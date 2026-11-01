@@ -146,19 +146,6 @@ impl AppView {
         }
     }
 
-    /// Stores the target of a mode while its slider moves.
-    fn change_normalize_target(&mut self, mode: NormalizeMode, value: f32, cx: &mut Context<Self>) {
-        if set_target(&mut self.settings, mode, value) {
-            cx.notify();
-        }
-    }
-
-    /// Saves the target once the slider is released, and shows it in the menus.
-    fn store_normalize_target(&mut self, cx: &Context<Self>) {
-        self.settings.save();
-        self.refresh_normalize_menus(cx);
-    }
-
     /// Resets the target of the current mode to its default.
     pub(super) fn reset_normalize_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mode = self.settings.normalize_mode;
@@ -209,6 +196,89 @@ impl AppView {
     /// Returns true while a cancelled normalization or processing run still has files that may commit.
     pub(super) const fn is_winding_down(&self) -> bool {
         self.normalize_winding_down || self.process_winding_down
+    }
+
+    /// Replaces the row of a normalized or processed source with its result,
+    /// and moves the selection and the listed roots over to a converted output.
+    /// The caller sorts the rows and restores the selection after the batch.
+    pub(super) fn apply_operation_result(&mut self, result: OperationResult, cx: &mut Context<Self>) {
+        let source = result.source;
+        self.artwork_rewrites.remove(&source);
+        let output_path = match &result.outcome {
+            OperationOutcome::Failed { .. } => None,
+            OperationOutcome::CommittedButUnanalyzed { output, .. } | OperationOutcome::Succeeded { output, .. } => {
+                Some(output.path.clone())
+            }
+        };
+        self.table.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            match result.outcome {
+                OperationOutcome::Failed { error } => delegate.fail_operation(&source, &error),
+                OperationOutcome::CommittedButUnanalyzed { output, error } => {
+                    let message = RowMessage {
+                        text: error,
+                        is_error: true,
+                    };
+                    delegate.replace_after_operation(&source, output, Some(message));
+                }
+                OperationOutcome::Succeeded { output, notice } => {
+                    let message = notice.map(|text| RowMessage { text, is_error: false });
+                    delegate.replace_after_operation(&source, output, message);
+                }
+            }
+            cx.notify();
+        });
+        if let Some(output_path) = output_path {
+            self.excluded.remove(&output_path);
+            for root in &mut self.roots {
+                if *root == source {
+                    root.clone_from(&output_path);
+                }
+            }
+            if self.selected.as_deref() == Some(source.as_path()) {
+                self.selected = None;
+                self.select_path(&output_path, false, cx);
+            }
+        } else if self.selected.as_deref() == Some(source.as_path()) {
+            self.refresh_selected_waveform(cx);
+            self.refresh_artwork(cx);
+        }
+    }
+
+    /// Reports the end of a normalization or processing run: the log line, and a dialog listing the failures.
+    pub(super) fn finish_operation_run(&mut self, run: &OperationRun, window: &mut Window, cx: &mut Context<Self>) {
+        tracing::info!("{}", run.log_line());
+        if let Some(message) = run.failure_message() {
+            let answer = window.prompt(
+                PromptLevel::Warning,
+                run.kind.dialog_title(),
+                Some(&message),
+                &["OK"],
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                let _ = answer.await;
+            })
+            .detach();
+        }
+        if self.selected.as_deref().is_some_and(|selected| !selected.exists()) {
+            self.clear_selection(cx);
+        } else {
+            self.refresh_artwork(cx);
+        }
+    }
+
+    /// Stores the target of a mode while its slider moves.
+    fn change_normalize_target(&mut self, mode: NormalizeMode, value: f32, cx: &mut Context<Self>) {
+        if set_target(&mut self.settings, mode, value) {
+            cx.notify();
+        }
+    }
+
+    /// Saves the target once the slider is released, and shows it in the menus.
+    fn store_normalize_target(&mut self, cx: &Context<Self>) {
+        self.settings.save();
+        self.refresh_normalize_menus(cx);
     }
 
     /// Returns why normalization cannot start now, or none when it can.
@@ -351,76 +421,6 @@ impl AppView {
             state.delegate_mut().mark_normalizing(path, fraction);
             cx.notify();
         });
-    }
-
-    /// Replaces the row of a normalized or processed source with its result,
-    /// and moves the selection and the listed roots over to a converted output.
-    /// The caller sorts the rows and restores the selection after the batch.
-    pub(super) fn apply_operation_result(&mut self, result: OperationResult, cx: &mut Context<Self>) {
-        let source = result.source;
-        self.artwork_rewrites.remove(&source);
-        let output_path = match &result.outcome {
-            OperationOutcome::Failed { .. } => None,
-            OperationOutcome::CommittedButUnanalyzed { output, .. } | OperationOutcome::Succeeded { output, .. } => {
-                Some(output.path.clone())
-            }
-        };
-        self.table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            match result.outcome {
-                OperationOutcome::Failed { error } => delegate.fail_operation(&source, &error),
-                OperationOutcome::CommittedButUnanalyzed { output, error } => {
-                    let message = RowMessage {
-                        text: error,
-                        is_error: true,
-                    };
-                    delegate.replace_after_operation(&source, output, Some(message));
-                }
-                OperationOutcome::Succeeded { output, notice } => {
-                    let message = notice.map(|text| RowMessage { text, is_error: false });
-                    delegate.replace_after_operation(&source, output, message);
-                }
-            }
-            cx.notify();
-        });
-        if let Some(output_path) = output_path {
-            self.excluded.remove(&output_path);
-            for root in &mut self.roots {
-                if *root == source {
-                    root.clone_from(&output_path);
-                }
-            }
-            if self.selected.as_deref() == Some(source.as_path()) {
-                self.selected = None;
-                self.select_path(&output_path, false, cx);
-            }
-        } else if self.selected.as_deref() == Some(source.as_path()) {
-            self.refresh_selected_waveform(cx);
-            self.refresh_artwork(cx);
-        }
-    }
-
-    /// Reports the end of a normalization or processing run: the log line, and a dialog listing the failures.
-    pub(super) fn finish_operation_run(&mut self, run: &OperationRun, window: &mut Window, cx: &mut Context<Self>) {
-        tracing::info!("{}", run.log_line());
-        if let Some(message) = run.failure_message() {
-            let answer = window.prompt(
-                PromptLevel::Warning,
-                run.kind.dialog_title(),
-                Some(&message),
-                &["OK"],
-                cx,
-            );
-            cx.spawn(async move |_, _| {
-                let _ = answer.await;
-            })
-            .detach();
-        }
-        if self.selected.as_deref().is_some_and(|selected| !selected.exists()) {
-            self.clear_selection(cx);
-        } else {
-            self.refresh_artwork(cx);
-        }
     }
 }
 

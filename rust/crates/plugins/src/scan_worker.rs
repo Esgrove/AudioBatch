@@ -30,6 +30,9 @@ pub fn is_scan_worker_invocation(arguments: impl IntoIterator<Item = OsString>) 
 }
 
 /// Runs the scan worker until its stdin closes, and returns the process exit code.
+///
+/// The worker writes its diagnostics with `eprintln!` instead of `tracing`,
+/// because it installs no subscriber and the parent redirects its stderr into `plugin-scan-worker.log`.
 #[must_use]
 pub fn run_scan_worker() -> i32 {
     let ui = match UiThread::register_current() {

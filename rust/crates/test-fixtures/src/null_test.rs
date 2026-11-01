@@ -5,7 +5,8 @@
 //! When the two do not cancel,
 //! the cross-correlation of their first channels tells whether the output is only shifted in time,
 //! which points at a latency problem rather than a level one.
-//! The C++ tests have the same helper in `cpp/tests/TestHelpers.cpp`.
+//! The C++ tests have the same helper in `cpp/tests/TestHelpers.cpp`,
+//! so both suites judge the shared expected files by the same measure.
 
 use std::fmt;
 

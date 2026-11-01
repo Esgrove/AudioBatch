@@ -1,6 +1,6 @@
 //! The look of the app: its color palette and its bundled Roboto fonts.
 //!
-//! The palette and the fonts are the same as in the C++ application, so both versions look alike.
+//! The palette and the fonts match those of the C++ application, so both applications look alike on screen.
 //! The palette is applied as a gpui-kit theme configuration,
 //! so the components and the results table pick it up through their theme colors,
 //! while the custom views read the palette constants directly.

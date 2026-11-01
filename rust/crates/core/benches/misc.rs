@@ -4,7 +4,10 @@
 //! and the CLI and the GUI sort the records by name, path, peak, or loudness.
 
 // Benchmarks are test code, which the workspace allows to index, like the tests.
-#![allow(clippy::indexing_slicing)]
+#![expect(
+    clippy::indexing_slicing,
+    reason = "benchmarks are test code, where indexing is allowed"
+)]
 
 use std::fs;
 use std::hint::black_box;

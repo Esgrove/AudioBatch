@@ -44,8 +44,9 @@ const PLUGIN_WINDOW_MINIMUM_SIZE: (f32, f32) = (480.0, 300.0);
 /// Status text when the scan folders or the blacklist are changed during a scan.
 const WAIT_FOR_SCAN: &str = "Wait for the plugin scan to finish";
 
-/// Status message when another process holds the scan lock, worded like the C++ application's dialog,
-/// since the most likely other scan is a CLI rescan, not the plugin manager this window opens.
+/// Status message when another process holds the scan lock.
+/// The wording matches the C++ application's dialog, so both applications give the same advice.
+/// The most likely other scan is a CLI rescan, not the plugin manager this window opens.
 const SCAN_BUSY_MESSAGE: &str = "Another plugin scan is running, for example audiobatch-rs list --rescan in a terminal. Scan again once it has finished.";
 
 /// An open plugin window and the subscription to its events.
@@ -200,18 +201,6 @@ impl AppView {
         }
     }
 
-    /// Runs the plugin housekeeping every `PLUGIN_TICK_INTERVAL` for the life of the view.
-    pub(super) fn spawn_plugin_tick(cx: &Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(PLUGIN_TICK_INTERVAL).await;
-                if this.update(cx, Self::plugin_tick).is_err() {
-                    break;
-                }
-            }
-        })
-    }
-
     /// Shows the menus and the open plugin windows with the current chain and known plugins.
     pub(super) fn refresh_plugin_views(&mut self, cx: &mut Context<Self>) {
         let summary = self.chain_summary();
@@ -233,6 +222,24 @@ impl AppView {
         self.sync_chain_window(cx);
         self.sync_manager_window(cx);
         cx.notify();
+    }
+
+    /// Shows a message in the status bar.
+    pub(super) fn report_status(&mut self, message: String, cx: &mut Context<Self>) {
+        self.status = message.into();
+        cx.notify();
+    }
+
+    /// Runs the plugin housekeeping every `PLUGIN_TICK_INTERVAL` for the life of the view.
+    pub(super) fn spawn_plugin_tick(cx: &Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(PLUGIN_TICK_INTERVAL).await;
+                if this.update(cx, Self::plugin_tick).is_err() {
+                    break;
+                }
+            }
+        })
     }
 
     /// Prepares the live instances again after a change of the output rate or a restart request,
@@ -643,12 +650,6 @@ impl AppView {
             }
         })
         .detach();
-    }
-
-    /// Shows a message in the status bar.
-    pub(super) fn report_status(&mut self, message: String, cx: &mut Context<Self>) {
-        self.status = message.into();
-        cx.notify();
     }
 }
 

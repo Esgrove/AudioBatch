@@ -7,7 +7,10 @@
 //! Files that have not been generated with `fixtures/benchmark/generate.py` are skipped with a note.
 
 // Benchmarks are test code, which the workspace allows to index, like the tests.
-#![allow(clippy::indexing_slicing)]
+#![expect(
+    clippy::indexing_slicing,
+    reason = "benchmarks are test code, where indexing is allowed"
+)]
 
 use std::fs;
 use std::hint::black_box;

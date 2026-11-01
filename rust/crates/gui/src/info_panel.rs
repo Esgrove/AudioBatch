@@ -58,7 +58,7 @@ const DETAIL_ROW_HEIGHT: f32 = 20.0;
 const DETAIL_FIELD_WIDTH: f32 = 64.0;
 
 /// Font size of the artist and title.
-/// The sizes of the panel match the JUCE font heights of the C++ panel, so both applications look alike.
+/// The sizes are derived from JUCE font heights, so the text is as large as in the C++ application's panel.
 /// A JUCE height is the ascent plus the descent, 1.17 em for Roboto and 1.32 em for Roboto Mono,
 /// so this is its height of 13 in Roboto.
 const HEADING_FONT_SIZE: f32 = 11.0;

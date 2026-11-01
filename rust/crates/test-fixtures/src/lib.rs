@@ -82,37 +82,11 @@ pub const STEREO_SPLIT_FIXTURE: &str = "stereo_split_44100_16.wav";
 /// Name of the variable that points the tests to the `AudioBatch Test MS` VST3 bundle.
 pub const TEST_PLUGIN_VARIABLE: &str = "AUDIOBATCH_TEST_VST3";
 
-/// One output the `AudioBatch Test MS` plugin in `test-plugin/` must produce, computed by `plugin_expected.py`.
-///
-/// Both applications compare their processed output against these files sample by sample,
-/// so they agree with each other through the shared files.
-#[derive(Debug, Clone, Copy)]
-pub struct PluginExpectation {
-    /// File name of the source fixture.
-    pub source: &'static str,
-    /// Linear gain parameter value.
-    pub gain: f32,
-    /// Stereo width parameter value.
-    pub width: f32,
-    /// Latency parameter value in samples, which a host must compensate to produce the expected output.
-    pub latency: u32,
-    /// File name of the expected output inside `fixtures/plugin_expected`.
-    pub expected: &'static str,
-}
+/// Allowed level difference for lossless fixtures, in dB or LU.
+pub const LOSSLESS_TOLERANCE: f64 = 0.05;
 
-impl PluginExpectation {
-    /// Returns the absolute path of the source fixture.
-    #[must_use]
-    pub fn source_path(&self) -> PathBuf {
-        fixture(self.source)
-    }
-
-    /// Returns the absolute path of the expected output.
-    #[must_use]
-    pub fn expected_path(&self) -> PathBuf {
-        fixtures_directory().join("plugin_expected").join(self.expected)
-    }
-}
+/// Allowed level difference for lossy fixtures, in dB or LU.
+pub const LOSSY_TOLERANCE: f64 = 0.5;
 
 /// The expected outputs of the `AudioBatch Test MS` plugin.
 ///
@@ -156,11 +130,60 @@ pub const PLUGIN_EXPECTATIONS: [PluginExpectation; 5] = [
     },
 ];
 
-/// Allowed level difference for lossless fixtures, in dB or LU.
-pub const LOSSLESS_TOLERANCE: f64 = 0.05;
+/// The tone fixtures and what analysis should report for them.
+///
+/// MP3, AAC, and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
+pub const TONE_FIXTURES: [ToneFixture; 17] = [
+    tone("sine_stereo_44100_16.wav", 2, 44_100, 16, false),
+    tone("sine_stereo_48000_24.wav", 2, 48_000, 24, false),
+    tone("sine_mono_44100_16.wav", 1, 44_100, 16, false),
+    tone("sine_mono_48000_24.wav", 1, 48_000, 24, false),
+    tone("sine_stereo_44100_32f.wav", 2, 44_100, 32, false),
+    tone("sine_stereo_96000_16.wav", 2, 96_000, 16, false),
+    tone("sine_mono_24000_16.wav", 1, 24_000, 16, false),
+    tone("sine_stereo_44100_16.aif", 2, 44_100, 16, false),
+    tone("sine_mono_48000_24.aif", 1, 48_000, 24, false),
+    tone("sine_stereo_44100_16.flac", 2, 44_100, 16, false),
+    tone("sine_stereo_48000_24.flac", 2, 48_000, 24, false),
+    tone("sine_stereo_44100_320k.mp3", 2, 44_100, 16, true),
+    tone("sine_joint_stereo_44100_192k.mp3", 2, 44_100, 16, true),
+    tone("sine_mono_44100_128k.mp3", 1, 44_100, 16, true),
+    tone("sine_stereo_48000.ogg", 2, 48_000, 16, true),
+    tone(NO_XING_MP3_FIXTURE, 2, 44_100, 16, true),
+    tone(AAC_FIXTURE, 2, 44_100, 16, true),
+];
 
-/// Allowed level difference for lossy fixtures, in dB or LU.
-pub const LOSSY_TOLERANCE: f64 = 0.5;
+/// One output the `AudioBatch Test MS` plugin in `test-plugin/` must produce, computed by `plugin_expected.py`.
+///
+/// Both applications compare their processed output against these files sample by sample,
+/// so they agree with each other through the shared files.
+#[derive(Debug, Clone, Copy)]
+pub struct PluginExpectation {
+    /// File name of the source fixture.
+    pub source: &'static str,
+    /// Linear gain parameter value.
+    pub gain: f32,
+    /// Stereo width parameter value.
+    pub width: f32,
+    /// Latency parameter value in samples, which a host must compensate to produce the expected output.
+    pub latency: u32,
+    /// File name of the expected output inside `fixtures/plugin_expected`.
+    pub expected: &'static str,
+}
+
+impl PluginExpectation {
+    /// Returns the absolute path of the source fixture.
+    #[must_use]
+    pub fn source_path(&self) -> PathBuf {
+        fixture(self.source)
+    }
+
+    /// Returns the absolute path of the expected output.
+    #[must_use]
+    pub fn expected_path(&self) -> PathBuf {
+        fixtures_directory().join("plugin_expected").join(self.expected)
+    }
+}
 
 /// Expected properties of one fixture tone.
 #[derive(Debug, Clone, Copy)]
@@ -194,29 +217,6 @@ impl ToneFixture {
         fixture(self.file_name)
     }
 }
-
-/// The tone fixtures and what analysis should report for them.
-///
-/// MP3, AAC, and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
-pub const TONE_FIXTURES: [ToneFixture; 17] = [
-    tone("sine_stereo_44100_16.wav", 2, 44_100, 16, false),
-    tone("sine_stereo_48000_24.wav", 2, 48_000, 24, false),
-    tone("sine_mono_44100_16.wav", 1, 44_100, 16, false),
-    tone("sine_mono_48000_24.wav", 1, 48_000, 24, false),
-    tone("sine_stereo_44100_32f.wav", 2, 44_100, 32, false),
-    tone("sine_stereo_96000_16.wav", 2, 96_000, 16, false),
-    tone("sine_mono_24000_16.wav", 1, 24_000, 16, false),
-    tone("sine_stereo_44100_16.aif", 2, 44_100, 16, false),
-    tone("sine_mono_48000_24.aif", 1, 48_000, 24, false),
-    tone("sine_stereo_44100_16.flac", 2, 44_100, 16, false),
-    tone("sine_stereo_48000_24.flac", 2, 48_000, 24, false),
-    tone("sine_stereo_44100_320k.mp3", 2, 44_100, 16, true),
-    tone("sine_joint_stereo_44100_192k.mp3", 2, 44_100, 16, true),
-    tone("sine_mono_44100_128k.mp3", 1, 44_100, 16, true),
-    tone("sine_stereo_48000.ogg", 2, 48_000, 16, true),
-    tone(NO_XING_MP3_FIXTURE, 2, 44_100, 16, true),
-    tone(AAC_FIXTURE, 2, 44_100, 16, true),
-];
 
 /// Returns the absolute path of the fixtures directory.
 #[must_use]

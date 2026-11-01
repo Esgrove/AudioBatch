@@ -12,7 +12,8 @@ use gpui_kit::{Bounds, Hsla, PathBuilder, Window, fill, point, px, size};
 use super::{PaintData, Viewport};
 use crate::theme::color;
 
-/// Amber #CEAF6C shared with the C++ warning renderer and the application warning palette.
+/// Amber #CEAF6C, the warning color of the application palette,
+/// which the C++ warning renderer also uses so overload marks look the same in both applications.
 const WARNING_AMBER: u32 = 0x00CE_AF6C;
 /// Height of solid or hollow caps at each channel edge.
 const CAP_HEIGHT: f32 = 4.0;

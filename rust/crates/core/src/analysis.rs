@@ -31,17 +31,6 @@ enum MeasurementError {
     Meter(#[from] MeterError),
 }
 
-impl MeasurementError {
-    /// Returns the classification that determines whether a failed analysis can be cached.
-    const fn kind(&self) -> AnalysisError {
-        match self {
-            Self::Decode(error) => error.analysis_kind(),
-            Self::Analysis(failure) => failure.kind,
-            Self::Meter(_) => AnalysisError::MeasurementFailed,
-        }
-    }
-}
-
 /// Left, right, and overall values reduced from per-channel values.
 #[derive(Debug, Clone, Copy)]
 struct ChannelSummary<T> {
@@ -64,6 +53,17 @@ struct DecodeMeasurements {
     short_term_loudness: Arc<ShortTermLoudnessHistory>,
     waveform: Arc<WaveformOverview>,
     overloads: Arc<OverloadHistory>,
+}
+
+impl MeasurementError {
+    /// Returns the classification that determines whether a failed analysis can be cached.
+    const fn kind(&self) -> AnalysisError {
+        match self {
+            Self::Decode(error) => error.analysis_kind(),
+            Self::Analysis(failure) => failure.kind,
+            Self::Meter(_) => AnalysisError::MeasurementFailed,
+        }
+    }
 }
 
 /// Analyzes a single audio file and returns the populated result record.

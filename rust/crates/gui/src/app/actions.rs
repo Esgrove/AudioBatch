@@ -63,36 +63,6 @@ impl AppView {
         cx.notify();
     }
 
-    /// Removes the rows of files from the list, keeps them out of later scans,
-    /// and selects the file that took the place of the first removed row.
-    fn remove_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        let first_index = {
-            let delegate = self.table.read(cx).delegate();
-            paths.iter().filter_map(|path| delegate.index_of(path)).min()
-        };
-        let removed: HashSet<PathBuf> = paths.iter().cloned().collect();
-        self.roots.retain(|root| !removed.contains(root));
-        self.excluded.extend(removed.iter().cloned());
-        let gains = self.table.update(cx, |state, cx| {
-            let gains = remove_result_rows(state.delegate_mut(), &removed, &mut self.pending_gain_paths);
-            cx.notify();
-            gains
-        });
-        for (path, gain) in gains {
-            self.store_custom_gain(&path, gain);
-        }
-        self.clear_selection(cx);
-        let next = first_index.and_then(|index| {
-            let delegate = self.table.read(cx).delegate();
-            let index = index.min(delegate.len().checked_sub(1)?);
-            delegate.row(index).map(|row| (index, row.path.clone()))
-        });
-        if let Some((index, path)) = next {
-            self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
-            self.select_path(&path, false, cx);
-        }
-    }
-
     /// Moves the selected file to the system trash, forgets its cached result, and removes it from the list.
     /// Asks first unless `confirm` is false, as it is for the shortcut with Shift held.
     pub(super) fn trash_selected(&mut self, confirm: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -121,44 +91,6 @@ impl AppView {
             }
         })
         .detach();
-    }
-
-    /// Moves files to the system trash and removes their rows.
-    /// A file that cannot be moved keeps its row, and the status names the first failure.
-    fn move_to_trash(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        if self.blocked_by_file_operation(cx) {
-            return;
-        }
-        let mut trashed = Vec::new();
-        let mut first_failure = None;
-        for path in paths {
-            if let Some(player) = &mut self.player
-                && player.loaded_path() == Some(path.as_path())
-            {
-                player.unload();
-            }
-            match trash::delete(path) {
-                Ok(()) => trashed.push(path.clone()),
-                Err(error) => {
-                    tracing::warn!("Could not move {} to the trash: {error}", path.display());
-                    first_failure
-                        .get_or_insert_with(|| format!("Could not move {} to the trash: {error}", display_name(path)));
-                }
-            }
-        }
-        if let Some(coordinator) = &self.coordinator
-            && let Err(error) = coordinator.cache().remove_analyses(&trashed)
-        {
-            let error = anyhow::Error::from(error);
-            tracing::warn!("Failed to remove the cached results of the trashed files: {error:#}");
-        }
-        if !trashed.is_empty() {
-            self.remove_paths(&trashed, cx);
-        }
-        self.status = first_failure
-            .unwrap_or_else(|| describe_files("Moved", "to the trash", &trashed))
-            .into();
-        cx.notify();
     }
 
     /// Shows the selected file in the platform file manager.
@@ -217,27 +149,6 @@ impl AppView {
     /// Returns true during an analysis, normalization, or processing run.
     pub(super) fn is_running(&self) -> bool {
         self.is_analyzing() || self.is_normalizing() || self.is_processing() || self.is_winding_down()
-    }
-
-    /// Cancels the analysis run, settling the rows it left waiting or analyzing.
-    fn cancel_analysis(&mut self, cx: &mut Context<Self>) {
-        tracing::info!("Analysis cancelled");
-        if let Some(coordinator) = &self.coordinator {
-            coordinator.cancel();
-        }
-        self.analysis_task = None;
-        if let Some(run) = &mut self.run {
-            run.completed = true;
-        }
-        let cache = self.coordinator.as_ref().map(|coordinator| coordinator.cache());
-        self.table.update(cx, |state, cx| {
-            state
-                .delegate_mut()
-                .finish_cancelled_analysis(|path| cache.as_ref().and_then(|cache| cache.get_analysis(path)));
-            cx.notify();
-        });
-        self.status = SharedString::from("Analysis cancelled");
-        cx.notify();
     }
 
     /// Plays the selected file, or stops playback while playing.
@@ -335,6 +246,62 @@ impl AppView {
         cx.notify();
     }
 
+    /// Handles seeks, wheel zoom, and wheel gain from the waveform.
+    pub(super) fn on_waveform_event(
+        &mut self,
+        _waveform: &Entity<WaveformView>,
+        event: &WaveformEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WaveformEvent::ScrubStarted(seconds) => {
+                self.start_after_cues = None;
+                if let Some(player) = &mut self.player {
+                    player.pause();
+                    player.seek(*seconds);
+                }
+            }
+            WaveformEvent::SeekRequested(seconds) => {
+                self.start_after_cues = None;
+                if let Some(player) = &mut self.player {
+                    player.seek(*seconds);
+                }
+            }
+            WaveformEvent::ScrubEnded => {
+                if let Some(player) = &mut self.player {
+                    player.play();
+                }
+            }
+            WaveformEvent::RestartRequested => {
+                self.start_after_cues = None;
+                if let Some(player) = &mut self.player {
+                    player.seek(0.0);
+                    player.play();
+                }
+            }
+            WaveformEvent::ZoomBy(factor) => {
+                let current = f64::from(self.zoom_slider.read(cx).value().start());
+                let zoom = (current * factor).clamp(MINIMUM_ZOOM, MAXIMUM_ZOOM);
+                self.zoom_slider
+                    .update(cx, |slider, cx| slider.set_value(zoom as f32, window, cx));
+                self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
+            }
+            WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
+                // Each wheel event moves the gain by one slider step.
+                let current = self.gain_slider.read(cx).value().start();
+                let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
+                let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
+                self.gain_slider
+                    .update(cx, |slider, cx| slider.set_value(gain, window, cx));
+                self.change_selected_gain(gain, cx);
+                self.schedule_gain_store(cx);
+            }
+            WaveformEvent::GainBy(_) => {}
+        }
+        cx.notify();
+    }
+
     /// Opens a dialog for choosing folders or files, then replaces or adds to the list.
     pub(super) fn prompt_for_paths(directories: bool, replace: bool, cx: &Context<Self>) {
         let receiver = cx.prompt_for_paths(PathPromptOptions {
@@ -404,59 +371,92 @@ impl AppView {
         })
     }
 
-    /// Handles seeks, wheel zoom, and wheel gain from the waveform.
-    pub(super) fn on_waveform_event(
-        &mut self,
-        _waveform: &Entity<WaveformView>,
-        event: &WaveformEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            WaveformEvent::ScrubStarted(seconds) => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    player.pause();
-                    player.seek(*seconds);
-                }
-            }
-            WaveformEvent::SeekRequested(seconds) => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    player.seek(*seconds);
-                }
-            }
-            WaveformEvent::ScrubEnded => {
-                if let Some(player) = &mut self.player {
-                    player.play();
-                }
-            }
-            WaveformEvent::RestartRequested => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    player.seek(0.0);
-                    player.play();
-                }
-            }
-            WaveformEvent::ZoomBy(factor) => {
-                let current = f64::from(self.zoom_slider.read(cx).value().start());
-                let zoom = (current * factor).clamp(MINIMUM_ZOOM, MAXIMUM_ZOOM);
-                self.zoom_slider
-                    .update(cx, |slider, cx| slider.set_value(zoom as f32, window, cx));
-                self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
-            }
-            WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
-                // Each wheel event moves the gain by one slider step.
-                let current = self.gain_slider.read(cx).value().start();
-                let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
-                let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
-                self.gain_slider
-                    .update(cx, |slider, cx| slider.set_value(gain, window, cx));
-                self.change_selected_gain(gain, cx);
-                self.schedule_gain_store(cx);
-            }
-            WaveformEvent::GainBy(_) => {}
+    /// Removes the rows of files from the list, keeps them out of later scans,
+    /// and selects the file that took the place of the first removed row.
+    fn remove_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let first_index = {
+            let delegate = self.table.read(cx).delegate();
+            paths.iter().filter_map(|path| delegate.index_of(path)).min()
+        };
+        let removed: HashSet<PathBuf> = paths.iter().cloned().collect();
+        self.roots.retain(|root| !removed.contains(root));
+        self.excluded.extend(removed.iter().cloned());
+        let gains = self.table.update(cx, |state, cx| {
+            let gains = remove_result_rows(state.delegate_mut(), &removed, &mut self.pending_gain_paths);
+            cx.notify();
+            gains
+        });
+        for (path, gain) in gains {
+            self.store_custom_gain(&path, gain);
         }
+        self.clear_selection(cx);
+        let next = first_index.and_then(|index| {
+            let delegate = self.table.read(cx).delegate();
+            let index = index.min(delegate.len().checked_sub(1)?);
+            delegate.row(index).map(|row| (index, row.path.clone()))
+        });
+        if let Some((index, path)) = next {
+            self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
+            self.select_path(&path, false, cx);
+        }
+    }
+
+    /// Moves files to the system trash and removes their rows.
+    /// A file that cannot be moved keeps its row, and the status names the first failure.
+    fn move_to_trash(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if self.blocked_by_file_operation(cx) {
+            return;
+        }
+        let mut trashed = Vec::new();
+        let mut first_failure = None;
+        for path in paths {
+            if let Some(player) = &mut self.player
+                && player.loaded_path() == Some(path.as_path())
+            {
+                player.unload();
+            }
+            match trash::delete(path) {
+                Ok(()) => trashed.push(path.clone()),
+                Err(error) => {
+                    tracing::warn!("Could not move {} to the trash: {error}", path.display());
+                    first_failure
+                        .get_or_insert_with(|| format!("Could not move {} to the trash: {error}", display_name(path)));
+                }
+            }
+        }
+        if let Some(coordinator) = &self.coordinator
+            && let Err(error) = coordinator.cache().remove_analyses(&trashed)
+        {
+            let error = anyhow::Error::from(error);
+            tracing::warn!("Failed to remove the cached results of the trashed files: {error:#}");
+        }
+        if !trashed.is_empty() {
+            self.remove_paths(&trashed, cx);
+        }
+        self.status = first_failure
+            .unwrap_or_else(|| describe_files("Moved", "to the trash", &trashed))
+            .into();
+        cx.notify();
+    }
+
+    /// Cancels the analysis run, settling the rows it left waiting or analyzing.
+    fn cancel_analysis(&mut self, cx: &mut Context<Self>) {
+        tracing::info!("Analysis cancelled");
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.cancel();
+        }
+        self.analysis_task = None;
+        if let Some(run) = &mut self.run {
+            run.completed = true;
+        }
+        let cache = self.coordinator.as_ref().map(|coordinator| coordinator.cache());
+        self.table.update(cx, |state, cx| {
+            state
+                .delegate_mut()
+                .finish_cancelled_analysis(|path| cache.as_ref().and_then(|cache| cache.get_analysis(path)));
+            cx.notify();
+        });
+        self.status = SharedString::from("Analysis cancelled");
         cx.notify();
     }
 

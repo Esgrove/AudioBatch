@@ -101,6 +101,35 @@ impl<W: Write + Seek> AiffWriter<W> {
         })
     }
 
+    /// Returns the number of frames written so far.
+    #[must_use]
+    pub const fn frames_written(&self) -> u64 {
+        self.frames_written
+    }
+
+    /// Pads the sample data to an even length, patches the header sizes, and returns the writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writing or seeking fails.
+    pub fn finish(mut self) -> Result<W, AiffError> {
+        let data = data_bytes(self.frames_written, self.channels, self.bits_per_sample)?;
+        if data % 2 == 1 {
+            self.writer.write_all(&[0]).map_err(AiffError::WriteData)?;
+        }
+        self.writer.seek(SeekFrom::Start(0)).map_err(AiffError::FinishHeader)?;
+        write_header(
+            &mut self.writer,
+            self.channels,
+            self.sample_rate,
+            self.bits_per_sample,
+            self.frames_written,
+        )?;
+        self.writer.seek(SeekFrom::End(0)).map_err(AiffError::FinishHeader)?;
+        self.writer.flush().map_err(AiffError::FinishFile)?;
+        Ok(self.writer)
+    }
+
     /// Appends one block of planar samples, one slice per channel, all of the same length.
     ///
     /// # Errors
@@ -185,35 +214,6 @@ impl<W: Write + Seek> AiffWriter<W> {
         self.writer.write_all(&self.scratch).map_err(AiffError::WriteData)?;
         self.frames_written = total_frames;
         Ok(())
-    }
-
-    /// Returns the number of frames written so far.
-    #[must_use]
-    pub const fn frames_written(&self) -> u64 {
-        self.frames_written
-    }
-
-    /// Pads the sample data to an even length, patches the header sizes, and returns the writer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when writing or seeking fails.
-    pub fn finish(mut self) -> Result<W, AiffError> {
-        let data = data_bytes(self.frames_written, self.channels, self.bits_per_sample)?;
-        if data % 2 == 1 {
-            self.writer.write_all(&[0]).map_err(AiffError::WriteData)?;
-        }
-        self.writer.seek(SeekFrom::Start(0)).map_err(AiffError::FinishHeader)?;
-        write_header(
-            &mut self.writer,
-            self.channels,
-            self.sample_rate,
-            self.bits_per_sample,
-            self.frames_written,
-        )?;
-        self.writer.seek(SeekFrom::End(0)).map_err(AiffError::FinishHeader)?;
-        self.writer.flush().map_err(AiffError::FinishFile)?;
-        Ok(self.writer)
     }
 }
 

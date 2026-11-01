@@ -22,6 +22,23 @@ const TRUE_PEAK_COLUMN_WIDTH: usize = 7;
 /// Width of the integrated loudness column of the table.
 const LOUDNESS_COLUMN_WIDTH: usize = 8;
 
+/// CSV header fields, in the order of the `RecordRow` fields.
+const CSV_HEADER: [&str; 13] = [
+    "path",
+    "name",
+    "format",
+    "sampleRate",
+    "channels",
+    "bitsPerSample",
+    "durationSeconds",
+    "peakDbfs",
+    "truePeakDbtp",
+    "integratedLufs",
+    "maxShortTermLufs",
+    "status",
+    "error",
+];
+
 /// Machine-readable fields of one record, shared by the CSV and JSON output.
 /// The field order is also the CSV column order.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -146,23 +163,6 @@ pub fn format_json(records: &[AnalysisRecord]) -> Result<String> {
     json.push('\n');
     Ok(json)
 }
-
-/// CSV header fields, in the order of the `RecordRow` fields.
-const CSV_HEADER: [&str; 13] = [
-    "path",
-    "name",
-    "format",
-    "sampleRate",
-    "channels",
-    "bitsPerSample",
-    "durationSeconds",
-    "peakDbfs",
-    "truePeakDbtp",
-    "integratedLufs",
-    "maxShortTermLufs",
-    "status",
-    "error",
-];
 
 /// Converts a linear amplitude to decibels rounded to two decimals, or `None` for silence.
 fn decibels_or_null(amplitude: f64) -> Option<f64> {
