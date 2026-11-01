@@ -33,6 +33,8 @@ AudioBatch/
 The fixtures and the test plugin are described in [`fixtures/README.md`](fixtures/README.md)
 and [`test-plugin/README.md`](test-plugin/README.md).
 
+Shared measurements, profiling commands, and plugin host comparisons are in [Performance](docs/performance.md).
+
 Build and test each version from its own directory, as described in its README.
 Each version explains how its parts work together in its `ARCHITECTURE.md`,
 [`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md).
@@ -44,6 +46,9 @@ The scripts in the repository root run the scripts of the same name in both proj
 ```shell
 # Build the release binaries of both versions
 ./build.sh
+
+# Build the debug binaries of both versions
+./build.sh --debug
 
 # Install both CLIs, GUI apps, and shell completions
 ./install.sh
@@ -60,6 +65,8 @@ Both build and install scripts accept `-c` or `--clean`.
 For C++, this deletes the selected CMake build directory and its local compilation cache before rebuilding.
 The Rust scripts accept the option without cleaning Cargo artifacts.
 Use `-l` or `--cli-only` to build or install only the CLIs.
+The build scripts accept `-d` or `--debug` to select debug builds, and keep release as the default.
+The C++ script also retains `-b` or `--build-type` for selecting any build configuration.
 For example, `./install.sh --clean` rebuilds C++ from scratch and installs both versions.
 
 ## Differences between the versions

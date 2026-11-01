@@ -237,7 +237,7 @@ else()
 
     target_compile_definitions(AudioBatchSQLite PRIVATE SQLITE_DQS=0 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
 
-    target_include_directories(AudioBatchSQLite PUBLIC ${sqlite3_SOURCE_DIR})
+    target_include_directories(AudioBatchSQLite SYSTEM PUBLIC ${sqlite3_SOURCE_DIR})
 
     set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
 endif()
@@ -660,7 +660,7 @@ function(audiobatch_set_source_warnings)
     endforeach()
     list(REMOVE_DUPLICATES project_sources)
 
-    if(MSVC)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         set(options
             # Standards conformance mode.
             # https://learn.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
@@ -702,10 +702,34 @@ function(audiobatch_set_source_warnings)
             /we4928
         )
     else()
+        if(MSVC)
+            set(system_include_flag -imsvc)
+            # JUCE selects /W4 for clang-cl, so enable the Clang diagnostics explicitly for project sources.
+            set(clang_frontend_warnings
+                /clang:-Wall
+                -Wpedantic
+                -Wshadow-all
+                -Wconversion
+                -Wsign-conversion
+                -Wfloat-equal
+                -Wconditional-uninitialized
+                -Wswitch-enum
+                -Wzero-as-null-pointer-constant
+                -Woverloaded-virtual
+                -Wreorder
+                -Winconsistent-missing-destructor-override
+                # Windows COM interfaces require the __uuidof language extension.
+                -Wno-language-extension-token
+            )
+        else()
+            set(system_include_flag -isystem)
+            set(clang_frontend_warnings "")
+        endif()
         set(options
+            ${clang_frontend_warnings}
             # JUCE headers are written to JUCE's own rules, so they are treated as system headers.
             # Clang keeps the system classification when the same directory is also a normal include directory.
-            -isystem
+            ${system_include_flag}
             "${CMAKE_SOURCE_DIR}/JUCE/modules"
             # The JUCE recommended warning flags include -Wall and -Wpedantic but not -Wextra.
             -Wextra

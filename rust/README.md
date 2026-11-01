@@ -43,7 +43,7 @@ In the October 30, 2026 measurements on an M3 Max,
 the release CLI analyzed the 29-file benchmark corpus in 0.297 s with one worker,
 compared with 1.618 s for C++, about 5.44 times faster.
 Peak and loudness normalization took 0.885 s and 0.928 s, about 3.71 and 3.52 times faster than C++.
-See [Analysis performance](docs/performance.md) for the full results, baseline comparisons, and validation limits.
+See [Analysis performance](../docs/performance.md) for the full results, baseline comparisons, and validation limits.
 
 ## Build
 
@@ -54,7 +54,8 @@ Run the commands from this directory.
 ./install.sh
 ```
 
-`build.sh` builds the release binaries and moves `audiobatch-rs` and `AudioBatchRs` into this directory.
+`build.sh` builds the release binaries by default and moves `audiobatch-rs` and `AudioBatchRs` into this directory.
+Use `./build.sh --debug` or `./build.sh -d` to build and move the debug binaries instead.
 On macOS, the GUI is packaged as `AudioBatchRs.app` with the bundle id `com.esgrove.audiobatch-rs`.
 `install.sh` installs the CLI with `cargo install` into the Cargo bin directory,
 and then installs the shell completions for it.
@@ -388,7 +389,7 @@ For repeated timing comparisons with isolated inputs, warmups, and JSON and Mark
 ./scripts/cli_benchmark.sh --corpus ../fixtures/normalization
 ```
 
-See [Analysis performance](docs/performance.md) for measured results and benchmark settings.
+See [Analysis performance](../docs/performance.md) for measured results and benchmark settings.
 
 For offline VST3 processing without decoding or file writes in the timed region:
 
@@ -456,4 +457,4 @@ rustup component add llvm-tools-preview
 
 [samply](https://github.com/mstange/samply) records sampling profiles of release or profiling builds.
 It is a development tool, not a runtime dependency.
-See [Analysis performance](docs/performance.md#reproducing-the-measurements) for profiling commands.
+See [Analysis performance](../docs/performance.md#reproducing-the-measurements) for profiling commands.

@@ -6,6 +6,7 @@ USAGE="Usage: $0 [OPTIONS]
 Build AudioBatch.
 On macOS, Ninja is used by default. Pass --xcode to use the Xcode generator instead.
 On Windows, Visual Studio is used by default. Pass --ninja to use Ninja instead.
+Pass --clang to use Ninja with LLVM clang-cl and LLD on Windows.
 
 OPTIONS: All options are optional
     -h | --help
@@ -16,6 +17,9 @@ OPTIONS: All options are optional
 
     -x | --xcode
         Use Xcode as the build system (macOS only, default is Ninja).
+
+    --clang
+        Use LLVM clang-cl and LLD with Ninja on Windows. Ignored on macOS.
 
     -o | --open
         Generate and open the project in the IDE instead of building or running tests.
@@ -30,6 +34,10 @@ OPTIONS: All options are optional
 
     -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
+
+    -d | --debug
+        Select Debug, equivalent to --build-type Debug.
+        When combined with --build-type, the last selection wins.
 
     -l | --cli-only
         Build only the CLI, without the GUI app.
@@ -49,6 +57,7 @@ source "$DIR/common.sh"
 init_options() {
     BUILD_TYPE="Release"
     USE_NINJA=false
+    USE_CLANG=false
     USE_XCODE=false
     OPEN_PROJECT=false
     REUSE_BUILD_DIR=false
@@ -63,6 +72,12 @@ init_options() {
                 ;;
             -n | --ninja)
                 USE_NINJA=true
+                ;;
+            --clang)
+                if [ "$BASH_PLATFORM" = "windows" ]; then
+                    USE_CLANG=true
+                    USE_NINJA=true
+                fi
                 ;;
             -x | --xcode)
                 USE_XCODE=true
@@ -82,6 +97,9 @@ init_options() {
                 fi
                 BUILD_TYPE="$2"
                 shift
+                ;;
+            -d | --debug)
+                BUILD_TYPE="Debug"
                 ;;
             -l | --cli-only)
                 CLI_ONLY=true
@@ -149,7 +167,9 @@ init_options() {
             CMAKE_BUILD_DIR="$REPO/cmake-build-mac-${BUILD_TYPE_LOWER}"
         fi
     elif [ "$BASH_PLATFORM" = "windows" ]; then
-        if [ "$USE_NINJA" = true ]; then
+        if [ "$USE_CLANG" = true ]; then
+            CMAKE_BUILD_DIR="$REPO/cmake-build-windows-clang-${BUILD_TYPE_LOWER}"
+        elif [ "$USE_NINJA" = true ]; then
             CMAKE_BUILD_DIR="$REPO/cmake-build-windows-ninja-${BUILD_TYPE_LOWER}"
         else
             CMAKE_BUILD_DIR="$REPO/cmake-build-windows-${BUILD_TYPE_LOWER}"
@@ -335,8 +355,7 @@ export_cmake_project() {
         fi
     elif [ "$BASH_PLATFORM" = "windows" ]; then
         if [ "$USE_NINJA" = true ]; then
-            # Like the windows-ninja presets, Ninja uses MSVC, which needs a developer command prompt environment,
-            # so load it when the script was not started from one.
+            # Both Windows Ninja toolchains use the Visual Studio SDK and CRT environment.
             load_msvc_environment
             print_magenta "Generating Ninja project..."
             local ninja_options=(
@@ -346,6 +365,13 @@ export_cmake_project() {
                 -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
                 -DBUILD_TESTING="$RUN_TESTS"
             )
+            if [ "$USE_CLANG" = true ]; then
+                ninja_options+=(
+                    -DCMAKE_C_COMPILER=clang-cl
+                    -DCMAKE_CXX_COMPILER=clang-cl
+                    -DCMAKE_LINKER_TYPE=LLD
+                )
+            fi
             if ! cmake -B "$CMAKE_BUILD_DIR" "${ninja_options[@]}"; then
                 rm -rf "$CMAKE_BUILD_DIR"
                 cmake -B "$CMAKE_BUILD_DIR" "${ninja_options[@]}"
@@ -363,6 +389,13 @@ export_cmake_project() {
 }
 
 init_options "$@"
+
+if [ "$BASH_PLATFORM" = "windows" ] && [ "$USE_NINJA" = true ]; then
+    load_msvc_environment
+    if [ "$USE_CLANG" = true ] && { ! command -v clang-cl > /dev/null 2>&1 || ! command -v lld-link > /dev/null 2>&1; }; then
+        print_error_and_exit "clang-cl and lld-link must be on PATH. Install LLVM or add its bin directory to PATH."
+    fi
+fi
 
 if [ "$REUSE_BUILD_DIR" = true ]; then
     if [ ! -d "$CMAKE_BUILD_DIR" ]; then

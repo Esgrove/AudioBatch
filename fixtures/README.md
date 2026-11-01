@@ -242,4 +242,4 @@ The in-memory signal tests cover actual subnormal samples.
 File benchmarks skip missing inputs with a message, while the in-memory benchmarks always run.
 
 Run the benchmarks from `../rust/` with `cargo bench -p audiobatch-core`.
-See `../rust/docs/performance.md` for the measurement procedure and results.
+See [Analysis performance](../docs/performance.md) for the measurement procedure and results.

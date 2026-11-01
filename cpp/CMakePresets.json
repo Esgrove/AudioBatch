@@ -36,6 +36,16 @@
       }
     },
     {
+      "name": "windows-clang-base",
+      "hidden": true,
+      "inherits": "windows-ninja-msvc-base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_LINKER_TYPE": "LLD"
+      }
+    },
+    {
       "name": "macos-ninja-base",
       "hidden": true,
       "generator": "Ninja",
@@ -90,6 +100,26 @@
       "description": "Use Ninja with the MSVC toolchain in cmake-build-windows-ninja-release for compile_commands.json support.",
       "inherits": "windows-ninja-msvc-base",
       "binaryDir": "${sourceDir}/cmake-build-windows-ninja-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-clang-debug",
+      "displayName": "Windows Clang Debug",
+      "description": "Use Ninja, LLVM clang-cl and LLD with the Visual Studio SDK and STL.",
+      "inherits": "windows-clang-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-clang-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-clang-release",
+      "displayName": "Windows Clang Release",
+      "description": "Use Ninja, LLVM clang-cl and LLD with checked Release LTO and local native CPU targeting.",
+      "inherits": "windows-clang-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-clang-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
@@ -175,6 +205,14 @@
     {
       "name": "windows-ninja-release",
       "configurePreset": "windows-ninja-release"
+    },
+    {
+      "name": "windows-clang-debug",
+      "configurePreset": "windows-clang-debug"
+    },
+    {
+      "name": "windows-clang-release",
+      "configurePreset": "windows-clang-release"
     },
     {
       "name": "macos-debug",

@@ -80,7 +80,18 @@ if(MSVC)
     endif()
 
     set(release_architecture AVX2)
-    if(use_native)
+    if(use_native AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        foreach(flag /clang:-march=native /clang:-mtune=native)
+            audiobatch_check_cpu_flag("${flag}" native_flag_supported)
+            if(NOT native_flag_supported)
+                message(
+                    FATAL_ERROR "AudioBatch native CPU flag ${flag} is not supported. Use AUDIOBATCH_NATIVE_CPU=OFF."
+                )
+            endif()
+            add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:${flag}>")
+        endforeach()
+        message(STATUS "AudioBatch Release native CPU: clang-cl -march=native -mtune=native")
+    elseif(use_native)
         set_property(
             DIRECTORY
             APPEND
@@ -120,10 +131,13 @@ if(MSVC)
         message(STATUS "AudioBatch Release native CPU: /arch:${release_architecture} /favor:${cpu_tuning}")
     endif()
 
-    add_compile_options(
-        "$<${cpu_languages}:$<IF:$<CONFIG:Release>,/arch:${release_architecture},/arch:AVX2>>"
-        "$<$<AND:${cpu_languages},$<CONFIG:Release>>:/fp:precise>"
-    )
+    add_compile_options("$<${cpu_languages}:$<IF:$<CONFIG:Release>,/arch:${release_architecture},/arch:AVX2>>")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        # Native targeting must not fuse separately rounded DSP multiply/add operations.
+        add_compile_options("$<${cpu_languages}:/clang:-ffp-contract=off>")
+    else()
+        add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:/fp:precise>")
+    endif()
     message(STATUS "AudioBatch Windows CPU baseline: AVX2")
 elseif(use_native)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
