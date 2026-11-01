@@ -146,7 +146,8 @@ def load(path: Path, folder: Path | None) -> dict[str, dict]:
     for row in json.loads(path.read_text(encoding="utf-8")):
         key = path_key(Path(row["path"]), folder)
         if key in indexed:
-            raise ValueError(f"duplicate result path: {key}")
+            message = f"duplicate result path: {key}"
+            raise ValueError(message)
         indexed[key] = row
     return indexed
 

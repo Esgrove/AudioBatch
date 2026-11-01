@@ -7717,6 +7717,8 @@ name = "test-fixtures"
 version = "1.2.0"
 dependencies = [
  "colored",
+ "serde",
+ "serde_json",
  "sha2 0.11.1",
  "tempfile",
 ]

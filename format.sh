@@ -6,6 +6,7 @@ USAGE="Usage: $0 [cpp|rust] [OPTIONS]
 Format the C++ and Rust projects with their own format.sh scripts.
 Without a project name, also format the shell scripts in the repository root with shfmt
 and the prose outside the projects with slb, when they are installed, and the Python scripts with ruff through uv.
+Without a project name, format tracked and non-ignored new JSON files with jq using two-space indentation.
 Name a project to format only that one.
 
 The options are passed to the format script of each project.
@@ -43,6 +44,37 @@ for argument in "$@"; do
 done
 
 cd "$DIR"
+
+require_command jq "jq not found in path, it formats the JSON files"
+if [ "$CHECK" = true ]; then
+    print_magenta "Checking JSON formatting..."
+else
+    print_magenta "Formatting JSON files..."
+fi
+
+git ls-files -z --cached --others --exclude-standard -- '*.json' |
+    while IFS= read -r -d '' file; do
+        temporary=$(mktemp)
+        if ! jq --indent 2 . "$file" > "$temporary"; then
+            rm -- "$temporary"
+            print_error "Failed to parse JSON: $file"
+            exit 1
+        fi
+        if ! cmp -s "$temporary" "$file"; then
+            if [ "$CHECK" = true ]; then
+                rm -- "$temporary"
+                print_error "JSON formatting differs: $file"
+                exit 1
+            fi
+            if ! cat "$temporary" > "$file"; then
+                rm -- "$temporary"
+                print_error "Failed to write formatted JSON: $file"
+                exit 1
+            fi
+            printf 'Formatted %s\n' "$file"
+        fi
+        rm -- "$temporary"
+    done
 
 if [ -n "$(command -v shfmt)" ]; then
     if [ "$CHECK" = true ]; then

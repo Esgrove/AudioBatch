@@ -25,6 +25,7 @@ Requires ffmpeg with the libmp3lame encoder.
 """
 
 import base64
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -141,31 +142,36 @@ def render(fixture: Fixture, output: Path) -> None:
         *fixture.codec,
         str(output),
     ]
-    subprocess.run(command, check=True)
+    ffmpeg(*command[1:])
+
+
+def ffmpeg(*arguments: str) -> None:
+    """Runs the resolved ffmpeg executable with generated arguments, without a shell."""
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        message = "ffmpeg is required to generate normalization fixtures"
+        raise FileNotFoundError(message)
+    subprocess.run([executable, *arguments], check=True)  # noqa: S603
 
 
 def render_cover(path: Path, size: int, pattern: str) -> bytes:
     """Renders a small test pattern image with ffmpeg and returns its bytes."""
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            f"{pattern}=size={size}x{size}:rate=1",
-            "-frames:v",
-            "1",
-            "-fflags",
-            "+bitexact",
-            "-flags",
-            "+bitexact",
-            str(path),
-        ],
-        check=True,
+    ffmpeg(
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"{pattern}=size={size}x{size}:rate=1",
+        "-frames:v",
+        "1",
+        "-fflags",
+        "+bitexact",
+        "-flags",
+        "+bitexact",
+        str(path),
     )
     return path.read_bytes()
 

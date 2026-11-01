@@ -8,6 +8,8 @@ When the two files disagree about code under `rust/`, this file wins.
 
 ## Working Next To The C++ Project
 
+- Follow the repository-wide [behavioral parity rules](../AGENTS.md#behavioral-parity).
+  Differences in results for the same input are bugs unless a narrow, technically justified exception is documented.
 - Read the C++ sources freely to understand how a feature behaves,
   but question anything that looks wrong before carrying it over, because that application is not finished either.
   `cpp/src/analysis/AudioAnalysis.cpp`, `cpp/src/analysis/AnalysisCache*.cpp`, and `cpp/src/cli/`

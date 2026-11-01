@@ -39,6 +39,8 @@ constexpr std::size_t bpmOffset {2};
 constexpr std::size_t autoGainOffset {9};
 constexpr std::size_t gainOffset {16};
 constexpr std::size_t fullAutotagsBytes {22};
+constexpr std::size_t compactAutotagsMinBytes {20};
+constexpr std::size_t compactAutotagsMaxBytes {21};
 constexpr std::size_t gridHeaderBytes {6};
 constexpr std::size_t gridRecordBytes {8};
 constexpr std::size_t cueNameOffset {12};
@@ -230,8 +232,8 @@ bool addMarker(Markers& markers, const juce::String& type, const std::span<const
             return false;
         }
         const auto name = markerName(bytes.subspan(loopNameOffset));
-        const auto start = integer(bytes.subspan<2, sizeof(std::uint32_t)>());
-        const auto end = integer(bytes.subspan<gridHeaderBytes, sizeof(std::uint32_t)>());
+        const auto start = std::bit_cast<std::int32_t>(integer(bytes.subspan<2, sizeof(std::uint32_t)>()));
+        const auto end = std::bit_cast<std::int32_t>(integer(bytes.subspan<gridHeaderBytes, sizeof(std::uint32_t)>()));
         if (!name || end < start) {
             return false;
         }
@@ -284,6 +286,9 @@ std::optional<Markers> readMarkerBody(const std::span<const std::uint8_t> payloa
     Markers markers;
     std::size_t records = 0;
     while (true) {
+        if (input.isExhausted()) {
+            return records > 0 ? std::optional(markers) : std::nullopt;
+        }
         const auto type = readMarkerType(input);
         if (!type) {
             return std::nullopt;
@@ -426,8 +431,8 @@ std::optional<Markers> readMarkers(Cursor& input)
         return std::nullopt;
     }
     for (std::uint32_t index = 0; index < *loopCount; ++index) {
-        const auto start = input.number();
-        const auto end = input.number();
+        const auto start = input.number().transform([](auto value) { return std::bit_cast<std::int32_t>(value); });
+        const auto end = input.number().transform([](auto value) { return std::bit_cast<std::int32_t>(value); });
         const auto slot = input.byte();
         const auto colour = input.number();
         const auto locked = input.boolean();
@@ -653,10 +658,32 @@ std::optional<juce::MemoryBlock> decodeTagBase64(
     return output.getMemoryBlock();
 }
 
+/// Decodes native FLAC envelopes, dropping only their final incomplete zero sextet.
+/// Generic Base64 callers still reject every impossible one-character remainder.
+std::optional<juce::MemoryBlock> decodeNativeTagBase64(const std::span<const std::uint8_t> bytes)
+{
+    if (bytes.size() > maxEncodedTagBytes) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> encoded;
+    encoded.reserve(bytes.size());
+    for (const auto byte : bytes) {
+        if (byte != ' ' && byte != '\t' && byte != '\r' && byte != '\n' && byte != '\f' && byte != '\v') {
+            encoded.push_back(byte);
+        }
+    }
+    if (encoded.size() % 4 == 1 && encoded.back() == 'A'
+        && std::ranges::find(encoded, std::uint8_t {'='}) == encoded.end())
+    {
+        encoded.pop_back();
+    }
+    return decodeTagBase64(encoded);
+}
+
 /// Returns the payload of a decoded native FLAC value after its wrapper,
 /// which holds the MIME type "application/octet-stream", an empty file name, and the given description,
 /// each terminated by a null byte, or nothing when any of them differs or lacks its terminator.
-/// The payload is a view into the decoded bytes.
+/// The payload is a view into the decoded bytes, omitting exactly one native zero suffix when its size identifies it.
 std::optional<std::span<const std::uint8_t>> parseTagWrapper(
     const std::span<const std::uint8_t> decoded,
     const std::string_view description
@@ -675,7 +702,21 @@ std::optional<std::span<const std::uint8_t>> parseTagWrapper(
         }
         offset += length + 1;
     }
-    return decoded.subspan(offset);
+    auto payload = decoded.subspan(offset);
+    if (!payload.empty() && payload.back() == 0) {
+        bool nativePadding = description == overviewNames.description && payload.size() > 2
+            && (payload.size() - 2) % Overview::bandCount == 1;
+        nativePadding = nativePadding || (description == analysisNames.description && payload.size() == 3);
+        if (description == beatGridNames.description && payload.size() >= gridHeaderBytes) {
+            const auto count = integer(payload.subspan<2, sizeof(std::uint32_t)>());
+            nativePadding = count <= maxTagRecords
+                && payload.size() == gridHeaderBytes + 2 + static_cast<std::size_t>(count) * gridRecordBytes;
+        }
+        if (nativePadding) {
+            payload = payload.first(payload.size() - 1);
+        }
+    }
+    return payload;
 }
 
 /// Returns the FLAC comment name and the GEOB description of a tag kind, or of the legacy markers,
@@ -727,9 +768,32 @@ std::optional<Analysis> parseAnalysis(const std::span<const std::uint8_t> bytes)
                              : std::nullopt;
 }
 
-/// Parses fixed-width ASCII tempo and gain fields with a supported version header.
+/// Parses fixed-width or compact terminated ASCII tempo and gain fields with a supported version header.
 std::optional<Autotags> parseAutotags(const std::span<const std::uint8_t> bytes)
 {
+    if ((bytes.size() == compactAutotagsMinBytes || bytes.size() == compactAutotagsMaxBytes) && bytes[0] == 1
+        && bytes[1] == 1)
+    {
+        auto remaining = bytes.subspan(2);
+        std::array<double, 3> fields {};
+        for (auto& field : fields) {
+            const auto end = std::ranges::find(remaining, std::uint8_t {0});
+            if (end == remaining.end()) {
+                return std::nullopt;
+            }
+            const std::string text(remaining.begin(), end);
+            const auto parsed = parseTagNumber(text);
+            if (!parsed) {
+                return std::nullopt;
+            }
+            field = *parsed;
+            remaining = remaining.subspan(static_cast<std::size_t>(end - remaining.begin()) + 1);
+        }
+        if (fields[0] < 0 || remaining.size() > 1 || !allZero(remaining)) {
+            return std::nullopt;
+        }
+        return Autotags {.bpm = fields[0], .autoGain = fields[1], .gain = fields[2]};
+    }
     if ((bytes.size() != gainOffset && bytes.size() != fullAutotagsBytes) || bytes[0] != 1 || bytes[1] != 1) {
         return std::nullopt;
     }
@@ -830,12 +894,13 @@ std::optional<Markers> parseLegacyMarkers(const std::span<const std::uint8_t> by
             if (record[legacyEndOffset - 1] != 0) {
                 return std::nullopt;
             }
-            const auto end = legacyNumber(record.subspan(legacyEndOffset));
-            if (end < position) {
+            const auto start = std::bit_cast<std::int32_t>(position);
+            const auto end = std::bit_cast<std::int32_t>(legacyNumber(record.subspan(legacyEndOffset)));
+            if (end < start) {
                 return std::nullopt;
             }
             markers.loops.push_back({
-                .startMilliseconds = position,
+                .startMilliseconds = start,
                 .endMilliseconds = end,
                 .index = slot,
                 .colour = colour,

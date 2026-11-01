@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mutagen==1.47.0", "numpy>=2"]
+# dependencies = ["mutagen==1.47.0", "numpy>=2", "pytest>=8"]
 # ///
 """
 Exercises benchmark safety, correctness failures, export compatibility, and release selection without audio CLIs.
@@ -21,7 +21,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import cli_benchmark as benchmark
+import pytest
 import test_parity
+
+BASH_EXECUTABLE = shutil.which("bash")
+if BASH_EXECUTABLE is None:
+    message = "Bash is required to test CLI benchmark shell entry points"
+    raise FileNotFoundError(message)
 
 
 class TestCorpusSafety(unittest.TestCase):
@@ -31,10 +37,10 @@ class TestCorpusSafety(unittest.TestCase):
         """Missing audio fails explicitly instead of producing deceptively fast empty runs."""
         with tempfile.TemporaryDirectory() as temporary:
             corpus = Path(temporary)
-            with self.assertRaisesRegex(ValueError, "No usable audio"):
+            with pytest.raises(ValueError, match="No usable audio"):
                 benchmark.discover_sources(corpus)
             (corpus / "pointer.wav").write_text("version https://git-lfs.github.com/spec/v1\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "Git LFS pointer"):
+            with pytest.raises(ValueError, match="Git LFS pointer"):
                 benchmark.discover_sources(corpus)
 
     def test_excludes_known_normalization_failures(self) -> None:
@@ -52,8 +58,8 @@ class TestCorpusSafety(unittest.TestCase):
                 ),
             ):
                 sources, excluded = benchmark.discover_sources(corpus)
-            self.assertEqual([source.name for source in sources], ["valid.wav"])
-            self.assertEqual(len(excluded), 1)
+            assert [source.name for source in sources] == ["valid.wav"]
+            assert len(excluded) == 1
 
     def test_auto_combines_both_collections(self) -> None:
         """Generated long audio supplements normalization fixtures instead of replacing them."""
@@ -64,9 +70,9 @@ class TestCorpusSafety(unittest.TestCase):
             (generated / "long.wav").write_bytes(b"audio")
             normalization = root / "fixtures/normalization"
             with patch.object(benchmark, "ROOT_DIRECTORY", root):
-                self.assertEqual(benchmark.select_corpora(), [generated, normalization])
-                self.assertEqual(benchmark.select_corpora("auto"), [generated, normalization])
-                self.assertEqual(benchmark.select_corpora(str(normalization)), [normalization.resolve()])
+                assert benchmark.select_corpora() == [generated, normalization]
+                assert benchmark.select_corpora("auto") == [generated, normalization]
+                assert benchmark.select_corpora(str(normalization)) == [normalization.resolve()]
 
     def test_windows_excludes_juce_unsupported_extensions(self) -> None:
         """Unsupported Windows inputs never reach fixture probing or either timed CLI."""
@@ -80,13 +86,17 @@ class TestCorpusSafety(unittest.TestCase):
                 patch.object(benchmark.levels, "expected_failure", return_value=False),
             ):
                 sources, excluded = benchmark.discover_sources(corpus)
-            self.assertEqual([source.name for source in sources], ["valid.wav"])
+            assert [source.name for source in sources] == ["valid.wav"]
             properties.assert_called_once_with(corpus / "valid.wav")
-            self.assertEqual(
-                {Path(row["path"]).name for row in excluded},
-                {"tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A", "tone.aifc"},
-            )
-            self.assertTrue(all("Windows" in row["reason"] for row in excluded))
+            assert {Path(row["path"]).name for row in excluded} == {
+                "tone.aac",
+                "tone.m4a",
+                "tone.mp4",
+                "tone.alac",
+                "upper.M4A",
+                "tone.aifc",
+            }
+            assert all("Windows" in row["reason"] for row in excluded)
 
     def test_auto_without_generated_audio_uses_normalization(self) -> None:
         """An absent or empty generated collection is optional, but normalization is always selected."""
@@ -98,7 +108,7 @@ class TestCorpusSafety(unittest.TestCase):
                     if present:
                         generated.mkdir(parents=True)
                         (generated / "README.txt").touch()
-                    self.assertEqual(benchmark.select_corpora("auto"), [root / "fixtures/normalization"])
+                    assert benchmark.select_corpora("auto") == [root / "fixtures/normalization"]
 
     def test_initialize_keeps_both_corpora_and_same_name_sources(self) -> None:
         """The combined manifest and isolated seeds retain distinct files even when their names match."""
@@ -123,10 +133,10 @@ class TestCorpusSafety(unittest.TestCase):
             ):
                 benchmark.initialize(arguments)
             metadata = json.loads((results / "metadata.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["corpora"], [str(source.parent) for source in sources])
-            self.assertEqual([row["source"] for row in metadata["files"]], list(map(str, sources)))
-            self.assertEqual(len(benchmark.levels.input_files([work / "seed"], recurse=True)), 2)
-            self.assertTrue((results / "raw").is_dir())
+            assert metadata["corpora"] == [str(source.parent) for source in sources]
+            assert [row["source"] for row in metadata["files"]] == list(map(str, sources))
+            assert len(benchmark.levels.input_files([work / "seed"], recurse=True)) == 2
+            assert (results / "raw").is_dir()
 
     @unittest.skipIf(os.name == "nt", "Creating Windows symlinks requires privileges")
     def test_rejects_corpus_symlinks(self) -> None:
@@ -138,9 +148,9 @@ class TestCorpusSafety(unittest.TestCase):
             original = root / "user.wav"
             original.write_bytes(b"original")
             (corpus / "link.wav").symlink_to(original)
-            with self.assertRaisesRegex(ValueError, "symlinks are not allowed"):
+            with pytest.raises(ValueError, match="symlinks are not allowed"):
                 benchmark.discover_sources(corpus)
-            self.assertEqual(original.read_bytes(), b"original")
+            assert original.read_bytes() == b"original"
 
 
 class TestPrivatePreparation(unittest.TestCase):
@@ -153,9 +163,9 @@ class TestPrivatePreparation(unittest.TestCase):
             original = work / "cpp/user.wav"
             original.parent.mkdir()
             original.write_bytes(b"original")
-            with self.assertRaises(FileNotFoundError):
+            with pytest.raises(FileNotFoundError):
                 benchmark.prepare(work, "cpp")
-            self.assertEqual(original.read_bytes(), b"original")
+            assert original.read_bytes() == b"original"
 
     def test_prepare_copies_and_restores_without_touching_seed(self) -> None:
         """Every invocation gets actual copies with no stale normalized outputs or cache."""
@@ -170,9 +180,9 @@ class TestPrivatePreparation(unittest.TestCase):
             copied.write_bytes(b"normalized")
             (work / "cpp/home/cache/stale").touch()
             benchmark.prepare(work, "cpp")
-            self.assertEqual(copied.read_bytes(), b"original")
-            self.assertEqual(seed.read_bytes(), b"original")
-            self.assertFalse((work / "cpp/home/cache/stale").exists())
+            assert copied.read_bytes() == b"original"
+            assert seed.read_bytes() == b"original"
+            assert not (work / "cpp/home/cache/stale").exists()
 
     def test_initialization_separates_colliding_outputs_and_preserves_sources(self) -> None:
         """The same stem in two formats is copied into separate private directories before normalization."""
@@ -197,18 +207,18 @@ class TestPrivatePreparation(unittest.TestCase):
             with patch.object(benchmark, "command_output", return_value="--delete --jobs --refresh"):
                 benchmark.initialize(arguments)
             expected = json.loads((work / "peak-expectations.json").read_text(encoding="utf-8"))
-            self.assertEqual(set(expected), {str(Path("0001") / "tone.aif"), str(Path("0002") / "tone.aif")})
-            self.assertTrue(all(row["status"] == "analyzed" for row in expected.values()))
+            assert set(expected) == {str(Path("0001") / "tone.aif"), str(Path("0002") / "tone.aif")}
+            assert all(row["status"] == "analyzed" for row in expected.values())
             benchmark.prepare(work, "rust")
             (work / "rust/input/0001/tone.aif").write_bytes(b"rewritten")
-            self.assertEqual({path.name: path.read_bytes() for path in corpus.iterdir()}, originals)
+            assert {path.name: path.read_bytes() for path in corpus.iterdir()} == originals
 
     def test_marker_must_match_physical_workspace(self) -> None:
         """A copied marker does not grant permission to clear a different directory."""
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary).resolve()
             benchmark.write_json(work / benchmark.MARKER_NAME, {"workspace": str(work / "other")})
-            with self.assertRaisesRegex(ValueError, "Invalid private workspace"):
+            with pytest.raises(ValueError, match="Invalid private workspace"):
                 benchmark.prepare(work, "rust")
 
 
@@ -249,16 +259,21 @@ class TestBenchmarkExports(unittest.TestCase):
                 benchmark.combine(work, work, "analyze", 1)
                 combined = json.loads((work / "analyze-jobs-1.json").read_text(encoding="utf-8"))
                 cpp, rust = combined["results"]
-                self.assertEqual(len(combined["raw_exports"]), 3)
-                self.assertEqual(len(cpp["measurements"]), 3)
-                self.assertEqual(
-                    cpp["summary"]["time_wall_clock"],
-                    {"unit": "second", "count": 3, "mean": 4.0, "stddev": 2.0, "median": 4.0, "min": 2.0, "max": 6.0},
-                )
-                self.assertEqual(benchmark.wall_mean(rust), 2.0)
+                assert len(combined["raw_exports"]) == 3
+                assert len(cpp["measurements"]) == 3
+                assert cpp["summary"]["time_wall_clock"] == {
+                    "unit": "second",
+                    "count": 3,
+                    "mean": 4.0,
+                    "stddev": 2.0,
+                    "median": 4.0,
+                    "min": 2.0,
+                    "max": 6.0,
+                }
+                assert benchmark.wall_mean(rust) == 2.0
                 if version != 1:
-                    self.assertEqual(cpp["summary"]["memory_peak_resident"]["mean"], 2048.0)
-                self.assertIn("4.000000 | 2.000000", (work / "analyze-jobs-1.md").read_text(encoding="utf-8"))
+                    assert cpp["summary"]["memory_peak_resident"]["mean"] == 2048.0
+                assert "4.000000 | 2.000000" in (work / "analyze-jobs-1.md").read_text(encoding="utf-8")
 
     def test_single_run_has_no_sample_standard_deviation(self) -> None:
         """A single measured sample remains valid and does not claim zero uncertainty."""
@@ -270,8 +285,8 @@ class TestBenchmarkExports(unittest.TestCase):
             write_pair(work, 1)
             benchmark.combine(work, work, "analyze", 1)
             combined = json.loads((work / "analyze-jobs-1.json").read_text(encoding="utf-8"))
-            self.assertIsNone(combined["results"][0]["summary"]["time_wall_clock"]["stddev"])
-            self.assertIn("n/a", (work / "analyze-jobs-1.md").read_text(encoding="utf-8"))
+            assert combined["results"][0]["summary"]["time_wall_clock"]["stddev"] is None
+            assert "n/a" in (work / "analyze-jobs-1.md").read_text(encoding="utf-8")
 
     def test_rejects_failed_missing_and_misordered_samples(self) -> None:
         """Failures, missing runs, invalid metrics, and unexpected command order cannot produce a report."""
@@ -280,11 +295,11 @@ class TestBenchmarkExports(unittest.TestCase):
             (work / "raw").mkdir()
             benchmark.write_json(work / benchmark.MARKER_NAME, {"workspace": str(work)})
             benchmark.write_json(work / "metadata.json", {"runs": 1})
-            with self.assertRaises(FileNotFoundError):
+            with pytest.raises(FileNotFoundError):
                 benchmark.combine(work, work, "analyze", 1)
             for version in (1, 2):
                 write_pair(work, 1, version=version, exit_code=1)
-                with self.assertRaisesRegex(ValueError, "successful measurement"):
+                with pytest.raises(ValueError, match="successful measurement"):
                     benchmark.combine(work, work, "analyze", 1)
             path = work / "raw/analyze-jobs-1-run-1.json"
             for mutation in ("order", "missing", "invalid", "unit"):
@@ -299,7 +314,13 @@ class TestBenchmarkExports(unittest.TestCase):
                 else:
                     exported["results"][0]["measurements"][0]["time_wall_clock"]["unit"] = "millisecond"
                 benchmark.write_json(path, exported)
-                with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                reason = {
+                    "order": "Unexpected benchmark command order",
+                    "missing": "successful measurement",
+                    "invalid": "Invalid hyperfine",
+                    "unit": "Hyperfine wall times must use seconds",
+                }[mutation]
+                with self.subTest(mutation=mutation), pytest.raises(ValueError, match=reason):
                     benchmark.combine(work, work, "analyze", 1)
 
 
@@ -342,9 +363,10 @@ class TestBenchmarkSequence(unittest.TestCase):
                 "BENCHMARK_RECORD": str(record),
             }
             environment.pop("GITHUB_STEP_SUMMARY", None)
-            subprocess.run(
+            # Only checked-in shell code runs, with fixture paths passed separately as arguments.
+            subprocess.run(  # noqa: S603
                 [
-                    "bash",
+                    BASH_EXECUTABLE,
                     str(scripts / "cli_benchmark.sh"),
                     "--no-build",
                     "--jobs",
@@ -360,34 +382,33 @@ class TestBenchmarkSequence(unittest.TestCase):
             )
             calls = [line.rstrip("\0").split("\0") for line in record.read_text(encoding="utf-8").splitlines()]
             initialization = calls.pop(0)
-            self.assertEqual(initialization[-2:], ["--corpus", "auto"])
-            self.assertEqual(initialization[5], "init")
+            assert initialization[-2:] == ["--corpus", "auto"]
+            assert initialization[5] == "init"
             for jobs in (1, 2):
                 for mode in benchmark.TARGETS:
                     for run in range(1, 4):
                         timing = calls.pop(0)
-                        self.assertEqual(timing[0], "hyperfine")
-                        self.assertEqual(timing[timing.index("--runs") + 1], "1")
-                        self.assertEqual(timing[timing.index("--warmup") + 1], "2" if run == 1 else "0")
-                        self.assertTrue(
-                            timing[timing.index("--export-json") + 1].endswith(f"raw/{mode}-jobs-{jobs}-run-{run}.json")
+                        assert timing[0] == "hyperfine"
+                        assert timing[timing.index("--runs") + 1] == "1"
+                        assert timing[timing.index("--warmup") + 1] == ("2" if run == 1 else "0")
+                        assert timing[timing.index("--export-json") + 1].endswith(
+                            f"raw/{mode}-jobs-{jobs}-run-{run}.json"
                         )
-                        self.assertEqual(
-                            [timing[index + 1] for index, value in enumerate(timing) if value == "--command-name"],
-                            [f"{implementation} {mode} jobs={jobs}" for implementation in ("cpp", "rust")],
-                        )
+                        assert [
+                            timing[index + 1] for index, value in enumerate(timing) if value == "--command-name"
+                        ] == [f"{implementation} {mode} jobs={jobs}" for implementation in ("cpp", "rust")]
                         for index, value in enumerate(timing):
                             if value == "--prepare":
-                                self.assertIn(" prepare ", timing[index + 1])
+                                assert " prepare " in timing[index + 1]
                             elif value == "--conclude":
-                                self.assertIn(" check ", timing[index + 1])
+                                assert " check " in timing[index + 1]
                                 timed_command = timing[index + 2]
-                                self.assertTrue(timed_command.startswith("env "))
-                                self.assertNotIn("cli_benchmark.py", timed_command)
-                        self.assertEqual(calls.pop(0)[5], "compare")
-                    self.assertEqual(calls.pop(0)[5], "combine")
-            self.assertEqual(calls.pop(0)[5], "report")
-            self.assertEqual(calls, [])
+                                assert timed_command.startswith("env ")
+                                assert "cli_benchmark.py" not in timed_command
+                        assert calls.pop(0)[5] == "compare"
+                    assert calls.pop(0)[5] == "combine"
+            assert calls.pop(0)[5] == "report"
+            assert calls == []
 
 
 class TestBenchmarkValidation(unittest.TestCase):
@@ -400,7 +421,7 @@ class TestBenchmarkValidation(unittest.TestCase):
             benchmark.write_json(work / benchmark.MARKER_NAME, {"workspace": str(work)})
             benchmark.write_json(work / "analyze-expectations.json", {"tone.wav": {"status": "analyzed"}})
             benchmark.write_json(benchmark.result_path(work, "analyze", 1, "cpp"), [])
-            with self.assertRaisesRegex(ValueError, "missing C\\+\\+ result"):
+            with pytest.raises(ValueError, match=r"missing C\+\+ result"):
                 benchmark.check(work, work, "cpp", "analyze", 1)
 
     def test_normalized_output_must_reach_target(self) -> None:
@@ -412,14 +433,14 @@ class TestBenchmarkValidation(unittest.TestCase):
             benchmark.write_json(work / "peak-before.json", {})
             row = {"path": str(work / "cpp/input/tone.aif"), **test_parity.result()}
             benchmark.write_json(benchmark.result_path(work, "peak", 1, "cpp"), [row])
-            with self.assertRaisesRegex(ValueError, "missed the target"):
+            with pytest.raises(ValueError, match="missed the target"):
                 benchmark.check(work, work, "cpp", "peak", 1)
 
     def test_reads_both_hyperfine_export_formats(self) -> None:
         """Hyperfine 1.x and 2.x store wall time statistics under different keys."""
-        self.assertEqual(benchmark.wall_mean({"mean": 1.25}), 1.25)
-        self.assertEqual(benchmark.wall_mean({"summary": {"time_wall_clock": {"mean": 2.5}}}), 2.5)
-        with self.assertRaises(KeyError):
+        assert benchmark.wall_mean({"mean": 1.25}) == 1.25
+        assert benchmark.wall_mean({"summary": {"time_wall_clock": {"mean": 2.5}}}) == 2.5
+        with pytest.raises(KeyError):
             benchmark.wall_mean({"summary": {"time_cpu": {"mean": 0.25}}})
 
     def test_combines_hyperfine_metrics_with_unitless_counters(self) -> None:
@@ -447,9 +468,9 @@ class TestBenchmarkValidation(unittest.TestCase):
             benchmark.combine(work, work, "peak", 1)
             combined = json.loads((work / "peak-jobs-1.json").read_text(encoding="utf-8"))
             summary = combined["results"][0]["summary"]
-            self.assertEqual(summary["time_wall_clock"]["mean"], 1.5)
-            self.assertEqual(summary["cpu_cycles"]["mean"], 150)
-            self.assertEqual(summary["cpu_cycles"]["unit"], "count")
+            assert summary["time_wall_clock"]["mean"] == 1.5
+            assert summary["cpu_cycles"]["mean"] == 150
+            assert summary["cpu_cycles"]["unit"] == "count"
 
     def test_report_exports_metadata_and_ratio(self) -> None:
         """The combined report retains build settings and both direction ratios in readable output."""
@@ -463,9 +484,9 @@ class TestBenchmarkValidation(unittest.TestCase):
                 (work / f"{mode}-jobs-1.md").write_text("Hyperfine export\n", encoding="utf-8")
             benchmark.report(work, work)
             summary = json.loads((work / "summary.json").read_text(encoding="utf-8"))
-            self.assertEqual(summary["metadata"], metadata)
-            self.assertEqual(summary["benchmarks"][0]["rust_over_cpp"], 0.5)
-            self.assertIn("Rust/C++ 0.500x, C++/Rust 2.000x", (work / "summary.md").read_text(encoding="utf-8"))
+            assert summary["metadata"] == metadata
+            assert summary["benchmarks"][0]["rust_over_cpp"] == 0.5
+            assert "Rust/C++ 0.500x, C++/Rust 2.000x" in (work / "summary.md").read_text(encoding="utf-8")
 
 
 @unittest.skipIf(os.name == "nt", "Tests POSIX CMake release artifact paths")
@@ -486,13 +507,13 @@ class TestReleaseSelection(unittest.TestCase):
                 binary.touch(mode=0o755)
             os.utime(release, (1, 1))
             script = 'source "$1"; REPO="$2"; unset AUDIOBATCH_CPP_CLI AUDIOBATCH_CPP_BUILD_TYPE; find_cpp_cli release'
-            selected = subprocess.run(
-                ["bash", "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(rust)],
+            selected = subprocess.run(  # noqa: S603
+                [BASH_EXECUTABLE, "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(rust)],
                 text=True,
                 capture_output=True,
                 check=True,
             )
-            self.assertEqual(Path(selected.stdout.strip()).resolve(), release)
+            assert Path(selected.stdout.strip()).resolve() == release
 
     def test_cmake_cache_overrules_misleading_directory_name(self) -> None:
         """A single-config Debug binary in a release-named folder is not a valid release baseline."""
@@ -504,13 +525,13 @@ class TestReleaseSelection(unittest.TestCase):
             binary.touch(mode=0o755)
             (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Debug\n", encoding="utf-8")
             script = 'source "$1"; AUDIOBATCH_CPP_CLI="$2"; unset AUDIOBATCH_CPP_BUILD_TYPE; find_cpp_cli release'
-            selected = subprocess.run(
-                ["bash", "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(binary)],
+            selected = subprocess.run(  # noqa: S603
+                [BASH_EXECUTABLE, "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(binary)],
                 text=True,
                 capture_output=True,
                 check=False,
             )
-            self.assertNotEqual(selected.returncode, 0)
+            assert selected.returncode != 0
 
     def test_explicit_debug_is_rejected_even_with_release_attestation(self) -> None:
         """Attestation cannot override a known Debug build directory."""
@@ -519,14 +540,14 @@ class TestReleaseSelection(unittest.TestCase):
             binary.parent.mkdir()
             binary.touch(mode=0o755)
             script = 'source "$1"; AUDIOBATCH_CPP_CLI="$2"; AUDIOBATCH_CPP_BUILD_TYPE=Release; find_cpp_cli release'
-            selected = subprocess.run(
-                ["bash", "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(binary)],
+            selected = subprocess.run(  # noqa: S603
+                [BASH_EXECUTABLE, "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(binary)],
                 text=True,
                 capture_output=True,
                 check=False,
             )
-            self.assertNotEqual(selected.returncode, 0)
-            self.assertIn("release C++ CLI is required", selected.stderr)
+            assert selected.returncode != 0
+            assert "release C++ CLI is required" in selected.stderr
 
 
 class TestBuildTypeTraversal(unittest.TestCase):
@@ -546,7 +567,7 @@ class TestBuildTypeTraversal(unittest.TestCase):
                 'dirname() { printf "%s\\n" "$ROOT"; }; '
                 'unset AUDIOBATCH_CPP_BUILD_TYPE; cpp_cli_build_type "$2"'
             )
-            selected = subprocess.run(
+            selected = subprocess.run(  # noqa: S603
                 [
                     bash,
                     "-c",
@@ -561,7 +582,7 @@ class TestBuildTypeTraversal(unittest.TestCase):
                 check=True,
                 timeout=5,
             )
-            self.assertEqual(selected.stdout.strip(), "unknown")
+            assert selected.stdout.strip() == "unknown"
 
 
 if __name__ == "__main__":

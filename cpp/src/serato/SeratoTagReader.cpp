@@ -127,7 +127,7 @@ TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, con
     const auto names = getTagNames(kind, legacy);
     const auto text = value.to8Bit(false);
     const std::vector<std::uint8_t> encoded(text.begin(), text.end());
-    const auto decoded = decodeTagBase64(encoded);
+    const auto decoded = decodeNativeTagBase64(encoded);
     if (!names.has_value() || !decoded.has_value()) {
         return invalid();
     }

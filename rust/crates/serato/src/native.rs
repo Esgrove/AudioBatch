@@ -5,6 +5,8 @@
 //! wrapped in the MIME type, an empty file name, and the frame description, each null terminated.
 //! `decode_native_value` checks that wrapper and returns the frame payload,
 //! so the tag can be written as a `GEOB` frame when a file is converted to a format that uses `ID3v2`.
+//! It removes a native export's dangling zero sextet and unambiguous one-byte raster or grid padding here,
+//! rather than weakening the raw tag parsers.
 
 use base64::Engine as _;
 use base64::alphabet;
@@ -84,7 +86,15 @@ pub fn decode_tag_base64(text: &[u8]) -> Option<Vec<u8>> {
 /// Returns `None` for a malformed value, a different wrapper, or a wrapper without a payload.
 #[must_use]
 pub fn decode_native_value(value: &str, expected_description: &str) -> Option<Vec<u8>> {
-    let decoded = decode_tag_base64(value.as_bytes())?;
+    if value.len() > MAXIMUM_ENCODED_BYTES {
+        return None;
+    }
+    let mut text: Vec<u8> = value.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+    // Native Serato exports can append a single zero sextet to an otherwise complete encoding.
+    if text.len() % 4 == 1 && text.last() == Some(&b'A') {
+        text.pop();
+    }
+    let decoded = decode_tag_base64(&text)?;
     let mut remaining = decoded.as_slice();
     for expected in [GEOB_MIME_TYPE, "", expected_description] {
         let terminator = remaining.iter().position(|&byte| byte == 0)?;
@@ -93,6 +103,26 @@ pub fn decode_native_value(value: &str, expected_description: &str) -> Option<Ve
             return None;
         }
         remaining = rest.get(1..)?;
+    }
+    let padded = match expected_description {
+        "Serato Overview" => remaining.starts_with(&[1, 5]) && remaining.len() > 18 && (remaining.len() - 2) % 16 == 1,
+        "Serato BeatGrid" => {
+            remaining.starts_with(&[1, 0])
+                && remaining
+                    .get(2..6)
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .is_some_and(|count| {
+                        usize::try_from(u32::from_be_bytes(count))
+                            .ok()
+                            .and_then(|count| count.checked_mul(8))
+                            .and_then(|length| length.checked_add(8))
+                            == Some(remaining.len())
+                    })
+        }
+        _ => false,
+    };
+    if padded && let Some((&0, payload)) = remaining.split_last() {
+        remaining = payload;
     }
     (!remaining.is_empty()).then(|| remaining.to_vec())
 }
@@ -159,5 +189,45 @@ mod test_decode_native_value {
         assert_eq!(native_field_description("serato_markers_v2"), Some("Serato Markers2"));
         assert_eq!(native_field_description("SERATO_OVERVIEW"), Some("Serato Overview"));
         assert_eq!(native_field_description("TITLE"), None);
+    }
+
+    #[test]
+    fn native_zero_sextet_does_not_weaken_generic_base64() {
+        let mut value = wrap("Serato Analysis", &[2, 1, 0]);
+        assert!(!value.contains('='));
+        value.push('A');
+        assert_eq!(decode_tag_base64(value.as_bytes()), None);
+        assert_eq!(decode_native_value(&value, "Serato Analysis"), Some(vec![2, 1, 0]));
+        value.pop();
+        value.push('B');
+        assert_eq!(decode_native_value(&value, "Serato Analysis"), None);
+    }
+
+    #[test]
+    fn trims_only_structural_zero_padding_on_native_rasters_and_grids() {
+        let overview = [&[1, 5][..], &[0; 16]].concat();
+        let mut grid = vec![1, 0];
+        grid.extend_from_slice(&1_u32.to_be_bytes());
+        grid.extend_from_slice(&0_f32.to_be_bytes());
+        grid.extend_from_slice(&126_f32.to_be_bytes());
+        grid.push(0);
+        for (description, payload) in [("Serato Overview", overview), ("Serato BeatGrid", grid)] {
+            assert_eq!(
+                decode_native_value(&wrap(description, &payload), description),
+                Some(payload.clone())
+            );
+            let padded = [payload.as_slice(), &[0]].concat();
+            assert_eq!(
+                decode_native_value(&wrap(description, &padded), description),
+                Some(payload.clone())
+            );
+            for suffix in [&[1][..], &[0, 0][..]] {
+                let malformed = [payload.as_slice(), suffix].concat();
+                assert_eq!(
+                    decode_native_value(&wrap(description, &malformed), description),
+                    Some(malformed)
+                );
+            }
+        }
     }
 }

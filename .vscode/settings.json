@@ -85,6 +85,8 @@
   "C_Cpp.default.cppStandard": "c++23",
   "cmake.sourceDirectory": "${workspaceFolder}/cpp",
   "cmake.useCMakePresets": "always",
-  "cmake.ctestArgs": ["--output-on-failure"],
+  "cmake.ctestArgs": [
+    "--output-on-failure"
+  ],
   "cmake.configureOnOpen": true
 }

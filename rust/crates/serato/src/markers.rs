@@ -143,10 +143,10 @@ pub struct Cue {
 pub struct Loop {
     /// Zero-based loop number.
     pub index: u8,
-    /// Start position in milliseconds.
-    pub start_position: u32,
-    /// End position in milliseconds.
-    pub end_position: u32,
+    /// Signed start position in milliseconds, including loops that begin before the audio.
+    pub start_position: i32,
+    /// Signed end position in milliseconds.
+    pub end_position: i32,
     /// Display color.
     pub color: Color,
     /// True when the loop is locked.
@@ -360,8 +360,8 @@ impl Loop {
     /// | -------- | ------------------- | ------------- | --------- | ----------------------- | -----------
     /// | `00`     |                `01` | `00`          |           |                         |
     /// | `01`     |                `01` | `00`          | 0         | `uint8_t`               | Index
-    /// | `02`     |                `04` | `00 00 00 00` | 0         | `uint32_t`              | Start Position in milliseconds
-    /// | `06`     |                `04` | `00 00 08 26` | 2086      | `uint32_t`              | End Position in milliseconds
+    /// | `02`     |                `04` | `00 00 00 00` | 0         | `int32_t`               | Start Position in milliseconds
+    /// | `06`     |                `04` | `00 00 08 26` | 2086      | `int32_t`               | End Position in milliseconds
     /// | `0a`     |                `04` | `ff ff ff ff` |           |                         |
     /// | `0e`     |                `04` | `00 27 aa e1` | `#27aae1` | 4-byte ARGB value       | Color
     /// | `12`     |                `01` | `00`          |           |                         |
@@ -375,8 +375,8 @@ impl Loop {
         let mut cursor = Cursor::new(data);
         cursor.set_position(1);
         let index = cursor.read_u8()?;
-        let start_position = cursor.read_u32::<BigEndian>()?;
-        let end_position = cursor.read_u32::<BigEndian>()?;
+        let start_position = cursor.read_i32::<BigEndian>()?;
+        let end_position = cursor.read_i32::<BigEndian>()?;
         cursor.set_position(cursor.position() + 4);
         let mut color = [0; 4];
         cursor.read_exact(&mut color)?;
@@ -399,7 +399,11 @@ impl Loop {
 impl Display for Loop {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let name = if self.name.is_empty() {
-            format_position_timestamp(self.start_position)
+            format!(
+                "{}{}",
+                if self.start_position < 0 { "-" } else { "" },
+                format_position_timestamp(self.start_position.unsigned_abs())
+            )
         } else {
             self.name.clone()
         };
@@ -551,6 +555,19 @@ mod test_cue_and_loop {
         assert!(Markers::Loop(locked).to_string().ends_with(" locked"));
         let unlocked = Loop::load(&loop_bytes(false)).expect("parses");
         assert!(Markers::Loop(unlocked).to_string().ends_with("unlocked"));
+    }
+
+    #[test]
+    fn saved_loop_preserves_signed_positions_and_display() {
+        let mut bytes = loop_bytes(false);
+        bytes[2..6].copy_from_slice(&(-5_i32).to_be_bytes());
+        bytes[6..10].copy_from_slice(&7555_i32.to_be_bytes());
+        let saved_loop = Loop::load(&bytes).expect("loop starts before audio");
+        assert_eq!(saved_loop.start_position, -5);
+        assert_eq!(saved_loop.end_position, 7555);
+        assert_eq!(saved_loop.to_string(), "Loop 1: -00:00.0 [-0.01s - 7.55s] unlocked");
+        bytes[2..6].copy_from_slice(&i32::MIN.to_be_bytes());
+        assert!(Loop::load(&bytes).expect("signed minimum").to_string().contains('-'));
     }
 }
 

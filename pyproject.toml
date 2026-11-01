@@ -3,12 +3,12 @@
 # This project only pins the development tools, run with `uv run ruff`.
 [project]
 name = "audiobatch-scripts"
-version = "0.1.0"
+version = "1.0.0"
 requires-python = ">=3.11"
 dependencies = []
 
 [dependency-groups]
-dev = ["ruff>=0.17.2"]
+dev = ["ruff>=0.17.3"]
 
 [tool.uv]
 package = false
@@ -19,28 +19,56 @@ line-length = 120
 extend-exclude = ["cpp/JUCE"]
 
 [tool.ruff.lint]
+# https://docs.astral.sh/ruff/rules/
 select = [
     "ANN",
+    "ASYNC",
     "B",
+    "BLE",
     "C4",
     "D",
+    "DTZ",
     "E",
+    "EXE",
     "F",
+    "FA",
+    "FLY",
     "FURB",
+    "G",
     "I",
+    "INT",
+    "ISC",
+    "LOG",
     "N",
     "PERF",
+    "PGH",
     "PIE",
     "PL",
+    "PT",
     "PTH",
+    "PYI",
     "RET",
     "RUF",
+    "S",
     "SIM",
+    "T10",
+    "TC",
+    "TRY",
     "UP",
     "W",
+    "YTT",
 ]
 # Module docstrings start on the line after the opening quotes, which D212 would reject.
 ignore = ["D212"]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assertions and literal expected fixture values, not production input validation or unexplained constants.
+"**/test_*.py" = ["S101", "PLR2004"]
