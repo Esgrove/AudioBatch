@@ -97,7 +97,7 @@ bool MidSideTestProcessor::isMidiEffect() const
     return false;
 }
 
-/// The output ends with the input, so there is no tail.
+/// Reports no effect tail. The delay is reported separately through getLatencySamples.
 double MidSideTestProcessor::getTailLengthSeconds() const
 {
     return 0.0;

@@ -1,8 +1,9 @@
 //! Locates the committed audio fixtures shared by the C++ and Rust test suites.
 //!
 //! The fixtures live in the `fixtures` directory at the repository root, shared with the C++ project.
-//! Every tone is a one second 1 kHz sine with a peak amplitude of 0.5,
+//! The standard sine fixtures are one second 1 kHz tones with a peak amplitude of 0.5,
 //! which reads -6.02 dBFS and -6.02 LUFS integrated, also for mono files measured as dual mono.
+//! Separate fixtures exercise intersample peaks, split stereo channels, and Serato waveform colours.
 //! This is the only place that knows where the fixtures are,
 //! so moving them changes a single path.
 //! It also locates the test VST3 that `test-plugin/` builds, lists the outputs that plugin must produce,

@@ -6,7 +6,7 @@
 //! The chain renders the file, then the plugins' latency and tail, into an unquantized temporary file,
 //! with the latency removed from the start so the output lines up with the source.
 //! Trailing silence from the tail allowance is trimmed, but the output is never shorter than the source.
-//! The second pass truncates the samples to 16 bits without dither or gain changes,
+//! The second pass floors the samples to 16 bits without dither or gain changes,
 //! because dithering and output level are up to the plugins.
 //! Samples beyond the 16-bit range saturate, and the result notice reports it.
 

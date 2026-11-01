@@ -245,11 +245,11 @@ The harness is local and introduces no production dependency or unsafe code in c
   Regeneration requires differential, displayed-value, normalization, and parity checks.
 - Cache analysis version 5 refreshes older measurements while retaining same-identity custom gains and Serato data.
 
-Local macOS validation passes all 860 workspace tests with the normalization corpus required and none skipped.
+The October 30 macOS validation passed all 860 workspace tests with the normalization corpus required and none skipped.
 Release core tests, Clippy, rustfmt, shell and prose formatting, Python checks, and packaging regression tests pass.
 The C++ debug build and all 28 CTest suites pass, as do clang-tidy and clang-format checks.
 
-Local Windows validation passes all 870 workspace tests with the normalization corpus required.
+The October 31 Windows validation passed all 870 workspace tests with the normalization corpus required.
 The three opt-in numerical diagnostic tests remain ignored in the routine run.
 The Windows Rust job requires the full normalization goldens in debug and release.
 Optimized checks cover the complete core suite and the selected CLI normalization tests.
@@ -272,7 +272,8 @@ Expected silence, excessive-gain, short-loudness, and output-conflict failures a
 - The generated long AAC normalization input fails the existing lossy-decoder sample tolerance.
   The complete CLI comparison therefore uses the committed normalization corpus, not the combined generated corpus.
   The tolerance remains unchanged.
-- Three timing samples per command support this local comparison, not a universal performance guarantee.
+- The macOS comparison has three timing samples per command, and Windows has ten.
+  They support these local comparisons, not a universal performance guarantee.
   CI reports timings without a performance threshold, and its benchmark step does not fail parity.
 
 ### Windows and macOS numerical differences

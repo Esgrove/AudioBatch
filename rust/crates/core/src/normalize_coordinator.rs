@@ -37,7 +37,7 @@ pub enum NormalizeEvent {
         /// Source file being normalized.
         path: PathBuf,
     },
-    /// Progress of a file through any source analysis, the render, and the output analysis, from 0 to 1.
+    /// Progress of a file through any source analysis, the metered render, and the commit, from 0 to 1.
     Progress {
         /// Run the event belongs to.
         run_id: u64,

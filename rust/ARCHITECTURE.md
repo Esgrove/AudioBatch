@@ -164,6 +164,7 @@ Any framework teardown errors remain visible in the log.
 `analysis.rs`, `normalize.rs`, and `process.rs` the runs, `selection.rs` the selection, `gain.rs` the per-file gain,
 `actions.rs` the menu and transport actions, `plugins.rs` the chain and its windows, `preview.rs` the live preview,
 `preferences.rs` the settings, `tags.rs` the tags of the selected file, `artwork.rs` its album artwork,
+`cue_start.rs` the deferred play or seek intent that waits for matching cue metadata and source duration,
 and `render.rs` the layout.
 
 ```mermaid
@@ -288,7 +289,8 @@ sequenceDiagram
 `AudioFileDecoder` in `core/src/decode.rs` probes the file with symphonia
 and returns planar `f32` chunks of the default audio track from `next_chunk`.
 It trims encoder delay and padding the way the decoders of the C++ application do,
-so both applications measure and write the same samples.
+so both applications align their decoded audio with the source timeline.
+Lossy decoder samples can still differ between applications and platforms.
 Symphonia trims MP3 files with a LAME header itself,
 and for other MP3 files the decoder leaves out the 529 samples of synthesis delay.
 `decode/gapless.rs` reads the MP4 edit list or `iTunSMPB` atom, which symphonia parses but never applies.
@@ -339,8 +341,8 @@ Tests compare the selected hardware backend and a forced scalar fallback with th
 The safe SIMD kernel leaves the caller's floating point environment unchanged.
 Ebur128 temporarily enables flush to zero on x86 with SSE2,
 and a focused x86 test covers the resulting arithmetic-underflow difference.
-Local correctness and timing results cover macOS on Apple Silicon.
-Windows execution and timings require native validation.
+Native correctness and timing results cover macOS on Apple Silicon and Windows on x86-64.
+The dated results and platform-specific validation limits are in [Analysis performance](docs/performance.md).
 
 The loudness contract allows at most 0.001 LU difference from the reference for integrated loudness,
 maximum short-term loudness, and each short-term history value.
@@ -433,11 +435,18 @@ Normalization raises source depths below 16 bits to 16-bit output.
 It converts floats the way JUCE does, so both applications write the same sample values.
 Both operations render into a hidden temporary file from `create_temporary_output` in the destination folder,
 copy the tags and Serato data onto it with `copy_metadata`, and check it with `validate_written_audio`.
-`commit_temporary_output` in `core/src/output_file.rs` then moves an existing output aside to a hidden backup,
-syncs and renames the new file into place, and disposes of a converted source.
-A failed step puts the backup back, so the folder is left as it was, and the backup is disposed of last.
+`commit_temporary_output_expected` in `core/src/output_file.rs` validates the source identity captured before rendering,
+including its native file identifier, and syncs the rendered data before touching an approved destination.
+For a converted source, an existing approved output is hard-linked to an exclusively claimed hidden backup,
+then removed, and the rendered file is published with a hard link that cannot replace a concurrent occupant.
+The converted source is disposed of only while its identity still matches.
+Rollback removes only the transaction's owned output and restores a backup only into an empty entry.
+When external changes or rollback failures prevent restoration, backups and completed audio are retained for recovery.
+The backup is disposed of last after a successful commit.
 An `.aif` source rewritten in place has a copy of it disposed of first,
 through the `FileDisposer`, which moves files to the system trash by default.
+Its temporary output is then persisted over the validated source.
+Identity checks narrow external-edit races but are not an atomic compare-and-swap of a directory entry.
 Cancellation is checked once more before the original is touched.
 
 **Runs.**
@@ -504,8 +513,9 @@ The insert it replaces goes back over the retire queue,
 and the UI thread drops it after `take_retired_inserts` on its next plugin tick.
 The callback swaps only while the retire queue has room, so it never drops an insert itself.
 `InsertRenderer` in `playback/src/output/insert.rs` applies the file's custom gain only in front of the insert.
-It resets the insert on every start, seek, resume, and change,
+It resets the insert after a stop, seek, or insert change,
 and pre-rolls its latency in silence when latency compensation is on.
+Pausing preserves buffered input and plugin state, so resuming does not skip unheard frames or repeat the pre-roll.
 It fades in and out over 64 frames,
 and at the end of the file it feeds silence for the latency and the tail while the playhead waits.
 Output that is not finite stops playback.
@@ -574,8 +584,10 @@ The Rust version differs from it on purpose in these points:
 - It hosts VST3 plugins only, on macOS and Windows, and no Audio Units.
 - It keeps its cache, logs, plugin list, chain, and presets in its own `AudioBatch-rs` folders,
   with the plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
-- It decodes every format with symphonia, so lossy outputs differ from the C++ ones by about one step,
-  and AAC more, because the C++ application decodes AAC through the platform decoder.
+- It decodes audio with symphonia rather than JUCE and the platform decoders.
+  It supports Ogg Vorbis but not the Opus decoder enabled in the C++ build.
+  Lossy PCM can differ, so parity checks use a separate -72 dBFS sample-difference tolerance for lossy sources,
+  not the exact peak-mode or one-step loudness-mode contract for lossless sources.
 - The GUI is built on gpui-kit, and plugin editors open in native windows that `vst3-host` creates.
 - The CLI generates its shell completions with clap, which adds elvish.
 

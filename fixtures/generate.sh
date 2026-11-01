@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # Regenerates the audio fixtures used by the tests and the CI smoke test.
-# Every tone is a one second 1 kHz sine with a peak amplitude of 0.5, which is -6.02 dBFS.
+# Unless a special case says otherwise, tones are one second 1 kHz sines with a peak amplitude of 0.5, or -6.02 dBFS.
 # Stereo tones carry the same signal on both channels and measure -6.02 LUFS integrated.
 # Mono tones are analyzed as dual mono and therefore measure the same loudness.
 # The files are committed so the tests do not depend on ffmpeg.

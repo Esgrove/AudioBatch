@@ -86,7 +86,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and the settings file options.
     - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
       It also chooses the default folder for file browsing,
-      and holds `FileIdentity`, which recognizes an unchanged file by its path, size and modification time.
+      and holds `FileIdentity`, which checks path, size, modification time,
+      native file identifiers, and high resolution timestamps to reject ordinary replacements.
     - `GuiUtils.*` holds reusable window activation, foreground permission transfer,
       read-only label styling, and failure-summary dialogs.
       Its `enumFromId` turns the integer ids of JUCE menu items, commands, and table columns into scoped enums.
@@ -168,7 +169,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   `StatusBar.*` is the bottom bar with the root folders, the status text, the preview audio output device,
   and the overall progress line along its top edge.
   `PreviewWorkspace.*` holds the waveform, the metrics, and the controls below the results table,
-  and lays them out as an expanded section or a compact row.
+  and lays them out as an expanded section, a wide section, or a compact row.
 
 The domains include each other in one direction only.
 `analysis/` uses only `utils/`, `serato/` adds `analysis/`, `metadata/` adds `serato/`,
@@ -221,7 +222,7 @@ Tests:
   `PluginPresetTests.cpp` saves the plugin's settings in a preset, loads it into a new chain, processes a fixture,
   and requires the output to cancel against the expected file with `nullTestFiles` from `TestHelpers.h`.
   Keep the processing in the plugin, the script, and the expected file lists of both test suites in step.
-  `../fixtures/normalization/` holds a larger Git LFS collection that the tests do not read.
+  `../fixtures/normalization/` holds a larger Git LFS collection that the C++ tests do not read.
   The Rust parity script normalizes it with both CLIs and compares the output files.
   The icons and fonts live in `../assets/` at the repository root for the same reason.
   Tests that modify files work on copies in a temporary directory.
@@ -410,7 +411,9 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - Only add lightweight, focused unit tests that complete in under one second.
   Do not add GUI tests, screenshot comparisons, or rendering-based assertions.
 - Build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
-  or run the `AudioBatchTests` executable directly for the full test log.
+  or `ctest --test-dir cmake-build-windows-debug --build-config Debug --output-on-failure` on Windows.
+  Run the `AudioBatchTests` executable directly for the full test log.
+  CTest's `-R` filters suite names, and the executable accepts GoogleTest's `--gtest_filter`.
 - Add tests for new behaviour in the shared core and the CLI parsing.
   Prefer the committed fixtures over generating audio in a test.
 - A successful conversion of a non-AIFF source moves the source to the system trash.
@@ -432,7 +435,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
 - `./format.sh` covers this `cpp/` directory, the sources, CMake file, and scripts of `../test-plugin/`,
   and `../fixtures/generate.sh`,
-  and also checks the prose with `slb` when it is installed.
+  and also checks the prose under `cpp/` with `slb` when it is installed.
+  Check the prose in `../test-plugin/` and `../.agents/rules/` separately.
 - `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt,
   and basic file checks through [prek](https://prek.j178.dev).
 - CI runs the root `../format.sh --check`, which includes this directory, in `../.github/workflows/format.yml`.

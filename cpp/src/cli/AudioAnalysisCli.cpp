@@ -308,7 +308,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
             : AudioNormalizationResult::failure(result.file, "The file was not normalized");
 
         // A converted original was moved to the trash, so its cached row is no longer needed,
-        // even when the re-analysis of the committed output failed.
+        // even when the committed output's analysis record could not be completed.
         // The cache logs its own failures, and a stale row only costs another read later.
         const auto forgetConvertedSource = [&](const AudioAnalysisRecord& output) {
             if (output.fullPath != result.fullPath) {
@@ -326,7 +326,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
                 [&](const OperationFailed& failed) { reportFailure(result, failed.error); },
                 [&](const CommittedButUnanalyzed& unanalyzed) {
                     forgetConvertedSource(unanalyzed.output);
-                    // The output replaced the source, so the failed re-analysis of the output is reported instead.
+                    // The output replaced the source, so its incomplete analysis record is reported instead.
                     reportFailure(unanalyzed.output, unanalyzed.error);
                 },
                 [&](const OperationSucceeded& succeeded) {

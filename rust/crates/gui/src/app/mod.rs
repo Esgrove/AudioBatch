@@ -176,7 +176,7 @@ pub struct AppView {
     demo_task: Option<Task<()>>,
     /// Files whose custom gain the mouse wheel changed, written to the cache once the wheel rests.
     pending_gain_paths: Vec<PathBuf>,
-    /// File to start playing once its cue points are read, when playing from the first cue is on.
+    /// Deferred play or seek intent, resolved after matching cue metadata and source duration are ready.
     start_after_cues: Option<cue_start::CueStartIntent>,
     /// True when a new file reset the waveform zoom, which the next render shows on the zoom slider.
     zoom_reset_pending: bool,

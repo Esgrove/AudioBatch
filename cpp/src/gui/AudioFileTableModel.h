@@ -1,6 +1,6 @@
 /// Table model for the sortable analysis results table in the GUI.
 /// Declares AudioFileTableModel, a juce::TableListBoxModel with sorting, cell painting, and row actions.
-/// Column identifiers and sizing rules are shared through GuiLayout.h.
+/// Column identifiers are shared through AudioBatchComponentConstants.h, and sizing rules through GuiLayout.h.
 
 #pragma once
 

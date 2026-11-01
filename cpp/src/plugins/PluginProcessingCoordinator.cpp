@@ -1,7 +1,8 @@
 /// Implementation of PluginProcessingCoordinator.
 /// Covers queuing one thread-pool job per file,
 /// the per-run free pool of pre-instantiated plugin chains that workers acquire and release between files,
-/// run-id based cancellation, and publishing results and completion to the message thread.
+/// run-id based cancellation, and publishing results and completion from workers.
+/// BackgroundWorkController hands those callbacks to the message thread.
 /// Cancellation also releases workers waiting for plugin setup on the message thread,
 /// so cancelAndWait can block the message thread without deadlocking.
 /// Plugin instances are always destroyed on the message thread to satisfy VST3 and Audio Unit hosting requirements.

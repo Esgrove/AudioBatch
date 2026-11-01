@@ -1,7 +1,6 @@
 //! Log file of the CLI and the GUI.
 //!
-//! `install` sets a `tracing` subscriber that appends timestamped lines to `<name>.log` in the platform log folder,
-//! like the JUCE file logger of the C++ application.
+//! `install` sets a `tracing` subscriber that appends timestamped lines to `<name>.log` in the platform log folder.
 //! Records of crates that use the `log` facade, such as the decoders, are forwarded to it.
 //! The file is trimmed to its last 32 KB when it is opened, and every run starts with a banner.
 //! Messages of the `AudioBatch` crates are kept from the debug level in debug builds and from the info level otherwise,

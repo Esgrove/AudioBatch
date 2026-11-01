@@ -9,6 +9,13 @@ it processes files through a plugin chain, shows the plugins' editors, and can p
 The CLI lists the plugins a scan found.
 The CLI takes the same arguments and prints the same output as the C++ CLI, so the two can be compared directly.
 
+## Audio formats
+
+Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis, and CAF files.
+Decoding uses symphonia on every platform, including AAC and lossless ALAC in M4A containers.
+Opus is not supported.
+Analysis and normalization support multichannel audio, while playback and plugin processing accept only mono and stereo.
+
 ## Crates
 
 - `crates/core`: decoding with symphonia, custom BS.1770 loudness and SIMD true peak with fearless_simd,
@@ -21,6 +28,7 @@ The CLI takes the same arguments and prints the same output as the C++ CLI, so t
 - `crates/serato`: parsers for the Serato GEOB tags, extracted from track-rename
 - `crates/cli`: the `audiobatch-rs` command line tool
 - `crates/gui`: the AudioBatchRs app, built on gpui-kit
+- `crates/build-info`: compile-time version and build metadata for the CLI and GUI
 - `crates/test-fixtures`: locates the shared test fixtures in `../fixtures`
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the crates work together,
@@ -31,9 +39,10 @@ Loudness stays within 0.001 LU of ebur128 and matches displayed integrated
 and maximum short-term values to two decimals.
 Normalization measures the exact quantized output while writing, without a second full decode.
 
-On an M3 Max, the release CLI analyzes the 29-file benchmark corpus in 0.297 s with one worker,
+In the October 30, 2026 measurements on an M3 Max,
+the release CLI analyzed the 29-file benchmark corpus in 0.297 s with one worker,
 compared with 1.618 s for C++, about 5.44 times faster.
-Peak and loudness normalization take 0.885 s and 0.928 s, about 3.71 and 3.52 times faster than C++.
+Peak and loudness normalization took 0.885 s and 0.928 s, about 3.71 and 3.52 times faster than C++.
 See [Analysis performance](docs/performance.md) for the full results, baseline comparisons, and validation limits.
 
 ## Build
@@ -51,7 +60,8 @@ On macOS, the GUI is packaged as `AudioBatchRs.app` with the bundle id `com.esgr
 and then installs the shell completions for it.
 On macOS, it installs the app bundle to `/Applications`.
 On Windows, it installs the GUI to `%LOCALAPPDATA%/Programs/AudioBatchRs` with a Start Menu shortcut.
-On other platforms, it installs the GUI binary next to the CLI.
+The installer packages the GUI only on macOS and Windows.
+On other platforms, use Cargo to build and install the GUI binary directly.
 Both scripts take `-l` or `--cli-only` to skip the slower GUI build.
 They also accept `-c` or `--clean` for the repository root scripts,
 but leave Cargo artifacts untouched because the option only cleans the C++ CMake build directory.
@@ -70,7 +80,8 @@ CPAL's ASIO dependency downloads the SDK on the first build and caches it in the
 No CMake step is needed for the Rust application.
 For an existing or offline SDK, set `CPAL_ASIO_DIR` to its directory containing `common/` and `host/`.
 
-`format.sh` formats the Rust code with rustfmt, the shell scripts with shfmt, and the prose with slb,
+`format.sh` formats the Rust code with rustfmt, the shell scripts with shfmt when installed,
+and the prose with slb when installed,
 and `format.sh --check` only verifies them.
 
 The app uses the same icons as the C++ application, from the root `assets` directory.
@@ -121,7 +132,7 @@ and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
 The `list` subcommand lists scanned VST3 effects, and `completion` generates shell completions.
 
-`--normalize` writes every analyzed file as a sibling `<name>.aif` at the source sample rate,
+`--normalize` writes analyzed files as a sibling `<name>.aif` at the source sample rate,
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
 A loudness target is limited by a -0.3 dBTP true peak ceiling, and a gain above 40 dB is refused.
 The output keeps the source bit depth when AIFF supports it, so 32-bit float files become 24-bit.
@@ -136,6 +147,7 @@ An existing output file is only replaced with `--force`,
 and when two selected files would write the same output, only one of them is normalized.
 Lossless output is sample-exact with C++ in peak mode and differs by at most one PCM step in loudness mode.
 Neither mode applies dither.
+An in-place `.aif` already at its target is left unchanged after cancellation and source-identity checks.
 
 ```console
 Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128)
@@ -182,8 +194,10 @@ The CLI prints each message once to stderr, and the GUI prints everything it log
 `audiobatch-rs list` prints the known VST3 plugins,
 and `--rescan` first scans the plugin folders for new or changed ones.
 The C++ CLI has the same subcommand with the same options.
-Each plugin is loaded in a separate worker process, so a plugin that crashes is blacklisted instead of ending the scan,
-and one that takes longer than three minutes is skipped.
+Bundles with `moduleinfo.json` are described without loading their code.
+Other bundles are loaded in a worker process shared by the scan.
+A crash blacklists the bundle and restarts the worker instead of ending the scan,
+and a bundle that takes longer than three minutes is skipped without being blacklisted.
 Bundles that are unchanged since the last scan are not loaded again.
 The list is saved to `plugins.json` in the data folder and shared with the GUI.
 
@@ -211,9 +225,11 @@ Normalization, processing, and file actions work on the selection, with confirme
 
 ### Waveform and playback
 
-The preview shows the selected file's levels, tags, waveform, and Serato cue points.
+The preview shows the selected file's levels, tags, embedded album artwork, waveform, and Serato cue points.
+Album artwork can be hidden, and PNG and JPEG covers are decoded into bounded thumbnails in the background.
 It supports mono and stereo playback, waveform zoom and scrubbing, and playback from Serato hot cues.
 Serato Overview tags provide optional waveform colours, and a short-term loudness graph can overlay the waveform.
+Source sample overs and true-peak overs have separate waveform markers, independent of preview gain and plugins.
 Multichannel playback is not supported.
 
 Per-file input gain scales the waveform and feeds plugin preview and processing.
@@ -249,8 +265,9 @@ Instruments are listed by scans but cannot be added to the chain.
 
 - Plugins > Plugin Manager… scans the plugin folders, which are the platform's standard VST3 folders
   after the folders in `VST3_PATH`, unless custom folders are set there.
-  Each plugin is loaded in a worker process, so a plugin that crashes is blacklisted instead of ending the scan,
-  and one that takes longer than three minutes is skipped.
+  Bundles are described from `moduleinfo.json` when available, otherwise loaded in a worker shared by the scan.
+  A crash blacklists the bundle and restarts the worker instead of ending the scan,
+  and a bundle that takes longer than three minutes is skipped without being blacklisted.
   The manager lists the known effects and the blacklisted bundles, which can be removed from the blacklist.
 - Plugins > Add Plugin, the Plugin Manager, or the Plugin Chain window adds an effect at the end of the chain
   and opens its editor in a window of its own.
@@ -273,7 +290,7 @@ Instruments are listed by scans but cannot be added to the chain.
   with the tags and Serato data carried over, like normalization writes.
   The latency of the chain is removed, and the tails of the plugins are rendered, up to 20 seconds per plugin,
   but the output is never shorter than the source and trailing audio below -96 dBFS is cut off.
-  Samples are truncated to 16 bits without dither or gain changes, since dither and level are up to the plugins,
+  Samples are floored to 16 bits without dither or gain changes, since dither and level are up to the plugins,
   and samples beyond full scale saturate, which the result reports.
 - Options > Preview Plugin Chain plays the preview through the enabled plugins,
   after the custom gain, at the output device's rate.
@@ -310,7 +327,7 @@ and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` lists actions to dispatch first.
 
 ```shell
 cargo build --release -p audiobatch-gui --features snapshot
-AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch::ToggleLoudnessGraph \
+AUDIOBATCH_GUI_SNAPSHOT=target/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch::ToggleLoudnessGraph \
     ./target/release/AudioBatchRs --autoplay ../fixtures
 ```
 

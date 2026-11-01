@@ -1,6 +1,6 @@
 //! Expands input paths into the sorted list of supported audio files to analyze.
 //!
-//! Directories are walked one level deep or recursively, hidden and dot-prefixed entries are skipped,
+//! Directories are walked one level deep or recursively, dot-prefixed entries are skipped,
 //! and the result is de-duplicated and sorted in natural order by full path.
 
 use std::collections::HashSet;

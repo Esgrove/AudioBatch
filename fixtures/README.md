@@ -56,8 +56,10 @@ Lossy decoded-PCM hashes are diagnostic evidence, not new platform-specific pass
 Compare matching commits, lockfiles, compiler versions, profiles, and CPU settings before locating the first differing stage.
 Repeat with `RUSTFLAGS=""` for the portable CI setting.
 This does not disable runtime SIMD dispatch.
-The Rust CI matrix captures both profiles and uploads provenance and reports before the output tests.
-It does not download normalization audio, so that collection remains an explicit CI coverage gap.
+The Rust CI build runs core tests in debug and release.
+Its Windows job downloads and requires the full normalization collection.
+The macOS Rust jobs leave it as LFS pointers, while the separate macOS parity workflow downloads and requires it.
+Numerical diagnostic reports are captured manually with the commands above, not uploaded by the current workflows.
 Rust decoder diagnostics support AAC and ALAC.
 These must not be run through JUCE on Windows.
 
@@ -137,7 +139,8 @@ The format workflow in CI fails when the committed files differ from what the sc
 ## Normalization Collection
 
 `normalization/` holds a larger collection for comparing the normalized output of both applications.
-It has music-like audio in every supported format, sample rate, and bit depth,
+It has music-like audio in WAV, AIFF, AIFC, FLAC, MP3, Ogg Vorbis, and AAC and ALAC in M4A,
+at 44.1, 48, and 96 kHz, with 16 and 24 bit integer and 32 bit float samples,
 from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases,
 such as silence, a gain above the 40 dB limit, float samples above full scale, a non-ASCII file name,
 and two sources that share one output name.

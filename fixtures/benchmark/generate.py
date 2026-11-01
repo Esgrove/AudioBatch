@@ -11,7 +11,8 @@ They are not committed, since they take about a gigabyte, so run this script onc
 Every rate the true peak oversampling treats differently gets a music-like stereo file in WAV and FLAC
 at 16 and 24 bits, and 44.1 and 48 kHz also get MP3, AAC, and Ogg Vorbis, the rates those are used at.
 A mono set covers the dual mono path, white noise is the worst case for FLAC decoding,
-and a long fade into silence produces the subnormal values that slow down filters on some machines.
+and a long fade stored as 24-bit PCM covers a quiet tail that reaches digital silence.
+Actual subnormal samples are covered by the in-memory signal tests, not these quantized files.
 Files that already exist are kept, so run with --force to render them again.
 
 Usage: uv run fixtures/benchmark/generate.py [--force]
@@ -82,7 +83,7 @@ def channel_expression(signal: str, sample_rate: int, right: bool) -> str:
     if signal == "noise":
         return "0.5*(random(0)*2-1)" if not right else "0.5*(random(1)*2-1)"
     if signal == "fade":
-        # Ten seconds of music, then an exponential fade far below the 16 bit floor, into subnormal floats.
+        # Ten seconds of music, then an exponential fade below the 24-bit floor into digital silence on output.
         return f"{music}*if(lt(t\\,10)\\,1\\,exp(-1.5*(t-10)))"
     return music
 
@@ -104,7 +105,7 @@ def sources() -> list[Source]:
 
 
 def ffmpeg(*arguments: str) -> None:
-    """Runs ffmpeg quietly with bit exact output."""
+    """Runs ffmpeg quietly and fails if the command exits unsuccessfully."""
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *arguments]
     subprocess.run(command, check=True)
 

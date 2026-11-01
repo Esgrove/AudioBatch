@@ -44,6 +44,7 @@ flowchart TD
 - `AUDIOBATCH_CORE_SOURCES` is the shared core: `analysis`, `metadata`, `normalization`, most of `utils`,
   `PluginScanner`, and the Serato tag parsing, overview, and tag cache.
 - `AudioBatch` is the GUI app, `AudioBatch.app` or `AudioBatchApp.exe`, made with `juce_add_gui_app`.
+  The Windows build target produces `AudioBatch.exe`, which `build.sh` copies as `AudioBatchApp.exe`.
   It adds `gui`, `gui/components`, the rest of `plugins`, `SeratoPreviewLoader`, and `SeratoWaveformColouring`,
   and links the JUCE device, GUI, and DSP modules and the embedded fonts.
 - `AudioBatchCli` is the console app, made with `juce_add_console_app` with the output name `audiobatch`.
@@ -77,6 +78,7 @@ flowchart TD
     BackgroundWorkController --> PluginProcessingCoordinator
     AudioBatchComponent --> AudioPreviewPlayer
     AudioBatchComponent --> PreviewController
+    AudioBatchComponent --> ArtworkLoader
     PreviewController --> SeratoPreviewLoader
     PreviewController -.-> AudioPreviewPlayer
     AudioBatchComponent --> PluginLibrary
@@ -164,6 +166,7 @@ A normalization or processing result is still passed on after its pass ended, be
   Clear All Files cancels every coordinator through `stopAllWork`.
   On shutdown, `cancelAndWait` waits up to 30 seconds for analysis and normalization jobs,
   and up to 60 seconds for plugin jobs.
+  The analysis and normalization destructors then wait without a timeout to keep their state alive for remaining jobs.
   When a plugin job is still running after that,
   the `PluginProcessingCoordinator` destructor ends the process instead of waiting for a hung plugin.
 - **`callOnMessageThread`** lets a plugin worker run a step on the message thread and wait for it.
@@ -175,6 +178,7 @@ A normalization or processing result is still passed on after its pass ended, be
   which fills the `BufferingAudioSource` from the file, so the audio callback never decodes.
 - **Smaller workers.** The `AudioThumbnailCache` of `ThumbnailComponent` builds the waveform on its own JUCE thread.
   `SeratoPreviewLoader` reads Serato tags on a `std::jthread` with one active and one replaceable pending request,
+  `ArtworkLoader` reads and decodes bounded artwork thumbnails on another worker with the same request policy,
   and `AudioBatchComponent` prunes cache rows of deleted files on another `std::jthread` after startup.
 - **Plugin scanning** runs on the single scan thread of the plugin manager's `PluginListComponent`.
   Each plugin is loaded in a separate worker process, which scans on its own message thread.
@@ -292,7 +296,7 @@ or in loudness mode the gain to the target loudness, lowered so the true peak st
 It refuses a silent file and a gain above 40 dB instead of capping it.
 For plugin processing, `getInputGain` applies the file's custom gain when it has one,
 then the normalization gain when Normalize is on, and unity gain with a notice when normalization refuses the file.
-An `.aif` file already at its target is not rewritten.
+An in-place `.aif` file whose gain is within 1.5 output PCM steps of unity is not rewritten.
 Its current analysis is reused after cancellation and file-identity checks,
 and a stale source is analyzed only once before making the gain decision.
 
@@ -333,12 +337,20 @@ A source in a format TagLib does not read is processed without tags.
 `validateWrittenAudio` opens the output and checks its channel count, sample rate, and length,
 without decoding its audio samples.
 After a last cancellation check, `disposeOfCopy` trashes a copy of an `.aif` source that is rewritten in place.
-`commitTemporaryOutput` moves an existing output aside as a hidden backup, moves the new file into place,
-trashes a converted source, and restores the folder when any step fails.
+`commitTemporaryOutput` retains an approved existing output under a hidden hard-link backup before vacating its path.
+For conversions, it claims the output with a hard link that cannot replace a concurrent occupant,
+then disposes of the source. In-place writes use JUCE's `replaceFileIn`.
+Rollback removes or restores only entries whose native identities still belong to the transaction.
+If recovery cannot restore the output, the rendered audio is retained and its location is reported.
+A backup that cannot be disposed of after successful publication is retained with a warning.
+These checks narrow stale-file races.
+Path-based replacement and disposal are not atomic compare-and-swap operations.
+Conversions require a filesystem that supports hard links.
 The `disposeFile` option moves files to the trash, and tests replace it with a delete.
 The outcome is `OperationSucceeded`, `CommittedButUnanalyzed`
-when the committed output cannot be opened to complete its analysis record,
-or `OperationFailed`, which leaves the source untouched.
+when the committed output cannot be opened or no longer matches the rendered file identity,
+or `OperationFailed` before a successful commit.
+Failures normally keep the source untouched, with recovery paths retaining rendered audio when publication fails.
 
 ## Preview
 
@@ -454,8 +466,8 @@ A processing run copies the current state of every enabled slot,
 and a plugin without saved state is reset to the state it had right after it was created before every file.
 
 **JUCE fork patches.** JUCE comes from the [Esgrove/JUCE](https://github.com/Esgrove/JUCE) fork,
-with about fifteen small commits on top of JUCE 9.0.4.
-Two of them exist for plugin hosting,
+with project-specific fixes for plugin hosting.
+Two hosting extensions are used by the application,
 and they live in JUCE because the code they change is private to JUCE's hosting classes:
 
 - *Let a custom plugin scanner abandon a scan.* `PluginListComponent` only stopped a cancelled scan between files,
@@ -479,7 +491,8 @@ The deliberate differences are these:
 
 - Only the C++ version hosts Audio Unit plugins.
   The Rust version hosts VST3 only, through its own `vst3-host` crate.
-- Only the C++ GUI has the results context menu, and only the Rust GUI can add individual files.
+- Only the C++ GUI has the results context menu.
+  Its file chooser selects folders, but drops and launch arguments accept individual files too.
 - Each version keeps its own analysis cache, plugin list, chain, and presets,
   because the chain state JUCE saves and its plugin ids are specific to JUCE.
 - The Rust version builds the waveform overview in the analysis pass,

@@ -18,8 +18,8 @@ which explains how its parts work together.
   `cpp/common.sh` and `rust/common.sh` source it and add their project specific parts.
 - `build.sh`, `install.sh`, and `format.sh` run the scripts of the same name in both projects,
   or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
-  `format.sh` also formats the root shell scripts and the prose outside the projects,
-  and runs ruff on the Python scripts.
+  `format.sh` also formats the root shell scripts and the prose outside the projects when shfmt and slb are installed,
+  and runs ruff on the Python scripts through uv.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place,
   and `fixtures/README.md` lists them with what each one tests.
   `fixtures/generate.sh` regenerates them with ffmpeg,
@@ -35,7 +35,7 @@ which explains how its parts work together.
   When its processing changes, update the script, regenerate the files,
   and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
 - `fixtures/normalization/` holds a larger collection for comparing the normalized output of both applications.
-  It has music-like audio in every supported format, sample rate, and bit depth,
+  It has music-like audio in representative supported formats, sample rates, and bit depths,
   from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.
   The audio is stored with Git LFS, so run `git lfs install` once per clone.
   `uv run fixtures/normalization/generate.py` regenerates it with ffmpeg and mutagen.
@@ -53,7 +53,9 @@ which explains how its parts work together.
 - `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/` and `test-plugin/`, cargo fmt on `rust/`,
   ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
 - `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
-  Each runs only when its own directory, the fixtures, the test plugin, or the assets change.
+  Their path filters include their own project, fixtures, the test plugin, assets, and shared shell helpers.
+  They also include their workflow files, and exclude Markdown-only changes.
+  The C++ workflow excludes the normalization collection.
   `format.yml` runs the root `./format.sh --check` on every change,
   and checks that `fixtures/plugin_expected/` matches what its script writes.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.

@@ -26,7 +26,7 @@ The latency is in samples, so a host sets it with the value divided by 1024.
 A stereo input is split into mid and side, the side is scaled by the width,
 and both output channels are scaled by the gain.
 A mono input is only scaled by the gain.
-The default settings leave the audio unchanged.
+The default gain and width are neutral apart from floating-point rounding.
 
 The output is then delayed by the latency, which the plugin reads when it is prepared and reports to the host.
 A host that compensates the latency renders the delayed tail and drops the delayed start,
@@ -41,6 +41,7 @@ The plugin's state is the XML of its parameter tree.
 
 The C++ project builds the plugin as part of its tests,
 and passes the bundle path to them as `AUDIOBATCH_TEST_VST3_PATH`.
+The plugin requires CMake 4.2 and C++23, with a minimum deployment target of macOS 15 when built there.
 
 The Rust tests need it built separately:
 

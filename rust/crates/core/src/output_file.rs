@@ -86,7 +86,7 @@ pub enum OutputError {
     /// No unused backup name is available.
     #[error("Could not move the existing output file aside")]
     BackupNamesExhausted,
-    /// The previous output could not be renamed to its backup.
+    /// The previous output could not be linked to a backup and removed from the destination.
     #[error("Could not move the existing output file aside")]
     Backup(#[source] std::io::Error),
     /// The rendered data could not be synchronized to disk.
@@ -101,7 +101,7 @@ pub enum OutputError {
     /// The converted source could not be disposed of.
     #[error("Could not move the original audio file to the system trash")]
     DisposeSource,
-    /// The original was lost during replacement, but the rendered file was recovered.
+    /// Publication or rollback failed, but the completed render was retained for recovery.
     #[error("Could not publish the new audio. The new audio was kept as {}", .path.display())]
     Recovered {
         /// Location of the recovered audio.
@@ -110,7 +110,7 @@ pub enum OutputError {
         #[source]
         source: std::io::Error,
     },
-    /// The original was lost and the rendered file could not be recovered.
+    /// Replacement failed and the completed render could not be retained for recovery.
     #[error("Could not replace the original file, and the new audio could not be kept")]
     RecoveryFailed(#[source] std::io::Error),
 }
@@ -391,7 +391,8 @@ fn commit_temporary_output(
 
 /// Commits only the source identity captured before rendering.
 ///
-/// Publication and restoration never replace an occupied destination.
+/// For converted sources, publication and restoration never replace an occupied destination.
+/// In-place output replaces the source only after validating its expected identity.
 /// File identity checks immediately precede destructive path operations,
 /// but an external writer can still race the final check and use on filesystems without conditional unlink.
 ///
@@ -526,10 +527,9 @@ fn temporary_root() -> PathBuf {
     root
 }
 
-/// Moves the new audio out of the temporary file after an in-place replace lost the original,
-/// so dropping the temporary file cannot delete the only remaining copy of the audio.
-/// On Windows, replacing a file can remove the original and then fail to move the replacement into place.
-/// The audio is kept next to the original as "<name> (recovered).<extension>", the name the C++ application uses.
+/// Retains completed audio when publication or rollback cannot restore the intended directory entries.
+/// Recovery tries exclusively claimed "<name> (recovered).<extension>" paths beside the intended output.
+/// If those moves fail, automatic cleanup is disabled and the existing temporary path is retained instead.
 /// Returns the user-facing error that says where the new audio was kept.
 fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path, source: std::io::Error) -> OutputError {
     let stem = output

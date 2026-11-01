@@ -348,8 +348,8 @@ void restoreOutputBackup(
     }
 }
 
-/// Moves the new audio out of the temporary file after an in-place replace lost the original,
-/// so the temporary file's destructor cannot delete the only remaining copy of the audio.
+/// Retains rendered audio under a recovery hard link after publication or rollback fails,
+/// so the temporary file's destructor cannot delete audio needed for recovery.
 /// On Windows, ReplaceFile can delete the original and then fail to move the replacement into place.
 /// Returns the user-facing error describing where the new audio was kept.
 juce::String keepNewAudioAfterLostOriginal(const OutputTemporaryFile& temporaryFile, const juce::File& outputFile)

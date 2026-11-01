@@ -1,9 +1,8 @@
 //! Benchmarks of the loudness and peak measurement, in memory and end to end on the generated files.
 //!
-//! The in-memory group measures each part of the meter alone on generated music,
-//! so the time splits into true peak, K-weighting, short-term loudness, and our own block handling.
-//! The `ebur128` groups feed the reference meter the way the analysis did before our own meter,
-//! so the old and the new path compare side by side in one report.
+//! The in-memory group measures the complete production meter and standalone SIMD true peak on generated music.
+//! The `ebur128` groups feed the development reference in 100 ms blocks,
+//! comparing its complete meter, true peak, K weighting, and short-term queries in the same report.
 //! The underflow group measures fresh interpolation histories at ordinary, tiny normal, and subnormal amplitudes.
 //! The overload group isolates the production flag collector, including stride doubling and final partial buckets.
 //! The end to end group runs `analyze_file` on the files of `fixtures/benchmark/generate.py`,
@@ -121,7 +120,8 @@ fn run_true_peak(planes: &[Vec<f32>], sample_rate: u32) -> f64 {
     meter.peaks().iter().sum()
 }
 
-/// Benchmarks every part of the measurement on in-memory stereo and mono music at every rate.
+/// Benchmarks the production meter, SIMD true peak, and reference components on in-memory music.
+/// Stereo covers every configured rate, while mono covers 44.1 kHz.
 fn bench_in_memory(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("meter");
     group.sample_size(10);

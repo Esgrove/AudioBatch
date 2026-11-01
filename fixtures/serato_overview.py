@@ -13,7 +13,7 @@ MP3 files get an ID3v2.4 tag with one GEOB frame in front of the audio,
 and AIFF files get the same tag in an "ID3 " chunk.
 FLAC files get a SERATO_OVERVIEW Vorbis comment instead,
 holding base64 of the GEOB wrapper and the payload in lines of 72 characters.
-The input must not have an ID3v2 tag or a Serato comment yet.
+MP3 and AIFF inputs must not have an ID3v2 tag yet, and FLAC inputs must not have a Serato Overview comment.
 Only the standard library is used, so the fixtures need no Python packages.
 """
 

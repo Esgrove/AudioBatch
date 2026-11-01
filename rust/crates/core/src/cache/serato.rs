@@ -6,7 +6,8 @@
 //! It only holds while the file keeps the stored size and modification time and the parser keeps the stored version.
 //! Present overviews keep their decoded slices in the `SOVR` representation.
 //! Files without an overview, with an invalid one, or in a format without Serato tags keep only their state,
-//! so the tag is not read again until the file changes.
+//! so callers can distinguish those results from an uncached file without parsing the tag.
+//! The GUI still refreshes display tags in the background and updates the cached state when that read succeeds.
 
 use std::path::Path;
 use std::sync::Arc;
