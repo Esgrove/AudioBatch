@@ -1,8 +1,8 @@
 # Performance
 
-Rust analysis is 5.4 to 5.5 times faster than C++ on the measured macOS corpus,
+Rust analysis is 3.8 to 4.7 times faster than C++ on the measured macOS corpus,
 and 4.9 to 5.3 times faster on the larger Windows corpus.
-Single-worker normalization is 3.5 to 3.7 times faster on both machines.
+Single-worker normalization is 2.7 to 2.9 times faster on macOS and 3.6 to 3.7 times faster on Windows.
 VST3 processing is closer, with the result depending on the C++ compiler and plugin chain.
 
 CLI and VST3 times are means with sample standard deviations.
@@ -13,7 +13,7 @@ Different hardware, corpora, and platform decoders prevent an isolated operating
 
 ## macOS CLI
 
-Measured October 30, 2026, on an Apple M3 Max with 16 logical CPUs and 64 GiB memory, running macOS 27.2.
+Measured November 2, 2026, on an Apple M4 Pro with 14 logical CPUs and 48 GiB memory, running macOS 27.2.
 Rust 1.99.1 uses native CPU targeting, release LTO, and one code generation unit.
 C++ uses Apple clang 21 with `-O3 -DNDEBUG`.
 
@@ -27,12 +27,12 @@ Times are in seconds.
 
 | Workers | Operation | C++, s | Rust, s | C++ / Rust |
 | ---: | :--- | ---: | ---: | ---: |
-| 1 | Analysis | 1.618250 ± 0.014608 | 0.297451 ± 0.007325 | 5.440 |
-| 1 | Peak normalization, 0 dBFS | 3.277709 ± 0.054053 | 0.884520 ± 0.011951 | 3.706 |
-| 1 | Loudness normalization, -14 LUFS | 3.270517 ± 0.040099 | 0.928473 ± 0.023419 | 3.522 |
-| 16 | Analysis | 0.310800 ± 0.003239 | 0.056582 ± 0.001800 | 5.493 |
-| 16 | Peak normalization, 0 dBFS | 0.594622 ± 0.011371 | 0.285083 ± 0.002519 | 2.086 |
-| 16 | Loudness normalization, -14 LUFS | 0.595915 ± 0.019191 | 0.293995 ± 0.004707 | 2.027 |
+| 1 | Analysis | 1.375623 ± 0.022020 | 0.366561 ± 0.016009 | 3.753 |
+| 1 | Peak normalization, 0 dBFS | 3.197021 ± 0.028894 | 1.116897 ± 0.034210 | 2.862 |
+| 1 | Loudness normalization, -14 LUFS | 3.205563 ± 0.030976 | 1.176975 ± 0.019905 | 2.724 |
+| 14 | Analysis | 0.279153 ± 0.002610 | 0.059650 ± 0.002875 | 4.680 |
+| 14 | Peak normalization, 0 dBFS | 0.551336 ± 0.014720 | 0.308543 ± 0.009541 | 1.787 |
+| 14 | Loudness normalization, -14 LUFS | 0.544206 ± 0.001968 | 0.307189 ± 0.003188 | 1.772 |
 
 ## Windows CLI
 
@@ -98,6 +98,31 @@ Clang-built C++ is faster in the mono and single-plugin stereo chains, with the 
 Rust control times vary between comparisons, particularly at 96 kHz.
 These measurements exclude file decoding and writing and do not establish an end-to-end processing speedup.
 
+## macOS VST3
+
+Measured November 2, 2026, on the M4 Pro above.
+C++ uses Apple clang 21 with the Release preset, and Rust uses the same release settings as the CLI.
+Both hosts load the identical AudioBatch Test MS VST3 bundle built by the C++ project.
+
+Each case processes 100 seconds of repeated fixture audio in 1024-frame blocks,
+with one warmup and 30 measured renders using freshly restored plugin state.
+The modes, timed work, and verification are the same as in the Windows measurements.
+Every case has zero floating-point residual and zero differing 16-bit PCM samples against independent arithmetic.
+
+Times are in milliseconds.
+
+| Mode | Input | Plugins | Latency, frames | C++, ms | Rust, ms | C++ / Rust |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| Host | 44.1 kHz stereo | 1 | 0 | 3.016 +/- 0.044 | 2.960 +/- 0.120 | 1.019 |
+| Chain | 44.1 kHz stereo | 1 | 0 | 5.381 +/- 0.163 | 5.136 +/- 0.104 | 1.048 |
+| Chain | 44.1 kHz mono | 1 | 0 | 2.771 +/- 0.033 | 2.716 +/- 0.113 | 1.020 |
+| Chain | 48 kHz stereo | 4 | 0 | 12.452 +/- 0.365 | 11.483 +/- 0.181 | 1.084 |
+| Chain | 96 kHz stereo | 8 | 0 | 47.535 +/- 1.528 | 44.063 +/- 1.654 | 1.079 |
+| Chain | 44.1 kHz stereo | 4 | 1024 | 35.499 +/- 0.337 | 35.526 +/- 0.529 | 0.999 |
+
+Rust is up to 8 percent faster in the multi-plugin chains and equal when latency dominates.
+These measurements exclude file decoding and writing and do not establish an end-to-end processing speedup.
+
 ## Rust Component Benchmarks
 
 Complete-meter input is ten seconds of stereo music at 44.1 kHz.
@@ -108,17 +133,23 @@ Times are Criterion point estimates with 95 percent confidence intervals, in mil
 
 ### macOS
 
-Measured October 30, 2026, on the M3 Max.
+Measured November 2, 2026, on the M4 Pro.
+Sorting uses 5000 records, and natural comparison scans adjacent names.
 
 | Case | Estimate, ms | 95 percent interval, ms |
 | :--- | ---: | ---: |
-| Complete meter, 44.1 kHz stereo | 5.9701 | 5.9556 to 5.9906 |
-| Analyze 60-second WAV | 41.396 | 41.275 to 41.510 |
-| Normalize WAV, peak | 84.876 | 84.551 to 85.178 |
-| Normalize WAV, loudness | 84.826 | 84.364 to 85.417 |
-| Gain and AIFF writer, 16 bit | 2.1915 | 2.1822 to 2.2056 |
-| Gain and AIFF writer, 24 bit | 3.2381 | 3.2310 to 3.2463 |
-| Gain only | 0.021840 | 0.021706 to 0.022057 |
+| Complete meter, 44.1 kHz stereo | 5.1375 | 5.0948 to 5.1966 |
+| Analyze 60-second WAV | 31.791 | 31.545 to 32.104 |
+| Normalize WAV, peak | 77.738 | 77.371 to 78.139 |
+| Normalize WAV, loudness | 76.966 | 76.402 to 77.488 |
+| Gain and AIFF writer, 16 bit | 1.7758 | 1.7690 to 1.7839 |
+| Gain and AIFF writer, 24 bit | 1.9635 | 1.9561 to 1.9731 |
+| Gain only | 0.023280 | 0.021833 to 0.024787 |
+| Natural comparison | 0.034878 | 0.034615 to 0.035140 |
+| Sort by name | 6.0061 | 5.9704 to 6.0499 |
+| Sort by path | 8.3098 | 8.2593 to 8.3713 |
+| Sort by peak | 0.66162 | 0.65792 to 0.66593 |
+| Sort by loudness | 0.65319 | 0.65006 to 0.65686 |
 
 ### Windows
 
