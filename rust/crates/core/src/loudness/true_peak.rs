@@ -211,7 +211,7 @@ impl TruePeak {
 
 impl<const TAPS: usize> Filter<TAPS> {
     /// Derives the conservative x86 arithmetic-underflow bound once for a fixed coefficient bank.
-    fn new(coefficients: [[f32; 4]; TAPS]) -> Self {
+    const fn new(coefficients: [[f32; 4]; TAPS]) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let minimum_fast_sample = {
             let minimum_coefficient = coefficients
