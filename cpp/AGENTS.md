@@ -387,6 +387,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   It configures and builds the `macos-asan` preset in `cmake-build-mac-asan`, then runs ctest.
   `./sanitize.sh --thread` does the same under ThreadSanitizer with the `macos-tsan` preset in `cmake-build-mac-tsan`.
   On Windows, `./sanitize.sh` uses the MSVC AddressSanitizer with the `windows-asan` preset in `cmake-build-windows-asan`.
+  `./sanitize.sh --clang` uses LLVM AddressSanitizer with the `windows-clang-asan` preset.
+  It uses RelWithDebInfo and the dynamic release CRT because LLVM AddressSanitizer rejects the Debug CRT.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
 - Every build enables standard library hardening,
   `_LIBCPP_HARDENING_MODE` on macOS and `_MSVC_STL_HARDENING` on Windows,

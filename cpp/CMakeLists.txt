@@ -178,8 +178,19 @@ if(AUDIOBATCH_SANITIZE)
         # or with the runtime checks that Debug builds enable by default.
         set(CMAKE_MSVC_RUNTIME_CHECKS "")
         add_link_options(/INCREMENTAL:NO)
-        # Instrumented executables load the AddressSanitizer runtime that ships next to the compiler.
+        # Instrumented executables load the AddressSanitizer runtime supplied by the active compiler.
         cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH msvcBinaryDirectory)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+            execute_process(
+                COMMAND "${CMAKE_CXX_COMPILER}" /clang:--print-resource-dir
+                OUTPUT_VARIABLE clangResourceDirectory
+                OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
+            )
+            file(TO_CMAKE_PATH "${clangResourceDirectory}/lib/windows" msvcBinaryDirectory)
+            link_libraries("${msvcBinaryDirectory}/clang_rt.asan_dynamic-x86_64.lib")
+            add_link_options("/WHOLEARCHIVE:${msvcBinaryDirectory}/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib")
+        endif()
         file(GLOB AUDIOBATCH_ASAN_RUNTIME "${msvcBinaryDirectory}/clang_rt.asan*_dynamic-x86_64.dll")
         if(NOT AUDIOBATCH_ASAN_RUNTIME)
             message(FATAL_ERROR "Could not find the AddressSanitizer runtime in ${msvcBinaryDirectory}")

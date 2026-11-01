@@ -7,6 +7,7 @@ Build the tests with sanitizers, then run them with ctest.
 On macOS, the macos-asan preset uses AddressSanitizer and UndefinedBehaviorSanitizer,
 and the macos-tsan preset uses ThreadSanitizer.
 On Windows, the windows-asan preset uses the MSVC AddressSanitizer.
+The --clang option selects LLVM AddressSanitizer with the windows-clang-asan preset.
 Each preset uses its own build directory, such as cmake-build-mac-asan,
 so the debug build directory is not affected.
 
@@ -20,6 +21,9 @@ OPTIONS: All options are optional
 
     -v | --verbose
         Display commands being executed.
+
+    --clang
+        Use clang-cl and LLVM AddressSanitizer. Only supported on Windows.
 "
 
 # Import common functions
@@ -28,6 +32,8 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$DIR/common.sh"
 
 THREAD_SANITIZER=false
+USE_CLANG=false
+BUILD_CONFIG="Debug"
 
 init_options() {
     while [ $# -gt 0 ]; do
@@ -40,6 +46,9 @@ init_options() {
                 ;;
             -v | --verbose)
                 set -x
+                ;;
+            --clang)
+                USE_CLANG=true
                 ;;
             *)
                 print_error "Unknown option: $1"
@@ -54,6 +63,9 @@ init_options "$@"
 
 case "$BASH_PLATFORM" in
     mac)
+        if [ "$USE_CLANG" = true ]; then
+            print_error_and_exit "--clang is only supported on Windows."
+        fi
         if [ "$THREAD_SANITIZER" = true ]; then
             PRESET="macos-tsan"
             BUILD_DIR="cmake-build-mac-tsan"
@@ -68,6 +80,15 @@ case "$BASH_PLATFORM" in
         fi
         PRESET="windows-asan"
         BUILD_DIR="cmake-build-windows-asan"
+        if [ "$USE_CLANG" = true ]; then
+            PRESET="windows-clang-asan"
+            BUILD_DIR="cmake-build-windows-clang-asan"
+            BUILD_CONFIG="RelWithDebInfo"
+            load_msvc_environment
+            CLANG_RESOURCE_DIR=$(clang-cl /clang:--print-resource-dir | tr -d '\r')
+            PATH="$(cygpath -u "$CLANG_RESOURCE_DIR")/lib/windows:$PATH"
+            export PATH
+        fi
         ;;
     *)
         print_error_and_exit "The sanitizer build is only supported on macOS and Windows."
@@ -81,6 +102,6 @@ cmake --preset "$PRESET" -DBUILD_TESTING=ON
 cmake --build --preset "$PRESET" --target AudioBatchTests
 
 print_magenta "Running tests..."
-ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure --no-tests=error
+ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_CONFIG" --output-on-failure --no-tests=error
 
 print_green "Sanitizer run passed."
