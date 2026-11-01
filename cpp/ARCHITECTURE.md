@@ -232,6 +232,7 @@ sequenceDiagram
   and corrects the length of MP3 files without a Xing header.
 - `AudioMeasurement` sets up libebur128 for integrated loudness, short-term loudness, and true peak,
   and measures a mono file as dual mono, so it reads as loud as the same content in stereo.
+  It reserves short-term history storage from the declared frame count and fixed update interval.
 - It accepts planar chunks from decoding or PCM output writing and measures fixed intervals,
   borrowing complete intervals and buffering only those that cross chunk boundaries.
   Its final reduction supplies the same record fields to all three services.
@@ -256,6 +257,10 @@ sequenceDiagram
 
 Normalization and plugin processing share the start of the pipeline and everything after rendering.
 Both write `<name>.aif` next to the source and measure the exact quantized PCM while writing it.
+Batch conflict detection prepares destination paths before sorting,
+then assigns normalized destination keys through sets, with in-place sources taking priority.
+Each in-place backup owns its File value and temporary folder,
+so concurrent backup calls do not share mutable path-encoding storage.
 The committed file's identity is attached to those measurements for the new table row,
 without decoding the output again.
 Its native file identity must still match the rendered temporary file after commit,

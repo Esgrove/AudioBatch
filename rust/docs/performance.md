@@ -176,6 +176,109 @@ The earlier three-run CLI comparison is `target/cli-benchmark/20261031T193550Z-p
 It passes correctness checks, but its normalization timings contain substantial outliers.
 Generated timing reports are local artifacts and are not committed.
 
+### Native build and VST3 follow-up
+
+These measurements were collected on November 1, 2026, on the same AMD Ryzen 9 7950X,
+with 16 cores, 32 logical CPUs, 64 GiB installed memory, and Windows 11 Pro build 26300.
+Windows reports 63.1 GiB usable physical memory.
+Rust 1.99.1 uses native CPU targeting, release LTO, and one code generation unit.
+The C++ applications use MSVC 19.51 Release optimization with checked IPO/LTO,
+`/arch:AVX512`, `/favor:AMD64`, and precise floating-point behavior.
+Native targeting is for local builds, not CI.
+The CLI binaries report revision `49fb45a`, with the validated working-tree changes.
+The CLI export records the measured binary hashes.
+Builds, tests, and lints completed before timing, and the benchmark targets ran sequentially.
+
+The auto CLI corpus combines `fixtures/normalization` and the generated `fixtures/benchmark/output`.
+It contains 65 eligible files, with ten known failures excluded.
+This is a different workload and C++ build configuration from the preceding 26-file comparison,
+so these numbers do not establish a before-and-after speedup.
+Each command has one warmup and five measured runs, alternating C++ and Rust.
+All 30 measured pairs pass the existing level, normalization-target, sample, and metadata checks.
+No tolerances were increased.
+
+| Workers | Operation | C++, mean ± standard deviation, s | Rust, mean ± standard deviation, s | C++ / Rust |
+| ---: | :--- | ---: | ---: | ---: |
+| 1 | Analysis | 14.392315 ± 0.170281 | 2.917110 ± 0.008495 | 4.934 |
+| 1 | Peak normalization, 0 dBFS | 29.317068 ± 0.236124 | 7.983531 ± 0.068688 | 3.672 |
+| 1 | Loudness normalization, -14 LUFS | 29.287836 ± 0.157043 | 8.130118 ± 0.244334 | 3.602 |
+| 32 | Analysis | 1.699614 ± 0.030330 | 0.319620 ± 0.039085 | 5.318 |
+| 32 | Peak normalization, 0 dBFS | 3.355598 ± 0.032431 | 0.882454 ± 0.074843 | 3.803 |
+| 32 | Loudness normalization, -14 LUFS | 3.301726 ± 0.023186 | 0.814784 ± 0.028366 | 4.052 |
+
+The native VST3 benchmark loads the same real AudioBatch Test MS bundle in both hosts.
+Every render repeats one second of committed mono or stereo input 20 times.
+One unreported warmup precedes ten measured renders, with fresh restored state for every render.
+Loading, decoding, allocation, preparation, state restoration, and sample exports are outside timing.
+Host mode includes a single host and its input/output transfers.
+Chain mode adds the production channel adapter and finite checks.
+Timed frames include latency drain and final block padding.
+The output is latency-compensated before verification.
+Every input sample agrees between decoders,
+and every output has zero floating-point residual and zero differing 16-bit PCM samples against independent arithmetic.
+
+Times are mean ± sample standard deviation in milliseconds.
+Ratios below one favor C++, and ratios above one favor Rust.
+These are elapsed times for the stated work boundaries, not a timing threshold or a general host ranking.
+
+| Mode | Input | Plugins | Total latency, frames | C++, ms | Rust, ms | C++ / Rust |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| Host | 44.1 kHz stereo | 1 | 0 | 1.062 ± 0.022 | 1.272 ± 0.074 | 0.835 |
+| Chain | 44.1 kHz stereo | 1 | 0 | 1.687 ± 0.089 | 1.982 ± 0.297 | 0.851 |
+| Chain | 44.1 kHz mono | 1 | 0 | 0.687 ± 0.017 | 0.568 ± 0.011 | 1.210 |
+| Chain | 48 kHz stereo | 4 | 0 | 4.291 ± 0.146 | 4.807 ± 0.087 | 0.893 |
+| Chain | 96 kHz stereo | 8 | 0 | 15.155 ± 0.128 | 17.091 ± 0.274 | 0.887 |
+| Chain | 44.1 kHz stereo | 4 | 1024 | 18.341 ± 0.310 | 18.618 ± 0.188 | 0.985 |
+
+The affected Criterion targets, `analysis`, `normalize`, and `misc`, completed 90 cases.
+The following are representative point estimates and 95 percent intervals in milliseconds.
+Complete-meter input is ten seconds of stereo music.
+File operations use the generated 60-second WAV.
+Sorting cases use 5000 records, and natural comparison scans their adjacent names.
+
+| Case | Estimate, ms | 95 percent interval, ms |
+| :--- | ---: | ---: |
+| Complete meter, 44.1 kHz stereo | 5.726110 | 5.719597 to 5.736626 |
+| Analyze 60-second WAV | 38.228325 | 38.149994 to 38.321970 |
+| Normalize WAV, peak | 75.046413 | 74.205293 to 76.202962 |
+| Normalize WAV, loudness | 79.796329 | 74.860976 to 85.034327 |
+| Gain and AIFF writer, 16 bit | 2.366786 | 2.359607 to 2.374072 |
+| Gain and AIFF writer, 24 bit | 2.527422 | 2.522260 to 2.533753 |
+| Natural comparison | 0.054017 | 0.053915 to 0.054123 |
+| Sort by name | 6.645268 | 6.619916 to 6.670930 |
+| Sort by path | 8.231340 | 8.211426 to 8.251712 |
+| Sort by peak | 0.934237 | 0.926785 to 0.942741 |
+| Sort by loudness | 0.944384 | 0.940087 to 0.949222 |
+
+Hot stereo true-peak construction and destruction take approximately 72 ns at both 48 and 96 kHz.
+The shared native coefficient banks have already initialized during warmup.
+The setup group also covers batches of 512 pushes with 1, 12, and 64 frames per push.
+The underflow group retains ordinary, small-normal, and subnormal arithmetic paths.
+The saved reports retain all samples and outliers, and prior baselines are unchanged.
+Native arithmetic and scalar/SIMD equivalence remain covered by the independent differential tests.
+
+Validation includes 30 C++ suites in Debug and Release, 917 Rust all-target tests,
+and 425 optimized Rust core and CLI tests.
+Existing ignored and platform-specific cases remain explicitly reported by their runners.
+The concurrent in-place backup test also passes 30 consecutive runs with 40 copies per run.
+Each backup call owns its File value, avoiding shared mutable path-encoding storage during native file operations.
+Full clang-tidy, Clippy, formatting, and the Python parity, benchmark, and license-tooling checks pass on Windows.
+Native macOS execution was not available for this run.
+
+Reports:
+
+- CLI: `target/cli-benchmark/20261101T164836Z-1O0kTD/`.
+- VST3: `target/vst3-benchmark/20261101T164833Z-RHU5uH/`, including planar sample exports and per-case comparisons.
+- Criterion: `target/criterion/`, baseline `validated-20261101-f5664e5e`.
+
+Reproduce from `rust/` with current Release binaries:
+
+```shell
+./scripts/vst3_benchmark.sh --iterations 10 --repeat 20
+./scripts/cli_benchmark.sh --no-build --jobs 32 --runs 5 --warmup 1
+cargo bench -p audiobatch-core --bench analysis --bench normalize --bench misc -- --save-baseline windows-local
+```
+
 ## Processing and memory
 
 `BlockMeter` groups planar decoder chunks into 100 ms measurement blocks.

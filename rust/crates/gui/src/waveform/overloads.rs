@@ -97,7 +97,8 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
             for run in runs.iter().filter(|run| run.kind == kind) {
                 let width = ((run.end - run.start) as f32).max(MINIMUM_MARK_WIDTH);
                 let center = f32::midpoint(run.start as f32, run.end as f32);
-                let left = f32::from(plot.origin.x) + center - width / 2.0;
+                let half_width = width * 0.5;
+                let left = f32::from(plot.origin.x) + center - half_width;
                 if kind == WarningKind::Sample {
                     window.paint_quad(fill(
                         Bounds {
@@ -229,7 +230,7 @@ fn matching_history(record: &AnalysisRecord) -> Option<Arc<OverloadHistory>> {
 
 /// Strokes a hollow edge cap inside its bounds, retaining the underlying waveform in its interior.
 fn paint_outline(left: f32, top: f32, width: f32, height: f32, amber: Hsla, window: &mut Window) {
-    let inset = OUTLINE_WIDTH / 2.0;
+    let inset = OUTLINE_WIDTH * 0.5;
     let mut builder = PathBuilder::stroke(px(OUTLINE_WIDTH));
     builder.add_polygon(
         &[

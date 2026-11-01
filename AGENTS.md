@@ -89,6 +89,25 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 
 ## Working Rules
 
+### Numeric calculations and performance
+
+- Prefer multiplication by one half over division by two for floating-point calculations,
+  such as `value * 0.5f` for C++ `float` and `value * 0.5` for `double` or inferred Rust floating-point values.
+  Leave integer division unchanged.
+  Preserve overflow-safe midpoint helpers and expressions whose numerical contract requires another evaluation.
+- Evaluate fixed calculations at compile time when doing so makes the code clearer or removes runtime work.
+  Prefer existing named mathematical constants, such as Rust's `FRAC_PI_2` instead of `PI * 0.5`.
+  Otherwise reuse invariant results at the narrowest appropriate scope, outside repeated sample or comparison loops.
+  Keep mutable processing state separate from shared immutable calculation data.
+- Preserve operation order, precision, rounding, and the behavioral parity contracts when optimizing numeric code.
+  Do not substitute approximate constants, arbitrary reciprocals, fused operations, or fast math without verification.
+  Validate DSP tables against the native reference on every supported architecture before replacing native calculations.
+- Measure runtime changes with the existing benchmarks.
+  Compilers often already optimize division by two and common subexpressions,
+  so distinguish clearer source code from demonstrated performance improvements.
+
+### Repository work
+
 - Run each project's build, format, lint, and test commands from its own directory.
 - Stage with explicit paths, such as `git add cpp` or `git add rust`.
 - Commit messages and all prose follow the semantic line break style described in both project files.

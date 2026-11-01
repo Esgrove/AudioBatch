@@ -212,6 +212,8 @@ endif()
 # https://github.com/juce-framework/JUCE/commit/6b1b4cf7f6b1008db44411f2c8887d71a3348889
 set_property(GLOBAL PROPERTY USE_FOLDERS YES)
 
+include(cmake/Optimizations.cmake)
+
 # Create a "/Modules" directory in the IDE with the JUCE Module code
 option(JUCE_ENABLE_MODULE_SOURCE_GROUPS "Show all module sources in IDE projects" ON)
 
@@ -836,6 +838,8 @@ if(BUILD_TESTING)
             "tests/NormalizeCoordinatorTests.cpp"
             "tests/OverloadHistoryTests.cpp"
             "tests/PluginCoordinatorTests.cpp"
+            "tests/PluginBenchmark.cpp"
+            "tests/PluginBenchmark.h"
             "tests/PluginPresetTests.cpp"
             "tests/PluginScanTests.cpp"
             "tests/ProcessingTestPlugins.cpp"
@@ -1023,7 +1027,6 @@ target_link_libraries(
         juce::juce_gui_extra
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
 # cmake-format: on
@@ -1044,7 +1047,6 @@ target_link_libraries(
         juce::juce_events
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
 # cmake-format: on

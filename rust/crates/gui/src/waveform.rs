@@ -349,7 +349,10 @@ impl WaveformView {
                 .as_ref()
                 .map(PlayheadSource::position_seconds)
                 .filter(|&position| position >= self.visible_start && position <= self.visible_start + old_length)
-                .unwrap_or(self.visible_start + old_length / 2.0);
+                .unwrap_or_else(|| {
+                    let half_length = old_length * 0.5;
+                    self.visible_start + half_length
+                });
             let anchor_fraction = if old_length > 0.0 {
                 (anchor - self.visible_start) / old_length
             } else {
@@ -413,7 +416,8 @@ impl WaveformView {
     /// Keeps the playhead in the middle of the view while playing zoomed in.
     fn follow_playhead(&mut self, position: f64) {
         if self.zoom > MINIMUM_ZOOM {
-            self.visible_start = position - self.visible_length() / 2.0;
+            let half_length = self.visible_length() * 0.5;
+            self.visible_start = position - half_length;
             self.clamp_visible_start();
         }
     }
@@ -661,9 +665,10 @@ fn paint_waveform(data: &PaintData, bounds: Bounds<Pixels>, window: &mut Window,
         && viewport.contains(position)
     {
         let x = viewport.time_to_x(position);
+        let half_width = PLAYHEAD_WIDTH * 0.5;
         window.paint_quad(fill(
             Bounds {
-                origin: point(px(x - PLAYHEAD_WIDTH / 2.0), bounds.origin.y),
+                origin: point(px(x - half_width), bounds.origin.y),
                 size: size(px(PLAYHEAD_WIDTH), bounds.size.height),
             },
             white(alpha),
@@ -679,6 +684,8 @@ fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
     let columns = f32::from(plot.size.width) as usize;
     let channels = data.overview.channels().clamp(1, 2) as usize;
     let lane_height = f32::from(plot.size.height) / channels as f32;
+    let half_height = lane_height * 0.5;
+    let half = (half_height - 1.0).max(0.5);
     let sample_rate = f64::from(data.overview.sample_rate());
     let start_frame = viewport.start * sample_rate;
     let end_frame = (viewport.start + viewport.length) * sample_rate;
@@ -686,20 +693,15 @@ fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
 
     for channel in 0..channels {
         let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
-        let center = lane_top + lane_height / 2.0;
-        let half = (lane_height / 2.0 - 1.0).max(0.5);
+        let center = lane_top + half_height;
         let scale = |value: f32| (value * data.display_gain).clamp(-1.0, 1.0);
-        let extents: Vec<(f32, f32)> = data
-            .overview
-            .column_peaks(channel, start_frame, end_frame, columns)
-            .into_iter()
-            .map(|(minimum, maximum)| {
-                (
-                    scale(maximum).mul_add(-half, center).min(center - 0.5),
-                    scale(minimum).mul_add(-half, center).max(center + 0.5),
-                )
-            })
-            .collect();
+        let mut extents = data.overview.column_peaks(channel, start_frame, end_frame, columns);
+        for (minimum, maximum) in &mut extents {
+            let top = scale(*maximum).mul_add(-half, center).min(center - 0.5);
+            let bottom = scale(*minimum).mul_add(-half, center).max(center + 0.5);
+            *minimum = top;
+            *maximum = bottom;
+        }
         if colours.is_empty() {
             paint_envelope(&extents, f32::from(plot.origin.x), window);
         } else {
@@ -809,7 +811,8 @@ fn paint_loudness_axis(
             .text_system()
             .shape_line(text, px(LOUDNESS_FONT_SIZE), &[run], None);
         let line_height = LOUDNESS_FONT_SIZE + 2.0;
-        let top = (y - line_height / 2.0).clamp(
+        let half_height = line_height * 0.5;
+        let top = (y - half_height).clamp(
             f32::from(bounds.origin.y),
             (f32::from(bounds.origin.y + bounds.size.height) - line_height).max(f32::from(bounds.origin.y)),
         );
@@ -923,7 +926,7 @@ fn paint_loudness_curve(
 fn paint_cues(cues: &[CueMarker], duration: f64, viewport: &Viewport, window: &mut Window) {
     let plot = viewport.plot;
     let arrow_height = CUE_ARROW_HEIGHT.min(f32::from(plot.size.height) / 4.0);
-    let half_width = CUE_ARROW_WIDTH.min(arrow_height * CUE_ARROW_WIDTH / CUE_ARROW_HEIGHT) / 2.0;
+    let half_width = CUE_ARROW_WIDTH.min(arrow_height * CUE_ARROW_WIDTH / CUE_ARROW_HEIGHT) * 0.5;
     let top = f32::from(plot.origin.y);
     let bottom = top + f32::from(plot.size.height);
     for cue in cues

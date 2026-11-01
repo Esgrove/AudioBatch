@@ -5,6 +5,7 @@
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 #include <initializer_list>
 
 #include <algorithm>
@@ -208,6 +209,20 @@ private:
         expectColour(serato::colourForOverviewSlice(uniformSlice(redIndex), fallback), 255, 0, 0);
         expectColour(serato::colourForOverviewSlice(uniformSlice(greenIndex), fallback), 0, 255, 0);
         expectColour(serato::colourForOverviewSlice(uniformSlice(215), fallback), 255, 255, 255);
+
+        beginTest("Every palette index matches the integer cube or the opaque fallback");
+        for (int index = 0; index <= 255; ++index) {
+            const auto expected = index >= 2 && index < 216 ? juce::Colour(
+                                                                  static_cast<juce::uint8>(index / 36 * 51),
+                                                                  static_cast<juce::uint8>(index % 36 / 6 * 51),
+                                                                  static_cast<juce::uint8>(index % 6 * 51)
+                                                              )
+                                                            : fallback.withAlpha(1.0f);
+            expect(
+                serato::colourForOverviewSlice(uniformSlice(static_cast<std::uint8_t>(index)), fallback) == expected,
+                utils::format("Palette index {}", index)
+            );
+        }
 
         beginTest("Final RGB rounds halfway components upward in both implementations");
         {

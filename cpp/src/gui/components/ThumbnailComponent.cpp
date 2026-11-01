@@ -158,7 +158,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     if (hasKeyboardFocus(false)) {
         graphics.setColour(CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
         graphics.drawRoundedRectangle(
-            getLocalBounds().toFloat().reduced(layout::waveform::focusOutlineWidth / 2.0f),
+            getLocalBounds().toFloat().reduced(layout::waveform::focusOutlineWidth * 0.5f),
             layout::waveform::cornerRadius,
             layout::waveform::focusOutlineWidth
         );
@@ -617,9 +617,9 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
             auto start = static_cast<float>(bounds.getX()) + static_cast<float>(column);
             auto finish = static_cast<float>(bounds.getX()) + static_cast<float>(end);
             if (finish - start < layout::waveform::overloadMinimumWidth) {
-                const auto centre = (start + finish) / 2.0f;
-                start = centre - layout::waveform::overloadMinimumWidth / 2.0f;
-                finish = centre + layout::waveform::overloadMinimumWidth / 2.0f;
+                const auto centre = (start + finish) * 0.5f;
+                start = centre - layout::waveform::overloadMinimumWidth * 0.5f;
+                finish = centre + layout::waveform::overloadMinimumWidth * 0.5f;
             }
             marks.push_back({
                 .horizontal = {start, finish},
@@ -662,8 +662,8 @@ void ThumbnailComponent::drawOverloads(juce::Graphics& graphics) const
             graphics.fillRect(bottomCap);
         } else {
             graphics.setColour(amber);
-            graphics.drawRect(topCap.reduced(outline / 2.0f), outline);
-            graphics.drawRect(bottomCap.reduced(outline / 2.0f), outline);
+            graphics.drawRect(topCap.reduced(outline * 0.5f), outline);
+            graphics.drawRect(bottomCap.reduced(outline * 0.5f), outline);
         }
     }
 }
@@ -763,7 +763,7 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
             if (newSegment) {
                 line.startNewSubPath(horizontal, vertical);
                 const auto diameter = layout::waveform::loudnessLineWidth;
-                segmentStarts.addEllipse(horizontal - diameter / 2.0f, vertical - diameter / 2.0f, diameter, diameter);
+                segmentStarts.addEllipse(horizontal - diameter * 0.5f, vertical - diameter * 0.5f, diameter, diameter);
                 newSegment = false;
             } else {
                 line.lineTo(horizontal, vertical);
@@ -842,7 +842,7 @@ void ThumbnailComponent::updateCursorPosition()
 
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(
-            timeToX(transportSource.getCurrentPosition()) - layout::waveform::positionMarkerWidth / 2.0f,
+            timeToX(transportSource.getCurrentPosition()) - layout::waveform::positionMarkerWidth * 0.5f,
             0.0f,
             layout::waveform::positionMarkerWidth,
             static_cast<float>(getHeight())
@@ -916,7 +916,7 @@ std::vector<CueArrows> ThumbnailComponent::getCueArrows() const
                                layout::waveform::cueArrowWidth,
                                arrowHeight * layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight
                            )
-        / 2.0f;
+        * 0.5f;
     std::vector<CueArrows> arrows;
     for (const auto& cue : seratoMarkers->cues) {
         const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::millisecondsPerSecond;

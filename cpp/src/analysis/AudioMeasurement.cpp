@@ -84,6 +84,9 @@ struct AudioMeasurementState {
         history->sampleRate = rate;
         history->lengthInSamples = length;
         history->samplesPerPoint = partial.getNumSamples();
+        const auto interval = static_cast<std::int64_t>(history->samplesPerPoint);
+        const auto points = length / interval + (length % interval != 0 ? 1 : 0);
+        history->values.reserve(static_cast<std::size_t>(points));
     }
 
     /// Interleaves an interval while collecting its extremes, then advances the continuous meter.

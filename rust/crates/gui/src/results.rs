@@ -11,7 +11,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_2, TAU};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -1303,19 +1303,22 @@ fn activity_ring(progress: f32) -> impl IntoElement {
 
 /// Paints the activity ring into its bounds.
 fn paint_activity_ring(bounds: Bounds<Pixels>, progress: f32, window: &mut Window) {
-    let radius = f32::from(bounds.size.width.min(bounds.size.height)) / 2.0 - 1.0;
+    let half_diameter = f32::from(bounds.size.width.min(bounds.size.height)) * 0.5;
+    let radius = half_diameter - 1.0;
     if radius <= 0.0 {
         return;
     }
-    let center_x = f32::from(bounds.origin.x) + f32::from(bounds.size.width) / 2.0;
-    let center_y = f32::from(bounds.origin.y) + f32::from(bounds.size.height) / 2.0;
+    let half_width = f32::from(bounds.size.width) * 0.5;
+    let half_height = f32::from(bounds.size.height) * 0.5;
+    let center_x = f32::from(bounds.origin.x) + half_width;
+    let center_y = f32::from(bounds.origin.y) + half_height;
     if let Some(disc) = circle_path(center_x, center_y, radius, PathBuilder::fill()) {
         window.paint_path(disc, color(palette::GREY_MIDDLE).opacity(0.3));
     }
     let progress = progress.clamp(0.0, 0.999);
     if progress >= 0.005 {
         let inner = radius * RING_INNER_PROPORTION;
-        let start = -PI / 2.0;
+        let start = -FRAC_PI_2;
         let end = TAU.mul_add(progress, start);
         let at = |angle: f32, length: f32| {
             point(

@@ -27,6 +27,24 @@ constexpr int paletteSize {palettePlaneSize * paletteLevels};
 constexpr int paletteComponentStep {51};
 constexpr double maximumColourComponent {255.0};
 
+/// Decodes the fixed RGB cube at compile time, including its two background entries.
+consteval auto makePaletteComponents()
+{
+    std::array<std::array<std::uint8_t, 3>, paletteSize> components {};
+    for (std::size_t index = 0; index < components.size(); ++index) {
+        const auto value = static_cast<int>(index);
+        components[index] = {
+            static_cast<std::uint8_t>(value / palettePlaneSize * paletteComponentStep),
+            static_cast<std::uint8_t>(value % palettePlaneSize / paletteLevels * paletteComponentStep),
+            static_cast<std::uint8_t>(value % paletteLevels * paletteComponentStep),
+        };
+    }
+    return components;
+}
+
+/// Exact integer palette components shared by all slices.
+constexpr auto paletteComponents {makePaletteComponents()};
+
 /// Retains decoded RGB sums and foreground cell weight until the final arithmetic mean.
 struct ColourContributions {
     /// Weighted sums of the red, green, and blue components.
@@ -48,9 +66,7 @@ void accumulateSlice(
         if (paletteIndex <= 1 || paletteIndex >= paletteSize) {
             continue;
         }
-        const auto red = paletteIndex / palettePlaneSize * paletteComponentStep;
-        const auto green = paletteIndex % palettePlaneSize / paletteLevels * paletteComponentStep;
-        const auto blue = paletteIndex % paletteLevels * paletteComponentStep;
+        const auto& [red, green, blue] = paletteComponents[paletteIndex];
         contributions.components[0] += static_cast<double>(red) * sampleWeight;
         contributions.components[1] += static_cast<double>(green) * sampleWeight;
         contributions.components[2] += static_cast<double>(blue) * sampleWeight;

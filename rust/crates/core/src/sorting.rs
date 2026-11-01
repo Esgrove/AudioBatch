@@ -52,7 +52,7 @@ pub fn sort_records(records: &mut [AnalysisRecord], mode: SortMode, ascending: b
 #[must_use]
 pub fn compare_by_mode(first: &AnalysisRecord, second: &AnalysisRecord, mode: SortMode) -> Ordering {
     let by_name = || compare_natural(&first.file_name, &second.file_name);
-    let by_path = || compare_natural(&first.path_string(), &second.path_string());
+    let by_path = || compare_natural(&first.path.to_string_lossy(), &second.path.to_string_lossy());
     let by_loudness = || first.integrated_lufs.total_cmp(&second.integrated_lufs);
     let by_peak = || first.overall_peak.abs().total_cmp(&second.overall_peak.abs());
     match mode {
@@ -66,18 +66,18 @@ pub fn compare_by_mode(first: &AnalysisRecord, second: &AnalysisRecord, mode: So
 /// Compares two strings in natural order, ignoring case, so "track 2" sorts before "track 10".
 #[must_use]
 pub fn compare_natural(first: &str, second: &str) -> Ordering {
-    let mut first_chars = first.chars().peekable();
-    let mut second_chars = second.chars().peekable();
+    let mut first_remaining = first;
+    let mut second_remaining = second;
     loop {
-        match (first_chars.peek().copied(), second_chars.peek().copied()) {
+        match (first_remaining.chars().next(), second_remaining.chars().next()) {
             (None, None) => return first.cmp(second),
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
             (Some(first_char), Some(second_char)) => {
                 if first_char.is_ascii_digit() && second_char.is_ascii_digit() {
-                    let first_number = take_digits(&mut first_chars);
-                    let second_number = take_digits(&mut second_chars);
-                    let ordering = compare_digit_runs(&first_number, &second_number);
+                    let first_number = take_digits(&mut first_remaining);
+                    let second_number = take_digits(&mut second_remaining);
+                    let ordering = compare_digit_runs(first_number, second_number);
                     if ordering != Ordering::Equal {
                         return ordering;
                     }
@@ -86,24 +86,19 @@ pub fn compare_natural(first: &str, second: &str) -> Ordering {
                     if ordering != Ordering::Equal {
                         return ordering;
                     }
-                    first_chars.next();
-                    second_chars.next();
+                    first_remaining = first_remaining.split_at(first_char.len_utf8()).1;
+                    second_remaining = second_remaining.split_at(second_char.len_utf8()).1;
                 }
             }
         }
     }
 }
 
-/// Consumes a run of ASCII digits from the iterator.
-fn take_digits(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
-    let mut digits = String::new();
-    while let Some(&character) = chars.peek() {
-        if !character.is_ascii_digit() {
-            break;
-        }
-        digits.push(character);
-        chars.next();
-    }
+/// Borrows the leading ASCII digit run and advances the remaining string on a UTF-8 boundary.
+fn take_digits<'a>(text: &mut &'a str) -> &'a str {
+    let count = text.as_bytes().iter().take_while(|byte| byte.is_ascii_digit()).count();
+    let (digits, remaining) = text.split_at(count);
+    *text = remaining;
     digits
 }
 
@@ -146,6 +141,35 @@ mod test_natural_order {
             compare_natural("a99999999999999999999999", "a100000000000000000000000"),
             Ordering::Less
         );
+    }
+
+    #[test]
+    fn digit_boundaries_and_leading_zeros_keep_their_tie_breaks() {
+        for (first, second) in [
+            ("track 0", "track 00"),
+            ("track 2a", "track 02a"),
+            ("track 02", "track 002"),
+            ("track 2a", "track 2b"),
+            ("track 2", "track 2a"),
+            ("track 9 mix 2", "track 9 mix 10"),
+        ] {
+            assert_eq!(compare_natural(first, second), Ordering::Less, "{first} vs {second}");
+            assert_eq!(compare_natural(second, first), Ordering::Greater, "{second} vs {first}");
+            assert_eq!(compare_natural(first, first), Ordering::Equal);
+        }
+    }
+
+    #[test]
+    fn unicode_case_and_equal_folded_names_keep_original_string_order() {
+        for (first, second, expected) in [
+            ("Ä2", "ä10", Ordering::Less),
+            ("İ2", "i10", Ordering::Greater),
+            ("Ä2", "ä2", "Ä2".cmp("ä2")),
+            ("Track 2", "track 2", "Track 2".cmp("track 2")),
+        ] {
+            assert_eq!(compare_natural(first, second), expected, "{first} vs {second}");
+            assert_eq!(compare_natural(second, first), expected.reverse());
+        }
     }
 }
 
@@ -203,6 +227,21 @@ mod test_sort_records {
         ];
         sort_records(&mut records, SortMode::Name, true);
         assert_eq!(names(&records), ["track 2.wav", "track 10.wav"]);
+    }
+
+    #[test]
+    fn path_breaks_equal_names_and_name_breaks_equal_levels() {
+        let mut first = record("same.wav", 0.5, -20.0, AnalysisStatus::Analyzed);
+        let mut second = first.clone();
+        first.path = "/music/folder 10/same.wav".into();
+        second.path = "/music/folder 2/same.wav".into();
+        for mode in [SortMode::Name, SortMode::Path] {
+            assert_eq!(compare_by_mode(&first, &second, mode), Ordering::Greater);
+        }
+        let named = record("a.wav", -0.5, -20.0, AnalysisStatus::Analyzed);
+        for mode in [SortMode::Peak, SortMode::Loudness] {
+            assert_eq!(compare_by_mode(&named, &first, mode), Ordering::Less);
+        }
     }
 
     #[test]
