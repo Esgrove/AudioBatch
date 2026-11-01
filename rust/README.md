@@ -390,6 +390,23 @@ For repeated timing comparisons with isolated inputs, warmups, and JSON and Mark
 
 See [Analysis performance](docs/performance.md) for measured results and benchmark settings.
 
+For offline VST3 processing without decoding or file writes in the timed region:
+
+```shell
+./scripts/vst3_benchmark.sh
+./scripts/vst3_benchmark.sh --iterations 10 --repeat 20 --no-build
+```
+
+The runner builds the Release C++ test executable and the Rust `vst3_benchmark` example,
+and passes the same real AudioBatch Test MS bundle to both.
+The six cases cover mono/stereo, 44.1/48/96 kHz, one/four/eight plugins, and latency.
+Plugin loading, state restoration, decoding, allocation, and sample exports are outside timing.
+Both host and chain modes include input/output transfers.
+Chain mode also uses the production channel adapter and finite checks, but neither mode writes audio while timing.
+Every output must match independent binary32 arithmetic and final 16-bit PCM exactly.
+Reports and planar sample exports are retained in `target/vst3-benchmark/`.
+Missing plugins and output differences fail the command. Timing differences are informational.
+
 `cargo run -p audiobatch-playback --example play -- <file> [seconds] [sample rate] [buffer size]`
 plays a file through the default output device, optionally at a chosen sample rate and buffer size,
 and `cargo run -p audiobatch-core --example read_tags -- <files...>` prints tags and Serato data.
@@ -433,5 +450,10 @@ and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
 ```shell
 cargo install --locked cargo-nextest
 cargo install --locked cargo-llvm-cov
+cargo install --locked samply
 rustup component add llvm-tools-preview
 ```
+
+[samply](https://github.com/mstange/samply) records sampling profiles of release or profiling builds.
+It is a development tool, not a runtime dependency.
+See [Analysis performance](docs/performance.md#reproducing-the-measurements) for profiling commands.

@@ -112,6 +112,8 @@ CheckOptions:
   modernize-use-override.OverrideSpelling: override
   modernize-use-transparent-functors.SafeMode: "false"
   modernize-use-using.IgnoreMacros: "true"
+  # File values need private path-encoding storage when concurrent callers use the native file APIs.
+  performance-unnecessary-value-param.AllowedTypes: "juce::File"
   readability-avoid-const-params-in-decls.IgnoreMacros: "true"
   readability-braces-around-statements.ShortStatementLines: "0"
   readability-const-return-type.IgnoreMacros: "true"

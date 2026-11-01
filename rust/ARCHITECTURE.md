@@ -334,6 +334,8 @@ Below 96 kHz its four interpolation phases occupy separate `f32x4` lanes,
 and from 96 kHz to below 192 kHz the two phases are duplicated into those lanes.
 At 192 kHz and above `BlockMeter` reuses the signed sample extremes instead of scanning samples again.
 The coefficients, tap order, separate multiply and add, and undrained history match ebur128.
+The two native coefficient banks and their x86 underflow bounds initialize once during meter construction.
+Meters share this immutable data, while each meter retains its own channel histories and peaks.
 Ordered comparisons ignore NaNs without relying on backend-specific SIMD maximum semantics.
 Hardware dispatch detects NEON on Apple Silicon or AVX2 on x86 once per process.
 AVX-512 capable AMD CPUs also use the AVX2 backend, with no SSE compatibility paths.
@@ -361,6 +363,8 @@ It reuses extrema when a block fits in the remaining bucket and both bounds pres
 Bucket crossings and zero-bound extrema require rescanning to retain exact ranges.
 The finest bucket size is at least 64 frames.
 The Serato Overview tag only colours the waveform, while its shape comes from the decoded audio.
+Its fixed RGB cube components are decoded at compile time.
+Waveform painting transforms projected peak tuples into display extents in the same buffer for each channel.
 
 `overload.rs` records independent sample-over and true-peak-over bits for each actual source channel.
 Sample flags come from block-local decoded extrema, while true peak uses the last nonempty push's maxima,

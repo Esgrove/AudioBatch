@@ -28,6 +28,9 @@ const PALETTE_COMPONENT_STEP: u16 = 51;
 /// Highest value of a colour component.
 const MAXIMUM_COMPONENT: f64 = 255.0;
 
+/// Exact integer colour-cube components, decoded once at compile time.
+const PALETTE_COMPONENTS: [[u8; 3]; PALETTE_SIZE as usize] = palette_components();
+
 /// An opaque colour with components from 0 to 1.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OverviewColour {
@@ -70,13 +73,11 @@ impl Contributions {
             if index <= 1 || index >= PALETTE_SIZE {
                 continue;
             }
-            let decoded = [
-                index / PALETTE_PLANE_SIZE,
-                index % PALETTE_PLANE_SIZE / PALETTE_LEVELS,
-                index % PALETTE_LEVELS,
-            ];
-            for (sum, level) in self.components.iter_mut().zip(decoded) {
-                *sum = f64::from(level * PALETTE_COMPONENT_STEP).mul_add(weight, *sum);
+            let decoded = PALETTE_COMPONENTS
+                .get(usize::from(index))
+                .expect("validated foreground index fits the colour cube");
+            for (sum, &component) in self.components.iter_mut().zip(decoded) {
+                *sum = f64::from(component).mul_add(weight, *sum);
             }
             self.weight += weight;
         }
@@ -127,6 +128,25 @@ pub fn column_colours(overview: &Overview, start: f64, end: f64, columns: usize)
             contributions.colour()
         })
         .collect()
+}
+
+/// Builds the fixed RGB cube from exact integer arithmetic, including the two background entries.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the compile-time loop is bounded by the palette length"
+)]
+const fn palette_components() -> [[u8; 3]; PALETTE_SIZE as usize] {
+    let mut components = [[0; 3]; PALETTE_SIZE as usize];
+    let mut index = 0;
+    while index < PALETTE_SIZE {
+        components[index as usize] = [
+            (index / PALETTE_PLANE_SIZE * PALETTE_COMPONENT_STEP) as u8,
+            (index % PALETTE_PLANE_SIZE / PALETTE_LEVELS * PALETTE_COMPONENT_STEP) as u8,
+            (index % PALETTE_LEVELS * PALETTE_COMPONENT_STEP) as u8,
+        ];
+        index += 1;
+    }
+    components
 }
 
 /// Returns the contributions at a position of the track, interpolated between the centres of adjacent slices.
@@ -200,6 +220,20 @@ mod test_slice_colour {
         assert_colour(slice_colour(&[RED_INDEX; BAND_COUNT]), 255, 0, 0);
         assert_colour(slice_colour(&[GREEN_INDEX; BAND_COUNT]), 0, 255, 0);
         assert_colour(slice_colour(&[215; BAND_COUNT]), 255, 255, 255);
+    }
+
+    #[test]
+    fn every_palette_index_matches_the_integer_cube_or_is_skipped() {
+        for index in 0..=u8::MAX {
+            let colour = slice_colour(&[index; BAND_COUNT]);
+            let index = u32::from(index);
+            if (2..216).contains(&index) {
+                let rgb = ((index / 36 * 51) << 16) | ((index % 36 / 6 * 51) << 8) | (index % 6 * 51);
+                assert_eq!(colour.expect("foreground").to_rgb_u32(), rgb, "index {index}");
+            } else {
+                assert_eq!(colour, None, "index {index}");
+            }
+        }
     }
 
     #[test]

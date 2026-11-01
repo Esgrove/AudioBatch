@@ -3,6 +3,7 @@
 /// Each discovered test runs its suite through juce::UnitTestRunner and reports any failures to GoogleTest.
 /// The tests also start the executable again in a helper mode, which runs one helper instead of the suites.
 
+#include "PluginBenchmark.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
@@ -71,6 +72,9 @@ int main(int argumentCount, char* arguments[])
     juce::StringArray helperArguments;
     for (const auto* argument : std::span(arguments, static_cast<std::size_t>(argumentCount)).subspan(1)) {
         helperArguments.add(juce::String::fromUTF8(argument));
+    }
+    if (helperArguments.contains("--vst3-benchmark")) {
+        return audiobatch::tests::runPluginBenchmark(helperArguments);
     }
     if (const auto helperExitCode = audiobatch::tests::runHelperProcess(helperArguments)) {
         return *helperExitCode;

@@ -15,7 +15,6 @@
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/ThreadUtils.h"
-#include <initializer_list>
 
 #include <algorithm>
 #include <compare>
@@ -72,10 +71,12 @@ int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnalysisReco
 }
 
 /// Returns the first ordering that is not equivalent, so later keys only break ties of earlier ones.
-std::weak_ordering firstDifference(const std::initializer_list<std::weak_ordering> orderings)
+template<typename... Comparisons>
+std::weak_ordering firstDifference(const Comparisons&... comparisons)
 {
-    const auto* const difference = std::ranges::find_if(orderings, [](const auto ordering) { return ordering != 0; });
-    return difference != orderings.end() ? *difference : std::weak_ordering::equivalent;
+    auto ordering = std::weak_ordering::equivalent;
+    static_cast<void>(((ordering = comparisons(), ordering != 0) || ...));
+    return ordering;
 }
 
 /// Orders two floating point values exactly.
@@ -94,23 +95,24 @@ std::weak_ordering compareBySortMode(
     const AudioAnalysisSortMode sortMode
 )
 {
-    const std::weak_ordering byName = lhs.fileName.compareNatural(rhs.fileName) <=> 0;
-    const std::weak_ordering byPath = lhs.fullPath.compareNatural(rhs.fullPath) <=> 0;
-    const auto byLoudness = compareValues(lhs.integratedLufs, rhs.integratedLufs);
-    const auto byPeak = compareValues(utils::peakMagnitude(lhs.overallPeak), utils::peakMagnitude(rhs.overallPeak));
+    const auto byName = [&] { return lhs.fileName.compareNatural(rhs.fileName) <=> 0; };
+    const auto byPath = [&] { return lhs.fullPath.compareNatural(rhs.fullPath) <=> 0; };
+    const auto byLoudness = [&] { return compareValues(lhs.integratedLufs, rhs.integratedLufs); };
+    const auto byPeak
+        = [&] { return compareValues(utils::peakMagnitude(lhs.overallPeak), utils::peakMagnitude(rhs.overallPeak)); };
 
     switch (sortMode) {
         case AudioAnalysisSortMode::name:
-            return firstDifference({byName, byPath});
+            return firstDifference(byName, byPath);
 
         case AudioAnalysisSortMode::path:
-            return firstDifference({byPath, byName});
+            return firstDifference(byPath, byName);
 
         case AudioAnalysisSortMode::loudness:
-            return firstDifference({byLoudness, byPeak, byName});
+            return firstDifference(byLoudness, byPeak, byName);
 
         case AudioAnalysisSortMode::peak:
-            return firstDifference({byPeak, byLoudness, byName});
+            return firstDifference(byPeak, byLoudness, byName);
     }
 
     std::unreachable();

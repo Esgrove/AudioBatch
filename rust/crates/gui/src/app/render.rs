@@ -225,7 +225,7 @@ impl AppView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(STATUS_SECTION_SPACING / 2.0))
+            .gap(px(STATUS_SECTION_SPACING * 0.5))
             .px(px(STATUS_PADDING))
             .bg(color(palette::GREY_SEMI_DARK))
             .border_t_1()
@@ -601,7 +601,7 @@ fn controls_width(content_width: f32) -> f32 {
 /// The controls and the panel then share that half, each up to its maximum,
 /// so the waveform gets at least the other half.
 fn preview_widths(content_width: f32) -> (f32, f32, bool) {
-    let half = content_width / 2.0;
+    let half = content_width * 0.5;
     if half < WIDE_MINIMUM_HALF_WIDTH {
         let information_width =
             (content_width * INFORMATION_WIDTH_PROPORTION).clamp(INFORMATION_MINIMUM_WIDTH, INFORMATION_MAXIMUM_WIDTH);

@@ -1,5 +1,6 @@
 /// Tests for the results table sorting in ResultsSorting.
 
+#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/ResultsSorting.h"
@@ -62,6 +63,42 @@ public:
     /// Runs the sorting checks.
     void runTest() override
     {
+        beginTest("Core sorting keeps key precedence, natural ties, and failures last in both directions");
+        {
+            auto trackTwo = makeRecord("track 2", -0.2f, -20.0);
+            auto trackThree = makeRecord("track 3", 0.2f, -20.0);
+            auto trackTen = makeRecord("track 10", 0.8f, -10.0);
+            auto failed = makeRecord("failed", 0.0f, -1000.0);
+            failed.status = AudioAnalysisStatus::failed;
+            trackTwo.fullPath = "/music/folder 3/track 2";
+            trackThree.fullPath = "/music/folder 2/track 3";
+            trackTen.fullPath = "/music/folder 1/track 10";
+            for (const auto mode :
+                 {
+                     AudioAnalysisSortMode::name,
+                     AudioAnalysisSortMode::path,
+                     AudioAnalysisSortMode::peak,
+                     AudioAnalysisSortMode::loudness,
+                 })
+            {
+                std::vector records {failed, trackTen, trackThree, trackTwo};
+                sortRecords(records, mode, true);
+                const auto expected = mode == AudioAnalysisSortMode::path
+                    ? juce::StringArray {"track 10", "track 3", "track 2"}
+                    : juce::StringArray {"track 2", "track 3", "track 10"};
+                auto forwards = expected;
+                forwards.add("failed");
+                expect(namesOf(records) == forwards);
+                sortRecords(records, mode, false);
+                juce::StringArray backwards;
+                for (int index = expected.size() - 1; index >= 0; --index) {
+                    backwards.add(expected[index]);
+                }
+                backwards.add("failed");
+                expect(namesOf(records) == backwards);
+            }
+        }
+
         beginTest("Bit depth sorts numerically in both directions, with unavailable depths first");
         {
             auto unknown = makeRecord("unknown", 0.5f, -20.0);

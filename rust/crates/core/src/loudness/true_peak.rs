@@ -21,6 +21,14 @@ use fearless_simd_macros::simd;
 /// NEON or AVX2 hardware level, detected once per process.
 static LEVEL: LazyLock<Level> = LazyLock::new(hardware_level);
 
+/// Native four-phase coefficients and their underflow bound, shared without sharing channel history.
+static FOUR_FILTER: LazyLock<Filter<12>> = LazyLock::new(|| Filter::new(interpolation_coefficients::<12, 4>()));
+
+/// Native two-phase coefficients duplicated into four lanes, with their shared underflow bound.
+static TWO_FILTER: LazyLock<Filter<24>> = LazyLock::new(|| {
+    Filter::new(interpolation_coefficients::<24, 2>().map(|[first, second]| [first, second, first, second]))
+});
+
 /// Total coefficients in the reference interpolation filter and storage for a doubled history.
 const FILTER_TAPS: usize = 48;
 
@@ -32,12 +40,12 @@ const ALMOST_ZERO: f64 = 0.000_001;
 enum Interpolation {
     /// Four phases below 96 kHz, with one phase per SIMD lane.
     Four {
-        coefficients: [[f32; 4]; 12],
+        filter: &'static Filter<12>,
         histories: Vec<History<12>>,
     },
     /// Two phases below 192 kHz, duplicated into the upper two SIMD lanes.
     Two {
-        coefficients: [[f32; 4]; 24],
+        filter: &'static Filter<24>,
         histories: Vec<History<24>>,
     },
     /// At 192 kHz and above only decoded sample peaks are needed.
@@ -57,6 +65,13 @@ pub struct TruePeak {
     peaks: Vec<f64>,
     /// Maxima from the most recent nonempty push, including interpolation of retained history.
     previous_peaks: Vec<f64>,
+}
+
+/// Immutable interpolation data initialized with native math before processing begins.
+#[derive(Debug)]
+struct Filter<const TAPS: usize> {
+    coefficients: [[f32; 4]; TAPS],
+    minimum_fast_sample: f32,
 }
 
 /// Doubled circular buffer exposing the most recent samples as a fixed size array.
@@ -82,13 +97,12 @@ impl TruePeak {
         assert!(sample_rate > 0, "true peak needs a positive sample rate");
         let interpolation = if sample_rate < 96_000 {
             Interpolation::Four {
-                coefficients: interpolation_coefficients::<12, 4>(),
+                filter: &FOUR_FILTER,
                 histories: vec![History::new(); channels],
             }
         } else if sample_rate < 192_000 {
             Interpolation::Two {
-                coefficients: interpolation_coefficients::<24, 2>()
-                    .map(|[first, second]| [first, second, first, second]),
+                filter: &TWO_FILTER,
                 histories: vec![History::new(); channels],
             }
         } else {
@@ -146,26 +160,20 @@ impl TruePeak {
             return;
         }
         match &mut self.interpolation {
-            Interpolation::Four {
-                coefficients,
-                histories,
-            } => push_interpolated(
+            Interpolation::Four { filter, histories } => push_interpolated(
                 simd,
                 planes,
                 &mut self.peaks,
                 &mut self.previous_peaks,
-                coefficients,
+                filter,
                 histories,
             ),
-            Interpolation::Two {
-                coefficients,
-                histories,
-            } => push_interpolated(
+            Interpolation::Two { filter, histories } => push_interpolated(
                 simd,
                 planes,
                 &mut self.peaks,
                 &mut self.previous_peaks,
-                coefficients,
+                filter,
                 histories,
             ),
             Interpolation::Samples => {
@@ -197,6 +205,31 @@ impl TruePeak {
             #[cfg(test)]
             Level::Fallback(simd) => self.push_simd(simd, planes),
             _ => unreachable!("true peak requires NEON or AVX2"),
+        }
+    }
+}
+
+impl<const TAPS: usize> Filter<TAPS> {
+    /// Derives the conservative x86 arithmetic-underflow bound once for a fixed coefficient bank.
+    fn new(coefficients: [[f32; 4]; TAPS]) -> Self {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let minimum_fast_sample = {
+            let minimum_coefficient = coefficients
+                .iter()
+                .flatten()
+                .map(|value| value.abs())
+                .filter(|&value| value > 0.0)
+                .fold(f32::INFINITY, f32::min);
+            // Products above 2^-102 have spacing of at least 2^-126, so their sums cannot become subnormal.
+            let minimum_product = f64::from(f32::MIN_POSITIVE) * f64::from(1_u32 << f32::MANTISSA_DIGITS);
+            (minimum_product / f64::from(minimum_coefficient)) as f32
+        }
+        .next_up();
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        let minimum_fast_sample = 0.0;
+        Self {
+            coefficients,
+            minimum_fast_sample,
         }
     }
 }
@@ -279,26 +312,12 @@ fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
     planes: &[P],
     peaks: &mut [f64],
     previous_peaks: &mut [f64],
-    coefficients: &[[f32; 4]; TAPS],
+    filter: &Filter<TAPS>,
     histories: &mut [History<TAPS>],
 ) {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    let minimum_fast_sample = {
-        let minimum_coefficient = coefficients
-            .iter()
-            .flatten()
-            .map(|value| value.abs())
-            .filter(|&value| value > 0.0)
-            .fold(f32::INFINITY, f32::min);
-        // Products above 2^-102 have spacing of at least 2^-126, so their sums cannot become subnormal.
-        let minimum_product = f64::from(f32::MIN_POSITIVE) * f64::from(1_u32 << f32::MANTISSA_DIGITS);
-        (minimum_product / f64::from(minimum_coefficient)) as f32
-    }
-    .next_up();
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    let minimum_fast_sample = 0.0;
-    let scalar_coefficients = coefficients;
-    let coefficients = coefficients.map(|row| f32x4::simd_from(simd, row));
+    let minimum_fast_sample = filter.minimum_fast_sample;
+    let scalar_coefficients = &filter.coefficients;
+    let coefficients = filter.coefficients.map(|row| f32x4::simd_from(simd, row));
     let zero = f32x4::splat(simd, 0.0);
     for (((plane, peak), previous_peak), history) in planes.iter().zip(peaks).zip(previous_peaks).zip(histories) {
         let mut block_peak = 0.0;
@@ -372,14 +391,15 @@ fn interpolate_underflow<S: Simd, const TAPS: usize>(
 fn interpolation_coefficients<const TAPS: usize, const FACTOR: usize>() -> [[f32; FACTOR]; TAPS] {
     assert_eq!(TAPS * FACTOR, FILTER_TAPS);
     let mut filter = [[0.0; FACTOR]; TAPS];
+    let window = FILTER_TAPS as f64;
+    let half_window = window * 0.5;
     for (index, coefficient) in filter.iter_mut().flat_map(|row| row.iter_mut()).enumerate() {
         let index = index as f64;
-        let window = FILTER_TAPS + 1;
-        let window = (window - 1) as f64;
         let weight = 0.5 * (1.0 - f64::cos(2.0 * PI * index / window));
-        let offset = index - window / 2.0;
+        let offset = index - half_window;
         *coefficient = if offset.abs() > ALMOST_ZERO {
-            weight * f64::sin(offset * PI / FACTOR as f64) / (offset * PI / FACTOR as f64)
+            let argument = offset * PI / FACTOR as f64;
+            weight * f64::sin(argument) / argument
         } else {
             weight
         } as f32;
@@ -393,6 +413,39 @@ mod test_true_peak {
 
     use super::*;
     use crate::signals::Xorshift;
+
+    #[test]
+    fn shared_filters_retain_every_native_coefficient_bit() {
+        for (actual, expected) in FOUR_FILTER
+            .coefficients
+            .iter()
+            .flatten()
+            .zip(interpolation_coefficients::<12, 4>().into_iter().flatten())
+            .chain(
+                TWO_FILTER.coefficients.iter().flatten().zip(
+                    interpolation_coefficients::<24, 2>()
+                        .map(|[first, second]| [first, second, first, second])
+                        .into_iter()
+                        .flatten(),
+                ),
+            )
+        {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        for rate in [48_000, 96_000] {
+            let first = TruePeak::new(1, rate);
+            let second = TruePeak::new(2, rate);
+            match (&first.interpolation, &second.interpolation) {
+                (Interpolation::Four { filter: first, .. }, Interpolation::Four { filter: second, .. }) => {
+                    assert!(std::ptr::eq(*first, *second));
+                }
+                (Interpolation::Two { filter: first, .. }, Interpolation::Two { filter: second, .. }) => {
+                    assert!(std::ptr::eq(*first, *second));
+                }
+                _ => panic!("the same rate must select the same interpolation"),
+            }
+        }
+    }
 
     /// Returns the hardware backend and the dependency's forced scalar fallback for exact comparisons.
     fn supported_levels() -> [Level; 2] {

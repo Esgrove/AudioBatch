@@ -16,6 +16,7 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
+#include <unordered_set>
 
 #include <algorithm>
 #include <cmath>
@@ -48,6 +49,14 @@ struct NormalizedRender {
     AudioAnalysisRecord measurements;
     /// Notice about tolerated read failures.
     juce::String decodeNotice;
+};
+
+/// Prepared destination and source metadata used while assigning deterministic output ownership.
+struct OutputCandidate {
+    /// Non-owning record from the caller's vector, valid for the duration of conflict detection.
+    const AudioAnalysisRecord* record {};
+    juce::File output;
+    bool inPlace {};
 };
 
 /// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
@@ -245,36 +254,35 @@ juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 /// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
 juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records)
 {
-    auto ordered = records | std::views::transform([](const AudioAnalysisRecord& record) { return &record; })
+    auto ordered = records | std::views::transform([](const AudioAnalysisRecord& record) {
+                       auto output = getNormalizationOutputFile(record.file);
+                       const auto inPlace = output == record.file;
+                       return OutputCandidate {.record = &record, .output = std::move(output), .inPlace = inPlace};
+                   })
         | std::ranges::to<std::vector>();
 
     // In-place sources claim their output first, then the rest in path order.
-    std::ranges::sort(ordered, [](const AudioAnalysisRecord* lhs, const AudioAnalysisRecord* rhs) {
-        const bool lhsInPlace = getNormalizationOutputFile(lhs->file) == lhs->file;
-        const bool rhsInPlace = getNormalizationOutputFile(rhs->file) == rhs->file;
-
-        if (lhsInPlace != rhsInPlace) {
-            return lhsInPlace;
+    std::ranges::sort(ordered, [](const OutputCandidate& lhs, const OutputCandidate& rhs) {
+        if (lhs.inPlace != rhs.inPlace) {
+            return lhs.inPlace;
         }
 
-        return lhs->file.getFullPathName() < rhs->file.getFullPathName();
+        return lhs.record->file.getFullPathName() < rhs.record->file.getFullPathName();
     });
 
-    juce::StringArray claimedOutputs;
+    std::unordered_set<juce::String> claimedOutputs;
     juce::StringArray conflicts;
 
-    juce::StringArray visitedSources;
-    for (const auto* record : ordered) {
-        if (visitedSources.contains(record->file.getFullPathName())) {
+    std::unordered_set<juce::String> visitedSources;
+    for (const auto& candidate : ordered) {
+        const auto& sourcePath = candidate.record->file.getFullPathName();
+        if (!visitedSources.insert(sourcePath).second) {
             continue;
         }
-        visitedSources.add(record->file.getFullPathName());
-        const auto outputPath = utils::resolvedOutputKey(getNormalizationOutputFile(record->file));
+        const auto outputPath = utils::resolvedOutputKey(candidate.output);
 
-        if (claimedOutputs.contains(outputPath, !juce::File::areFileNamesCaseSensitive())) {
-            conflicts.add(record->file.getFullPathName());
-        } else {
-            claimedOutputs.add(outputPath);
+        if (!claimedOutputs.insert(outputPath).second) {
+            conflicts.add(sourcePath);
         }
     }
 

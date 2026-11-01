@@ -20,7 +20,7 @@ use audiobatch_core::loudness::true_peak::TruePeak;
 use audiobatch_core::meter::BlockMeter;
 use audiobatch_core::overload::{OverloadHistoryBuilder, SAMPLE_OVER, TRUE_PEAK_OVER};
 use audiobatch_core::signals::{SignalKind, generate};
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ebur128::{Channel, EbuR128, Mode};
 
 /// Length of the in-memory signals, long enough to fill the short-term window many times over.
@@ -165,6 +165,35 @@ fn bench_in_memory(criterion: &mut Criterion) {
     group.finish();
 }
 
+/// Isolates repeated meter construction and short pushes whose setup cost can dominate interpolation.
+fn bench_true_peak_setup(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("true_peak_setup");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(3));
+    for rate in [48_000, 96_000] {
+        group.bench_function(BenchmarkId::new("construct", rate), |bencher| {
+            bencher.iter(|| black_box(TruePeak::new(black_box(2), black_box(rate))));
+        });
+        for frames in [1, 12, 64] {
+            let samples = vec![0.5; frames];
+            let planes = [samples.as_slice(); 2];
+            group.bench_function(format!("push/{rate}/{frames}"), |bencher| {
+                bencher.iter_batched(
+                    || TruePeak::new(2, rate),
+                    |mut meter| {
+                        for _ in 0..512 {
+                            meter.push(black_box(&planes));
+                        }
+                        black_box(meter.peaks());
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
 /// Measures underflowing interpolation from an empty history, without an earlier loud peak masking the result.
 fn bench_true_peak_underflow(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("true_peak_underflow");
@@ -241,6 +270,7 @@ fn bench_end_to_end(criterion: &mut Criterion) {
 criterion_group!(
     benches,
     bench_in_memory,
+    bench_true_peak_setup,
     bench_true_peak_underflow,
     bench_overload_history,
     bench_end_to_end

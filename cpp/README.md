@@ -456,6 +456,55 @@ cmake --build --preset windows-debug
 
 For Ninja with MSVC and a compilation database, use `windows-ninja-debug` instead.
 
+### CPU targeting and Release optimization
+
+Windows x64 builds require AVX2 in every configuration, including Debug and sanitizer builds.
+There is no fallback for older CPUs.
+Local Release builds additionally target the build machine's CPU by default.
+On x86 Clang this uses `-march=native -mtune=native`,
+and on Apple Silicon it uses `-mcpu=native -mtune=native`.
+MSVC selects the highest usable, compiler-supported `/arch` level at or above AVX2,
+including AVX-512 and AVX10 where available, and applies coarse Intel or AMD `/favor` tuning.
+The host probe checks instruction availability and operating-system register state support before selecting a level.
+Wider SIMD is not a guarantee of better performance.
+
+`AUDIOBATCH_LTO` defaults to `ON`.
+CMake checks C and C++ IPO support before enabling link-time optimization for Release.
+The same settings cover the GUI, CLI, tests, and dependencies compiled by this build.
+Imported system libraries are unchanged.
+Existing Release optimization levels and floating-point semantics are retained.
+Sanitizer builds do not enable native targeting or LTO.
+
+CI never uses native CPU targeting, even if `AUDIOBATCH_NATIVE_CPU=ON` is cached or explicitly requested.
+It retains the Windows AVX2 minimum and supported Release LTO.
+Cross-compilation and macOS universal or non-host architecture builds also disable native targeting.
+CMake prints the effective optimization policy when configuring.
+
+Use the Release presets directly to configure and build, for example on Windows:
+
+```shell
+cmake --preset windows-release
+cmake --build --preset windows-release
+```
+
+To disable host-specific targeting while retaining the platform baseline and LTO:
+
+```shell
+cmake --preset windows-release -DAUDIOBATCH_NATIVE_CPU=OFF
+cmake --build --preset windows-release
+```
+
+Use `macos-release` on macOS, or `windows-ninja-release` with the MSVC developer environment for Ninja.
+Add `-DAUDIOBATCH_LTO=OFF` to disable LTO independently.
+Options remain in the build directory's CMake cache.
+To restore native targeting, reconfigure with `-DAUDIOBATCH_NATIVE_CPU=ON`.
+Native options and LTO only apply to the Release configuration, including in Visual Studio and Xcode projects.
+Do a clean rebuild after moving a native build directory to another CPU.
+Native binaries may not run on machines with fewer instruction extensions.
+A Windows baseline binary still requires AVX2.
+
+### Build script and installation
+
 The build produces `AudioBatch.app` or `AudioBatch.exe` (GUI) and `audiobatch` (CLI).
 `build.sh` copies them into this directory, where the Windows GUI becomes `AudioBatchApp.exe`.
 
@@ -502,6 +551,34 @@ Pass `-c` or `--clean` to remove that directory and its local compilation cache 
 For example, `./install.sh --clean` starts with a fresh release CMake configuration.
 
 ## Development
+
+### Profiling tools
+
+Install [samply](https://github.com/mstange/samply) through Cargo for sampling profiles of release builds:
+
+```shell
+cargo install --locked samply
+```
+
+Cargo is needed to install this optional development tool, not to build or run the C++ application.
+See [Analysis performance](../rust/docs/performance.md#reproducing-the-measurements) for shared benchmark
+and profiling setup.
+
+### Formatting and verification
+
+The plugin-linked test executable also has a standalone `--vst3-benchmark` mode.
+It does not run unit tests or change the application CLIs.
+Run the shared [VST3 benchmark runner](../rust/scripts/vst3_benchmark.sh) from `../rust`:
+
+```shell
+./scripts/vst3_benchmark.sh
+```
+
+The runner uses the same real AudioBatch Test MS bundle in both hosts,
+measures already decoded audio with preallocated buffers, and verifies every sample outside timing.
+Host mode includes a single host and input/output transfers.
+Chain mode adds the production channel adapter and finite checks.
+State restoration, loading, decoding, and sample exports are excluded from both timing boundaries.
 
 - `./format.sh` formats C++, CMake and shell scripts. `--check` verifies formatting without changes.
 - `./lint.sh` runs clang-tidy. `--check` fails on warnings.

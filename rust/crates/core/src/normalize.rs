@@ -201,17 +201,22 @@ pub fn normalization_output_path(source: &Path) -> PathBuf {
 /// A source listed more than once does not conflict with itself.
 #[must_use]
 pub fn find_batch_output_conflicts(records: &[AnalysisRecord]) -> HashSet<PathBuf> {
-    let mut ordered: Vec<&Path> = records.iter().map(|record| record.path.as_path()).collect();
-    ordered.sort_by(|first, second| {
-        let first_in_place = normalization_output_path(first) == *first;
-        let second_in_place = normalization_output_path(second) == *second;
-        second_in_place.cmp(&first_in_place).then_with(|| first.cmp(second))
+    let mut ordered: Vec<_> = records
+        .iter()
+        .map(|record| {
+            let source = record.path.as_path();
+            let output = normalization_output_path(source);
+            (source, output == source, output)
+        })
+        .collect();
+    ordered.sort_by(|(first, first_in_place, _), (second, second_in_place, _)| {
+        second_in_place.cmp(first_in_place).then_with(|| first.cmp(second))
     });
-    ordered.dedup();
+    ordered.dedup_by(|(first, _, _), (second, _, _)| first == second);
     let mut claimed: HashSet<String> = HashSet::new();
     let mut conflicts = HashSet::new();
-    for source in ordered {
-        if !claimed.insert(resolved_output_key(&normalization_output_path(source))) {
+    for (source, _, output) in ordered {
+        if !claimed.insert(resolved_output_key(&output)) {
             conflicts.insert(source.to_path_buf());
         }
     }

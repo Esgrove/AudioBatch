@@ -674,23 +674,44 @@ juce::String existingOutputMessage(const juce::File& outputFile)
 /// The copy is made in a new folder in the system temp directory, which is removed afterwards.
 /// Each call gets its own uniquely named folder, because workers back up files concurrently,
 /// and a shared folder name would let one worker delete the copy of another before it reached the trash.
+/// It owns its File value so concurrent calls do not share mutable path-encoding storage during native file operations.
 /// Returns true when the copy was made and disposed of.
-bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
+bool disposeOfCopy(const juce::File file, const FileDisposer& disposeFile)
 {
     const auto parentDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("AudioBatch");
     if (!parentDirectory.createDirectory() && !parentDirectory.isDirectory()) {
+        logError("Could not create the backup parent folder {}", parentDirectory.getFullPathName().quoted());
         return false;
     }
     const auto directory = parentDirectory.getChildFile(format("original-{}", juce::Uuid().toDashedString()));
 
     if (directory.exists() || !directory.createDirectory()) {
+        logError("Could not claim the backup folder {}", directory.getFullPathName().quoted());
         return false;
     }
 
     const auto copy = directory.getChildFile(file.getFileName());
     // The disposer reports a missing file as gone, so the copy is checked first,
     // otherwise a lost copy would count as a recoverable original.
-    const bool disposed = file.copyFileTo(copy) && copy.existsAsFile() && disposeFile(copy);
+    const auto copied = file.copyFileTo(copy);
+#if JUCE_WINDOWS
+    if (!copied) {
+        const std::error_code error(static_cast<int>(GetLastError()), std::system_category());
+        logError(
+            "Could not copy {} to {} before disposal: {}",
+            file.getFullPathName().quoted(),
+            copy.getFullPathName().quoted(),
+            error.message()
+        );
+    }
+#else
+    if (!copied) {
+        logError(
+            "Could not copy {} to {} before disposal", file.getFullPathName().quoted(), copy.getFullPathName().quoted()
+        );
+    }
+#endif
+    const bool disposed = copied && copy.existsAsFile() && disposeFile(copy);
 
     if (!directory.deleteRecursively()) {
         logWarn("Could not remove the temporary folder {}", directory.getFullPathName().quoted());
