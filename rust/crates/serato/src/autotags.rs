@@ -56,7 +56,7 @@ pub enum AutoTagsError {
     #[error("Negative BPM: {bpm}")]
     NegativeBpm {
         /// Rejected BPM.
-        bpm: f32,
+        bpm: f64,
     },
 }
 
@@ -99,11 +99,11 @@ pub enum AutoTagsNumberError {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AutoTags {
     /// Beats per minute.
-    pub bpm: f32,
+    pub bpm: f64,
     /// Calculated auto gain in dB.
-    pub auto_gain: f32,
+    pub auto_gain: f64,
     /// Manually adjusted gain in dB.
-    pub gain: f32,
+    pub gain: f64,
 }
 
 impl Display for AutoTagsField {
@@ -173,6 +173,7 @@ impl AutoTags {
         Ok(Self { bpm, auto_gain, gain })
     }
 
+    /// Parses three compact terminated numbers and at most one padding byte.
     fn parse_compact(data: &[u8]) -> Result<Self, AutoTagsError> {
         let mut remaining = data.get(2..).ok_or(AutoTagsError::TooShort { length: data.len() })?;
         let mut number = |field| {
@@ -214,11 +215,7 @@ impl Display for AutoTags {
 }
 
 /// Parses a fixed-width ASCII number padded with zero bytes, rejecting anything after the padding.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "the fields are stored as f32 and Serato writes at most three decimals"
-)]
-fn fixed_number(bytes: &[u8]) -> Result<f32, AutoTagsNumberError> {
+fn fixed_number(bytes: &[u8]) -> Result<f64, AutoTagsNumberError> {
     let length = bytes
         .iter()
         .position(|&byte| byte == 0)
@@ -228,7 +225,7 @@ fn fixed_number(bytes: &[u8]) -> Result<f32, AutoTagsNumberError> {
         return Err(AutoTagsNumberError::DataAfterTerminator);
     }
     let text = std::str::from_utf8(digits).map_err(AutoTagsNumberError::Utf8)?;
-    parse_tag_number(text).map(|value| value as f32)
+    parse_tag_number(text)
 }
 
 /// Strictly parses a finite ASCII number with no ignored text.
@@ -266,6 +263,19 @@ mod test_autotags {
         assert!((autotags.bpm - 128.0).abs() < 0.001);
         assert!((autotags.auto_gain + 3.257).abs() < 0.001);
         assert!(autotags.gain.abs() < 0.001);
+    }
+
+    #[test]
+    fn ascii_values_retain_binary64_precision_and_range() {
+        let data = [HEADER, b"127.12\0", b"1.135\0\0", b"0.001\0"].concat();
+        let tags = AutoTags::parse(&data).expect("exact decimal source values");
+        assert_eq!(tags.bpm.to_bits(), 127.12_f64.to_bits());
+        assert_eq!(tags.auto_gain.to_bits(), 1.135_f64.to_bits());
+        assert_eq!(tags.gain.to_bits(), 0.001_f64.to_bits());
+        let data = [HEADER, b"1e100\0\0", b"1e-100\0", b"0.000\0"].concat();
+        let tags = AutoTags::parse(&data).expect("finite binary64 range");
+        assert_eq!(tags.bpm.to_bits(), 1e100_f64.to_bits());
+        assert_eq!(tags.auto_gain.to_bits(), 1e-100_f64.to_bits());
     }
 
     #[test]

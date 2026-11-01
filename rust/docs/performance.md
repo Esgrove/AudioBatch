@@ -235,7 +235,7 @@ The harness is local and introduces no production dependency or unsafe code in c
 
 - Integrated loudness, maximum short-term loudness, and each history value stay within 0.001 LU of ebur128.
   Integrated and maximum short-term values must also match at two displayed decimal places.
-- True peak is bit-exact against the reference except for the explicit x86 arithmetic-underflow case below.
+- True peak is bit-exact against the reference, including x86 arithmetic underflow.
   Chunk-size invariance, sample extrema, waveform bytes, and overload history retain exact regression checks.
 - In-render normalization records equal an independent fresh decode, including file identity, history,
   waveform, overload bytes, and final partial windows after three seconds.
@@ -243,7 +243,7 @@ The harness is local and introduces no production dependency or unsafe code in c
   Lossy formats retain their separate decoder tolerance.
 - Goldens are regression snapshots of the current meter.
   Regeneration requires differential, displayed-value, normalization, and parity checks.
-- Cache analysis version 5 refreshes older measurements while retaining same-identity custom gains and Serato data.
+- Cache analysis version 6 refreshes older measurements while retaining same-identity custom gains and Serato data.
 
 The October 30 macOS validation passed all 860 workspace tests with the normalization corpus required and none skipped.
 Release core tests, Clippy, rustfmt, shell and prose formatting, Python checks, and packaging regression tests pass.
@@ -265,10 +265,11 @@ Expected silence, excessive-gain, short-loudness, and output-conflict failures a
 
 - Windows and macOS measurements use different CPUs and platform decoders.
   Compare implementations within each machine, not the operating systems as an isolated performance variable.
-- Ebur128 temporarily enables arithmetic flush to zero on x86 with SSE2.
-  The safe SIMD kernel leaves the caller's floating point environment unchanged,
-  so arithmetic-underflow results can differ even for normal source samples.
-  A focused x86 regression covers this difference.
+- X86 arithmetic underflow matches ebur128 without changing the caller's floating point environment.
+  Subnormal-sensitive histories use binary64 intermediates rounded to binary32 after each multiply and add.
+  This exceptional-input path costs more than ordinary binary32 SIMD processing.
+  The dated timing results above predate this emulation.
+  `true_peak_underflow` benchmarks ordinary, small-normal, and subnormal inputs separately.
 - The generated long AAC normalization input fails the existing lossy-decoder sample tolerance.
   The complete CLI comparison therefore uses the committed normalization corpus, not the combined generated corpus.
   The tolerance remains unchanged.

@@ -4,6 +4,8 @@
 //! although each application has its own database file.
 //! A row is keyed by path and tag kind.
 //! It only holds while the file keeps the stored size and modification time and the parser keeps the stored version.
+//! The read/parser version covers duplicate selection and recovered errors independently of the raster blob version,
+//! so stale present and missing outcomes are re-read together.
 //! Present overviews keep their decoded slices in the `SOVR` representation.
 //! Files without an overview, with an invalid one, or in a format without Serato tags keep only their state,
 //! so callers can distinguish those results from an uncached file without parsing the tag.
@@ -252,6 +254,45 @@ mod test_serato_cache {
             .store_serato_overview(&path, &state)
             .expect("replaces old invalid row");
         assert_eq!(setup.cache.get_serato_overview(&path), Some(state));
+    }
+
+    #[test]
+    fn version_two_outcomes_miss_and_current_read_replaces_them() {
+        let setup = setup();
+        let path = test_fixtures::metadata_fixtures()
+            .into_iter()
+            .find(|case| case.file == "dmt_drum_127_26A.flac")
+            .expect("real FLAC case")
+            .path();
+        let tags = crate::tags::read_display_tags(&path).expect("current native reader");
+        let refreshed = SeratoOverviewState::from_tags(&path, &tags);
+        assert!(matches!(refreshed, SeratoOverviewState::Present(_)));
+        for stale in [
+            present(),
+            SeratoOverviewState::Invalid,
+            SeratoOverviewState::Absent,
+            SeratoOverviewState::Unsupported,
+        ] {
+            setup
+                .cache
+                .store_serato_overview(&path, &stale)
+                .expect("seeds old outcome");
+            setup
+                .cache
+                .with_connection(|connection| {
+                    Ok(connection.execute("UPDATE serato_tag_cache SET parser_version = 2", [])?)
+                })
+                .expect("marks old duplicate-selection semantics");
+            assert!(
+                setup.cache.get_serato_overview(&path).is_none(),
+                "stale version-two outcome"
+            );
+            setup
+                .cache
+                .store_serato_overview(&path, &refreshed)
+                .expect("refreshes outcome");
+            assert_eq!(setup.cache.get_serato_overview(&path), Some(refreshed.clone()));
+        }
     }
 
     #[test]

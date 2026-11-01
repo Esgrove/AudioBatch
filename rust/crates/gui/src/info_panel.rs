@@ -14,7 +14,7 @@ use audiobatch_core::format::{
     format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
     format_true_peak_compact, format_type_label,
 };
-use audiobatch_core::serato_tags::BeatGrid;
+use audiobatch_core::serato_tags::SeratoData;
 use audiobatch_core::{AnalysisRecord, FileTags};
 use gpui_kit::{
     AnyElement, Div, Hsla, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
@@ -497,13 +497,8 @@ fn record_rows(record: &AnalysisRecord) -> Vec<Detail> {
 /// The tempo prefers Serato's analyzed value over the tag and the beat grid.
 /// The tempo, the key, and the year are short, and the album, the genre, and the comment can be long.
 fn tag_rows(tags: &FileTags) -> Vec<Detail> {
-    let serato_bpm = tags.serato.as_ref().and_then(|serato| {
-        serato
-            .bpm()
-            .or_else(|| serato.beatgrid.as_ref().and_then(BeatGrid::bpm))
-    });
+    let serato_bpm = tags.serato.as_ref().and_then(SeratoData::bpm);
     let bpm = serato_bpm
-        .map(f64::from)
         .or_else(|| tags.bpm.as_deref().and_then(|bpm| bpm.trim().parse::<f64>().ok()))
         .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
         .map(|bpm| format!("{bpm:.2}"));

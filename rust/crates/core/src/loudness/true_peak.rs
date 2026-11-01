@@ -8,16 +8,14 @@
 //! The x86 path selects AVX2 even when wider instructions are available, without SSE compatibility backends.
 //! Scalar fallback remains available for differential tests.
 //!
-//! On x86 with SSE2, ebur128 temporarily enables flush to zero for arithmetic results, but not denormals are zero.
-//! This safe kernel leaves the floating point environment unchanged,
-//! so subnormal products and accumulators can differ from that reference, even when every input sample is normal.
-//! Bit equality in that underflow regime is not guaranteed.
-//! Other targets also inherit the caller's floating point environment.
+//! On x86, arithmetic results are flushed to zero to match ebur128, without discarding subnormal inputs.
+//! The kernel emulates that behavior without changing the caller's floating point environment.
+//! Other targets retain their native arithmetic-underflow behavior.
 
 use std::f64::consts::PI;
 use std::sync::LazyLock;
 
-use fearless_simd::{Level, Simd, f32x4, prelude::*};
+use fearless_simd::{Level, Simd, f32x4, f64x4, prelude::*};
 use fearless_simd_macros::simd;
 
 /// NEON or AVX2 hardware level, detected once per process.
@@ -50,7 +48,6 @@ enum Interpolation {
 ///
 /// Input is planar, with equally sized planes in the channel order passed to [`Self::new`].
 /// Construction allocates channel histories and peak storage, but processing and reading peaks do not allocate.
-/// See the module documentation for the x86 subnormal arithmetic caveat.
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct TruePeak {
@@ -69,6 +66,8 @@ struct History<const TAPS: usize> {
     samples: [f32; FILTER_TAPS],
     /// Index of the newest sample after the first insertion.
     position: usize,
+    /// Slots whose nonzero samples can produce subnormal products or sums.
+    small_samples: u32,
 }
 
 impl TruePeak {
@@ -209,10 +208,11 @@ impl<const TAPS: usize> History<TAPS> {
         Self {
             samples: [0.0; FILTER_TAPS],
             position: TAPS,
+            small_samples: 0,
         }
     }
 
-    /// Inserts the newest sample and returns a constant length view, newest sample first.
+    /// Inserts a sample and returns the newest-first history and whether underflow needs explicit handling.
     #[expect(
         clippy::inline_always,
         reason = "the fixed history view must inline into the SIMD kernel"
@@ -222,17 +222,27 @@ impl<const TAPS: usize> History<TAPS> {
         reason = "the position stays below TAPS and the buffer holds two histories"
     )]
     #[inline(always)]
-    fn push_front(&mut self, sample: f32) -> &[f32; TAPS] {
+    fn push_front(&mut self, sample: f32, minimum_fast_sample: f32) -> (&[f32; TAPS], bool) {
         self.position = if self.position == 0 {
             TAPS - 1
         } else {
             self.position - 1
         };
+        let slot = 1_u32 << self.position;
+        self.small_samples &= !slot;
+        // Clear the sign bit so unsigned comparisons order magnitudes without floating-point denormal handling.
+        let magnitude = sample.to_bits() & 0x7fff_ffff;
+        if magnitude < minimum_fast_sample.to_bits() && magnitude != 0 {
+            self.small_samples |= slot;
+        }
         self.samples[self.position] = sample;
         self.samples[self.position + TAPS] = sample;
-        self.samples[self.position..]
-            .first_chunk::<TAPS>()
-            .expect("the doubled buffer always contains a complete history")
+        (
+            self.samples[self.position..]
+                .first_chunk::<TAPS>()
+                .expect("the doubled buffer always contains a complete history"),
+            self.small_samples != 0,
+        )
     }
 }
 
@@ -272,6 +282,22 @@ fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
     coefficients: &[[f32; 4]; TAPS],
     histories: &mut [History<TAPS>],
 ) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let minimum_fast_sample = {
+        let minimum_coefficient = coefficients
+            .iter()
+            .flatten()
+            .map(|value| value.abs())
+            .filter(|&value| value > 0.0)
+            .fold(f32::INFINITY, f32::min);
+        // Products above 2^-102 have spacing of at least 2^-126, so their sums cannot become subnormal.
+        let minimum_product = f64::from(f32::MIN_POSITIVE) * f64::from(1_u32 << f32::MANTISSA_DIGITS);
+        (minimum_product / f64::from(minimum_coefficient)) as f32
+    }
+    .next_up();
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    let minimum_fast_sample = 0.0;
+    let scalar_coefficients = coefficients;
     let coefficients = coefficients.map(|row| f32x4::simd_from(simd, row));
     let zero = f32x4::splat(simd, 0.0);
     for (((plane, peak), previous_peak), history) in planes.iter().zip(peaks).zip(previous_peaks).zip(histories) {
@@ -284,13 +310,18 @@ fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
             if magnitude > block_peak {
                 block_peak = magnitude;
             }
-            let recent = history.push_front(sample);
-            let mut output = zero;
-            for (&coefficient, &input) in coefficients.iter().zip(recent) {
-                // Separate operators are intentional, the reference does not enable precision-true-peak.
-                let product = f32x4::splat(simd, input) * coefficient;
-                output += product;
-            }
+            let (recent, underflow_possible) = history.push_front(sample, minimum_fast_sample);
+            let output = if underflow_possible {
+                interpolate_underflow(simd, recent, scalar_coefficients)
+            } else {
+                let mut output = zero;
+                for (&coefficient, &input) in coefficients.iter().zip(recent) {
+                    // Separate operators are intentional, the reference does not enable precision-true-peak.
+                    let product = f32x4::splat(simd, input) * coefficient;
+                    output += product;
+                }
+                output
+            };
             let magnitudes = output.abs();
             // SIMD max has backend-dependent NaN semantics, while ordered comparison ignores every NaN.
             phase_peaks = magnitudes.simd_gt(phase_peaks).select(magnitudes, phase_peaks);
@@ -308,6 +339,30 @@ fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
             *peak = block_peak;
         }
     }
+}
+
+/// Emulates each binary32 multiply and add with FTZ, keeping intermediates normal in binary64.
+#[simd]
+fn interpolate_underflow<S: Simd, const TAPS: usize>(
+    simd: S,
+    inputs: &[f32; TAPS],
+    coefficients: &[[f32; 4]; TAPS],
+) -> f32x4<S> {
+    let zero = f64x4::splat(simd, 0.0);
+    let minimum = f64x4::splat(simd, f64::from(f32::MIN_POSITIVE));
+    let round = |value: f64x4<S>| {
+        let value = value.abs().simd_lt(minimum).select(zero, value);
+        let narrowed = value.narrow(value).split().0;
+        let (low, high) = narrowed.widen();
+        low.combine(high)
+    };
+    let mut output = zero;
+    for (&input, row) in inputs.iter().zip(coefficients) {
+        let coefficient = f64x4::simd_from(simd, row.map(f64::from));
+        let product = round(f64x4::splat(simd, f64::from(input)) * coefficient);
+        output = round(output + product);
+    }
+    output.narrow(output).split().0
 }
 
 // Interpolation coefficient calculation is adapted from ebur128 0.1.11.
@@ -626,39 +681,61 @@ mod test_true_peak {
         assert_reference(&planes, 192_000, &[1]);
     }
 
-    #[cfg(not(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "sse2")))]
     #[test]
-    fn underflowing_interpolation_matches_without_reference_ftz() {
+    fn normal_inputs_with_underflowing_products_match_reference() {
         let planes: Vec<_> = seeded_planes(2, 129)
             .into_iter()
-            .map(|plane| plane.into_iter().map(|sample| sample * f32::MIN_POSITIVE).collect())
+            .map(|plane| {
+                plane
+                    .into_iter()
+                    .map(|sample| (1.0 + sample.abs()).copysign(sample) * f32::MIN_POSITIVE)
+                    .collect::<Vec<_>>()
+            })
             .collect();
-        for rate in [48_000, 96_000] {
+        assert!(planes.iter().flatten().all(|sample| sample.is_normal()));
+        for rate in [22_050, 48_000, 96_000, 192_000] {
             assert_reference(&planes, rate, &random_chunks());
         }
     }
 
-    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "sse2"))]
     #[test]
-    fn subnormal_overshoots_expose_the_x86_ftz_caveat() {
+    fn subnormal_inputs_match_reference() {
         let amplitude = f32::MIN_POSITIVE * 0.5;
         let planes = vec![
             (0..65)
                 .map(|frame| if frame % 4 < 2 { amplitude } else { -amplitude })
                 .collect::<Vec<_>>(),
         ];
-        let mut reference = EbuR128::new(1, 48_000, Mode::TRUE_PEAK).expect("reference meter");
-        let plane_refs: Vec<_> = planes.iter().map(Vec::as_slice).collect();
-        reference.add_frames_planar_f32(&plane_refs).expect("reference block");
-        let reference_peak = reference.true_peak(0).expect("reference peak");
-        assert_eq!(reference_peak.to_bits(), f64::from(amplitude).to_bits());
-        for level in supported_levels() {
-            let mut candidate = TruePeak::new(1, 48_000);
-            candidate.push_at_level(&planes, level);
-            assert!(
-                candidate.peaks()[0] > reference_peak,
-                "default gradual underflow should expose the documented FTZ difference at {level:?}"
-            );
+        for rate in [22_050, 48_000, 96_000, 192_000] {
+            assert_reference(&planes, rate, &random_chunks());
+        }
+    }
+
+    #[test]
+    fn tiny_signal_scales_and_history_transitions_match_reference() {
+        let planes: Vec<_> = seeded_planes(2, 385)
+            .into_iter()
+            .map(|plane| {
+                plane
+                    .into_iter()
+                    .enumerate()
+                    .map(|(frame, sample)| {
+                        sample
+                            * match frame / 55 {
+                                0 => f32::MIN_POSITIVE * 0.25,
+                                1 => f32::MIN_POSITIVE,
+                                2 => f32::MIN_POSITIVE * 64.0,
+                                3 => 1.0e-20,
+                                4 => 1.0e-12,
+                                5 => f32::MIN_POSITIVE * 0.5,
+                                _ => 0.0,
+                            }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for rate in [22_050, 48_000, 96_000, 192_000] {
+            assert_reference(&planes, rate, &random_chunks());
         }
     }
 }

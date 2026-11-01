@@ -189,7 +189,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   maximum short-term loudness, and every short-term history point.
   Integrated and maximum short-term values must also display the same two decimal places.
   Do not require reference bit equality for loudness fields or serialized history.
-  True peak keeps its unchanged bit-exact contract and documented x86 arithmetic-underflow exception.
+  True peak must match the ebur128 reference bit for bit, including x86 arithmetic underflow.
 - Goldens are our own regression snapshots, not immutable reference output.
   A validated numerical change may regenerate the affected snapshots.
   Keep differential, displayed-value, chunk-invariance, normalization, and parity checks as independent validation.
@@ -213,7 +213,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Keep header and frame-count validation, without a full output re-decode.
   Fuse one `f32` gain multiplication into the writer, without a scaled copy or per-chunk plane-reference `Vec`.
   An in-place file already at target returns the current record after cancellation and source-identity checks.
-- Cache analysis version 5 invalidates older measurements without discarding same-identity custom gains or Serato data.
+- Cache analysis version 6 invalidates older measurements without discarding same-identity custom gains or Serato data.
   Keep ebur128 as a development dependency only.
 
 ## VST3 Hosting

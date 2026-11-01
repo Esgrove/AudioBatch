@@ -5,7 +5,7 @@
 //! wrapped in the MIME type, an empty file name, and the frame description, each null terminated.
 //! `decode_native_value` checks that wrapper and returns the frame payload,
 //! so the tag can be written as a `GEOB` frame when a file is converted to a format that uses `ID3v2`.
-//! It removes a native export's dangling zero sextet and unambiguous one-byte raster or grid padding here,
+//! It removes a native export's dangling zero sextet and unambiguous one-byte analysis, raster, or grid padding here,
 //! rather than weakening the raw tag parsers.
 
 use base64::Engine as _;
@@ -105,6 +105,7 @@ pub fn decode_native_value(value: &str, expected_description: &str) -> Option<Ve
         remaining = rest.get(1..)?;
     }
     let padded = match expected_description {
+        "Serato Analysis" => remaining.len() == 3,
         "Serato Overview" => remaining.starts_with(&[1, 5]) && remaining.len() > 18 && (remaining.len() - 2) % 16 == 1,
         "Serato BeatGrid" => {
             remaining.starts_with(&[1, 0])
@@ -170,6 +171,8 @@ mod test_decode_native_value {
     fn returns_the_payload_of_a_matching_wrapper() {
         let value = wrap("Serato Analysis", &[2, 1]);
         assert_eq!(decode_native_value(&value, "Serato Analysis"), Some(vec![2, 1]));
+        let padded = wrap("Serato Analysis", &[2, 1, 0]);
+        assert_eq!(decode_native_value(&padded, "Serato Analysis"), Some(vec![2, 1]));
     }
 
     #[test]
@@ -197,7 +200,7 @@ mod test_decode_native_value {
         assert!(!value.contains('='));
         value.push('A');
         assert_eq!(decode_tag_base64(value.as_bytes()), None);
-        assert_eq!(decode_native_value(&value, "Serato Analysis"), Some(vec![2, 1, 0]));
+        assert_eq!(decode_native_value(&value, "Serato Analysis"), Some(vec![2, 1]));
         value.pop();
         value.push('B');
         assert_eq!(decode_native_value(&value, "Serato Analysis"), None);

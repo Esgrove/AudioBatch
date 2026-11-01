@@ -9,15 +9,53 @@ use std::fmt::Display;
 use std::io::{self, BufRead, Cursor, Read};
 use std::str;
 
-use base64::{Engine as _, engine::general_purpose};
+use base64::Engine as _;
+use base64::alphabet;
+#[cfg(test)]
+use base64::engine::general_purpose;
+use base64::engine::{GeneralPurpose, GeneralPurposeConfig};
 use byteorder::{BigEndian, ReadBytesExt};
 
 use crate::format_position_timestamp;
 
+/// Fixed number of slots in the legacy markers layout.
+const LEGACY_SLOTS: usize = 14;
+/// Size of a legacy slot in bytes.
+const LEGACY_RECORD_BYTES: usize = 22;
+/// Largest supported marker payload.
+const MAXIMUM_PAYLOAD_BYTES: usize = 2 + crate::MAXIMUM_SLICES * crate::BAND_COUNT;
+/// Bound on records in one marker payload.
+const MAXIMUM_RECORDS: usize = 4096;
+/// Bound on owned marker labels.
+const MAXIMUM_LABEL_BYTES: usize = 32_768;
+/// Serato can leave nonzero unused bits in its final Base64 sextet.
+const MARKERS_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::STANDARD,
+    GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+);
+
 /// A malformed Markers2 wrapper, payload, or known entry.
 #[derive(Debug, thiserror::Error)]
 pub enum MarkersError {
-    /// The base64 wrapper has no terminator.
+    /// A legacy header, slot, or size is invalid.
+    #[error("Invalid legacy markers layout")]
+    InvalidLegacy,
+    /// A lock byte is not a boolean.
+    #[error("Invalid marker lock byte: {value}")]
+    InvalidLock {
+        /// Rejected lock byte.
+        value: u8,
+    },
+    /// A loop ends before it starts.
+    #[error("Loop ends before its start")]
+    ReversedLoop,
+    /// A record name is not bounded ASCII.
+    #[error("Invalid marker record type")]
+    InvalidRecordType,
+    /// The payload, record count, or label exceeds its bound.
+    #[error("Marker data exceeds its size limit")]
+    SizeLimit,
+    /// A required marker label or record terminator is missing.
     #[error("No null terminator found")]
     MissingTerminator,
     /// The terminator occurs before the wrapper header ends.
@@ -134,7 +172,7 @@ pub struct Cue {
     pub position: u32,
     /// Display color.
     pub color: Color,
-    /// Name, or the position as a timestamp when the cue has no name.
+    /// Exact source label, possibly empty or whitespace.
     pub name: String,
 }
 
@@ -156,6 +194,101 @@ pub struct Loop {
 }
 
 impl Markers {
+    /// Parses the fixed fourteen-slot legacy tag without inventing names or a BPM lock.
+    ///
+    /// Positions and RGB colours use four seven-bit groups carrying a 24-bit value.
+    /// Unset slots still consume their cue or loop index, and unknown slot types are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong header or length, invalid slot flags, or reversed loop boundaries.
+    pub fn parse_legacy(data: &[u8]) -> Result<Vec<Self>, MarkersError> {
+        if data.len() != 6 + LEGACY_SLOTS * LEGACY_RECORD_BYTES + 4 || !data.starts_with(&[2, 5, 0, 0, 0, 14]) {
+            return Err(MarkersError::InvalidLegacy);
+        }
+        let mut markers = Vec::new();
+        let mut cue_index = 0;
+        let mut loop_index = 0;
+        let records = data
+            .get(6..data.len() - 4)
+            .ok_or(MarkersError::InvalidLegacy)?
+            .as_chunks::<LEGACY_RECORD_BYTES>()
+            .0;
+        for &[
+            flag,
+            p0,
+            p1,
+            p2,
+            p3,
+            end_flag,
+            e0,
+            e1,
+            e2,
+            e3,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            c0,
+            c1,
+            c2,
+            c3,
+            kind,
+            lock,
+        ] in records
+        {
+            if !matches!(flag, 0 | 127) || lock > 1 {
+                return Err(MarkersError::InvalidLegacy);
+            }
+            let index = if kind == 1 {
+                let index = cue_index;
+                cue_index += 1;
+                index
+            } else {
+                let index = loop_index;
+                loop_index += 1;
+                index
+            };
+            if flag == 127 {
+                continue;
+            }
+            let position = legacy_number([p0, p1, p2, p3]);
+            let color = legacy_color([c0, c1, c2, c3]);
+            match kind {
+                1 => markers.push(Self::Cue(Cue {
+                    index,
+                    position,
+                    color,
+                    name: String::new(),
+                })),
+                3 => {
+                    if end_flag != 0 {
+                        return Err(MarkersError::InvalidLegacy);
+                    }
+                    let start_position = i32::from_be_bytes(position.to_be_bytes());
+                    let end_position = i32::from_be_bytes(legacy_number([e0, e1, e2, e3]).to_be_bytes());
+                    if end_position < start_position {
+                        return Err(MarkersError::ReversedLoop);
+                    }
+                    markers.push(Self::Loop(Loop {
+                        index,
+                        start_position,
+                        end_position,
+                        color,
+                        locked: lock != 0,
+                        name: String::new(),
+                    }));
+                }
+                _ => {}
+            }
+        }
+        let footer = data.last_chunk::<4>().ok_or(MarkersError::InvalidLegacy)?;
+        markers.push(Self::Color(legacy_color(*footer)));
+        Ok(markers)
+    }
+
     /// Parses every entry of base64 encoded Serato Markers2 tag data.
     ///
     /// Entry types this parser does not know, such as Serato's flips, are skipped by their length,
@@ -166,25 +299,43 @@ impl Markers {
     /// Returns an error when the base64 payload or one of its known entries is malformed,
     /// or when anything but zero bytes follows the terminating name.
     pub fn parse(data: &[u8]) -> Result<Vec<Self>, MarkersError> {
-        let base64_end = data
+        if data.len() > MAXIMUM_PAYLOAD_BYTES {
+            return Err(MarkersError::SizeLimit);
+        }
+        if !data.starts_with(&[1, 1]) {
+            return Err(MarkersError::InvalidVersion {
+                version: (
+                    data.first().copied().unwrap_or_default(),
+                    data.get(1).copied().unwrap_or_default(),
+                ),
+            });
+        }
+        let base64_end = data.iter().position(|&byte| byte == b'\x00').unwrap_or(data.len());
+        if data
+            .get(base64_end..)
+            .ok_or(MarkersError::InvalidBase64Range { end: base64_end })?
             .iter()
-            .position(|&byte| byte == b'\x00')
-            .ok_or(MarkersError::MissingTerminator)?;
+            .any(|byte| *byte != 0)
+        {
+            return Err(MarkersError::TrailingData);
+        }
         let base64_data = data
             .get(2..base64_end)
             .ok_or(MarkersError::InvalidBase64Range { end: base64_end })?;
 
         // Serato wraps the base64 text with line feeds and leaves out the padding.
-        let mut cleaned: Vec<u8> = base64_data.iter().copied().filter(|&byte| byte != b'\n').collect();
+        let mut cleaned: Vec<u8> = base64_data
+            .iter()
+            .copied()
+            .filter(|byte| !byte.is_ascii_whitespace() && *byte != b'\x0b')
+            .collect();
         match cleaned.len() % 4 {
             1 => cleaned.extend_from_slice(b"A=="),
             2 => cleaned.extend_from_slice(b"=="),
             3 => cleaned.extend_from_slice(b"="),
             _ => {}
         }
-        let payload = general_purpose::STANDARD
-            .decode(&cleaned)
-            .map_err(MarkersError::Base64)?;
+        let payload = MARKERS_BASE64.decode(&cleaned).map_err(MarkersError::Base64)?;
 
         let mut cursor = Cursor::new(payload);
         let version = (cursor.read_u8()?, cursor.read_u8()?);
@@ -193,7 +344,14 @@ impl Markers {
         }
 
         let mut entries = Vec::new();
+        let mut records = 0;
         loop {
+            if cursor.position() == cursor.get_ref().len() as u64 {
+                if records == 0 {
+                    return Err(MarkersError::MissingTerminator);
+                }
+                break;
+            }
             let name_bytes = read_until_null(&mut cursor)?;
             if name_bytes.is_empty() {
                 let rest = cursor.get_ref().get(cursor.position() as usize..).unwrap_or_default();
@@ -201,6 +359,13 @@ impl Markers {
                     return Err(MarkersError::TrailingData);
                 }
                 break;
+            }
+            if name_bytes.len() > 64 || !name_bytes.is_ascii() {
+                return Err(MarkersError::InvalidRecordType);
+            }
+            records += 1;
+            if records > MAXIMUM_RECORDS {
+                return Err(MarkersError::SizeLimit);
             }
             let entry_name = String::from_utf8(name_bytes)?;
             let entry_length = cursor.read_u32::<BigEndian>()? as usize;
@@ -251,7 +416,8 @@ impl BpmLock {
     /// Parses a BPM lock entry, a single boolean byte.
     const fn load(data: &[u8]) -> Result<Self, MarkersError> {
         match data {
-            [value] => Ok(Self { enabled: *value != 0 }),
+            [value @ 0..=1] => Ok(Self { enabled: *value != 0 }),
+            [value] => Err(MarkersError::InvalidLock { value: *value }),
             _ => Err(MarkersError::BpmLockLength { length: data.len() }),
         }
     }
@@ -325,18 +491,12 @@ impl Cue {
         let mut color = [0; 3];
         cursor.read_exact(&mut color)?;
         cursor.set_position(cursor.position() + 2);
-        let mut name_bytes = Vec::new();
-        cursor.read_to_end(&mut name_bytes)?;
-        let name = str::from_utf8(&name_bytes)?.trim_end_matches('\x00').trim();
+        let name = marker_name(data.get(12..).ok_or(MarkersError::CueLength { length: data.len() })?)?;
         Ok(Self {
             index,
             position,
             color: Color::new(color),
-            name: if name.is_empty() {
-                format_position_timestamp(position)
-            } else {
-                name.to_string()
-            },
+            name,
         })
     }
 }
@@ -344,11 +504,16 @@ impl Cue {
 impl Display for Cue {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         let seconds = f64::from(self.position) / 1000.0;
+        let name = if self.name.is_empty() {
+            format_position_timestamp(self.position)
+        } else {
+            self.name.clone()
+        };
         write!(
             formatter,
             "Cue {}: {:<12} {seconds:>7.3}s",
             u16::from(self.index) + 1,
-            self.name
+            name
         )
     }
 }
@@ -369,7 +534,7 @@ impl Loop {
     /// | `14`     | `01` <= X <= `7fec` | `00`          | ``        | UTF-8 (null-terminated) | Name
     ///
     fn load(data: &[u8]) -> Result<Self, MarkersError> {
-        if data.len() < 15 {
+        if data.len() < 21 {
             return Err(MarkersError::LoopLength { length: data.len() });
         }
         let mut cursor = Cursor::new(data);
@@ -377,14 +542,15 @@ impl Loop {
         let index = cursor.read_u8()?;
         let start_position = cursor.read_i32::<BigEndian>()?;
         let end_position = cursor.read_i32::<BigEndian>()?;
+        if end_position < start_position {
+            return Err(MarkersError::ReversedLoop);
+        }
         cursor.set_position(cursor.position() + 4);
         let mut color = [0; 4];
         cursor.read_exact(&mut color)?;
         cursor.set_position(cursor.position() + 1);
-        let locked = cursor.read_u8()? == 1;
-        let mut name_bytes = Vec::new();
-        cursor.read_to_end(&mut name_bytes)?;
-        let name = str::from_utf8(&name_bytes)?.trim_end_matches('\x00').to_string();
+        let locked = BpmLock::load(&[cursor.read_u8()?])?.enabled;
+        let name = marker_name(data.get(20..).ok_or(MarkersError::LoopLength { length: data.len() })?)?;
         Ok(Self {
             index,
             start_position,
@@ -422,10 +588,131 @@ impl Display for Loop {
 fn read_until_null<R: BufRead>(reader: &mut R) -> io::Result<Vec<u8>> {
     let mut buffer = Vec::new();
     reader.read_until(b'\x00', &mut buffer)?;
-    if buffer.last() == Some(&b'\x00') {
-        buffer.pop();
+    if buffer.last() != Some(&b'\x00') {
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "missing zero terminator"));
     }
+    buffer.pop();
     Ok(buffer)
+}
+
+/// Reads an exact UTF-8 label with a required terminator and only zero padding.
+fn marker_name(bytes: &[u8]) -> Result<String, MarkersError> {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or(MarkersError::MissingTerminator)?;
+    if end > MAXIMUM_LABEL_BYTES {
+        return Err(MarkersError::SizeLimit);
+    }
+    let (label, padding) = bytes.split_at_checked(end).ok_or(MarkersError::MissingTerminator)?;
+    if padding.iter().any(|byte| *byte != 0) {
+        return Err(MarkersError::TrailingData);
+    }
+    Ok(str::from_utf8(label)?.to_owned())
+}
+
+/// Recovers a legacy 24-bit value from four seven-bit groups.
+fn legacy_number([high, second, third, low]: [u8; 4]) -> u32 {
+    (u32::from(high & 7) << 21) | (u32::from(second & 127) << 14) | (u32::from(third & 127) << 7) | u32::from(low & 127)
+}
+
+/// Decodes a legacy RGB value without narrowing any colour component.
+fn legacy_color(bytes: [u8; 4]) -> Color {
+    let [_, red, green, blue] = legacy_number(bytes).to_be_bytes();
+    Color { red, green, blue }
+}
+
+#[cfg(test)]
+pub mod test_legacy {
+    use super::*;
+
+    /// Encodes independent byte-layout expectations, with two cue slots and one loop slot in use.
+    pub fn payload() -> Vec<u8> {
+        let mut bytes = vec![2, 5, 0, 0, 0, 14];
+        for slot in 0..14 {
+            let mut record = [0; 22];
+            record[0] = 127;
+            record[20] = if slot < 5 { 1 } else { 3 };
+            match slot {
+                0 => {
+                    record[0] = 0;
+                    record[1..5].copy_from_slice(&[0, 0, 3, 104]);
+                    record[16..20].copy_from_slice(&[4, 72, 104, 86]);
+                }
+                2 => {
+                    record[0] = 0;
+                    record[1..5].copy_from_slice(&[0, 0, 7, 104]);
+                    record[16..20].copy_from_slice(&[0, 0, 0, 127]);
+                }
+                6 => {
+                    record[0] = 0;
+                    record[1..5].copy_from_slice(&[0, 0, 3, 116]);
+                    record[6..10].copy_from_slice(&[0, 0, 15, 80]);
+                    record[16..20].copy_from_slice(&[0, 0, 0, 127]);
+                    record[21] = 1;
+                }
+                _ => {}
+            }
+            bytes.extend_from_slice(&record);
+        }
+        bytes.extend_from_slice(&[7, 124, 0, 1]);
+        bytes
+    }
+
+    #[test]
+    fn parses_seven_bit_groups_and_counts_unset_slots() {
+        let markers = Markers::parse_legacy(&payload()).expect("legacy layout");
+        assert_eq!(
+            markers,
+            [
+                Markers::Cue(Cue {
+                    index: 0,
+                    position: 488,
+                    color: Color::new([0x92, 0x34, 0x56]),
+                    name: String::new()
+                }),
+                Markers::Cue(Cue {
+                    index: 2,
+                    position: 1000,
+                    color: Color::new([0, 0, 127]),
+                    name: String::new()
+                }),
+                Markers::Loop(Loop {
+                    index: 1,
+                    start_position: 500,
+                    end_position: 2000,
+                    color: Color::new([0, 0, 127]),
+                    locked: true,
+                    name: String::new(),
+                }),
+                Markers::Color(Color::new([0xff, 0, 1])),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_header_flags_lengths_and_reversed_boundaries() {
+        for (offset, value) in [(0, 1), (1, 4), (5, 13), (6, 1), (6 + 21, 2), (6 + 6 * 22 + 5, 127)] {
+            let mut bytes = payload();
+            bytes[offset] = value;
+            assert!(Markers::parse_legacy(&bytes).is_err(), "{offset}");
+        }
+        let bytes = payload();
+        assert!(Markers::parse_legacy(&bytes[..bytes.len() - 1]).is_err());
+        assert!(Markers::parse_legacy(&[bytes.as_slice(), &[0]].concat()).is_err());
+        let mut bytes = bytes;
+        bytes[6 + 6 * 22 + 6..6 + 6 * 22 + 10].copy_from_slice(&[0, 0, 0, 1]);
+        assert!(Markers::parse_legacy(&bytes).is_err());
+    }
+
+    #[test]
+    fn skips_valid_unknown_slots_without_discarding_other_markers() {
+        let mut bytes = payload();
+        bytes[6 + 20] = 99;
+        let markers = Markers::parse_legacy(&bytes).expect("unknown legacy type");
+        assert_eq!(markers.len(), 3);
+        assert!(matches!(markers[0], Markers::Cue(Cue { index: 1, .. })));
+    }
 }
 
 #[cfg(test)]
@@ -522,11 +809,41 @@ mod test_cue_and_loop {
     }
 
     #[test]
-    fn unnamed_cue_gets_a_timestamp_name() {
+    fn unnamed_cue_preserves_empty_label_and_displays_timestamp() {
         let cue = Cue::load(&cue_bytes(0, 61_500, [0xCC, 0x00, 0x00], b"\0")).expect("parses");
         assert_eq!(cue.position, 61_500);
         assert_eq!(cue.color, Color::new([0xCC, 0x00, 0x00]));
-        assert_eq!(cue.name, "01:01.5");
+        assert_eq!(cue.name, "");
+        assert!(cue.to_string().starts_with("Cue 1: 01:01.5"));
+    }
+
+    #[test]
+    fn labels_preserve_whitespace_and_accept_only_zero_padding() {
+        for label in [b"  Drop \t\0".as_slice(), b" \t\0", b"Drop\0\0\0"] {
+            let cue = Cue::load(&cue_bytes(0, 0, [1, 2, 3], label)).expect("terminated label");
+            let end = label.iter().position(|byte| *byte == 0).expect("terminator");
+            assert_eq!(cue.name.as_bytes(), &label[..end]);
+        }
+        for label in [b"Drop".as_slice(), b"Drop\0hidden", b"\xff\0"] {
+            assert!(Cue::load(&cue_bytes(0, 0, [1, 2, 3], label)).is_err());
+            let mut bytes = loop_bytes(false);
+            bytes.pop();
+            bytes.extend_from_slice(label);
+            assert!(Loop::load(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_nonboolean_locks_and_reversed_loops() {
+        for value in [2, 127, 255] {
+            assert!(BpmLock::load(&[value]).is_err());
+            let mut bytes = loop_bytes(false);
+            bytes[19] = value;
+            assert!(Loop::load(&bytes).is_err());
+        }
+        let mut bytes = loop_bytes(false);
+        bytes[6..10].copy_from_slice(&499_i32.to_be_bytes());
+        assert!(Loop::load(&bytes).is_err());
     }
 
     #[test]
@@ -637,10 +954,34 @@ mod test_markers_parse {
     }
 
     #[test]
+    fn envelope_and_record_names_are_strict() {
+        let valid = encode(&[1, 1, 0]);
+        let mut version = valid.clone();
+        version[0] = 2;
+        assert!(Markers::parse(&version).is_err());
+        assert!(Markers::parse(&[valid.as_slice(), b"hidden"].concat()).is_err());
+        for payload in [b"\x01\x01".as_slice(), b"\x01\x01FLIP", b"\x01\x01\xc3\xa9\0\0\0\0\0"] {
+            assert!(Markers::parse(&encode(payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn supports_documented_base64_whitespace_and_omitted_padding() {
+        for data in [
+            b"\x01\x01AQEA".as_slice(),
+            b"\x01\x01 A Q\tE\rA\n\x0b\0\0",
+            b"\x01\x01AQEAAB==\0",
+            b"\x01\x01AQEAA\0",
+        ] {
+            assert_eq!(Markers::parse(data).expect("valid envelope"), []);
+        }
+    }
+
+    #[test]
     fn reads_bytes_until_null() {
         let mut cursor = Cursor::new(vec![0x48, 0x65, 0x00, 0xFF]);
         assert_eq!(read_until_null(&mut cursor).expect("reads"), vec![0x48, 0x65]);
         let mut cursor = Cursor::new(Vec::new());
-        assert_eq!(read_until_null(&mut cursor).expect("reads"), Vec::<u8>::new());
+        assert!(read_until_null(&mut cursor).is_err());
     }
 }

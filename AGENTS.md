@@ -69,12 +69,14 @@ which explains how its parts work together.
 For the same input and supported operation, the C++ and Rust applications must produce the same meaningful results.
 This includes parsed metadata, names, positions, colors, numerical values, analysis results, and processed audio.
 Different results are bugs to investigate and fix, not features of the implementations.
+Small loudness and normalization differences are allowed within the existing documented test tolerances.
+These allowances do not extend to parsed metadata or the bit-exact true peak contract.
 The C++ implementation is a reference,
 not an oracle that overrides the file format or independently verified expectations.
 
 Use shared, independent expectations and cross-implementation tests where possible.
 Do not add implementation-specific expected values or widen tolerances merely to make divergent results pass.
-A passing test with a tolerance does not establish exact parity or justify a difference.
+A passing test with a tolerance establishes only its bounded contract, not exact equality.
 Keep presentation fallbacks separate from parsed source values,
 and apply the same presentation rules in both applications.
 

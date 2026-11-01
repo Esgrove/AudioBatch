@@ -128,7 +128,9 @@ fn unknown_history_version_misses_then_refills_preserving_user_data() {
 
 #[test]
 fn older_analysis_version_misses_then_refills_preserving_user_data() {
-    assert_miss_refills_preserving_user_data("analysis_version = 3");
+    for assignment in ["analysis_version = 3", "analysis_version = 5"] {
+        assert_miss_refills_preserving_user_data(assignment);
+    }
 }
 
 #[test]

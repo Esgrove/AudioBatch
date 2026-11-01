@@ -31,7 +31,7 @@ pub struct MetadataFixture {
     /// Major and minor analysis version, absent when there is no dedicated Analysis tag.
     pub analysis: Option<[u8; 2]>,
     /// Serato BPM, automatic gain, and manual gain.
-    pub autotags: [f32; 3],
+    pub autotags: [f64; 3],
     /// Track colour as `0xRRGGBB`.
     pub track_rgb: u32,
     /// Explicit beatgrid lock stored in Markers2.
@@ -56,7 +56,7 @@ pub struct MetadataCue {
     pub position_ms: u32,
     /// Cue colour as `0xRRGGBB`.
     pub rgb: u32,
-    /// Original label, empty when the reader may synthesize a timestamp.
+    /// Exact source label, including whitespace or an empty string.
     pub name: String,
 }
 
@@ -83,11 +83,11 @@ pub struct MetadataLoop {
 #[serde(deny_unknown_fields)]
 pub struct MetadataBeatGridMarker {
     /// Position in seconds, decoded from the stored big-endian float.
-    pub position_seconds: f32,
+    pub position_seconds: f64,
     /// Beats to the next anchor, zero for the terminal anchor.
     pub beats_until_next: u32,
     /// Terminal BPM, absent on non-terminal anchors.
-    pub bpm: Option<f32>,
+    pub bpm: Option<f64>,
 }
 
 /// Overview checks that preserve every palette byte and verify representative decoded colours.
