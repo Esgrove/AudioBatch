@@ -142,7 +142,7 @@ void AnalysisCoordinator::planRun(const AudioAnalysisOptions& options, const int
 
     for (const auto& file : plan.staleFiles) {
         runner.addJob([this, file, runId, totalFiles = plan.files.size(), pendingFiles] {
-            analyzeStaleFile(file, runId, totalFiles, pendingFiles);
+            analyzeStaleFile(file, runId, totalFiles, *pendingFiles);
         });
     }
 }
@@ -156,7 +156,7 @@ void AnalysisCoordinator::analyzeStaleFile(
     const juce::File& file,
     const int runId,
     const int totalFiles,
-    const std::shared_ptr<std::atomic<int>>& pendingFiles
+    std::atomic<int>& pendingFiles
 ) const
 {
     if (!runner.isCurrent(runId)) {
@@ -196,7 +196,7 @@ void AnalysisCoordinator::analyzeStaleFile(
 
     runner.publish(resultCallback, runId, result);
 
-    if (pendingFiles->fetch_sub(1) == 1) {
+    if (pendingFiles.fetch_sub(1) == 1) {
         runner.publish(completionCallback, runId, totalFiles);
     }
 }

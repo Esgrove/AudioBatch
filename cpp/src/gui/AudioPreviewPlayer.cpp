@@ -42,6 +42,13 @@ public:
         readFailure(failure)
     {}
 
+    ~PreviewReaderSource() override = default;
+
+    PreviewReaderSource(const PreviewReaderSource&) = delete;
+    PreviewReaderSource& operator=(const PreviewReaderSource&) = delete;
+    PreviewReaderSource(PreviewReaderSource&&) = delete;
+    PreviewReaderSource& operator=(PreviewReaderSource&&) = delete;
+
     /// Reads only available source samples and pads EOF, preserving the buffering source's position contract.
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
@@ -77,6 +84,13 @@ public:
         underrunFlag(underrun)
     {}
 
+    ~PreviewBufferingSource() override = default;
+
+    PreviewBufferingSource(const PreviewBufferingSource&) = delete;
+    PreviewBufferingSource& operator=(const PreviewBufferingSource&) = delete;
+    PreviewBufferingSource(PreviewBufferingSource&&) = delete;
+    PreviewBufferingSource& operator=(PreviewBufferingSource&&) = delete;
+
     /// Observes whether JUCE could advance its buffered input cursor.
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
@@ -106,7 +120,7 @@ juce::String openAlternativeAsioOutput(
     const auto names = type->getDeviceNames(false);
     const auto& defaultOutput = names[type->getDefaultDeviceIndex(false)];
     auto attempted = defaultOutput;
-    utils::logWarn("Audio preview: ASIO output \"{}\": {}", attempted, error);
+    utils::logWarn("Audio preview: ASIO output {}: {}", attempted.quoted(), error);
     for (const auto& name : names) {
         if (name == defaultOutput) {
             continue;
@@ -115,12 +129,12 @@ juce::String openAlternativeAsioOutput(
         error = manager.setAudioDeviceSetup(setup, false);
         attempted = name;
         if (error.isEmpty()) {
-            utils::logInfo("Audio preview: Using ASIO output \"{}\"", name);
+            utils::logInfo("Audio preview: Using ASIO output {}", name.quoted());
             return {};
         }
-        utils::logWarn("Audio preview: ASIO output \"{}\": {}", name, error);
+        utils::logWarn("Audio preview: ASIO output {}: {}", name.quoted(), error);
     }
-    return utils::format("No ASIO output could be opened. Last attempt \"{}\": {}", attempted, error);
+    return utils::format("No ASIO output could be opened. Last attempt {}: {}", attempted.quoted(), error);
 }
 }  // namespace
 

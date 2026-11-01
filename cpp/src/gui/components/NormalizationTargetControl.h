@@ -19,6 +19,13 @@ class NormalizationTargetControl final : public juce::Component
 public:
     explicit NormalizationTargetControl(juce::ApplicationProperties& applicationProperties);
 
+    ~NormalizationTargetControl() override = default;
+
+    NormalizationTargetControl(const NormalizationTargetControl&) = delete;
+    NormalizationTargetControl& operator=(const NormalizationTargetControl&) = delete;
+    NormalizationTargetControl(NormalizationTargetControl&&) = delete;
+    NormalizationTargetControl& operator=(NormalizationTargetControl&&) = delete;
+
     void loadSettings();
 
     [[nodiscard]] AudioNormalizationOptions getOptions() const;

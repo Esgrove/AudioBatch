@@ -1,4 +1,4 @@
-/// Parses documented Serato payloads and validates portable per-kind cache blocks.
+/// Parses documented Serato payloads.
 /// Bounds apply to encoded input, decoded data, record counts and owned UTF-8 text.
 /// Also decodes the Base64 and the wrapper of native FLAC values, and finds the ID3v2 tag of an open TagLib file.
 
@@ -6,6 +6,7 @@
 
 #include "serato/SeratoBytes.h"
 #include "serato/SeratoOverview.h"
+#include "serato/SeratoTagFields.h"
 #include "serato/SeratoTagTypes.h"
 #include <string_view>
 
@@ -26,7 +27,6 @@
 #include <sstream>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 #include <wavfile.h>
 
@@ -34,7 +34,6 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t cacheHeaderBytes {16};
 constexpr std::size_t bpmOffset {2};
 constexpr std::size_t autoGainOffset {9};
 constexpr std::size_t gainOffset {16};
@@ -43,9 +42,7 @@ constexpr std::size_t compactAutotagsMinBytes {20};
 constexpr std::size_t compactAutotagsMaxBytes {21};
 constexpr std::size_t gridHeaderBytes {6};
 constexpr std::size_t gridRecordBytes {8};
-constexpr std::size_t cueNameOffset {12};
 constexpr std::size_t cueColourOffset {7};
-constexpr std::size_t loopNameOffset {20};
 constexpr std::size_t loopColourOffset {15};
 constexpr std::size_t loopLockOffset {19};
 constexpr std::size_t maxRecordTypeBytes {64};
@@ -58,109 +55,10 @@ constexpr std::size_t legacyEndOffset {6};
 constexpr std::uint8_t legacyUnset {0x7f};
 constexpr std::uint8_t legacyMinorVersion {5};
 constexpr std::uint8_t maxAsciiByte {127};
-constexpr std::uint32_t cacheMagic {0x53544147};
 constexpr unsigned int seratoGroupBits {7};
 constexpr std::uint32_t seratoGroupMask {0x7f};
 constexpr std::uint32_t seratoHighMask {0x07};
 constexpr std::uint32_t opaqueAlpha {0xff000000};
-
-/// A fail-closed reader for cache fields.
-/// Every read returns nothing instead of a default value when its field is truncated or invalid,
-/// and a failed read never advances outside the supplied span.
-class Cursor
-{
-public:
-    /// Borrows an already bounded block for this synchronous decode.
-    explicit Cursor(const std::span<const std::uint8_t> input) : remaining(input) {}
-
-    /// Takes a field of the given size, or nothing when fewer bytes remain.
-    std::optional<std::span<const std::uint8_t>> take(const std::size_t count)
-    {
-        if (count > remaining.size()) {
-            return std::nullopt;
-        }
-        const auto bytes = remaining.first(count);
-        remaining = remaining.subspan(count);
-        return bytes;
-    }
-
-    /// Reads an unsigned byte.
-    std::optional<std::uint8_t> byte()
-    {
-        return take(1).transform([](const std::span<const std::uint8_t> bytes) { return bytes.front(); });
-    }
-
-    /// Reads a strict boolean, rejecting byte values other than zero and one.
-    std::optional<bool> boolean()
-    {
-        const auto value = byte();
-        if (!value || *value > 1) {
-            return std::nullopt;
-        }
-        return *value != 0;
-    }
-
-    /// Reads a portable four-byte unsigned integer.
-    std::optional<std::uint32_t> number()
-    {
-        return take(sizeof(std::uint32_t)).transform([](const std::span<const std::uint8_t> bytes) {
-            return readBigEndian<std::uint32_t>(bytes.first<sizeof(std::uint32_t)>());
-        });
-    }
-
-    /// Reads an IEEE binary64 value, rejecting infinities and NaNs.
-    std::optional<double> real()
-    {
-        const auto bytes = take(sizeof(std::uint64_t));
-        if (!bytes) {
-            return std::nullopt;
-        }
-        const auto value = std::bit_cast<double>(readBigEndian<std::uint64_t>(bytes->first<sizeof(std::uint64_t)>()));
-        return std::isfinite(value) ? std::optional(value) : std::nullopt;
-    }
-
-    std::optional<juce::String> text();
-
-    /// Reports whether every byte of the enclosing block has been consumed.
-    [[nodiscard]] bool isExhausted() const
-    {
-        return remaining.empty();
-    }
-
-private:
-    /// The bytes not read yet, a view into the block the cursor borrows.
-    std::span<const std::uint8_t> remaining;
-};
-
-/// Checks padding without accepting unparsed trailing records or text.
-bool allZero(std::span<const std::uint8_t> bytes)
-{
-    return std::ranges::all_of(bytes, [](auto byte) { return byte == 0; });
-}
-
-/// Returns a validated UTF-8 string of bounded length without embedded nulls.
-std::optional<juce::String> utf8(std::span<const std::uint8_t> bytes)
-{
-    if (bytes.size() > maxTagTextBytes || std::ranges::find(bytes, std::uint8_t {0}) != bytes.end()) {
-        return std::nullopt;
-    }
-    const std::string text(bytes.begin(), bytes.end());
-    if (!juce::CharPointer_UTF8::isValidString(text.c_str(), static_cast<int>(text.size()))) {
-        return std::nullopt;
-    }
-    return juce::String::fromUTF8(text.c_str(), static_cast<int>(text.size()));
-}
-
-/// Reads length-prefixed UTF-8, bounding the length before allocating the text.
-std::optional<juce::String> Cursor::text()
-{
-    const auto size = number();
-    if (!size || *size > maxTagTextBytes) {
-        return std::nullopt;
-    }
-    const auto bytes = take(*size);
-    return bytes ? utf8(*bytes) : std::nullopt;
-}
 
 /// Reads an exact terminated marker label, permitting zero padding after its terminator.
 std::optional<juce::String> markerName(std::span<const std::uint8_t> bytes)
@@ -307,200 +205,6 @@ std::optional<Markers> readMarkerBody(const std::span<const std::uint8_t> payloa
     }
 }
 
-/// Reads counted cache grid anchors while checking ordering and terminal versus intermediate semantics.
-std::optional<BeatGrid> readCacheGrid(Cursor& input)
-{
-    const auto count = input.number();
-    if (!count || *count > maxTagRecords) {
-        return std::nullopt;
-    }
-    BeatGrid grid;
-    for (std::uint32_t index = 0; index < *count; ++index) {
-        const auto position = input.real();
-        const auto beatsUntilNext = input.number();
-        const auto hasBpm = input.boolean();
-        if (!position || !beatsUntilNext || !hasBpm) {
-            return std::nullopt;
-        }
-        BeatGridMarker marker {.positionSeconds = *position, .beatsUntilNext = *beatsUntilNext, .bpm = std::nullopt};
-        if (*hasBpm) {
-            marker.bpm = input.real();
-            if (!marker.bpm) {
-                return std::nullopt;
-            }
-        }
-        const bool ordered = grid.markers.empty() || marker.positionSeconds >= grid.markers.back().positionSeconds;
-        const bool consistent = index + 1 == *count ? marker.bpm && *marker.bpm > 0 && marker.beatsUntilNext == 0
-                                                    : !marker.bpm && marker.beatsUntilNext > 0;
-        if (!ordered || !consistent) {
-            return std::nullopt;
-        }
-        grid.markers.push_back(marker);
-    }
-    return grid;
-}
-
-/// Writes binary64 bits rather than native floating point layout.
-void writeReal(juce::MemoryOutputStream& output, const double value)
-{
-    output.writeInt64BigEndian(std::bit_cast<std::int64_t>(value));
-}
-
-/// Writes a bounded length-prefixed UTF-8 value without the C string terminator.
-void writeText(juce::MemoryOutputStream& output, const juce::String& value)
-{
-    output.writeIntBigEndian(static_cast<int>(value.getNumBytesAsUTF8()));
-    output.write(value.toRawUTF8(), value.getNumBytesAsUTF8());
-}
-
-/// Verifies public marker sizes before any serialization allocation.
-bool boundedMarkers(const Markers& markers)
-{
-    if (markers.cues.size() > maxTagRecords || markers.loops.size() > maxTagRecords) {
-        return false;
-    }
-    std::size_t total = cacheHeaderBytes;
-    for (const auto& cue : markers.cues) {
-        const auto size = cue.name.getNumBytesAsUTF8();
-        if (size > maxTagTextBytes) {
-            return false;
-        }
-        total += size + cueNameOffset;
-    }
-    for (const auto& loop : markers.loops) {
-        const auto size = loop.name.getNumBytesAsUTF8();
-        if (size > maxTagTextBytes) {
-            return false;
-        }
-        total += size + loopNameOffset;
-    }
-    return total <= maxTagPayloadBytes;
-}
-
-/// Serializes counted marker records with explicit flags for optional track metadata.
-void writeMarkers(juce::MemoryOutputStream& output, const Markers& markers)
-{
-    output.writeIntBigEndian(static_cast<int>(markers.cues.size()));
-    for (const auto& [positionMilliseconds, index, colour, name] : markers.cues) {
-        output.writeIntBigEndian(std::bit_cast<int>(positionMilliseconds));
-        output.writeByte(static_cast<char>(index));
-        output.writeIntBigEndian(std::bit_cast<int>(colour.getARGB()));
-        writeText(output, name);
-    }
-    output.writeIntBigEndian(static_cast<int>(markers.loops.size()));
-    for (const auto& [startMilliseconds, endMilliseconds, index, colour, locked, name] : markers.loops) {
-        output.writeIntBigEndian(std::bit_cast<int>(startMilliseconds));
-        output.writeIntBigEndian(std::bit_cast<int>(endMilliseconds));
-        output.writeByte(static_cast<char>(index));
-        output.writeIntBigEndian(std::bit_cast<int>(colour.getARGB()));
-        output.writeBool(locked);
-        writeText(output, name);
-    }
-    output.writeBool(markers.colour.has_value());
-    if (markers.colour) {
-        output.writeIntBigEndian(std::bit_cast<int>(markers.colour->getARGB()));
-    }
-    output.writeBool(markers.bpmLocked.has_value());
-    if (markers.bpmLocked) {
-        output.writeBool(*markers.bpmLocked);
-    }
-}
-
-/// Reads cache markers without trusting counts or allowing reversed loop boundaries.
-std::optional<Markers> readMarkers(Cursor& input)
-{
-    Markers markers;
-    const auto cueCount = input.number();
-    if (!cueCount || *cueCount > maxTagRecords) {
-        return std::nullopt;
-    }
-    for (std::uint32_t index = 0; index < *cueCount; ++index) {
-        const auto position = input.number();
-        const auto slot = input.byte();
-        const auto colour = input.number();
-        const auto name = input.text();
-        if (!position || !slot || !colour || !name) {
-            return std::nullopt;
-        }
-        markers.cues.push_back(
-            {.positionMilliseconds = *position, .index = *slot, .colour = juce::Colour(*colour), .name = *name}
-        );
-    }
-    const auto loopCount = input.number();
-    if (!loopCount || *loopCount > maxTagRecords) {
-        return std::nullopt;
-    }
-    for (std::uint32_t index = 0; index < *loopCount; ++index) {
-        const auto start = input.number().transform([](auto value) { return std::bit_cast<std::int32_t>(value); });
-        const auto end = input.number().transform([](auto value) { return std::bit_cast<std::int32_t>(value); });
-        const auto slot = input.byte();
-        const auto colour = input.number();
-        const auto locked = input.boolean();
-        const auto name = input.text();
-        if (!start || !end || !slot || !colour || !locked || !name || *end < *start) {
-            return std::nullopt;
-        }
-        markers.loops.push_back({
-            .startMilliseconds = *start,
-            .endMilliseconds = *end,
-            .index = *slot,
-            .colour = juce::Colour(*colour),
-            .locked = *locked,
-            .name = *name,
-        });
-    }
-    const auto hasColour = input.boolean();
-    if (!hasColour) {
-        return std::nullopt;
-    }
-    if (*hasColour) {
-        const auto colour = input.number();
-        if (!colour) {
-            return std::nullopt;
-        }
-        markers.colour = juce::Colour(*colour);
-    }
-    const auto hasBpmLock = input.boolean();
-    if (!hasBpmLock) {
-        return std::nullopt;
-    }
-    if (*hasBpmLock) {
-        markers.bpmLocked = input.boolean();
-        if (!markers.bpmLocked) {
-            return std::nullopt;
-        }
-    }
-    return markers;
-}
-
-/// Reads cache track information: an optional positive BPM followed by the key, album, genre, year, and comment texts,
-/// requiring at least one field to be set.
-std::optional<TrackInfo> readTrackInfo(Cursor& input)
-{
-    const auto hasBpm = input.boolean();
-    if (!hasBpm) {
-        return std::nullopt;
-    }
-    TrackInfo info;
-    if (*hasBpm) {
-        info.bpm = input.real();
-        if (!info.bpm || *info.bpm <= 0) {
-            return std::nullopt;
-        }
-    }
-    for (auto* field : {&info.key, &info.album, &info.genre, &info.year, &info.comment}) {
-        const auto text = input.text();
-        if (!text) {
-            return std::nullopt;
-        }
-        *field = *text;
-    }
-    if (info.isEmpty()) {
-        return std::nullopt;
-    }
-    return info;
-}
-
 /// Recovers the 24-bit legacy value from its four seven-bit groups.
 std::uint32_t legacyNumber(const std::span<const std::uint8_t> bytes)
 {
@@ -509,70 +213,6 @@ std::uint32_t legacyNumber(const std::span<const std::uint8_t> bytes)
         | (bytes[3] & seratoGroupMask);
 }
 
-/// Writes a non-Overview cache payload after checking its public collection and text bounds.
-bool writeCachePayload(juce::MemoryOutputStream& payload, const TagValue& value)
-{
-    switch (kindOf(value)) {
-        case TagKind::analysis: {
-            const auto& analysis = std::get<Analysis>(value);
-            payload.writeByte(static_cast<char>(analysis.majorVersion));
-            payload.writeByte(static_cast<char>(analysis.minorVersion));
-            return true;
-        }
-        case TagKind::autotags: {
-            const auto& autotags = std::get<Autotags>(value);
-            writeReal(payload, autotags.bpm);
-            writeReal(payload, autotags.autoGain);
-            writeReal(payload, autotags.gain);
-            return true;
-        }
-        case TagKind::beatGrid: {
-            const auto& grid = std::get<BeatGrid>(value);
-            if (grid.markers.size() > maxTagRecords) {
-                return false;
-            }
-            payload.writeIntBigEndian(static_cast<int>(grid.markers.size()));
-            for (const auto& [positionSeconds, beatsUntilNext, bpm] : grid.markers) {
-                writeReal(payload, positionSeconds);
-                payload.writeIntBigEndian(std::bit_cast<int>(beatsUntilNext));
-                payload.writeBool(bpm.has_value());
-                if (bpm) {
-                    writeReal(payload, *bpm);
-                }
-            }
-            return true;
-        }
-        case TagKind::markers: {
-            const auto& markers = std::get<Markers>(value);
-            if (!boundedMarkers(markers)) {
-                return false;
-            }
-            writeMarkers(payload, markers);
-            return true;
-        }
-        case TagKind::trackInfo: {
-            const auto& info = std::get<TrackInfo>(value);
-            const std::array texts {&info.key, &info.album, &info.genre, &info.year, &info.comment};
-            if (std::ranges::any_of(
-                    texts, [](const auto* text) { return text->getNumBytesAsUTF8() > maxTagTextBytes; }
-                ))
-            {
-                return false;
-            }
-            payload.writeBool(info.bpm.has_value());
-            if (info.bpm) {
-                writeReal(payload, *info.bpm);
-            }
-            for (const auto* text : texts) {
-                writeText(payload, *text);
-            }
-            return true;
-        }
-        case TagKind::overview:
-            return false;
-    }
-    return false;
-}
 }  // namespace
 
 /// Strictly parses a finite ASCII number without locale dependence or ignored trailing text.
@@ -939,84 +579,4 @@ TagReadResult parseTagPayload(const TagKind kind, const std::span<const std::uin
     return TagReadResult::missing(kind, ReadStatus::unsupported);
 }
 
-/// Encodes a present result using a bounded, versioned numeric representation.
-/// Overview delegates to its existing serializer. Missing, mismatched, or invalid values return an empty block.
-juce::MemoryBlock serializeTag(const TagReadResult& result)
-{
-    if (!result.value || !supportsTagKind(result.kind) || kindOf(*result.value) != result.kind) {
-        return {};
-    }
-    if (const auto* overview = std::get_if<Overview>(&*result.value)) {
-        return overview->serialize();
-    }
-    juce::MemoryOutputStream payload;
-    if (!writeCachePayload(payload, *result.value)) {
-        return {};
-    }
-    if (payload.getDataSize() > maxTagPayloadBytes) {
-        return {};
-    }
-    juce::MemoryOutputStream output;
-    output.writeIntBigEndian(static_cast<int>(cacheMagic));
-    output.writeIntBigEndian(std::to_underlying(result.kind));
-    output.writeIntBigEndian(static_cast<int>(parserVersion(result.kind)));
-    output.writeIntBigEndian(static_cast<int>(payload.getDataSize()));
-    output.write(payload.getData(), payload.getDataSize());
-    const auto block = output.getMemoryBlock();
-    return deserializeTag(result.kind, block) ? block : juce::MemoryBlock();
-}
-
-/// Validates kind, version, exact length, counts, UTF-8 and finite numeric values before returning owned data.
-/// Overview delegates to its existing deserializer. Corrupt data is a cache miss.
-std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBlock& block)
-{
-    const std::span bytes {static_cast<const std::uint8_t*>(block.getData()), block.getSize()};
-    if (kind == TagKind::overview) {
-        auto overview = Overview::deserialize(bytes);
-        return overview ? std::optional(TagReadResult::present(std::move(*overview))) : std::nullopt;
-    }
-    if (!supportsTagKind(kind) || bytes.size() < cacheHeaderBytes
-        || bytes.size() > cacheHeaderBytes + maxTagPayloadBytes)
-    {
-        return std::nullopt;
-    }
-    Cursor input(bytes);
-    if (input.number() != cacheMagic || input.number() != std::to_underlying(kind)
-        || input.number() != parserVersion(kind) || input.number() != bytes.size() - cacheHeaderBytes)
-    {
-        return std::nullopt;
-    }
-    std::optional<TagValue> value;
-    switch (kind) {
-        case TagKind::analysis: {
-            const auto majorVersion = input.byte();
-            const auto minorVersion = input.byte();
-            if (majorVersion && minorVersion) {
-                value = Analysis {.majorVersion = *majorVersion, .minorVersion = *minorVersion};
-            }
-            break;
-        }
-        case TagKind::autotags: {
-            const auto bpm = input.real();
-            const auto autoGain = input.real();
-            const auto gain = input.real();
-            if (bpm && autoGain && gain && *bpm >= 0) {
-                value = Autotags {.bpm = *bpm, .autoGain = *autoGain, .gain = *gain};
-            }
-            break;
-        }
-        case TagKind::beatGrid:
-            value = readCacheGrid(input);
-            break;
-        case TagKind::markers:
-            value = readMarkers(input);
-            break;
-        case TagKind::trackInfo:
-            value = readTrackInfo(input);
-            break;
-        case TagKind::overview:
-            return std::nullopt;
-    }
-    return input.isExhausted() && value ? std::optional(TagReadResult::present(std::move(*value))) : std::nullopt;
-}
 }  // namespace audiobatch::serato

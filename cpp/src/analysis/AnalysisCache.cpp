@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sqlite3.h>
 #include <utility>
 #include <vector>
@@ -264,8 +265,10 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
         }
         if (sqlite3_column_type(statement, analysis_column::overloadHistory) == SQLITE_BLOB) {
             record.overloads = deserializeOverloadHistory(
-                sqlite3_column_blob(statement, analysis_column::overloadHistory),
-                static_cast<std::size_t>(sqlite3_column_bytes(statement, analysis_column::overloadHistory))
+                std::span(
+                    static_cast<const std::byte*>(sqlite3_column_blob(statement, analysis_column::overloadHistory)),
+                    static_cast<std::size_t>(sqlite3_column_bytes(statement, analysis_column::overloadHistory))
+                )
             );
         }
         if (!record.overloads || !overloadHistoryMatches(*record.overloads, record)) {

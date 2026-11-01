@@ -99,7 +99,8 @@ public:
             FileActivityTracker observed(component, [&] {
                 if (observedTracker != nullptr) {
                     const auto state = observedTracker->getActivityState(first.getFullPathName());
-                    observedEmptyProgress = state.has_value() && state->progress == 0.0f;
+                    observedEmptyProgress = state.has_value() && state->progress.has_value()
+                        && juce::approximatelyEqual(*state->progress, 0.0f);
                 }
             });
             observedTracker = &observed;

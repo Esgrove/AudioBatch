@@ -32,7 +32,7 @@ namespace audiobatch::tests
 namespace
 {
 /// Allowed difference between the normalized peak and the target, in dB.
-constexpr double peakTolerance = 0.01;
+constexpr double peakTolerance {0.01};
 
 /// How long a coordinator test waits for a run to reach the expected state before it fails.
 constexpr auto coordinatorTimeout {std::chrono::seconds(10)};

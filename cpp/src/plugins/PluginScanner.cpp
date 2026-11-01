@@ -481,7 +481,7 @@ public:
         return connectionLost;
     }
 
-    /// Sends a scan request to the worker. Returns false when the worker is no longer reachable.
+    /// Sends a scan request to the worker. Returns false when the worker is unreachable.
     bool sendRequest(const juce::MemoryBlock& request)
     {
         return sendMessageToWorker(request);

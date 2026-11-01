@@ -17,6 +17,16 @@
 
 namespace audiobatch
 {
+/// What an analysis run does with the rows already in the table.
+enum class AnalysisRows : std::uint8_t {
+    /// Adds the files of the run to the rows and updates the rows of files it analyzes again.
+    add,
+    /// Clears the table first, for a run over new root folders.
+    replace,
+    /// Keeps the rows of the files the run finds and drops the others, for a rescan.
+    sync,
+};
+
 /// Persisted preview choices, independent of the current file and audio device.
 struct AudioPreviewPreferences {
     /// Lowest editable LUFS limit of the source loudness axis.
@@ -74,16 +84,6 @@ struct ArtworkState {
     juce::Image image;
     /// True once the request for the requested version completed, including with no artwork.
     bool completed {false};
-};
-
-/// What an analysis run does with the rows already in the table.
-enum class AnalysisRows : std::uint8_t {
-    /// Adds the files of the run to the rows and updates the rows of files it analyzes again.
-    add,
-    /// Clears the table first, for a run over new root folders.
-    replace,
-    /// Keeps the rows of the files the run finds and drops the others, for a rescan.
-    sync,
 };
 
 /// No analysis, normalization, or plugin processing is running.

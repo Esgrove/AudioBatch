@@ -55,6 +55,60 @@ constexpr auto scanLockHelperArgument {"--scan-lock-helper"};
 /// Line a scan lock helper prints once it holds the lock.
 constexpr auto scanLockHeldLine {"held"};
 
+/// Sample format of one file in a null test, as its reader reports it.
+struct NullTestFormat {
+    /// Returns true when both formats have the same sample rate, bit depth, and sample type.
+    [[nodiscard]] bool matches(const NullTestFormat& other) const noexcept
+    {
+        return juce::approximatelyEqual(sampleRate, other.sampleRate) && bitsPerSample == other.bitsPerSample
+            && floatingPoint == other.floatingPoint;
+    }
+
+    /// Sample rate in Hz.
+    double sampleRate {0.0};
+    /// Bits per sample of the stored data.
+    int bitsPerSample {0};
+    /// True for a file that stores floating point samples instead of integers.
+    bool floatingPoint {false};
+};
+
+/// Result of a null test that subtracts an expected file from an actual file, sample by sample in 16-bit steps.
+/// Both files are read as integer sample values, so any difference of a single step counts.
+/// The files must also have the same sample rate, bit depth, and integer or floating point samples to cancel.
+struct NullTestResult {
+    /// False when either file could not be read, which leaves every other field empty.
+    bool readable {false};
+    /// Channel count of the expected file.
+    int expectedChannels {0};
+    /// Channel count of the actual file.
+    int actualChannels {0};
+    /// Length of the expected file in samples per channel.
+    juce::int64 expectedLength {0};
+    /// Length of the actual file in samples per channel.
+    juce::int64 actualLength {0};
+    /// Sample format of the expected file.
+    NullTestFormat expectedFormat;
+    /// Sample format of the actual file.
+    NullTestFormat actualFormat;
+    /// Number of samples over all channels that differ within the common length.
+    juce::int64 differingSamples {0};
+    /// Largest absolute difference within the common length, in 16-bit steps.
+    int peakDifference {0};
+    /// Offset of the actual first channel against the expected one, in samples, where the two correlate best.
+    /// It is zero for aligned audio, and tells by how much a delayed or early output is shifted.
+    /// Only computed when the files do not cancel.
+    int bestLag {0};
+
+    /// Returns true when both files have the same format, layout, and length, and every sample cancels out.
+    [[nodiscard]] bool cancels() const noexcept
+    {
+        return readable && expectedFormat.matches(actualFormat) && expectedChannels == actualChannels
+            && expectedLength == actualLength && differingSamples == 0;
+    }
+
+    [[nodiscard]] juce::String describe() const;
+};
+
 /// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
 struct TestAudioDeviceState {
     juce::String typeName {"Test audio"};
@@ -98,10 +152,8 @@ private:
 class TemporaryDirectory
 {
 public:
-    /// Creates the folder.
     TemporaryDirectory();
 
-    /// Deletes the folder and everything in it.
     ~TemporaryDirectory();
 
     TemporaryDirectory(const TemporaryDirectory&) = delete;
@@ -109,78 +161,20 @@ public:
     TemporaryDirectory(TemporaryDirectory&&) = delete;
     TemporaryDirectory& operator=(TemporaryDirectory&&) = delete;
 
-    /// Returns a file inside the folder, which does not need to exist yet.
     [[nodiscard]] juce::File getChildFile(const juce::String& name) const;
 
-    /// Copies a fixture into the folder, optionally under a new name, and returns the copy.
-    /// Tests that modify files work on copies so the committed fixtures never change.
-    /// Logs which fixture could not be copied and throws when the copy fails,
-    /// since every later check on the missing copy would fail with a misleading message.
-    /// The JUCE runner reports the exception as a failure of the suite.
     [[nodiscard]] juce::File copyFixture(const juce::String& fixtureName, const juce::String& copyName = {}) const;
 
 private:
     juce::File directory;
 };
 
-/// Sample format of one file in a null test, as its reader reports it.
-struct NullTestFormat {
-    /// Returns true when both formats have the same sample rate, bit depth, and sample type.
-    [[nodiscard]] bool matches(const NullTestFormat& other) const noexcept
-    {
-        return juce::approximatelyEqual(sampleRate, other.sampleRate) && bitsPerSample == other.bitsPerSample
-            && floatingPoint == other.floatingPoint;
-    }
-
-    double sampleRate {0.0};
-    int bitsPerSample {0};
-    /// True for a file that stores floating point samples instead of integers.
-    bool floatingPoint {false};
-};
-
-/// Result of a null test that subtracts an expected file from an actual file, sample by sample in 16-bit steps.
-/// Both files are read as integer sample values, so any difference of a single step counts.
-/// The files must also have the same sample rate, bit depth, and integer or floating point samples to cancel.
-struct NullTestResult {
-    /// False when either file could not be read, which leaves every other field empty.
-    bool readable {false};
-    int expectedChannels {0};
-    int actualChannels {0};
-    juce::int64 expectedLength {0};
-    juce::int64 actualLength {0};
-    NullTestFormat expectedFormat;
-    NullTestFormat actualFormat;
-    /// Number of samples over all channels that differ within the common length.
-    juce::int64 differingSamples {0};
-    /// Largest absolute difference within the common length, in 16-bit steps.
-    int peakDifference {0};
-    /// Offset of the actual first channel against the expected one, in samples, where the two correlate best.
-    /// It is zero for aligned audio, and tells by how much a delayed or early output is shifted.
-    /// Only computed when the files do not cancel.
-    int bestLag {0};
-
-    /// Returns true when both files have the same format, layout, and length, and every sample cancels out.
-    [[nodiscard]] bool cancels() const noexcept
-    {
-        return readable && expectedFormat.matches(actualFormat) && expectedChannels == actualChannels
-            && expectedLength == actualLength && differingSamples == 0;
-    }
-
-    /// Describes the result for a failed expectation:
-    /// the formats, layouts and lengths, the differing sample count, the residual peak in dBFS, and the best lag.
-    [[nodiscard]] juce::String describe() const;
-};
-
-/// Subtracts the expected file from the actual file sample by sample, and finds the lag at which they correlate best.
 NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actual);
 
-/// Returns the committed fixture with the given file name from the root fixtures directory.
 juce::File fixtureFile(const juce::String& name);
 
-/// Returns the AudioBatch Test MS VST3 bundle that CMake builds from test-plugin/ next to the tests.
 juce::File testPluginBundle();
 
-/// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record);
 juce::int64 peakSamplePosition(const juce::File& file);
 juce::String outcomeError(const OperationOutcome& outcome);
@@ -202,6 +196,10 @@ std::optional<Value> tagValue(const serato::TagReadResult& result)
 
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
 void renderTestAudioDevice(const TestAudioDeviceState& state, int sampleCount = 512);
+
+juce::MemoryBlock validWaveform();
+bool executeSql(juce::UnitTest& test, const juce::File& databaseFile, const char* sql);
+void expectSqlScalar(juce::UnitTest& test, const juce::File& databaseFile, const char* sql, int expected);
 
 utils::CancellationCheck cancelAfterChecks(int allowedChecks, std::shared_ptr<std::atomic<int>> calls);
 

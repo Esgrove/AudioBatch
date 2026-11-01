@@ -55,7 +55,9 @@ struct NormalizedRender {
 struct OutputCandidate {
     /// Non-owning record from the caller's vector, valid for the duration of conflict detection.
     const AudioAnalysisRecord* record {};
+    /// Destination the normalized file is written to.
     juce::File output;
+    /// True when the destination is the source file itself.
     bool inPlace {};
 };
 

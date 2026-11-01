@@ -10,6 +10,7 @@
 
 namespace audiobatch::tests
 {
+/// Creates the suite that checks streaming measurement, PCM roundtrips, and invalid input.
 std::unique_ptr<juce::UnitTest> createMeasurementTests();
 
 /// Creates the suite that analyzes the committed audio fixtures and checks the measured levels.
@@ -36,7 +37,11 @@ std::unique_ptr<juce::UnitTest> createFileActivityTests();
 /// Creates the suite that checks the peak, loudness, and file property display formatting.
 std::unique_ptr<juce::UnitTest> createFormatTests();
 
+/// Creates the suite that checks the embedded UI fonts and the text geometry of the look-and-feel.
 std::unique_ptr<juce::UnitTest> createGuiFontTests();
+
+/// Creates the suite that checks the Serato tag rows of the analysis cache.
+std::unique_ptr<juce::UnitTest> createSeratoTagCacheTests();
 
 /// Creates the suite that checks reading and writing tags across formats.
 std::unique_ptr<juce::UnitTest> createMetadataTests();

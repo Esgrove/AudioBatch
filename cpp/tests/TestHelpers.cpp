@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <sqlite3.h>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -205,6 +206,14 @@ public:
         juce::AudioIODeviceType(deviceState.typeName),
         state(deviceState)
     {}
+
+    ~TestAudioDeviceType() override = default;
+
+    TestAudioDeviceType(const TestAudioDeviceType&) = delete;
+    TestAudioDeviceType& operator=(const TestAudioDeviceType&) = delete;
+    TestAudioDeviceType(TestAudioDeviceType&&) = delete;
+    TestAudioDeviceType& operator=(TestAudioDeviceType&&) = delete;
+
     /// Needs no native device enumeration.
     void scanForDevices() override {}
     /// Offers the same interface for input and output.
@@ -390,6 +399,8 @@ void expectAnalysisMeasurementsEqual(
     }
 }
 
+/// Describes the result for a failed expectation:
+/// the formats, layouts and lengths, the differing sample count, the residual peak in dBFS, and the best lag.
 juce::String NullTestResult::describe() const
 {
     if (!readable) {
@@ -415,6 +426,7 @@ juce::String NullTestResult::describe() const
     );
 }
 
+/// Subtracts the expected file from the actual file sample by sample, and finds the lag at which they correlate best.
 NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actual)
 {
     NullTestResult result;
@@ -455,6 +467,7 @@ NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actua
     return result;
 }
 
+/// Returns the AudioBatch Test MS VST3 bundle that CMake builds from test-plugin/ next to the tests.
 juce::File testPluginBundle()
 {
     // Set by CMake to the bundle that the test plugin target builds for the configuration of the tests.
@@ -508,6 +521,7 @@ void ScopedLogCapture::logMessage(const juce::String& message)
     messages.add(message);
 }
 
+/// Creates the folder.
 TemporaryDirectory::TemporaryDirectory() :
     directory(
         juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -518,16 +532,23 @@ TemporaryDirectory::TemporaryDirectory() :
     directory.createDirectory();
 }
 
+/// Deletes the folder and everything in it.
 TemporaryDirectory::~TemporaryDirectory()
 {
     directory.deleteRecursively();
 }
 
+/// Returns a file inside the folder, which does not need to exist yet.
 juce::File TemporaryDirectory::getChildFile(const juce::String& name) const
 {
     return directory.getChildFile(name);
 }
 
+/// Copies a fixture into the folder, optionally under a new name, and returns the copy.
+/// Tests that modify files work on copies so the committed fixtures never change.
+/// Logs which fixture could not be copied and throws when the copy fails,
+/// since every later check on the missing copy would fail with a misleading message.
+/// The JUCE runner reports the exception as a failure of the suite.
 juce::File TemporaryDirectory::copyFixture(const juce::String& fixtureName, const juce::String& copyName) const
 {
     const auto source = fixtureFile(fixtureName);
@@ -542,12 +563,14 @@ juce::File TemporaryDirectory::copyFixture(const juce::String& fixtureName, cons
     return copy;
 }
 
+/// Returns the committed fixture with the given file name from the root fixtures directory.
 juce::File fixtureFile(const juce::String& name)
 {
     // Set by CMake to the absolute path of the fixtures directory at the repository root.
     return juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getChildFile(name);
 }
 
+/// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record)
 {
     return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
@@ -614,6 +637,58 @@ juce::int64 peakSamplePosition(const juce::File& file)
     const std::span samples(buffer.getReadPointer(0), static_cast<std::size_t>(buffer.getNumSamples()));
     const auto peak = std::ranges::max_element(samples, {}, [](const float sample) { return std::abs(sample); });
     return std::distance(samples.begin(), peak);
+}
+
+/// Builds a small complete waveform without decoding or rendering audio.
+juce::MemoryBlock validWaveform()
+{
+    juce::MemoryBlock result;
+    juce::MemoryOutputStream output(result, false);
+    output.write("jatm", 4);
+    output.writeInt(16);
+    output.writeInt64(32);
+    output.writeInt64(32);
+    output.writeInt(3);
+    output.writeInt(1);
+    output.writeInt(44'100);
+    output.writeInt64(0);
+    output.writeInt64(0);
+    for (int point = 0; point < 3; ++point) {
+        output.writeShort(0);
+    }
+    return result;
+}
+
+/// Mutates an isolated test database to exercise rows that normal cache APIs cannot write.
+/// Logs the SQLite error to the test and returns false when the statement fails.
+bool executeSql(juce::UnitTest& test, const juce::File& databaseFile, const char* sql)
+{
+    sqlite3* database = nullptr;
+    const auto opened = sqlite3_open(databaseFile.getFullPathName().toRawUTF8(), &database);
+    const auto completed = opened == SQLITE_OK && sqlite3_exec(database, sql, nullptr, nullptr, nullptr) == SQLITE_OK;
+    if (!completed && database != nullptr) {
+        test.logMessage(juce::String::fromUTF8(sqlite3_errmsg(database)));
+    }
+    sqlite3_close(database);
+    return completed;
+}
+
+/// Checks persisted SQL state without relying on the cache's decoder or identity validation.
+/// The statement must return one row whose first column is the expected integer.
+void expectSqlScalar(juce::UnitTest& test, const juce::File& databaseFile, const char* sql, const int expected)
+{
+    sqlite3* database = nullptr;
+    const auto opened = sqlite3_open(databaseFile.getFullPathName().toRawUTF8(), &database);
+    test.expectEquals(opened, SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    if (opened == SQLITE_OK && sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) == SQLITE_OK) {
+        test.expectEquals(sqlite3_step(statement), SQLITE_ROW);
+        test.expectEquals(sqlite3_column_int(statement, 0), expected);
+    } else {
+        test.expect(false, "Cannot read test database state");
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(database);
 }
 
 /// Returns a cancellation check that counts its calls in `calls` and reports cancellation on every call

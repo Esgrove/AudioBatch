@@ -188,7 +188,10 @@ juce::Image ArtworkLoader::loadArtworkThumbnail(const juce::File& file, const ut
         if (isCancelled && isCancelled()) {
             return {};
         }
-        if (auto image = decodeThumbnail(picture.data.getData(), picture.data.getSize()); image.isValid()) {
+        if (auto image
+            = decodeThumbnail(std::span(static_cast<const std::byte*>(picture.data.getData()), picture.data.getSize()));
+            image.isValid())
+        {
             return image;
         }
     }
@@ -198,8 +201,10 @@ juce::Image ArtworkLoader::loadArtworkThumbnail(const juce::File& file, const ut
 /// Decodes a JPEG or PNG picture into a thumbnail no larger than artworkThumbnailSize on either side.
 /// The header is checked first, so another format, a corrupt header,
 /// or dimensions above artworkMaximumSourceDimension return an invalid image without decoding.
-juce::Image ArtworkLoader::decodeThumbnail(const void* data, const std::size_t size)
+juce::Image ArtworkLoader::decodeThumbnail(const std::span<const std::byte> encoded)
 {
+    const void* data = encoded.data();
+    const auto size = encoded.size();
     if (data == nullptr || size == 0 || size > ArtworkReadLimits {}.maximumBytes) {
         return {};
     }

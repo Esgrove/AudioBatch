@@ -241,8 +241,10 @@ juce::MemoryBlock serializeOverloadHistory(const OverloadHistory& history)
 
 /// Validates the header and the exact payload size before allocating the flags,
 /// then validates the complete history, returning null for any malformed blob.
-std::shared_ptr<const OverloadHistory> deserializeOverloadHistory(const void* data, const std::size_t bytes)
+std::shared_ptr<const OverloadHistory> deserializeOverloadHistory(const std::span<const std::byte> blob)
 {
+    const void* data = blob.data();
+    const auto bytes = blob.size();
     if (data == nullptr || bytes < overloadHistoryHeaderBytes) {
         return {};
     }

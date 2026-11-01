@@ -59,5 +59,5 @@ inline constexpr std::int64_t truePeakCoverageFrames {32};
 [[nodiscard]] bool isValidOverloadHistory(const OverloadHistory& history);
 [[nodiscard]] bool overloadHistoryMatches(const OverloadHistory& history, const AudioAnalysisRecord& record);
 [[nodiscard]] juce::MemoryBlock serializeOverloadHistory(const OverloadHistory& history);
-[[nodiscard]] std::shared_ptr<const OverloadHistory> deserializeOverloadHistory(const void* data, std::size_t bytes);
+[[nodiscard]] std::shared_ptr<const OverloadHistory> deserializeOverloadHistory(std::span<const std::byte> blob);
 }  // namespace audiobatch

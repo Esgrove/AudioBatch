@@ -19,6 +19,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <thread>
 
 namespace audiobatch
@@ -62,7 +63,7 @@ public:
     ArtworkLoader& operator=(ArtworkLoader&&) = delete;
 
     static juce::Image loadArtworkThumbnail(const juce::File& file, const utils::CancellationCheck& isCancelled);
-    static juce::Image decodeThumbnail(const void* data, std::size_t size);
+    static juce::Image decodeThumbnail(std::span<const std::byte> encoded);
 
     std::uint64_t request(const juce::File& file);
 
