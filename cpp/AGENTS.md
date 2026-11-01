@@ -390,6 +390,12 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   `./sanitize.sh --clang` uses LLVM AddressSanitizer with the `windows-clang-asan` preset.
   It uses RelWithDebInfo and the dynamic release CRT because LLVM AddressSanitizer rejects the Debug CRT.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
+- To measure code coverage on macOS, run `./coverage.sh`.
+  It configures and builds the `macos-coverage` preset in `cmake-build-mac-coverage`,
+  which sets the `AUDIOBATCH_COVERAGE` CMake option for Clang source based coverage,
+  runs ctest, and prints a per-file summary of `src/` with `llvm-cov`.
+  `--lcov` also writes an LCOV report, and `--open` writes and opens the HTML report.
+  The reports are in `cmake-build-mac-coverage/coverage`.
 - Every build enables standard library hardening,
   `_LIBCPP_HARDENING_MODE` on macOS and `_MSVC_STL_HARDENING` on Windows,
   so out of range access through the standard containers traps instead of reading past the end.

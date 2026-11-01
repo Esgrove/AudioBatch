@@ -178,6 +178,17 @@
       }
     },
     {
+      "name": "macos-coverage",
+      "displayName": "macOS Coverage",
+      "description": "Debug build with source based code coverage instrumentation in cmake-build-mac-coverage.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-coverage",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AUDIOBATCH_COVERAGE": "ON"
+      }
+    },
+    {
       "name": "macos-fuzz",
       "displayName": "macOS Fuzz",
       "description": "libFuzzer harnesses with AddressSanitizer and UndefinedBehaviorSanitizer, built with Homebrew LLVM in cmake-build-mac-fuzz.",
@@ -244,6 +255,10 @@
     {
       "name": "macos-tsan",
       "configurePreset": "macos-tsan"
+    },
+    {
+      "name": "macos-coverage",
+      "configurePreset": "macos-coverage"
     },
     {
       "name": "macos-fuzz",
