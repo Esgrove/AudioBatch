@@ -7,7 +7,7 @@
 //! since the platform math library may round `sin` and `exp` differently in the last bit.
 //! The module is public only for the benchmarks, which is why it is hidden from the documentation.
 
-#![allow(
+#![expect(
     clippy::suboptimal_flops,
     reason = "separate multiplies and adds keep the signals the same whether or not the target fuses them"
 )]

@@ -44,6 +44,9 @@ const SETUP_SAMPLE_RATE: f64 = 44_100.0;
 /// Block size the plugin is set up for while its parameters are set.
 const SETUP_BLOCK_FRAMES: usize = 512;
 
+/// The dispatcher of the one UI thread these tests share, since a process can have only one.
+static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
+
 /// Parameter values set on the test plugin the way a host automates them.
 #[derive(Debug, Clone, Copy)]
 struct Parameters {
@@ -64,9 +67,6 @@ impl From<&PluginExpectation> for Parameters {
         }
     }
 }
-
-/// The dispatcher of the one UI thread these tests share, since a process can have only one.
-static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
 
 /// Returns the dispatcher of the shared test UI thread, starting the thread on first use.
 fn dispatcher() -> &'static UiDispatcher {

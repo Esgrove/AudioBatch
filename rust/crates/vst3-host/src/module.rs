@@ -160,6 +160,31 @@ impl Module {
         Arc::new(Self::with_factory(ui, PathBuf::from(name), factory, None))
     }
 
+    /// Builds the module around its factory, giving the factory the host context and reading its classes.
+    fn with_factory(
+        _ui: &UiThread,
+        path: PathBuf,
+        factory: ComPtr<IPluginFactory>,
+        library: Option<platform::Library>,
+    ) -> Self {
+        if let Some(factory3) = factory.cast::<IPluginFactory3>() {
+            let host = HostApplication::create();
+            if let Some(context) = host.to_com_ptr::<FUnknown>() {
+                // SAFETY: both pointers are valid, and the factory takes its own reference to the context.
+                let _ = unsafe { factory3.setHostContext(context.as_ptr()) };
+            }
+        }
+        let factory_info = read_factory_info(&factory);
+        let classes = read_classes(&factory);
+        Self {
+            path,
+            factory,
+            factory_info,
+            classes,
+            _library: library,
+        }
+    }
+
     /// Returns the bundle path.
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -204,31 +229,6 @@ impl Module {
         }
         // SAFETY: on success the factory returned an owned reference to an object implementing `I`.
         unsafe { ComPtr::from_raw(object.cast::<I>()) }.ok_or(FactoryError::MissingObject)
-    }
-
-    /// Builds the module around its factory, giving the factory the host context and reading its classes.
-    fn with_factory(
-        _ui: &UiThread,
-        path: PathBuf,
-        factory: ComPtr<IPluginFactory>,
-        library: Option<platform::Library>,
-    ) -> Self {
-        if let Some(factory3) = factory.cast::<IPluginFactory3>() {
-            let host = HostApplication::create();
-            if let Some(context) = host.to_com_ptr::<FUnknown>() {
-                // SAFETY: both pointers are valid, and the factory takes its own reference to the context.
-                let _ = unsafe { factory3.setHostContext(context.as_ptr()) };
-            }
-        }
-        let factory_info = read_factory_info(&factory);
-        let classes = read_classes(&factory);
-        Self {
-            path,
-            factory,
-            factory_info,
-            classes,
-            _library: library,
-        }
     }
 }
 

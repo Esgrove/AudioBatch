@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::fmt::Display;
+use std::num::FpCategory;
 
 /// Offset of the BPM field after the two version bytes.
 const BPM_OFFSET: usize = 2;
@@ -242,7 +243,9 @@ fn parse_tag_number(text: &str) -> Result<f64, AutoTagsNumberError> {
         source,
     })?;
     let significand = trimmed.split(['e', 'E']).next().unwrap_or_default();
-    let underflowed = value == 0.0 && significand.contains(|character: char| ('1'..='9').contains(&character));
+    // A zero from a nonzero significand is an underflow, so the zero is classified exactly instead of with a tolerance.
+    let underflowed = value.classify() == FpCategory::Zero
+        && significand.contains(|character: char| ('1'..='9').contains(&character));
     if !value.is_finite() || underflowed {
         return Err(AutoTagsNumberError::OutOfRange { text: text.to_owned() });
     }

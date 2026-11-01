@@ -339,17 +339,6 @@ impl AnalysisCache {
         })
     }
 
-    /// Returns the custom gain stored for a file when its row describes the given version of the file,
-    /// so a fresh analysis of an unchanged file keeps the gain the user set.
-    #[must_use]
-    pub(crate) fn get_custom_gain(&self, path: &Path, file_size: u64, modified_time_ms: i64) -> Option<f32> {
-        let file_size = i64::try_from(file_size).ok()?;
-        self.with_connection(|connection| Ok(stored_custom_gain(connection, path, file_size, modified_time_ms)?))
-            .ok()
-            .flatten()
-            .and_then(|stored| stored.custom_gain_db)
-    }
-
     /// Sets or clears the custom gain of a file in its cached row.
     /// Returns true when a row was updated.
     /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
@@ -404,6 +393,17 @@ impl AnalysisCache {
             transaction.commit()?;
             Ok(())
         })
+    }
+
+    /// Returns the custom gain stored for a file when its row describes the given version of the file,
+    /// so a fresh analysis of an unchanged file keeps the gain the user set.
+    #[must_use]
+    pub(crate) fn get_custom_gain(&self, path: &Path, file_size: u64, modified_time_ms: i64) -> Option<f32> {
+        let file_size = i64::try_from(file_size).ok()?;
+        self.with_connection(|connection| Ok(stored_custom_gain(connection, path, file_size, modified_time_ms)?))
+            .ok()
+            .flatten()
+            .and_then(|stored| stored.custom_gain_db)
     }
 
     /// Opens a connection and ensures the schema is current.

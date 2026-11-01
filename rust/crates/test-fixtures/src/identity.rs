@@ -94,6 +94,7 @@ pub fn pcm_sha256(sample_rate: u32, planes: &[Vec<f32>]) -> String {
     lower_hex(&hasher.finalize())
 }
 
+/// Styles a report label with the color and bold unless `NO_COLOR` is set.
 fn report_label(text: &str, color: Color) -> ColoredString {
     if std::env::var_os("NO_COLOR").is_some() {
         text.normal()
@@ -102,6 +103,8 @@ fn report_label(text: &str, color: Color) -> ColoredString {
     }
 }
 
+/// Parses a manifest into a map from name to hash, accepting `name = hash` and `hash  name` lines.
+/// Returns `None` when a line has neither form or a name repeats.
 fn manifest_entries(text: &str) -> Option<BTreeMap<&str, &str>> {
     let mut entries = BTreeMap::new();
     for line in text.lines() {
@@ -118,6 +121,8 @@ fn manifest_entries(text: &str) -> Option<BTreeMap<&str, &str>> {
     Some(entries)
 }
 
+/// Builds the colored report that compares the expected and actual manifest of one input.
+/// It lists each identity as matched, mismatched, missing, or unexpected, and ends with the totals.
 fn manifest_report(path: &Path, expected: &str, actual: &str) -> String {
     let mut report = format!(
         "{} {}\n",
@@ -206,6 +211,7 @@ fn manifest_report(path: &Path, expected: &str, actual: &str) -> String {
     report
 }
 
+/// Formats the bytes as lowercase hexadecimal.
 fn lower_hex(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

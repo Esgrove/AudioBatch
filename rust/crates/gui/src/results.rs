@@ -77,6 +77,65 @@ const STATUS_MINIMUM_WIDTH: f32 = 180.0;
 /// Widest width the Status column stretches to, past the 1200 pixel default limit of a column.
 const STATUS_MAXIMUM_WIDTH: f32 = 8192.0;
 
+/// Column definitions in the default order.
+/// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
+/// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
+/// The Name and Path widths are a starting point that `ResultsDelegate::new` stretches,
+/// and the Status width is the least it gets, because it fills whatever the table has left.
+const COLUMNS: [ColumnSpec; 15] = [
+    column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
+    column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
+    column_spec(ColumnKey::Type, "Type", "File type", 66.0, false),
+    column_spec(
+        ColumnKey::Length,
+        "Length",
+        "Duration in minutes and seconds",
+        72.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::BitDepth,
+        "Bit Depth",
+        "Bit depth of the source audio",
+        86.0,
+        true,
+    ),
+    column_spec(ColumnKey::Bitrate, "Bitrate", "Average bitrate in kbps", 76.0, true),
+    column_spec(ColumnKey::SampleRate, "Rate", "Sample rate in kHz", 70.0, true),
+    column_spec(ColumnKey::Peak, "Peak", "Sample peak in dBFS", 76.0, true),
+    column_spec(
+        ColumnKey::PeakLeft,
+        "Peak L",
+        "Sample peak of the left channel in dBFS",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::PeakRight,
+        "Peak R",
+        "Sample peak of the right channel in dBFS",
+        76.0,
+        true,
+    ),
+    column_spec(ColumnKey::TruePeak, "True Peak", "True peak in dBTP", 92.0, true),
+    column_spec(
+        ColumnKey::ShortTerm,
+        "LUFS-S",
+        "Maximum short-term loudness in LUFS",
+        78.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::Integrated,
+        "LUFS-I",
+        "Integrated loudness in LUFS",
+        78.0,
+        true,
+    ),
+    column_spec(ColumnKey::Gain, "Gain", "Per-file gain in dB", 76.0, true),
+    column_spec(ColumnKey::Status, "Status", "Analysis status", 180.0, false),
+];
+
 /// Analysis progress of one row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RowState {
@@ -186,65 +245,6 @@ struct ColumnSpec {
     /// True for numbers, which line up on the right.
     right_aligned: bool,
 }
-
-/// Column definitions in the default order.
-/// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
-/// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
-/// The Name and Path widths are a starting point that `ResultsDelegate::new` stretches,
-/// and the Status width is the least it gets, because it fills whatever the table has left.
-const COLUMNS: [ColumnSpec; 15] = [
-    column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
-    column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
-    column_spec(ColumnKey::Type, "Type", "File type", 66.0, false),
-    column_spec(
-        ColumnKey::Length,
-        "Length",
-        "Duration in minutes and seconds",
-        72.0,
-        true,
-    ),
-    column_spec(
-        ColumnKey::BitDepth,
-        "Bit Depth",
-        "Bit depth of the source audio",
-        86.0,
-        true,
-    ),
-    column_spec(ColumnKey::Bitrate, "Bitrate", "Average bitrate in kbps", 76.0, true),
-    column_spec(ColumnKey::SampleRate, "Rate", "Sample rate in kHz", 70.0, true),
-    column_spec(ColumnKey::Peak, "Peak", "Sample peak in dBFS", 76.0, true),
-    column_spec(
-        ColumnKey::PeakLeft,
-        "Peak L",
-        "Sample peak of the left channel in dBFS",
-        76.0,
-        true,
-    ),
-    column_spec(
-        ColumnKey::PeakRight,
-        "Peak R",
-        "Sample peak of the right channel in dBFS",
-        76.0,
-        true,
-    ),
-    column_spec(ColumnKey::TruePeak, "True Peak", "True peak in dBTP", 92.0, true),
-    column_spec(
-        ColumnKey::ShortTerm,
-        "LUFS-S",
-        "Maximum short-term loudness in LUFS",
-        78.0,
-        true,
-    ),
-    column_spec(
-        ColumnKey::Integrated,
-        "LUFS-I",
-        "Integrated loudness in LUFS",
-        78.0,
-        true,
-    ),
-    column_spec(ColumnKey::Gain, "Gain", "Per-file gain in dB", 76.0, true),
-    column_spec(ColumnKey::Status, "Status", "Analysis status", 180.0, false),
-];
 
 impl ResultRow {
     /// Creates a pending row for a file.
@@ -371,27 +371,6 @@ impl ResultsDelegate {
         };
         delegate.apply_sort_to_columns();
         delegate
-    }
-
-    /// Returns the columns the user can show or hide, with their titles, in the default order.
-    /// The Name column always shows.
-    pub fn column_choices() -> impl Iterator<Item = (ColumnKey, &'static str)> {
-        COLUMNS
-            .iter()
-            .filter(|spec| spec.key != ColumnKey::Name)
-            .map(|spec| (spec.key, spec.title))
-    }
-
-    /// Returns the column with the identifier the settings store, if there is one.
-    #[must_use]
-    pub fn column_from_id(id: &str) -> Option<ColumnKey> {
-        COLUMNS.iter().map(|spec| spec.key).find(|&key| column_id(key) == id)
-    }
-
-    /// Returns the identifier of a column, which the settings store.
-    #[must_use]
-    pub const fn column_identifier(key: ColumnKey) -> &'static str {
-        column_id(key)
     }
 
     /// Returns true when the column shows.
@@ -725,19 +704,6 @@ impl ResultsDelegate {
         self.selected = path;
     }
 
-    /// Applies a plain pointer press, even when the pressed row is already the preview anchor.
-    /// Programmatic cursor restoration does not call this, so it keeps the batch selection.
-    fn plain_click_row(&mut self, row_index: usize) {
-        if let Some(path) = self.row(row_index).map(|row| row.path.clone()) {
-            self.select_only(Some(path));
-        }
-    }
-
-    /// Records a completed plain pointer click before the table emits its positional selection event.
-    fn pointer_click_row(&mut self, path: &Path) {
-        self.pointer_selection = Some(path.to_path_buf());
-    }
-
     /// Consumes completed plain pointer intent once, before resolving the table's selection event.
     pub const fn take_pointer_selection(&mut self) -> Option<PathBuf> {
         self.pointer_selection.take()
@@ -838,6 +804,69 @@ impl ResultsDelegate {
         self.rebuild_index();
     }
 
+    /// Remembers the widths of the shown columns, in display order, as the table has them now,
+    /// so rebuilding the columns, such as to show or hide one, keeps the widths the user gave them.
+    pub fn remember_column_widths(&mut self, widths: &[Pixels]) {
+        for (key, &width) in self.order.iter().zip(widths) {
+            if let Some((_, column)) = self.all_columns.iter_mut().find(|(column_key, _)| column_key == key) {
+                *column = column.clone().width(width);
+            }
+        }
+    }
+
+    /// Sets, flips, or clears the secondary sort for a Command or Control click on a header.
+    /// The primary column clears it, the current secondary column flips its direction,
+    /// and any other column becomes the ascending secondary sort.
+    pub fn toggle_secondary_sort(&mut self, column_index: usize) {
+        let Some(&key) = self.order.get(column_index) else {
+            return;
+        };
+        let primary = self
+            .sort
+            .filter(|(_, sort)| *sort != ColumnSort::Default)
+            .map(|(key, _)| key);
+        self.secondary_sort = match self.secondary_sort {
+            _ if primary == Some(key) => None,
+            Some((current, ascending)) if current == key => Some((current, !ascending)),
+            _ => Some((key, true)),
+        };
+        self.sort_rows();
+    }
+
+    /// Returns the columns the user can show or hide, with their titles, in the default order.
+    /// The Name column always shows.
+    pub fn column_choices() -> impl Iterator<Item = (ColumnKey, &'static str)> {
+        COLUMNS
+            .iter()
+            .filter(|spec| spec.key != ColumnKey::Name)
+            .map(|spec| (spec.key, spec.title))
+    }
+
+    /// Returns the column with the identifier the settings store, if there is one.
+    #[must_use]
+    pub fn column_from_id(id: &str) -> Option<ColumnKey> {
+        COLUMNS.iter().map(|spec| spec.key).find(|&key| column_id(key) == id)
+    }
+
+    /// Returns the identifier of a column, which the settings store.
+    #[must_use]
+    pub const fn column_identifier(key: ColumnKey) -> &'static str {
+        column_id(key)
+    }
+
+    /// Applies a plain pointer press, even when the pressed row is already the preview anchor.
+    /// Programmatic cursor restoration does not call this, so it keeps the batch selection.
+    fn plain_click_row(&mut self, row_index: usize) {
+        if let Some(path) = self.row(row_index).map(|row| row.path.clone()) {
+            self.select_only(Some(path));
+        }
+    }
+
+    /// Records a completed plain pointer click before the table emits its positional selection event.
+    fn pointer_click_row(&mut self, path: &Path) {
+        self.pointer_selection = Some(path.to_path_buf());
+    }
+
     /// Returns the display index of the Status column, which stretches to fill the table width.
     fn status_index(&self) -> Option<usize> {
         self.order.iter().position(|&key| key == ColumnKey::Status)
@@ -847,16 +876,6 @@ impl ResultsDelegate {
     fn spec_at(&self, column_index: usize) -> Option<&'static ColumnSpec> {
         let key = *self.order.get(column_index)?;
         COLUMNS.iter().find(|spec| spec.key == key)
-    }
-
-    /// Remembers the widths of the shown columns, in display order, as the table has them now,
-    /// so rebuilding the columns, such as to show or hide one, keeps the widths the user gave them.
-    pub fn remember_column_widths(&mut self, widths: &[Pixels]) {
-        for (key, &width) in self.order.iter().zip(widths) {
-            if let Some((_, column)) = self.all_columns.iter_mut().find(|(column_key, _)| column_key == key) {
-                *column = column.clone().width(width);
-            }
-        }
     }
 
     /// Rebuilds the shown columns: the ones still shown keep their display order,
@@ -905,25 +924,6 @@ impl ResultsDelegate {
             *column = column.clone().sort(direction);
         }
         self.rebuild_visible_columns();
-    }
-
-    /// Sets, flips, or clears the secondary sort for a Command or Control click on a header.
-    /// The primary column clears it, the current secondary column flips its direction,
-    /// and any other column becomes the ascending secondary sort.
-    pub fn toggle_secondary_sort(&mut self, column_index: usize) {
-        let Some(&key) = self.order.get(column_index) else {
-            return;
-        };
-        let primary = self
-            .sort
-            .filter(|(_, sort)| *sort != ColumnSort::Default)
-            .map(|(key, _)| key);
-        self.secondary_sort = match self.secondary_sort {
-            _ if primary == Some(key) => None,
-            Some((current, ascending)) if current == key => Some((current, !ascending)),
-            _ => Some((key, true)),
-        };
-        self.sort_rows();
     }
 
     /// Moves a column to another display index when the user drags its header.

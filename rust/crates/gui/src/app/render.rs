@@ -175,6 +175,29 @@ impl AppView {
         )
     }
 
+    /// Waits for matching startup geometry on consecutive frames, including deferred platform maximization.
+    /// Commits the controls-fit split once, and never refits it on later resize, selection, or artwork arrival.
+    pub fn schedule_preview_startup_fit(&self, initially_maximized: bool, window: &Window, cx: &Context<Self>) {
+        if self.preview_startup_fit.complete {
+            return;
+        }
+        let this = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            let _ = this.update(cx, |view, cx| {
+                let geometry = content_size(window.viewport_size());
+                let platform_ready = !initially_maximized || window.is_maximized();
+                if view.preview_startup_fit.observe(geometry, platform_ready) {
+                    view.preview_height = preview_fit_height(geometry.0, geometry.1);
+                    view.workspace_split = cx.new(|_| ResizableState::default());
+                    cx.notify();
+                }
+                if !view.preview_startup_fit.complete {
+                    view.schedule_preview_startup_fit(initially_maximized, window, cx);
+                }
+            });
+        });
+    }
+
     /// Sets the window title, with the activity and its progress while a run is in progress.
     fn update_window_title(&mut self, progress: Option<(&str, f32)>, window: &mut Window) {
         let title = progress.map_or_else(
@@ -298,13 +321,6 @@ impl AppView {
         }
     }
 
-    /// Returns the callback that hands the events of the controls to the view.
-    fn controls_listener(cx: &Context<Self>) -> EventCallback {
-        Rc::new(cx.listener(|view, event: &ControlsEvent, window, cx| {
-            view.handle_controls_event(*event, window, cx);
-        }))
-    }
-
     /// Renders the preview: the controls, the information panel, and the waveform side by side.
     /// A wide window gives the controls and the information panel their wide layouts, see `preview_widths`.
     fn render_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
@@ -400,29 +416,6 @@ impl AppView {
             )
     }
 
-    /// Waits for matching startup geometry on consecutive frames, including deferred platform maximization.
-    /// Commits the controls-fit split once, and never refits it on later resize, selection, or artwork arrival.
-    pub fn schedule_preview_startup_fit(&self, initially_maximized: bool, window: &Window, cx: &Context<Self>) {
-        if self.preview_startup_fit.complete {
-            return;
-        }
-        let this = cx.weak_entity();
-        window.on_next_frame(move |window, cx| {
-            let _ = this.update(cx, |view, cx| {
-                let geometry = content_size(window.viewport_size());
-                let platform_ready = !initially_maximized || window.is_maximized();
-                if view.preview_startup_fit.observe(geometry, platform_ready) {
-                    view.preview_height = preview_fit_height(geometry.0, geometry.1);
-                    view.workspace_split = cx.new(|_| ResizableState::default());
-                    cx.notify();
-                }
-                if !view.preview_startup_fit.complete {
-                    view.schedule_preview_startup_fit(initially_maximized, window, cx);
-                }
-            });
-        });
-    }
-
     /// Renders the results table above the preview:
     /// split by a draggable divider while expanded, and above the compact row while collapsed.
     fn render_workspace(&self, content_width: f32, workspace_height: f32, cx: &Context<Self>) -> Div {
@@ -459,6 +452,13 @@ impl AppView {
                 )
                 .child(preview),
         )
+    }
+
+    /// Returns the callback that hands the events of the controls to the view.
+    fn controls_listener(cx: &Context<Self>) -> EventCallback {
+        Rc::new(cx.listener(|view, event: &ControlsEvent, window, cx| {
+            view.handle_controls_event(*event, window, cx);
+        }))
     }
 }
 

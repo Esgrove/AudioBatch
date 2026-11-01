@@ -4,7 +4,10 @@
 //! while `column_peaks` runs on every repaint of the waveform at the width of the view.
 
 // Benchmarks are test code, which the workspace allows to index, like the tests.
-#![allow(clippy::indexing_slicing)]
+#![expect(
+    clippy::indexing_slicing,
+    reason = "benchmarks are test code, where indexing is allowed"
+)]
 
 use std::hint::black_box;
 use std::sync::Arc;
