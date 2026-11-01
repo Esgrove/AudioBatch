@@ -168,7 +168,7 @@ private:
             };
             const std::array aligned {minimum, minimum, -2 * quantum, -quantum, -quantum, 0, 0, maximum - quantum + 1};
             for (std::size_t index = 0; index < samples.size(); ++index) {
-                expectEquals(
+                expectEquals<juce::uint64>(
                     std::bit_cast<std::uint32_t>(utils::pcmSampleToFloat(samples[index], bits)),
                     std::bit_cast<std::uint32_t>(static_cast<float>(aligned[index]) * scale)
                 );
