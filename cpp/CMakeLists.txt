@@ -203,6 +203,22 @@ if(AUDIOBATCH_SANITIZE)
     endif()
 endif()
 
+# Source based code coverage with the Clang instrumentation, for the coverage.sh report.
+# The flags are global so every target is instrumented the same way, and the report filters the sources it lists.
+# Sanitizers are left out because their runtimes change the code the coverage mapping describes.
+option(AUDIOBATCH_COVERAGE "Instrument the build for source based code coverage" OFF)
+
+if(AUDIOBATCH_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "AUDIOBATCH_COVERAGE needs Clang")
+    endif()
+    if(AUDIOBATCH_SANITIZE)
+        message(FATAL_ERROR "AUDIOBATCH_COVERAGE cannot be combined with AUDIOBATCH_SANITIZE")
+    endif()
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate)
+endif()
+
 # libc++ hardening turns out of range access through std::span, std::optional, std::vector and similar into a trap.
 # Debug builds, which include the sanitizer builds, use the extensive checks,
 # and the other configurations keep the cheap checks that are suitable for release builds.
