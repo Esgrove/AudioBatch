@@ -30,8 +30,11 @@ namespace audiobatch::tests
 {
 /// Expected properties of one fixture tone.
 struct ToneFixture {
+    /// Name of the committed fixture file.
     const char* fileName {};
+    /// Expected channel count.
     int channels {};
+    /// Expected sample rate in Hz.
     int sampleRate {};
     /// Expected source bit depth.
     /// MP3 and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
@@ -171,9 +174,9 @@ constexpr std::array toneFixtures {
 };
 
 /// Allowed level difference for lossless fixtures, in dB or LU.
-constexpr double losslessTolerance = 0.05;
+constexpr double losslessTolerance {0.05};
 /// Allowed level difference for lossy fixtures, in dB or LU.
-constexpr double lossyTolerance = 0.5;
+constexpr double lossyTolerance {0.5};
 
 /// Checks the measured peaks, loudness, and file properties of every fixture.
 class AnalysisTests final : public juce::UnitTest

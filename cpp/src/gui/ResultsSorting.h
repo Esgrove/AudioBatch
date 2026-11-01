@@ -17,6 +17,26 @@
 
 namespace audiobatch
 {
+/// Comparators and sorting for the results table columns.
+namespace results_sorting
+{
+/// The primary and secondary sort columns of the results table.
+/// An empty column means no sort on that level.
+struct SortState {
+    /// The column the rows are sorted by first.
+    std::optional<AudioFileTableColumn> primaryColumn;
+    /// True to sort the primary column in ascending order.
+    bool primaryForwards {true};
+    /// The column that orders the rows with equal primary values.
+    std::optional<AudioFileTableColumn> secondaryColumn;
+    /// True to sort the secondary column in ascending order.
+    bool secondaryForwards {true};
+    /// Returns the text the status column shows for a record, such as the message of its last operation.
+    /// The status column sorts by this text when set, and by the analysis status otherwise.
+    std::function<juce::String(const AudioAnalysisRecord&)> statusText;
+};
+}  // namespace results_sorting
+
 /// Table header that maps ctrl or cmd clicks to a secondary sort request
 /// and renders the secondary sort indicator inside the column name text.
 /// Its tooltip describes the column under the mouse, with the unit the short column titles leave out.
@@ -51,25 +71,8 @@ private:
     std::map<int, juce::String> baseColumnNames;
 };
 
-/// Comparators and sorting for the results table columns.
 namespace results_sorting
 {
-/// The primary and secondary sort columns of the results table.
-/// An empty column means no sort on that level.
-struct SortState {
-    /// The column the rows are sorted by first.
-    std::optional<AudioFileTableColumn> primaryColumn;
-    /// True to sort the primary column in ascending order.
-    bool primaryForwards {true};
-    /// The column that orders the rows with equal primary values.
-    std::optional<AudioFileTableColumn> secondaryColumn;
-    /// True to sort the secondary column in ascending order.
-    bool secondaryForwards {true};
-    /// Returns the text the status column shows for a record, such as the message of its last operation.
-    /// The status column sorts by this text when set, and by the analysis status otherwise.
-    std::function<juce::String(const AudioAnalysisRecord&)> statusText;
-};
-
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, AudioFileTableColumn column);
 
 void setPrimarySort(SortState& state, std::optional<AudioFileTableColumn> column, bool isForwards);

@@ -181,7 +181,8 @@ private:
         beginTest("An overload history blob round trips");
         {
             const auto data = serializeOverloadHistory(*history);
-            const auto restored = deserializeOverloadHistory(data.getData(), data.getSize());
+            const auto restored
+                = deserializeOverloadHistory(std::span(static_cast<const std::byte*>(data.getData()), data.getSize()));
             expect(restored != nullptr);
             if (restored) {
                 expect(restored->flags == history->flags);
@@ -194,7 +195,11 @@ private:
         {
             const auto data = serializeOverloadHistory(*history);
             const auto rejects = [this](juce::MemoryBlock blob, const juce::String& reason) {
-                expect(deserializeOverloadHistory(blob.getData(), blob.getSize()) == nullptr, reason);
+                expect(
+                    deserializeOverloadHistory(std::span(static_cast<const std::byte*>(blob.getData()), blob.getSize()))
+                        == nullptr,
+                    reason
+                );
             };
             rejects({}, "empty");
             auto truncated = data;

@@ -30,6 +30,12 @@ namespace audiobatch::tests
 {
 namespace
 {
+/// Views the bytes of a buffer for ArtworkLoader::decodeThumbnail.
+std::span<const std::byte> asBytes(const void* data, const std::size_t size)
+{
+    return {static_cast<const std::byte*>(data), size};
+}
+
 /// Encodes a solid colour image of the given size as PNG.
 juce::MemoryBlock encodePng(const int width, const int height, const juce::Colour colour)
 {
@@ -174,12 +180,12 @@ private:
     {
         beginTest("Thumbnails are bounded, and corrupt or oversized images are skipped without decoding");
         const auto small = encodePng(40, 20, juce::Colours::white);
-        const auto smallImage = ArtworkLoader::decodeThumbnail(small.getData(), small.getSize());
+        const auto smallImage = ArtworkLoader::decodeThumbnail(asBytes(small.getData(), small.getSize()));
         expectEquals(smallImage.getWidth(), 40);
         expectEquals(smallImage.getHeight(), 20);
 
         const auto wide = encodePng(400, 200, juce::Colours::white);
-        const auto wideImage = ArtworkLoader::decodeThumbnail(wide.getData(), wide.getSize());
+        const auto wideImage = ArtworkLoader::decodeThumbnail(asBytes(wide.getData(), wide.getSize()));
         expectEquals(wideImage.getWidth(), artworkThumbnailSize);
         expectEquals(wideImage.getHeight(), artworkThumbnailSize / 2);
 
@@ -187,25 +193,27 @@ private:
         juce::JPEGImageFormat jpegFormat;
         juce::MemoryOutputStream jpegStream;
         expect(jpegFormat.writeImageToStream(jpegSource, jpegStream));
-        const auto jpeg = ArtworkLoader::decodeThumbnail(jpegStream.getData(), jpegStream.getDataSize());
+        const auto jpeg = ArtworkLoader::decodeThumbnail(asBytes(jpegStream.getData(), jpegStream.getDataSize()));
         expectEquals(jpeg.getWidth(), 12);
         expectEquals(jpeg.getHeight(), 6);
 
-        expect(!ArtworkLoader::decodeThumbnail(nullptr, 0).isValid());
+        expect(!ArtworkLoader::decodeThumbnail({}).isValid());
         // An encoded-byte limit is checked before accessing even the signature.
-        expect(!ArtworkLoader::decodeThumbnail(small.getData(), ArtworkReadLimits {}.maximumBytes + 1).isValid());
+        expect(
+            !ArtworkLoader::decodeThumbnail(asBytes(small.getData(), ArtworkReadLimits {}.maximumBytes + 1)).isValid()
+        );
         const juce::MemoryBlock garbage("not an image at all", 19);
-        expect(!ArtworkLoader::decodeThumbnail(garbage.getData(), garbage.getSize()).isValid());
+        expect(!ArtworkLoader::decodeThumbnail(asBytes(garbage.getData(), garbage.getSize())).isValid());
 
         auto huge = encodePng(4, 4, juce::Colours::white);
         const std::span bytes(static_cast<std::uint8_t*>(huge.getData()), huge.getSize());
         // Declares 65536 x 65536 in the IHDR chunk, which the header check must reject before decoding.
         constexpr std::array<std::uint8_t, 8> hugeDimensions {0, 1, 0, 0, 0, 1, 0, 0};
         std::ranges::copy(hugeDimensions, bytes.subspan(16).begin());
-        expect(!ArtworkLoader::decodeThumbnail(huge.getData(), huge.getSize()).isValid());
+        expect(!ArtworkLoader::decodeThumbnail(asBytes(huge.getData(), huge.getSize())).isValid());
 
         constexpr std::array<std::uint8_t, 7> truncatedJpeg {0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08};
-        expect(!ArtworkLoader::decodeThumbnail(truncatedJpeg.data(), truncatedJpeg.size()).isValid());
+        expect(!ArtworkLoader::decodeThumbnail(asBytes(truncatedJpeg.data(), truncatedJpeg.size())).isValid());
     }
 
     /// Checks that a replaced request never completes, the latest one does,

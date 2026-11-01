@@ -636,7 +636,10 @@ private:
             expectEquals(static_cast<int>(data->beatGrid->markers.size()), 1);
             if (!data->beatGrid->markers.empty()) {
                 expectEquals(data->beatGrid->markers.front().positionSeconds, 0.5);
-                expect(data->beatGrid->markers.front().bpm == 128.0);
+                expect(
+                    data->beatGrid->markers.front().bpm.has_value()
+                    && juce::approximatelyEqual(*data->beatGrid->markers.front().bpm, 128.0)
+                );
             }
         }
         if (data->markers) {
@@ -646,7 +649,7 @@ private:
             expect(data->markers->bpmLocked == false);
         }
         if (data->trackInfo) {
-            expect(data->trackInfo->bpm == 128.0);
+            expect(data->trackInfo->bpm.has_value() && juce::approximatelyEqual(*data->trackInfo->bpm, 128.0));
             expectEquals(data->trackInfo->key, juce::String("Am"));
         }
     }

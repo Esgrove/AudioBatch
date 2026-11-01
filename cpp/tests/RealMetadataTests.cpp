@@ -12,6 +12,7 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/FileUtils.h"
+#include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <bit>
@@ -130,8 +131,11 @@ private:
     {
         expect(
             std::bit_cast<std::uint64_t>(actual) == std::bit_cast<std::uint64_t>(expected),
-            "Actual bits " + juce::String::toHexString(std::bit_cast<juce::int64>(actual)) + " expected "
-                + juce::String::toHexString(std::bit_cast<juce::int64>(expected))
+            utils::format(
+                "Actual bits {} expected {}",
+                juce::String::toHexString(std::bit_cast<juce::int64>(actual)),
+                juce::String::toHexString(std::bit_cast<juce::int64>(expected))
+            )
         );
     }
 
@@ -142,7 +146,7 @@ private:
             || (result.kind == serato::TagKind::beatGrid && expected["beatgrid"].isVoid());
         expect(
             result.status() == (absent ? serato::ReadStatus::absent : serato::ReadStatus::present),
-            "Kind " + juce::String(static_cast<int>(result.kind))
+            utils::format("Kind {}", static_cast<int>(result.kind))
         );
         if (!result.value) {
             return;

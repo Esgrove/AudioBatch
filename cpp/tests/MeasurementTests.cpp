@@ -9,6 +9,7 @@
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
+#include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <array>
@@ -94,7 +95,7 @@ private:
                  "silence_stereo_44100_16.wav",
              })
         {
-            beginTest(juce::String("Chunk boundaries preserve every measurement: ") + fixtureName);
+            beginTest(utils::format("Chunk boundaries preserve every measurement: {}", fixtureName));
             const auto file = fixtureFile(fixtureName);
             const auto reference = analyzeFile(file);
             const auto reader = utils::createAudioReader(file);
@@ -151,7 +152,7 @@ private:
     {
         juce::AiffAudioFormat format;
         for (const auto bits : format.getPossibleBitDepths()) {
-            beginTest(juce::String("PCM alignment preserves signed boundaries at bit depth ") + juce::String(bits));
+            beginTest(utils::format("PCM alignment preserves signed boundaries at bit depth {}", bits));
             const auto quantum = static_cast<int>(1U << static_cast<unsigned int>(32 - bits));
             constexpr auto minimum = std::numeric_limits<int>::min();
             constexpr auto maximum = std::numeric_limits<int>::max();

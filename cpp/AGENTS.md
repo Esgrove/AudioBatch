@@ -60,6 +60,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   and `NormalizeCoordinator.*`, which orchestrates background normalization.
 - `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`,
   and the fixed-width field readers in `SeratoBytes.h`),
+  the cache block codec for the parsed tags (`SeratoTagBlocks.cpp`),
+  which shares its field cursor with the parsers in `SeratoTagFields.h`,
   the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
   the tag results kept in the analysis cache database (`SeratoTagCache.*`),
   and the background preview loading in `SeratoPreviewLoader.*`.

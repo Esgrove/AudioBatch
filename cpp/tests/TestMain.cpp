@@ -40,6 +40,13 @@ public:
     /// Refers to a suite owned by main for the entire test run.
     explicit JuceSuiteTest(juce::UnitTest& testSuite) : suite(testSuite) {}
 
+    ~JuceSuiteTest() override = default;
+
+    JuceSuiteTest(const JuceSuiteTest&) = delete;
+    JuceSuiteTest& operator=(const JuceSuiteTest&) = delete;
+    JuceSuiteTest(JuceSuiteTest&&) = delete;
+    JuceSuiteTest& operator=(JuceSuiteTest&&) = delete;
+
 private:
     /// Runs the suite and forwards its total failure count to GoogleTest.
     void TestBody() override
@@ -90,6 +97,7 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createArtworkTests());
     suites.push_back(audiobatch::tests::createBackgroundWorkTests());
     suites.push_back(audiobatch::tests::createCacheTests());
+    suites.push_back(audiobatch::tests::createSeratoTagCacheTests());
     suites.push_back(audiobatch::tests::createCliTests());
     suites.push_back(audiobatch::tests::createFileActivityTests());
     suites.push_back(audiobatch::tests::createFormatTests());

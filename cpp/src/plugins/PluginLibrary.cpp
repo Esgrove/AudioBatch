@@ -121,7 +121,7 @@ void PluginLibrary::reload()
 
     const juce::ScopedValueSetter reloadingSetter(reloading, true);
     loadKnownPluginList(*settings, knownPluginList);
-    // The list now matches its file, so its change messages are delivered while saving is off.
+    // The list matches its file, so its change messages are delivered while saving is off.
     knownPluginList.dispatchPendingMessages();
     loadedModificationTime = modificationTime;
     listLoaded = true;

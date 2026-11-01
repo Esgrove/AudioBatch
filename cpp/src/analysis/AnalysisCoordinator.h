@@ -80,12 +80,7 @@ public:
 private:
     void planRun(const AudioAnalysisOptions& options, int runId);
 
-    void analyzeStaleFile(
-        const juce::File& file,
-        int runId,
-        int totalFiles,
-        const std::shared_ptr<std::atomic<int>>& pendingFiles
-    ) const;
+    void analyzeStaleFile(const juce::File& file, int runId, int totalFiles, std::atomic<int>& pendingFiles) const;
 
     /// The cache the runs look files up in and store their results in, which outlives the coordinator.
     AnalysisCache& cache;
