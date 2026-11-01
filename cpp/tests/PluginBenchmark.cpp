@@ -202,6 +202,9 @@ juce::var benchmark(const juce::StringArray& arguments)
     const auto channels = input.getNumChannels();
     const auto frames = input.getNumSamples();
     const auto rate = loaded.sampleRate;
+    if (channels < 1 || channels > 2) {
+        throw std::runtime_error("Benchmark input must retain its mono/stereo channel layout");
+    }
     juce::AudioPluginFormatManager formats;
     formats.addFormat(std::make_unique<juce::VST3PluginFormat>());
     juce::OwnedArray<juce::PluginDescription> descriptions;
@@ -275,8 +278,8 @@ juce::var benchmark(const juce::StringArray& arguments)
     object->setProperty("block_frames", block);
     object->setProperty("instances", instanceCount);
     object->setProperty("latency_frames", latency);
-    object->setProperty("gain", benchmarkGain);
-    object->setProperty("width", benchmarkWidth);
+    object->setProperty("gain", static_cast<double>(benchmarkGain));
+    object->setProperty("width", static_cast<double>(benchmarkWidth));
     object->setProperty("seconds", seconds);
     object->setProperty("input_file", inputFile.getFullPathName());
     object->setProperty("output_file", outputFile.getFullPathName());

@@ -348,14 +348,14 @@ with a conservative coefficient-derived bound ensuring that no arithmetic result
 Subnormal decoded sample peaks remain intact.
 Tests require exact reference agreement for underflowing products, subnormal inputs, and history transitions.
 Native correctness and timing results cover macOS on Apple Silicon and Windows on x86-64.
-The dated results and platform-specific validation limits are in [Analysis performance](docs/performance.md).
+The dated results and platform-specific validation limits are in [Analysis performance](../docs/performance.md).
 
 The loudness contract allows at most 0.001 LU difference from the reference for integrated loudness,
 maximum short-term loudness, and each short-term history value.
 Displayed integrated and maximum short-term loudness must also agree at two decimal places.
 True peak is bit-exact against the reference, including x86 arithmetic underflow.
 Goldens capture regression snapshots, checked alongside differential and parity tests.
-The benchmark commands, profiling breakdown, and validation limits are in [Analysis performance](docs/performance.md).
+The benchmark commands, profiling breakdown, and validation limits are in [Analysis performance](../docs/performance.md).
 
 `WaveformBuilder` merges neighbouring buckets whenever their count passes 8192,
 and `WaveformOverview` keeps them quantized to 8 bits with coarser levels for drawing.

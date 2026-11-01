@@ -3,7 +3,7 @@ set -eo pipefail
 
 USAGE="Usage: $0 [cpp|rust] [OPTIONS]
 
-Build the release binaries of the C++ and Rust projects with their own build.sh scripts.
+Build the binaries of the C++ and Rust projects with their own build.sh scripts. Defaults to release mode.
 Name a project to build only that one.
 
 The options are passed to the build script of each project.
@@ -16,6 +16,9 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
         After a project name, display the instructions of that project's script.
+
+    -d | --debug
+        Build debug binaries in both projects, or in the named project.
 "
 
 # Import common functions

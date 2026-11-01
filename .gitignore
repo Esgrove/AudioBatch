@@ -43,6 +43,7 @@
 /cpp/Builds
 /cpp/cmake-build*
 /test-plugin/build
+/test-plugin/build-debug
 
 # Test audio files
 /cpp/files/

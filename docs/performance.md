@@ -315,9 +315,9 @@ There is no scaled-audio copy, per-chunk plane-reference allocation, or full out
 Header and frame-count validation remain in place before commit.
 An in-place source already at target returns its current record after cancellation and source-identity checks.
 
-[Architecture](../ARCHITECTURE.md) describes the channel map, waveform, overload history, cache, and commit lifecycle.
+[Rust architecture](../rust/ARCHITECTURE.md) describes the channel map, waveform, overload history, cache, and commit lifecycle.
 The adapted coefficient routines retain their upstream notice in
-[`crates/core/licenses/ebur128.txt`](../crates/core/licenses/ebur128.txt).
+[`crates/core/licenses/ebur128.txt`](../rust/crates/core/licenses/ebur128.txt).
 
 ### Profile and allocation checks
 

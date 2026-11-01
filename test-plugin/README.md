@@ -51,6 +51,9 @@ The Rust tests need it built separately:
 
 The script builds the Release bundle into `build/` with the JUCE submodule in `../cpp/JUCE`,
 and prints its path, which `--print` prints without building.
+Use `./build.sh --debug` or `./build.sh -d` for a Debug bundle in `build-debug/`,
+leaving the default Release bundle untouched.
+`./build.sh --debug --print` prints the Debug bundle path without building.
 The Rust `test-fixtures` crate finds the bundle there,
 or wherever the `AUDIOBATCH_TEST_VST3` variable points.
 Without the bundle the Rust plugin tests skip, except in CI, where they fail.

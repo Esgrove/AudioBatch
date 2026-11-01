@@ -433,7 +433,7 @@ flowchart TD
 
 Built with C++23 and JUCE. Requires CMake 4.2 or newer and a supported platform toolchain.
 The macOS deployment target is 15.0, and the macOS presets use Clang.
-The Windows presets use Visual Studio 18 2026 with x64 output, or Ninja with MSVC.
+The Windows presets use Visual Studio 18 2026 with x64 output, or Ninja with MSVC or LLVM clang-cl.
 GCC is not a supported compiler.
 JUCE is included as a submodule.
 CMake fetches the other dependencies as needed: SQLite 3, libebur128, TagLib, {fmt} and GoogleTest (tests only).
@@ -443,25 +443,78 @@ Run these commands from the `cpp` directory in a terminal on macOS or Git Bash o
 macOS:
 
 ```shell
-cmake --preset macos-debug
-cmake --build --preset macos-debug
+./build.sh --test --debug
 ```
 
 Windows (Git Bash, with the Visual Studio toolchain):
 
 ```shell
-cmake --preset windows-debug
-cmake --build --preset windows-debug
+./build.sh --test --debug
 ```
 
-For Ninja with MSVC and a compilation database, use `windows-ninja-debug` instead.
+Add `--ninja` on Windows to use MSVC with Ninja and generate a compilation database.
+
+### Windows dependencies
+
+Install [Scoop](https://scoop.sh/) first, then install the available build and development tools through it:
+
+```shell
+scoop update
+scoop install git cmake llvm uv
+```
+
+The Scoop `llvm` package includes `clang-cl`, `lld-link`, `clang-tidy`, and `clang-format`.
+Use `scoop install ninja` if your configured buckets provide a Ninja manifest.
+If Ninja is not available in Scoop, install it with Winget:
+
+```shell
+winget install --exact --id Ninja-build.Ninja
+```
+
+Visual Studio is not available in the standard Scoop buckets.
+Install Visual Studio Community 2026 and its desktop C++ workload through Winget:
+
+```shell
+winget install --exact --id Microsoft.VisualStudio.Community --override "--wait --passive --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended"
+```
+
+An existing Visual Studio installation with the x64 MSVC tools and Windows SDK also works.
+These are required even when compiling with LLVM, which uses the Microsoft CRT and standard library.
+Restart Git Bash after installation so the tools are on `PATH`.
+
+### Windows LLVM builds
+
+Install LLVM and Ninja as described above.
+Visual Studio's x64 C++ tools and Windows SDK are still required for the CRT, standard library, and platform headers.
+The Clang presets use the MSVC ABI and STL, not MinGW.
+They keep separate build directories from MSVC and generate their own compilation databases.
+Run from Git Bash:
+
+```shell
+./build.sh --clang --test --debug
+./lint.sh --clang --check
+```
+
+Use `./build.sh --clang --test` for an optimized Release build with checked LLVM LTO and LLD linking.
+The script loads the Visual Studio developer environment, configures the workspace, builds, and runs the tests.
+Clang's strict source warnings are enabled even though JUCE's clang-cl warning defaults follow MSVC.
+The lint script prefers the Clang Debug database when available.
+Use `--build-dir cmake-build-windows-ninja-debug` to select the MSVC database explicitly.
+`./lint.sh --clang --build-type Release --check` selects the Clang Release workspace.
+Other build types, including `RelWithDebInfo` and `MinSizeRel`, use their own directories.
+If the selected compilation database is missing, linting first configures and builds that workspace,
+including explicit `--build-dir` selections and the macOS `--fuzz` configuration.
+Existing explicit directories retain their cached toolchain and build type unless `--build-type` is supplied.
+Visual Studio and Xcode generators cannot export compilation databases. Use a separate Ninja directory for linting.
+On macOS, `--clang` is accepted by both scripts without changing compiler selection.
+The lint script still uses Homebrew `clang-tidy` when available.
 
 ### CPU targeting and Release optimization
 
 Windows x64 builds require AVX2 in every configuration, including Debug and sanitizer builds.
 There is no fallback for older CPUs.
 Local Release builds additionally target the build machine's CPU by default.
-On x86 Clang this uses `-march=native -mtune=native`,
+On x86 Clang, including Windows clang-cl, this uses `-march=native -mtune=native`,
 and on Apple Silicon it uses `-mcpu=native -mtune=native`.
 MSVC selects the highest usable, compiler-supported `/arch` level at or above AVX2,
 including AVX-512 and AVX10 where available, and applies coarse Intel or AMD `/favor` tuning.
@@ -480,24 +533,19 @@ It retains the Windows AVX2 minimum and supported Release LTO.
 Cross-compilation and macOS universal or non-host architecture builds also disable native targeting.
 CMake prints the effective optimization policy when configuring.
 
-Use the Release presets directly to configure and build, for example on Windows:
+The build script selects Release by default:
 
 ```shell
-cmake --preset windows-release
-cmake --build --preset windows-release
+./build.sh
 ```
 
-To disable host-specific targeting while retaining the platform baseline and LTO:
-
-```shell
-cmake --preset windows-release -DAUDIOBATCH_NATIVE_CPU=OFF
-cmake --build --preset windows-release
-```
-
-Use `macos-release` on macOS, or `windows-ninja-release` with the MSVC developer environment for Ninja.
-Add `-DAUDIOBATCH_LTO=OFF` to disable LTO independently.
+Add `--clang` for LLVM on Windows, or `--ninja` for Ninja with MSVC.
+To disable host-specific targeting while retaining the platform baseline and LTO,
+set `AUDIOBATCH_NATIVE_CPU=OFF` in the selected workspace's CMake configuration through your IDE.
+Set `AUDIOBATCH_LTO=OFF` there to disable LTO independently.
 Options remain in the build directory's CMake cache.
-To restore native targeting, reconfigure with `-DAUDIOBATCH_NATIVE_CPU=ON`.
+Use the same build script options with `--reuse` to build that configured workspace.
+To restore native targeting, set `AUDIOBATCH_NATIVE_CPU=ON` again.
 Native options and LTO only apply to the Release configuration, including in Visual Studio and Xcode projects.
 Do a clean rebuild after moving a native build directory to another CPU.
 Native binaries may not run on machines with fewer instruction extensions.
@@ -514,11 +562,15 @@ For release builds, use the build script:
 ./build.sh
 ```
 
+Add `-d` or `--debug` for a Debug build.
+The existing `-b` or `--build-type` option remains available for Debug and other configurations.
+If both options are supplied, the last build-type selection wins.
+
 On macOS, the script builds with Ninja, or with Xcode when given `--xcode`.
 On Windows, it builds with Visual Studio, or with Ninja and MSVC when given `--ninja`.
+Use `./build.sh --clang` for Ninja with LLVM clang-cl and LLD.
 For Ninja, the script loads the Visual Studio x64 developer environment when `cl` is not already on PATH,
 so it can run from plain Git Bash.
-Direct `windows-ninja` preset builds still need that environment configured by the caller.
 `-l` or `--cli-only` builds only the CLI.
 Pass `-c` or `--clean` to delete the selected CMake build directory and its local compilation cache before configuring.
 Only the directory for the selected generator and build type is removed.
@@ -527,7 +579,7 @@ Other build directories are kept.
 To generate a project and open it in the IDE without building, use `--open`:
 
 ```shell
-./build.sh --open -b Debug
+./build.sh --open --debug
 ```
 
 This selects Xcode on macOS and Visual Studio on Windows.
@@ -561,7 +613,7 @@ cargo install --locked samply
 ```
 
 Cargo is needed to install this optional development tool, not to build or run the C++ application.
-See [Analysis performance](../rust/docs/performance.md#reproducing-the-measurements) for shared benchmark
+See [Analysis performance](../docs/performance.md#reproducing-the-measurements) for shared benchmark
 and profiling setup.
 
 ### Formatting and verification
@@ -584,24 +636,19 @@ State restoration, loading, decoding, and sample exports are excluded from both 
 - `./lint.sh` runs clang-tidy. `--check` fails on warnings.
   `--changed` lints only the sources changed since the last commit, and `--staged` only the staged ones.
 
-The debug presets build the tests too, so the usual loop is a preset build followed by ctest:
+Use the build script to configure, build, and run the Debug tests:
 
 ```shell
-cmake --preset macos-debug
-cmake --build --preset macos-debug
-ctest --test-dir cmake-build-mac-debug --output-on-failure
+./build.sh --test --debug
 ```
 
-On Windows, use the `windows-debug` or `windows-ninja-debug` preset and its build directory,
-and pass `--build-config Debug` to ctest for the Visual Studio build.
+On Windows, add `--ninja` for MSVC with Ninja, or `--clang` for LLVM.
 ctest runs each JUCE unit test suite as its own test, with a time limit per suite.
-Pass `-R <name>` to run the suites whose names match.
 
-The build script can build and run the tests too, in Release by default:
+For Release tests:
 
 ```shell
 ./build.sh --test
-./build.sh --test -b Debug
 ```
 
 The tests build the `AudioBatch Test MS` VST3 in `../test-plugin/` as part of the project,
@@ -613,12 +660,11 @@ or under MSVC AddressSanitizer only with `windows-asan`.
 Each sanitizer build has its own build directory, so the debug build is not affected.
 
 The libFuzzer harnesses in `tests/fuzz/` need the Homebrew LLVM, since Apple Clang does not ship libFuzzer.
-The `macos-fuzz` preset builds them, ctest replays their committed corpus,
-and `./lint.sh --fuzz` lints them with that preset's compile database:
+`./lint.sh --fuzz` configures and builds the harnesses when their compilation database is missing,
+then lints them with that workspace's flags.
+Run a harness with its committed corpus to fuzz it:
 
 ```shell
-cmake --preset macos-fuzz
-cmake --build --preset macos-fuzz
-ctest --test-dir cmake-build-mac-fuzz --output-on-failure
+./lint.sh --fuzz --check
 cmake-build-mac-fuzz/SeratoTagFuzzer_artefacts/RelWithDebInfo/SeratoTagFuzzer -max_total_time=60 tests/fuzz/corpus/SeratoTagFuzzer
 ```
