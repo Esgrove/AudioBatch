@@ -151,6 +151,29 @@ private:
     {
         juce::AiffAudioFormat format;
         for (const auto bits : format.getPossibleBitDepths()) {
+            beginTest(juce::String("PCM alignment preserves signed boundaries at bit depth ") + juce::String(bits));
+            const auto quantum = static_cast<int>(1U << static_cast<unsigned int>(32 - bits));
+            constexpr auto minimum = std::numeric_limits<int>::min();
+            constexpr auto maximum = std::numeric_limits<int>::max();
+            constexpr auto scale = 1.0f / static_cast<float>(maximum);
+            const std::array samples {
+                minimum,
+                minimum + quantum - 1,
+                -quantum - 1,
+                -quantum,
+                -1,
+                0,
+                quantum - 1,
+                maximum,
+            };
+            const std::array aligned {minimum, minimum, -2 * quantum, -quantum, -quantum, 0, 0, maximum - quantum + 1};
+            for (std::size_t index = 0; index < samples.size(); ++index) {
+                expectEquals(
+                    std::bit_cast<std::uint32_t>(utils::pcmSampleToFloat(samples[index], bits)),
+                    std::bit_cast<std::uint32_t>(static_cast<float>(aligned[index]) * scale)
+                );
+            }
+
             const auto step = std::ldexp(1.0f, 1 - bits);
             const std::array values {
                 -1.25f,
