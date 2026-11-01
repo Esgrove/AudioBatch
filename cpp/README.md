@@ -656,6 +656,9 @@ and check its output against the expected files in `../fixtures/plugin_expected/
 
 `./sanitize.sh` builds and runs the tests under AddressSanitizer and UndefinedBehaviorSanitizer with `macos-asan`,
 or under MSVC AddressSanitizer only with `windows-asan`.
+`./sanitize.sh --clang` uses LLVM AddressSanitizer with `windows-clang-asan` on Windows.
+That preset uses RelWithDebInfo because LLVM AddressSanitizer does not support the Debug CRT.
+It retains debug symbols and standard library hardening, without native targeting or LTO.
 `./sanitize.sh --thread` runs them under ThreadSanitizer on macOS.
 Each sanitizer build has its own build directory, so the debug build is not affected.
 

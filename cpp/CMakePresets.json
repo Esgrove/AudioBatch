@@ -125,6 +125,17 @@
       }
     },
     {
+      "name": "windows-clang-asan",
+      "displayName": "Windows Clang AddressSanitizer",
+      "description": "Use Ninja, LLVM clang-cl and LLD with AddressSanitizer and release CRT debug symbols.",
+      "inherits": "windows-clang-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-clang-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "AUDIOBATCH_SANITIZE": "address"
+      }
+    },
+    {
       "name": "macos-debug",
       "displayName": "macOS Debug",
       "description": "Use Ninja with clang output in cmake-build-mac-debug.",
@@ -213,6 +224,10 @@
     {
       "name": "windows-clang-release",
       "configurePreset": "windows-clang-release"
+    },
+    {
+      "name": "windows-clang-asan",
+      "configurePreset": "windows-clang-asan"
     },
     {
       "name": "macos-debug",
