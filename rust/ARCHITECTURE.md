@@ -427,6 +427,8 @@ The worker's `ProcessingChain` asks the UI thread to prepare every plugin for th
 restore its saved settings, configure the main buses for the file's channels,
 set up offline processing in blocks of `PROCESSING_BLOCK_FRAMES`, and activate it.
 `ChainSignal` passes every block through the chain's `ProcessorHandle`s.
+Mono/stereo main buses borrow the signal buffers in place, without per-stage audio transfers.
+Wider main buses use the owned-buffer adapter.
 It copies a mono signal to both channels of a stereo input and folds a stereo signal to the average for a mono input,
 so the order of the plugins never drops a channel.
 After the source, `render_blocks` renders the plugins' latencies and tails, each tail at most 20 seconds,
@@ -468,8 +470,11 @@ and each job leases a free one, so a chain is only ever used by one worker at a 
 `PluginInstance::processor` returns a handle that owns a buffer for every channel of every bus,
 sized for the largest block, together with the parameter change objects and the process context.
 The caller fills the main inputs, calls `process`, and reads the main outputs.
+Alternatively, `process_in_place` borrows mono/stereo main channels for one call.
+The main input and output share channel pointers, and output-only channels are cleared before processing.
+The owned bus descriptions are restored on every exit, including plugin failure.
 Auxiliary inputs get silence, and edits from the controller are delivered at the start of each block.
-Nothing in `process` allocates or locks, so the same handle runs offline and in the audio callback.
+Neither processing path allocates or locks, so the same handle runs offline and in the audio callback.
 A guard keeps two handles of one instance from processing at once, which VST3 forbids.
 
 ## Preview

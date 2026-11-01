@@ -340,6 +340,15 @@ mod test_preview_chain {
     }
 
     #[test]
+    fn mono_and_stereo_stages_process_the_shared_signal_in_order() {
+        let mut chain = preview_chain(&[(Kind::MonoOnly, gain_state(0.5)), (Kind::StereoOnly, gain_state(0.5))])
+            .expect("mixed-width preview chain");
+        let (left, right) = render(&mut chain, 11, 4, (0.5, -0.25));
+        assert_eq!(left, [0.03125; 11]);
+        assert_eq!(right, [0.03125; 11]);
+    }
+
+    #[test]
     fn reset_clears_the_delay_lines() {
         let mut chain = preview_chain(&[(Kind::Delay, PluginState::default())]).expect("the chain builds");
         render(&mut chain, 200, 64, (1.0, 1.0));

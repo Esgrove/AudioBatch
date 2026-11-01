@@ -218,21 +218,9 @@ fn process_block(
     match mode {
         BenchmarkMode::Host => {
             let processor = processors.first_mut().expect("one host instance");
-            for channel in 0..channels {
-                processor
-                    .input_channel_mut(channel)
-                    .expect("prepared main input")
-                    .copy_from_slice(signal.channel(channel).expect("validated channel"));
-            }
             processor
-                .process(PROCESSING_BLOCK_FRAMES)
+                .process_in_place(&mut signal.channels_mut(), PROCESSING_BLOCK_FRAMES)
                 .map_err(|source| BenchmarkError::Process { stage: 0, source })?;
-            for channel in 0..channels {
-                signal
-                    .channel_mut(channel)
-                    .expect("validated channel")
-                    .copy_from_slice(processor.output_channel(channel).expect("prepared main output"));
-            }
         }
         BenchmarkMode::Chain => {
             signal

@@ -488,20 +488,18 @@ impl IAudioProcessorTrait for TestProcessor {
         let input_channels = input.map_or(0, |bus| usize::try_from(bus.numChannels).unwrap_or_default());
         for channel in 0..output_channels {
             // SAFETY: the bus has `numChannels` channel pointers, each to at least `frames` samples.
-            let output_samples = unsafe { channel_samples(output, channel, frames) };
+            let output_samples = unsafe { channel_pointer(output, channel) };
             let input_samples = input
                 .filter(|_| input_channels > 0)
                 // SAFETY: as above, for the input bus, with the channel index clamped to its channel count.
-                .map(|bus| unsafe { channel_samples(bus, channel.min(input_channels - 1), frames) });
+                .map(|bus| unsafe { channel_pointer(bus, channel.min(input_channels - 1)) });
             for index in 0..frames {
-                let sample = input_samples
-                    .as_ref()
-                    .and_then(|samples| samples.get(index).copied())
-                    .unwrap_or_default();
+                // SAFETY: the pointers cover `frames` samples.
+                // Read the input value before writing output, since the buffers may alias.
+                let sample = input_samples.map_or(0.0, |samples| unsafe { samples.add(index).read() });
                 let processed = self.process_sample(&mut delay_lines, channel, sample, gain);
-                if let Some(target) = output_samples.get_mut(index) {
-                    *target = processed;
-                }
+                // SAFETY: the output pointer covers `frames` writable samples.
+                unsafe { output_samples.add(index).write(processed) };
             }
         }
         drop(delay_lines);
@@ -534,16 +532,13 @@ impl IConnectionPointTrait for TestProcessor {
     }
 }
 
-/// Returns the samples of one channel of a bus.
+/// Returns the sample pointer of one channel, allowing shared input and output buffers.
 ///
 /// # Safety
 ///
 /// The bus must have more than `channel` channel pointers,
-/// each pointing to at least `frames` samples that nothing else accesses while the slice lives.
-unsafe fn channel_samples<'a>(bus: &AudioBusBuffers, channel: usize, frames: usize) -> &'a mut [f32] {
+/// each pointing to a valid sample buffer for the processing call.
+unsafe fn channel_pointer(bus: &AudioBusBuffers, channel: usize) -> *mut f32 {
     // SAFETY: the caller guarantees the channel pointer array and the channel buffer are valid.
-    unsafe {
-        let pointer = *bus.__field0.channelBuffers32.add(channel);
-        std::slice::from_raw_parts_mut(pointer, frames)
-    }
+    unsafe { *bus.__field0.channelBuffers32.add(channel) }
 }
