@@ -5,7 +5,8 @@
 //! Symphonia trims MP3 files with a LAME tag itself.
 //! The decoder trims MP4 files from their edit list, which symphonia leaves alone,
 //! and leaves the synthesis delay out of other MP3 files.
-//! Both trims match the decoders the C++ application uses, so both applications measure and write the same samples.
+//! Both trims align decoded audio with the source timeline, as the C++ application's decoders do.
+//! Lossy sample values can still differ between decoders and platforms.
 //! `DecodeFailureTracker` holds the shared rules for packets that fail to decode:
 //! isolated failures are tolerated and replaced with silence,
 //! while several failures in a row stop decoding with an error,

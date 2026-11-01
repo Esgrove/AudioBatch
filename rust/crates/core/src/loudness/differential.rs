@@ -1,4 +1,5 @@
 //! Differential tests comparing loudness within 0.001 LU and true peak bit for bit against ebur128.
+//! A focused x86 test covers the reference's different arithmetic-underflow handling.
 //!
 //! The reference feeds ebur128 the way the analysis always has, in 100 ms blocks with mono as dual mono.
 //! The inputs cover every signal kind, the rates where the true peak oversampling changes,
@@ -94,7 +95,7 @@ pub fn cases() -> Vec<Case> {
     cases
 }
 
-/// Measures the case with ebur128 the way the analysis always has, in 100 ms blocks.
+/// Measures the reference case with ebur128 in 100 ms blocks.
 pub fn reference(case: &Case) -> Reference {
     let channels = case.channels() as u32;
     let mut meter = EbuR128::new(channels, case.sample_rate, Mode::I | Mode::S | Mode::TRUE_PEAK).expect("meter");

@@ -12,7 +12,7 @@
 /// The chain output is rendered to an unquantized 32-bit float file first,
 /// so the end of the audible tail is known before the final 16-bit AIFF file is written.
 /// Output is truncated without additional dither or gain adjustment. Plugins handle dithering and output level.
-/// The AIFF file is validated, given the original file's metadata,
+/// The AIFF file is given the original file's metadata, validated,
 /// and then moved into place, with measurements gathered from the final PCM supplying the result record.
 
 #include "plugins/PluginProcessing.h"

@@ -35,6 +35,9 @@ The Rust version covers the key features of the C++ application:
 - List the files with their stats in the CLI and the GUI.
 - Draw a waveform overview of the selected file in the GUI,
   coloured from the Serato Overview tag when the file has one.
+  Show separate source sample-over and true-peak-over markers, independent of preview gain and plugins.
+- Show the selected file's embedded PNG or JPEG album artwork in the GUI,
+  read independently of the tags and decoded into a bounded thumbnail.
 - Cache the Serato Overview of each file in a `serato_tag_cache` table with the same schema as the C++ cache.
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the waveform and to the plugin chain preview.
@@ -69,7 +72,7 @@ and every crate inherits them with `.workspace = true`.
     cache reads, and sorting with Criterion.
     The longer inputs come from `../fixtures/benchmark/generate.py` and are generated locally, not committed.
   - `decode.rs` wraps symphonia: probing, the decode loop, and the read failure rules.
-    It trims the gapless padding the way the decoders of the C++ application do, so both measure the same samples,
+    It trims the gapless padding the way the decoders of the C++ application do, keeping the source timeline aligned,
     reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
     and leaving out the MP3 synthesis delay when no LAME header states the encoder delay.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
@@ -150,6 +153,7 @@ and every crate inherits them with `.workspace = true`.
   `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
   `app/preferences.rs` holds the Audio Settings window and the preview options,
   and `app/tags.rs` the tags of the selected file with its Serato cue points and Overview.
+  `app/cue_start.rs` retains a play or seek intent until matching cue metadata and source duration are ready.
   `app/artwork.rs` reads the album artwork of the selected file, which `artwork.rs` decodes into a bounded thumbnail.
   `plugins/` holds the live chain in `live_chain.rs`,
   the Plugin Chain and Plugin Manager windows in `chain_window.rs` and `manager_window.rs`,

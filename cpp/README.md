@@ -9,7 +9,9 @@ GUI and CLI tool (C++23 and JUCE) for analyzing and batch processing audio files
 - Write AIFF output while preserving tags and embedded artwork.
 - Cache analysis so unchanged files do not need to be read again.
 
-Supports mono and stereo audio, including WAV, AIFF, FLAC, MP3 and Ogg Vorbis.
+Supports mono and stereo audio, including WAV, AIFF, FLAC, MP3, Ogg Vorbis and Opus.
+On macOS, Core Audio also reads AAC and ALAC.
+Windows Media decoding is disabled, so the Windows build does not provide those decoders or WMA support.
 Multichannel audio and Linux are not currently supported.
 
 ## Processing performance
@@ -99,9 +101,13 @@ Removing a row does not delete the file. Moving a file to the trash is a separat
 
 View and play tracks with a zoomable waveform.
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
+Embedded album artwork appears beside the file name when available.
+Artwork can be hidden from the Options menu.
 
 An optional orange-red short-term loudness line overlays the waveform, with a compact numeric axis on the left.
 It measures the trailing three seconds and follows waveform zoom and scrolling.
+Amber waveform markers identify source sample overloads and true-peak overloads.
+They describe the original audio, not the custom gain or live plugin output.
 
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
@@ -204,6 +210,8 @@ CLI normalization can permanently delete replaced originals instead with `--dele
 - If selected files share an output name, only one is processed. An existing `.aif` source takes priority.
 - If metadata cannot be preserved, the file fails and the original is kept.
 - On Windows, operations that require trashing a file fail on drives without a recycle bin, such as network shares.
+- Publishing a converted file requires a filesystem that supports hard links.
+  Concurrent destination files are not overwritten, and failed recovery retains the audio with its location reported.
 
 ## CLI
 
@@ -402,10 +410,12 @@ flowchart TD
     AnalysisCoordinator --> BackgroundRunner
     NormalizeCoordinator --> BackgroundRunner
     PluginProcessingCoordinator --> BackgroundRunner
-    PreviewController --> AudioPreviewPlayer
+    AudioBatchComponent --> AudioPreviewPlayer
+    PreviewController -.-> AudioPreviewPlayer
     PreviewController --> SeratoPreviewLoader
     AudioPreviewPlayer -.-> LiveChain
-    LiveChain --> PluginLibrary
+    AudioBatchComponent --> PluginLibrary
+    LiveChain -.-> PluginLibrary
 ```
 
 - `ResultsModel` holds the rows of the results table and sorts, merges and removes them.
@@ -422,6 +432,9 @@ flowchart TD
 ## Build
 
 Built with C++23 and JUCE. Requires CMake 4.2 or newer and a supported platform toolchain.
+The macOS deployment target is 15.0, and the macOS presets use Clang.
+The Windows presets use Visual Studio 18 2026 with x64 output, or Ninja with MSVC.
+GCC is not a supported compiler.
 JUCE is included as a submodule.
 CMake fetches the other dependencies as needed: SQLite 3, libebur128, TagLib, {fmt} and GoogleTest (tests only).
 
@@ -453,8 +466,10 @@ For release builds, use the build script:
 ```
 
 On macOS, the script builds with Ninja, or with Xcode when given `--xcode`.
-On Windows, it builds with Visual Studio, or with Ninja and MSVC when given `--ninja`,
-which needs a Visual Studio developer command prompt environment, like the `windows-ninja` presets.
+On Windows, it builds with Visual Studio, or with Ninja and MSVC when given `--ninja`.
+For Ninja, the script loads the Visual Studio x64 developer environment when `cl` is not already on PATH,
+so it can run from plain Git Bash.
+Direct `windows-ninja` preset builds still need that environment configured by the caller.
 `-l` or `--cli-only` builds only the CLI.
 Pass `-c` or `--clean` to delete the selected CMake build directory and its local compilation cache before configuring.
 Only the directory for the selected generator and build type is removed.
@@ -515,8 +530,8 @@ The build script can build and run the tests too, in Release by default:
 The tests build the `AudioBatch Test MS` VST3 in `../test-plugin/` as part of the project,
 and check its output against the expected files in `../fixtures/plugin_expected/`.
 
-`./sanitize.sh` builds and runs the tests with the `macos-asan` or `windows-asan` preset,
-under AddressSanitizer and UndefinedBehaviorSanitizer.
+`./sanitize.sh` builds and runs the tests under AddressSanitizer and UndefinedBehaviorSanitizer with `macos-asan`,
+or under MSVC AddressSanitizer only with `windows-asan`.
 `./sanitize.sh --thread` runs them under ThreadSanitizer on macOS.
 Each sanitizer build has its own build directory, so the debug build is not affected.
 
@@ -530,7 +545,3 @@ cmake --build --preset macos-fuzz
 ctest --test-dir cmake-build-mac-fuzz --output-on-failure
 cmake-build-mac-fuzz/SeratoTagFuzzer_artefacts/RelWithDebInfo/SeratoTagFuzzer -max_total_time=60 tests/fuzz/corpus/SeratoTagFuzzer
 ```
-
-## TODO
-
-- User config file

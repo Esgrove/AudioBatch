@@ -1,7 +1,8 @@
 /// Normalization interface shared by the GUI and CLI targets.
 /// The normalization functions rewrite audio files to a target sample peak or integrated loudness,
-/// renders the output as AIFF, and re-analyzes the result.
-/// AudioNormalizationResult carries the outcome of a single normalize-and-reanalyze pass.
+/// render the output as AIFF, and measure the quantized PCM while writing it.
+/// AudioNormalizationResult carries the outcome and the committed output measurements,
+/// or the reused source analysis for an in-place file already at its target.
 
 #pragma once
 

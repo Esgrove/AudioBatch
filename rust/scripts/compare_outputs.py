@@ -6,7 +6,7 @@
 """
 Compares the files the C++ and the Rust CLI leave behind after normalizing their own copies of the same inputs.
 
-Both folders must hold the same file names after the sources were moved to the trash,
+Both folders must hold the same file names after the replaced sources were disposed of,
 and the sources that failed to normalize must be left as they were.
 Every AIFF output pair must have the same container form and COMM chunk, the same samples, and the same ID3v2 frames.
 With --lossy, lossless outputs must have identical samples in peak mode,
@@ -15,7 +15,7 @@ Only the outputs of the lossy sources it lists, which the two decoders may decod
 may differ by the dBFS tolerance.
 Without it, every output may differ by the tolerance.
 --list-lossy prints that list for a folder, and must run before normalizing,
-since normalizing moves the sources to the trash.
+since normalization removes converted sources from their original paths.
 Physical frames are decoded in isolation, so same-identity duplicates retain their individual payloads,
 while a different text encoding of the same text is no difference.
 Pre-operation snapshots assert original bytes and filesystem metadata for expected failures and untouched files.

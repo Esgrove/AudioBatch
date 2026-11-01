@@ -9,7 +9,8 @@ then normalizes copies of them in peak and in loudness mode and stores the JSON 
 The paths default to the audio files in fixtures/ and fixtures/normalization.
 compare repeats the run and requires the JSON to be identical,
 and compare_outputs.py to find the same files with identical samples and tags.
-A snapshot taken before an optimization is the reference that every later change must still match.
+A saved snapshot checks exact output stability.
+Regenerate it only after independently validating an intentional numerical change.
 The CLI moves the replaced copies to the system trash, as it does when normalizing.
 Exits with code 1 when anything differs.
 

@@ -128,9 +128,9 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
-    /// Starts the selected file at its first cue point when the option is on,
-    /// as long as the playhead has not moved since the file was loaded.
-    /// A file waiting for its cue points to start playing starts now, at the cue or at the beginning.
+    /// Supplies matching cue metadata to the current load's deferred play or seek intent.
+    /// Resolution waits for the source duration too, and Stop or an explicit seek discards the intent.
+    /// The earliest nonnegative finite cue is used only within the first half of the file, otherwise the start is zero.
     pub(super) fn start_at_first_cue(&mut self, path: &Path, cues: &[CueMarker], _cx: &Context<Self>) {
         if !self.settings.play_from_first_cue_point {
             return;
@@ -141,7 +141,8 @@ impl AppView {
         }
     }
 
-    /// Starts a pending cue request exactly once after both metadata and this load's duration are ready.
+    /// Resolves a pending cue request exactly once after matching metadata and this load's duration are ready.
+    /// Paused selections only seek, while a play intent also starts playback.
     pub(super) fn resolve_cue_start(&mut self) {
         let Some(player) = &mut self.player else {
             return;

@@ -37,8 +37,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CLICOLOR_FORCE: "1"
-  # Override target-cpu=native from rust/.cargo/config.toml to avoid illegal instruction
-  # errors on GitHub Actions runners with varying CPU capabilities
+  # Override target-cpu=native from rust/.cargo/config.toml.
+  # Runners have varying CPU capabilities, so native builds can cause illegal instruction errors.
   RUSTFLAGS: ""
 
 defaults:

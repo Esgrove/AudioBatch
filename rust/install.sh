@@ -6,7 +6,7 @@ USAGE="Usage: $0 [OPTIONS]
 Install the Rust CLI to the Cargo bin directory and its shell completions.
 On macOS, the GUI is installed as the AudioBatchRs.app bundle in /Applications.
 On Windows, the GUI is installed to %LOCALAPPDATA%/Programs/AudioBatchRs, with a Start Menu shortcut.
-On other platforms, it is installed as a plain binary next to the CLI.
+The installer packages the GUI only on macOS and Windows.
 
 OPTIONS: All options are optional
     -h | --help

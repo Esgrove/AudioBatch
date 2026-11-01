@@ -1,5 +1,5 @@
 /// File system helpers shared by the services and both front ends.
-/// Declares FileIdentity, which recognizes an unchanged file by its path, size and modification time,
+/// Declares FileIdentity, which checks path, size, modification time, native file identifiers and precise timestamps,
 /// moving files to the system trash, the file manager label for revealing a file,
 /// deleting files with error logging, choosing the default browse folder,
 /// and extension checks for supported audio types.
@@ -26,7 +26,8 @@ enum class TrashResult : std::uint8_t {
     failed,
 };
 
-/// Captures the cache key before tag reading. Reuse this identity for lookup, delivery and persistence.
+/// Captures file identity before tag reading or output rendering.
+/// Reuse it for cache lookup, delivery, persistence and checks at output transaction boundaries.
 /// Native file identifiers and high resolution timestamps reject ordinary same-path replacements.
 /// This is a stale-file guard, not an atomic conditional filesystem operation.
 struct FileIdentity {

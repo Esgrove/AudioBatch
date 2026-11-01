@@ -15,7 +15,7 @@
 
 namespace audiobatch
 {
-/// Coordinates background normalize jobs and marshals results back to the UI layer.
+/// Coordinates background normalize jobs and publishes callbacks for the caller to marshal to the UI layer.
 class NormalizeCoordinator
 {
 public:

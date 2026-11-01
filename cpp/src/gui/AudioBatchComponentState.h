@@ -31,7 +31,7 @@ struct AudioPreviewPreferences {
 
     /// True to play the preview through the plugin chain.
     bool pluginChainEnabled {false};
-    /// True to delay the preview by the chain latency, so the audio lines up with the waveform position.
+    /// True to discard the chain's latency pre-roll, so audible audio lines up with the waveform position.
     bool latencyCompensated {true};
     /// True to keep playing when another file is selected during playback.
     bool continuePlayback {false};

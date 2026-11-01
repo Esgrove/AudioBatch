@@ -1,8 +1,9 @@
 /// Background job coordination for batch plugin processing.
 /// Declares PluginProcessingCoordinator,
 /// which runs files through pre-instantiated plugin chains on a worker thread pool
-/// and marshals per-file starts, progress, results, completion, and start
-/// errors back to the message thread through callbacks.
+/// and publishes per-file starts, progress, results and completion from workers.
+/// BackgroundWorkController marshals those callbacks to the message thread.
+/// Start errors are published on the message thread where a run is started.
 
 #pragma once
 
@@ -88,7 +89,7 @@ private:
     int chainIndex;
 };
 
-/// Coordinates background plugin-processing jobs and marshals results back to the UI layer.
+/// Coordinates background plugin-processing jobs and publishes callbacks for the caller to marshal to the UI layer.
 class PluginProcessingCoordinator
 {
 public:

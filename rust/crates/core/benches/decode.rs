@@ -1,6 +1,6 @@
 //! Benchmarks of decoding alone, opening the generated files and draining them without measuring anything.
 //!
-//! Subtracting these from the `analyze_file` results of the analysis benchmarks gives the measurement share.
+//! Comparing these with `analyze_file` estimates work beyond decoding, including metering and waveform construction.
 //! FLAC decode speed depends on the content, so white noise is included as its worst case,
 //! and lossy decode speed depends on the bitrate, so the formats use their common high bitrates.
 //! Files that have not been generated with `fixtures/benchmark/generate.py` are skipped with a note.

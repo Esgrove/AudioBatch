@@ -2,12 +2,14 @@
 //!
 //! The level tests elsewhere check values within decibel tolerances, which a change in the last bit passes.
 //! These tests record every value with its exact bits in a small text file per input in `tests/golden/`,
-//! as `f64::to_bits` hex next to the decimal value for reading,
+//! as `f32::to_bits` or `f64::to_bits` hex next to the decimal value for reading,
 //! and fail when any value differs, printing the old and the new line.
 //! Windows x86-64 uses overrides in `tests/golden/windows-x86_64/` only where platform math differs.
 //! All other outputs use the shared snapshots, and input identities remain shared on every platform.
-//! Running the tests with `UPDATE_GOLDEN=1` rewrites the files.
-//! Only regenerate them in a commit that explains why the output changed, never inside an optimization.
+//! Running the tests with `UPDATE_GOLDEN=1` updates snapshots.
+//! On Windows it writes only differing overrides, preserves shared snapshots, and removes redundant overrides.
+//! Regenerate only after validating an intentional numerical change with differential, displayed-value,
+//! normalization, and parity checks.
 //! The inputs are the committed fixtures, the Git LFS fixtures in `fixtures/normalization` when present,
 //! and in-memory signals at every rate where the true peak oversampling changes.
 

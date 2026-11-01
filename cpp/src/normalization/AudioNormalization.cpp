@@ -100,7 +100,7 @@ std::expected<void, juce::String> commitNormalizedOutput(
 }
 
 /// Picks a bit depth the writer format supports, preferring the requested depth.
-/// Falls back to the format's highest supported depth so no precision is lost.
+/// Falls back to the format's highest supported depth to retain as much precision as the writer allows.
 int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
 {
     const auto bitDepths = format.getPossibleBitDepths();
@@ -347,16 +347,17 @@ juce::String batchOutputConflictMessage(const juce::File& sourceFile)
     );
 }
 
-/// Rewrites a file to the target level in the options, then re-analyzes the result.
+/// Rewrites a file to the target level in the options and measures its quantized PCM while writing.
+/// An in-place file already at its target reuses its source analysis instead of rewriting.
 /// Fails without writing anything when the output path already exists and is not the source,
 /// unless options.overwriteExisting is set, in which case the existing output is disposed of.
 /// An `.aif` source rewritten in place first has a copy of it disposed of,
 /// and a converted source is disposed of after the output is in place, both through options.disposeFile.
 /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
-/// Isolated source blocks that fail to decode are written as decoded and reported in the result notice.
-/// Progress of the whole file, through any source analysis, the render, and the output analysis,
-/// is reported to onProgress.
+/// Tolerated read failures retain any samples the decoder supplied, with unwritten samples left silent,
+/// and are reported in the result notice.
+/// Progress through any source analysis, rendering and metering, and finalization is reported to onProgress.
 AudioNormalizationResult normalizeFile(
     const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,

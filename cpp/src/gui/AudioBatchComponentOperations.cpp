@@ -210,7 +210,7 @@ void AudioBatchComponent::normalizeResultsReceived(std::vector<AudioNormalizatio
                     }
                 },
                 [&](CommittedButUnanalyzed& unanalyzed) {
-                    // A committed output replaces its source even when its re-analysis failed,
+                    // A committed output replaces its source even when its analysis record could not be completed,
                     // since a converted source is already in the trash.
                     reportFailure(unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
                     outputs.push_back({.source = result.file, .output = std::move(unanalyzed.output)});
@@ -639,7 +639,7 @@ void AudioBatchComponent::processingResultsReceived(std::vector<PluginProcessing
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), error);
     };
 
-    // A committed output replaces its source even when its re-analysis failed,
+    // A committed output replaces its source even when its analysis record could not be completed,
     // since a converted source is already in the trash.
     std::vector<CommittedOutput> outputs;
     for (auto& result : results) {

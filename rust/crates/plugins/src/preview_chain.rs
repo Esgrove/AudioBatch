@@ -1,6 +1,6 @@
 //! The plugin chain the live preview plays through inside the audio callback.
 //!
-//! It is built on the UI thread from live instances that are already prepared for stereo realtime processing,
+//! It is built on the UI thread from live instances prepared for stereo or fallback mono realtime processing,
 //! and from then on only runs their processor handles, so it can move to the audio thread.
 //! It processes stereo blocks in place through every plugin in order,
 //! with the same channel handling as offline processing.
