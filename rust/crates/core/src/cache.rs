@@ -20,11 +20,6 @@ mod schema;
 mod serato;
 mod waveform_cache;
 
-#[cfg(test)]
-mod test_overload;
-#[cfg(test)]
-mod test_shared;
-
 /// Directory name of the application data, kept apart from the C++ application's `AudioBatch` directory.
 pub(crate) const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
@@ -99,9 +94,6 @@ pub enum CacheError {
     /// A successful analysis has no valid overload history matching its stream and duration.
     #[error("Cannot cache analysis without valid overload history")]
     InvalidOverloadHistory,
-    /// A successful analysis has no waveform.
-    #[error("Cannot cache analysis without a waveform overview")]
-    MissingWaveform,
     /// The file identity needed for caching is unavailable.
     #[error("Cannot cache Serato tags of missing file {}", path.display())]
     MissingSeratoFile {
@@ -531,7 +523,7 @@ pub fn data_directory() -> PathBuf {
 
 /// Returns the default database path in the user data directory.
 #[must_use]
-pub(crate) fn default_database_path() -> PathBuf {
+fn default_database_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     let base = dirs::home_dir().unwrap_or_else(std::env::temp_dir).join("Library");
     #[cfg(target_os = "windows")]
@@ -842,6 +834,15 @@ fn deserialize_history(bytes: &[u8], record: &AnalysisRecord) -> Option<ShortTer
 }
 
 #[cfg(test)]
+mod test_migration;
+#[cfg(test)]
+mod test_overload;
+#[cfg(test)]
+mod test_publication;
+#[cfg(test)]
+mod test_shared;
+
+#[cfg(test)]
 mod test_analysis_cache {
     use super::*;
 
@@ -1117,6 +1118,7 @@ mod test_history_serialization {
         assert_eq!(deserialize_history(&bytes, &record), Some(history));
     }
 
+    /// Verifies history encoding against independent literal bytes rather than only a round trip.
     #[test]
     fn independent_shared_history_bytes_decode_and_serialize_exactly() {
         let (record, history) = record_with_history(vec![-20.0, -10.0]);

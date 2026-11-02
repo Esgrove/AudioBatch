@@ -292,7 +292,7 @@ fn syncsafe_size(bytes: [u8; 4]) -> io::Result<usize> {
 }
 
 /// Locates the first ID3 chunk without reading PCM, rejecting truncated container chunks.
-fn read_ordered_geob(path: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
+fn read_ordered_geob(path: &Path) -> Result<Vec<(String, Vec<u8>)>, lofty::error::FileParseError> {
     let mut file = File::open(path)?;
     let length = file.metadata()?.len();
     if lowercase_extension(path).as_deref() == Some("mp3") {
@@ -304,7 +304,7 @@ fn read_ordered_geob(path: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
     if !(little_endian && &header[8..] == b"WAVE"
         || &header[..4] == b"FORM" && matches!(&header[8..], b"AIFF" | b"AIFC"))
     {
-        return Err(invalid_id3("Invalid ID3 audio container"));
+        return Err(invalid_id3("Invalid ID3 audio container").into());
     }
     while file.stream_position()?.checked_add(8).is_some_and(|end| end <= length) {
         let mut chunk = [0; 8];
@@ -329,7 +329,7 @@ fn read_ordered_geob(path: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
 }
 
 /// Reads bounded ID3 framing in source order, leaving GEOB decoding and flag handling to Lofty.
-fn read_geob_tag(file: &mut File, available: u64) -> io::Result<Vec<(String, Vec<u8>)>> {
+fn read_geob_tag(file: &mut File, available: u64) -> Result<Vec<(String, Vec<u8>)>, lofty::error::FileParseError> {
     let mut header = [0; 10];
     if available < 10 {
         return Ok(Vec::new());
@@ -340,12 +340,12 @@ fn read_geob_tag(file: &mut File, available: u64) -> io::Result<Vec<(String, Vec
     }
     let version = header[3];
     if !matches!(version, 2..=4) {
-        return Err(invalid_id3("Unsupported ID3 version"));
+        return Err(invalid_id3("Unsupported ID3 version").into());
     }
     let length = syncsafe_size(header[6..].try_into().expect("four-byte ID3 size"))?;
     // Bounds the temporary tag body, including unrelated frames, before allocating it.
     if length > 64 * 1024 * 1024 || length as u64 > available - 10 {
-        return Err(invalid_id3("Oversized or truncated ID3 tag"));
+        return Err(invalid_id3("Oversized or truncated ID3 tag").into());
     }
     let mut body = vec![0; length];
     file.read_exact(&mut body)?;
@@ -402,7 +402,7 @@ fn read_geob_tag(file: &mut File, available: u64) -> io::Result<Vec<(String, Vec
         let frame = remaining.get(..end).ok_or_else(|| invalid_id3("Truncated ID3 frame"))?;
         if (version == 2 && frame.starts_with(b"GEO")) || (version != 2 && frame.starts_with(b"GEOB")) {
             if length > 2 + serato_tags::MAXIMUM_SLICES * serato_tags::BAND_COUNT + 1024 {
-                return Err(invalid_id3("Oversized GEOB frame"));
+                return Err(invalid_id3("Oversized GEOB frame").into());
             }
             objects.extend(decode_geob_frame(header, frame)?);
         }
@@ -412,7 +412,10 @@ fn read_geob_tag(file: &mut File, available: u64) -> io::Result<Vec<(String, Vec
 }
 
 /// Decodes one source frame in an isolated ID3 chunk so Lofty's deduplication cannot change source order.
-fn decode_geob_frame(mut header: [u8; 10], frame: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
+fn decode_geob_frame(
+    mut header: [u8; 10],
+    frame: &[u8],
+) -> Result<Vec<(String, Vec<u8>)>, lofty::error::FileParseError> {
     header[5] &= 0x80;
     let length = u32::try_from(frame.len()).map_err(|_| invalid_id3("Oversized GEOB frame"))?;
     header[6..].copy_from_slice(&[
@@ -431,8 +434,7 @@ fn decode_geob_frame(mut header: [u8; 10], frame: &[u8]) -> io::Result<Vec<(Stri
     if chunk_length % 2 != 0 {
         bytes.push(0);
     }
-    let wav = WavFile::read_from(&mut Cursor::new(bytes), display_parse_options())
-        .map_err(|_| invalid_id3("Failed to decode source GEOB frame"))?;
+    let wav = WavFile::read_from(&mut Cursor::new(bytes), display_parse_options())?;
     Ok(wav
         .id3v2()
         .into_iter()
@@ -720,6 +722,8 @@ mod test_artwork {
 mod test_serato_overview_state {
     use super::*;
 
+    use std::error::Error as _;
+
     use base64::Engine as _;
     use lofty::config::WriteOptions;
     use lofty::ogg::tag::VorbisComments;
@@ -812,6 +816,7 @@ mod test_serato_overview_state {
         base64::engine::general_purpose::STANDARD.encode(bytes)
     }
 
+    /// Preserves physical first-valid GEOB order across supported containers despite library frame deduplication.
     #[test]
     fn physical_geob_duplicates_keep_first_valid_in_every_container() {
         let directory = TempDir::new().expect("temp dir");
@@ -844,6 +849,7 @@ mod test_serato_overview_state {
         }
     }
 
+    /// Selects the first valid native duplicate and rejects malformed trailing base64 padding.
     #[test]
     fn native_duplicates_keep_first_valid_and_reject_padding_after_padding() {
         let directory = TempDir::new().expect("temp dir");
@@ -900,6 +906,32 @@ mod test_serato_overview_state {
         );
     }
 
+    /// Retains Lofty's concrete frame failure through ordered extraction instead of replacing it with a text-only error.
+    #[test]
+    fn ordered_geob_decode_failure_retains_the_concrete_lofty_source() {
+        let directory = TempDir::new().expect("temporary directory");
+        let path = directory.path().join("malformed.mp3");
+        let mut tag = b"ID3\x04\0\0\0\0\0\x0bGEOB\0\0\0\x01\0\x08".to_vec();
+        // A compressed frame must contain a four-byte length indicator, but this one has only one byte.
+        tag.push(0);
+        std::fs::write(&path, tag).expect("writes malformed compressed frame");
+        let error = read_ordered_geob(&path).expect_err("Lofty rejects an undersized compressed frame");
+        let mut cause = error.source();
+        let mut retains_frame_error = false;
+        while let Some(source) = cause {
+            if source.is::<lofty::id3::v2::error::FrameParseError>() {
+                retains_frame_error = true;
+                break;
+            }
+            cause = source.source();
+        }
+        assert!(
+            retains_frame_error,
+            "ordered extraction must retain the concrete Lofty frame error"
+        );
+    }
+
+    /// Keeps missing or unreadable source data as errors rather than caching a stable absent outcome.
     #[test]
     fn extraction_read_failures_never_return_absent() {
         let directory = TempDir::new().expect("temp dir");

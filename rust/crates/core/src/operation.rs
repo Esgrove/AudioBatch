@@ -248,6 +248,7 @@ mod test_operation_cache {
         assert_eq!(result.output().map(|record| &record.path), Some(&output.path));
     }
 
+    /// Preserves a replacement source's cache row when an older conversion completes after it.
     #[test]
     fn delayed_conversion_completion_does_not_remove_a_newer_source_row() {
         let directory = TempDir::new().expect("temporary directory");
