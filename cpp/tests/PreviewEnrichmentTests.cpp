@@ -489,7 +489,7 @@ private:
     void testWaveforms(const juce::File& first)
     {
         beginTest("Waveform-only serialization matches native JUCE complete buckets and empty final point");
-        for (const auto* name :
+        for (const auto* fixtureName :
              {
                  "sine_mono_44100_16.wav",
                  "sine_stereo_44100_16.wav",
@@ -499,13 +499,13 @@ private:
                  "click_mono_44100_16.wav",
              })
         {
-            auto reader = utils::createAudioReader(fixtureFile(name));
-            expect(reader != nullptr, name);
+            const auto reader = utils::createAudioReader(fixtureFile(fixtureName));
+            expect(reader != nullptr, fixtureName);
             if (!reader) {
                 continue;
             }
             const auto actual = buildNativeWaveform(*reader);
-            expect(actual.has_value(), name);
+            expect(actual.has_value(), fixtureName);
             if (!actual) {
                 continue;
             }
@@ -530,7 +530,7 @@ private:
             juce::MemoryOutputStream output(expected, false);
             reference.saveTo(output);
             output.flush();
-            expect(*actual == expected, name);
+            expect(*actual == expected, fixtureName);
             expectWithinAbsoluteError(
                 reference.getTotalLength(), static_cast<double>(reader->lengthInSamples) / reader->sampleRate, 1.0e-12
             );
@@ -607,7 +607,7 @@ private:
 
         beginTest("Waveform cancellation is checked between bounded native PCM reads");
         {
-            auto reader = utils::createAudioReader(first);
+            const auto reader = utils::createAudioReader(first);
             expect(reader != nullptr);
             if (reader) {
                 int checks = 0;
