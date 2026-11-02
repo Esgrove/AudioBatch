@@ -41,7 +41,7 @@ impl AppView {
     }
 
     /// Handles row selection and double clicks in the table,
-    /// and renders again after a column resize so the Status column fills the width again.
+    /// and remembers manual column width adjustments separately from automatic sizing.
     /// With playback continuation on, selecting another file while one plays starts the new one.
     pub(super) fn on_table_event(
         &mut self,
@@ -58,6 +58,10 @@ impl AppView {
                 .is_some_and(super::cue_start::CueStartIntent::should_play);
         let continue_playback = self.settings.continue_playback && playing;
         if matches!(event, TableEvent::ColumnWidthsChanged(_)) {
+            table.update(cx, |state, _| {
+                let widths: Vec<Pixels> = (0..).map_while(|index| state.col_width(index)).collect();
+                state.delegate_mut().remember_column_widths(&widths);
+            });
             cx.notify();
             return;
         }
