@@ -7,6 +7,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/Sqlite.h"
+#include "analysis/SqliteTransaction.h"
 #include "serato/SeratoTags.h"
 #include "serato/SeratoTagTypes.h"
 #include "utils/FileUtils.h"
@@ -53,6 +54,9 @@ constexpr int parserVersion {5};
 constexpr int resultState {6};
 constexpr int decodedData {7};
 constexpr int updatedAtMs {8};
+constexpr int observedSourcePresent {9};
+constexpr int observedFileSize {10};
+constexpr int observedModifiedTimeMs {11};
 }  // namespace tag_parameter
 
 /// The validated contents of one cached row.
@@ -131,24 +135,34 @@ std::optional<CachedTagRow> readTagRow(
     return cached;
 }
 
-/// Inserts or replaces the row of the tag kind with the serialized data, or with no data for a stable negative.
+/// Publishes one result only while its source still matches the captured row or the incoming identity.
+/// A matching source keeps newer parser results, and a different analysis identity rejects delayed tag work.
 bool writeTagRow(
     sqlite3& database,
     sqlite::StatementCache& statements,
     const utils::FileIdentity& identity,
     const TagKind kind,
     const ReadStatus status,
-    const juce::MemoryBlock& data
+    const juce::MemoryBlock& data,
+    const std::optional<std::pair<std::int64_t, std::int64_t>>& observedSource
 )
 {
     constexpr auto sql = R"SQL(
         INSERT INTO serato_tag_cache (
             file_path, tag_kind, file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+        WHERE NOT EXISTS (SELECT 1 FROM file_analysis WHERE file_path = ?1
+            AND (file_size != ?3 OR modified_time_ms != ?4))
         ON CONFLICT(file_path, tag_kind) DO UPDATE SET
             file_size = excluded.file_size, modified_time_ms = excluded.modified_time_ms,
             parser_version = excluded.parser_version, result_state = excluded.result_state,
-            decoded_data = excluded.decoded_data, updated_at_ms = excluded.updated_at_ms;
+            decoded_data = excluded.decoded_data, updated_at_ms = excluded.updated_at_ms
+        WHERE ((serato_tag_cache.file_size = excluded.file_size
+                AND serato_tag_cache.modified_time_ms = excluded.modified_time_ms)
+            OR (?9 AND serato_tag_cache.file_size = ?10 AND serato_tag_cache.modified_time_ms = ?11))
+            AND ((serato_tag_cache.file_size != excluded.file_size
+                OR serato_tag_cache.modified_time_ms != excluded.modified_time_ms)
+                OR serato_tag_cache.parser_version <= excluded.parser_version);
     )SQL";
     const auto statement = statements.borrow(database, sql);
     if (!statement.isValid()) {
@@ -164,7 +178,13 @@ bool writeTagRow(
         && sqlite::bindInt64(*statement, tag_parameter::parserVersion, parserVersion(kind))
         && sqlite::bindInt64(*statement, tag_parameter::resultState, std::to_underlying(status))
         && sqlite::bindInt64(*statement, tag_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
-    return bound && sqlite::stepToCompletion(*statement);
+    const bool sourceBound
+        = sqlite::bindInt64(*statement, tag_parameter::observedSourcePresent, observedSource.has_value() ? 1 : 0)
+        && sqlite::bindInt64(*statement, tag_parameter::observedFileSize, observedSource ? observedSource->first : 0)
+        && sqlite::bindInt64(
+              *statement, tag_parameter::observedModifiedTimeMs, observedSource ? observedSource->second : 0
+        );
+    return bound && sourceBound && sqlite::stepToCompletion(*statement);
 }
 }  // namespace
 
@@ -220,8 +240,9 @@ std::vector<std::optional<TagReadResult>> getCachedTags(
 }
 
 /// Stores independently serialized tag data or a stable negative without requiring an analysis row.
-/// Serializes outside the database lock and checks the captured identity before writing.
-/// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
+/// Captures the stored source before checking the file, with serialization and filesystem work outside database locks.
+/// A short write transaction rejects a changed source or newer parser instead of replacing newer work.
+/// Returns false for stale identities, inconsistent results, transient outcomes, superseded work or database failures.
 bool storeCachedTag(AnalysisCache& cache, const utils::FileIdentity& identity, const TagReadResult& result)
 {
     const auto status = result.status();
@@ -246,13 +267,39 @@ bool storeCachedTag(AnalysisCache& cache, const utils::FileIdentity& identity, c
         case ReadStatus::cancelled:
             return false;
     }
-    if (!identity.matches(juce::File(identity.path))) {
+    std::optional<std::pair<std::int64_t, std::int64_t>> observedSource;
+    bool observed = false;
+    cache.withDatabase([&](sqlite3& database, sqlite::StatementCache& statements) {
+        constexpr auto sql = R"SQL(
+            SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ? AND tag_kind = ?;
+        )SQL";
+        const auto statement = statements.borrow(database, sql);
+        if (!statement.isValid() || !sqlite::bindText(*statement, 1, identity.path)
+            || !sqlite::bindInt64(*statement, 2, std::to_underlying(result.kind)))
+        {
+            return;
+        }
+        const auto step = sqlite3_step(statement.get());
+        observed = step == SQLITE_ROW || step == SQLITE_DONE;
+        if (step == SQLITE_ROW) {
+            observedSource
+                = std::pair {sqlite3_column_int64(statement.get(), 0), sqlite3_column_int64(statement.get(), 1)};
+        }
+    });
+    if (!observed || !identity.matches(juce::File(identity.path))) {
         return false;
     }
     bool stored = false;
-    cache.withDatabase([&stored, &identity, &result, status, &data](
-                           sqlite3& database, sqlite::StatementCache& statements
-                       ) { stored = writeTagRow(database, statements, identity, result.kind, status, data); });
+    cache.withDatabase([&](sqlite3& database, sqlite::StatementCache& statements) {
+        sqlite::Transaction transaction(database);
+        if (!transaction.isActive()
+            || !writeTagRow(database, statements, identity, result.kind, status, data, observedSource))
+        {
+            return;
+        }
+        const bool changed = sqlite3_changes(&database) > 0;
+        stored = transaction.commit() && changed;
+    });
     return stored;
 }
 }  // namespace audiobatch::serato

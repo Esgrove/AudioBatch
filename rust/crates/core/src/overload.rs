@@ -2,9 +2,9 @@
 //!
 //! Each analysis block contributes sample and true peak flags, with neighbouring buckets merged by bitwise or
 //! when the history would exceed its limit.
-//! The Rust cache uses an independent integer-only blob, not the C++ cache representation.
-//! Its little-endian header holds the bytes "AOVR", a `u32` version, `u32` sample rate and channel count,
-//! `u64` source length and bucket stride, and a `u32` bucket count, followed by bucket-major flag bytes.
+//! The shared little-endian `OVLD` header holds a version, double-precision sample rate,
+//! signed 64-bit source length and bucket stride, and 32-bit channel and bucket counts.
+//! Bucket-major flag bytes follow the 40-byte header.
 
 use crate::record::ShortTermLoudnessHistory;
 
@@ -21,12 +21,12 @@ const ALL_FLAGS: u8 = SAMPLE_OVER | TRUE_PEAK_OVER;
 const MAXIMUM_CHANNELS: u32 = 64;
 /// Largest sample rate represented by the meter's stream parameters.
 const MAXIMUM_SAMPLE_RATE: u32 = i32::MAX as u32;
-/// Identifies this integer-only representation, the bytes "AOVR" in little-endian order.
-const SERIALIZATION_MAGIC: u32 = 0x5256_4f41;
+/// Identifies the shared representation, the bytes "OVLD" in little-endian order.
+const SERIALIZATION_MAGIC: u32 = 0x444c_564f;
 /// Version of the overload blob, independent of the enclosing cache schema.
 const SERIALIZATION_VERSION: u32 = 1;
 /// Fixed header size, before the flag payload.
-const HEADER_BYTES: usize = 36;
+const HEADER_BYTES: usize = 40;
 
 /// Source overloads in time order, with one flag byte per channel in each bucket.
 ///
@@ -75,10 +75,14 @@ impl OverloadHistory {
         if reader.u32()? != SERIALIZATION_MAGIC || reader.u32()? != SERIALIZATION_VERSION {
             return None;
         }
-        let sample_rate = reader.u32()?;
+        let rate = f64::from_bits(reader.u64()?);
+        if !rate.is_finite() || rate.fract().abs() > 0.0 || !(1.0..=f64::from(MAXIMUM_SAMPLE_RATE)).contains(&rate) {
+            return None;
+        }
+        let sample_rate = rate as u32;
+        let length_in_samples = u64::try_from(i64::from_le_bytes(reader.u64()?.to_le_bytes())).ok()?;
+        let samples_per_bucket = u64::try_from(i64::from_le_bytes(reader.u64()?.to_le_bytes())).ok()?;
         let channels = reader.u32()?;
-        let length_in_samples = reader.u64()?;
-        let samples_per_bucket = reader.u64()?;
         let buckets = usize::try_from(reader.u32()?).ok()?;
         let expected = expected_bucket_count(sample_rate, length_in_samples, samples_per_bucket, channels)?;
         let payload_bytes = buckets.checked_mul(usize::try_from(channels).ok()?)?;
@@ -143,10 +147,10 @@ impl OverloadHistory {
         let mut bytes = Vec::with_capacity(HEADER_BYTES.checked_add(self.flags.len())?);
         bytes.extend_from_slice(&SERIALIZATION_MAGIC.to_le_bytes());
         bytes.extend_from_slice(&SERIALIZATION_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&self.sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&f64::from(self.sample_rate).to_le_bytes());
+        bytes.extend_from_slice(&i64::try_from(self.length_in_samples).ok()?.to_le_bytes());
+        bytes.extend_from_slice(&i64::try_from(self.samples_per_bucket).ok()?.to_le_bytes());
         bytes.extend_from_slice(&self.channels.to_le_bytes());
-        bytes.extend_from_slice(&self.length_in_samples.to_le_bytes());
-        bytes.extend_from_slice(&self.samples_per_bucket.to_le_bytes());
         bytes.extend_from_slice(&buckets.to_le_bytes());
         bytes.extend_from_slice(&self.flags);
         Some(bytes)
@@ -470,13 +474,22 @@ mod test_validation {
     fn rejects_bad_rates_channels_bucket_counts_and_lengths_before_adoption() {
         let bytes = history().to_bytes().expect("valid history");
         for (offset, values) in [
-            (8, vec![0, MAXIMUM_SAMPLE_RATE + 1, u32::MAX]),
-            (12, vec![0, MAXIMUM_CHANNELS + 1, u32::MAX]),
-            (32, vec![0, 2, MAXIMUM_BUCKETS as u32 + 1, u32::MAX]),
+            (32, vec![0, MAXIMUM_CHANNELS + 1, u32::MAX]),
+            (36, vec![0, 2, MAXIMUM_BUCKETS as u32 + 1, u32::MAX]),
         ] {
             for value in values {
                 assert!(OverloadHistory::from_bytes(&replace(&bytes, offset, &value.to_le_bytes())).is_none());
             }
+        }
+        for rate in [
+            0.0,
+            -1.0,
+            44_100.5,
+            f64::NAN,
+            f64::INFINITY,
+            f64::from(MAXIMUM_SAMPLE_RATE) + 1.0,
+        ] {
+            assert!(OverloadHistory::from_bytes(&replace(&bytes, 8, &rate.to_le_bytes())).is_none());
         }
         for length in [0, 4411, u64::MAX] {
             assert!(OverloadHistory::from_bytes(&replace(&bytes, 16, &length.to_le_bytes())).is_none());
@@ -490,22 +503,22 @@ mod test_validation {
         assert_eq!(
             bytes,
             [
-                0x41,
-                0x4f,
-                0x56,
-                0x52,
+                b'O',
+                b'V',
+                b'L',
+                b'D',
                 1,
                 0,
                 0,
                 0,
-                0x44,
-                0xac,
-                0,
-                0,
-                1,
                 0,
                 0,
                 0,
+                0,
+                0x80,
+                0x88,
+                0xe5,
+                0x40,
                 0x3a,
                 0x11,
                 0,
@@ -519,6 +532,10 @@ mod test_validation {
                 0,
                 0,
                 0,
+                0,
+                0,
+                0,
+                1,
                 0,
                 0,
                 0,
@@ -559,8 +576,8 @@ mod test_validation {
     fn maximum_source_length_uses_overflow_safe_ceiling_division() {
         let history = OverloadHistory {
             sample_rate: 1,
-            length_in_samples: u64::MAX,
-            samples_per_bucket: 1 << 51,
+            length_in_samples: i64::MAX as u64,
+            samples_per_bucket: 1 << 50,
             channels: 1,
             flags: vec![0; MAXIMUM_BUCKETS],
         };

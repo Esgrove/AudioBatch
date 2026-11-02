@@ -29,6 +29,59 @@
 
 namespace audiobatch::serato
 {
+namespace
+{
+/// Reads only missing kinds and merges independent stable results while the captured source remains unchanged.
+/// Transient I/O remains uncached and cancellation discards the current read without manufacturing absence.
+bool loadMissingTags(
+    AnalysisCache& cache,
+    const utils::FileIdentity& identity,
+    std::vector<std::optional<TagReadResult>>& results,
+    const utils::CancellationCheck& isCancelled,
+    const SeratoPreviewLoader::Reader& reader
+)
+{
+    std::vector<TagKind> misses;
+    for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
+        if (!results[index]) {
+            misses.push_back(allTagKinds[index]);
+        }
+    }
+    if (misses.empty()) {
+        return true;
+    }
+    const juce::File file(identity.path);
+    if (utils::isCancellationRequested(isCancelled) || !identity.matches(file)) {
+        return false;
+    }
+    auto fresh = reader(file, misses, isCancelled);
+    if (utils::isCancellationRequested(isCancelled) || !identity.matches(file)
+        || std::ranges::any_of(fresh, [](const auto& result) { return result.status() == ReadStatus::cancelled; }))
+    {
+        return false;
+    }
+    for (auto& result : fresh) {
+        const auto index = static_cast<std::size_t>(
+            std::ranges::distance(allTagKinds.begin(), std::ranges::find(allTagKinds, result.kind))
+        );
+        if (index == allTagKinds.size() || std::ranges::find(misses, result.kind) == misses.end()) {
+            continue;
+        }
+        if (results[index]) {
+            continue;
+        }
+        if (utils::isCancellationRequested(isCancelled) || !identity.matches(file)) {
+            return false;
+        }
+        if (result.status() != ReadStatus::ioError) {
+            static_cast<void>(storeCachedTag(cache, identity, result));
+        }
+        results[index] = std::move(result);
+    }
+    return true;
+}
+}  // namespace
+
 /// Starts one worker. Completion runs on that worker and must only enqueue delivery, never wait for the UI.
 /// The cache and callback captures must remain alive until cancelAndWait returns.
 /// An injected reader allows deterministic lifecycle tests without changing production cache behavior.
@@ -143,29 +196,7 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
 
     std::shared_ptr<const SeratoData> data;
     try {
-        if (active.identity.matches(active.file)) {
-            Results results;
-            std::vector<TagKind> misses;
-            auto cached = getCachedTags(cache, active.identity, allTagKinds);
-            if (isCancelled()) {
-                return;
-            }
-            for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
-                results[index] = std::move(cached[index]);
-                if (!results[index]) {
-                    misses.push_back(allTagKinds[index]);
-                }
-            }
-            const auto outcome = readMisses(active, misses, results, isCancelled);
-            if (outcome == ReadOutcome::cancelled || isCancelled()) {
-                return;
-            }
-            // A rejected identity falls through to the null completion below,
-            // even when the file matches again by now, so the waiting preview is always resolved.
-            if (outcome == ReadOutcome::completed && active.identity.matches(active.file)) {
-                data = collectData(results);
-            }
-        }
+        data = loadPreviewData(cache, active.identity, isCancelled, true, reader);
     } catch (...) {
         // The worker is a std::jthread, where an escaping exception would terminate the process.
         utils::logDebug("Serato preview read failed: {}", utils::describeCurrentException());
@@ -179,59 +210,28 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
     }
 }
 
-/// Reads missing kinds in one batch and persists only stable results while the request remains current.
-/// Reports cancellation and a changed file separately, since only cancellation may skip the completion.
-ReadOutcome SeratoPreviewLoader::readMisses(
-    const SeratoPreviewRequest& active,
-    const std::span<const TagKind> misses,
-    Results& results,
-    const utils::CancellationCheck& isCancelled
-) const
+/// Synchronously loads independent tags on the caller's admitted worker, without starting another thread.
+/// Cache-only requests never invoke TagLib. Stable negatives are complete, while transient I/O remains uncached.
+/// Identity is checked before reading, after reading, before each store, and before returning owned artifacts.
+std::shared_ptr<const SeratoData> loadPreviewData(
+    AnalysisCache& cache,
+    const utils::FileIdentity& identity,
+    const utils::CancellationCheck& isCancelled,
+    const bool readMissing,
+    const SeratoPreviewLoader::Reader& reader
+)
 {
-    if (misses.empty()) {
-        return ReadOutcome::completed;
+    const juce::File file(identity.path);
+    if (utils::isCancellationRequested(isCancelled) || !identity.matches(file)) {
+        return {};
     }
-    if (isCancelled()) {
-        return ReadOutcome::cancelled;
+    auto results = getCachedTags(cache, identity, allTagKinds);
+    if (readMissing && !loadMissingTags(cache, identity, results, isCancelled, reader)) {
+        return {};
     }
-    if (!active.identity.matches(active.file)) {
-        return ReadOutcome::identityRejected;
+    if (utils::isCancellationRequested(isCancelled) || !identity.matches(file)) {
+        return {};
     }
-    auto fresh = reader(active.file, misses, isCancelled);
-    if (isCancelled()
-        || std::ranges::any_of(fresh, [](const auto& result) { return result.status() == ReadStatus::cancelled; }))
-    {
-        return ReadOutcome::cancelled;
-    }
-    if (!active.identity.matches(active.file)) {
-        return ReadOutcome::identityRejected;
-    }
-    for (auto& result : fresh) {
-        if (std::ranges::find(misses, result.kind) == misses.end()) {
-            continue;
-        }
-        if (isCancelled()) {
-            return ReadOutcome::cancelled;
-        }
-        // Avoid naming the iterator type, it is a pointer with libc++ but a class with MSVC.
-        const auto index = static_cast<std::size_t>(
-            std::ranges::distance(allTagKinds.begin(), std::ranges::find(allTagKinds, result.kind))
-        );
-        if (results[index]) {
-            continue;
-        }
-        // A tag the cache could not store is only read from the file again next time.
-        if (result.status() != ReadStatus::ioError) {
-            static_cast<void>(storeCachedTag(cache, active.identity, result));
-        }
-        results[index] = std::move(result);
-    }
-    return ReadOutcome::completed;
-}
-
-/// Moves independently present values into an immutable aggregate, leaving negative kinds unset.
-std::shared_ptr<const SeratoData> SeratoPreviewLoader::collectData(Results& results)
-{
     SeratoData loaded;
     for (auto& result : results) {
         if (!result || !result->value) {

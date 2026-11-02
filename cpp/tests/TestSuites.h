@@ -78,6 +78,9 @@ std::unique_ptr<juce::UnitTest> createOverloadHistoryTests();
 /// Creates the suite that checks the transitions between an empty, released, and loaded preview.
 std::unique_ptr<juce::UnitTest> createPreviewControllerTests();
 
+/// Creates the suite that checks preview admission policy and native waveform serialization.
+std::unique_ptr<juce::UnitTest> createPreviewEnrichmentTests();
+
 /// Creates the suite that checks merging, removing, and sorting the rows of the results table.
 std::unique_ptr<juce::UnitTest> createResultsModelTests();
 

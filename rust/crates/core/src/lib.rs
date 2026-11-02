@@ -45,7 +45,7 @@ pub use cache::AnalysisCache;
 pub use coordinator::{AnalysisCoordinator, AnalysisEvent};
 pub use normalize_coordinator::{NormalizeCoordinator, NormalizeEvent};
 pub use operation::{OperationOutcome, OperationResult};
-pub use record::{AnalysisOptions, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
+pub use record::{AnalysisOptions, AnalysisRecord, AnalysisStatus, MeasurementProducer, ShortTermLoudnessHistory};
 pub use serato_tags;
 pub use sorting::SortMode;
 pub use tags::{FileTags, SeratoOverviewState, read_tags};

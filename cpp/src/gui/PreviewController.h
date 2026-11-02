@@ -5,9 +5,8 @@
 
 #pragma once
 
-#include "analysis/AnalysisCache.h"
 #include "gui/AudioPreviewPlayer.h"
-#include "serato/SeratoPreviewLoader.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
@@ -51,15 +50,12 @@ using PreviewState = std::variant<NoPreview, ReleasedPreview, LoadedPreview>;
 
 /// Loads the previewed file into the preview player and tracks which file and tags the preview shows.
 /// Only used on the message thread.
-/// The Serato tags are read on a worker, whose results the owner passes back to adoptSeratoData.
+/// Artifacts are requested through the owner's shared scheduler and passed back to adoptSeratoData.
 class PreviewController
 {
 public:
-    PreviewController(
-        AnalysisCache& cache,
-        AudioPreviewPlayer& previewPlayer,
-        serato::SeratoPreviewLoader::Completion onSeratoData
-    );
+    using ArtifactRequest = std::function<void(const utils::FileIdentity&, std::uint64_t)>;
+    PreviewController(AudioPreviewPlayer& previewPlayer, ArtifactRequest onRequest);
 
     ~PreviewController() = default;
 
@@ -75,6 +71,7 @@ public:
     [[nodiscard]] bool isWaveformLoadedFromCache() const noexcept;
     [[nodiscard]] bool canDisplayAnalysis(const AudioAnalysisRecord& record) const;
     [[nodiscard]] bool needsReload(const juce::File& file) const;
+    [[nodiscard]] std::uint64_t getGeneration() const noexcept;
 
     [[nodiscard]] bool adoptSeratoData(
         const utils::FileIdentity& identity,
@@ -92,8 +89,10 @@ public:
 private:
     /// The player the file is loaded into, owned by the main component, which outlives the controller.
     AudioPreviewPlayer& player;
-    /// Reads the Serato tags of the loaded file on its worker thread.
-    serato::SeratoPreviewLoader seratoLoader;
+    /// Enqueues selected artifacts through the GUI's single enrichment admission path.
+    ArtifactRequest requestArtifacts;
+    /// Selected-preview generation, independent of foreground load and source identity.
+    std::uint64_t generation {0};
     /// What the preview holds.
     PreviewState state;
 };

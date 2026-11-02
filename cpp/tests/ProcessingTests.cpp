@@ -510,6 +510,24 @@ public:
             expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -3.0, 0.05);
         }
 
+        beginTest("Foreign levels are remeasured before automatic plugin normalization");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "foreign_pre_peak.aif");
+            TestPlugin plugin({});
+            auto options = makeOptions({&plugin});
+            AudioNormalizationOptions target;
+            target.targetPeakDbfs = -3.0;
+            options.normalizeBeforePlugin = target;
+            auto record = analyzeFile(source);
+            record.measurementProducer = MeasurementProducer::rust;
+            record.overallPeak = 0.0f;
+            const auto result = processFileWithPlugins(record, options, chainOf(plugin));
+            expect(!result.hasError(), outcomeError(result.outcome));
+            if (!result.hasError()) {
+                expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -3.0, 0.05);
+            }
+        }
+
         beginTest("Normalization before the chain follows the selected loudness target");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "pre_loudness.aif");
@@ -534,6 +552,8 @@ public:
             options.normalizeBeforePlugin = AudioNormalizationOptions {};
             auto record = analyzeFile(source);
             record.customGain = Decibels {-6.0f};
+            record.measurementProducer = MeasurementProducer::rust;
+            record.overallPeak = 0.0f;
 
             const auto result = processFileWithPlugins(record, options, chainOf(plugin));
 

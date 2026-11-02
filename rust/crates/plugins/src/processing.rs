@@ -25,7 +25,7 @@ use audiobatch_core::output_file::{
     FileDisposer, OutputError, OutputPathError, OutputValidationError, SourceIdentity, check_output_path,
     commit_temporary_output_expected, create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
-use audiobatch_core::record::{AnalysisError, AnalysisRecord};
+use audiobatch_core::record::{AnalysisError, AnalysisRecord, MeasurementProducer};
 use vst3_host::ProcessError;
 
 use crate::chain_signal::{ChainSignal, StageFailure};
@@ -322,13 +322,15 @@ fn try_process_file(
     check_output_path(source, &output, options.overwrite_existing)?;
 
     let expected_source = SourceIdentity::capture(source).map_err(|_| OutputError::SourceChanged)?;
-    let render_start = if source_record.matches_file_on_disk() {
-        0.0
-    } else {
+    let needs_measurement = needs_native_measurement(source_record, options);
+    let render_start = if needs_measurement {
         SOURCE_ANALYSIS_PROGRESS_SHARE
+    } else {
+        0.0
     };
-    let record = refresh_if_changed(
+    let record = refresh_if_needed(
         source_record,
+        needs_measurement,
         is_cancelled,
         &mut progress_range(on_progress, 0.0, render_start),
     );
@@ -430,19 +432,31 @@ fn analyze_processed_output(
     OperationResult::success(source, analysis, notice)
 }
 
-/// Returns the record unchanged when the file still matches it on disk, and otherwise analyzes the file again,
-/// so the input gain is never computed from outdated levels.
-/// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
-fn refresh_if_changed(
+/// Requires native levels only for automatic normalization or a source that changed on disk.
+/// Explicit custom gain and unity processing do not depend on the originating meter.
+fn needs_native_measurement(record: &AnalysisRecord, options: &ProcessingOptions) -> bool {
+    !record.matches_file_on_disk()
+        || (record.measurement_producer != MeasurementProducer::Rust
+            && record.custom_gain_db.is_none()
+            && options.normalize_before_plugins.is_some())
+}
+
+/// Refreshes levels before gain-dependent decisions and retains custom gain only for an unchanged source.
+fn refresh_if_needed(
     record: &AnalysisRecord,
+    needs_measurement: bool,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
 ) -> AnalysisRecord {
-    if record.matches_file_on_disk() {
-        record.clone()
-    } else {
-        analyze_file(&record.path, is_cancelled, on_progress)
+    if !needs_measurement {
+        return record.clone();
     }
+    let unchanged = record.matches_file_on_disk();
+    let mut measured = analyze_file(&record.path, is_cancelled, on_progress);
+    if unchanged {
+        measured.custom_gain_db = record.custom_gain_db;
+    }
+    measured
 }
 
 /// Returns the linear gain applied before the first plugin, and a notice when normalization was skipped.
@@ -930,6 +944,32 @@ mod test_process_file_gain {
         let expected = test_fixtures::FIXTURE_PEAK_DECIBELS + 3.0;
         assert!((output_peak_dbfs(&result) - expected).abs() < 0.01);
         assert_eq!(result.output().and_then(|output| output.custom_gain_db), None);
+    }
+
+    #[test]
+    fn foreign_levels_are_refreshed_only_for_automatic_normalization() {
+        let directory = TempDir::new().expect("temp dir");
+        let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        record.measurement_producer = MeasurementProducer::Cpp;
+        assert!(!needs_native_measurement(&record, &deleting_options()));
+        let options = normalizing_options(-12.0);
+        assert!(needs_native_measurement(&record, &options));
+        record.custom_gain_db = Some(3.0);
+        assert!(!needs_native_measurement(&record, &options));
+        let unchanged = refresh_if_needed(&record, false, &|| true, &mut |_| {});
+        assert_eq!(unchanged.measurement_producer, MeasurementProducer::Cpp);
+    }
+
+    #[test]
+    fn foreign_bogus_levels_do_not_skip_automatic_normalization() {
+        let directory = TempDir::new().expect("temp dir");
+        let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        record.measurement_producer = MeasurementProducer::Cpp;
+        record.overall_peak = 0.0;
+        let chain = test_chain(&[(Kind::Gain, gain_state(1.0))]);
+        let result = process_file(&record, &normalizing_options(-12.0), &chain, &|| false, &mut |_| {});
+        assert_eq!(result.error(), None);
+        assert!((output_peak_dbfs(&result) + 12.0).abs() < 0.01);
     }
 
     #[test]

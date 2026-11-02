@@ -20,6 +20,7 @@ juce::String formatPeakCompact(double peak);
 juce::String formatSampleRateCompact(const AudioAnalysisRecord& record);
 juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record);
 juce::String formatStatus(const AudioAnalysisRecord& record);
+juce::String formatGuiStatus(const AudioAnalysisRecord& record);
 juce::String formatTruePeakCompact(double truePeak);
 juce::String formatTypeLabel(const AudioAnalysisRecord& record);
 double getAverageBitrateKbps(const AudioAnalysisRecord& record);

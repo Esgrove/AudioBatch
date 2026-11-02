@@ -190,6 +190,11 @@ impl AppView {
             self.invalidate_artwork(cx);
         }
         self.refresh_artwork(cx);
+        self.enrichment.invalidate();
+        if let Some(drain) = self.analysis_task.take() {
+            drain.detach();
+        }
+        self.analysis_workers += 1;
         let (run_id, receiver) = coordinator.start(AnalysisOptions {
             input_paths: inputs,
             recursive: true,
@@ -211,14 +216,18 @@ impl AppView {
 
     /// Applies a batch of analysis events to the table and the selection.
     fn apply_analysis_events(&mut self, events: Vec<AnalysisEvent>, cx: &mut Context<Self>) {
-        let Some((run_id, kind)) = self.run.as_ref().map(|run| (run.run_id, run.kind)) else {
+        let Some((run_id, kind)) = self
+            .run
+            .as_ref()
+            .filter(|run| !run.completed)
+            .map(|run| (run.run_id, run.kind))
+        else {
             return;
         };
         let mut planned_total = None;
         let mut finished = 0;
         let mut selected_finished = false;
         let mut completed = false;
-        let mut carried_gains = Vec::new();
         let excluded = &self.excluded;
         let selected = self.selected.as_deref();
         let run = &mut self.run;
@@ -253,10 +262,11 @@ impl AppView {
                         }
                         finished += 1;
                         selected_finished |= selected == Some(record.path.as_path());
-                        let path = record.path.clone();
-                        if let Some(gain) = delegate.set_record(*record) {
-                            carried_gains.push((path, gain));
+                        let mut record = *record;
+                        if selected != Some(record.path.as_path()) {
+                            record.waveform = None;
                         }
+                        delegate.set_record(record);
                     }
                     AnalysisEvent::Completed { .. } => {
                         delegate.sort_rows();
@@ -266,11 +276,6 @@ impl AppView {
             }
             cx.notify();
         });
-        // The coordinator stored each row before publishing it, so a carried over gain can be stored now.
-        for (path, gain) in carried_gains {
-            self.store_custom_gain(&path, gain);
-        }
-
         if let Some(run) = &mut self.run {
             if let Some(total) = planned_total {
                 run.planned = true;
@@ -287,27 +292,36 @@ impl AppView {
             self.restore_selection(cx);
         }
         if completed && std::mem::take(&mut self.autoplay_pending) {
-            let first_playable = {
-                let delegate = self.table.read(cx).delegate();
-                (0..delegate.len()).find_map(|index| {
-                    delegate
-                        .row(index)
-                        .filter(|row| row.ready_record().is_some())
-                        .map(|row| (index, row.path.clone()))
-                })
-            };
-            if let Some((index, path)) = first_playable {
-                self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
-                self.select_path(&path, true, cx);
-            }
+            self.autoplay_first_ready(cx);
+        }
+        if completed {
+            self.resume_enrichment(cx);
         }
         if selected_finished {
             self.reconcile_selected_preview(cx);
             self.refresh_selected_waveform(cx);
             self.refresh_artwork(cx);
             self.apply_preview_gain(cx);
+            self.request_selected_enrichment(cx);
         }
         cx.notify();
+    }
+
+    /// Starts the first playable row after a completed load requested autoplay.
+    fn autoplay_first_ready(&mut self, cx: &mut Context<Self>) {
+        let first_playable = {
+            let delegate = self.table.read(cx).delegate();
+            (0..delegate.len()).find_map(|index| {
+                delegate
+                    .row(index)
+                    .filter(|row| row.ready_record().is_some())
+                    .map(|row| (index, row.path.clone()))
+            })
+        };
+        if let Some((index, path)) = first_playable {
+            self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
+            self.select_path(&path, true, cx);
+        }
     }
 
     /// Sets the status text from the progress of the current run.
@@ -369,6 +383,10 @@ fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -
                 break;
             }
             if disconnected {
+                let _ = this.update(cx, |view, cx| {
+                    view.analysis_workers = view.analysis_workers.saturating_sub(1);
+                    view.resume_enrichment(cx);
+                });
                 break;
             }
             cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;

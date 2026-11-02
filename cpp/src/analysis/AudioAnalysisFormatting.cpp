@@ -205,6 +205,15 @@ juce::String formatTypeLabel(const AudioAnalysisRecord& record)
     return formatName.isNotEmpty() ? formatName : juce::String("Unknown");
 }
 
+/// Formats measurement provenance for GUI settled statuses, without changing CLI status text.
+juce::String formatGuiStatus(const AudioAnalysisRecord& record)
+{
+    if (record.status == AudioAnalysisStatus::cached && record.measurementProducer == MeasurementProducer::rust) {
+        return "Cached (Rust)";
+    }
+    return formatStatus(record);
+}
+
 /// Formats the human-readable status text for a record.
 juce::String formatStatus(const AudioAnalysisRecord& record)
 {

@@ -1,11 +1,9 @@
 /// Tests for PreviewController:
 /// the transitions between an empty, released, and loaded preview, and which file each state keeps.
 
-#include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/PreviewController.h"
-#include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/FileUtils.h"
@@ -25,19 +23,10 @@ public:
     /// Runs the preview state checks.
     void runTest() override
     {
-        // The cache is never opened, because these checks request no Serato tags.
-        AnalysisCache cache(
-            juce::File::getSpecialLocation(juce::File::tempDirectory)
-                .getChildFile("AudioBatch preview controller tests.db")
-        );
         TestAudioDeviceState device;
         AudioPreviewPlayer player;
         installTestAudioDevice(player.getDeviceManager(), device);
-        PreviewController preview(
-            cache,
-            player,
-            [](const utils::FileIdentity&, std::uint64_t, const std::shared_ptr<const serato::SeratoData>&) {}
-        );
+        PreviewController preview(player, [](const utils::FileIdentity&, std::uint64_t) {});
         const auto file = fixtureFile("silence_stereo_44100_16.wav");
 
         beginTest("A new preview is empty");
@@ -154,6 +143,25 @@ public:
             expect(!preview.canDisplayAnalysis(record));
             preview.clear();
             expect(!preview.canDisplayAnalysis(record));
+        }
+
+        beginTest("Artifact generations reject A to B to A and preserve the loaded transport");
+        {
+            expect(preview.load(file, false));
+            preview.requestSeratoData();
+            const auto firstGeneration = preview.getGeneration();
+            const utils::FileIdentity identity(file);
+            const auto another = fixtureFile("sine_stereo_44100_16.wav");
+            expect(preview.load(another, false));
+            expect(preview.load(file, false));
+            preview.requestSeratoData();
+            expect(preview.getGeneration() != firstGeneration);
+            expect(!preview.adoptSeratoData(identity, firstGeneration, nullptr));
+            player.setPosition(0.25);
+            const auto position = player.getCurrentPosition();
+            expect(preview.adoptSeratoData(identity, preview.getGeneration(), nullptr));
+            expectWithinAbsoluteError(player.getCurrentPosition(), position, 1.0e-12);
+            expect(player.hasLoadedSource());
         }
 
         preview.stop();

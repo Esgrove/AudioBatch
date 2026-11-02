@@ -312,7 +312,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
         // The cache logs its own failures, and a stale row only costs another read later.
         const auto forgetConvertedSource = [&](const AudioAnalysisRecord& output) {
             if (output.fullPath != result.fullPath) {
-                static_cast<void>(cache.removeAnalysis(result.file));
+                static_cast<void>(cache.removeAnalysis(result));
             }
         };
         const auto reportFailure = [&](const AudioAnalysisRecord& record, const juce::String& error) {

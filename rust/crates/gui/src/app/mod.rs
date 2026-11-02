@@ -15,7 +15,9 @@ mod actions;
 mod analysis;
 mod artwork;
 mod cue_start;
+mod enrichment;
 mod gain;
+pub mod gain_writer;
 mod normalize;
 mod plugins;
 mod preferences;
@@ -146,8 +148,14 @@ pub struct AppView {
     preview_source: preview::PreviewSource,
     /// Tags of the selected file, read in the background after selection.
     selected_tags: Option<(PathBuf, Arc<FileTags>)>,
-    /// Reads the tags of the selected file. Replacing it drops a read that is no longer wanted.
-    tags_task: Option<Task<()>>,
+    /// Admits one expensive metadata or waveform job after measurement loading completes.
+    enrichment: enrichment::EnrichmentQueue,
+    /// Drains the active reader even after cooperative cancellation.
+    enrichment_task: Option<Task<()>>,
+    /// Analysis receiver drains still owning workers, including cancelled or replaced runs.
+    analysis_workers: usize,
+    /// Ordered, coalescing persistence for new explicit gain edits only.
+    gain_writer: Option<gain_writer::GainWriter>,
     /// Album artwork thumbnail of the selected file, read in the background after selection.
     selected_artwork: Option<(ArtworkIdentity, Arc<RenderImage>)>,
     /// Coalesces selected-file identities and rejects obsolete artwork generations.
@@ -211,12 +219,7 @@ impl AppView {
             cx.subscribe_in(&waveform, window, Self::on_waveform_event),
         ];
         subscriptions.extend(slider_subscriptions);
-        subscriptions.push(cx.on_app_quit(|view, cx| {
-            view.flush_gain_store(cx);
-            view.save_plugin_chain();
-            view.invalidate_artwork(cx);
-            async {}
-        }));
+        subscriptions.push(cx.on_app_quit(Self::prepare_quit));
 
         let mut menu_state = initial_menu_state(&settings, &table, cx);
         let editor_owner = window.window_handle().ok().map(|handle| handle.as_raw());
@@ -227,15 +230,15 @@ impl AppView {
             status,
         } = open_startup(&settings, dispatcher, editor_owner, &mut menu_state);
         set_menus(cx, &menu_state);
-        waveform.update(cx, |waveform, cx| {
-            waveform.set_show_loudness(settings.show_loudness_graph, cx);
-            waveform.set_serato_colours(settings.serato_waveform_colours, cx);
-            waveform.set_loudness_range(settings.loudness_minimum, settings.loudness_maximum, cx);
-        });
+        configure_waveform(&waveform, &settings, cx);
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let (player_poll_task, plugin_tick_task) = (Self::spawn_player_poll(cx), Self::spawn_plugin_tick(cx));
+        let gain_writer = coordinators
+            .analysis
+            .as_ref()
+            .map(|coordinator| gain_writer::GainWriter::new(Arc::clone(coordinator.cache())));
 
         let mut view = Self {
             focus_handle,
@@ -247,7 +250,7 @@ impl AppView {
             gain_slider: sliders.gain,
             peak_target_slider: sliders.peak_target,
             loudness_target_slider: sliders.loudness_target,
-            coordinator: coordinators.analysis,
+            coordinator: coordinators.analysis.clone(),
             normalize_coordinator: coordinators.normalize,
             normalize_run: None,
             normalize_task: None,
@@ -268,7 +271,10 @@ impl AppView {
             selected: None,
             preview_source: preview::PreviewSource::default(),
             selected_tags: None,
-            tags_task: None,
+            enrichment: enrichment::EnrichmentQueue::default(),
+            enrichment_task: None,
+            analysis_workers: 0,
+            gain_writer,
             selected_artwork: None,
             artwork_requests: ArtworkRequests::default(),
             artwork_rewrites: HashSet::new(),
@@ -304,6 +310,20 @@ impl AppView {
             view.add_roots(&options.paths, cx);
         }
         view
+    }
+
+    /// Invalidates readers and drains ordered explicit gains off the message thread before application quit.
+    fn prepare_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.flush_gain_store(cx);
+        self.save_plugin_chain();
+        self.invalidate_artwork(cx);
+        self.enrichment.invalidate();
+        let writer = self.gain_writer.as_mut().and_then(gain_writer::GainWriter::finish);
+        cx.background_executor().spawn(async move {
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
+        })
     }
 
     /// Updates both the system menus and the Windows in-window menu bar.
@@ -348,6 +368,15 @@ impl AppView {
         let active = self.table.read(cx).delegate().active_progress();
         Some((activity, ((finished as f32 + active) / total as f32).clamp(0.0, 1.0)))
     }
+}
+
+/// Applies saved waveform presentation before any source is selected.
+fn configure_waveform(waveform: &Entity<WaveformView>, settings: &GuiSettings, cx: &mut Context<AppView>) {
+    waveform.update(cx, |waveform, cx| {
+        waveform.set_show_loudness(settings.show_loudness_graph, cx);
+        waveform.set_serato_colours(settings.serato_waveform_colours, cx);
+        waveform.set_loudness_range(settings.loudness_minimum, settings.loudness_maximum, cx);
+    });
 }
 
 /// Returns the menu state of the saved settings and the table columns, before the output device is opened.

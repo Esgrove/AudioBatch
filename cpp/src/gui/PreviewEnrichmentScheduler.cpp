@@ -1,0 +1,458 @@
+/// Serializes optional artifact repair and explicit GUI cache edits on one owned connection.
+/// The single detached worker owns all of its dependencies, never waits for UI delivery,
+/// and polls cancellation between waveform blocks and metadata stages.
+
+#include "gui/PreviewEnrichmentScheduler.h"
+
+#include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/NativeWaveformBuilder.h"
+#include "serato/SeratoPreviewLoader.h"
+#include "serato/SeratoTagCache.h"
+#include "serato/SeratoTagTypes.h"
+#include "utils/FileUtils.h"
+#include "utils/Log.h"
+#include "utils/ThreadUtils.h"
+#include <condition_variable>
+#include <unordered_map>
+#include <unordered_set>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace audiobatch
+{
+/// A committed output and the captured source row to remove if conversion changed its path.
+struct EnrichmentOutput {
+    AudioAnalysisRecord output;
+    std::optional<AudioAnalysisRecord> convertedSource;
+};
+
+/// State shared only because a cancelled worker may outlive its GUI owner.
+struct PreviewEnrichmentState {
+    /// Constructs a worker-owned connection without opening it on the message thread.
+    PreviewEnrichmentState(
+        const juce::File& databaseFile,
+        PreviewEnrichmentScheduler::Completion onCompletion,
+        PreviewEnrichmentScheduler::Work onWork
+    ) :
+        cache(databaseFile),
+        completion(std::move(onCompletion)),
+        work(std::move(onWork))
+    {}
+
+    AnalysisCache cache;
+    PreviewEnrichmentScheduler::Completion completion;
+    PreviewEnrichmentScheduler::Work work;
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::deque<PreviewEnrichmentCandidate> pending;
+    std::unordered_map<juce::String, CustomGainUpdate> gains;
+    std::unordered_map<juce::String, CustomGainUpdate> deferredGains;
+    bool retryDeferredGains {false};
+    std::deque<EnrichmentOutput> outputs;
+    std::optional<utils::FileIdentity> selected;
+    std::uint64_t selectionGeneration {0};
+    std::atomic<std::uint64_t> loadGeneration {1};
+    std::atomic<std::uint64_t> interruption {0};
+    std::atomic<bool> stopped {false};
+    bool gateOpen {false};
+    bool selectionPending {false};
+    juce::String activePath;
+    std::optional<PreviewEnrichmentCandidate> activeCandidate;
+    std::uint64_t activeInterruption {0};
+    std::uint64_t activeSelectionGeneration {0};
+};
+
+namespace
+{
+/// One admitted unit of work, keeping source ownership separate from foreground and selection generations.
+struct EnrichmentJob {
+    std::optional<PreviewEnrichmentCandidate> candidate;
+    std::vector<CustomGainUpdate> gains;
+    std::optional<EnrichmentOutput> output;
+    bool readMissing {false};
+    bool retryingGains {false};
+    std::uint64_t loadGeneration {0};
+    std::uint64_t interruption {0};
+};
+
+/// Publishes artifacts only for the latest selected identity, generation and foreground load.
+void deliver(
+    const std::shared_ptr<PreviewEnrichmentState>& state,
+    const utils::FileIdentity& identity,
+    const std::uint64_t loadGeneration,
+    std::shared_ptr<const serato::SeratoData> tags,
+    std::optional<juce::MemoryBlock> waveform,
+    const bool tagsReady
+)
+{
+    std::uint64_t selectionGeneration = 0;
+    {
+        const std::scoped_lock lock(state->mutex);
+        if (state->stopped || state->loadGeneration != loadGeneration || !state->selected
+            || state->activeSelectionGeneration != state->selectionGeneration || state->selected->path != identity.path
+            || state->selected->platformId != identity.platformId
+            || state->selected->preciseTimes != identity.preciseTimes || state->selected->fileSize != identity.fileSize
+            || state->selected->modifiedTimeMs != identity.modifiedTimeMs)
+        {
+            return;
+        }
+        selectionGeneration = state->selectionGeneration;
+    }
+    if (identity.matches(juce::File(identity.path)) && !state->stopped && state->completion) {
+        state->completion({
+            .identity = identity,
+            .selectionGeneration = selectionGeneration,
+            .loadGeneration = loadGeneration,
+            .seratoData = std::move(tags),
+            .waveform = std::move(waveform),
+            .tagsReady = tagsReady,
+        });
+    }
+}
+
+/// Rechecks both artifacts at admission, reads tags first, and persists only the missing native waveform.
+void enrich(
+    const std::shared_ptr<PreviewEnrichmentState>& state,
+    const PreviewEnrichmentCandidate& candidate,
+    const bool readMissing,
+    const std::uint64_t loadGeneration,
+    const std::uint64_t interruption
+)
+{
+    const utils::FileIdentity identity(candidate.file);
+    const auto cancelled = [state, loadGeneration, interruption] {
+        return state->stopped || state->loadGeneration != loadGeneration || state->interruption != interruption;
+    };
+    if (identity.fileSize != candidate.fileSize || identity.modifiedTimeMs != candidate.modifiedTimeMs
+        || !identity.matches(candidate.file) || cancelled())
+    {
+        return;
+    }
+
+    const auto cachedTags = serato::getCachedTags(state->cache, identity, serato::allTagKinds);
+    const auto tagsCached = std::ranges::all_of(cachedTags, [](const auto& result) { return result.has_value(); });
+    std::shared_ptr<const serato::SeratoData> tags;
+    try {
+        tags = serato::loadPreviewData(state->cache, identity, cancelled, readMissing);
+    } catch (...) {
+        // Metadata failure must not prevent independent waveform repair.
+        utils::logDebug("Preview metadata enrichment failed: {}", utils::describeCurrentException());
+    }
+    if (cancelled() || !identity.matches(candidate.file)) {
+        return;
+    }
+    const auto finalTags = readMissing && !tagsCached
+        ? serato::getCachedTags(state->cache, identity, serato::allTagKinds)
+        : std::vector<std::optional<serato::TagReadResult>> {};
+    const auto tagsReady = tagsCached
+        || (readMissing && std::ranges::all_of(finalTags, [](const auto& result) { return result.has_value(); }));
+    // Tag success is independently visible even if waveform decoding is interrupted or fails.
+    // A completed transient read resolves cue positioning too, but is retried only on a later request or load.
+    if (tagsReady || tags || readMissing) {
+        deliver(state, identity, loadGeneration, std::move(tags), std::nullopt, true);
+    }
+    auto waveform = state->cache.getWaveformData(candidate.file);
+    if (!waveform && readMissing && !cancelled()) {
+        waveform = buildNativeWaveform(identity, cancelled);
+        if (waveform && !cancelled() && identity.matches(candidate.file)) {
+            static_cast<void>(state->cache.storeWaveformData(identity, *waveform));
+        }
+    }
+    if (!cancelled() && waveform && identity.matches(candidate.file)) {
+        deliver(state, identity, loadGeneration, {}, std::move(waveform), false);
+    }
+}
+
+/// Moves explicit edits first, retrying an unavailable source row only once after foreground completion.
+void takeGains(PreviewEnrichmentState& state, EnrichmentJob& job)
+{
+    job.retryingGains = state.gains.empty() && state.outputs.empty() && state.retryDeferredGains;
+    auto& source = job.retryingGains ? state.deferredGains : state.gains;
+    if (job.retryingGains) {
+        state.retryDeferredGains = false;
+    }
+    for (auto& [path, gain] : source) {
+        juce::ignoreUnused(path);
+        job.gains.push_back(std::move(gain));
+    }
+    source.clear();
+}
+
+/// Chooses the selected request ahead of directory repair while the queue mutex is held.
+void takeCandidate(PreviewEnrichmentState& state, EnrichmentJob& job)
+{
+    if (state.selectionPending && state.selected) {
+        const auto& identity = *state.selected;
+        job.candidate = PreviewEnrichmentCandidate {
+            .file = juce::File(identity.path),
+            .fileSize = identity.fileSize,
+            .modifiedTimeMs = identity.modifiedTimeMs,
+        };
+        state.selectionPending = false;
+        job.readMissing = state.gateOpen;
+        if (job.readMissing) {
+            std::erase_if(state.pending, [&](const auto& item) { return item.file == job.candidate->file; });
+        }
+    } else if (state.gateOpen && !state.pending.empty()) {
+        job.candidate = std::move(state.pending.front());
+        state.pending.pop_front();
+        job.readMissing = true;
+    } else {
+        state.selectionPending = false;
+    }
+}
+
+/// Waits for one admissible job without holding the queue lock across filesystem, SQLite or decoding work.
+std::optional<EnrichmentJob> nextJob(PreviewEnrichmentState& state)
+{
+    std::unique_lock lock(state.mutex);
+    state.condition.wait(lock, [&] {
+        return state.stopped || !state.gains.empty() || !state.outputs.empty() || state.retryDeferredGains
+            || state.selectionPending || (state.gateOpen && !state.pending.empty());
+    });
+    if (state.stopped && state.gains.empty() && state.outputs.empty()) {
+        return std::nullopt;
+    }
+    EnrichmentJob job;
+    takeGains(state, job);
+    if (job.gains.empty()) {
+        if (!state.outputs.empty()) {
+            job.output = std::move(state.outputs.front());
+            state.outputs.pop_front();
+        } else {
+            takeCandidate(state, job);
+        }
+    }
+    job.loadGeneration = state.loadGeneration;
+    job.interruption = state.interruption;
+    state.activeCandidate = job.candidate;
+    state.activePath = job.candidate ? job.candidate->file.getFullPathName() : juce::String();
+    state.activeInterruption = job.interruption;
+    state.activeSelectionGeneration = state.selectionGeneration;
+    return job;
+}
+
+/// Persists coalesced explicit edits, retaining only a bounded retry when the measured row is not ready yet.
+void persistGains(PreviewEnrichmentState& state, const EnrichmentJob& job)
+{
+    for (const auto& gain : job.gains) {
+        const auto stored = state.cache.storeCustomGains({gain}) > 0;
+        const std::scoped_lock lock(state.mutex);
+        if (!stored && !job.retryingGains && !state.gains.contains(gain.file.getFullPathName())) {
+            state.deferredGains.insert_or_assign(gain.file.getFullPathName(), gain);
+        }
+    }
+}
+
+/// Dispatches one already admitted job without creating another worker or waiting for GUI delivery.
+void executeJob(const std::shared_ptr<PreviewEnrichmentState>& state, const EnrichmentJob& job)
+{
+    if (!job.gains.empty()) {
+        persistGains(*state, job);
+    } else if (job.output) {
+        static_cast<void>(state->cache.storeAnalysis(job.output->output));
+        if (job.output->convertedSource) {
+            static_cast<void>(state->cache.removeAnalysis(*job.output->convertedSource));
+        }
+    } else if (job.candidate) {
+        if (state->work) {
+            state->work(*job.candidate, job.readMissing, [state, &job] {
+                return state->stopped || state->loadGeneration != job.loadGeneration
+                    || state->interruption != job.interruption;
+            });
+        } else {
+            enrich(state, *job.candidate, job.readMissing, job.loadGeneration, job.interruption);
+        }
+    }
+}
+
+/// Atomically retires admission and requeues only interrupted work in the surviving load generation.
+void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
+{
+    const std::scoped_lock lock(state.mutex);
+    if (job.candidate && !state.stopped && state.loadGeneration == job.loadGeneration
+        && state.interruption != job.interruption && job.readMissing
+        && std::ranges::none_of(state.pending, [&](const auto& item) { return item.file == job.candidate->file; }))
+    {
+        state.pending.push_back(*job.candidate);
+    }
+    if (job.candidate && !state.stopped && state.loadGeneration == job.loadGeneration
+        && state.interruption != job.interruption && state.selected
+        && state.selected->path == job.candidate->file.getFullPathName())
+    {
+        // Explicit gain edits can interrupt a cache-only selection too, which still needs its artifacts delivered.
+        state.selectionPending = true;
+    }
+    // Retirement and requeue share the selection lock, so a late request cannot join an exited job.
+    state.activePath.clear();
+    state.activeCandidate.reset();
+}
+
+/// Runs one job at a time, giving coalesced explicit gains precedence over optional audio work.
+void run(const std::shared_ptr<PreviewEnrichmentState>& state)
+{
+    while (auto job = nextJob(*state)) {
+        try {
+            executeJob(state, *job);
+        } catch (...) {
+            utils::logDebug("Preview enrichment failed: {}", utils::describeCurrentException());
+        }
+        retireJob(*state, *job);
+    }
+}
+}  // namespace
+
+/// Starts the sole worker with independently owned cache and callback captures.
+PreviewEnrichmentScheduler::PreviewEnrichmentScheduler(
+    const juce::File& databaseFile,
+    Completion completion,
+    Work work
+) :
+    state(std::make_shared<PreviewEnrichmentState>(databaseFile, std::move(completion), std::move(work)))
+{
+    std::thread([shared = state] { run(shared); }).detach();
+}
+
+/// Requests cancellation without a message-thread join or worker-to-UI rendezvous.
+PreviewEnrichmentScheduler::~PreviewEnrichmentScheduler()
+{
+    stop();
+}
+
+/// Closes admission before scans or file writers start, invalidating queued artifact deliveries.
+void PreviewEnrichmentScheduler::beginForeground()
+{
+    const std::scoped_lock lock(state->mutex);
+    state->gateOpen = false;
+    state->selectionPending = false;
+    ++state->loadGeneration;
+    ++state->interruption;
+    state->pending.clear();
+}
+
+/// Opens admission only after applied results and restored selection, including all-cache-hit runs.
+void PreviewEnrichmentScheduler::completeForeground(std::vector<PreviewEnrichmentCandidate> candidates)
+{
+    {
+        const std::scoped_lock lock(state->mutex);
+        state->pending.clear();
+        std::unordered_set<juce::String> paths;
+        for (auto& candidate : candidates) {
+            if (paths.insert(candidate.file.getFullPathName()).second) {
+                state->pending.push_back(std::move(candidate));
+            }
+        }
+        state->gateOpen = true;
+        state->retryDeferredGains = true;
+        state->selectionPending = state->selected.has_value();
+    }
+    state->condition.notify_one();
+}
+
+/// Promotes or joins the selected path and cooperatively interrupts unselected waveform decoding.
+void PreviewEnrichmentScheduler::select(const utils::FileIdentity& identity, const std::uint64_t selectionGeneration)
+{
+    {
+        const std::scoped_lock lock(state->mutex);
+        if (state->activePath.isNotEmpty() && state->activePath != identity.path) {
+            ++state->interruption;
+        }
+        state->selected = identity;
+        state->selectionGeneration = selectionGeneration;
+        state->selectionPending = state->activePath != identity.path || state->activeInterruption != state->interruption
+            || state->activeSelectionGeneration != selectionGeneration;
+    }
+    state->condition.notify_one();
+}
+
+/// Drops selected delivery ownership without interrupting useful directory repair.
+void PreviewEnrichmentScheduler::clearSelection()
+{
+    const std::scoped_lock lock(state->mutex);
+    state->selected.reset();
+    state->selectionPending = false;
+}
+
+/// Invalidates active publication and drops removed candidates without waiting for a decoder.
+void PreviewEnrichmentScheduler::remove(const juce::StringArray& paths)
+{
+    const std::scoped_lock lock(state->mutex);
+    ++state->loadGeneration;
+    ++state->interruption;
+    std::erase_if(state->pending, [&](const auto& item) { return paths.contains(item.file.getFullPathName()); });
+    if (state->gateOpen && state->activeCandidate && !paths.contains(state->activePath)
+        && std::ranges::none_of(
+            state->pending, [&](const auto& item) { return item.file == state->activeCandidate->file; }
+        ))
+    {
+        // The global generation cancels every active job, including useful repair of paths that survived removal.
+        state->pending.push_front(*state->activeCandidate);
+    }
+    if (state->selected && paths.contains(state->selected->path)) {
+        state->selected.reset();
+        state->selectionPending = false;
+    } else {
+        // Removal invalidates queued delivery for every path, so refresh the surviving selected artifacts.
+        state->selectionPending = state->selected.has_value();
+    }
+    state->condition.notify_one();
+}
+
+/// Invalidates a cleared result set and closes automatic admission.
+void PreviewEnrichmentScheduler::clear()
+{
+    beginForeground();
+    clearSelection();
+}
+
+/// Invalidates all publication and releases the worker as soon as its current cancellable stage exits.
+void PreviewEnrichmentScheduler::stop()
+{
+    state->stopped = true;
+    ++state->interruption;
+    state->condition.notify_one();
+}
+
+/// Coalesces only explicit edits by path and preserves their latest captured source identity.
+void PreviewEnrichmentScheduler::storeCustomGains(std::vector<CustomGainUpdate> updates)
+{
+    {
+        const std::scoped_lock lock(state->mutex);
+        for (auto& update : updates) {
+            state->deferredGains.erase(update.file.getFullPathName());
+            state->gains.insert_or_assign(update.file.getFullPathName(), std::move(update));
+        }
+        ++state->interruption;
+    }
+    state->condition.notify_one();
+}
+
+/// Moves committed output persistence off the GUI thread, before optional repair can publish its waveform.
+void PreviewEnrichmentScheduler::persistOperation(
+    AudioAnalysisRecord output,
+    std::optional<AudioAnalysisRecord> convertedSource
+)
+{
+    {
+        const std::scoped_lock lock(state->mutex);
+        state->outputs.push_back({.output = std::move(output), .convertedSource = std::move(convertedSource)});
+    }
+    state->condition.notify_one();
+}
+
+/// Rejects an artifact message queued before a newer foreground generation or removal.
+bool PreviewEnrichmentScheduler::isCurrentLoad(const std::uint64_t generation) const
+{
+    return !state->stopped && state->loadGeneration == generation;
+}
+}  // namespace audiobatch

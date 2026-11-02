@@ -91,7 +91,7 @@ pub fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &Ope
         return;
     };
     if output.path != source.path
-        && let Err(error) = cache.remove_analysis(&source.path)
+        && let Err(error) = cache.remove_analysis_for_record(source)
     {
         tracing::warn!("Could not update the cache: {}", format_error_chain(&error));
     }
@@ -246,6 +246,25 @@ mod test_operation_cache {
 
         assert_eq!(result.error(), None);
         assert_eq!(result.output().map(|record| &record.path), Some(&output.path));
+    }
+
+    #[test]
+    fn delayed_conversion_completion_does_not_remove_a_newer_source_row() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let old_source = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        cache.store_analysis(&old_source).expect("stores original");
+        let replacement = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "source.wav");
+        cache.store_analysis(&replacement).expect("stores replacement");
+        let output = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "output.wav");
+        update_cache(
+            &cache,
+            &old_source,
+            &OperationResult::success(&old_source.path, output, None),
+        );
+        let retained = cache.get_analysis(&replacement.path).expect("newer source retained");
+        assert_eq!(retained.file_size, replacement.file_size);
+        assert_eq!(retained.sample_rate, replacement.sample_rate);
     }
 
     #[test]

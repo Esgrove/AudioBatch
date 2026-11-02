@@ -16,7 +16,6 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use audiobatch_core::AnalysisRecord;
 use audiobatch_core::format::{
     average_bitrate_kbps, format_bitrate_compact, format_bits_per_sample, format_custom_gain_compact, format_duration,
     format_loudness_compact, format_peak_compact, format_sample_rate_compact, format_status, format_true_peak_compact,
@@ -24,6 +23,7 @@ use audiobatch_core::format::{
 };
 use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
+use audiobatch_core::{AnalysisRecord, AnalysisStatus, MeasurementProducer, WaveformOverview};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::{
@@ -32,6 +32,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Window, canvas, div, point, px, rgba,
 };
 
+use crate::app::gain_writer::GainWrite;
 use crate::file_drag::DraggedFiles;
 use crate::files::{OPEN_PARENT_FOLDER_LABEL, REVEAL_LABEL};
 use crate::menus::{
@@ -259,6 +260,7 @@ struct CustomGainEdit {
     file_size: u64,
     modified_time_ms: i64,
     gain: Option<f32>,
+    pending: bool,
 }
 
 /// One column of the results table.
@@ -322,7 +324,7 @@ impl ResultRow {
             (RowState::Normalizing(_), _, _) => String::from("Normalizing"),
             (RowState::Processing(_), _, _) => String::from("Processing"),
             (RowState::Done, _, Some(message)) => message.text.clone(),
-            (RowState::Done, Some(record), None) => format_status(record.status).to_string(),
+            (RowState::Done, Some(record), None) => gui_measurement_status(record).to_string(),
             (RowState::Done, None, None) => String::new(),
         }
     }
@@ -344,10 +346,24 @@ impl ResultRow {
         if let Some(message) = &self.message {
             return Some(message.text.clone());
         }
-        self.record
-            .as_ref()
-            .filter(|record| record.has_error() && !record.error_message.is_empty())
-            .map(|record| record.error_message.clone())
+        self.record.as_ref().and_then(|record| {
+            if record.has_error() && !record.error_message.is_empty() {
+                Some(record.error_message.clone())
+            } else if gui_measurement_status(record) == "Cached (C++)" {
+                Some(String::from("Measurements and source-over history were produced by AudioBatch C++. Lossy playback decoding can differ."))
+            } else {
+                None
+            }
+        })
+    }
+}
+
+/// Formats GUI measurement provenance without changing core statuses or CLI output.
+fn gui_measurement_status(record: &AnalysisRecord) -> &'static str {
+    if record.status == AnalysisStatus::Cached && record.measurement_producer == MeasurementProducer::Cpp {
+        "Cached (C++)"
+    } else {
+        format_status(record.status)
     }
 }
 
@@ -639,9 +655,8 @@ impl ResultsDelegate {
     }
 
     /// Stores the result of a file, adding a row when the file is not listed yet.
-    /// A replaced record passes its custom gain on while the file is unchanged on disk,
-    /// because the user may have set it before the cache had a row to keep it in.
-    /// Returns the authoritative gain, including `Some(None)` for a clear, when the cache must be updated.
+    /// Only a still-pending explicit edit overrides the incoming persisted gain.
+    /// Returns a presentation override, never a request to replay an inherited database value.
     #[expect(
         clippy::option_option,
         reason = "The outer option requests persistence, the inner option is a nullable gain"
@@ -673,11 +688,50 @@ impl ResultsDelegate {
             file_size: record.file_size,
             modified_time_ms: record.modified_time_ms,
             gain: custom_gain_db,
+            pending: true,
         };
         let changed = !same_custom_gain(record.custom_gain_db, custom_gain_db);
         record.custom_gain_db = custom_gain_db;
         self.gain_edits.insert(path.to_path_buf(), edit);
         changed
+    }
+
+    /// Takes a newly requested gain edit once, never replaying inherited values after a cross-process clear.
+    pub fn take_gain_write(&mut self, path: &Path) -> Option<GainWrite> {
+        let edit = self.gain_edits.get_mut(path)?;
+        if !edit.pending {
+            return None;
+        }
+        edit.pending = false;
+        let record = self.row_for(path)?.ready_record()?;
+        Some(GainWrite::new(record))
+    }
+
+    /// Attaches only the native preview field for the same captured source, preserving messages and measurements.
+    pub fn attach_waveform(
+        &mut self,
+        path: &Path,
+        file_size: u64,
+        modified_time_ms: i64,
+        waveform: Arc<WaveformOverview>,
+    ) {
+        if let Some(record) = self.row_mut(path).and_then(|row| row.record.as_mut())
+            && record.file_size == file_size
+            && record.modified_time_ms == modified_time_ms
+        {
+            record.waveform = Some(waveform);
+        }
+    }
+
+    /// Keeps at most the selected row's waveform in memory, since unselected artifacts live in their native cache.
+    pub fn release_waveforms_except(&mut self, selected: Option<&Path>) {
+        for row in &mut self.rows {
+            if selected != Some(row.path.as_path())
+                && let Some(record) = &mut row.record
+            {
+                record.waveform = None;
+            }
+        }
     }
 
     /// Removes the row of a file and returns its former index.
@@ -733,17 +787,14 @@ impl ResultsDelegate {
             row.state = RowState::Done;
             if let Some(mut record) = cached(&row.path) {
                 if let Some(edit) = self.gain_edits.get(&row.path).copied() {
-                    if edit.file_size == record.file_size && edit.modified_time_ms == record.modified_time_ms {
+                    if edit.pending
+                        && edit.file_size == record.file_size
+                        && edit.modified_time_ms == record.modified_time_ms
+                    {
                         record.custom_gain_db = edit.gain;
                     } else {
                         self.gain_edits.remove(&row.path);
                     }
-                } else if let Some(existing) = &row.record
-                    && existing.file_size == record.file_size
-                    && existing.modified_time_ms == record.modified_time_ms
-                    && existing.custom_gain_db.is_some()
-                {
-                    record.custom_gain_db = existing.custom_gain_db;
                 }
                 row.record = Some(record);
             } else if row.record.is_none() {
@@ -1106,7 +1157,7 @@ impl ResultsDelegate {
         }
     }
 
-    /// Applies the latest explicit edit or an existing nonempty gain only to the same file identity.
+    /// Applies an unsubmitted explicit edit only to the same file identity.
     /// An identity change retires the old edit rather than letting it affect a replacement file.
     #[expect(
         clippy::option_option,
@@ -1115,17 +1166,14 @@ impl ResultsDelegate {
     fn merge_custom_gain(&mut self, incoming: &mut AnalysisRecord) -> Option<Option<f32>> {
         let incoming_gain = incoming.custom_gain_db;
         if let Some(edit) = self.gain_edits.get(&incoming.path).copied() {
-            if edit.file_size == incoming.file_size && edit.modified_time_ms == incoming.modified_time_ms {
+            if edit.pending
+                && edit.file_size == incoming.file_size
+                && edit.modified_time_ms == incoming.modified_time_ms
+            {
                 incoming.custom_gain_db = edit.gain;
             } else {
                 self.gain_edits.remove(&incoming.path);
             }
-        } else if let Some(existing) = self.row_for(&incoming.path).and_then(|row| row.record.as_ref())
-            && existing.file_size == incoming.file_size
-            && existing.modified_time_ms == incoming.modified_time_ms
-            && existing.custom_gain_db.is_some()
-        {
-            incoming.custom_gain_db = existing.custom_gain_db;
         }
         (!same_custom_gain(incoming_gain, incoming.custom_gain_db)).then_some(incoming.custom_gain_db)
     }
@@ -1659,6 +1707,152 @@ fn compare_column(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orde
 }
 
 #[cfg(test)]
+mod test_preview_artifacts {
+    use audiobatch_core::waveform::WaveformBuilder;
+
+    use super::*;
+
+    /// Creates a bounded waveform without decoding audio or measuring levels.
+    fn waveform() -> Arc<WaveformOverview> {
+        let mut builder = WaveformBuilder::new(1, Some(64));
+        builder.push(&[&[0.25; 64]]);
+        builder.finish(48_000, 64)
+    }
+
+    /// Creates a source-scoped foreign cached measurement with an operation notice.
+    fn row(path: &str) -> ResultRow {
+        let mut row = ResultRow::from_record(AnalysisRecord {
+            path: path.into(),
+            file_size: 100,
+            modified_time_ms: 200,
+            custom_gain_db: Some(-3.0),
+            measurement_producer: MeasurementProducer::Cpp,
+            status: AnalysisStatus::Cached,
+            ..AnalysisRecord::default()
+        });
+        row.message = Some(RowMessage {
+            text: "Output exists".into(),
+            is_error: true,
+        });
+        row
+    }
+
+    #[test]
+    fn attachment_preserves_measurements_origin_messages_selection_and_row_order() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(vec![row("a"), row("b")]);
+        delegate.select_only(Some("a".into()));
+        delegate.select_all();
+        let selection = delegate.selected_paths();
+        let order: Vec<_> = delegate.rows.iter().map(|row| row.path.clone()).collect();
+        delegate.attach_waveform(Path::new("a"), 100, 200, waveform());
+        let row = delegate.row_for(Path::new("a")).expect("same row");
+        let record = row.ready_record().expect("same measurements");
+        assert_eq!(record.measurement_producer, MeasurementProducer::Cpp);
+        assert_eq!(record.status, AnalysisStatus::Cached);
+        assert!(same_custom_gain(record.custom_gain_db, Some(-3.0)));
+        assert_eq!(row.status_text(), "Output exists");
+        assert!(record.waveform.is_some());
+        assert_eq!(delegate.selected_paths(), selection);
+        assert_eq!(
+            delegate.rows.iter().map(|row| row.path.clone()).collect::<Vec<_>>(),
+            order
+        );
+    }
+
+    #[test]
+    fn stale_same_path_artifact_never_attaches_to_replacement_measurements() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(vec![row("a")]);
+        delegate.attach_waveform(Path::new("a"), 99, 200, waveform());
+        delegate.attach_waveform(Path::new("a"), 100, 199, waveform());
+        assert!(
+            delegate
+                .row_for(Path::new("a"))
+                .expect("row")
+                .ready_record()
+                .expect("record")
+                .waveform
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn unselected_artifacts_are_released_but_the_selected_artifact_survives() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(vec![row("a"), row("b")]);
+        let selected = waveform();
+        let unselected = waveform();
+        let selected_weak = Arc::downgrade(&selected);
+        let unselected_weak = Arc::downgrade(&unselected);
+        delegate.attach_waveform(Path::new("a"), 100, 200, selected);
+        delegate.attach_waveform(Path::new("b"), 100, 200, unselected);
+        delegate.release_waveforms_except(Some(Path::new("a")));
+        assert!(unselected_weak.upgrade().is_none());
+        assert!(selected_weak.upgrade().is_some());
+        delegate.release_waveforms_except(None);
+        assert!(selected_weak.upgrade().is_none());
+    }
+}
+
+#[cfg(test)]
+mod test_measurement_provenance {
+    use super::*;
+
+    /// Makes a settled row without needing a filesystem source or GUI context.
+    fn row(status: AnalysisStatus, producer: MeasurementProducer) -> ResultRow {
+        ResultRow::from_record(AnalysisRecord {
+            path: "track.wav".into(),
+            status,
+            measurement_producer: producer,
+            ..AnalysisRecord::default()
+        })
+    }
+
+    #[test]
+    fn only_foreign_cache_hits_have_a_gui_origin_suffix() {
+        let foreign = row(AnalysisStatus::Cached, MeasurementProducer::Cpp);
+        let native = row(AnalysisStatus::Cached, MeasurementProducer::Rust);
+        assert_eq!(foreign.status_text(), "Cached (C++)");
+        assert_eq!(native.status_text(), "Cached");
+        assert_eq!(format_status(AnalysisStatus::Cached), "Cached");
+        assert!(foreign.status_tooltip().is_some());
+        assert!(native.status_tooltip().is_none());
+        for status in [
+            AnalysisStatus::Pending,
+            AnalysisStatus::Analyzed,
+            AnalysisStatus::Failed,
+        ] {
+            assert_eq!(
+                row(status, MeasurementProducer::Cpp).status_text(),
+                format_status(status)
+            );
+        }
+    }
+
+    #[test]
+    fn operation_messages_and_activity_take_precedence_over_origin() {
+        let mut foreign = row(AnalysisStatus::Cached, MeasurementProducer::Cpp);
+        foreign.message = Some(RowMessage {
+            text: "Output exists".into(),
+            is_error: true,
+        });
+        assert_eq!(foreign.status_text(), "Output exists");
+        assert_eq!(foreign.status_tooltip().as_deref(), Some("Output exists"));
+        foreign.state = RowState::Processing(0.5);
+        assert_eq!(foreign.status_text(), "Processing");
+        assert!(foreign.status_tooltip().is_none());
+    }
+
+    #[test]
+    fn status_sorting_uses_the_presented_origin() {
+        let native = row(AnalysisStatus::Cached, MeasurementProducer::Rust);
+        let foreign = row(AnalysisStatus::Cached, MeasurementProducer::Cpp);
+        assert!(compare_rows(&native, &foreign, ColumnKey::Status).is_lt());
+    }
+}
+
+#[cfg(test)]
 mod test_custom_gain {
     use super::*;
 
@@ -1702,11 +1896,22 @@ mod test_custom_gain {
     }
 
     #[test]
-    fn new_record_of_an_unchanged_file_takes_over_the_gain() {
+    fn new_persisted_clear_does_not_inherit_or_replay_an_old_gain() {
         let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
-        assert_eq!(delegate.set_record(record("/a.wav", None)), Some(Some(-3.0)));
-        assert_eq!(gain_of(&delegate, "/a.wav"), Some(-3.0));
-        assert_eq!(delegate.set_record(record("/a.wav", Some(-3.0))), None);
+        assert_eq!(delegate.set_record(record("/a.wav", None)), None);
+        assert_eq!(gain_of(&delegate, "/a.wav"), None);
+        assert!(delegate.take_gain_write(Path::new("/a.wav")).is_none());
+    }
+
+    #[test]
+    fn submitted_explicit_edit_is_not_replayed_over_a_later_external_clear() {
+        let mut delegate = delegate_with(vec![record("/a.wav", None)]);
+        delegate.set_custom_gain(Path::new("/a.wav"), Some(-3.0));
+        assert!(delegate.take_gain_write(Path::new("/a.wav")).is_some());
+        assert!(delegate.take_gain_write(Path::new("/a.wav")).is_none());
+        delegate.set_record(record("/a.wav", None));
+        assert_eq!(gain_of(&delegate, "/a.wav"), None);
+        assert!(delegate.take_gain_write(Path::new("/a.wav")).is_none());
     }
 
     #[test]
@@ -2003,6 +2208,7 @@ mod test_operation_rows {
         source.file_size = 100;
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_rows(vec![ResultRow::from_record(source)]);
+        delegate.set_custom_gain(Path::new("/a.aif"), Some(-3.0));
 
         let mut unchanged = record("/a.aif");
         unchanged.file_size = 100;

@@ -6,6 +6,9 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "analysis/Sqlite.h"
+#include "gui/NativeWaveformBuilder.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagCache.h"
 #include "serato/SeratoTags.h"
@@ -14,14 +17,17 @@
 #include "TestSuites.h"
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
+#include <string_view>
 
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
+#include <sqlite3.h>
 #include <utility>
 
 namespace audiobatch::tests
@@ -37,6 +43,7 @@ public:
     {
         runSeratoTests();
         runMultiKindSeratoTests();
+        runDelayedWriteTests();
     }
 
 private:
@@ -191,15 +198,15 @@ private:
         expect(serato::storeCachedTag(cache, identity, positive));
         const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
-        const auto waveform = validWaveform();
+        const auto waveform = buildNativeWaveform(identity).value_or(juce::MemoryBlock {});
         expect(cache.storeWaveformData(utils::FileIdentity(file), waveform));
-        expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 12);
+        expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 13);
         expectSqlScalar(*this, databaseFile, "SELECT waveform_version FROM file_analysis;", 3);
         expect(serato::getCachedTag(cache, identity).has_value());
         const auto loadedWaveform = cache.getWaveformData(file);
         expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
         expect(cache.storeAnalysis(analyzed));
-        expect(!cache.getWaveformData(file).has_value());
+        expect(cache.getWaveformData(file) == std::optional(waveform));
         expect(serato::getCachedTag(cache, identity).has_value());
         expect(executeSql(*this, databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
         expect(serato::getCachedTag(cache, identity).has_value());
@@ -315,6 +322,111 @@ private:
         AnalysisCache broken(brokenDatabase);
         expect(!serato::getCachedTag(broken, detachedIdentity));
         expect(!serato::storeCachedTag(broken, detachedIdentity, positive));
+    }
+
+    /// Interleaves another connection immediately before the write transaction acquires its database lock.
+    /// Also recognizes an unguarded INSERT so this regression fails without the transaction and source predicates.
+    bool storeWithConcurrentWrite(
+        AnalysisCache& cache,
+        const utils::FileIdentity& identity,
+        const serato::TagReadResult& result,
+        const std::function<void()>& concurrentWrite
+    )
+    {
+        bool interleaved = false;
+        std::function<void()> pendingWrite = [&] {
+            interleaved = true;
+            concurrentWrite();
+        };
+        cache.withDatabase([&](sqlite3& database, sqlite::StatementCache&) {
+            expectEquals(
+                sqlite3_trace_v2(
+                    &database,
+                    SQLITE_TRACE_STMT,
+                    [](unsigned int, void* context, void* statement, void*) {
+                        auto& pending = *static_cast<std::function<void()>*>(context);
+                        const auto* sql = sqlite3_sql(static_cast<sqlite3_stmt*>(statement));
+                        if (pending && sql != nullptr) {
+                            const std::string_view text(sql);
+                            if (text.starts_with("BEGIN IMMEDIATE") || text.contains("INSERT INTO serato_tag_cache")) {
+                                const auto write = std::exchange(pending, {});
+                                write();
+                            }
+                        }
+                        return 0;
+                    },
+                    &pendingWrite
+                ),
+                SQLITE_OK
+            );
+        });
+        const bool stored = serato::storeCachedTag(cache, identity, result);
+        cache.withDatabase([&](sqlite3& database, sqlite::StatementCache&) {
+            expectEquals(sqlite3_trace_v2(&database, 0, nullptr, nullptr), SQLITE_OK);
+        });
+        expect(interleaved);
+        return stored;
+    }
+
+    /// Checks delayed tag work against newer source and parser rows using two connections without sleeps.
+    void runDelayedWriteTests()
+    {
+        const TemporaryDirectory directory;
+        const auto databaseFile = directory.getChildFile("delayed_tags.db");
+        AnalysisCache cache(databaseFile);
+        AnalysisCache concurrent(databaseFile);
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "delayed.wav");
+        const auto absent = serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::absent);
+        const auto invalid = serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::invalid);
+
+        beginTest("A source published after filesystem validation cannot be replaced by delayed tag work");
+        for (const bool existingRow : {false, true}) {
+            expect(cache.removeAnalysis(file));
+            const utils::FileIdentity identity(file);
+            if (existingRow) {
+                expect(serato::storeCachedTag(cache, identity, absent));
+            }
+            expect(!storeWithConcurrentWrite(cache, identity, invalid, [&] {
+                expect(file.setLastModificationTime(juce::Time(identity.modifiedTimeMs + 10'000)));
+                expect(serato::storeCachedTag(concurrent, utils::FileIdentity(file), absent));
+            }));
+            const utils::FileIdentity changed(file);
+            const auto retained = serato::getCachedTag(cache, changed);
+            expect(retained && retained->status() == serato::ReadStatus::absent);
+            expect(!serato::getCachedTag(cache, identity));
+        }
+
+        beginTest("A newer analysis identity rejects tag work that passed filesystem validation earlier");
+        expect(cache.removeAnalysis(file));
+        const utils::FileIdentity beforeAnalysis(file);
+        expect(serato::storeCachedTag(cache, beforeAnalysis, absent));
+        expect(!storeWithConcurrentWrite(cache, beforeAnalysis, invalid, [&] {
+            expect(file.setLastModificationTime(juce::Time(beforeAnalysis.modifiedTimeMs + 10'000)));
+            auto analyzed = AudioAnalysisRecord::fromFile(file);
+            analyzed.status = AudioAnalysisStatus::failed;
+            analyzed.error = AnalysisError::unsupported;
+            expect(concurrent.storeAnalysis(analyzed));
+        }));
+        expectSqlScalar(*this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
+        expectSqlScalar(*this, databaseFile, "SELECT count(*) FROM file_analysis;", 1);
+
+        beginTest("A newer parser published during a delayed write is not downgraded");
+        expect(cache.removeAnalysis(file));
+        const utils::FileIdentity identity(file);
+        expect(serato::storeCachedTag(cache, identity, absent));
+        expect(!storeWithConcurrentWrite(cache, identity, invalid, [&] {
+            concurrent.withDatabase([&](sqlite3& database, sqlite::StatementCache&) {
+                expect(sqlite::execute(database, "UPDATE serato_tag_cache SET parser_version = parser_version + 1;"));
+            });
+        }));
+        expect(!serato::storeCachedTag(cache, identity, invalid));
+        expectSqlScalar(
+            *this,
+            databaseFile,
+            "SELECT parser_version FROM serato_tag_cache;",
+            static_cast<int>(serato::parserVersion(serato::TagKind::overview) + 1)
+        );
+        expectSqlScalar(*this, databaseFile, "SELECT result_state FROM serato_tag_cache;", 2);
     }
 
     /// Verifies independently versioned owned values, negatives and tag-only coexistence for every supported kind.
@@ -447,7 +559,7 @@ private:
                 }
                 const auto mismatch = utils::format(
                     "UPDATE serato_tag_cache SET parser_version = {} WHERE tag_kind = {};",
-                    serato::parserVersion(kind) + 1,
+                    serato::parserVersion(kind) - 1,
                     static_cast<std::uint32_t>(kind)
                 );
                 expect(executeSql(*this, databaseFile, mismatch.toRawUTF8()));
@@ -508,7 +620,7 @@ private:
         beginTest("All kinds coexist with analysis and waveform writes and independent version changes");
         const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
-        const auto waveform = validWaveform();
+        const auto waveform = buildNativeWaveform(identity).value_or(juce::MemoryBlock {});
         expect(cache.storeWaveformData(utils::FileIdentity(file), waveform));
         for (const auto& positive : positives) {
             expect(serato::storeCachedTag(cache, identity, positive));
@@ -517,7 +629,7 @@ private:
         expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
         expect(cache.getAnalysis(file).has_value());
         expect(cache.storeAnalysis(analyzed));
-        expect(!cache.getWaveformData(file).has_value());
+        expect(cache.getWaveformData(file) == std::optional(waveform));
         expect(executeSql(*this, databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
         for (const auto& positive : positives) {
             const auto retained = serato::getCachedTag(cache, identity, positive.kind);

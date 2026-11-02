@@ -1,7 +1,6 @@
 //! The Serato tag table of the analysis cache, which keeps what reading a file's Serato Overview tag found.
 //!
-//! The `serato_tag_cache` table keeps the same schema and stored values as the C++ application's table,
-//! although each application has its own database file.
+//! The `serato_tag_cache` table shares its schema and stored values with the C++ application.
 //! A row is keyed by path and tag kind.
 //! It only holds while the file keeps the stored size and modification time and the parser keeps the stored version.
 //! The read/parser version covers duplicate selection and recovered errors independently of the raster blob version,
@@ -14,11 +13,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::types::ValueRef;
+use rusqlite::{OptionalExtension, params};
 use serato_tags::{OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview};
 
 use super::{AnalysisCache, CacheError, Result, now_ms, path_key};
-use crate::record::file_identity;
+use crate::record::{AnalysisRecord, file_identity};
 use crate::tags::SeratoOverviewState;
 
 /// Schema of the Serato tag table.
@@ -52,39 +52,43 @@ impl AnalysisCache {
     #[must_use]
     pub fn get_serato_overview(&self, path: &Path) -> Option<SeratoOverviewState> {
         let (file_size, modified_time_ms) = file_identity(path)?;
-        let (stored_size, stored_modified_time_ms, parser_version, state, data) = self
-            .with_connection(|connection| {
-                Ok(connection
-                    .query_row(
-                        "SELECT file_size, modified_time_ms, parser_version, result_state, decoded_data
+        self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms
                          FROM serato_tag_cache WHERE file_path = ?1 AND tag_kind = ?2",
-                        params![path_key(path), OVERVIEW_TAG_KIND],
-                        |row| {
-                            Ok((
-                                row.get::<_, i64>(0)?,
-                                row.get::<_, i64>(1)?,
-                                row.get::<_, i64>(2)?,
-                                row.get::<_, i64>(3)?,
-                                row.get::<_, Option<Vec<u8>>>(4)?,
-                            ))
-                        },
-                    )
-                    .optional()?)
-            })
-            .ok()??;
-        if stored_size != i64::try_from(file_size).ok()?
-            || stored_modified_time_ms != modified_time_ms
-            || parser_version != i64::from(OVERVIEW_PARSER_VERSION)
-        {
-            return None;
-        }
-        match state {
-            STATE_PRESENT => Some(SeratoOverviewState::Present(Arc::new(Overview::deserialize(&data?)?))),
-            STATE_ABSENT => Some(SeratoOverviewState::Absent),
-            STATE_UNSUPPORTED => Some(SeratoOverviewState::Unsupported),
-            STATE_INVALID => Some(SeratoOverviewState::Invalid),
-            _ => None,
-        }
+                    params![path_key(path), OVERVIEW_TAG_KIND],
+                    |row| {
+                        if row.get::<_, i64>(0)? != i64::try_from(file_size).unwrap_or(-1)
+                            || row.get::<_, i64>(1)? != modified_time_ms
+                            || row.get::<_, i64>(2)? != i64::from(OVERVIEW_PARSER_VERSION)
+                            || row.get::<_, i64>(5)? <= 0
+                        {
+                            return Ok(None);
+                        }
+                        let state: i64 = row.get(3)?;
+                        if state != STATE_PRESENT && !matches!(row.get_ref(4)?, ValueRef::Null) {
+                            return Ok(None);
+                        }
+                        Ok(match state {
+                            STATE_PRESENT => row
+                                .get_ref(4)?
+                                .as_blob()
+                                .ok()
+                                .and_then(Overview::deserialize)
+                                .map(|overview| SeratoOverviewState::Present(Arc::new(overview))),
+                            STATE_ABSENT => Some(SeratoOverviewState::Absent),
+                            STATE_UNSUPPORTED => Some(SeratoOverviewState::Unsupported),
+                            STATE_INVALID => Some(SeratoOverviewState::Invalid),
+                            _ => None,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .ok()
+        .flatten()
+        .flatten()
     }
 
     /// Stores the Serato Overview state of a file for its current size and modification time,
@@ -98,6 +102,67 @@ impl AnalysisCache {
         let (file_size, modified_time_ms) = file_identity(path).ok_or_else(|| CacheError::MissingSeratoFile {
             path: path.to_path_buf(),
         })?;
+        self.store_serato_overview_for_record(
+            &AnalysisRecord {
+                path: path.to_path_buf(),
+                file_size,
+                modified_time_ms,
+                ..Default::default()
+            },
+            state,
+        )
+        .map(|_| ())
+    }
+
+    /// Publishes metadata using identity captured before its read, without recapturing a changed file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid overview or a failed database write.
+    pub fn store_serato_overview_for_identity(
+        &self,
+        path: &Path,
+        file_size: u64,
+        modified_time_ms: i64,
+        state: &SeratoOverviewState,
+    ) -> Result<bool> {
+        self.store_serato_overview_for_record(
+            &AnalysisRecord {
+                path: path.to_path_buf(),
+                file_size,
+                modified_time_ms,
+                ..Default::default()
+            },
+            state,
+        )
+    }
+
+    /// Publishes parsed metadata only for the captured source version, without replacing newer tag work.
+    /// Negative parser outcomes are complete results and remain independent of measurement validity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid overview or a failed database write.
+    pub fn store_serato_overview_for_record(
+        &self,
+        record: &AnalysisRecord,
+        state: &SeratoOverviewState,
+    ) -> Result<bool> {
+        let observed_source = self.with_connection(|connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1 AND tag_kind = ?2",
+                    params![path_key(&record.path), OVERVIEW_TAG_KIND],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .optional()?)
+        })?;
+        if !record.matches_file_on_disk() {
+            return Ok(false);
+        }
+        let path = &record.path;
+        let file_size = record.file_size;
+        let modified_time_ms = record.modified_time_ms;
         let (code, data) = match state {
             SeratoOverviewState::Present(overview) => {
                 let data = overview.serialize();
@@ -113,19 +178,27 @@ impl AnalysisCache {
             SeratoOverviewState::Invalid => (STATE_INVALID, None),
         };
         self.with_connection(|connection| {
-            connection
+            let updated = connection
                 .execute(
                     "INSERT INTO serato_tag_cache (
                         file_path, tag_kind, file_size, modified_time_ms, parser_version, result_state,
                         decoded_data, updated_at_ms
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    ) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+                    WHERE NOT EXISTS (SELECT 1 FROM file_analysis WHERE file_path = ?1
+                        AND (file_size != ?3 OR modified_time_ms != ?4))
                     ON CONFLICT(file_path, tag_kind) DO UPDATE SET
                         file_size = excluded.file_size,
                         modified_time_ms = excluded.modified_time_ms,
                         parser_version = excluded.parser_version,
                         result_state = excluded.result_state,
                         decoded_data = excluded.decoded_data,
-                        updated_at_ms = excluded.updated_at_ms",
+                        updated_at_ms = excluded.updated_at_ms
+                    WHERE ((serato_tag_cache.file_size = excluded.file_size
+                            AND serato_tag_cache.modified_time_ms = excluded.modified_time_ms)
+                        OR (?9 AND serato_tag_cache.file_size = ?10 AND serato_tag_cache.modified_time_ms = ?11))
+                        AND ((serato_tag_cache.file_size != excluded.file_size
+                            OR serato_tag_cache.modified_time_ms != excluded.modified_time_ms)
+                            OR serato_tag_cache.parser_version <= excluded.parser_version)",
                     params![
                         path_key(path),
                         OVERVIEW_TAG_KIND,
@@ -135,20 +208,15 @@ impl AnalysisCache {
                         code,
                         data,
                         now_ms(),
+                        observed_source.is_some(),
+                        observed_source.map_or(0, |identity| identity.0),
+                        observed_source.map_or(0, |identity| identity.1),
                     ],
                 )
                 .map_err(CacheError::StoreSerato)?;
-            Ok(())
+            Ok(updated > 0)
         })
     }
-}
-
-/// Removes the Serato tag rows of a file, and returns how many were removed.
-pub(super) fn remove_rows(connection: &Connection, path: &Path) -> rusqlite::Result<usize> {
-    connection.execute(
-        "DELETE FROM serato_tag_cache WHERE file_path = ?1",
-        params![path_key(path)],
-    )
 }
 
 #[cfg(test)]

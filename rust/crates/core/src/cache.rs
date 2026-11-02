@@ -1,39 +1,38 @@
 //! SQLite-backed cache for analysis results.
 //!
-//! Stores one row per file with the measured levels, loudness and overload histories, and the waveform overview,
-//! keyed by path and validated against the file size and modification time,
-//! so unchanged files are not decoded again on later runs.
-//! Each row also keeps the custom gain the user set for that version of the file.
-//! A second table, in the `serato` module, keeps what reading each file's Serato Overview tag found.
-//! The database file and its schema are separate from the C++ application's cache,
-//! because the two applications must never write to each other's cache.
+//! Measurements are shared with the C++ application and validated against source identity and a common contract.
+//! Native previews live independently, so measurement reads never retain waveform blobs.
+//! Gain and artifact updates preserve the original measurement producer.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::overload::OverloadHistory;
 use crate::record::{
-    AnalysisError, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
+    AnalysisError, AnalysisRecord, AnalysisStatus, MeasurementProducer, ShortTermLoudnessHistory, file_identity,
 };
-use crate::waveform::{self, WaveformOverview};
 
+mod schema;
 mod serato;
+mod waveform_cache;
 
 #[cfg(test)]
 mod test_overload;
+#[cfg(test)]
+mod test_shared;
 
 /// Directory name of the application data, kept apart from the C++ application's `AudioBatch` directory.
 pub(crate) const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
-const ANALYSIS_VERSION: i64 = 6;
+const ANALYSIS_VERSION: i64 = 13;
 
-/// Columns added to `file_analysis` after its first version, with their definitions,
-/// which databases created before them gain when they are opened.
-const ADDED_ANALYSIS_COLUMNS: &[(&str, &str)] = &[("custom_gain_db", "REAL"), ("overload_history", "BLOB")];
+/// Largest accepted loudness history payload, limiting allocations from untrusted databases to 16 MiB.
+const MAXIMUM_HISTORY_BYTES: usize = 16 * 1024 * 1024;
 
 /// How long SQLite retries a locked database before failing a statement.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -131,13 +130,6 @@ pub struct AnalysisCache {
     connection: Mutex<Option<Connection>>,
 }
 
-/// Identity of the file version a cached row describes.
-struct RowIdentity {
-    file_size: i64,
-    modified_time_ms: i64,
-    analysis_version: i64,
-}
-
 /// The custom gain column of a cached row, which is empty when the user has not set a gain for the file.
 struct StoredGain {
     custom_gain_db: Option<f32>,
@@ -187,87 +179,102 @@ impl AnalysisCache {
         self.with_connection(|_| Ok(()))
     }
 
-    /// Returns the cached record for a file, or `None` when the file changed, the row is from another version,
-    /// or a stored loudness history, overload history, or waveform is invalid.
-    /// A cached successful record has the `Cached` status, and a cached failure keeps the `Failed` status.
+    /// Returns shared successful measurements without loading either application's waveform.
+    /// Invalid measurements miss independently of preview data, and failures are reusable only from Rust.
     #[must_use]
     pub fn get_analysis(&self, path: &Path) -> Option<AnalysisRecord> {
         let (file_size, modified_time_ms) = file_identity(path)?;
-        let mut record = AnalysisRecord::from_path(path);
-        let row = self
-            .with_connection(|connection| {
-                Ok(connection
-                    .query_row(
-                "SELECT file_size, modified_time_ms, analysis_version, file_name, format_name, length_in_samples,
+        let mut record = AnalysisRecord {
+            path: path.to_path_buf(),
+            file_size,
+            modified_time_ms,
+            ..Default::default()
+        };
+        let file_size = i64::try_from(file_size).ok()?;
+        self.with_connection(|connection| {
+            Ok(connection
+                .prepare_cached(
+                    "SELECT file_size, modified_time_ms, analysis_version, file_name, format_name, length_in_samples,
                         duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
                         overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels,
-                        bits_per_sample, status, error_message, custom_gain_db, short_term_loudness, waveform_data,
-                        waveform_version, overload_history
-                 FROM file_analysis WHERE file_path = ?1",
-                params![path_key(path)],
-                |row| {
-                    let identity = RowIdentity {
-                        file_size: row.get(0)?,
-                        modified_time_ms: row.get(1)?,
-                        analysis_version: row.get(2)?,
-                    };
-                    read_record_row(row, &mut record)?;
-                    let history: Option<Vec<u8>> = row.get(21)?;
-                    let waveform: Option<Vec<u8>> = row.get(22)?;
-                    let waveform_version: i64 = row.get(23)?;
-                    let overload_history: Option<Vec<u8>> = row.get(24)?;
-                    Ok((identity, history, waveform, waveform_version, overload_history))
-                },
-                    )
-                    .optional()?)
-            })
-            .ok()??;
-
-        let (identity, history, waveform_data, waveform_version, overload_history) = row;
-        if identity.file_size != i64::try_from(file_size).ok()?
-            || identity.modified_time_ms != modified_time_ms
-            || identity.analysis_version != ANALYSIS_VERSION
-        {
-            return None;
-        }
-        record.from_cache = true;
-        if record.has_error() {
-            // Only failures that repeat for the same bytes are stored.
-            record.error = Some(AnalysisError::Unsupported);
-            return Some(record);
-        }
-        let overloads = OverloadHistory::from_bytes(&overload_history?)?;
-        if !valid_overload_timing(&overloads, &record) {
-            return None;
-        }
-        record.overloads = Some(Arc::new(overloads));
-        record.short_term_loudness = Some(Arc::new(deserialize_history(&history?, &record)?));
-        if waveform_version != i64::from(waveform::SERIALIZATION_VERSION) {
-            return None;
-        }
-        record.waveform = Some(Arc::new(WaveformOverview::from_bytes(&waveform_data?)?));
-        record.status = AnalysisStatus::Cached;
-        Some(record)
+                        bits_per_sample, status, error_message, custom_gain_db, short_term_loudness,
+                        has_custom_gain, analysis_producer, overload_history
+                 FROM file_analysis WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3
+                    AND analysis_version = ?4 AND analysis_producer IN ('cpp', 'rust')
+                    AND (status IN (1, 2) OR (status = 3 AND analysis_producer = 'rust'))",
+                )?
+                .query_row(
+                    params![path_key(path), file_size, modified_time_ms, ANALYSIS_VERSION],
+                    |row| {
+                        if !valid_record_columns(row)? {
+                            return Ok(None);
+                        }
+                        read_record_row(row, &mut record)?;
+                        record.measurement_producer = match row.get_ref(23)?.as_str()? {
+                            "cpp" => MeasurementProducer::Cpp,
+                            "rust" => MeasurementProducer::Rust,
+                            _ => return Ok(None),
+                        };
+                        record.from_cache = true;
+                        if record.has_error() {
+                            record.error = Some(AnalysisError::Unsupported);
+                            return Ok(Some(record));
+                        }
+                        if !valid_measurements(&record) {
+                            return Ok(None);
+                        }
+                        let Some(history) = row
+                            .get_ref(21)?
+                            .as_blob()
+                            .ok()
+                            .and_then(|bytes| deserialize_history(bytes, &record))
+                        else {
+                            return Ok(None);
+                        };
+                        let Some(overloads) = row.get_ref(24)?.as_blob().ok().and_then(OverloadHistory::from_bytes)
+                        else {
+                            return Ok(None);
+                        };
+                        if !valid_overload_timing(&overloads, &record) {
+                            return Ok(None);
+                        }
+                        record.short_term_loudness = Some(Arc::new(history));
+                        record.overloads = Some(Arc::new(overloads));
+                        record.status = AnalysisStatus::Cached;
+                        Ok(Some(record))
+                    },
+                )
+                .optional()?
+                .flatten())
+        })
+        .ok()
+        .flatten()
     }
 
-    /// Stores a completed analysis record, replacing any earlier row for the file.
-    /// A failure that reading the same bytes again would repeat is stored too,
-    /// so an unchanged broken file is not decoded again.
-    /// Other failures, such as a file that could not be opened, are skipped, so the next run tries the file again.
-    /// The custom gain of an earlier row is kept while the file has the same size and modification time,
-    /// and replaced by the record's gain otherwise,
-    /// because a custom gain only applies to the version of the file it was set for.
+    /// Atomically stores measurements and an optional native waveform for the captured source identity.
+    /// Same-source writes preserve the latest explicit gain, including a clear, and compatible native previews.
+    /// Repeatable failures never replace a same-source success.
+    /// Stale work is ignored when the source no longer matches the record.
     ///
     /// # Errors
     ///
-    /// Returns an error when a successful record has no valid loudness history, overload history, or waveform,
-    /// or when the database write fails.
+    /// Returns an error for invalid required histories or a failed database write.
     pub fn store_analysis(&self, record: &AnalysisRecord) -> Result<()> {
-        if record.has_error() && !record.error.is_some_and(AnalysisError::is_repeatable) {
+        if record.has_error()
+            && (record.measurement_producer != MeasurementProducer::Rust
+                || !record.error.is_some_and(AnalysisError::is_repeatable))
+        {
             return Ok(());
         }
-        let (history, waveform_data, overload_history) = if record.has_error() {
-            (None, None, None)
+        if !record.is_ready() && !record.has_error() {
+            return Ok(());
+        }
+        let observed_identity = self.with_connection(|connection| Ok(stored_identity(connection, &record.path)?))?;
+        if !record.matches_file_on_disk() {
+            return Ok(());
+        }
+        let (history, overload_history) = if record.has_error() {
+            (None, None)
         } else {
             let overload_history = record
                 .overloads
@@ -280,29 +287,25 @@ impl AnalysisCache {
                 .as_deref()
                 .and_then(|history| serialize_history(history, record))
                 .ok_or(CacheError::InvalidHistory)?;
-            let waveform_data = record
-                .waveform
-                .as_deref()
-                .map(WaveformOverview::to_bytes)
-                .ok_or(CacheError::MissingWaveform)?;
-            (Some(history), Some(waveform_data), Some(overload_history))
+            if !valid_measurements(record) {
+                return Err(CacheError::InvalidHistory);
+            }
+            (Some(history), Some(overload_history))
         };
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
             // Taking the write lock up front keeps a concurrent writer from failing the upgrade from the read.
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let custom_gain = stored_custom_gain(&transaction, &record.path, file_size, record.modified_time_ms)?
-                .map_or(record.custom_gain_db, |stored| stored.custom_gain_db);
-            transaction
+            let current_identity = stored_identity(&transaction, &record.path)?;
+            if current_identity != observed_identity
+                && current_identity != Some((record.file_size, record.modified_time_ms))
+            {
+                return Ok(());
+            }
+            let custom_gain = record.custom_gain_db.filter(|gain| gain.is_finite());
+            let updated = transaction
                 .execute(
-                    "INSERT OR REPLACE INTO file_analysis (
-                    file_path, file_name, format_name, file_size, modified_time_ms, length_in_samples,
-                    duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
-                    overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels, bits_per_sample,
-                    status, error_message, short_term_loudness, waveform_data, waveform_version, analysis_version,
-                    updated_at_ms, custom_gain_db, overload_history
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                          ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+                    schema::STORE_ANALYSIS_SQL,
                     params![
                         path_key(&record.path),
                         record.file_name,
@@ -325,15 +328,32 @@ impl AnalysisCache {
                         status_code(record.status),
                         record.error_message,
                         history,
-                        waveform_data,
-                        i64::from(waveform::SERIALIZATION_VERSION),
                         ANALYSIS_VERSION,
                         now_ms(),
-                        custom_gain.map(f64::from),
+                        f64::from(custom_gain.unwrap_or_default()),
+                        custom_gain.is_some(),
                         overload_history,
+                        producer_name(record.measurement_producer),
                     ],
                 )
                 .map_err(CacheError::StoreAnalysis)?;
+            if updated == 0 {
+                transaction.commit()?;
+                return Ok(());
+            }
+            waveform_cache::prune_incompatible(&transaction, record)?;
+            transaction.execute(
+                "DELETE FROM serato_tag_cache WHERE file_path = ?1
+                    AND (file_size != ?2 OR modified_time_ms != ?3)
+                    AND EXISTS (SELECT 1 FROM file_analysis WHERE file_path = ?1
+                        AND file_size = ?2 AND modified_time_ms = ?3)",
+                params![path_key(&record.path), file_size, record.modified_time_ms],
+            )?;
+            if !record.has_error()
+                && let Some(waveform) = record.waveform.as_deref()
+            {
+                waveform_cache::store(&transaction, record, waveform)?;
+            }
             transaction.commit()?;
             Ok(())
         })
@@ -347,14 +367,46 @@ impl AnalysisCache {
     ///
     /// Returns an error when the database write fails.
     pub fn store_custom_gain(&self, path: &Path, custom_gain_db: Option<f32>) -> Result<bool> {
+        let Some((file_size, modified_time_ms)) = file_identity(path) else {
+            return Ok(false);
+        };
+        self.store_custom_gain_for_record(
+            &AnalysisRecord {
+                path: path.to_path_buf(),
+                file_size,
+                modified_time_ms,
+                ..Default::default()
+            },
+            custom_gain_db,
+        )
+    }
+
+    /// Publishes an explicit gain edit only to the captured source version.
+    /// Callers must not use this to replay a gain inherited from an earlier measurement record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when SQLite cannot update the row.
+    pub fn store_custom_gain_for_record(&self, record: &AnalysisRecord, custom_gain_db: Option<f32>) -> Result<bool> {
+        if custom_gain_db.is_some_and(|gain| !gain.is_finite()) {
+            return Ok(false);
+        }
         self.with_connection(|connection| {
-            let updated = connection
+            Ok(connection
                 .execute(
-                    "UPDATE file_analysis SET custom_gain_db = ?1, updated_at_ms = ?2 WHERE file_path = ?3",
-                    params![custom_gain_db.map(f64::from), now_ms(), path_key(path)],
+                    "UPDATE file_analysis SET custom_gain_db = ?1, has_custom_gain = ?2, updated_at_ms = ?3
+                    WHERE file_path = ?4 AND file_size = ?5 AND modified_time_ms = ?6",
+                    params![
+                        f64::from(custom_gain_db.unwrap_or_default()),
+                        custom_gain_db.is_some(),
+                        now_ms(),
+                        path_key(&record.path),
+                        i64::try_from(record.file_size).unwrap_or(-1),
+                        record.modified_time_ms
+                    ],
                 )
-                .map_err(CacheError::StoreCustomGain)?;
-            Ok(updated > 0)
+                .map_err(CacheError::StoreCustomGain)?
+                > 0)
         })
     }
 
@@ -364,12 +416,27 @@ impl AnalysisCache {
     ///
     /// Returns an error when the database write fails.
     pub fn remove_analysis(&self, path: &Path) -> Result<bool> {
+        let identity =
+            file_identity(path).or(self.with_connection(|connection| Ok(stored_identity(connection, path)?))?);
         self.with_connection(|connection| {
-            let transaction = connection.transaction()?;
-            let removed = transaction.execute(
-                "DELETE FROM file_analysis WHERE file_path = ?1",
-                params![path_key(path)],
-            )? + serato::remove_rows(&transaction, path)?;
+            let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let removed = identity.map_or(Ok(0), |(size, modified)| {
+                remove_identity(&transaction, path, size, modified)
+            })?;
+            transaction.commit()?;
+            Ok(removed > 0)
+        })
+    }
+
+    /// Removes only the captured source version, leaving a newer measurement or preview untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the atomic database deletion fails.
+    pub fn remove_analysis_for_record(&self, record: &AnalysisRecord) -> Result<bool> {
+        self.with_connection(|connection| {
+            let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let removed = remove_identity(&transaction, &record.path, record.file_size, record.modified_time_ms)?;
             transaction.commit()?;
             Ok(removed > 0)
         })
@@ -381,14 +448,21 @@ impl AnalysisCache {
     ///
     /// Returns an error when the database write fails, in which case no row is removed.
     pub fn remove_analyses(&self, paths: &[PathBuf]) -> Result<()> {
+        let mut identities: Vec<_> = paths.iter().map(|path| (path, file_identity(path))).collect();
         self.with_connection(|connection| {
-            let transaction = connection.transaction()?;
-            for path in paths {
-                transaction.execute(
-                    "DELETE FROM file_analysis WHERE file_path = ?1",
-                    params![path_key(path)],
-                )?;
-                serato::remove_rows(&transaction, path)?;
+            for (path, identity) in &mut identities {
+                if identity.is_none() {
+                    *identity = stored_identity(connection, path)?;
+                }
+            }
+            Ok(())
+        })?;
+        self.with_connection(|connection| {
+            let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for (path, identity) in identities {
+                if let Some((size, modified)) = identity {
+                    remove_identity(&transaction, path, size, modified)?;
+                }
             }
             transaction.commit()?;
             Ok(())
@@ -414,46 +488,14 @@ impl AnalysisCache {
                 source,
             })?;
         }
-        let connection = Connection::open(&self.database_path).map_err(|source| CacheError::Open {
+        let mut connection = Connection::open(&self.database_path).map_err(|source| CacheError::Open {
             path: self.database_path.clone(),
             source,
         })?;
         connection.busy_timeout(BUSY_TIMEOUT)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
-        connection.execute_batch(
-            "CREATE TABLE IF NOT EXISTS file_analysis (
-                file_path TEXT PRIMARY KEY,
-                file_name TEXT NOT NULL,
-                format_name TEXT,
-                file_size INTEGER NOT NULL,
-                modified_time_ms INTEGER NOT NULL,
-                length_in_samples INTEGER NOT NULL,
-                duration_seconds REAL NOT NULL,
-                peak_left REAL NOT NULL,
-                peak_right REAL NOT NULL,
-                overall_peak REAL NOT NULL,
-                true_peak_left REAL NOT NULL,
-                true_peak_right REAL NOT NULL,
-                overall_true_peak REAL NOT NULL,
-                max_short_term_lufs REAL NOT NULL,
-                integrated_lufs REAL NOT NULL,
-                sample_rate INTEGER NOT NULL,
-                channels INTEGER NOT NULL,
-                bits_per_sample INTEGER NOT NULL,
-                status INTEGER NOT NULL,
-                error_message TEXT,
-                short_term_loudness BLOB,
-                waveform_data BLOB,
-                waveform_version INTEGER NOT NULL DEFAULT 0,
-                analysis_version INTEGER NOT NULL,
-                updated_at_ms INTEGER NOT NULL,
-                custom_gain_db REAL,
-                overload_history BLOB
-            );",
-        )?;
-        add_missing_columns(&connection, "file_analysis", ADDED_ANALYSIS_COLUMNS)?;
-        connection.execute_batch(serato::SCHEMA)?;
+        schema::initialize(&mut connection)?;
         Ok(connection)
     }
 
@@ -478,7 +520,7 @@ impl Default for AnalysisCache {
     }
 }
 
-/// Returns the directory for the cache and the settings of the Rust version, in the user data directory.
+/// Returns the directory for Rust settings, logs, and plugin data, separate from the shared measurement database.
 /// Falls back to the temporary directory when the platform has no user data directory.
 #[must_use]
 pub fn data_directory() -> PathBuf {
@@ -490,14 +532,60 @@ pub fn data_directory() -> PathBuf {
 /// Returns the default database path in the user data directory.
 #[must_use]
 pub(crate) fn default_database_path() -> PathBuf {
-    data_directory().join("analysis.db")
+    #[cfg(target_os = "macos")]
+    let base = dirs::home_dir().unwrap_or_else(std::env::temp_dir).join("Library");
+    #[cfg(target_os = "windows")]
+    let base = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let base = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
+    base.join("AudioBatch").join("analysis.db")
+}
+
+/// Reads a signed SQLite integer without allowing a negative source length to become an empty stream.
+fn read_nonnegative_integer(row: &Row<'_>, column: usize) -> rusqlite::Result<u64> {
+    let value: i64 = row.get(column)?;
+    u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, value))
+}
+
+/// Validates SQLite storage types and text budgets before creating owned strings or measurement arrays.
+fn valid_record_columns(row: &Row<'_>) -> rusqlite::Result<bool> {
+    for column in [0, 1, 2, 5, 15, 16, 17, 18, 22] {
+        if !matches!(row.get_ref(column)?, ValueRef::Integer(_)) {
+            return Ok(false);
+        }
+    }
+    for column in [6, 7, 8, 9, 10, 11, 12, 13, 14, 20] {
+        let value = match row.get_ref(column)? {
+            ValueRef::Integer(value) => value as f64,
+            ValueRef::Real(value) => value,
+            _ => return Ok(false),
+        };
+        if !value.is_finite() {
+            return Ok(false);
+        }
+    }
+    for column in [7, 8, 9, 20] {
+        if row.get::<_, f64>(column)?.abs() > f64::from(f32::MAX) {
+            return Ok(false);
+        }
+    }
+    for (column, maximum, nullable) in [(3, 4096, false), (4, 4096, true), (19, 65_536, true), (23, 4, false)] {
+        match row.get_ref(column)? {
+            ValueRef::Text(bytes) if bytes.len() <= maximum => {}
+            ValueRef::Null if nullable => {}
+            _ => return Ok(false),
+        }
+    }
+    let has_gain: i64 = row.get(22)?;
+    let gain = row.get::<_, f64>(20)? as f32;
+    Ok((0..=1).contains(&has_gain) && (has_gain == 0 || gain.is_finite()))
 }
 
 /// Fills the record fields stored in the row, from column 3 to column 20.
 fn read_record_row(row: &Row<'_>, record: &mut AnalysisRecord) -> rusqlite::Result<()> {
     record.file_name = row.get(3)?;
     record.format_name = row.get::<_, Option<String>>(4)?.unwrap_or_default();
-    record.length_in_samples = u64::try_from(row.get::<_, i64>(5)?).unwrap_or(0);
+    record.length_in_samples = read_nonnegative_integer(row, 5)?;
     record.duration_seconds = row.get(6)?;
     record.peak_left = row.get::<_, f64>(7)? as f32;
     record.peak_right = row.get::<_, f64>(8)? as f32;
@@ -512,13 +600,18 @@ fn read_record_row(row: &Row<'_>, record: &mut AnalysisRecord) -> rusqlite::Resu
     record.bits_per_sample = row.get(17)?;
     record.status = status_from_code(row.get(18)?);
     record.error_message = row.get::<_, Option<String>>(19)?.unwrap_or_default();
-    record.custom_gain_db = row.get::<_, Option<f64>>(20)?.and_then(stored_gain_to_decibels);
+    record.custom_gain_db = if row.get::<_, i64>(22)? == 1 {
+        row.get::<_, Option<f64>>(20)?.and_then(stored_gain_to_decibels)
+    } else {
+        None
+    };
     Ok(())
 }
 
 /// Returns a stored custom gain as decibels, dropping a value that is not a usable gain.
 fn stored_gain_to_decibels(stored: f64) -> Option<f32> {
-    custom_gain_from_decibels(stored as f32)
+    let gain = stored as f32;
+    gain.is_finite().then_some(gain)
 }
 
 /// Returns the custom gain column of the row for a file when the row describes the given version of the file,
@@ -531,7 +624,7 @@ fn stored_custom_gain(
 ) -> rusqlite::Result<Option<StoredGain>> {
     connection
         .query_row(
-            "SELECT custom_gain_db FROM file_analysis
+            "SELECT CASE WHEN has_custom_gain = 1 THEN custom_gain_db ELSE NULL END FROM file_analysis
              WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
             params![path_key(path), file_size, modified_time_ms],
             |row| row.get::<_, Option<f64>>(0),
@@ -542,6 +635,31 @@ fn stored_custom_gain(
                 custom_gain_db: gain.and_then(stored_gain_to_decibels),
             })
         })
+}
+
+/// Reads a stored source identity when a removed file no longer has filesystem metadata.
+fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Option<(u64, i64)>> {
+    connection
+        .query_row(
+            "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1
+         UNION ALL SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1
+         UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1 LIMIT 1",
+            [path_key(path)],
+            |row| Ok((read_nonnegative_integer(row, 0)?, row.get(1)?)),
+        )
+        .optional()
+}
+
+/// Deletes each artifact with its own identity predicate in the caller's short transaction.
+fn remove_identity(connection: &Connection, path: &Path, size: u64, modified: i64) -> rusqlite::Result<usize> {
+    let mut removed = 0;
+    for table in ["file_analysis", "serato_tag_cache", "rust_waveform_cache"] {
+        removed += connection.execute(
+            &format!("DELETE FROM {table} WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3"),
+            params![path_key(path), i64::try_from(size).unwrap_or(-1), modified],
+        )?;
+    }
+    Ok(removed)
 }
 
 /// Adds the listed columns a table is missing, so a database created by an earlier version keeps working.
@@ -598,6 +716,37 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+/// Returns the stable shared database spelling of a measurement origin.
+const fn producer_name(producer: MeasurementProducer) -> &'static str {
+    match producer {
+        MeasurementProducer::Cpp => "cpp",
+        MeasurementProducer::Rust => "rust",
+    }
+}
+
+/// Rejects invalid geometry and nonfinite measurements without confusing digital silence with corruption.
+fn valid_measurements(record: &AnalysisRecord) -> bool {
+    (16..=2_822_400).contains(&record.sample_rate)
+        && (1..=64).contains(&record.channels)
+        && record.bits_per_sample <= 64
+        && i64::try_from(record.length_in_samples).is_ok()
+        && record.duration_seconds.is_finite()
+        && record.duration_seconds >= 0.0
+        && [record.peak_left, record.peak_right, record.overall_peak]
+            .iter()
+            .all(|value| value.is_finite())
+        && [record.true_peak_left, record.true_peak_right, record.overall_true_peak]
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0)
+        && [record.max_short_term_lufs, record.integrated_lufs]
+            .iter()
+            .all(|value| {
+                value.is_finite()
+                    && *value >= crate::record::NEGATIVE_INFINITY_LOUDNESS
+                    && *value <= f64::from(MAXIMUM_LOUDNESS)
+            })
+}
+
 /// Checks overload metadata and the record's decoded duration before storing or accepting a cache hit.
 fn valid_overload_timing(history: &OverloadHistory, record: &AnalysisRecord) -> bool {
     history.matches_stream(record.sample_rate, record.length_in_samples, record.channels)
@@ -609,13 +758,15 @@ fn valid_overload_timing(history: &OverloadHistory, record: &AnalysisRecord) -> 
 fn valid_history_timing(history: &ShortTermLoudnessHistory, record: &AnalysisRecord, count: usize) -> bool {
     if !history.sample_rate.is_finite()
         || history.sample_rate < 1.0
-        || (history.sample_rate.round() as u64) != u64::from(record.sample_rate)
+        || history.sample_rate.to_bits() != f64::from(record.sample_rate).to_bits()
         || history.length_in_samples != record.length_in_samples
         || history.samples_per_point != ShortTermLoudnessHistory::samples_per_point_for_rate(record.sample_rate)
     {
         return false;
     }
-    count as u64 == history.length_in_samples.div_ceil(u64::from(history.samples_per_point))
+    history.samples_per_point != 0
+        && count <= (MAXIMUM_HISTORY_BYTES - HISTORY_HEADER_BYTES) / 4
+        && count as u64 == history.length_in_samples.div_ceil(u64::from(history.samples_per_point))
 }
 
 /// Rejects non-finite readings and values outside the possible loudness range.
@@ -645,6 +796,9 @@ pub(crate) fn serialize_history(history: &ShortTermLoudnessHistory, record: &Ana
 
 /// Restores a history blob after validating it against its record.
 fn deserialize_history(bytes: &[u8], record: &AnalysisRecord) -> Option<ShortTermLoudnessHistory> {
+    if bytes.len() > MAXIMUM_HISTORY_BYTES {
+        return None;
+    }
     let (header, payload) = bytes.split_at_checked(HISTORY_HEADER_BYTES)?;
     let (magic, header) = header.split_first_chunk::<4>()?;
     let (version, header) = header.split_first_chunk::<4>()?;
@@ -663,6 +817,14 @@ fn deserialize_history(bytes: &[u8], record: &AnalysisRecord) -> Option<ShortTer
         samples_per_point: u32::try_from(i32::from_le_bytes(*samples_per_point)).ok()?,
     };
     if !valid_history_timing(&history, record, count) || payload.len() != count.checked_mul(4)? {
+        return None;
+    }
+    if !payload
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|chunk| valid_history_value(f32::from_le_bytes(*chunk)))
+    {
         return None;
     }
     history.values = payload
@@ -705,7 +867,8 @@ mod test_analysis_cache {
         assert!((cached.overall_peak - record.overall_peak).abs() < f32::EPSILON);
         assert_eq!(cached.short_term_loudness, record.short_term_loudness);
         assert_eq!(cached.overloads, record.overloads);
-        assert_eq!(cached.waveform, record.waveform);
+        assert!(cached.waveform.is_none());
+        assert_eq!(cache.get_waveform(&record.path), record.waveform);
         assert_eq!(cached.format_name, record.format_name);
     }
 
@@ -952,6 +1115,17 @@ mod test_history_serialization {
         let bytes = serialize_history(&history, &record).expect("serializes");
         assert_eq!(bytes.len(), HISTORY_HEADER_BYTES + 8);
         assert_eq!(deserialize_history(&bytes, &record), Some(history));
+    }
+
+    #[test]
+    fn independent_shared_history_bytes_decode_and_serialize_exactly() {
+        let (record, history) = record_with_history(vec![-20.0, -10.0]);
+        let bytes = [
+            b'L', b'U', b'F', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x88, 0xe5, 0x40, 0x74, 0x22, 0, 0, 0, 0, 0, 0, 0x3a,
+            0x11, 0, 0, 2, 0, 0, 0, 0, 0, 0xa0, 0xc1, 0, 0, 0x20, 0xc1,
+        ];
+        assert_eq!(deserialize_history(&bytes, &record), Some(history.clone()));
+        assert_eq!(serialize_history(&history, &record).expect("serializes"), bytes);
     }
 
     #[test]

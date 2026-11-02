@@ -152,7 +152,13 @@ constexpr std::array columnDefinitions {
         layout::table::metricMaximumWidth,
         false
     ),
-    defineColumn(AudioFileTableColumn::status, "Status", "Analysis status", layout::table::statusMaximumWidth),
+    defineColumn(
+        AudioFileTableColumn::status,
+        "Status",
+        "Analysis status. Cached (Rust) retains Rust measurements and source overload history, not locally decoded "
+        "playback PCM.",
+        layout::table::statusMaximumWidth
+    ),
 };
 
 /// Draws the small activity indicator shown in the Status column while a row is busy.
@@ -382,7 +388,7 @@ void AudioFileTableModel::paintCell(
 
             if (!activityState.has_value()) {
                 operationMessage = getOperationMessage(record);
-                text = operationMessage.text.isNotEmpty() ? operationMessage.text : formatStatus(record);
+                text = operationMessage.text.isNotEmpty() ? operationMessage.text : formatGuiStatus(record);
             } else {
                 text = getFileActivityLabel(activityState->activity);
                 const auto indicatorSize = static_cast<float>(juce::jmin(
@@ -460,6 +466,10 @@ juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int 
         return text;
     }
 
+    if (record.status == AudioAnalysisStatus::cached && record.measurementProducer == MeasurementProducer::rust) {
+        return "Measurements and source overload history were produced by Rust. They are not a bit-exact claim about "
+               "locally decoded playback PCM.";
+    }
     return record.hasError() ? record.errorMessage : juce::String();
 }
 

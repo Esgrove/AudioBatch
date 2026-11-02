@@ -20,6 +20,16 @@ pub const NEGATIVE_INFINITY_LOUDNESS: f64 = -1000.0;
 /// well below the 0.1 dB step of the gain slider.
 const CUSTOM_GAIN_EPSILON_DB: f32 = 1e-4;
 
+/// Application that measured the audio, unaffected by later gain or preview edits.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MeasurementProducer {
+    /// Measurements made by the C++ application.
+    Cpp,
+    /// Measurements made by the Rust application.
+    #[default]
+    Rust,
+}
+
 /// Lifecycle states of a file analysis record.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnalysisStatus {
@@ -137,6 +147,8 @@ pub struct AnalysisRecord {
     pub status: AnalysisStatus,
     /// True when the record was loaded from the cache.
     pub from_cache: bool,
+    /// Application that measured the audio, retained through independent artifact and gain writes.
+    pub measurement_producer: MeasurementProducer,
 }
 
 /// A failed analysis step with the kind of failure, so callers can tell which failures repeat.

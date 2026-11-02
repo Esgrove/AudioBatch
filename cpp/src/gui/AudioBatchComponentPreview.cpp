@@ -10,11 +10,13 @@
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/PreviewController.h"
+#include "gui/PreviewEnrichmentScheduler.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagTypes.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -244,7 +246,9 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     updatePreviewInputGain();
     updateThumbnailDisplayGain();
     const auto seratoData = record.file == preview.getFile() ? preview.getSeratoData() : nullptr;
-    previewWorkspace.audioInfo.showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
+    const auto operation = fileActivity.getMessage(record.fullPath);
+    const auto activity = fileActivity.getActiveLabel(record.fullPath);
+    previewWorkspace.audioInfo.showRecord(record, activity.isNotEmpty() ? activity : operation.text, seratoData.get());
     // Follows the displayed record rather than the loaded preview,
     // so a pending or failed file whose audio cannot load still shows its artwork.
     requestArtwork(record.file);
@@ -291,16 +295,11 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
     previewWorkspace.zoomSlider.setValue(100.0, juce::dontSendNotification);
 
     const auto& loaded = std::get<LoadedPreview>(preview.getState());
-    const auto waveformData = file.existsAsFile() ? analysisCache.getWaveformData(file) : std::nullopt;
-    if (waveformData.has_value() && loaded.identity.matches(file)
-        && previewWorkspace.thumbnail.loadFromCacheData(*waveformData, loaded.identity))
-    {
-        preview.setWaveformLoadedFromCache(true);
-    } else {
-        previewWorkspace.thumbnail.setURL(
-            juce::URL(file), previewPlayer.getLoadedLengthInSamples().value_or(0), loaded.identity
-        );
-    }
+    previewWorkspace.thumbnail.setPendingSource(
+        previewPlayer.getLoadedLengthInSamples().value_or(0),
+        previewPlayer.getLoadedDurationSeconds().value_or(0.0),
+        loaded.identity
+    );
 
     requestSeratoPreview();
     updatePreviewLoudnessHistory();
@@ -347,29 +346,44 @@ void AudioBatchComponent::adoptSeratoPreview(
     }
 }
 
-/// Stores freshly computed waveform data in the analysis cache,
-/// unless the current waveform was itself loaded from the cache.
-void AudioBatchComponent::handleThumbnailFullyLoaded()
+/// Reopens the post-load gate with lightweight candidates only after foreground results and selection settle.
+void AudioBatchComponent::resumePreviewEnrichment()
 {
-    const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
-    if (loaded == nullptr || loaded->waveformLoadedFromCache || !loaded->file.existsAsFile()) {
+    if (!backgroundWork.isIdle()) {
         return;
     }
+    std::vector<PreviewEnrichmentCandidate> candidates;
+    candidates.reserve(static_cast<std::size_t>(analysisResults.size()));
+    for (const auto& record : analysisResults) {
+        if (record.isReady()) {
+            candidates.push_back(
+                {.file = record.file, .fileSize = record.fileSize, .modifiedTimeMs = record.modifiedTimeMs}
+            );
+        }
+    }
+    enrichment.completeForeground(std::move(candidates));
+}
 
-    const auto& identity = previewWorkspace.thumbnail.getSourceIdentity();
-    if (!identity || identity->path != loaded->identity.path || identity->fileSize != loaded->identity.fileSize
-        || identity->modifiedTimeMs != loaded->identity.modifiedTimeMs
-        || identity->platformId != loaded->identity.platformId
-        || identity->preciseTimes != loaded->identity.preciseTimes || !identity->matches(loaded->file))
+/// Adopts only artifact fields for the unchanged selected source, never playback or result-table records.
+void AudioBatchComponent::adoptPreviewEnrichment(PreviewEnrichmentResult result)
+{
+    const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
+    if (!enrichment.isCurrentLoad(result.loadGeneration) || result.selectionGeneration != preview.getGeneration()
+        || loaded == nullptr || loaded->identity.path != result.identity.path
+        || loaded->identity.fileSize != result.identity.fileSize
+        || loaded->identity.modifiedTimeMs != result.identity.modifiedTimeMs
+        || loaded->identity.platformId != result.identity.platformId
+        || loaded->identity.preciseTimes != result.identity.preciseTimes || !result.identity.matches(loaded->file)
+        || isFileBeingRewritten(result.identity.path))
     {
         return;
     }
-    const auto waveformData = previewWorkspace.thumbnail.saveToCacheData();
-    if (waveformData.getSize() == 0) {
-        return;
+    if (result.tagsReady) {
+        adoptSeratoPreview(result.identity, result.selectionGeneration, std::move(result.seratoData));
     }
-
-    preview.setWaveformLoadedFromCache(analysisCache.storeWaveformData(*identity, waveformData));
+    if (result.waveform && previewWorkspace.thumbnail.adoptWaveformData(*result.waveform, result.identity)) {
+        preview.setWaveformLoadedFromCache(true);
+    }
 }
 
 /// Relabels and recolours the play button to match whether the transport is playing.
@@ -415,6 +429,7 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
 void AudioBatchComponent::clearCurrentAudioPreview()
 {
     preview.clear();
+    enrichment.clearSelection();
     clearPreviewDisplay();
     artwork.file = juce::File();
 }
@@ -424,6 +439,7 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 void AudioBatchComponent::releasePreviewPlayback()
 {
     preview.release();
+    enrichment.clearSelection();
     clearPreviewDisplay();
 }
 
@@ -470,15 +486,22 @@ void AudioBatchComponent::applyCustomGainToSelection(const std::optional<Decibel
             continue;
         }
 
-        if (analysisResults.setCustomGain(rowNumber, gain)) {
-            changedGains.push_back({.file = analysisResults[rowNumber].file, .customGain = gain});
-        }
+        static_cast<void>(analysisResults.setCustomGain(rowNumber, gain));
+        const auto& record = analysisResults[rowNumber];
+        // A new explicit edit still matters when another application changed the persisted value.
+        // In particular, clearing an already empty local value must clear a newer persisted gain.
+        changedGains.push_back({
+            .file = record.file,
+            .customGain = gain,
+            .fileSize = record.fileSize,
+            .modifiedTimeMs = record.modifiedTimeMs,
+        });
     }
 
-    // The slider calls this on every step of a drag, so all selected files are stored in one transaction.
+    // Slider drags coalesce pending explicit edits by path on the worker, keeping immediate in-memory feedback.
     // The cache logs its own failures, and the table keeps the gains either way.
     if (!changedGains.empty()) {
-        static_cast<void>(analysisCache.storeCustomGains(changedGains));
+        enrichment.storeCustomGains(std::move(changedGains));
         resultsTable.repaint();
         updateThumbnailDisplayGain();
         updatePreviewInputGain();

@@ -128,12 +128,16 @@ impl AppView {
     /// Removes every file and folder and stops any run and playback.
     /// Files being normalized or processed finish their current block and keep their originals.
     pub(super) fn clear_list(&mut self, cx: &mut Context<Self>) {
+        self.flush_gain_store(cx);
+        self.enrichment.invalidate();
         if let Some(coordinator) = &self.coordinator {
             coordinator.cancel();
         }
         self.cancel_normalization();
         self.stop_processing();
-        self.analysis_task = None;
+        if let Some(drain) = self.analysis_task.take() {
+            drain.detach();
+        }
         let was_demo = self.demo_task.take().is_some();
         self.roots.clear();
         self.excluded.clear();
@@ -145,9 +149,7 @@ impl AppView {
             cx.notify();
             gains
         });
-        for (path, gain) in gains {
-            self.store_custom_gain(&path, gain);
-        }
+        debug_assert_eq!(gains, [] as [(PathBuf, Option<f32>); 0]);
         if was_demo {
             self.connect_playhead(cx);
         }
@@ -395,6 +397,8 @@ impl AppView {
     /// Removes the rows of files from the list, keeps them out of later scans,
     /// and selects the file that took the place of the first removed row.
     fn remove_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        self.flush_gain_store(cx);
+        self.enrichment.invalidate();
         let first_index = {
             let delegate = self.table.read(cx).delegate();
             paths.iter().filter_map(|path| delegate.index_of(path)).min()
@@ -407,9 +411,7 @@ impl AppView {
             cx.notify();
             gains
         });
-        for (path, gain) in gains {
-            self.store_custom_gain(&path, gain);
-        }
+        debug_assert_eq!(gains, [] as [(PathBuf, Option<f32>); 0]);
         self.clear_selection(cx);
         let next = first_index.and_then(|index| {
             let delegate = self.table.read(cx).delegate();
@@ -420,6 +422,7 @@ impl AppView {
             self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
             self.select_path(&path, false, cx);
         }
+        self.resume_enrichment(cx);
     }
 
     /// Moves files to the system trash and removes their rows.
@@ -445,11 +448,24 @@ impl AppView {
                 }
             }
         }
-        if let Some(coordinator) = &self.coordinator
-            && let Err(error) = coordinator.cache().remove_analyses(&trashed)
-        {
-            let error = anyhow::Error::from(error);
-            tracing::warn!("Failed to remove the cached results of the trashed files: {error:#}");
+        if let Some(coordinator) = &self.coordinator {
+            let records = trashed
+                .iter()
+                .filter_map(|path| self.table.read(cx).delegate().row_for(path)?.record.clone())
+                .collect::<Vec<_>>();
+            let cache = std::sync::Arc::clone(coordinator.cache());
+            cx.background_executor()
+                .spawn(async move {
+                    for record in records {
+                        if let Err(error) = cache.remove_analysis_for_record(&record) {
+                            tracing::warn!(
+                                "Failed to remove the cached result of {}: {error}",
+                                record.path.display()
+                            );
+                        }
+                    }
+                })
+                .detach();
         }
         if !trashed.is_empty() {
             self.remove_paths(&trashed, cx);
@@ -466,15 +482,15 @@ impl AppView {
         if let Some(coordinator) = &self.coordinator {
             coordinator.cancel();
         }
-        self.analysis_task = None;
+        if let Some(drain) = self.analysis_task.take() {
+            drain.detach();
+        }
         if let Some(run) = &mut self.run {
             run.completed = true;
         }
-        let cache = self.coordinator.as_ref().map(|coordinator| coordinator.cache());
         self.table.update(cx, |state, cx| {
-            state
-                .delegate_mut()
-                .finish_cancelled_analysis(|path| cache.as_ref().and_then(|cache| cache.get_analysis(path)));
+            // Results already applied stay usable, without a SQLite busy wait on cancellation.
+            state.delegate_mut().finish_cancelled_analysis(|_| None);
             cx.notify();
         });
         self.status = SharedString::from("Analysis cancelled");

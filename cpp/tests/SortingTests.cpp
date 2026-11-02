@@ -1,6 +1,7 @@
 /// Tests for the results table sorting in ResultsSorting.
 
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/ResultsSorting.h"
@@ -63,6 +64,23 @@ public:
     /// Runs the sorting checks.
     void runTest() override
     {
+        beginTest("GUI-only cached status preserves measurement producer and settled sort order");
+        {
+            auto native = makeRecord("native", 0.5f, -20.0);
+            native.status = AudioAnalysisStatus::cached;
+            auto foreign = native;
+            foreign.measurementProducer = MeasurementProducer::rust;
+            expectEquals(formatGuiStatus(native), juce::String("Cached"));
+            expectEquals(formatGuiStatus(foreign), juce::String("Cached (Rust)"));
+            expect(results_sorting::compareRecordsByColumn(native, foreign, AudioFileTableColumn::status) < 0);
+            foreign.status = AudioAnalysisStatus::analyzed;
+            expectEquals(formatGuiStatus(foreign), juce::String("Analyzed"));
+            foreign.status = AudioAnalysisStatus::failed;
+            expectEquals(formatGuiStatus(foreign), juce::String("Failed"));
+            foreign.status = AudioAnalysisStatus::pending;
+            expectEquals(formatGuiStatus(foreign), juce::String("Pending"));
+        }
+
         beginTest("Core sorting keeps key precedence, natural ties, and failures last in both directions");
         {
             auto trackTwo = makeRecord("track 2", -0.2f, -20.0);

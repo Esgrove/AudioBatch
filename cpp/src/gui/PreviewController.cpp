@@ -4,10 +4,8 @@
 
 #include "gui/PreviewController.h"
 
-#include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
-#include "serato/SeratoPreviewLoader.h"
 #include "serato/SeratoTagTypes.h"
 
 #include <cmath>
@@ -19,16 +17,17 @@
 
 namespace audiobatch
 {
-/// Creates the Serato tag worker, which reads through the cache only once a tag request is made.
-/// The completion runs on the worker thread, so it must move the result to the message thread itself.
-PreviewController::PreviewController(
-    AnalysisCache& cache,
-    AudioPreviewPlayer& previewPlayer,
-    serato::SeratoPreviewLoader::Completion onSeratoData
-) :
+/// Routes selected preview artifact work to the GUI-owned scheduler, without creating a decoder thread.
+PreviewController::PreviewController(AudioPreviewPlayer& previewPlayer, ArtifactRequest onRequest) :
     player(previewPlayer),
-    seratoLoader(cache, std::move(onSeratoData))
+    requestArtifacts(std::move(onRequest))
 {}
+
+/// Returns the selection generation used to reject A to B to A artifact deliveries.
+std::uint64_t PreviewController::getGeneration() const noexcept
+{
+    return generation;
+}
 
 /// Returns the current preview state.
 const PreviewState& PreviewController::getState() const noexcept
@@ -97,13 +96,13 @@ bool PreviewController::canDisplayAnalysis(const AudioAnalysisRecord& record) co
 /// Returns true when the tags were adopted, after which the caller resolves the start position and shows them.
 bool PreviewController::adoptSeratoData(
     const utils::FileIdentity& identity,
-    const std::uint64_t generation,
+    const std::uint64_t resultGeneration,
     std::shared_ptr<const serato::SeratoData> data
 )
 {
     auto* loaded = std::get_if<LoadedPreview>(&state);
     if (loaded == nullptr || !player.hasLoadedSource() || identity.path != loaded->file.getFullPathName()
-        || !seratoLoader.isCurrentGeneration(generation))
+        || resultGeneration != generation)
     {
         return false;
     }
@@ -111,7 +110,7 @@ bool PreviewController::adoptSeratoData(
     if (identity.path != loaded->identity.path || identity.fileSize != loaded->identity.fileSize
         || identity.modifiedTimeMs != loaded->identity.modifiedTimeMs
         || identity.platformId != loaded->identity.platformId || identity.preciseTimes != loaded->identity.preciseTimes
-        || !loaded->identity.matches(loaded->file) || !seratoLoader.canAdopt(identity, generation, loaded->file))
+        || !loaded->identity.matches(loaded->file) || !identity.matches(loaded->file))
     {
         player.completeInitialPosition(0.0);
         return false;
@@ -128,7 +127,7 @@ bool PreviewController::adoptSeratoData(
 /// Returns true when the file was loaded.
 bool PreviewController::load(const juce::File& file, const bool playFromFirstCuePoint)
 {
-    seratoLoader.cancel();
+    ++generation;
     // The identity is taken before loading, so a change during the load makes the analysis look outdated.
     const utils::FileIdentity identity(file);
 
@@ -159,7 +158,7 @@ void PreviewController::clear()
 /// so the file on disk can be replaced or the preview loaded again.
 void PreviewController::release()
 {
-    seratoLoader.cancel();
+    ++generation;
     if (const auto* loaded = std::get_if<LoadedPreview>(&state)) {
         state = ReleasedPreview {.file = loaded->file};
     }
@@ -178,18 +177,21 @@ void PreviewController::requestSeratoData()
 
     const auto duration = player.getLoadedDurationSeconds();
     if (loaded == nullptr || !duration.has_value() || !std::isfinite(*duration) || *duration <= 0.0) {
-        seratoLoader.cancel();
+        ++generation;
         player.completeInitialPosition(0.0);
         return;
     }
 
     if (!loaded->identity.matches(loaded->file)) {
-        seratoLoader.cancel();
+        ++generation;
         player.completeInitialPosition(0.0);
         return;
     }
     loaded->seratoIdentity = loaded->identity;
-    if (seratoLoader.request(loaded->file, *duration) == 0) {
+    ++generation;
+    if (requestArtifacts) {
+        requestArtifacts(loaded->identity, generation);
+    } else {
         player.completeInitialPosition(0.0);
     }
 }
@@ -202,9 +204,9 @@ void PreviewController::setWaveformLoadedFromCache(const bool loadedFromCache)
     }
 }
 
-/// Cancels the tag read and waits for the worker to finish, before the cache it reads from is destroyed.
+/// Invalidates selected deliveries without waiting for background cache or decoding work.
 void PreviewController::stop()
 {
-    seratoLoader.cancelAndWait();
+    ++generation;
 }
 }  // namespace audiobatch

@@ -140,6 +140,8 @@ pub struct CueMarker {
 /// Paints the overview of one file.
 pub struct WaveformView {
     overview: Option<Arc<WaveformOverview>>,
+    /// Captured analysis source, independent of waveform allocation and selected-preview generation.
+    source: Option<(std::path::PathBuf, u64, i64)>,
     /// Source-only warnings validated against the record, waveform, and on-disk file identity.
     overloads: SourceOverloads,
     /// Serato Overview of the file, which colours the envelope when present.
@@ -243,6 +245,7 @@ impl WaveformView {
     pub fn new() -> Self {
         Self {
             overview: None,
+            source: None,
             overloads: SourceOverloads::default(),
             serato_overview: None,
             cues: Vec::new(),
@@ -270,8 +273,8 @@ impl WaveformView {
     /// Shows an analyzed record and attaches source warnings only while its file identity and waveform match.
     /// Warning attachment does not change input gain, cues, playback, or the visible range of the same overview.
     pub fn set_record(&mut self, record: &AnalysisRecord, cx: &mut Context<Self>) {
-        self.show(record.waveform.clone(), record.short_term_loudness.clone(), cx);
-        self.overloads.set_record(record);
+        self.update_record(record);
+        cx.notify();
     }
 
     /// Shows an overview without source warnings, for example for synthetic demo data.
@@ -281,6 +284,34 @@ impl WaveformView {
         overview: Option<Arc<WaveformOverview>>,
         loudness: Option<Arc<ShortTermLoudnessHistory>>,
         cx: &mut Context<Self>,
+    ) {
+        self.update_overview(overview, loudness);
+        cx.notify();
+    }
+
+    /// Applies source-matched artifacts without touching transport, cue, gain, zoom or scrubbing state.
+    fn update_record(&mut self, record: &AnalysisRecord) {
+        let source = (record.path.clone(), record.file_size, record.modified_time_ms);
+        let same_source = self.source.as_ref() == Some(&source);
+        let visible_start = self.visible_start;
+        let overview = record
+            .waveform
+            .clone()
+            .or_else(|| same_source.then(|| self.overview.clone()).flatten());
+        self.update_overview(overview, record.short_term_loudness.clone());
+        self.source = Some(source);
+        if same_source {
+            self.visible_start = visible_start;
+            self.clamp_visible_start();
+        }
+        self.overloads.set_record(record);
+    }
+
+    /// Updates only overview presentation state so pure tests can prove same-source viewport retention.
+    fn update_overview(
+        &mut self,
+        overview: Option<Arc<WaveformOverview>>,
+        loudness: Option<Arc<ShortTermLoudnessHistory>>,
     ) {
         let same_file = match (&self.overview, &overview) {
             (Some(current), Some(next)) => Arc::ptr_eq(current, next),
@@ -295,10 +326,10 @@ impl WaveformView {
             SharedString::from("No waveform for this file")
         };
         self.overloads.clear();
+        self.source = None;
         self.overview = overview;
         self.loudness = loudness;
         self.clamp_visible_start();
-        cx.notify();
     }
 
     /// Shows a text instead of an overview, for example while the file is analyzed.
@@ -306,6 +337,7 @@ impl WaveformView {
     pub fn show_placeholder(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.placeholder = text.into();
         self.overloads.clear();
+        self.source = None;
         self.overview = None;
         self.loudness = None;
         self.visible_start = 0.0;
@@ -969,6 +1001,83 @@ fn loudness_tick_interval(minimum: i32, maximum: i32, height: f32) -> i32 {
         .into_iter()
         .find(|interval| interval * target_count >= maximum - minimum)
         .unwrap_or(20)
+}
+
+#[cfg(test)]
+mod test_artifact_presentation {
+    use audiobatch_core::AnalysisStatus;
+    use audiobatch_core::waveform::WaveformBuilder;
+
+    use super::*;
+
+    /// Supplies a small overview whose source duration permits a nonzero viewport.
+    fn record() -> AnalysisRecord {
+        let mut builder = WaveformBuilder::new(1, Some(4_800));
+        let samples = vec![0.25; 4_800];
+        builder.push(&[&samples]);
+        AnalysisRecord {
+            path: "preview.wav".into(),
+            file_size: 100,
+            modified_time_ms: 200,
+            status: AnalysisStatus::Cached,
+            waveform: Some(builder.finish(48_000, 4_800)),
+            ..AnalysisRecord::default()
+        }
+    }
+
+    #[test]
+    fn replacing_same_source_artifact_preserves_viewport_and_interaction_state() {
+        let mut view = WaveformView::new();
+        view.update_record(&record());
+        view.zoom = 4.0;
+        view.visible_start = 0.04;
+        view.display_gain = 0.5;
+        view.scrubbing = true;
+        view.cues = vec![CueMarker {
+            seconds: 0.02,
+            color: 0,
+            slot: 0,
+        }];
+        view.playhead = Some(PlayheadSource::Simulated {
+            started: Instant::now(),
+            duration: 10.0,
+        });
+        view.update_record(&record());
+        assert!((view.visible_start - 0.04).abs() < f64::EPSILON);
+        assert!((view.zoom - 4.0).abs() < f64::EPSILON);
+        assert!((view.display_gain - 0.5).abs() < f32::EPSILON);
+        assert!(view.scrubbing);
+        assert_eq!(view.cues.len(), 1);
+        assert!(view.playhead.is_some());
+    }
+
+    #[test]
+    fn waveform_free_same_source_measurements_keep_the_selected_artifact() {
+        let mut record = record();
+        let overview = record.waveform.clone().expect("overview");
+        let mut view = WaveformView::new();
+        view.update_record(&record);
+        view.zoom = 4.0;
+        view.visible_start = 0.04;
+        record.waveform = None;
+        view.update_record(&record);
+        assert!(Arc::ptr_eq(
+            view.overview.as_ref().expect("retained artifact"),
+            &overview
+        ));
+        assert!((view.visible_start - 0.04).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn different_source_does_not_borrow_a_released_waveform() {
+        let mut record = record();
+        let mut view = WaveformView::new();
+        view.update_record(&record);
+        record.modified_time_ms += 1;
+        record.waveform = None;
+        view.update_record(&record);
+        assert!(view.overview.is_none());
+    }
 }
 
 #[cfg(test)]

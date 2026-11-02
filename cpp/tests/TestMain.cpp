@@ -3,6 +3,9 @@
 /// Each discovered test runs its suite through juce::UnitTestRunner and reports any failures to GoogleTest.
 /// The tests also start the executable again in a helper mode, which runs one helper instead of the suites.
 
+#include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "PluginBenchmark.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -13,6 +16,7 @@
 
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -67,6 +71,58 @@ private:
 
     juce::UnitTest& suite;
 };
+
+/// Measures repeated cache-only reads for an explicit directory of interoperability fixtures.
+int benchmarkSharedCacheReads(AnalysisCache& cache, const juce::File& source)
+{
+    const auto files = source.findChildFiles(juce::File::findFiles, false, "*.wav");
+    if (files.isEmpty()) {
+        return 2;
+    }
+    constexpr int passes {20};
+    int hits = 0;
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+    for (int pass = 0; pass < passes; ++pass) {
+        for (const auto& file : files) {
+            const auto record = cache.getAnalysis(file);
+            hits += record && !record->hasError() ? 1 : 0;
+        }
+    }
+    const auto elapsed = juce::Time::getMillisecondCounterHiRes() - started;
+    fmt::print("C++ warm lookup: {} hits, {:.3f} ms per {} rows\n", hits, elapsed / passes, files.size());
+    return hits == files.size() * passes ? 0 : 1;
+}
+
+/// Runs interoperability helpers against an explicit temporary database, never the user's cache.
+/// Other argument shapes fall through to the test executable's remaining helper modes.
+std::optional<int> runSharedCacheHelper(const juce::StringArray& arguments)
+{
+    if (arguments.size() != 4 || arguments[0] != "--shared-cache") {
+        return std::nullopt;
+    }
+    const auto& mode = arguments[1];
+    const juce::File database(arguments[2]);
+    const juce::File source(arguments[3]);
+    AnalysisCache cache(database);
+    if (!cache.open()) {
+        return 1;
+    }
+    if (mode == "benchmark-read") {
+        return benchmarkSharedCacheReads(cache, source);
+    }
+    if (mode == "write") {
+        const auto record = analyzeFile(source);
+        return !record.hasError() && cache.storeAnalysis(record) ? 0 : 1;
+    }
+    if (mode == "read-rust") {
+        const auto record = cache.getAnalysis(source);
+        return record && record->fromCache && !record->hasError()
+                && record->measurementProducer == MeasurementProducer::rust
+            ? 0
+            : 1;
+    }
+    return 2;
+}
 }  // namespace
 }  // namespace audiobatch::tests
 
@@ -79,6 +135,9 @@ int main(int argumentCount, char* arguments[])
     juce::StringArray helperArguments;
     for (const auto* argument : std::span(arguments, static_cast<std::size_t>(argumentCount)).subspan(1)) {
         helperArguments.add(juce::String::fromUTF8(argument));
+    }
+    if (const auto helperExitCode = audiobatch::tests::runSharedCacheHelper(helperArguments)) {
+        return *helperExitCode;
     }
     if (helperArguments.contains("--vst3-benchmark")) {
         return audiobatch::tests::runPluginBenchmark(helperArguments);
@@ -111,6 +170,7 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createPluginScanTests());
     suites.push_back(audiobatch::tests::createProcessingTests());
     suites.push_back(audiobatch::tests::createPreviewControllerTests());
+    suites.push_back(audiobatch::tests::createPreviewEnrichmentTests());
     suites.push_back(audiobatch::tests::createPreviewPlaybackTests());
     suites.push_back(audiobatch::tests::createPreviewPlayerTests());
     suites.push_back(audiobatch::tests::createResultsModelTests());

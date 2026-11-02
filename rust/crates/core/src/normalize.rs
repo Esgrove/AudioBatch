@@ -27,7 +27,7 @@ use crate::output_file::{
     FileDisposer, OutputValidationError, SourceIdentity, check_output_path, commit_temporary_output_expected,
     create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
-use crate::record::{AnalysisRecord, NEGATIVE_INFINITY_LOUDNESS};
+use crate::record::{AnalysisRecord, MeasurementProducer, NEGATIVE_INFINITY_LOUDNESS};
 
 /// Lowest sample peak target, in dBFS.
 pub const MINIMUM_TARGET_PEAK_DBFS: f64 = -12.0;
@@ -313,7 +313,7 @@ pub(crate) fn output_bit_depth(record: &AnalysisRecord) -> u32 {
 ///
 /// Fails without writing anything when the output path already exists and is not the source,
 /// unless `overwrite_existing` is set, in which case the existing output is disposed of.
-/// When the file changed on disk since it was analyzed, it is analyzed again before computing the gain.
+/// Changed sources and foreign measurements are analyzed natively before any gain-dependent decision.
 /// A call cancelled before its output is committed fails and leaves the original untouched.
 /// Source packets that fail to decode in isolation are written as silence and reported in the notice.
 /// Progress of the whole file, through any source analysis, the render, and the commit,
@@ -343,15 +343,20 @@ pub fn normalize_file(
         return fail(source, crate::output_file::OutputError::SourceChanged);
     };
     let source_changed = !source_record.matches_file_on_disk();
-    let render_start = if source_changed {
+    let needs_measurement = source_changed || source_record.measurement_producer != MeasurementProducer::Rust;
+    let render_start = if needs_measurement {
         SOURCE_ANALYSIS_PROGRESS_SHARE
     } else {
         0.0
     };
-    let record = if source_changed {
-        analyze_file(source, is_cancelled, &mut |fraction| {
+    let record = if needs_measurement {
+        let mut measured = analyze_file(source, is_cancelled, &mut |fraction| {
             on_progress(fraction * render_start);
-        })
+        });
+        if !source_changed {
+            measured.custom_gain_db = source_record.custom_gain_db;
+        }
+        measured
     } else {
         source_record.clone()
     };
@@ -995,6 +1000,45 @@ mod test_normalize_file {
 
         assert!(result.error().is_none(), "{:?}", result.error());
         assert_eq!(fs::read(&record.path).expect("reads"), contents);
+        assert!(disposed.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn foreign_levels_are_remeasured_before_refusal_and_no_op_decisions() {
+        for bogus_peak in [0.0, 1.0] {
+            let directory = tempfile::tempdir().expect("creates directory");
+            let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
+            record.measurement_producer = MeasurementProducer::Cpp;
+            record.overall_peak = bogus_peak;
+            let (options, _) = options(NormalizationMode::Peak);
+            let result = normalize(&record, &options);
+            let output = result
+                .output()
+                .expect("native remeasurement avoids foreign refusal/no-op");
+            assert_eq!(output.measurement_producer, MeasurementProducer::Rust);
+            assert!(output.overall_peak.abs() > 0.99);
+        }
+    }
+
+    #[test]
+    fn foreign_at_target_no_op_retains_gain_and_reports_native_measurements() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
+        let (options, disposed) = options(NormalizationMode::Peak);
+        let mut foreign = normalize(&record, &options).output().expect("normalizes").clone();
+        foreign.measurement_producer = MeasurementProducer::Cpp;
+        foreign.custom_gain_db = Some(2.0);
+        disposed.lock().expect("lock").clear();
+        let contents = fs::read(&foreign.path).expect("reads source");
+        let result = normalize(&foreign, &options);
+        let output = result.output().expect("successful no-op");
+        assert_eq!(output.measurement_producer, MeasurementProducer::Rust);
+        assert!(
+            output
+                .custom_gain_db
+                .is_some_and(|gain| (gain - 2.0).abs() < f32::EPSILON)
+        );
+        assert_eq!(fs::read(&foreign.path).expect("unchanged source"), contents);
         assert!(disposed.lock().expect("lock").is_empty());
     }
 

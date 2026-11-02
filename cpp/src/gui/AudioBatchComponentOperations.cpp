@@ -28,7 +28,7 @@
 namespace audiobatch
 {
 /// Resolves rows still marked pending or active after a run completes,
-/// from the cache when possible and otherwise as failed, so no row is left waiting.
+/// as failed after the controller has drained every delivered result, so no row is left waiting.
 /// Never decodes audio, because it runs on the message thread.
 void AudioBatchComponent::reconcilePendingAnalysisResults()
 {
@@ -46,15 +46,6 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         }
 
         resultsChanged = true;
-
-        if (auto refreshedRecord = analysisCache.getAnalysis(record.file)) {
-            const auto merged = analysisResults.merge(std::move(*refreshedRecord));
-            if (merged.customGainCarriedOver) {
-                const auto& updated = analysisResults[merged.row];
-                static_cast<void>(analysisCache.storeCustomGain(updated.file, updated.customGain));
-            }
-            continue;
-        }
 
         auto failed = record;
         failed.status = AudioAnalysisStatus::failed;
@@ -98,13 +89,7 @@ void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecor
         const auto merged = analysisResults.merge(std::move(record));
         const auto& row = analysisResults[merged.row];
 
-        // A gain edit, including a clear, may have superseded the queued result,
-        // or may only live in the table while the cache still had no row for this file identity.
-        // The coordinator stored the row before publishing the result, so the gain can be stored now.
-        // The cache logs its own failures, and the table keeps the gain either way.
-        if (merged.customGainCarriedOver) {
-            static_cast<void>(analysisCache.storeCustomGain(row.file, row.customGain));
-        }
+        // Only explicit user edits enter the ordered persistence path. Merged gains never write back.
 
         currentFileChanged = currentFileChanged || preview.getFile() == row.file;
         tableChanged = true;
@@ -144,18 +129,19 @@ void AudioBatchComponent::replaceRecordsAfterOperation(const std::vector<Committ
 
     for (const auto& [originalFile, newRecord] : outputs) {
         const auto& originalPath = originalFile.getFullPathName();
+        std::optional<AudioAnalysisRecord> convertedSource;
+        if (newRecord.fullPath != originalPath) {
+            if (const auto originalRow = analysisResults.findRow(originalPath)) {
+                convertedSource = analysisResults[*originalRow];
+            }
+        }
         const auto merged = analysisResults.replaceAfterOperation(originalPath, newRecord);
 
         // The cache logs its own failures, and a row it could not store or remove is only read again later.
-        static_cast<void>(analysisCache.storeAnalysis(analysisResults[merged.row]));
-        if (merged.customGainCarriedOver) {
-            const auto& updated = analysisResults[merged.row];
-            static_cast<void>(analysisCache.storeCustomGain(updated.file, updated.customGain));
-        }
+        enrichment.persistOperation(analysisResults[merged.row], std::move(convertedSource));
 
-        // A converted original was moved to the trash, so its cached row is no longer needed.
+        // Converted sources are pruned through captured-source cleanup rather than delayed path-only deletion.
         if (newRecord.fullPath != originalPath) {
-            static_cast<void>(analysisCache.removeAnalysis(originalFile));
             movedPaths.insert_or_assign(originalPath, newRecord.fullPath);
         }
 
@@ -257,19 +243,21 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
     }
 
     updateStatusLabel();
+    resumePreviewEnrichment();
     if (pass.cancelling) {
         statusBar.setStatusText("Normalization cancelled");
     }
 }
 
 /// Finalizes an analysis run on the message thread:
-/// reconciles rows still pending, logs run statistics, and restores a sensible selection.
+/// reconciles rows still pending, logs run statistics, restores selection, and opens optional artifact admission.
 void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int totalFiles)
 {
     reconcilePendingAnalysisResults();
 
     // The plan handler already reported that no files were found.
     if (totalFiles == 0) {
+        resumePreviewEnrichment();
         updateProcessButtonState();
         return;
     }
@@ -301,6 +289,7 @@ void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int 
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
 
+    resumePreviewEnrichment();
     updateProcessButtonState();
 }
 
@@ -383,7 +372,9 @@ void AudioBatchComponent::normalizeRecords(const std::vector<AudioAnalysisRecord
 
     auto normalizationOptions = previewWorkspace.normalizationTargetControl.getOptions();
     normalizationOptions.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
+    enrichment.beginForeground();
     if (backgroundWork.startNormalization(recordsToNormalize, normalizationOptions) <= 0) {
+        resumePreviewEnrichment();
         handleSelectionChanged(resultsTable.getSelectedRow());
         updateStatusLabel();
         return;
@@ -413,6 +404,8 @@ void AudioBatchComponent::startAnalysis(
         return;
     }
 
+    enrichment.beginForeground();
+    analysisResults.beginLoad();
     if (rows == AnalysisRows::replace) {
         analysisResults.clear();
         fileActivity.clearAllActive();
@@ -599,9 +592,11 @@ void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>&
     const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     statusBar.setStatusText("Loading plugins...");
 
+    enrichment.beginForeground();
     auto run
         = pluginLibrary->createProcessingRun(enabledPlugins, std::move(settings), static_cast<int>(records.size()));
     if (!run.has_value()) {
+        resumePreviewEnrichment();
         showPluginProcessingWarning(run.error());
         statusBar.setStatusText("Plugin load failed");
         return;
@@ -614,6 +609,7 @@ void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>&
     updateProcessButtonState();
 
     if (expected <= 0) {
+        resumePreviewEnrichment();
         handleSelectionChanged(resultsTable.getSelectedRow());
         updateStatusLabel();
         return;
@@ -670,12 +666,6 @@ void AudioBatchComponent::processingResultsReceived(std::vector<PluginProcessing
 
     replaceRecordsAfterOperation(outputs);
 
-    // The custom gain is baked into the processed audio, so the new outputs start without one.
-    // The cache logs its own failures, and the rows in the table are already correct.
-    for (const auto& committed : outputs) {
-        static_cast<void>(analysisCache.storeCustomGain(committed.output.file, std::nullopt));
-    }
-
     resultsTable.repaint();
     updateStatusLabel();
 }
@@ -704,6 +694,7 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
     }
 
     updateStatusLabel();
+    resumePreviewEnrichment();
     if (pass.cancelling) {
         statusBar.setStatusText("Plugin processing cancelled");
     }
@@ -712,6 +703,7 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
 /// Shows why a plugin processing pass could not start its workers.
 void AudioBatchComponent::processingStartFailed(const juce::String& errorMessage)
 {
+    resumePreviewEnrichment();
     handleSelectionChanged(resultsTable.getSelectedRow());
     statusBar.setStatusText(errorMessage);
     showPluginProcessingWarning(errorMessage);

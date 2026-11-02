@@ -388,18 +388,28 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
     return summary;
 }
 
-/// Returns the record unchanged when the file still matches it on disk,
-/// otherwise analyzes the file again, so the input gain is never computed from an outdated peak.
+/// Returns unchanged native measurements or foreign measurements used only with custom or unity gain.
+/// Automatic normalization requires native measurements before any gain or refusal decision.
+/// Changed sources are always analyzed again so the input gain never uses an outdated peak.
 /// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
 /// The analysis stops when isCancelled returns true, and the returned record then carries the cancellation error.
 /// The analysis progress is reported to onProgress.
 AudioAnalysisRecord refreshIfChanged(
     const AudioAnalysisRecord& record,
+    const bool needsMeasurement,
+    const bool sourceChanged,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress
 )
 {
-    return record.matchesFileOnDisk() ? record : analyzeFile(record.file, isCancelled, onProgress);
+    if (!needsMeasurement) {
+        return record;
+    }
+    auto refreshed = analyzeFile(record.file, isCancelled, onProgress);
+    if (!sourceChanged) {
+        refreshed.customGain = record.customGain;
+    }
+    return refreshed;
 }
 
 /// Prepares the chain, renders the whole file through it into an unquantized 32-bit float WAV file,
@@ -663,9 +673,18 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     const utils::FileIdentity expectedSource(file);
-    const auto renderProgressStart = sourceRecord.matchesFileOnDisk() ? 0.0f : sourceAnalysisProgressShare;
-    const auto record
-        = refreshIfChanged(sourceRecord, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart));
+    const bool sourceChanged = !sourceRecord.matchesFileOnDisk();
+    const bool needsMeasurement = sourceChanged
+        || (sourceRecord.measurementProducer != MeasurementProducer::cpp && !sourceRecord.customGain
+            && options.normalizeBeforePlugin.has_value());
+    const auto renderProgressStart = needsMeasurement ? sourceAnalysisProgressShare : 0.0f;
+    const auto record = refreshIfChanged(
+        sourceRecord,
+        needsMeasurement,
+        sourceChanged,
+        isCancelled,
+        utils::makeProgressRange(onProgress, 0.0f, renderProgressStart)
+    );
 
     if (record.hasError()) {
         return fail(file, record.errorMessage);

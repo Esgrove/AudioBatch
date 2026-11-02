@@ -600,6 +600,44 @@ private:
             );
         }
 
+        beginTest("Foreign levels are remeasured before refusal and in-place no-op decisions");
+        for (const auto bogusPeak : {0.0f, 1.0f}) {
+            const TemporaryDirectory foreignDirectory;
+            const auto source = foreignDirectory.copyFixture("sine_stereo_44100_16.aif", "foreign.aif");
+            auto record = analyzeFile(source);
+            record.measurementProducer = MeasurementProducer::rust;
+            record.overallPeak = bogusPeak;
+            const auto result = normalizeFile(record, testNormalizationOptions());
+            expect(!result.hasError(), outcomeError(result.outcome));
+            if (!result.hasError()) {
+                const auto& output = outcomeRecord(result.outcome);
+                expect(output.measurementProducer == MeasurementProducer::cpp);
+                expectWithinAbsoluteError(peakDecibels(output), 0.0, peakTolerance);
+            }
+        }
+
+        beginTest("Foreign at-target remeasurement preserves gain and establishes native provenance");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "foreign_no_op.aif");
+            auto record = analyzeFile(source);
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = peakDecibels(record);
+            record.measurementProducer = MeasurementProducer::rust;
+            record.customGain = Decibels {2.0f};
+            const auto modifiedBefore = source.getLastModificationTime();
+            const auto result = normalizeFile(record, options);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            if (!result.hasError()) {
+                const auto& output = outcomeRecord(result.outcome);
+                expect(output.measurementProducer == MeasurementProducer::cpp);
+                expect(output.customGain.has_value());
+                if (output.customGain) {
+                    expectWithinAbsoluteError(output.customGain->value, 2.0f, 0.0001f);
+                }
+                expect(source.getLastModificationTime() == modifiedBefore);
+            }
+        }
+
         beginTest("Cancellation stops an unchanged in-place no-op");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_no_op.aif");
@@ -629,7 +667,10 @@ private:
             expect(output.overloads == record.overloads);
             expect(output.fromCache == record.fromCache);
             expect(output.status == record.status);
-            expect(!output.customGain);
+            expect(output.customGain.has_value());
+            if (output.customGain) {
+                expectWithinAbsoluteError(output.customGain->value, 3.0f, 0.0001f);
+            }
             expect(output.matchesFileOnDisk());
         }
 
