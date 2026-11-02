@@ -14,6 +14,11 @@
 
 namespace audiobatch::utils
 {
+/// Result code for a dialog's confirmation action.
+inline constexpr int DIALOG_RESULT_OK {1};
+/// Result code for cancelling or dismissing a dialog.
+inline constexpr int DIALOG_RESULT_CANCEL {0};
+
 void allowExistingInstanceToActivate(const juce::String& applicationName);
 void bringWindowToFront(juce::TopLevelWindow& window);
 void styleLabel(juce::Label& label, const juce::Font& font, juce::Colour colour);
