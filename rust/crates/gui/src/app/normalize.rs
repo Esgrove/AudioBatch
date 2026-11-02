@@ -18,7 +18,6 @@ use gpui_kit::{Context, Entity, PromptLevel, SharedString, Task, Window};
 
 use super::analysis::ANALYSIS_POLL_INTERVAL;
 use super::{AppView, drain_events};
-use crate::menus::set_menus;
 use crate::normalization::{
     ALREADY_NORMALIZING, BLOCKED_BY_ANALYSIS, BLOCKED_BY_PROCESSING, NORMALIZATION_IN_PROGRESS, describe_target,
     normalization_options, set_target, target_range,
@@ -276,7 +275,7 @@ impl AppView {
     }
 
     /// Saves the target once the slider is released, and shows it in the menus.
-    fn store_normalize_target(&mut self, cx: &Context<Self>) {
+    fn store_normalize_target(&mut self, cx: &mut Context<Self>) {
         self.settings.save();
         self.refresh_normalize_menus(cx);
     }
@@ -297,11 +296,11 @@ impl AppView {
     }
 
     /// Puts the normalization target into the labels of the normalize menu items.
-    fn refresh_normalize_menus(&mut self, cx: &Context<Self>) {
+    fn refresh_normalize_menus(&mut self, cx: &mut Context<Self>) {
         let target = describe_target(&self.settings);
         if self.menu_state.normalize_target != target {
             self.menu_state.normalize_target = target;
-            set_menus(cx, &self.menu_state);
+            self.refresh_menus(cx);
         }
     }
 

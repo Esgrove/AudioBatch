@@ -34,6 +34,8 @@ use audiobatch_core::{AnalysisCoordinator, FileTags, NormalizeCoordinator};
 use audiobatch_playback::Player;
 use audiobatch_plugins::ProcessingCoordinator;
 use gpui_kit::base::ResizableState;
+#[cfg(target_os = "windows")]
+use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::component::table::TableState;
 use gpui_kit::{
@@ -69,6 +71,9 @@ const CONTENT_PADDING: f32 = 4.0;
 /// Height of the status bar at the bottom of the window.
 const STATUS_BAR_HEIGHT: f32 = 24.0;
 
+/// Height reserved for the in-window menu bar, including its bottom border.
+const MENU_BAR_HEIGHT: f32 = if cfg!(target_os = "windows") { 28.0 } else { 0.0 };
+
 /// Width of the outline around the results table.
 const TABLE_FRAME_BORDER: f32 = 1.0;
 
@@ -92,6 +97,8 @@ pub struct LaunchOptions {
 /// The root view of the main window.
 pub struct AppView {
     focus_handle: FocusHandle,
+    #[cfg(target_os = "windows")]
+    menu_bar: Entity<AppMenuBar>,
     table: Entity<TableState<ResultsDelegate>>,
     waveform: Entity<WaveformView>,
     zoom_slider: Entity<SliderState>,
@@ -228,11 +235,12 @@ impl AppView {
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        let player_poll_task = Self::spawn_player_poll(cx);
-        let plugin_tick_task = Self::spawn_plugin_tick(cx);
+        let (player_poll_task, plugin_tick_task) = (Self::spawn_player_poll(cx), Self::spawn_plugin_tick(cx));
 
         let mut view = Self {
             focus_handle,
+            #[cfg(target_os = "windows")]
+            menu_bar: AppMenuBar::new(cx),
             table,
             waveform,
             zoom_slider: sliders.zoom,
@@ -298,6 +306,13 @@ impl AppView {
         view
     }
 
+    /// Updates both the system menus and the Windows in-window menu bar.
+    fn refresh_menus(&self, cx: &mut Context<Self>) {
+        set_menus(cx, &self.menu_state);
+        #[cfg(target_os = "windows")]
+        self.menu_bar.update(cx, AppMenuBar::reload);
+    }
+
     /// Points the waveform playhead at the current player.
     fn connect_playhead(&self, cx: &mut Context<Self>) {
         let playhead = self
@@ -357,6 +372,6 @@ fn initial_menu_state(
 /// Returns the content width and the height left for the table and the preview in a window of the given size.
 fn content_size(viewport: Size<Pixels>) -> (f32, f32) {
     let width = CONTENT_PADDING.mul_add(-2.0, f32::from(viewport.width));
-    let height = CONTENT_PADDING.mul_add(-2.0, f32::from(viewport.height)) - STATUS_BAR_HEIGHT;
+    let height = CONTENT_PADDING.mul_add(-2.0, f32::from(viewport.height)) - STATUS_BAR_HEIGHT - MENU_BAR_HEIGHT;
     (width, height)
 }

@@ -15,7 +15,6 @@ use gpui_kit::{
 };
 
 use super::AppView;
-use crate::menus::set_menus;
 use crate::settings::GuiSettings;
 use crate::settings_window::{
     SETTINGS_HEIGHT, SETTINGS_TITLE, SETTINGS_WIDTH, SettingsEvent, SettingsSnapshot, SettingsView,
@@ -93,7 +92,7 @@ impl AppView {
     pub(super) fn toggle_preview_section(&mut self, cx: &mut Context<Self>) {
         self.preview_compact = !self.preview_compact;
         self.menu_state.preview_compact = self.preview_compact;
-        set_menus(cx, &self.menu_state);
+        self.refresh_menus(cx);
         cx.notify();
     }
 
@@ -200,7 +199,7 @@ impl AppView {
         self.menu_state.show_album_artwork = settings.show_album_artwork;
         self.menu_state.preview_plugin_chain = settings.preview_plugin_chain;
         self.menu_state.compensate_preview_latency = settings.compensate_preview_latency;
-        set_menus(cx, &self.menu_state);
+        self.refresh_menus(cx);
         let artwork_changed = settings.show_album_artwork != self.settings.show_album_artwork;
         self.settings = settings;
         self.settings.save();
