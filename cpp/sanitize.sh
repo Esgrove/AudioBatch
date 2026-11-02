@@ -103,6 +103,7 @@ cmake --build --preset "$PRESET" --target AudioBatchTests
 
 print_magenta "Running tests..."
 # The integration tier runs separately in the normal macOS and Windows builds.
-ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_CONFIG" -LE integration --output-on-failure --no-tests=error
+# Select the unit label so unbuilt integration targets' unlabelled discovery placeholders are excluded too.
+ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_CONFIG" -L unit --output-on-failure --no-tests=error
 
 print_green "Sanitizer run passed."

@@ -424,8 +424,5 @@ fi
 build_app
 
 if [ "$RUN_TESTS" = true ]; then
-    print_magenta "Building tests..."
-    cmake --build "$CMAKE_BUILD_DIR" --target AudioBatchTests --config "$BUILD_TYPE"
-    print_magenta "Running tests..."
-    ctest --test-dir "$CMAKE_BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure --no-tests=error
+    "$REPO/test.sh" --build-dir "$CMAKE_BUILD_DIR" --build-type "$BUILD_TYPE"
 fi

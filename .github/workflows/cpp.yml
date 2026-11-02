@@ -85,9 +85,7 @@ jobs:
           restore-keys: ${{ runner.os }}-${{ matrix.build-type }}-cmake-
 
       - name: Build
-        run: |
-          chmod +x build.sh
-          ./build.sh --build-type "$BUILD_TYPE"
+        run: ./build.sh --build-type "$BUILD_TYPE"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
@@ -95,29 +93,12 @@ jobs:
       - name: Build tests and run unit suites
         timeout-minutes: 20
         run: |
-          BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            BUILD_DIR="cmake-build-mac-$BUILD_TYPE_LOWER"
-          else
-            BUILD_DIR="cmake-build-windows-$BUILD_TYPE_LOWER"
-          fi
-          # Reuse the compilation cache that build.sh keeps inside the build directory.
-          export CCACHE_DIR="$PWD/$BUILD_DIR/ccache"
-          # build.sh configures without tests, so enable the test target explicitly.
-          cmake -S . -B "$BUILD_DIR" -DBUILD_TESTING=ON
-          cmake --build "$BUILD_DIR" --target AudioBatchTests AudioBatchIntegrationTests AudioBatchCli --config "$BUILD_TYPE"
-          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" -LE integration --output-on-failure --no-tests=error
+          ./test.sh --build-type "$BUILD_TYPE" --build-only
+          ./test.sh --build-type "$BUILD_TYPE" --unit --no-build
 
       - name: CLI contracts and nonvisual GUI integration
         timeout-minutes: 5
-        run: |
-          BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            BUILD_DIR="cmake-build-mac-$BUILD_TYPE_LOWER"
-          else
-            BUILD_DIR="cmake-build-windows-$BUILD_TYPE_LOWER"
-          fi
-          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" -L integration --output-on-failure --no-tests=error
+        run: ./test.sh --build-type "$BUILD_TYPE" --integration --no-build
 
       # CTest's integration label includes the shared executable CLI contracts and the nonvisual GUI workflows.
       - name: Upload integration failure diagnostics
@@ -200,25 +181,15 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
 
-      # clang-tidy only needs the compile database and the generated JUCE and binary data headers,
-      # so the application itself is not built.
-      - name: Configure CMake and generate headers
+      - name: Test shell script contracts
         run: |
-          cmake --preset macos-debug
-          ninja -C cmake-build-mac-debug \
-            AudioBatch_artefacts/JuceLibraryCode/JuceHeader.h \
-            AudioBatchCli_artefacts/JuceLibraryCode/JuceHeader.h \
-            AudioBatchTests_artefacts/JuceLibraryCode/JuceHeader.h \
-            AudioBatchIntegrationTests_artefacts/JuceLibraryCode/JuceHeader.h \
-            juce_binarydata_Assets/JuceLibraryCode/BinaryData.h
+          uv run --script ../tests/test_cpp_lint.py
+          uv run --script ../tests/test_cpp_test.py
 
-      # Only this step uses the Homebrew LLVM tools,
-      # so CMake above still configures with the Xcode toolchain like the build job.
-      - name: Run clang-tidy
-        run: |
-          LLVM_PREFIX="$(brew --prefix llvm)"
-          export PATH="$LLVM_PREFIX/bin:$PATH"
-          ./lint.sh --check
+      # --prepare refreshes the compile database and generated headers without compiling the applications.
+      # lint.sh selects Homebrew clang-tidy while CMake retains the build job's Apple toolchain.
+      - name: Prepare workspace and run clang-tidy
+        run: ./lint.sh --prepare --build-type Debug --check
 
   sanitize:
     # Runs the unit tests on macOS under AddressSanitizer and UndefinedBehaviorSanitizer,
@@ -278,30 +249,18 @@ jobs:
         uses: astral-sh/setup-uv@v10.3.2
 
       - name: Build harnesses
-        run: |
-          cmake --preset macos-fuzz
-          cmake --build --preset macos-fuzz
+        run: ./fuzz.sh --build-only
 
       # The harnesses are only in the compile database of the macos-fuzz preset, so the lint job skips them.
       - name: Run clang-tidy on the harnesses
-        run: |
-          LLVM_PREFIX="$(brew --prefix llvm)"
-          export PATH="$LLVM_PREFIX/bin:$PATH"
-          ./lint.sh --check --fuzz
+        run: ./lint.sh --check --fuzz
 
       - name: Replay corpus
-        run: ctest --test-dir cmake-build-mac-fuzz --output-on-failure --no-tests=error
+        run: ./fuzz.sh --no-build --replay
 
       # New inputs go to a scratch corpus, so the committed corpus stays as it is.
       - name: Fuzz
-        run: |
-          mkdir -p fuzz-artifacts
-          for fuzzer in SeratoTagFuzzer CliArgumentsFuzzer; do
-            mkdir -p "fuzz-scratch/$fuzzer"
-            "cmake-build-mac-fuzz/${fuzzer}_artefacts/RelWithDebInfo/$fuzzer" \
-              -max_total_time=60 -artifact_prefix="fuzz-artifacts/$fuzzer-" \
-              "fuzz-scratch/$fuzzer" "tests/fuzz/corpus/$fuzzer"
-          done
+        run: ./fuzz.sh --no-build --fuzz --seconds 60
 
       - name: Upload crashing inputs
         if: failure()
