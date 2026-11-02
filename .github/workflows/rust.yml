@@ -13,6 +13,7 @@ on:
       - "fixtures/**"
       - "rust/**"
       - "test-plugin/**"
+      - "tests/**"
       - "!**/*.md"
   pull_request:
     paths:
@@ -24,6 +25,7 @@ on:
       - "fixtures/**"
       - "rust/**"
       - "test-plugin/**"
+      - "tests/**"
       - "!**/*.md"
 
 # Cancel previous runs for PRs but not pushes to main
@@ -133,8 +135,15 @@ jobs:
 
       # Includes shared fixture checksums, generated input identities, and exact platform goldens.
       # Nextest builds the test targets, avoiding a separate all-targets build.
-      - name: Run tests
-        run: cargo nextest run --workspace --no-fail-fast --success-output final
+      - name: Run unit and service tests
+        run: cargo nextest run --workspace --no-fail-fast --success-output final -E 'not test(integration_tests::)'
+
+      - name: Nonvisual GUI integration workflows
+        timeout-minutes: 5
+        run: |
+          mkdir -p target/integration-artifacts
+          cargo nextest run -p audiobatch-gui -E 'test(integration_tests::)' --no-fail-fast \
+            --failure-output immediate-final 2>&1 | tee target/integration-artifacts/gui.log
 
       - name: Check distribution license notices
         if: runner.os == 'macOS'
@@ -149,21 +158,23 @@ jobs:
           fi
           cargo nextest run --release -p audiobatch-core "${options[@]}" --no-fail-fast
 
-      # Runs the CLI on the committed fixtures and checks the reported level and the exit codes,
-      # like the CLI smoke test of the C++ build.
-      - name: CLI smoke test
+      - name: CLI integration contracts
+        timeout-minutes: 5
         run: |
-          cargo run --quiet --bin audiobatch-rs -- --help
-          cargo run --quiet --bin audiobatch-rs -- ../fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
-          grep -- "-6.02" smoke-output.txt
-          set +e
-          cargo run --quiet --bin audiobatch-rs -- ../fixtures/broken.wav
-          EXIT_CODE=$?
-          set -e
-          if [ "$EXIT_CODE" -ne 2 ]; then
-            echo "Expected exit code 2 for a broken file, got $EXIT_CODE"
-            exit 1
+          cargo build --bin audiobatch-rs
+          CLI="$PWD/target/debug/audiobatch-rs"
+          if [ "$RUNNER_OS" = Windows ]; then
+            CLI="$CLI.exe"
           fi
+          uv run --script ../tests/cli_integration.py --cli "$CLI" --artifacts target/integration-artifacts/cli
+
+      - name: Upload integration failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-integration-${{ runner.os }}
+          path: rust/target/integration-artifacts
+          if-no-files-found: ignore
 
   coverage:
     runs-on: macos-latest
@@ -204,10 +215,15 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Run tests with coverage
-        run: cargo llvm-cov nextest --workspace --no-fail-fast --no-report
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Run tests and CLI subprocesses with coverage
+        timeout-minutes: 25
+        run: ./coverage.sh --lcov
 
       - name: Write coverage reports
+        if: always()
         run: |
           mkdir -p target/llvm-cov
           cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
@@ -220,10 +236,12 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage reports
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: rust-coverage
           path: |
             rust/target/llvm-cov/lcov.info
             rust/target/llvm-cov/html
+            rust/target/integration-artifacts
           if-no-files-found: error
