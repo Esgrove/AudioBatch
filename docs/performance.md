@@ -8,7 +8,8 @@ VST3 processing is closer, with the result depending on the C++ compiler and plu
 CLI and VST3 times are means with sample standard deviations.
 The C++ / Rust ratio divides the C++ mean by the Rust mean.
 Ratios above one favor Rust, and ratios below one favor C++.
-Measurements use warm filesystem caches and sequential runs without concurrent builds or tests.
+CLI and VST3 measurements use warm filesystem caches and sequential runs without concurrent builds or tests.
+The shared-cache checks below are short development measurements with their own stated limits.
 Different hardware, corpora, and platform decoders prevent an isolated operating-system comparison.
 
 ## macOS CLI
@@ -198,6 +199,100 @@ VST3 mono/stereo chains process the signal in place instead of copying through s
   This excludes decoding, construction, metadata, and unknown-length history growth.
 - A 60-second WAV profile attributes 85.6 percent of 729 analysis-worker samples to `BlockMeter::measure_planes`,
   and 8.0 percent to PCM decoding.
+
+## Shared-Cache Development Checks
+
+Measured November 2, 2026, on an Apple M3 Max with 16 logical CPUs and 64 GiB memory, running macOS 27.2.
+Rust 1.99.1 uses the optimized bench profile with native CPU targeting, LTO, and one code generation unit.
+These short checks are not the isolated CLI or VST3 comparisons above.
+Other workspace validation was running, so the timings are observations, not a release regression threshold.
+
+The `misc` benchmark stores 500 source identities with simulated ten-minute stereo histories and bounded previews.
+The source files are copies of the one-second WAV fixture, not 500 ten-minute recordings.
+The Rust-native case uses Rust provenance.
+The C++-provenance case relabels the same compatible measurements through the Rust cache API,
+so it isolates the foreign-hit read path rather than measuring C++ analysis or decoder differences.
+The optional C++ helper reads the original Rust-produced rows with the real C++ cache implementation.
+
+A direct release-executable run used ten Criterion samples with 0.5 seconds each for warmup and measurement.
+Point estimates and 95 percent confidence intervals were:
+
+- Rust-native first result on a new connection, 3.846 ms, interval 3.762 to 3.933 ms.
+- C++-provenance first result in Rust on a new connection, 3.732 ms, interval 3.667 to 3.811 ms.
+- Rust-native retained batch of 500 rows, 22.442 ms, interval 21.460 to 23.349 ms.
+- C++-provenance retained batch in Rust, 21.352 ms, interval 21.158 to 21.579 ms.
+- C++-provenance retained batch with an independent Rust gain writer, 24.028 ms, interval 23.734 to 24.341 ms.
+
+First-result timing includes opening SQLite, applying pragmas, validating the schema, checking the source identity,
+and loading one measurement with its histories.
+It excludes closing the connection, process startup, directory discovery, GUI result delivery, and rendering.
+Retained batches use an already-open connection and include allocation, validation, and release of the 500 loaded rows.
+An earlier short run observed 17.811 ms for native and 17.468 ms for foreign-provenance batches.
+Different background load and benchmark setup prevent interpreting the difference as a measured regression.
+
+The real C++ helper accepted all 10,000 reads across 20 passes, averaging 347.105 ms per 500 rows.
+An earlier run averaged 302.071 ms.
+This helper is a Debug build and releases one record at a time, unlike the optimized retained Rust batch.
+Its result validates warm Rust-to-C++ reuse, it is not a fair cross-build speed comparison.
+
+The independent gain writer completed 5583 edits in 1.475 seconds with a maximum worker write latency of 4.998 ms.
+The WAL grew from 4,177,712 to 4,803,952 bytes during this contention stage.
+An earlier run observed an 18.002 ms maximum and WAL growth from 4,177,712 to 5,574,392 bytes.
+These are sampled worker latencies and file sizes, not upper bounds or GUI input-to-persistence latency.
+
+### Background Filling And Retention
+
+A separate probe clears 16 previews, then fills them serially with the production waveform builder and cache writer.
+It uses synthetic constant samples for ten-minute stereo timelines, without source decoding or metadata reads.
+An independent foreground loop requests a wakeup two milliseconds after each completed probe,
+then measures a cache read and explicit gain write separately on the same connection mutex.
+This deliberately exercises contention, but it is not the GUI executor or its asynchronous gain writer.
+
+The worker filled all 16 previews in 98.351 ms.
+Across 64 idle and 37 overlapping probes, respectively:
+
+- Synthetic wake delay p95 was 0.533 and 0.564 ms, with maxima of 0.938 and 0.652 ms.
+- Measurement-read p95 was 0.127 and 0.325 ms, with maxima of 0.254 and 0.558 ms.
+- Gain-write p95 was 0.668 and 0.154 ms, with maxima of 1.012 and 0.161 ms.
+
+The independent timing avoids inferring foreground responsiveness from the worker's completion time.
+The short sequential baseline and fill stages have different scheduling and filesystem conditions,
+so lower gain latency during filling does not establish a speedup.
+No interactive playback, selection, scrolling, cancellation, or GUI responsiveness was verified.
+No GUI tests or screenshots were used, and Windows shared-cache performance was unavailable.
+
+The retained 500-row batch contains 18,000,000 bytes of required loudness and overload payloads, plus row overhead.
+All loaded rows assert that their waveform is absent, excluding 6,476,000 serialized native-preview bytes.
+Each generated background preview also passes a weak-reference release check immediately after persistence.
+This verifies the benchmark's measurement-only read and release paths, not total GUI retention under every interaction.
+Required histories are still retained for every loaded row, they are not claimed to be lazy or constant-memory.
+
+Process-only `/usr/bin/time -l` reported 64,225,280 bytes maximum resident set size, about 61.3 MiB,
+and 57,311,760 bytes peak memory footprint, about 54.7 MiB.
+The command ran the already-built Rust benchmark executable without the optional C++ subprocess.
+It includes fixture setup, SQLite, Criterion, and all benchmark functions' setup, not only the retained batch.
+The earlier 1,137,197,056-byte maximum from timing `cargo bench` included compilation,
+and must not be reported as cache or application process memory.
+
+### Reproduction
+
+Run from `rust/` and use the executable path printed by the build, its hash can change.
+Build the C++ test helper separately before the interoperability command.
+All cache databases and copied inputs are temporary, neither application's user cache is opened.
+Avoid overlapping validation jobs when collecting comparable timing results.
+
+```shell
+cargo clippy -p audiobatch-core --bench misc -- -D warnings
+rustfmt --edition 2024 --check crates/core/benches/misc.rs
+cargo bench -p audiobatch-core --bench misc --no-run
+bench=./target/release/deps/misc-9423a221e819b0f6
+# No Cargo or C++ child process is included in this memory measurement.
+env -u AUDIOBATCH_CPP_TESTS /usr/bin/time -l "$bench" --bench cache/shared \
+  --sample-size 10 --measurement-time 0.5 --warm-up-time 0.5 --noplot
+# Runs the real Rust-to-C++ reader before the Rust benchmarks.
+AUDIOBATCH_CPP_TESTS="$PWD/../cpp/cmake-build-mac-debug/AudioBatchTests_artefacts/Debug/AudioBatchTests" \
+  "$bench" --bench cache/shared --sample-size 10 --measurement-time 0.5 --warm-up-time 0.5 --noplot
+```
 
 ## Accuracy And Validation
 
