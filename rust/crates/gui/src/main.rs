@@ -93,6 +93,10 @@ fn main() {
             return;
         }
     };
+    if let Err(error) = audiobatch_core::storage::StoragePaths::from_environment() {
+        eprintln!("{error}");
+        std::process::exit(2);
+    }
     // Logging also writes each message to stderr when it is available.
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
         let error = anyhow::Error::from(error);

@@ -35,6 +35,11 @@ fn main() -> ExitCode {
         return ExitCode::from(u8::try_from(run_scan_worker()).unwrap_or(EXIT_USAGE_ERROR));
     }
 
+    if let Err(error) = audiobatch_core::storage::StoragePaths::from_environment() {
+        eprintln!("{error}");
+        return ExitCode::from(EXIT_USAGE_ERROR);
+    }
+
     let args = match CliArgs::try_parse() {
         Ok(args) => args,
         Err(error) if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) => {

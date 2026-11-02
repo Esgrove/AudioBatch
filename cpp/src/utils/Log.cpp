@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 
 #if !JUCE_WINDOWS
 #include <string_view>
@@ -130,9 +132,28 @@ void installCrashLogging()
 /// which defaults to the application name.
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName)
 {
+    return createDefaultLogger(appName, logName, getDataRootOverride());
+}
+
+/// Opens a logger beneath explicit isolated storage or preserves JUCE's native unset location.
+std::unique_ptr<juce::FileLogger> createDefaultLogger(
+    const juce::String& appName,
+    const juce::String& logName,
+    const std::optional<juce::File>& dataRoot
+)
+{
     /// Size in bytes the log file is trimmed to when it is opened.
     constexpr int maximumInitialLogSize = 32'768;
     const auto name = logName.isNotEmpty() ? logName : appName;
+    if (dataRoot) {
+        const auto directory = dataRoot->getChildFile("AudioBatch/logs");
+        if (const auto result = directory.createDirectory(); result.failed()) {
+            throw std::runtime_error(result.getErrorMessage().toStdString());
+        }
+        return std::make_unique<juce::FileLogger>(
+            directory.getChildFile(format("{}.log", name)), name, maximumInitialLogSize
+        );
+    }
     return std::unique_ptr<juce::FileLogger>(
         juce::FileLogger::createDefaultAppLogger(appName, format("{}.log", name), name, maximumInitialLogSize)
     );

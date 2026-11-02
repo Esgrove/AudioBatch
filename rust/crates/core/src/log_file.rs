@@ -31,8 +31,6 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt as _;
 
-use crate::cache::data_directory;
-
 /// Target of the messages the caller already showed to the user, which only go to the log file.
 pub const FILE_ONLY_TARGET: &str = "audiobatch::file_only";
 
@@ -182,23 +180,10 @@ pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf, Log
 /// and the `logs` folder in the data directory elsewhere.
 #[must_use]
 pub(crate) fn log_directory() -> PathBuf {
-    platform_log_directory().unwrap_or_else(|| data_directory().join("logs"))
-}
-
-/// Returns the macOS log folder of the Rust version.
-#[cfg(target_os = "macos")]
-fn platform_log_directory() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| {
-        home.join("Library")
-            .join("Logs")
-            .join(crate::cache::DATA_DIRECTORY_NAME)
-    })
-}
-
-/// Returns nothing, since other platforms keep the logs in the data directory.
-#[cfg(not(target_os = "macos"))]
-const fn platform_log_directory() -> Option<PathBuf> {
-    None
+    crate::storage::StoragePaths::from_environment()
+        .expect("valid AUDIOBATCH_DATA_ROOT")
+        .logs()
+        .to_path_buf()
 }
 
 /// Returns the most detailed level kept for the `AudioBatch` crates.

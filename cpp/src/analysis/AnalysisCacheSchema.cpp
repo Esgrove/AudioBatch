@@ -6,10 +6,10 @@
 #include "analysis/AnalysisCacheSql.h"
 #include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
+#include "utils/AppInfo.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
-#include "utils/version.h"
 
 #include <algorithm>
 #include <array>
@@ -30,12 +30,7 @@ struct ColumnMigration {
 }  // namespace
 
 /// Resolves the default cache database location.
-AnalysisCache::AnalysisCache()
-{
-    const auto appDataDirectory
-        = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(version::APP_NAME);
-    databaseFile = appDataDirectory.getChildFile("analysis.db");
-}
+AnalysisCache::AnalysisCache() : databaseFile(utils::defaultAnalysisDatabaseFile()) {}
 
 /// Uses the given SQLite database file instead of the default location, for example in tests.
 AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) {}

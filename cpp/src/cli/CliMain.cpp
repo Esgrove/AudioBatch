@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <exception>
 #include <span>
 #include <variant>
 
@@ -143,5 +144,11 @@ int runCliMain(const std::span<char*> argv)
 /// Entry point for the headless batch analysis executable.
 int main(const int argc, char* argv[])
 {
-    return audiobatch::runCliMain(std::span(argv, static_cast<std::size_t>(argc)));
+    try {
+        return audiobatch::runCliMain(std::span(argv, static_cast<std::size_t>(argc)));
+    } catch (const std::exception& error) {
+        juce::Logger::setCurrentLogger(nullptr);
+        audiobatch::console::printError(error.what());
+        return 1;
+    }
 }

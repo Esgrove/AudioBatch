@@ -10,6 +10,9 @@
 
 #include "plugins/PluginScanner.h"
 
+#ifndef AUDIOBATCH_TESTING
+#include "utils/AppInfo.h"
+#endif
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include <condition_variable>
@@ -657,7 +660,13 @@ void OutOfProcessPluginScanner::scanFinished()
 
 /// Creates the lock without taking it.
 /// Every process that uses the same name shares the lock, and tests pass their own name to stay apart from the app.
-PluginScanLock::PluginScanLock(const juce::String& lockName) : lock(lockName) {}
+PluginScanLock::PluginScanLock(const juce::String& lockName) :
+#ifdef AUDIOBATCH_TESTING
+    lock(lockName == pluginScanLockName ? utils::format("{}-tests", lockName) : lockName)
+#else
+    lock(utils::scopedPluginScanLockName(lockName))
+#endif
+{}
 
 /// Releases the lock if it is held.
 PluginScanLock::~PluginScanLock()

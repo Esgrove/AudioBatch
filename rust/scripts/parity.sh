@@ -143,6 +143,8 @@ RUST_CLI="$RUST_DIR/target/$PROFILE/$(executable_name audiobatch-rs)"
 
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
+# Parity runs never populate the user's shared cache, logs, or plugin data.
+export AUDIOBATCH_DATA_ROOT="$WORK_DIR/storage"
 
 echo "C++ CLI:  $CPP_CLI"
 echo "Rust CLI: $RUST_CLI"
