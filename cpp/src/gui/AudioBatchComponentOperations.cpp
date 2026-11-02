@@ -372,6 +372,9 @@ void AudioBatchComponent::normalizeRecords(const std::vector<AudioAnalysisRecord
 
     auto normalizationOptions = previewWorkspace.normalizationTargetControl.getOptions();
     normalizationOptions.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
+    if (configuration.disposeFile) {
+        normalizationOptions.disposeFile = configuration.disposeFile;
+    }
     enrichment.beginForeground();
     if (backgroundWork.startNormalization(recordsToNormalize, normalizationOptions) <= 0) {
         resumePreviewEnrichment();
@@ -588,6 +591,9 @@ void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>&
         settings.normalizeBeforePlugin = previewWorkspace.normalizationTargetControl.getOptions();
     }
     settings.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
+    if (configuration.disposeFile) {
+        settings.disposeFile = configuration.disposeFile;
+    }
 
     const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     statusBar.setStatusText("Loading plugins...");

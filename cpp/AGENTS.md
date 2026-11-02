@@ -430,12 +430,23 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 
 ## Testing
 
-- Only add lightweight, focused unit tests that complete in under one second.
-  Do not add GUI tests, screenshot comparisons, or rendering-based assertions.
+- Keep unit tests lightweight and focused, targeting under one second per case.
+  Put executable CLI contracts and nonvisual production-view workflows in the separately labelled integration tier.
+  Integration tests may take longer, but must have bounded waits and process timeouts.
+  Use isolated application storage and copied fixtures,
+  with no system trash, physical audio devices, or installed plugins.
+  Do not add screenshot comparisons, pixel assertions, or desktop automation.
+  GUI integration tests prove application composition and event delivery, not packaged-app or native OS behavior.
 - Build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
   or `ctest --test-dir cmake-build-windows-debug --build-config Debug --output-on-failure` on Windows.
   Run the `AudioBatchTests` executable directly for the full test log.
   CTest's `-R` filters suite names, and the executable accepts GoogleTest's `--gtest_filter`.
+  Build `AudioBatchIntegrationTests` and `AudioBatchCli` to run the separate integration tier with `ctest -L integration`.
+  Use `ctest -LE integration` for only the original suites.
+  The CLI contracts require uv and the shared `../tests/cli_integration.py` suite.
+  Only test targets define `AUDIOBATCH_TESTING`, the equivalent of Rust's `cfg(test)` for test-only setup and access.
+  Their normal main-view constructor defaults to owned unique scratch storage, source deletion, and no audio hardware.
+  Production targets retain native defaults, and the CLI suite supplies its storage override automatically.
 - Add tests for new behaviour in the shared core and the CLI parsing.
   Prefer the committed fixtures over generating audio in a test.
 - A successful conversion of a non-AIFF source moves the source to the system trash.

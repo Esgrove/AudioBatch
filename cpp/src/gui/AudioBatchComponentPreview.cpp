@@ -223,7 +223,9 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
 /// Persists the canonical preferences and updates check marks without generating recursive control callbacks.
 void AudioBatchComponent::synchronizePreviewPreferences()
 {
-    audioSettingsComponent.setPreferences(previewPreferences);
+    if (audioSettingsComponent != nullptr) {
+        audioSettingsComponent->setPreferences(previewPreferences);
+    }
     previewWorkspace.previewChainToggle.setToggleState(
         previewPreferences.pluginChainEnabled, juce::dontSendNotification
     );

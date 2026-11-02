@@ -9,3 +9,6 @@ InheritParentConfig: true
 Checks: >
   -readability-magic-numbers,
   -clang-analyzer-cplusplus.NewDeleteLeaks
+# GoogleTest assertions expand into control flow unrelated to the workflow's own complexity.
+CheckOptions:
+  readability-function-cognitive-complexity.IgnoreMacros: true

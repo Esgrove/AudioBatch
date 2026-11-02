@@ -508,81 +508,80 @@ set(AUDIOBATCH_CLI_SOURCES
 )
 # cmake-format: on
 
+set(AUDIOBATCH_GUI_SOURCES
+    "src/gui/ArtworkLoader.cpp"
+    "src/gui/ArtworkLoader.h"
+    "src/gui/AudioBatchComponent.cpp"
+    "src/gui/AudioBatchComponent.h"
+    "src/gui/AudioBatchComponentActions.cpp"
+    "src/gui/AudioBatchComponentConstants.h"
+    "src/gui/AudioBatchComponentLayout.cpp"
+    "src/gui/AudioBatchComponentOperations.cpp"
+    "src/gui/AudioBatchComponentPreview.cpp"
+    "src/gui/AudioBatchComponentRoots.cpp"
+    "src/gui/AudioBatchComponentState.h"
+    "src/gui/AudioFileTableModel.cpp"
+    "src/gui/AudioFileTableModel.h"
+    "src/gui/AudioPreviewPlayer.cpp"
+    "src/gui/AudioPreviewPlayer.h"
+    "src/gui/BackgroundWorkController.cpp"
+    "src/gui/BackgroundWorkController.h"
+    "src/gui/components/AudioInfoPanel.cpp"
+    "src/gui/components/AudioInfoPanel.h"
+    "src/gui/components/AudioSettingsComponent.cpp"
+    "src/gui/components/AudioSettingsComponent.h"
+    "src/gui/components/CustomLookAndFeel.cpp"
+    "src/gui/components/CustomLookAndFeel.h"
+    "src/gui/components/IntervalStepSlider.h"
+    "src/gui/components/NormalizationTargetControl.cpp"
+    "src/gui/components/NormalizationTargetControl.h"
+    "src/gui/components/PluginChainEditor.cpp"
+    "src/gui/components/PluginChainEditor.h"
+    "src/gui/components/PreviewWorkspace.cpp"
+    "src/gui/components/PreviewWorkspace.h"
+    "src/gui/components/StatusBar.cpp"
+    "src/gui/components/StatusBar.h"
+    "src/gui/components/ThumbnailComponent.cpp"
+    "src/gui/components/ThumbnailComponent.h"
+    "src/gui/FileActivityTracker.cpp"
+    "src/gui/FileActivityTracker.h"
+    "src/gui/GuiLayout.h"
+    "src/gui/LiveChain.cpp"
+    "src/gui/LiveChain.h"
+    "src/gui/LiveChainPreview.cpp"
+    "src/gui/LiveChainPresets.cpp"
+    "src/gui/LiveChainWindows.cpp"
+    "src/gui/PreviewController.cpp"
+    "src/gui/PreviewController.h"
+    "src/gui/PreviewEnrichmentScheduler.cpp"
+    "src/gui/PreviewEnrichmentScheduler.h"
+    "src/gui/NativeWaveformBuilder.cpp"
+    "src/gui/NativeWaveformBuilder.h"
+    "src/gui/ResultsModel.cpp"
+    "src/gui/ResultsModel.h"
+    "src/gui/ResultsSorting.cpp"
+    "src/gui/ResultsSorting.h"
+    "src/plugins/PluginLibrary.cpp"
+    "src/plugins/PluginLibrary.h"
+    "src/plugins/PluginPreviewSource.cpp"
+    "src/plugins/PluginPreviewSource.h"
+    "src/plugins/PluginChainPreparation.cpp"
+    "src/plugins/PluginChainPreparation.h"
+    "src/plugins/PluginChainPresets.cpp"
+    "src/plugins/PluginChainPresets.h"
+    "src/plugins/PluginProcessing.cpp"
+    "src/plugins/PluginProcessing.h"
+    "src/plugins/PluginProcessingCoordinator.cpp"
+    "src/plugins/PluginProcessingCoordinator.h"
+    "src/serato/SeratoPreviewLoader.cpp"
+    "src/serato/SeratoPreviewLoader.h"
+    "src/serato/SeratoWaveformColouring.cpp"
+    "src/serato/SeratoWaveformColouring.h"
+)
+
 target_sources(
-    AudioBatch
-    PRIVATE
-        ${AUDIOBATCH_CORE_SOURCES}
-        "src/gui/ArtworkLoader.cpp"
-        "src/gui/ArtworkLoader.h"
-        "src/gui/AudioBatchComponent.cpp"
-        "src/gui/AudioBatchComponent.h"
-        "src/gui/AudioBatchComponentActions.cpp"
-        "src/gui/AudioBatchComponentConstants.h"
-        "src/gui/AudioBatchComponentLayout.cpp"
-        "src/gui/AudioBatchComponentOperations.cpp"
-        "src/gui/AudioBatchComponentPreview.cpp"
-        "src/gui/AudioBatchComponentRoots.cpp"
-        "src/gui/AudioBatchComponentState.h"
-        "src/gui/AudioFileTableModel.cpp"
-        "src/gui/AudioFileTableModel.h"
-        "src/gui/AudioPreviewPlayer.cpp"
-        "src/gui/AudioPreviewPlayer.h"
-        "src/gui/BackgroundWorkController.cpp"
-        "src/gui/BackgroundWorkController.h"
-        "src/gui/components/AudioInfoPanel.cpp"
-        "src/gui/components/AudioInfoPanel.h"
-        "src/gui/components/AudioSettingsComponent.cpp"
-        "src/gui/components/AudioSettingsComponent.h"
-        "src/gui/components/CustomLookAndFeel.cpp"
-        "src/gui/components/CustomLookAndFeel.h"
-        "src/gui/components/IntervalStepSlider.h"
-        "src/gui/components/NormalizationTargetControl.cpp"
-        "src/gui/components/NormalizationTargetControl.h"
-        "src/gui/components/PluginChainEditor.cpp"
-        "src/gui/components/PluginChainEditor.h"
-        "src/gui/components/PreviewWorkspace.cpp"
-        "src/gui/components/PreviewWorkspace.h"
-        "src/gui/components/StatusBar.cpp"
-        "src/gui/components/StatusBar.h"
-        "src/gui/components/ThumbnailComponent.cpp"
-        "src/gui/components/ThumbnailComponent.h"
-        "src/gui/FileActivityTracker.cpp"
-        "src/gui/FileActivityTracker.h"
-        "src/gui/GuiLayout.h"
-        "src/gui/LiveChain.cpp"
-        "src/gui/LiveChain.h"
-        "src/gui/LiveChainPreview.cpp"
-        "src/gui/LiveChainPresets.cpp"
-        "src/gui/LiveChainWindows.cpp"
-        "src/gui/Main.cpp"
-        "src/gui/MainWindow.cpp"
-        "src/gui/MainWindow.h"
-        "src/gui/PreviewController.cpp"
-        "src/gui/PreviewController.h"
-        "src/gui/PreviewEnrichmentScheduler.cpp"
-        "src/gui/PreviewEnrichmentScheduler.h"
-        "src/gui/NativeWaveformBuilder.cpp"
-        "src/gui/NativeWaveformBuilder.h"
-        "src/gui/ResultsModel.cpp"
-        "src/gui/ResultsModel.h"
-        "src/gui/ResultsSorting.cpp"
-        "src/gui/ResultsSorting.h"
-        "src/plugins/PluginLibrary.cpp"
-        "src/plugins/PluginLibrary.h"
-        "src/plugins/PluginPreviewSource.cpp"
-        "src/plugins/PluginPreviewSource.h"
-        "src/plugins/PluginChainPreparation.cpp"
-        "src/plugins/PluginChainPreparation.h"
-        "src/plugins/PluginChainPresets.cpp"
-        "src/plugins/PluginChainPresets.h"
-        "src/plugins/PluginProcessing.cpp"
-        "src/plugins/PluginProcessing.h"
-        "src/plugins/PluginProcessingCoordinator.cpp"
-        "src/plugins/PluginProcessingCoordinator.h"
-        "src/serato/SeratoPreviewLoader.cpp"
-        "src/serato/SeratoPreviewLoader.h"
-        "src/serato/SeratoWaveformColouring.cpp"
-        "src/serato/SeratoWaveformColouring.h"
+    AudioBatch PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_GUI_SOURCES} "src/gui/Main.cpp" "src/gui/MainWindow.cpp"
+                       "src/gui/MainWindow.h"
 )
 
 target_sources(AudioBatchCli PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_CLI_SOURCES} "src/cli/CliMain.cpp")
@@ -931,8 +930,10 @@ if(BUILD_TESTING)
     target_link_libraries(AudioBatchTests PRIVATE Assets)
     target_compile_definitions(
         AudioBatchTests
-        PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS} AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
-                AUDIOBATCH_TEST_VST3_PATH="${AUDIOBATCH_TEST_PLUGIN_BUNDLE}"
+        PRIVATE
+            ${AUDIOBATCH_CONSOLE_DEFINITIONS} AUDIOBATCH_TESTING=1
+            AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
+            AUDIOBATCH_TEST_VST3_PATH="${AUDIOBATCH_TEST_PLUGIN_BUNDLE}"
     )
     add_dependencies(AudioBatchTests AudioBatchTestPlugin_VST3)
     set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
@@ -984,9 +985,70 @@ if(BUILD_TESTING)
     gtest_discover_tests(
         AudioBatchTests DISCOVERY_TIMEOUT 60
         PROPERTIES RUN_SERIAL TRUE
-        TIMEOUT 300
+        TIMEOUT 300 LABELS unit
     )
-    audiobatch_set_source_warnings(AudioBatchTests)
+    juce_add_console_app(
+        AudioBatchIntegrationTests
+        PRODUCT_NAME "AudioBatchIntegrationTests"
+        VERSION ${APP_BUILD_VERSION}
+    )
+    juce_generate_juce_header(AudioBatchIntegrationTests)
+    target_sources(
+        AudioBatchIntegrationTests PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_GUI_SOURCES}
+                                           "tests/IntegrationMain.cpp"
+    )
+    target_include_directories(
+        AudioBatchIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}"
+    )
+    target_compile_definitions(
+        AudioBatchIntegrationTests
+        PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS} AUDIOBATCH_TESTING=1 JUCE_MODAL_LOOPS_PERMITTED=1
+                AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
+    )
+    set_target_properties(AudioBatchIntegrationTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
+    target_link_libraries(
+        AudioBatchIntegrationTests
+        PRIVATE
+            Assets
+            GTest::gtest
+            ${AUDIOBATCH_SQLITE_TARGET}
+            ebur128
+            fmt::fmt
+            tag
+            juce::juce_audio_utils
+            juce::juce_audio_processors
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+    if(APPLE)
+        target_link_libraries(
+            AudioBatchIntegrationTests PRIVATE "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>"
+                                               "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+        )
+    endif()
+    if(AUDIOBATCH_ASAN_RUNTIME)
+        add_custom_command(
+            TARGET AudioBatchIntegrationTests
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${AUDIOBATCH_ASAN_RUNTIME}
+                    $<TARGET_FILE_DIR:AudioBatchIntegrationTests>
+            VERBATIM
+        )
+    endif()
+    gtest_discover_tests(
+        AudioBatchIntegrationTests DISCOVERY_TIMEOUT 60
+        PROPERTIES LABELS integration
+        TIMEOUT 60
+    )
+
+    find_program(AUDIOBATCH_UV_EXECUTABLE uv REQUIRED)
+    add_test(
+        NAME AudioBatchCliIntegration
+        COMMAND "${AUDIOBATCH_UV_EXECUTABLE}" run --script "${CMAKE_SOURCE_DIR}/../tests/cli_integration.py" --cli
+                $<TARGET_FILE:AudioBatchCli> --artifacts "${CMAKE_BINARY_DIR}/integration-artifacts/cli"
+    )
+    set_tests_properties(AudioBatchCliIntegration PROPERTIES LABELS integration TIMEOUT 240)
+    audiobatch_set_source_warnings(AudioBatchTests AudioBatchIntegrationTests)
 endif()
 
 # libFuzzer harnesses for the parsers that read untrusted input, built by the macos-fuzz preset.
@@ -1045,7 +1107,7 @@ endif()
 audiobatch_set_source_warnings(AudioBatch AudioBatchCli)
 
 # Mirror the src subdirectories as folders in the Visual Studio and Xcode projects.
-foreach(target IN ITEMS AudioBatch AudioBatchCli AudioBatchTests)
+foreach(target IN ITEMS AudioBatch AudioBatchCli AudioBatchTests AudioBatchIntegrationTests)
     if(TARGET ${target})
         get_target_property(target_sources ${target} SOURCES)
         list(FILTER target_sources INCLUDE REGEX "^src/")

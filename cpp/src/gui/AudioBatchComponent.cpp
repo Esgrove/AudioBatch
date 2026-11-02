@@ -29,11 +29,30 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#ifdef AUDIOBATCH_TESTING
+#include <stdexcept>
+#endif
 #include <utility>
 #include <vector>
 
 namespace audiobatch
 {
+/// Chooses production defaults normally, or unique lifetime-owned storage and safe capabilities in test targets.
+AudioBatchComponentConfig::AudioBatchComponentConfig()
+{
+#ifdef AUDIOBATCH_TESTING
+    testDirectory = std::make_shared<juce::TemporaryFile>(".audiobatch-test");
+    const auto root = testDirectory->getFile();
+    if (root.createDirectory().failed()) {
+        throw std::runtime_error("Could not create view test storage");
+    }
+    cacheDatabaseFile = root.getChildFile("AudioBatch/analysis.db");
+    settingsOptions = utils::createApplicationSettingsOptions(root);
+    disposeFile = utils::deleteFile;
+    allowAudioHardware = false;
+#endif
+}
+
 /// Creates the results table header, model, and selection behavior.
 void AudioBatchComponent::configureResultsTable()
 {
@@ -132,9 +151,6 @@ void AudioBatchComponent::configureProcessingControls()
             nullptr
         );
     });
-    audioSettingsComponent.setPreferencesChangedCallback([this](const AudioPreviewPreferences& preferences) {
-        setPreviewPreferences(preferences);
-    });
     setPreviewPreferences(loadAudioPreviewPreferences(*pluginAppProperties.getUserSettings()));
 
     previewWorkspace.pluginButton.onClick = [this] { liveChain->showMenu(previewWorkspace.pluginButton); };
@@ -198,7 +214,11 @@ ArtworkLoader::Completion AudioBatchComponent::createArtworkCompletion()
 }
 
 /// Creates the UI, opens the analysis cache, and starts the initial scan.
-AudioBatchComponent::AudioBatchComponent() :
+AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
+    configuration(std::move(config)),
+    analysisCache(
+        configuration.cacheDatabaseFile ? *configuration.cacheDatabaseFile : utils::defaultAnalysisDatabaseFile()
+    ),
     fileTableModel(
         analysisResults,
         [this](const int row) { handleSelectionChanged(row); },
@@ -223,7 +243,9 @@ AudioBatchComponent::AudioBatchComponent() :
     logStartupCheckpoint("constructor begin");
 
     // The plugin chain is created first, so every control and callback configured below can rely on it.
-    pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
+    pluginAppProperties.setStorageParameters(
+        configuration.settingsOptions ? *configuration.settingsOptions : utils::createApplicationSettingsOptions()
+    );
     pluginLibrary = std::make_unique<PluginLibrary>(pluginAppProperties);
     liveChain = std::make_unique<LiveChain>(
         *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
@@ -286,7 +308,9 @@ AudioBatchComponent::~AudioBatchComponent()
     previewWorkspace.thumbnail.setMouseWheelZoomCallback({});
     previewWorkspace.thumbnail.setMouseWheelGainCallback({});
     previewWorkspace.thumbnail.setThumbnailFullyLoadedCallback({});
-    audioSettingsComponent.setPreferencesChangedCallback({});
+    if (audioSettingsComponent != nullptr) {
+        audioSettingsComponent->setPreferencesChangedCallback({});
+    }
     resultsTable.setModel(nullptr);
 
     if (childWindows.size() != 0) {
@@ -373,10 +397,20 @@ bool AudioBatchComponent::hasAnyRecords() const
 /// Opens the audio-device settings dialog.
 void AudioBatchComponent::showAudioSettingsWindow()
 {
+    if (!configuration.allowAudioHardware) {
+        return;
+    }
+    if (audioSettingsComponent == nullptr) {
+        audioSettingsComponent = std::make_unique<AudioSettingsComponent>(previewPlayer.getDeviceManager());
+        audioSettingsComponent->setPreferences(previewPreferences);
+        audioSettingsComponent->setPreferencesChangedCallback([this](const AudioPreviewPreferences& preferences) {
+            setPreviewPreferences(preferences);
+        });
+    }
     previewPlayer.setDeviceSettingsActive(true);
     openDialogWindow(
         settingsWindow,
-        &audioSettingsComponent,
+        audioSettingsComponent.get(),
         "Audio Settings",
         layout::audioSettings::preferredWidth,
         layout::audioSettings::preferredHeight

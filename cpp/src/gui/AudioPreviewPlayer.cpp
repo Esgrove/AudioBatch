@@ -139,7 +139,7 @@ juce::String openAlternativeAsioOutput(
 }  // namespace
 
 /// Creates a device-free player. The output device opens only when playback starts.
-AudioPreviewPlayer::AudioPreviewPlayer()
+AudioPreviewPlayer::AudioPreviewPlayer(const bool allowAudioHardware) : audioHardwareAllowed(allowAudioHardware)
 {
     utils::registerAudioFormats(formatManager);
     readAheadThread.startThread(juce::Thread::Priority::high);
@@ -163,6 +163,9 @@ AudioPreviewPlayer::~AudioPreviewPlayer()
 /// Initial startup alone never opens hardware or requests recording permission.
 bool AudioPreviewPlayer::openAudioDevice()
 {
+    if (!audioHardwareAllowed) {
+        return false;
+    }
     deviceOpenFailed = false;
     if (deviceManager.getCurrentAudioDevice() != nullptr) {
         return true;
