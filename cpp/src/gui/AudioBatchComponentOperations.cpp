@@ -319,11 +319,19 @@ void AudioBatchComponent::normalizeAllRecords()
     );
     const SafePointer safeThis(this);
     juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::WarningIcon, "Normalize All Files", message, "Normalize", "Cancel", this
-        ),
+        juce::MessageBoxOptions {}
+            .withIconType(juce::MessageBoxIconType::WarningIcon)
+            .withTitle("Normalize All Files")
+            .withMessage(message)
+            .withButton(juce::MessageBoxButtonOptions {"Normalize", utils::DIALOG_RESULT_OK}.withPreferredAction())
+            .withButton(
+                juce::MessageBoxButtonOptions {"Cancel", utils::DIALOG_RESULT_CANCEL}.withRole(
+                    juce::MessageBoxButtonRole::cancel
+                )
+            )
+            .withAssociatedComponent(this),
         [safeThis, confirmedRecords = std::move(records)](const int result) {
-            if (safeThis != nullptr && result == 1) {
+            if (safeThis != nullptr && result == utils::DIALOG_RESULT_OK) {
                 safeThis->normalizeRecords(confirmedRecords);
             }
         }
@@ -556,11 +564,19 @@ void AudioBatchComponent::processAllRecords()
     );
     const SafePointer safeThis(this);
     juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::WarningIcon, "Process All Files", message, "Process", "Cancel", this
-        ),
+        juce::MessageBoxOptions {}
+            .withIconType(juce::MessageBoxIconType::WarningIcon)
+            .withTitle("Process All Files")
+            .withMessage(message)
+            .withButton(juce::MessageBoxButtonOptions {"Process", utils::DIALOG_RESULT_OK}.withPreferredAction())
+            .withButton(
+                juce::MessageBoxButtonOptions {"Cancel", utils::DIALOG_RESULT_CANCEL}.withRole(
+                    juce::MessageBoxButtonRole::cancel
+                )
+            )
+            .withAssociatedComponent(this),
         [safeThis, confirmedRecords = std::move(records)](const int result) {
-            if (safeThis != nullptr && result == 1) {
+            if (safeThis != nullptr && result == utils::DIALOG_RESULT_OK) {
                 safeThis->processRecords(confirmedRecords);
             }
         }

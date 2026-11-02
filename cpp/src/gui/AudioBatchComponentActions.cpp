@@ -10,6 +10,7 @@
 #include "gui/components/AudioInfoPanel.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/FileUtils.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include <unordered_set>
@@ -372,11 +373,19 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
 
     const auto safeThis = SafePointer(this);
     juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::WarningIcon, "Move to Trash", message, "Move to Trash", "Cancel", this
-        ),
+        juce::MessageBoxOptions {}
+            .withIconType(juce::MessageBoxIconType::WarningIcon)
+            .withTitle("Move to Trash")
+            .withMessage(message)
+            .withButton(juce::MessageBoxButtonOptions {"Move to Trash", utils::DIALOG_RESULT_OK}.withPreferredAction())
+            .withButton(
+                juce::MessageBoxButtonOptions {"Cancel", utils::DIALOG_RESULT_CANCEL}.withRole(
+                    juce::MessageBoxButtonRole::cancel
+                )
+            )
+            .withAssociatedComponent(this),
         [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](const int result) {
-            if (safeThis == nullptr || result != 1) {
+            if (safeThis == nullptr || result != utils::DIALOG_RESULT_OK) {
                 return;
             }
             safeThis->runMoveToTrash(filesToTrash, removedPaths, fallbackRow);

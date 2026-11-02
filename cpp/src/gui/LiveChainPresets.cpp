@@ -7,6 +7,7 @@
 #include "gui/LiveChain.h"
 #include "plugins/PluginChainPresets.h"
 #include "utils/AppInfo.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -170,8 +171,8 @@ void LiveChain::promptSavePreset()
         juce::MessageBoxIconType::NoIcon
     );
     window->addTextEditor(presetNameFieldName, getCurrentPresetName(), "Preset name:");
-    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    window->addButton("Save", utils::DIALOG_RESULT_OK, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", utils::DIALOG_RESULT_CANCEL, juce::KeyPress(juce::KeyPress::escapeKey));
 
     // The window runs the callback before it deletes itself, so the callback can still read the name.
     const juce::Component::SafePointer<juce::AlertWindow> safeWindow(window.get());
@@ -180,7 +181,7 @@ void LiveChain::promptSavePreset()
     modalWindow->enterModalState(
         true,
         juce::ModalCallbackFunction::create([safeThis, safeWindow](const int result) {
-            if (safeThis == nullptr || safeWindow == nullptr || result != 1) {
+            if (safeThis == nullptr || safeWindow == nullptr || result != utils::DIALOG_RESULT_OK) {
                 return;
             }
             safeThis->savePresetConfirmingReplace(safeWindow->getTextEditorContents(presetNameFieldName));
@@ -214,17 +215,22 @@ void LiveChain::savePresetConfirmingReplace(const juce::String& name)
 
     const juce::WeakReference safeThis(this);
     juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::QuestionIcon,
-            "Replace Preset",
-            utils::format(
-                "A preset named {} already exists. Replace it?", file->getFileNameWithoutExtension().quoted()
+        juce::MessageBoxOptions {}
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle("Replace Preset")
+            .withMessage(
+                utils::format(
+                    "A preset named {} already exists. Replace it?", file->getFileNameWithoutExtension().quoted()
+                )
+            )
+            .withButton(juce::MessageBoxButtonOptions {"Replace", utils::DIALOG_RESULT_OK}.withPreferredAction())
+            .withButton(
+                juce::MessageBoxButtonOptions {"Cancel", utils::DIALOG_RESULT_CANCEL}.withRole(
+                    juce::MessageBoxButtonRole::cancel
+                )
             ),
-            "Replace",
-            "Cancel"
-        ),
         [safeThis, name](const int result) {
-            if (safeThis != nullptr && result == 1) {
+            if (safeThis != nullptr && result == utils::DIALOG_RESULT_OK) {
                 safeThis->savePresetAndReport(name);
             }
         }
@@ -253,15 +259,18 @@ void LiveChain::confirmDeletePreset(const ChainPresetInfo& preset)
 {
     const juce::WeakReference safeThis(this);
     juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::WarningIcon,
-            "Delete Preset",
-            utils::format("Delete the preset {}?", preset.name.quoted()),
-            "Delete",
-            "Cancel"
-        ),
+        juce::MessageBoxOptions {}
+            .withIconType(juce::MessageBoxIconType::WarningIcon)
+            .withTitle("Delete Preset")
+            .withMessage(utils::format("Delete the preset {}?", preset.name.quoted()))
+            .withButton(juce::MessageBoxButtonOptions {"Delete", utils::DIALOG_RESULT_OK}.withPreferredAction())
+            .withButton(
+                juce::MessageBoxButtonOptions {"Cancel", utils::DIALOG_RESULT_CANCEL}.withRole(
+                    juce::MessageBoxButtonRole::cancel
+                )
+            ),
         [safeThis, preset](const int result) {
-            if (safeThis == nullptr || result != 1) {
+            if (safeThis == nullptr || result != utils::DIALOG_RESULT_OK) {
                 return;
             }
             if (!safeThis->deletePreset(preset.file)) {
