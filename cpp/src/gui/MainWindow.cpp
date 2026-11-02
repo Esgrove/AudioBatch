@@ -492,7 +492,7 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             break;
         case CommandId::revealSelected:
             result.setInfo(
-                utils::revealInFileManagerLabel(), "Reveals the selected file in the file manager", fileCategory, 0
+                utils::revealInFileManagerLabel(), "Reveals the selected files in the file manager", fileCategory, 0
             );
             result.addDefaultKeypress('r', juce::ModifierKeys::commandModifier);
             result.setActive(canActOnSelection);

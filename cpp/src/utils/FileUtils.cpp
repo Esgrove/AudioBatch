@@ -1,4 +1,5 @@
 /// Implementation of file system helpers and default browse-folder selection.
+/// Revealing several files groups them by parent folder, one file manager window per folder, up to a limit.
 /// Moving to the trash uses the shell's IFileOperation on Windows,
 /// with a progress sink that refuses deletes the shell would perform permanently,
 /// and juce::File::moveToTrash elsewhere.
@@ -9,9 +10,11 @@
 #include "utils/StringFormat.h"
 #include <system_error>
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <utility>
 #if !JUCE_WINDOWS
@@ -21,7 +24,6 @@
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
 
-#include <memory>
 #include <shobjidl.h>
 
 #if JUCE_MSVC
@@ -582,22 +584,95 @@ juce::String revealInFileManagerLabel()
 #endif
 }
 
-/// Reveals the file in the platform file manager, or its parent folder when the file no longer exists.
-void revealFileInFileManager(const juce::File& file)
+/// Groups files by their parent folder, keeping the order in which folders and files first appear.
+/// Duplicate files are listed once.
+/// Folders beyond maximumFolders are counted in skippedFolders instead of returned.
+FolderGroups groupByParentFolder(const juce::Array<juce::File>& files, const int maximumFolders)
 {
-    if (file.exists()) {
-        file.revealToUser();
-    } else {
-        file.getParentDirectory().revealToUser();
+    FolderGroups result;
+    juce::Array<juce::File> skipped;
+    juce::Array<juce::File> seenFiles;
+    for (const auto& file : files) {
+        if (file == juce::File() || seenFiles.contains(file)) {
+            continue;
+        }
+        seenFiles.add(file);
+        const auto folder = file.getParentDirectory();
+        const auto group
+            = std::ranges::find_if(result.groups, [&folder](const auto& entry) { return entry.first == folder; });
+        if (group != result.groups.end()) {
+            group->second.add(file);
+        } else if (std::cmp_less(result.groups.size(), maximumFolders)) {
+            result.groups.emplace_back(folder, juce::Array<juce::File> {file});
+        } else {
+            skipped.addIfNotAlreadyThere(folder);
+        }
     }
+    result.skippedFolders = skipped.size();
+    return result;
 }
 
-/// Opens the file's parent folder in the platform file manager.
-void revealParentDirectory(const juce::File& file)
+namespace
 {
-    if (const auto parentDirectory = file.getParentDirectory(); parentDirectory.isDirectory()) {
-        parentDirectory.revealToUser();
+/// How long the background thread waits to reap the `open -R` process that reveals files in Finder.
+[[maybe_unused]] constexpr int revealProcessTimeoutMs {10'000};
+
+/// Shows the files of one folder selected in the platform file manager.
+/// Files that no longer exist are left out, and when none exists the folder opens instead.
+void revealFolderFiles(const juce::File& folder, const juce::Array<juce::File>& files)
+{
+    juce::Array<juce::File> existing;
+    for (const auto& file : files) {
+        if (file.exists()) {
+            existing.add(file);
+        }
     }
+    if (existing.isEmpty()) {
+        if (folder.isDirectory()) {
+            folder.revealToUser();
+        }
+        return;
+    }
+#if JUCE_MAC
+    // Finder selects every file of the folder in one window through `open -R`.
+    // The process is reaped on a background thread, so it does not linger as a zombie.
+    juce::StringArray arguments {"/usr/bin/open", "-R"};
+    for (const auto& file : existing) {
+        arguments.add(file.getFullPathName());
+    }
+    if (const auto process = std::make_shared<juce::ChildProcess>(); process->start(arguments, 0)) {
+        juce::Thread::launch([process] { process->waitForProcessToFinish(revealProcessTimeoutMs); });
+        return;
+    }
+#endif
+    // Explorer selects only one file per window.
+    existing.getFirst().revealToUser();
+}
+}  // namespace
+
+/// Reveals the files in the platform file manager, one window per parent folder, up to maximumRevealFolders.
+/// Finder selects every file of a folder in its window, Explorer only the first of them.
+/// Returns the number of folders left out because of the limit.
+int revealFilesInFileManager(const juce::Array<juce::File>& files)
+{
+    const auto folders = groupByParentFolder(files, maximumRevealFolders);
+    for (const auto& [folder, folderFiles] : folders.groups) {
+        revealFolderFiles(folder, folderFiles);
+    }
+    return folders.skippedFolders;
+}
+
+/// Opens each distinct parent folder of the files in the platform file manager, up to maximumRevealFolders.
+/// Returns the number of folders left out because of the limit.
+int openParentDirectories(const juce::Array<juce::File>& files)
+{
+    const auto folders = groupByParentFolder(files, maximumRevealFolders);
+    for (const auto& [folder, folderFiles] : folders.groups) {
+        if (folder.isDirectory()) {
+            folder.revealToUser();
+        }
+    }
+    return folders.skippedFolders;
 }
 
 /// Deletes a file and logs an error if the deletion fails.
