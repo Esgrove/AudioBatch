@@ -43,6 +43,28 @@ struct CommittedOutput {
     AudioAnalysisRecord output;
 };
 
+/// Per-view dependencies. Test builds default to owned scratch storage, deletion, and no audio hardware.
+struct AudioBatchComponentConfig {
+    AudioBatchComponentConfig();
+
+#ifdef AUDIOBATCH_TESTING
+    /// Keeps a unique scratch directory alive until every worker using these paths has stopped.
+    std::shared_ptr<juce::TemporaryFile> testDirectory;
+#endif
+    /// Explicit database path, independent of the process environment.
+    std::optional<juce::File> cacheDatabaseFile;
+    /// Explicit settings options, also locating plugin lists and chain presets.
+    std::optional<juce::PropertiesFile::Options> settingsOptions;
+    /// Replaces trash disposal for every file-writing operation when supplied.
+    utils::FileDisposer disposeFile;
+    /// Disables device opens and the hardware settings panel when false.
+    bool allowAudioHardware {true};
+};
+
+#ifdef AUDIOBATCH_TESTING
+class AudioBatchIntegrationTest;
+#endif
+
 /// Main application view that coordinates analysis, playback preview, and file-list interactions.
 class AudioBatchComponent :
     public juce::Component,
@@ -54,7 +76,7 @@ class AudioBatchComponent :
     private BackgroundWorkListener
 {
 public:
-    AudioBatchComponent();
+    explicit AudioBatchComponent(AudioBatchComponentConfig config = {});
 
     ~AudioBatchComponent() override;
 
@@ -124,6 +146,10 @@ protected:
     ) override;
 
 private:
+#ifdef AUDIOBATCH_TESTING
+    friend class AudioBatchIntegrationTest;
+#endif
+
     void componentVisibilityChanged(juce::Component& component) override;
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
@@ -233,6 +259,9 @@ private:
     /// Notifies the window when preview command labels or check marks need refreshing.
     std::function<void()> onViewOptionsChanged;
 
+    /// Per-view storage, disposal, and device policy, fixed for the view lifetime.
+    AudioBatchComponentConfig configuration;
+
     /// The SQLite cache of the analysis results, waveforms, custom gains, and Serato tags.
     AnalysisCache analysisCache;
 
@@ -253,7 +282,7 @@ private:
 
     /// Plays the previewed file.
     /// Declared before the thumbnail and the audio settings component, which hold references into it.
-    AudioPreviewPlayer previewPlayer;
+    AudioPreviewPlayer previewPlayer {configuration.allowAudioHardware};
 
     /// The previewed file and its Serato tags.
     /// Selected artifact requests use the shared enrichment scheduler, never a separate decoder worker.
@@ -290,7 +319,7 @@ private:
     /// The root folders that the list was scanned from.
     juce::Array<juce::File> currentRoots;
     /// The content of the audio settings dialog.
-    AudioSettingsComponent audioSettingsComponent {previewPlayer.getDeviceManager()};
+    std::unique_ptr<AudioSettingsComponent> audioSettingsComponent;
     /// The preview preferences, kept in the settings and shown in the audio settings dialog.
     AudioPreviewPreferences previewPreferences;
     /// The table of the analyzed files.

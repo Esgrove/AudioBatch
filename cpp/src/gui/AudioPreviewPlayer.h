@@ -42,7 +42,7 @@ class AudioPreviewPlayer :
     private juce::Timer
 {
 public:
-    AudioPreviewPlayer();
+    explicit AudioPreviewPlayer(bool allowAudioHardware = true);
 
     ~AudioPreviewPlayer() override;
 
@@ -126,6 +126,8 @@ private:
     /// which only try-locks it.
     /// The live chain shares it.
     mutable juce::CriticalSection renderingLock;
+    /// False for isolated workflows that must never open an audio device.
+    bool audioHardwareAllowed {true};
     /// The output device, opened only while something plays or the audio settings need it.
     juce::AudioDeviceManager deviceManager;
     /// Creates the readers of remote preview files, and of the waveform thumbnail.

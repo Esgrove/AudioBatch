@@ -102,6 +102,7 @@ cmake --preset "$PRESET" -DBUILD_TESTING=ON
 cmake --build --preset "$PRESET" --target AudioBatchTests
 
 print_magenta "Running tests..."
-ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_CONFIG" --output-on-failure --no-tests=error
+# The integration tier runs separately in the normal macOS and Windows builds.
+ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_CONFIG" -LE integration --output-on-failure --no-tests=error
 
 print_green "Sanitizer run passed."
