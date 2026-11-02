@@ -1,7 +1,8 @@
 //! The results table: one row per file with its analysis status and levels.
 //!
 //! The titles are short, and their tooltips describe each column with its unit, so the cells hold only numbers.
-//! Columns can be reordered by dragging their headers, and the Status column fills the width left over.
+//! Columns can be reordered and resized by dragging their headers.
+//! Name, Path, and Status share extra window width with ten times the weight of the other columns.
 //! Failed files have white text with reduced opacity, cells have a faint divider between them,
 //! and the Status column shows a progress ring while a file is analyzed, normalized, or processed with plugins.
 //! A failure or notice of a normalization or plugin processing replaces the status text of its row,
@@ -87,8 +88,7 @@ const STATUS_MAXIMUM_WIDTH: f32 = 8192.0;
 /// Column definitions in the default order.
 /// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
 /// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
-/// The Name and Path widths are a starting point that `ResultsDelegate::new` stretches,
-/// and the Status width is the least it gets, because it fills whatever the table has left.
+/// These are preferred widths, which automatic sizing adjusts to fit the visible columns in the window.
 const COLUMNS: [ColumnSpec; 15] = [
     column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
     column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
@@ -228,8 +228,12 @@ pub struct ResultsDelegate {
     extra_selected: HashSet<PathBuf>,
     /// Completed plain pointer selection awaiting the table's selection event, identified independently of its index.
     pointer_selection: Option<PathBuf>,
-    /// Width the Status column fills, which `fit_column` hands to the table.
-    status_fill_width: Pixels,
+    /// Last observed widths by identity, separate from the preferred widths in `all_columns`.
+    column_widths: HashMap<ColumnKey, Pixels>,
+    /// Window width and scale of the last automatic layout, invalidated by visibility changes.
+    column_layout: Option<(f32, f32)>,
+    /// One automatic fit in progress, so double clicks do not reset manually resized columns.
+    column_fit: Option<(usize, Pixels)>,
     /// The app state the right-click row menu needs, which the main view keeps up to date.
     row_menu: RowMenuState,
 }
@@ -348,26 +352,15 @@ impl ResultRow {
 }
 
 impl ResultsDelegate {
-    /// Creates an empty table whose Name and Path columns share the width the other columns leave free,
-    /// in the 140 to 160 ratio of their default widths.
+    /// Creates an empty table whose visible columns share the available width by weight.
     /// The table's scrollbars overlay the rows, so the columns can use its whole width.
     #[must_use]
     pub fn new(table_width: f32) -> Self {
-        let fixed: f32 = COLUMNS
-            .iter()
-            .filter(|spec| !matches!(spec.key, ColumnKey::Name | ColumnKey::Path))
-            .map(|spec| spec.width)
-            .sum();
-        let free = (table_width - fixed).max(300.0);
-        let name_width = (free * 140.0 / 300.0).max(140.0).floor();
-        let path_width = (free - name_width).max(160.0).floor();
         let all_columns = COLUMNS
             .iter()
             .map(|spec| {
                 let column = Column::new(column_id(spec.key), spec.title).sortable().p_0();
                 let column = match spec.key {
-                    ColumnKey::Name => column.width(px(name_width)),
-                    ColumnKey::Path => column.width(px(path_width)),
                     ColumnKey::Status => column
                         .width(px(spec.width))
                         .min_width(px(STATUS_MINIMUM_WIDTH))
@@ -391,10 +384,18 @@ impl ResultsDelegate {
             selected: None,
             extra_selected: HashSet::new(),
             pointer_selection: None,
-            status_fill_width: px(STATUS_MINIMUM_WIDTH),
+            column_widths: HashMap::new(),
+            column_layout: None,
+            column_fit: None,
             row_menu: RowMenuState::default(),
         };
         delegate.apply_sort_to_columns();
+        delegate.rebuild_visible_columns();
+        let widths = delegate.fitted_widths(table_width, 1.0);
+        for ((key, column), width) in delegate.order.iter().zip(&mut delegate.columns).zip(widths) {
+            column.width = width;
+            delegate.column_widths.insert(*key, width);
+        }
         delegate
     }
 
@@ -894,14 +895,82 @@ impl ResultsDelegate {
         self.rebuild_index();
     }
 
-    /// Remembers the widths of the shown columns, in display order, as the table has them now,
-    /// so rebuilding the columns, such as to show or hide one, keeps the widths the user gave them.
+    /// Applies manual width deltas to preferred widths without remembering automatic expansion as a preference.
+    /// Call with the live table widths, not an earlier event's snapshot.
     pub fn remember_column_widths(&mut self, widths: &[Pixels]) {
         for (key, &width) in self.order.iter().zip(widths) {
-            if let Some((_, column)) = self.all_columns.iter_mut().find(|(column_key, _)| column_key == key) {
-                *column = column.clone().width(width);
+            if let Some(previous) = self.column_widths.insert(*key, width)
+                && let Some((_, column)) = self.all_columns.iter_mut().find(|(column_key, _)| column_key == key)
+            {
+                column.width = (column.width + (width - previous)).clamp(column.min_width, column.max_width);
             }
         }
+    }
+
+    /// Allocates widths from preferred sizes and bounds in physical pixels.
+    fn fitted_widths(&self, table_width: f32, scale: f32) -> Vec<Pixels> {
+        let columns: Vec<_> = self
+            .order
+            .iter()
+            .filter_map(|key| self.all_columns.iter().find(|(column_key, _)| column_key == key))
+            .collect();
+        let limits: Vec<_> = columns
+            .iter()
+            .map(|(_, column)| {
+                (
+                    (f64::from(f32::from(column.min_width)) * f64::from(scale)).ceil(),
+                    (f64::from(f32::from(column.max_width)) * f64::from(scale)).floor(),
+                )
+            })
+            .collect();
+        let mut widths: Vec<_> = columns
+            .iter()
+            .zip(&limits)
+            .map(|((_, column), &(minimum, maximum))| {
+                (f64::from(f32::from(column.width)) * f64::from(scale)).clamp(minimum, maximum)
+            })
+            .collect();
+        let target = (f64::from(table_width) * f64::from(scale)).floor().clamp(
+            limits.iter().map(|(minimum, _)| minimum).sum(),
+            limits.iter().map(|(_, maximum)| maximum).sum(),
+        );
+        for _ in 0..=columns.len() {
+            let remaining = target - widths.iter().sum::<f64>();
+            if remaining.abs() < 0.000_001 {
+                break;
+            }
+            let weights: Vec<_> = columns
+                .iter()
+                .zip(&widths)
+                .zip(&limits)
+                .map(|(((key, _), &width), &(minimum, maximum))| {
+                    if (remaining > 0.0 && width < maximum) || (remaining < 0.0 && width > minimum) {
+                        column_weight(*key)
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+            let weight_sum: f64 = weights.iter().sum();
+            if weight_sum <= 0.0 {
+                break;
+            }
+            for ((width, weight), &(minimum, maximum)) in widths.iter_mut().zip(weights).zip(&limits) {
+                *width = (*width + remaining * weight / weight_sum).clamp(minimum, maximum);
+            }
+        }
+        let mut previous = 0.0;
+        let mut accumulated = 0.0;
+        widths
+            .into_iter()
+            .map(|width| {
+                accumulated += width;
+                let rounded = accumulated.round();
+                let result = px((rounded - previous) as f32 / scale);
+                previous = rounded;
+                result
+            })
+            .collect()
     }
 
     /// Sets, flips, or clears the secondary sort for a Command or Control click on a header.
@@ -957,7 +1026,8 @@ impl ResultsDelegate {
         self.pointer_selection = Some(path.to_path_buf());
     }
 
-    /// Returns the display index of the Status column, which stretches to fill the table width.
+    /// Returns the display index of the Status column.
+    #[cfg(test)]
     fn status_index(&self) -> Option<usize> {
         self.order.iter().position(|&key| key == ColumnKey::Status)
     }
@@ -1000,6 +1070,10 @@ impl ResultsDelegate {
             })
             .collect();
         self.order = order;
+        for (key, column) in self.order.iter().zip(&self.columns) {
+            self.column_widths.insert(*key, column.width);
+        }
+        self.column_layout = None;
     }
 
     /// Marks the primary sort column with its direction and every other column as unsorted,
@@ -1013,7 +1087,11 @@ impl ResultsDelegate {
             };
             *column = column.clone().sort(direction);
         }
-        self.rebuild_visible_columns();
+        for (key, column) in self.order.iter().zip(&mut self.columns) {
+            if let Some((_, definition)) = self.all_columns.iter().find(|(column_key, _)| column_key == key) {
+                column.sort = definition.sort;
+            }
+        }
     }
 
     /// Moves a column to another display index when the user drags its header.
@@ -1329,7 +1407,11 @@ impl TableDelegate for ResultsDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> Option<Pixels> {
-        (self.order.get(column_index) == Some(&ColumnKey::Status)).then_some(self.status_fill_width)
+        self.column_fit
+            .filter(|(index, _)| *index == column_index)
+            // fit_col rounds content upward to device pixels.
+            // The predecessor avoids rounding an already quantized quotient up by another pixel.
+            .map(|(_, width)| px(f32::from(width).next_down()))
     }
 
     fn cell_label(&self, row_index: usize, column_index: usize, _cx: &App) -> Option<SharedString> {
@@ -1341,31 +1423,47 @@ impl TableDelegate for ResultsDelegate {
     }
 }
 
-/// Widens or narrows the Status column so the columns fill the table width.
-/// Status takes what the other columns leave, wherever the user has moved it, down to its minimum width,
-/// below which the table scrolls horizontally instead.
-/// It goes through `fit_col`, which resizes only that column, so a column drag in progress keeps working.
-pub fn fill_status_column(
+/// Fits visible columns after a window or visibility change, leaving manual drags alone at unchanged geometry.
+/// Individual fits preserve the table's selection, scrolling, and header drag state.
+pub fn fit_results_columns(
     state: &mut TableState<ResultsDelegate>,
     table_width: f32,
     window: &mut Window,
     cx: &mut Context<TableState<ResultsDelegate>>,
 ) {
-    let Some(status) = state.delegate().status_index() else {
+    let current: Vec<_> = (0..).map_while(|index| state.col_width(index)).collect();
+    state.delegate_mut().remember_column_widths(&current);
+    let scale = window.scale_factor();
+    if state.delegate().column_layout.is_some_and(|(width, previous_scale)| {
+        (width - table_width).abs() < 0.01 && (previous_scale - scale).abs() < 0.001
+    }) {
         return;
-    };
-    let others: f32 = (0..state.delegate().columns.len())
-        .filter(|&column_index| column_index != status)
-        .filter_map(|column_index| state.col_width(column_index))
-        .map(f32::from)
-        .sum();
-    let target = (table_width - others)
-        .clamp(STATUS_MINIMUM_WIDTH, STATUS_MAXIMUM_WIDTH)
-        .floor();
-    let current = state.col_width(status).map_or(0.0, f32::from);
-    if (target - current).abs() >= 0.5 {
-        state.delegate_mut().status_fill_width = px(target);
-        state.fit_col(status, window, cx);
+    }
+    let targets = state.delegate().fitted_widths(table_width, scale);
+    state.delegate_mut().column_layout = Some((table_width, scale));
+    for (index, target) in targets.into_iter().enumerate() {
+        if state
+            .col_width(index)
+            .is_some_and(|width| (f32::from(width - target)).abs() < 0.001)
+        {
+            continue;
+        }
+        state.delegate_mut().column_fit = Some((index, target));
+        state.fit_col(index, window, cx);
+        if let Some(width) = state.col_width(index)
+            && let Some(&key) = state.delegate().order.get(index)
+        {
+            state.delegate_mut().column_widths.insert(key, width);
+        }
+    }
+    state.delegate_mut().column_fit = None;
+}
+
+/// Gives long text columns ten times the resize share of a compact value column.
+const fn column_weight(key: ColumnKey) -> f64 {
+    match key {
+        ColumnKey::Name | ColumnKey::Path | ColumnKey::Status => 10.0,
+        _ => 1.0,
     }
 }
 
@@ -2080,13 +2178,12 @@ mod test_column_visibility_and_sort {
     #[test]
     fn showing_a_column_keeps_the_widths_of_the_others() {
         let mut delegate = ResultsDelegate::new(1600.0);
-        let widths: Vec<Pixels> = (0..delegate.columns.len())
-            .map(|index| px(50.0 + index as f32))
-            .collect();
+        let mut widths: Vec<Pixels> = delegate.columns.iter().map(|column| column.width).collect();
+        widths[0] += px(25.0);
         delegate.remember_column_widths(&widths);
         delegate.set_column_visible(ColumnKey::Gain, true);
         let first = delegate.columns.first().expect("a shown column");
-        assert_eq!(first.width, px(50.0));
+        assert_eq!(first.width, px(165.0));
     }
 
     #[test]
@@ -2142,5 +2239,192 @@ mod test_column_visibility_and_sort {
         let peak = delegate.order.iter().position(|&key| key == ColumnKey::Peak);
         delegate.toggle_secondary_sort(peak.expect("the Peak column shows"));
         assert_eq!(delegate.secondary_sort, None);
+    }
+}
+
+#[cfg(test)]
+mod test_column_sizing {
+    use super::*;
+
+    /// Returns visible preferred sizes before window expansion or contraction.
+    fn preferred(delegate: &ResultsDelegate) -> Vec<f32> {
+        delegate
+            .order
+            .iter()
+            .map(|key| {
+                f32::from(
+                    delegate
+                        .all_columns
+                        .iter()
+                        .find(|(column_key, _)| column_key == key)
+                        .expect("visible column definition")
+                        .1
+                        .width,
+                )
+            })
+            .collect()
+    }
+
+    /// Checks the physical pixel budget without requiring a window or renderer.
+    fn assert_budget(delegate: &ResultsDelegate, width: f32, scale: f32) {
+        let widths = delegate.fitted_widths(width, scale);
+        let total: f32 = widths.iter().copied().map(f32::from).sum();
+        assert!(
+            (total - width).abs() < 1.0 / scale + 0.001,
+            "{total} versus {width} at {scale}"
+        );
+        for (key, width) in delegate.order.iter().zip(widths) {
+            let column = &delegate
+                .all_columns
+                .iter()
+                .find(|(column_key, _)| column_key == key)
+                .expect("column")
+                .1;
+            assert!(width >= column.min_width);
+            assert!(width <= column.max_width);
+            // Mirror fit_col's upward rounding, including its quotient guard.
+            let content = f32::from(width).next_down();
+            let mut pixels = (content * scale).ceil();
+            if pixels / scale < content {
+                pixels += 1.0;
+            }
+            assert!((pixels / scale - f32::from(width)).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn text_columns_receive_ten_times_the_extra_width() {
+        let delegate = ResultsDelegate::new(1600.0);
+        let preferred = preferred(&delegate);
+        let weights: f64 = delegate.order.iter().map(|&key| column_weight(key)).sum();
+        let target = (weights as f32).mul_add(10.0, preferred.iter().sum::<f32>());
+        let widths = delegate.fitted_widths(target, 1.0);
+        for ((key, width), preferred) in delegate.order.iter().zip(widths).zip(preferred) {
+            let growth = f32::from(width) - preferred;
+            assert!((column_weight(*key) as f32).mul_add(-10.0, growth).abs() < 0.001);
+        }
+        assert_budget(&delegate, target, 1.0);
+    }
+
+    #[test]
+    fn initial_layout_allocates_only_visible_columns() {
+        let delegate = ResultsDelegate::new(1600.0);
+        let total: f32 = delegate.columns.iter().map(|column| f32::from(column.width)).sum();
+        assert!((total - 1600.0).abs() < 0.001);
+        assert_eq!(delegate.columns.len(), COLUMNS.len() - DEFAULT_HIDDEN_COLUMNS.len());
+    }
+
+    #[test]
+    fn shrink_below_preferred_sizes_then_overflow_at_minimums() {
+        let delegate = ResultsDelegate::new(1600.0);
+        let widths = delegate.fitted_widths(700.0, 1.0);
+        assert!(
+            widths
+                .iter()
+                .zip(preferred(&delegate))
+                .any(|(&width, preferred)| f32::from(width) < preferred)
+        );
+        assert_budget(&delegate, 700.0, 1.0);
+        let minimums = delegate.fitted_widths(100.0, 1.0);
+        for (key, width) in delegate.order.iter().zip(&minimums) {
+            let minimum = if *key == ColumnKey::Status { 180.0 } else { 20.0 };
+            assert!((f32::from(*width) - minimum).abs() < 0.001);
+        }
+        assert!(minimums.into_iter().map(f32::from).sum::<f32>() > 100.0);
+    }
+
+    #[test]
+    fn limits_redistribute_space_and_cap_excess() {
+        let delegate = ResultsDelegate::new(1600.0);
+        assert_budget(&delegate, 8000.0, 1.0);
+        let widths = delegate.fitted_widths(100_000.0, 1.0);
+        for (key, width) in delegate.order.iter().zip(widths) {
+            let maximum = if *key == ColumnKey::Status {
+                STATUS_MAXIMUM_WIDTH
+            } else {
+                1200.0
+            };
+            assert!((f32::from(width) - maximum).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn fractional_scale_layout_is_stable_and_reversible() {
+        let delegate = ResultsDelegate::new(1600.0);
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 1.3] {
+            let original = delegate.fitted_widths(1600.0, scale);
+            for width in [1400.3, 2400.0, 800.2, 3840.0, 1600.0] {
+                assert_budget(&delegate, width, scale);
+            }
+            assert_eq!(original, delegate.fitted_widths(1600.0, scale));
+        }
+    }
+
+    #[test]
+    fn manual_width_deltas_are_retained_without_automatic_feedback() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        let baseline = preferred(&delegate);
+        let mut widths: Vec<_> = delegate.columns.iter().map(|column| column.width).collect();
+        delegate.remember_column_widths(&widths);
+        assert_eq!(baseline, preferred(&delegate));
+        widths[0] += px(40.0);
+        delegate.remember_column_widths(&widths);
+        for _ in 0..10 {
+            delegate.remember_column_widths(&widths);
+        }
+        let preferences = preferred(&delegate);
+        assert!((preferences[0] - baseline[0] - 40.0).abs() < 0.001);
+        assert_eq!(&preferences[1..], &baseline[1..]);
+        let targets = delegate.fitted_widths(2400.0, 1.0);
+        for (key, &width) in delegate.order.iter().zip(&targets) {
+            delegate.column_widths.insert(*key, width);
+        }
+        delegate.remember_column_widths(&targets);
+        assert_eq!(preferences, preferred(&delegate));
+    }
+
+    #[test]
+    fn sorting_does_not_reclassify_automatic_widths_as_manual_edits() {
+        let mut delegate = ResultsDelegate::new(2400.0);
+        let baseline = preferred(&delegate);
+        let widths: Vec<_> = delegate.columns.iter().map(|column| column.width).collect();
+        delegate.column_layout = Some((2400.0, 1.0));
+        delegate.sort = Some((ColumnKey::Name, ColumnSort::Ascending));
+        delegate.apply_sort_to_columns();
+        delegate.remember_column_widths(&widths);
+        assert_eq!(baseline, preferred(&delegate));
+        assert!(delegate.column_layout.is_some());
+        assert_eq!(
+            delegate.columns.first().expect("name").sort,
+            Some(ColumnSort::Ascending)
+        );
+    }
+
+    #[test]
+    fn visibility_and_reorder_keep_preferences_and_weights_by_identity() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        let mut widths: Vec<_> = delegate.columns.iter().map(|column| column.width).collect();
+        widths[0] += px(40.0);
+        delegate.remember_column_widths(&widths);
+        delegate.reorder_column(0, 3);
+        delegate.set_column_visible(ColumnKey::Path, false);
+        delegate.set_column_visible(ColumnKey::Status, false);
+        assert_budget(&delegate, 2400.0, 1.5);
+        let name = delegate
+            .order
+            .iter()
+            .position(|key| *key == ColumnKey::Name)
+            .expect("name");
+        assert!((preferred(&delegate)[name] - 180.0).abs() < 0.001);
+        assert!((column_weight(delegate.order[name]) - 10.0).abs() < f64::EPSILON);
+        delegate.set_column_visible(ColumnKey::Path, true);
+        delegate.set_column_visible(ColumnKey::Status, true);
+        assert_budget(&delegate, 1600.0, 1.25);
+        let name = delegate
+            .order
+            .iter()
+            .position(|key| *key == ColumnKey::Name)
+            .expect("name");
+        assert!((preferred(&delegate)[name] - 180.0).abs() < 0.001);
     }
 }

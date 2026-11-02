@@ -45,7 +45,7 @@ use crate::menus::{
     TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSeratoColours, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
-use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, RowMenuState, fill_status_column};
+use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, RowMenuState, fit_results_columns};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
 use crate::waveform::MINIMUM_ZOOM;
 
@@ -495,7 +495,7 @@ impl Render for AppView {
         let table_width = TABLE_FRAME_BORDER.mul_add(-2.0, content_width);
         let row_menu = self.row_menu_state();
         self.table.update(cx, |state, cx| {
-            fill_status_column(state, table_width, window, cx);
+            fit_results_columns(state, table_width, window, cx);
             state.delegate_mut().set_row_menu_state(row_menu);
         });
         self.sync_gain_slider(window, cx);
