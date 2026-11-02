@@ -32,6 +32,11 @@ OPTIONS: All options are optional
     -p | --build-dir <directory>
         Use this build directory's compile database instead of auto-detecting one.
 
+    -j | --jobs <count>
+        Run up to this many clang-tidy processes in parallel. Defaults to 8.
+        Use 1 for serial processing. Diagnostics are grouped by source file.
+        Fixes and shared export files always use serial processing to avoid concurrent writes.
+
     --clang
         Select the Windows clang-cl workspace. Ignored on macOS.
 
@@ -62,6 +67,7 @@ init_options() {
     USE_CLANG=false
     BUILD_TYPE="Debug"
     BUILD_TYPE_EXPLICIT=false
+    JOBS=8
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -88,6 +94,13 @@ init_options() {
                     print_error_and_exit "Missing value for $1."
                 fi
                 REQUESTED_BUILD_DIR="$2"
+                shift
+                ;;
+            -j | --jobs)
+                if [ $# -lt 2 ]; then
+                    print_error_and_exit "Missing value for $1."
+                fi
+                JOBS="$2"
                 shift
                 ;;
             --clang)
@@ -126,6 +139,26 @@ init_options() {
             print_error_and_exit "Build type must contain only letters, numbers, underscores, or hyphens."
             ;;
     esac
+    case "$JOBS" in
+        "" | *[!0-9]*)
+            print_error_and_exit "Job count must be a positive integer."
+            ;;
+    esac
+    if ! [ "$JOBS" -gt 0 ] 2> /dev/null; then
+        print_error_and_exit "Job count must be a positive integer."
+    fi
+    JOBS=$((10#$JOBS))
+
+    # Fixes can touch a header shared by several sources, and exports share one destination file.
+    # Keep the original batched invocation for these arguments instead of running concurrent writers.
+    local argument
+    for argument in "${CLANG_TIDY_ARGS[@]}"; do
+        case "$argument" in
+            -fix* | --fix* | -export-fixes* | --export-fixes*)
+                JOBS=1
+                ;;
+        esac
+    done
 }
 
 # Prints the paths, relative to the repository root,
@@ -201,31 +234,63 @@ if [ -z "$CLANG_TIDY" ]; then
     print_error_and_exit "clang-tidy not found. Install LLVM (brew install llvm on macOS) or add its bin directory to PATH."
 fi
 
-# Locate a compile_commands.json from one of the known CMake build directories.
-# Applies the shared configuration directly to the test plugin, including Windows symlink-stub checkouts.
+# Replaces a worker subshell with clang-tidy so its recorded PID can also be cancelled directly.
+# Project sources discover their own configuration, including the inherited test exceptions.
+# The test plugin uses the shared configuration and the optional Windows formatting overlay.
+run_clang_tidy_sources() {
+    local arguments=()
+    if [[ "$1" == "$ROOT/test-plugin/"* ]]; then
+        arguments=(--config-file="$REPO/.clang-tidy" "${PLUGIN_ARGS[@]}")
+    fi
+    exec "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" \
+        "${arguments[@]}" "$@" "${CLANG_TIDY_ARGS[@]}"
+}
+
+# Stops and reaps any remaining workers before removing their logs and the shared formatting overlay.
+cleanup_lint() {
+    local process
+    for process in "${WORKER_PIDS[@]}"; do
+        kill "$process" 2> /dev/null || true
+    done
+    for process in "${WORKER_PIDS[@]}"; do
+        wait "$process" 2> /dev/null || true
+    done
+    rm -rf "$WORK_DIR"
+}
+
+# Waits for a worker and emits its complete log without interleaving another source's diagnostics.
+# Keeps a nonzero status even if later workers succeed.
+finish_worker() {
+    local index="$1"
+    wait "${WORKER_PIDS[index]}" || CLANG_TIDY_STATUS=$?
+    unset 'WORKER_PIDS[index]'
+    if [ "$CHECK" = true ]; then
+        tee -a "$OUTPUT_FILE" < "$WORK_DIR/$index.log"
+    else
+        cat "$WORK_DIR/$index.log"
+    fi
+}
+
+# Keeps at most JOBS workers outstanding, using Bash 3.2-compatible waits on macOS.
+# Each invocation still analyzes every compile command for its source, not just the first target.
 run_clang_tidy() {
-    local status=0
-    if [ "${#PROJECT_SOURCES[@]}" -gt 0 ]; then
-        "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" \
-            "${PROJECT_SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" || status=$?
-    fi
-    if [ "${#PLUGIN_SOURCES[@]}" -gt 0 ]; then
-        local overlay=""
-        local plugin_args=()
-        if [ "$BASH_PLATFORM" = windows ] && [ ! -L "$ROOT/test-plugin/.clang-format" ]; then
-            overlay=$(mktemp)
-            printf '{"version":0,"roots":[{"type":"file","name":"%s","external-contents":"%s"}]}\n' \
-                "$(cygpath -m "$ROOT/test-plugin/.clang-format")" \
-                "$(cygpath -m "$REPO/.clang-format")" > "$overlay"
-            plugin_args+=(--vfsoverlay="$overlay")
+    local index=0
+    local oldest=0
+    local source
+    for source in "${SOURCES[@]}"; do
+        if [ $((index - oldest)) -ge "$JOBS" ]; then
+            finish_worker "$oldest"
+            oldest=$((oldest + 1))
         fi
-        "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" --config-file="$REPO/.clang-tidy" \
-            "${plugin_args[@]}" "${PLUGIN_SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" || status=$?
-        if [ -n "$overlay" ]; then
-            rm -f "$overlay"
-        fi
-    fi
-    return "$status"
+        print_magenta "[$((index + 1))/${#SOURCES[@]}] Linting $source"
+        run_clang_tidy_sources "$source" > "$WORK_DIR/$index.log" 2>&1 &
+        WORKER_PIDS[index]=$!
+        index=$((index + 1))
+    done
+    while [ "$oldest" -lt "$index" ]; do
+        finish_worker "$oldest"
+        oldest=$((oldest + 1))
+    done
 }
 
 # The debug preset supplies the toolchain even when selecting another single-configuration build type.
@@ -396,20 +461,48 @@ for source in "${SOURCES[@]}"; do
     fi
 done
 
-print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
-
-if [ "$CHECK" = false ]; then
-    run_clang_tidy
-    exit
+WORK_DIR=$(mktemp -d)
+WORKER_PIDS=()
+trap cleanup_lint EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+OUTPUT_FILE="$WORK_DIR/output.log"
+CLANG_TIDY_STATUS=0
+PLUGIN_ARGS=()
+if [ "${#PLUGIN_SOURCES[@]}" -gt 0 ] && [ "$BASH_PLATFORM" = windows ] &&
+       [ ! -L "$ROOT/test-plugin/.clang-format" ]; then
+    OVERLAY="$WORK_DIR/plugin-overlay.json"
+    printf '{"version":0,"roots":[{"type":"file","name":"%s","external-contents":"%s"}]}\n' \
+        "$(cygpath -m "$ROOT/test-plugin/.clang-format")" \
+        "$(cygpath -m "$REPO/.clang-format")" > "$OVERLAY"
+    PLUGIN_ARGS+=(--vfsoverlay="$OVERLAY")
 fi
 
-OUTPUT_FILE=$(mktemp)
-trap 'rm -f "$OUTPUT_FILE"' EXIT
+print_magenta "Running clang-tidy on ${#SOURCES[@]} source files with up to $JOBS parallel jobs..."
 
-set +e
-run_clang_tidy 2>&1 | tee "$OUTPUT_FILE"
-CLANG_TIDY_STATUS=${PIPESTATUS[0]}
-set -e
+if [ "$JOBS" -eq 1 ]; then
+    # Retain batched invocations for fixes and exports, which must share a single clang-tidy process.
+    index=0
+    for group in project plugin; do
+        if [ "$group" = project ]; then
+            GROUP_SOURCES=("${PROJECT_SOURCES[@]}")
+        else
+            GROUP_SOURCES=("${PLUGIN_SOURCES[@]}")
+        fi
+        if [ "${#GROUP_SOURCES[@]}" -gt 0 ]; then
+            run_clang_tidy_sources "${GROUP_SOURCES[@]}" > "$WORK_DIR/$index.log" 2>&1 &
+            WORKER_PIDS[index]=$!
+            finish_worker "$index"
+            index=$((index + 1))
+        fi
+    done
+else
+    run_clang_tidy
+fi
+
+if [ "$CHECK" = false ]; then
+    exit "$CLANG_TIDY_STATUS"
+fi
 
 # Headers are linted once per including source file, so count each finding only once.
 ISSUE_COUNT=$({ grep -E "(^|: )(warning|error): " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
