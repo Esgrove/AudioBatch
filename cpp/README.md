@@ -12,7 +12,7 @@ GUI and CLI tool (C++23 and JUCE) for analyzing and batch processing audio files
 Supports mono and stereo audio, including WAV, AIFF, FLAC, MP3, Ogg Vorbis and Opus.
 On macOS, Core Audio also reads AAC and ALAC.
 Windows Media decoding is disabled, so the Windows build does not provide those decoders or WMA support.
-Multichannel audio and Linux are not currently supported.
+Multichannel audio is not currently supported.
 
 ## Processing performance
 

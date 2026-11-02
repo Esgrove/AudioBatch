@@ -175,7 +175,7 @@ C++ keeps its existing Overview cache version because its duplicate selection is
 
 `metadata/inspect_metadata.py` repeats the independent container inspection with Python's standard library,
 using ffprobe only for ordinary text tags.
-It locates the fixtures relative to its own path on Windows, macOS, and Linux.
+It locates the fixtures relative to its own path.
 From the repository root, verify the fixed expectations without rewriting them:
 
 ```shell

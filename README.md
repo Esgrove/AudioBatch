@@ -4,6 +4,7 @@ Tools for analyzing and batch processing audio files.
 They measure sample peak, true peak, and integrated loudness (EBU R128),
 cache the results in SQLite, and list them in a GUI and a CLI.
 The GUIs provide waveform previews, embedded artwork, and playback through live plugin chains.
+The project targets macOS and Windows.
 
 The repository holds two versions of the application side by side:
 

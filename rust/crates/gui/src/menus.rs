@@ -3,7 +3,7 @@
 //! The menu bar has an application menu on macOS, then File, Plugins, Options, and Help.
 //! On other platforms the File menu ends with Quit instead.
 //! The Plugins menu shows the chain summary and adds the known effects, grouped by vendor.
-//! Shortcuts use Command on macOS and Control on Windows and Linux.
+//! Shortcuts use Command on macOS and Control on Windows.
 //! The app view handles most actions, so they work from the menu bar and the shortcuts alike.
 
 use audiobatch_playback::Player;
