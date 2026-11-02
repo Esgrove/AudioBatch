@@ -122,6 +122,9 @@ public:
             expect(!serato::Overview::parse(overviewPayload(serato::Overview::maxSlices + 1)));
         }
 
+        beginTest("Parser-result revision three retains raster format version two");
+        expectEquals(static_cast<int>(serato::overviewParserVersion), 3);
+
         beginTest("Cache header has explicit magic, kind, version and big-endian count");
         {
             const auto overview = serato::Overview::parse(overviewPayload(257));

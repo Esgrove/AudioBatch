@@ -284,7 +284,7 @@ private:
         beginTest("Stable kind IDs, versions and analysis are independent of musical key");
         for (std::size_t index = 0; index < serato::allTagKinds.size(); ++index) {
             expectEquals(static_cast<int>(serato::allTagKinds[index]), static_cast<int>(index + 1));
-            expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), 2);
+            expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), index == 0 ? 3 : 2);
         }
         expect(!serato::supportsTagKind(std::bit_cast<serato::TagKind>(std::uint8_t {99})));
         const std::array<std::uint8_t, 2> analysis {2, 1};

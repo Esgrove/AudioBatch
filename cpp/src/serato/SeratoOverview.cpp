@@ -22,6 +22,8 @@ namespace
 constexpr std::array<std::uint8_t, 4> cacheMagic {'S', 'O', 'V', 'R'};
 constexpr std::array<std::uint8_t, 2> payloadHeader {0x01, 0x05};
 constexpr std::size_t cacheHeaderBytes {16};
+/// Raster layout is independent of the parser-result revision used by the tag cache.
+constexpr std::uint32_t cacheFormatVersion {2};
 constexpr std::size_t kindOffset {4};
 constexpr std::size_t versionOffset {8};
 constexpr std::size_t countOffset {12};
@@ -80,7 +82,7 @@ std::optional<Overview> Overview::parse(const std::span<const std::uint8_t> byte
     return copySlices(bytes.subspan(payloadHeader.size()));
 }
 
-/// Encodes magic, kind, parser version and count as big-endian fields followed by raw palette indices.
+/// Encodes magic, kind, raster format version and count as big-endian fields followed by raw palette indices.
 /// Returns an empty block when the public slice vector is empty or exceeds maxSlices.
 juce::MemoryBlock Overview::serialize() const
 {
@@ -91,7 +93,7 @@ juce::MemoryBlock Overview::serialize() const
     const std::span bytes {static_cast<std::uint8_t*>(output.getData()), output.getSize()};
     std::ranges::copy(cacheMagic, bytes.begin());
     writeBigEndian(bytes.subspan(kindOffset, fieldBytes), std::to_underlying(TagKind::overview));
-    writeBigEndian(bytes.subspan(versionOffset, fieldBytes), overviewParserVersion);
+    writeBigEndian(bytes.subspan(versionOffset, fieldBytes), cacheFormatVersion);
     writeBigEndian(bytes.subspan(countOffset, fieldBytes), static_cast<std::uint32_t>(slices.size()));
     for (std::size_t index = 0; index < slices.size(); ++index) {
         std::ranges::copy(slices[index], bytes.subspan(cacheHeaderBytes + index * bandCount, bandCount).begin());
@@ -105,7 +107,7 @@ std::optional<Overview> Overview::deserialize(const std::span<const std::uint8_t
 {
     if (bytes.size() < cacheHeaderBytes || !std::ranges::equal(bytes.first(cacheMagic.size()), cacheMagic)
         || readHeaderField<kindOffset>(bytes) != std::to_underlying(TagKind::overview)
-        || readHeaderField<versionOffset>(bytes) != overviewParserVersion)
+        || readHeaderField<versionOffset>(bytes) != cacheFormatVersion)
     {
         return std::nullopt;
     }

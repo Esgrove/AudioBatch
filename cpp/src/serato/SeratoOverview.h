@@ -13,8 +13,9 @@
 
 namespace audiobatch::serato
 {
-/// Independent extraction and numeric serialization version for the Overview kind.
-inline constexpr std::uint32_t overviewParserVersion {2};
+/// Revision of persisted Overview outcomes, including first-valid duplicate recovery in physical source order.
+/// Independent of the unchanged version-two SOVR raster encoding.
+inline constexpr std::uint32_t overviewParserVersion {3};
 
 /// Owns the Serato Overview's coarse color raster for the whole track.
 /// Common payloads contain 240 consecutive time slices regardless of track duration,

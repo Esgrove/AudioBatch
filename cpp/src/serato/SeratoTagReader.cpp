@@ -40,7 +40,7 @@ bool hasValidContainerHeader(const juce::File& file)
     if (input == nullptr) {
         return false;
     }
-    if (!file.hasFileExtension("wav;wave;aif;aiff")) {
+    if (!file.hasFileExtension("wav;wave;aif;aiff;aifc")) {
         return true;
     }
     std::array<char, containerHeaderBytes> header {};
@@ -314,7 +314,7 @@ std::vector<TagReadResult> readTags(
     if (!file.existsAsFile()) {
         return failedReads(std::move(results), ReadStatus::ioError);
     }
-    if (!file.hasFileExtension("mp3;aif;aiff;wav;wave;flac")) {
+    if (!file.hasFileExtension("mp3;aif;aiff;aifc;wav;wave;flac")) {
         return failedReads(std::move(results), ReadStatus::unsupported);
     }
     if (!hasValidContainerHeader(file)) {

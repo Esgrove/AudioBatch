@@ -41,6 +41,7 @@ constexpr std::size_t fullAutotagsBytes {22};
 constexpr std::size_t compactAutotagsMinBytes {20};
 constexpr std::size_t compactAutotagsMaxBytes {21};
 constexpr std::size_t gridHeaderBytes {6};
+constexpr std::array<std::uint8_t, 2> overviewPayloadHeader {1, 5};
 constexpr std::size_t gridRecordBytes {8};
 constexpr std::size_t cueColourOffset {7};
 constexpr std::size_t loopColourOffset {15};
@@ -344,8 +345,10 @@ std::optional<std::span<const std::uint8_t>> parseTagWrapper(
     }
     auto payload = decoded.subspan(offset);
     if (!payload.empty() && payload.back() == 0) {
-        bool nativePadding = description == overviewNames.description && payload.size() > 2
-            && (payload.size() - 2) % Overview::bandCount == 1;
+        bool nativePadding = description == overviewNames.description
+            && payload.size() > overviewPayloadHeader.size() + Overview::bandCount
+            && std::ranges::equal(payload.first(overviewPayloadHeader.size()), overviewPayloadHeader)
+            && (payload.size() - overviewPayloadHeader.size()) % Overview::bandCount == 1;
         nativePadding = nativePadding || (description == analysisNames.description && payload.size() == 3);
         if (description == beatGridNames.description && payload.size() >= gridHeaderBytes) {
             const auto count = integer(payload.subspan<2, sizeof(std::uint32_t)>());

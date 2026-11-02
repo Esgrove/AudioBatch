@@ -440,6 +440,27 @@ mod test_serato_data {
     }
 
     #[test]
+    fn overview_duplicate_order_has_independent_literal_expectations() {
+        let first = [1, 5, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37];
+        let mut second = first;
+        second[2] = 180;
+        let invalid = [1, 5, 0];
+        for values in [
+            vec![first.as_slice(), &second, &first],
+            vec![invalid.as_slice(), &first, &second, &first],
+            vec![first.as_slice(), &invalid, &second],
+        ] {
+            let data =
+                SeratoData::parse(values.into_iter().map(|value| ("Serato Overview", value))).expect("overview tags");
+            assert_eq!(data.overview.expect("first valid overview").slices(), &[[37; 16]]);
+            assert_eq!(data.errors, [] as [String; 0]);
+        }
+        let invalid = SeratoData::parse([("Serato Overview", invalid.as_slice())]).expect("invalid overview");
+        assert!(invalid.overview.is_none());
+        assert!(invalid.failed_to_parse(SeratoTag::Overview));
+    }
+
+    #[test]
     fn overview_with_a_partial_slice_failed_to_parse() {
         let data = SeratoData::parse([("Serato Overview", &[1_u8, 5, 0][..])]).expect("found serato tags");
         assert_eq!(data.overview, None);

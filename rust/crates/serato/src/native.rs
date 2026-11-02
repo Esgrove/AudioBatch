@@ -25,8 +25,11 @@ pub const NATIVE_FIELDS: [(&str, &str); 6] = [
 /// MIME type of every Serato `GEOB` frame and of the wrapper in a native value.
 pub const GEOB_MIME_TYPE: &str = "application/octet-stream";
 
-/// Longest base64 text accepted, in bytes, which bounds the decoded size too.
-const MAXIMUM_ENCODED_BYTES: usize = 4 * 1024 * 1024;
+/// Largest decoded wrapper, matching the shared bounded tag payload contract.
+const MAXIMUM_DECODED_BYTES: usize = 2 + crate::MAXIMUM_SLICES * crate::BAND_COUNT + 1024;
+
+/// Largest native Base64 value, including a bounded allowance for whitespace.
+const MAXIMUM_ENCODED_BYTES: usize = MAXIMUM_DECODED_BYTES.div_ceil(3) * 4 + 4096;
 
 /// Base64 engine that accepts both padded and unpadded text.
 const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
@@ -89,12 +92,18 @@ pub fn decode_native_value(value: &str, expected_description: &str) -> Option<Ve
     if value.len() > MAXIMUM_ENCODED_BYTES {
         return None;
     }
-    let mut text: Vec<u8> = value.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+    let mut text: Vec<u8> = value
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace() && *byte != b'\x0b')
+        .collect();
     // Native Serato exports can append a single zero sextet to an otherwise complete encoding.
-    if text.len() % 4 == 1 && text.last() == Some(&b'A') {
+    if text.len() % 4 == 1 && text.last() == Some(&b'A') && !text.contains(&b'=') {
         text.pop();
     }
     let decoded = decode_tag_base64(&text)?;
+    if decoded.len() > MAXIMUM_DECODED_BYTES {
+        return None;
+    }
     let mut remaining = decoded.as_slice();
     for expected in [GEOB_MIME_TYPE, "", expected_description] {
         let terminator = remaining.iter().position(|&byte| byte == 0)?;

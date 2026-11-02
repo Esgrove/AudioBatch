@@ -306,6 +306,83 @@ bool writeFlacValues(const juce::File& file, const juce::StringArray& values)
     return flac.save();
 }
 
+/// Writes literal GEOB framing without TagLib's writer so source duplicate order is independently specified.
+bool writeRawOverviewFrames(
+    const juce::File& file,
+    const std::span<const std::vector<std::uint8_t>> payloads,
+    const int version
+)
+{
+    juce::MemoryOutputStream frames;
+    for (const auto& payload : payloads) {
+        juce::MemoryOutputStream body;
+        body.writeByte(0);
+        body.writeString("application/octet-stream");
+        body.writeByte(0);
+        body.writeString("Serato Overview");
+        body.write(payload.data(), payload.size());
+        frames.write("GEOB", 4);
+        const auto size = static_cast<std::uint32_t>(body.getDataSize());
+        if (version == 3) {
+            frames.writeIntBigEndian(static_cast<int>(size));
+        } else {
+            for (const unsigned int shift : {21U, 14U, 7U, 0U}) {
+                frames.writeByte(static_cast<char>((size >> shift) & 127U));
+            }
+        }
+        frames.writeShort(0);
+        frames.write(body.getData(), body.getDataSize());
+    }
+    juce::MemoryOutputStream tag;
+    tag.write("ID3", 3);
+    tag.writeByte(static_cast<char>(version));
+    tag.writeShort(0);
+    const auto size = static_cast<std::uint32_t>(frames.getDataSize());
+    for (const unsigned int shift : {21U, 14U, 7U, 0U}) {
+        tag.writeByte(static_cast<char>((size >> shift) & 127U));
+    }
+    tag.write(frames.getData(), frames.getDataSize());
+    juce::MemoryBlock source;
+    if (!file.loadFileAsData(source)) {
+        return false;
+    }
+    const std::span bytes {static_cast<const std::uint8_t*>(source.getData()), source.getSize()};
+    juce::MemoryOutputStream output;
+    if (file.hasFileExtension("mp3")) {
+        std::size_t skip = 0;
+        if (bytes.size() >= 10 && std::ranges::equal(bytes.first(3), std::to_array<std::uint8_t>({'I', 'D', '3'}))) {
+            skip = 10;
+            std::size_t length = 0;
+            for (const auto byte : bytes.subspan(6, 4)) {
+                length = (length << 7U) | byte;
+            }
+            skip += length;
+        }
+        output.write(tag.getData(), tag.getDataSize());
+        const auto audio = bytes.subspan(skip);
+        output.write(audio.data(), audio.size());
+    } else {
+        output.write(bytes.data(), bytes.size());
+        output.write("ID3 ", 4);
+        const auto length = static_cast<int>(tag.getDataSize());
+        if (file.hasFileExtension("wav")) {
+            output.writeInt(length);
+        } else {
+            output.writeIntBigEndian(length);
+        }
+        output.write(tag.getData(), tag.getDataSize());
+        if (tag.getDataSize() % 2 != 0) {
+            output.writeByte(0);
+        }
+        const auto containerSize = static_cast<std::uint32_t>(output.getDataSize() - 8);
+        const auto encoded = file.hasFileExtension("wav") ? juce::ByteOrder::swapIfBigEndian(containerSize)
+                                                          : juce::ByteOrder::swapIfLittleEndian(containerSize);
+        output.setPosition(4);
+        output.write(&encoded, sizeof(encoded));
+    }
+    return file.replaceWithData(output.getData(), output.getDataSize());
+}
+
 /// Computes a streaming FNV-1a checksum to verify extraction does not alter temporary fixtures.
 std::optional<std::uint64_t> fileChecksum(const juce::File& file)
 {
@@ -341,6 +418,7 @@ public:
     {
         testOverview();
         testRainbowFixtures();
+        testIndependentOverviewContract();
         testMetadata();
         testTrackInfoFields();
     }
@@ -396,6 +474,79 @@ private:
                 );
             }
         }
+    }
+
+    /// Uses the same literal one-slice values and source order as the Rust extraction contract tests.
+    void testIndependentOverviewContract()
+    {
+        beginTest("Physical GEOB A B A duplicates retain the first valid slice across containers and ID3 versions");
+        const TemporaryDirectory directory;
+        std::vector<std::uint8_t> first(18, 37);
+        first[0] = 1;
+        first[1] = 5;
+        auto second = first;
+        second[2] = 180;
+        const std::vector<std::uint8_t> invalid {1, 5, 0};
+        const std::array cases {
+            std::vector {first, second, first},
+            std::vector {invalid, first, second, first},
+            std::vector {first, invalid, second},
+        };
+        for (const auto* fixture :
+             {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif", "sine_stereo_44100_16.wav"})
+        {
+            for (const auto version : {3, 4}) {
+                for (const auto& payloads : cases) {
+                    const auto file = directory.copyFixture(fixture);
+                    expect(writeRawOverviewFrames(file, payloads, version));
+                    const auto result = serato::readTag(file);
+                    expectStatus(result, serato::ReadStatus::present);
+                    const auto overview = tagValue<serato::Overview>(result);
+                    if (overview) {
+                        expectEquals(overview->slices.size(), std::size_t {1});
+                        expect(
+                            overview->slices.front()
+                            == std::to_array<std::uint8_t>(
+                                {37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37}
+                            )
+                        );
+                    }
+                }
+            }
+        }
+        beginTest("Native duplicate recovery uses the first valid value with strict padding and independent bytes");
+        const auto file = directory.copyFixture("sine_stereo_44100_16.flac");
+        const auto firstWrapper = flacWrapper(first);
+        const auto secondWrapper = flacWrapper(second);
+        const auto firstEncoded = juce::Base64::toBase64(firstWrapper.getData(), firstWrapper.getSize());
+        const auto secondEncoded = juce::Base64::toBase64(secondWrapper.getData(), secondWrapper.getSize());
+        for (const auto& values :
+             {
+                 juce::StringArray {firstEncoded, secondEncoded, firstEncoded},
+                 juce::StringArray {"!invalid!", firstEncoded, secondEncoded, firstEncoded},
+                 juce::StringArray {firstEncoded, "!invalid!", secondEncoded},
+             })
+        {
+            expect(writeFlacValues(file, values));
+            const auto result = serato::readTag(file);
+            expectStatus(result, serato::ReadStatus::present);
+            const auto overview = tagValue<serato::Overview>(result);
+            if (overview) {
+                expectEquals(overview->slices.size(), std::size_t {1});
+                expect(std::ranges::all_of(overview->slices.front(), [](auto cell) { return cell == 37; }));
+            }
+        }
+        auto padded = firstWrapper;
+        const std::uint8_t zero = 0;
+        padded.append(&zero, 1);
+        expect(writeFlacValues(file, {juce::Base64::toBase64(padded.getData(), padded.getSize())}));
+        expectStatus(serato::readTag(file), serato::ReadStatus::present);
+        expect(writeFlacValues(file, {juce::Base64::toBase64(padded.getData(), padded.getSize()) + "A"}));
+        expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
+        const auto alias = directory.copyFixture("sine_stereo_44100_16.aif", "alias.aifc");
+        const std::array payloads {first};
+        expect(writeRawOverviewFrames(alias, payloads, 4));
+        expectStatus(serato::readTag(alias), serato::ReadStatus::present);
     }
 
     /// Preserves existing Overview container and outcome regression coverage.
