@@ -222,6 +222,7 @@ Open or drop files and folders to start background analysis.
 Compare levels and file properties in a sortable results table with configurable columns and per-file progress.
 Rescanning analyzes only new and changed files, while re-analysis ignores cached results.
 Normalization, processing, and file actions work on the selection, with confirmed batch commands for all analyzed files.
+Right-click a row for a menu of these actions on the selection.
 
 ### Waveform and playback
 

@@ -61,6 +61,10 @@ impl AppView {
             cx.notify();
             return;
         }
+        if let TableEvent::RightClickedRow(Some(index)) = event {
+            self.select_right_clicked_row(*index, cx);
+            return;
+        }
         let pointer_path = if matches!(event, TableEvent::SelectRow(_)) {
             table.update(cx, |state, _| state.delegate_mut().take_pointer_selection())
         } else {
@@ -87,6 +91,26 @@ impl AppView {
             }
             self.select_path(&path, play, cx);
         }
+    }
+
+    /// Makes a right-clicked row part of the selection before its menu opens:
+    /// an unselected row becomes the only selection, and a selected row keeps the whole selection,
+    /// so the menu always acts on the highlighted rows.
+    fn select_right_clicked_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        let delegate = self.table.read(cx).delegate();
+        let Some(path) = delegate.row(index).map(|row| row.path.clone()) else {
+            return;
+        };
+        if delegate.is_path_selected(&path) {
+            return;
+        }
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().select_only(Some(path.clone()));
+            state.set_selected_row(index, cx);
+            // Moving the cursor clears the right-clicked row, which the table's menu builder still needs.
+            state.set_right_clicked_row(Some(index), cx);
+        });
+        self.select_path(&path, false, cx);
     }
 
     /// Returns the selected files, the file the preview plays first.

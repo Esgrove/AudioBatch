@@ -44,6 +44,7 @@ The Rust version covers the key features of the C++ application:
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the waveform and to the plugin chain preview.
 - Accept files and folders dropped onto the GUI.
+- Offer a right-click menu on the rows of the GUI, with the items of the C++ menu except Normalization Format Support.
 - Normalize files from the CLI and the GUI to a sample peak or loudness target,
   written as AIFF with tags and Serato data.
   Lossless sources produce identical samples in peak mode and differ by at most one PCM step in loudness mode.
@@ -170,7 +171,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   and `settings_window.rs` for the Audio Settings window.
   `menus.rs` defines the actions, the shortcuts, and the menu bar, `theme.rs` the palette and the fonts,
   `settings.rs` the saved preferences, `normalization.rs` the normalization target and options,
-  `operation_run.rs` the progress of a normalization or processing run, and `files.rs` revealing files.
+  `operation_run.rs` the progress of a normalization or processing run,
+  and `files.rs` revealing files and opening their folders.
   `single_instance.rs` hands the paths of a second launch to the running app,
   `demo.rs` holds the data of the `--demo-rows` stress test, and `snapshot.rs` the `snapshot` feature.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.

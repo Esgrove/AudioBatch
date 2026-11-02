@@ -23,13 +23,19 @@ use audiobatch_core::format::{
 };
 use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::{
-    App, Bounds, ClickEvent, Context, Div, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement as _, PathBuilder, Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
-    Window, canvas, div, point, px, rgba,
+    App, Bounds, ClickEvent, Context, Div, FocusHandle, InteractiveElement as _, IntoElement, MouseButton,
+    MouseDownEvent, ParentElement as _, PathBuilder, Pixels, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, canvas, div, point, px, rgba,
 };
 
+use crate::files::{OPEN_PARENT_FOLDER_LABEL, REVEAL_LABEL};
+use crate::menus::{
+    ClearCustomGain, NormalizeSelected, OpenParentFolder, ProcessSelected, ReanalyzeSelected, RemoveSelected,
+    RevealSelected, TrashSelected,
+};
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
 
 /// Height of a table row.
@@ -223,6 +229,23 @@ pub struct ResultsDelegate {
     pointer_selection: Option<PathBuf>,
     /// Width the Status column fills, which `fit_column` hands to the table.
     status_fill_width: Pixels,
+    /// The app state the right-click row menu needs, which the main view keeps up to date.
+    row_menu: RowMenuState,
+}
+
+/// The app state behind the right-click row menu, which the delegate cannot see itself.
+#[derive(Clone, Default)]
+pub struct RowMenuState {
+    /// Focus handle of the main view, which handles the menu's actions.
+    pub action_context: Option<FocusHandle>,
+    /// True when no analysis, normalization, or plugin processing is running.
+    pub idle: bool,
+    /// True when a normalization could start now.
+    pub can_normalize: bool,
+    /// True when plugin processing could start now, with an enabled plugin in the chain.
+    pub can_process: bool,
+    /// Normalization target shown in the normalize item, for example "-14.0 LUFS".
+    pub normalize_target: String,
 }
 
 /// An explicit gain choice belonging only to one version of a file.
@@ -368,9 +391,58 @@ impl ResultsDelegate {
             extra_selected: HashSet::new(),
             pointer_selection: None,
             status_fill_width: px(STATUS_MINIMUM_WIDTH),
+            row_menu: RowMenuState::default(),
         };
         delegate.apply_sort_to_columns();
         delegate
+    }
+
+    /// Updates the app state the right-click row menu shows.
+    pub fn set_row_menu_state(&mut self, state: RowMenuState) {
+        self.row_menu = state;
+    }
+
+    /// Fills the right-click menu of the selected rows.
+    ///
+    /// The items, labels, and order match the C++ file menu, since both applications offer the same file actions.
+    /// The one difference is Normalization Format Support, because this application has no such dialog.
+    /// Every item acts on the whole selection, which right-clicking an unselected row first replaces with that row.
+    fn fill_row_menu(&self, menu: PopupMenu) -> PopupMenu {
+        let state = &self.row_menu;
+        let selected = self.selected_paths();
+        let any_exists = selected.iter().any(|path| path.exists());
+        let any_parent_folder = selected.iter().any(|path| path.parent().is_some_and(Path::is_dir));
+        let any_normalizable = selected
+            .iter()
+            .any(|path| self.row_for(path).and_then(ResultRow::ready_record).is_some());
+        let any_custom_gain = selected.iter().any(|path| {
+            self.row_for(path)
+                .and_then(|row| row.record.as_ref())
+                .is_some_and(|record| record.custom_gain_db.is_some())
+        });
+        let menu = match &state.action_context {
+            Some(focus) => menu.action_context(focus.clone()),
+            None => menu,
+        };
+        menu.menu_with_disabled(REVEAL_LABEL, Box::new(RevealSelected), !any_exists)
+            .menu_with_disabled(OPEN_PARENT_FOLDER_LABEL, Box::new(OpenParentFolder), !any_parent_folder)
+            .separator()
+            .menu_with_disabled("Re-analyze Selected", Box::new(ReanalyzeSelected), !state.idle)
+            .menu_with_disabled(
+                format!("Normalize to {}", state.normalize_target),
+                Box::new(NormalizeSelected),
+                !(state.can_normalize && any_normalizable),
+            )
+            .separator()
+            .menu_with_disabled(
+                "Process With Plugin Chain",
+                Box::new(ProcessSelected),
+                !(state.can_process && any_normalizable),
+            )
+            .menu_with_disabled("Clear Per-file Gain", Box::new(ClearCustomGain), !any_custom_gain)
+            .separator()
+            .menu_with_disabled("Remove from List", Box::new(RemoveSelected), selected.is_empty())
+            .menu_with_disabled("Move to Trash", Box::new(TrashSelected), !any_exists)
     }
 
     /// Returns true when the column shows.
@@ -720,6 +792,12 @@ impl ResultsDelegate {
         self.selected.iter().cloned().chain(extra).collect()
     }
 
+    /// Returns true when the file is selected, as the app's selected file or one of the others.
+    #[must_use]
+    pub fn is_path_selected(&self, path: &Path) -> bool {
+        self.selected.as_deref() == Some(path) || self.extra_selected.contains(path)
+    }
+
     /// Selects every row besides the app's selected file.
     pub fn select_all(&mut self) {
         self.extra_selected = self
@@ -1005,6 +1083,17 @@ impl TableDelegate for ResultsDelegate {
 
     fn rows_count(&self, _cx: &App) -> usize {
         self.rows.len()
+    }
+
+    fn context_menu(
+        &mut self,
+        _row_index: usize,
+        menu: PopupMenu,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        // The main view has already made the right-clicked row part of the selection, see `on_table_event`.
+        self.fill_row_menu(menu)
     }
 
     fn column(&self, column_index: usize, _cx: &App) -> Column {
@@ -1586,6 +1675,16 @@ mod test_selection {
         assert_eq!(selected(&delegate), ["/b.wav", "/c.wav"]);
         delegate.toggle_row(2);
         assert_eq!(selected(&delegate), ["/b.wav"]);
+    }
+
+    #[test]
+    fn a_path_is_selected_as_the_selected_file_or_one_of_the_others() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav"]);
+        delegate.select_only(Some(PathBuf::from("/b.wav")));
+        delegate.toggle_row(0);
+        assert!(delegate.is_path_selected(Path::new("/a.wav")));
+        assert!(delegate.is_path_selected(Path::new("/b.wav")));
+        assert!(!delegate.is_path_selected(Path::new("/c.wav")));
     }
 
     #[test]

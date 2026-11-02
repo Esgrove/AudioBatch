@@ -1,7 +1,7 @@
 //! Menu and transport actions of the main view.
 //!
 //! Covers the file dialogs, analyzing the selected file again, clearing its custom gain, removing it from the list,
-//! moving it to the trash, revealing it in the file manager, clearing the list,
+//! moving it to the trash, revealing it in the file manager or opening its folder, clearing the list,
 //! playback, the events of the controls column, the About dialog, and the synthetic stress test.
 //! Removing or trashing files waits while files are being normalized or processed with plugins.
 
@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use audiobatch_core::file_selection::MAXIMUM_REVEAL_FOLDERS;
 use audiobatch_playback::{Player, PlayerEvent};
 use gpui_kit::{Context, Entity, PathPromptOptions, PromptLevel, SharedString, Task, Window};
 
@@ -17,7 +18,7 @@ use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
 use crate::build_info::about_message;
 use crate::controls::{ControlsEvent, SliderControl};
 use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
-use crate::files::reveal_in_file_manager;
+use crate::files::{open_parent_folders, reveal_in_file_manager};
 use crate::results::ResultsDelegate;
 use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, PlayheadSource, WaveformEvent, WaveformView};
 
@@ -93,15 +94,35 @@ impl AppView {
         .detach();
     }
 
-    /// Shows the selected file in the platform file manager.
+    /// Shows the selected files in the platform file manager, one window per parent folder.
     pub(super) fn reveal_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() {
             return;
-        };
-        if let Err(error) = reveal_in_file_manager(&selected) {
-            self.status = format!("Could not show {}: {error}", display_name(&selected)).into();
-            cx.notify();
         }
+        let result = reveal_in_file_manager(&selected);
+        self.report_folder_action(result, "show", cx);
+    }
+
+    /// Opens the parent folders of the selected files in the platform file manager.
+    pub(super) fn open_parent_folder(&mut self, cx: &mut Context<Self>) {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() {
+            return;
+        }
+        let result = open_parent_folders(&selected);
+        self.report_folder_action(result, "open", cx);
+    }
+
+    /// Shows in the status when the file manager could not start, or when the folder limit left folders out.
+    fn report_folder_action(&mut self, result: std::io::Result<usize>, verb: &str, cx: &mut Context<Self>) {
+        let status = match result {
+            Err(error) => format!("Could not {verb} the selected files: {error}"),
+            Ok(0) => return,
+            Ok(skipped) => folder_limit_status(skipped),
+        };
+        self.status = status.into();
+        cx.notify();
     }
 
     /// Removes every file and folder and stops any run and playback.
@@ -514,6 +535,12 @@ fn describe_files(action: &str, rest: &str, paths: &[PathBuf]) -> String {
         [single] => format!("{action} {} {rest}", display_name(single)),
         _ => format!("{action} {} files {rest}", paths.len()),
     }
+}
+
+/// Describes that revealing or opening the folders of the selection stopped at `MAXIMUM_REVEAL_FOLDERS`.
+fn folder_limit_status(skipped: usize) -> String {
+    let folders = if skipped == 1 { "folder" } else { "folders" };
+    format!("Opened the first {MAXIMUM_REVEAL_FOLDERS} folders, {skipped} more {folders} left out")
 }
 
 #[cfg(test)]

@@ -46,11 +46,15 @@ impl AppView {
     /// Returns true when the selected file can be processed now.
     /// It runs on every render, so it leaves checking that the file still exists to `process_selected`.
     pub(super) fn can_process_selected(&self, cx: &Context<Self>) -> bool {
+        self.can_start_processing() && self.selected_record(cx).is_some()
+    }
+
+    /// Returns true when plugin processing could start now, with an enabled plugin, whatever is selected.
+    pub(super) fn can_start_processing(&self) -> bool {
         !self.is_demo()
             && self.process_coordinator.is_some()
             && self.processing_blocked_reason().is_none()
             && self.plugins.chain.enabled_count() > 0
-            && self.selected_record(cx).is_some()
     }
 
     /// Processes the selected file with the plugin chain.
