@@ -26,11 +26,12 @@ use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::{
-    App, Bounds, ClickEvent, Context, Div, FocusHandle, InteractiveElement as _, IntoElement, MouseButton,
-    MouseDownEvent, ParentElement as _, PathBuilder, Pixels, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, Window, canvas, div, point, px, rgba,
+    App, AppContext as _, Bounds, ClickEvent, Context, Div, FocusHandle, InteractiveElement as _, IntoElement,
+    MouseButton, MouseDownEvent, ParentElement as _, PathBuilder, Pixels, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, Window, canvas, div, point, px, rgba,
 };
 
+use crate::file_drag::DraggedFiles;
 use crate::files::{OPEN_PARENT_FOLDER_LABEL, REVEAL_LABEL};
 use crate::menus::{
     ClearCustomGain, NormalizeSelected, OpenParentFolder, ProcessSelected, ReanalyzeSelected, RemoveSelected,
@@ -798,6 +799,17 @@ impl ResultsDelegate {
         self.selected.as_deref() == Some(path) || self.extra_selected.contains(path)
     }
 
+    /// Returns the files a drag that started on the row of `pressed` carries:
+    /// the whole selection when that row is selected, otherwise only its file.
+    #[must_use]
+    pub fn drag_paths(&self, pressed: &Path) -> Vec<PathBuf> {
+        if self.is_path_selected(pressed) {
+            self.selected_paths()
+        } else {
+            vec![pressed.to_path_buf()]
+        }
+    }
+
     /// Selects every row besides the app's selected file.
     pub fn select_all(&mut self) {
         self.extra_selected = self
@@ -1192,6 +1204,15 @@ impl TableDelegate for ResultsDelegate {
             row.bg(rgba(SELECTION_BACKGROUND))
         } else {
             row
+        };
+        // A drag of the row hands its files to other applications as copies, see `file_drag`.
+        let row = match &path {
+            Some(path) => row
+                .on_drag(DraggedFiles::new(path.clone(), cx.weak_entity()), |files, _, _, cx| {
+                    cx.new(|_| files.clone())
+                })
+                .external_drag_payload(|files: &DraggedFiles, _, cx| files.payload(cx)),
+            None => row,
         };
         let click_path = path.clone();
         row.on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
@@ -1678,13 +1699,15 @@ mod test_selection {
     }
 
     #[test]
-    fn a_path_is_selected_as_the_selected_file_or_one_of_the_others() {
+    fn a_drag_carries_the_selection_only_from_a_selected_row() {
         let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav"]);
         delegate.select_only(Some(PathBuf::from("/b.wav")));
         delegate.toggle_row(0);
+        let from_selected = delegate.drag_paths(Path::new("/a.wav"));
+        assert_eq!(from_selected, [PathBuf::from("/b.wav"), PathBuf::from("/a.wav")]);
         assert!(delegate.is_path_selected(Path::new("/a.wav")));
-        assert!(delegate.is_path_selected(Path::new("/b.wav")));
         assert!(!delegate.is_path_selected(Path::new("/c.wav")));
+        assert_eq!(delegate.drag_paths(Path::new("/c.wav")), [PathBuf::from("/c.wav")]);
     }
 
     #[test]

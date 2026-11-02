@@ -50,7 +50,8 @@ flowchart LR
 They have no plugin code either.
 The preview engine knows plugins only through the `PreviewInsert` trait,
 which the GUI implements with `ChainInsert`, a wrapper of the `PreviewChain` from `plugins`.
-The workspace lints deny unsafe code, and only `vst3-host` and `test-plugin` allow it, module by module.
+The workspace lints deny unsafe code, and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`.
+These are mostly modules of `vst3-host` and `test-plugin`, plus the Windows file drag in `gui/src/file_drag/windows.rs`.
 
 ## Threads
 
@@ -253,6 +254,17 @@ The port file is readable only by the user and holds a random token that a launc
 and a lock file makes launches that start at the same time decide one after the other.
 Otherwise this launch becomes the running app,
 and `listen_for_launches` opens the paths of later launches as if they were dropped onto the window.
+
+Dragging result rows out of the window gives other applications copies of the files.
+A row drag carries `DraggedFiles`, its own type rather than `ExternalPaths`, so the window's drop handler ignores it.
+It resolves the dragged files from the table when the drag leaves the window:
+the selection when the pressed row is selected, otherwise only that row,
+filtered by `drag_out_paths` in `audiobatch-core` to existing files without duplicates.
+On macOS gpui's `external_drag_payload` starts an `NSDraggingSession` that offers only the Copy operation.
+gpui-pre 0.3.10 returns false from `can_start_external_drag` on Windows,
+so there a `cfg(windows)` `on_drag_move` listener on the results frame stops the gpui drag
+and runs an OLE `DoDragDrop` of a `CF_HDROP` list with `DROPEFFECT_COPY`, in `gui/src/file_drag/windows.rs`.
+Delete that listener and module once gpui implements `start_external_drag` on Windows.
 
 ## Analysis
 
@@ -578,7 +590,9 @@ Closing the window only hides it, so `LiveChain` captures the settings on the ne
 **Unsafe code.**
 Each module of `vst3-host` that needs unsafe code opts in with `#![expect(unsafe_code, reason = "...")]`,
 and every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
-COM pointers never leave `vst3-host`, so `plugins` and the front ends stay safe.
+VST3 COM pointers never leave `vst3-host`, so `plugins` and the front ends stay safe.
+The one unsafe module of the GUI, the Windows file drag,
+holds its own OLE objects and depends on nothing in `vst3-host`.
 The `vst3` crate is pinned to `=0.3.0`, whose bindings come from VST SDK 3.8.0, the SDK that JUCE bundles.
 
 **Scanning.**

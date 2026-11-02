@@ -33,6 +33,8 @@ use crate::controls::{
     ControlsEvent, ControlsState, EventCallback, NormalizeControls, PlaybackControls, SECTION_TOGGLE_SIZE,
     fit_height as controls_fit_height, render_controls, render_playback_row, render_section_toggle,
 };
+#[cfg(windows)]
+use crate::file_drag::DraggedFiles;
 use crate::info_panel::{COMPACT_METRIC_SPACING, render_compact_info_panel, render_info_panel};
 use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
@@ -282,9 +284,13 @@ impl AppView {
 
     /// Renders the results table in its outlined frame, highlighted while files are dragged over it.
     fn render_table(&self) -> impl IntoElement {
+        let frame = div().id("results-frame");
+        // TODO: delete this trigger and `file_drag::windows` once gpui implements `start_external_drag` on Windows,
+        // since the rows' `external_drag_payload` then covers Windows as well.
+        #[cfg(windows)]
+        let frame = frame.on_drag_move::<DraggedFiles>(start_windows_file_drag);
         div().id("results").size_full().pb(px(DIVIDER_SPACING)).child(
-            div()
-                .id("results-frame")
+            frame
                 .size_full()
                 .rounded(px(4.0))
                 .border(px(TABLE_FRAME_BORDER))
@@ -641,6 +647,36 @@ fn preview_widths(content_width: f32) -> (f32, f32, bool) {
         (shared * (1.0 - WIDE_CONTROLS_PROPORTION)).min(WIDE_INFORMATION_MAXIMUM_WIDTH),
         true,
     )
+}
+
+/// Hands a drag of result rows to the OLE drag of `file_drag::windows` once the pointer leaves the window.
+///
+/// This trigger exists only because gpui-pre 0.3.10 returns false from `can_start_external_drag` on Windows,
+/// so the rows' `external_drag_payload` never starts a platform drag there.
+/// Stopping the gpui drag ends the gesture inside the window, so this runs once per gesture.
+/// The modal OLE loop starts from a foreground task, after this mouse event has been handled,
+/// so its message pump does not re-enter gpui while the app is being updated.
+#[cfg(windows)]
+fn start_windows_file_drag(event: &gpui_kit::DragMoveEvent<DraggedFiles>, window: &mut Window, cx: &mut App) {
+    let position = event.event.position;
+    let viewport = window.viewport_size();
+    let inside =
+        position.x >= px(0.0) && position.y >= px(0.0) && position.x < viewport.width && position.y < viewport.height;
+    if inside {
+        return;
+    }
+    let paths = event.drag(cx).existing_paths(cx);
+    cx.stop_active_drag(window);
+    cx.refresh_windows();
+    if paths.is_empty() {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        let copied = crate::file_drag::start_file_drag(&paths);
+        tracing::debug!(files = paths.len(), copied, "file drag out of the window ended");
+        cx.update(App::refresh_windows);
+    })
+    .detach();
 }
 
 /// Renders the overall progress of a run as a thin line along the top edge of the status bar.
