@@ -444,7 +444,7 @@ fn decode_geob_frame(
     bytes.extend_from_slice(&chunk_length.to_le_bytes());
     bytes.extend_from_slice(&header);
     bytes.extend_from_slice(frame);
-    if chunk_length % 2 != 0 {
+    if !chunk_length.is_multiple_of(2) {
         bytes.push(0);
     }
     let wav = WavFile::read_from(&mut Cursor::new(bytes), display_parse_options())?;
