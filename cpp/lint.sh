@@ -5,6 +5,7 @@ USAGE="Usage: $0 [OPTIONS] [-- CLANG_TIDY_ARGS...]
 
 Lint C++ code in src/, tests/, and ../test-plugin/src/ with clang-tidy.
 Progress and diagnostics report project paths relative to the repository root.
+Every run ends with warning and error totals, counting repeated header findings only once.
 
 Uses the compile_commands.json from an existing CMake build directory.
 If the selected database is missing, configures and builds its Ninja workspace first.
@@ -289,11 +290,7 @@ finish_worker() {
     local index="$1"
     wait "${WORKER_PIDS[index]}" || CLANG_TIDY_STATUS=$?
     unset 'WORKER_PIDS[index]'
-    if [ "$CHECK" = true ]; then
-        report_relative_paths < "$WORK_DIR/$index.log" | tee -a "$OUTPUT_FILE"
-    else
-        report_relative_paths < "$WORK_DIR/$index.log"
-    fi
+    report_relative_paths < "$WORK_DIR/$index.log" | tee -a "$OUTPUT_FILE"
 }
 
 # Keeps at most JOBS workers outstanding, using Bash 3.2-compatible waits on macOS.
@@ -465,7 +462,7 @@ if [ "${#SOURCES[@]}" -eq 0 ]; then
     if [ "$FUZZ" = true ]; then
         print_error_and_exit "No fuzz harnesses found in $REPO/tests/fuzz"
     fi
-    print_green "No $FILE_SELECTION C++ sources to lint"
+    print_green "No $FILE_SELECTION C++ sources to lint (0 warnings, 0 errors)"
     exit 0
 fi
 
@@ -485,7 +482,7 @@ for source in "${SOURCES[@]}"; do
     fi
 done
 if [ "${#LINTED_SOURCES[@]}" -eq 0 ]; then
-    print_green "No C++ sources in this compile database to lint"
+    print_green "No C++ sources in this compile database to lint (0 warnings, 0 errors)"
     exit 0
 fi
 SOURCES=("${LINTED_SOURCES[@]}")
@@ -538,19 +535,25 @@ else
     run_clang_tidy
 fi
 
+# Headers are linted once per including source file, so count each finding only once.
+WARNING_COUNT=$({ grep -E "(^|: )warning: " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
+ERROR_COUNT=$({ grep -E "(^|: )error: " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
+ISSUE_COUNT=$((WARNING_COUNT + ERROR_COUNT))
+
+if [ "$ISSUE_COUNT" -gt 0 ]; then
+    print_yellow "clang-tidy reported $WARNING_COUNT warning(s) and $ERROR_COUNT error(s)"
+else
+    print_green "clang-tidy reported 0 warnings and 0 errors"
+fi
+
 if [ "$CHECK" = false ]; then
     exit "$CLANG_TIDY_STATUS"
 fi
 
-# Headers are linted once per including source file, so count each finding only once.
-ISSUE_COUNT=$({ grep -E "(^|: )(warning|error): " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
-
 if [ "$ISSUE_COUNT" -gt 0 ]; then
-    print_error_and_exit "clang-tidy reported $ISSUE_COUNT issue(s)"
+    exit 1
 fi
 
 if [ "$CLANG_TIDY_STATUS" -ne 0 ]; then
     print_error_and_exit "clang-tidy failed with exit code $CLANG_TIDY_STATUS"
 fi
-
-print_green "No clang-tidy issues found"

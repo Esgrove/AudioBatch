@@ -634,6 +634,7 @@ State restoration, loading, decoding, and sample exports are excluded from both 
 
 - `./format.sh` formats C++, CMake and shell scripts. `--check` verifies formatting without changes.
 - `./lint.sh` runs clang-tidy. `--check` fails on warnings.
+  Every run reports warning and error totals, counting repeated header findings only once.
   `--changed` lints only the sources changed since the last commit, and `--staged` only the staged ones.
   `--prepare` refreshes a Ninja workspace's compile database and generated headers without compiling the applications.
   CI uses `./lint.sh --prepare --build-type Debug --check` for the same lightweight setup locally and on runners.
