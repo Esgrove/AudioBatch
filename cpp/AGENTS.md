@@ -47,10 +47,18 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `AudioMeasurement.*` groups decoded or rendered PCM into fixed libebur128 measurement intervals
       and supplies peaks, loudness, and overload histories without decoding rendered output again.
       `OverloadHistory.*` build, validate, project, and serialize the bounded per-channel source overload flags.
-    - `AnalysisCache.*` manage the SQLite result cache.
+    - `AnalysisCache.*` manage the SQLite result cache shared with the Rust application.
       Its implementation is split into `AnalysisCache.cpp` (analysis and waveform persistence)
       and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
       which share the column and parameter constants in `AnalysisCacheSql.h`.
+      Measurement contract version 13 is coordinated across both implementations.
+      Successful foreign measurements are reusable for reporting, while decoder failures are producer-specific.
+      Rust waveforms live in `rust_waveform_cache`, separate from the optional JUCE waveform columns.
+      A missing waveform or Serato payload must not invalidate successful measurements.
+      Preserve current persisted gains, including explicit clears, and compatible previews during measurement refills.
+      Gain and preview writes never change measurement provenance.
+      Foreign measurements require native remeasurement before normalization gain, refusal, ceiling, or no-op decisions.
+      Explicit custom-gain and unity plugin processing do not depend on foreign measurement values.
     - `Sqlite.*` holds the self-closing database and statement handles in the `sqlite` namespace,
       with the execute, prepare, step, bind and column helpers that check results and log errors.
       `SqliteTransaction.*` holds `sqlite::Transaction`, which rolls back unless committed.
@@ -157,8 +165,11 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `LiveChainPresets.cpp` (saving, loading, and deleting presets), and `LiveChainPreview.cpp`.
       Each slot owns the processor the preview and its editor share, and `LiveChainPreview.cpp` prepares them.
       The chain editor rows refer to their slot by `PluginSlotId` instead of by position.
-    - `PreviewController.*` loads and releases the previewed file in that player and reads its Serato tags.
+    - `PreviewController.*` loads and releases the previewed file and requests artifacts from the GUI-owned scheduler.
       Its state is a variant of no preview, a released preview that keeps its file, and a loaded preview.
+    - `PreviewEnrichmentScheduler.*` admits one optional-artifact worker after foreground results settle,
+      prioritizes selection, and persists explicit gain edits and committed outputs outside the message thread.
+      `NativeWaveformBuilder.*` decodes bounded PCM blocks and serializes native JUCE thumbnails without a second pool.
     - `ArtworkLoader.*` reads the album artwork of the selected file on its own worker,
       checks the image header before decoding a bounded thumbnail, and drops results of replaced or changed files.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,

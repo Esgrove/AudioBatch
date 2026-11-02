@@ -141,15 +141,25 @@ impl WaveformOverview {
         let length_in_frames = reader.u64()?;
         let frames_per_bucket = u64::from(reader.u32()?);
         let bucket_count = reader.u32()? as usize;
-        if channels == 0 || frames_per_bucket == 0 {
-            return None;
-        }
-        if (bucket_count as u64).checked_mul(frames_per_bucket)? < length_in_frames {
+        if !(16..=2_822_400).contains(&sample_rate)
+            || !(1..=64).contains(&channels)
+            || frames_per_bucket < MINIMUM_FRAMES_PER_BUCKET
+            || !frames_per_bucket.is_power_of_two()
+            || bucket_count > MAXIMUM_BUCKETS
+            || length_in_frames.div_ceil(frames_per_bucket) != bucket_count as u64
+        {
             return None;
         }
         let peak_count = bucket_count.checked_mul(channels as usize)?;
         let payload = reader.remaining();
         if payload.len() != peak_count.checked_mul(2)? {
+            return None;
+        }
+        if !payload.as_chunks::<2>().0.iter().all(|&[min, max]| {
+            let min = i8::from_le_bytes([min]);
+            let max = i8::from_le_bytes([max]);
+            min >= -127 && min <= max
+        }) {
             return None;
         }
         let peaks = payload
@@ -205,7 +215,6 @@ impl WaveformOverview {
     }
 
     /// Returns the source length in frames.
-    #[cfg(test)]
     #[must_use]
     pub(crate) const fn length_in_frames(&self) -> u64 {
         self.length_in_frames
@@ -707,6 +716,29 @@ mod test_waveform {
         let mut empty = WaveformBuilder::new(1, None).finish(44_100, 0).to_bytes();
         empty.splice(16..24, 1000_u64.to_le_bytes());
         assert!(WaveformOverview::from_bytes(&empty).is_none());
+    }
+
+    #[test]
+    fn oversized_geometry_and_invalid_quantized_ranges_are_rejected_before_allocating() {
+        let mut builder = WaveformBuilder::new(1, None);
+        builder.push(&[&[0.5; 64]]);
+        let bytes = builder.finish(44_100, 64).to_bytes();
+        for (offset, value) in [(8, 0), (12, 65), (24, 1), (28, u32::MAX)] {
+            let mut malformed = bytes.clone();
+            malformed
+                .get_mut(offset..offset + 4)
+                .expect("header field")
+                .copy_from_slice(&value.to_le_bytes());
+            assert!(WaveformOverview::from_bytes(&malformed).is_none());
+        }
+        for range in [[128, 127], [127, 0], [0, 128]] {
+            let mut malformed = bytes.clone();
+            malformed
+                .get_mut(HEADER_BYTES..)
+                .expect("peak payload")
+                .copy_from_slice(&range);
+            assert!(WaveformOverview::from_bytes(&malformed).is_none());
+        }
     }
 
     #[test]

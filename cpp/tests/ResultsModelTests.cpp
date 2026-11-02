@@ -1,20 +1,42 @@
 /// Tests for ResultsModel, the rows of the results table.
-/// Covers merging analysis and operation results, the custom gain carried over for unchanged files,
-/// and the path index after removing and sorting rows.
+/// Covers merging analysis and operation results, explicit gain edits versus inherited persisted values,
+/// the path index after removing and sorting rows, and non-rendering artifact admission checks.
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/NativeWaveformBuilder.h"
+#include "gui/PreviewEnrichmentScheduler.h"
 #include "gui/ResultsModel.h"
+#include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioFormatUtils.h"
+#include "utils/FileUtils.h"
+#include <condition_variable>
 
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <vector>
 
 namespace audiobatch::tests
 {
 namespace
 {
+/// Barrier state retained until a detached admission-test worker exits.
+struct EnrichmentProbe {
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::vector<juce::String> paths;
+    std::vector<bool> missing;
+    bool release {false};
+    int active {0};
+    int maximum {0};
+};
+
 /// Builds an analyzed record for a file with the given name, size, and custom gain.
 AudioAnalysisRecord makeRecord(
     const juce::String& name,
@@ -53,6 +75,9 @@ public:
     /// Runs the results model checks.
     void runTest() override
     {
+        testNativeWaveform();
+        testEnrichmentAdmission();
+
         beginTest("Merging appends new paths and replaces the row of a known path in place");
         {
             ResultsModel results;
@@ -70,14 +95,14 @@ public:
             expect(!results.containsRow(2));
         }
 
-        beginTest("A custom gain is carried over only while the file is unchanged");
+        beginTest("Inherited gains never override another process's persisted edit or clear");
         {
             ResultsModel results;
             results.merge(makeRecord("a.wav", 1000, Decibels {-3.0f}));
 
             const auto unchanged = results.merge(makeRecord("a.wav"));
-            expect(unchanged.customGainCarriedOver);
-            expect(sameCustomGain(results[0].customGain, Decibels {-3.0f}));
+            expect(!unchanged.customGainCarriedOver);
+            expect(!results[0].customGain);
 
             const auto sameGain = results.merge(makeRecord("a.wav", 1000, Decibels {-3.0f}));
             expect(!sameGain.customGainCarriedOver);
@@ -115,6 +140,9 @@ public:
             expect(!results[0].customGain);
             results.setRecord(0, stale);
             expect(!results[0].customGain);
+            results.beginLoad();
+            results.merge(stale);
+            expect(sameCustomGain(results[0].customGain, Decibels {-3.0f}));
 
             results.removePaths({stale.fullPath});
             results.merge(stale);
@@ -221,6 +249,123 @@ public:
             expectEquals(results.size(), 2);
             expect(results[0].status == AudioAnalysisStatus::analyzed);
             expect(results[1].status == AudioAnalysisStatus::pending);
+        }
+    }
+
+private:
+    /// Compares complete PCM buckets against JUCE encoding without starting a source-backed decoder.
+    void testNativeWaveform()
+    {
+        beginTest("Waveform-only bytes match native JUCE geometry and quantization without padded final buckets");
+        auto reader = utils::createAudioReader(fixtureFile("sine_stereo_44100_16.wav"));
+        expect(reader != nullptr);
+        if (!reader) {
+            return;
+        }
+        const auto waveform = buildNativeWaveform(*reader);
+        expect(waveform.has_value());
+        if (!waveform) {
+            return;
+        }
+        juce::MemoryInputStream input(*waveform, false);
+        expectEquals(input.readInt(), 0x6d74616a);
+        const auto detail = input.readInt();
+        expectEquals(detail, samplesPerThumbnailPoint(reader->lengthInSamples));
+        expectEquals(input.readInt64(), reader->lengthInSamples);
+        const auto completeLength = reader->lengthInSamples / detail * detail;
+        expectEquals(input.readInt64(), completeLength);
+        const auto points = input.readInt();
+        expectEquals(points, static_cast<int>(reader->lengthInSamples / detail + 1));
+        expectEquals(input.readInt(), 2);
+        expectEquals(input.readInt(), 44'100);
+
+        juce::AudioBuffer<float> pcm(2, static_cast<int>(reader->lengthInSamples));
+        expect(utils::readFloatSamples(*reader, utils::writePointers(pcm), 0, pcm.getNumSamples()));
+        juce::AudioFormatManager formats;
+        juce::AudioThumbnailCache cache(1);
+        juce::AudioThumbnail native(detail, formats, cache);
+        native.reset(2, reader->sampleRate, reader->lengthInSamples);
+        native.addBlock(0, pcm, 0, static_cast<int>(completeLength));
+        juce::MemoryBlock expected;
+        juce::MemoryOutputStream output(expected, false);
+        native.saveTo(output);
+        output.flush();
+        expect(*waveform == expected);
+        expectWithinAbsoluteError(
+            native.getTotalLength(), static_cast<double>(reader->lengthInSamples) / reader->sampleRate, 1.0e-12
+        );
+        expect(!buildNativeWaveform(*reader, [] { return true; }));
+    }
+
+    /// Exercises post-load gating, single admission, selection promotion, cancellation and dedup with barriers.
+    void testEnrichmentAdmission()
+    {
+        beginTest("Enrichment gates missing work, joins the selected job, and never admits a second worker");
+        auto probe = std::make_shared<EnrichmentProbe>();
+        const TemporaryDirectory directory;
+        const auto first = directory.copyFixture("silence_stereo_44100_16.wav", "first.wav");
+        const auto selected = directory.copyFixture("silence_stereo_44100_16.wav", "selected.wav");
+        const utils::FileIdentity identity(selected);
+        PreviewEnrichmentScheduler scheduler(
+            directory.getChildFile("enrichment.db"),
+            {},
+            [probe](
+                const PreviewEnrichmentCandidate& candidate,
+                const bool missing,
+                const utils::CancellationCheck& cancelled
+            ) {
+                std::unique_lock lock(probe->mutex);
+                ++probe->active;
+                probe->maximum = std::max(probe->maximum, probe->active);
+                probe->paths.push_back(candidate.file.getFileName());
+                probe->missing.push_back(missing);
+                probe->condition.notify_all();
+                probe->condition.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                    return probe->release || cancelled();
+                });
+                --probe->active;
+                probe->condition.notify_all();
+            }
+        );
+        scheduler.beginForeground();
+        scheduler.select(identity, 1);
+        {
+            std::unique_lock lock(probe->mutex);
+            expect(probe->condition.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                return !probe->paths.empty();
+            }));
+            expect(!probe->missing.empty() && !probe->missing.front());
+            probe->release = true;
+            probe->condition.notify_all();
+            expect(probe->condition.wait_for(lock, std::chrono::milliseconds(250), [&] { return probe->active == 0; }));
+            probe->release = false;
+        }
+        const auto candidate = [](const juce::File& file) {
+            return PreviewEnrichmentCandidate {
+                .file = file,
+                .fileSize = file.getSize(),
+                .modifiedTimeMs = file.getLastModificationTime().toMilliseconds(),
+            };
+        };
+        scheduler.completeForeground({candidate(first), candidate(selected), candidate(selected)});
+        {
+            std::unique_lock lock(probe->mutex);
+            expect(probe->condition.wait_for(lock, std::chrono::milliseconds(250), [&] {
+                return probe->paths.size() >= 2;
+            }));
+            expectEquals(probe->paths.back(), juce::String("selected.wav"));
+            expect(probe->missing.back());
+        }
+        scheduler.select(identity, 2);
+        scheduler.beginForeground();
+        scheduler.stop();
+        {
+            std::unique_lock lock(probe->mutex);
+            probe->release = true;
+            probe->condition.notify_all();
+            expect(probe->condition.wait_for(lock, std::chrono::milliseconds(250), [&] { return probe->active == 0; }));
+            expectEquals(probe->maximum, 1);
+            expectEquals(probe->paths.size(), std::size_t {2});
         }
     }
 };

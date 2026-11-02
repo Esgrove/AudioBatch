@@ -195,17 +195,14 @@ fn new_target_slider(mode: NormalizeMode, target: f64, cx: &mut Context<AppView>
     })
 }
 
-/// Opens the default analysis cache, and the coordinators sharing it.
+/// Creates coordinators sharing a lazily opened default analysis cache.
 /// Analysis and normalization get one worker per CPU.
 /// Plugin processing leaves one physical core free, because plugins are much heavier per file
 /// and the preview and the editors keep running on the UI thread.
-/// Falls back to a cache in the temporary directory when the default location cannot be opened.
+/// Opening SQLite and migrating the shared schema happen on the first worker lookup, never during GUI startup.
+/// Cache failures remain misses and do not prevent native analysis or processing.
 fn open_coordinators() -> anyhow::Result<Coordinators> {
-    let cache = AnalysisCache::open_default().or_else(|_| {
-        let cache = AnalysisCache::with_path(std::env::temp_dir().join("AudioBatch-rs").join("analysis.db"));
-        cache.open()?;
-        anyhow::Ok(Arc::new(cache))
-    })?;
+    let cache = Arc::new(AnalysisCache::new());
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     Ok(Coordinators {
         normalize: Some(Arc::new(NormalizeCoordinator::new(Arc::clone(&cache), workers)?)),

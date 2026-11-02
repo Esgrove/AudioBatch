@@ -16,23 +16,6 @@
 
 namespace audiobatch
 {
-namespace
-{
-/// Copies the custom gain of the record in the table onto a new record for the same path,
-/// when the file still has the size and modification time the gain was set for.
-/// A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
-void keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
-{
-    if (!existing.customGain || existing.fileSize != incoming.fileSize
-        || existing.modifiedTimeMs != incoming.modifiedTimeMs)
-    {
-        return;
-    }
-
-    incoming.customGain = existing.customGain;
-}
-}  // namespace
-
 /// True when the table has no rows.
 bool ResultsModel::empty() const noexcept
 {
@@ -113,7 +96,7 @@ bool ResultsModel::setCustomGain(const int row, const std::optional<Decibels> ga
 
 /// Replaces the row with the same full path as the record, or appends the record as a new row.
 /// Explicit gain edits, including clears, win over queued results while the file identity is unchanged.
-/// Without an explicit edit, an existing nonempty gain is retained for that same identity.
+/// Inherited gains never override incoming persisted values, including another process's explicit clear.
 MergedRecord ResultsModel::merge(AudioAnalysisRecord record)
 {
     if (const auto existing = rowsByPath.find(record.fullPath); existing != rowsByPath.end()) {
@@ -125,8 +108,6 @@ MergedRecord ResultsModel::merge(AudioAnalysisRecord record)
             } else {
                 customGainEdits.erase(edit);
             }
-        } else {
-            keepCustomGainOfUnchangedFile(row, record);
         }
         const auto carriedOver = !sameCustomGain(incomingGain, record.customGain);
         row = std::move(record);
@@ -150,6 +131,13 @@ MergedRecord ResultsModel::replaceAfterOperation(const juce::String& originalPat
     }
 
     return merge(std::move(output));
+}
+
+/// Stops protecting prior-run explicit edits when a new read starts, so persisted cross-process changes win.
+/// Edits made after this boundary still protect the current run's queued results.
+void ResultsModel::beginLoad()
+{
+    customGainEdits.clear();
 }
 
 /// Removes every row.

@@ -227,6 +227,7 @@ impl AppView {
                     delegate.replace_after_operation(&source, output, message);
                 }
             }
+            delegate.release_waveforms_except(self.selected.as_deref());
             cx.notify();
         });
         if let Some(output_path) = output_path {
@@ -327,6 +328,7 @@ impl AppView {
             cx.notify();
             return;
         };
+        self.enrichment.invalidate();
         self.artwork_rewrites
             .extend(records.iter().map(|record| record.path.clone()));
         if self
@@ -443,6 +445,7 @@ fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx
                     finish_drain(&mut view.normalize_run, &mut view.normalize_winding_down);
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
+                    view.resume_enrichment(cx);
                     cx.notify();
                 });
                 break;

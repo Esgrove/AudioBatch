@@ -285,7 +285,7 @@ std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& 
 }
 /// Shows full-width file details and fixed metrics, clearing analysis values for pending or failed records.
 /// Splits the filename at the first literal " - ", keeping subsequent separators in the title.
-/// Ready records omit the status row to leave more room for file details.
+/// Cached measurements show their origin-aware status, with activity and operation messages taking precedence.
 /// Musical metadata remains independent of analysis readiness.
 /// Same-file updates preserve the detail scroll position.
 void AudioInfoPanel::showRecord(
@@ -313,10 +313,8 @@ void AudioInfoPanel::showRecord(
         label->setTooltip(path);
         label->setDescription(path);
     }
-    hasStatus = !record.isReady();
-    const auto status = !record.isReady() && !record.hasError() && activeStatusLabel.isNotEmpty()
-        ? activeStatusLabel
-        : formatStatus(record);
+    hasStatus = !record.isReady() || record.status == AudioAnalysisStatus::cached || activeStatusLabel.isNotEmpty();
+    const auto status = activeStatusLabel.isNotEmpty() ? activeStatusLabel : formatGuiStatus(record);
     statusLabel.setText(status, juce::dontSendNotification);
     setDescription(utils::format("{}: {}", path, status));
     statusLabel.setColour(

@@ -51,6 +51,12 @@ struct NormalizedRender {
     juce::String decodeNotice;
 };
 
+/// Native source measurements and the progress reserved for obtaining them.
+struct NormalizationSource {
+    AudioAnalysisRecord analysis;
+    float renderProgressStart {0.0f};
+};
+
 /// Prepared destination and source metadata used while assigning deterministic output ownership.
 struct OutputCandidate {
     /// Non-owning record from the caller's vector, valid for the duration of conflict detection.
@@ -80,6 +86,26 @@ AudioNormalizationResult failNormalization(const juce::File& file, const juce::S
 {
     utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), message);
     return AudioNormalizationResult::failure(file, message);
+}
+
+/// Establishes native measurements before any gain, refusal, ceiling or already-at-target decision.
+/// An unchanged source keeps its explicit gain even when foreign measurements must be replaced.
+NormalizationSource prepareNormalizationSource(
+    const AudioAnalysisRecord& sourceRecord,
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
+)
+{
+    const bool sourceChanged = !sourceRecord.matchesFileOnDisk();
+    const bool needsMeasurement = sourceChanged || sourceRecord.measurementProducer != MeasurementProducer::cpp;
+    const auto renderProgressStart = needsMeasurement ? sourceAnalysisProgressShare : 0.0f;
+    auto record = needsMeasurement
+        ? analyzeFile(sourceRecord.file, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart))
+        : sourceRecord;
+    if (needsMeasurement && !sourceChanged) {
+        record.customGain = sourceRecord.customGain;
+    }
+    return {.analysis = std::move(record), .renderProgressStart = renderProgressStart};
 }
 
 /// Moves the finished output into place, disposing of the files it replaces through options.disposeFile.
@@ -391,13 +417,10 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "File analysis must finish before normalization");
     }
 
-    // The gain comes from the analyzed peak, so a file that changed since its analysis is measured again first.
     const utils::FileIdentity expectedSource(file);
-    const bool sourceChanged = !sourceRecord.matchesFileOnDisk();
-    const auto renderProgressStart = sourceChanged ? sourceAnalysisProgressShare : 0.0f;
-    const auto record = sourceChanged
-        ? analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart))
-        : sourceRecord;
+    const auto source = prepareNormalizationSource(sourceRecord, isCancelled, onProgress);
+    const auto& record = source.analysis;
+    const auto renderProgressStart = source.renderProgressStart;
 
     if (record.hasError()) {
         return failNormalization(file, record.errorMessage);
@@ -432,7 +455,6 @@ AudioNormalizationResult normalizeFile(
             return failNormalization(file, "The source file changed while normalization was being checked.");
         }
         auto analysis = record;
-        analysis.customGain.reset();
         utils::reportProgress(onProgress, 1.0f);
 
         utils::logInfo(

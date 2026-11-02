@@ -37,6 +37,7 @@ constexpr int customGainDb {20};
 constexpr int hasCustomGain {21};
 constexpr int shortTermLoudness {22};
 constexpr int overloadHistory {23};
+constexpr int measurementProducer {24};
 }  // namespace analysis_column
 
 /// One-based bind parameter indices for the analysis record upsert in AnalysisCache::storeAnalysis.
@@ -71,6 +72,10 @@ constexpr int customGainDb {25};
 constexpr int hasCustomGain {26};
 constexpr int shortTermLoudness {27};
 constexpr int overloadHistory {28};
+constexpr int measurementProducer {29};
+constexpr int observedSourcePresent {30};
+constexpr int observedFileSize {31};
+constexpr int observedModifiedTimeMs {32};
 }  // namespace analysis_parameter
 
 /// One-based bind parameter indices for the waveform UPDATE in AnalysisCache::storeWaveformData.
@@ -84,5 +89,8 @@ constexpr int filePath {4};
 constexpr int fileSize {5};
 constexpr int modifiedTimeMs {6};
 constexpr int analysisVersion {7};
+constexpr int lengthInSamples {8};
+constexpr int sampleRate {9};
+constexpr int channels {10};
 }  // namespace waveform_parameter
 }  // namespace audiobatch

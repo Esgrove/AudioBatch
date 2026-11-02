@@ -111,6 +111,8 @@ public:
         const juce::MemoryBlock& waveformData,
         std::optional<utils::FileIdentity> identity = std::nullopt
     );
+    [[nodiscard]] bool adoptWaveformData(const juce::MemoryBlock& waveformData, const utils::FileIdentity& identity);
+    void setPendingSource(juce::int64 lengthInSamples, double durationSeconds, const utils::FileIdentity& identity);
     [[nodiscard]] const std::optional<utils::FileIdentity>& getSourceIdentity() const noexcept;
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
 

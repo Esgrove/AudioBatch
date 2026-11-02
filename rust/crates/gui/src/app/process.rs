@@ -214,6 +214,7 @@ impl AppView {
                 }
             }
         }
+        self.enrichment.invalidate();
         self.artwork_rewrites
             .extend(records.iter().map(|record| record.path.clone()));
         if self
@@ -350,6 +351,7 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
                     finish_drain(&mut view.process_run, &mut view.process_winding_down);
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
+                    view.resume_enrichment(cx);
                     cx.notify();
                 });
                 break;

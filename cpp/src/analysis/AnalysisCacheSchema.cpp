@@ -5,6 +5,7 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCacheSql.h"
 #include "analysis/Sqlite.h"
+#include "analysis/SqliteTransaction.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
@@ -89,7 +90,11 @@ void AnalysisCache::closeUnlocked()
 
 /// Returns true when the given table already has the named column.
 /// Used for lightweight schema migrations when opening the database.
-bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName) const
+bool AnalysisCache::columnExists(
+    const juce::String& tableName,
+    const juce::String& columnName,
+    const bool requireNotNull
+) const
 {
     const auto sql = utils::format("PRAGMA table_info({});", tableName);
 
@@ -99,7 +104,9 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
     }
 
     while (sqlite3_step(statement.get()) == SQLITE_ROW) {
-        if (sqlite::columnText(*statement, 1) == columnName) {
+        if (sqlite::columnText(*statement, 1) == columnName
+            && (!requireNotNull || sqlite3_column_int(statement.get(), 3) == 1))
+        {
             return true;
         }
     }
@@ -111,6 +118,23 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
 /// Returns false when a migration statement fails.
 bool AnalysisCache::addMissingColumns() const
 {
+    // Only the complete C++ version-12 schema proves the origin of rows without a producer.
+    if (!columnExists("file_analysis", "analysis_producer")) {
+        const bool provenCpp = columnExists("file_analysis", "has_custom_gain")
+            && columnExists("file_analysis", "custom_gain_db", true)
+            && columnExists("file_analysis", "overload_history");
+        if (!sqlite::execute(
+                *database,
+                provenCpp ? "UPDATE file_analysis SET analysis_version = 0 WHERE analysis_version <> 12;"
+                          : "UPDATE file_analysis SET analysis_version = 0;"
+            )
+            || !sqlite::execute(
+                *database, "ALTER TABLE file_analysis ADD COLUMN analysis_producer TEXT NOT NULL DEFAULT 'cpp';"
+            ))
+        {
+            return false;
+        }
+    }
     constexpr std::array migrations {
         ColumnMigration {.name = "waveform_data", .definition = "BLOB"},
         ColumnMigration {.name = "waveform_version", .definition = "INTEGER NOT NULL DEFAULT 0"},
@@ -198,7 +222,12 @@ bool AnalysisCache::openUnlocked()
     }
 
     utils::logDebug("Analysis cache startup: ensuring schema");
-    if (!sqlite::execute(*database, R"SQL(
+    const auto prepareSchema = [this] {
+        sqlite::Transaction transaction(*database);
+        if (!transaction.isActive()) {
+            return false;
+        }
+        if (!sqlite::execute(*database, R"SQL(
         CREATE TABLE IF NOT EXISTS file_analysis (
             file_path TEXT PRIMARY KEY,
             file_name TEXT NOT NULL,
@@ -227,20 +256,25 @@ bool AnalysisCache::openUnlocked()
             waveform_data BLOB,
             waveform_version INTEGER NOT NULL DEFAULT 0,
             analysis_version INTEGER NOT NULL,
+            analysis_producer TEXT NOT NULL DEFAULT 'cpp',
             updated_at_ms INTEGER NOT NULL
         );
     )SQL"))
-    {
-        closeUnlocked();
-        return false;
-    }
+        {
+            return false;
+        }
 
-    if (!addMissingColumns()) {
-        closeUnlocked();
-        return false;
-    }
+        if (!addMissingColumns()
+            || !sqlite::execute(
+                *database,
+                "UPDATE file_analysis SET analysis_version = 13 WHERE analysis_version = 12 AND analysis_producer = "
+                "'cpp';"
+            ))
+        {
+            return false;
+        }
 
-    if (!sqlite::execute(*database, R"SQL(
+        if (!sqlite::execute(*database, R"SQL(
         CREATE TABLE IF NOT EXISTS serato_tag_cache (
             file_path TEXT NOT NULL,
             tag_kind INTEGER NOT NULL,
@@ -252,8 +286,24 @@ bool AnalysisCache::openUnlocked()
             updated_at_ms INTEGER NOT NULL,
             PRIMARY KEY (file_path, tag_kind)
         );
+    )SQL") || !sqlite::execute(*database, R"SQL(
+        CREATE TABLE IF NOT EXISTS rust_waveform_cache (
+            file_path TEXT PRIMARY KEY,
+            file_size INTEGER NOT NULL,
+            modified_time_ms INTEGER NOT NULL,
+            sample_rate INTEGER NOT NULL,
+            num_channels INTEGER NOT NULL,
+            duration_seconds REAL NOT NULL,
+            waveform_version INTEGER NOT NULL,
+            waveform_data BLOB NOT NULL
+        );
     )SQL"))
-    {
+        {
+            return false;
+        }
+        return transaction.commit();
+    };
+    if (!prepareSchema()) {
         closeUnlocked();
         return false;
     }

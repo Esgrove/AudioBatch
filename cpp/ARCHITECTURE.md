@@ -79,7 +79,10 @@ flowchart TD
     AudioBatchComponent --> AudioPreviewPlayer
     AudioBatchComponent --> PreviewController
     AudioBatchComponent --> ArtworkLoader
-    PreviewController --> SeratoPreviewLoader
+    AudioBatchComponent --> PreviewEnrichmentScheduler
+    PreviewController -.-> PreviewEnrichmentScheduler
+    PreviewEnrichmentScheduler --> NativeWaveformBuilder
+    PreviewEnrichmentScheduler -.-> SeratoPreviewLoader
     PreviewController -.-> AudioPreviewPlayer
     AudioBatchComponent --> PluginLibrary
     AudioBatchComponent --> LiveChain
@@ -97,7 +100,8 @@ Solid lines own, and dashed lines only refer to the other object.
 - `BackgroundWorkController` owns the three coordinators and runs one pass at a time.
   Its state is the `BackgroundWork` variant of `IdleWork`, `AnalyzingWork`, `NormalizingWork`, and `ProcessingWork`.
 - `PreviewController` holds the `PreviewState` variant of `NoPreview`, `ReleasedPreview`, and `LoadedPreview`.
-  It loads the selected file into `AudioPreviewPlayer` and asks `SeratoPreviewLoader` for its Serato tags.
+  It loads the selected file into `AudioPreviewPlayer` and requests artifacts through `PreviewEnrichmentScheduler`.
+  The scheduler reuses `SeratoPreviewLoader` parsing and cache helpers on its sole admitted worker.
 - `PreviewWorkspace` holds the waveform `ThumbnailComponent`, the metric cards of `AudioInfoPanel`,
   and the playback, gain, normalization, plugin, and settings controls,
   laid out as an expanded section, a wide section whose controls and metrics share half of the width, or a compact row.
@@ -123,7 +127,7 @@ flowchart LR
     player["AudioPreviewPlayer and its AudioDeviceManager"]
     thumbnail["ThumbnailComponent"]
     chain["LiveChain"]
-    serato["SeratoPreviewLoader worker"]
+    enrichment["PreviewEnrichmentScheduler worker"]
     table["AudioFileTableModel"]
 
     jobs -->|"analysis results, and normalization and processing starts, progress, and results"| batcher
@@ -134,7 +138,7 @@ flowchart LR
     player -->|"ChangeListener and error callback"| component
     thumbnail -->|"ChangeListener and callbacks"| component
     chain -->|"chain and latency changed callbacks"| component
-    serato -->|"completion through callAsync with a SafePointer"| component
+    enrichment -->|"artifact completion through callAsync with a SafePointer"| component
     table -->|"selection, sort, and context menu callbacks"| component
 ```
 
@@ -150,8 +154,9 @@ A normalization or processing result is still passed on after its pass ended, be
 
 ## Threads
 
-- **The message thread** runs the GUI, starts and cancels passes, applies results to the table and the cache,
-  and does every plugin lifecycle step: creating, preparing, releasing, and destroying instances.
+- **The message thread** runs the GUI, starts and cancels passes, and applies results to the table.
+  Cache persistence runs on workers.
+  The message thread also does every plugin lifecycle step: creating, preparing, releasing, and destroying instances.
 - **`BackgroundRunner` pools.** Each coordinator owns one `BackgroundRunner` with its own `juce::ThreadPool`.
   Analysis and normalization use one worker per logical core,
   and plugin processing one per physical core minus one, from `getPluginProcessingWorkerCount`.
@@ -176,10 +181,16 @@ A normalization or processing result is still passed on after its pass ended, be
   It only try-locks the rendering lock and outputs silence for any block in which the lock is busy.
 - **The read-ahead thread** is the `TimeSliceThread` of `AudioPreviewPlayer`,
   which fills the `BufferingAudioSource` from the file, so the audio callback never decodes.
-- **Smaller workers.** The `AudioThumbnailCache` of `ThumbnailComponent` builds the waveform on its own JUCE thread.
-  `SeratoPreviewLoader` reads Serato tags on a `std::jthread` with one active and one replaceable pending request,
-  `ArtworkLoader` reads and decodes bounded artwork thumbnails on another worker with the same request policy,
-  and `AudioBatchComponent` prunes cache rows of deleted files on another `std::jthread` after startup.
+- **Preview enrichment.** `PreviewEnrichmentScheduler` owns one worker and a separate cache connection.
+  It loads selected cached artifacts during foreground work, then repairs missing Serato tags
+  and native waveforms only after measurement results and restored selection settle.
+  Selection takes priority, and cancellation is checked between bounded PCM blocks.
+  `NativeWaveformBuilder` serializes JUCE thumbnails directly, without source-backed `AudioThumbnailCache` decoding.
+  Coalesced explicit gain edits and committed output persistence share the worker, ahead of optional repair.
+  Shutdown cancels artifact publication without joining a worker against UI delivery.
+- **Other small workers.** `ArtworkLoader` reads and decodes bounded artwork thumbnails with one active
+  and one replaceable pending request.
+  `AudioBatchComponent` prunes cache rows of deleted files on another `std::jthread` after startup.
 - **Plugin scanning** runs on the single scan thread of the plugin manager's `PluginListComponent`.
   Each plugin is loaded in a separate worker process, which scans on its own message thread.
 
@@ -193,8 +204,28 @@ The destructor of `PluginRunChains` posts the instances back to the message thre
 ## Analysis
 
 `AnalysisCoordinator::start` plans the run on a worker, so the message thread never waits for the file system.
-The cache key is the file path, and a cached row only counts while the file size, the modification time,
-and the analysis version still match.
+The cache key is the file path, and a cached row only counts while source size, modification time,
+and the coordinated measurement contract still match.
+Both applications read and write `file_analysis` in the main AudioBatch `analysis.db`.
+On macOS it lives at `~/Library/AudioBatch/analysis.db`, and on Windows at `%APPDATA%\\AudioBatch\\analysis.db`.
+Contract version 13 accepts either producer's successful measurements with validated stream geometry and histories.
+The loudness-history and `OVLD` overload encodings are shared, but decoder failures remain producer-specific.
+Known-compatible C++ measurements migrate without discarding gains or compatible previews.
+Unknown or malformed required measurements refill normally.
+Same-source UPSERTs preserve the database's latest gain, including explicit clears, and compatible native artifacts.
+Gain and artifact writes never change the producer of the measurements.
+The GUI shows `Cached (Rust)` for Rust measurements and plain `Cached` for its own, with CLI output unchanged.
+Foreign overload histories describe the originating decoder's measured source, not bit-identical local lossy playback.
+
+The optional JUCE waveform remains separate from Rust's `rust_waveform_cache` representation.
+Measurement lookups do not load waveform blobs, and missing native waveforms
+or corrupt Serato cache payloads are artifact misses rather than measurement misses.
+Post-load enrichment uses one active expensive job per app, with selected-file priority,
+stable negative Serato outcomes, identity-conditional publication, and foreground-operation cancellation.
+Cache reads enforce payload bounds,
+and short WAL transactions keep decoding and metadata parsing outside database locks.
+Potentially blocking gain and preview persistence runs outside the GUI thread and the audio callback.
+Settings, logs, and plugin data remain application-specific.
 
 ```mermaid
 sequenceDiagram
@@ -250,8 +281,10 @@ sequenceDiagram
 - The sample peaks keep their sign, and the overall values take the channel with the largest magnitude.
 - `storeAnalysis` keeps only failures that would repeat for the same bytes, so the next run retries the others.
 - The waveform is not part of the analysis.
-  `showAudioFile` loads it from the cache with `getWaveformData`, or lets `juce::AudioThumbnail` read the file,
-  and `handleThumbnailFullyLoaded` stores the finished thumbnail with `storeWaveformData`.
+  `PreviewController` routes selected artifact requests to the shared enrichment admission policy.
+  `getWaveformData` loads cached thumbnails on the worker, and `NativeWaveformBuilder` fills missing thumbnails.
+  Identity-conditional `storeWaveformData` persists only the artifact.
+  Selected adoption changes neither transport nor gain, histories, operation messages, or measurement provenance.
 
 ## Normalization and processing
 
@@ -304,6 +337,10 @@ then the normalization gain when Normalize is on, and unity gain with a notice w
 An in-place `.aif` file whose gain is within 1.5 output PCM steps of unity is not rewritten.
 Its current analysis is reused after cancellation and file-identity checks,
 and a stale source is analyzed only once before making the gain decision.
+Foreign measurements are also remeasured natively before target gain, silence or excessive-gain refusal,
+true-peak ceiling, and in-place no-op decisions.
+An unchanged source keeps its custom gain and gains native measurement provenance even when no rewrite is needed.
+Explicit custom-gain and unity plugin paths do not remeasure solely because the origin is foreign.
 
 **Normalization rendering.** `normalizeFile` streams the source in blocks of 32768 samples,
 applies the gain, and writes AIFF at the source sample rate.
@@ -498,9 +535,11 @@ The deliberate differences are these:
   The Rust version hosts VST3 only, through its own `vst3-host` crate.
 - Only the C++ GUI has the results context menu.
   Its file chooser selects folders, but drops and launch arguments accept individual files too.
-- Each version keeps its own analysis cache, plugin list, chain, and presets,
+- Both versions share measurements and compatible Serato outcomes in the main AudioBatch analysis database.
+  Each keeps its own plugin list, chain, presets, settings, and logs,
   because the chain state JUCE saves and its plugin ids are specific to JUCE.
-- The Rust version builds the waveform overview in the analysis pass,
-  while the C++ version draws it with `juce::AudioThumbnail` when a file is previewed and caches it afterwards.
+- The Rust version builds its native waveform overview in the analysis pass.
+  The C++ version uses the JUCE thumbnail representation.
+  Both native waveform artifacts can coexist, and each GUI fills its missing artifacts after initial loading.
 - The Rust preview decodes on its own thread into a ring buffer that the `cpal` callback reads,
   where the C++ preview reads through `BufferingAudioSource` and `ResamplingAudioSource`.

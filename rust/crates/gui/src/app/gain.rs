@@ -80,16 +80,15 @@ impl AppView {
     }
 
     /// Stores the custom gain of the selected files in the cache.
-    pub(super) fn store_selected_gain(&self, cx: &App) {
-        for record in self.selected_ready_records(cx) {
-            self.store_custom_gain(&record.path, record.custom_gain_db);
-        }
+    pub(super) fn store_selected_gain(&self, cx: &mut Context<Self>) {
+        let selected = self.selected_paths(cx);
+        self.persist_gain_edits(&selected, cx);
     }
 
     /// Writes the custom gain of the selected file to the cache once the mouse wheel rests,
     /// so a wheel gesture does not write to the database on the UI thread for every step.
     /// A pending gain of another file is written right away.
-    pub(super) fn schedule_gain_store(&mut self, cx: &Context<Self>) {
+    pub(super) fn schedule_gain_store(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_paths(cx);
         if selected.is_empty() {
             return;
@@ -100,26 +99,33 @@ impl AppView {
         self.pending_gain_paths = selected;
         self.gain_store_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(GAIN_STORE_DELAY).await;
-            let _ = this.update(cx, |view, cx| view.flush_gain_store(cx));
+            let _ = this.update(cx, Self::flush_gain_store);
         }));
     }
 
     /// Writes the current custom gain of the files the mouse wheel changed, if any, to the cache.
-    pub(super) fn flush_gain_store(&mut self, cx: &App) {
-        let gains = take_pending_gains(self.table.read(cx).delegate(), &mut self.pending_gain_paths);
-        for (path, gain) in gains {
-            self.store_custom_gain(&path, gain);
+    pub(super) fn flush_gain_store(&mut self, cx: &mut Context<Self>) {
+        let mut paths = std::mem::take(&mut self.pending_gain_paths);
+        for path in self.selected_paths(cx) {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
         }
+        self.persist_gain_edits(&paths, cx);
     }
 
-    /// Writes the custom gain of a file to the cache.
-    /// A failure is only reported, because the table keeps the gain for this session either way.
-    pub(super) fn store_custom_gain(&self, path: &Path, custom_gain_db: Option<f32>) {
-        if let Some(coordinator) = &self.coordinator
-            && let Err(error) = coordinator.cache().store_custom_gain(path, custom_gain_db)
-        {
-            let error = anyhow::Error::from(error);
-            tracing::warn!("Failed to store the custom gain of {}: {error:#}", path.display());
+    /// Moves only new explicit edits to an ordered worker using their already captured source identity.
+    fn persist_gain_edits(&self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let writes = self.table.update(cx, |state, _| {
+            paths
+                .iter()
+                .filter_map(|path| state.delegate_mut().take_gain_write(path))
+                .collect::<Vec<_>>()
+        });
+        if let Some(writer) = &self.gain_writer {
+            for write in writes {
+                writer.enqueue(write);
+            }
         }
     }
 

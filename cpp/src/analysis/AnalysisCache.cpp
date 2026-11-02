@@ -1,8 +1,7 @@
-/// Analysis and waveform persistence of AnalysisCache.
-/// Implements the load and store paths for analysis records,
-/// waveform previews and custom gain values using prepared statements,
+/// Measurement and custom gain persistence of AnalysisCache.
+/// Implements the load and store paths for analysis records and custom gains using prepared statements,
 /// and the removal and pruning of rows for files that changed or no longer exist.
-/// The database lifecycle and schema live in AnalysisCacheSchema.cpp.
+/// Database lifecycle and schema live in AnalysisCacheSchema.cpp, and native previews in AnalysisCacheWaveform.cpp.
 
 #include "analysis/AnalysisCache.h"
 
@@ -11,7 +10,6 @@
 #include "analysis/OverloadHistory.h"
 #include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
-#include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -36,7 +34,11 @@ namespace
 constexpr int loudnessHistoryMagic {0x5346554c};
 constexpr int loudnessHistoryVersion {1};
 constexpr std::size_t loudnessHistoryHeaderBytes {32};
-
+/// Practical per-record allocation budget, separate from SQLite's much larger blob limit.
+constexpr std::size_t maximumHistoryBytes {16UZ * 1024 * 1024};
+constexpr double maximumLoudness {1000.0};
+constexpr double maximumDurationError {1.0e-9};
+constexpr int maximumMeasurementSampleRate {2'822'400};
 /// One cached row, identified by path and the file version it describes.
 struct CachedRow {
     /// Path of the file the row describes.
@@ -58,8 +60,9 @@ bool validHistoryTiming(
 {
     if (!std::isfinite(history.sampleRate) || history.sampleRate < 1.0
         || history.sampleRate > static_cast<double>(std::numeric_limits<int>::max())
-        || juce::roundToInt(history.sampleRate) != record.sampleRate || history.lengthInSamples < 0
-        || history.lengthInSamples != record.lengthInSamples
+        || std::bit_cast<std::uint64_t>(history.sampleRate)
+            != std::bit_cast<std::uint64_t>(static_cast<double>(record.sampleRate))
+        || history.lengthInSamples < 0 || history.lengthInSamples != record.lengthInSamples
         || !juce::approximatelyEqual(
             static_cast<double>(history.lengthInSamples) / history.sampleRate, record.durationSeconds
         )
@@ -71,17 +74,15 @@ bool validHistoryTiming(
     const auto expectedCount = history.lengthInSamples / history.samplesPerPoint
         + (history.lengthInSamples % history.samplesPerPoint != 0 ? 1 : 0);
     return count == expectedCount && count >= 0
-        && count <= (std::numeric_limits<int>::max() - static_cast<std::int64_t>(loudnessHistoryHeaderBytes))
-            / static_cast<std::int64_t>(sizeof(float));
+        && std::cmp_less_equal(count, (maximumHistoryBytes - loudnessHistoryHeaderBytes) / sizeof(float));
 }
 
 /// Rejects non-finite readings and values outside the float audio signal's possible LUFS range.
 /// The upper bound is deliberately above the roughly +800 LUFS representable by finite float PCM.
 bool validHistoryValue(const float value)
 {
-    constexpr float maximumLoudness {1000.0f};
     return std::isfinite(value) && static_cast<double>(value) >= AudioAnalysisRecord::negativeInfinityLoudness
-        && value <= maximumLoudness;
+        && static_cast<double>(value) <= maximumLoudness;
 }
 
 /// Writes an explicit little-endian header and IEEE float readings, never native struct padding.
@@ -117,7 +118,7 @@ std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
     const AudioAnalysisRecord& record
 )
 {
-    if (data == nullptr || bytes < loudnessHistoryHeaderBytes) {
+    if (data == nullptr || bytes < loudnessHistoryHeaderBytes || bytes > maximumHistoryBytes) {
         return {};
     }
     juce::MemoryInputStream input(data, bytes, false);
@@ -158,6 +159,237 @@ std::optional<AudioAnalysisStatus> statusFromColumn(const int value)
 
     return static_cast<AudioAnalysisStatus>(value);
 }
+/// Rejects SQLite coercions and values that cannot safely become a shared record.
+bool validRecordColumns(sqlite3_stmt& statement)
+{
+    for (const auto column :
+         {
+             analysis_column::fileSize,
+             analysis_column::modifiedTimeMs,
+             analysis_column::lengthInSamples,
+             analysis_column::sampleRate,
+             analysis_column::channels,
+             analysis_column::bitsPerSample,
+             analysis_column::status,
+             analysis_column::analysisVersion,
+             analysis_column::hasCustomGain,
+         })
+    {
+        if (sqlite3_column_type(&statement, column) != SQLITE_INTEGER) {
+            return false;
+        }
+    }
+    for (const auto column :
+         {
+             analysis_column::durationSeconds,
+             analysis_column::peakLeft,
+             analysis_column::peakRight,
+             analysis_column::overallPeak,
+             analysis_column::truePeakLeft,
+             analysis_column::truePeakRight,
+             analysis_column::overallTruePeak,
+             analysis_column::maxShortTermLufs,
+             analysis_column::integratedLufs,
+             analysis_column::customGainDb,
+         })
+    {
+        const auto type = sqlite3_column_type(&statement, column);
+        if ((type != SQLITE_FLOAT && type != SQLITE_INTEGER)
+            || !std::isfinite(sqlite3_column_double(&statement, column)))
+        {
+            return false;
+        }
+    }
+    for (const auto column :
+         {
+             analysis_column::sampleRate,
+             analysis_column::channels,
+             analysis_column::bitsPerSample,
+             analysis_column::status,
+             analysis_column::analysisVersion,
+             analysis_column::hasCustomGain,
+         })
+    {
+        const auto value = sqlite3_column_int64(&statement, column);
+        if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) {
+            return false;
+        }
+    }
+    for (const auto column :
+         {
+             analysis_column::peakLeft,
+             analysis_column::peakRight,
+             analysis_column::overallPeak,
+             analysis_column::customGainDb,
+         })
+    {
+        if (std::abs(sqlite3_column_double(&statement, column))
+            > static_cast<double>(std::numeric_limits<float>::max()))
+        {
+            return false;
+        }
+    }
+    return sqlite3_column_type(&statement, analysis_column::fileName) == SQLITE_TEXT
+        && sqlite3_column_bytes(&statement, analysis_column::fileName) <= 4096
+        && (sqlite3_column_type(&statement, analysis_column::formatName) == SQLITE_TEXT
+            || sqlite3_column_type(&statement, analysis_column::formatName) == SQLITE_NULL)
+        && sqlite3_column_bytes(&statement, analysis_column::formatName) <= 4096
+        && (sqlite3_column_type(&statement, analysis_column::errorMessage) == SQLITE_TEXT
+            || sqlite3_column_type(&statement, analysis_column::errorMessage) == SQLITE_NULL)
+        && sqlite3_column_bytes(&statement, analysis_column::errorMessage) <= 65'536
+        && sqlite3_column_type(&statement, analysis_column::measurementProducer) == SQLITE_TEXT
+        && sqlite3_column_bytes(&statement, analysis_column::measurementProducer) <= 4;
+}
+
+/// Validates numerical measurements and geometry before adopting data from either implementation.
+bool validMeasurements(const AudioAnalysisRecord& record)
+{
+    const auto validLoudness = [](const double value) {
+        return std::isfinite(value) && value >= AudioAnalysisRecord::negativeInfinityLoudness
+            && value <= maximumLoudness;
+    };
+    const auto validPeak = [](const double value) {
+        return std::isfinite(value) && std::abs(value) <= static_cast<double>(std::numeric_limits<float>::max());
+    };
+    if (record.fileSize < 0 || record.modifiedTimeMs < 0
+        || (record.customGain && !std::isfinite(record.customGain->value)))
+    {
+        return false;
+    }
+    if (record.hasError()) {
+        return true;
+    }
+    return record.isReady() && record.sampleRate >= 16 && record.sampleRate <= maximumMeasurementSampleRate
+        && record.channels >= 1 && record.channels <= 64 && record.bitsPerSample >= 0 && record.bitsPerSample <= 64
+        && record.lengthInSamples >= 0 && std::isfinite(record.durationSeconds)
+        && std::abs(record.durationSeconds - static_cast<double>(record.lengthInSamples) / record.sampleRate)
+        <= maximumDurationError
+        && validPeak(static_cast<double>(record.peakLeft)) && validPeak(static_cast<double>(record.peakRight))
+        && validPeak(static_cast<double>(record.overallPeak)) && std::isfinite(record.truePeakLeft)
+        && std::isfinite(record.truePeakRight) && std::isfinite(record.overallTruePeak) && record.truePeakLeft >= 0.0
+        && record.truePeakRight >= 0.0 && record.overallTruePeak >= 0.0 && validLoudness(record.maxShortTermLufs)
+        && validLoudness(record.integratedLufs);
+}
+/// Restores required bounded histories independently of optional waveform and tag artifacts.
+bool readRequiredHistories(sqlite3_stmt& statement, AudioAnalysisRecord& record)
+{
+    if (sqlite3_column_type(&statement, analysis_column::shortTermLoudness) == SQLITE_BLOB
+        && sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness)
+            <= static_cast<int>(maximumHistoryBytes))
+    {
+        record.shortTermLoudness = deserializeLoudnessHistory(
+            sqlite3_column_blob(&statement, analysis_column::shortTermLoudness),
+            static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness)),
+            record
+        );
+    }
+    if (!record.shortTermLoudness) {
+        utils::logWarn(
+            "Invalid cached short-term loudness history for {}, reanalysis required", record.fullPath.quoted()
+        );
+        return false;
+    }
+    constexpr auto maximumOverloadBytes = 40 + OverloadHistory::maximumBuckets * 64;
+    if (sqlite3_column_type(&statement, analysis_column::overloadHistory) == SQLITE_BLOB
+        && sqlite3_column_bytes(&statement, analysis_column::overloadHistory) <= static_cast<int>(maximumOverloadBytes))
+    {
+        record.overloads = deserializeOverloadHistory(
+            std::span(
+                static_cast<const std::byte*>(sqlite3_column_blob(&statement, analysis_column::overloadHistory)),
+                static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::overloadHistory))
+            )
+        );
+    }
+    if (!record.overloads || !overloadHistoryMatches(*record.overloads, record)) {
+        utils::logWarn("Invalid cached overload history for {}, reanalysis required", record.fullPath.quoted());
+        return false;
+    }
+    return true;
+}
+
+/// Refuses transient and foreign decoder failures rather than publishing them under this implementation's contract.
+bool ignoresFailure(const AudioAnalysisRecord& record)
+{
+    return record.hasError()
+        && (record.measurementProducer != MeasurementProducer::cpp
+            || !(record.error.has_value() && isRepeatable(*record.error)));
+}
+
+/// Binds null failure histories or already validated successful histories without changing measurement provenance.
+bool bindHistories(
+    sqlite3_stmt& statement,
+    const bool failed,
+    const juce::MemoryBlock& loudness,
+    const juce::MemoryBlock& overloads
+)
+{
+    return sqlite::bindNull(statement, analysis_parameter::waveformData)
+        && (failed ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
+                   : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudness))
+        && (failed ? sqlite::bindNull(statement, analysis_parameter::overloadHistory)
+                   : sqlite::bindBlob(statement, analysis_parameter::overloadHistory, overloads));
+}
+
+/// Binds the previously observed row version so a different-source writer cannot lose publication.
+bool bindObservedSource(sqlite3_stmt& statement, const std::optional<std::pair<std::int64_t, std::int64_t>>& source)
+{
+    const auto [size, modified] = source.value_or(std::pair<std::int64_t, std::int64_t> {});
+    return sqlite::bindInt64(statement, analysis_parameter::observedSourcePresent, static_cast<int>(source.has_value()))
+        && sqlite::bindInt64(statement, analysis_parameter::observedFileSize, size)
+        && sqlite::bindInt64(statement, analysis_parameter::observedModifiedTimeMs, modified);
+}
+
+/// Reads the persisted source version with the caller's connection and returns false only for database errors.
+bool readStoredSource(
+    sqlite3& connection,
+    sqlite::StatementCache& statements,
+    const juce::String& path,
+    std::optional<std::pair<std::int64_t, std::int64_t>>& source
+)
+{
+    const auto statement
+        = statements.borrow(connection, "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?;");
+    if (!statement.isValid() || !sqlite::bindText(*statement, 1, path)) {
+        return false;
+    }
+    const auto result = sqlite3_step(statement.get());
+    if (result == SQLITE_ROW) {
+        source = std::pair {sqlite3_column_int64(statement.get(), 0), sqlite3_column_int64(statement.get(), 1)};
+    }
+    return result == SQLITE_ROW || result == SQLITE_DONE;
+}
+
+/// Removes previews for another source or geometry only after this transaction published measurements.
+bool invalidateIncompatiblePreviews(
+    sqlite3& connection,
+    sqlite::StatementCache& statements,
+    const AudioAnalysisRecord& record
+)
+{
+    constexpr int channelsParameter {5};
+    constexpr int durationParameter {6};
+    constexpr auto waveformSql = R"SQL(
+        DELETE FROM rust_waveform_cache WHERE file_path = ?
+            AND (file_size <> ? OR modified_time_ms <> ? OR sample_rate <> ?
+                OR num_channels <> ? OR duration_seconds <> ?);
+    )SQL";
+    const auto waveform = statements.borrow(connection, waveformSql);
+    if (!waveform.isValid() || !sqlite::bindText(*waveform, 1, record.fullPath)
+        || !sqlite::bindInt64(*waveform, 2, record.fileSize) || !sqlite::bindInt64(*waveform, 3, record.modifiedTimeMs)
+        || !sqlite::bindInt64(*waveform, 4, record.sampleRate)
+        || !sqlite::bindInt64(*waveform, channelsParameter, record.channels)
+        || !sqlite::bindDouble(*waveform, durationParameter, record.durationSeconds)
+        || !sqlite::stepToCompletion(*waveform))
+    {
+        return false;
+    }
+    constexpr auto tagsSql = R"SQL(
+        DELETE FROM serato_tag_cache WHERE file_path = ? AND (file_size <> ? OR modified_time_ms <> ?);
+    )SQL";
+    const auto tags = statements.borrow(connection, tagsSql);
+    return tags.isValid() && sqlite::bindText(*tags, 1, record.fullPath) && sqlite::bindInt64(*tags, 2, record.fileSize)
+        && sqlite::bindInt64(*tags, 3, record.modifiedTimeMs) && sqlite::stepToCompletion(*tags);
+}
 }  // namespace
 
 /// Runs the function with the open database connection and its prepared statements while holding the cache lock,
@@ -193,7 +425,7 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
                duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
                true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
                sample_rate, channels, bits_per_sample, status, error_message, analysis_version,
-               custom_gain_db, has_custom_gain, short_term_loudness, overload_history
+               custom_gain_db, has_custom_gain, short_term_loudness, overload_history, analysis_producer
         FROM file_analysis
         WHERE file_path = ?;
     )SQL";
@@ -209,6 +441,14 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
         return std::nullopt;
     }
 
+    if (!validRecordColumns(*statement)) {
+        return std::nullopt;
+    }
+    const auto producer = sqlite::columnText(*statement, analysis_column::measurementProducer);
+    if (producer != "cpp" && producer != "rust") {
+        return std::nullopt;
+    }
+    record.measurementProducer = producer == "cpp" ? MeasurementProducer::cpp : MeasurementProducer::rust;
     const auto cachedFileSize = sqlite3_column_int64(statement, analysis_column::fileSize);
     const auto cachedModifiedTime = sqlite3_column_int64(statement, analysis_column::modifiedTimeMs);
     const auto cachedVersion = sqlite3_column_int(statement, analysis_column::analysisVersion);
@@ -240,41 +480,27 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
         return std::nullopt;
     }
     record.status = *status;
+    if (record.hasError() && record.measurementProducer != MeasurementProducer::cpp) {
+        return std::nullopt;
+    }
     record.errorMessage = sqlite::columnText(*statement, analysis_column::errorMessage);
     // Only failures that repeat for the same bytes are stored.
     if (record.hasError()) {
         record.error = AnalysisError::unsupported;
     }
-    if (sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0) {
+    const auto hasCustomGain = sqlite3_column_int64(statement, analysis_column::hasCustomGain);
+    if (hasCustomGain != 0 && hasCustomGain != 1) {
+        return std::nullopt;
+    }
+    if (hasCustomGain == 1) {
         record.customGain
             = Decibels {static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb))};
     }
-    if (!record.hasError()) {
-        if (sqlite3_column_type(statement, analysis_column::shortTermLoudness) == SQLITE_BLOB) {
-            record.shortTermLoudness = deserializeLoudnessHistory(
-                sqlite3_column_blob(statement, analysis_column::shortTermLoudness),
-                static_cast<std::size_t>(sqlite3_column_bytes(statement, analysis_column::shortTermLoudness)),
-                record
-            );
-        }
-        if (!record.shortTermLoudness) {
-            utils::logWarn(
-                "Invalid cached short-term loudness history for {}, reanalysis required", record.fullPath.quoted()
-            );
-            return std::nullopt;
-        }
-        if (sqlite3_column_type(statement, analysis_column::overloadHistory) == SQLITE_BLOB) {
-            record.overloads = deserializeOverloadHistory(
-                std::span(
-                    static_cast<const std::byte*>(sqlite3_column_blob(statement, analysis_column::overloadHistory)),
-                    static_cast<std::size_t>(sqlite3_column_bytes(statement, analysis_column::overloadHistory))
-                )
-            );
-        }
-        if (!record.overloads || !overloadHistoryMatches(*record.overloads, record)) {
-            utils::logWarn("Invalid cached overload history for {}, reanalysis required", record.fullPath.quoted());
-            return std::nullopt;
-        }
+    if (!validMeasurements(record)) {
+        return std::nullopt;
+    }
+    if (!record.hasError() && !readRequiredHistories(*statement, record)) {
+        return std::nullopt;
     }
     record.fromCache = true;
 
@@ -294,8 +520,19 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
 /// and return true, so the next run tries the file again.
 bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
 {
-    if (record.hasError() && !(record.error.has_value() && isRepeatable(*record.error))) {
+    if (ignoresFailure(record)) {
         return true;
+    }
+    // Capture the row before filesystem validation, then compare it again inside the write transaction.
+    // A writer that publishes a different source while this work waits must not be overwritten.
+    std::optional<std::pair<std::int64_t, std::int64_t>> observedSource;
+    bool observed = false;
+    withDatabase([&](sqlite3& connection, sqlite::StatementCache& preparedStatements) {
+        observed = readStoredSource(connection, preparedStatements, record.fullPath, observedSource);
+    });
+    // Filesystem work must precede the database lock and transaction.
+    if (!observed || !validMeasurements(record) || !record.matchesFileOnDisk()) {
+        return false;
     }
     const auto loudnessData = serializeLoudnessHistory(record);
     if (!record.hasError() && loudnessData.isEmpty()) {
@@ -315,6 +552,10 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         return false;
     }
 
+    sqlite::Transaction transaction(*database);
+    if (!transaction.isActive()) {
+        return false;
+    }
     constexpr auto sql = R"SQL(
         INSERT INTO file_analysis (
             file_path, file_name, format_name, file_size, modified_time_ms, length_in_samples,
@@ -322,8 +563,8 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
             sample_rate, channels, bits_per_sample, status, error_message,
             waveform_data, waveform_version, analysis_version, updated_at_ms,
-            custom_gain_db, has_custom_gain, short_term_loudness, overload_history
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            custom_gain_db, has_custom_gain, short_term_loudness, overload_history, analysis_producer
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -346,9 +587,27 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             bits_per_sample = excluded.bits_per_sample,
             status = excluded.status,
             error_message = excluded.error_message,
-            waveform_data = excluded.waveform_data,
-            waveform_version = excluded.waveform_version,
+            waveform_data = CASE
+                WHEN file_analysis.file_size = excluded.file_size
+                    AND file_analysis.modified_time_ms = excluded.modified_time_ms
+                    AND file_analysis.length_in_samples = excluded.length_in_samples
+                    AND file_analysis.sample_rate = excluded.sample_rate
+                    AND file_analysis.channels = excluded.channels
+                    AND file_analysis.duration_seconds = excluded.duration_seconds
+                    AND file_analysis.waveform_version = 3
+                    AND typeof(file_analysis.waveform_data) = 'blob'
+                    AND length(file_analysis.waveform_data) BETWEEN 52 AND 16777268
+                THEN file_analysis.waveform_data ELSE NULL END,
+            waveform_version = CASE
+                WHEN file_analysis.file_size = excluded.file_size
+                    AND file_analysis.modified_time_ms = excluded.modified_time_ms
+                    AND file_analysis.length_in_samples = excluded.length_in_samples
+                    AND file_analysis.sample_rate = excluded.sample_rate
+                    AND file_analysis.channels = excluded.channels
+                    AND file_analysis.duration_seconds = excluded.duration_seconds
+                THEN file_analysis.waveform_version ELSE 0 END,
             analysis_version = excluded.analysis_version,
+            analysis_producer = excluded.analysis_producer,
             updated_at_ms = excluded.updated_at_ms,
             custom_gain_db = CASE
                 WHEN file_analysis.file_size = excluded.file_size
@@ -361,7 +620,16 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
                     AND file_analysis.modified_time_ms = excluded.modified_time_ms
                 THEN file_analysis.has_custom_gain
                 ELSE excluded.has_custom_gain
-            END;
+            END
+        WHERE NOT (excluded.status = 3
+            AND file_analysis.file_size = excluded.file_size
+            AND file_analysis.modified_time_ms = excluded.modified_time_ms
+            AND file_analysis.status IN (1, 2)
+            AND file_analysis.analysis_version = excluded.analysis_version
+            AND file_analysis.analysis_producer IN ('cpp', 'rust'))
+            AND ((file_analysis.file_size = excluded.file_size
+                    AND file_analysis.modified_time_ms = excluded.modified_time_ms)
+                OR (? AND file_analysis.file_size = ? AND file_analysis.modified_time_ms = ?));
     )SQL";
 
     const auto prepared = statements.borrow(*database, sql);
@@ -373,7 +641,10 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     const bool textBound = sqlite::bindText(statement, analysis_parameter::filePath, record.fullPath)
         && sqlite::bindText(statement, analysis_parameter::fileName, record.fileName)
         && sqlite::bindText(statement, analysis_parameter::formatName, record.formatName)
-        && sqlite::bindText(statement, analysis_parameter::errorMessage, record.errorMessage);
+        && sqlite::bindText(statement, analysis_parameter::errorMessage, record.errorMessage)
+        && sqlite::bindText(statement,
+                            analysis_parameter::measurementProducer,
+                            record.measurementProducer == MeasurementProducer::cpp ? "cpp" : "rust");
     const bool integersBound = sqlite::bindInt64(statement, analysis_parameter::fileSize, record.fileSize)
         && sqlite::bindInt64(statement, analysis_parameter::modifiedTimeMs, record.modifiedTimeMs)
         && sqlite::bindInt64(statement, analysis_parameter::lengthInSamples, record.lengthInSamples)
@@ -397,13 +668,18 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         && sqlite::bindDouble(statement,
                               analysis_parameter::customGainDb,
                               static_cast<double>(record.customGain.value_or(Decibels {}).value));
-    const bool blobsBound = sqlite::bindNull(statement, analysis_parameter::waveformData)
-        && (record.hasError() ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
-                              : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData))
-        && (record.hasError() ? sqlite::bindNull(statement, analysis_parameter::overloadHistory)
-                              : sqlite::bindBlob(statement, analysis_parameter::overloadHistory, overloadData));
+    const bool blobsBound = bindHistories(statement, record.hasError(), loudnessData, overloadData);
 
-    return textBound && integersBound && numbersBound && blobsBound && sqlite::stepToCompletion(statement);
+    const bool sourceBound = bindObservedSource(statement, observedSource);
+    if (!(textBound && integersBound && numbersBound && blobsBound && sourceBound
+          && sqlite::stepToCompletion(statement)))
+    {
+        return false;
+    }
+    if (sqlite3_changes(database.get()) > 0 && !invalidateIncompatiblePreviews(*database, statements, record)) {
+        return false;
+    }
+    return transaction.commit();
 }
 
 /// Loads the custom gain stored for a file when the stored row has the given size and modification time,
@@ -435,7 +711,12 @@ std::optional<Decibels> AnalysisCache::getCustomGain(
         return std::nullopt;
     }
 
-    return Decibels {static_cast<float>(sqlite3_column_double(statement.get(), 0))};
+    const auto type = sqlite3_column_type(statement.get(), 0);
+    const auto gain = sqlite3_column_double(statement.get(), 0);
+    return (type == SQLITE_INTEGER || type == SQLITE_FLOAT) && std::isfinite(gain)
+            && std::abs(gain) <= static_cast<double>(std::numeric_limits<float>::max())
+        ? std::optional {Decibels {static_cast<float>(gain)}}
+        : std::nullopt;
 }
 
 /// Updates only the user-controlled gain fields for a file.
@@ -443,7 +724,15 @@ std::optional<Decibels> AnalysisCache::getCustomGain(
 /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
 bool AnalysisCache::storeCustomGain(const juce::File& file, const std::optional<Decibels> customGain)
 {
-    return storeCustomGains({{.file = file, .customGain = customGain}}) > 0;
+    return storeCustomGains({
+               {
+                   .file = file,
+                   .customGain = customGain,
+                   .fileSize = file.getSize(),
+                   .modifiedTimeMs = file.getLastModificationTime().toMilliseconds(),
+               },
+           })
+        > 0;
 }
 
 /// Updates the user-controlled gain fields of several files in one transaction with one prepared statement,
@@ -455,6 +744,17 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
 {
     if (updates.empty()) {
         return 0;
+    }
+    // Compatibility callers capture identity synchronously. Queued GUI edits supply their original identity.
+    auto capturedUpdates = updates;
+    for (auto& update : capturedUpdates) {
+        if (update.customGain && !std::isfinite(update.customGain->value)) {
+            return 0;
+        }
+        if (update.fileSize < 0 || update.modifiedTimeMs < 0) {
+            update.fileSize = update.file.getSize();
+            update.modifiedTimeMs = update.file.getLastModificationTime().toMilliseconds();
+        }
     }
 
     const juce::ScopedLock lock(mutex);
@@ -471,7 +771,7 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
     constexpr auto sql = R"SQL(
         UPDATE file_analysis
         SET custom_gain_db = ?, has_custom_gain = ?, updated_at_ms = ?
-        WHERE file_path = ?;
+        WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;
     )SQL";
 
     const auto statement = statements.borrow(*database, sql);
@@ -482,12 +782,13 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
     const auto updatedAtMs = juce::Time::getCurrentTime().toMilliseconds();
     int updatedRows = 0;
 
-    for (const auto& [file, customGain] : updates) {
+    for (const auto& [file, customGain, fileSize, modifiedTimeMs] : capturedUpdates) {
         sqlite3_reset(statement.get());
         const bool stored
             = sqlite::bindDouble(*statement, 1, static_cast<double>(customGain.value_or(Decibels {}).value))
             && sqlite::bindInt64(*statement, 2, customGain.has_value() ? 1 : 0)
             && sqlite::bindInt64(*statement, 3, updatedAtMs) && sqlite::bindText(*statement, 4, normalizedPath(file))
+            && sqlite::bindInt64(*statement, 5, fileSize) && sqlite::bindInt64(*statement, 6, modifiedTimeMs)
             && sqlite::stepToCompletion(*statement);
 
         if (!stored) {
@@ -500,9 +801,31 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
     return transaction.commit() ? updatedRows : 0;
 }
 
-/// Removes the analysis, waveform and all independently cached tag kinds for a file, atomically.
-/// Returns true when the operation completed.
+/// Captures the persisted source version, then removes only that version in a short transaction.
+/// Callers with an earlier captured record should use the record overload instead.
 bool AnalysisCache::removeAnalysis(const juce::File& file)
+{
+    auto captured = AudioAnalysisRecord::fromFile(file);
+    withDatabase([&](sqlite3& connection, sqlite::StatementCache& preparedStatements) {
+        const auto statement = preparedStatements.borrow(
+            connection,
+            "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1 "
+            "UNION ALL SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1 "
+            "UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1 LIMIT 1;"
+        );
+        if (statement.isValid() && sqlite::bindText(*statement, 1, normalizedPath(file))
+            && sqlite3_step(statement.get()) == SQLITE_ROW)
+        {
+            captured.fileSize = sqlite3_column_int64(statement.get(), 0);
+            captured.modifiedTimeMs = sqlite3_column_int64(statement.get(), 1);
+        }
+    });
+    return removeAnalysis(captured);
+}
+
+/// Removes the captured analysis, waveform and matching independently cached tags atomically.
+/// Delayed completion cannot delete a newer source row or its preview.
+bool AnalysisCache::removeAnalysis(const AudioAnalysisRecord& record)
 {
     const juce::ScopedLock lock(mutex);
 
@@ -516,11 +839,16 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     }
 
     for (const auto* sql :
-         {"DELETE FROM file_analysis WHERE file_path = ?;", "DELETE FROM serato_tag_cache WHERE file_path = ?;"})
+         {
+             "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
+             "DELETE FROM serato_tag_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
+             "DELETE FROM rust_waveform_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
+         })
     {
         const auto statement = statements.borrow(*database, sql);
-        if (!statement.isValid() || !sqlite::bindText(*statement, 1, normalizedPath(file))
-            || !sqlite::stepToCompletion(*statement))
+        if (!statement.isValid() || !sqlite::bindText(*statement, 1, record.fullPath)
+            || !sqlite::bindInt64(*statement, 2, record.fileSize)
+            || !sqlite::bindInt64(*statement, 3, record.modifiedTimeMs) || !sqlite::stepToCompletion(*statement))
         {
             return false;
         }
@@ -552,7 +880,9 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
         constexpr auto sql = R"SQL(
             SELECT file_path, file_size, modified_time_ms, NULL FROM file_analysis
             UNION ALL
-            SELECT file_path, file_size, modified_time_ms, tag_kind FROM serato_tag_cache;
+            SELECT file_path, file_size, modified_time_ms, tag_kind FROM serato_tag_cache
+            UNION ALL
+            SELECT file_path, file_size, modified_time_ms, -1 FROM rust_waveform_cache;
         )SQL";
         const auto prepared = sqlite::prepare(*database, sql);
         if (prepared == nullptr) {
@@ -618,10 +948,18 @@ bool AnalysisCache::removeRowVersion(
         return false;
     }
 
-    const auto* sql = tagKind.has_value()
-        ? "DELETE FROM serato_tag_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND tag_kind = "
-          "?;"
-        : "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
+    sqlite::Transaction transaction(*database);
+    if (!transaction.isActive()) {
+        return false;
+    }
+    const bool rustWaveform = tagKind == std::optional<std::int64_t> {-1};
+    const char* sql = "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
+    if (rustWaveform) {
+        sql = "DELETE FROM rust_waveform_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
+    } else if (tagKind.has_value()) {
+        sql = "DELETE FROM serato_tag_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND "
+              "tag_kind = ?;";
+    }
 
     const auto statement = statements.borrow(*database, sql);
     if (!statement.isValid()) {
@@ -630,148 +968,13 @@ bool AnalysisCache::removeRowVersion(
 
     const bool bound = sqlite::bindText(*statement, 1, path) && sqlite::bindInt64(*statement, 2, fileSize)
         && sqlite::bindInt64(*statement, 3, modifiedTimeMs)
-        && (!tagKind.has_value() || sqlite::bindInt64(*statement, 4, *tagKind));
+        && (!tagKind.has_value() || rustWaveform || sqlite::bindInt64(*statement, 4, *tagKind));
 
-    return bound && sqlite::stepToCompletion(*statement) && sqlite3_changes(database.get()) > 0;
+    if (!bound || !sqlite::stepToCompletion(*statement)) {
+        return false;
+    }
+    const bool removed = sqlite3_changes(database.get()) > 0;
+    return transaction.commit() && removed;
 }
 
-/// Validates the complete mono/stereo thumbnail payload before the JUCE deserializer can allocate.
-/// Cached thumbnails use bounded power-of-two detail and complete source geometry, including the final partial point.
-bool isValidWaveformData(const juce::MemoryBlock& data)
-{
-    constexpr std::size_t headerBytes {52};
-    constexpr int waveformMagic {0x6d74616a};
-    constexpr int minimumDetail {16};
-    constexpr int maximumDetail {1024};
-    constexpr int maximumSampleRate {768'000};
-    constexpr std::int64_t maximumPoints {4'194'304};
-    if (data.getSize() < headerBytes) {
-        return false;
-    }
-    juce::MemoryInputStream input(data, false);
-    if (input.readInt() != waveformMagic) {
-        return false;
-    }
-    const auto detail = input.readInt();
-    const auto total = input.readInt64();
-    const auto finished = input.readInt64();
-    const auto points = input.readInt();
-    const auto channels = input.readInt();
-    const auto rate = input.readInt();
-    if (detail < minimumDetail || detail > maximumDetail || !std::has_single_bit(static_cast<unsigned int>(detail))
-        || total <= 0 || finished < 0 || finished > total || total - finished > detail || points <= 0
-        || points > maximumPoints || (channels != 1 && channels != 2) || rate <= 0 || rate > maximumSampleRate
-        || total / detail != static_cast<std::int64_t>(points) - 1)
-    {
-        return false;
-    }
-    const auto payload = static_cast<std::size_t>(points) * static_cast<std::size_t>(channels) * 2;
-    return data.getSize() - headerBytes == payload;
-}
-
-/// Keys in-memory thumbnail reuse by the captured source version, detail and waveform format version.
-juce::int64 waveformCacheKey(const utils::FileIdentity& identity, const int samplesPerPoint)
-{
-    const auto [volume, file] = identity.platformId.value_or(std::pair<std::uint64_t, std::uint64_t> {});
-    return utils::format(
-               "{}:{}:{}:{}:{}:{}:{}:{}:3",
-               identity.path,
-               identity.fileSize,
-               identity.modifiedTimeMs,
-               volume,
-               file,
-               identity.preciseTimes.first,
-               identity.preciseTimes.second,
-               samplesPerPoint
-    )
-        .hashCode64();
-}
-
-/// Loads the cached thumbnail waveform data for the given file,
-/// or returns an empty optional when there is none for the file's current size, modification time and version.
-std::optional<juce::MemoryBlock> AnalysisCache::getWaveformData(const juce::File& file)
-{
-    // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
-    const auto fileSize = file.getSize();
-    const auto modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
-    const juce::ScopedLock lock(mutex);
-
-    if (database == nullptr && !openUnlocked()) {
-        return std::nullopt;
-    }
-
-    constexpr auto sql = R"SQL(
-        SELECT file_size, modified_time_ms, waveform_data, waveform_version, analysis_version
-        FROM file_analysis
-        WHERE file_path = ?;
-    )SQL";
-
-    const auto prepared = statements.borrow(*database, sql);
-    if (!prepared.isValid() || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
-        return std::nullopt;
-    }
-
-    auto* const statement = prepared.get();
-
-    if (sqlite3_step(statement) != SQLITE_ROW) {
-        return std::nullopt;
-    }
-
-    const auto cachedFileSize = sqlite3_column_int64(statement, 0);
-    const auto cachedModifiedTime = sqlite3_column_int64(statement, 1);
-    const auto cachedWaveformVersion = sqlite3_column_int(statement, 3);
-    const auto cachedAnalysisVersion = sqlite3_column_int(statement, 4);
-
-    if (cachedFileSize != fileSize || cachedModifiedTime != modifiedTimeMs || cachedWaveformVersion != waveformVersion
-        || cachedAnalysisVersion != analysisVersion)
-    {
-        return std::nullopt;
-    }
-
-    constexpr int maximumWaveformBytes {52 + 4'194'304 * 2 * 2};
-    if (sqlite3_column_bytes(statement, 2) > maximumWaveformBytes) {
-        return std::nullopt;
-    }
-    auto waveformData = sqlite::columnBlob(*statement, 2);
-    return isValidWaveformData(waveformData) ? std::optional {std::move(waveformData)} : std::nullopt;
-}
-
-/// Stores serialized waveform preview data for a file.
-bool AnalysisCache::storeWaveformData(const utils::FileIdentity& identity, const juce::MemoryBlock& waveformData)
-{
-    if (!isValidWaveformData(waveformData) || !identity.matches(juce::File(identity.path))) {
-        return false;
-    }
-    const juce::ScopedLock lock(mutex);
-
-    if (database == nullptr && !openUnlocked()) {
-        return false;
-    }
-
-    constexpr auto sql = R"SQL(
-        UPDATE file_analysis
-        SET waveform_data = ?,
-            waveform_version = ?,
-            updated_at_ms = ?
-        WHERE file_path = ?
-          AND file_size = ?
-          AND modified_time_ms = ?
-          AND analysis_version = ?;
-    )SQL";
-
-    const auto statement = statements.borrow(*database, sql);
-    if (!statement.isValid()) {
-        return false;
-    }
-
-    const bool bound = sqlite::bindBlob(*statement, waveform_parameter::waveformData, waveformData)
-        && sqlite::bindInt64(*statement, waveform_parameter::waveformVersion, waveformVersion)
-        && sqlite::bindInt64(*statement, waveform_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())
-        && sqlite::bindText(*statement, waveform_parameter::filePath, identity.path)
-        && sqlite::bindInt64(*statement, waveform_parameter::fileSize, identity.fileSize)
-        && sqlite::bindInt64(*statement, waveform_parameter::modifiedTimeMs, identity.modifiedTimeMs)
-        && sqlite::bindInt64(*statement, waveform_parameter::analysisVersion, analysisVersion);
-
-    return bound && sqlite::stepToCompletion(*statement) && sqlite3_changes(database.get()) > 0;
-}
 }  // namespace audiobatch

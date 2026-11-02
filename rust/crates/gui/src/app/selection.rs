@@ -184,6 +184,9 @@ impl AppView {
                 .preview_source
                 .needs_reload(path, self.player.as_ref().and_then(Player::loaded_path));
         if changed {
+            self.enrichment.deselect();
+            self.table
+                .update(cx, |state, _| state.delegate_mut().release_waveforms_except(Some(path)));
             self.preview_source.begin(path);
         }
         self.selected = Some(path.to_path_buf());
@@ -198,10 +201,11 @@ impl AppView {
         if changed {
             self.selected_tags = None;
             self.clear_tag_marks(cx);
-            self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
             // Each file starts at the whole-file zoom.
-            self.waveform
-                .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
+            self.waveform.update(cx, |waveform, cx| {
+                waveform.show_placeholder("Loading preview", cx);
+                waveform.set_zoom(MINIMUM_ZOOM, cx);
+            });
             self.zoom_reset_pending = true;
         }
         // With playing from the first cue on, a new file stays silent until its cue points are read,
@@ -229,6 +233,7 @@ impl AppView {
         // Load first so the previous decoder cannot authorize presentation or gain for the newly selected file.
         self.refresh_selected_waveform(cx);
         self.apply_preview_gain(cx);
+        self.request_selected_enrichment(cx);
         cx.notify();
     }
 
@@ -238,7 +243,9 @@ impl AppView {
         self.preview_source.clear();
         self.selected = None;
         self.selected_tags = None;
-        self.tags_task = None;
+        self.enrichment.deselect();
+        self.table
+            .update(cx, |state, _| state.delegate_mut().release_waveforms_except(None));
         self.request_artwork(None, cx);
         self.table
             .update(cx, |state, _| state.delegate_mut().set_selected_path(None));

@@ -74,19 +74,8 @@ public:
     ) const;
 
 private:
-    using Results = std::array<std::optional<TagReadResult>, allTagKinds.size()>;
-
-    static std::shared_ptr<const SeratoData> collectData(Results& results);
-
     void run(const std::stop_token& stopToken);
     void process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const;
-
-    ReadOutcome readMisses(
-        const SeratoPreviewRequest& active,
-        std::span<const TagKind> misses,
-        Results& results,
-        const utils::CancellationCheck& isCancelled
-    ) const;
 
     /// The cache the tag results are read from and stored in, which outlives the loader.
     AnalysisCache& cache;
@@ -109,4 +98,12 @@ private:
     /// Starts only after every queue member it accesses has been initialized.
     std::jthread worker;
 };
+
+[[nodiscard]] std::shared_ptr<const SeratoData> loadPreviewData(
+    AnalysisCache& cache,
+    const utils::FileIdentity& identity,
+    const utils::CancellationCheck& isCancelled,
+    bool readMissing = true,
+    const SeratoPreviewLoader::Reader& reader = readTags
+);
 }  // namespace audiobatch::serato

@@ -90,6 +90,7 @@ void AudioBatchComponent::clearAllRecords()
 
     // Discard results immediately, but keep writers excluded until their terminal callback.
     backgroundWork.stopAllWork();
+    enrichment.clear();
 
     analysisResults.clear();
     fileActivity.clearAllActive();
@@ -118,6 +119,7 @@ void AudioBatchComponent::cancelCurrentWork()
         // A cancelled analysis ends at once without a completion, so its waiting rows are settled here.
         utils::logInfo("Analysis cancelled");
         reconcilePendingAnalysisResults();
+        resumePreviewEnrichment();
         updateStatusLabel();
         statusBar.setStatusText("Analysis cancelled");
         return;
@@ -475,6 +477,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         fileActivity.clearMessage(removedPath);
     }
 
+    enrichment.remove(removedPaths);
     analysisResults.removePaths(removedPaths);
     backgroundWork.forgetRemovedPaths(removedPaths, removedPendingCount);
 

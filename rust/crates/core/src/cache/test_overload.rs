@@ -17,9 +17,11 @@ fn unchanged_blobs(cache: &AnalysisCache, path: &Path) -> (Vec<u8>, Vec<u8>, Vec
     cache
         .with_connection(|connection| {
             Ok(connection.query_row(
-                "SELECT analysis.short_term_loudness, analysis.waveform_data, serato.decoded_data
+                "SELECT analysis.short_term_loudness, preview.waveform_data, serato.decoded_data
                  FROM file_analysis AS analysis JOIN serato_tag_cache AS serato
-                 ON analysis.file_path = serato.file_path WHERE analysis.file_path = ?1",
+                 ON analysis.file_path = serato.file_path
+                 JOIN rust_waveform_cache AS preview ON preview.file_path = analysis.file_path
+                 WHERE analysis.file_path = ?1",
                 params![path_key(path)],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?)

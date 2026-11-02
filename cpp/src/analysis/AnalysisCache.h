@@ -25,6 +25,10 @@ struct CustomGainUpdate {
     juce::File file;
     /// The new gain, or nothing to clear it.
     std::optional<Decibels> customGain;
+    /// Size captured when the edit was made, or -1 for the synchronous compatibility API.
+    std::int64_t fileSize {-1};
+    /// Modification time captured when the edit was made, or -1 for the synchronous compatibility API.
+    std::int64_t modifiedTimeMs {-1};
 };
 
 [[nodiscard]] bool isValidWaveformData(const juce::MemoryBlock& data);
@@ -60,6 +64,7 @@ public:
 
     [[nodiscard]] bool open();
     [[nodiscard]] bool removeAnalysis(const juce::File& file);
+    [[nodiscard]] bool removeAnalysis(const AudioAnalysisRecord& record);
     [[nodiscard]] bool storeAnalysis(const AudioAnalysisRecord& record);
     [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<Decibels> customGain);
     [[nodiscard]] bool storeWaveformData(const utils::FileIdentity& identity, const juce::MemoryBlock& waveformData);
@@ -68,7 +73,11 @@ public:
 
 private:
     [[nodiscard]] bool addMissingColumns() const;
-    [[nodiscard]] bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
+    [[nodiscard]] bool columnExists(
+        const juce::String& tableName,
+        const juce::String& columnName,
+        bool requireNotNull = false
+    ) const;
     bool openUnlocked();
 
     [[nodiscard]] bool removeRowVersion(
@@ -83,7 +92,7 @@ private:
     static juce::String normalizedPath(const juce::File& file);
 
     /// Raised when the analysis changed, so cached results of the older analysis are analyzed again.
-    static constexpr int analysisVersion {12};
+    static constexpr int analysisVersion {13};
     /// Raised when waveform detail or source-version rules change, so older peaks are generated again.
     static constexpr int waveformVersion {3};
 

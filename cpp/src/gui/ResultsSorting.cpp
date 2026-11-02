@@ -217,7 +217,7 @@ int compareRecordsByColumn(
         }
 
         case AudioFileTableColumn::status:
-            return compareNatural(formatStatus(lhs), formatStatus(rhs));
+            return compareNatural(formatGuiStatus(lhs), formatGuiStatus(rhs));
 
         case AudioFileTableColumn::overallPeak:
             return comparePeaks(lhs.overallPeak, rhs.overallPeak);

@@ -120,7 +120,13 @@ jobs:
           export CCACHE_DIR="$PWD/cmake-build-mac-release/ccache"
           cmake -S . -B cmake-build-mac-release -G Ninja \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
-          cmake --build cmake-build-mac-release --target AudioBatchCli
+          cmake --build cmake-build-mac-release --target AudioBatchCli AudioBatchTests
+
+      - name: Verify bidirectional shared-cache reuse
+        working-directory: rust
+        env:
+          AUDIOBATCH_CPP_TESTS: ${{ github.workspace }}/cpp/cmake-build-mac-release/AudioBatchTests_artefacts/Release/AudioBatchTests
+        run: cargo test --release -p audiobatch-core --test shared_cache -- --nocapture
 
       - name: Compare CLIs
         working-directory: rust

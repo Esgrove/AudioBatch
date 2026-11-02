@@ -19,6 +19,7 @@
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
 #include "gui/PreviewController.h"
+#include "gui/PreviewEnrichmentScheduler.h"
 #include "gui/ResultsModel.h"
 #include "gui/ResultsSorting.h"
 #include "plugins/PluginLibrary.h"
@@ -164,7 +165,8 @@ private:
     void handleSecondarySortRequested(AudioFileTableColumn column);
     void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(std::optional<AudioFileTableColumn> column, bool isForwards);
-    void handleThumbnailFullyLoaded();
+    void resumePreviewEnrichment();
+    void adoptPreviewEnrichment(PreviewEnrichmentResult result);
     void launchFolderChooser(bool appendToRoots);
     void normalizeSelectedRecords();
     void normalizeRecords(const std::vector<AudioAnalysisRecord>& recordsToNormalize);
@@ -221,7 +223,7 @@ private:
         std::shared_ptr<const serato::SeratoData> data
     );
 
-    serato::SeratoPreviewLoader::Completion createSeratoPreviewCompletion();
+    PreviewEnrichmentScheduler::Completion createPreviewEnrichmentCompletion();
     ArtworkLoader::Completion createArtworkCompletion();
 
     void adoptArtwork(const utils::FileIdentity& identity, std::uint64_t generation, juce::Image image);
@@ -254,9 +256,16 @@ private:
     AudioPreviewPlayer previewPlayer;
 
     /// The previewed file and its Serato tags.
-    /// Its tag worker is stopped explicitly before GUI cleanup,
-    /// and it is declared after the cache and the player it uses, so it is destroyed before them.
-    PreviewController preview {analysisCache, previewPlayer, createSeratoPreviewCompletion()};
+    /// Selected artifact requests use the shared enrichment scheduler, never a separate decoder worker.
+    PreviewController preview {
+        previewPlayer,
+        [this](const utils::FileIdentity& identity, const std::uint64_t generation) {
+            enrichment.select(identity, generation);
+        }
+    };
+
+    /// The only admission path for native waveform and Serato repair, with its own background cache connection.
+    PreviewEnrichmentScheduler enrichment {analysisCache.getDatabaseFile(), createPreviewEnrichmentCompletion()};
 
     /// Reads the album artwork of the selected file on its own worker, so it never delays the Serato cue start.
     /// Stopped explicitly before GUI cleanup.

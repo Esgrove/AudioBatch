@@ -18,12 +18,12 @@
 
 namespace audiobatch
 {
-/// Where merging a record put it, and whether a retained gain edit must be persisted.
+/// Where merging a record put it, and whether a current explicit edit overrode the incoming value.
 struct MergedRecord {
     /// The row of the merged record, valid until rows are removed or sorted.
     int row {-1};
-    /// True when a retained gain or explicit clear overrode the incoming gain,
-    /// which the cache may not have stored for this version of the file yet.
+    /// True when an explicit edit or clear overrode a queued record's incoming gain.
+    /// This is presentation state, never permission to replay an inherited gain into the cache.
     bool customGainCarriedOver {false};
 };
 
@@ -56,6 +56,7 @@ public:
     MergedRecord merge(AudioAnalysisRecord record);
     MergedRecord replaceAfterOperation(const juce::String& originalPath, AudioAnalysisRecord output);
     void clear() noexcept;
+    void beginLoad();
     void removePaths(const juce::StringArray& paths);
     void setRecord(int row, AudioAnalysisRecord record);
     void sort(const results_sorting::SortState& state);
@@ -67,7 +68,7 @@ private:
     std::vector<AudioAnalysisRecord> records;
     /// The row of each record by its full path, rebuilt whenever rows move.
     std::unordered_map<juce::String, std::size_t> rowsByPath;
-    /// Explicit edits remain authoritative, including an empty gain, until the file identity changes.
+    /// Explicit edits protect queued results until the file identity changes or a new load begins.
     std::unordered_map<juce::String, CustomGainEdit> customGainEdits;
 };
 

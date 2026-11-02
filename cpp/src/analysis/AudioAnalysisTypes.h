@@ -27,6 +27,12 @@ enum class AudioAnalysisStatus : std::uint8_t {
     failed = 3,
 };
 
+/// The implementation that measured the audio, independent of later gain or preview writes.
+enum class MeasurementProducer : std::uint8_t {
+    cpp,
+    rust,
+};
+
 /// Available sort keys for CLI output and in-memory result lists.
 enum class AudioAnalysisSortMode : std::uint8_t {
     peak,
@@ -243,6 +249,8 @@ struct AudioAnalysisRecord {
     std::optional<Decibels> customGain;
     /// Where the record is in its lifecycle, from a pending placeholder to an analyzed, cached, or failed file.
     AudioAnalysisStatus status {AudioAnalysisStatus::pending};
+    /// Implementation that produced the measurements, not the last writer of gain or preview data.
+    MeasurementProducer measurementProducer {MeasurementProducer::cpp};
     /// Why the analysis failed, set on the records of failed analyses.
     std::optional<AnalysisError> error;
     /// True when the record was read from the analysis cache instead of decoding the file.

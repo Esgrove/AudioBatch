@@ -12,6 +12,7 @@
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "gui/NativeWaveformBuilder.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagTypes.h"
 #include "serato/SeratoWaveformColouring.h"
@@ -55,12 +56,6 @@ constexpr float cueArrowOutlineAlpha {0.8f};
 /// Number of Serato hot cue slots reachable with the number keys 1 to 8.
 constexpr int hotCueSlotCount {8};
 
-/// Number of points a waveform aims for, enough detail to zoom in on files of typical length.
-constexpr juce::int64 thumbnailTargetPoints {16'384};
-
-/// Finest waveform detail, in source samples per waveform point, used for short files.
-constexpr int minimumSamplesPerThumbnailPoint {16};
-
 /// Coarsest waveform detail, which keeps the cached waveform of a long file small.
 constexpr int maximumSamplesPerThumbnailPoint {1024};
 
@@ -76,39 +71,6 @@ constexpr float loudnessGridAlpha {0.12f};
 /// Opacity of the black outline drawn under the loudness curve, which keeps it readable over the waveform.
 constexpr float loudnessOutlineAlpha {0.65f};
 
-/// A URL source whose in-memory peaks belong to a captured file version and detail rather than a path alone.
-class VersionedThumbnailSource final : public juce::URLInputSource
-{
-public:
-    /// Captures the immutable cache key used for the entire thumbnail read.
-    VersionedThumbnailSource(const juce::URL& url, const juce::int64 key) : juce::URLInputSource(url), cacheKey(key) {}
-
-    /// Returns the captured key without querying a possibly replaced file.
-    [[nodiscard]] juce::int64 hashCode() const override
-    {
-        return cacheKey;
-    }
-
-private:
-    const juce::int64 cacheKey;
-};
-
-/// Returns the source samples per waveform point for a file:
-/// the power of two that gives it about thumbnailTargetPoints points, within the finest and coarsest detail.
-/// A 30 second file gets 128 samples per point, and an unknown length the coarsest detail.
-int samplesPerThumbnailPoint(const juce::int64 lengthInSamples)
-{
-    if (lengthInSamples <= 0) {
-        return maximumSamplesPerThumbnailPoint;
-    }
-    auto samplesPerPoint = minimumSamplesPerThumbnailPoint;
-    while (samplesPerPoint < maximumSamplesPerThumbnailPoint
-           && lengthInSamples / samplesPerPoint > thumbnailTargetPoints)
-    {
-        samplesPerPoint *= 2;
-    }
-    return samplesPerPoint;
-}
 }  // namespace
 
 /// Creates a thumbnail view backed by the shared transport source.
@@ -249,6 +211,42 @@ bool ThumbnailComponent::loadFromCacheData(
     return true;
 }
 
+/// Shows source geometry while artifact work is gated or queued, without launching a JUCE decoder.
+void ThumbnailComponent::setPendingSource(
+    const juce::int64 lengthInSamples,
+    const double durationSeconds,
+    const utils::FileIdentity& identity
+)
+{
+    setURL(juce::URL(juce::File(identity.path)), lengthInSamples, identity);
+    if (lengthInSamples > 0 && std::isfinite(durationSeconds) && durationSeconds > 0.0) {
+        thumbnail->reset(2, static_cast<double>(lengthInSamples) / durationSeconds, lengthInSamples);
+        setRange({0.0, durationSeconds});
+    }
+}
+
+/// Replaces only native peaks, preserving viewport, cues, histories, gain and transport.
+/// A detached worker result must belong to the exact source version already displayed.
+bool ThumbnailComponent::adoptWaveformData(const juce::MemoryBlock& waveformData, const utils::FileIdentity& identity)
+{
+    if (!sourceIdentity || sourceIdentity->path != identity.path || sourceIdentity->fileSize != identity.fileSize
+        || sourceIdentity->modifiedTimeMs != identity.modifiedTimeMs
+        || sourceIdentity->platformId != identity.platformId || sourceIdentity->preciseTimes != identity.preciseTimes
+        || !isValidWaveformData(waveformData))
+    {
+        return false;
+    }
+    juce::MemoryInputStream input(waveformData, false);
+    if (!thumbnail->loadFrom(input)) {
+        return false;
+    }
+    colouredWaveform.reset();
+    hasNotifiedFullyLoaded = true;
+    updateCursorPosition();
+    repaint();
+    return true;
+}
+
 /// Returns the identity captured for the waveform, including after its decoder finished.
 const std::optional<utils::FileIdentity>& ThumbnailComponent::getSourceIdentity() const noexcept
 {
@@ -319,9 +317,8 @@ void ThumbnailComponent::setURL(
         sourceIdentity.emplace(url.getLocalFile());
     }
     replaceThumbnail(detail);
-    // The thumbnail takes ownership of the source, whose immutable hash prevents same-path stale hits.
-    const auto key = sourceIdentity ? waveformCacheKey(*sourceIdentity, detail) : url.toString(false).hashCode64();
-    thumbnail->setSource(new VersionedThumbnailSource(url, key));
+    // Source-backed thumbnails start their own hidden decoder, so only the admitted scheduler may fill peaks.
+    juce::ignoreUnused(url);
 
     if (thumbnail->getTotalLength() > 0.0) {
         setRange({0.0, thumbnail->getTotalLength()});

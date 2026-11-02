@@ -123,13 +123,13 @@ impl AppView {
             .settings
             .play_from_first_cue_point
             .then(|| super::cue_start::CueStartIntent::seek(&path));
-        self.tags_task = None;
+        self.enrichment.deselect();
         self.selected_tags = None;
         self.clear_tag_marks(cx);
         if let Some(player) = &mut self.player {
             player.load(&path, 0.0, false);
         }
-        self.tags_task = Some(self.spawn_tag_read(path, cx));
+        self.request_selected_enrichment(cx);
         self.refresh_selected_waveform(cx);
         self.apply_preview_gain(cx);
     }

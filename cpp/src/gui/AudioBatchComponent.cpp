@@ -13,12 +13,11 @@
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "gui/PreviewEnrichmentScheduler.h"
 #include "gui/ResultsSorting.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
-#include "serato/SeratoPreviewLoader.h"
-#include "serato/SeratoTagTypes.h"
 #include "utils/AppInfo.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
@@ -53,7 +52,7 @@ void AudioBatchComponent::configureResultsTable()
     // The activity labels change while files are busy, so only the settled text decides the status column order.
     sortState.statusText = [this](const AudioAnalysisRecord& record) {
         const auto [text, isError] = fileActivity.getMessage(record.fullPath);
-        return text.isNotEmpty() ? text : formatStatus(record);
+        return text.isNotEmpty() ? text : formatGuiStatus(record);
     };
     resultsTable.getHeader().setSortColumnId(toColumnId(sortState.primaryColumn), sortState.primaryForwards);
     refreshSortIndicators();
@@ -99,7 +98,6 @@ void AudioBatchComponent::configurePreviewControls()
             = juce::jlimit(gainSlider.getMinimum(), gainSlider.getMaximum(), gainSlider.getValue() + step);
         gainSlider.setValue(newValue, juce::sendNotificationSync);
     });
-    thumbnail.setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
 
     previewWorkspace.startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
     previewWorkspace.previewChainToggle.onClick = [this] {
@@ -170,23 +168,16 @@ void AudioBatchComponent::configureProcessingControls()
     previewWorkspace.settingsButton.onClick = [this] { showAudioSettingsWindow(); };
 }
 
-/// Creates the completion for the Serato tag worker of the preview,
-/// which adopts the tags on the message thread while this component still exists.
-/// Called from the member initializer of the preview controller, so it only captures a safe pointer to this component.
-serato::SeratoPreviewLoader::Completion AudioBatchComponent::createSeratoPreviewCompletion()
+/// Queues artifact-only adoption without making the worker wait for message-thread delivery.
+PreviewEnrichmentScheduler::Completion AudioBatchComponent::createPreviewEnrichmentCompletion()
 {
-    return
-        [safeThis = SafePointer(this)](
-            utils::FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
-        ) {
-            juce::MessageManager::callAsync(
-                [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
-                    if (safeThis != nullptr) {
-                        safeThis->adoptSeratoPreview(previewIdentity, generation, previewData);
-                    }
-                }
-            );
-        };
+    return [safeThis = SafePointer(this)](PreviewEnrichmentResult result) {
+        juce::MessageManager::callAsync([safeThis, delivery = std::move(result)] mutable {
+            if (safeThis != nullptr) {
+                safeThis->adoptPreviewEnrichment(std::move(delivery));
+            }
+        });
+    };
 }
 
 /// Creates the completion for the artwork worker, which adopts the thumbnail on the message thread
@@ -251,18 +242,13 @@ AudioBatchComponent::AudioBatchComponent() :
     tooltipWindow = std::make_unique<juce::TooltipWindow>(this, layout::tooltipDelayMilliseconds);
     logStartupCheckpoint("ui controls created");
 
-    utils::logDebug("AudioBatchComponent startup: opening analysis cache");
-    const auto analysisCacheOpened = analysisCache.open();
-    if (analysisCacheOpened) {
-        logStartupCheckpoint("analysis cache opened");
-
-        // Checking every cached path touches the file system, so it runs in the background.
-        cachePruneThread = std::jthread([this](const std::stop_token& stopToken) {
+    // Opening a shared database can wait for another writer, just like pruning can touch a slow file system.
+    // Both belong on a worker, and analysis remains usable when the cache is unavailable.
+    cachePruneThread = std::jthread([this](const std::stop_token& stopToken) {
+        if (!stopToken.stop_requested() && analysisCache.open()) {
             analysisCache.pruneMissingFiles([&stopToken] { return stopToken.stop_requested(); });
-        });
-    } else {
-        utils::logError("AudioBatchComponent startup: analysis cache open failed");
-    }
+        }
+    });
 
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
@@ -282,6 +268,7 @@ AudioBatchComponent::~AudioBatchComponent()
     fileActivity.clearAllActive();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
     preview.stop();
+    enrichment.stop();
     artworkLoader.cancelAndWait();
     // A plugin job that hangs makes the shutdown end the process, so the chain is saved first.
     liveChain->saveChain();
