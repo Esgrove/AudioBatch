@@ -80,6 +80,8 @@ Within a struct or class:
 - Use `constexpr` for every variable and function that can be evaluated at compile time.
 - Use `consteval` for functions that must never run at runtime.
 - Put file-local constants in an anonymous namespace as `constexpr` without a redundant `static`.
+- Prefer named constants over unexplained numeric literals when values represent domain concepts, protocol fields,
+  policy limits, or reused values. Keep self-evident arithmetic and conventional values inline.
 - Function-local `static const` is fine for values that need runtime initialization, such as fonts.
 
 ## Initialization

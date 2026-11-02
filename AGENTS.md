@@ -114,6 +114,8 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   Prefer existing named mathematical constants, such as Rust's `FRAC_PI_2` instead of `PI * 0.5`.
   Otherwise reuse invariant results at the narrowest appropriate scope, outside repeated sample or comparison loops.
   Keep mutable processing state separate from shared immutable calculation data.
+- Prefer named constants over unexplained numeric literals when a value represents a domain concept,
+  protocol field, policy limit, or reused value. Keep self-evident arithmetic and conventional values inline.
 - Preserve operation order, precision, rounding, and the behavioral parity contracts when optimizing numeric code.
   Do not substitute approximate constants, arbitrary reciprocals, fused operations, or fast math without verification.
   Validate DSP tables against the native reference on every supported architecture before replacing native calculations.

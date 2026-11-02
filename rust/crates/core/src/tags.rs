@@ -29,6 +29,15 @@ use serato_tags::{Overview, SeratoData, SeratoTag};
 /// Largest encoded embedded picture passed to the thumbnail decoder, 16 MiB.
 pub const ARTWORK_MAXIMUM_BYTES: usize = 16 * 1024 * 1024;
 
+const ID3_TAG_HEADER_BYTES: usize = 10;
+const ID3V2_FRAME_HEADER_BYTES: usize = 6;
+const ID3_FRAME_HEADER_BYTES: usize = 10;
+const ID3_TAG_MAXIMUM_BYTES: usize = 64 * 1024 * 1024;
+const ID3_SYNC_SAFE_HIGH_BIT: u8 = 0x80;
+const ID3_SYNC_SAFE_VALUE_MASK: u32 = 0x7f;
+const ID3_UNSYNCHRONISATION_FLAG: u8 = 0x80;
+const ID3_EXTENDED_HEADER_FLAG: u8 = 0x40;
+
 /// What reading the Serato Overview tag of a file found, the read results the tag cache keeps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeratoOverviewState {
@@ -285,7 +294,7 @@ fn invalid_id3(message: &'static str) -> io::Error {
 
 /// Decodes a checked four-byte syncsafe ID3 size.
 fn syncsafe_size(bytes: [u8; 4]) -> io::Result<usize> {
-    if bytes.iter().any(|byte| byte & 0x80 != 0) {
+    if bytes.iter().any(|byte| byte & ID3_SYNC_SAFE_HIGH_BIT != 0) {
         return Err(invalid_id3("Invalid syncsafe ID3 size"));
     }
     Ok(bytes.into_iter().fold(0, |size, byte| (size << 7) | usize::from(byte)))
@@ -330,8 +339,8 @@ fn read_ordered_geob(path: &Path) -> Result<Vec<(String, Vec<u8>)>, lofty::error
 
 /// Reads bounded ID3 framing in source order, leaving GEOB decoding and flag handling to Lofty.
 fn read_geob_tag(file: &mut File, available: u64) -> Result<Vec<(String, Vec<u8>)>, lofty::error::FileParseError> {
-    let mut header = [0; 10];
-    if available < 10 {
+    let mut header = [0; ID3_TAG_HEADER_BYTES];
+    if available < ID3_TAG_HEADER_BYTES as u64 {
         return Ok(Vec::new());
     }
     file.read_exact(&mut header)?;
@@ -344,19 +353,19 @@ fn read_geob_tag(file: &mut File, available: u64) -> Result<Vec<(String, Vec<u8>
     }
     let length = syncsafe_size(header[6..].try_into().expect("four-byte ID3 size"))?;
     // Bounds the temporary tag body, including unrelated frames, before allocating it.
-    if length > 64 * 1024 * 1024 || length as u64 > available - 10 {
+    if length > ID3_TAG_MAXIMUM_BYTES || length as u64 > available - ID3_TAG_HEADER_BYTES as u64 {
         return Err(invalid_id3("Oversized or truncated ID3 tag").into());
     }
     let mut body = vec![0; length];
     file.read_exact(&mut body)?;
-    if version < 4 && header[5] & 0x80 != 0 {
+    if version < 4 && header[5] & ID3_UNSYNCHRONISATION_FLAG != 0 {
         let mut decoded = Vec::with_capacity(body.len());
         UnsynchronizedStream::new(body.as_slice()).read_to_end(&mut decoded)?;
         body = decoded;
-        header[5] &= !0x80;
+        header[5] &= !ID3_UNSYNCHRONISATION_FLAG;
     }
     let mut remaining = body.as_slice();
-    if version >= 3 && header[5] & 0x40 != 0 {
+    if version >= 3 && header[5] & ID3_EXTENDED_HEADER_FLAG != 0 {
         let size: [u8; 4] = remaining
             .get(..4)
             .ok_or_else(|| invalid_id3("Truncated extended ID3 header"))?
@@ -372,7 +381,11 @@ fn read_geob_tag(file: &mut File, available: u64) -> Result<Vec<(String, Vec<u8>
             .ok_or_else(|| invalid_id3("Truncated extended ID3 header"))?;
     }
     let mut objects = Vec::new();
-    let frame_header_length = if version == 2 { 6 } else { 10 };
+    let frame_header_length = if version == 2 {
+        ID3V2_FRAME_HEADER_BYTES
+    } else {
+        ID3_FRAME_HEADER_BYTES
+    };
     while remaining.first().is_some_and(|byte| *byte != 0) {
         let frame_header = remaining
             .get(..frame_header_length)
@@ -413,18 +426,18 @@ fn read_geob_tag(file: &mut File, available: u64) -> Result<Vec<(String, Vec<u8>
 
 /// Decodes one source frame in an isolated ID3 chunk so Lofty's deduplication cannot change source order.
 fn decode_geob_frame(
-    mut header: [u8; 10],
+    mut header: [u8; ID3_TAG_HEADER_BYTES],
     frame: &[u8],
 ) -> Result<Vec<(String, Vec<u8>)>, lofty::error::FileParseError> {
-    header[5] &= 0x80;
+    header[5] &= ID3_UNSYNCHRONISATION_FLAG;
     let length = u32::try_from(frame.len()).map_err(|_| invalid_id3("Oversized GEOB frame"))?;
     header[6..].copy_from_slice(&[
-        ((length >> 21) & 0x7f) as u8,
-        ((length >> 14) & 0x7f) as u8,
-        ((length >> 7) & 0x7f) as u8,
-        (length & 0x7f) as u8,
+        ((length >> 21) & ID3_SYNC_SAFE_VALUE_MASK) as u8,
+        ((length >> 14) & ID3_SYNC_SAFE_VALUE_MASK) as u8,
+        ((length >> 7) & ID3_SYNC_SAFE_VALUE_MASK) as u8,
+        (length & ID3_SYNC_SAFE_VALUE_MASK) as u8,
     ]);
-    let chunk_length = 10 + length;
+    let chunk_length = ID3_TAG_HEADER_BYTES as u32 + length;
     let mut bytes = b"RIFF".to_vec();
     bytes.extend_from_slice(&(12 + chunk_length + chunk_length % 2).to_le_bytes());
     bytes.extend_from_slice(b"WAVEID3 ");

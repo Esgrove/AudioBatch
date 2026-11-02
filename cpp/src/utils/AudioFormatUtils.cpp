@@ -21,6 +21,7 @@ namespace audiobatch::utils
 {
 namespace
 {
+constexpr int MPEG_LAYER_III {3};
 /// Samples of layer III synthesis delay that both JUCE's MP3 reader and Core Audio leave out at the start of a file.
 constexpr juce::int64 mp3DecoderDelaySamples {529};
 }  // namespace
@@ -132,7 +133,7 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
     const auto* properties = mpegFile.audioProperties();
 
     if (!mpegFile.isValid() || properties == nullptr || properties->xingHeader() != nullptr
-        || properties->version() != TagLib::MPEG::Header::Version1 || properties->layer() != 3)
+        || properties->version() != TagLib::MPEG::Header::Version1 || properties->layer() != MPEG_LAYER_III)
     {
         return reader;
     }
@@ -149,7 +150,7 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
     for (auto position = firstFrame; position <= lastFrame;) {
         const TagLib::MPEG::Header header(&mpegFile, position, false);
 
-        if (!header.isValid() || header.version() != TagLib::MPEG::Header::Version1 || header.layer() != 3
+        if (!header.isValid() || header.version() != TagLib::MPEG::Header::Version1 || header.layer() != MPEG_LAYER_III
             || header.sampleRate() != properties->sampleRate() || header.frameLength() <= 0
             || position + header.frameLength() > mpegFile.length())
         {

@@ -7,6 +7,7 @@
 #include "gui/components/PluginChainEditor.h"
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -52,7 +53,7 @@ void LiveChain::showMenu(juce::Component& anchor)
 
     const juce::WeakReference safeThis(this);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor), [safeThis, types](const int result) {
-        if (safeThis == nullptr || result == 0) {
+        if (safeThis == nullptr || result == utils::MENU_RESULT_DISMISSED) {
             return;
         }
 
