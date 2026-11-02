@@ -60,7 +60,7 @@ std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer);
 /// Masks the low bits without changing the sign, so negative samples round toward negative infinity.
 [[nodiscard]] inline float pcmSampleToFloat(const int sample, const int bitsPerSample) noexcept
 {
-    const auto shift = 32 - bitsPerSample;
+    const auto shift = static_cast<unsigned int>(32 - bitsPerSample);
     const auto mask = std::numeric_limits<unsigned int>::max() << shift;
     const auto aligned = std::bit_cast<int>(static_cast<unsigned int>(sample) & mask);
     constexpr auto scale = 1.0f / static_cast<float>(std::numeric_limits<int>::max());
