@@ -37,13 +37,13 @@ use crate::info_panel::{COMPACT_METRIC_SPACING, render_compact_info_panel, rende
 use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
-    OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
-    RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleAlbumArtwork, ToggleColumn,
-    ToggleLoudnessGraph, TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection,
-    ToggleSeratoColours, TrashSelected, TrashSelectedNow,
+    OpenParentFolder, OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected,
+    RemoveSelected, Rescan, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback,
+    ToggleAlbumArtwork, ToggleColumn, ToggleLoudnessGraph, TogglePlayback, TogglePluginPreview,
+    TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSeratoColours, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
-use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, fill_status_column};
+use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, RowMenuState, fill_status_column};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
 use crate::waveform::MINIMUM_ZOOM;
 
@@ -312,6 +312,17 @@ impl AppView {
             .and_then(|path| self.table.read(cx).delegate().row_for(path).cloned())
     }
 
+    /// Returns the app state the right-click row menu of the results table shows.
+    fn row_menu_state(&self) -> RowMenuState {
+        RowMenuState {
+            action_context: Some(self.focus_handle.clone()),
+            idle: !self.is_running(),
+            can_normalize: self.can_start_normalization(),
+            can_process: self.can_start_processing(),
+            normalize_target: self.menu_state.normalize_target.clone(),
+        }
+    }
+
     /// Returns what the Play/Stop and Process buttons show.
     fn playback_controls(&self, cx: &Context<Self>) -> PlaybackControls {
         PlaybackControls {
@@ -476,8 +487,10 @@ impl Render for AppView {
         let progress = progress.map(|(_, fraction)| fraction);
         let (content_width, workspace_height) = content_size(window.viewport_size());
         let table_width = TABLE_FRAME_BORDER.mul_add(-2.0, content_width);
+        let row_menu = self.row_menu_state();
         self.table.update(cx, |state, cx| {
             fill_status_column(state, table_width, window, cx);
+            state.delegate_mut().set_row_menu_state(row_menu);
         });
         self.sync_gain_slider(window, cx);
         if std::mem::take(&mut self.zoom_reset_pending) {
@@ -494,6 +507,7 @@ impl Render for AppView {
             .on_action(cx.listener(|_, _: &AddFiles, _, cx| Self::prompt_for_paths(false, false, cx)))
             .on_action(cx.listener(|view, _: &Rescan, _, cx| view.rescan(cx)))
             .on_action(cx.listener(|view, _: &RevealSelected, _, cx| view.reveal_selected(cx)))
+            .on_action(cx.listener(|view, _: &OpenParentFolder, _, cx| view.open_parent_folder(cx)))
             .on_action(cx.listener(|view, _: &ReanalyzeSelected, _, cx| view.reanalyze_selected(cx)))
             .on_action(cx.listener(|view, _: &NormalizeSelected, window, cx| view.normalize_selected(window, cx)))
             .on_action(cx.listener(|view, _: &NormalizeAll, window, cx| view.normalize_all(window, cx)))

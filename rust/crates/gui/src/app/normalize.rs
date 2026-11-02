@@ -41,10 +41,12 @@ impl AppView {
     /// Returns true when the selected file can be normalized now.
     /// It runs on every render, so it leaves checking that the file still exists to `normalize_selected`.
     pub(super) fn can_normalize_selected(&self, cx: &Context<Self>) -> bool {
-        !self.is_demo()
-            && self.normalize_coordinator.is_some()
-            && self.normalization_blocked_reason().is_none()
-            && self.selected_record(cx).is_some()
+        self.can_start_normalization() && self.selected_record(cx).is_some()
+    }
+
+    /// Returns true when a normalization could start now, whatever is selected.
+    pub(super) fn can_start_normalization(&self) -> bool {
+        !self.is_demo() && self.normalize_coordinator.is_some() && self.normalization_blocked_reason().is_none()
     }
 
     /// Shows that the list cannot change while files are being normalized or processed with plugins.

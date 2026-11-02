@@ -11,7 +11,7 @@ use audiobatch_playback::Player;
 use gpui_kit::base::GlobalState;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, SharedString, SystemMenuType};
 
-use crate::files::REVEAL_LABEL;
+use crate::files::{OPEN_PARENT_FOLDER_LABEL, REVEAL_LABEL};
 use crate::plugins::labels::VendorGroup;
 
 /// Key context of the main view, which scopes the shortcuts that act on the results table.
@@ -57,10 +57,15 @@ pub struct AddFiles;
 #[action(namespace = audiobatch)]
 pub struct Rescan;
 
-/// Shows the selected file in the platform file manager.
+/// Shows the selected files in the platform file manager, one window per parent folder.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
 pub struct RevealSelected;
+
+/// Opens the parent folders of the selected files in the platform file manager.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct OpenParentFolder;
 
 /// Analyzes the selected file again, ignoring its cached result.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
@@ -354,6 +359,7 @@ pub fn set_menus(cx: &mut App, state: &MenuState) {
         MenuItem::action("Rescan", Rescan),
         MenuItem::separator(),
         MenuItem::action(REVEAL_LABEL, RevealSelected),
+        MenuItem::action(OPEN_PARENT_FOLDER_LABEL, OpenParentFolder),
         MenuItem::action("Re-analyze Selected", ReanalyzeSelected),
         MenuItem::action(
             format!("Normalize Selected to {}", state.normalize_target),
