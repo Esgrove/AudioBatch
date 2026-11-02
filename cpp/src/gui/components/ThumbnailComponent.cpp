@@ -1,5 +1,5 @@
 /// Implementation of the ThumbnailComponent waveform preview.
-/// Covers waveform painting and cache load and save,
+/// Covers waveform painting and adoption of scheduler-provided native artifacts,
 /// transport scrubbing through the mouse handlers,
 /// wheel-based zoom and gain gestures,
 /// and display-synchronized position marker updates during playback.
@@ -247,7 +247,7 @@ bool ThumbnailComponent::adoptWaveformData(const juce::MemoryBlock& waveformData
     return true;
 }
 
-/// Returns the identity captured for the waveform, including after its decoder finished.
+/// Returns the source identity retained while its waveform is pending and after artifacts are adopted.
 const std::optional<utils::FileIdentity>& ThumbnailComponent::getSourceIdentity() const noexcept
 {
     return sourceIdentity;
@@ -271,7 +271,7 @@ juce::MemoryBlock ThumbnailComponent::saveToCacheData() const
     return waveformData;
 }
 
-/// Sets the callback fired once a full waveform has been loaded from disk.
+/// Sets the callback fired once the thumbnail reports complete native waveform data.
 void ThumbnailComponent::setThumbnailFullyLoadedCallback(std::function<void()> callback)
 {
     thumbnailFullyLoadedCallback = std::move(callback);
@@ -289,8 +289,9 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
     mouseWheelGainCallback = std::move(callback);
 }
 
-/// Loads a new audio resource into the thumbnail display.
+/// Resets the display and source identity while the admitted scheduler prepares waveform artifacts.
 /// The length of the file in samples chooses the waveform detail, the finest for short files.
+/// This does not attach a source-backed decoder or read audio.
 void ThumbnailComponent::setURL(
     const juce::URL& url,
     const juce::int64 lengthInSamples,
@@ -365,7 +366,7 @@ void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
     if (source != thumbnail.get()) {
         return;
     }
-    // The thumbnail reports each step of reading the file, and every step changes the waveform pixels.
+    // Native thumbnail changes invalidate the memoized waveform drawing.
     colouredWaveform.reset();
     if (thumbnail->getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
         setRange({0.0, thumbnail->getTotalLength()});

@@ -1,6 +1,6 @@
 /// Implementation of PreviewController:
 /// the transitions between an empty, released, and loaded preview,
-/// and the requests and adoption of the Serato tags of the loaded file.
+/// and scheduler artifact requests with generation-checked adoption for the loaded file.
 
 #include "gui/PreviewController.h"
 
@@ -65,7 +65,7 @@ bool PreviewController::isSeratoDataOutdated(const juce::File& file) const
         && !loaded->seratoIdentity->matches(file);
 }
 
-/// Reports whether the waveform of the loaded file came from the analysis cache.
+/// Reports whether the loaded preview has adopted a cached or freshly built scheduler waveform.
 bool PreviewController::isWaveformLoadedFromCache() const noexcept
 {
     const auto* loaded = std::get_if<LoadedPreview>(&state);
@@ -121,7 +121,7 @@ bool PreviewController::adoptSeratoData(
     return true;
 }
 
-/// Loads a file into the preview player, cancelling the tag read of the previous file.
+/// Loads a file into the preview player and invalidates artifact deliveries for the previous selection.
 /// On failure the player is released and the file stays selected,
 /// so a later operation on it can load it again.
 /// Returns true when the file was loaded.
@@ -165,7 +165,8 @@ void PreviewController::release()
     player.release();
 }
 
-/// Forgets the tags of the loaded file and requests them again for its current version.
+/// Forgets adopted tags and requests current artifacts through the GUI-owned scheduler.
+/// A new selection generation invalidates any already queued artifact delivery.
 /// Without a loaded file of known length, the pending start position resolves at the beginning instead.
 void PreviewController::requestSeratoData()
 {
@@ -196,7 +197,7 @@ void PreviewController::requestSeratoData()
     }
 }
 
-/// Records whether the waveform of the loaded file came from the analysis cache.
+/// Records whether the loaded preview has adopted a cached or freshly built scheduler waveform.
 void PreviewController::setWaveformLoadedFromCache(const bool loadedFromCache)
 {
     if (auto* loaded = std::get_if<LoadedPreview>(&state)) {

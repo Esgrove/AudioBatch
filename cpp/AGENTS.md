@@ -48,8 +48,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and supplies peaks, loudness, and overload histories without decoding rendered output again.
       `OverloadHistory.*` build, validate, project, and serialize the bounded per-channel source overload flags.
     - `AnalysisCache.*` manage the SQLite result cache shared with the Rust application.
-      Its implementation is split into `AnalysisCache.cpp` (analysis and waveform persistence)
-      and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
+      Its implementation is split into `AnalysisCache.cpp` (measurement and custom gain persistence),
+      `AnalysisCacheSchema.cpp` (database lifecycle and schema),
+      and `AnalysisCacheWaveform.cpp` (native waveform persistence and validation),
       which share the column and parameter constants in `AnalysisCacheSql.h`.
       Measurement contract version 13 is coordinated across both implementations.
       Successful foreign measurements are reusable for reporting, while decoder failures are producer-specific.

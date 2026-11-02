@@ -1,6 +1,6 @@
 /// State of the audio preview in the main window.
 /// Declares PreviewController, which loads and releases the previewed file in the preview player,
-/// and reads its Serato tags in the background.
+/// and requests its Serato tags through the GUI-owned enrichment scheduler.
 /// The preview is either empty, released with its file kept for reloading, or loaded with its file identity and tags.
 
 #pragma once
@@ -36,7 +36,7 @@ struct LoadedPreview {
     /// The version of the file that was loaded, compared with analysis results of the same path.
     utils::FileIdentity identity;
 
-    /// True when the waveform came from the analysis cache, so it is not stored again.
+    /// True after adopting a scheduler artifact, whether reused from cache or freshly built on its worker.
     bool waveformLoadedFromCache {false};
 
     /// The Serato tags of the file, kept through analysis refreshes until the selection changes.
