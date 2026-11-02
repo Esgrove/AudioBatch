@@ -388,14 +388,21 @@ public:
     }
 
 private:
-    /// Checks delete aliases and environment values without modifying the process environment or touching the trash.
-    void runDeleteOptionTests()
-    {
-        const auto expectDisposer = [this](
-                                        const juce::StringArray& arguments,
-                                        const std::optional<juce::String>& environmentValue,
-                                        const bool deletes
-                                    ) {
+    void runAnalysisExitCodeTests();
+    void runCompletionTests();
+    void runDeleteNormalizationTests();
+    void runDeleteOptionTests();
+    void runInputTests();
+    void runOutputTests();
+};
+
+/// Checks delete aliases and environment values without modifying the process environment or touching the trash.
+void CliTests::runDeleteOptionTests()
+{
+    const auto expectDisposer =
+        [this](
+            const juce::StringArray& arguments, const std::optional<juce::String>& environmentValue, const bool deletes
+        ) {
             const auto command = expectCommand<AnalyzeCommand>(arguments, environmentValue);
             expect(command.normalization.has_value());
             if (command.normalization) {
@@ -404,427 +411,420 @@ private:
             }
         };
 
-        beginTest("Delete requires normalize and selects permanent disposal through either alias");
-        for (const auto* option : {"-D", "--delete"}) {
-            expectEquals(
-                expectError({option}, CliParseErrorKind::missingRequiredOption),
-                juce::String("--delete can only be used with --normalize")
-            );
-            expectDisposer({"-n", option}, std::nullopt, true);
-            expectError({"list", option}, CliParseErrorKind::conflictingOptions);
-            expectError({"completion", "zsh", option}, CliParseErrorKind::unknownOption);
-        }
-        expectDisposer({"-nDF"}, std::nullopt, true);
-        expectDisposer({"-n"}, std::nullopt, false);
+    beginTest("Delete requires normalize and selects permanent disposal through either alias");
+    for (const auto* option : {"-D", "--delete"}) {
+        expectEquals(
+            expectError({option}, CliParseErrorKind::missingRequiredOption),
+            juce::String("--delete can only be used with --normalize")
+        );
+        expectDisposer({"-n", option}, std::nullopt, true);
+        expectError({"list", option}, CliParseErrorKind::conflictingOptions);
+        expectError({"completion", "zsh", option}, CliParseErrorKind::unknownOption);
+    }
+    expectDisposer({"-nDF"}, std::nullopt, true);
+    expectDisposer({"-n"}, std::nullopt, false);
 
-        beginTest("The delete environment accepts case-insensitive boolish values");
-        for (const auto* value : {"true", "1", "yes", "on", "TRUE", "True", "YES", "Yes", "ON", "On"}) {
-            expectDisposer({"-n"}, juce::String(value), true);
-            expectEquals(
-                expectError({}, CliParseErrorKind::missingRequiredOption, juce::String(value)),
-                juce::String("--delete can only be used with --normalize")
-            );
-        }
-        for (const auto* value : {"false", "0", "no", "off", "FALSE", "False", "NO", "No", "OFF", "Off"}) {
-            expectDisposer({"-n"}, juce::String(value), false);
-            expect(!expectCommand<AnalyzeCommand>({}, juce::String(value)).normalization.has_value());
-        }
-
-        beginTest("The delete environment rejects empty, unknown, and whitespace-padded values");
-        for (const auto* value : {"", "invalid", "2", "-1", " true", "false ", " yes ", "\tON", "off\n"}) {
-            const auto message = expectError({"-n"}, CliParseErrorKind::invalidValue, juce::String(value));
-            expectEquals(
-                message, juce::String("AUDIOBATCH_DELETE must be one of: true, 1, yes, on, false, 0, no, off")
-            );
-        }
-
-        beginTest("Either delete alias overrides disabled and invalid environment values");
-        for (const auto* option : {"-D", "--delete"}) {
-            for (const auto* value : {"false", "0", "NO", "Off", "invalid", "", " true"}) {
-                expectDisposer({"-n", option}, juce::String(value), true);
-                expectError({option}, CliParseErrorKind::missingRequiredOption, juce::String(value));
-            }
-        }
-        expectDisposer({"-nDF"}, juce::String("invalid"), true);
-
-        beginTest("Subcommands validate the environment without applying normalization, and help ignores it");
-        for (const auto* value : {"true", "1", "YES", "On", "false", "0", "NO", "Off"}) {
-            expectCommand<ListPluginsCommand>({"list"}, juce::String(value));
-            expectCommand<CompletionCommand>({"completion", "zsh"}, juce::String(value));
-        }
-        for (const auto* value : {"invalid", ""}) {
-            expectCommand<HelpCommand>({"help"}, juce::String(value));
-            expectError({"list"}, CliParseErrorKind::invalidValue, juce::String(value));
-            expectError({"completion", "zsh"}, CliParseErrorKind::invalidValue, juce::String(value));
-        }
+    beginTest("The delete environment accepts case-insensitive boolish values");
+    for (const auto* value : {"true", "1", "yes", "on", "TRUE", "True", "YES", "Yes", "ON", "On"}) {
+        expectDisposer({"-n"}, juce::String(value), true);
+        expectEquals(
+            expectError({}, CliParseErrorKind::missingRequiredOption, juce::String(value)),
+            juce::String("--delete can only be used with --normalize")
+        );
+    }
+    for (const auto* value : {"false", "0", "no", "off", "FALSE", "False", "NO", "No", "OFF", "Off"}) {
+        expectDisposer({"-n"}, juce::String(value), false);
+        expect(!expectCommand<AnalyzeCommand>({}, juce::String(value)).normalization.has_value());
     }
 
-    /// Runs parsed delete options against temporary audio copies and checks the existing transaction safeguards.
-    void runDeleteNormalizationTests()
-    {
-        const TemporaryDirectory directory;
-        auto command = expectCommand<AnalyzeCommand>({"-nDF", "--peak", "-1"});
-        expect(command.normalization.has_value());
-        if (!command.normalization) {
-            return;
-        }
-        const auto& options = *command.normalization;
-
-        beginTest("Delete normalization converts a source and removes a forced output backup");
-        for (const bool overwrite : {false, true}) {
-            const auto* outputStem = overwrite ? "forced" : "converted";
-            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", juce::String(outputStem) + ".wav");
-            const auto output = getNormalizationOutputFile(source);
-            if (overwrite) {
-                expect(output.replaceWithText("previous output"));
-            }
-            const auto result = normalizeFile(analyzeFile(source), options);
-            expect(!result.hasError(), outcomeError(result.outcome));
-            expect(!source.exists());
-            expect(output.existsAsFile());
-            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, 0.01);
-            expect(!output.getSiblingFile("." + output.getFileName() + ".backup").exists());
-        }
-
-        beginTest("Delete normalization preserves the published in-place source and an unchanged no-op");
-        {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "in_place_delete.aif");
-            const auto first = normalizeFile(analyzeFile(source), options);
-            expect(!first.hasError(), outcomeError(first.outcome));
-            expect(source.existsAsFile());
-            expectWithinAbsoluteError(peakDecibels(analyzeFile(source)), -1.0, 0.01);
-            juce::MemoryBlock before;
-            expect(source.loadFileAsData(before));
-            const utils::FileIdentity identity(source);
-            const auto second = normalizeFile(analyzeFile(source), options);
-            expect(!second.hasError(), outcomeError(second.outcome));
-            juce::MemoryBlock after;
-            expect(source.loadFileAsData(after));
-            expect(before == after);
-            expect(identity.matches(source));
-        }
-
-        beginTest("Delete normalization keeps a cancelled source and an approved output");
-        {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "cancel_delete.wav");
-            const auto output = getNormalizationOutputFile(source);
-            expect(output.replaceWithText("approved"));
-            const utils::FileIdentity identity(source);
-            const auto result = normalizeFile(analyzeFile(source), options, [] { return true; });
-            expect(result.hasError());
-            expect(identity.matches(source));
-            expectEquals(output.loadFileAsString(), juce::String("approved"));
-        }
-
-        beginTest("Delete normalization never disposes of a source replaced during rendering");
-        {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "changed_delete.wav");
-            const auto output = getNormalizationOutputFile(source);
-            expect(output.replaceWithText("approved"));
-            bool replaced = false;
-            const auto result = normalizeFile(analyzeFile(source), options, {}, [&](const float progress) {
-                if (progress >= 0.8f && !replaced) {
-                    expect(source.replaceWithText("external"));
-                    replaced = true;
-                }
-            });
-            expect(replaced);
-            expect(outcomeError(result.outcome).contains("source file changed"), outcomeError(result.outcome));
-            expectEquals(source.loadFileAsString(), juce::String("external"));
-            expectEquals(output.loadFileAsString(), juce::String("approved"));
-        }
+    beginTest("The delete environment rejects empty, unknown, and whitespace-padded values");
+    for (const auto* value : {"", "invalid", "2", "-1", " true", "false ", " yes ", "\tON", "off\n"}) {
+        const auto message = expectError({"-n"}, CliParseErrorKind::invalidValue, juce::String(value));
+        expectEquals(message, juce::String("AUDIOBATCH_DELETE must be one of: true, 1, yes, on, false, 0, no, off"));
     }
 
-    /// Checks that every completion script offers the options, values, and subcommands of the parser,
-    /// and that each shell's script is installed to its per-user directory.
-    void runCompletionTests()
-    {
-        beginTest("Completion scripts offer every option, value, and subcommand");
-        {
-            for (const auto& shellName : cli::completionShellNames) {
-                const auto script = cli::buildCompletionScript(shellName.value, "audiobatch");
-                const auto label = juce::String(shellName.name);
-                expect(!script.containsChar('\r'), label);
-                expect(!script.contains("@COMMAND@") && !script.contains("@ID@"), label + " has an unfilled token");
-
-                // Fish names long options without their dashes, as in "-l recurse".
-                const auto expectOption = [&](const CliOption& option) {
-                    const auto name = juce::String(option.longName).trimCharactersAtStart("-");
-                    expect(script.contains(name), label + " misses " + option.longName);
-                };
-                std::ranges::for_each(cli::analysisOptions, expectOption);
-                std::ranges::for_each(cli::listOptions, expectOption);
-                std::ranges::for_each(cli::completionOptions, expectOption);
-                for (const auto* value : cli::sortModeValues) {
-                    expect(script.contains(value), label + " misses the sort mode " + value);
-                }
-                for (const auto& subcommand : cli::subcommands) {
-                    expect(script.contains(subcommand.name), label + " misses " + subcommand.name);
-                }
-            }
-
-            const auto zsh = cli::buildCompletionScript(CompletionShell::zsh, "audiobatch");
-            expect(zsh.startsWith("#compdef audiobatch\n"), zsh);
-            expect(zsh.contains("{-D,--delete}"), zsh);
-            expect(zsh.contains(R"('(-s --sort)'{-s,--sort=}'[Sort by peak, lufs, name, or path]:mode:()"), zsh);
-            expect(zsh.contains(R"(shell'\''s completion directory)"), zsh);
-
-            const auto bash = cli::buildCompletionScript(CompletionShell::bash, "audio-batch");
-            expect(bash.contains("complete -o filenames -F _audio_batch audio-batch"), bash);
-            expect(bash.contains("-D --delete"), bash);
-
-            const auto fish = cli::buildCompletionScript(CompletionShell::fish, "audiobatch");
-            expect(fish.contains("-s o -l output -x -a 'table csv json'"), fish);
-            expect(fish.contains("-s D -l delete"), fish);
-            expect(fish.contains(R"(shell\'s completion directory)"), fish);
-
-            const auto powerShell = cli::buildCompletionScript(CompletionShell::powershell, "audiobatch");
-            expect(powerShell.contains("-CommandName 'audiobatch'"), powerShell);
-            expect(powerShell.contains("'-D'"), powerShell);
-            expect(powerShell.contains("'--delete'"), powerShell);
-            expect(powerShell.contains("shell''s completion directory"), powerShell);
+    beginTest("Either delete alias overrides disabled and invalid environment values");
+    for (const auto* option : {"-D", "--delete"}) {
+        for (const auto* value : {"false", "0", "NO", "Off", "invalid", "", " true"}) {
+            expectDisposer({"-n", option}, juce::String(value), true);
+            expectError({option}, CliParseErrorKind::missingRequiredOption, juce::String(value));
         }
+    }
+    expectDisposer({"-nDF"}, juce::String("invalid"), true);
 
-        beginTest("Completion scripts are installed to the per-user directory of each shell");
-        {
-            const TemporaryDirectory home;
-            const auto homeDirectory = home.getChildFile({});
-            const auto installPath = [&homeDirectory](const CompletionShell shell) {
-                return cli::findCompletionFile(shell, "audiobatch", homeDirectory).getFullPathName();
+    beginTest("Subcommands validate the environment without applying normalization, and help ignores it");
+    for (const auto* value : {"true", "1", "YES", "On", "false", "0", "NO", "Off"}) {
+        expectCommand<ListPluginsCommand>({"list"}, juce::String(value));
+        expectCommand<CompletionCommand>({"completion", "zsh"}, juce::String(value));
+    }
+    for (const auto* value : {"invalid", ""}) {
+        expectCommand<HelpCommand>({"help"}, juce::String(value));
+        expectError({"list"}, CliParseErrorKind::invalidValue, juce::String(value));
+        expectError({"completion", "zsh"}, CliParseErrorKind::invalidValue, juce::String(value));
+    }
+}
+
+/// Runs parsed delete options against temporary audio copies and checks the existing transaction safeguards.
+void CliTests::runDeleteNormalizationTests()
+{
+    const TemporaryDirectory directory;
+    auto command = expectCommand<AnalyzeCommand>({"-nDF", "--peak", "-1"});
+    expect(command.normalization.has_value());
+    if (!command.normalization) {
+        return;
+    }
+    const auto& options = *command.normalization;
+
+    beginTest("Delete normalization converts a source and removes a forced output backup");
+    for (const bool overwrite : {false, true}) {
+        const auto* outputStem = overwrite ? "forced" : "converted";
+        const auto source = directory.copyFixture("sine_stereo_44100_16.wav", juce::String(outputStem) + ".wav");
+        const auto output = getNormalizationOutputFile(source);
+        if (overwrite) {
+            expect(output.replaceWithText("previous output"));
+        }
+        const auto result = normalizeFile(analyzeFile(source), options);
+        expect(!result.hasError(), outcomeError(result.outcome));
+        expect(!source.exists());
+        expect(output.existsAsFile());
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, 0.01);
+        expect(!output.getSiblingFile("." + output.getFileName() + ".backup").exists());
+    }
+
+    beginTest("Delete normalization preserves the published in-place source and an unchanged no-op");
+    {
+        const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "in_place_delete.aif");
+        const auto first = normalizeFile(analyzeFile(source), options);
+        expect(!first.hasError(), outcomeError(first.outcome));
+        expect(source.existsAsFile());
+        expectWithinAbsoluteError(peakDecibels(analyzeFile(source)), -1.0, 0.01);
+        juce::MemoryBlock before;
+        expect(source.loadFileAsData(before));
+        const utils::FileIdentity identity(source);
+        const auto second = normalizeFile(analyzeFile(source), options);
+        expect(!second.hasError(), outcomeError(second.outcome));
+        juce::MemoryBlock after;
+        expect(source.loadFileAsData(after));
+        expect(before == after);
+        expect(identity.matches(source));
+    }
+
+    beginTest("Delete normalization keeps a cancelled source and an approved output");
+    {
+        const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "cancel_delete.wav");
+        const auto output = getNormalizationOutputFile(source);
+        expect(output.replaceWithText("approved"));
+        const utils::FileIdentity identity(source);
+        const auto result = normalizeFile(analyzeFile(source), options, [] { return true; });
+        expect(result.hasError());
+        expect(identity.matches(source));
+        expectEquals(output.loadFileAsString(), juce::String("approved"));
+    }
+
+    beginTest("Delete normalization never disposes of a source replaced during rendering");
+    {
+        const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "changed_delete.wav");
+        const auto output = getNormalizationOutputFile(source);
+        expect(output.replaceWithText("approved"));
+        bool replaced = false;
+        const auto result = normalizeFile(analyzeFile(source), options, {}, [&](const float progress) {
+            if (progress >= 0.8f && !replaced) {
+                expect(source.replaceWithText("external"));
+                replaced = true;
+            }
+        });
+        expect(replaced);
+        expect(outcomeError(result.outcome).contains("source file changed"), outcomeError(result.outcome));
+        expectEquals(source.loadFileAsString(), juce::String("external"));
+        expectEquals(output.loadFileAsString(), juce::String("approved"));
+    }
+}
+
+/// Checks that every completion script offers the options, values, and subcommands of the parser,
+/// and that each shell's script is installed to its per-user directory.
+void CliTests::runCompletionTests()
+{
+    beginTest("Completion scripts offer every option, value, and subcommand");
+    {
+        for (const auto& shellName : cli::completionShellNames) {
+            const auto script = cli::buildCompletionScript(shellName.value, "audiobatch");
+            const auto label = juce::String(shellName.name);
+            expect(!script.containsChar('\r'), label);
+            expect(!script.contains("@COMMAND@") && !script.contains("@ID@"), label + " has an unfilled token");
+
+            // Fish names long options without their dashes, as in "-l recurse".
+            const auto expectOption = [&](const CliOption& option) {
+                const auto name = juce::String(option.longName).trimCharactersAtStart("-");
+                expect(script.contains(name), label + " misses " + option.longName);
             };
-
-            expectEquals(
-                installPath(CompletionShell::zsh),
-                homeDirectory.getChildFile(".zsh")
-                    .getChildFile("completions")
-                    .getChildFile("_audiobatch")
-                    .getFullPathName()
-            );
-            expectEquals(
-                installPath(CompletionShell::bash),
-                homeDirectory.getChildFile(".bash_completion.d").getChildFile("audiobatch.bash").getFullPathName()
-            );
-            expect(installPath(CompletionShell::fish).endsWith("audiobatch.fish"));
-            expect(installPath(CompletionShell::powershell).endsWith("_audiobatch.ps1"));
-
-            // With oh-my-zsh, the script becomes a custom plugin named after the command.
-            const auto plugins
-                = homeDirectory.getChildFile(".oh-my-zsh").getChildFile("custom").getChildFile("plugins");
-            expect(plugins.createDirectory().wasOk());
-            expectEquals(
-                installPath(CompletionShell::zsh),
-                plugins.getChildFile("audiobatch").getChildFile("_audiobatch").getFullPathName()
-            );
+            std::ranges::for_each(cli::analysisOptions, expectOption);
+            std::ranges::for_each(cli::listOptions, expectOption);
+            std::ranges::for_each(cli::completionOptions, expectOption);
+            for (const auto* value : cli::sortModeValues) {
+                expect(script.contains(value), label + " misses the sort mode " + value);
+            }
+            for (const auto& subcommand : cli::subcommands) {
+                expect(script.contains(subcommand.name), label + " misses " + subcommand.name);
+            }
         }
+
+        const auto zsh = cli::buildCompletionScript(CompletionShell::zsh, "audiobatch");
+        expect(zsh.startsWith("#compdef audiobatch\n"), zsh);
+        expect(zsh.contains("{-D,--delete}"), zsh);
+        expect(zsh.contains(R"('(-s --sort)'{-s,--sort=}'[Sort by peak, lufs, name, or path]:mode:()"), zsh);
+        expect(zsh.contains(R"(shell'\''s completion directory)"), zsh);
+
+        const auto bash = cli::buildCompletionScript(CompletionShell::bash, "audio-batch");
+        expect(bash.contains("complete -o filenames -F _audio_batch audio-batch"), bash);
+        expect(bash.contains("-D --delete"), bash);
+
+        const auto fish = cli::buildCompletionScript(CompletionShell::fish, "audiobatch");
+        expect(fish.contains("-s o -l output -x -a 'table csv json'"), fish);
+        expect(fish.contains("-s D -l delete"), fish);
+        expect(fish.contains(R"(shell\'s completion directory)"), fish);
+
+        const auto powerShell = cli::buildCompletionScript(CompletionShell::powershell, "audiobatch");
+        expect(powerShell.contains("-CommandName 'audiobatch'"), powerShell);
+        expect(powerShell.contains("'-D'"), powerShell);
+        expect(powerShell.contains("'--delete'"), powerShell);
+        expect(powerShell.contains("shell''s completion directory"), powerShell);
     }
 
-    /// Checks that inputs named on the command line which produce no result are reported as errors.
-    void runInputTests()
+    beginTest("Completion scripts are installed to the per-user directory of each shell");
     {
-        const TemporaryDirectory directory;
-        const auto audio = directory.copyFixture("sine_stereo_44100_16.wav", "tone.wav");
-        const auto text = directory.getChildFile("notes.txt");
-        expect(text.replaceWithText("not audio"));
-        const auto hidden = directory.copyFixture("sine_stereo_44100_16.wav", ".hidden.wav");
-        const auto missing = directory.getChildFile("missing.wav");
-
-        AudioAnalysisRecord analyzed;
-        analyzed.file = audio;
-        analyzed.fullPath = audio.getFullPathName();
-        const std::vector results {analyzed};
-
-        beginTest("Inputs that produced a result, and folders, are not reported");
-        {
-            const juce::Array<juce::File> inputs {audio, directory.getChildFile({})};
-            expect(cli::findSkippedInputs(inputs, results).isEmpty());
-        }
-
-        beginTest("Missing, unsupported and hidden inputs are reported");
-        {
-            const auto errors = cli::findSkippedInputs({missing, text, hidden}, results);
-            expectEquals(errors.size(), 3);
-            expect(errors[0].startsWith("Input not found"), errors[0]);
-            expect(errors[1].startsWith("Not a supported audio file"), errors[1]);
-            expect(errors[2].startsWith("Hidden files are not analyzed"), errors[2]);
-        }
-    }
-
-    /// Checks the CSV and JSON output of a quoted path, a silent file, and a failed file.
-    void runOutputTests()
-    {
-        AudioAnalysisRecord quoted;
-        quoted.fullPath = R"(/music/a, "b".wav)";
-        quoted.fileName = R"(a, "b".wav)";
-        quoted.formatName = "WAV";
-        quoted.sampleRate = 44'100;
-        quoted.channels = 2;
-        quoted.bitsPerSample = 24;
-        quoted.durationSeconds = 1.5;
-        // Every level differs from the others, so a field that reports the wrong measurement fails the check.
-        quoted.overallPeak = 0.5f;
-        quoted.overallTruePeak = 0.8;
-        quoted.integratedLufs = -14.25;
-        quoted.maxShortTermLufs = -11.5;
-        quoted.status = AudioAnalysisStatus::analyzed;
-
-        AudioAnalysisRecord silent;
-        silent.fullPath = "/music/silence.wav";
-        silent.fileName = "silence.wav";
-        silent.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
-        silent.maxShortTermLufs = AudioAnalysisRecord::negativeInfinityLoudness;
-        silent.status = AudioAnalysisStatus::analyzed;
-
-        AudioAnalysisRecord failed;
-        failed.fullPath = "/music/broken.wav";
-        failed.fileName = "broken.wav";
-        failed.status = AudioAnalysisStatus::failed;
-        failed.errorMessage = "Unsupported or unreadable audio file";
-
-        const std::vector records {quoted, silent, failed};
-
-        beginTest("CSV output escapes fields and always has a header");
-        {
-            const juce::String header {"path,name,format,sampleRate,channels,bitsPerSample,durationSeconds,"
-                                       "peakDbfs,truePeakDbtp,integratedLufs,maxShortTermLufs,status,error"};
-            const auto emptyLines = juce::StringArray::fromLines(cli::formatRecordsAsCsv({}).trimEnd());
-            expectEquals(emptyLines.size(), 1);
-            expectEquals(emptyLines[0], header);
-
-            const auto csv = cli::formatRecordsAsCsv(records);
-            expect(!csv.containsChar('\r'));
-            const auto lines = juce::StringArray::fromLines(csv.trimEnd());
-            expectEquals(lines.size(), 4);
-            expectEquals(lines[0], header);
-            expectEquals(
-                lines[1],
-                juce::String(
-                    R"("/music/a, ""b"".wav","a, ""b"".wav",WAV,44100,2,24,1.5,-6.02,-1.94,-14.25,-11.5,analyzed,)"
-                )
-            );
-            expect(lines[3].contains("failed"), lines[3]);
-            expect(lines[3].contains("Unsupported or unreadable audio file"), lines[3]);
-        }
-
-        beginTest("JSON output writes null for silence and keeps failed records");
-        {
-            const auto json = cli::formatRecordsAsJson(records);
-            expect(!json.containsChar('\r'));
-            const auto parsed = juce::JSON::parse(json);
-            expect(parsed.isArray());
-            expectEquals(parsed.size(), 3);
-
-            expectEquals(parsed[0]["path"].toString(), quoted.fullPath);
-            expectEquals(parsed[0]["name"].toString(), quoted.fileName);
-            expectEquals(parsed[0]["format"].toString(), juce::String("WAV"));
-            expectEquals(static_cast<int>(parsed[0]["sampleRate"]), 44'100);
-            expectEquals(static_cast<int>(parsed[0]["channels"]), 2);
-            expectEquals(static_cast<int>(parsed[0]["bitsPerSample"]), 24);
-            expectEquals(static_cast<double>(parsed[0]["durationSeconds"]), 1.5);
-            expectEquals(static_cast<double>(parsed[0]["peakDbfs"]), -6.02);
-            expectEquals(static_cast<double>(parsed[0]["truePeakDbtp"]), -1.94);
-            expectEquals(static_cast<double>(parsed[0]["integratedLufs"]), -14.25);
-            expectEquals(static_cast<double>(parsed[0]["maxShortTermLufs"]), -11.5);
-            expectEquals(parsed[0]["status"].toString(), juce::String("analyzed"));
-
-            // The levels are written as rounded, without the binary rounding error of the double that holds them.
-            expect(json.contains("\"peakDbfs\": -6.02,"), json);
-            expect(json.contains("\"truePeakDbtp\": -1.94,"), json);
-
-            expect(parsed[1]["peakDbfs"].isVoid());
-            expect(parsed[1]["integratedLufs"].isVoid());
-            expectEquals(parsed[2]["status"].toString(), juce::String("failed"));
-            expectEquals(parsed[2]["error"].toString(), failed.errorMessage);
-        }
-    }
-
-    /// Runs the analysis workflow of the CLI with a cache in a temporary folder and checks its exit codes:
-    /// 0 when every input was analyzed and normalized, and 2 when any input was skipped or failed.
-    void runAnalysisExitCodeTests()
-    {
-        const TemporaryDirectory directory;
-        AnalysisCache cache(directory.getChildFile("cli_cache.db"));
-        const auto makeCommand = [](const juce::Array<juce::File>& inputs) {
-            AnalyzeCommand command;
-            command.inputPaths = inputs;
-            command.workerCount = 2;
-            command.outputFormat = AudioAnalysisOutputFormat::json;
-            return command;
+        const TemporaryDirectory home;
+        const auto homeDirectory = home.getChildFile({});
+        const auto installPath = [&homeDirectory](const CompletionShell shell) {
+            return cli::findCompletionFile(shell, "audiobatch", homeDirectory).getFullPathName();
         };
 
-        beginTest("The analysis exits with 0 when every input is analyzed, and stores the results in the given cache");
-        {
-            const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
-            const auto second = directory.copyFixture("sine_mono_44100_16.wav", "second.wav");
-            expectEquals(cli::runAnalysis(makeCommand({first, second}), cache), 0);
-            expect(cache.getAnalysis(first).has_value());
-            expect(cache.getAnalysis(second).has_value());
+        expectEquals(
+            installPath(CompletionShell::zsh),
+            homeDirectory.getChildFile(".zsh").getChildFile("completions").getChildFile("_audiobatch").getFullPathName()
+        );
+        expectEquals(
+            installPath(CompletionShell::bash),
+            homeDirectory.getChildFile(".bash_completion.d").getChildFile("audiobatch.bash").getFullPathName()
+        );
+        expect(installPath(CompletionShell::fish).endsWith("audiobatch.fish"));
+        expect(installPath(CompletionShell::powershell).endsWith("_audiobatch.ps1"));
 
-            // The second run reads both results from the cache and still succeeds.
-            expectEquals(cli::runAnalysis(makeCommand({first, second}), cache), 0);
-        }
+        // With oh-my-zsh, the script becomes a custom plugin named after the command.
+        const auto plugins = homeDirectory.getChildFile(".oh-my-zsh").getChildFile("custom").getChildFile("plugins");
+        expect(plugins.createDirectory().wasOk());
+        expectEquals(
+            installPath(CompletionShell::zsh),
+            plugins.getChildFile("audiobatch").getChildFile("_audiobatch").getFullPathName()
+        );
+    }
+}
 
-        beginTest("The analysis exits with 2 for a missing, unsupported, or broken input among good ones");
-        {
-            const auto good = directory.copyFixture("sine_stereo_44100_16.wav", "good.wav");
-            const auto text = directory.getChildFile("notes.txt");
-            expect(text.replaceWithText("not audio"));
-            const auto broken = directory.copyFixture("broken.wav");
-            for (const auto& bad : {directory.getChildFile("missing.wav"), text, broken}) {
-                expectEquals(cli::runAnalysis(makeCommand({good, bad}), cache), 2, bad.getFileName());
-            }
-        }
+/// Checks that inputs named on the command line which produce no result are reported as errors.
+void CliTests::runInputTests()
+{
+    const TemporaryDirectory directory;
+    const auto audio = directory.copyFixture("sine_stereo_44100_16.wav", "tone.wav");
+    const auto text = directory.getChildFile("notes.txt");
+    expect(text.replaceWithText("not audio"));
+    const auto hidden = directory.copyFixture("sine_stereo_44100_16.wav", ".hidden.wav");
+    const auto missing = directory.getChildFile("missing.wav");
 
-        beginTest("Normalizing in place exits with 0, and a refused or conflicting file exits with 2");
-        {
-            const auto inPlace = directory.copyFixture("sine_stereo_44100_16.aif", "normalized.aif");
-            auto command = makeCommand({inPlace});
-            command.normalization = testNormalizationOptions();
-            command.normalization->targetPeakDbfs = -1.0;
-            expectEquals(cli::runAnalysis(command, cache), 0);
-            expectWithinAbsoluteError(peakDecibels(analyzeFile(inPlace)), -1.0, 0.01);
+    AudioAnalysisRecord analyzed;
+    analyzed.file = audio;
+    analyzed.fullPath = audio.getFullPathName();
+    const std::vector results {analyzed};
 
-            const auto silent = directory.copyFixture("silence_stereo_44100_16.wav", "silent.wav");
-            command.inputPaths = {silent};
-            expectEquals(cli::runAnalysis(command, cache), 2);
-            expect(silent.existsAsFile());
+    beginTest("Inputs that produced a result, and folders, are not reported");
+    {
+        const juce::Array<juce::File> inputs {audio, directory.getChildFile({})};
+        expect(cli::findSkippedInputs(inputs, results).isEmpty());
+    }
 
-            const auto winner = directory.copyFixture("sine_stereo_44100_16.aif", "conflict.aif");
-            const auto loser = directory.copyFixture("sine_stereo_44100_16.wav", "conflict.wav");
-            command.inputPaths = {winner, loser};
-            expectEquals(cli::runAnalysis(command, cache), 2);
-            expect(loser.existsAsFile());
-        }
+    beginTest("Missing, unsupported and hidden inputs are reported");
+    {
+        const auto errors = cli::findSkippedInputs({missing, text, hidden}, results);
+        expectEquals(errors.size(), 3);
+        expect(errors[0].startsWith("Input not found"), errors[0]);
+        expect(errors[1].startsWith("Not a supported audio file"), errors[1]);
+        expect(errors[2].startsWith("Hidden files are not analyzed"), errors[2]);
+    }
+}
 
-        beginTest("Normalizing several files on several workers converts each one and caches its output");
-        {
-            const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "parallel_first.wav");
-            const auto second = directory.copyFixture("sine_mono_44100_16.wav", "parallel_second.wav");
-            const auto third = directory.copyFixture("sine_stereo_44100_16.flac", "parallel_third.flac");
-            auto command = makeCommand({first, second, third});
-            command.workerCount = 3;
-            command.normalization = testNormalizationOptions();
-            command.normalization->targetPeakDbfs = -1.0;
-            expectEquals(cli::runAnalysis(command, cache), 0);
-            for (const auto& source : {first, second, third}) {
-                const auto output = source.withFileExtension("aif");
-                expect(output.existsAsFile(), output.getFileName());
-                expect(!source.existsAsFile(), source.getFileName());
-                expectWithinAbsoluteError(peakDecibels(analyzeFile(output)), -1.0, 0.01);
-                expect(cache.getAnalysis(output).has_value(), output.getFileName());
-            }
-        }
+/// Checks the CSV and JSON output of a quoted path, a silent file, and a failed file.
+void CliTests::runOutputTests()
+{
+    AudioAnalysisRecord quoted;
+    quoted.fullPath = R"(/music/a, "b".wav)";
+    quoted.fileName = R"(a, "b".wav)";
+    quoted.formatName = "WAV";
+    quoted.sampleRate = 44'100;
+    quoted.channels = 2;
+    quoted.bitsPerSample = 24;
+    quoted.durationSeconds = 1.5;
+    // Every level differs from the others, so a field that reports the wrong measurement fails the check.
+    quoted.overallPeak = 0.5f;
+    quoted.overallTruePeak = 0.8;
+    quoted.integratedLufs = -14.25;
+    quoted.maxShortTermLufs = -11.5;
+    quoted.status = AudioAnalysisStatus::analyzed;
 
-        beginTest("The analysis still succeeds when the cache cannot be opened");
-        {
-            const auto notDatabase = directory.getChildFile("not_a_database.db");
-            expect(notDatabase.replaceWithText("This text is not an SQLite database."));
-            AnalysisCache brokenCache(notDatabase);
-            const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "uncached.wav");
-            expectEquals(cli::runAnalysis(makeCommand({file}), brokenCache), 0);
-            expect(!brokenCache.getAnalysis(file).has_value());
+    AudioAnalysisRecord silent;
+    silent.fullPath = "/music/silence.wav";
+    silent.fileName = "silence.wav";
+    silent.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+    silent.maxShortTermLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+    silent.status = AudioAnalysisStatus::analyzed;
+
+    AudioAnalysisRecord failed;
+    failed.fullPath = "/music/broken.wav";
+    failed.fileName = "broken.wav";
+    failed.status = AudioAnalysisStatus::failed;
+    failed.errorMessage = "Unsupported or unreadable audio file";
+
+    const std::vector records {quoted, silent, failed};
+
+    beginTest("CSV output escapes fields and always has a header");
+    {
+        const juce::String header {"path,name,format,sampleRate,channels,bitsPerSample,durationSeconds,"
+                                   "peakDbfs,truePeakDbtp,integratedLufs,maxShortTermLufs,status,error"};
+        const auto emptyLines = juce::StringArray::fromLines(cli::formatRecordsAsCsv({}).trimEnd());
+        expectEquals(emptyLines.size(), 1);
+        expectEquals(emptyLines[0], header);
+
+        const auto csv = cli::formatRecordsAsCsv(records);
+        expect(!csv.containsChar('\r'));
+        const auto lines = juce::StringArray::fromLines(csv.trimEnd());
+        expectEquals(lines.size(), 4);
+        expectEquals(lines[0], header);
+        expectEquals(
+            lines[1],
+            juce::String(
+                R"("/music/a, ""b"".wav","a, ""b"".wav",WAV,44100,2,24,1.5,-6.02,-1.94,-14.25,-11.5,analyzed,)"
+            )
+        );
+        expect(lines[3].contains("failed"), lines[3]);
+        expect(lines[3].contains("Unsupported or unreadable audio file"), lines[3]);
+    }
+
+    beginTest("JSON output writes null for silence and keeps failed records");
+    {
+        const auto json = cli::formatRecordsAsJson(records);
+        expect(!json.containsChar('\r'));
+        const auto parsed = juce::JSON::parse(json);
+        expect(parsed.isArray());
+        expectEquals(parsed.size(), 3);
+
+        expectEquals(parsed[0]["path"].toString(), quoted.fullPath);
+        expectEquals(parsed[0]["name"].toString(), quoted.fileName);
+        expectEquals(parsed[0]["format"].toString(), juce::String("WAV"));
+        expectEquals(static_cast<int>(parsed[0]["sampleRate"]), 44'100);
+        expectEquals(static_cast<int>(parsed[0]["channels"]), 2);
+        expectEquals(static_cast<int>(parsed[0]["bitsPerSample"]), 24);
+        expectEquals(static_cast<double>(parsed[0]["durationSeconds"]), 1.5);
+        expectEquals(static_cast<double>(parsed[0]["peakDbfs"]), -6.02);
+        expectEquals(static_cast<double>(parsed[0]["truePeakDbtp"]), -1.94);
+        expectEquals(static_cast<double>(parsed[0]["integratedLufs"]), -14.25);
+        expectEquals(static_cast<double>(parsed[0]["maxShortTermLufs"]), -11.5);
+        expectEquals(parsed[0]["status"].toString(), juce::String("analyzed"));
+
+        // The levels are written as rounded, without the binary rounding error of the double that holds them.
+        expect(json.contains("\"peakDbfs\": -6.02,"), json);
+        expect(json.contains("\"truePeakDbtp\": -1.94,"), json);
+
+        expect(parsed[1]["peakDbfs"].isVoid());
+        expect(parsed[1]["integratedLufs"].isVoid());
+        expectEquals(parsed[2]["status"].toString(), juce::String("failed"));
+        expectEquals(parsed[2]["error"].toString(), failed.errorMessage);
+    }
+}
+
+/// Runs the analysis workflow of the CLI with a cache in a temporary folder and checks its exit codes:
+/// 0 when every input was analyzed and normalized, and 2 when any input was skipped or failed.
+void CliTests::runAnalysisExitCodeTests()
+{
+    const TemporaryDirectory directory;
+    AnalysisCache cache(directory.getChildFile("cli_cache.db"));
+    const auto makeCommand = [](const juce::Array<juce::File>& inputs) {
+        AnalyzeCommand command;
+        command.inputPaths = inputs;
+        command.workerCount = 2;
+        command.outputFormat = AudioAnalysisOutputFormat::json;
+        return command;
+    };
+
+    beginTest("The analysis exits with 0 when every input is analyzed, and stores the results in the given cache");
+    {
+        const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
+        const auto second = directory.copyFixture("sine_mono_44100_16.wav", "second.wav");
+        expectEquals(cli::runAnalysis(makeCommand({first, second}), cache), 0);
+        expect(cache.getAnalysis(first).has_value());
+        expect(cache.getAnalysis(second).has_value());
+
+        // The second run reads both results from the cache and still succeeds.
+        expectEquals(cli::runAnalysis(makeCommand({first, second}), cache), 0);
+    }
+
+    beginTest("The analysis exits with 2 for a missing, unsupported, or broken input among good ones");
+    {
+        const auto good = directory.copyFixture("sine_stereo_44100_16.wav", "good.wav");
+        const auto text = directory.getChildFile("notes.txt");
+        expect(text.replaceWithText("not audio"));
+        const auto broken = directory.copyFixture("broken.wav");
+        for (const auto& bad : {directory.getChildFile("missing.wav"), text, broken}) {
+            expectEquals(cli::runAnalysis(makeCommand({good, bad}), cache), 2, bad.getFileName());
         }
     }
-};
+
+    beginTest("Normalizing in place exits with 0, and a refused or conflicting file exits with 2");
+    {
+        const auto inPlace = directory.copyFixture("sine_stereo_44100_16.aif", "normalized.aif");
+        auto command = makeCommand({inPlace});
+        command.normalization = testNormalizationOptions();
+        command.normalization->targetPeakDbfs = -1.0;
+        expectEquals(cli::runAnalysis(command, cache), 0);
+        expectWithinAbsoluteError(peakDecibels(analyzeFile(inPlace)), -1.0, 0.01);
+
+        const auto silent = directory.copyFixture("silence_stereo_44100_16.wav", "silent.wav");
+        command.inputPaths = {silent};
+        expectEquals(cli::runAnalysis(command, cache), 2);
+        expect(silent.existsAsFile());
+
+        const auto winner = directory.copyFixture("sine_stereo_44100_16.aif", "conflict.aif");
+        const auto loser = directory.copyFixture("sine_stereo_44100_16.wav", "conflict.wav");
+        command.inputPaths = {winner, loser};
+        expectEquals(cli::runAnalysis(command, cache), 2);
+        expect(loser.existsAsFile());
+    }
+
+    beginTest("Normalizing several files on several workers converts each one and caches its output");
+    {
+        const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "parallel_first.wav");
+        const auto second = directory.copyFixture("sine_mono_44100_16.wav", "parallel_second.wav");
+        const auto third = directory.copyFixture("sine_stereo_44100_16.flac", "parallel_third.flac");
+        auto command = makeCommand({first, second, third});
+        command.workerCount = 3;
+        command.normalization = testNormalizationOptions();
+        command.normalization->targetPeakDbfs = -1.0;
+        expectEquals(cli::runAnalysis(command, cache), 0);
+        for (const auto& source : {first, second, third}) {
+            const auto output = source.withFileExtension("aif");
+            expect(output.existsAsFile(), output.getFileName());
+            expect(!source.existsAsFile(), source.getFileName());
+            expectWithinAbsoluteError(peakDecibels(analyzeFile(output)), -1.0, 0.01);
+            expect(cache.getAnalysis(output).has_value(), output.getFileName());
+        }
+    }
+
+    beginTest("The analysis still succeeds when the cache cannot be opened");
+    {
+        const auto notDatabase = directory.getChildFile("not_a_database.db");
+        expect(notDatabase.replaceWithText("This text is not an SQLite database."));
+        AnalysisCache brokenCache(notDatabase);
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "uncached.wav");
+        expectEquals(cli::runAnalysis(makeCommand({file}), brokenCache), 0);
+        expect(!brokenCache.getAnalysis(file).has_value());
+    }
+}
 
 std::unique_ptr<juce::UnitTest> createCliTests()
 {

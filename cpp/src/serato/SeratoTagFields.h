@@ -53,6 +53,36 @@ public:
     /// Borrows an already bounded block for this synchronous decode.
     explicit Cursor(const std::span<const std::uint8_t> input) : remaining(input) {}
 
+    /// Reads length-prefixed UTF-8, bounding the length before allocating the text.
+    std::optional<juce::String> text()
+    {
+        const auto size = number();
+        if (!size || *size > maxTagTextBytes) {
+            return std::nullopt;
+        }
+        const auto bytes = take(*size);
+        return bytes ? utf8(*bytes) : std::nullopt;
+    }
+
+    /// Reads a portable four-byte unsigned integer.
+    std::optional<std::uint32_t> number()
+    {
+        return take(sizeof(std::uint32_t)).transform([](const std::span<const std::uint8_t> bytes) {
+            return readBigEndian<std::uint32_t>(bytes.first<sizeof(std::uint32_t)>());
+        });
+    }
+
+    /// Reads an IEEE binary64 value, rejecting infinities and NaNs.
+    std::optional<double> real()
+    {
+        const auto bytes = take(sizeof(std::uint64_t));
+        if (!bytes) {
+            return std::nullopt;
+        }
+        const auto value = std::bit_cast<double>(readBigEndian<std::uint64_t>(bytes->first<sizeof(std::uint64_t)>()));
+        return std::isfinite(value) ? std::optional(value) : std::nullopt;
+    }
+
     /// Takes a field of the given size, or nothing when fewer bytes remain.
     std::optional<std::span<const std::uint8_t>> take(const std::size_t count)
     {
@@ -78,36 +108,6 @@ public:
             return std::nullopt;
         }
         return *value != 0;
-    }
-
-    /// Reads a portable four-byte unsigned integer.
-    std::optional<std::uint32_t> number()
-    {
-        return take(sizeof(std::uint32_t)).transform([](const std::span<const std::uint8_t> bytes) {
-            return readBigEndian<std::uint32_t>(bytes.first<sizeof(std::uint32_t)>());
-        });
-    }
-
-    /// Reads an IEEE binary64 value, rejecting infinities and NaNs.
-    std::optional<double> real()
-    {
-        const auto bytes = take(sizeof(std::uint64_t));
-        if (!bytes) {
-            return std::nullopt;
-        }
-        const auto value = std::bit_cast<double>(readBigEndian<std::uint64_t>(bytes->first<sizeof(std::uint64_t)>()));
-        return std::isfinite(value) ? std::optional(value) : std::nullopt;
-    }
-
-    /// Reads length-prefixed UTF-8, bounding the length before allocating the text.
-    std::optional<juce::String> text()
-    {
-        const auto size = number();
-        if (!size || *size > maxTagTextBytes) {
-            return std::nullopt;
-        }
-        const auto bytes = take(*size);
-        return bytes ? utf8(*bytes) : std::nullopt;
     }
 
     /// Reports whether every byte of the enclosing block has been consumed.

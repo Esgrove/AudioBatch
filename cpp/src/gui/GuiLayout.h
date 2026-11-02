@@ -16,6 +16,7 @@ namespace audiobatch
 {
 /// Adjacent full-height sections of the lower workspace, in parent coordinates.
 struct PreviewColumns {
+    // Field order matches the left-to-right positional layout returned by the geometry helpers.
     /// The playback, gain, normalization, plugin, and settings controls on the left.
     juce::Rectangle<int> controls;
     /// The summary and details of the selected file in the middle.

@@ -11,6 +11,7 @@
 #include "cli/PluginListCli.h"
 #include "cli/ShellCompletion.h"
 #include "plugins/PluginScanner.h"
+#include "plugins/PluginScanWorker.h"
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
 #include "utils/Log.h"

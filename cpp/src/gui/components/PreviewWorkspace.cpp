@@ -14,8 +14,8 @@ namespace audiobatch
 /// Creates the controls and adds them to the workspace, with the playback controls disabled until a file loads.
 /// The settings must outlive the workspace, and are only read once the owner loads the normalization target.
 PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::ApplicationProperties& settings) :
-    thumbnail(previewPlayer.getFormatManager(), previewPlayer),
-    normalizationTargetControl(settings)
+    normalizationTargetControl(settings),
+    thumbnail(previewPlayer.getFormatManager(), previewPlayer)
 {
     configurePreviewSectionButton();
     controlsContent.addAndMakeVisible(previewSectionButton);

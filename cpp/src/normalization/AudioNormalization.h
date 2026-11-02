@@ -28,48 +28,57 @@ enum class AudioNormalizationMode : std::uint8_t {
 
 /// Options controlling how a file is normalized.
 struct AudioNormalizationOptions {
-    /// Default target sample peak, in dBFS.
-    static constexpr double defaultTargetPeakDbfs {0.0};
     /// Default target integrated loudness, in LUFS.
     static constexpr double defaultTargetLufs {-14.0};
+    /// Default target sample peak, in dBFS.
+    static constexpr double defaultTargetPeakDbfs {0.0};
     /// Default highest true peak allowed in loudness mode, in dBTP.
     static constexpr double defaultTruePeakCeilingDbtp {-0.3};
-    /// Lowest accepted target sample peak, in dBFS.
-    static constexpr double minimumTargetPeakDbfs {-12.0};
+
+    /// Largest gain normalization applies, in dB.
+    /// A file that would need more is close to silent, and raising it further would mostly amplify noise.
+    static constexpr double maximumGainDb {40.0};
+    /// Highest accepted target integrated loudness, in LUFS.
+    static constexpr double maximumTargetLufs {-6.0};
     /// Highest accepted target sample peak, in dBFS.
     static constexpr double maximumTargetPeakDbfs {0.0};
     /// Lowest accepted target integrated loudness, in LUFS.
     static constexpr double minimumTargetLufs {-24.0};
-    /// Highest accepted target integrated loudness, in LUFS.
-    static constexpr double maximumTargetLufs {-6.0};
-    /// Largest gain normalization applies, in dB.
-    /// A file that would need more is close to silent, and raising it further would mostly amplify noise.
-    static constexpr double maximumGainDb {40.0};
+    /// Lowest accepted target sample peak, in dBFS.
+    static constexpr double minimumTargetPeakDbfs {-12.0};
 
+    /// Whether the target is a sample peak or an integrated loudness.
+    AudioNormalizationMode mode {AudioNormalizationMode::peak};
     /// Disposes of the files a normalized output replaces:
     /// a converted source, an overwritten output, and a copy of an `.aif` source rewritten in place.
     /// Moves them to the system trash, unless a caller such as a test passes another function.
     utils::FileDisposer disposeFile {utils::trashFile};
-    /// Replace an existing output file that is not the source itself.
-    /// When false, a file whose output path is already taken fails instead of overwriting it.
-    bool overwriteExisting {false};
-    /// Whether the target is a sample peak or an integrated loudness.
-    AudioNormalizationMode mode {AudioNormalizationMode::peak};
-    /// Target sample peak in peak mode, in dBFS.
-    double targetPeakDbfs {defaultTargetPeakDbfs};
+
     /// Target integrated loudness in loudness mode, in LUFS.
     double targetLufs {defaultTargetLufs};
+    /// Target sample peak in peak mode, in dBFS.
+    double targetPeakDbfs {defaultTargetPeakDbfs};
     /// Highest true peak allowed in loudness mode, in dBTP.
     /// When reaching the target loudness would exceed it, the gain is reduced to stay at the ceiling.
     double truePeakCeilingDbtp {defaultTruePeakCeilingDbtp};
+
+    /// Replace an existing output file that is not the source itself.
+    /// When false, a file whose output path is already taken fails instead of overwriting it.
+    bool overwriteExisting {false};
 };
 
 /// Result of normalizing one file, with the source it ran on and what happened to it.
 struct AudioNormalizationResult {
-    /// Returns true unless the output was written and analyzed, or the file was already at its target.
-    [[nodiscard]] bool hasError() const noexcept
+    /// Creates the result of a file the user cancelled before it was changed.
+    static AudioNormalizationResult cancelled(const juce::File& file)
     {
-        return !std::holds_alternative<OperationSucceeded>(outcome);
+        return forFile(file, OperationFailed {.error = "Normalization was cancelled", .cancelled = true});
+    }
+
+    /// Creates a failure result for the given file and message.
+    static AudioNormalizationResult failure(const juce::File& file, const juce::String& message)
+    {
+        return forFile(file, OperationFailed {.error = message, .cancelled = false});
     }
 
     /// Creates the result of an operation on the given source file.
@@ -83,16 +92,10 @@ struct AudioNormalizationResult {
         return result;
     }
 
-    /// Creates a failure result for the given file and message.
-    static AudioNormalizationResult failure(const juce::File& file, const juce::String& message)
+    /// Returns true unless the output was written and analyzed, or the file was already at its target.
+    [[nodiscard]] bool hasError() const noexcept
     {
-        return forFile(file, OperationFailed {.error = message, .cancelled = false});
-    }
-
-    /// Creates the result of a file the user cancelled before it was changed.
-    static AudioNormalizationResult cancelled(const juce::File& file)
-    {
-        return forFile(file, OperationFailed {.error = "Normalization was cancelled", .cancelled = true});
+        return !std::holds_alternative<OperationSucceeded>(outcome);
     }
 
     /// The source file the operation ran on.
@@ -124,8 +127,8 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
     const AudioNormalizationOptions& options
 );
 
+int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
+
 bool canNormalizeFile(const juce::File& file);
 bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
-
-int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
 }  // namespace audiobatch

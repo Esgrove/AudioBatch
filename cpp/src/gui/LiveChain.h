@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "gui/LiveSlot.h"
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
@@ -25,13 +26,9 @@
 
 namespace audiobatch
 {
-/// Identifies one slot of the live chain for as long as the slot exists.
-/// Rows of the chain editor refer to their slot by id, so a row that is about to be rebuilt still acts on its own slot
-/// after another slot was moved or removed.
-enum class PluginSlotId : std::uint64_t {};
-
 /// A prepared live chain. Its slot-owned instances remain protected by the preview rendering lock.
 struct PreviewChain {
+    // Preserve aggregate order used by preview preparation and callers.
     /// Non-owning, never null views of the enabled slot instances in chain order.
     /// They stay valid only while the slots keep their instances, so use them under the preview rendering lock.
     std::vector<juce::AudioPluginInstance*> instances;
@@ -40,61 +37,16 @@ struct PreviewChain {
     plugin_processing::ChainPreparation preparation;
 };
 
-/// One slot owns the same processor for editing and live playback, independently of its editor window.
-/// Destroying a slot tears its processor down in the order a plugin needs:
-/// the editor window first, then the parameter listener, then the prepared resources, and the instance last.
-/// Moving a slot carries the processor and its editor window along and leaves the source slot empty.
-struct LiveSlot {
-    LiveSlot() = default;
-    explicit LiveSlot(SavedChainSlot savedSlot);
-    ~LiveSlot();
-    LiveSlot(LiveSlot&& other) noexcept;
-    LiveSlot& operator=(LiveSlot&& other) noexcept;
-    LiveSlot(const LiveSlot&) = delete;
-    LiveSlot& operator=(const LiveSlot&) = delete;
-
-    void attachInstance(
-        std::unique_ptr<juce::AudioPluginInstance> newInstance,
-        juce::AudioProcessorListener& newListener
-    );
-    void closeEditor();
-    void destroyProcessor();
-
-    /// Identifies the slot for as long as it exists, given by the chain when the slot is added.
-    PluginSlotId id {};
-    /// The plugin of the slot, which can name a plugin that is not installed.
-    juce::PluginDescription description;
-    /// The last captured or loaded state of the plugin, restored when the processor is prepared.
-    juce::MemoryBlock state;
-    /// True when the slot takes part in processing and in the preview.
-    bool enabled {true};
-    /// The processor that the preview and the editor share, created on first use.
-    std::unique_ptr<juce::AudioPluginInstance> instance;
-    /// The listener registered on the instance, owned by the live chain that owns the slot.
-    /// Null exactly when the slot has no instance.
-    juce::AudioProcessorListener* listener {nullptr};
-    /// The editor window of the processor, which hides itself when closed, or null when it is not open.
-    juce::Component::SafePointer<juce::DialogWindow> editorWindow;
-    /// Why the processor could not be created or prepared, or empty after it was.
-    juce::String preparationError;
-    /// Latency of the prepared processor at the preview rate, or empty while it is not prepared.
-    std::optional<juce::int64> latencySamples;
-    /// True while the processor is prepared for the preview rate and block size.
-    bool prepared {false};
-    /// True from opening the editor until its closed window has been reaped.
-    bool wasEditorOpen {false};
-};
-
 /// The saved presets that LiveChain listed last, kept until the presets folder changes.
 /// Adding, removing, or renaming a preset file changes the modification time of the folder,
 /// and saving or deleting a preset through the chain drops the list as well.
 struct PresetListCache {
-    /// The listed presets, sorted by name.
-    std::vector<ChainPresetInfo> presets;
     /// The folder the presets were listed from.
     juce::File directory;
     /// Modification time of the folder when the presets were listed.
     juce::Time directoryModified;
+    /// The listed presets, sorted by name.
+    std::vector<ChainPresetInfo> presets;
 };
 
 /// Owns the user's plugin chain and its editor and plugin manager windows.
@@ -119,34 +71,6 @@ public:
     LiveChain(LiveChain&&) = delete;
     LiveChain& operator=(LiveChain&&) = delete;
 
-    [[nodiscard]] juce::PluginDescription getSlotDescription(PluginSlotId slotId) const;
-    [[nodiscard]] juce::String getChainSummary() const;
-    [[nodiscard]] juce::int64 getPreviewTailSamples() const;
-
-    [[nodiscard]] std::optional<int> getSlotIndex(PluginSlotId slotId) const;
-    [[nodiscard]] std::optional<juce::int64> getSlotLatency(PluginSlotId slotId) const;
-    [[nodiscard]] std::optional<juce::int64> getTotalLatency() const;
-    [[nodiscard]] std::vector<EnabledChainPlugin> getEnabledPlugins();
-    [[nodiscard]] std::vector<PluginSlotId> getSlotIds() const;
-
-    [[nodiscard]] bool hasOpenPreviewDevice() const;
-    [[nodiscard]] bool isSlotEnabled(PluginSlotId slotId) const;
-    [[nodiscard]] double getPreviewSampleRate() const noexcept;
-    [[nodiscard]] int getNumEnabledValidSlots() const noexcept;
-    [[nodiscard]] int getNumSlots() const noexcept;
-
-    /// Distinguishes structural changes from latency-only label refreshes.
-    [[nodiscard]] std::uint64_t getRevision() const noexcept
-    {
-        return revision;
-    }
-    [[nodiscard]] PreviewChain preparePreview(
-        double sampleRate,
-        int blockSize,
-        bool inspectAll = false,
-        bool loadEnabled = true
-    );
-
     /// Returns the library of known plugins that slots are added from.
     [[nodiscard]] PluginLibrary& getLibrary() const noexcept
     {
@@ -154,109 +78,143 @@ public:
     }
 
     [[nodiscard]] juce::File getPresetDirectory() const;
-    [[nodiscard]] std::vector<ChainPresetInfo> getPresets() const;
-    [[nodiscard]] juce::String getCurrentPresetName() const;
-    [[nodiscard]] bool isPresetModified() const noexcept;
+    [[nodiscard]] juce::PluginDescription getSlotDescription(PluginSlotId slotId) const;
     [[nodiscard]] juce::PopupMenu createPresetsMenu(int firstItemId) const;
+    [[nodiscard]] juce::String getChainSummary() const;
+    [[nodiscard]] juce::String getCurrentPresetName() const;
+
+    [[nodiscard]] PreviewChain preparePreview(
+        double sampleRate,
+        int blockSize,
+        bool inspectAll = false,
+        bool loadEnabled = true
+    );
+
+    [[nodiscard]] std::vector<EnabledChainPlugin> getEnabledPlugins();
+    [[nodiscard]] std::vector<ChainPresetInfo> getPresets() const;
+    [[nodiscard]] std::vector<PluginSlotId> getSlotIds() const;
+
+    [[nodiscard]] std::optional<int> getSlotIndex(PluginSlotId slotId) const;
+    [[nodiscard]] std::optional<juce::int64> getSlotLatency(PluginSlotId slotId) const;
+    [[nodiscard]] std::optional<juce::int64> getTotalLatency() const;
+
+    std::expected<void, juce::String> loadPreset(const juce::File& file);
     std::expected<juce::File, juce::String> saveAsPreset(const juce::String& name);
 
-    void saveChain();
-    std::expected<void, juce::String> loadPreset(const juce::File& file);
     bool deletePreset(const juce::File& file);
     bool handlePresetsMenuItem(int itemId, int firstItemId);
-    void confirmDeletePreset(const ChainPresetInfo& preset);
-    void loadPresetAndReport(const juce::File& file);
-    void promptSavePreset();
-    void showPresetFolder() const;
-    void updateCurrentPreset();
+    [[nodiscard]] bool hasOpenPreviewDevice() const;
+    [[nodiscard]] bool isPresetModified() const noexcept;
+    [[nodiscard]] bool isSlotEnabled(PluginSlotId slotId) const;
+
+    [[nodiscard]] double getPreviewSampleRate() const noexcept;
+    [[nodiscard]] int getNumEnabledValidSlots() const noexcept;
+    [[nodiscard]] int getNumSlots() const noexcept;
+    [[nodiscard]] juce::int64 getPreviewTailSamples() const;
+
+    /// Distinguishes structural changes from latency-only label refreshes.
+    [[nodiscard]] std::uint64_t getRevision() const noexcept
+    {
+        return revision;
+    }
 
     void addPlugin(const juce::PluginDescription& description);
-    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void clearChain();
+    void confirmDeletePreset(const ChainPresetInfo& preset);
+    void loadPresetAndReport(const juce::File& file);
     void moveSlot(PluginSlotId slotId, int toIndex);
     void openEditorForSlot(PluginSlotId slotId);
+    void promptSavePreset();
     void removeSlot(PluginSlotId slotId);
+    void saveChain();
+
+    // View callbacks, windows and preview status.
     void setChainChangedCallback(ChainChangedCallback callback);
     void setLatencyChangedCallback(ChainChangedCallback callback);
     void setSlotEnabled(PluginSlotId slotId, bool enabled);
     void showChainEditor();
     void showMenu(juce::Component& anchor);
+    void showPresetFolder() const;
     void showScanWindow();
+    void updateCurrentPreset();
     void updatePreviewStatus();
 
-private:
-    [[nodiscard]] static bool isEditorWindowClosed(const LiveSlot& entry);
-    static bool reapClosedEditor(LiveSlot& entry);
+    // juce::ChangeListener
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
+private:
     [[nodiscard]] static std::optional<LiveSlot> parseLegacyEntry(
         const juce::String& pluginXml,
         const juce::String& stateBase64
     );
 
+    [[nodiscard]] static bool isEditorWindowClosed(const LiveSlot& entry);
+    static bool reapClosedEditor(LiveSlot& entry);
+
     PluginSlotId appendSlot(LiveSlot entry);
 
     [[nodiscard]] std::vector<SavedChainSlot> captureSavedSlots();
 
-    void savePresetAndReport(const juce::String& name);
-    void savePresetConfirmingReplace(const juce::String& name);
-
-    void audioProcessorChanged(juce::AudioProcessor* processor, const ChangeDetails& details) override;
-    void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
+    bool instantiateLiveEntry(LiveSlot& entry);
+    bool prepareLiveEntry(LiveSlot& entry);
 
     void captureOpenEditorStates();
     void loadPersistedChain();
     void notifyChainChanged();
     void persistChain();
+    void savePresetAndReport(const juce::String& name);
+    void savePresetConfirmingReplace(const juce::String& name);
 
-    bool instantiateLiveEntry(LiveSlot& entry);
-    bool prepareLiveEntry(LiveSlot& entry);
+    // juce::AudioProcessorListener
+    void audioProcessorChanged(juce::AudioProcessor* processor, const ChangeDetails& details) override;
+    void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
 
-    /// Called on the message thread after every structural change of the chain.
+    /// Called on the message thread after structural changes.
     ChainChangedCallback chainChangedCallback;
-    /// Called on the message thread after the latency of a prepared processor changed.
+    /// Called on the message thread after prepared latency changes.
     ChainChangedCallback latencyChangedCallback;
-
-    /// The known plugins that slots create their processors through, which outlives the chain.
+    /// Known plugins, owned by the view and outliving this chain.
     PluginLibrary& library;
-    /// The application settings that keep the chain and locate the presets folder.
-    juce::ApplicationProperties& appProperties;
-    /// The device manager of the preview, observed for the rate shown in the chain editor.
-    juce::AudioDeviceManager& previewDeviceManager;
-    /// The chain editor window, which hides itself when closed, or null before it was first opened.
-    juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
-    /// The plugin manager window, which hides itself when closed, or null before it was first opened.
-    juce::Component::SafePointer<juce::DialogWindow> scanWindow;
-    /// The rendering lock of the preview player, held while a processor in the preview is reconfigured.
-    juce::CriticalSection& renderingLock;
-    /// Set by a processor that reported a latency change, from any thread, until the next display update reads it.
-    std::atomic<bool> latencyDirty {false};
-    /// Counts the structural changes of the chain, so views can tell a rebuild from a label refresh.
-    std::uint64_t revision {0};
-    /// The id given to the last slot added, so every slot gets a new one.
-    std::uint64_t lastSlotId {0};
-    /// Set by a processor that reported a change to its settings, from any thread,
-    /// until the next display update moves it into settingsChanged.
-    std::atomic<bool> pendingSettingsChange {false};
-    /// True when a plugin's settings changed since the chain was last loaded from or saved as a preset.
-    bool settingsChanged {false};
-    /// Name of the preset the chain was last loaded from or saved as, until the chain is cleared or the preset deleted.
-    juce::String presetName;
-    /// The revision of the chain when it was last loaded from or saved as a preset.
-    /// A later revision means the chain was modified since.
-    std::uint64_t presetRevision {0};
-    /// Preset files of the presets submenu last built by createPresetsMenu, in menu id order.
-    /// Mutable, because building a menu does not change the chain.
-    mutable std::vector<juce::File> presetMenuFiles;
-    /// The presets getPresets listed last, or nothing before the first listing and after a save or delete.
-    /// Mutable, because listing the presets does not change the chain.
-    mutable std::optional<PresetListCache> presetList;
-    /// The slots in chain order.
-    std::vector<LiveSlot> chain;
 
-    /// Sample rate the processors are prepared for, the rate of the preview device or a default without one.
+    /// Settings that keep the chain and locate presets.
+    juce::ApplicationProperties& appProperties;
+    /// Preview device, observed for sample-rate context.
+    juce::AudioDeviceManager& previewDeviceManager;
+    /// Borrowed chain editor window, null before opening.
+    juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
+    /// Borrowed plugin manager window, null before opening.
+    juce::Component::SafePointer<juce::DialogWindow> scanWindow;
+    /// Shared rendering lock held while processors are reconfigured.
+    juce::CriticalSection& renderingLock;
+    /// Loaded preset name, empty without one.
+    juce::String presetName;
+
+    /// Set from processor callbacks until the display reads the change.
+    std::atomic<bool> latencyDirty {false};
+    /// Pending processor settings change, transferred to settingsChanged on the message thread.
+    std::atomic<bool> pendingSettingsChange {false};
+
+    /// Last preset listing, invalidated by changes. Listing does not modify the chain.
+    mutable std::optional<PresetListCache> presetList;
+    /// Preset files in menu id order. Building a menu does not modify the chain.
+    mutable std::vector<juce::File> presetMenuFiles;
+
+    /// Whether plugin state changed since saving or loading a preset.
+    bool settingsChanged {false};
+    /// Rate at which processors are prepared.
     double previewSampleRate {utils::defaultSampleRate};
-    /// Block size the processors are prepared for.
+    /// Block size at which processors are prepared.
     int previewBlockSize {512};
+
+    /// Last assigned slot identity, never reused.
+    std::uint64_t lastSlotId {0};
+    /// Revision at the last preset load or save.
+    std::uint64_t presetRevision {0};
+    /// Structural revision used by editor rows.
+    std::uint64_t revision {0};
+
+    /// Slots remain last so they unregister listeners before the callback and revision state is destroyed.
+    std::vector<LiveSlot> chain;
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(LiveChain)
     JUCE_LEAK_DETECTOR(LiveChain)

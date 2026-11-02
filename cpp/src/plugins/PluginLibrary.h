@@ -7,6 +7,7 @@
 
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginScanner.h"
+#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
@@ -18,6 +19,7 @@ namespace audiobatch
 {
 /// Description plus descriptor reference for one enabled slot, in chain order.
 struct EnabledChainPlugin {
+    // Preserve the description-first aggregate order used by the live chain.
     /// The plugin to create.
     juce::PluginDescription description;
     /// The identifier, the names, and the captured state of the plugin, as processing takes them.
@@ -26,16 +28,16 @@ struct EnabledChainPlugin {
 
 /// Plugin chains created for one processing run, or the reason they could not be created.
 struct ChainInstantiation {
+    /// Empty when every plugin of every chain was created.
+    juce::String errorMessage;
+    /// Name of the plugin that failed to load, when errorMessage is not empty.
+    juce::String failedPluginName;
     /// One chain of plugin instances per worker.
     std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
     /// State of each enabled plugin right after it was created, in chain order.
     /// Restored before every file for a plugin without saved state,
     /// so adaptive state from one file does not carry over to the next.
     std::vector<juce::MemoryBlock> initialStates;
-    /// Empty when every plugin of every chain was created.
-    juce::String errorMessage;
-    /// Name of the plugin that failed to load, when errorMessage is not empty.
-    juce::String failedPluginName;
 };
 
 /// The options and the plugin chains of one processing run, created together by PluginLibrary::createProcessingRun.
@@ -65,16 +67,8 @@ public:
         const std::vector<EnabledChainPlugin>& enabledPlugins,
         int workerCount
     ) const;
-    [[nodiscard]] std::expected<ProcessingRunSetup, juce::String> createProcessingRun(
-        const std::vector<EnabledChainPlugin>& enabledPlugins,
-        PluginProcessingOptions options,
-        int fileCount
-    ) const;
-
-    [[nodiscard]] juce::Array<juce::PluginDescription> getKnownTypes() const;
     [[nodiscard]] juce::Array<juce::PluginDescription> getKnownEffectTypes() const;
-
-    [[nodiscard]] std::unique_ptr<juce::PluginListComponent> createScanComponent();
+    [[nodiscard]] juce::Array<juce::PluginDescription> getKnownTypes() const;
 
     /// Returns the format manager that creates the plugin instances.
     [[nodiscard]] juce::AudioPluginFormatManager& getFormatManager() noexcept
@@ -82,19 +76,34 @@ public:
         return formatManager;
     }
 
+    [[nodiscard]] std::expected<ProcessingRunSetup, juce::String> createProcessingRun(
+        const std::vector<EnabledChainPlugin>& enabledPlugins,
+        PluginProcessingOptions options,
+        int fileCount
+    ) const;
+    [[nodiscard]] std::unique_ptr<juce::PluginListComponent> createScanComponent();
+
     void reload();
 
 private:
-    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-
     bool beginPluginScan(const utils::CancellationCheck& shouldStop);
     void finishPluginScan(bool completed);
     void saveList();
 
+    // juce::ChangeListener
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+
+    // Scanner callbacks observe these flags, so they outlive the list-owned scanner.
+    /// True once the list has been loaded, even from a file that did not exist yet.
+    bool listLoaded {false};
+    /// True while reload replaces the list, so its change messages do not save it back.
+    bool reloading {false};
+    /// True from the start of a scan from the plugin manager until it finishes, set on the message thread.
+    bool scanning {false};
+
     /// Taken and released on the message thread only.
     /// Declared before the list, so it outlives the scanner that the list owns.
     PluginScanLock pluginScanLock;
-
     /// The application settings, which locate the list file and hold the list of older versions.
     juce::ApplicationProperties& appProperties;
     /// The VST3 and Audio Unit formats that create the plugin instances.
@@ -103,12 +112,6 @@ private:
     juce::KnownPluginList knownPluginList;
     /// Modification time of the list file when this library last loaded or saved it.
     juce::Time loadedModificationTime;
-    /// True once the list has been loaded, even from a file that did not exist yet.
-    bool listLoaded {false};
-    /// True while reload replaces the list, so its change messages do not save it back.
-    bool reloading {false};
-    /// True from the start of a scan from the plugin manager until it finishes, set on the message thread.
-    bool scanning {false};
 
     JUCE_LEAK_DETECTOR(PluginLibrary)
 };

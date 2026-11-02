@@ -42,7 +42,7 @@ flowchart TD
 `CMakeLists.txt` decides which files each target builds, independently of the directories:
 
 - `AUDIOBATCH_CORE_SOURCES` is the shared core: `analysis`, `metadata`, `normalization`, most of `utils`,
-  `PluginScanner`, and the Serato tag parsing, overview, and tag cache.
+  the plugin scan helpers, worker, and out-of-process scanner, and the Serato tag parsing, overview, and tag cache.
 - `AudioBatch` is the GUI app, `AudioBatch.app` or `AudioBatchApp.exe`, made with `juce_add_gui_app`.
   The Windows build target produces `AudioBatch.exe`, which `build.sh` copies as `AudioBatchApp.exe`.
   It adds `gui`, `gui/components`, the rest of `plugins`, `SeratoPreviewLoader`, and `SeratoWaveformColouring`,

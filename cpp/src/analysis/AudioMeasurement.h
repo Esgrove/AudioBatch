@@ -20,6 +20,7 @@ class AudioMeasurement
 {
 public:
     AudioMeasurement(int channelCount, double sampleRate, std::int64_t lengthInSamples);
+
     ~AudioMeasurement();
 
     AudioMeasurement(const AudioMeasurement&) = delete;
@@ -27,26 +28,27 @@ public:
     AudioMeasurement(AudioMeasurement&&) = delete;
     AudioMeasurement& operator=(AudioMeasurement&&) = delete;
 
+    [[nodiscard]] std::expected<AudioAnalysisRecord, juce::String> finish();
+
     [[nodiscard]] std::expected<void, juce::String> checkInitialization() const;
     [[nodiscard]] std::expected<void, juce::String> push(
         const juce::AudioBuffer<float>& samples,
         int firstSample,
         int frames
     );
-    [[nodiscard]] std::expected<AudioAnalysisRecord, juce::String> finish();
 
 private:
-    /// Owns the meter and its scratch storage, absent when initialization failed.
-    std::unique_ptr<AudioMeasurementState> state;
     /// Initialization failure reported by every operation instead of returning partial measurements.
     juce::String initializationError;
+    /// Owns the meter and its scratch storage, absent when initialization failed.
+    std::unique_ptr<AudioMeasurementState> state;
 };
 
-[[nodiscard]] bool isSupportedMeasurementStream(int channelCount, double sampleRate) noexcept;
 [[nodiscard]] AudioAnalysisRecord completeRenderedAnalysis(
     AudioAnalysisRecord measurements,
     const juce::File& file,
     int bitsPerSample,
     const utils::FileIdentity& renderedIdentity
 );
+[[nodiscard]] bool isSupportedMeasurementStream(int channelCount, double sampleRate) noexcept;
 }  // namespace audiobatch

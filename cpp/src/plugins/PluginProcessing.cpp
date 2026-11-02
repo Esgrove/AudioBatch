@@ -71,20 +71,20 @@ constexpr unsigned int maximumProcessingChannels {2};
 
 /// Length measurements of the rendered chain output, used to finalize the output file.
 struct RenderSummary {
-    /// Number of samples written to the intermediate file.
-    juce::int64 samplesWritten {0};
     /// Position of the last sample above the silence threshold, or -1 when the output is silent.
     juce::int64 lastAudibleSample {-1};
+    /// Number of samples written to the intermediate file.
+    juce::int64 samplesWritten {0};
     /// Notice about source blocks that failed to decode but were tolerated, or empty when there were none.
     juce::String decodeNotice;
 };
 
 /// Outcome of writing the final 16-bit output.
 struct WriteSummary {
-    /// True when the final PCM conversion saturated at least one sample.
-    bool clipped {false};
     /// Measurements of the retained, quantized output.
     AudioAnalysisRecord measurements;
+    /// True when the final PCM conversion saturated at least one sample.
+    bool clipped {false};
 };
 
 /// The gain applied before the first plugin, and why the requested normalization was skipped, if it was.

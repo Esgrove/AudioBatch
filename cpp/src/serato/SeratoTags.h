@@ -25,6 +25,7 @@ namespace audiobatch::serato
 {
 /// The names of one Serato tag in the two containers that hold it.
 struct TagNames {
+    // Keep the native property before the ID3 description, matching aggregate tag-name tables.
     /// Name of the native FLAC comment, such as "SERATO_OVERVIEW".
     std::string_view property;
     /// Description of the ID3 GEOB frame, which the wrapper of the FLAC comment repeats, such as "Serato Overview".
@@ -58,31 +59,32 @@ inline constexpr std::array allTagNames {
     legacyMarkersNames,
 };
 
-[[nodiscard]] juce::MemoryBlock serializeTag(const TagReadResult& result);
-[[nodiscard]] std::optional<Analysis> parseAnalysis(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::optional<Autotags> parseAutotags(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::optional<Markers> parseLegacyMarkers(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::optional<Markers> parseMarkers2(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBlock& block);
-[[nodiscard]] std::optional<double> parseTagNumber(std::string_view text);
-[[nodiscard]] std::optional<TagNames> getTagNames(TagKind kind, bool legacyMarkers = false);
-
-[[nodiscard]] std::optional<juce::MemoryBlock> decodeTagBase64(
-    std::span<const std::uint8_t> bytes,
-    bool markersWorkaround = false
-);
-[[nodiscard]] std::optional<juce::MemoryBlock> decodeNativeTagBase64(std::span<const std::uint8_t> bytes);
-[[nodiscard]] std::optional<std::span<const std::uint8_t>> parseTagWrapper(
-    std::span<const std::uint8_t> decoded,
-    std::string_view description
-);
-
 [[nodiscard]] TagReadResult parseTagPayload(
     TagKind kind,
     std::span<const std::uint8_t> bytes,
     bool legacyMarkers = false
 );
-
 [[nodiscard]] TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, bool create = false);
+[[nodiscard]] juce::MemoryBlock serializeTag(const TagReadResult& result);
+
+[[nodiscard]] std::optional<Analysis> parseAnalysis(std::span<const std::uint8_t> bytes);
+[[nodiscard]] std::optional<Autotags> parseAutotags(std::span<const std::uint8_t> bytes);
+[[nodiscard]] std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes);
+
+[[nodiscard]] std::optional<Markers> parseLegacyMarkers(std::span<const std::uint8_t> bytes);
+[[nodiscard]] std::optional<Markers> parseMarkers2(std::span<const std::uint8_t> bytes);
+[[nodiscard]] std::optional<TagNames> getTagNames(TagKind kind, bool legacyMarkers = false);
+[[nodiscard]] std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBlock& block);
+
+[[nodiscard]] std::optional<double> parseTagNumber(std::string_view text);
+
+[[nodiscard]] std::optional<juce::MemoryBlock> decodeNativeTagBase64(std::span<const std::uint8_t> bytes);
+[[nodiscard]] std::optional<juce::MemoryBlock> decodeTagBase64(
+    std::span<const std::uint8_t> bytes,
+    bool markersWorkaround = false
+);
+[[nodiscard]] std::optional<std::span<const std::uint8_t>> parseTagWrapper(
+    std::span<const std::uint8_t> decoded,
+    std::string_view description
+);
 }  // namespace audiobatch::serato

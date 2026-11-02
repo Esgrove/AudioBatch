@@ -29,16 +29,16 @@ enum class AnalysisRows : std::uint8_t {
 
 /// Persisted preview choices, independent of the current file and audio device.
 struct AudioPreviewPreferences {
-    /// Lowest editable LUFS limit of the source loudness axis.
-    static constexpr double minimumLoudnessGraphLimit {-60.0};
-    /// Highest editable LUFS limit of the source loudness axis.
-    static constexpr double maximumLoudnessGraphLimit {6.0};
-
-    /// Initial bottom of the LUFS axis, shared by the settings and the waveform.
-    static constexpr double defaultLoudnessGraphMinimum {-24.0};
     /// Initial top of the LUFS axis, shared by the settings and the waveform.
     static constexpr double defaultLoudnessGraphMaximum {-4.0};
+    /// Initial bottom of the LUFS axis, shared by the settings and the waveform.
+    static constexpr double defaultLoudnessGraphMinimum {-24.0};
+    /// Highest editable LUFS limit of the source loudness axis.
+    static constexpr double maximumLoudnessGraphLimit {6.0};
+    /// Lowest editable LUFS limit of the source loudness axis.
+    static constexpr double minimumLoudnessGraphLimit {-60.0};
 
+    // Preserve the designated preference construction order shared by settings and integration tests.
     /// True to play the preview through the plugin chain.
     bool pluginChainEnabled {false};
     /// True to discard the chain's latency pre-roll, so audible audio lines up with the waveform position.
@@ -51,10 +51,12 @@ struct AudioPreviewPreferences {
     bool seratoWaveformColours {true};
     /// True to draw the short-term loudness curve over the waveform.
     bool loudnessGraphEnabled {false};
+
     /// Bottom of the loudness axis in LUFS.
     double loudnessGraphMinimum {defaultLoudnessGraphMinimum};
     /// Top of the loudness axis in LUFS.
     double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
+
     /// True to show the embedded album artwork beside the file name.
     /// Only the Options menu changes it, so Audio Settings carries it over unchanged.
     bool showAlbumArtwork {true};
@@ -78,12 +80,12 @@ struct ArtworkState {
 
     /// The selected file whose artwork is shown or requested, tracked even while the option is off.
     juce::File file;
-    /// The file version the artwork was requested for, so the panel refreshes reuse it instead of reading again.
-    std::optional<utils::FileIdentity> requested;
     /// The decoded thumbnail, invalid while pending or when the file has no usable artwork.
     juce::Image image;
     /// True once the request for the requested version completed, including with no artwork.
     bool completed {false};
+    /// The file version the artwork was requested for, so the panel refreshes reuse it instead of reading again.
+    std::optional<utils::FileIdentity> requested;
 };
 
 /// No analysis, normalization, or plugin processing is running.
@@ -92,6 +94,7 @@ struct IdleWork {};
 /// Progress and inputs of one analysis run, from its start until its completion arrives.
 /// The run scans the input folders until its plan arrives.
 struct AnalyzingWork {
+    // Preserve designated construction order for run setup and carried-over analysis inputs.
     /// Options of the run.
     /// A run that keeps the results and replaces a running one carries these inputs over.
     AudioAnalysisOptions options;
@@ -132,6 +135,7 @@ struct AnalysisResultMessage {
 
 /// Progress and collected failures of a normalization or plugin processing pass.
 struct OperationProgress {
+    // Preserve aggregate order shared by normalization/processing setup and their test fixtures.
     /// One "file: error" line per failed file, shown in a summary when the pass completes.
     juce::StringArray failures;
 

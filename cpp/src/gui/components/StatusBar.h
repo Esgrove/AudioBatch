@@ -22,23 +22,24 @@ class StatusBar final : public juce::Component
 public:
     StatusBar();
 
-    void setPath(const juce::String& text, const juce::String& tooltip);
-    void setStatusText(const juce::String& text);
     void setOutputStatus(const AudioOutputStatus& status);
+    void setPath(const juce::String& text, const juce::String& tooltip);
     void setProgress(int permille);
+    void setStatusText(const juce::String& text);
 
+    // juce::Component
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
 private:
     [[nodiscard]] juce::Rectangle<int> getProgressBounds() const;
 
+    /// The preview output device and its configuration.
+    juce::Label outputLabel {"Audio output"};
     /// The root folders of the list.
     juce::Label pathLabel {"Root folders"};
     /// What the application is doing, or a summary of the list.
     juce::Label statusLabel {"Status"};
-    /// The preview output device and its configuration.
-    juce::Label outputLabel {"Audio output"};
 
     /// Overall progress in tenths of a percent, or -1 when no pass of known size runs.
     int progressPermille {-1};

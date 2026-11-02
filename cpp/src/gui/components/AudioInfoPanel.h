@@ -34,8 +34,10 @@ class AudioInfoMetric final : public juce::Component
 public:
     AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit);
 
-    void setValue(const juce::String& value);
     void setCompact(bool compact);
+    void setValue(const juce::String& value);
+
+    // juce::Component
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
@@ -58,6 +60,9 @@ public:
 
     static std::vector<AudioInfoRow> formatRows(const AudioAnalysisRecord& record);
 
+    [[nodiscard]] bool hasArtwork() const noexcept;
+    [[nodiscard]] int getPreferredHeight() const;
+
     void clear();
     void setArtwork(const juce::Image& image);
     void setCompact(bool compact);
@@ -68,57 +73,59 @@ public:
         const serato::SeratoData* data = nullptr
     );
 
-    [[nodiscard]] int getPreferredHeight() const;
-    [[nodiscard]] bool hasArtwork() const noexcept;
-
+    // juce::Component
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
 private:
+    [[nodiscard]] int getDetailLineCount() const;
     [[nodiscard]] int getErrorHeight(int width) const;
     [[nodiscard]] int getHeaderHeight() const;
-
-    [[nodiscard]] int getDetailLineCount() const;
 
     void ensureLabelCount(std::size_t requiredCount);
     void setRows(std::vector<AudioInfoRow> newRows);
 
-    /// The file name, or the part before " - " when the name holds an artist and a title.
-    juce::Label filenameLabel {"File"};
-    /// The part of the file name after " - ", shown only for such names.
-    juce::Label titleLabel {"Title"};
-    /// The embedded album artwork beside the file name, hidden when the file has none or the option is off.
+    /// Details parent outlives the viewport and the dynamically owned labels.
+    juce::Component detailsContent;
+    /// Embedded album artwork beside the file name.
     juce::ImageComponent artworkImage {"Album artwork"};
-    /// The status of a file that is not analyzed yet or failed, hidden otherwise.
+
+    /// Error of a failed analysis, empty otherwise.
+    juce::Label errorLabel {"Error"};
+    /// File name, or artist when split into artist and title.
+    juce::Label filenameLabel {"File"};
+    /// Status while pending or failed.
     juce::Label statusLabel {"Status"};
-    /// The cards of the peak, true peak, maximum short-term loudness, and integrated loudness.
+    /// Title when the file name was split.
+    juce::Label titleLabel {"Title"};
+
+    /// Path used to retain scroll position across updates.
+    juce::String displayedPath;
+    /// Borrows the details content without taking ownership.
+    juce::Viewport detailsViewport;
+
+    /// Cards retain display order: peak, true peak, short-term and integrated loudness.
     std::array<AudioInfoMetric, 4> metrics {
         AudioInfoMetric {"Peak", "Peak", "dBFS"},
         AudioInfoMetric {"True peak", "True peak", "dBTP"},
         AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
         AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
     };
-    /// The content of the details viewport, with the error and the detail rows.
-    juce::Component detailsContent;
-    /// The error message of a failed analysis, empty otherwise.
-    juce::Label errorLabel {"Error"};
-    /// Path of the shown file, so an update of the same file keeps the scroll position of the details.
-    juce::String displayedPath;
-    /// Scrolls the details below the summary.
-    juce::Viewport detailsViewport;
-    /// The detail rows that the labels show.
+    /// Detail rows displayed by the labels.
     std::vector<AudioInfoRow> rows;
-    /// The caption labels of the detail rows, created as rows are needed and reused afterwards.
+
+    /// Caption labels created on demand.
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
-    /// The value labels of the detail rows, created as rows are needed and reused afterwards.
+    /// Value labels created on demand.
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
-    /// True in the compact row, which shows only the metric cards.
+
+    /// True for the compact metric-only layout.
     bool compactMode {false};
-    /// True in the wide layout, which shows the metrics in one row and the short details two to a line.
-    bool wideMode {false};
-    /// True when the file name was split into a name and a title.
-    bool hasTitle {false};
-    /// True when the status label is shown.
+    /// Whether the status label is shown.
     bool hasStatus {false};
+    /// Whether the file name was split.
+    bool hasTitle {false};
+    /// True for the wide metrics and short-detail layout.
+    bool wideMode {false};
 };
 }  // namespace audiobatch

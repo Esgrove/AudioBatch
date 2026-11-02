@@ -47,10 +47,10 @@ constexpr auto paletteComponents {makePaletteComponents()};
 
 /// Retains decoded RGB sums and foreground cell weight until the final arithmetic mean.
 struct ColourContributions {
-    /// Weighted sums of the red, green, and blue components.
-    std::array<double, 3> components {};
     /// Summed weight of the foreground cells that contributed.
     double weight {0.0};
+    /// Weighted sums of the red, green, and blue components.
+    std::array<double, 3> components {};
 };
 
 /// Decodes every vertical cell with a time-sample weight, independently of its row position.

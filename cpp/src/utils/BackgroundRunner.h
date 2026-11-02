@@ -20,13 +20,6 @@ template<typename... Args>
 class RunCallback
 {
 public:
-    /// Replaces the callback, or stops further calls when the function is empty.
-    void set(std::function<void(Args...)> newCallback)
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callback = std::move(newCallback);
-    }
-
     /// Invokes the callback, if one is set.
     /// The callback is copied under the lock and invoked without it, so it may call back into its owner.
     void operator()(Args... arguments) const
@@ -43,11 +36,18 @@ public:
         }
     }
 
+    /// Replaces the callback, or stops further calls when the function is empty.
+    void set(std::function<void(Args...)> newCallback)
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callback = std::move(newCallback);
+    }
+
 private:
-    /// The callback, or empty when none is set.
-    std::function<void(Args...)> callback;
     /// Guards the callback, which a worker copies while the message thread replaces it.
     juce::CriticalSection callbackLock;
+    /// The callback, or empty when none is set.
+    std::function<void(Args...)> callback;
 };
 
 /// Runs the jobs of one run at a time on a thread pool.
@@ -61,20 +61,26 @@ class BackgroundRunner
 public:
     BackgroundRunner(int workerCount, int jobShutdownTimeoutMilliseconds);
 
+    ~BackgroundRunner() = default;
+
     BackgroundRunner(const BackgroundRunner&) = delete;
     BackgroundRunner& operator=(const BackgroundRunner&) = delete;
     BackgroundRunner(BackgroundRunner&&) = delete;
     BackgroundRunner& operator=(BackgroundRunner&&) = delete;
 
-    ~BackgroundRunner() = default;
+    [[nodiscard]] utils::CancellationCheck makeCancellationCheck(int runId) const;
 
     [[nodiscard]] int getCurrentRunId() const noexcept;
     [[nodiscard]] int getNumThreads() const noexcept;
+
     [[nodiscard]] bool hasJobs() const;
     [[nodiscard]] bool isActive(int runId) const noexcept;
     [[nodiscard]] bool isCurrent(int runId) const noexcept;
     [[nodiscard]] bool isStopRequested(int runId) const noexcept;
-    [[nodiscard]] utils::CancellationCheck makeCancellationCheck(int runId) const;
+
+    void addJob(std::function<void()> job);
+    void cancel();
+    void cancelAndWait();
 
     /// Invokes the callback with the run id appended to the values, while the run is still current.
     template<typename... Args, typename... Values>
@@ -85,16 +91,14 @@ public:
         }
     }
 
-    void addJob(std::function<void()> job);
-    void cancel();
-    void cancelAndWait();
     void requestStop();
     void waitForAllJobs();
     void waitForRunningJobs();
 
 private:
-    /// Runs the jobs.
+    /// Runs the jobs. The owner waits for workers before destroying this runner or its callbacks.
     juce::ThreadPool threadPool;
+
     /// Id of the current run, raised by every cancellation.
     std::atomic<int> currentRunId {0};
     /// The run asked to stop, or -1 when none was.
@@ -102,6 +106,7 @@ private:
     /// True after a wait for the running jobs timed out, until the pool is empty again,
     /// so later waits for the same hung job return at once instead of waiting the whole timeout again.
     std::atomic<bool> waitTimedOut {false};
+
     /// How long cancelAndWait waits for the running jobs to finish.
     int shutdownTimeoutMilliseconds;
 };

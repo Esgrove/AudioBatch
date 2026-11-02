@@ -3,7 +3,7 @@
 
 #include "gui/FileActivityTracker.h"
 
-#include "gui/AudioFileTableModel.h"
+#include "gui/FileActivity.h"
 #include <initializer_list>
 
 #include <algorithm>
@@ -15,23 +15,6 @@
 
 namespace audiobatch
 {
-/// Returns the text shown in the status column for a file busy with the activity.
-juce::String getFileActivityLabel(const FileActivity activity)
-{
-    switch (activity) {
-        case FileActivity::waiting:
-            return "Waiting";
-        case FileActivity::analyzing:
-            return "Analyzing";
-        case FileActivity::normalizing:
-            return "Normalizing";
-        case FileActivity::processing:
-            return "Processing";
-    }
-
-    return {};
-}
-
 /// Creates the tracker with the callback that repaints the view showing the activity.
 /// The component must outlive the tracker and selects the display used for animation updates.
 FileActivityTracker::FileActivityTracker(juce::Component& component, std::function<void()> repaintCallback) :

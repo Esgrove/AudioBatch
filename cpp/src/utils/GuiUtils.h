@@ -23,13 +23,13 @@ inline constexpr int MENU_RESULT_DISMISSED {0};
 
 void allowExistingInstanceToActivate(const juce::String& applicationName);
 void bringWindowToFront(juce::TopLevelWindow& window);
-void styleLabel(juce::Label& label, const juce::Font& font, juce::Colour colour);
 void showFailureSummary(
     const juce::StringArray& failures,
     const juce::String& title,
     const juce::String& failedAction,
     juce::Component* associatedComponent
 );
+void styleLabel(juce::Label& label, const juce::Font& font, juce::Colour colour);
 
 /// Converts an integer id received from JUCE back to a scoped enum whose values run without gaps from first to last.
 /// Returns nullopt for any other id, such as the zero JUCE uses for a dismissed menu or for no sort column.

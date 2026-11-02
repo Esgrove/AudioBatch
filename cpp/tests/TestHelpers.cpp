@@ -62,85 +62,39 @@ public:
     }
 
     TestAudioDevice(const TestAudioDevice&) = delete;
-    TestAudioDevice& operator=(const TestAudioDevice&) = delete;
     TestAudioDevice(TestAudioDevice&&) = delete;
+    TestAudioDevice& operator=(const TestAudioDevice&) = delete;
     TestAudioDevice& operator=(TestAudioDevice&&) = delete;
 
-    /// Exposes a stereo playback interface.
-    juce::StringArray getOutputChannelNames() override
-    {
-        return {"Left", "Right"};
-    }
-    /// Exposes inputs so tests can detect accidentally requesting recording channels.
-    juce::StringArray getInputChannelNames() override
-    {
-        return {"Left", "Right"};
-    }
     /// Keeps preparation independent of physical device capabilities.
     juce::Array<double> getAvailableSampleRates() override
     {
         return {48'000.0};
     }
+
     /// Uses a small fixed render quantum.
     juce::Array<int> getAvailableBufferSizes() override
     {
         return {512};
     }
-    /// Matches the simulated callback size.
-    int getDefaultBufferSize() override
-    {
-        return 512;
-    }
-    /// Reports the prepared callback size.
-    int getCurrentBufferSizeSamples() override
-    {
-        return 512;
-    }
-    /// Reports the prepared playback rate.
-    double getCurrentSampleRate() override
-    {
-        return 48'000.0;
-    }
-    /// Reports the simulated interface resolution.
-    int getCurrentBitDepth() override
-    {
-        return 24;
-    }
-    /// Adds no hardware output delay.
-    int getOutputLatencyInSamples() override
-    {
-        return 0;
-    }
-    /// Adds no hardware input delay.
-    int getInputLatencyInSamples() override
-    {
-        return 0;
-    }
-    /// Returns the channels actually requested by the application.
-    [[nodiscard]] juce::BigInteger getActiveOutputChannels() const override
-    {
-        return outputs;
-    }
+
     /// Returns the recording channels actually requested by the application.
     [[nodiscard]] juce::BigInteger getActiveInputChannels() const override
     {
         return inputs;
     }
+
+    /// Returns the channels actually requested by the application.
+    [[nodiscard]] juce::BigInteger getActiveOutputChannels() const override
+    {
+        return outputs;
+    }
+
     /// Exposes explicit failures injected by the test.
     juce::String getLastError() override
     {
         return state.unavailableDeviceNames.contains(getName()) ? juce::String("No device is connected to the PC.")
                                                                 : state.openError;
-    }
-    /// Reports simulated ownership of the interface.
-    bool isOpen() override
-    {
-        return opened;
-    }
-    /// Reports whether a render callback is registered.
-    bool isPlaying() override
-    {
-        return state.callback != nullptr;
     }
 
     /// Captures the requested channels or returns the injected device-open error.
@@ -161,6 +115,65 @@ public:
         opened = true;
         ++state.opens;
         return {};
+    }
+
+    /// Exposes inputs so tests can detect accidentally requesting recording channels.
+    juce::StringArray getInputChannelNames() override
+    {
+        return {"Left", "Right"};
+    }
+
+    /// Exposes a stereo playback interface.
+    juce::StringArray getOutputChannelNames() override
+    {
+        return {"Left", "Right"};
+    }
+
+    /// Reports simulated ownership of the interface.
+    bool isOpen() override
+    {
+        return opened;
+    }
+    /// Reports whether a render callback is registered.
+    bool isPlaying() override
+    {
+        return state.callback != nullptr;
+    }
+
+    /// Reports the prepared playback rate.
+    double getCurrentSampleRate() override
+    {
+        return 48'000.0;
+    }
+
+    /// Reports the simulated interface resolution.
+    int getCurrentBitDepth() override
+    {
+        return 24;
+    }
+
+    /// Reports the prepared callback size.
+    int getCurrentBufferSizeSamples() override
+    {
+        return 512;
+    }
+
+    /// Matches the simulated callback size.
+    int getDefaultBufferSize() override
+    {
+        return 512;
+    }
+
+    /// Adds no hardware input delay.
+    int getInputLatencyInSamples() override
+    {
+        return 0;
+    }
+
+    /// Adds no hardware output delay.
+    int getOutputLatencyInSamples() override
+    {
+        return 0;
     }
 
     /// Balances each successful device open exactly once.
@@ -210,32 +223,10 @@ public:
     ~TestAudioDeviceType() override = default;
 
     TestAudioDeviceType(const TestAudioDeviceType&) = delete;
-    TestAudioDeviceType& operator=(const TestAudioDeviceType&) = delete;
     TestAudioDeviceType(TestAudioDeviceType&&) = delete;
+    TestAudioDeviceType& operator=(const TestAudioDeviceType&) = delete;
     TestAudioDeviceType& operator=(TestAudioDeviceType&&) = delete;
 
-    /// Needs no native device enumeration.
-    void scanForDevices() override {}
-    /// Offers the same interface for input and output.
-    juce::StringArray getDeviceNames(bool /*wantInputNames*/) const override
-    {
-        return state.outputDeviceNames;
-    }
-    /// Always selects the only interface.
-    int getDefaultDeviceIndex(bool /*forInput*/) const override
-    {
-        return 0;
-    }
-    /// All created devices belong to the single advertised interface.
-    int getIndexOfDevice(juce::AudioIODevice* device, bool /*asInput*/) const override
-    {
-        return device != nullptr ? state.outputDeviceNames.indexOf(device->getName()) : -1;
-    }
-    /// Allows output-only operation without an input device name.
-    bool hasSeparateInputsAndOutputs() const override
-    {
-        return true;
-    }
     /// Creates a fresh driver whose lifetime is controlled by the real device manager.
     juce::AudioIODevice* createDevice(
         const juce::String& outputDeviceName,
@@ -244,6 +235,32 @@ public:
     {
         return new TestAudioDevice(state, outputDeviceName);
     }
+
+    /// Offers the same interface for input and output.
+    juce::StringArray getDeviceNames(bool /*wantInputNames*/) const override
+    {
+        return state.outputDeviceNames;
+    }
+    /// Allows output-only operation without an input device name.
+    bool hasSeparateInputsAndOutputs() const override
+    {
+        return true;
+    }
+
+    /// Always selects the only interface.
+    int getDefaultDeviceIndex(bool /*forInput*/) const override
+    {
+        return 0;
+    }
+
+    /// All created devices belong to the single advertised interface.
+    int getIndexOfDevice(juce::AudioIODevice* device, bool /*asInput*/) const override
+    {
+        return device != nullptr ? state.outputDeviceNames.indexOf(device->getName()) : -1;
+    }
+
+    /// Needs no native device enumeration.
+    void scanForDevices() override {}
 
 private:
     TestAudioDeviceState& state;

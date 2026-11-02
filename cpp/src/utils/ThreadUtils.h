@@ -27,16 +27,24 @@ using CancellationCheck = std::function<bool()>;
 /// Number of milliseconds in one second, shared by duration conversions and timing output.
 inline constexpr double millisecondsPerSecond {1000.0};
 
-/// Returns true when a cancellation check is set and reports that cancellation was requested.
-[[nodiscard]] inline bool isCancellationRequested(const CancellationCheck& isCancelled)
-{
-    return isCancelled != nullptr && isCancelled();
-}
+ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
+/// Deleted, because the returned callback refers to onProgress, which a temporary would leave dangling.
+ProgressCallback makeProgressRange(ProgressCallback&& onProgress, float start, float end) = delete;
+ProgressCallback makeThrottledProgress(ProgressCallback onProgress);
+juce::String describeCurrentException();
 
 /// Returns the done amount as a fraction of the total for progress reporting, or 1 when the total is not positive.
 [[nodiscard]] constexpr float progressFraction(const std::int64_t done, const std::int64_t total)
 {
     return total > 0 ? static_cast<float>(static_cast<double>(done) / static_cast<double>(total)) : 1.0f;
+}
+
+[[nodiscard]] bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
+
+/// Returns true when a cancellation check is set and reports that cancellation was requested.
+[[nodiscard]] inline bool isCancellationRequested(const CancellationCheck& isCancelled)
+{
+    return isCancelled != nullptr && isCancelled();
 }
 
 /// Reports the completed fraction to the callback when one is set.
@@ -46,13 +54,4 @@ inline void reportProgress(const ProgressCallback& onProgress, const float progr
         onProgress(progress);
     }
 }
-
-[[nodiscard]] bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
-
-juce::String describeCurrentException();
-
-ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
-/// Deleted, because the returned callback refers to onProgress, which a temporary would leave dangling.
-ProgressCallback makeProgressRange(ProgressCallback&& onProgress, float start, float end) = delete;
-ProgressCallback makeThrottledProgress(ProgressCallback onProgress);
 }  // namespace audiobatch::utils

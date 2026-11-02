@@ -21,6 +21,7 @@ class LiveChain;
 /// Name and configuration of the preview output device, shown in the status bar.
 /// A value that is not known yet is empty or zero.
 struct AudioOutputStatus {
+    // Preserve the device/rate/buffer/open aggregate order used by status snapshots.
     /// Name of the output device.
     juce::String deviceName;
     /// Sample rate of the device in hertz.
@@ -51,34 +52,6 @@ public:
     AudioPreviewPlayer(AudioPreviewPlayer&&) = delete;
     AudioPreviewPlayer& operator=(AudioPreviewPlayer&&) = delete;
 
-    [[nodiscard]] bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
-
-    void release();
-    void suspend();
-    void setApplicationActive(bool active);
-    void setDeviceSettingsActive(bool active);
-    void stop();
-    void start();
-    void setPosition(double seconds);
-    void completeInitialPosition(double seconds);
-    void setErrorCallback(std::function<void(const juce::String&)> callback);
-    void setLiveChain(LiveChain* chain);
-    bool setPluginPreviewEnabled(bool enabled);
-    void setLatencyCompensated(bool enabled);
-    void setInputGain(LinearGain gain, bool immediately = false);
-    void setSavedDeviceState(std::unique_ptr<juce::XmlElement> state);
-    [[nodiscard]] std::unique_ptr<juce::XmlElement> createDeviceState() const;
-    bool refreshPluginChain();
-    void togglePlayback();
-    void updatePlaybackStatus();
-
-    [[nodiscard]] bool hasLoadedSource() const noexcept;
-    [[nodiscard]] bool isPlaying() const;
-    [[nodiscard]] bool isStopping() const;
-    [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
-    [[nodiscard]] double getCurrentPosition() const;
-    [[nodiscard]] std::optional<double> getLoadedDurationSeconds() const;
-    [[nodiscard]] std::optional<juce::int64> getLoadedLengthInSamples() const;
     [[nodiscard]] AudioOutputStatus getOutputStatus() const;
 
     /// Returns the device manager, used by the audio settings dialog.
@@ -99,9 +72,50 @@ public:
         return renderingLock;
     }
 
+    [[nodiscard]] std::unique_ptr<juce::XmlElement> createDeviceState() const;
+
+    [[nodiscard]] std::optional<double> getLoadedDurationSeconds() const;
+    [[nodiscard]] std::optional<juce::int64> getLoadedLengthInSamples() const;
+
+    [[nodiscard]] bool hasLoadedSource() const noexcept;
+    [[nodiscard]] bool isPlaying() const;
+    [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
+    [[nodiscard]] bool isStopping() const;
+    [[nodiscard]] bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
+    bool refreshPluginChain();
+    bool setPluginPreviewEnabled(bool enabled);
+
+    [[nodiscard]] double getCurrentPosition() const;
+
+    void completeInitialPosition(double seconds);
+    void release();
+    void setApplicationActive(bool active);
+    void setDeviceSettingsActive(bool active);
+    void setErrorCallback(std::function<void(const juce::String&)> callback);
+    void setInputGain(LinearGain gain, bool immediately = false);
+    void setLatencyCompensated(bool enabled);
+    void setLiveChain(LiveChain* chain);
+    void setPosition(double seconds);
+
+    // Device persistence and transport commands.
+    void setSavedDeviceState(std::unique_ptr<juce::XmlElement> state);
+    void start();
+    void stop();
+    void suspend();
+    void togglePlayback();
+    void updatePlaybackStatus();
+
 private:
+    bool openAudioDevice();
+    bool reposition(double seconds, bool resume);
+
+    void closeAudioDevice();
+    void prepareInput();
+    void publishState();
+    void reportError(const juce::String& message) const;
+
+    // juce::AudioIODeviceCallback
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
-    void audioDeviceStopped() override;
     void audioDeviceIOCallbackWithContext(
         const float* const* inputChannels,
         int inputChannelCount,
@@ -110,15 +124,17 @@ private:
         int sampleCount,
         const juce::AudioIODeviceCallbackContext& context
     ) override;
-    void handleAsyncUpdate() override;
-    void timerCallback() override;
-    void closeAudioDevice();
-    void prepareInput();
-    void publishState();
-    bool openAudioDevice();
-    bool reposition(double seconds, bool resume);
-    void reportError(const juce::String& message) const;
+    void audioDeviceStopped() override;
 
+    // juce::AsyncUpdater
+    void handleAsyncUpdate() override;
+
+    // juce::Timer
+    void timerCallback() override;
+
+    // Preserve the renderer/device/source dependency order.
+    // Shutdown stops device and read-ahead callbacks before releasing sources.
+    // Sources borrow the rendering lock and failure flags.
     /// Delivers errors on the message thread, never from audio or read-ahead callbacks.
     std::function<void(const juce::String&)> onError;
 
@@ -146,12 +162,13 @@ private:
 
     /// Reads ahead from the file so playback does not decode on the audio thread.
     juce::TimeSliceThread readAheadThread {"audio file preview"};
+
+    /// Set by the audio callback when the buffered input ran out.
+    std::atomic<bool> bufferUnderrun {false};
     /// True once the input and the chain are prepared for the open device, so the callback may render.
     std::atomic<bool> deviceReady {false};
     /// Set by the read-ahead thread when decoding the file fails.
     std::atomic<bool> readFailed {false};
-    /// Set by the audio callback when the buffered input ran out.
-    std::atomic<bool> bufferUnderrun {false};
     /// Sample rate of the device that is starting, until the message thread prepares for it.
     std::atomic<double> pendingRate {0.0};
     /// Block size of the device that is starting, until the message thread prepares for it.
@@ -160,37 +177,37 @@ private:
     /// Playback state of the preview source, published under the rendering lock after every change
     /// and after every rendered block, so the message thread reads it without taking the lock.
     /// The audio callback only try-locks, and outputs silence for every block in which the lock is busy.
-    std::atomic<double> publishedPosition {0.0};
+    std::atomic<bool> publishedFailed {false};
     std::atomic<bool> publishedPlaying {false};
     std::atomic<bool> publishedStopping {false};
-    std::atomic<bool> publishedFailed {false};
+    std::atomic<double> publishedPosition {0.0};
 
     /// Device state saved by an earlier session, used and cleared by the first open.
     std::unique_ptr<juce::XmlElement> savedDeviceState;
 
-    /// Tail length last applied to the preview source, so an unchanged tail does not take the rendering lock.
-    juce::int64 appliedTailSamples {-1};
-    /// Sample rate the input and the chain are prepared for.
-    double sampleRate {utils::defaultSampleRate};
-    /// Block size the input and the chain are prepared for.
-    int blockSize {512};
-    /// True while the preview plays through the plugin chain.
-    bool pluginPreviewEnabled {false};
-    /// True to render the latency pre-roll, so the audio lines up with the waveform position.
-    bool latencyCompensated {true};
-    /// The playing state the listeners were last told about.
-    bool lastReportedPlaying {false};
-    /// False while the application is in the background, where it gives up the device.
+    /// False in the background, where the app gives up the device.
     bool applicationActive {true};
-    /// True while the audio settings dialog is shown, which keeps the device open.
-    bool deviceSettingsActive {false};
-    /// Blocks focus-driven retries after a failed open until the user retries or selects a working device.
+    /// Suppresses focus-driven retries until an explicit retry or working device selection.
     bool deviceOpenFailed {false};
+    /// Keeps the device open while audio settings are shown.
+    bool deviceSettingsActive {false};
+    /// Last playing state sent to listeners.
+    bool lastReportedPlaying {false};
+    /// Discards latency pre-roll so sound aligns with the waveform.
+    bool latencyCompensated {true};
+    /// True while rendering through the live chain.
+    bool pluginPreviewEnabled {false};
 
-    /// Holds a new file silent until its asynchronous cue metadata determines the initial position.
-    /// Explicit seeks cancel the wait, and start/stop retain the user's latest playback intent.
-    bool waitingForInitialPosition {false};
+    /// Playback intent retained while awaiting cue metadata.
     bool startWhenInitialPositionReady {false};
+    /// Holds new files silent until cue metadata resolves. Explicit seeks cancel the wait.
+    bool waitingForInitialPosition {false};
+
+    /// Rate and block size at which the input and chain are prepared.
+    double sampleRate {utils::defaultSampleRate};
+    int blockSize {512};
+    /// Last applied tail, avoiding unnecessary rendering-lock acquisitions.
+    juce::int64 appliedTailSamples {-1};
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(AudioPreviewPlayer)
     JUCE_LEAK_DETECTOR(AudioPreviewPlayer)

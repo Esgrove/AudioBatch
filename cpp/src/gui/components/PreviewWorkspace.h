@@ -28,57 +28,58 @@ public:
 
     [[nodiscard]] bool isCompact() const noexcept;
 
-    void resized() override;
     void setCompact(bool shouldBeCompact);
     void setPlaybackState(bool enabled, bool playing);
 
-    /// The summary, metrics, and details of the selected file.
+    // juce::Component
+    void resized() override;
+
+    /// Selected-file summary, metrics and details.
     AudioInfoPanel audioInfo;
-    /// The waveform of the previewed file.
-    ThumbnailComponent thumbnail;
-    /// Collapses the workspace to the compact row and expands it again.
-    juce::DrawableButton previewSectionButton {"Collapse bottom section", juce::DrawableButton::ImageFitted};
-    /// Starts the preview, and reads "Stop" while it plays.
-    juce::TextButton startStopButton {"Play"};
-    /// Processes the selected files through the plugin chain, or cancels the running pass.
-    juce::TextButton processButton {"Process"};
-
-    /// The secondary controls scroll independently while playback and processing stay pinned below them.
-    /// Declared before the viewport that shows it without owning it.
-    juce::Component controlsContent;
-    /// Scrolls the secondary controls when the column is shorter than they are.
-    juce::Viewport controlsViewport;
-
-    /// Caption of the zoom slider.
-    juce::Label zoomLabel {"Zoom"};
-    /// Zoom of the waveform in percent.
-    juce::Slider zoomSlider {"ZoomSlider"};
-    /// Caption of the gain slider.
-    juce::Label gainLabel {"GainLabel"};
-    /// Custom gain of the selected files in decibels.
+    /// Custom gain in decibels.
     IntervalStepSlider gainSlider {"GainSlider"};
-    /// Normalizes the files to the target before the plugin chain processes them.
-    juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
-    /// Lets normalization and processing replace an existing output file.
+    /// Normalization mode and target persisted in the supplied settings.
+    NormalizationTargetControl normalizationTargetControl;
+    /// Waveform of the previewed file.
+    ThumbnailComponent thumbnail;
+
+    /// Secondary-control parent outlives the viewport borrowing it.
+    juce::Component controlsContent;
+    /// Collapses or expands the bottom section.
+    juce::DrawableButton previewSectionButton {"Collapse bottom section", juce::DrawableButton::ImageFitted};
+    /// Slider captions.
+    juce::Label gainLabel {"GainLabel"};
+    juce::Label zoomLabel {"Zoom"};
+    /// Waveform zoom in percent.
+    juce::Slider zoomSlider {"ZoomSlider"};
+
+    /// Opens the chain menu.
+    juce::TextButton pluginButton {"Plugin chain"};
+    /// Processes selected files, or cancels the running pass.
+    juce::TextButton processButton {"Process"};
+    /// Opens audio settings.
+    juce::TextButton settingsButton {"Audio Settings"};
+    /// Starts playback, showing Stop while playing.
+    juce::TextButton startStopButton {"Play"};
+
+    /// Allows overwriting existing output files.
     juce::ToggleButton forceOverwriteToggle {"Overwrite"};
-    /// Plays the preview through the plugin chain, shown only in the wide layout, which has a free row for it.
+    /// Normalizes before plugin processing.
+    juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
+    /// Enables live-chain playback in the wide layout.
     juce::ToggleButton previewChainToggle {"Preview chain"};
 
-    /// Normalization mode and target, persisted in the settings given to the constructor.
-    NormalizationTargetControl normalizationTargetControl;
-
-    /// Opens the plugin chain menu.
-    juce::TextButton pluginButton {"Plugin chain"};
-    /// Opens the audio settings dialog.
-    juce::TextButton settingsButton {"Audio Settings"};
+    /// Scrolls borrowed secondary controls independently of the playback controls.
+    juce::Viewport controlsViewport;
 
 private:
+    juce::Rectangle<int> layoutSliders(juce::Rectangle<int> content);
+
     void configurePreviewSectionButton();
     void configureSecondaryControls();
     void layoutCompact(juce::Rectangle<int> bounds, int playbackWidth);
     void layoutNarrowControls(juce::Rectangle<int> content);
     void layoutPlaybackButtons(juce::Rectangle<int> bounds);
-    juce::Rectangle<int> layoutSliders(juce::Rectangle<int> content);
     void layoutWideControls(juce::Rectangle<int> content);
 };
 }  // namespace audiobatch

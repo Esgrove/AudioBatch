@@ -236,8 +236,8 @@ PreparedChain::PreparedChain(
     const std::span<juce::AudioPluginInstance* const> instances,
     const utils::CancellationCheck& cancellationCheck
 ) :
-    chainInstances(instances),
-    isCancelled(cancellationCheck)
+    isCancelled(cancellationCheck),
+    chainInstances(instances)
 {}
 
 /// Releases a successfully prepared chain on the message thread unless the run was cancelled.

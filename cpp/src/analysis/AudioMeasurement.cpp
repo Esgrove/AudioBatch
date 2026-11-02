@@ -73,13 +73,13 @@ double normalizeLoudness(const double value)
 struct AudioMeasurementState {
     /// Allocates scratch storage once for the validated stream.
     AudioMeasurementState(const int channels, const double rate, const std::int64_t length) :
-        meter(createLoudnessState(channels, rate)),
         partial(channels, overloadBlockSize(rate)),
+        overloads(channels, rate, length, partial.getNumSamples()),
+        meter(createLoudnessState(channels, rate)),
         interleaved(static_cast<std::size_t>(channels) * static_cast<std::size_t>(partial.getNumSamples()), 0.0f),
-        minimums(static_cast<std::size_t>(channels), 0.0f),
         maximums(static_cast<std::size_t>(channels), 0.0f),
-        flags(static_cast<std::size_t>(channels), 0),
-        overloads(channels, rate, length, partial.getNumSamples())
+        minimums(static_cast<std::size_t>(channels), 0.0f),
+        flags(static_cast<std::size_t>(channels), 0)
     {
         history->sampleRate = rate;
         history->lengthInSamples = length;
@@ -137,32 +137,35 @@ struct AudioMeasurementState {
         return {};
     }
 
-    /// Continuous loudness and true-peak state.
-    std::unique_ptr<ebur128_state, EbuR128StateDeleter> meter;
     /// Storage for an interval crossing input chunk boundaries.
     juce::AudioBuffer<float> partial;
-    /// Meter input reused for every interval.
-    std::vector<float> interleaved;
-    /// Per-channel negative sample extremes.
-    std::vector<float> minimums;
-    /// Per-channel positive sample extremes.
-    std::vector<float> maximums;
-    /// Per-channel overload flags of the current interval.
-    std::vector<std::uint8_t> flags;
-    /// Bounded overload history builder.
+    /// Bounded overload history builder. Its interval depends on partial's initialized buffer size.
     OverloadHistoryBuilder overloads;
+    /// Error that invalidates the measurement after a failed push.
+    juce::String error;
+
     /// Short-term readings and their timing properties.
     std::shared_ptr<ShortTermLoudnessHistory> history {std::make_shared<ShortTermLoudnessHistory>()};
+    /// Continuous loudness and true-peak state.
+    std::unique_ptr<ebur128_state, EbuR128StateDeleter> meter;
+
+    /// Meter input reused for every interval.
+    std::vector<float> interleaved;
+    /// Per-channel positive sample extremes.
+    std::vector<float> maximums;
+    /// Per-channel negative sample extremes.
+    std::vector<float> minimums;
+    /// Per-channel overload flags of the current interval.
+    std::vector<std::uint8_t> flags;
+
     /// Highest normalized short-term reading.
     double maxShortTerm {AudioAnalysisRecord::negativeInfinityLoudness};
     /// Frames buffered in an incomplete interval.
     int partialFrames {0};
-    /// Frames accepted from all chunks.
-    std::int64_t framesReceived {0};
-    /// Error that invalidates the measurement after a failed push.
-    juce::String error;
     /// Prevents reading a moved-out history or extending a completed measurement.
     bool finished {false};
+    /// Frames accepted from all chunks.
+    std::int64_t framesReceived {0};
 };
 
 /// Checks stream bounds before allocating buffers or rounding its sample rate.

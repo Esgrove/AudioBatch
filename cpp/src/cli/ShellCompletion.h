@@ -10,13 +10,13 @@
 
 namespace audiobatch::cli
 {
-[[nodiscard]] juce::String buildCompletionScript(CompletionShell shell, const juce::String& commandName);
-
 [[nodiscard]] juce::File findCompletionFile(
     CompletionShell shell,
     const juce::String& commandName,
     const juce::File& homeDirectory
 );
+
+[[nodiscard]] juce::String buildCompletionScript(CompletionShell shell, const juce::String& commandName);
 
 [[nodiscard]] int runCompletion(const CompletionCommand& command, const juce::String& commandName);
 }  // namespace audiobatch::cli

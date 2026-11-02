@@ -35,13 +35,16 @@ class MidSideTestProcessor final : public juce::AudioProcessor
 public:
     MidSideTestProcessor();
 
+    [[nodiscard]] const juce::String getName() const override;
+    [[nodiscard]] const juce::String getProgramName(int index) override;
+
     [[nodiscard]] bool acceptsMidi() const override;
     [[nodiscard]] bool hasEditor() const override;
     [[nodiscard]] bool isMidiEffect() const override;
     [[nodiscard]] bool producesMidi() const override;
-    [[nodiscard]] const juce::String getName() const override;
-    [[nodiscard]] const juce::String getProgramName(int index) override;
+
     [[nodiscard]] double getTailLengthSeconds() const override;
+
     [[nodiscard]] int getCurrentProgram() override;
     [[nodiscard]] int getNumPrograms() override;
 
@@ -61,17 +64,18 @@ private:
 
     void delayBlock(juce::AudioBuffer<float>& buffer);
 
-    juce::AudioProcessorValueTreeState parameters;
-    std::atomic<float>& gain;
-    std::atomic<float>& width;
-    std::atomic<float>& latency;
-
     /// One ring buffer per channel holding the last latency samples, allocated when the plugin is prepared.
     juce::AudioBuffer<float> delayLine;
+    /// Owns the parameters before the references below bind to them.
+    juce::AudioProcessorValueTreeState parameters;
 
-    /// Latency in samples the plugin reported when it was prepared.
-    int delaySamples {0};
+    std::atomic<float>& gain;
+    std::atomic<float>& latency;
+    std::atomic<float>& width;
+
     /// Position in the ring buffers of the oldest delayed sample.
     int delayPosition {0};
+    /// Latency in samples the plugin reported when it was prepared.
+    int delaySamples {0};
 };
 }  // namespace audiobatch::test_plugin

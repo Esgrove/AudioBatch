@@ -23,10 +23,23 @@ namespace audiobatch::console
 
 [[nodiscard]] bool isColorEnabled(std::FILE* stream);
 
-void printLineToConsole(const juce::String& text);
+/// Formats a value with a colour for building composite lines,
+/// for example a coloured column inside an otherwise plain row printed to stdout.
+/// Returns the plain text when stdout does not support colour.
+template<utils::Formattable T>
+[[nodiscard]] std::string colored(const T& value, const fmt::terminal_color color)
+{
+    if (isColorEnabled(stdout)) {
+        return fmt::format(fmt::fg(color), "{}", value);
+    }
 
+    return fmt::format("{}", value);
+}
+
+void printLineToConsole(const juce::String& text);
 void printStyledText(std::FILE* stream, fmt::text_style style, std::string_view text);
 
+// Keep the inline printing layers dependency-first: styled output, colour helpers, then named colours.
 /// Formats and prints to the given stream with a text style.
 /// The style is dropped when the stream does not support colour.
 template<typename... Args>
@@ -39,13 +52,6 @@ void printStyled(std::FILE* stream, const fmt::text_style style, fmt::format_str
     }
 }
 
-/// Prints to stdout in the given colour.
-template<typename... Args>
-void printColor(const fmt::terminal_color color, fmt::format_string<Args...> format, Args&&... args)
-{
-    printStyled(stdout, fmt::fg(color), format, std::forward<Args>(args)...);
-}
-
 /// Prints bold text to stdout.
 template<typename... Args>
 void printBold(fmt::format_string<Args...> format, Args&&... args)
@@ -53,11 +59,28 @@ void printBold(fmt::format_string<Args...> format, Args&&... args)
     printStyled(stdout, fmt::emphasis::bold, format, std::forward<Args>(args)...);
 }
 
+/// Prints to stdout in the given colour.
+template<typename... Args>
+void printColor(const fmt::terminal_color color, fmt::format_string<Args...> format, Args&&... args)
+{
+    printStyled(stdout, fmt::fg(color), format, std::forward<Args>(args)...);
+}
+
 /// Prints bold text to stdout in the given colour.
 template<typename... Args>
 void printColorBold(const fmt::terminal_color color, fmt::format_string<Args...> format, Args&&... args)
 {
     printStyled(stdout, fmt::emphasis::bold | fmt::fg(color), format, std::forward<Args>(args)...);
+}
+
+void printError(std::string_view message);
+void printError(const juce::String& message);
+
+/// Prints "Error: <message>" in red to stderr, followed by a newline.
+/// Resolves string literals, which would otherwise be ambiguous between the other overloads.
+inline void printError(const char* message)
+{
+    printError(std::string_view {message});
 }
 
 /// Prints green text to stdout.
@@ -74,18 +97,11 @@ void printGreenBold(fmt::format_string<Args...> format, Args&&... args)
     printColorBold(fmt::terminal_color::green, format, std::forward<Args>(args)...);
 }
 
-/// Prints yellow text to stdout.
+/// Prints bold magenta text to stdout.
 template<typename... Args>
-void printYellow(fmt::format_string<Args...> format, Args&&... args)
+void printMagentaBold(fmt::format_string<Args...> format, Args&&... args)
 {
-    printColor(fmt::terminal_color::yellow, format, std::forward<Args>(args)...);
-}
-
-/// Prints bold yellow text to stdout.
-template<typename... Args>
-void printYellowBold(fmt::format_string<Args...> format, Args&&... args)
-{
-    printColorBold(fmt::terminal_color::yellow, format, std::forward<Args>(args)...);
+    printColorBold(fmt::terminal_color::magenta, format, std::forward<Args>(args)...);
 }
 
 /// Prints red text to stdout.
@@ -102,26 +118,7 @@ void printRedBold(fmt::format_string<Args...> format, Args&&... args)
     printColorBold(fmt::terminal_color::red, format, std::forward<Args>(args)...);
 }
 
-/// Prints bold magenta text to stdout.
-template<typename... Args>
-void printMagentaBold(fmt::format_string<Args...> format, Args&&... args)
-{
-    printColorBold(fmt::terminal_color::magenta, format, std::forward<Args>(args)...);
-}
-
-void printError(std::string_view message);
-
-void printError(const juce::String& message);
-
-/// Prints "Error: <message>" in red to stderr, followed by a newline.
-/// Resolves string literals, which would otherwise be ambiguous between the other overloads.
-inline void printError(const char* message)
-{
-    printError(std::string_view {message});
-}
-
 void printWarn(std::string_view message);
-
 void printWarn(const juce::String& message);
 
 /// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
@@ -131,16 +128,18 @@ inline void printWarn(const char* message)
     printWarn(std::string_view {message});
 }
 
-/// Formats a value with a colour for building composite lines,
-/// for example a coloured column inside an otherwise plain row printed to stdout.
-/// Returns the plain text when stdout does not support colour.
-template<utils::Formattable T>
-[[nodiscard]] std::string colored(const T& value, const fmt::terminal_color color)
+/// Prints yellow text to stdout.
+template<typename... Args>
+void printYellow(fmt::format_string<Args...> format, Args&&... args)
 {
-    if (isColorEnabled(stdout)) {
-        return fmt::format(fmt::fg(color), "{}", value);
-    }
-
-    return fmt::format("{}", value);
+    printColor(fmt::terminal_color::yellow, format, std::forward<Args>(args)...);
 }
+
+/// Prints bold yellow text to stdout.
+template<typename... Args>
+void printYellowBold(fmt::format_string<Args...> format, Args&&... args)
+{
+    printColorBold(fmt::terminal_color::yellow, format, std::forward<Args>(args)...);
+}
+
 }  // namespace audiobatch::console

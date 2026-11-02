@@ -104,303 +104,310 @@ public:
     /// Registers the portable GUI slice through its explicit factory.
     SeratoPreviewTests() : juce::UnitTest("Serato preview presentation", "AudioBatch") {}
 
-    /// Checks the arrow placement, colour, projection, clipping, resets and info-field precedence.
-    void runTest() override
-    {
-        testCueArrows();
-        testCueReset();
-        testOverloadMarks();
-        testHotCueKeys();
-        testTrackInfo();
-    }
+    void runTest() override;
 
 private:
-    /// Checks the cue arrow placement at full view, zoom and pan, and that only the cues and the viewport move it.
-    void testCueArrows()
-    {
-        beginTest("Cue arrows hang from both waveform edges, opaque and independent of gain and channels");
-        juce::AudioFormatManager formats;
-        AudioPreviewPlayer transport;
-        ThumbnailComponent thumbnail(formats, transport);
-        thumbnail.setSize(previewWidth, previewHeight);
-        const auto colour = juce::Colour(239, 37, 37);
-        auto markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 500, .colour = colour.withAlpha(0.5f), .name = "Test cue"});
+    void testCueArrows();
+    void testCueReset();
+    void testHotCueKeys();
+    void testOverloadMarks();
+    void testTrackInfo();
+};
 
-        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
-        expect(thumbnail.getCueArrows().empty());
-        thumbnail.setSeratoMarkers(markers);
-        const auto arrows = thumbnail.getCueArrows();
-        expectEquals(static_cast<int>(arrows.size()), 1);
-        if (arrows.size() == 1) {
-            const auto& cue = arrows.front();
-            expect(cue.colour == colour);
-            expectWithinAbsoluteError(cue.horizontalPosition, expectedCuePosition(0.5, {0.0, 1.0}), 0.001f);
-            expectWithinAbsoluteError(cue.top, waveformInset, 0.001f);
-            expectWithinAbsoluteError(cue.bottom, previewHeight - waveformInset, 0.001f);
-            expectWithinAbsoluteError(cue.height, layout::waveform::cueArrowHeight, 0.001f);
-            expectWithinAbsoluteError(cue.halfWidth, layout::waveform::cueArrowWidth / 2.0f, 0.001f);
-            // The arrows stay near the edges, so they never cover the middle of the waveform.
-            expect(cue.height <= (cue.bottom - cue.top) / 4.0f);
-        }
+/// Checks the arrow placement, colour, projection, clipping, resets and info-field precedence.
+void SeratoPreviewTests::runTest()
+{
+    testCueArrows();
+    testCueReset();
+    testOverloadMarks();
+    testHotCueKeys();
+    testTrackInfo();
+}
 
-        for (const int channels : {1, 2}) {
-            expect(thumbnail.loadFromCacheData(previewPeaks(formats, channels)));
-            thumbnail.setSeratoMarkers(markers);
-            for (const float gain : {0.0f, 1.0f, 4.0f}) {
-                thumbnail.setDisplayGain(gain);
-                expect(sameArrows(thumbnail.getCueArrows(), arrows), utils::format("{} channels", channels));
-            }
-        }
-        thumbnail.setDisplayGain(1.0f);
+/// Checks the cue arrow placement at full view, zoom and pan, and that only the cues and the viewport move it.
+void SeratoPreviewTests::testCueArrows()
+{
+    beginTest("Cue arrows hang from both waveform edges, opaque and independent of gain and channels");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(previewWidth, previewHeight);
+    const auto colour = juce::Colour(239, 37, 37);
+    auto markers = std::make_shared<serato::Markers>();
+    markers->cues.push_back({.positionMilliseconds = 500, .colour = colour.withAlpha(0.5f), .name = "Test cue"});
 
-        beginTest("Cue arrows shrink on a short waveform and keep their proportions");
-        thumbnail.setSize(previewWidth, 20);
-        const auto shortArrows = thumbnail.getCueArrows();
-        expectEquals(static_cast<int>(shortArrows.size()), 1);
-        if (shortArrows.size() == 1) {
-            const auto& cue = shortArrows.front();
-            expectWithinAbsoluteError(cue.height, (cue.bottom - cue.top) / 4.0f, 0.001f);
-            expectWithinAbsoluteError(
-                cue.halfWidth * 2.0f / cue.height,
-                layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight,
-                0.001f
-            );
-        }
-        thumbnail.setSize(previewWidth, previewHeight);
-
-        beginTest("Millisecond cues stay aligned through zoom and pan, and cues outside the view have no arrows");
-        for (const auto range : {juce::Range(0.25, 0.75), juce::Range(0.4, 0.9), juce::Range(-0.25, 0.75)}) {
-            thumbnail.setRange(range);
-            const auto zoomed = thumbnail.getCueArrows();
-            expectEquals(static_cast<int>(zoomed.size()), 1);
-            if (!zoomed.empty()) {
-                expectWithinAbsoluteError(zoomed.front().horizontalPosition, expectedCuePosition(0.5, range), 0.001f);
-            }
-        }
-        thumbnail.setRange({0.6, 1.1});
-        expect(thumbnail.getCueArrows().empty());
-        markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 1500, .colour = colour, .name = "Beyond track"});
-        thumbnail.setSeratoMarkers(markers);
-        thumbnail.setRange({0.0, 2.0});
-        expect(thumbnail.getCueArrows().empty());
-
-        beginTest("Cue arrows do not depend on the Overview colouring");
-        markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 500, .colour = colour, .name = {}});
-        thumbnail.setSeratoMarkers(markers);
-        thumbnail.setRange({0.0, 1.0});
-        const auto withoutOverview = thumbnail.getCueArrows();
-        const auto overview = std::make_shared<serato::Overview>();
-        std::array<std::uint8_t, serato::Overview::bandCount> slice {};
-        slice.fill(30);
-        overview->slices.push_back(slice);
-        thumbnail.setSeratoOverview(overview);
-        expectEquals(static_cast<int>(withoutOverview.size()), 1);
-        expect(sameArrows(thumbnail.getCueArrows(), withoutOverview));
-        thumbnail.setSeratoOverview({});
-        thumbnail.setRange({});
-        expect(thumbnail.getCueArrows().empty());
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+    expect(thumbnail.getCueArrows().empty());
+    thumbnail.setSeratoMarkers(markers);
+    const auto arrows = thumbnail.getCueArrows();
+    expectEquals(static_cast<int>(arrows.size()), 1);
+    if (arrows.size() == 1) {
+        const auto& cue = arrows.front();
+        expect(cue.colour == colour);
+        expectWithinAbsoluteError(cue.horizontalPosition, expectedCuePosition(0.5, {0.0, 1.0}), 0.001f);
+        expectWithinAbsoluteError(cue.top, waveformInset, 0.001f);
+        expectWithinAbsoluteError(cue.bottom, previewHeight - waveformInset, 0.001f);
+        expectWithinAbsoluteError(cue.height, layout::waveform::cueArrowHeight, 0.001f);
+        expectWithinAbsoluteError(cue.halfWidth, layout::waveform::cueArrowWidth / 2.0f, 0.001f);
+        // The arrows stay near the edges, so they never cover the middle of the waveform.
+        expect(cue.height <= (cue.bottom - cue.top) / 4.0f);
     }
 
-    /// Checks overload mark lanes, kinds, minimum width, gain independence, and reset with the waveform.
-    void testOverloadMarks()
-    {
-        beginTest("Overload marks follow the channel lanes and their kind, independent of gain");
-        juce::AudioFormatManager formats;
-        AudioPreviewPlayer transport;
-        ThumbnailComponent thumbnail(formats, transport);
-        thumbnail.setSize(previewWidth, previewHeight);
-        // One second at 8192 Hz in ten blocks of 819 frames and a final partial one, like the generated peaks.
-        constexpr double sampleRate {8192.0};
-        const auto blockSize = overloadBlockSize(sampleRate);
-        OverloadHistoryBuilder builder(2, sampleRate, 8192, blockSize);
-        for (int block = 0; block < 11; ++block) {
-            std::array<std::uint8_t, 2> flags {};
-            if (block == 2) {
-                flags[0] = OverloadHistory::sampleOver | OverloadHistory::truePeakOver;
-            }
-            if (block == 6) {
-                flags[1] = OverloadHistory::truePeakOver;
-            }
-            builder.addBlock(flags);
+    for (const int channels : {1, 2}) {
+        expect(thumbnail.loadFromCacheData(previewPeaks(formats, channels)));
+        thumbnail.setSeratoMarkers(markers);
+        for (const float gain : {0.0f, 1.0f, 4.0f}) {
+            thumbnail.setDisplayGain(gain);
+            expect(sameArrows(thumbnail.getCueArrows(), arrows), utils::format("{} channels", channels));
         }
-        const auto history = builder.finish();
+    }
+    thumbnail.setDisplayGain(1.0f);
 
-        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 2)));
+    beginTest("Cue arrows shrink on a short waveform and keep their proportions");
+    thumbnail.setSize(previewWidth, 20);
+    const auto shortArrows = thumbnail.getCueArrows();
+    expectEquals(static_cast<int>(shortArrows.size()), 1);
+    if (shortArrows.size() == 1) {
+        const auto& cue = shortArrows.front();
+        expectWithinAbsoluteError(cue.height, (cue.bottom - cue.top) / 4.0f, 0.001f);
+        expectWithinAbsoluteError(
+            cue.halfWidth * 2.0f / cue.height,
+            layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight,
+            0.001f
+        );
+    }
+    thumbnail.setSize(previewWidth, previewHeight);
+
+    beginTest("Millisecond cues stay aligned through zoom and pan, and cues outside the view have no arrows");
+    for (const auto range : {juce::Range(0.25, 0.75), juce::Range(0.4, 0.9), juce::Range(-0.25, 0.75)}) {
+        thumbnail.setRange(range);
+        const auto zoomed = thumbnail.getCueArrows();
+        expectEquals(static_cast<int>(zoomed.size()), 1);
+        if (!zoomed.empty()) {
+            expectWithinAbsoluteError(zoomed.front().horizontalPosition, expectedCuePosition(0.5, range), 0.001f);
+        }
+    }
+    thumbnail.setRange({0.6, 1.1});
+    expect(thumbnail.getCueArrows().empty());
+    markers = std::make_shared<serato::Markers>();
+    markers->cues.push_back({.positionMilliseconds = 1500, .colour = colour, .name = "Beyond track"});
+    thumbnail.setSeratoMarkers(markers);
+    thumbnail.setRange({0.0, 2.0});
+    expect(thumbnail.getCueArrows().empty());
+
+    beginTest("Cue arrows do not depend on the Overview colouring");
+    markers = std::make_shared<serato::Markers>();
+    markers->cues.push_back({.positionMilliseconds = 500, .colour = colour, .name = {}});
+    thumbnail.setSeratoMarkers(markers);
+    thumbnail.setRange({0.0, 1.0});
+    const auto withoutOverview = thumbnail.getCueArrows();
+    const auto overview = std::make_shared<serato::Overview>();
+    std::array<std::uint8_t, serato::Overview::bandCount> slice {};
+    slice.fill(30);
+    overview->slices.push_back(slice);
+    thumbnail.setSeratoOverview(overview);
+    expectEquals(static_cast<int>(withoutOverview.size()), 1);
+    expect(sameArrows(thumbnail.getCueArrows(), withoutOverview));
+    thumbnail.setSeratoOverview({});
+    thumbnail.setRange({});
+    expect(thumbnail.getCueArrows().empty());
+}
+
+/// Ensures neither a new cached source nor a failed or cleared source retains the previous file's cues.
+void SeratoPreviewTests::testCueReset()
+{
+    beginTest("Cached source replacement, explicit reset and empty URL remove old cues");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(previewWidth, previewHeight);
+    const auto peaks = previewPeaks(formats, 1);
+    const auto markers = std::make_shared<serato::Markers>();
+    markers->cues.push_back({.positionMilliseconds = 500, .colour = juce::Colours::red, .name = {}});
+    expect(thumbnail.loadFromCacheData(peaks));
+    thumbnail.setSeratoMarkers(markers);
+    expectEquals(static_cast<int>(thumbnail.getCueArrows().size()), 1);
+    expect(thumbnail.loadFromCacheData(peaks));
+    expect(thumbnail.getCueArrows().empty());
+    thumbnail.setSeratoMarkers(markers);
+    thumbnail.setSeratoMarkers({});
+    expect(thumbnail.getCueArrows().empty());
+    thumbnail.setSeratoMarkers(markers);
+    thumbnail.setURL({});
+    expect(thumbnail.getCueArrows().empty());
+    expect(!thumbnail.loadFromCacheData({}));
+}
+
+/// Maps the number keys to Serato hot cue slots and leaves other keys to the parent component.
+void SeratoPreviewTests::testHotCueKeys()
+{
+    beginTest("Number keys jump to their Serato hot cue slot and other keys pass through");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    expect(transport.load(juce::URL(fixtureFile("silence_stereo_44100_16.wav"))));
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(260, 104);
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+    const auto markers = std::make_shared<serato::Markers>();
+    markers->cues.push_back({.positionMilliseconds = 250, .index = 0, .colour = juce::Colours::red, .name = {}});
+    markers->cues.push_back({.positionMilliseconds = 750, .index = 2, .colour = juce::Colours::green, .name = {}});
+    thumbnail.setSeratoMarkers(markers);
+
+    expect(thumbnail.keyPressed(juce::KeyPress('3', juce::ModifierKeys::noModifiers, '3')));
+    expectWithinAbsoluteError(transport.getCurrentPosition(), 0.75, 0.001);
+    expect(thumbnail.keyPressed(juce::KeyPress('1', juce::ModifierKeys::noModifiers, '1')));
+    expectWithinAbsoluteError(transport.getCurrentPosition(), 0.25, 0.001);
+    transport.stop();
+    transport.setPosition(0.5);
+    expect(thumbnail.keyPressed(juce::KeyPress('2', juce::ModifierKeys::noModifiers, '2')));
+    expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
+    expect(!thumbnail.keyPressed(juce::KeyPress('9', juce::ModifierKeys::noModifiers, '9')));
+    expect(!thumbnail.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers, ' ')));
+    expect(!thumbnail.keyPressed(juce::KeyPress('1', juce::ModifierKeys::commandModifier, '1')));
+    expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
+
+    transport.stop();
+    transport.release();
+}
+
+/// Checks overload mark lanes, kinds, minimum width, gain independence, and reset with the waveform.
+void SeratoPreviewTests::testOverloadMarks()
+{
+    beginTest("Overload marks follow the channel lanes and their kind, independent of gain");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(previewWidth, previewHeight);
+    // One second at 8192 Hz in ten blocks of 819 frames and a final partial one, like the generated peaks.
+    constexpr double sampleRate {8192.0};
+    const auto blockSize = overloadBlockSize(sampleRate);
+    OverloadHistoryBuilder builder(2, sampleRate, 8192, blockSize);
+    for (int block = 0; block < 11; ++block) {
+        std::array<std::uint8_t, 2> flags {};
+        if (block == 2) {
+            flags[0] = OverloadHistory::sampleOver | OverloadHistory::truePeakOver;
+        }
+        if (block == 6) {
+            flags[1] = OverloadHistory::truePeakOver;
+        }
+        builder.addBlock(flags);
+    }
+    const auto history = builder.finish();
+
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 2)));
+    expect(thumbnail.getOverloadMarks().empty());
+    thumbnail.setOverloadHistory(history);
+    const auto marks = thumbnail.getOverloadMarks();
+    constexpr auto laneHeight = (previewHeight - 2.0f * waveformInset) / 2.0f;
+    const auto inLane
+        = [](const OverloadMark& mark, const float top) { return juce::approximatelyEqual(mark.laneTop, top); };
+    const auto solid
+        = std::ranges::find_if(marks, [&](const auto& mark) { return mark.sampleOver && inLane(mark, waveformInset); });
+    expect(solid != marks.end());
+    if (solid != marks.end()) {
+        expectWithinAbsoluteError(solid->laneBottom, waveformInset + laneHeight, 0.001f);
+        const auto blockSeconds = static_cast<double>(blockSize) / sampleRate;
+        expectWithinAbsoluteError(
+            solid->horizontal.getStart(), expectedCuePosition(2 * blockSeconds, {0.0, 1.0}), 1.0f
+        );
+    }
+    expect(std::ranges::none_of(marks, [&](const auto& mark) {
+        return mark.sampleOver && inLane(mark, waveformInset + laneHeight);
+    }));
+    expect(std::ranges::any_of(marks, [&](const auto& mark) {
+        return !mark.sampleOver && inLane(mark, waveformInset + laneHeight);
+    }));
+    // The true peak coverage of the filter delay reaches at most a column before the solid run.
+    expect(std::ranges::all_of(marks, [&](const auto& mark) {
+        return mark.sampleOver || !inLane(mark, waveformInset) || solid == marks.end()
+            || mark.horizontal.getEnd() <= solid->horizontal.getEnd();
+    }));
+    thumbnail.setDisplayGain(4.0f);
+    expectEquals(thumbnail.getOverloadMarks().size(), marks.size());
+
+    beginTest("A short overload keeps the minimum mark width when zoomed out");
+    {
+        OverloadHistoryBuilder shortBuilder(2, sampleRate, 8192, blockSize);
+        for (int block = 0; block < 11; ++block) {
+            shortBuilder.addBlock(
+                std::array<std::uint8_t, 2> {
+                    static_cast<std::uint8_t>(block == 10 ? OverloadHistory::sampleOver : 0),
+                    0,
+                }
+            );
+        }
+        thumbnail.setOverloadHistory(shortBuilder.finish());
+        const auto shortMarks = thumbnail.getOverloadMarks();
+        expectEquals(static_cast<int>(shortMarks.size()), 1);
+        if (!shortMarks.empty()) {
+            expect(shortMarks.front().horizontal.getLength() >= layout::waveform::overloadMinimumWidth);
+        }
+    }
+
+    beginTest("An all-clear history, a mismatched channel count, and a new waveform show no marks");
+    {
+        OverloadHistoryBuilder clearBuilder(2, sampleRate, 8192, blockSize);
+        for (int block = 0; block < 11; ++block) {
+            clearBuilder.addBlock(std::array<std::uint8_t, 2> {});
+        }
+        thumbnail.setOverloadHistory(clearBuilder.finish());
+        expect(thumbnail.getOverloadMarks().empty());
+        expect(thumbnail.getTooltip().isEmpty());
+        thumbnail.setOverloadHistory(history);
+        expect(thumbnail.getTooltip().isNotEmpty());
+        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
         expect(thumbnail.getOverloadMarks().empty());
         thumbnail.setOverloadHistory(history);
-        const auto marks = thumbnail.getOverloadMarks();
-        constexpr auto laneHeight = (previewHeight - 2.0f * waveformInset) / 2.0f;
-        const auto inLane
-            = [](const OverloadMark& mark, const float top) { return juce::approximatelyEqual(mark.laneTop, top); };
-        const auto solid = std::ranges::find_if(marks, [&](const auto& mark) {
-            return mark.sampleOver && inLane(mark, waveformInset);
-        });
-        expect(solid != marks.end());
-        if (solid != marks.end()) {
-            expectWithinAbsoluteError(solid->laneBottom, waveformInset + laneHeight, 0.001f);
-            const auto blockSeconds = static_cast<double>(blockSize) / sampleRate;
-            expectWithinAbsoluteError(
-                solid->horizontal.getStart(), expectedCuePosition(2 * blockSeconds, {0.0, 1.0}), 1.0f
-            );
-        }
-        expect(std::ranges::none_of(marks, [&](const auto& mark) {
-            return mark.sampleOver && inLane(mark, waveformInset + laneHeight);
-        }));
-        expect(std::ranges::any_of(marks, [&](const auto& mark) {
-            return !mark.sampleOver && inLane(mark, waveformInset + laneHeight);
-        }));
-        // The true peak coverage of the filter delay reaches at most a column before the solid run.
-        expect(std::ranges::all_of(marks, [&](const auto& mark) {
-            return mark.sampleOver || !inLane(mark, waveformInset) || solid == marks.end()
-                || mark.horizontal.getEnd() <= solid->horizontal.getEnd();
-        }));
-        thumbnail.setDisplayGain(4.0f);
-        expectEquals(thumbnail.getOverloadMarks().size(), marks.size());
-
-        beginTest("A short overload keeps the minimum mark width when zoomed out");
-        {
-            OverloadHistoryBuilder shortBuilder(2, sampleRate, 8192, blockSize);
-            for (int block = 0; block < 11; ++block) {
-                shortBuilder.addBlock(
-                    std::array<std::uint8_t, 2> {
-                        static_cast<std::uint8_t>(block == 10 ? OverloadHistory::sampleOver : 0),
-                        0,
-                    }
-                );
-            }
-            thumbnail.setOverloadHistory(shortBuilder.finish());
-            const auto shortMarks = thumbnail.getOverloadMarks();
-            expectEquals(static_cast<int>(shortMarks.size()), 1);
-            if (!shortMarks.empty()) {
-                expect(shortMarks.front().horizontal.getLength() >= layout::waveform::overloadMinimumWidth);
-            }
-        }
-
-        beginTest("An all-clear history, a mismatched channel count, and a new waveform show no marks");
-        {
-            OverloadHistoryBuilder clearBuilder(2, sampleRate, 8192, blockSize);
-            for (int block = 0; block < 11; ++block) {
-                clearBuilder.addBlock(std::array<std::uint8_t, 2> {});
-            }
-            thumbnail.setOverloadHistory(clearBuilder.finish());
-            expect(thumbnail.getOverloadMarks().empty());
-            expect(thumbnail.getTooltip().isEmpty());
-            thumbnail.setOverloadHistory(history);
-            expect(thumbnail.getTooltip().isNotEmpty());
-            expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
-            expect(thumbnail.getOverloadMarks().empty());
-            thumbnail.setOverloadHistory(history);
-            expect(thumbnail.getOverloadMarks().empty());
-        }
+        expect(thumbnail.getOverloadMarks().empty());
     }
+}
 
-    /// Ensures neither a new cached source nor a failed or cleared source retains the previous file's cues.
-    void testCueReset()
-    {
-        beginTest("Cached source replacement, explicit reset and empty URL remove old cues");
-        juce::AudioFormatManager formats;
-        AudioPreviewPlayer transport;
-        ThumbnailComponent thumbnail(formats, transport);
-        thumbnail.setSize(previewWidth, previewHeight);
-        const auto peaks = previewPeaks(formats, 1);
-        const auto markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 500, .colour = juce::Colours::red, .name = {}});
-        expect(thumbnail.loadFromCacheData(peaks));
-        thumbnail.setSeratoMarkers(markers);
-        expectEquals(static_cast<int>(thumbnail.getCueArrows().size()), 1);
-        expect(thumbnail.loadFromCacheData(peaks));
-        expect(thumbnail.getCueArrows().empty());
-        thumbnail.setSeratoMarkers(markers);
-        thumbnail.setSeratoMarkers({});
-        expect(thumbnail.getCueArrows().empty());
-        thumbnail.setSeratoMarkers(markers);
-        thumbnail.setURL({});
-        expect(thumbnail.getCueArrows().empty());
-        expect(!thumbnail.loadFromCacheData({}));
-    }
+/// Shows metadata only when available, preserving it during pending/failed analysis and clearing it on replacement.
+void SeratoPreviewTests::testTrackInfo()
+{
+    beginTest("Autotags tempo takes precedence, standard key stays independent and absent fields disappear");
+    AudioInfoPanel panel;
+    panel.setSize(320, 400);
+    AudioAnalysisRecord record;
+    record.status = AudioAnalysisStatus::analyzed;
+    serato::SeratoData data;
+    data.autotags = serato::Autotags {.bpm = 128.25};
+    data.trackInfo = makeTrackInfo(130.0, "8A");
+    panel.showRecord(record, {}, &data);
+    expectEquals(panelValue(panel, "BPM"), juce::String("128.25"));
+    expectEquals(panelValue(panel, "Key"), juce::String("8A"));
+    data.autotags.reset();
+    panel.showRecord(record, {}, &data);
+    expectEquals(panelValue(panel, "BPM"), juce::String("130.00"));
+    data.trackInfo->bpm.reset();
+    panel.showRecord(record, {}, &data);
+    expect(panelValue(panel, "BPM").isEmpty());
+    expectEquals(panelValue(panel, "Key"), juce::String("8A"));
+    data.trackInfo.reset();
+    data.beatGrid = serato::BeatGrid {.markers = {{.bpm = 96.5}}};
+    panel.showRecord(record, {}, &data);
+    expectEquals(panelValue(panel, "BPM"), juce::String("96.50"));
+    expect(panelValue(panel, "Key").isEmpty());
+    panel.showRecord(record, {});
+    expect(panelValue(panel, "BPM").isEmpty());
 
-    /// Maps the number keys to Serato hot cue slots and leaves other keys to the parent component.
-    void testHotCueKeys()
-    {
-        beginTest("Number keys jump to their Serato hot cue slot and other keys pass through");
-        juce::AudioFormatManager formats;
-        AudioPreviewPlayer transport;
-        expect(transport.load(juce::URL(fixtureFile("silence_stereo_44100_16.wav"))));
-        ThumbnailComponent thumbnail(formats, transport);
-        thumbnail.setSize(260, 104);
-        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
-        const auto markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 250, .index = 0, .colour = juce::Colours::red, .name = {}});
-        markers->cues.push_back({.positionMilliseconds = 750, .index = 2, .colour = juce::Colours::green, .name = {}});
-        thumbnail.setSeratoMarkers(markers);
-
-        expect(thumbnail.keyPressed(juce::KeyPress('3', juce::ModifierKeys::noModifiers, '3')));
-        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.75, 0.001);
-        expect(thumbnail.keyPressed(juce::KeyPress('1', juce::ModifierKeys::noModifiers, '1')));
-        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.25, 0.001);
-        transport.stop();
-        transport.setPosition(0.5);
-        expect(thumbnail.keyPressed(juce::KeyPress('2', juce::ModifierKeys::noModifiers, '2')));
-        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
-        expect(!thumbnail.keyPressed(juce::KeyPress('9', juce::ModifierKeys::noModifiers, '9')));
-        expect(!thumbnail.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers, ' ')));
-        expect(!thumbnail.keyPressed(juce::KeyPress('1', juce::ModifierKeys::commandModifier, '1')));
-        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
-
-        transport.stop();
-        transport.release();
-    }
-
-    /// Shows metadata only when available, preserving it during pending/failed analysis and clearing it on replacement.
-    void testTrackInfo()
-    {
-        beginTest("Autotags tempo takes precedence, standard key stays independent and absent fields disappear");
-        AudioInfoPanel panel;
-        panel.setSize(320, 400);
-        AudioAnalysisRecord record;
-        record.status = AudioAnalysisStatus::analyzed;
-        serato::SeratoData data;
-        data.autotags = serato::Autotags {.bpm = 128.25};
-        data.trackInfo = makeTrackInfo(130.0, "8A");
-        panel.showRecord(record, {}, &data);
-        expectEquals(panelValue(panel, "BPM"), juce::String("128.25"));
-        expectEquals(panelValue(panel, "Key"), juce::String("8A"));
-        data.autotags.reset();
-        panel.showRecord(record, {}, &data);
-        expectEquals(panelValue(panel, "BPM"), juce::String("130.00"));
-        data.trackInfo->bpm.reset();
-        panel.showRecord(record, {}, &data);
-        expect(panelValue(panel, "BPM").isEmpty());
-        expectEquals(panelValue(panel, "Key"), juce::String("8A"));
-        data.trackInfo.reset();
-        data.beatGrid = serato::BeatGrid {.markers = {{.bpm = 96.5}}};
-        panel.showRecord(record, {}, &data);
-        expectEquals(panelValue(panel, "BPM"), juce::String("96.50"));
-        expect(panelValue(panel, "Key").isEmpty());
-        panel.showRecord(record, {});
-        expect(panelValue(panel, "BPM").isEmpty());
-
-        beginTest("Musical metadata survives pending or failed analysis without treating Analysis version as key");
-        data.beatGrid.reset();
-        data.trackInfo = makeTrackInfo(92.0, "F minor");
-        record.status = AudioAnalysisStatus::pending;
-        panel.showRecord(record, "Analyzing", &data);
-        expectEquals(panelValue(panel, "BPM"), juce::String("92.00"));
-        expectEquals(panelValue(panel, "Key"), juce::String("F minor"));
-        record.status = AudioAnalysisStatus::failed;
-        panel.showRecord(record, {}, &data);
-        expectEquals(panelValue(panel, "Key"), juce::String("F minor"));
-        data.trackInfo.reset();
-        data.analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5};
-        panel.showRecord(record, {}, &data);
-        expect(panelValue(panel, "Key").isEmpty());
-        panel.clear();
-        expect(panelValue(panel, "BPM").isEmpty());
-    }
-};
+    beginTest("Musical metadata survives pending or failed analysis without treating Analysis version as key");
+    data.beatGrid.reset();
+    data.trackInfo = makeTrackInfo(92.0, "F minor");
+    record.status = AudioAnalysisStatus::pending;
+    panel.showRecord(record, "Analyzing", &data);
+    expectEquals(panelValue(panel, "BPM"), juce::String("92.00"));
+    expectEquals(panelValue(panel, "Key"), juce::String("F minor"));
+    record.status = AudioAnalysisStatus::failed;
+    panel.showRecord(record, {}, &data);
+    expectEquals(panelValue(panel, "Key"), juce::String("F minor"));
+    data.trackInfo.reset();
+    data.analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5};
+    panel.showRecord(record, {}, &data);
+    expect(panelValue(panel, "Key").isEmpty());
+    panel.clear();
+    expect(panelValue(panel, "BPM").isEmpty());
+}
 
 /// Constructs the synthetic cue and track-info presentation suite.
 std::unique_ptr<juce::UnitTest> createSeratoPreviewTests()

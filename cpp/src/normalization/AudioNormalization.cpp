@@ -59,10 +59,10 @@ struct NormalizationSource {
 
 /// Prepared destination and source metadata used while assigning deterministic output ownership.
 struct OutputCandidate {
-    /// Non-owning record from the caller's vector, valid for the duration of conflict detection.
-    const AudioAnalysisRecord* record {};
     /// Destination the normalized file is written to.
     juce::File output;
+    /// Non-owning record from the caller's vector, valid for the duration of conflict detection.
+    const AudioAnalysisRecord* record {};
     /// True when the destination is the source file itself.
     bool inPlace {};
 };
@@ -285,7 +285,7 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
     auto ordered = records | std::views::transform([](const AudioAnalysisRecord& record) {
                        auto output = getNormalizationOutputFile(record.file);
                        const auto inPlace = output == record.file;
-                       return OutputCandidate {.record = &record, .output = std::move(output), .inPlace = inPlace};
+                       return OutputCandidate {.output = std::move(output), .record = &record, .inPlace = inPlace};
                    })
         | std::ranges::to<std::vector>();
 

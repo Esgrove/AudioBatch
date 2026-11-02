@@ -30,6 +30,7 @@ struct PreviewEnrichmentCandidate {
 
 /// Independent artifact delivery for the currently selected source.
 struct PreviewEnrichmentResult {
+    // Keep delivery's designated aggregate contract in identity/generation/artifact order.
     utils::FileIdentity identity;
     std::uint64_t selectionGeneration {0};
     std::uint64_t loadGeneration {0};
@@ -50,25 +51,28 @@ public:
     using Work = std::function<void(const PreviewEnrichmentCandidate&, bool, const utils::CancellationCheck&)>;
 
     PreviewEnrichmentScheduler(const juce::File& databaseFile, Completion completion, Work work = {});
+
     ~PreviewEnrichmentScheduler();
+
     PreviewEnrichmentScheduler(const PreviewEnrichmentScheduler&) = delete;
     PreviewEnrichmentScheduler& operator=(const PreviewEnrichmentScheduler&) = delete;
     PreviewEnrichmentScheduler(PreviewEnrichmentScheduler&&) = delete;
     PreviewEnrichmentScheduler& operator=(PreviewEnrichmentScheduler&&) = delete;
 
+    [[nodiscard]] bool isCurrentLoad(std::uint64_t generation) const;
+
     void beginForeground();
-    void completeForeground(std::vector<PreviewEnrichmentCandidate> candidates);
-    void select(const utils::FileIdentity& identity, std::uint64_t selectionGeneration);
-    void clearSelection();
-    void remove(const juce::StringArray& paths);
     void clear();
-    void stop();
-    void storeCustomGains(std::vector<CustomGainUpdate> updates);
+    void clearSelection();
+    void completeForeground(std::vector<PreviewEnrichmentCandidate> candidates);
     void persistOperation(
         AudioAnalysisRecord output,
         std::optional<AudioAnalysisRecord> convertedSource = std::nullopt
     );
-    [[nodiscard]] bool isCurrentLoad(std::uint64_t generation) const;
+    void remove(const juce::StringArray& paths);
+    void select(const utils::FileIdentity& identity, std::uint64_t selectionGeneration);
+    void stop();
+    void storeCustomGains(std::vector<CustomGainUpdate> updates);
 
 private:
     std::shared_ptr<PreviewEnrichmentState> state;

@@ -33,6 +33,8 @@
 
 namespace audiobatch::tests
 {
+namespace
+{
 /// A fixed-point reader whose reads write integer samples and then report a failure,
 /// like a decoder that fails part way through a block.
 class FailingFixedPointReader final : public juce::AudioFormatReader
@@ -68,585 +70,749 @@ public:
     }
 };
 
+}  // namespace
+
 /// Checks the generic file, format, and cancellation helpers.
 class UtilsTests final : public juce::UnitTest
 {
 public:
     UtilsTests() : juce::UnitTest("Shared helpers", "AudioBatch") {}
 
-    /// Runs the helper checks.
-    void runTest() override
-    {
-        const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
-
-        beginTest("Startup flags recognize complete options and their short aliases");
-        {
-            expect(utils::isVersionRequest("--version"));
-            expect(utils::isVersionRequest("-V"));
-            expect(!utils::isVersionRequest({}));
-            expect(!utils::isVersionRequest("--versions"));
-            expect(!utils::isVersionRequest("track--version.wav"));
-            expect(!utils::isVersionRequest("--headless"));
-            expect(utils::isHeadlessRequest("--headless"));
-            expect(utils::isHeadlessRequest("-H"));
-            expect(!utils::isHeadlessRequest({}));
-            expect(!utils::isHeadlessRequest("--headless-mode"));
-            expect(!utils::isHeadlessRequest("track--headless.wav"));
-            expect(!utils::isHeadlessRequest("--version"));
-        }
-
-        beginTest("Path arguments skip options and resolve against the working directory");
-        {
-            const auto workingDirectory = juce::File::getCurrentWorkingDirectory();
-            const auto absoluteFolder = root.getChildFile("AudioBatch path arguments").getFullPathName();
-            const auto paths = utils::getPathArguments(
-                utils::format("--headless track.wav {} -psn_0_12345 track.wav", absoluteFolder.quoted())
-            );
-
-            expectEquals(paths.size(), 2);
-            expectEquals(paths[0], workingDirectory.getChildFile("track.wav").getFullPathName());
-            expectEquals(paths[1], absoluteFolder);
-            expect(utils::getPathArguments({}).isEmpty());
-            expect(utils::getPathArguments("--headless -V").isEmpty());
-        }
-
-        beginTest("System information retains indented details without padding one-line messages");
-        {
-            const ScopedLogCapture capture;
-            utils::logSystemInfo();
-            utils::logInfo("Processing log check");
-            const auto messages = capture.getMessages();
-            expect(messages.size() >= 3);
-            if (messages.size() >= 3) {
-                expect(messages[0].contains("[INFO]: System info\n    AudioBatch"), messages[0]);
-                for (int index = 1; index < messages.size() - 1; ++index) {
-                    expect(messages[index].startsWith("    "), messages[index]);
-                }
-                expect(messages[messages.size() - 1].endsWith("[INFO]: Processing log check"));
-            }
-        }
-
-        beginTest("Extensions are lowercased without the leading dot");
-        {
-            expectEquals(utils::normalizeExtension(" .MP3 "), juce::String("mp3"));
-            expectEquals(utils::fileExtension(root.getChildFile("Song.AIFF")), juce::String("aiff"));
-            expectEquals(utils::fileExtension(root.getChildFile("no_extension")), juce::String());
-        }
-
-        runFolderGroupingTests(root);
-
-        beginTest("Audio file types are recognised by extension");
-        {
-            expect(utils::isMp3File(root.getChildFile("a.MP3")));
-            expect(!utils::isMp3File(root.getChildFile("a.mp4")));
-            expect(utils::isAiffFile(root.getChildFile("a.aif")));
-            expect(utils::isAiffFile(root.getChildFile("a.aifc")));
-            expect(!utils::isAiffFile(root.getChildFile("a.wav")));
-            expect(utils::isWavFile(root.getChildFile("a.WAVE")));
-        }
-
-        beginTest("The AIFF writer and metadata conversion are available");
-        {
-            expect(utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr);
-
-            juce::StringPairArray metadata;
-            metadata.set("MetaDataSource", "AIFF");
-            metadata.set("key", "value");
-            expect(utils::aiffWriterMetadata(metadata).contains("key"));
-
-            metadata.set("MetaDataSource", "WAV");
-            expect(utils::aiffWriterMetadata(metadata).empty());
-            expectEquals(utils::peakMagnitude(-0.5f), 0.5f);
-        }
-
-        runWrittenAudioValidationTests(root);
-
-        beginTest("A temporary output replaces its source in place");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("old"));
-
-            const utils::OutputTemporaryFile temporaryFile(source);
-            expect(temporaryFile.getFile().replaceWithText("new"));
-
-            expect(
-                utils::commitTemporaryOutput(temporaryFile, source, source, false, utils::FileIdentity(source))
-                    .has_value()
-            );
-            expectEquals(source.loadFileAsString(), juce::String("new"));
-        }
-
-        beginTest("A temporary output never replaces an unrelated file without overwrite");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            expect(output.replaceWithText("unrelated"));
-
-            const utils::OutputTemporaryFile temporaryFile(output);
-            expect(temporaryFile.getFile().replaceWithText("new"));
-
-            const auto error
-                = utils::commitTemporaryOutput(temporaryFile, source, output, false, utils::FileIdentity(source))
-                      .error_or({});
-            expect(error.contains("already exists"), error);
-            expectEquals(output.loadFileAsString(), juce::String("unrelated"));
-            expectEquals(source.loadFileAsString(), juce::String("source"));
-        }
-
-        beginTest("Force overwrite never trashes a folder at the output path");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            expect(output.createDirectory());
-            const auto keptFile = output.getChildFile("kept.txt");
-            expect(keptFile.replaceWithText("kept"));
-
-            const utils::OutputTemporaryFile temporaryFile(output);
-            expect(temporaryFile.getFile().replaceWithText("new"));
-
-            const auto error
-                = utils::commitTemporaryOutput(temporaryFile, source, output, true, utils::FileIdentity(source))
-                      .error_or({});
-            expect(error.contains("not a file"), error);
-            expect(keptFile.existsAsFile());
-            expectEquals(source.loadFileAsString(), juce::String("source"));
-        }
-
-        beginTest("Force overwrite replaces the existing output and disposes of it and the source");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            expect(output.replaceWithText("previous"));
-
-            const utils::OutputTemporaryFile temporaryFile(output);
-            expect(temporaryFile.getFile().replaceWithText("new"));
-
-            juce::StringArray disposedContents;
-            const auto commit = utils::commitTemporaryOutput(
-                temporaryFile, source, output, true, utils::FileIdentity(source), [&](const juce::File& file) {
-                    disposedContents.add(file.loadFileAsString());
-                    return file.deleteFile();
-                }
-            );
-
-            expect(commit.has_value(), commit.error_or({}));
-            expectEquals(output.loadFileAsString(), juce::String("new"));
-            expect(!source.exists());
-            expectEquals(disposedContents.joinIntoString(","), juce::String("source,previous"));
-            expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
-        }
-
-        beginTest("A forced commit that cannot dispose of the source restores the previous output");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            expect(output.replaceWithText("previous"));
-
-            const utils::OutputTemporaryFile temporaryFile(output);
-            expect(temporaryFile.getFile().replaceWithText("new"));
-
-            const auto error
-                = utils::commitTemporaryOutput(
-                      temporaryFile, source, output, true, utils::FileIdentity(source), [](const juce::File&) {
-                          return false;
-                      }
-                ).error_or({});
-
-            expect(error.contains("original audio file"), error);
-            expectEquals(output.loadFileAsString(), juce::String("previous"));
-            expectEquals(source.loadFileAsString(), juce::String("source"));
-            expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 2);
-        }
-
-        runOutputOwnershipTests();
-        runDisposalTests();
-
-        beginTest("Names match case-insensitively and CSV fields are escaped");
-        {
-            expectEquals(utils::normalizedToken("  JSON "), juce::String("json"));
-            expectEquals(utils::escapeCsvField("plain"), juce::String("plain"));
-            expectEquals(utils::escapeCsvField("a,b"), juce::String(R"("a,b")"));
-            expectEquals(utils::escapeCsvField(R"(say "hi")"), juce::String(R"("say ""hi""")"));
-        }
-
-        beginTest("Display width counts terminal columns");
-        {
-            expectEquals(console::displayWidth("plain"), 5);
-            expectEquals(console::displayWidth(juce::String()), 0);
-            expectEquals(console::displayWidth(juce::String::fromUTF8("\xe6\x97\xa5\xe6\x9c\xac")), 4);
-        }
-
-        beginTest("A message thread call runs directly on the message thread");
-        {
-            bool ran = false;
-            expect(utils::callOnMessageThread([&ran] { ran = true; }, {}));
-            expect(ran);
-        }
-
-        beginTest("A queued message thread call from a worker is abandoned when cancelled");
-        {
-            // The test runs on the message thread and does not dispatch messages,
-            // so the call stays queued until the worker gives up on it.
-            std::atomic<bool> cancelled {false};
-            std::atomic<bool> ran {false};
-            std::atomic<int> outcome {-1};
-
-            std::thread worker([&] {
-                const auto completed
-                    = utils::callOnMessageThread([&ran] { ran = true; }, [&cancelled] { return cancelled.load(); });
-                outcome = completed ? 1 : 0;
-            });
-
-            juce::Thread::sleep(50);
-            cancelled = true;
-            worker.join();
-
-            expectEquals(outcome.load(), 0);
-            expect(!ran.load());
-        }
-
-        beginTest("Values posted from a worker are delivered in one batch, in posting order");
-        {
-            std::vector<std::vector<int>> batches;
-            utils::MessageThreadBatcher<int> batcher([&batches](std::vector<int> batch) {
-                batches.push_back(std::move(batch));
-            });
-
-            // The test runs on the message thread without dispatching messages, so delivery is triggered by hand.
-            batcher.deliverPending();
-            expect(batches.empty());
-
-            std::thread worker([&batcher] {
-                for (int value = 1; value <= 3; ++value) {
-                    batcher.post(value);
-                }
-            });
-            worker.join();
-
-            batcher.deliverPending();
-            batcher.deliverPending();
-            expectEquals(static_cast<int>(batches.size()), 1);
-            expect(!batches.empty() && batches.front() == std::vector {1, 2, 3});
-        }
-
-        beginTest("An exception being handled is described by its message");
-        {
-            try {
-                throw std::runtime_error("worker failure");
-            } catch (...) {
-                expectEquals(utils::describeCurrentException(), juce::String("worker failure"));
-            }
-        }
-
-        beginTest("An empty cancellation check never cancels");
-        {
-            expect(!utils::isCancellationRequested({}));
-            expect(utils::isCancellationRequested([] { return true; }));
-        }
-
-        beginTest("A progress range maps a phase into part of the whole operation");
-        {
-            std::vector<float> reported;
-            const utils::ProgressCallback onProgress
-                = [&reported](const float progress) { reported.push_back(progress); };
-            const auto phase = utils::makeProgressRange(onProgress, 0.2f, 0.6f);
-            phase(0.0f);
-            phase(0.5f);
-            phase(2.0f);
-
-            expectEquals(static_cast<int>(reported.size()), 3);
-            expectWithinAbsoluteError(reported[0], 0.2f, 1.0e-6f);
-            expectWithinAbsoluteError(reported[1], 0.4f, 1.0e-6f);
-            expectWithinAbsoluteError(reported[2], 0.6f, 1.0e-6f);
-            const utils::ProgressCallback noProgress;
-            expect(utils::makeProgressRange(noProgress, 0.0f, 1.0f) == nullptr);
-            expectWithinAbsoluteError(utils::progressFraction(1, 4), 0.25f, 1.0e-6f);
-            expectEquals(utils::progressFraction(0, 0), 1.0f);
-        }
-
-        beginTest("Throttled progress skips small steps but always reports completion");
-        {
-            std::vector<float> reported;
-            const auto onProgress
-                = utils::makeThrottledProgress([&reported](const float progress) { reported.push_back(progress); });
-
-            for (int step = 0; step <= 1000; ++step) {
-                onProgress(static_cast<float>(step) / 1000.0f);
-            }
-
-            expect(!reported.empty());
-            expect(reported.size() < 1000, juce::String(static_cast<int>(reported.size())));
-            expectEquals(reported.back(), 1.0f);
-            expect(std::ranges::is_sorted(reported));
-            for (std::size_t index = 1; index + 1 < reported.size(); ++index) {
-                expectGreaterOrEqual(reported[index] - reported[index - 1], 0.001f);
-            }
-            expect(utils::makeThrottledProgress({}) == nullptr);
-        }
-
-        beginTest("Throttled progress forwards steps of a tenth of a percent");
-        {
-            std::vector<float> reported;
-            const auto onProgress
-                = utils::makeThrottledProgress([&reported](const float progress) { reported.push_back(progress); });
-
-            onProgress(0.0f);
-            // Waits past the minimum interval, so only the size of the step decides what is forwarded.
-            juce::Thread::sleep(60);
-            onProgress(0.0005f);
-            onProgress(0.0015f);
-
-            expectEquals(static_cast<int>(reported.size()), 2);
-            expectEquals(reported.back(), 0.0015f);
-        }
-
-        beginTest("Padded MP3 frames without a frame-count header have an exact readable length");
-        {
-            const TemporaryDirectory temporary;
-            const auto file = temporary.copyFixture("sine_stereo_44100_320k.mp3");
-            juce::MemoryBlock data;
-            expect(file.loadFileAsData(data));
-            const std::span<char> bytes(static_cast<char*>(data.getData()), data.getSize());
-
-            for (const std::string_view marker : {"Info", "Xing"}) {
-                const auto found = std::ranges::search(bytes, marker);
-                if (!found.empty()) {
-                    std::ranges::fill(found, '\0');
-                }
-            }
-
-            expect(file.replaceWithData(data.getData(), data.getSize()));
-            auto reader = utils::createAudioReader(file);
-            expect(reader != nullptr);
-
-            if (reader != nullptr) {
-                expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152 - 529));
-                juce::AudioBuffer<float> buffer(2, 512);
-                for (juce::int64 position = 0; position < reader->lengthInSamples; position += 512) {
-                    const auto samples
-                        = static_cast<int>(juce::jmin<juce::int64>(512, reader->lengthInSamples - position));
-                    expect(utils::readFloatSamples(*reader, utils::writePointers(buffer), position, samples));
-                }
-            }
-
-            reader.reset();
-            juce::MemoryBlock trailingTag(128, true);
-            std::copy_n("TAG", 3, static_cast<char*>(trailingTag.getData()));
-            data.append(trailingTag.getData(), trailingTag.getSize());
-            expect(file.replaceWithData(data.getData(), data.getSize()));
-            reader = utils::createAudioReader(file);
-            expect(reader != nullptr);
-            if (reader != nullptr) {
-                expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152 - 529));
-            }
-        }
-
-        runMp3TimingTests();
-
-        beginTest("Readers retain indexed MP3 and PCM lengths and reject unreadable files");
-        {
-            for (const auto* fixtureName : {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif"}) {
-                const auto file = fixtureFile(fixtureName);
-                const std::unique_ptr<juce::AudioFormatReader> original(
-                    utils::threadLocalFormatManager().createReaderFor(file)
-                );
-                const auto reader = utils::createAudioReader(file);
-                expect(original != nullptr && reader != nullptr);
-                if (original != nullptr && reader != nullptr) {
-                    expectEquals(reader->lengthInSamples, original->lengthInSamples);
-                }
-            }
-            expect(utils::createAudioReader(fixtureFile("broken.wav")) == nullptr);
-        }
-
-        beginTest("A failed read from a fixed-point reader leaves silence instead of raw integers");
-        {
-            FailingFixedPointReader reader;
-            juce::AudioBuffer<float> buffer(1, 64);
-            buffer.setSample(0, 0, 0.25f);
-
-            expect(!utils::readFloatSamples(reader, utils::writePointers(buffer), 0, 64));
-            expectEquals(buffer.getMagnitude(0, 0, 64), 0.0f);
-        }
-
-        beginTest("Decode failures are tolerated in isolation and reported in a notice");
-        {
-            constexpr int blockSize = 1024;
-            const auto blockStart = [](const juce::int64 block) { return block * blockSize; };
-            DecodeFailureTracker tracker(blockStart(10));
-            expect(tracker.recordBlock(true, 0, blockSize));
-            expectEquals(tracker.getNotice(), juce::String());
-
-            expect(tracker.recordBlock(false, blockStart(1), blockSize));
-            expect(tracker.recordBlock(true, blockStart(2), blockSize));
-            // A failed final block is expected for MP3 files and is not reported.
-            expect(tracker.recordBlock(false, blockStart(9), blockSize));
-            expectEquals(tracker.getFailedBlockCount(), 1);
-            expectEquals(tracker.getNotice(), juce::String("1 audio block(s) failed to decode, first at sample 1024"));
-
-            for (int block = 3; block < 3 + DecodeFailureTracker::maximumConsecutiveFailures - 1; ++block) {
-                expect(tracker.recordBlock(false, blockStart(block), blockSize));
-            }
-
-            expect(!tracker.recordBlock(false, blockStart(5), blockSize));
-            expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
-        }
-
-        runMessageLoopTest();
-        runNullTestFormatTests();
-    }
+    void runTest() override;
 
 private:
-    /// Checks how files are grouped by parent folder for revealing and opening them.
-    void runFolderGroupingTests(const juce::File& root)
-    {
-        beginTest("Files group by parent folder in first appearance order without duplicates");
-        {
-            const auto first = root.getChildFile("AudioBatch reveal one");
-            const auto second = root.getChildFile("AudioBatch reveal two");
-            const juce::Array<juce::File> files {
-                first.getChildFile("b.wav"),
-                second.getChildFile("c.wav"),
-                first.getChildFile("a.wav"),
-                first.getChildFile("b.wav"),
-            };
-            const auto folders = utils::groupByParentFolder(files, utils::maximumRevealFolders);
-            expectEquals(static_cast<int>(folders.groups.size()), 2);
-            expectEquals(folders.skippedFolders, 0);
-            if (folders.groups.size() == 2) {
-                expect(folders.groups[0].first == first);
-                expect(
-                    folders.groups[0].second == juce::Array {first.getChildFile("b.wav"), first.getChildFile("a.wav")}
-                );
-                expect(folders.groups[1].first == second);
-                expect(folders.groups[1].second == juce::Array {second.getChildFile("c.wav")});
-            }
-            expect(utils::groupByParentFolder({}, utils::maximumRevealFolders).groups.empty());
-        }
+    static bool writeWavCopy(
+        const juce::File& source,
+        const juce::File& destination,
+        double sampleRate,
+        int bitsPerSample,
+        juce::AudioFormatWriterOptions::SampleFormat sampleFormat
+    );
 
-        beginTest("Folder grouping stops at the limit and counts the folders left out");
-        {
-            juce::Array<juce::File> files;
-            for (int index = 0; index < 4; ++index) {
-                const auto folder = root.getChildFile(utils::format("AudioBatch reveal limit {}", index));
-                files.add(folder.getChildFile("a.wav"));
-                files.add(folder.getChildFile("b.wav"));
+    void runDisposalTests();
+    void runFolderGroupingTests(const juce::File& root);
+    void runMessageLoopTest();
+    void runMp3TimingTests();
+    void runNullTestFormatTests();
+
+    void runOutputOwnershipTests();
+    void runRecoveryPreservationTests();
+    void runSourceSafetyTests();
+    void runWrittenAudioValidationTests(const juce::File& root);
+};
+
+/// Runs the helper checks.
+void UtilsTests::runTest()
+{
+    const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
+
+    beginTest("Startup flags recognize complete options and their short aliases");
+    {
+        expect(utils::isVersionRequest("--version"));
+        expect(utils::isVersionRequest("-V"));
+        expect(!utils::isVersionRequest({}));
+        expect(!utils::isVersionRequest("--versions"));
+        expect(!utils::isVersionRequest("track--version.wav"));
+        expect(!utils::isVersionRequest("--headless"));
+        expect(utils::isHeadlessRequest("--headless"));
+        expect(utils::isHeadlessRequest("-H"));
+        expect(!utils::isHeadlessRequest({}));
+        expect(!utils::isHeadlessRequest("--headless-mode"));
+        expect(!utils::isHeadlessRequest("track--headless.wav"));
+        expect(!utils::isHeadlessRequest("--version"));
+    }
+
+    beginTest("Path arguments skip options and resolve against the working directory");
+    {
+        const auto workingDirectory = juce::File::getCurrentWorkingDirectory();
+        const auto absoluteFolder = root.getChildFile("AudioBatch path arguments").getFullPathName();
+        const auto paths = utils::getPathArguments(
+            utils::format("--headless track.wav {} -psn_0_12345 track.wav", absoluteFolder.quoted())
+        );
+
+        expectEquals(paths.size(), 2);
+        expectEquals(paths[0], workingDirectory.getChildFile("track.wav").getFullPathName());
+        expectEquals(paths[1], absoluteFolder);
+        expect(utils::getPathArguments({}).isEmpty());
+        expect(utils::getPathArguments("--headless -V").isEmpty());
+    }
+
+    beginTest("System information retains indented details without padding one-line messages");
+    {
+        const ScopedLogCapture capture;
+        utils::logSystemInfo();
+        utils::logInfo("Processing log check");
+        const auto messages = capture.getMessages();
+        expect(messages.size() >= 3);
+        if (messages.size() >= 3) {
+            expect(messages[0].contains("[INFO]: System info\n    AudioBatch"), messages[0]);
+            for (int index = 1; index < messages.size() - 1; ++index) {
+                expect(messages[index].startsWith("    "), messages[index]);
             }
-            files.add(root.getChildFile("AudioBatch reveal limit 0").getChildFile("c.wav"));
-            const auto folders = utils::groupByParentFolder(files, 2);
-            expectEquals(static_cast<int>(folders.groups.size()), 2);
-            expectEquals(folders.skippedFolders, 2);
-            if (folders.groups.size() == 2) {
-                expectEquals(folders.groups[0].second.size(), 3);
-                expectEquals(folders.groups[1].second.size(), 2);
-            }
-            expectEquals(utils::groupByParentFolder(files, 0).skippedFolders, 4);
-            expectEquals(utils::maximumRevealFolders, 10);
+            expect(messages[messages.size() - 1].endsWith("[INFO]: Processing log check"));
         }
     }
 
-    /// Injects same-stat replacements before rendering and at each source destruction boundary.
-    void runSourceSafetyTests()
+    beginTest("Extensions are lowercased without the leading dot");
     {
-        beginTest("Source replacement preserving size and mtime is refused");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("original"));
+        expectEquals(utils::normalizeExtension(" .MP3 "), juce::String("mp3"));
+        expectEquals(utils::fileExtension(root.getChildFile("Song.AIFF")), juce::String("aiff"));
+        expectEquals(utils::fileExtension(root.getChildFile("no_extension")), juce::String());
+    }
+
+    runFolderGroupingTests(root);
+
+    beginTest("Audio file types are recognised by extension");
+    {
+        expect(utils::isMp3File(root.getChildFile("a.MP3")));
+        expect(!utils::isMp3File(root.getChildFile("a.mp4")));
+        expect(utils::isAiffFile(root.getChildFile("a.aif")));
+        expect(utils::isAiffFile(root.getChildFile("a.aifc")));
+        expect(!utils::isAiffFile(root.getChildFile("a.wav")));
+        expect(utils::isWavFile(root.getChildFile("a.WAVE")));
+    }
+
+    beginTest("The AIFF writer and metadata conversion are available");
+    {
+        expect(utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr);
+
+        juce::StringPairArray metadata;
+        metadata.set("MetaDataSource", "AIFF");
+        metadata.set("key", "value");
+        expect(utils::aiffWriterMetadata(metadata).contains("key"));
+
+        metadata.set("MetaDataSource", "WAV");
+        expect(utils::aiffWriterMetadata(metadata).empty());
+        expectEquals(utils::peakMagnitude(-0.5f), 0.5f);
+    }
+
+    runWrittenAudioValidationTests(root);
+
+    beginTest("A temporary output replaces its source in place");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("old"));
+
+        const utils::OutputTemporaryFile temporaryFile(source);
+        expect(temporaryFile.getFile().replaceWithText("new"));
+
+        expect(
+            utils::commitTemporaryOutput(temporaryFile, source, source, false, utils::FileIdentity(source)).has_value()
+        );
+        expectEquals(source.loadFileAsString(), juce::String("new"));
+    }
+
+    beginTest("A temporary output never replaces an unrelated file without overwrite");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        expect(output.replaceWithText("unrelated"));
+
+        const utils::OutputTemporaryFile temporaryFile(output);
+        expect(temporaryFile.getFile().replaceWithText("new"));
+
+        const auto error
+            = utils::commitTemporaryOutput(temporaryFile, source, output, false, utils::FileIdentity(source))
+                  .error_or({});
+        expect(error.contains("already exists"), error);
+        expectEquals(output.loadFileAsString(), juce::String("unrelated"));
+        expectEquals(source.loadFileAsString(), juce::String("source"));
+    }
+
+    beginTest("Force overwrite never trashes a folder at the output path");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        expect(output.createDirectory());
+        const auto keptFile = output.getChildFile("kept.txt");
+        expect(keptFile.replaceWithText("kept"));
+
+        const utils::OutputTemporaryFile temporaryFile(output);
+        expect(temporaryFile.getFile().replaceWithText("new"));
+
+        const auto error
+            = utils::commitTemporaryOutput(temporaryFile, source, output, true, utils::FileIdentity(source))
+                  .error_or({});
+        expect(error.contains("not a file"), error);
+        expect(keptFile.existsAsFile());
+        expectEquals(source.loadFileAsString(), juce::String("source"));
+    }
+
+    beginTest("Force overwrite replaces the existing output and disposes of it and the source");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        expect(output.replaceWithText("previous"));
+
+        const utils::OutputTemporaryFile temporaryFile(output);
+        expect(temporaryFile.getFile().replaceWithText("new"));
+
+        juce::StringArray disposedContents;
+        const auto commit = utils::commitTemporaryOutput(
+            temporaryFile, source, output, true, utils::FileIdentity(source), [&](const juce::File& file) {
+                disposedContents.add(file.loadFileAsString());
+                return file.deleteFile();
+            }
+        );
+
+        expect(commit.has_value(), commit.error_or({}));
+        expectEquals(output.loadFileAsString(), juce::String("new"));
+        expect(!source.exists());
+        expectEquals(disposedContents.joinIntoString(","), juce::String("source,previous"));
+        expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
+    }
+
+    beginTest("A forced commit that cannot dispose of the source restores the previous output");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        expect(output.replaceWithText("previous"));
+
+        const utils::OutputTemporaryFile temporaryFile(output);
+        expect(temporaryFile.getFile().replaceWithText("new"));
+
+        const auto error = utils::commitTemporaryOutput(
+                               temporaryFile, source, output, true, utils::FileIdentity(source), [](const juce::File&) {
+                                   return false;
+                               }
+        ).error_or({});
+
+        expect(error.contains("original audio file"), error);
+        expectEquals(output.loadFileAsString(), juce::String("previous"));
+        expectEquals(source.loadFileAsString(), juce::String("source"));
+        expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 2);
+    }
+
+    runOutputOwnershipTests();
+    runDisposalTests();
+
+    beginTest("Names match case-insensitively and CSV fields are escaped");
+    {
+        expectEquals(utils::normalizedToken("  JSON "), juce::String("json"));
+        expectEquals(utils::escapeCsvField("plain"), juce::String("plain"));
+        expectEquals(utils::escapeCsvField("a,b"), juce::String(R"("a,b")"));
+        expectEquals(utils::escapeCsvField(R"(say "hi")"), juce::String(R"("say ""hi""")"));
+    }
+
+    beginTest("Display width counts terminal columns");
+    {
+        expectEquals(console::displayWidth("plain"), 5);
+        expectEquals(console::displayWidth(juce::String()), 0);
+        expectEquals(console::displayWidth(juce::String::fromUTF8("\xe6\x97\xa5\xe6\x9c\xac")), 4);
+    }
+
+    beginTest("A message thread call runs directly on the message thread");
+    {
+        bool ran = false;
+        expect(utils::callOnMessageThread([&ran] { ran = true; }, {}));
+        expect(ran);
+    }
+
+    beginTest("A queued message thread call from a worker is abandoned when cancelled");
+    {
+        // The test runs on the message thread and does not dispatch messages,
+        // so the call stays queued until the worker gives up on it.
+        std::atomic<bool> cancelled {false};
+        std::atomic<bool> ran {false};
+        std::atomic<int> outcome {-1};
+
+        std::thread worker([&] {
+            const auto completed
+                = utils::callOnMessageThread([&ran] { ran = true; }, [&cancelled] { return cancelled.load(); });
+            outcome = completed ? 1 : 0;
+        });
+
+        juce::Thread::sleep(50);
+        cancelled = true;
+        worker.join();
+
+        expectEquals(outcome.load(), 0);
+        expect(!ran.load());
+    }
+
+    beginTest("Values posted from a worker are delivered in one batch, in posting order");
+    {
+        std::vector<std::vector<int>> batches;
+        utils::MessageThreadBatcher<int> batcher([&batches](std::vector<int> batch) {
+            batches.push_back(std::move(batch));
+        });
+
+        // The test runs on the message thread without dispatching messages, so delivery is triggered by hand.
+        batcher.deliverPending();
+        expect(batches.empty());
+
+        std::thread worker([&batcher] {
+            for (int value = 1; value <= 3; ++value) {
+                batcher.post(value);
+            }
+        });
+        worker.join();
+
+        batcher.deliverPending();
+        batcher.deliverPending();
+        expectEquals(static_cast<int>(batches.size()), 1);
+        expect(!batches.empty() && batches.front() == std::vector {1, 2, 3});
+    }
+
+    beginTest("An exception being handled is described by its message");
+    {
+        try {
+            throw std::runtime_error("worker failure");
+        } catch (...) {
+            expectEquals(utils::describeCurrentException(), juce::String("worker failure"));
+        }
+    }
+
+    beginTest("An empty cancellation check never cancels");
+    {
+        expect(!utils::isCancellationRequested({}));
+        expect(utils::isCancellationRequested([] { return true; }));
+    }
+
+    beginTest("A progress range maps a phase into part of the whole operation");
+    {
+        std::vector<float> reported;
+        const utils::ProgressCallback onProgress = [&reported](const float progress) { reported.push_back(progress); };
+        const auto phase = utils::makeProgressRange(onProgress, 0.2f, 0.6f);
+        phase(0.0f);
+        phase(0.5f);
+        phase(2.0f);
+
+        expectEquals(static_cast<int>(reported.size()), 3);
+        expectWithinAbsoluteError(reported[0], 0.2f, 1.0e-6f);
+        expectWithinAbsoluteError(reported[1], 0.4f, 1.0e-6f);
+        expectWithinAbsoluteError(reported[2], 0.6f, 1.0e-6f);
+        const utils::ProgressCallback noProgress;
+        expect(utils::makeProgressRange(noProgress, 0.0f, 1.0f) == nullptr);
+        expectWithinAbsoluteError(utils::progressFraction(1, 4), 0.25f, 1.0e-6f);
+        expectEquals(utils::progressFraction(0, 0), 1.0f);
+    }
+
+    beginTest("Throttled progress skips small steps but always reports completion");
+    {
+        std::vector<float> reported;
+        const auto onProgress
+            = utils::makeThrottledProgress([&reported](const float progress) { reported.push_back(progress); });
+
+        for (int step = 0; step <= 1000; ++step) {
+            onProgress(static_cast<float>(step) / 1000.0f);
+        }
+
+        expect(!reported.empty());
+        expect(reported.size() < 1000, juce::String(static_cast<int>(reported.size())));
+        expectEquals(reported.back(), 1.0f);
+        expect(std::ranges::is_sorted(reported));
+        for (std::size_t index = 1; index + 1 < reported.size(); ++index) {
+            expectGreaterOrEqual(reported[index] - reported[index - 1], 0.001f);
+        }
+        expect(utils::makeThrottledProgress({}) == nullptr);
+    }
+
+    beginTest("Throttled progress forwards steps of a tenth of a percent");
+    {
+        std::vector<float> reported;
+        const auto onProgress
+            = utils::makeThrottledProgress([&reported](const float progress) { reported.push_back(progress); });
+
+        onProgress(0.0f);
+        // Waits past the minimum interval, so only the size of the step decides what is forwarded.
+        juce::Thread::sleep(60);
+        onProgress(0.0005f);
+        onProgress(0.0015f);
+
+        expectEquals(static_cast<int>(reported.size()), 2);
+        expectEquals(reported.back(), 0.0015f);
+    }
+
+    beginTest("Padded MP3 frames without a frame-count header have an exact readable length");
+    {
+        const TemporaryDirectory temporary;
+        const auto file = temporary.copyFixture("sine_stereo_44100_320k.mp3");
+        juce::MemoryBlock data;
+        expect(file.loadFileAsData(data));
+        const std::span<char> bytes(static_cast<char*>(data.getData()), data.getSize());
+
+        for (const std::string_view marker : {"Info", "Xing"}) {
+            const auto found = std::ranges::search(bytes, marker);
+            if (!found.empty()) {
+                std::ranges::fill(found, '\0');
+            }
+        }
+
+        expect(file.replaceWithData(data.getData(), data.getSize()));
+        auto reader = utils::createAudioReader(file);
+        expect(reader != nullptr);
+
+        if (reader != nullptr) {
+            expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152 - 529));
+            juce::AudioBuffer<float> buffer(2, 512);
+            for (juce::int64 position = 0; position < reader->lengthInSamples; position += 512) {
+                const auto samples = static_cast<int>(juce::jmin<juce::int64>(512, reader->lengthInSamples - position));
+                expect(utils::readFloatSamples(*reader, utils::writePointers(buffer), position, samples));
+            }
+        }
+
+        reader.reset();
+        juce::MemoryBlock trailingTag(128, true);
+        std::copy_n("TAG", 3, static_cast<char*>(trailingTag.getData()));
+        data.append(trailingTag.getData(), trailingTag.getSize());
+        expect(file.replaceWithData(data.getData(), data.getSize()));
+        reader = utils::createAudioReader(file);
+        expect(reader != nullptr);
+        if (reader != nullptr) {
+            expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152 - 529));
+        }
+    }
+
+    runMp3TimingTests();
+
+    beginTest("Readers retain indexed MP3 and PCM lengths and reject unreadable files");
+    {
+        for (const auto* fixtureName : {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif"}) {
+            const auto file = fixtureFile(fixtureName);
+            const std::unique_ptr<juce::AudioFormatReader> original(
+                utils::threadLocalFormatManager().createReaderFor(file)
+            );
+            const auto reader = utils::createAudioReader(file);
+            expect(original != nullptr && reader != nullptr);
+            if (original != nullptr && reader != nullptr) {
+                expectEquals(reader->lengthInSamples, original->lengthInSamples);
+            }
+        }
+        expect(utils::createAudioReader(fixtureFile("broken.wav")) == nullptr);
+    }
+
+    beginTest("A failed read from a fixed-point reader leaves silence instead of raw integers");
+    {
+        FailingFixedPointReader reader;
+        juce::AudioBuffer<float> buffer(1, 64);
+        buffer.setSample(0, 0, 0.25f);
+
+        expect(!utils::readFloatSamples(reader, utils::writePointers(buffer), 0, 64));
+        expectEquals(buffer.getMagnitude(0, 0, 64), 0.0f);
+    }
+
+    beginTest("Decode failures are tolerated in isolation and reported in a notice");
+    {
+        constexpr int blockSize = 1024;
+        const auto blockStart = [](const juce::int64 block) { return block * blockSize; };
+        DecodeFailureTracker tracker(blockStart(10));
+        expect(tracker.recordBlock(true, 0, blockSize));
+        expectEquals(tracker.getNotice(), juce::String());
+
+        expect(tracker.recordBlock(false, blockStart(1), blockSize));
+        expect(tracker.recordBlock(true, blockStart(2), blockSize));
+        // A failed final block is expected for MP3 files and is not reported.
+        expect(tracker.recordBlock(false, blockStart(9), blockSize));
+        expectEquals(tracker.getFailedBlockCount(), 1);
+        expectEquals(tracker.getNotice(), juce::String("1 audio block(s) failed to decode, first at sample 1024"));
+
+        for (int block = 3; block < 3 + DecodeFailureTracker::maximumConsecutiveFailures - 1; ++block) {
+            expect(tracker.recordBlock(false, blockStart(block), blockSize));
+        }
+
+        expect(!tracker.recordBlock(false, blockStart(5), blockSize));
+        expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
+    }
+
+    runMessageLoopTest();
+    runNullTestFormatTests();
+}
+
+/// Writes every sample of the source to a WAV file with the given sample rate, bit depth, and sample type.
+/// Returns false when the source cannot be read or the copy cannot be written.
+bool UtilsTests::writeWavCopy(
+    const juce::File& source,
+    const juce::File& destination,
+    const double sampleRate,
+    const int bitsPerSample,
+    const juce::AudioFormatWriterOptions::SampleFormat sampleFormat
+)
+{
+    const auto reader = utils::createAudioReader(source);
+    if (reader == nullptr) {
+        return false;
+    }
+
+    std::unique_ptr<juce::OutputStream> stream = destination.createOutputStream();
+    juce::WavAudioFormat format;
+    auto const writer = format.createWriterFor(
+        stream,
+        juce::AudioFormatWriterOptions()
+            .withSampleRate(sampleRate)
+            .withNumChannels(static_cast<int>(reader->numChannels))
+            .withBitsPerSample(bitsPerSample)
+            .withSampleFormat(sampleFormat)
+    );
+    return writer != nullptr && writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples);
+}
+
+/// Checks how files are grouped by parent folder for revealing and opening them.
+void UtilsTests::runFolderGroupingTests(const juce::File& root)
+{
+    beginTest("Files group by parent folder in first appearance order without duplicates");
+    {
+        const auto first = root.getChildFile("AudioBatch reveal one");
+        const auto second = root.getChildFile("AudioBatch reveal two");
+        const juce::Array<juce::File> files {
+            first.getChildFile("b.wav"),
+            second.getChildFile("c.wav"),
+            first.getChildFile("a.wav"),
+            first.getChildFile("b.wav"),
+        };
+        const auto folders = utils::groupByParentFolder(files, utils::maximumRevealFolders);
+        expectEquals(static_cast<int>(folders.groups.size()), 2);
+        expectEquals(folders.skippedFolders, 0);
+        if (folders.groups.size() == 2) {
+            expect(folders.groups[0].first == first);
+            expect(folders.groups[0].second == juce::Array {first.getChildFile("b.wav"), first.getChildFile("a.wav")});
+            expect(folders.groups[1].first == second);
+            expect(folders.groups[1].second == juce::Array {second.getChildFile("c.wav")});
+        }
+        expect(utils::groupByParentFolder({}, utils::maximumRevealFolders).groups.empty());
+    }
+
+    beginTest("Folder grouping stops at the limit and counts the folders left out");
+    {
+        juce::Array<juce::File> files;
+        for (int index = 0; index < 4; ++index) {
+            const auto folder = root.getChildFile(utils::format("AudioBatch reveal limit {}", index));
+            files.add(folder.getChildFile("a.wav"));
+            files.add(folder.getChildFile("b.wav"));
+        }
+        files.add(root.getChildFile("AudioBatch reveal limit 0").getChildFile("c.wav"));
+        const auto folders = utils::groupByParentFolder(files, 2);
+        expectEquals(static_cast<int>(folders.groups.size()), 2);
+        expectEquals(folders.skippedFolders, 2);
+        if (folders.groups.size() == 2) {
+            expectEquals(folders.groups[0].second.size(), 3);
+            expectEquals(folders.groups[1].second.size(), 2);
+        }
+        expectEquals(utils::groupByParentFolder(files, 0).skippedFolders, 4);
+        expectEquals(utils::maximumRevealFolders, 10);
+    }
+}
+
+/// Injects same-stat replacements before rendering and at each source destruction boundary.
+void UtilsTests::runSourceSafetyTests()
+{
+    beginTest("Source replacement preserving size and mtime is refused");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("original"));
+        expect(output.replaceWithText("approved"));
+        const utils::FileIdentity expectedSource(source);
+        const auto modified = source.getLastModificationTime();
+        const auto replacement = directory.getChildFile("replacement");
+        expect(replacement.replaceWithText("external"));
+        expect(replacement.setLastModificationTime(modified));
+        expect(replacement.replaceFileIn(source));
+        const utils::OutputTemporaryFile temporary(output);
+        expect(temporary.getFile().replaceWithText("rendered"));
+        const auto result
+            = utils::commitTemporaryOutput(temporary, source, output, true, expectedSource, [](const juce::File&) {
+                  return false;
+              });
+        expect(!result.has_value());
+        expectEquals(source.loadFileAsString(), juce::String("external"));
+        expectEquals(output.loadFileAsString(), juce::String("approved"));
+    }
+
+    beginTest("Source replacements at commit boundaries are never adopted or disposed");
+    for (const auto& [inPlace, stage] :
+         {std::pair {true, "before_publish"}, {false, "before_publish"}, {false, "before_dispose"}})
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = inPlace ? source : directory.getChildFile("song.aif");
+        expect(source.replaceWithText("original"));
+        if (!inPlace) {
             expect(output.replaceWithText("approved"));
-            const utils::FileIdentity expectedSource(source);
-            const auto modified = source.getLastModificationTime();
-            const auto replacement = directory.getChildFile("replacement");
-            expect(replacement.replaceWithText("external"));
-            expect(replacement.setLastModificationTime(modified));
-            expect(replacement.replaceFileIn(source));
-            const utils::OutputTemporaryFile temporary(output);
-            expect(temporary.getFile().replaceWithText("rendered"));
-            const auto result
-                = utils::commitTemporaryOutput(temporary, source, output, true, expectedSource, [](const juce::File&) {
-                      return false;
-                  });
-            expect(!result.has_value());
-            expectEquals(source.loadFileAsString(), juce::String("external"));
+        }
+        const utils::FileIdentity expectedSource(source);
+        const utils::OutputTemporaryFile temporary(output);
+        expect(temporary.getFile().replaceWithText("rendered"));
+        bool disposed = false;
+        const auto result = utils::commitTemporaryOutput(
+            temporary,
+            source,
+            output,
+            true,
+            expectedSource,
+            [&](const juce::File&) {
+                disposed = true;
+                return false;
+            },
+            [&](const juce::String& current) {
+                if (current == stage) {
+                    const auto replacement = directory.getChildFile("replacement");
+                    expect(replacement.replaceWithText("external"));
+                    expect(replacement.replaceFileIn(source));
+                }
+            }
+        );
+        expect(!result.has_value());
+        expect(result.error_or({}).contains("source file changed"));
+        expect(!disposed);
+        expectEquals(source.loadFileAsString(), juce::String("external"));
+        if (!inPlace) {
             expectEquals(output.loadFileAsString(), juce::String("approved"));
         }
+    }
+}
 
-        beginTest("Source replacements at commit boundaries are never adopted or disposed");
-        for (const auto& [inPlace, stage] :
-             {std::pair {true, "before_publish"}, {false, "before_publish"}, {false, "before_dispose"}})
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = inPlace ? source : directory.getChildFile("song.aif");
-            expect(source.replaceWithText("original"));
-            if (!inPlace) {
-                expect(output.replaceWithText("approved"));
-            }
-            const utils::FileIdentity expectedSource(source);
-            const utils::OutputTemporaryFile temporary(output);
-            expect(temporary.getFile().replaceWithText("rendered"));
-            bool disposed = false;
-            const auto result = utils::commitTemporaryOutput(
-                temporary,
-                source,
-                output,
-                true,
-                expectedSource,
-                [&](const juce::File&) {
-                    disposed = true;
-                    return false;
-                },
-                [&](const juce::String& current) {
-                    if (current == stage) {
-                        const auto replacement = directory.getChildFile("replacement");
-                        expect(replacement.replaceWithText("external"));
-                        expect(replacement.replaceFileIn(source));
-                    }
+/// Injects external directory mutations at publication, backup reservation, and rollback boundaries.
+void UtilsTests::runOutputOwnershipTests()
+{
+    runSourceSafetyTests();
+    runRecoveryPreservationTests();
+    beginTest("Concurrent publication occupants survive either overwrite policy with recoverable rendered audio");
+    for (const bool overwrite : {false, true}) {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        if (overwrite) {
+            expect(output.replaceWithText("approved"));
+        }
+        const utils::FileIdentity expectedSource(source);
+        const utils::OutputTemporaryFile temporary(output);
+        expect(temporary.getFile().replaceWithText("rendered"));
+        const auto result = utils::commitTemporaryOutput(
+            temporary,
+            source,
+            output,
+            overwrite,
+            expectedSource,
+            [](const juce::File&) { return false; },
+            [&](const juce::String& stage) {
+                if (stage == "before_publish") {
+                    expect(output.replaceWithText("external"));
                 }
-            );
-            expect(!result.has_value());
-            expect(result.error_or({}).contains("source file changed"));
-            expect(!disposed);
-            expectEquals(source.loadFileAsString(), juce::String("external"));
-            if (!inPlace) {
-                expectEquals(output.loadFileAsString(), juce::String("approved"));
             }
+        );
+        expect(!result.has_value());
+        expectEquals(output.loadFileAsString(), juce::String("external"));
+        expectEquals(source.loadFileAsString(), juce::String("source"));
+        expectEquals(directory.getChildFile("song (recovered).aif").loadFileAsString(), juce::String("rendered"));
+        if (overwrite) {
+            expectEquals(directory.getChildFile(".song.aif.backup").loadFileAsString(), juce::String("approved"));
         }
     }
 
-    /// Injects external directory mutations at publication, backup reservation, and rollback boundaries.
-    void runOutputOwnershipTests()
+    beginTest("Rollback keeps an external occupant and its owned backup");
     {
-        runSourceSafetyTests();
-        runRecoveryPreservationTests();
-        beginTest("Concurrent publication occupants survive either overwrite policy with recoverable rendered audio");
-        for (const bool overwrite : {false, true}) {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            if (overwrite) {
-                expect(output.replaceWithText("approved"));
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        expect(output.replaceWithText("approved"));
+        const utils::FileIdentity expectedSource(source);
+        const utils::OutputTemporaryFile temporary(output);
+        expect(temporary.getFile().replaceWithText("rendered"));
+        const auto result = utils::commitTemporaryOutput(
+            temporary,
+            source,
+            output,
+            true,
+            expectedSource,
+            [](const juce::File&) { return false; },
+            [&](const juce::String& stage) {
+                if (stage == "before_rollback") {
+                    expect(output.replaceWithText("external"));
+                }
             }
-            const utils::FileIdentity expectedSource(source);
+        );
+        expect(!result.has_value());
+        expectEquals(output.loadFileAsString(), juce::String("external"));
+        expectEquals(source.loadFileAsString(), juce::String("source"));
+        expectEquals(directory.getChildFile(".song.aif.backup").loadFileAsString(), juce::String("approved"));
+        expectEquals(directory.getChildFile("song (recovered).aif").loadFileAsString(), juce::String("rendered"));
+    }
+
+    beginTest("Concurrent backup reservation does not overwrite the occupied backup");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        const auto backup = directory.getChildFile(".song.aif.backup");
+        expect(source.replaceWithText("source"));
+        expect(output.replaceWithText("approved"));
+        const utils::FileIdentity expectedSource(source);
+        const utils::OutputTemporaryFile temporary(output);
+        expect(temporary.getFile().replaceWithText("rendered"));
+        const auto result = utils::commitTemporaryOutput(
+            temporary,
+            source,
+            output,
+            true,
+            expectedSource,
+            [](const juce::File& file) { return file.deleteFile(); },
+            [&](const juce::String& stage) {
+                if (stage == "before_backup_claim" && !backup.exists()) {
+                    expect(backup.replaceWithText("external"));
+                }
+            }
+        );
+        expect(result.has_value(), result.error_or({}));
+        expectEquals(backup.loadFileAsString(), juce::String("external"));
+    }
+}
+
+/// Forces recovery filesystem failures and exhausted names without deleting completed audio.
+void UtilsTests::runRecoveryPreservationTests()
+{
+    beginTest("Recovery filesystem failures retain the temporary file at its actual path");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("missing/song.aif");
+        expect(source.replaceWithText("source"));
+        juce::File retained;
+        {
+            const utils::OutputTemporaryFile temporary(directory.getChildFile("render.aif"));
+            retained = temporary.getFile();
+            expect(retained.replaceWithText("rendered"));
+            const auto result = utils::commitTemporaryOutput(
+                temporary, source, output, false, utils::FileIdentity(source), [](const juce::File&) { return false; }
+            );
+            expect(result.error_or({}).contains(retained.getFullPathName()));
+        }
+        expectEquals(retained.loadFileAsString(), juce::String("rendered"));
+    }
+
+    beginTest("Recovery name exhaustion retains the actual temporary path after its owner is destroyed");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.wav");
+        const auto output = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("source"));
+        for (int index = 1; index <= 1000; ++index) {
+            const auto suffix = index == 1 ? juce::String() : juce::String(index);
+            expect(directory.getChildFile("song (recovered)" + suffix + ".aif").replaceWithText("occupied"));
+        }
+        juce::File retained;
+        {
             const utils::OutputTemporaryFile temporary(output);
-            expect(temporary.getFile().replaceWithText("rendered"));
+            retained = temporary.getFile();
+            expect(retained.replaceWithText("rendered"));
             const auto result = utils::commitTemporaryOutput(
                 temporary,
                 source,
                 output,
-                overwrite,
-                expectedSource,
+                false,
+                utils::FileIdentity(source),
                 [](const juce::File&) { return false; },
                 [&](const juce::String& stage) {
                     if (stage == "before_publish") {
@@ -654,381 +820,232 @@ private:
                     }
                 }
             );
-            expect(!result.has_value());
-            expectEquals(output.loadFileAsString(), juce::String("external"));
-            expectEquals(source.loadFileAsString(), juce::String("source"));
-            expectEquals(directory.getChildFile("song (recovered).aif").loadFileAsString(), juce::String("rendered"));
-            if (overwrite) {
-                expectEquals(directory.getChildFile(".song.aif.backup").loadFileAsString(), juce::String("approved"));
-            }
+            expect(result.error_or({}).contains(retained.getFullPathName()));
         }
+        expectEquals(retained.loadFileAsString(), juce::String("rendered"));
+    }
+}
 
-        beginTest("Rollback keeps an external occupant and its owned backup");
+/// Checks that written audio is validated against the expected channel count, sample rate, and length.
+void UtilsTests::runWrittenAudioValidationTests(const juce::File& root)
+{
+    beginTest("Written audio is validated against the expected layout and length");
+    auto& formatManager = utils::threadLocalFormatManager();
+    const auto fixture = fixtureFile("sine_stereo_44100_16.wav");
+    const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(fixture));
+    expect(reader != nullptr, "the WAV fixture must be readable");
+    if (reader == nullptr) {
+        return;
+    }
+    const auto length = reader->lengthInSamples;
+
+    const auto validationError
+        = [&formatManager](
+              const juce::File& file, const int channels, const double sampleRate, const juce::int64 samples
+          ) { return utils::validateWrittenAudio(formatManager, file, channels, sampleRate, samples).error_or({}); };
+
+    expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44'100.0, length).has_value());
+    expect(validationError(fixture, 1, 44'100.0, length).contains("channels"));
+    expect(validationError(fixture, 2, 48'000.0, length).contains("sample rate"));
+    expect(validationError(fixture, 2, 44'100.0, length + 1).contains("samples"));
+    expect(validationError(root.getChildFile("missing.aif"), 2, 44'100.0, length).contains("cannot be read"));
+}
+
+/// Checks in a helper process that the message loop of a console app dispatches messages until it is stopped.
+/// Stopping the loop ends it for good, and running it dispatches every queued message,
+/// so the check leaves the loop of the tests alone, whatever runs before or after it.
+/// The CLI plugin scan worker relies on this loop to receive its scan requests.
+void UtilsTests::runMessageLoopTest()
+{
+    beginTest("The message loop of a console app dispatches messages until it is stopped");
+    juce::ChildProcess helper;
+    expect(startHelperProcess(helper, juce::StringArray(messageLoopHelperArgument)));
+    const auto finished = helper.waitForProcessToFinish(30'000);
+    expect(finished, "the message loop helper did not finish");
+    if (!finished) {
+        helper.kill();
+    }
+    expectEquals(static_cast<int>(helper.getExitCode()), 0);
+}
+
+/// Checks that the null test also compares the sample rate, the bit depth, and the sample type,
+/// using WAV copies of a 16-bit tone that hold exactly the same 16-bit sample values.
+void UtilsTests::runNullTestFormatTests()
+{
+    beginTest("The null test requires the same sample rate, bit depth, and sample type to cancel");
+    const TemporaryDirectory directory;
+    const auto source = fixtureFile("sine_stereo_44100_16.wav");
+    const auto sameFormat = directory.getChildFile("same.wav");
+    const auto deeper = directory.getChildFile("deeper.wav");
+    const auto floating = directory.getChildFile("floating.wav");
+    const auto relabelled = directory.getChildFile("relabelled.wav");
+    using SampleFormat = juce::AudioFormatWriterOptions::SampleFormat;
+    expect(writeWavCopy(source, sameFormat, 44'100.0, 16, SampleFormat::integral));
+    expect(writeWavCopy(source, deeper, 44'100.0, 24, SampleFormat::integral));
+    expect(writeWavCopy(source, floating, 44'100.0, 32, SampleFormat::floatingPoint));
+    expect(writeWavCopy(source, relabelled, 48'000.0, 16, SampleFormat::integral));
+
+    const auto same = nullTestFiles(source, sameFormat);
+    expect(same.cancels(), same.describe());
+
+    for (const auto& copy : {deeper, floating, relabelled}) {
+        const auto result = nullTestFiles(source, copy);
+        expect(result.readable, copy.getFileName());
+        expectEquals(result.differingSamples, juce::int64 {0}, copy.getFileName());
+        expect(!result.expectedFormat.matches(result.actualFormat), copy.getFileName());
+        expect(!result.cancels(), copy.getFileName());
+    }
+
+    const auto floatingResult = nullTestFiles(source, floating);
+    expect(floatingResult.actualFormat.floatingPoint);
+    expect(floatingResult.describe().contains("32-bit float"), floatingResult.describe());
+    expectEquals(nullTestFiles(source, deeper).actualFormat.bitsPerSample, 24);
+    expectWithinAbsoluteError(nullTestFiles(source, relabelled).actualFormat.sampleRate, 48'000.0, 0.001);
+}
+
+/// Checks that MP3 files decode with the timing and length of the audio that was encoded.
+void UtilsTests::runMp3TimingTests()
+{
+    beginTest("MP3 files decode with the start and length of the encoded audio");
+    {
+        const auto click = fixtureFile("click_mono_44100_320k.mp3");
+        const auto reader = utils::createAudioReader(click);
+        expect(reader != nullptr);
+        if (reader != nullptr) {
+            expectEquals(reader->getFormatName(), juce::String("MP3 file"));
+            expectEquals(reader->lengthInSamples, clickFixtureLength);
+        }
+        expectEquals(peakSamplePosition(click), clickFixturePosition);
+
+        for (const auto* fixtureName :
+             {"sine_stereo_44100_320k.mp3", "sine_joint_stereo_44100_192k.mp3", "sine_mono_44100_128k.mp3"})
         {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            expect(output.replaceWithText("approved"));
-            const utils::FileIdentity expectedSource(source);
-            const utils::OutputTemporaryFile temporary(output);
-            expect(temporary.getFile().replaceWithText("rendered"));
-            const auto result = utils::commitTemporaryOutput(
-                temporary,
-                source,
-                output,
-                true,
-                expectedSource,
-                [](const juce::File&) { return false; },
-                [&](const juce::String& stage) {
-                    if (stage == "before_rollback") {
-                        expect(output.replaceWithText("external"));
-                    }
-                }
-            );
-            expect(!result.has_value());
-            expectEquals(output.loadFileAsString(), juce::String("external"));
-            expectEquals(source.loadFileAsString(), juce::String("source"));
-            expectEquals(directory.getChildFile(".song.aif.backup").loadFileAsString(), juce::String("approved"));
-            expectEquals(directory.getChildFile("song (recovered).aif").loadFileAsString(), juce::String("rendered"));
+            const auto sine = utils::createAudioReader(fixtureFile(fixtureName));
+            expect(sine != nullptr && sine->lengthInSamples == 44'100, fixtureName);
         }
 
-        beginTest("Concurrent backup reservation does not overwrite the occupied backup");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            const auto backup = directory.getChildFile(".song.aif.backup");
-            expect(source.replaceWithText("source"));
-            expect(output.replaceWithText("approved"));
-            const utils::FileIdentity expectedSource(source);
-            const utils::OutputTemporaryFile temporary(output);
-            expect(temporary.getFile().replaceWithText("rendered"));
-            const auto result = utils::commitTemporaryOutput(
-                temporary,
-                source,
-                output,
-                true,
-                expectedSource,
-                [](const juce::File& file) { return file.deleteFile(); },
-                [&](const juce::String& stage) {
-                    if (stage == "before_backup_claim" && !backup.exists()) {
-                        expect(backup.replaceWithText("external"));
-                    }
-                }
-            );
-            expect(result.has_value(), result.error_or({}));
-            expectEquals(backup.loadFileAsString(), juce::String("external"));
-        }
+        const auto noXing = utils::createAudioReader(fixtureFile("sine_stereo_44100_192k_no_xing.mp3"));
+        expect(noXing != nullptr && noXing->lengthInSamples == noXingFixtureLength);
     }
-
-    /// Forces recovery filesystem failures and exhausted names without deleting completed audio.
-    void runRecoveryPreservationTests()
-    {
-        beginTest("Recovery filesystem failures retain the temporary file at its actual path");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("missing/song.aif");
-            expect(source.replaceWithText("source"));
-            juce::File retained;
-            {
-                const utils::OutputTemporaryFile temporary(directory.getChildFile("render.aif"));
-                retained = temporary.getFile();
-                expect(retained.replaceWithText("rendered"));
-                const auto result = utils::commitTemporaryOutput(
-                    temporary, source, output, false, utils::FileIdentity(source), [](const juce::File&) {
-                        return false;
-                    }
-                );
-                expect(result.error_or({}).contains(retained.getFullPathName()));
-            }
-            expectEquals(retained.loadFileAsString(), juce::String("rendered"));
-        }
-
-        beginTest("Recovery name exhaustion retains the actual temporary path after its owner is destroyed");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.wav");
-            const auto output = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("source"));
-            for (int index = 1; index <= 1000; ++index) {
-                const auto suffix = index == 1 ? juce::String() : juce::String(index);
-                expect(directory.getChildFile("song (recovered)" + suffix + ".aif").replaceWithText("occupied"));
-            }
-            juce::File retained;
-            {
-                const utils::OutputTemporaryFile temporary(output);
-                retained = temporary.getFile();
-                expect(retained.replaceWithText("rendered"));
-                const auto result = utils::commitTemporaryOutput(
-                    temporary,
-                    source,
-                    output,
-                    false,
-                    utils::FileIdentity(source),
-                    [](const juce::File&) { return false; },
-                    [&](const juce::String& stage) {
-                        if (stage == "before_publish") {
-                            expect(output.replaceWithText("external"));
-                        }
-                    }
-                );
-                expect(result.error_or({}).contains(retained.getFullPathName()));
-            }
-            expectEquals(retained.loadFileAsString(), juce::String("rendered"));
-        }
-    }
-
-    /// Checks that written audio is validated against the expected channel count, sample rate, and length.
-    void runWrittenAudioValidationTests(const juce::File& root)
-    {
-        beginTest("Written audio is validated against the expected layout and length");
-        auto& formatManager = utils::threadLocalFormatManager();
-        const auto fixture = fixtureFile("sine_stereo_44100_16.wav");
-        const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(fixture));
-        expect(reader != nullptr, "the WAV fixture must be readable");
-        if (reader == nullptr) {
-            return;
-        }
-        const auto length = reader->lengthInSamples;
-
-        const auto validationError =
-            [&formatManager](
-                const juce::File& file, const int channels, const double sampleRate, const juce::int64 samples
-            ) { return utils::validateWrittenAudio(formatManager, file, channels, sampleRate, samples).error_or({}); };
-
-        expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44'100.0, length).has_value());
-        expect(validationError(fixture, 1, 44'100.0, length).contains("channels"));
-        expect(validationError(fixture, 2, 48'000.0, length).contains("sample rate"));
-        expect(validationError(fixture, 2, 44'100.0, length + 1).contains("samples"));
-        expect(validationError(root.getChildFile("missing.aif"), 2, 44'100.0, length).contains("cannot be read"));
-    }
-
-    /// Checks in a helper process that the message loop of a console app dispatches messages until it is stopped.
-    /// Stopping the loop ends it for good, and running it dispatches every queued message,
-    /// so the check leaves the loop of the tests alone, whatever runs before or after it.
-    /// The CLI plugin scan worker relies on this loop to receive its scan requests.
-    void runMessageLoopTest()
-    {
-        beginTest("The message loop of a console app dispatches messages until it is stopped");
-        juce::ChildProcess helper;
-        expect(startHelperProcess(helper, juce::StringArray(messageLoopHelperArgument)));
-        const auto finished = helper.waitForProcessToFinish(30'000);
-        expect(finished, "the message loop helper did not finish");
-        if (!finished) {
-            helper.kill();
-        }
-        expectEquals(static_cast<int>(helper.getExitCode()), 0);
-    }
-
-    /// Checks that the null test also compares the sample rate, the bit depth, and the sample type,
-    /// using WAV copies of a 16-bit tone that hold exactly the same 16-bit sample values.
-    void runNullTestFormatTests()
-    {
-        beginTest("The null test requires the same sample rate, bit depth, and sample type to cancel");
-        const TemporaryDirectory directory;
-        const auto source = fixtureFile("sine_stereo_44100_16.wav");
-        const auto sameFormat = directory.getChildFile("same.wav");
-        const auto deeper = directory.getChildFile("deeper.wav");
-        const auto floating = directory.getChildFile("floating.wav");
-        const auto relabelled = directory.getChildFile("relabelled.wav");
-        using SampleFormat = juce::AudioFormatWriterOptions::SampleFormat;
-        expect(writeWavCopy(source, sameFormat, 44'100.0, 16, SampleFormat::integral));
-        expect(writeWavCopy(source, deeper, 44'100.0, 24, SampleFormat::integral));
-        expect(writeWavCopy(source, floating, 44'100.0, 32, SampleFormat::floatingPoint));
-        expect(writeWavCopy(source, relabelled, 48'000.0, 16, SampleFormat::integral));
-
-        const auto same = nullTestFiles(source, sameFormat);
-        expect(same.cancels(), same.describe());
-
-        for (const auto& copy : {deeper, floating, relabelled}) {
-            const auto result = nullTestFiles(source, copy);
-            expect(result.readable, copy.getFileName());
-            expectEquals(result.differingSamples, juce::int64 {0}, copy.getFileName());
-            expect(!result.expectedFormat.matches(result.actualFormat), copy.getFileName());
-            expect(!result.cancels(), copy.getFileName());
-        }
-
-        const auto floatingResult = nullTestFiles(source, floating);
-        expect(floatingResult.actualFormat.floatingPoint);
-        expect(floatingResult.describe().contains("32-bit float"), floatingResult.describe());
-        expectEquals(nullTestFiles(source, deeper).actualFormat.bitsPerSample, 24);
-        expectWithinAbsoluteError(nullTestFiles(source, relabelled).actualFormat.sampleRate, 48'000.0, 0.001);
-    }
-
-    /// Writes every sample of the source to a WAV file with the given sample rate, bit depth, and sample type.
-    /// Returns false when the source cannot be read or the copy cannot be written.
-    static bool writeWavCopy(
-        const juce::File& source,
-        const juce::File& destination,
-        const double sampleRate,
-        const int bitsPerSample,
-        const juce::AudioFormatWriterOptions::SampleFormat sampleFormat
-    )
-    {
-        const auto reader = utils::createAudioReader(source);
-        if (reader == nullptr) {
-            return false;
-        }
-
-        std::unique_ptr<juce::OutputStream> stream = destination.createOutputStream();
-        juce::WavAudioFormat format;
-        auto const writer = format.createWriterFor(
-            stream,
-            juce::AudioFormatWriterOptions()
-                .withSampleRate(sampleRate)
-                .withNumChannels(static_cast<int>(reader->numChannels))
-                .withBitsPerSample(bitsPerSample)
-                .withSampleFormat(sampleFormat)
-        );
-        return writer != nullptr && writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples);
-    }
-
-    /// Checks that MP3 files decode with the timing and length of the audio that was encoded.
-    void runMp3TimingTests()
-    {
-        beginTest("MP3 files decode with the start and length of the encoded audio");
-        {
-            const auto click = fixtureFile("click_mono_44100_320k.mp3");
-            const auto reader = utils::createAudioReader(click);
-            expect(reader != nullptr);
-            if (reader != nullptr) {
-                expectEquals(reader->getFormatName(), juce::String("MP3 file"));
-                expectEquals(reader->lengthInSamples, clickFixtureLength);
-            }
-            expectEquals(peakSamplePosition(click), clickFixturePosition);
-
-            for (const auto* fixtureName :
-                 {"sine_stereo_44100_320k.mp3", "sine_joint_stereo_44100_192k.mp3", "sine_mono_44100_128k.mp3"})
-            {
-                const auto sine = utils::createAudioReader(fixtureFile(fixtureName));
-                expect(sine != nullptr && sine->lengthInSamples == 44'100, fixtureName);
-            }
-
-            const auto noXing = utils::createAudioReader(fixtureFile("sine_stereo_44100_192k_no_xing.mp3"));
-            expect(noXing != nullptr && noXing->lengthInSamples == noXingFixtureLength);
-        }
 
 #if JUCE_MAC
-        beginTest("AAC files decode without the priming and padding recorded in the MP4 edit list");
-        {
-            const auto aac = utils::createAudioReader(fixtureFile("sine_stereo_44100_aac.m4a"));
-            expect(aac != nullptr && aac->lengthInSamples == 44'100);
-            if (aac != nullptr) {
-                expectEquals(analysis::resolveSourceBitsPerSample(*aac, fixtureFile("sine_stereo_44100_aac.m4a")), 16);
-            }
+    beginTest("AAC files decode without the priming and padding recorded in the MP4 edit list");
+    {
+        const auto aac = utils::createAudioReader(fixtureFile("sine_stereo_44100_aac.m4a"));
+        expect(aac != nullptr && aac->lengthInSamples == 44'100);
+        if (aac != nullptr) {
+            expectEquals(analysis::resolveSourceBitsPerSample(*aac, fixtureFile("sine_stereo_44100_aac.m4a")), 16);
         }
+    }
 #endif
+}
+
+/// Checks moving to the trash and the backups of originals, without touching the system trash.
+void UtilsTests::runDisposalTests()
+{
+    beginTest("Background runner publishes with the run id only while the run is current");
+    {
+        BackgroundRunner backgroundRunner(1, 1000);
+        RunCallback<int, int> callback;
+        std::vector<std::pair<int, int>> calls;
+        callback.set([&calls](const int value, const int runId) { calls.emplace_back(value, runId); });
+
+        const auto runId = backgroundRunner.getCurrentRunId();
+        const auto isCancelled = backgroundRunner.makeCancellationCheck(runId);
+        backgroundRunner.publish(callback, runId, 7);
+        expect(!isCancelled());
+
+        backgroundRunner.cancel();
+        backgroundRunner.publish(callback, runId, 8);
+        expect(isCancelled());
+        expect(!backgroundRunner.isCurrent(runId));
+
+        callback.set({});
+        backgroundRunner.publish(callback, backgroundRunner.getCurrentRunId(), 9);
+
+        expectEquals(static_cast<int>(calls.size()), 1);
+        expect(calls.front() == std::pair(7, runId));
     }
 
-    /// Checks moving to the trash and the backups of originals, without touching the system trash.
-    void runDisposalTests()
+    beginTest("Cancelling a background run waits for its running job to finish");
     {
-        beginTest("Background runner publishes with the run id only while the run is current");
-        {
-            BackgroundRunner backgroundRunner(1, 1000);
-            RunCallback<int, int> callback;
-            std::vector<std::pair<int, int>> calls;
-            callback.set([&calls](const int value, const int runId) { calls.emplace_back(value, runId); });
-
-            const auto runId = backgroundRunner.getCurrentRunId();
-            const auto isCancelled = backgroundRunner.makeCancellationCheck(runId);
-            backgroundRunner.publish(callback, runId, 7);
-            expect(!isCancelled());
-
-            backgroundRunner.cancel();
-            backgroundRunner.publish(callback, runId, 8);
-            expect(isCancelled());
-            expect(!backgroundRunner.isCurrent(runId));
-
-            callback.set({});
-            backgroundRunner.publish(callback, backgroundRunner.getCurrentRunId(), 9);
-
-            expectEquals(static_cast<int>(calls.size()), 1);
-            expect(calls.front() == std::pair(7, runId));
+        BackgroundRunner backgroundRunner(1, 5000);
+        std::atomic<bool> started {false};
+        std::atomic<bool> finished {false};
+        backgroundRunner.addJob([&started, &finished] {
+            started = true;
+            juce::Thread::sleep(50);
+            finished = true;
+        });
+        while (!started.load()) {
+            juce::Thread::yield();
         }
+        backgroundRunner.cancelAndWait();
+        expect(finished.load());
+        backgroundRunner.waitForAllJobs();
+    }
 
-        beginTest("Cancelling a background run waits for its running job to finish");
-        {
-            BackgroundRunner backgroundRunner(1, 5000);
-            std::atomic<bool> started {false};
-            std::atomic<bool> finished {false};
-            backgroundRunner.addJob([&started, &finished] {
-                started = true;
-                juce::Thread::sleep(50);
-                finished = true;
-            });
-            while (!started.load()) {
-                juce::Thread::yield();
-            }
-            backgroundRunner.cancelAndWait();
-            expect(finished.load());
-            backgroundRunner.waitForAllJobs();
-        }
-
-        beginTest("Moving a missing file to the trash reports it as already missing");
-        {
-            const TemporaryDirectory directory;
-            const auto missing = directory.getChildFile("missing.aif");
-            expect(utils::moveToTrash(missing) == utils::TrashResult::alreadyMissing);
-            expect(utils::trashFile(missing));
-        }
+    beginTest("Moving a missing file to the trash reports it as already missing");
+    {
+        const TemporaryDirectory directory;
+        const auto missing = directory.getChildFile("missing.aif");
+        expect(utils::moveToTrash(missing) == utils::TrashResult::alreadyMissing);
+        expect(utils::trashFile(missing));
+    }
 
 #if JUCE_WINDOWS
-        // Only on CI, so local test runs leave the developer's recycle bin alone.
-        if (juce::SystemStats::getEnvironmentVariable("CI", {}).isNotEmpty()) {
-            beginTest("Moving a file to the recycle bin removes it from its folder");
-            {
-                const TemporaryDirectory directory;
-                const auto file = directory.getChildFile("recycled.aif");
-                expect(file.replaceWithText("recycled"));
-                expect(utils::moveToTrash(file) == utils::TrashResult::moved);
-                expect(!file.exists());
-            }
-        }
-#endif
-
-        beginTest("Concurrent backups of files with the same name each dispose of their own copy");
+    // Only on CI, so local test runs leave the developer's recycle bin alone.
+    if (juce::SystemStats::getEnvironmentVariable("CI", {}).isNotEmpty()) {
+        beginTest("Moving a file to the recycle bin removes it from its folder");
         {
             const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("original"));
-            constexpr int workerCount {4};
-            constexpr int backupsPerWorker {10};
-            std::atomic<int> failedBackups {0};
-            std::atomic<int> foreignCopies {0};
-
-            const auto backUp = [&] {
-                for (int backup = 0; backup < backupsPerWorker; ++backup) {
-                    const auto disposed = utils::disposeOfCopy(source, [&](const juce::File& copy) {
-                        if (copy.loadFileAsString() != "original") {
-                            ++foreignCopies;
-                        }
-                        return copy.deleteFile();
-                    });
-
-                    if (!disposed) {
-                        ++failedBackups;
-                    }
-                }
-            };
-
-            {
-                std::vector<std::jthread> workers;
-                workers.reserve(workerCount);
-
-                for (int worker = 0; worker < workerCount; ++worker) {
-                    workers.emplace_back(backUp);
-                }
-            }
-
-            expectEquals(failedBackups.load(), 0);
-            expectEquals(foreignCopies.load(), 0);
-            expectEquals(source.loadFileAsString(), juce::String("original"));
+            const auto file = directory.getChildFile("recycled.aif");
+            expect(file.replaceWithText("recycled"));
+            expect(utils::moveToTrash(file) == utils::TrashResult::moved);
+            expect(!file.exists());
         }
     }
-};
+#endif
+
+    beginTest("Concurrent backups of files with the same name each dispose of their own copy");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.getChildFile("song.aif");
+        expect(source.replaceWithText("original"));
+        constexpr int workerCount {4};
+        constexpr int backupsPerWorker {10};
+        std::atomic<int> failedBackups {0};
+        std::atomic<int> foreignCopies {0};
+
+        const auto backUp = [&] {
+            for (int backup = 0; backup < backupsPerWorker; ++backup) {
+                const auto disposed = utils::disposeOfCopy(source, [&](const juce::File& copy) {
+                    if (copy.loadFileAsString() != "original") {
+                        ++foreignCopies;
+                    }
+                    return copy.deleteFile();
+                });
+
+                if (!disposed) {
+                    ++failedBackups;
+                }
+            }
+        };
+
+        {
+            std::vector<std::jthread> workers;
+            workers.reserve(workerCount);
+
+            for (int worker = 0; worker < workerCount; ++worker) {
+                workers.emplace_back(backUp);
+            }
+        }
+
+        expectEquals(failedBackups.load(), 0);
+        expectEquals(foreignCopies.load(), 0);
+        expectEquals(source.loadFileAsString(), juce::String("original"));
+    }
+}
 
 std::unique_ptr<juce::UnitTest> createUtilsTests()
 {

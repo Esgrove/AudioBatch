@@ -18,6 +18,7 @@ namespace audiobatch
 {
 /// The stored form of one chain slot: which plugin it holds, whether it is enabled, and the plugin's saved state.
 struct SavedChainSlot {
+    // Preserve the description/state/enabled order of callers' aggregate initializers.
     /// The plugin of the slot.
     juce::PluginDescription description;
     /// The plugin's getStateInformation data, empty when the plugin keeps its defaults.
@@ -28,10 +29,10 @@ struct SavedChainSlot {
 
 /// A preset file found in the preset folder.
 struct ChainPresetInfo {
-    /// The name shown to the user, which is the file name without its extension.
-    juce::String name;
     /// The preset file.
     juce::File file;
+    /// The name shown to the user, which is the file name without its extension.
+    juce::String name;
     /// Modification time of the preset file when it was listed.
     juce::Time modified;
 };
@@ -43,21 +44,22 @@ constexpr auto presetFileExtension {".xml"};
 /// Name of the preset folder, which sits next to the application settings file.
 constexpr auto presetFolderName {"Chain Presets"};
 
-[[nodiscard]] std::unique_ptr<juce::XmlElement> createChainXml(std::span<const SavedChainSlot> slots);
-[[nodiscard]] std::optional<std::vector<SavedChainSlot>> parseChainXml(const juce::XmlElement& element);
-[[nodiscard]] juce::MemoryBlock decodeState(const juce::String& stateBase64);
-
 [[nodiscard]] juce::File getPresetDirectory(const juce::File& settingsFile);
+[[nodiscard]] juce::MemoryBlock decodeState(const juce::String& stateBase64);
 [[nodiscard]] juce::String sanitizePresetName(const juce::String& name);
-[[nodiscard]] std::optional<juce::File> getPresetFile(const juce::File& directory, const juce::String& name);
-[[nodiscard]] std::vector<ChainPresetInfo> listPresets(const juce::File& directory);
 
+[[nodiscard]] std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::File& file);
 [[nodiscard]] std::expected<juce::File, juce::String> savePreset(
     const juce::File& directory,
     const juce::String& name,
     std::span<const SavedChainSlot> slots
 );
-[[nodiscard]] std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::File& file);
+
+[[nodiscard]] std::optional<juce::File> getPresetFile(const juce::File& directory, const juce::String& name);
+[[nodiscard]] std::optional<std::vector<SavedChainSlot>> parseChainXml(const juce::XmlElement& element);
+[[nodiscard]] std::unique_ptr<juce::XmlElement> createChainXml(std::span<const SavedChainSlot> slots);
+[[nodiscard]] std::vector<ChainPresetInfo> listPresets(const juce::File& directory);
+
 [[nodiscard]] bool deletePreset(const juce::File& file);
 }  // namespace plugin_presets
 }  // namespace audiobatch

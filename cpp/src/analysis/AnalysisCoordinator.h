@@ -20,12 +20,12 @@ namespace audiobatch
 {
 /// The files of a run, published once the input paths are expanded and checked against the cache.
 struct AnalysisPlan {
-    /// The run the plan belongs to.
-    int runId {0};
     /// Every supported file found in the input paths.
     juce::Array<juce::File> files;
     /// The files without a current cache entry, which are analyzed in this run.
     juce::Array<juce::File> staleFiles;
+    /// The run the plan belongs to.
+    int runId {0};
 };
 
 /// Coordinates background audio analysis jobs and marshals result callbacks to the UI layer.
@@ -71,6 +71,7 @@ public:
 
     void cancel();
     void cancelAndWait();
+
     void setCompletionCallback(CompletionCallback callback);
     void setPlanCallback(PlanCallback callback);
     void setProgressCallback(ProgressCallback callback);
@@ -78,12 +79,12 @@ public:
     void setStartingCallback(StartingCallback callback);
 
 private:
-    void planRun(const AudioAnalysisOptions& options, int runId);
-
     void analyzeStaleFile(const juce::File& file, int runId, int totalFiles, std::atomic<int>& pendingFiles) const;
+    void planRun(const AudioAnalysisOptions& options, int runId);
 
     /// The cache the runs look files up in and store their results in, which outlives the coordinator.
     AnalysisCache& cache;
+
     /// Receives the completion of each run.
     RunCallback<int, int> completionCallback;
     /// Receives the files and stale files each run found.

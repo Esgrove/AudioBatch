@@ -355,35 +355,30 @@ public:
     }
 
 private:
-    /// Checks antisymmetry and transitivity of every column comparator on records with random values,
-    /// including NaN, negative zero, silence, and repeated values.
-    /// std::ranges::sort has undefined behaviour when its comparator is not a strict weak ordering.
-    void checkComparatorsOnRandomRecords()
+    /// Returns how many pairs break antisymmetry and how many triples break transitivity for one column.
+    static int countOrderingViolations(
+        const std::vector<AudioAnalysisRecord>& records,
+        const AudioFileTableColumn column
+    )
     {
-        constexpr std::array columns {
-            AudioFileTableColumn::name,
-            AudioFileTableColumn::path,
-            AudioFileTableColumn::bitDepth,
-            AudioFileTableColumn::sampleRate,
-            AudioFileTableColumn::length,
-            AudioFileTableColumn::peakLeft,
-            AudioFileTableColumn::peakRight,
-            AudioFileTableColumn::overallPeak,
-            AudioFileTableColumn::overallTruePeak,
-            AudioFileTableColumn::maxShortTermLufs,
-            AudioFileTableColumn::integratedLufs,
-            AudioFileTableColumn::customGain,
-            AudioFileTableColumn::status,
+        const auto compare = [column](const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs) {
+            return juce::jlimit(-1, 1, results_sorting::compareRecordsByColumn(lhs, rhs, column));
         };
 
-        const auto records = makeRandomRecords();
         int violations = 0;
 
-        for (const auto column : columns) {
-            violations += countOrderingViolations(records, column);
+        for (const auto& first : records) {
+            for (const auto& second : records) {
+                violations += compare(first, second) != -compare(second, first) ? 1 : 0;
+
+                for (const auto& third : records) {
+                    const auto ordered = compare(first, second) <= 0 && compare(second, third) <= 0;
+                    violations += ordered && compare(first, third) > 0 ? 1 : 0;
+                }
+            }
         }
 
-        expectEquals(violations, 0);
+        return violations;
     }
 
     /// Builds records with random values that often repeat or hit NaN, negative zero, and silence.
@@ -440,30 +435,35 @@ private:
         return records;
     }
 
-    /// Returns how many pairs break antisymmetry and how many triples break transitivity for one column.
-    static int countOrderingViolations(
-        const std::vector<AudioAnalysisRecord>& records,
-        const AudioFileTableColumn column
-    )
+    /// Checks antisymmetry and transitivity of every column comparator on records with random values,
+    /// including NaN, negative zero, silence, and repeated values.
+    /// std::ranges::sort has undefined behaviour when its comparator is not a strict weak ordering.
+    void checkComparatorsOnRandomRecords()
     {
-        const auto compare = [column](const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs) {
-            return juce::jlimit(-1, 1, results_sorting::compareRecordsByColumn(lhs, rhs, column));
+        constexpr std::array columns {
+            AudioFileTableColumn::name,
+            AudioFileTableColumn::path,
+            AudioFileTableColumn::bitDepth,
+            AudioFileTableColumn::sampleRate,
+            AudioFileTableColumn::length,
+            AudioFileTableColumn::peakLeft,
+            AudioFileTableColumn::peakRight,
+            AudioFileTableColumn::overallPeak,
+            AudioFileTableColumn::overallTruePeak,
+            AudioFileTableColumn::maxShortTermLufs,
+            AudioFileTableColumn::integratedLufs,
+            AudioFileTableColumn::customGain,
+            AudioFileTableColumn::status,
         };
 
+        const auto records = makeRandomRecords();
         int violations = 0;
 
-        for (const auto& first : records) {
-            for (const auto& second : records) {
-                violations += compare(first, second) != -compare(second, first) ? 1 : 0;
-
-                for (const auto& third : records) {
-                    const auto ordered = compare(first, second) <= 0 && compare(second, third) <= 0;
-                    violations += ordered && compare(first, third) > 0 ? 1 : 0;
-                }
-            }
+        for (const auto column : columns) {
+            violations += countOrderingViolations(records, column);
         }
 
-        return violations;
+        expectEquals(violations, 0);
     }
 };
 

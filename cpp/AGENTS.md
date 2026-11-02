@@ -52,6 +52,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `AnalysisCacheSchema.cpp` (database lifecycle and schema),
       and `AnalysisCacheWaveform.cpp` (native waveform persistence and validation),
       which share the column and parameter constants in `AnalysisCacheSql.h`.
+      `NativeWaveformData.*` holds bounded native thumbnail validation and identity-sensitive waveform keys,
+      independently of database persistence.
       Measurement contract version 13 is coordinated across both implementations.
       Successful foreign measurements are reusable for reporting, while decoder failures are producer-specific.
       Rust waveforms live in `rust_waveform_cache`, separate from the optional JUCE waveform columns.
@@ -77,7 +79,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
 - `src/metadata/` holds `AudioMetadata.*`, which reads and writes tags and embedded art through TagLib.
   It rewrites Serato values as ID3 frames and drops the overview from processed copies, so it depends on `serato/`.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
-    - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
+    - `PluginScanner.*` holds plugin format registration, known-list persistence, and the shared scan lock.
+      `PluginScanWorker.*` implements the child process, and `OutOfProcessPluginScanner.*` its main-process scanner.
       `addPluginFormats` registers the plugin formats, and leaves the Audio Units built into macOS out of every scan.
       Each executable relaunches itself as its scan worker:
       `gui/Main.cpp` and `cli/CliMain.cpp` detect the worker command line before doing anything else.
@@ -86,6 +89,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       It scans from the plugin manager on one background thread and creates the plugin instances of a processing run.
     - `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
       implement batch processing through a plugin chain.
+      `PluginRunChains.*` owns the run's plugin instances and leases idle chains to workers.
     - `PluginChainPresets.*` turn a chain into XML and back, for the chain in the settings and for the presets.
       Each preset is one `.xml` file in the `Chain Presets` folder next to the settings file,
       named after the preset, with the plugins, their order, their enabled flags, and their state.
@@ -164,7 +168,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Its implementation is split into `LiveChain.cpp` (the slots, editing, and persistence),
       `LiveChainWindows.cpp` (the menu and the editor, chain editor, and plugin manager windows),
       `LiveChainPresets.cpp` (saving, loading, and deleting presets), and `LiveChainPreview.cpp`.
-      Each slot owns the processor the preview and its editor share, and `LiveChainPreview.cpp` prepares them.
+      `LiveSlot.*` owns each slot's processor and editor and preserves their teardown order.
+      `LiveChainPreview.cpp` prepares the processors shared by preview and editing.
       The chain editor rows refer to their slot by `PluginSlotId` instead of by position.
     - `PreviewController.*` loads and releases the previewed file and requests artifacts from the GUI-owned scheduler.
       Its state is a variant of no preview, a released preview that keeps its file, and a loaded preview.
@@ -176,10 +181,13 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,
       and merges, removes, and sorts them.
       `AudioFileTableModel.*` shows those rows in the sortable table, and `ResultsSorting.*` compares and sorts records.
-    - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
+      `SecondarySortTableHeader.*` implements the table header's secondary-sort interaction.
+    - `FileActivity.*` holds the per-file activity types and labels shared by the tracker and table.
+      `FileActivityTracker.*` holds their active progress and operation messages.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
   `AudioInfoPanel.*`, `AudioSettingsComponent.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`,
   `ThumbnailComponent.*`, `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
+  `PluginChainSlotRow.*` implements each independently identified row of the chain editor.
   `StatusBar.*` is the bottom bar with the root folders, the status text, the preview audio output device,
   and the overall progress line along its top edge.
   `PreviewWorkspace.*` holds the waveform, the metrics, and the controls below the results table,
@@ -200,7 +208,8 @@ The source lists are defined in `CMakeLists.txt`.
 and each target adds its own entry point and target-specific files.
 The shared core is everything in `analysis/`, `metadata/`, `normalization/`,
 and `utils/` except `ConsoleProgress`,
-plus `plugins/PluginScanner.*` and the Serato tag, tag cache, and overview files.
+plus `plugins/PluginScanner.*`, `plugins/PluginScanWorker.*`, `plugins/OutOfProcessPluginScanner.*`,
+and the Serato tag, tag cache, and overview files.
 Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.
 List sources as relative `src/...` paths,
@@ -305,6 +314,8 @@ Tests:
   Do not repeat the docstring on the declaration in the header.
   Header-only code, inline functions, and templates are documented where they are defined.
   Types, enums, aliases, constants, and data members keep their docs in the header.
+  Document either every enumerator in an enum or none of them.
+  Prefer no individual docstrings for self-explanatory values, putting needed context in the enum's top-level docstring.
 - Prefer full names instead of abbreviations in identifiers,
   for example `directories` instead of `dirs` and `description` instead of `desc`.
   Established domain terms and API names (`midi`, `xml`, `id`, `dB`) are fine,
@@ -369,10 +380,27 @@ Prefer, in this order, a value or a reference, then a smart pointer, and a raw p
 The detailed rules are in `../.agents/rules/code-organization.md` at the repository root.
 `../.claude/rules` is a symlink to `../.agents/rules`, so Claude Code reads the same files.
 
-- Declare enums first, then structs, then classes.
+- Follow the C++ Core Guidelines NL.16 foundation: relevant types and aliases, special members, functions, then data.
+  Put dependent namespace declarations after the types they need, rather than mechanically sorting unrelated types.
 - Within a class or struct, put `public` before `protected` before `private`.
-- Put member functions before data members.
-- Group functions and variables by return type and topic.
+  Put constructors, the destructor, and copy/move operations first, then static methods.
+  Separate the regular constructor group, destructor, and copy/move group with blank lines.
+  Keep declarations within the constructor and copy/move groups contiguous.
+  Static methods lead protected/private method declarations too.
+- Keep ordinary methods separate from overrides, grouping overrides by their interface when useful.
+  Within coherent blocks, group by return type and alphabetize names, keeping overloads together.
+  Prefer project/library objects, then standard-library objects, then basic scalar returns, with `void` last.
+  Scalar aliases such as `juce::int64` and `std::int64_t` belong with basic types.
+- Put member functions before data members in each access section, with static data first within the data block.
+  Group fields by type and alphabetize within groups where practical.
+  Prefer project/library objects, then standard-library objects, then basic scalar fields.
+- Split sections with more than six methods or fields into coherent groups.
+  Smaller sections may stay compact.
+  Put blank lines between groups, not between function declarations within a group.
+- Correctness, lifetime dependencies, and observable contracts take priority over cosmetic sorting.
+  Match constructor initializer lists to declaration order, and review aggregate callers and layout when moving fields.
+  Do not add manual teardown or worker lifecycle machinery solely to achieve sorting.
+  Explain non-obvious dependency-sensitive order with a short comment.
 - Do not define structs, classes or enums inside classes.
   Declare them at namespace level before the class, or in the anonymous namespace of the `.cpp` that alone uses them.
 - Put file-local helper functions and variables in the anonymous namespace too, instead of declaring them `static`.
@@ -384,8 +412,15 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   Only `main`, the JUCE application macro, and code that must be in the `juce` namespace stay outside.
 - Do not write a class that only has static member functions.
   Use free functions in a namespace instead, and keep classes for types with state or an invariant.
-- Give a reusable class its own file instead of adding it to a helper file such as `utils/ThreadUtils.h`.
-  Helper files hold free functions and small types only.
+- Follow Core Guidelines C.4 and C.5: prefer nonmember helpers when direct representation access is unnecessary,
+  and keep them in the namespace of the type they support.
+  Related free helpers may share the type's header.
+  Use a focused topic file when it improves cohesion or removes unnecessary dependencies,
+  rather than converting helpers into static members for file organization.
+- Prefer a dedicated file for a substantial reusable class when that improves cohesion and dependencies.
+  Small related types and implementation-local helpers may remain together.
+  Do not mechanically require one type per file.
+- Keep headers self-contained and avoid cyclic dependencies or reliance on accidental transitive includes.
 - Do not use `using namespace`. Wrap definitions in the matching namespace block or qualify names.
 - Do not use namespace aliases. Qualify references with the original namespace path.
 - Split files that reach about 1000 lines into focused parts by topic, but avoid very small files.

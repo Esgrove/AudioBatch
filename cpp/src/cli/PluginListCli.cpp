@@ -5,6 +5,7 @@
 
 #include "cli/PluginListCli.h"
 
+#include "plugins/OutOfProcessPluginScanner.h"
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"

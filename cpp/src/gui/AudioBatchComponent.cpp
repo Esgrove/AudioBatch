@@ -15,6 +15,7 @@
 #include "gui/GuiLayout.h"
 #include "gui/PreviewEnrichmentScheduler.h"
 #include "gui/ResultsSorting.h"
+#include "gui/SecondarySortTableHeader.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
@@ -268,7 +269,7 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
     // Both belong on a worker, and analysis remains usable when the cache is unavailable.
     cachePruneThread = std::jthread([this](const std::stop_token& stopToken) {
         if (!stopToken.stop_requested() && analysisCache.open()) {
-            analysisCache.pruneMissingFiles([&stopToken] { return stopToken.stop_requested(); });
+            juce::ignoreUnused(analysisCache.pruneMissingFiles([&stopToken] { return stopToken.stop_requested(); }));
         }
     });
 

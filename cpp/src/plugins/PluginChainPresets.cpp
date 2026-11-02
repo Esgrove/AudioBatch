@@ -166,7 +166,7 @@ std::vector<ChainPresetInfo> listPresets(const juce::File& directory)
         }
         const auto& file = entry.getFile();
         presets.push_back(
-            {.name = file.getFileNameWithoutExtension(), .file = file, .modified = entry.getModificationTime()}
+            {.file = file, .name = file.getFileNameWithoutExtension(), .modified = entry.getModificationTime()}
         );
     }
 

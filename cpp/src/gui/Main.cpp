@@ -4,6 +4,7 @@
 
 #include "gui/MainWindow.h"
 #include "plugins/PluginScanner.h"
+#include "plugins/PluginScanWorker.h"
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
 #include "utils/GuiUtils.h"
@@ -58,6 +59,24 @@ public:
             utils::allowExistingInstanceToActivate(getApplicationName());
         }
         return independent;
+    }
+
+    /// Opens folders and files forwarded by a relaunch or the system, queuing early requests until startup.
+    void anotherInstanceStarted(const juce::String& commandLine) override
+    {
+        utils::logInfo("Another instance started with args: {}", commandLine);
+        if (const auto paths = utils::getPathArguments(commandLine); !paths.isEmpty()) {
+            if (mainWindow == nullptr) {
+                pendingPaths.addArray(paths);
+            } else if (!quitRequested) {
+                mainWindow->openPaths(paths);
+            }
+        }
+#if JUCE_WINDOWS
+        if (mainWindow != nullptr && !quitRequested && !utils::isHeadlessRequest(commandLine)) {
+            mainWindow->showAndActivate();
+        }
+#endif
     }
 
     /// Starts the application: sets up file logging, creates the main window,
@@ -160,28 +179,6 @@ public:
         }
     }
 
-    /// Opens the folders and files of a relaunch or of a system request to open files in the running window.
-    /// On macOS, files opened at launch arrive here before initialise creates the window,
-    /// so they are kept until it exists.
-    /// Activates the existing Windows window on a normal relaunch, preserving deliberate headless launches.
-    /// macOS keeps its existing platform activation behavior.
-    void anotherInstanceStarted(const juce::String& commandLine) override
-    {
-        utils::logInfo("Another instance started with args: {}", commandLine);
-        if (const auto paths = utils::getPathArguments(commandLine); !paths.isEmpty()) {
-            if (mainWindow == nullptr) {
-                pendingPaths.addArray(paths);
-            } else if (!quitRequested) {
-                mainWindow->openPaths(paths);
-            }
-        }
-#if JUCE_WINDOWS
-        if (mainWindow != nullptr && !quitRequested && !utils::isHeadlessRequest(commandLine)) {
-            mainWindow->showAndActivate();
-        }
-#endif
-    }
-
 private:
     /// Runs this process as a plugin scan worker for the main application instance.
     /// The worker gets its own log file and no window,
@@ -208,15 +205,15 @@ private:
         utils::logInfo("Plugin scan worker started");
     }
 
+    /// Paths the system asked to open before the main window existed.
+    juce::StringArray pendingPaths;
+
+    /// Declared before the window and scan worker so their teardown can still log.
+    std::unique_ptr<juce::FileLogger> logger;
     /// The main window, or null when the process runs as a plugin scan worker.
     std::unique_ptr<MainWindow> mainWindow;
     /// The plugin scan worker, when the process was launched as one.
     std::unique_ptr<PluginScanWorker> pluginScanWorker;
-    /// Writes the application log file.
-    std::unique_ptr<juce::FileLogger> logger;
-
-    /// Paths the system asked to open before the main window existed.
-    juce::StringArray pendingPaths;
 
     /// Prevents repeated close requests from scheduling teardown more than once.
     bool quitRequested {false};

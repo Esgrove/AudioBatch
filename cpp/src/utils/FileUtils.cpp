@@ -69,6 +69,7 @@ struct ComReleaser {
 class RecycleOnlyProgressSink final : public IFileOperationProgressSink
 {
 public:
+    // IUnknown
     /// Returns this object for IUnknown and IFileOperationProgressSink.
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID interfaceId, void** object) override
     {
@@ -97,17 +98,7 @@ public:
         return 1;
     }
 
-    /// Aborts the delete when the shell will not recycle the item.
-    HRESULT STDMETHODCALLTYPE PreDeleteItem(const DWORD flags, IShellItem* /*item*/) override
-    {
-        if ((flags & static_cast<DWORD>(TSF_DELETE_RECYCLE_IF_POSSIBLE)) == 0) {
-            refusedPermanentDelete = true;
-            return E_ABORT;
-        }
-
-        return S_OK;
-    }
-
+    // IFileOperationProgressSink, kept in the lifecycle order of the interface.
     /// Accepts the start of the operations.
     HRESULT STDMETHODCALLTYPE StartOperations() override
     {
@@ -183,6 +174,17 @@ public:
         IShellItem* /*newItem*/
     ) override
     {
+        return S_OK;
+    }
+
+    /// Aborts the delete when the shell will not recycle the item.
+    HRESULT STDMETHODCALLTYPE PreDeleteItem(const DWORD flags, IShellItem* /*item*/) override
+    {
+        if ((flags & static_cast<DWORD>(TSF_DELETE_RECYCLE_IF_POSSIBLE)) == 0) {
+            refusedPermanentDelete = true;
+            return E_ABORT;
+        }
+
         return S_OK;
     }
 

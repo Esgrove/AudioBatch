@@ -5,6 +5,7 @@
 
 #include "plugins/PluginLibrary.h"
 
+#include "plugins/OutOfProcessPluginScanner.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "plugins/PluginScanner.h"
@@ -185,7 +186,7 @@ std::expected<ProcessingRunSetup, juce::String> PluginLibrary::createProcessingR
 ) const
 {
     const auto workerCount = juce::jmin(fileCount, getPluginProcessingWorkerCount());
-    auto [chains, initialStates, errorMessage, failedPluginName] = instantiateChains(enabledPlugins, workerCount);
+    auto [errorMessage, failedPluginName, chains, initialStates] = instantiateChains(enabledPlugins, workerCount);
 
     if (chains.empty() || errorMessage.isNotEmpty()) {
         return std::unexpected(

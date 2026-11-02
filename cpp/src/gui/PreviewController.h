@@ -36,6 +36,7 @@ struct LoadedPreview {
     /// The version of the file that was loaded, compared with analysis results of the same path.
     utils::FileIdentity identity;
 
+    // Preserve designated aggregate construction order used when adopting a newly loaded preview.
     /// True after adopting a scheduler artifact, whether reused from cache or freshly built on its worker.
     bool waveformLoadedFromCache {false};
 
@@ -55,6 +56,7 @@ class PreviewController
 {
 public:
     using ArtifactRequest = std::function<void(const utils::FileIdentity&, std::uint64_t)>;
+
     PreviewController(AudioPreviewPlayer& previewPlayer, ArtifactRequest onRequest);
 
     ~PreviewController() = default;
@@ -66,19 +68,21 @@ public:
 
     [[nodiscard]] const PreviewState& getState() const noexcept;
     [[nodiscard]] juce::File getFile() const;
+
     [[nodiscard]] std::shared_ptr<const serato::SeratoData> getSeratoData() const;
-    [[nodiscard]] bool isSeratoDataOutdated(const juce::File& file) const;
-    [[nodiscard]] bool isWaveformLoadedFromCache() const noexcept;
-    [[nodiscard]] bool canDisplayAnalysis(const AudioAnalysisRecord& record) const;
-    [[nodiscard]] bool needsReload(const juce::File& file) const;
-    [[nodiscard]] std::uint64_t getGeneration() const noexcept;
 
     [[nodiscard]] bool adoptSeratoData(
         const utils::FileIdentity& identity,
         std::uint64_t generation,
         std::shared_ptr<const serato::SeratoData> data
     );
+    [[nodiscard]] bool canDisplayAnalysis(const AudioAnalysisRecord& record) const;
+    [[nodiscard]] bool isSeratoDataOutdated(const juce::File& file) const;
+    [[nodiscard]] bool isWaveformLoadedFromCache() const noexcept;
     [[nodiscard]] bool load(const juce::File& file, bool playFromFirstCuePoint);
+    [[nodiscard]] bool needsReload(const juce::File& file) const;
+
+    [[nodiscard]] std::uint64_t getGeneration() const noexcept;
 
     void clear();
     void release();
@@ -91,9 +95,10 @@ private:
     AudioPreviewPlayer& player;
     /// Enqueues selected artifacts through the GUI's single enrichment admission path.
     ArtifactRequest requestArtifacts;
-    /// Selected-preview generation, independent of foreground load and source identity.
-    std::uint64_t generation {0};
     /// What the preview holds.
     PreviewState state;
+
+    /// Selected-preview generation, independent of foreground load and source identity.
+    std::uint64_t generation {0};
 };
 }  // namespace audiobatch

@@ -28,7 +28,9 @@
 
 namespace audiobatch::tests
 {
-/// Expected properties of one fixture tone.
+namespace
+{
+/// Expected properties of one fixture tone, ordered to match the designated fixture initializers.
 struct ToneFixture {
     /// Name of the committed fixture file.
     const char* fileName {};
@@ -177,6 +179,8 @@ constexpr std::array toneFixtures {
 constexpr double losslessTolerance {0.05};
 /// Allowed level difference for lossy fixtures, in dB or LU.
 constexpr double lossyTolerance {0.5};
+
+}  // namespace
 
 /// Checks the measured peaks, loudness, and file properties of every fixture.
 class AnalysisTests final : public juce::UnitTest
@@ -415,6 +419,42 @@ public:
     }
 
 private:
+    /// Analyzes one fixture and compares the results with its expected properties.
+    void checkToneFixture(const ToneFixture& fixture)
+    {
+        beginTest(fixture.fileName);
+
+        const auto record = analyzeFile(fixtureFile(fixture.fileName));
+        expect(!record.hasError(), record.errorMessage);
+        expectEquals(record.channels, fixture.channels);
+        expectEquals(record.sampleRate, fixture.sampleRate);
+
+        expectEquals(record.bitsPerSample, fixture.bitsPerSample);
+
+        const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
+        expectWithinAbsoluteError(peakDecibels(record), fixturePeakDecibels, tolerance);
+        expectWithinAbsoluteError(
+            juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
+        );
+        expectWithinAbsoluteError(record.integratedLufs, fixtureLoudness, tolerance);
+        const auto expectedLength = fixture.lengthInSamples.value_or(juce::int64 {fixture.sampleRate});
+        expectEquals(record.lengthInSamples, static_cast<std::int64_t>(expectedLength), "decoded length in samples");
+        expectWithinAbsoluteError(
+            record.durationSeconds, static_cast<double>(expectedLength) / fixture.sampleRate, 0.000001
+        );
+        expect(record.shortTermLoudness != nullptr);
+        if (record.shortTermLoudness && !record.shortTermLoudness->values.empty()) {
+            const auto& history = *record.shortTermLoudness;
+            const auto expectedCount = record.lengthInSamples / history.samplesPerPoint
+                + (record.lengthInSamples % history.samplesPerPoint != 0 ? 1 : 0);
+            expectEquals(static_cast<std::int64_t>(history.values.size()), expectedCount);
+            expectWithinAbsoluteError(history.timeAt(history.values.size() - 1), record.durationSeconds, 0.0000001);
+            expectWithinAbsoluteError(
+                static_cast<double>(*std::ranges::max_element(history.values)), record.maxShortTermLufs, 0.00001
+            );
+        }
+    }
+
     /// Uses short slices of the committed tone to cover exact EOF and the zero-filled startup window.
     void testLoudnessHistory()
     {
@@ -471,42 +511,6 @@ private:
                 );
                 expectEquals(slice.lengthInSamples, static_cast<std::int64_t>(frames));
             }
-        }
-    }
-
-    /// Analyzes one fixture and compares the results with its expected properties.
-    void checkToneFixture(const ToneFixture& fixture)
-    {
-        beginTest(fixture.fileName);
-
-        const auto record = analyzeFile(fixtureFile(fixture.fileName));
-        expect(!record.hasError(), record.errorMessage);
-        expectEquals(record.channels, fixture.channels);
-        expectEquals(record.sampleRate, fixture.sampleRate);
-
-        expectEquals(record.bitsPerSample, fixture.bitsPerSample);
-
-        const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
-        expectWithinAbsoluteError(peakDecibels(record), fixturePeakDecibels, tolerance);
-        expectWithinAbsoluteError(
-            juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
-        );
-        expectWithinAbsoluteError(record.integratedLufs, fixtureLoudness, tolerance);
-        const auto expectedLength = fixture.lengthInSamples.value_or(juce::int64 {fixture.sampleRate});
-        expectEquals(record.lengthInSamples, static_cast<std::int64_t>(expectedLength), "decoded length in samples");
-        expectWithinAbsoluteError(
-            record.durationSeconds, static_cast<double>(expectedLength) / fixture.sampleRate, 0.000001
-        );
-        expect(record.shortTermLoudness != nullptr);
-        if (record.shortTermLoudness && !record.shortTermLoudness->values.empty()) {
-            const auto& history = *record.shortTermLoudness;
-            const auto expectedCount = record.lengthInSamples / history.samplesPerPoint
-                + (record.lengthInSamples % history.samplesPerPoint != 0 ? 1 : 0);
-            expectEquals(static_cast<std::int64_t>(history.values.size()), expectedCount);
-            expectWithinAbsoluteError(history.timeAt(history.values.size() - 1), record.durationSeconds, 0.0000001);
-            expectWithinAbsoluteError(
-                static_cast<double>(*std::ranges::max_element(history.values)), record.maxShortTermLufs, 0.00001
-            );
         }
     }
 };
