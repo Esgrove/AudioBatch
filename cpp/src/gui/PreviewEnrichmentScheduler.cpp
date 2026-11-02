@@ -302,16 +302,16 @@ void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
 }
 
 /// Runs one job at a time, giving coalesced explicit gains precedence over optional audio work.
-/// Shared ownership keeps the connection and callback captures alive until the detached worker exits.
-void run(std::shared_ptr<PreviewEnrichmentState> state)
+/// Borrows state kept alive by the detached worker's owning capture until this loop exits.
+void run(PreviewEnrichmentState& state)
 {
-    while (auto job = nextJob(*state)) {
+    while (auto job = nextJob(state)) {
         try {
-            executeJob(*state, *job);
+            executeJob(state, *job);
         } catch (...) {
             utils::logDebug("Preview enrichment failed: {}", utils::describeCurrentException());
         }
-        retireJob(*state, *job);
+        retireJob(state, *job);
     }
 }
 }  // namespace
@@ -327,7 +327,7 @@ PreviewEnrichmentScheduler::PreviewEnrichmentScheduler(
 ) :
     state(std::make_shared<PreviewEnrichmentState>(databaseFile, std::move(completion), std::move(work)))
 {
-    std::thread([shared = state] { run(shared); }).detach();
+    std::thread([shared = state] { run(*shared); }).detach();
 }
 
 /// Requests cancellation without a message-thread join or worker-to-UI rendezvous.

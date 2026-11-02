@@ -215,7 +215,16 @@ public:
     {
         const auto first = fixtureFile("sine_mono_44100_16.wav");
         const auto second = fixtureFile("silence_stereo_44100_16.wav");
+        testScheduling(first, second);
+        testPersistence(first);
+        testMetadata(first);
+        testWaveforms(first);
+    }
 
+private:
+    /// Checks admission, selection generations and cancellation with deterministic worker gates.
+    void testScheduling(const juce::File& first, const juce::File& second)
+    {
         beginTest("Selected cache reads precede the gate, but missing repair waits for completion");
         {
             const TemporaryDirectory directory;
@@ -322,7 +331,11 @@ public:
             probe->release(std::numeric_limits<std::size_t>::max());
             expect(probe->waitForFinished(2));
         }
+    }
 
+    /// Verifies explicit edits and committed outputs are persisted before optional repair resumes.
+    void testPersistence(const juce::File& first)
+    {
         beginTest("Explicit gains coalesce off-thread and interrupted selected cache reads resume");
         {
             const TemporaryDirectory directory;
@@ -402,7 +415,11 @@ public:
             expect(probe->waitForFinished(2));
             expectEquals(probe->getMaximumActive(), 1);
         }
+    }
 
+    /// Checks independent metadata publication and cache-only handling of missing and stable negative tags.
+    void testMetadata(const juce::File& first)
+    {
         beginTest("Successful metadata is published even when independent waveform decoding fails");
         {
             const TemporaryDirectory directory;
@@ -466,7 +483,11 @@ public:
             const auto cached = serato::getCachedTags(cache, identity, serato::allTagKinds);
             expect(std::ranges::all_of(cached, [](const auto& result) { return result.has_value(); }));
         }
+    }
 
+    /// Compares native waveform bytes and rejects invalid geometry, failed decoding and obsolete identities.
+    void testWaveforms(const juce::File& first)
+    {
         beginTest("Waveform-only serialization matches native JUCE complete buckets and empty final point");
         for (const auto* name :
              {
