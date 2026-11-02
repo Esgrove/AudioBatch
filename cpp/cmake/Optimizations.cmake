@@ -1,4 +1,5 @@
-# Release IPO and native CPU targeting are shared by the applications, tests, and source-built dependencies.
+# Release IPO, native CPU targeting, and fused multiply-add contraction are shared by the applications, tests,
+# and source-built dependencies.
 # Windows always requires AVX2. CI never adds host-specific CPU flags.
 
 include(CheckCompilerFlag)
@@ -133,10 +134,9 @@ if(MSVC)
 
     add_compile_options("$<${cpu_languages}:$<IF:$<CONFIG:Release>,/arch:${release_architecture},/arch:AVX2>>")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        # Native targeting must not fuse separately rounded DSP multiply/add operations.
-        add_compile_options("$<${cpu_languages}:/clang:-ffp-contract=off>")
+        add_compile_options("$<${cpu_languages}:/clang:-ffp-contract=fast>")
     else()
-        add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:/fp:precise>")
+        add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:/fp:precise;/fp:contract>")
     endif()
     message(STATUS "AudioBatch Windows CPU baseline: AVX2")
 elseif(use_native)
@@ -144,8 +144,6 @@ elseif(use_native)
         set(native_flags -mcpu=native -mtune=native)
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$")
         set(native_flags -march=native -mtune=native)
-        # Native x86 targeting introduces FMA, which must not change separate multiply/add rounding.
-        add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:-ffp-contract=off>")
     else()
         message(FATAL_ERROR "AudioBatch native CPU targeting is not supported for ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
@@ -162,4 +160,9 @@ endif()
 
 if(NOT AUDIOBATCH_NATIVE_CPU)
     message(STATUS "AudioBatch native CPU targeting: disabled by AUDIOBATCH_NATIVE_CPU")
+endif()
+
+if(NOT MSVC)
+    # Lets the compiler fuse multiply/add chains into FMA instructions across statements wherever the target has them.
+    add_compile_options("$<$<AND:${cpu_languages},$<CONFIG:Release>>:-ffp-contract=fast>")
 endif()
