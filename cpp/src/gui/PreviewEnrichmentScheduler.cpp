@@ -30,12 +30,6 @@
 
 namespace audiobatch
 {
-/// A committed output and the captured source row to remove if conversion changed its path.
-struct EnrichmentOutput {
-    AudioAnalysisRecord output;
-    std::optional<AudioAnalysisRecord> convertedSource;
-};
-
 /// State shared only because a cancelled worker may outlive its GUI owner.
 struct PreviewEnrichmentState {
     /// Constructs a worker-owned connection without opening it on the message thread.
@@ -58,7 +52,7 @@ struct PreviewEnrichmentState {
     std::unordered_map<juce::String, CustomGainUpdate> gains;
     std::unordered_map<juce::String, CustomGainUpdate> deferredGains;
     bool retryDeferredGains {false};
-    std::deque<EnrichmentOutput> outputs;
+    std::deque<std::pair<AudioAnalysisRecord, std::optional<AudioAnalysisRecord>>> outputs;
     std::optional<utils::FileIdentity> selected;
     std::uint64_t selectionGeneration {0};
     std::atomic<std::uint64_t> loadGeneration {1};
@@ -74,6 +68,12 @@ struct PreviewEnrichmentState {
 
 namespace
 {
+/// A committed output and the captured source row to remove if conversion changed its path.
+struct EnrichmentOutput {
+    AudioAnalysisRecord output;
+    std::optional<AudioAnalysisRecord> convertedSource;
+};
+
 /// One admitted unit of work, keeping source ownership separate from foreground and selection generations.
 struct EnrichmentJob {
     std::optional<PreviewEnrichmentCandidate> candidate;
@@ -87,7 +87,7 @@ struct EnrichmentJob {
 
 /// Publishes artifacts only for the latest selected identity, generation and foreground load.
 void deliver(
-    const std::shared_ptr<PreviewEnrichmentState>& state,
+    PreviewEnrichmentState& state,
     const utils::FileIdentity& identity,
     const std::uint64_t loadGeneration,
     std::shared_ptr<const serato::SeratoData> tags,
@@ -97,19 +97,19 @@ void deliver(
 {
     std::uint64_t selectionGeneration = 0;
     {
-        const std::scoped_lock lock(state->mutex);
-        if (state->stopped || state->loadGeneration != loadGeneration || !state->selected
-            || state->activeSelectionGeneration != state->selectionGeneration || state->selected->path != identity.path
-            || state->selected->platformId != identity.platformId
-            || state->selected->preciseTimes != identity.preciseTimes || state->selected->fileSize != identity.fileSize
-            || state->selected->modifiedTimeMs != identity.modifiedTimeMs)
+        const std::scoped_lock lock(state.mutex);
+        if (state.stopped || state.loadGeneration != loadGeneration || !state.selected
+            || state.activeSelectionGeneration != state.selectionGeneration || state.selected->path != identity.path
+            || state.selected->platformId != identity.platformId
+            || state.selected->preciseTimes != identity.preciseTimes || state.selected->fileSize != identity.fileSize
+            || state.selected->modifiedTimeMs != identity.modifiedTimeMs)
         {
             return;
         }
-        selectionGeneration = state->selectionGeneration;
+        selectionGeneration = state.selectionGeneration;
     }
-    if (identity.matches(juce::File(identity.path)) && !state->stopped && state->completion) {
-        state->completion({
+    if (identity.matches(juce::File(identity.path)) && !state.stopped && state.completion) {
+        state.completion({
             .identity = identity,
             .selectionGeneration = selectionGeneration,
             .loadGeneration = loadGeneration,
@@ -121,8 +121,9 @@ void deliver(
 }
 
 /// Rechecks both artifacts at admission, reads tags first, and persists only the missing native waveform.
+/// Cancellation borrows the state only during synchronous metadata and waveform calls.
 void enrich(
-    const std::shared_ptr<PreviewEnrichmentState>& state,
+    PreviewEnrichmentState& state,
     const PreviewEnrichmentCandidate& candidate,
     const bool readMissing,
     const std::uint64_t loadGeneration,
@@ -130,8 +131,8 @@ void enrich(
 )
 {
     const utils::FileIdentity identity(candidate.file);
-    const auto cancelled = [state, loadGeneration, interruption] {
-        return state->stopped || state->loadGeneration != loadGeneration || state->interruption != interruption;
+    const auto cancelled = [&state, loadGeneration, interruption] {
+        return state.stopped || state.loadGeneration != loadGeneration || state.interruption != interruption;
     };
     if (identity.fileSize != candidate.fileSize || identity.modifiedTimeMs != candidate.modifiedTimeMs
         || !identity.matches(candidate.file) || cancelled())
@@ -139,11 +140,11 @@ void enrich(
         return;
     }
 
-    const auto cachedTags = serato::getCachedTags(state->cache, identity, serato::allTagKinds);
+    const auto cachedTags = serato::getCachedTags(state.cache, identity, serato::allTagKinds);
     const auto tagsCached = std::ranges::all_of(cachedTags, [](const auto& result) { return result.has_value(); });
     std::shared_ptr<const serato::SeratoData> tags;
     try {
-        tags = serato::loadPreviewData(state->cache, identity, cancelled, readMissing);
+        tags = serato::loadPreviewData(state.cache, identity, cancelled, readMissing);
     } catch (...) {
         // Metadata failure must not prevent independent waveform repair.
         utils::logDebug("Preview metadata enrichment failed: {}", utils::describeCurrentException());
@@ -152,7 +153,7 @@ void enrich(
         return;
     }
     const auto finalTags = readMissing && !tagsCached
-        ? serato::getCachedTags(state->cache, identity, serato::allTagKinds)
+        ? serato::getCachedTags(state.cache, identity, serato::allTagKinds)
         : std::vector<std::optional<serato::TagReadResult>> {};
     const auto tagsReady = tagsCached
         || (readMissing && std::ranges::all_of(finalTags, [](const auto& result) { return result.has_value(); }));
@@ -161,11 +162,11 @@ void enrich(
     if (tagsReady || tags || readMissing) {
         deliver(state, identity, loadGeneration, std::move(tags), std::nullopt, true);
     }
-    auto waveform = state->cache.getWaveformData(candidate.file);
+    auto waveform = state.cache.getWaveformData(candidate.file);
     if (!waveform && readMissing && !cancelled()) {
         waveform = buildNativeWaveform(identity, cancelled);
         if (waveform && !cancelled() && identity.matches(candidate.file)) {
-            static_cast<void>(state->cache.storeWaveformData(identity, *waveform));
+            static_cast<void>(state.cache.storeWaveformData(identity, *waveform));
         }
     }
     if (!cancelled() && waveform && identity.matches(candidate.file)) {
@@ -227,7 +228,8 @@ std::optional<EnrichmentJob> nextJob(PreviewEnrichmentState& state)
     takeGains(state, job);
     if (job.gains.empty()) {
         if (!state.outputs.empty()) {
-            job.output = std::move(state.outputs.front());
+            auto& [output, convertedSource] = state.outputs.front();
+            job.output = EnrichmentOutput {.output = std::move(output), .convertedSource = std::move(convertedSource)};
             state.outputs.pop_front();
         } else {
             takeCandidate(state, job);
@@ -255,20 +257,21 @@ void persistGains(PreviewEnrichmentState& state, const EnrichmentJob& job)
 }
 
 /// Dispatches one already admitted job without creating another worker or waiting for GUI delivery.
-void executeJob(const std::shared_ptr<PreviewEnrichmentState>& state, const EnrichmentJob& job)
+/// Injected work borrows the state, job and cancellation callback only until the synchronous call returns.
+void executeJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
 {
     if (!job.gains.empty()) {
-        persistGains(*state, job);
+        persistGains(state, job);
     } else if (job.output) {
-        static_cast<void>(state->cache.storeAnalysis(job.output->output));
+        static_cast<void>(state.cache.storeAnalysis(job.output->output));
         if (job.output->convertedSource) {
-            static_cast<void>(state->cache.removeAnalysis(*job.output->convertedSource));
+            static_cast<void>(state.cache.removeAnalysis(*job.output->convertedSource));
         }
     } else if (job.candidate) {
-        if (state->work) {
-            state->work(*job.candidate, job.readMissing, [state, &job] {
-                return state->stopped || state->loadGeneration != job.loadGeneration
-                    || state->interruption != job.interruption;
+        if (state.work) {
+            state.work(*job.candidate, job.readMissing, [&state, &job] {
+                return state.stopped || state.loadGeneration != job.loadGeneration
+                    || state.interruption != job.interruption;
             });
         } else {
             enrich(state, *job.candidate, job.readMissing, job.loadGeneration, job.interruption);
@@ -299,11 +302,12 @@ void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
 }
 
 /// Runs one job at a time, giving coalesced explicit gains precedence over optional audio work.
-void run(const std::shared_ptr<PreviewEnrichmentState>& state)
+/// Shared ownership keeps the connection and callback captures alive until the detached worker exits.
+void run(std::shared_ptr<PreviewEnrichmentState> state)
 {
     while (auto job = nextJob(*state)) {
         try {
-            executeJob(state, *job);
+            executeJob(*state, *job);
         } catch (...) {
             utils::logDebug("Preview enrichment failed: {}", utils::describeCurrentException());
         }
@@ -313,6 +317,9 @@ void run(const std::shared_ptr<PreviewEnrichmentState>& state)
 }  // namespace
 
 /// Starts the sole worker with independently owned cache and callback captures.
+/// Completion runs on that worker and must enqueue GUI delivery without waiting for the message thread.
+/// Callback captures must own their dependencies or use safe references because shutdown does not join the worker.
+/// Injected work runs synchronously and must not retain its borrowed candidate or cancellation callback.
 PreviewEnrichmentScheduler::PreviewEnrichmentScheduler(
     const juce::File& databaseFile,
     Completion completion,
@@ -415,7 +422,8 @@ void PreviewEnrichmentScheduler::clear()
     clearSelection();
 }
 
-/// Invalidates all publication and releases the worker as soon as its current cancellable stage exits.
+/// Invalidates all publication and drains queued explicit writes after the current cancellable stage exits.
+/// Returns without joining, so callback captures remain worker-owned and must tolerate overlapping shutdown.
 void PreviewEnrichmentScheduler::stop()
 {
     state->stopped = true;
@@ -445,7 +453,7 @@ void PreviewEnrichmentScheduler::persistOperation(
 {
     {
         const std::scoped_lock lock(state->mutex);
-        state->outputs.push_back({.output = std::move(output), .convertedSource = std::move(convertedSource)});
+        state->outputs.emplace_back(std::move(output), std::move(convertedSource));
     }
     state->condition.notify_one();
 }

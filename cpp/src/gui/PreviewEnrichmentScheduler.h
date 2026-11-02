@@ -42,8 +42,11 @@ struct PreviewEnrichmentResult {
 class PreviewEnrichmentScheduler final
 {
 public:
+    /// Receives artifacts on the worker thread and must enqueue GUI delivery without waiting for the message thread.
+    /// Captures must own their dependencies or refer safely to owners because delivery can overlap scheduler shutdown.
     using Completion = std::function<void(PreviewEnrichmentResult)>;
-    /// Optional deterministic worker injection for admission tests, never used by the application.
+    /// Optional synchronous worker injection for admission tests, never used by the application.
+    /// The candidate and cancellation callback are borrowed only for the invocation and must not be retained.
     using Work = std::function<void(const PreviewEnrichmentCandidate&, bool, const utils::CancellationCheck&)>;
 
     PreviewEnrichmentScheduler(const juce::File& databaseFile, Completion completion, Work work = {});

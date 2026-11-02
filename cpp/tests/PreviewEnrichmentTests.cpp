@@ -195,10 +195,10 @@ PreviewEnrichmentCandidate candidateFor(const juce::File& file)
 }
 
 /// Returns work whose probe outlives every detached callback, including timeout and early-return paths.
-PreviewEnrichmentScheduler::Work workFor(const std::shared_ptr<EnrichmentProbe>& probe)
+PreviewEnrichmentScheduler::Work workFor(std::shared_ptr<EnrichmentProbe> probe)
 {
-    return [probe](const auto& candidate, const bool readMissing, const auto& cancelled) {
-        probe->work(candidate, readMissing, cancelled);
+    return [ownedProbe = std::move(probe)](const auto& candidate, const bool readMissing, const auto& cancelled) {
+        ownedProbe->work(candidate, readMissing, cancelled);
     };
 }
 }  // namespace
@@ -363,6 +363,46 @@ public:
             expectEquals(probe->getMaximumActive(), 1);
         }
 
+        beginTest("Committed conversion persists its output and removes its captured source before repair");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_mono_44100_16.wav", "source.wav");
+            const auto outputFile = directory.copyFixture("sine_stereo_44100_16.aif", "output.aif");
+            const auto database = directory.getChildFile("cache.db");
+            const auto sourceRecord = analyzeFile(source);
+            const auto outputRecord = analyzeFile(outputFile);
+            expect(!sourceRecord.hasError());
+            expect(!outputRecord.hasError());
+            AnalysisCache cache(database);
+            expect(cache.storeAnalysis(sourceRecord));
+            const auto probe = std::make_shared<EnrichmentProbe>();
+            PreviewEnrichmentScheduler scheduler(database, {}, workFor(probe));
+            scheduler.completeForeground({candidateFor(source), candidateFor(outputFile)});
+            expect(probe->waitForCalls(1));
+            scheduler.persistOperation(outputRecord, sourceRecord);
+            probe->release(1);
+            expect(probe->waitForCalls(2));
+            {
+                // A separate connection proves the writes committed before optional output repair was admitted.
+                AnalysisCache persisted(database);
+                const auto cached = persisted.getAnalysis(outputFile);
+                expect(cached.has_value());
+                if (cached) {
+                    expectEquals(cached->lengthInSamples, outputRecord.lengthInSamples);
+                    expectEquals(cached->channels, outputRecord.channels);
+                    expectWithinAbsoluteError(cached->overallPeak, outputRecord.overallPeak, 1.0e-6f);
+                }
+                expect(!persisted.getAnalysis(source));
+                expect(source.existsAsFile());
+            }
+            const auto calls = probe->snapshot();
+            expect(calls.size() == 2 && calls[1].file == outputFile && calls[1].readMissing);
+            scheduler.stop();
+            probe->release(std::numeric_limits<std::size_t>::max());
+            expect(probe->waitForFinished(2));
+            expectEquals(probe->getMaximumActive(), 1);
+        }
+
         beginTest("Successful metadata is published even when independent waveform decoding fails");
         {
             const TemporaryDirectory directory;
@@ -431,6 +471,7 @@ public:
         for (const auto* name :
              {
                  "sine_mono_44100_16.wav",
+                 "sine_stereo_44100_16.wav",
                  "silence_stereo_44100_16.wav",
                  "sine_stereo_44100_32f.wav",
                  "sine_stereo_96000_16.wav",
@@ -444,8 +485,19 @@ public:
             }
             const auto actual = buildNativeWaveform(*reader);
             expect(actual.has_value(), name);
+            if (!actual) {
+                continue;
+            }
             const auto detail = samplesPerThumbnailPoint(reader->lengthInSamples);
             const auto completeSamples = static_cast<int>((reader->lengthInSamples / detail) * detail);
+            juce::MemoryInputStream input(*actual, false);
+            expectEquals(input.readInt(), 0x6d74616a);
+            expectEquals(input.readInt(), detail);
+            expectEquals(input.readInt64(), reader->lengthInSamples);
+            expectEquals(input.readInt64(), static_cast<juce::int64>(completeSamples));
+            expectEquals(input.readInt(), static_cast<int>(reader->lengthInSamples / detail + 1));
+            expectEquals(input.readInt(), static_cast<int>(reader->numChannels));
+            expectEquals(input.readInt(), static_cast<int>(reader->sampleRate));
             juce::AudioBuffer<float> pcm(static_cast<int>(reader->numChannels), completeSamples);
             expect(utils::readFloatSamples(*reader, utils::writePointers(pcm), 0, completeSamples));
             juce::AudioFormatManager formats;
@@ -457,7 +509,11 @@ public:
             juce::MemoryOutputStream output(expected, false);
             reference.saveTo(output);
             output.flush();
-            expect(actual && *actual == expected, name);
+            expect(*actual == expected, name);
+            expectWithinAbsoluteError(
+                reference.getTotalLength(), static_cast<double>(reader->lengthInSamples) / reader->sampleRate, 1.0e-12
+            );
+            expect(!buildNativeWaveform(*reader, [] { return true; }));
         }
 
         beginTest("Native thumbnail detail keeps its power-of-two bounds across long and empty sources");

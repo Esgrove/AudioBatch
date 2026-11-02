@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <sqlite3.h>
 #include <utility>
 
@@ -32,7 +33,7 @@ struct WaveformGeometry {
 constexpr int maximumWaveformBytes {52 + 4'194'304 * 2 * 2};
 
 /// Validates a borrowed SQLite blob before copying it or allowing JUCE to allocate native thumbnail arrays.
-std::optional<WaveformGeometry> waveformGeometry(const void* data, const std::size_t bytes)
+std::optional<WaveformGeometry> waveformGeometry(const std::span<const std::byte> data)
 {
     constexpr std::size_t headerBytes {52};
     constexpr int waveformMagic {0x6d74616a};
@@ -40,10 +41,10 @@ std::optional<WaveformGeometry> waveformGeometry(const void* data, const std::si
     constexpr int maximumDetail {1024};
     constexpr int maximumWaveformSampleRate {768'000};
     constexpr std::int64_t maximumPoints {4'194'304};
-    if (data == nullptr || bytes < headerBytes || bytes > static_cast<std::size_t>(maximumWaveformBytes)) {
+    if (data.size() < headerBytes || data.size() > static_cast<std::size_t>(maximumWaveformBytes)) {
         return std::nullopt;
     }
-    juce::MemoryInputStream input(data, bytes, false);
+    juce::MemoryInputStream input(data.data(), data.size(), false);
     if (input.readInt() != waveformMagic) {
         return std::nullopt;
     }
@@ -57,7 +58,7 @@ std::optional<WaveformGeometry> waveformGeometry(const void* data, const std::si
         || total <= 0 || finished < 0 || finished > total || total - finished > detail || points <= 0
         || points > maximumPoints || (channels != 1 && channels != 2) || rate <= 0 || rate > maximumWaveformSampleRate
         || total / detail != static_cast<std::int64_t>(points) - 1
-        || bytes - headerBytes != static_cast<std::size_t>(points) * static_cast<std::size_t>(channels) * 2)
+        || data.size() - headerBytes != static_cast<std::size_t>(points) * static_cast<std::size_t>(channels) * 2)
     {
         return std::nullopt;
     }
@@ -69,7 +70,7 @@ std::optional<WaveformGeometry> waveformGeometry(const void* data, const std::si
 /// Cached thumbnails use bounded power-of-two detail and complete source geometry, including the final partial point.
 bool isValidWaveformData(const juce::MemoryBlock& data)
 {
-    return waveformGeometry(data.getData(), data.getSize()).has_value();
+    return waveformGeometry(std::span(static_cast<const std::byte*>(data.getData()), data.getSize())).has_value();
 }
 
 /// Keys in-memory thumbnail reuse by the captured source version, detail and waveform format version.
@@ -135,9 +136,12 @@ std::optional<juce::MemoryBlock> AnalysisCache::getWaveformData(const juce::File
     if (sqlite3_column_type(statement, 2) != SQLITE_BLOB || sqlite3_column_bytes(statement, 2) > maximumWaveformBytes) {
         return std::nullopt;
     }
-    const auto geometry = waveformGeometry(
-        sqlite3_column_blob(statement, 2), static_cast<std::size_t>(sqlite3_column_bytes(statement, 2))
-    );
+    const auto* data = static_cast<const std::byte*>(sqlite3_column_blob(statement, 2));
+    if (data == nullptr) {
+        return std::nullopt;
+    }
+    const auto geometry
+        = waveformGeometry(std::span(data, static_cast<std::size_t>(sqlite3_column_bytes(statement, 2))));
     constexpr int lengthColumn {5};
     constexpr int rateColumn {6};
     constexpr int channelsColumn {7};
@@ -153,7 +157,8 @@ std::optional<juce::MemoryBlock> AnalysisCache::getWaveformData(const juce::File
 /// Stores serialized waveform preview data for a file.
 bool AnalysisCache::storeWaveformData(const utils::FileIdentity& identity, const juce::MemoryBlock& waveformData)
 {
-    const auto geometry = waveformGeometry(waveformData.getData(), waveformData.getSize());
+    const auto geometry
+        = waveformGeometry(std::span(static_cast<const std::byte*>(waveformData.getData()), waveformData.getSize()));
     if (!geometry || !identity.matches(juce::File(identity.path))) {
         return false;
     }
