@@ -63,13 +63,37 @@ require_command cargo-nextest "cargo-nextest not found. Install it with: cargo i
 
 cd "$REPO"
 
+# Use one directory for test mappings, the executable build, subprocess profiles, and all reports.
+export CARGO_LLVM_COV_TARGET_DIR="$REPO/target/llvm-cov-target"
+
 if [ "$CLEAN" = true ]; then
     print_magenta "Removing previous coverage data..."
     cargo llvm-cov clean --workspace
 fi
 
 print_magenta "Running tests with coverage..."
-cargo llvm-cov nextest --workspace --no-fail-fast --no-report
+TEST_STATUS=0
+cargo llvm-cov nextest --workspace --no-fail-fast --no-report || TEST_STATUS=$?
+
+# Build and run the real CLI with the same instrumentation as nextest.
+# The shared suite preserves LLVM_PROFILE_FILE in every child environment.
+# Keep this environment scoped so cargo-llvm-cov's report command sees its normal flags.
+run_cli_coverage() {
+    local coverage_environment cli_binary
+    coverage_environment=$(CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR" cargo llvm-cov show-env --sh) || return "$?"
+    eval "$coverage_environment" || return "$?"
+    export LLVM_PROFILE_FILE="$CARGO_LLVM_COV_TARGET_DIR/rust-cli-integration-%m-%p.profraw"
+    cargo build --target-dir "$CARGO_LLVM_COV_TARGET_DIR" --bin audiobatch-rs || return "$?"
+    require_command uv "uv not found in path, it runs the shared CLI integration suite" || return "$?"
+    cli_binary="$CARGO_LLVM_COV_TARGET_DIR/debug/audiobatch-rs"
+    if [ "$BASH_PLATFORM" = windows ]; then
+        cli_binary="$cli_binary.exe"
+    fi
+    uv run --script ../tests/cli_integration.py \
+        --cli "$cli_binary" \
+        --artifacts target/integration-artifacts/cli-coverage
+}
+(run_cli_coverage) || TEST_STATUS=$?
 
 cargo llvm-cov report --summary-only
 
@@ -82,4 +106,9 @@ fi
 if [ "$OPEN" = true ]; then
     cargo llvm-cov report --html --open
     print_green "HTML report: $REPO/target/llvm-cov/html/index.html"
+fi
+
+if [ "$TEST_STATUS" -ne 0 ]; then
+    print_error "Tests failed, the report includes only the code they reached."
+    exit "$TEST_STATUS"
 fi
