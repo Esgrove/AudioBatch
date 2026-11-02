@@ -662,25 +662,30 @@ private:
             const TemporaryDirectory directory;
             AnalysisCache cache(directory.getChildFile("cache.db"));
             const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-            PreviewProbe probe(status);
             for (std::size_t attempt = 0; attempt < 2; ++attempt) {
+                PreviewProbe probe(status, status == ReadStatus::cancelled);
                 SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
                 loader.request(file, 1.0);
-                expect(probe.waitForReads(attempt + 1));
+                expect(probe.waitForReads(1));
                 if (status == ReadStatus::ioError) {
-                    expect(probe.waitForDeliveries(attempt + 1));
+                    expect(probe.waitForDeliveries(1));
+                } else {
+                    // Invalidate the generation while the reader is gated, before a null completion can be queued.
+                    loader.cancel();
+                    probe.release();
                 }
                 loader.cancelAndWait();
                 for (const auto kind : serato::allTagKinds) {
                     expect(!serato::getCachedTag(cache, utils::FileIdentity(file), kind));
                 }
-            }
-            expectEquals(static_cast<int>(probe.readPaths().size()), 2);
-            for (const auto& result : probe.queued()) {
-                expect(result.data == nullptr);
-            }
-            if (status == ReadStatus::cancelled) {
-                expect(probe.queued().empty());
+                expectEquals(static_cast<int>(probe.readPaths().size()), 1);
+                for (const auto& result : probe.queued()) {
+                    expect(result.data == nullptr);
+                }
+                if (status == ReadStatus::cancelled) {
+                    expect(probe.wasCancelled());
+                    expect(probe.queued().empty());
+                }
             }
         }
     }
