@@ -76,7 +76,7 @@ public:
     void reanalyzeSelectedRecords();
     void removeSelectedRecords();
     void rescanCurrentRoot();
-    void revealSelectedRecord() const;
+    void revealSelectedRecord();
     void showAudioSettingsWindow();
     void showSupportedNormalizationFormats();
     void setViewOptionsChangedCallback(std::function<void()> callback);
@@ -139,6 +139,7 @@ private:
     void setExpandedLayout(int previewHeight);
 
     juce::Array<juce::File> getSelectedRecordFiles() const;
+    juce::Array<juce::File> getSelectedListedFiles() const;
     juce::StringArray getSelectedRecordPaths() const;
     [[nodiscard]] juce::Array<juce::File> releasePreviewBeforeProcessing(
         const std::vector<AudioAnalysisRecord>& records
@@ -175,6 +176,7 @@ private:
     void releasePreviewPlayback();
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
     void repaintStatusColumn();
+    void reportFolderLimit(int skippedFolders);
     void replaceRecordsAfterOperation(const std::vector<CommittedOutput>& outputs);
     void requestSeratoPreview();
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);

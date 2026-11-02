@@ -14,6 +14,7 @@
 #include "utils/StringFormat.h"
 #include <unordered_set>
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -208,8 +209,16 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
         return;
     }
 
-    const auto& record = analysisResults[row];
-    const auto parentDirectory = record.file.getParentDirectory();
+    // Every item acts on the selection, which handleFileContextMenuRequested has made include the clicked row.
+    // Missing files stay in, so their parent folders can still be opened.
+    auto selectedFiles = getSelectedListedFiles();
+    if (selectedFiles.isEmpty()) {
+        selectedFiles.add(analysisResults[row].file);
+    }
+    const auto anyFileExists = std::ranges::any_of(selectedFiles, [](const juce::File& file) { return file.exists(); });
+    const auto anyParentDirectory = std::ranges::any_of(selectedFiles, [](const juce::File& file) {
+        return file.getParentDirectory().isDirectory();
+    });
     const auto selectedRecords = getSelectedNormalizableRecords();
     const auto canNormalize = backgroundWork.isIdle() && canNormalizeRecords(selectedRecords);
 
@@ -217,8 +226,8 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     const auto addItem = [&menu](const FileMenuItemId item, const juce::String& text, const bool isEnabled) {
         menu.addItem(std::to_underlying(item), text, isEnabled);
     };
-    addItem(FileMenuItemId::revealFile, utils::revealInFileManagerLabel(), record.file.exists());
-    addItem(FileMenuItemId::openParentDirectory, "Open Parent Folder", parentDirectory.isDirectory());
+    addItem(FileMenuItemId::revealFile, utils::revealInFileManagerLabel(), anyFileExists);
+    addItem(FileMenuItemId::openParentDirectory, "Open Parent Folder", anyParentDirectory);
     menu.addSeparator();
     addItem(FileMenuItemId::reanalyze, "Re-analyze Selected", backgroundWork.isIdle());
     addItem(
@@ -240,15 +249,16 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     addItem(FileMenuItemId::clearCustomGain, "Clear Per-file Gain", anyHasGain);
     menu.addSeparator();
     addItem(FileMenuItemId::removeFromList, "Remove from List", true);
-    addItem(FileMenuItemId::moveToTrash, "Move to Trash", record.file.exists());
+    addItem(FileMenuItemId::moveToTrash, "Move to Trash", anyFileExists);
 
     const auto safeThis = SafePointer(this);
     menu.showMenuAsync(
         juce::PopupMenu::Options()
             .withTargetScreenArea(juce::Rectangle(screenPosition.x, screenPosition.y, 1, 1))
             .withParentComponent(this),
-        // The file is captured instead of the row, because results arriving while the menu is open re-sort the table.
-        [safeThis, file = record.file](const int result) {
+        // The files are captured instead of the rows,
+        // because results arriving while the menu is open re-sort the table.
+        [safeThis, files = std::move(selectedFiles)](const int result) {
             const auto item = fileMenuItemFromId(result);
             if (safeThis == nullptr || !item.has_value()) {
                 return;
@@ -256,10 +266,10 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
 
             switch (*item) {
                 case FileMenuItemId::revealFile:
-                    utils::revealFileInFileManager(file);
+                    safeThis->reportFolderLimit(utils::revealFilesInFileManager(files));
                     break;
                 case FileMenuItemId::openParentDirectory:
-                    utils::revealParentDirectory(file);
+                    safeThis->reportFolderLimit(utils::openParentDirectories(files));
                     break;
                 case FileMenuItemId::normalize:
                     safeThis->normalizeSelectedRecords();
@@ -288,15 +298,27 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     );
 }
 
-/// Reveals the file of the selected row in the platform file manager.
-/// With several rows selected, the row shown in the info panel is used.
+/// Reveals the files of the selected rows in the platform file manager, one window per parent folder.
 /// Does nothing when no row is selected.
-void AudioBatchComponent::revealSelectedRecord() const
+void AudioBatchComponent::revealSelectedRecord()
 {
-    const auto selectedRows = resultsTable.getSelectedRows();
+    if (const auto selectedFiles = getSelectedListedFiles(); !selectedFiles.isEmpty()) {
+        reportFolderLimit(utils::revealFilesInFileManager(selectedFiles));
+    }
+}
 
-    if (const auto row = getSelectionDisplayRow(selectedRows, -1); analysisResults.containsRow(row)) {
-        utils::revealFileInFileManager(analysisResults[row].file);
+/// Shows in the status bar when revealing or opening folders stopped at utils::maximumRevealFolders.
+void AudioBatchComponent::reportFolderLimit(const int skippedFolders)
+{
+    if (skippedFolders > 0) {
+        statusBar.setStatusText(
+            utils::format(
+                "Opened the first {} folders, {} more {} left out",
+                utils::maximumRevealFolders,
+                skippedFolders,
+                skippedFolders == 1 ? "folder" : "folders"
+            )
+        );
     }
 }
 

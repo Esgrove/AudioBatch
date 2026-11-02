@@ -468,6 +468,19 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRec
     return selectedRecords;
 }
 
+/// Returns the files of the selected rows in table order, including files that no longer exist.
+juce::Array<juce::File> AudioBatchComponent::getSelectedListedFiles() const
+{
+    juce::Array<juce::File> selectedFiles;
+    const auto selectedRows = resultsTable.getSelectedRows();
+    for (int index = 0; index < selectedRows.size(); ++index) {
+        if (const auto rowNumber = selectedRows[index]; analysisResults.containsRow(rowNumber)) {
+            selectedFiles.add(analysisResults[rowNumber].file);
+        }
+    }
+    return selectedFiles;
+}
+
 /// Returns the full paths of the selected rows, used to restore the selection
 /// after re-sorting.
 juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const

@@ -133,6 +133,8 @@ public:
             expectEquals(utils::fileExtension(root.getChildFile("no_extension")), juce::String());
         }
 
+        runFolderGroupingTests(root);
+
         beginTest("Audio file types are recognised by extension");
         {
             expect(utils::isMp3File(root.getChildFile("a.MP3")));
@@ -504,6 +506,54 @@ public:
     }
 
 private:
+    /// Checks how files are grouped by parent folder for revealing and opening them.
+    void runFolderGroupingTests(const juce::File& root)
+    {
+        beginTest("Files group by parent folder in first appearance order without duplicates");
+        {
+            const auto first = root.getChildFile("AudioBatch reveal one");
+            const auto second = root.getChildFile("AudioBatch reveal two");
+            const juce::Array<juce::File> files {
+                first.getChildFile("b.wav"),
+                second.getChildFile("c.wav"),
+                first.getChildFile("a.wav"),
+                first.getChildFile("b.wav"),
+            };
+            const auto folders = utils::groupByParentFolder(files, utils::maximumRevealFolders);
+            expectEquals(static_cast<int>(folders.groups.size()), 2);
+            expectEquals(folders.skippedFolders, 0);
+            if (folders.groups.size() == 2) {
+                expect(folders.groups[0].first == first);
+                expect(
+                    folders.groups[0].second == juce::Array {first.getChildFile("b.wav"), first.getChildFile("a.wav")}
+                );
+                expect(folders.groups[1].first == second);
+                expect(folders.groups[1].second == juce::Array {second.getChildFile("c.wav")});
+            }
+            expect(utils::groupByParentFolder({}, utils::maximumRevealFolders).groups.empty());
+        }
+
+        beginTest("Folder grouping stops at the limit and counts the folders left out");
+        {
+            juce::Array<juce::File> files;
+            for (int index = 0; index < 4; ++index) {
+                const auto folder = root.getChildFile(utils::format("AudioBatch reveal limit {}", index));
+                files.add(folder.getChildFile("a.wav"));
+                files.add(folder.getChildFile("b.wav"));
+            }
+            files.add(root.getChildFile("AudioBatch reveal limit 0").getChildFile("c.wav"));
+            const auto folders = utils::groupByParentFolder(files, 2);
+            expectEquals(static_cast<int>(folders.groups.size()), 2);
+            expectEquals(folders.skippedFolders, 2);
+            if (folders.groups.size() == 2) {
+                expectEquals(folders.groups[0].second.size(), 3);
+                expectEquals(folders.groups[1].second.size(), 2);
+            }
+            expectEquals(utils::groupByParentFolder(files, 0).skippedFolders, 4);
+            expectEquals(utils::maximumRevealFolders, 10);
+        }
+    }
+
     /// Injects same-stat replacements before rendering and at each source destruction boundary.
     void runSourceSafetyTests()
     {

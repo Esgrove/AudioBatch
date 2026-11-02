@@ -1,6 +1,7 @@
 /// File system helpers shared by the services and both front ends.
 /// Declares FileIdentity, which checks path, size, modification time, native file identifiers and precise timestamps,
 /// moving files to the system trash, the file manager label for revealing a file,
+/// revealing files and opening their folders grouped by parent folder,
 /// deleting files with error logging, choosing the default browse folder,
 /// and extension checks for supported audio types.
 
@@ -13,6 +14,7 @@
 #include <functional>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace audiobatch::utils
 {
@@ -94,8 +96,22 @@ bool isMp3File(const juce::File& file);
 bool isWavFile(const juce::File& file);
 bool trashFile(const juce::File& file);
 
-void revealFileInFileManager(const juce::File& file);
-void revealParentDirectory(const juce::File& file);
+/// Most folders that revealing the selected files or opening their parent folders opens at once,
+/// so a large selection does not open hundreds of windows. The Rust application uses the same limit.
+inline constexpr int maximumRevealFolders = 10;
+
+/// Selected files grouped by their parent folder, in the order the folders first appear.
+struct FolderGroups {
+    /// Each folder with its files, in selection order, at most the requested number of folders.
+    std::vector<std::pair<juce::File, juce::Array<juce::File>>> groups;
+    /// Number of further folders left out because of the limit.
+    int skippedFolders {0};
+};
+
+[[nodiscard]] FolderGroups groupByParentFolder(const juce::Array<juce::File>& files, int maximumFolders);
+
+int revealFilesInFileManager(const juce::Array<juce::File>& files);
+int openParentDirectories(const juce::Array<juce::File>& files);
 
 [[nodiscard]] std::expected<void, juce::String> commitTemporaryOutput(
     const OutputTemporaryFile& temporaryFile,
