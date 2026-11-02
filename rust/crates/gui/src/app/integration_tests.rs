@@ -18,7 +18,7 @@ use gpui_kit::{AppContext as _, Bounds, Entity, Point, TestAppContext, WindowBou
 use tempfile::TempDir;
 
 use super::{AppOptions, AppView, LaunchOptions};
-use crate::menus::{AddFiles, CancelRun, ClearList, ReanalyzeSelected, ToggleLoudnessGraph};
+use crate::menus::{AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, ToggleLoudnessGraph};
 use crate::settings::GuiSettings;
 use crate::test_helpers::plugin_dispatcher;
 
@@ -154,6 +154,20 @@ fn integration_plugin_processing_options_retain_isolated_disposal(cx: &mut TestA
             let normalization = options.normalize_before_plugins.expect("normalize before plugins");
             assert!(Arc::ptr_eq(&normalization.dispose, &view.dispose));
         });
+    });
+}
+
+/// Opens the production Audio Settings action without querying physical output devices.
+#[gpui_kit::test]
+fn integration_audio_settings_opens_without_audio_hardware(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    workflow.focus(cx);
+    cx.dispatch_action(workflow.window, OpenAudioSettings);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.settings_window.is_some());
+        assert!(view.player.is_none());
     });
 }
 

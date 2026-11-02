@@ -231,8 +231,16 @@ impl AppView {
     fn settings_snapshot(&self) -> SettingsSnapshot {
         let device = self.player.as_ref().map(|player| player.device_name().to_string());
         SettingsSnapshot {
-            devices: Player::output_device_names(),
-            capabilities: device_capabilities(device.as_deref()).ok(),
+            devices: if cfg!(test) {
+                Vec::new()
+            } else {
+                Player::output_device_names()
+            },
+            capabilities: if cfg!(test) {
+                None
+            } else {
+                device_capabilities(device.as_deref()).ok()
+            },
             device,
             sample_rate: self.player.as_ref().map(Player::output_rate),
             buffer_size: self.player.as_ref().and_then(Player::buffer_size),
