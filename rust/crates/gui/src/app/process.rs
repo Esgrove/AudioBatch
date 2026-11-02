@@ -11,6 +11,7 @@
 //! which leaves the files in progress with their originals.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use audiobatch_core::AnalysisRecord;
 use audiobatch_plugins::{ProcessingChain, ProcessingEvent, ProcessingOptions};
@@ -145,6 +146,19 @@ impl AppView {
         discard_run(&mut self.process_run, &mut self.process_winding_down);
     }
 
+    /// Captures processing settings with the view-owned disposer instead of resolving a production default.
+    pub(super) fn processing_options(&self) -> ProcessingOptions {
+        ProcessingOptions {
+            normalize_before_plugins: self.normalize_first.then(|| {
+                let mut options = normalization_options(&self.settings, self.overwrite_existing);
+                options.dispose = Arc::clone(&self.dispose);
+                options
+            }),
+            overwrite_existing: self.overwrite_existing,
+            dispose: Arc::clone(&self.dispose),
+        }
+    }
+
     /// Switches the normalization before the plugins on or off, for this session.
     pub(super) fn set_normalize_first(&mut self, normalize_first: bool, cx: &mut Context<Self>) {
         self.normalize_first = normalize_first;
@@ -239,13 +253,7 @@ impl AppView {
             }
             cx.notify();
         });
-        let options = ProcessingOptions {
-            normalize_before_plugins: self
-                .normalize_first
-                .then(|| normalization_options(&self.settings, self.overwrite_existing)),
-            overwrite_existing: self.overwrite_existing,
-            ..ProcessingOptions::default()
-        };
+        let options = self.processing_options();
         let total = records.len();
         let (run_id, receiver) = coordinator.start(records, options, chains);
         let run = OperationRun::new(OperationKind::Process, run_id, total);

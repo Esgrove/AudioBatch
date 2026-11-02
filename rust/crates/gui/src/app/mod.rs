@@ -102,49 +102,6 @@ pub struct LaunchOptions {
     pub autoplay: bool,
 }
 
-/// Startup services captured once before constructing the view and starting its workers.
-struct AppOptions {
-    paths: StoragePaths,
-    playback: bool,
-    workers: usize,
-    dispose: FileDisposer,
-    #[cfg(test)]
-    directory: Arc<tempfile::TempDir>,
-}
-
-#[cfg(not(test))]
-impl Default for AppOptions {
-    fn default() -> Self {
-        Self {
-            paths: StoragePaths::from_environment().expect("valid AUDIOBATCH_DATA_ROOT"),
-            playback: true,
-            workers: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
-            dispose: trash_disposer(),
-        }
-    }
-}
-
-#[cfg(test)]
-impl Default for AppOptions {
-    fn default() -> Self {
-        Self::in_test_directory(Arc::new(tempfile::tempdir().expect("isolated view storage")))
-    }
-}
-
-#[cfg(test)]
-impl AppOptions {
-    /// Reuses one owned scratch directory across view recreation, without consulting the environment.
-    fn in_test_directory(directory: Arc<tempfile::TempDir>) -> Self {
-        Self {
-            paths: StoragePaths::in_root(directory.path()).expect("absolute test storage"),
-            playback: false,
-            workers: 1,
-            dispose: Arc::new(|path| std::fs::remove_file(path).is_ok()),
-            directory,
-        }
-    }
-}
-
 /// The root view of the main window.
 pub struct AppView {
     focus_handle: FocusHandle,
@@ -221,7 +178,7 @@ pub struct AppView {
     settings: GuiSettings,
     /// Captured preference destination, never resolved again during a view's lifetime.
     settings_path: PathBuf,
-    /// Disposes of replaced source files for normalization.
+    /// Disposes of replaced source files for normalization and plugin processing.
     dispose: FileDisposer,
     /// The Audio Settings window while it is open.
     settings_window: Option<SettingsWindow>,
@@ -258,6 +215,16 @@ pub struct AppView {
     /// Keeps scratch storage alive until every view-owned worker and persistence service has been dropped.
     #[cfg(test)]
     test_directory: Arc<tempfile::TempDir>,
+}
+
+/// Startup services captured once before constructing the view and starting its workers.
+struct AppOptions {
+    paths: StoragePaths,
+    playback: bool,
+    workers: usize,
+    dispose: FileDisposer,
+    #[cfg(test)]
+    directory: Arc<tempfile::TempDir>,
 }
 
 impl AppView {
@@ -458,6 +425,39 @@ impl AppView {
         }
         let active = self.table.read(cx).delegate().active_progress();
         Some((activity, ((finished as f32 + active) / total as f32).clamp(0.0, 1.0)))
+    }
+}
+
+#[cfg(test)]
+impl AppOptions {
+    /// Reuses one owned scratch directory across view recreation, without consulting the environment.
+    fn in_test_directory(directory: Arc<tempfile::TempDir>) -> Self {
+        Self {
+            paths: StoragePaths::in_root(directory.path()).expect("absolute test storage"),
+            playback: false,
+            workers: 1,
+            dispose: Arc::new(|path| std::fs::remove_file(path).is_ok()),
+            directory,
+        }
+    }
+}
+
+#[cfg(not(test))]
+impl Default for AppOptions {
+    fn default() -> Self {
+        Self {
+            paths: StoragePaths::from_environment().expect("valid AUDIOBATCH_DATA_ROOT"),
+            playback: true,
+            workers: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+            dispose: trash_disposer(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Default for AppOptions {
+    fn default() -> Self {
+        Self::in_test_directory(Arc::new(tempfile::tempdir().expect("isolated view storage")))
     }
 }
 
