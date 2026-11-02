@@ -351,7 +351,13 @@ pub fn install(cx: &mut App) {
     )
 )]
 pub fn set_menus(cx: &mut App, state: &MenuState) {
-    let devices = Player::output_device_names()
+    // Nonvisual tests must not initialize audio drivers, including during menu refreshes.
+    let devices = if cfg!(test) {
+        Vec::new()
+    } else {
+        Player::output_device_names()
+    };
+    let devices = devices
         .into_iter()
         .map(|name| {
             let checked = state.output_device.as_deref() == Some(name.as_str());
