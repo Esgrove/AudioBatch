@@ -336,8 +336,25 @@ AUDIOBATCH_GUI_SNAPSHOT=target/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatc
 ## Test
 
 ```shell
+# The same test selections and integration diagnostics as CI
+./test.sh --unit
+./test.sh --gui-integration
+./test.sh --optimized
+./test.sh --cli-integration
+./test.sh --tooling
+
+# Run every workspace test together
 cargo nextest run
 ```
+
+`test.sh` defaults to the workspace unit and service tier, excluding the nonvisual GUI integration workflows.
+The GUI tier saves `target/integration-artifacts/gui.log` and propagates failures through its logging pipeline.
+The optimized tier runs release core tests, adding the CLI normalization subset on Windows.
+The CLI tier builds the debug executable and runs the shared contracts through uv with isolated application storage.
+Its diagnostics go to `target/integration-artifacts/cli/`.
+Use `--artifacts <directory>` with either integration tier to choose a different diagnostic directory.
+`--tooling` runs the parity-oracle and benchmark-tooling regression suites.
+Set `RUSTFLAGS=""` to reproduce CI's portable CPU configuration.
 
 The core golden tests compare exact floating point bits, histories, waveforms, and normalized samples.
 Windows x86-64 uses snapshots in `crates/core/tests/golden/windows-x86_64/` for outputs affected by platform math,
@@ -418,6 +435,7 @@ and `cargo run -p audiobatch-core --example read_tags -- <files...>` prints tags
 Code coverage is generated using [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
 with [cargo-nextest](https://nexte.st/).
 `coverage.sh` runs the tests of the whole workspace with coverage and prints a per-file summary.
+It also builds and runs the executable CLI contracts with the same instrumentation.
 
 ```shell
 # Print the coverage summary
@@ -431,6 +449,9 @@ with [cargo-nextest](https://nexte.st/).
 
 # Remove the previous coverage data first
 ./coverage.sh --clean
+
+# Write LCOV, HTML, and the summary again without rebuilding or running tests
+./coverage.sh --report-only
 ```
 
 The HTML report is generated in `target/llvm-cov/html/` and the LCOV report in `target/llvm-cov/lcov.info`.

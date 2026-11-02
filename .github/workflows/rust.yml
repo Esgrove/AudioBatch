@@ -115,11 +115,13 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
 
+      - name: Check Rust shell entry points
+        if: runner.os == 'macOS'
+        run: uv run --script ../tests/test_rust_scripts.py
+
       - name: Test parity oracles and benchmark tooling natively
         if: runner.os == 'Windows'
-        run: |
-          uv run --script scripts/test_parity.py
-          uv run --script scripts/test_cli_benchmark.py
+        run: ./test.sh --tooling
 
       - name: Check formatting
         if: runner.os == 'macOS'
@@ -136,14 +138,11 @@ jobs:
       # Includes shared fixture checksums, generated input identities, and exact platform goldens.
       # Nextest builds the test targets, avoiding a separate all-targets build.
       - name: Run unit and service tests
-        run: cargo nextest run --workspace --no-fail-fast --success-output final -E 'not test(integration_tests::)'
+        run: ./test.sh --unit
 
       - name: Nonvisual GUI integration workflows
         timeout-minutes: 5
-        run: |
-          mkdir -p target/integration-artifacts
-          cargo nextest run -p audiobatch-gui -E 'test(integration_tests::)' --no-fail-fast \
-            --failure-output immediate-final 2>&1 | tee target/integration-artifacts/gui.log
+        run: ./test.sh --gui-integration
 
       - name: Check distribution license notices
         if: runner.os == 'macOS'
@@ -151,22 +150,11 @@ jobs:
 
       # Each backend must preserve its platform baseline in optimized builds too.
       - name: Run optimized core and Windows CLI tests
-        run: |
-          options=()
-          if [ "$RUNNER_OS" = Windows ]; then
-            options=(-p audiobatch-cli -E 'package(audiobatch-core) | (package(audiobatch-cli) & test(run::test_run_analysis::normalize_))')
-          fi
-          cargo nextest run --release -p audiobatch-core "${options[@]}" --no-fail-fast
+        run: ./test.sh --optimized
 
       - name: CLI integration contracts
         timeout-minutes: 5
-        run: |
-          cargo build --bin audiobatch-rs
-          CLI="$PWD/target/debug/audiobatch-rs"
-          if [ "$RUNNER_OS" = Windows ]; then
-            CLI="$CLI.exe"
-          fi
-          uv run --script ../tests/cli_integration.py --cli "$CLI" --artifacts target/integration-artifacts/cli
+        run: ./test.sh --cli-integration
 
       - name: Upload integration failure diagnostics
         if: failure()
@@ -224,16 +212,7 @@ jobs:
 
       - name: Write coverage reports
         if: always()
-        run: |
-          mkdir -p target/llvm-cov
-          cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
-          cargo llvm-cov report --html
-          {
-            echo '## Rust code coverage'
-            echo '```text'
-            cargo llvm-cov report --summary-only
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+        run: ./coverage.sh --report-only
 
       - name: Upload coverage reports
         if: always()
