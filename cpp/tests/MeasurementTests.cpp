@@ -19,11 +19,53 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <numbers>
+#include <optional>
 #include <span>
 #include <vector>
 
 namespace audiobatch::tests
 {
+namespace
+{
+/// Allowed deviation of a loudness reading, in LU, as in EBU Tech 3341.
+constexpr double loudnessTolerance {0.1};
+/// Allowed true peak reading above the expected level, in dB, as in EBU Tech 3341.
+constexpr double truePeakUpperTolerance {0.2};
+/// Allowed true peak reading below the expected level, in dB.
+constexpr double truePeakLowerTolerance {0.4};
+/// Frames per push, unrelated to the meter's block size.
+constexpr int knownAnswerChunkFrames {4096};
+/// Frequency of the test tone in hertz.
+constexpr double toneFrequency {1000.0};
+
+/// One segment of a conformance signal.
+struct ToneSegment {
+    /// Duration in seconds.
+    double seconds {0.0};
+    /// Peak level in dBFS.
+    double levelDecibels {0.0};
+};
+
+/// One conformance signal and what it must measure.
+struct KnownAnswerCase {
+    /// Description for failure messages.
+    const char* label {""};
+    /// Consecutive segments of the tone.
+    std::vector<ToneSegment> segments;
+    /// Expected integrated loudness in LUFS.
+    double integratedLufs {0.0};
+    /// Expected maximum short-term loudness in LUFS, when the signal defines one.
+    std::optional<double> maxShortTermLufs;
+};
+
+/// Creates a segment of the test tone.
+constexpr ToneSegment tone(const double seconds, const double levelDecibels)
+{
+    return {.seconds = seconds, .levelDecibels = levelDecibels};
+}
+}  // namespace
+
 /// Exercises arbitrary chunk sizes, complete histories, PCM endpoints, and invalid input.
 class MeasurementTests final : public juce::UnitTest
 {
@@ -36,6 +78,7 @@ public:
     {
         runChunkTests();
         runPcmTests();
+        runKnownAnswerTests();
 
         beginTest("Rendered identity survives a rename but rejects measurements for replaced bytes");
         {
@@ -83,6 +126,146 @@ public:
     }
 
 private:
+    /// Measures planar samples in chunks and returns the record, which the caller checks.
+    [[nodiscard]] std::optional<AudioAnalysisRecord> measureKnownAnswerSignal(
+        const juce::AudioBuffer<float>& samples,
+        double sampleRate
+    )
+    {
+        AudioMeasurement meter(samples.getNumChannels(), sampleRate, samples.getNumSamples());
+        for (int offset = 0; offset < samples.getNumSamples(); offset += knownAnswerChunkFrames) {
+            const auto frames = std::min(knownAnswerChunkFrames, samples.getNumSamples() - offset);
+            if (!meter.push(samples, offset, frames)) {
+                expect(false, "The meter must accept the known-answer signal");
+                return std::nullopt;
+            }
+        }
+        auto record = meter.finish();
+        expect(record.has_value(), record ? juce::String() : record.error());
+        if (!record) {
+            return std::nullopt;
+        }
+        return *record;
+    }
+
+    /// Measures a stereo tone with the same samples on both channels and a continuous phase,
+    /// and requires the readings to be within the tolerance.
+    void expectKnownAnswer(const KnownAnswerCase& testCase, double sampleRate)
+    {
+        auto frames {0};
+        for (const auto& segment : testCase.segments) {
+            frames += static_cast<int>(std::lround(sampleRate * segment.seconds));
+        }
+        juce::AudioBuffer<float> samples(2, frames);
+        auto frame {0};
+        for (const auto& segment : testCase.segments) {
+            const auto amplitude = std::pow(10.0, segment.levelDecibels / 20.0);
+            const auto segmentEnd = frame + static_cast<int>(std::lround(sampleRate * segment.seconds));
+            for (; frame < segmentEnd; ++frame) {
+                const auto phase = 2.0 * std::numbers::pi * toneFrequency * static_cast<double>(frame) / sampleRate;
+                const auto value = static_cast<float>(amplitude * std::sin(phase));
+                samples.setSample(0, frame, value);
+                samples.setSample(1, frame, value);
+            }
+        }
+        const auto record = measureKnownAnswerSignal(samples, sampleRate);
+        if (!record) {
+            return;
+        }
+        const auto description = juce::String(testCase.label) + " at " + juce::String(sampleRate) + " Hz";
+        expectWithinAbsoluteError(record->integratedLufs, testCase.integratedLufs, loudnessTolerance, description);
+        if (testCase.maxShortTermLufs) {
+            expectWithinAbsoluteError(
+                record->maxShortTermLufs, *testCase.maxShortTermLufs, loudnessTolerance, description
+            );
+        }
+    }
+
+    /// Checks published EBU Tech 3341 levels that do not depend on any reference implementation.
+    /// The segments are shorter than the originals, and the loudest part stays the longest so the gates select it.
+    /// The Rust application runs the same cases in `crates/core/src/loudness/known_answers.rs`,
+    /// so keep both tables in step.
+    void runKnownAnswerTests()
+    {
+        const KnownAnswerCase toneAtMinus23 {
+            .label = "stereo tone at -23 LUFS",
+            .segments = {tone(4.0, -23.0)},
+            .integratedLufs = -23.0,
+            .maxShortTermLufs = -23.0,
+        };
+        const KnownAnswerCase toneAtMinus33 {
+            .label = "stereo tone at -33 LUFS",
+            .segments = {tone(4.0, -33.0)},
+            .integratedLufs = -33.0,
+            .maxShortTermLufs = -33.0,
+        };
+
+        beginTest("Steady tones read their level at both common sample rates");
+        for (const auto sampleRate : {44'100.0, 48'000.0}) {
+            expectKnownAnswer(toneAtMinus23, sampleRate);
+            expectKnownAnswer(toneAtMinus33, sampleRate);
+        }
+
+        beginTest("Quiet parts around a tone are gated out");
+        expectKnownAnswer(
+            {
+                .label = "quiet parts around a tone at -23 LUFS are below the relative gate",
+                .segments = {tone(1.0, -36.0), tone(12.0, -23.0), tone(1.0, -36.0)},
+                .integratedLufs = -23.0,
+                .maxShortTermLufs = std::nullopt,
+            },
+            48'000.0
+        );
+
+        beginTest("Parts below the absolute gate and the relative gate are ignored");
+        expectKnownAnswer(
+            {
+                .label = "parts below the absolute gate and the relative gate are ignored",
+                .segments = {tone(0.5, -72.0), tone(1.0, -36.0), tone(12.0, -23.0), tone(1.0, -36.0), tone(0.5, -72.0)},
+                .integratedLufs = -23.0,
+                .maxShortTermLufs = std::nullopt,
+            },
+            48'000.0
+        );
+
+        beginTest("A louder part averages by energy");
+        expectKnownAnswer(
+            {
+                .label = "a louder part between quieter ones averages to -23 LUFS",
+                .segments = {tone(3.0, -26.0), tone(3.0, -20.0), tone(3.0, -26.0)},
+                .integratedLufs = -23.0,
+                .maxShortTermLufs = std::nullopt,
+            },
+            48'000.0
+        );
+
+        beginTest("A quarter sample rate tone has its true peak between the samples");
+        {
+            // Every sample of a quarter sample rate sine at 45 degrees is 0.7071 of its amplitude,
+            // so the sample peak is 3 dB below the true peak, which is the amplitude.
+            constexpr auto sampleRate {48'000};
+            constexpr auto level {-6.0};
+            const auto amplitude = std::pow(10.0, level / 20.0);
+            juce::AudioBuffer<float> samples(2, 2 * sampleRate);
+            for (int frame = 0; frame < samples.getNumSamples(); ++frame) {
+                const auto phase = std::numbers::pi * 0.5 * static_cast<double>(frame) + std::numbers::pi * 0.25;
+                const auto value = static_cast<float>(amplitude * std::sin(phase));
+                samples.setSample(0, frame, value);
+                samples.setSample(1, frame, value);
+            }
+            const auto record = measureKnownAnswerSignal(samples, sampleRate);
+            if (record) {
+                for (const auto truePeak : {record->truePeakLeft, record->truePeakRight}) {
+                    const auto decibels = 20.0 * std::log10(truePeak);
+                    expect(
+                        decibels >= level - truePeakLowerTolerance && decibels <= level + truePeakUpperTolerance,
+                        "True peak " + juce::String(decibels) + " dBTP, expected " + juce::String(level)
+                    );
+                }
+            }
+        }
+    }
+
     /// Feeds fixtures and overloads in chunks unrelated to the meter's fixed update interval.
     void runChunkTests()
     {
