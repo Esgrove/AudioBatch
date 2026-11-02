@@ -146,7 +146,7 @@ std::optional<juce::MemoryBlock> buildNativeWaveform(
     if (!identity.matches(file) || utils::isCancellationRequested(isCancelled)) {
         return std::nullopt;
     }
-    auto reader = utils::createAudioReader(file);
+    const auto reader = utils::createAudioReader(file);
     if (!reader || !identity.matches(file)) {
         return std::nullopt;
     }
