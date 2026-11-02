@@ -24,7 +24,7 @@ use gpui_kit::{
 use vst3_host::UiThread;
 
 use super::AppView;
-use crate::menus::{AddPluginToChain, set_menus};
+use crate::menus::AddPluginToChain;
 use crate::plugins::chain_window::{
     CHAIN_HEIGHT, CHAIN_TITLE, CHAIN_WIDTH, ChainEvent, ChainRow, ChainSnapshot, ChainView,
 };
@@ -217,7 +217,7 @@ impl AppView {
             self.menu_state.plugin_groups = groups;
             self.menu_state.presets = presets;
             self.menu_state.current_preset = current_preset;
-            set_menus(cx, &self.menu_state);
+            self.refresh_menus(cx);
         }
         self.sync_chain_window(cx);
         self.sync_manager_window(cx);

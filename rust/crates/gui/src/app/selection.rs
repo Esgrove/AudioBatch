@@ -10,7 +10,7 @@ use gpui_kit::{App, Context, Entity, Pixels, Window};
 
 use super::AppView;
 use super::preview::PreviewSource;
-use crate::menus::{ColumnChoice, set_menus};
+use crate::menus::ColumnChoice;
 use crate::results::{ResultRow, ResultsDelegate, RowState};
 use crate::waveform::{MINIMUM_ZOOM, NO_FILE_TEXT};
 
@@ -128,7 +128,7 @@ impl AppView {
         );
         self.settings.save();
         self.menu_state.columns = column_choices(self.table.read(cx).delegate());
-        set_menus(cx, &self.menu_state);
+        self.refresh_menus(cx);
         cx.notify();
     }
 

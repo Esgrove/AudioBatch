@@ -7,6 +7,8 @@
 //! The app view handles most actions, so they work from the menu bar and the shortcuts alike.
 
 use audiobatch_playback::Player;
+#[cfg(target_os = "windows")]
+use gpui_kit::base::GlobalState;
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, SharedString, SystemMenuType};
 
 use crate::files::REVEAL_LABEL;
@@ -336,7 +338,7 @@ pub fn install(cx: &mut App) {
 
 /// Builds the menu bar, with check marks on the options and the current output device,
 /// and the normalization target in the normalize items.
-pub fn set_menus(cx: &App, state: &MenuState) {
+pub fn set_menus(cx: &mut App, state: &MenuState) {
     let devices = Player::output_device_names()
         .into_iter()
         .map(|name| {
@@ -414,6 +416,11 @@ pub fn set_menus(cx: &App, state: &MenuState) {
     );
     menus.push(Menu::new("Help").items([MenuItem::action("About AudioBatchRs", About)]));
     cx.set_menus(menus);
+    #[cfg(target_os = "windows")]
+    {
+        let menus = cx.get_menus().unwrap_or_default();
+        GlobalState::global_mut(cx).set_app_menus(menus);
+    }
 }
 
 /// Builds the Chain Presets submenu: saving the chain, then the saved presets with the current one checked.

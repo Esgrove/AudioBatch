@@ -18,6 +18,7 @@ use gpui_kit::base::{ResizableState, ResizeHandleContext, ResizeHandleRenderer, 
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
 use gpui_kit::component::table::DataTable;
 use gpui_kit::component::{Sizable as _, Size};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Axis, Context, Div, ExternalPaths, FocusHandle, Focusable, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -540,6 +541,19 @@ impl Render for AppView {
             .text_color(color(palette::GREY_LIGHT))
             .font_family(TEXT_FONT)
             .text_size(px(15.0))
+            .when(cfg!(target_os = "windows"), |element| {
+                #[cfg(target_os = "windows")]
+                let element = element.child(
+                    div()
+                        .w_full()
+                        .h(px(super::MENU_BAR_HEIGHT))
+                        .flex_none()
+                        .border_b_1()
+                        .border_color(color(palette::GREY_MEDIUM))
+                        .child(self.menu_bar.clone()),
+                );
+                element
+            })
             .child(
                 div().flex_1().min_h_0().flex().flex_col().p(px(CONTENT_PADDING)).child(
                     div()
@@ -639,6 +653,14 @@ fn status_separator() -> Div {
 #[cfg(test)]
 mod test_preview_startup_fit {
     use super::*;
+
+    #[test]
+    fn workspace_reserves_menu_padding_and_status_bar() {
+        let (width, height) = content_size(gpui_kit::size(px(1000.0), px(700.0)));
+        assert!((width - 992.0).abs() < f32::EPSILON);
+        let expected_height = if cfg!(target_os = "windows") { 640.0 } else { 668.0 };
+        assert!((height - expected_height).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn width_breakpoint_matches_the_controls_layout() {
