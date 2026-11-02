@@ -19,6 +19,11 @@ OPTIONS: All options are optional
     -o | --open
         Write the HTML report to target/llvm-cov/html and open it in the browser.
 
+    --report-only
+        Write LCOV, HTML, and a summary from existing coverage data without running tests.
+        Append the summary to GITHUB_STEP_SUMMARY when set.
+        Cannot be combined with --clean.
+
     -v | --verbose
         Display commands being executed.
 "
@@ -31,6 +36,7 @@ source "$DIR/common.sh"
 CLEAN=false
 LCOV=false
 OPEN=false
+REPORT_ONLY=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -46,6 +52,9 @@ while [ $# -gt 0 ]; do
         -o | --open)
             OPEN=true
             ;;
+        --report-only)
+            REPORT_ONLY=true
+            ;;
         -v | --verbose)
             set -x
             ;;
@@ -57,14 +66,38 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+if [ "$REPORT_ONLY" = true ] && [ "$CLEAN" = true ]; then
+    print_error_and_exit "--report-only cannot be combined with --clean."
+fi
+
 require_command cargo "Cargo not found in path. Maybe install rustup?"
 require_command cargo-llvm-cov "cargo-llvm-cov not found. Install it with: cargo install --locked cargo-llvm-cov"
-require_command cargo-nextest "cargo-nextest not found. Install it with: cargo install --locked cargo-nextest"
 
 cd "$REPO"
 
 # Use one directory for test mappings, the executable build, subprocess profiles, and all reports.
 export CARGO_LLVM_COV_TARGET_DIR="$REPO/target/llvm-cov-target"
+
+if [ "$REPORT_ONLY" = true ]; then
+    mkdir -p target/llvm-cov
+    cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+    html_options=()
+    if [ "$OPEN" = true ]; then
+        html_options=(--open)
+    fi
+    cargo llvm-cov report --html "${html_options[@]}"
+    # Capture first so a failed report cannot be hidden by the closing Markdown fence.
+    summary=$(cargo llvm-cov report --summary-only)
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        # shellcheck disable=SC2016
+        printf '## Rust code coverage\n```text\n%s\n```\n' "$summary" | tee -a "$GITHUB_STEP_SUMMARY"
+    else
+        printf '%s\n' "$summary"
+    fi
+    exit 0
+fi
+
+require_command cargo-nextest "cargo-nextest not found. Install it with: cargo install --locked cargo-nextest"
 
 if [ "$CLEAN" = true ]; then
     print_magenta "Removing previous coverage data..."
@@ -79,18 +112,11 @@ cargo llvm-cov nextest --workspace --no-fail-fast --no-report || TEST_STATUS=$?
 # The shared suite preserves LLVM_PROFILE_FILE in every child environment.
 # Keep this environment scoped so cargo-llvm-cov's report command sees its normal flags.
 run_cli_coverage() {
-    local coverage_environment cli_binary
+    local coverage_environment
     coverage_environment=$(CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR" cargo llvm-cov show-env --sh) || return "$?"
     eval "$coverage_environment" || return "$?"
     export LLVM_PROFILE_FILE="$CARGO_LLVM_COV_TARGET_DIR/rust-cli-integration-%m-%p.profraw"
-    cargo build --target-dir "$CARGO_LLVM_COV_TARGET_DIR" --bin audiobatch-rs || return "$?"
-    require_command uv "uv not found in path, it runs the shared CLI integration suite" || return "$?"
-    cli_binary="$CARGO_LLVM_COV_TARGET_DIR/debug/audiobatch-rs"
-    if [ "$BASH_PLATFORM" = windows ]; then
-        cli_binary="$cli_binary.exe"
-    fi
-    uv run --script ../tests/cli_integration.py \
-        --cli "$cli_binary" \
+    CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR" "$REPO/test.sh" --cli-integration \
         --artifacts target/integration-artifacts/cli-coverage
 }
 (run_cli_coverage) || TEST_STATUS=$?
