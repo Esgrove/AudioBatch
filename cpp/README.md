@@ -635,21 +635,34 @@ State restoration, loading, decoding, and sample exports are excluded from both 
 - `./format.sh` formats C++, CMake and shell scripts. `--check` verifies formatting without changes.
 - `./lint.sh` runs clang-tidy. `--check` fails on warnings.
   `--changed` lints only the sources changed since the last commit, and `--staged` only the staged ones.
+  `--prepare` refreshes a Ninja workspace's compile database and generated headers without compiling the applications.
+  CI uses `./lint.sh --prepare --build-type Debug --check` for the same lightweight setup locally and on runners.
 
-Use the build script to configure, build, and run the Debug tests:
-
-```shell
-./build.sh --test --debug
-```
-
-On Windows, add `--ninja` for MSVC with Ninja, or `--clang` for LLVM.
-ctest runs each JUCE unit test suite as its own test, with a time limit per suite.
-
-For Release tests:
+Use the test script to configure, build, and run the Debug tests without packaging the applications:
 
 ```shell
-./build.sh --test
+./test.sh
 ```
+
+It shares the default platform build directory and compilation cache with `build.sh`.
+CTest runs each JUCE unit test suite as its own test, with a time limit per suite.
+The default run also builds and runs the executable CLI contracts and nonvisual GUI integration tier.
+The CLI contracts require uv.
+Use `--unit` or `--integration` to build and run only that tier.
+
+CI compiles all test targets first, then runs each tier separately with its own timeout:
+
+```shell
+./test.sh --build-type Debug --build-only
+./test.sh --build-type Debug --unit --no-build
+./test.sh --build-type Debug --integration --no-build
+```
+
+For Release tests, use `./test.sh --build-type Release`.
+Select an existing Ninja, Xcode, or Visual Studio workspace with `--build-dir` and its `--build-type`.
+For example, `./test.sh --build-dir cmake-build-windows-clang-debug` uses the Windows LLVM workspace.
+`./build.sh --test --debug` still builds and packages the applications, then invokes the same test runner.
+On Windows, add `--ninja` to `build.sh` for MSVC with Ninja, or `--clang` for LLVM.
 
 The tests build the `AudioBatch Test MS` VST3 in `../test-plugin/` as part of the project,
 and check its output against the expected files in `../fixtures/plugin_expected/`.
@@ -665,9 +678,12 @@ Each sanitizer build has its own build directory, so the debug build is not affe
 The libFuzzer harnesses in `tests/fuzz/` need the Homebrew LLVM, since Apple Clang does not ship libFuzzer.
 `./lint.sh --fuzz` configures and builds the harnesses when their compilation database is missing,
 then lints them with that workspace's flags.
-Run a harness with its committed corpus to fuzz it:
+Use the fuzz script to build both harnesses, replay the committed corpus, and fuzz each harness for a minute:
 
 ```shell
-./lint.sh --fuzz --check
-cmake-build-mac-fuzz/SeratoTagFuzzer_artefacts/RelWithDebInfo/SeratoTagFuzzer -max_total_time=60 tests/fuzz/corpus/SeratoTagFuzzer
+./fuzz.sh
 ```
+
+CI uses the same script with `--build-only`, then `--no-build --replay`, then `--no-build --fuzz --seconds 60`.
+`./lint.sh --fuzz --check` lints the built harnesses.
+New fuzz inputs stay in `fuzz-scratch/`, and crashing inputs go to `fuzz-artifacts/` without changing the committed corpus.

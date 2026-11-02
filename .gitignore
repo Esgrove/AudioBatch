@@ -49,6 +49,8 @@
 /cpp/files/
 /cpp/test/
 /cpp/screenshots/
+/cpp/fuzz-artifacts/
+/cpp/fuzz-scratch/
 
 # Allow checked-in workspace settings for shared CMake/IntelliSense config.
 !/.vscode/
