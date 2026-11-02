@@ -277,6 +277,13 @@ impl WaveformView {
         cx.notify();
     }
 
+    /// Returns the source currently owning a real waveform, for nonvisual workflow assertions.
+    #[cfg(test)]
+    pub fn waveform_source(&self) -> Option<&std::path::Path> {
+        self.overview.as_ref()?;
+        self.source.as_ref().map(|(path, _, _)| path.as_path())
+    }
+
     /// Shows an overview without source warnings, for example for synthetic demo data.
     /// A different file starts from its beginning, while the same file keeps the visible range.
     pub fn show(
@@ -1052,7 +1059,8 @@ mod test_artifact_presentation {
         assert!(view.playhead.is_some());
     }
 
-    /// Retains the selected overview across waveform-free measurement refreshes so independent cache reads do not blank it.
+    /// Retains the selected overview across waveform-free measurement refreshes
+    /// so independent cache reads do not blank it.
     #[test]
     fn waveform_free_same_source_measurements_keep_the_selected_artifact() {
         let mut record = record();

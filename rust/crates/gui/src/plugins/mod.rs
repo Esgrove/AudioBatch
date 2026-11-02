@@ -77,16 +77,14 @@ pub struct RunningScan {
 }
 
 impl PluginHost {
-    /// Loads the known plugins and the saved chain, preparing the chain's instances at `sample_rate`.
-    /// Plugin editors open as windows owned by `editor_owner`.
-    /// Returns the host and the messages of the files that could not be read.
+    /// Loads plugin state from explicit application-private paths, without consulting the environment.
     #[must_use]
-    pub fn open(
+    pub fn open_with_paths(
         dispatcher: UiDispatcher,
         sample_rate: u32,
         editor_owner: Option<RawWindowHandle>,
+        paths: PluginDataPaths,
     ) -> (Self, Vec<String>) {
-        let paths = PluginDataPaths::default();
         let mut problems = Vec::new();
         let known = match KnownPlugins::load_recovering(&paths.known_plugins) {
             Ok((known, message)) => {

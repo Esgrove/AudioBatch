@@ -9,6 +9,7 @@
 //! The end of a run shows its summary in the status bar and lists any failures in a dialog.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use audiobatch_core::operation::{OperationOutcome, OperationResult};
 use audiobatch_core::{AnalysisRecord, NormalizeEvent};
@@ -125,7 +126,7 @@ impl AppView {
     pub(super) fn set_normalize_mode(&mut self, mode: NormalizeMode, cx: &mut Context<Self>) {
         if self.settings.normalize_mode != mode {
             self.settings.normalize_mode = mode;
-            self.settings.save();
+            self.save_settings();
             self.refresh_normalize_menus(cx);
         }
         cx.notify();
@@ -279,7 +280,7 @@ impl AppView {
 
     /// Saves the target once the slider is released, and shows it in the menus.
     fn store_normalize_target(&mut self, cx: &mut Context<Self>) {
-        self.settings.save();
+        self.save_settings();
         self.refresh_normalize_menus(cx);
     }
 
@@ -354,8 +355,9 @@ impl AppView {
             cx.notify();
         });
         let total = records.len();
-        let (run_id, receiver) =
-            coordinator.start(records, normalization_options(&self.settings, self.overwrite_existing));
+        let mut options = normalization_options(&self.settings, self.overwrite_existing);
+        options.dispose = Arc::clone(&self.dispose);
+        let (run_id, receiver) = coordinator.start(records, options);
         let run = OperationRun::new(OperationKind::Normalize, run_id, total);
         self.status = run.progress_text().into();
         self.normalize_run = Some(run);

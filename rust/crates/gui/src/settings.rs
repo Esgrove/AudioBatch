@@ -7,15 +7,14 @@
 //! and the loudness graph with its axis range.
 //! The Options menu choices for the Serato waveform colours and the album artwork are kept here too.
 //! The normalization mode and its peak and loudness targets are kept here too.
-//! They are stored as JSON next to the analysis cache in the `AudioBatch-rs` data directory.
+//! They are stored as JSON in the Rust-specific `AudioBatch-rs` data directory.
 //! A missing or unreadable file gives the defaults, so a broken file never stops the app from starting.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use audiobatch_core::atomic_write::write_atomically;
-use audiobatch_core::cache::data_directory;
 use audiobatch_core::normalize::{
     DEFAULT_TARGET_LUFS, DEFAULT_TARGET_PEAK_DBFS, MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS,
     MINIMUM_TARGET_PEAK_DBFS, NormalizationMode,
@@ -36,7 +35,7 @@ pub const DEFAULT_LOUDNESS_MINIMUM: i32 = -24;
 pub const DEFAULT_LOUDNESS_MAXIMUM: i32 = -4;
 
 /// File name of the settings in the data directory.
-const SETTINGS_FILE_NAME: &str = "gui-settings.json";
+pub const SETTINGS_FILE_NAME: &str = "gui-settings.json";
 
 /// The level normalization brings files to, as stored in the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -122,12 +121,6 @@ impl Default for GuiSettings {
 }
 
 impl GuiSettings {
-    /// Reads the settings from the data directory.
-    #[must_use]
-    pub fn load() -> Self {
-        Self::load_from(&settings_path())
-    }
-
     /// Reads the settings from a file, with the defaults when it is missing or invalid.
     /// An invalid loudness range falls back to the default range on its own,
     /// and a normalization target outside its range is clamped into it.
@@ -154,14 +147,6 @@ impl GuiSettings {
             DEFAULT_TARGET_LUFS,
         );
         settings
-    }
-
-    /// Writes the settings to the data directory, reporting a failure on stderr.
-    pub fn save(&self) {
-        let path = settings_path();
-        if let Err(error) = self.save_to(&path) {
-            tracing::error!("Failed to save the settings to {}: {error:#}", path.display());
-        }
     }
 
     /// Writes the settings to a file, replacing it atomically and creating its directory when needed.
@@ -197,11 +182,6 @@ pub fn parse_loudness_limit(text: &str) -> Option<i32> {
         .parse::<i32>()
         .ok()
         .filter(|value| (LOUDNESS_LIMIT_MINIMUM..=LOUDNESS_LIMIT_MAXIMUM).contains(value))
-}
-
-/// Returns the path of the settings file.
-fn settings_path() -> PathBuf {
-    data_directory().join(SETTINGS_FILE_NAME)
 }
 
 /// Clamps a stored normalization target into its range, with the default for a value that is not a number.

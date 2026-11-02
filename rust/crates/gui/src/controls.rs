@@ -22,6 +22,9 @@
 
 use std::rc::Rc;
 
+#[cfg(test)]
+use gpui_kit::test::TestSupportExt as _;
+
 use gpui_kit::base::Selectable as _;
 use gpui_kit::base::slider::{Slider as BaseSlider, SliderIndicator, SliderTrack};
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
@@ -472,12 +475,15 @@ fn zoom_track(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
 }
 
 /// Renders the input gain slider, which resets on a double click while the gain can be adjusted.
-fn gain_track(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
-    slider_track(
+fn gain_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_kit::IntoElement {
+    let track = slider_track(
         Slider::new(state.gain),
         state.can_adjust_gain,
         send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
-    )
+    );
+    #[cfg(test)]
+    let track = track.id("gain-track").test_support();
+    track
 }
 
 /// Renders the Plugin Chain button, with the chain summary in its tooltip.

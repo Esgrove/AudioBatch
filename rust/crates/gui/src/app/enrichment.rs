@@ -847,7 +847,8 @@ mod test_enrichment_parts {
         }
     }
 
-    /// Rejects metadata read across a source replacement and skips decoding so stale artifacts cannot reach the preview.
+    /// Rejects metadata read across a source replacement and skips decoding
+    /// so stale artifacts cannot reach the preview.
     #[test]
     fn replacement_during_metadata_rejects_all_parts_and_skips_waveform() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -1170,7 +1171,8 @@ mod test_enrichment_admission {
         assert!(queue.take_next(Some(Path::new("a")), source.token(), true).is_some());
     }
 
-    /// Interrupts background work for selection but joins an already matching preview so repeated requests do not restart it.
+    /// Interrupts background work for selection but joins an already matching preview
+    /// so repeated requests do not restart it.
     #[test]
     fn selection_cancels_unselected_work_but_joins_the_current_preview() {
         let file = tempfile::NamedTempFile::new().expect("source");

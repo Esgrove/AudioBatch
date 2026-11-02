@@ -202,7 +202,7 @@ impl AppView {
         self.refresh_menus(cx);
         let artwork_changed = settings.show_album_artwork != self.settings.show_album_artwork;
         self.settings = settings;
-        self.settings.save();
+        self.save_settings();
         if preview_changed {
             self.refresh_plugin_preview(cx);
         }

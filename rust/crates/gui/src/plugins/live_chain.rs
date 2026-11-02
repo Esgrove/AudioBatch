@@ -871,7 +871,7 @@ mod test_restarts {
                 move |ui| {
                     let mut chain = LiveChain::new(
                         PathBuf::from("/unused/plugin-chain.json"),
-                        super::test_replace::dispatcher().clone(),
+                        super::test_replace::dispatcher(),
                         48_000,
                     );
                     test(ui, &mut chain);
@@ -1059,19 +1059,14 @@ mod test_restarts {
 
 #[cfg(test)]
 mod test_replace {
-    use std::sync::OnceLock;
-
     use vst3_host::ui_channel;
 
     use super::*;
     use crate::test_helpers::effect;
 
-    /// The dispatcher of the one UI thread these tests share, since a process can have only one.
-    static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
-
     /// Returns the dispatcher of the shared test UI thread, starting the thread on first use.
-    pub(super) fn dispatcher() -> &'static UiDispatcher {
-        DISPATCHER.get_or_init(|| UiThread::spawn_dedicated().expect("no other UI thread in the test process"))
+    pub(super) fn dispatcher() -> UiDispatcher {
+        crate::test_helpers::plugin_dispatcher()
     }
 
     /// Returns a saved slot of a plugin whose bundle does not exist, with a state and an enabled flag.

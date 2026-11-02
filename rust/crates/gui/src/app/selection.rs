@@ -154,7 +154,7 @@ impl AppView {
                 .map(|key| ResultsDelegate::column_identifier(key).to_string())
                 .collect(),
         );
-        self.settings.save();
+        self.save_settings();
         self.menu_state.columns = column_choices(self.table.read(cx).delegate());
         self.refresh_menus(cx);
         cx.notify();

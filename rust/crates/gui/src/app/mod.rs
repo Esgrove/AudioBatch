@@ -18,6 +18,8 @@ mod cue_start;
 mod enrichment;
 mod gain;
 pub mod gain_writer;
+#[cfg(test)]
+mod integration_tests;
 mod normalize;
 mod plugins;
 mod preferences;
@@ -32,6 +34,10 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use audiobatch_core::output_file::FileDisposer;
+#[cfg(not(test))]
+use audiobatch_core::output_file::trash_disposer;
+use audiobatch_core::storage::StoragePaths;
 use audiobatch_core::{AnalysisCoordinator, FileTags, NormalizeCoordinator};
 use audiobatch_playback::Player;
 use audiobatch_plugins::ProcessingCoordinator;
@@ -94,6 +100,49 @@ pub struct LaunchOptions {
     pub demo_rows: Option<usize>,
     /// Selects and plays the first analyzed file once the startup analysis completes.
     pub autoplay: bool,
+}
+
+/// Startup services captured once before constructing the view and starting its workers.
+struct AppOptions {
+    paths: StoragePaths,
+    playback: bool,
+    workers: usize,
+    dispose: FileDisposer,
+    #[cfg(test)]
+    directory: Arc<tempfile::TempDir>,
+}
+
+#[cfg(not(test))]
+impl Default for AppOptions {
+    fn default() -> Self {
+        Self {
+            paths: StoragePaths::from_environment().expect("valid AUDIOBATCH_DATA_ROOT"),
+            playback: true,
+            workers: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+            dispose: trash_disposer(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Default for AppOptions {
+    fn default() -> Self {
+        Self::in_test_directory(Arc::new(tempfile::tempdir().expect("isolated view storage")))
+    }
+}
+
+#[cfg(test)]
+impl AppOptions {
+    /// Reuses one owned scratch directory across view recreation, without consulting the environment.
+    fn in_test_directory(directory: Arc<tempfile::TempDir>) -> Self {
+        Self {
+            paths: StoragePaths::in_root(directory.path()).expect("absolute test storage"),
+            playback: false,
+            workers: 1,
+            dispose: Arc::new(|path| std::fs::remove_file(path).is_ok()),
+            directory,
+        }
+    }
 }
 
 /// The root view of the main window.
@@ -170,6 +219,10 @@ pub struct AppView {
     menu_state: MenuState,
     /// Preferences saved between launches.
     settings: GuiSettings,
+    /// Captured preference destination, never resolved again during a view's lifetime.
+    settings_path: PathBuf,
+    /// Disposes of replaced source files for normalization.
+    dispose: FileDisposer,
     /// The Audio Settings window while it is open.
     settings_window: Option<SettingsWindow>,
     window_title: String,
@@ -202,6 +255,9 @@ pub struct AppView {
     /// Opens the paths that later launches of the app hand over, when this launch is the running app.
     launch_task: Option<Task<()>>,
     _plugin_tick_task: Task<()>,
+    /// Keeps scratch storage alive until every view-owned worker and persistence service has been dropped.
+    #[cfg(test)]
+    test_directory: Arc<tempfile::TempDir>,
 }
 
 impl AppView {
@@ -209,8 +265,24 @@ impl AppView {
     /// and starts any startup analysis.
     /// The dispatcher runs plugin calls from the processing workers on this thread.
     pub fn new(options: &LaunchOptions, dispatcher: UiDispatcher, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_options(options, dispatcher, AppOptions::default(), window, cx)
+    }
+
+    /// Constructs the real view with explicit storage and capabilities, without changing the environment.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Root construction keeps entity owners and startup services together"
+    )]
+    fn with_options(
+        options: &LaunchOptions,
+        dispatcher: UiDispatcher,
+        services: AppOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (content_width, workspace_height) = content_size(window.viewport_size());
-        let settings = GuiSettings::load();
+        let settings_path = services.paths.data().join(crate::settings::SETTINGS_FILE_NAME);
+        let settings = GuiSettings::load_from(&settings_path);
         let table = new_results_table(content_width, &settings, window, cx);
         let waveform = cx.new(|_| WaveformView::new());
         let (sliders, slider_subscriptions) = new_sliders(&settings, window, cx);
@@ -228,7 +300,15 @@ impl AppView {
             player,
             plugins,
             status,
-        } = open_startup(&settings, dispatcher, editor_owner, &mut menu_state);
+        } = open_startup(
+            &settings,
+            dispatcher,
+            editor_owner,
+            &mut menu_state,
+            &services.paths,
+            services.playback,
+            services.workers,
+        );
         set_menus(cx, &menu_state);
         configure_waveform(&waveform, &settings, cx);
 
@@ -283,6 +363,8 @@ impl AppView {
             shown_output: SharedString::default(),
             menu_state,
             settings,
+            settings_path,
+            dispose: services.dispose,
             settings_window: None,
             window_title: String::from(APP_TITLE),
             preview_height: render::preview_fit_height(content_width, workspace_height),
@@ -301,6 +383,8 @@ impl AppView {
             _player_poll_task: player_poll_task,
             launch_task: None,
             _plugin_tick_task: plugin_tick_task,
+            #[cfg(test)]
+            test_directory: services.directory,
         };
         view.connect_playhead(cx);
         view.refresh_plugin_preview(cx);
@@ -310,6 +394,13 @@ impl AppView {
             view.add_roots(&options.paths, cx);
         }
         view
+    }
+
+    /// Saves preferences to the destination captured by the constructor.
+    fn save_settings(&self) {
+        if let Err(error) = self.settings.save_to(&self.settings_path) {
+            tracing::error!("Failed to save settings: {error:#}");
+        }
     }
 
     /// Invalidates readers and drains ordered explicit gains off the message thread before application quit.
