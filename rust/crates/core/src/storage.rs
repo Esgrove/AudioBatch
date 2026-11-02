@@ -98,6 +98,7 @@ impl StoragePaths {
 mod test_storage {
     use super::*;
 
+    /// Keeps the shared database and private application paths at their native locations when no root is supplied.
     #[test]
     fn absent_override_preserves_platform_locations() {
         let paths = StoragePaths::resolve(None).expect("platform paths");

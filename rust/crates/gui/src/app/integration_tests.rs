@@ -142,6 +142,22 @@ impl Workflow {
     }
 }
 
+/// Keeps plugin processing and its optional normalization on the view's isolated disposal policy.
+#[gpui_kit::test]
+fn integration_plugin_processing_options_retain_isolated_disposal(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            view.set_normalize_first(true, cx);
+            let options = view.processing_options();
+            assert!(Arc::ptr_eq(&options.dispose, &view.dispose));
+            let normalization = options.normalize_before_plugins.expect("normalize before plugins");
+            assert!(Arc::ptr_eq(&normalization.dispose, &view.dispose));
+        });
+    });
+}
+
+/// Opens copied valid and broken inputs through the file picker and waits for real workers to reach idle.
 #[gpui_kit::test]
 async fn integration_open_valid_and_broken_files_reaches_idle(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
@@ -174,6 +190,7 @@ async fn integration_open_valid_and_broken_files_reaches_idle(cx: &mut TestAppCo
     assert!(workflow.paths.database().is_file());
 }
 
+/// Sorts through the table header while retaining the selected file's identity, metadata, and waveform.
 #[gpui_kit::test]
 async fn integration_selection_sort_retains_identity_metadata_and_waveform(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
@@ -220,6 +237,7 @@ async fn integration_selection_sort_retains_identity_metadata_and_waveform(cx: &
     });
 }
 
+/// Normalizes only the selected source copy through its control and follows the committed output everywhere.
 #[gpui_kit::test]
 async fn integration_normalize_selected_replaces_row_and_preserves_selection(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
@@ -263,6 +281,7 @@ async fn integration_normalize_selected_replaces_row_and_preserves_selection(cx:
     });
 }
 
+/// Cancels and clears pending work through actions, then rejects stale rows during the next generation.
 #[gpui_kit::test]
 async fn integration_cancel_and_clear_pending_work_never_resurrects_rows(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
@@ -303,6 +322,7 @@ async fn integration_cancel_and_clear_pending_work_never_resurrects_rows(cx: &mu
     });
 }
 
+/// Restores a real slider edit and preference action after replacing the view but retaining its isolated storage.
 #[gpui_kit::test]
 async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);

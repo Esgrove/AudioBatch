@@ -121,7 +121,8 @@ pub(super) fn new_sliders(
     (sliders, subscriptions)
 }
 
-/// Opens the coordinators, the audio device, and the plugin chain, and fills in their part of the menus.
+/// Opens the coordinators and plugin chain from explicit paths, and opens playback only when permitted.
+/// Fills in their part of the menus.
 /// Plugin editors open as windows owned by `editor_owner`.
 /// A problem with playback replaces one with analysis in the status line,
 /// and plugin problems are shown only when neither failed.
@@ -210,9 +211,9 @@ fn new_target_slider(mode: NormalizeMode, target: f64, cx: &mut Context<AppView>
 }
 
 /// Creates coordinators sharing a lazily opened cache at the captured storage destination.
-/// Analysis and normalization get one worker per CPU.
-/// Plugin processing leaves one physical core free, because plugins are much heavier per file
-/// and the preview and the editors keep running on the UI thread.
+/// Analysis and normalization use the supplied worker limit, which defaults to one worker per CPU.
+/// Plugin processing also respects the limit that leaves one physical core free,
+/// because plugins are much heavier per file and the preview and the editors keep running on the UI thread.
 /// Opening SQLite and migrating the shared schema happen on the first worker lookup, never during GUI startup.
 /// Cache failures remain misses and do not prevent native analysis or processing.
 fn open_coordinators(paths: &StoragePaths, workers: usize) -> anyhow::Result<Coordinators> {
