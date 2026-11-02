@@ -114,29 +114,6 @@ impl AnalysisCache {
         .map(|_| ())
     }
 
-    /// Publishes metadata using identity captured before its read, without recapturing a changed file.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an invalid overview or a failed database write.
-    pub fn store_serato_overview_for_identity(
-        &self,
-        path: &Path,
-        file_size: u64,
-        modified_time_ms: i64,
-        state: &SeratoOverviewState,
-    ) -> Result<bool> {
-        self.store_serato_overview_for_record(
-            &AnalysisRecord {
-                path: path.to_path_buf(),
-                file_size,
-                modified_time_ms,
-                ..Default::default()
-            },
-            state,
-        )
-    }
-
     /// Publishes parsed metadata only for the captured source version, without replacing newer tag work.
     /// Negative parser outcomes are complete results and remain independent of measurement validity.
     ///

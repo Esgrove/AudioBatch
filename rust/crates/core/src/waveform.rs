@@ -718,6 +718,7 @@ mod test_waveform {
         assert!(WaveformOverview::from_bytes(&empty).is_none());
     }
 
+    /// Rejects unbounded waveform geometry and inverted quantized ranges before accepting serialized previews.
     #[test]
     fn oversized_geometry_and_invalid_quantized_ranges_are_rejected_before_allocating() {
         let mut builder = WaveformBuilder::new(1, None);

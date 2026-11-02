@@ -21,6 +21,7 @@ fn cpp_helper(executable: &Path, mode: &str, database: &Path, source: &Path) {
     assert!(status.success(), "C++ helper {mode}: {status}");
 }
 
+/// Verifies both real cache implementations reuse each other's measurements while preserving independent artifacts.
 #[test]
 fn both_implementations_reuse_the_other_producers_measurements() {
     let Some(executable) = env::var_os("AUDIOBATCH_CPP_TESTS").map(PathBuf::from) else {

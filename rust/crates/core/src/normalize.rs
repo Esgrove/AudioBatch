@@ -1003,6 +1003,7 @@ mod test_normalize_file {
         assert!(disposed.lock().expect("lock").is_empty());
     }
 
+    /// Remeasures foreign levels before using them to refuse normalization or skip an apparently at-target source.
     #[test]
     fn foreign_levels_are_remeasured_before_refusal_and_no_op_decisions() {
         for bogus_peak in [0.0, 1.0] {
@@ -1020,6 +1021,7 @@ mod test_normalize_file {
         }
     }
 
+    /// Reports native measurements and retains explicit gain when remeasurement confirms a foreign source is at target.
     #[test]
     fn foreign_at_target_no_op_retains_gain_and_reports_native_measurements() {
         let directory = tempfile::tempdir().expect("creates directory");

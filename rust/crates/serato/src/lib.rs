@@ -439,6 +439,7 @@ mod test_serato_data {
         assert!(!data.failed_to_parse(SeratoTag::Overview));
     }
 
+    /// Selects the physically first valid overview against independent literal expectations for duplicate frames.
     #[test]
     fn overview_duplicate_order_has_independent_literal_expectations() {
         let first = [1, 5, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37];

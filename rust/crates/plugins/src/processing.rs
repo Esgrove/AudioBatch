@@ -946,6 +946,7 @@ mod test_process_file_gain {
         assert_eq!(result.output().and_then(|output| output.custom_gain_db), None);
     }
 
+    /// Requires native levels only for automatic normalization, not explicit gain or unity plugin processing.
     #[test]
     fn foreign_levels_are_refreshed_only_for_automatic_normalization() {
         let directory = TempDir::new().expect("temp dir");
@@ -960,6 +961,7 @@ mod test_process_file_gain {
         assert_eq!(unchanged.measurement_producer, MeasurementProducer::Cpp);
     }
 
+    /// Remeasures foreign silence claims so automatic normalization still reaches its requested output target.
     #[test]
     fn foreign_bogus_levels_do_not_skip_automatic_normalization() {
         let directory = TempDir::new().expect("temp dir");

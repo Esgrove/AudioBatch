@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Sender, bounded};
 use rayon::ThreadPool;
+use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::analysis::analyze_file;
@@ -70,9 +71,22 @@ pub fn scrambled_fixture_copy(directory: &TempDir, fixture: &str, copy_name: &st
 
 /// Opens a cache in a subfolder of the directory, which the cache has to create.
 pub fn temporary_cache(directory: &TempDir) -> AnalysisCache {
-    let cache = AnalysisCache::with_path(directory.path().join("cache/analysis.db"));
+    let cache = AnalysisCache::with_path(temporary_cache_path(directory));
     cache.open().expect("cache opens");
     cache
+}
+
+/// Returns the explicit database path shared by temporary caches and independent test connections.
+pub fn temporary_cache_path(directory: &TempDir) -> PathBuf {
+    directory.path().join("cache/analysis.db")
+}
+
+/// Changes persisted measurements through an independent connection to simulate another cache writer.
+pub fn update_cached_measurements(directory: &TempDir, assignments: &str) {
+    Connection::open(temporary_cache_path(directory))
+        .expect("second connection")
+        .execute_batch(&format!("UPDATE file_analysis SET {assignments}"))
+        .expect("updates shared row");
 }
 
 /// Occupies every worker of the pool until the returned sender is dropped,
