@@ -161,6 +161,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
   `app/preferences.rs` holds the Audio Settings window and the preview options,
   and `app/tags.rs` the tags of the selected file with its Serato cue points and Overview.
+  `app/enrichment.rs` owns post-load waveform and Serato filling with one active cancellable reader,
+  and `app/gain_writer.rs` serializes coalesced explicit gain edits without blocking the GUI.
   `app/cue_start.rs` retains a play or seek intent until matching cue metadata and source duration are ready.
   `app/artwork.rs` reads the album artwork of the selected file, which `artwork.rs` decodes into a bounded thumbnail.
   `plugins/` holds the live chain in `live_chain.rs`,
@@ -222,7 +224,9 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Keep header and frame-count validation, without a full output re-decode.
   Fuse one `f32` gain multiplication into the writer, without a scaled copy or per-chunk plane-reference `Vec`.
   An in-place file already at target returns the current record after cancellation and source-identity checks.
-- Cache analysis version 6 invalidates older measurements without discarding same-identity custom gains or Serato data.
+- Shared measurement contract version 13 is coordinated with the C++ cache.
+  A measurement-affecting change in either implementation requires a coordinated invalidation.
+  Preserve same-identity custom gains, including explicit clears, and compatible previews when refilling measurements.
   Keep ebur128 as a development dependency only.
 
 ## VST3 Hosting
@@ -273,8 +277,22 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 
 - The Rust CLI is `audiobatch-rs`, and the Rust app is `AudioBatchRs` with the bundle id `com.esgrove.audiobatch-rs`.
   The C++ versions are `audiobatch` and `AudioBatch` with `com.esgrove.audiobatch`.
-- The Rust cache lives in its own data directory, `AudioBatch-rs`.
-  Never open the C++ `analysis.db`, because the two schemas would overwrite each other.
+- Both applications share `AudioBatch/analysis.db`, with a common versioned `file_analysis` measurement contract.
+  On macOS the database is `~/Library/AudioBatch/analysis.db`, not in Application Support.
+  Settings, logs, plugin data, and presets remain in their separate application directories.
+- Measurement provenance names the application that measured the audio, not the last writer of gain or preview data.
+  Successful measurements are reusable in either direction, while decoder failures are producer-specific.
+  Rust waveforms use `rust_waveform_cache`, leaving JUCE waveform columns untouched for compatible unchanged sources.
+  Missing or corrupt waveforms and Serato cache payloads are artifact misses, not measurement misses.
+- The GUI fills missing native waveforms and Serato outcomes after initial loading through a bounded background queue.
+  Keep selected-file work within the same admission limit,
+  retain stable negative tag outcomes, and reject stale identities.
+  Do not persist inherited gain values as new user edits, hydrate every waveform in measurement reads,
+  or run SQLite work on the audio callback.
+- Foreign measurements are reporting results of their originating decoder and meter.
+  Remeasure natively before normalization decisions, including refusal and no-op checks,
+  unless operation compatibility is independently established.
+  Explicit custom-gain or unity plugin processing does not require foreign-origin remeasurement.
 
 ## Build And Test Commands
 

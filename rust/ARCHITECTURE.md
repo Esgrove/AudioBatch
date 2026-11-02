@@ -392,25 +392,46 @@ Sample overs use solid amber edge caps and a restrained channel tint, while true
 Projection merges flags per screen column so isolated subpixel warnings stay visible,
 and extends true peak coverage conservatively across interpolation boundaries without shifting sample regions.
 
-**The cache.**
-`AnalysisCache` in `core/src/cache.rs` keeps one SQLite row per path,
-with the levels, loudness history, waveform and overload history as independent blobs, and the user's custom gain.
-Successful rows require valid overload history matching their decoded stream.
-Analysis version 6 identifies measurements from the current loudness and true peak meters.
-Older rows or missing or malformed history trigger reanalysis through an additive migration and analysis version gate.
-A refill retains same-identity custom gains, including explicit clears, and leaves Serato rows untouched.
-A row holds while the file keeps the stored size and modification time and the analysis version is current.
-Failures that would repeat for the same bytes are stored too, so a broken file is not decoded again.
-The connection opens lazily behind a mutex, so every worker can use the cache.
-`cache/serato.rs` adds the `serato_tag_cache` table with the schema of the C++ application's table.
-The database lives in the `AudioBatch-rs` data directory, apart from the C++ application's cache.
+**The shared cache.**
+`AnalysisCache` in `core/src/cache.rs` reads and writes the same `file_analysis` table as the C++ application.
+The database is `~/Library/AudioBatch/analysis.db` on macOS and `%APPDATA%\\AudioBatch\\analysis.db` on Windows.
+Settings, logs, and plugin data keep their separate application paths.
+Shared measurement contract version 13 accepts either producer's successful levels and required histories.
+The short-term history and `OVLD` overload encoding are shared, while native waveform formats are separate.
+Both implementations must coordinate contract invalidation after measurement-affecting changes.
+Known-compatible C++ measurements are adopted through additive migration,
+and the old standalone Rust database is untouched.
+
+A row remains usable while source size, modification time, and accepted contract match.
+Reads validate types, geometry, counts, and payload bounds before constructing owned histories or previews.
+Failures that repeat for the same bytes are retained only for the originating decoder.
+Same-source measurement writes preserve the latest persisted gain, including explicit clears, and compatible previews.
+Captured-identity artifact writes do not republish old whole records or change measurement provenance.
+WAL, short transactions, and prepared statements reduce contention, but SQLite still serializes writers.
+Potentially blocking persistence belongs on background paths, never the audio callback.
+
+Rust waveforms are stored in `rust_waveform_cache`, leaving JUCE waveform columns available to the C++ application.
+A missing native waveform or corrupt optional preview is not a measurement-cache miss.
+Measurement reads do not hydrate every waveform, and selected artifacts are loaded asynchronously.
+After initial loading, one active enrichment job fills missing native waveforms and Serato outcomes,
+prioritizing selection and yielding to foreground file operations.
+Valid absent, unsupported, and invalid Serato source-tag outcomes complete that work without repeated retries.
+The parser-result revision is independent of the shared `SOVR` raster encoding revision.
+
+The GUI shows `Cached (C++)` for foreign measurements and `Cached` for its own, without changing CLI status output.
+The origin describes the decoder and meter that supplied measurements, including overload flags.
+Foreign lossy measurements do not promise bit-identical local playback PCM.
+Gain or preview edits never change that origin.
 
 ## Normalization and processing
 
 Normalization in `core/src/normalize.rs` and processing in `plugins/src/processing.rs` both write `<name>.aif`.
 They write it next to the source and commit it after validation.
 Normalization measures its quantized output while rendering, while processing analyzes the committed result.
-Both require a finished analysis, and analyze the source again first when it changed on disk.
+Both require a finished analysis and reanalyze a source that changed on disk.
+Foreign measurements are also remeasured natively before normalization gain, refusal, ceiling, and no-op decisions.
+Explicit custom gain and unity plugin processing do not need native measurement solely because the origin is foreign.
+Native remeasurement of an unchanged source preserves its custom gain and establishes native measurement provenance.
 Lossless sources normalize to identical samples in peak mode and within one PCM step in loudness mode,
 which `scripts/compare_outputs.py` checks independently of the level comparison.
 
@@ -609,8 +630,9 @@ The C++ application in `../cpp` is the reference implementation.
 The Rust version differs from it on purpose in these points:
 
 - It hosts VST3 plugins only, on macOS and Windows, and no Audio Units.
-- It keeps its cache, logs, plugin list, chain, and presets in its own `AudioBatch-rs` folders,
-  with the plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
+- It shares measurements and compatible Serato outcomes with the C++ application in `AudioBatch/analysis.db`.
+  Logs, settings, plugin list, chain, and presets remain in its own `AudioBatch-rs` folders,
+  with plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
 - It decodes audio with symphonia rather than JUCE and the platform decoders.
   It supports Ogg Vorbis but not the Opus decoder enabled in the C++ build.
   Lossy PCM can differ, so parity checks use a separate -72 dBFS sample-difference tolerance for lossy sources,
