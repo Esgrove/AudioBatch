@@ -41,3 +41,9 @@ its comments describe what the migration does and why each step exists, not the 
 
 When one or more data members of a struct have a `///` docstring, give every data member one.
 This applies to options and result structs in particular.
+
+## Enum value docstrings
+
+Document either every enumerator in an enum or none of them, rather than documenting just one value.
+For self-explanatory enumerator names, prefer no individual docstrings.
+Put shared context and any needed clarification in the enum's top-level docstring instead.

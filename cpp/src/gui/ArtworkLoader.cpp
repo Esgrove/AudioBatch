@@ -26,6 +26,7 @@ namespace
 {
 /// Width and height an image header declares.
 struct ImageDimensions {
+    // Preserve the width/height positional construction used by the image header decoders.
     /// Declared width in pixels.
     int width {0};
     /// Declared height in pixels.

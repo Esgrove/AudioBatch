@@ -25,5 +25,6 @@ juce::Array<juce::File> collectInputFiles(
 );
 
 bool isSupportedAudioFile(const juce::File& file);
+
 void sortRecords(std::vector<AudioAnalysisRecord>& records, AudioAnalysisSortMode sortMode, bool ascending);
 }  // namespace audiobatch

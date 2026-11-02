@@ -22,14 +22,15 @@ constexpr double maximumTailSeconds {20.0};
 
 /// Values gathered while preparing a plugin chain for one file that rendering needs.
 struct ChainPreparation {
-    /// Empty when every plugin in the chain was prepared.
-    juce::String errorMessage;
+    // Preserve the channel/error/latency aggregate order used by preparation and playback callers.
     /// Widest channel count of any plugin in the chain, at least the file's channel count.
     int processChannelCount {0};
-    /// Sum of the individually clamped per-plugin tails.
-    juce::int64 tailSamples {0};
+    /// Empty when every plugin in the chain was prepared.
+    juce::String errorMessage;
     /// Sum of the latencies the plugins report after preparation.
     juce::int64 latencySamples {0};
+    /// Sum of the individually clamped per-plugin tails.
+    juce::int64 tailSamples {0};
 };
 
 /// Prepares a plugin chain for one file on the message thread and releases it again when destroyed,
@@ -44,10 +45,12 @@ public:
         std::span<juce::AudioPluginInstance* const> instances,
         const utils::CancellationCheck& cancellationCheck
     );
+
     ~PreparedChain();
+
     PreparedChain(const PreparedChain&) = delete;
-    PreparedChain(PreparedChain&&) = delete;
     PreparedChain& operator=(const PreparedChain&) = delete;
+    PreparedChain(PreparedChain&&) = delete;
     PreparedChain& operator=(PreparedChain&&) = delete;
 
     [[nodiscard]] std::optional<ChainPreparation> prepare(
@@ -57,10 +60,10 @@ public:
     );
 
 private:
-    /// The instances of the chain in chain order, which the caller owns.
-    std::span<juce::AudioPluginInstance* const> chainInstances;
     /// The cancellation check of the run, which skips the release on the message thread once it returns true.
     const utils::CancellationCheck& isCancelled;
+    /// The instances of the chain in chain order, which the caller owns.
+    std::span<juce::AudioPluginInstance* const> chainInstances;
     /// True after a preparation succeeded, so the destructor releases the chain again.
     bool prepared {false};
 };
@@ -72,14 +75,13 @@ ChainPreparation prepareChain(
     double sampleRate
 );
 
-[[nodiscard]] juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, double sampleRate);
 [[nodiscard]] juce::String formatPluginLatency(juce::int64 samples, double sampleRate);
-
-void addToPreparation(ChainPreparation& preparation, const juce::AudioPluginInstance& plugin, double sampleRate);
 
 bool configurePluginChannels(juce::AudioPluginInstance& plugin, int numChannels);
 bool configurePreviewChannels(juce::AudioPluginInstance& plugin);
+[[nodiscard]] juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, double sampleRate);
 
+void addToPreparation(ChainPreparation& preparation, const juce::AudioPluginInstance& plugin, double sampleRate);
 void releasePluginResources(std::span<juce::AudioPluginInstance* const> chainInstances);
 void restoreStateAndPrepare(
     juce::AudioPluginInstance& plugin,

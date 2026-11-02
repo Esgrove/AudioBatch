@@ -22,14 +22,14 @@ namespace audiobatch
 namespace
 {
 struct AudioNormalizationFormatSupport {
+    /// Why the format can or cannot be normalized, for the support dialog.
+    juce::String detail;
     /// Name of the audio format, such as "MP3 file".
     juce::String formatName;
     /// The file extensions the format reads.
     juce::StringArray fileExtensions;
     /// True when this build can normalize files of the format.
     bool canNormalize {false};
-    /// Why the format can or cannot be normalized, for the support dialog.
-    juce::String detail;
 };
 
 /// Returns the one-line summary of normalization output behavior used in the support summary.
@@ -233,7 +233,7 @@ juce::String getFormatSupportSummary()
     juce::StringArray writableLines;
     juce::StringArray readOnlyLines;
 
-    for (const auto& [formatName, fileExtensions, canNormalize, detail] : support) {
+    for (const auto& [detail, formatName, fileExtensions, canNormalize] : support) {
         const auto line = detail.isNotEmpty()
             ? utils::format("- {} ({}): {}", formatName, formatExtensionsToText(fileExtensions), detail)
             : utils::format("- {} ({})", formatName, formatExtensionsToText(fileExtensions));

@@ -23,19 +23,21 @@ namespace audiobatch::utils
 {
 /// Fallback sample rate for preview and plugin preparation before an audio device is available.
 constexpr double defaultSampleRate {48'000.0};
-/// Returns the magnitude of a peak value, since analysis records store signed peaks.
-template<std::floating_point Value>
-[[nodiscard]] Value peakMagnitude(const Value peak)
-{
-    return std::abs(peak);
-}
-
 juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager);
 [[nodiscard]] TagLib::FileName tagLibFileName(const juce::String& fullPath);
-void registerAudioFormats(juce::AudioFormatManager& formatManager);
 juce::AudioFormatManager& threadLocalFormatManager();
-std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file);
 
+std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer);
+std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file);
+std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::StringPairArray& metadata);
+
+[[nodiscard]] std::expected<void, juce::String> quantizeNormalizedSamples(
+    std::span<const float> input,
+    std::span<int> pcm,
+    std::span<float> observed,
+    float gain,
+    int bitsPerSample
+);
 [[nodiscard]] std::expected<void, juce::String> validateWrittenAudio(
     juce::AudioFormatManager& formatManager,
     const juce::File& file,
@@ -44,7 +46,12 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
     juce::int64 expectedLength
 );
 
-std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::StringPairArray& metadata);
+/// Returns the magnitude of a peak value, since analysis records store signed peaks.
+template<std::floating_point Value>
+[[nodiscard]] Value peakMagnitude(const Value peak)
+{
+    return std::abs(peak);
+}
 
 [[nodiscard]] bool readFloatSamples(
     juce::AudioFormatReader& reader,
@@ -52,8 +59,6 @@ std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::St
     juce::int64 startSample,
     int numSamples
 );
-
-std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer);
 
 /// Reconstructs the float a JUCE integer AIFF reader returns after discarding unwritten low bits.
 /// The input is aligned to the most significant bits of a 32-bit PCM value.
@@ -67,11 +72,5 @@ std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer);
     return static_cast<float>(aligned) * scale;
 }
 
-[[nodiscard]] std::expected<void, juce::String> quantizeNormalizedSamples(
-    std::span<const float> input,
-    std::span<int> pcm,
-    std::span<float> observed,
-    float gain,
-    int bitsPerSample
-);
+void registerAudioFormats(juce::AudioFormatManager& formatManager);
 }  // namespace audiobatch::utils

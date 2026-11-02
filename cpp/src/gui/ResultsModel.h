@@ -20,6 +20,7 @@ namespace audiobatch
 {
 /// Where merging a record put it, and whether a current explicit edit overrode the incoming value.
 struct MergedRecord {
+    // Preserve the row/edit-result aggregate order returned by merge operations.
     /// The row of the merged record, valid until rows are removed or sorted.
     int row {-1};
     /// True when an explicit edit or clear overrode a queued record's incoming gain.
@@ -29,6 +30,7 @@ struct MergedRecord {
 
 /// An explicit gain edit, including a clear, belonging only to the edited version of a file.
 struct CustomGainEdit {
+    // Preserve the file-identity/gain aggregate order used by explicit-edit producers.
     /// File size when the gain was edited.
     std::int64_t fileSize {0};
     /// Modification time when the gain was edited.
@@ -43,20 +45,23 @@ struct CustomGainEdit {
 class ResultsModel
 {
 public:
-    [[nodiscard]] bool empty() const noexcept;
-    [[nodiscard]] int size() const noexcept;
-    [[nodiscard]] bool containsRow(int row) const noexcept;
-    [[nodiscard]] std::optional<int> findRow(const juce::String& fullPath) const;
     [[nodiscard]] const AudioAnalysisRecord& operator[](int row) const;
+    MergedRecord merge(AudioAnalysisRecord record);
+    MergedRecord replaceAfterOperation(const juce::String& originalPath, AudioAnalysisRecord output);
+
     [[nodiscard]] std::vector<AudioAnalysisRecord>::const_iterator begin() const noexcept;
     [[nodiscard]] std::vector<AudioAnalysisRecord>::const_iterator end() const noexcept;
 
+    [[nodiscard]] std::optional<int> findRow(const juce::String& fullPath) const;
+
     bool addPending(const juce::File& file);
+    [[nodiscard]] bool containsRow(int row) const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
     bool setCustomGain(int row, std::optional<Decibels> gain);
-    MergedRecord merge(AudioAnalysisRecord record);
-    MergedRecord replaceAfterOperation(const juce::String& originalPath, AudioAnalysisRecord output);
-    void clear() noexcept;
+    [[nodiscard]] int size() const noexcept;
+
     void beginLoad();
+    void clear() noexcept;
     void removePaths(const juce::StringArray& paths);
     void setRecord(int row, AudioAnalysisRecord record);
     void sort(const results_sorting::SortState& state);
@@ -66,10 +71,11 @@ private:
 
     /// The rows in table order.
     std::vector<AudioAnalysisRecord> records;
-    /// The row of each record by its full path, rebuilt whenever rows move.
-    std::unordered_map<juce::String, std::size_t> rowsByPath;
+
     /// Explicit edits protect queued results until the file identity changes or a new load begins.
     std::unordered_map<juce::String, CustomGainEdit> customGainEdits;
+    /// The row of each record by its full path, rebuilt whenever rows move.
+    std::unordered_map<juce::String, std::size_t> rowsByPath;
 };
 
 juce::StringArray remapSelectedPaths(

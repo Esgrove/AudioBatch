@@ -63,19 +63,19 @@ public:
 
     std::uint64_t request(const juce::File& file, double durationSeconds);
 
-    void cancel();
-    void cancelAndWait();
-
-    [[nodiscard]] bool isCurrentGeneration(std::uint64_t resultGeneration) const;
     [[nodiscard]] bool canAdopt(
         const utils::FileIdentity& identity,
         std::uint64_t resultGeneration,
         const juce::File& selectedFile
     ) const;
+    [[nodiscard]] bool isCurrentGeneration(std::uint64_t resultGeneration) const;
+
+    void cancel();
+    void cancelAndWait();
 
 private:
-    void run(const std::stop_token& stopToken);
     void process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const;
+    void run(const std::stop_token& stopToken);
 
     /// The cache the tag results are read from and stored in, which outlives the loader.
     AnalysisCache& cache;

@@ -55,6 +55,7 @@ struct FileProgressEvent {
 /// so they arrive in the order the workers sent them, and a start never arrives after the result of its file.
 template<typename Result>
 struct OperationEvent {
+    // Keep the event/run-id aggregate contract used by coordinator callback producers.
     /// What happened to the file.
     std::variant<FileStartedEvent, FileProgressEvent, Result> event;
     /// Id of the coordinator run the event belongs to.
@@ -67,6 +68,7 @@ class BackgroundWorkListener
 {
 public:
     BackgroundWorkListener() = default;
+
     virtual ~BackgroundWorkListener() = default;
 
     BackgroundWorkListener(const BackgroundWorkListener&) = delete;
@@ -74,28 +76,28 @@ public:
     BackgroundWorkListener(BackgroundWorkListener&&) = delete;
     BackgroundWorkListener& operator=(BackgroundWorkListener&&) = delete;
 
+    /// Called when the running analysis has finished, after its last results and once the controller is idle again.
+    virtual void analysisCompleted(const AnalyzingWork& run, int totalFiles) = 0;
+
     /// Called once the running analysis has scanned its inputs, with the run already updated from the plan.
     virtual void analysisPlanReceived(const AnalysisPlan& plan, const AnalyzingWork& run) = 0;
 
     /// Called with a batch of results of the running analysis, without the results of rows removed during the run.
     virtual void analysisResultsReceived(std::vector<AudioAnalysisRecord> records) = 0;
 
-    /// Called when the running analysis has finished, after its last results and once the controller is idle again.
-    virtual void analysisCompleted(const AnalyzingWork& run, int totalFiles) = 0;
+    /// Called when the running normalization pass has finished, once the controller is idle again.
+    virtual void normalizeCompleted(const NormalizingWork& pass, int totalFiles) = 0;
 
     /// Called with a batch of normalization results in the order they arrived, after the completed count went up.
     /// A result is passed on even after its pass ended, because its output file was already written.
     virtual void normalizeResultsReceived(std::vector<AudioNormalizationResult> results) = 0;
 
-    /// Called when the running normalization pass has finished, once the controller is idle again.
-    virtual void normalizeCompleted(const NormalizingWork& pass, int totalFiles) = 0;
+    /// Called when the running processing pass has finished, once the controller is idle again.
+    virtual void processingCompleted(const ProcessingWork& pass, int totalFiles) = 0;
 
     /// Called with a batch of plugin processing results in the order they arrived, after the completed count went up.
     /// A result is passed on even after its pass ended, because its output file was already written.
     virtual void processingResultsReceived(std::vector<PluginProcessingResult> results) = 0;
-
-    /// Called when the running processing pass has finished, once the controller is idle again.
-    virtual void processingCompleted(const ProcessingWork& pass, int totalFiles) = 0;
 
     /// Called when a processing pass could not start its workers, once the controller is idle again.
     virtual void processingStartFailed(const juce::String& errorMessage) = 0;
@@ -123,16 +125,17 @@ public:
     BackgroundWorkController& operator=(BackgroundWorkController&&) = delete;
 
     [[nodiscard]] const BackgroundWork& getWork() const noexcept;
-    [[nodiscard]] bool isIdle() const noexcept;
+
+    bool cancelCurrentWork();
     [[nodiscard]] bool isAnalysisInProgress() const noexcept;
-    [[nodiscard]] bool isProcessingInProgress() const noexcept;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
+    [[nodiscard]] bool isIdle() const noexcept;
+    [[nodiscard]] bool isProcessingInProgress() const noexcept;
 
     [[nodiscard]] int startNormalization(
         const std::vector<AudioAnalysisRecord>& records,
         const AudioNormalizationOptions& options
     );
-
     [[nodiscard]] int startProcessing(
         const std::vector<AudioAnalysisRecord>& records,
         const PluginProcessingOptions& options,
@@ -142,17 +145,22 @@ public:
 
     void cancelAnalysis();
     void cancelAndWait();
-    bool cancelCurrentWork();
-    void stopAllWork();
     void forgetRemovedPaths(const juce::StringArray& removedPaths, int removedPendingCount);
     void recordFailure(const juce::String& failure);
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
+    void stopAllWork();
 
 private:
     friend class tests::BackgroundWorkTests;
 
+    [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
+    [[nodiscard]] bool isCurrentNormalizationRun(int runId) const noexcept;
+    [[nodiscard]] bool isCurrentProcessingRun(int runId) const noexcept;
+
     void connectAnalysisCallbacks();
     void connectOperationCallbacks();
+
+    // Events delivered on the message thread.
     void handleAnalysisComplete(int totalFiles, int runId);
     void handleAnalysisPlan(const AnalysisPlan& plan);
     void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
@@ -162,15 +170,12 @@ private:
     void handleProcessingEvents(std::vector<OperationEvent<PluginProcessingResult>> events);
     void handleProcessingStartError(const juce::String& errorMessage, int runId);
 
-    [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
-    [[nodiscard]] bool isCurrentNormalizationRun(int runId) const noexcept;
-    [[nodiscard]] bool isCurrentProcessingRun(int runId) const noexcept;
-
     /// The activities of the table rows, which the passes mark busy and idle, owned by the main component.
     FileActivityTracker& fileActivity;
     /// Receives the plans, results, and completions, owned by the main component.
     BackgroundWorkListener& listener;
 
+    // Run and discard state must outlive coordinators whose callbacks consult it during shutdown.
     /// The analysis run, normalization pass, or plugin processing pass that is running, if any.
     BackgroundWork work;
     /// Run id of the last normalization pass that stopAllWork discarded, whose events are all dropped,

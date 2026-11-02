@@ -21,7 +21,6 @@ namespace audiobatch::serato
     const utils::FileIdentity& identity,
     TagKind kind = TagKind::overview
 );
-
 [[nodiscard]] std::vector<std::optional<TagReadResult>> getCachedTags(
     AnalysisCache& cache,
     const utils::FileIdentity& identity,

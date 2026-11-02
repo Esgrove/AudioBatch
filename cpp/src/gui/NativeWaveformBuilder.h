@@ -13,7 +13,6 @@
 
 namespace audiobatch
 {
-[[nodiscard]] int samplesPerThumbnailPoint(juce::int64 lengthInSamples);
 [[nodiscard]] std::optional<juce::MemoryBlock> buildNativeWaveform(
     juce::AudioFormatReader& reader,
     const utils::CancellationCheck& isCancelled = {}
@@ -22,4 +21,6 @@ namespace audiobatch
     const utils::FileIdentity& identity,
     const utils::CancellationCheck& isCancelled = {}
 );
+
+[[nodiscard]] int samplesPerThumbnailPoint(juce::int64 lengthInSamples);
 }  // namespace audiobatch

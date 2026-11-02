@@ -29,8 +29,8 @@ public:
     AsyncCallback(AsyncCallback&&) = delete;
     AsyncCallback& operator=(AsyncCallback&&) = delete;
 
-    void trigger();
     void runNowIfPending();
+    void trigger();
 
 private:
     void handleAsyncUpdate() override;
@@ -53,6 +53,13 @@ public:
     /// Creates a batcher that delivers every batch to the handler.
     explicit MessageThreadBatcher(Handler batchHandler) : handler(std::move(batchHandler)) {}
 
+    /// Delivers the values posted so far right away instead of on the next message loop turn.
+    /// Call it on the message thread before handling something that must see every earlier value.
+    void deliverPending()
+    {
+        delivery.runNowIfPending();
+    }
+
     /// Adds a value to the next batch and schedules its delivery. Safe to call from any thread.
     void post(Value value)
     {
@@ -62,13 +69,6 @@ public:
         }
 
         delivery.trigger();
-    }
-
-    /// Delivers the values posted so far right away instead of on the next message loop turn.
-    /// Call it on the message thread before handling something that must see every earlier value.
-    void deliverPending()
-    {
-        delivery.runNowIfPending();
     }
 
 private:

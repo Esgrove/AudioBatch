@@ -29,10 +29,10 @@ struct OptionName {
 
 /// One command line option, which the parser matches and the usage text and the shell completions describe.
 struct CliOption {
-    /// Returns true when the option takes a value, such as the count of --jobs.
-    [[nodiscard]] constexpr bool takesValue() const
+    /// Returns the pattern juce::ArgumentList matches the option with, such as "--recurse|-r".
+    [[nodiscard]] juce::String pattern() const
     {
-        return !std::string_view(valueName).empty();
+        return hasShortName() ? utils::format("{}|{}", longName, shortName) : juce::String(longName);
     }
 
     /// Returns true when the option has a short form besides the long one.
@@ -41,12 +41,13 @@ struct CliOption {
         return !std::string_view(shortName).empty();
     }
 
-    /// Returns the pattern juce::ArgumentList matches the option with, such as "--recurse|-r".
-    [[nodiscard]] juce::String pattern() const
+    /// Returns true when the option takes a value, such as the count of --jobs.
+    [[nodiscard]] constexpr bool takesValue() const
     {
-        return hasShortName() ? utils::format("{}|{}", longName, shortName) : juce::String(longName);
+        return !std::string_view(valueName).empty();
     }
 
+    // Keep fields in the order used by the option table's designated initializers.
     /// Long form, such as "--recurse".
     const char* longName {""};
     /// Short form, such as "-r", or empty for an option that only has the long form.
@@ -64,6 +65,7 @@ using CliOptionList = std::span<const std::reference_wrapper<const CliOption>>;
 
 /// A subcommand, which runs instead of the analysis when it is the first argument.
 struct CliSubcommandInfo {
+    // Keep the command, options, and argument fields in their aggregate table order.
     /// The subcommand the entry describes.
     CliSubcommand subcommand {CliSubcommand::none};
     /// The word that selects the subcommand, such as "list".

@@ -413,455 +413,467 @@ public:
     /// Registers the reader suite with the explicit JUCE runner.
     SeratoTagReaderTests() : juce::UnitTest("Serato tag reader", "AudioBatch") {}
 
-    /// Writes synthetic metadata only on temporary copies and verifies extraction is read-only.
-    void runTest() override
-    {
-        testOverview();
-        testRainbowFixtures();
-        testIndependentOverviewContract();
-        testMetadata();
-        testTrackInfoFields();
-    }
+    void runTest() override;
 
 private:
-    /// Reads the committed rainbow fixtures, which the Rust tests read too.
-    /// The MP3 and AIFF files hold the overview in a GEOB frame, and the FLAC file in a native comment.
-    void testRainbowFixtures()
-    {
-        beginTest("The committed rainbow fixtures have 240 overview slices in six colour bands in every container");
-        for (const auto* fixtureName :
-             {
-                 "serato_rainbow_stereo_44100_128k.mp3",
-                 "serato_rainbow_stereo_44100_16.aif",
-                 "serato_rainbow_stereo_44100_16.flac",
-             })
-        {
-            const auto result = serato::readTag(fixtureFile(fixtureName));
-            expectStatus(result, serato::ReadStatus::present);
-            const auto overview = tagValue<serato::Overview>(result);
-            expect(overview.has_value(), fixtureName);
-            if (overview) {
-                expectRainbowBands(*overview, fixtureName);
-            }
-        }
-    }
-
-    /// Checks the slice count and the colour of the first and last slice of every band of a rainbow overview.
-    void expectRainbowBands(const serato::Overview& overview, const juce::String& fixtureName)
-    {
-        constexpr std::size_t sliceCount {240};
-        expectEquals(overview.slices.size(), sliceCount, fixtureName);
-        if (overview.slices.size() != sliceCount) {
-            return;
-        }
-        const std::array<juce::uint32, 6> bands {
-            0xffff0000,
-            0xffffff00,
-            0xff00ff00,
-            0xff00ffff,
-            0xff0000ff,
-            0xffff00ff,
-        };
-        const auto slicesPerBand = sliceCount / bands.size();
-        for (std::size_t band = 0; band < bands.size(); ++band) {
-            for (const auto slice : {band * slicesPerBand, ((band + 1) * slicesPerBand) - 1}) {
-                const auto colour = serato::colourForOverviewSlice(overview.slices[slice], juce::Colours::black);
-                expect(
-                    colour.getARGB() == bands[band],
-                    utils::format(
-                        "{} slice {} is {} instead of {:08x}", fixtureName, slice, colour.toString(), bands[band]
-                    )
-                );
-            }
-        }
-    }
-
-    /// Uses the same literal one-slice values and source order as the Rust extraction contract tests.
-    void testIndependentOverviewContract()
-    {
-        beginTest("Physical GEOB A B A duplicates retain the first valid slice across containers and ID3 versions");
-        const TemporaryDirectory directory;
-        std::vector<std::uint8_t> first(18, 37);
-        first[0] = 1;
-        first[1] = 5;
-        auto second = first;
-        second[2] = 180;
-        const std::vector<std::uint8_t> invalid {1, 5, 0};
-        const std::array cases {
-            std::vector {first, second, first},
-            std::vector {invalid, first, second, first},
-            std::vector {first, invalid, second},
-        };
-        for (const auto* fixture :
-             {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif", "sine_stereo_44100_16.wav"})
-        {
-            for (const auto version : {3, 4}) {
-                for (const auto& payloads : cases) {
-                    const auto file = directory.copyFixture(fixture);
-                    expect(writeRawOverviewFrames(file, payloads, version));
-                    const auto result = serato::readTag(file);
-                    expectStatus(result, serato::ReadStatus::present);
-                    const auto overview = tagValue<serato::Overview>(result);
-                    if (overview) {
-                        expectEquals(overview->slices.size(), std::size_t {1});
-                        expect(
-                            overview->slices.front()
-                            == std::to_array<std::uint8_t>(
-                                {37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37}
-                            )
-                        );
-                    }
-                }
-            }
-        }
-        beginTest("Native duplicate recovery uses the first valid value with strict padding and independent bytes");
-        const auto file = directory.copyFixture("sine_stereo_44100_16.flac");
-        const auto firstWrapper = flacWrapper(first);
-        const auto secondWrapper = flacWrapper(second);
-        const auto firstEncoded = juce::Base64::toBase64(firstWrapper.getData(), firstWrapper.getSize());
-        const auto secondEncoded = juce::Base64::toBase64(secondWrapper.getData(), secondWrapper.getSize());
-        for (const auto& values :
-             {
-                 juce::StringArray {firstEncoded, secondEncoded, firstEncoded},
-                 juce::StringArray {"!invalid!", firstEncoded, secondEncoded, firstEncoded},
-                 juce::StringArray {firstEncoded, "!invalid!", secondEncoded},
-             })
-        {
-            expect(writeFlacValues(file, values));
-            const auto result = serato::readTag(file);
-            expectStatus(result, serato::ReadStatus::present);
-            const auto overview = tagValue<serato::Overview>(result);
-            if (overview) {
-                expectEquals(overview->slices.size(), std::size_t {1});
-                expect(std::ranges::all_of(overview->slices.front(), [](auto cell) { return cell == 37; }));
-            }
-        }
-        auto padded = firstWrapper;
-        const std::uint8_t zero = 0;
-        padded.append(&zero, 1);
-        expect(writeFlacValues(file, {juce::Base64::toBase64(padded.getData(), padded.getSize())}));
-        expectStatus(serato::readTag(file), serato::ReadStatus::present);
-        expect(writeFlacValues(file, {juce::Base64::toBase64(padded.getData(), padded.getSize()) + "A"}));
-        expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
-        const auto alias = directory.copyFixture("sine_stereo_44100_16.aif", "alias.aifc");
-        const std::array payloads {first};
-        expect(writeRawOverviewFrames(alias, payloads, 4));
-        expectStatus(serato::readTag(alias), serato::ReadStatus::present);
-    }
-
-    /// Preserves existing Overview container and outcome regression coverage.
-    void testOverview()
-    {
-        const auto payload = readerPayload();
-        const auto expected = serato::Overview::parse(payload);
-        const TemporaryDirectory directory;
-
-        beginTest(
-            "GEOB extraction supports MP3, AIFF, WAV, ID3v2.3/v2.4 and text "
-            "encodings"
-        );
-        for (const auto* fixture :
-             {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif", "sine_stereo_44100_16.wav"})
-        {
-            for (const auto version : {TagLib::ID3v2::v3, TagLib::ID3v2::v4}) {
-                for (const auto encoding : {TagLib::String::Latin1, TagLib::String::UTF16, TagLib::String::UTF8}) {
-                    const auto file = directory.copyFixture(
-                        fixture,
-                        utils::format(
-                            "{}-test.{}",
-                            juce::String::fromUTF8("\xc3\xa4"),
-                            juce::String(fixture).fromLastOccurrenceOf(".", false, false)
-                        )
-                    );
-                    expect(writeGeob(file, payload, true, encoding, version));
-                    const auto before = fileChecksum(file);
-                    const auto result = serato::readTag(file);
-                    expectStatus(result, serato::ReadStatus::present);
-                    expectOverview(result, expected, fixture);
-                    expect(before.has_value() && before == fileChecksum(file));
-                }
-            }
-        }
-
-        beginTest("Unrelated GEOB is absent and only malformed matching GEOB is invalid");
-        {
-            const auto file = directory.copyFixture("sine_stereo_44100_16.aif");
-            expect(writeGeob(file, payload, false, TagLib::String::UTF16, TagLib::ID3v2::v4, false));
-            expectStatus(serato::readTag(file), serato::ReadStatus::absent);
-            auto malformed = payload;
-            malformed.pop_back();
-            expect(writeGeob(file, malformed));
-            expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
-            malformed = payload;
-            malformed[1] = 6;
-            expect(writeGeob(file, malformed));
-            expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
-        }
-
-        beginTest(
-            "FLAC comments support padding, whitespace, omitted padding and "
-            "valid later duplicates"
-        );
-        const auto flacFile = directory.copyFixture("sine_stereo_44100_16.flac");
-        const auto wrapper = flacWrapper(payload);
-        const auto encoded = juce::Base64::toBase64(wrapper.getData(), wrapper.getSize());
-        for (const auto& value :
-             {
-                 encoded,
-                 encoded.trimCharactersAtEnd("="),
-                 juce::String(" \t\r\n") + encoded.substring(0, 20) + "\n" + encoded.substring(20),
-             })
-        {
-            expect(writeFlacValues(flacFile, {"!invalid!", value}));
-            const auto before = fileChecksum(flacFile);
-            const auto result = serato::readTag(flacFile);
-            expectStatus(result, serato::ReadStatus::present);
-            expectOverview(result, expected, "FLAC comment");
-            expect(before.has_value() && before == fileChecksum(flacFile));
-        }
-
-        beginTest(
-            "FLAC rejects missing wrapper fields, wrong descriptions, "
-            "invalid padding and oversized values"
-        );
-        {
-            std::vector<juce::String> invalidValues {"A", "AAAA=AAA", "AA===", encoded + "!"};
-            const juce::MemoryBlock missingTerminator("application/octet-stream", 24);
-            invalidValues.push_back(juce::Base64::toBase64(missingTerminator.getData(), missingTerminator.getSize()));
-            invalidValues.push_back(juce::Base64::toBase64(payload.data(), payload.size()));
-            for (const std::size_t offset : {0U, 25U, 26U, 41U}) {
-                auto corrupt = wrapper;
-                const std::uint8_t changed = 'X';
-                corrupt.copyFrom(&changed, static_cast<int>(offset), 1);
-                invalidValues.push_back(juce::Base64::toBase64(corrupt.getData(), corrupt.getSize()));
-            }
-            invalidValues.push_back(juce::String::repeatedString("A", 1'500'000));
-            // The first character moved up by 0x100 has the same low byte, which a Latin-1 conversion would keep.
-            juce::String nonAscii;
-            nonAscii << juce::String::charToString(static_cast<juce::juce_wchar>(0x100 + encoded[0]))
-                     << encoded.substring(1);
-            invalidValues.push_back(nonAscii);
-            for (const auto& value : invalidValues) {
-                expect(writeFlacValues(flacFile, {value}));
-                expectStatus(serato::readTag(flacFile), serato::ReadStatus::invalid);
-            }
-        }
-
-        beginTest("Absent, unsupported, I/O failure and cancellation remain distinct");
-        {
-            expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_16.flac")), serato::ReadStatus::absent);
-            expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_16.wav")), serato::ReadStatus::absent);
-            expectStatus(serato::readTag(fixtureFile("sine_stereo_48000.ogg")), serato::ReadStatus::unsupported);
-            expectStatus(serato::readTag(fixtureFile("broken.wav")), serato::ReadStatus::ioError);
-            expectStatus(serato::readTag(directory.getChildFile("missing.mp3")), serato::ReadStatus::ioError);
-            expectStatus(
-                serato::readTag(flacFile, serato::TagKind::overview, [] { return true; }), serato::ReadStatus::cancelled
-            );
-            int checks = 0;
-            expectStatus(
-                serato::readTag(flacFile, serato::TagKind::overview, [&checks] { return ++checks >= 2; }),
-                serato::ReadStatus::cancelled
-            );
-        }
-    }
-
-    /// Checks multi-kind extraction on generated containers and independent track properties.
-    void testMetadata()
-    {
-        const TemporaryDirectory directory;
-        beginTest(
-            "Synthetic containers return all kinds independently and recover "
-            "later valid duplicates"
-        );
-        for (const auto* extension : {"mp3", "aif", "wav", "flac"}) {
-            const auto file = directory.getChildFile(utils::format("synthetic.{}", extension));
-            expect(createSyntheticContainer(file));
-            expect(writeSyntheticTags(file));
-            const auto before = fileChecksum(file);
-            const auto results = serato::readTags(file, serato::allTagKinds);
-            expectEquals(static_cast<int>(results.size()), 6, extension);
-            for (std::size_t index = 0; index < results.size(); ++index) {
-                expectEquals(static_cast<int>(results[index].kind), static_cast<int>(index + 1));
-                expectEquals(static_cast<int>(results[index].status()), static_cast<int>(serato::ReadStatus::present));
-                expect(serato::serializeTag(results[index]).getSize() > 0);
-            }
-            if (results.size() == 6) {
-                expectSyntheticValues(results, extension);
-            }
-            expect(before.has_value() && before == fileChecksum(file));
-            expect(writeSyntheticTags(file, true));
-            const auto mixed = serato::readTags(file, serato::allTagKinds);
-            expectEquals(static_cast<int>(mixed.size()), 6, extension);
-            for (std::size_t index = 0; index < mixed.size(); ++index) {
-                expectEquals(
-                    static_cast<int>(mixed[index].status()),
-                    static_cast<int>(index == 2 ? serato::ReadStatus::invalid : serato::ReadStatus::present)
-                );
-            }
-            const auto cancelled = serato::readTags(file, serato::allTagKinds, [] { return true; });
-            expectEquals(static_cast<int>(cancelled.size()), 6, extension);
-            for (const auto& result : cancelled) {
-                expectEquals(static_cast<int>(result.status()), static_cast<int>(serato::ReadStatus::cancelled));
-                expect(serato::serializeTag(result).getSize() == 0);
-            }
-        }
-
-        beginTest(
-            "Legacy marker fallback, unrelated frame count and repeated "
-            "requested kinds remain independent"
-        );
-        {
-            const auto file = directory.getChildFile("fallback.wav");
-            expect(createSyntheticContainer(file));
-            expect(writeSyntheticTags(file, false, true, true));
-            const auto markers = serato::readTag(file, serato::TagKind::markers);
-            expectEquals(static_cast<int>(markers.status()), static_cast<int>(serato::ReadStatus::present));
-            const auto value = tagValue<serato::Markers>(markers);
-            expect(value.has_value(), "the legacy fallback must supply markers");
-            if (value) {
-                expectEquals(static_cast<int>(value->cues.size()), 1, "the legacy fallback must have one cue");
-            }
-            if (value && !value->cues.empty()) {
-                expectEquals(static_cast<int>(value->cues.front().positionMilliseconds), 100);
-            }
-            expectStatus(serato::readTag(file), serato::ReadStatus::present);
-            const std::array kinds {
-                serato::TagKind::analysis,
-                std::bit_cast<serato::TagKind>(std::uint8_t {99}),
-                serato::TagKind::analysis,
-            };
-            const auto results = serato::readTags(file, kinds);
-            expectEquals(static_cast<int>(results.size()), 3);
-            if (results.size() == 3) {
-                expectEquals(static_cast<int>(results[0].status()), static_cast<int>(serato::ReadStatus::present));
-                expectEquals(static_cast<int>(results[1].status()), static_cast<int>(serato::ReadStatus::unsupported));
-                expectEquals(static_cast<int>(results[2].status()), static_cast<int>(serato::ReadStatus::present));
-            }
-            expect(serato::readTags(file, {}).empty());
-        }
-
-        beginTest(
-            "Standard key survives invalid BPM and Analysis alone never "
-            "supplies musical key"
-        );
-        {
-            const auto file = directory.getChildFile("properties.wav");
-            expect(createSyntheticContainer(file));
-            expect(writeSyntheticTags(file));
-            const auto& fullPath = file.getFullPathName();
-            {
-                TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
-                auto properties = wav.properties();
-                properties.replace("BPM", TagLib::StringList("nan"));
-                wav.setProperties(properties);
-                expect(wav.save());
-            }
-            const auto keyOnly = serato::readTag(file, serato::TagKind::trackInfo);
-            expectEquals(static_cast<int>(keyOnly.status()), static_cast<int>(serato::ReadStatus::present));
-            const auto info = tagValue<serato::TrackInfo>(keyOnly);
-            expect(info.has_value(), "the key alone must supply track information");
-            if (info) {
-                expect(!info->bpm);
-                expectEquals(info->key, juce::String("Gm"));
-            }
-            {
-                TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
-                auto properties = wav.properties();
-                properties.erase("BPM");
-                properties.erase("INITIALKEY");
-                wav.setProperties(properties);
-                expect(wav.save());
-            }
-            expectEquals(
-                static_cast<int>(serato::readTag(file, serato::TagKind::analysis).status()),
-                static_cast<int>(serato::ReadStatus::present)
-            );
-            expectEquals(
-                static_cast<int>(serato::readTag(file, serato::TagKind::trackInfo).status()),
-                static_cast<int>(serato::ReadStatus::absent)
-            );
-        }
-    }
-
-    /// Checks that track information also carries the album, genre, year, and comment of the standard tags.
-    void testTrackInfoFields()
-    {
-        const TemporaryDirectory directory;
-        beginTest("Track information carries the album, genre, year, and comment of the standard tags");
-        {
-            const auto tagged = tagValue<serato::TrackInfo>(
-                serato::readTag(fixtureFile("tagged_stereo_44100_16.flac"), serato::TagKind::trackInfo)
-            );
-            expect(tagged.has_value());
-            if (tagged) {
-                expectEquals(tagged->album, juce::String("Fixtures"));
-                expectEquals(tagged->comment, juce::String("Custom comment"));
-            }
-
-            const auto file = directory.getChildFile("dates.wav");
-            expect(createSyntheticContainer(file));
-            expect(writeSyntheticTags(file));
-            {
-                TagLib::RIFF::WAV::File wav(utils::tagLibFileName(file.getFullPathName()), false);
-                auto properties = wav.properties();
-                properties.replace("DATE", TagLib::StringList("2024-05-01"));
-                properties.replace("GENRE", TagLib::StringList("Techno"));
-                wav.setProperties(properties);
-                expect(wav.save());
-            }
-            const auto dated = tagValue<serato::TrackInfo>(serato::readTag(file, serato::TagKind::trackInfo));
-            expect(dated.has_value());
-            if (dated) {
-                expectEquals(dated->year, juce::String("2024"));
-                expectEquals(dated->genre, juce::String("Techno"));
-            }
-        }
-    }
-
-    /// Checks the track information and the Markers2 cue that writeSyntheticTags stores,
-    /// in the results of reading every tag kind, failing with the container instead of skipping a missing value.
-    void expectSyntheticValues(const std::vector<serato::TagReadResult>& results, const juce::String& extension)
-    {
-        const auto info = tagValue<serato::TrackInfo>(results[5]);
-        expect(info.has_value(), utils::format("{} must have track information", extension));
-        if (info) {
-            expectEquals(info->bpm.value_or(0), 129.5);
-            expectEquals(info->key, juce::String("Gm"));
-        }
-
-        const auto markers = tagValue<serato::Markers>(results[4]);
-        expect(markers.has_value(), utils::format("{} must have Markers2", extension));
-        if (markers) {
-            expectEquals(static_cast<int>(markers->cues.size()), 1, extension);
-        }
-        if (markers && !markers->cues.empty()) {
-            expectEquals(static_cast<int>(markers->cues.front().positionMilliseconds), 1234);
-        }
-    }
-
-    /// Requires a present result to hold an Overview with the same slices as the expected payload,
-    /// and fails with the context instead of skipping the comparison when either one is missing.
     void expectOverview(
         const serato::TagReadResult& result,
         const std::optional<serato::Overview>& expected,
         const juce::String& context
-    )
+    );
+    void expectRainbowBands(const serato::Overview& overview, const juce::String& fixtureName);
+    void expectStatus(const serato::TagReadResult& result, serato::ReadStatus status);
+    void expectSyntheticValues(const std::vector<serato::TagReadResult>& results, const juce::String& extension);
+
+    void testIndependentOverviewContract();
+    void testMetadata();
+    void testOverview();
+    void testRainbowFixtures();
+    void testTrackInfoFields();
+};
+
+/// Writes synthetic metadata only on temporary copies and verifies extraction is read-only.
+void SeratoTagReaderTests::runTest()
+{
+    testOverview();
+    testRainbowFixtures();
+    testIndependentOverviewContract();
+    testMetadata();
+    testTrackInfoFields();
+}
+
+/// Requires a present result to hold an Overview with the same slices as the expected payload,
+/// and fails with the context instead of skipping the comparison when either one is missing.
+void SeratoTagReaderTests::expectOverview(
+    const serato::TagReadResult& result,
+    const std::optional<serato::Overview>& expected,
+    const juce::String& context
+)
+{
+    const auto overview = tagValue<serato::Overview>(result);
+    expect(expected.has_value(), utils::format("{}: the synthetic payload must parse", context));
+    expect(overview.has_value(), utils::format("{}: the result must hold an Overview", context));
+    if (overview && expected) {
+        expect(overview->slices == expected->slices, utils::format("{}: the overview slices differ", context));
+    }
+}
+
+/// Checks both the outcome and that a present result owns an Overview.
+void SeratoTagReaderTests::expectStatus(const serato::TagReadResult& result, serato::ReadStatus status)
+{
+    expectEquals(static_cast<int>(result.status()), static_cast<int>(status));
+    expect(tagValue<serato::Overview>(result).has_value() == (status == serato::ReadStatus::present));
+}
+
+/// Checks the track information and the Markers2 cue that writeSyntheticTags stores,
+/// in the results of reading every tag kind, failing with the container instead of skipping a missing value.
+void SeratoTagReaderTests::expectSyntheticValues(
+    const std::vector<serato::TagReadResult>& results,
+    const juce::String& extension
+)
+{
+    const auto info = tagValue<serato::TrackInfo>(results[5]);
+    expect(info.has_value(), utils::format("{} must have track information", extension));
+    if (info) {
+        expectEquals(info->bpm.value_or(0), 129.5);
+        expectEquals(info->key, juce::String("Gm"));
+    }
+
+    const auto markers = tagValue<serato::Markers>(results[4]);
+    expect(markers.has_value(), utils::format("{} must have Markers2", extension));
+    if (markers) {
+        expectEquals(static_cast<int>(markers->cues.size()), 1, extension);
+    }
+    if (markers && !markers->cues.empty()) {
+        expectEquals(static_cast<int>(markers->cues.front().positionMilliseconds), 1234);
+    }
+}
+
+/// Reads the committed rainbow fixtures, which the Rust tests read too.
+/// The MP3 and AIFF files hold the overview in a GEOB frame, and the FLAC file in a native comment.
+void SeratoTagReaderTests::testRainbowFixtures()
+{
+    beginTest("The committed rainbow fixtures have 240 overview slices in six colour bands in every container");
+    for (const auto* fixtureName :
+         {
+             "serato_rainbow_stereo_44100_128k.mp3",
+             "serato_rainbow_stereo_44100_16.aif",
+             "serato_rainbow_stereo_44100_16.flac",
+         })
     {
+        const auto result = serato::readTag(fixtureFile(fixtureName));
+        expectStatus(result, serato::ReadStatus::present);
         const auto overview = tagValue<serato::Overview>(result);
-        expect(expected.has_value(), utils::format("{}: the synthetic payload must parse", context));
-        expect(overview.has_value(), utils::format("{}: the result must hold an Overview", context));
-        if (overview && expected) {
-            expect(overview->slices == expected->slices, utils::format("{}: the overview slices differ", context));
+        expect(overview.has_value(), fixtureName);
+        if (overview) {
+            expectRainbowBands(*overview, fixtureName);
+        }
+    }
+}
+
+/// Checks the slice count and the colour of the first and last slice of every band of a rainbow overview.
+void SeratoTagReaderTests::expectRainbowBands(const serato::Overview& overview, const juce::String& fixtureName)
+{
+    constexpr std::size_t sliceCount {240};
+    expectEquals(overview.slices.size(), sliceCount, fixtureName);
+    if (overview.slices.size() != sliceCount) {
+        return;
+    }
+    const std::array<juce::uint32, 6> bands {
+        0xffff0000,
+        0xffffff00,
+        0xff00ff00,
+        0xff00ffff,
+        0xff0000ff,
+        0xffff00ff,
+    };
+    const auto slicesPerBand = sliceCount / bands.size();
+    for (std::size_t band = 0; band < bands.size(); ++band) {
+        for (const auto slice : {band * slicesPerBand, ((band + 1) * slicesPerBand) - 1}) {
+            const auto colour = serato::colourForOverviewSlice(overview.slices[slice], juce::Colours::black);
+            expect(
+                colour.getARGB() == bands[band],
+                utils::format("{} slice {} is {} instead of {:08x}", fixtureName, slice, colour.toString(), bands[band])
+            );
+        }
+    }
+}
+
+/// Uses the same literal one-slice values and source order as the Rust extraction contract tests.
+void SeratoTagReaderTests::testIndependentOverviewContract()
+{
+    beginTest("Physical GEOB A B A duplicates retain the first valid slice across containers and ID3 versions");
+    const TemporaryDirectory directory;
+    std::vector<std::uint8_t> first(18, 37);
+    first[0] = 1;
+    first[1] = 5;
+    auto second = first;
+    second[2] = 180;
+    const std::vector<std::uint8_t> invalid {1, 5, 0};
+    const std::array cases {
+        std::vector {first, second, first},
+        std::vector {invalid, first, second, first},
+        std::vector {first, invalid, second},
+    };
+    for (const auto* fixture : {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif", "sine_stereo_44100_16.wav"}) {
+        for (const auto version : {3, 4}) {
+            for (const auto& payloads : cases) {
+                const auto file = directory.copyFixture(fixture);
+                expect(writeRawOverviewFrames(file, payloads, version));
+                const auto result = serato::readTag(file);
+                expectStatus(result, serato::ReadStatus::present);
+                const auto overview = tagValue<serato::Overview>(result);
+                if (overview) {
+                    expectEquals(overview->slices.size(), std::size_t {1});
+                    expect(
+                        overview->slices.front()
+                        == std::to_array<std::uint8_t>({37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37})
+                    );
+                }
+            }
+        }
+    }
+    beginTest("Native duplicate recovery uses the first valid value with strict padding and independent bytes");
+    const auto file = directory.copyFixture("sine_stereo_44100_16.flac");
+    const auto firstWrapper = flacWrapper(first);
+    const auto secondWrapper = flacWrapper(second);
+    const auto firstEncoded = juce::Base64::toBase64(firstWrapper.getData(), firstWrapper.getSize());
+    const auto secondEncoded = juce::Base64::toBase64(secondWrapper.getData(), secondWrapper.getSize());
+    for (const auto& values :
+         {
+             juce::StringArray {firstEncoded, secondEncoded, firstEncoded},
+             juce::StringArray {"!invalid!", firstEncoded, secondEncoded, firstEncoded},
+             juce::StringArray {firstEncoded, "!invalid!", secondEncoded},
+         })
+    {
+        expect(writeFlacValues(file, values));
+        const auto result = serato::readTag(file);
+        expectStatus(result, serato::ReadStatus::present);
+        const auto overview = tagValue<serato::Overview>(result);
+        if (overview) {
+            expectEquals(overview->slices.size(), std::size_t {1});
+            expect(std::ranges::all_of(overview->slices.front(), [](auto cell) { return cell == 37; }));
+        }
+    }
+    auto padded = firstWrapper;
+    const std::uint8_t zero = 0;
+    padded.append(&zero, 1);
+    expect(writeFlacValues(file, {juce::Base64::toBase64(padded.getData(), padded.getSize())}));
+    expectStatus(serato::readTag(file), serato::ReadStatus::present);
+    expect(writeFlacValues(file, {juce::Base64::toBase64(padded.getData(), padded.getSize()) + "A"}));
+    expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
+    const auto alias = directory.copyFixture("sine_stereo_44100_16.aif", "alias.aifc");
+    const std::array payloads {first};
+    expect(writeRawOverviewFrames(alias, payloads, 4));
+    expectStatus(serato::readTag(alias), serato::ReadStatus::present);
+}
+
+/// Preserves existing Overview container and outcome regression coverage.
+void SeratoTagReaderTests::testOverview()
+{
+    const auto payload = readerPayload();
+    const auto expected = serato::Overview::parse(payload);
+    const TemporaryDirectory directory;
+
+    beginTest(
+        "GEOB extraction supports MP3, AIFF, WAV, ID3v2.3/v2.4 and text "
+        "encodings"
+    );
+    for (const auto* fixture : {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif", "sine_stereo_44100_16.wav"}) {
+        for (const auto version : {TagLib::ID3v2::v3, TagLib::ID3v2::v4}) {
+            for (const auto encoding : {TagLib::String::Latin1, TagLib::String::UTF16, TagLib::String::UTF8}) {
+                const auto file = directory.copyFixture(
+                    fixture,
+                    utils::format(
+                        "{}-test.{}",
+                        juce::String::fromUTF8("\xc3\xa4"),
+                        juce::String(fixture).fromLastOccurrenceOf(".", false, false)
+                    )
+                );
+                expect(writeGeob(file, payload, true, encoding, version));
+                const auto before = fileChecksum(file);
+                const auto result = serato::readTag(file);
+                expectStatus(result, serato::ReadStatus::present);
+                expectOverview(result, expected, fixture);
+                expect(before.has_value() && before == fileChecksum(file));
+            }
         }
     }
 
-    /// Checks both the outcome and that a present result owns an Overview.
-    void expectStatus(const serato::TagReadResult& result, serato::ReadStatus status)
+    beginTest("Unrelated GEOB is absent and only malformed matching GEOB is invalid");
     {
-        expectEquals(static_cast<int>(result.status()), static_cast<int>(status));
-        expect(tagValue<serato::Overview>(result).has_value() == (status == serato::ReadStatus::present));
+        const auto file = directory.copyFixture("sine_stereo_44100_16.aif");
+        expect(writeGeob(file, payload, false, TagLib::String::UTF16, TagLib::ID3v2::v4, false));
+        expectStatus(serato::readTag(file), serato::ReadStatus::absent);
+        auto malformed = payload;
+        malformed.pop_back();
+        expect(writeGeob(file, malformed));
+        expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
+        malformed = payload;
+        malformed[1] = 6;
+        expect(writeGeob(file, malformed));
+        expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
     }
-};
+
+    beginTest(
+        "FLAC comments support padding, whitespace, omitted padding and "
+        "valid later duplicates"
+    );
+    const auto flacFile = directory.copyFixture("sine_stereo_44100_16.flac");
+    const auto wrapper = flacWrapper(payload);
+    const auto encoded = juce::Base64::toBase64(wrapper.getData(), wrapper.getSize());
+    for (const auto& value :
+         {
+             encoded,
+             encoded.trimCharactersAtEnd("="),
+             juce::String(" \t\r\n") + encoded.substring(0, 20) + "\n" + encoded.substring(20),
+         })
+    {
+        expect(writeFlacValues(flacFile, {"!invalid!", value}));
+        const auto before = fileChecksum(flacFile);
+        const auto result = serato::readTag(flacFile);
+        expectStatus(result, serato::ReadStatus::present);
+        expectOverview(result, expected, "FLAC comment");
+        expect(before.has_value() && before == fileChecksum(flacFile));
+    }
+
+    beginTest(
+        "FLAC rejects missing wrapper fields, wrong descriptions, "
+        "invalid padding and oversized values"
+    );
+    {
+        std::vector<juce::String> invalidValues {"A", "AAAA=AAA", "AA===", encoded + "!"};
+        const juce::MemoryBlock missingTerminator("application/octet-stream", 24);
+        invalidValues.push_back(juce::Base64::toBase64(missingTerminator.getData(), missingTerminator.getSize()));
+        invalidValues.push_back(juce::Base64::toBase64(payload.data(), payload.size()));
+        for (const std::size_t offset : {0U, 25U, 26U, 41U}) {
+            auto corrupt = wrapper;
+            const std::uint8_t changed = 'X';
+            corrupt.copyFrom(&changed, static_cast<int>(offset), 1);
+            invalidValues.push_back(juce::Base64::toBase64(corrupt.getData(), corrupt.getSize()));
+        }
+        invalidValues.push_back(juce::String::repeatedString("A", 1'500'000));
+        // The first character moved up by 0x100 has the same low byte, which a Latin-1 conversion would keep.
+        juce::String nonAscii;
+        nonAscii << juce::String::charToString(static_cast<juce::juce_wchar>(0x100 + encoded[0]))
+                 << encoded.substring(1);
+        invalidValues.push_back(nonAscii);
+        for (const auto& value : invalidValues) {
+            expect(writeFlacValues(flacFile, {value}));
+            expectStatus(serato::readTag(flacFile), serato::ReadStatus::invalid);
+        }
+    }
+
+    beginTest("Absent, unsupported, I/O failure and cancellation remain distinct");
+    {
+        expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_16.flac")), serato::ReadStatus::absent);
+        expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_16.wav")), serato::ReadStatus::absent);
+        expectStatus(serato::readTag(fixtureFile("sine_stereo_48000.ogg")), serato::ReadStatus::unsupported);
+        expectStatus(serato::readTag(fixtureFile("broken.wav")), serato::ReadStatus::ioError);
+        expectStatus(serato::readTag(directory.getChildFile("missing.mp3")), serato::ReadStatus::ioError);
+        expectStatus(
+            serato::readTag(flacFile, serato::TagKind::overview, [] { return true; }), serato::ReadStatus::cancelled
+        );
+        int checks = 0;
+        expectStatus(
+            serato::readTag(flacFile, serato::TagKind::overview, [&checks] { return ++checks >= 2; }),
+            serato::ReadStatus::cancelled
+        );
+    }
+}
+
+/// Checks multi-kind extraction on generated containers and independent track properties.
+void SeratoTagReaderTests::testMetadata()
+{
+    const TemporaryDirectory directory;
+    beginTest(
+        "Synthetic containers return all kinds independently and recover "
+        "later valid duplicates"
+    );
+    for (const auto* extension : {"mp3", "aif", "wav", "flac"}) {
+        const auto file = directory.getChildFile(utils::format("synthetic.{}", extension));
+        expect(createSyntheticContainer(file));
+        expect(writeSyntheticTags(file));
+        const auto before = fileChecksum(file);
+        const auto results = serato::readTags(file, serato::allTagKinds);
+        expectEquals(static_cast<int>(results.size()), 6, extension);
+        for (std::size_t index = 0; index < results.size(); ++index) {
+            expectEquals(static_cast<int>(results[index].kind), static_cast<int>(index + 1));
+            expectEquals(static_cast<int>(results[index].status()), static_cast<int>(serato::ReadStatus::present));
+            expect(serato::serializeTag(results[index]).getSize() > 0);
+        }
+        if (results.size() == 6) {
+            expectSyntheticValues(results, extension);
+        }
+        expect(before.has_value() && before == fileChecksum(file));
+        expect(writeSyntheticTags(file, true));
+        const auto mixed = serato::readTags(file, serato::allTagKinds);
+        expectEquals(static_cast<int>(mixed.size()), 6, extension);
+        for (std::size_t index = 0; index < mixed.size(); ++index) {
+            expectEquals(
+                static_cast<int>(mixed[index].status()),
+                static_cast<int>(index == 2 ? serato::ReadStatus::invalid : serato::ReadStatus::present)
+            );
+        }
+        const auto cancelled = serato::readTags(file, serato::allTagKinds, [] { return true; });
+        expectEquals(static_cast<int>(cancelled.size()), 6, extension);
+        for (const auto& result : cancelled) {
+            expectEquals(static_cast<int>(result.status()), static_cast<int>(serato::ReadStatus::cancelled));
+            expect(serato::serializeTag(result).getSize() == 0);
+        }
+    }
+
+    beginTest(
+        "Legacy marker fallback, unrelated frame count and repeated "
+        "requested kinds remain independent"
+    );
+    {
+        const auto file = directory.getChildFile("fallback.wav");
+        expect(createSyntheticContainer(file));
+        expect(writeSyntheticTags(file, false, true, true));
+        const auto markers = serato::readTag(file, serato::TagKind::markers);
+        expectEquals(static_cast<int>(markers.status()), static_cast<int>(serato::ReadStatus::present));
+        const auto value = tagValue<serato::Markers>(markers);
+        expect(value.has_value(), "the legacy fallback must supply markers");
+        if (value) {
+            expectEquals(static_cast<int>(value->cues.size()), 1, "the legacy fallback must have one cue");
+        }
+        if (value && !value->cues.empty()) {
+            expectEquals(static_cast<int>(value->cues.front().positionMilliseconds), 100);
+        }
+        expectStatus(serato::readTag(file), serato::ReadStatus::present);
+        const std::array kinds {
+            serato::TagKind::analysis,
+            std::bit_cast<serato::TagKind>(std::uint8_t {99}),
+            serato::TagKind::analysis,
+        };
+        const auto results = serato::readTags(file, kinds);
+        expectEquals(static_cast<int>(results.size()), 3);
+        if (results.size() == 3) {
+            expectEquals(static_cast<int>(results[0].status()), static_cast<int>(serato::ReadStatus::present));
+            expectEquals(static_cast<int>(results[1].status()), static_cast<int>(serato::ReadStatus::unsupported));
+            expectEquals(static_cast<int>(results[2].status()), static_cast<int>(serato::ReadStatus::present));
+        }
+        expect(serato::readTags(file, {}).empty());
+    }
+
+    beginTest(
+        "Standard key survives invalid BPM and Analysis alone never "
+        "supplies musical key"
+    );
+    {
+        const auto file = directory.getChildFile("properties.wav");
+        expect(createSyntheticContainer(file));
+        expect(writeSyntheticTags(file));
+        const auto& fullPath = file.getFullPathName();
+        {
+            TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
+            auto properties = wav.properties();
+            properties.replace("BPM", TagLib::StringList("nan"));
+            wav.setProperties(properties);
+            expect(wav.save());
+        }
+        const auto keyOnly = serato::readTag(file, serato::TagKind::trackInfo);
+        expectEquals(static_cast<int>(keyOnly.status()), static_cast<int>(serato::ReadStatus::present));
+        const auto info = tagValue<serato::TrackInfo>(keyOnly);
+        expect(info.has_value(), "the key alone must supply track information");
+        if (info) {
+            expect(!info->bpm);
+            expectEquals(info->key, juce::String("Gm"));
+        }
+        {
+            TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
+            auto properties = wav.properties();
+            properties.erase("BPM");
+            properties.erase("INITIALKEY");
+            wav.setProperties(properties);
+            expect(wav.save());
+        }
+        expectEquals(
+            static_cast<int>(serato::readTag(file, serato::TagKind::analysis).status()),
+            static_cast<int>(serato::ReadStatus::present)
+        );
+        expectEquals(
+            static_cast<int>(serato::readTag(file, serato::TagKind::trackInfo).status()),
+            static_cast<int>(serato::ReadStatus::absent)
+        );
+    }
+}
+
+/// Checks that track information also carries the album, genre, year, and comment of the standard tags.
+void SeratoTagReaderTests::testTrackInfoFields()
+{
+    const TemporaryDirectory directory;
+    beginTest("Track information carries the album, genre, year, and comment of the standard tags");
+    {
+        const auto tagged = tagValue<serato::TrackInfo>(
+            serato::readTag(fixtureFile("tagged_stereo_44100_16.flac"), serato::TagKind::trackInfo)
+        );
+        expect(tagged.has_value());
+        if (tagged) {
+            expectEquals(tagged->album, juce::String("Fixtures"));
+            expectEquals(tagged->comment, juce::String("Custom comment"));
+        }
+
+        const auto file = directory.getChildFile("dates.wav");
+        expect(createSyntheticContainer(file));
+        expect(writeSyntheticTags(file));
+        {
+            TagLib::RIFF::WAV::File wav(utils::tagLibFileName(file.getFullPathName()), false);
+            auto properties = wav.properties();
+            properties.replace("DATE", TagLib::StringList("2024-05-01"));
+            properties.replace("GENRE", TagLib::StringList("Techno"));
+            wav.setProperties(properties);
+            expect(wav.save());
+        }
+        const auto dated = tagValue<serato::TrackInfo>(serato::readTag(file, serato::TagKind::trackInfo));
+        expect(dated.has_value());
+        if (dated) {
+            expectEquals(dated->year, juce::String("2024"));
+            expectEquals(dated->genre, juce::String("Techno"));
+        }
+    }
+}
 
 std::unique_ptr<juce::UnitTest> createSeratoTagReaderTests()
 {

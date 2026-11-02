@@ -408,7 +408,7 @@ TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataPict
 {
     TagLib::List<TagLib::VariantMap> pictureList;
 
-    for (const auto& [data, mimeType, description, pictureType] : pictures) {
+    for (const auto& [data, description, mimeType, pictureType] : pictures) {
         if (data.getSize() == 0) {
             continue;
         }
@@ -492,8 +492,8 @@ std::vector<MetadataPicture> readArtworkCandidates(const juce::File& file, const
             }
             pictures.push_back({
                 .data = juce::MemoryBlock(bytes.data(), bytes.size()),
-                .mimeType = toJuce(pictureField<TagLib::String>(pictureMap, "mimeType")),
                 .description = toJuce(pictureField<TagLib::String>(pictureMap, "description")),
+                .mimeType = toJuce(pictureField<TagLib::String>(pictureMap, "mimeType")),
                 .pictureType = toJuce(pictureType),
             });
         }

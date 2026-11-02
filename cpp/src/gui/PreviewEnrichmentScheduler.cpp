@@ -46,24 +46,29 @@ struct PreviewEnrichmentState {
     AnalysisCache cache;
     PreviewEnrichmentScheduler::Completion completion;
     PreviewEnrichmentScheduler::Work work;
-    std::mutex mutex;
-    std::condition_variable condition;
-    std::deque<PreviewEnrichmentCandidate> pending;
-    std::unordered_map<juce::String, CustomGainUpdate> gains;
-    std::unordered_map<juce::String, CustomGainUpdate> deferredGains;
-    bool retryDeferredGains {false};
-    std::deque<std::pair<AudioAnalysisRecord, std::optional<AudioAnalysisRecord>>> outputs;
-    std::optional<utils::FileIdentity> selected;
-    std::uint64_t selectionGeneration {0};
-    std::atomic<std::uint64_t> loadGeneration {1};
-    std::atomic<std::uint64_t> interruption {0};
-    std::atomic<bool> stopped {false};
-    bool gateOpen {false};
-    bool selectionPending {false};
     juce::String activePath;
+
+    std::atomic<bool> stopped {false};
+    std::atomic<std::uint64_t> interruption {0};
+    std::atomic<std::uint64_t> loadGeneration {1};
+
+    std::condition_variable condition;
+    std::mutex mutex;
+
+    std::deque<std::pair<AudioAnalysisRecord, std::optional<AudioAnalysisRecord>>> outputs;
+    std::deque<PreviewEnrichmentCandidate> pending;
     std::optional<PreviewEnrichmentCandidate> activeCandidate;
+    std::optional<utils::FileIdentity> selected;
+    std::unordered_map<juce::String, CustomGainUpdate> deferredGains;
+    std::unordered_map<juce::String, CustomGainUpdate> gains;
+
+    bool gateOpen {false};
+    bool retryDeferredGains {false};
+    bool selectionPending {false};
+
     std::uint64_t activeInterruption {0};
     std::uint64_t activeSelectionGeneration {0};
+    std::uint64_t selectionGeneration {0};
 };
 
 namespace
@@ -77,12 +82,14 @@ struct EnrichmentOutput {
 /// One admitted unit of work, keeping source ownership separate from foreground and selection generations.
 struct EnrichmentJob {
     std::optional<PreviewEnrichmentCandidate> candidate;
-    std::vector<CustomGainUpdate> gains;
     std::optional<EnrichmentOutput> output;
+    std::vector<CustomGainUpdate> gains;
+
     bool readMissing {false};
     bool retryingGains {false};
-    std::uint64_t loadGeneration {0};
+
     std::uint64_t interruption {0};
+    std::uint64_t loadGeneration {0};
 };
 
 /// Publishes artifacts only for the latest selected identity, generation and foreground load.

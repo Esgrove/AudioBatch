@@ -10,11 +10,12 @@
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentState.h"
-#include "gui/AudioFileTableModel.h"
+#include "gui/FileActivity.h"
 #include "gui/FileActivityTracker.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
+#include "plugins/PluginRunChains.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 

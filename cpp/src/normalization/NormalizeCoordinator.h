@@ -49,6 +49,7 @@ public:
     void cancel();
     void cancelAndWait();
     void requestStop();
+
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
     void setResultCallback(ResultCallback callback);

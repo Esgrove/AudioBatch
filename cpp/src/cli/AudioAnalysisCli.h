@@ -72,30 +72,32 @@ enum class CliParseErrorKind : std::uint8_t {
 struct AnalyzeCommand {
     /// Files and directories to analyze.
     juce::Array<juce::File> inputPaths;
-    /// Search directories in the input paths recursively for audio files.
-    bool recursive {false};
-    /// Ignore cached results and analyze every file again.
-    bool refresh {false};
+    /// Format of the printed results.
+    AudioAnalysisOutputFormat outputFormat {AudioAnalysisOutputFormat::table};
+    /// Order of the printed results.
+    AudioAnalysisSortMode sortMode {AudioAnalysisSortMode::peak};
+
     /// The normalization to run after the analysis, set by --normalize.
     /// The target comes from --peak or --lufs, defaulting to a 0 dBFS sample peak,
     /// and --force allows replacing an existing output file.
     std::optional<AudioNormalizationOptions> normalization;
+
     /// Number of files analyzed in parallel.
     int workerCount {juce::SystemStats::getNumCpus()};
-    /// Order of the printed results.
-    AudioAnalysisSortMode sortMode {AudioAnalysisSortMode::peak};
+    /// Search directories in the input paths recursively for audio files.
+    bool recursive {false};
+    /// Ignore cached results and analyze every file again.
+    bool refresh {false};
     /// Sort in descending instead of ascending order.
     bool reverse {false};
-    /// Format of the printed results.
-    AudioAnalysisOutputFormat outputFormat {AudioAnalysisOutputFormat::table};
 };
 
 /// A plugin listing parsed from the command line, selected by the list subcommand.
 struct ListPluginsCommand {
-    /// Scan for new or changed plugins before listing them.
-    bool rescan {false};
     /// How the plugin list is grouped and ordered.
     PluginListGrouping grouping {PluginListGrouping::name};
+    /// Scan for new or changed plugins before listing them.
+    bool rescan {false};
 };
 
 /// A shell completion request parsed from the command line, selected by the completion subcommand.
@@ -127,13 +129,12 @@ using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand, CompletionCo
 
 namespace cli
 {
+[[nodiscard]] CliSubcommand findSubcommand(const juce::ArgumentList& arguments);
+[[nodiscard]] juce::ArgumentList expandShortOptions(const juce::ArgumentList& arguments);
+
 juce::String buildUsage(const juce::String& executableName, CliSubcommand subcommand = CliSubcommand::none);
 juce::String buildUsageLine(const juce::String& executableName, CliSubcommand subcommand = CliSubcommand::none);
 juce::String joinArguments(const juce::ArgumentList& arguments);
-
-[[nodiscard]] CliSubcommand findSubcommand(const juce::ArgumentList& arguments);
-
-[[nodiscard]] juce::ArgumentList expandShortOptions(const juce::ArgumentList& arguments);
 
 juce::StringArray findSkippedInputs(
     const juce::Array<juce::File>& inputPaths,

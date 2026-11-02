@@ -32,21 +32,25 @@ public:
 private:
     void drawUnlocked(bool force);
 
-    /// Guards the line, which several workers update.
-    std::mutex mutex;
     /// The name shown after the counts, such as the file being worked on.
     juce::String currentMessage;
-    /// When the progress line was created, for the elapsed time.
-    double startedAtMilliseconds {0.0};
+
+    /// Guards the line, which several workers update.
+    std::mutex mutex;
+
     /// When the line was last drawn, to limit redraws to a few per second.
     double lastDrawnAtMilliseconds {0.0};
+    /// When the progress line was created, for the elapsed time.
+    double startedAtMilliseconds {0.0};
+
     /// Files finished so far.
     int done {0};
     /// Files of the run.
     int total {0};
-    /// True when stderr is a colour terminal, so the line is drawn at all.
-    bool enabled {false};
+
     /// True while a drawn line is on screen and needs erasing.
     bool drawn {false};
+    /// True when stderr is a colour terminal, so the line is drawn at all.
+    bool enabled {false};
 };
 }  // namespace audiobatch::console

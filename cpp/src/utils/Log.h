@@ -19,13 +19,6 @@ namespace audiobatch::utils
 /// Severity of a log message, which picks its prefix and console colour.
 enum class Level : std::uint8_t { debug, info, warn, error };
 
-/// Returns elapsed seconds for duration logs without discarding fractional milliseconds.
-/// The start value must come from juce::Time::getMillisecondCounterHiRes.
-inline double elapsedSecondsSince(const double startedAtMilliseconds)
-{
-    return (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / millisecondsPerSecond;
-}
-
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
 std::unique_ptr<juce::FileLogger> createDefaultLogger(
     const juce::String& appName,
@@ -33,6 +26,15 @@ std::unique_ptr<juce::FileLogger> createDefaultLogger(
     const std::optional<juce::File>& dataRoot
 );
 
+/// Returns elapsed seconds for duration logs without discarding fractional milliseconds.
+/// The start value must come from juce::Time::getMillisecondCounterHiRes.
+inline double elapsedSecondsSince(const double startedAtMilliseconds)
+{
+    return (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / millisecondsPerSecond;
+}
+
+void installCrashLogging();
+void logSystemInfo();
 void setConsoleEcho(bool enabled);
 void writeToLog(const juce::String& message, Level logLevel = Level::info);
 
@@ -52,6 +54,28 @@ void logDebug([[maybe_unused]] fmt::format_string<Args...> formatString, [[maybe
 #if JUCE_DEBUG
     logDebug(utils::format(formatString, std::forward<Args>(args)...));
 #endif
+}
+
+/// Writes an error message to the application log.
+inline void logError(const juce::String& message)
+{
+    writeToLog(format("[ERROR]: {}", message), Level::error);
+}
+
+/// Formats and logs an error message directly from an fmt format string and arguments.
+template<typename... Args>
+void logError(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logError(utils::format(formatString, std::forward<Args>(args)...));
+}
+
+void logErrorAlways(const juce::String& message);
+
+/// Formats and logs an error the user needs to see, and prints it to stderr even when the console echo is off.
+template<typename... Args>
+void logErrorAlways(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logErrorAlways(utils::format(formatString, std::forward<Args>(args)...));
 }
 
 /// Writes an informational message to the application log.
@@ -79,30 +103,4 @@ void logWarn(fmt::format_string<Args...> formatString, Args&&... args)
 {
     logWarn(utils::format(formatString, std::forward<Args>(args)...));
 }
-
-/// Writes an error message to the application log.
-inline void logError(const juce::String& message)
-{
-    writeToLog(format("[ERROR]: {}", message), Level::error);
-}
-
-/// Formats and logs an error message directly from an fmt format string and arguments.
-template<typename... Args>
-void logError(fmt::format_string<Args...> formatString, Args&&... args)
-{
-    logError(utils::format(formatString, std::forward<Args>(args)...));
-}
-
-void logErrorAlways(const juce::String& message);
-
-/// Formats and logs an error the user needs to see, and prints it to stderr even when the console echo is off.
-template<typename... Args>
-void logErrorAlways(fmt::format_string<Args...> formatString, Args&&... args)
-{
-    logErrorAlways(utils::format(formatString, std::forward<Args>(args)...));
-}
-
-void logSystemInfo();
-
-void installCrashLogging();
 }  // namespace audiobatch::utils

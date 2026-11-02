@@ -38,13 +38,14 @@ struct FileIdentity {
     [[nodiscard]] bool matches(const juce::File& file) const;
     [[nodiscard]] bool owns(const juce::File& file) const;
 
+    /// Absolute path of the file.
+    juce::String path;
+
     /// Platform device or volume and file identifier, absent when identity capture failed.
     std::optional<std::pair<std::uint64_t, std::uint64_t>> platformId;
     /// Nanosecond modification and change times on POSIX, high resolution write time on Windows.
     std::pair<std::int64_t, std::int64_t> preciseTimes;
 
-    /// Absolute path of the file.
-    juce::String path;
     /// Size of the file in bytes when the identity was captured.
     std::int64_t fileSize;
     /// Modification time of the file when the identity was captured, in milliseconds since the epoch.
@@ -54,12 +55,16 @@ struct FileIdentity {
 /// Rendered output whose automatic cleanup can be disabled when recovery cannot move the audio.
 struct OutputTemporaryFile {
     explicit OutputTemporaryFile(const juce::File& output);
+
     ~OutputTemporaryFile();
+
     OutputTemporaryFile(const OutputTemporaryFile&) = delete;
     OutputTemporaryFile& operator=(const OutputTemporaryFile&) = delete;
     OutputTemporaryFile(OutputTemporaryFile&&) = delete;
     OutputTemporaryFile& operator=(OutputTemporaryFile&&) = delete;
+
     [[nodiscard]] const juce::File& getFile() const;
+
     void preserve() const;
 
 private:
@@ -73,20 +78,30 @@ using OutputCommitHook = std::function<void(const juce::String&)>;
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
 
+/// Most folders that revealing the selected files or opening their parent folders opens at once,
+/// so a large selection does not open hundreds of windows. The Rust application uses the same limit.
+inline constexpr int maximumRevealFolders {10};
+
+/// Selected files grouped by their parent folder, in the order the folders first appear.
+struct FolderGroups {
+    /// Number of further folders left out because of the limit.
+    int skippedFolders {0};
+    /// Each folder with its files, in selection order, at most the requested number of folders.
+    std::vector<std::pair<juce::File, juce::Array<juce::File>>> groups;
+};
+
+[[nodiscard]] FolderGroups groupByParentFolder(const juce::Array<juce::File>& files, int maximumFolders);
+[[nodiscard]] TrashResult moveToTrash(const juce::File& file);
 juce::File getDefaultBrowseDirectory();
 
-[[nodiscard]] std::expected<void, juce::String> checkOutputPath(
-    const juce::File& sourceFile,
-    const juce::File& outputFile,
-    bool overwriteExisting
-);
 juce::String existingOutputMessage(const juce::File& outputFile);
-juce::String resolvedOutputKey(const juce::File& file);
 juce::String fileExtension(const juce::File& file);
 juce::String normalizeExtension(const juce::String& extension);
+juce::String resolvedOutputKey(const juce::File& file);
 juce::String revealInFileManagerLabel();
 
-[[nodiscard]] TrashResult moveToTrash(const juce::File& file);
+int openParentDirectories(const juce::Array<juce::File>& files);
+int revealFilesInFileManager(const juce::Array<juce::File>& files);
 
 [[nodiscard]] bool deleteFile(const juce::File& file);
 [[nodiscard]] bool disposeOfCopy(juce::File file, const FileDisposer& disposeFile);
@@ -96,23 +111,11 @@ bool isMp3File(const juce::File& file);
 bool isWavFile(const juce::File& file);
 bool trashFile(const juce::File& file);
 
-/// Most folders that revealing the selected files or opening their parent folders opens at once,
-/// so a large selection does not open hundreds of windows. The Rust application uses the same limit.
-inline constexpr int maximumRevealFolders = 10;
-
-/// Selected files grouped by their parent folder, in the order the folders first appear.
-struct FolderGroups {
-    /// Each folder with its files, in selection order, at most the requested number of folders.
-    std::vector<std::pair<juce::File, juce::Array<juce::File>>> groups;
-    /// Number of further folders left out because of the limit.
-    int skippedFolders {0};
-};
-
-[[nodiscard]] FolderGroups groupByParentFolder(const juce::Array<juce::File>& files, int maximumFolders);
-
-int revealFilesInFileManager(const juce::Array<juce::File>& files);
-int openParentDirectories(const juce::Array<juce::File>& files);
-
+[[nodiscard]] std::expected<void, juce::String> checkOutputPath(
+    const juce::File& sourceFile,
+    const juce::File& outputFile,
+    bool overwriteExisting
+);
 [[nodiscard]] std::expected<void, juce::String> commitTemporaryOutput(
     const OutputTemporaryFile& temporaryFile,
     const juce::File& sourceFile,
@@ -122,5 +125,4 @@ int openParentDirectories(const juce::Array<juce::File>& files);
     const FileDisposer& disposeFile = trashFile,
     const OutputCommitHook& hook = {}
 );
-
 }  // namespace audiobatch::utils

@@ -15,18 +15,44 @@ Paths below are relative to `cpp/`, and `AGENTS.md` means `cpp/AGENTS.md`.
 
 ## Declaration order
 
-Within a header or namespace, declare in this order:
+Follow the [C++ Core Guidelines NL.16](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rl-order)
+foundation: relevant types and aliases, special members, functions, then data.
+Use `public`, then `protected`, then `private`, without scattering repeated access sections through the declaration.
+Keep private implementation declarations in the private section.
+At namespace scope, put dependent declarations after the types they need.
+Related enums and small records normally precede their consuming class, but do not mechanically sort unrelated types.
 
-1. Enums.
-2. Structs.
-3. Classes.
+The following are AudioBatch readability conventions, not requirements of the ISO C++ standard:
 
-Within a struct or class:
+- Put constructors, the destructor, and copy/move operations first, followed by static methods.
+  Separate the regular constructor group, destructor, and copy/move group with blank lines.
+  Keep declarations within the constructor and copy/move groups contiguous.
+  Static methods also lead the method declarations in protected and private sections.
+- Keep ordinary methods separate from overrides, grouping overrides by the interface they implement when useful.
+  An overriding destructor remains with the special members.
+- Within each coherent method block, group by return type and alphabetize names within each group.
+  Keep overloads together.
+  Prefer complex types before basic scalar types: project/library objects, standard-library objects,
+  then basic types such as `int`, `bool`, `float`, and `double`, with `void` last.
+  Classify scalar aliases such as `juce::int64` and `std::int64_t` with basic types, not complex objects.
+  Preserve related interface operations when a mechanical return-type split would reduce readability.
+- Put methods before data within each access section.
+  Put static data first within the data block, not ahead of methods.
+- Group fields by type and alphabetize names within groups where practical.
+  Prefer project/library objects, then standard-library objects, then basic scalar fields.
+  Standard-library types go last among complex types, not after basic scalar fields.
+  Correctness, lifetime dependencies, and observable contracts take priority over sorting.
+- Split sections with more than six methods or fields into coherent groups.
+  Smaller sections may remain compact.
+  Put blank lines between groups, not between function declarations within a group.
+  Preserve documentation and normal spacing between inline function definitions.
 
-1. `public` section, then `protected`, then `private`.
-2. Member functions before data members in each section.
-3. Group functions and variables by return type and topic.
-   Keep related functions together, and keep functions that return the same kind of value next to each other.
+Follow [C.47](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rc-order)
+by matching constructor initializer lists to declaration order.
+When reordering fields, review initialization and reverse destruction dependencies,
+positional and designated aggregate initializers, structured bindings, defaulted comparisons, and layout contracts.
+Update callers where straightforward, but do not add manual teardown or worker lifecycle machinery solely for sorting.
+Keep dependency-sensitive order and explain non-obvious requirements in a short comment.
 
 ## Types and namespaces
 
@@ -45,6 +71,13 @@ Within a struct or class:
   and switch over every enumerator without a `default` label.
 - Put all project code in `namespace audiobatch`, so classes and their member definitions share it.
   Keep `main`, the JUCE application macro, and forward declarations of third-party types outside it.
+- Follow [C.4](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rc-member)
+  and [C.5](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rc-helper):
+  prefer nonmember helpers when direct access to a class representation is unnecessary,
+  and put them in the namespace of the type they support.
+  Related free helpers may share the type's header.
+  Move shared helpers into a focused topic file when that improves cohesion or removes unnecessary dependencies.
+  Do not turn a free helper into a static member merely to remove free functions from a class header.
 - Do not write a class or struct whose members are all static.
   Use free functions in a namespace, as with `utils::` and `cli::`, and give them specific names.
   Keep classes for types that own state or enforce an invariant.
@@ -59,6 +92,11 @@ Within a struct or class:
   Keep a header next to its source, and add a new directory only for a new domain with several files.
 - Include project headers by their path relative to `src/`, such as `#include "analysis/AudioAnalysis.h"`,
   also from within the same directory, and never with `../`.
+- Prefer a dedicated file for a substantial reusable class when that improves cohesion and dependencies.
+  Small related helper types, records, and enums may remain together.
+  Do not mechanically require one type per file or split implementation-local fixture helpers into public headers.
+- Keep headers self-contained and include the declarations used directly rather than relying on transitive includes.
+  Avoid cyclic dependencies.
 - Split a file that reaches about 1000 lines into focused parts by topic.
   Each part should be a few hundred lines,
   with a shared internal header for constants and helpers used by several parts.

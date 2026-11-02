@@ -15,13 +15,14 @@ juce::String formatBitsPerSampleDisplay(const AudioAnalysisRecord& record);
 juce::String formatCustomGainCompact(const AudioAnalysisRecord& record);
 juce::String formatDurationClock(double durationSeconds);
 juce::String formatDurationClockTenths(double durationSeconds);
+juce::String formatGuiStatus(const AudioAnalysisRecord& record);
 juce::String formatLoudnessCompact(double loudness);
 juce::String formatPeakCompact(double peak);
 juce::String formatSampleRateCompact(const AudioAnalysisRecord& record);
 juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record);
 juce::String formatStatus(const AudioAnalysisRecord& record);
-juce::String formatGuiStatus(const AudioAnalysisRecord& record);
 juce::String formatTruePeakCompact(double truePeak);
 juce::String formatTypeLabel(const AudioAnalysisRecord& record);
+
 double getAverageBitrateKbps(const AudioAnalysisRecord& record);
 }  // namespace audiobatch

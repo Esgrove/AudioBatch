@@ -40,6 +40,7 @@ class BorrowedStatement
 {
 public:
     explicit BorrowedStatement(sqlite3_stmt* borrowed) noexcept;
+
     ~BorrowedStatement();
 
     BorrowedStatement(const BorrowedStatement&) = delete;
@@ -47,9 +48,10 @@ public:
     BorrowedStatement(BorrowedStatement&&) = delete;
     BorrowedStatement& operator=(BorrowedStatement&&) = delete;
 
-    [[nodiscard]] bool isValid() const noexcept;
     [[nodiscard]] sqlite3_stmt* get() const noexcept;
     [[nodiscard]] sqlite3_stmt& operator*() const noexcept;
+
+    [[nodiscard]] bool isValid() const noexcept;
 
 private:
     /// The statement, owned by the cache it came from, or null when it could not be prepared.
@@ -71,9 +73,10 @@ private:
     std::unordered_map<const char*, Statement> statements;
 };
 
-[[nodiscard]] bool execute(sqlite3& database, const char* sql);
+juce::MemoryBlock columnBlob(sqlite3_stmt& statement, int columnIndex);
+juce::String columnText(sqlite3_stmt& statement, int columnIndex);
+
 [[nodiscard]] Statement prepare(sqlite3& database, const char* sql);
-[[nodiscard]] bool stepToCompletion(sqlite3_stmt& statement);
 
 [[nodiscard]] bool bindBlob(sqlite3_stmt& statement, int index, const juce::MemoryBlock& data);
 [[nodiscard]] bool bindDouble(sqlite3_stmt& statement, int index, double value);
@@ -81,6 +84,6 @@ private:
 [[nodiscard]] bool bindNull(sqlite3_stmt& statement, int index);
 [[nodiscard]] bool bindText(sqlite3_stmt& statement, int index, const juce::String& value);
 
-juce::MemoryBlock columnBlob(sqlite3_stmt& statement, int columnIndex);
-juce::String columnText(sqlite3_stmt& statement, int columnIndex);
+[[nodiscard]] bool execute(sqlite3& database, const char* sql);
+[[nodiscard]] bool stepToCompletion(sqlite3_stmt& statement);
 }  // namespace audiobatch::sqlite

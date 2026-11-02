@@ -20,12 +20,6 @@
 
 namespace audiobatch::tests
 {
-void expectAnalysisMeasurementsEqual(
-    juce::UnitTest& test,
-    const AudioAnalysisRecord& actual,
-    const AudioAnalysisRecord& expected
-);
-
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.
 constexpr double fixturePeakDecibels {-6.0206};
 /// Integrated loudness of a fixture tone, in LUFS.
@@ -64,7 +58,7 @@ struct NullTestFormat {
             && floatingPoint == other.floatingPoint;
     }
 
-    /// Sample rate in Hz.
+    /// Sample rate in Hz. Keep the reader's positional initialization order.
     double sampleRate {0.0};
     /// Bits per sample of the stored data.
     int bitsPerSample {0};
@@ -76,28 +70,7 @@ struct NullTestFormat {
 /// Both files are read as integer sample values, so any difference of a single step counts.
 /// The files must also have the same sample rate, bit depth, and integer or floating point samples to cancel.
 struct NullTestResult {
-    /// False when either file could not be read, which leaves every other field empty.
-    bool readable {false};
-    /// Channel count of the expected file.
-    int expectedChannels {0};
-    /// Channel count of the actual file.
-    int actualChannels {0};
-    /// Length of the expected file in samples per channel.
-    juce::int64 expectedLength {0};
-    /// Length of the actual file in samples per channel.
-    juce::int64 actualLength {0};
-    /// Sample format of the expected file.
-    NullTestFormat expectedFormat;
-    /// Sample format of the actual file.
-    NullTestFormat actualFormat;
-    /// Number of samples over all channels that differ within the common length.
-    juce::int64 differingSamples {0};
-    /// Largest absolute difference within the common length, in 16-bit steps.
-    int peakDifference {0};
-    /// Offset of the actual first channel against the expected one, in samples, where the two correlate best.
-    /// It is zero for aligned audio, and tells by how much a delayed or early output is shifted.
-    /// Only computed when the files do not cancel.
-    int bestLag {0};
+    [[nodiscard]] juce::String describe() const;
 
     /// Returns true when both files have the same format, layout, and length, and every sample cancels out.
     [[nodiscard]] bool cancels() const noexcept
@@ -106,21 +79,49 @@ struct NullTestResult {
             && expectedLength == actualLength && differingSamples == 0;
     }
 
-    [[nodiscard]] juce::String describe() const;
+    /// Sample format of the actual file.
+    NullTestFormat actualFormat;
+    /// Sample format of the expected file.
+    NullTestFormat expectedFormat;
+
+    /// False when either file could not be read, which leaves every other field empty.
+    bool readable {false};
+
+    /// Channel count of the actual file.
+    int actualChannels {0};
+    /// Offset of the actual first channel against the expected one, in samples, where the two correlate best.
+    /// It is zero for aligned audio, and tells by how much a delayed or early output is shifted.
+    /// Only computed when the files do not cancel.
+    int bestLag {0};
+    /// Channel count of the expected file.
+    int expectedChannels {0};
+    /// Largest absolute difference within the common length, in 16-bit steps.
+    int peakDifference {0};
+
+    /// Length of the actual file in samples per channel.
+    juce::int64 actualLength {0};
+    /// Number of samples over all channels that differ within the common length.
+    juce::int64 differingSamples {0};
+    /// Length of the expected file in samples per channel.
+    juce::int64 expectedLength {0};
 };
 
 /// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
 struct TestAudioDeviceState {
+    /// Non-owning callback installed only while the simulated driver is playing.
+    juce::AudioIODeviceCallback* callback {nullptr};
+
+    juce::String openError;
     juce::String typeName {"Test audio"};
+
+    juce::StringArray attemptedDevices;
     juce::StringArray outputDeviceNames {"Test output"};
     juce::StringArray unavailableDeviceNames;
-    juce::StringArray attemptedDevices;
-    int opens {0};
+
     int closes {0};
     int inputChannels {0};
+    int opens {0};
     int outputChannels {0};
-    juce::String openError;
-    juce::AudioIODeviceCallback* callback {nullptr};
 };
 
 /// Captures log messages from any worker and restores the previous logger when the scope ends.
@@ -133,8 +134,8 @@ public:
     ~ScopedLogCapture() override;
 
     ScopedLogCapture(const ScopedLogCapture&) = delete;
-    ScopedLogCapture& operator=(const ScopedLogCapture&) = delete;
     ScopedLogCapture(ScopedLogCapture&&) = delete;
+    ScopedLogCapture& operator=(const ScopedLogCapture&) = delete;
     ScopedLogCapture& operator=(ScopedLogCapture&&) = delete;
 
     [[nodiscard]] juce::StringArray getMessages() const;
@@ -143,8 +144,8 @@ protected:
     void logMessage(const juce::String& message) override;
 
 private:
-    juce::Logger* previousLogger;
     juce::CriticalSection lock;
+    juce::Logger* previousLogger;
     juce::StringArray messages;
 };
 
@@ -157,33 +158,37 @@ public:
     ~TemporaryDirectory();
 
     TemporaryDirectory(const TemporaryDirectory&) = delete;
-    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
     TemporaryDirectory(TemporaryDirectory&&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
     TemporaryDirectory& operator=(TemporaryDirectory&&) = delete;
 
-    [[nodiscard]] juce::File getChildFile(const juce::String& name) const;
-
     [[nodiscard]] juce::File copyFixture(const juce::String& fixtureName, const juce::String& copyName = {}) const;
+    [[nodiscard]] juce::File getChildFile(const juce::String& name) const;
 
 private:
     juce::File directory;
 };
 
+AudioAnalysisRecord outcomeRecord(const OperationOutcome& outcome);
+
+AudioNormalizationOptions testNormalizationOptions();
+
 NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actual);
 
-juce::File fixtureFile(const juce::String& name);
+serato::TrackInfo makeTrackInfo(double bpm, const juce::String& key);
 
+utils::CancellationCheck cancelAfterChecks(int allowedChecks, std::shared_ptr<std::atomic<int>> calls);
+
+juce::File fixtureFile(const juce::String& name);
 juce::File testPluginBundle();
 
-double peakDecibels(const AudioAnalysisRecord& record);
-juce::int64 peakSamplePosition(const juce::File& file);
-juce::String outcomeError(const OperationOutcome& outcome);
-AudioAnalysisRecord outcomeRecord(const OperationOutcome& outcome);
-juce::String outcomeNotice(const OperationOutcome& outcome);
+juce::MemoryBlock validWaveform();
 
-bool deleteInsteadOfTrash(const juce::File& file);
-AudioNormalizationOptions testNormalizationOptions();
-serato::TrackInfo makeTrackInfo(double bpm, const juce::String& key);
+juce::String outcomeError(const OperationOutcome& outcome);
+juce::String outcomeNotice(const OperationOutcome& outcome);
+juce::String readHelperLine(juce::ChildProcess& process);
+
+std::optional<int> runHelperProcess(const juce::StringArray& arguments);
 
 /// Returns a copy of the value of a present Serato tag result as the given tag type,
 /// or nothing when the result has no value of that type.
@@ -194,16 +199,20 @@ std::optional<Value> tagValue(const serato::TagReadResult& result)
     return value != nullptr ? std::optional<Value>(*value) : std::nullopt;
 }
 
+bool deleteInsteadOfTrash(const juce::File& file);
+bool executeSql(juce::UnitTest& test, const juce::File& databaseFile, const char* sql);
+bool startHelperProcess(juce::ChildProcess& process, const juce::StringArray& helperArguments);
+
+double peakDecibels(const AudioAnalysisRecord& record);
+
+juce::int64 peakSamplePosition(const juce::File& file);
+
+void expectAnalysisMeasurementsEqual(
+    juce::UnitTest& test,
+    const AudioAnalysisRecord& actual,
+    const AudioAnalysisRecord& expected
+);
+void expectSqlScalar(juce::UnitTest& test, const juce::File& databaseFile, const char* sql, int expected);
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
 void renderTestAudioDevice(const TestAudioDeviceState& state, int sampleCount = 512);
-
-juce::MemoryBlock validWaveform();
-bool executeSql(juce::UnitTest& test, const juce::File& databaseFile, const char* sql);
-void expectSqlScalar(juce::UnitTest& test, const juce::File& databaseFile, const char* sql, int expected);
-
-utils::CancellationCheck cancelAfterChecks(int allowedChecks, std::shared_ptr<std::atomic<int>> calls);
-
-std::optional<int> runHelperProcess(const juce::StringArray& arguments);
-bool startHelperProcess(juce::ChildProcess& process, const juce::StringArray& helperArguments);
-juce::String readHelperLine(juce::ChildProcess& process);
 }  // namespace audiobatch::tests

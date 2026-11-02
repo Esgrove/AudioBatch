@@ -24,10 +24,10 @@ struct MetadataProperty {
 struct MetadataPicture {
     /// Encoded image bytes.
     juce::MemoryBlock data;
-    /// Image type such as "image/jpeg" or "image/png".
-    juce::String mimeType;
     /// Free text description stored with the picture.
     juce::String description;
+    /// Image type such as "image/jpeg" or "image/png".
+    juce::String mimeType;
     /// ID3v2 picture type name, e.g. "Front Cover", "Back Cover", "Band".
     juce::String pictureType;
 };
@@ -47,16 +47,17 @@ struct AudioMetadata {
         return properties.empty() && pictures.empty() && id3v2Frames.empty() && !hasUnsupportedId3Frames;
     }
 
-    /// The text properties.
-    std::vector<MetadataProperty> properties;
-    /// The embedded pictures.
-    std::vector<MetadataPicture> pictures;
     /// Owned ID3v2.4 frame bytes, including custom binary frames outside TagLib's PropertyMap.
     std::vector<juce::MemoryBlock> id3v2Frames;
-    /// True when TagLib cannot safely reserialize a known frame, so processing must keep the original file.
-    bool hasUnsupportedId3Frames {false};
+    /// The embedded pictures.
+    std::vector<MetadataPicture> pictures;
+    /// The text properties.
+    std::vector<MetadataProperty> properties;
+
     /// True when the properties were read from an ID3v2 tag rather than Vorbis comments or another tag format.
     bool hasId3Tag {false};
+    /// True when TagLib cannot safely reserialize a known frame, so processing must keep the original file.
+    bool hasUnsupportedId3Frames {false};
 };
 
 /// Limits of an artwork-only read, so a file with huge or many pictures cannot make the preview hold them all.
@@ -67,11 +68,12 @@ struct ArtworkReadLimits {
     std::size_t maximumCount {4};
 };
 
-[[nodiscard]] bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
 [[nodiscard]] std::vector<MetadataPicture> readArtworkCandidates(
     const juce::File& file,
     const ArtworkReadLimits& limits = {}
 );
+
+[[nodiscard]] bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
 bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
 bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
 }  // namespace audiobatch

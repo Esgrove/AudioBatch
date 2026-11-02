@@ -8,7 +8,7 @@
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/CustomLookAndFeel.h"
-#include "gui/FileActivityTracker.h"
+#include "gui/FileActivity.h"
 #include "gui/GuiLayout.h"
 #include "gui/ResultsModel.h"
 
@@ -51,6 +51,7 @@ constexpr float spinnerArcTurns {0.6f};
 
 /// A results table column as the header registers it.
 struct ColumnDefinition {
+    // Positional construction mirrors defineColumn and the table's declarative column list.
     /// The column, whose value is also its JUCE column id.
     AudioFileTableColumn column;
     /// Short title shown in the header.
@@ -218,12 +219,12 @@ AudioFileTableModel::AudioFileTableModel(
     std::function<float()> phaseProvider
 ) :
     records(sourceRecords),
-    selectionChanged(std::move(onSelectionChanged)),
-    sortChanged(std::move(onSortChanged)),
-    contextMenuRequested(std::move(onContextMenuRequested)),
-    activityStateProvider(std::move(activityProvider)),
+    activityPhaseProvider(std::move(phaseProvider)),
     operationMessageProvider(std::move(messageProvider)),
-    activityPhaseProvider(std::move(phaseProvider))
+    activityStateProvider(std::move(activityProvider)),
+    contextMenuRequested(std::move(onContextMenuRequested)),
+    selectionChanged(std::move(onSelectionChanged)),
+    sortChanged(std::move(onSortChanged))
 {}
 
 /// Installs the standard set of columns used by the results table.

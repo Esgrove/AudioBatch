@@ -5,6 +5,7 @@
 /// and the presets submenu that the chain menu and the main menu bar share.
 
 #include "gui/LiveChain.h"
+#include "gui/LiveSlot.h"
 #include "plugins/PluginChainPresets.h"
 #include "utils/AppInfo.h"
 #include "utils/GuiUtils.h"
@@ -58,9 +59,9 @@ std::vector<ChainPresetInfo> LiveChain::getPresets() const
         || presetList->directoryModified != directoryModified)
     {
         presetList = PresetListCache {
-            .presets = plugin_presets::listPresets(directory),
             .directory = directory,
             .directoryModified = directoryModified,
+            .presets = plugin_presets::listPresets(directory),
         };
     }
     return presetList->presets;

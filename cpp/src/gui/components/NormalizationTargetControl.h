@@ -26,42 +26,38 @@ public:
     NormalizationTargetControl(NormalizationTargetControl&&) = delete;
     NormalizationTargetControl& operator=(NormalizationTargetControl&&) = delete;
 
-    void loadSettings();
-
     [[nodiscard]] AudioNormalizationOptions getOptions() const;
-
     [[nodiscard]] juce::String describeTarget() const;
 
-    void resized() override;
-
+    void loadSettings();
+    void setNormalizeCallback(std::function<void()> callback);
     void setNormalizeEnabled(bool enabled);
-
     void setTargetEnabled(bool enabled);
 
-    void setNormalizeCallback(std::function<void()> callback);
+    // juce::Component
+    void resized() override;
 
 private:
     [[nodiscard]] bool isLoudnessMode() const;
 
     void saveSettings() const;
-
     void selectMode(bool loudness);
-
     void updateSlider();
 
     /// The application settings the mode and the targets are kept in.
     juce::ApplicationProperties& properties;
-    /// Selects normalizing to a sample peak.
-    juce::TextButton peakButton {"Peak"};
+    /// The target of the selected mode, in dBFS or LUFS.
+    juce::Slider targetSlider {"NormalizeTarget"};
     /// Selects normalizing to an integrated loudness.
     juce::TextButton loudnessButton {"Loudness"};
     /// Normalizes the selected files.
     juce::TextButton normalizeButton {"Normalize"};
-    /// The target of the selected mode, in dBFS or LUFS.
-    juce::Slider targetSlider {"NormalizeTarget"};
-    /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
-    double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};
+    /// Selects normalizing to a sample peak.
+    juce::TextButton peakButton {"Peak"};
+
     /// Remembered loudness mode target, in LUFS, kept while peak mode is selected.
     double targetLufs {AudioNormalizationOptions::defaultTargetLufs};
+    /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
+    double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};
 };
 }  // namespace audiobatch

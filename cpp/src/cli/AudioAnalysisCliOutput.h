@@ -11,7 +11,6 @@
 namespace audiobatch::cli
 {
 juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records);
-
 juce::String formatRecordsAsJson(const std::vector<AudioAnalysisRecord>& records);
 
 void printRecords(

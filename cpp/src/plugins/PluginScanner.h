@@ -1,22 +1,11 @@
-/// Out-of-process plugin scanning, so a plugin that crashes while it is being scanned cannot take down the application.
-/// Declares PluginScanWorker, which runs in a child process launched from the application's own executable
-/// and loads plugins to describe them,
-/// and OutOfProcessPluginScanner, the KnownPluginList::CustomScanner the main process installs
-/// to send each plugin file to the worker and collect the descriptions it reports back.
-/// A worker crash is reported as a failed scan, which makes KnownPluginList blacklist that plugin.
-/// Also declares the plugin format registration, which leaves the Audio Units built into macOS out of every scan.
+/// Shared plugin scan helpers and the inter-process scan lock.
+/// Registers plugin formats, filters built-in Apple Audio Units, and persists the known-plugins list.
 
 #pragma once
-
-#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
 #include <chrono>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <queue>
 
 namespace audiobatch
 {
@@ -28,128 +17,6 @@ constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
 /// the CLI rescan cannot be cancelled, and the GUI scan would wait until the user cancels it.
 /// Generous, because a copy-protected plugin can show a licensing prompt in the worker while it is scanned.
 constexpr auto pluginScanTimeout {std::chrono::seconds(180)};
-
-[[nodiscard]] bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier);
-[[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
-[[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList, const juce::File& file);
-[[nodiscard]] juce::File getKnownPluginListFile(const juce::PropertiesFile& settings);
-[[nodiscard]] juce::FileSearchPath buildVst3SearchPath(
-    const juce::FileSearchPath& juceSearchPath,
-    const juce::String& variableValue,
-    const juce::String& listSeparator
-);
-
-void addPluginFormats(juce::AudioPluginFormatManager& formatManager);
-void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
-void migrateKnownPluginList(juce::PropertiesFile& settings);
-void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList);
-int removeMissingPlugins(
-    juce::KnownPluginList& knownPluginList,
-    const juce::AudioPluginFormatManager& formatManager,
-    juce::PropertiesFile& settings
-);
-
-/// Child side of out-of-process plugin scanning.
-/// Receives scan requests from the main process, loads the plugin file on the message thread,
-/// and replies with the plugin descriptions found in it.
-class PluginScanWorker final : juce::ChildProcessWorker, juce::AsyncUpdater
-{
-public:
-    explicit PluginScanWorker(std::function<void()> connectionLostCallback);
-
-    ~PluginScanWorker() override;
-
-    PluginScanWorker(const PluginScanWorker&) = delete;
-    PluginScanWorker& operator=(const PluginScanWorker&) = delete;
-    PluginScanWorker(PluginScanWorker&&) = delete;
-    PluginScanWorker& operator=(PluginScanWorker&&) = delete;
-
-    bool initialiseFromCommandLine(const juce::String& commandLine);
-
-private:
-    void handleMessageFromCoordinator(const juce::MemoryBlock& message) override;
-
-    void handleConnectionLost() override;
-
-    void handleAsyncUpdate() override;
-
-    void sendResults(const juce::OwnedArray<juce::PluginDescription>& results);
-
-    [[nodiscard]] juce::OwnedArray<juce::PluginDescription> scan(const juce::MemoryBlock& request) const;
-
-    /// The formats the worker loads plugins with.
-    juce::AudioPluginFormatManager formatManager;
-    /// Called when the main process goes away, so the worker process can exit.
-    std::function<void()> onConnectionLost;
-    /// Guards the pending requests, which arrive on the connection thread and are scanned on the message thread.
-    std::mutex pendingRequestsMutex;
-    /// Scan requests waiting for the message thread.
-    std::queue<juce::MemoryBlock> pendingRequests;
-
-    JUCE_LEAK_DETECTOR(PluginScanWorker)
-};
-
-class PluginScanWorkerProcess;
-
-/// Main-process side of out-of-process plugin scanning.
-/// Install it with KnownPluginList::setCustomScanner.
-/// Each plugin file is sent to a worker process launched from this executable,
-/// and the worker is relaunched after a crash so the scan can continue with the next plugin.
-class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScanner
-{
-public:
-    /// Called before the first plugin of a scan is loaded, with a check that turns true once the scan is abandoned.
-    /// Returning false skips every plugin of that scan without blacklisting any of them.
-    using ScanStartingCallback = std::function<bool(const utils::CancellationCheck& shouldStop)>;
-
-    /// Called once a scan has finished, including scans that were skipped or cancelled,
-    /// with true only for a scan that ran to its end.
-    using ScanFinishedCallback = std::function<void(bool completed)>;
-
-    explicit OutOfProcessPluginScanner(
-        ScanStartingCallback scanStartingCallback = nullptr,
-        ScanFinishedCallback scanFinishedCallback = nullptr
-    );
-
-    ~OutOfProcessPluginScanner() override;
-
-    OutOfProcessPluginScanner(const OutOfProcessPluginScanner&) = delete;
-    OutOfProcessPluginScanner& operator=(const OutOfProcessPluginScanner&) = delete;
-    OutOfProcessPluginScanner(OutOfProcessPluginScanner&&) = delete;
-    OutOfProcessPluginScanner& operator=(OutOfProcessPluginScanner&&) = delete;
-
-    bool findPluginTypesFor(
-        juce::AudioPluginFormat& format,
-        juce::OwnedArray<juce::PluginDescription>& result,
-        const juce::String& fileOrIdentifier
-    ) override;
-
-    void scanFinished() override;
-
-    /// Returns the plugin files that took longer than the timeout to scan and were skipped,
-    /// since the scanner was created.
-    [[nodiscard]] const juce::StringArray& getTimedOutFiles() const noexcept
-    {
-        return timedOutFiles;
-    }
-
-private:
-    /// The worker process that loads the plugins, launched when a plugin needs one,
-    /// and dropped when a plugin crashes it or hangs, or the scan is cancelled.
-    std::unique_ptr<PluginScanWorkerProcess> worker;
-    /// The plugin files that took longer than the timeout and were skipped.
-    juce::StringArray timedOutFiles;
-    /// Called before the first plugin of a scan, which can abandon the scan.
-    ScanStartingCallback onScanStarting;
-    /// Called when the scan ends, with whether it ran to its end.
-    ScanFinishedCallback onScanFinished;
-    /// True once the first plugin of the scan was reached.
-    bool scanStarted {false};
-    /// True when the starting callback abandoned the scan.
-    bool scanSkipped {false};
-
-    JUCE_LEAK_DETECTOR(OutOfProcessPluginScanner)
-};
 
 /// Name of the inter-process lock that the GUI and the CLI take around a plugin scan.
 constexpr auto pluginScanLockName {"AudioBatchPluginScan"};
@@ -182,4 +49,25 @@ private:
 
     JUCE_LEAK_DETECTOR(PluginScanLock)
 };
+
+[[nodiscard]] juce::File getKnownPluginListFile(const juce::PropertiesFile& settings);
+[[nodiscard]] juce::FileSearchPath buildVst3SearchPath(
+    const juce::FileSearchPath& juceSearchPath,
+    const juce::String& variableValue,
+    const juce::String& listSeparator
+);
+
+[[nodiscard]] bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier);
+[[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
+[[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList, const juce::File& file);
+int removeMissingPlugins(
+    juce::KnownPluginList& knownPluginList,
+    const juce::AudioPluginFormatManager& formatManager,
+    juce::PropertiesFile& settings
+);
+
+void addPluginFormats(juce::AudioPluginFormatManager& formatManager);
+void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
+void migrateKnownPluginList(juce::PropertiesFile& settings);
+void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList);
 }  // namespace audiobatch

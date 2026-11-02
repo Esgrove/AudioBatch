@@ -1,5 +1,4 @@
-/// Implementation of the results table sorting:
-/// the secondary sort table header and the per-column record comparators.
+/// Per-column record comparisons and primary and secondary results sorting.
 
 #include "gui/ResultsSorting.h"
 
@@ -13,7 +12,6 @@
 #include <compare>
 #include <concepts>
 #include <optional>
-#include <utility>
 #include <vector>
 
 namespace audiobatch
@@ -84,76 +82,6 @@ int compareLoudness(const double left, const double right)
     return compareValues(left, right);
 }
 }  // namespace
-
-/// Stores the callback invoked when a column is clicked with ctrl or cmd held down,
-/// and the one that describes a column for the header tooltip.
-SecondarySortTableHeader::SecondarySortTableHeader(
-    SecondarySortCallback secondarySortRequestedCallback,
-    ColumnDescriber columnDescriber
-) :
-    secondarySortRequested(std::move(secondarySortRequestedCallback)),
-    describeColumn(std::move(columnDescriber))
-{}
-
-/// Returns the description of the column under the mouse.
-/// The tooltip window asks again as the mouse moves, so each column shows its own description.
-juce::String SecondarySortTableHeader::getTooltip()
-{
-    const auto column = tableColumnFromId(getColumnIdAtX(getMouseXYRelative().getX()));
-    return column.has_value() && describeColumn != nullptr ? describeColumn(*column) : juce::String();
-}
-
-/// Routes ctrl or cmd clicks to the secondary sort callback,
-/// while plain clicks fall through to the normal primary sort behaviour.
-void SecondarySortTableHeader::columnClicked(const int columnId, const juce::ModifierKeys& modifiers)
-{
-    if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
-        if (const auto column = tableColumnFromId(columnId)) {
-            secondarySortRequested(*column);
-        }
-        return;
-    }
-
-    juce::TableHeaderComponent::columnClicked(columnId, modifiers);
-}
-
-/// Appends a textual secondary sort marker to the given column's name and restores the base name of every other column.
-/// Passing no column clears the indicator entirely.
-void SecondarySortTableHeader::setSecondarySortIndicator(
-    const std::optional<AudioFileTableColumn> column,
-    const bool isForwards
-)
-{
-    if (baseColumnNames.empty()) {
-        cacheBaseColumnNames();
-    }
-
-    secondarySortColumn = column;
-    secondarySortForwards = isForwards;
-
-    for (const auto& [trackedColumnId, baseName] : baseColumnNames) {
-        auto displayName = baseName;
-
-        if (trackedColumnId == toColumnId(secondarySortColumn)) {
-            displayName = utils::format("{} {}", displayName, secondarySortForwards ? "[2^]" : "[2v]");
-        }
-
-        setColumnName(trackedColumnId, displayName);
-    }
-
-    repaint();
-}
-
-/// Captures the original column names once, so indicator suffixes can be re-applied without accumulating in the names.
-void SecondarySortTableHeader::cacheBaseColumnNames()
-{
-    const auto columnCount = getNumColumns(false);
-
-    for (int index = 0; index < columnCount; ++index) {
-        const auto columnId = getColumnIdOfIndex(index, false);
-        baseColumnNames.emplace(columnId, getColumnName(columnId));
-    }
-}
 
 namespace results_sorting
 {
@@ -296,11 +224,5 @@ void toggleSecondarySort(SortState& state, const AudioFileTableColumn column)
     }
 }
 
-/// Returns the table's header downcast to SecondarySortTableHeader.
-/// The table must have been created with that header type.
-SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table)
-{
-    return dynamic_cast<SecondarySortTableHeader&>(table.getHeader());
-}
 }  // namespace results_sorting
 }  // namespace audiobatch

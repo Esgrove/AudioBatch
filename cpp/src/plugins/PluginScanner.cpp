@@ -1,12 +1,5 @@
-/// Implementation of out-of-process plugin scanning.
-/// Covers the request and reply protocol between the main process and the scan worker:
-/// a request carries the format name and the plugin file or identifier,
-/// and a reply is an XML list of plugin descriptions.
-/// Also covers the worker process lifetime in the main process,
-/// which launches a worker on demand and drops it after a crash, a cancel, or the end of a scan,
-/// and the known-plugins list file with its migration out of the settings.
-/// The plugin formats are registered with an Audio Unit format that leaves out the Audio Units built into macOS,
-/// and loading the known-plugins list drops any of them that an older version saved.
+/// Registers plugin formats, persists the known-plugins list, and serializes scans between processes.
+/// Built-in Apple Audio Units are excluded from both scans and previously saved lists.
 
 #include "plugins/PluginScanner.h"
 
@@ -15,46 +8,14 @@
 #endif
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
-#include <condition_variable>
 
 #include <algorithm>
-#include <chrono>
-#include <cstdint>
-#include <functional>
 #include <memory>
-#include <mutex>
-#include <utility>
 
 namespace audiobatch
 {
 namespace
 {
-/// Tag of the element that holds the plugin descriptions of a worker reply.
-constexpr auto resultsXmlTag {"PLUGINS"};
-/// Name of the known-plugins list file next to the settings file.
-constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
-/// Settings key under which older versions kept the known-plugins list.
-constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
-/// Start of the identifier of every Audio Unit.
-constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
-/// Manufacturer code that ends the identifiers of the Audio Units built into macOS.
-constexpr auto appleManufacturerCode {"appl"};
-/// Environment variable with extra folders to search for VST3 plugins.
-constexpr auto vst3PathVariable {"VST3_PATH"};
-/// How often waiting for a worker reply checks whether the scan was cancelled.
-constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
-
-/// Outcome of waiting for the reply to one scan request.
-enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
-
-/// Reply to one scan request.
-struct PluginScanResponse {
-    /// Whether a reply arrived, the wait timed out, or the worker went away.
-    PluginScanResponseState state {PluginScanResponseState::timeout};
-    /// The plugin descriptions the worker replied with, or null without a reply.
-    std::unique_ptr<juce::XmlElement> xml;
-};
-
 #if JUCE_PLUGINHOST_AU && JUCE_MAC
 /// Audio Unit format that leaves the Audio Units built into macOS out of plugin scans.
 /// Only the list of plugins to scan is filtered, so every other Audio Unit scans and loads as usual.
@@ -84,6 +45,9 @@ public:
 };
 #endif
 
+/// Environment variable with extra folders to search for VST3 plugins.
+constexpr auto vst3PathVariable {"VST3_PATH"};
+
 #if JUCE_PLUGINHOST_VST3
 /// VST3 format whose default search path splits VST3_PATH with the separator of the platform's path lists.
 /// JUCE replaces every ":" in the variable with ";", which splits a Windows path such as C:\Plugins in two.
@@ -102,29 +66,14 @@ public:
 };
 #endif
 
-/// Adds the plugin descriptions in a worker reply to the scan results, skipping entries that do not parse.
-void addDescriptions(const juce::XmlElement* reply, juce::OwnedArray<juce::PluginDescription>& result)
-{
-    if (reply == nullptr) {
-        return;
-    }
-
-    for (const auto* element : reply->getChildIterator()) {
-        if (auto description = std::make_unique<juce::PluginDescription>(); description->loadFromXml(*element)) {
-            result.add(std::move(description));
-        }
-    }
-}
-
-/// Builds a scan request for one plugin file or identifier.
-juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::String& fileOrIdentifier)
-{
-    juce::MemoryBlock request;
-    juce::MemoryOutputStream stream(request, false);
-    stream.writeString(formatName);
-    stream.writeString(fileOrIdentifier);
-    return request;
-}
+/// Name of the known-plugins list file next to the settings file.
+constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
+/// Settings key under which older versions kept the known-plugins list.
+constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
+/// Start of the identifier of every Audio Unit.
+constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
+/// Manufacturer code that ends the identifiers of the Audio Units built into macOS.
+constexpr auto appleManufacturerCode {"appl"};
 }  // namespace
 
 /// Rebuilds the search path JUCE made from VST3_PATH and the standard folders,
@@ -337,326 +286,6 @@ void migrateKnownPluginList(juce::PropertiesFile& settings)
     settings.removeValue(legacyKnownPluginListPropertyKey);
     settings.saveIfNeeded();
 }
-
-//==============================================================================
-
-/// Creates the worker with the plugin formats of the main process.
-/// The connection-lost callback runs when the main process goes away or finishes scanning,
-/// and should shut the worker process down.
-PluginScanWorker::PluginScanWorker(std::function<void()> connectionLostCallback) :
-    onConnectionLost(std::move(connectionLostCallback))
-{
-    addPluginFormats(formatManager);
-}
-
-/// Cancels any pending scan dispatch before the worker is destroyed.
-PluginScanWorker::~PluginScanWorker()
-{
-    cancelPendingUpdate();
-}
-
-/// Connects to the main process when the command line identifies a scan worker.
-/// Returns false for any other command line, in which case the worker does nothing.
-bool PluginScanWorker::initialiseFromCommandLine(const juce::String& commandLine)
-{
-    return ChildProcessWorker::initialiseFromCommandLine(commandLine, pluginScanWorkerProcessUid);
-}
-
-/// Queues a scan request and schedules it on the message thread.
-/// Called on the connection thread.
-void PluginScanWorker::handleMessageFromCoordinator(const juce::MemoryBlock& message)
-{
-    if (message.isEmpty()) {
-        return;
-    }
-
-    {
-        const std::scoped_lock lock(pendingRequestsMutex);
-        pendingRequests.push(message);
-    }
-
-    triggerAsyncUpdate();
-}
-
-/// Invokes the connection-lost callback so the worker process can exit.
-void PluginScanWorker::handleConnectionLost()
-{
-    if (onConnectionLost != nullptr) {
-        onConnectionLost();
-    }
-}
-
-/// Runs queued scan requests on the message thread and sends the results back.
-/// Scanning must happen on the message thread, because copy-protected plugins (for example PACE / iLok wrapped VST3s)
-/// dispatch licensing work to the main thread while their factory is being enumerated.
-void PluginScanWorker::handleAsyncUpdate()
-{
-    for (;;) {
-        juce::MemoryBlock request;
-
-        {
-            const std::scoped_lock lock(pendingRequestsMutex);
-            if (pendingRequests.empty()) {
-                return;
-            }
-
-            request = std::move(pendingRequests.front());
-            pendingRequests.pop();
-        }
-
-        sendResults(scan(request));
-    }
-}
-
-/// Loads the requested plugin file and returns the plugin descriptions it contains.
-juce::OwnedArray<juce::PluginDescription> PluginScanWorker::scan(const juce::MemoryBlock& request) const
-{
-    juce::MemoryInputStream stream(request, false);
-    const auto formatName = stream.readString();
-    const auto fileOrIdentifier = stream.readString();
-
-    juce::OwnedArray<juce::PluginDescription> results;
-
-    for (auto* format : formatManager.getFormats()) {
-        if (format->getName() == formatName) {
-            utils::logInfo("Scanning {} plugin: {}", formatName, fileOrIdentifier.quoted());
-            format->findAllTypesForFile(results, fileOrIdentifier);
-            utils::logInfo("Found {} plugin types in {}", results.size(), fileOrIdentifier.quoted());
-            return results;
-        }
-    }
-
-    utils::logWarn("Unknown plugin format {} for {}", formatName.quoted(), fileOrIdentifier.quoted());
-    return results;
-}
-
-/// Serializes the descriptions as XML and sends them to the main process.
-void PluginScanWorker::sendResults(const juce::OwnedArray<juce::PluginDescription>& results)
-{
-    juce::XmlElement xml(resultsXmlTag);
-
-    for (const auto* description : results) {
-        xml.addChildElement(description->createXml().release());
-    }
-
-    const auto text = xml.toString();
-    sendMessageToCoordinator({text.toRawUTF8(), text.getNumBytesAsUTF8()});
-}
-
-/// Owns one launched worker process and hands its replies to the waiting scan call.
-/// Replies and connection loss arrive on the connection thread,
-/// while the scan call waits on whichever thread KnownPluginList scans from.
-class PluginScanWorkerProcess final : juce::ChildProcessCoordinator
-{
-public:
-    /// Launches this executable as a scan worker.
-    /// Check isRunning afterwards, since the launch can fail.
-    PluginScanWorkerProcess()
-    {
-        // The worker's stdout and stderr are not read, so do not capture them.
-        // An undrained pipe would block the worker once it fills up.
-        running = launchWorkerProcess(
-            juce::File::getSpecialLocation(juce::File::currentExecutableFile), pluginScanWorkerProcessUid, 0, 0
-        );
-    }
-
-    /// Kills the worker process.
-    ~PluginScanWorkerProcess() override
-    {
-        killWorkerProcess();
-    }
-
-    PluginScanWorkerProcess(const PluginScanWorkerProcess&) = delete;
-    PluginScanWorkerProcess& operator=(const PluginScanWorkerProcess&) = delete;
-    PluginScanWorkerProcess(PluginScanWorkerProcess&&) = delete;
-    PluginScanWorkerProcess& operator=(PluginScanWorkerProcess&&) = delete;
-
-    /// True when the worker process was launched and connected.
-    [[nodiscard]] bool isRunning() const noexcept
-    {
-        return running;
-    }
-
-    /// True once the worker process has gone away.
-    [[nodiscard]] bool hasLostConnection()
-    {
-        const std::scoped_lock lock(mutex);
-        return connectionLost;
-    }
-
-    /// Sends a scan request to the worker. Returns false when the worker is unreachable.
-    bool sendRequest(const juce::MemoryBlock& request)
-    {
-        return sendMessageToWorker(request);
-    }
-
-    /// Waits a short while for the reply to the last request.
-    /// Returns a timeout response when nothing arrived yet, so the caller can check for cancellation.
-    /// A reply wins over a lost connection that arrived with it,
-    /// since the worker finished the plugin before it went away and the plugin must not be blacklisted.
-    PluginScanResponse waitForResponse()
-    {
-        std::unique_lock lock(mutex);
-
-        if (!condition.wait_for(lock, responsePollInterval, [this] { return gotResult || connectionLost; })) {
-            return {};
-        }
-
-        PluginScanResponse response;
-        response.state = gotResult ? PluginScanResponseState::gotResult : PluginScanResponseState::connectionLost;
-        response.xml = std::move(resultXml);
-        gotResult = false;
-        return response;
-    }
-
-private:
-    /// Stores the worker's reply and wakes the waiting scan call.
-    void handleMessageFromWorker(const juce::MemoryBlock& message) override
-    {
-        const std::scoped_lock lock(mutex);
-        resultXml = juce::parseXML(message.toString());
-        gotResult = true;
-        condition.notify_one();
-    }
-
-    /// Records that the worker died, usually because the plugin crashed it, and wakes the waiting scan call.
-    void handleConnectionLost() override
-    {
-        const std::scoped_lock lock(mutex);
-        connectionLost = true;
-        condition.notify_one();
-    }
-
-    /// Guards the reply state below, which the coordinator thread writes and the scan call reads.
-    std::mutex mutex;
-    /// Wakes the scan call when a reply arrives or the worker goes away.
-    std::condition_variable condition;
-    /// The plugin descriptions of the last reply.
-    std::unique_ptr<juce::XmlElement> resultXml;
-    /// True once a reply to the current request arrived.
-    bool gotResult {false};
-    /// True once the worker process went away.
-    bool connectionLost {false};
-    /// True when the worker process was launched and connected.
-    bool running {false};
-
-    JUCE_LEAK_DETECTOR(PluginScanWorkerProcess)
-};
-
-/// Creates the scanner without starting a worker.
-/// The worker process is launched on the first scan request, and relaunched after a crash or a cancelled scan.
-/// The optional callbacks let the owner coordinate the scan with other processes,
-/// for example through a PluginScanLock.
-OutOfProcessPluginScanner::OutOfProcessPluginScanner(
-    ScanStartingCallback scanStartingCallback,
-    ScanFinishedCallback scanFinishedCallback
-) :
-    onScanStarting(std::move(scanStartingCallback)),
-    onScanFinished(std::move(scanFinishedCallback))
-{}
-
-/// Stops the worker process, if one is running.
-OutOfProcessPluginScanner::~OutOfProcessPluginScanner() = default;
-
-/// Scans one plugin file in the worker process and adds the descriptions it found.
-/// Blocks until the worker replies, the worker process dies, the scan is cancelled, or the per-plugin timeout passes.
-/// A worker that times out is dropped, since it may be stuck inside the plugin.
-/// Returns false only when the worker crashed, which makes KnownPluginList blacklist the plugin.
-bool OutOfProcessPluginScanner::findPluginTypesFor(
-    juce::AudioPluginFormat& format,
-    juce::OwnedArray<juce::PluginDescription>& result,
-    const juce::String& fileOrIdentifier
-)
-{
-    if (!scanStarted) {
-        scanStarted = true;
-        scanSkipped = onScanStarting != nullptr && !onScanStarting([this] { return shouldExit(); });
-        if (scanSkipped) {
-            // Ends the scan after this plugin, without listing the plugins it did not load as failed.
-            abandonScan();
-        }
-    }
-
-    if (scanSkipped) {
-        // Report the plugin as scanned without loading it, so it is not blacklisted.
-        return true;
-    }
-
-    if (worker == nullptr) {
-        worker = std::make_unique<PluginScanWorkerProcess>();
-
-        if (!worker->isRunning()) {
-            // Without a worker there is nothing to isolate the plugin with.
-            // Skip it instead of blacklisting, so a later scan can try again.
-            utils::logErrorAlways("Could not launch the plugin scan worker process");
-            worker.reset();
-            return true;
-        }
-    }
-
-    if (!worker->sendRequest(createScanRequest(format.getName(), fileOrIdentifier))) {
-        utils::logWarn("Plugin scan worker is not reachable, skipping {}", fileOrIdentifier.quoted());
-        worker.reset();
-        return true;
-    }
-
-    const auto deadline = std::chrono::steady_clock::now() + pluginScanTimeout;
-
-    for (;;) {
-        if (shouldExit()) {
-            // The scan was cancelled. Drop the worker, which may be stuck inside the plugin.
-            worker.reset();
-            return true;
-        }
-
-        auto [state, xml] = worker->waitForResponse();
-
-        switch (state) {
-            case PluginScanResponseState::timeout:
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    // Skipped instead of blacklisted, so a plugin that was only slow is scanned again next time.
-                    utils::logWarn(
-                        "Plugin scan timed out after {} seconds, skipping {}",
-                        pluginScanTimeout.count(),
-                        fileOrIdentifier.quoted()
-                    );
-                    timedOutFiles.addIfNotAlreadyThere(fileOrIdentifier);
-                    worker.reset();
-                    return true;
-                }
-                continue;
-
-            case PluginScanResponseState::connectionLost:
-                utils::logWarn("Plugin scan worker crashed while scanning {}", fileOrIdentifier.quoted());
-                worker.reset();
-                return false;
-
-            case PluginScanResponseState::gotResult:
-                addDescriptions(xml.get(), result);
-                // A worker that went away after replying is relaunched for the next plugin.
-                if (worker->hasLostConnection()) {
-                    worker.reset();
-                }
-                return true;
-        }
-    }
-}
-
-/// Stops the worker process once the scan has finished and invokes the scan-finished callback.
-/// KnownPluginList clears the abandon request only after this call, so shouldExit still tells a cancelled scan apart.
-void OutOfProcessPluginScanner::scanFinished()
-{
-    worker.reset();
-
-    if (scanStarted && onScanFinished != nullptr) {
-        onScanFinished(!scanSkipped && !shouldExit());
-    }
-
-    scanStarted = false;
-    scanSkipped = false;
-}
-
-//==============================================================================
 
 /// Creates the lock without taking it.
 /// Every process that uses the same name shares the lock, and tests pass their own name to stay apart from the app.

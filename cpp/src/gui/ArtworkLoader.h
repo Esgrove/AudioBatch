@@ -62,35 +62,35 @@ public:
     ArtworkLoader(ArtworkLoader&&) = delete;
     ArtworkLoader& operator=(ArtworkLoader&&) = delete;
 
-    static juce::Image loadArtworkThumbnail(const juce::File& file, const utils::CancellationCheck& isCancelled);
     static juce::Image decodeThumbnail(std::span<const std::byte> encoded);
-
-    std::uint64_t request(const juce::File& file);
-
-    void cancel();
-    void cancelAndWait();
+    static juce::Image loadArtworkThumbnail(const juce::File& file, const utils::CancellationCheck& isCancelled);
 
     [[nodiscard]] bool canAdopt(
         const utils::FileIdentity& identity,
         std::uint64_t resultGeneration,
         const juce::File& selectedFile
     ) const;
+    std::uint64_t request(const juce::File& file);
+
+    void cancel();
+    void cancelAndWait();
 
 private:
-    void run(const std::stop_token& stopToken);
-    void process(const ArtworkRequest& active, const std::stop_token& stopToken) const;
-
     [[nodiscard]] bool isCurrentGeneration(std::uint64_t resultGeneration) const;
+
+    void process(const ArtworkRequest& active, const std::stop_token& stopToken) const;
+    void run(const std::stop_token& stopToken);
 
     /// Receives the thumbnail of each current request on the worker thread.
     Completion completion;
     /// Reads and decodes the artwork, replaceable in tests.
     Decoder decode;
 
-    /// Counts the requests and cancellations, so a result of an older request is never delivered.
-    std::atomic<std::uint64_t> generation {0};
     /// True once the loader stopped for good.
     std::atomic<bool> stopped {false};
+    /// Counts the requests and cancellations, so a result of an older request is never delivered.
+    std::atomic<std::uint64_t> generation {0};
+
     /// Wakes the worker when a request arrives or the loader stops.
     std::condition_variable_any condition;
     /// Guards the pending request.

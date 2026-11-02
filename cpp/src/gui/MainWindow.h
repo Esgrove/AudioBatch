@@ -28,31 +28,40 @@ public:
     MainWindow(MainWindow&&) = delete;
     MainWindow& operator=(MainWindow&&) = delete;
 
-    void closeButtonPressed() override;
     void openPaths(const juce::StringArray& paths) const;
     void showAndActivate();
 
-private:
-    ApplicationCommandTarget* getNextCommandTarget() override;
-    bool perform(const InvocationInfo& info) override;
-    juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String& menuName) override;
-    juce::StringArray getMenuBarNames() override;
-    void getAllCommands(juce::Array<juce::CommandID>& commands) override;
-    void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override;
-    void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
+    // juce::DocumentWindow
+    void closeButtonPressed() override;
 
+private:
     AudioBatchComponent& getAudioBatch() const;
+    [[nodiscard]] juce::String getNormalizeAllLabel() const;
+
     void appendPluginOptionsMenuItems(juce::PopupMenu& menu);
     void handlePluginChoiceMenuItem(int menuItemID) const;
-    [[nodiscard]] juce::String getNormalizeAllLabel() const;
+
+    // juce::MenuBarModel
+    juce::StringArray getMenuBarNames() override;
+    juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String& menuName) override;
+
+    void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
+
+    // juce::ApplicationCommandTarget
+    ApplicationCommandTarget* getNextCommandTarget() override;
+
+    bool perform(const InvocationInfo& info) override;
+
+    void getAllCommands(juce::Array<juce::CommandID>& commands) override;
+    void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override;
 
     /// Runs the menu bar commands and their keyboard shortcuts.
     juce::ApplicationCommandManager commandManager;
-    /// The dark look of the window and every component in it.
-    std::unique_ptr<CustomLookAndFeel> lookAndFeel {std::make_unique<CustomLookAndFeel>(true)};
     /// The plugins the Add Plugin submenu of the menu bar was last built from, in menu id order.
     juce::Array<juce::PluginDescription> pluginMenuTypes;
 
+    /// The dark look of the window and every component in it.
+    std::unique_ptr<CustomLookAndFeel> lookAndFeel {std::make_unique<CustomLookAndFeel>(true)};
     /// The window content, shown without transferring ownership to the window.
     /// Declared after the look-and-feel it paints with, and destroyed explicitly before it in the destructor.
     std::unique_ptr<AudioBatchComponent> content;

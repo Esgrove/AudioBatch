@@ -47,8 +47,8 @@ public:
     ~JuceSuiteTest() override = default;
 
     JuceSuiteTest(const JuceSuiteTest&) = delete;
-    JuceSuiteTest& operator=(const JuceSuiteTest&) = delete;
     JuceSuiteTest(JuceSuiteTest&&) = delete;
+    JuceSuiteTest& operator=(const JuceSuiteTest&) = delete;
     JuceSuiteTest& operator=(JuceSuiteTest&&) = delete;
 
 private:

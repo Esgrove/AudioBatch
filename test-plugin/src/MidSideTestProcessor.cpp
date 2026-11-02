@@ -69,8 +69,8 @@ MidSideTestProcessor::MidSideTestProcessor() :
     ),
     parameters(*this, nullptr, stateTag, createParameterLayout()),
     gain(getParameterValue(parameters, gainParameterId)),
-    width(getParameterValue(parameters, widthParameterId)),
-    latency(getParameterValue(parameters, latencyParameterId))
+    latency(getParameterValue(parameters, latencyParameterId)),
+    width(getParameterValue(parameters, widthParameterId))
 {}
 
 /// Returns the plugin name.

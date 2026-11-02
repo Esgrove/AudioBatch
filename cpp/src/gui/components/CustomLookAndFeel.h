@@ -1,7 +1,4 @@
-/// Application-wide JUCE look-and-feel.
-/// Declares CustomLookAndFeel with the project fonts and colour palette,
-/// custom title bar buttons and title bar drawing for Windows,
-/// and styled tooltips, popup menus, buttons, and combo boxes.
+/// Application-wide JUCE look-and-feel, fonts, palette and desktop control drawing.
 
 #pragma once
 #include "gui/GuiLayout.h"
@@ -10,145 +7,30 @@
 
 namespace audiobatch
 {
-/// Opaque ARGB values of the project colour palette.
-/// The CustomLookAndFeel colour accessors and its default colour scheme are built from these values.
+/// Opaque ARGB values shared by palette accessors and the default colour scheme.
 namespace palette_argb
 {
-/// Palette colour #76A8DA.
 constexpr juce::uint32 blue {0xff76A8DA};
-/// Palette colour #69B786.
 constexpr juce::uint32 green {0xff69B786};
-/// Palette colour #121315.
 constexpr juce::uint32 greyDark {0xff121315};
-/// Palette colour #DCE0E5.
 constexpr juce::uint32 greyLight {0xffDCE0E5};
-/// Palette colour #30343C.
 constexpr juce::uint32 greyMedium {0xff30343C};
-/// Palette colour #202329.
 constexpr juce::uint32 greyMediumDark {0xff202329};
-/// Palette colour #686F79.
 constexpr juce::uint32 greyMiddle {0xff686F79};
-/// Palette colour #AAB0B9.
 constexpr juce::uint32 greyMiddleLight {0xffAAB0B9};
-/// Palette colour #1A1C20.
 constexpr juce::uint32 greySemiDark {0xff1A1C20};
-/// Palette colour #808791.
 constexpr juce::uint32 greySemiLight {0xff808791};
-/// Palette colour #F3F5F7.
 constexpr juce::uint32 greySuperLight {0xffF3F5F7};
-/// Palette colour #DD8B65.
 constexpr juce::uint32 orange {0xffDD8B65};
-/// Palette colour #D66565.
 constexpr juce::uint32 red {0xffD66565};
-/// Palette colour #CEAF6C.
 constexpr juce::uint32 yellow {0xffCEAF6C};
 }  // namespace palette_argb
 
-/// Application-specific look-and-feel with the project's fonts, colours, and popup styling.
+/// Stateful application theme with the project's fonts, colours and popup styling.
 class CustomLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     explicit CustomLookAndFeel(bool darkModeEnabled);
-
-    /// Switches the active theme palette without rebuilding the look-and-feel object.
-    [[maybe_unused]] void setDarkTheme(const bool darkModeEnabled)
-    {
-        darkTheme = darkModeEnabled;
-    }
-
-    juce::Button* createDocumentWindowButton(int buttonType) override;
-
-    void drawDocumentWindowTitleBar(
-        juce::DocumentWindow& window,
-        juce::Graphics& graphics,
-        int width,
-        int height,
-        int titleSpaceX,
-        int titleSpaceWidth,
-        const juce::Image* icon,
-        bool drawTitleTextOnLeft
-    ) override;
-
-    void drawTooltip(juce::Graphics& graphics, const juce::String& text, int width, int height) override;
-
-    void drawToggleButton(
-        juce::Graphics& graphics,
-        juce::ToggleButton& button,
-        bool shouldDrawButtonAsHighlighted,
-        bool shouldDrawButtonAsDown
-    ) override;
-
-    void drawTableHeaderColumn(
-        juce::Graphics& graphics,
-        juce::TableHeaderComponent& header,
-        const juce::String& columnName,
-        int columnId,
-        int width,
-        int height,
-        bool isMouseOver,
-        bool isMouseDown,
-        int columnFlags
-    ) override;
-
-    static juce::TextLayout layoutTooltipText(const juce::String& text, juce::Colour colour) noexcept;
-
-    void drawMenuBarItem(
-        juce::Graphics& graphics,
-        int width,
-        int height,
-        int itemIndex,
-        const juce::String& itemText,
-        bool isMouseOverItem,
-        bool isMenuOpen,
-        bool isMouseOverBar,
-        juce::MenuBarComponent& menuBar
-    ) override;
-
-    void drawPopupMenuItem(
-        juce::Graphics& graphics,
-        const juce::Rectangle<int>& area,
-        bool isSeparator,
-        bool isActive,
-        bool isHighlighted,
-        bool isTicked,
-        bool hasSubMenu,
-        const juce::String& text,
-        const juce::String& shortcutKeyText,
-        const juce::Drawable* icon,
-        const juce::Colour* textColourToUse
-    ) override;
-
-    void getIdealPopupMenuItemSize(
-        const juce::String& text,
-        bool isSeparator,
-        int standardMenuItemHeight,
-        int& idealWidth,
-        int& idealHeight
-    ) override;
-
-    juce::Font getMenuBarFont(juce::MenuBarComponent& menuBar, int itemIndex, const juce::String& itemText) override;
-
-    juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;
-
-    juce::Font getPopupMenuFont() override;
-
-    /// Uses the monospaced font for combo box text so numeric choices align.
-    juce::Font getComboBoxFont(juce::ComboBox& /*comboBox*/) override
-    {
-        return get_mono_font();
-    }
-
-    /// Returns the monospaced font used for tabular values and status text.
-    [[nodiscard]] static juce::Font get_mono_font()
-    {
-        return getMonoBaseFont().withHeight(layout::theme::monoFontHeight);
-    }
-
-    [[nodiscard]] static const juce::Font& getTextFont();
-
-    [[nodiscard]] static const juce::Font& getMonoBaseFont();
-
-    [[nodiscard]] static juce::Font getTableHeaderFont(int headerHeight);
 
     /// Palette colour #76A8DA.
     [[nodiscard]] static juce::Colour blue() noexcept
@@ -234,6 +116,97 @@ public:
         return juce::Colour {palette_argb::yellow};
     }
 
+    /// Returns the monospaced font used for tabular values and status text.
+    [[nodiscard]] static juce::Font get_mono_font()
+    {
+        return getMonoBaseFont().withHeight(layout::theme::monoFontHeight);
+    }
+
+    [[nodiscard]] static const juce::Font& getMonoBaseFont();
+    [[nodiscard]] static juce::Font getTableHeaderFont(int headerHeight);
+    [[nodiscard]] static const juce::Font& getTextFont();
+
+    static juce::TextLayout layoutTooltipText(const juce::String& text, juce::Colour colour) noexcept;
+
+    /// Switches the active palette without rebuilding the look-and-feel object.
+    [[maybe_unused]] void setDarkTheme(const bool darkModeEnabled)
+    {
+        darkTheme = darkModeEnabled;
+    }
+
+    // juce::LookAndFeel_V4
+    juce::Button* createDocumentWindowButton(int buttonType) override;
+
+    /// Uses the monospaced font so numeric choices align.
+    juce::Font getComboBoxFont(juce::ComboBox& /*comboBox*/) override
+    {
+        return get_mono_font();
+    }
+
+    juce::Font getMenuBarFont(juce::MenuBarComponent& menuBar, int itemIndex, const juce::String& itemText) override;
+    juce::Font getPopupMenuFont() override;
+    juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;
+
+    void drawDocumentWindowTitleBar(
+        juce::DocumentWindow& window,
+        juce::Graphics& graphics,
+        int width,
+        int height,
+        int titleSpaceX,
+        int titleSpaceWidth,
+        const juce::Image* icon,
+        bool drawTitleTextOnLeft
+    ) override;
+    void drawMenuBarItem(
+        juce::Graphics& graphics,
+        int width,
+        int height,
+        int itemIndex,
+        const juce::String& itemText,
+        bool isMouseOverItem,
+        bool isMenuOpen,
+        bool isMouseOverBar,
+        juce::MenuBarComponent& menuBar
+    ) override;
+    void drawPopupMenuItem(
+        juce::Graphics& graphics,
+        const juce::Rectangle<int>& area,
+        bool isSeparator,
+        bool isActive,
+        bool isHighlighted,
+        bool isTicked,
+        bool hasSubMenu,
+        const juce::String& text,
+        const juce::String& shortcutKeyText,
+        const juce::Drawable* icon,
+        const juce::Colour* textColourToUse
+    ) override;
+    void drawTableHeaderColumn(
+        juce::Graphics& graphics,
+        juce::TableHeaderComponent& header,
+        const juce::String& columnName,
+        int columnId,
+        int width,
+        int height,
+        bool isMouseOver,
+        bool isMouseDown,
+        int columnFlags
+    ) override;
+    void drawToggleButton(
+        juce::Graphics& graphics,
+        juce::ToggleButton& button,
+        bool shouldDrawButtonAsHighlighted,
+        bool shouldDrawButtonAsDown
+    ) override;
+    void drawTooltip(juce::Graphics& graphics, const juce::String& text, int width, int height) override;
+    void getIdealPopupMenuItemSize(
+        const juce::String& text,
+        bool isSeparator,
+        int standardMenuItemHeight,
+        int& idealWidth,
+        int& idealHeight
+    ) override;
+
 private:
     const ColourScheme customColourScheme {
         // windowBackground
@@ -255,8 +228,7 @@ private:
         // menuText
         palette_argb::greyLight,
     };
-
-    /// True for the dark variant of the palette, which the window buttons follow.
+    /// True for the dark palette variant followed by the window buttons.
     bool darkTheme;
 };
 }  // namespace audiobatch

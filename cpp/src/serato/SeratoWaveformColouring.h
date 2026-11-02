@@ -33,6 +33,14 @@ struct ColouredThumbnailImage {
 /// Bounds gradient storage independently of tag size and offscreen slice count.
 inline constexpr int maxWaveformGradientStops {4096};
 
+[[nodiscard]] ColouredThumbnailImage renderColouredThumbnail(
+    const juce::Graphics& graphics,
+    juce::AudioThumbnail& thumbnail,
+    juce::Rectangle<int> waveformBounds,
+    juce::Range<double> visibleRange,
+    float displayGain,
+    const juce::ColourGradient& gradient
+);
 [[nodiscard]] juce::Colour colourForOverviewSlice(
     const std::array<std::uint8_t, Overview::bandCount>& cells,
     juce::Colour fallback
@@ -46,14 +54,6 @@ inline constexpr int maxWaveformGradientStops {4096};
     juce::Colour fallback
 );
 
-[[nodiscard]] ColouredThumbnailImage renderColouredThumbnail(
-    const juce::Graphics& graphics,
-    juce::AudioThumbnail& thumbnail,
-    juce::Rectangle<int> waveformBounds,
-    juce::Range<double> visibleRange,
-    float displayGain,
-    const juce::ColourGradient& gradient
-);
 [[nodiscard]] bool isRenderedFor(const ColouredThumbnailImage& rendered, const juce::Graphics& graphics);
 
 void drawColouredThumbnail(juce::Graphics& graphics, const ColouredThumbnailImage& rendered);

@@ -56,6 +56,7 @@ struct Analysis {
 
 /// Serato tempo and gain adjustments in beats per minute and decibels.
 struct Autotags {
+    // Keep the tempo and gain fields in the order used by aggregate tag values.
     /// Tempo that Serato detected, in beats per minute.
     double bpm {0};
     /// Gain that Serato's automatic gain applies, in decibels.
@@ -66,6 +67,7 @@ struct Autotags {
 
 /// A grid anchor in seconds. The final anchor has BPM instead of beats until the next anchor.
 struct BeatGridMarker {
+    // Preserve position, beat count, and terminal tempo order in aggregate grid anchors.
     /// Position of the anchor in the track, in seconds.
     double positionSeconds {0};
     /// Beats from this anchor to the next one, zero for the final anchor.
@@ -82,6 +84,7 @@ struct BeatGrid {
 
 /// An owned hot cue with its original zero-based index and millisecond position.
 struct CuePoint {
+    // Preserve the position, slot, colour, label aggregate contract used by marker readers and clients.
     /// Position of the cue in the track, in milliseconds.
     std::uint32_t positionMilliseconds {0};
     /// Zero-based hot cue slot, which the number keys jump to.
@@ -94,6 +97,7 @@ struct CuePoint {
 
 /// An owned saved loop and its lock state.
 struct Loop {
+    // Preserve the source-record field order used by aggregate marker values.
     /// Signed start of the loop in milliseconds, retaining negative lead-in positions.
     std::int32_t startMilliseconds {0};
     /// End of the loop in the track, in milliseconds, never before its start.
@@ -110,6 +114,7 @@ struct Loop {
 
 /// Marker records retain absent colour and BPM lock separately from explicit values.
 struct Markers {
+    // Preserve the cue, loop, colour, and lock order of aggregate marker values.
     /// The hot cues in the order the tag stores them.
     std::vector<CuePoint> cues;
     /// The saved loops in the order the tag stores them.
@@ -128,25 +133,24 @@ struct TrackInfo {
         return !bpm && key.isEmpty() && album.isEmpty() && genre.isEmpty() && year.isEmpty() && comment.isEmpty();
     }
 
-    /// Tempo from the BPM tag, in beats per minute.
-    std::optional<double> bpm;
-    /// Musical key from the INITIALKEY tag.
-    juce::String key;
     /// Album name.
     juce::String album;
-    /// Genre name.
-    juce::String genre;
-    /// Release year, or the date as written when it does not start with a year.
-    juce::String year;
     /// Comment, or the DESCRIPTION of a Vorbis comment that has no COMMENT.
     juce::String comment;
+    /// Genre name.
+    juce::String genre;
+    /// Musical key from the INITIALKEY tag.
+    juce::String key;
+    /// Release year, or the date as written when it does not start with a year.
+    juce::String year;
+
+    /// Tempo from the BPM tag, in beats per minute.
+    std::optional<double> bpm;
 };
 
 /// Owned independent tag values for delivery from a worker to the preview UI.
 /// Each kind is empty when the file has no usable tag of it.
 struct SeratoData {
-    /// The overview waveform colours.
-    std::optional<Overview> overview;
     /// The version of the Serato analysis.
     std::optional<Analysis> analysis;
     /// The tempo and gains of the Serato Autotags tag.
@@ -155,6 +159,8 @@ struct SeratoData {
     std::optional<BeatGrid> beatGrid;
     /// The cues, loops, track colour, and grid lock.
     std::optional<Markers> markers;
+    /// The overview waveform colours.
+    std::optional<Overview> overview;
     /// The standard tempo, key, album, genre, year, and comment tags.
     std::optional<TrackInfo> trackInfo;
 };
@@ -172,18 +178,18 @@ static_assert(std::variant_size_v<TagValue> == allTagKinds.size());
 
 /// Reports one requested kind, with the owned value of a present tag or the status that explains why there is none.
 struct TagReadResult {
-    /// Returns the result of a present tag, whose kind follows from the value.
-    [[nodiscard]] static TagReadResult present(TagValue tagValue)
-    {
-        const auto tagKind = kindOf(tagValue);
-        return {.kind = tagKind, .value = std::move(tagValue)};
-    }
-
     /// Returns the result of a kind without a value, which must not have the status ReadStatus::present.
     [[nodiscard]] static TagReadResult missing(const TagKind tagKind, const ReadStatus status)
     {
         jassert(status != ReadStatus::present);
         return {.kind = tagKind, .value = std::unexpected(status)};
+    }
+
+    /// Returns the result of a present tag, whose kind follows from the value.
+    [[nodiscard]] static TagReadResult present(TagValue tagValue)
+    {
+        const auto tagKind = kindOf(tagValue);
+        return {.kind = tagKind, .value = std::move(tagValue)};
     }
 
     /// Returns ReadStatus::present for a tag with a value, otherwise the reason it has none.

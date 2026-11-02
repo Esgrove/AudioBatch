@@ -63,8 +63,8 @@ public:
     }
 
     IntegrationDirectory(const IntegrationDirectory&) = delete;
-    IntegrationDirectory& operator=(const IntegrationDirectory&) = delete;
     IntegrationDirectory(IntegrationDirectory&&) = delete;
+    IntegrationDirectory& operator=(const IntegrationDirectory&) = delete;
     IntegrationDirectory& operator=(IntegrationDirectory&&) = delete;
 
     /// Returns the root while retaining its ownership in this scope.
@@ -128,51 +128,20 @@ public:
     ~AudioBatchIntegrationTest() override = default;
 
     AudioBatchIntegrationTest(const AudioBatchIntegrationTest&) = delete;
-    AudioBatchIntegrationTest& operator=(const AudioBatchIntegrationTest&) = delete;
     AudioBatchIntegrationTest(AudioBatchIntegrationTest&&) = delete;
+    AudioBatchIntegrationTest& operator=(const AudioBatchIntegrationTest&) = delete;
     AudioBatchIntegrationTest& operator=(AudioBatchIntegrationTest&&) = delete;
 
 private:
-    /// Dispatches a workflow with no native window or installed plugins.
-    void TestBody() override
+    /// Selects by stable source identity through the actual table callback.
+    static bool selectFile(AudioBatchComponent& view, const juce::File& file)
     {
-        switch (workflow) {
-            case IntegrationWorkflow::storage:
-                storageIsolation();
-                break;
-            case IntegrationWorkflow::openAndSort:
-                openAndSort();
-                break;
-            case IntegrationWorkflow::normalize:
-                normalizeSelection();
-                break;
-            case IntegrationWorkflow::cancelAndClear:
-                cancelAndClear();
-                break;
-            case IntegrationWorkflow::restore:
-                restorePreferencesAndGain();
-                break;
+        const auto row = view.analysisResults.findRow(file.getFullPathName());
+        if (!row) {
+            return false;
         }
-    }
-
-    /// Builds per-view configuration with no process-global environment mutation.
-    [[nodiscard]] AudioBatchComponentConfig configuration() const
-    {
-        AudioBatchComponentConfig config;
-        config.cacheDatabaseFile = temporary.get().getChildFile("AudioBatch/analysis.db");
-        config.settingsOptions = utils::createApplicationSettingsOptions(temporary.get());
-        return config;
-    }
-
-    /// Copies a small committed fixture before any view can modify it.
-    [[nodiscard]] juce::File copyFixture(const juce::String& name) const
-    {
-        const auto source = juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getChildFile(name);
-        const auto target = temporary.get().getChildFile(name);
-        if (!source.copyFileTo(target)) {
-            throw std::runtime_error(utils::format("Could not copy fixture {}", name).toStdString());
-        }
-        return target;
+        view.resultsTable.selectRow(*row);
+        return view.getSelectedRecordPaths().contains(file.getFullPathName());
     }
 
     /// Waits for completed rows, including failures, and the view's normal idle transition.
@@ -186,17 +155,6 @@ private:
         });
     }
 
-    /// Selects by stable source identity through the actual table callback.
-    static bool selectFile(AudioBatchComponent& view, const juce::File& file)
-    {
-        const auto row = view.analysisResults.findRow(file.getFullPathName());
-        if (!row) {
-            return false;
-        }
-        view.resultsTable.selectRow(*row);
-        return view.getSelectedRecordPaths().contains(file.getFullPathName());
-    }
-
     /// Checks both waveform readiness and source ownership after asynchronous enrichment.
     static bool waitForWaveform(AudioBatchComponent& view, const juce::File& file)
     {
@@ -208,214 +166,266 @@ private:
         });
     }
 
-    /// Pins invalid override rejection and the exact isolated settings/plugin directory without touching native paths.
-    void storageIsolation()
-    {
-        EXPECT_FALSE(utils::parseDataRootOverride({}));
-        EXPECT_THROW(juce::ignoreUnused(utils::parseDataRootOverride("relative/root")), std::invalid_argument);
-        EXPECT_THROW(juce::ignoreUnused(utils::parseDataRootOverride("~/root")), std::invalid_argument);
-        EXPECT_THROW(juce::ignoreUnused(utils::parseDataRootOverride("   ")), std::invalid_argument);
-        const auto root = utils::parseDataRootOverride(temporary.get().getFullPathName());
-        if (!root) {
-            ADD_FAILURE() << "The explicit absolute root was not accepted";
-            return;
-        }
-        EXPECT_EQ(*root, temporary.get());
-        EXPECT_EQ(utils::defaultAnalysisDatabaseFile(root), temporary.get().getChildFile("AudioBatch/analysis.db"));
-        const auto isolatedLock = utils::scopedPluginScanLockName(pluginScanLockName, root);
-        EXPECT_NE(isolatedLock, juce::String(pluginScanLockName));
-        EXPECT_EQ(isolatedLock, utils::scopedPluginScanLockName(pluginScanLockName, root));
-        EXPECT_NE(
-            isolatedLock, utils::scopedPluginScanLockName(pluginScanLockName, temporary.get().getChildFile("other"))
-        );
-        EXPECT_EQ(utils::scopedPluginScanLockName(pluginScanLockName, std::nullopt), juce::String(pluginScanLockName));
-        const auto logger = utils::createDefaultLogger("audiobatch", "scanner", root);
-        EXPECT_EQ(logger->getLogFile(), temporary.get().getChildFile("AudioBatch/logs/scanner.log"));
-        EXPECT_TRUE(logger->getLogFile().existsAsFile());
-        const auto options = utils::createApplicationSettingsOptions(root);
-        EXPECT_EQ(options.getDefaultFile(), temporary.get().getChildFile("AudioBatch/settings/AudioBatch.settings"));
-        AudioBatchComponent view(configuration());
-        EXPECT_EQ(view.analysisCache.getDatabaseFile(), temporary.get().getChildFile("AudioBatch/analysis.db"));
-        EXPECT_EQ(view.pluginAppProperties.getUserSettings()->getFile(), options.getDefaultFile());
-        EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
-        EXPECT_EQ(view.getPeer(), nullptr);
-        view.showAudioSettingsWindow();
-        EXPECT_EQ(view.settingsWindow.getComponent(), nullptr);
-        juce::File defaultRoot;
-        {
-            AudioBatchComponent defaultView;
-            defaultRoot = defaultView.configuration.testDirectory->getFile();
-            EXPECT_TRUE(defaultRoot.isDirectory());
-            EXPECT_EQ(defaultView.analysisCache.getDatabaseFile(), defaultRoot.getChildFile("AudioBatch/analysis.db"));
-            EXPECT_EQ(
-                defaultView.pluginAppProperties.getUserSettings()->getFile(),
-                defaultRoot.getChildFile("AudioBatch/settings/AudioBatch.settings")
-            );
-            EXPECT_FALSE(defaultView.previewPlayer.getOutputStatus().open);
-            EXPECT_NE(defaultRoot, temporary.get());
-        }
-        EXPECT_FALSE(defaultRoot.exists());
-    }
+    [[nodiscard]] AudioBatchComponentConfig configuration() const;
 
-    /// Opens valid and broken files and waits for real analysis.
-    /// Sorting keeps the selected inspector and waveform identity intact.
-    void openAndSort()
-    {
-        const auto valid = copyFixture("serato_rainbow_stereo_44100_16.flac");
-        const auto other = copyFixture("sine_mono_44100_16.wav");
-        const auto broken = copyFixture("broken.wav");
-        AudioBatchComponent view(configuration());
-        view.openPaths({valid.getFullPathName(), broken.getFullPathName(), other.getFullPathName()}, false);
-        ASSERT_TRUE(waitForRows(view, 3));
-        const auto brokenRow = view.analysisResults.findRow(broken.getFullPathName());
-        if (!brokenRow) {
-            ADD_FAILURE() << "The broken input was lost instead of producing an error row";
-            return;
-        }
-        EXPECT_TRUE(view.analysisResults[*brokenRow].hasError());
-        ASSERT_TRUE(selectFile(view, valid));
-        ASSERT_TRUE(waitForWaveform(view, valid));
-        ASSERT_TRUE(dispatchUntil([&] {
-            const auto metadata = view.preview.getSeratoData();
-            return metadata && metadata->overview.has_value();
-        }));
-        const auto metadataBeforeSort = view.preview.getSeratoData();
-        if (!metadataBeforeSort || !metadataBeforeSort->overview) {
-            ADD_FAILURE() << "The selected Serato metadata did not load";
-            return;
-        }
-        EXPECT_EQ(metadataBeforeSort->overview->slices.size(), 240U);
-        EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, valid.getFileName()));
-        view.resultsTable.getHeader().setSortColumnId(toColumnId(AudioFileTableColumn::name), false);
-        ASSERT_TRUE(dispatchUntil([&] { return view.sortState.primaryColumn == AudioFileTableColumn::name; }));
-        EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(valid.getFullPathName()));
-        EXPECT_EQ(view.preview.getFile(), valid);
-        const auto metadataAfterSort = view.preview.getSeratoData();
-        if (!metadataAfterSort || !metadataAfterSort->overview) {
-            ADD_FAILURE() << "Sorting discarded the selected Serato metadata";
-            return;
-        }
-        EXPECT_EQ(metadataAfterSort->overview->slices.size(), 240U);
-        EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, valid.getFileName()));
-        ASSERT_TRUE(waitForWaveform(view, valid));
-        EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
-        EXPECT_EQ(view.getPeer(), nullptr);
-    }
+    [[nodiscard]] juce::File copyFixture(const juce::String& name) const;
 
-    /// Converts only a copied WAV through the real Normalize control and follows the committed output everywhere.
-    void normalizeSelection()
-    {
-        const auto source = copyFixture("sine_stereo_44100_16.wav");
-        const auto output = source.withFileExtension(".aif");
-        AudioBatchComponent view(configuration());
-        view.openPaths({source.getFullPathName()}, false);
-        ASSERT_TRUE(waitForRows(view, 1));
-        ASSERT_TRUE(selectFile(view, source));
-        ASSERT_TRUE(waitForWaveform(view, source));
-        auto* normalize = findButton(view.previewWorkspace.normalizationTargetControl, "Normalize");
-        ASSERT_NE(normalize, nullptr);
-        ASSERT_TRUE(normalize->isEnabled());
-        normalize->onClick();
-        ASSERT_TRUE(dispatchUntil([&] {
-            return !view.isBackgroundWorkRunning()
-                && view.analysisResults.findRow(output.getFullPathName()).has_value();
-        }));
-        EXPECT_TRUE(output.existsAsFile());
-        EXPECT_FALSE(source.exists());
-        EXPECT_EQ(view.analysisResults.size(), 1);
-        EXPECT_FALSE(view.analysisResults.findRow(source.getFullPathName()));
-        EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(output.getFullPathName()));
-        EXPECT_EQ(view.preview.getFile(), output);
-        ASSERT_TRUE(waitForWaveform(view, output));
-        EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, output.getFileName()));
-        const auto outputRow = view.analysisResults.findRow(output.getFullPathName());
-        if (!outputRow) {
-            ADD_FAILURE() << "The output row was not retained";
-            return;
-        }
-        const auto& record = view.analysisResults[*outputRow];
-        EXPECT_TRUE(record.isReady());
-        EXPECT_NEAR(
-            static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak))),
-            AudioNormalizationOptions::defaultTargetPeakDbfs,
-            0.01
-        );
-        EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
-    }
+    void cancelAndClear();
+    void normalizeSelection();
+    void openAndSort();
+    void restorePreferencesAndGain();
+    void storageIsolation();
 
-    /// Cancels and clears before queued delivery.
-    /// Completes a new load to expose stale callbacks deterministically.
-    void cancelAndClear()
-    {
-        const auto first = copyFixture("sine_stereo_44100_16.wav");
-        const auto second = copyFixture("sine_mono_44100_16.wav");
-        AudioBatchComponent view(configuration());
-        view.openPaths({first.getFullPathName()}, false);
-        ASSERT_TRUE(view.isBackgroundWorkRunning());
-        view.cancelCurrentWork();
-        EXPECT_FALSE(view.isBackgroundWorkRunning());
-        view.clearAllRecords();
-        EXPECT_TRUE(view.analysisResults.empty());
-        view.openPaths({first.getFullPathName()}, false);
-        view.clearAllRecords();
-        view.openPaths({second.getFullPathName()}, false);
-        ASSERT_TRUE(waitForRows(view, 1));
-        ASSERT_TRUE(selectFile(view, second));
-        ASSERT_TRUE(waitForWaveform(view, second));
-        EXPECT_FALSE(view.analysisResults.findRow(first.getFullPathName()));
-        EXPECT_EQ(view.preview.getFile(), second);
-        EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(second.getFullPathName()));
-        view.clearAllRecords();
-        auto delivered = std::make_shared<bool>(false);
-        juce::MessageManager::callAsync([delivered] { *delivered = true; });
-        ASSERT_TRUE(dispatchUntil([&] { return *delivered; }));
-        EXPECT_TRUE(view.analysisResults.empty());
-        EXPECT_EQ(view.preview.getFile(), juce::File());
-        EXPECT_FALSE(view.previewWorkspace.thumbnail.getSourceIdentity());
-    }
-
-    /// Persists an explicit slider edit and a real preference action, then restores them in a new view instance.
-    void restorePreferencesAndGain()
-    {
-        const auto file = copyFixture("sine_stereo_44100_16.wav");
-        bool expectedPreference = false;
-        {
-            AudioBatchComponent view(configuration());
-            view.openPaths({file.getFullPathName()}, false);
-            ASSERT_TRUE(waitForRows(view, 1));
-            ASSERT_TRUE(selectFile(view, file));
-            view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
-            view.toggleLoudnessGraph();
-            expectedPreference = view.isLoudnessGraphEnabled();
-            AnalysisCache observer(temporary.get().getChildFile("AudioBatch/analysis.db"));
-            ASSERT_TRUE(dispatchUntil([&] {
-                const auto stored = observer.getAnalysis(file);
-                return stored && stored->customGain && juce::approximatelyEqual(stored->customGain->value, -3.0f);
-            }));
-        }
-        AudioBatchComponent recreated(configuration());
-        EXPECT_EQ(recreated.isLoudnessGraphEnabled(), expectedPreference);
-        recreated.openPaths({file.getFullPathName()}, false);
-        ASSERT_TRUE(waitForRows(recreated, 1));
-        ASSERT_TRUE(selectFile(recreated, file));
-        const auto restoredRow = recreated.analysisResults.findRow(file.getFullPathName());
-        if (!restoredRow) {
-            ADD_FAILURE() << "The restored file was not loaded";
-            return;
-        }
-        const auto& record = recreated.analysisResults[*restoredRow];
-        if (!record.customGain) {
-            ADD_FAILURE() << "The explicit custom gain was not restored";
-            return;
-        }
-        EXPECT_NEAR(record.customGain->value, -3.0f, 0.001f);
-        EXPECT_NEAR(recreated.previewWorkspace.gainSlider.getValue(), -3.0, 0.001);
-        EXPECT_FALSE(recreated.previewPlayer.getOutputStatus().open);
-    }
+    void TestBody() override;
 
     IntegrationDirectory temporary;
     IntegrationWorkflow workflow;
 };
+
+/// Builds per-view configuration with no process-global environment mutation.
+AudioBatchComponentConfig AudioBatchIntegrationTest::configuration() const
+{
+    AudioBatchComponentConfig config;
+    config.cacheDatabaseFile = temporary.get().getChildFile("AudioBatch/analysis.db");
+    config.settingsOptions = utils::createApplicationSettingsOptions(temporary.get());
+    return config;
+}
+
+/// Copies a small committed fixture before any view can modify it.
+juce::File AudioBatchIntegrationTest::copyFixture(const juce::String& name) const
+{
+    const auto source = juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getChildFile(name);
+    const auto target = temporary.get().getChildFile(name);
+    if (!source.copyFileTo(target)) {
+        throw std::runtime_error(utils::format("Could not copy fixture {}", name).toStdString());
+    }
+    return target;
+}
+
+/// Pins invalid override rejection and the exact isolated settings/plugin directory without touching native paths.
+void AudioBatchIntegrationTest::storageIsolation()
+{
+    EXPECT_FALSE(utils::parseDataRootOverride({}));
+    EXPECT_THROW(juce::ignoreUnused(utils::parseDataRootOverride("relative/root")), std::invalid_argument);
+    EXPECT_THROW(juce::ignoreUnused(utils::parseDataRootOverride("~/root")), std::invalid_argument);
+    EXPECT_THROW(juce::ignoreUnused(utils::parseDataRootOverride("   ")), std::invalid_argument);
+    const auto root = utils::parseDataRootOverride(temporary.get().getFullPathName());
+    if (!root) {
+        ADD_FAILURE() << "The explicit absolute root was not accepted";
+        return;
+    }
+    EXPECT_EQ(*root, temporary.get());
+    EXPECT_EQ(utils::defaultAnalysisDatabaseFile(root), temporary.get().getChildFile("AudioBatch/analysis.db"));
+    const auto isolatedLock = utils::scopedPluginScanLockName(pluginScanLockName, root);
+    EXPECT_NE(isolatedLock, juce::String(pluginScanLockName));
+    EXPECT_EQ(isolatedLock, utils::scopedPluginScanLockName(pluginScanLockName, root));
+    EXPECT_NE(isolatedLock, utils::scopedPluginScanLockName(pluginScanLockName, temporary.get().getChildFile("other")));
+    EXPECT_EQ(utils::scopedPluginScanLockName(pluginScanLockName, std::nullopt), juce::String(pluginScanLockName));
+    const auto logger = utils::createDefaultLogger("audiobatch", "scanner", root);
+    EXPECT_EQ(logger->getLogFile(), temporary.get().getChildFile("AudioBatch/logs/scanner.log"));
+    EXPECT_TRUE(logger->getLogFile().existsAsFile());
+    const auto options = utils::createApplicationSettingsOptions(root);
+    EXPECT_EQ(options.getDefaultFile(), temporary.get().getChildFile("AudioBatch/settings/AudioBatch.settings"));
+    AudioBatchComponent view(configuration());
+    EXPECT_EQ(view.analysisCache.getDatabaseFile(), temporary.get().getChildFile("AudioBatch/analysis.db"));
+    EXPECT_EQ(view.pluginAppProperties.getUserSettings()->getFile(), options.getDefaultFile());
+    EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
+    EXPECT_EQ(view.getPeer(), nullptr);
+    view.showAudioSettingsWindow();
+    EXPECT_EQ(view.settingsWindow.getComponent(), nullptr);
+    juce::File defaultRoot;
+    {
+        AudioBatchComponent defaultView;
+        defaultRoot = defaultView.configuration.testDirectory->getFile();
+        EXPECT_TRUE(defaultRoot.isDirectory());
+        EXPECT_EQ(defaultView.analysisCache.getDatabaseFile(), defaultRoot.getChildFile("AudioBatch/analysis.db"));
+        EXPECT_EQ(
+            defaultView.pluginAppProperties.getUserSettings()->getFile(),
+            defaultRoot.getChildFile("AudioBatch/settings/AudioBatch.settings")
+        );
+        EXPECT_FALSE(defaultView.previewPlayer.getOutputStatus().open);
+        EXPECT_NE(defaultRoot, temporary.get());
+    }
+    EXPECT_FALSE(defaultRoot.exists());
+}
+
+/// Opens valid and broken files and waits for real analysis.
+/// Sorting keeps the selected inspector and waveform identity intact.
+void AudioBatchIntegrationTest::openAndSort()
+{
+    const auto valid = copyFixture("serato_rainbow_stereo_44100_16.flac");
+    const auto other = copyFixture("sine_mono_44100_16.wav");
+    const auto broken = copyFixture("broken.wav");
+    AudioBatchComponent view(configuration());
+    view.openPaths({valid.getFullPathName(), broken.getFullPathName(), other.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(view, 3));
+    const auto brokenRow = view.analysisResults.findRow(broken.getFullPathName());
+    if (!brokenRow) {
+        ADD_FAILURE() << "The broken input was lost instead of producing an error row";
+        return;
+    }
+    EXPECT_TRUE(view.analysisResults[*brokenRow].hasError());
+    ASSERT_TRUE(selectFile(view, valid));
+    ASSERT_TRUE(waitForWaveform(view, valid));
+    ASSERT_TRUE(dispatchUntil([&] {
+        const auto metadata = view.preview.getSeratoData();
+        return metadata && metadata->overview.has_value();
+    }));
+    const auto metadataBeforeSort = view.preview.getSeratoData();
+    if (!metadataBeforeSort || !metadataBeforeSort->overview) {
+        ADD_FAILURE() << "The selected Serato metadata did not load";
+        return;
+    }
+    EXPECT_EQ(metadataBeforeSort->overview->slices.size(), 240U);
+    EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, valid.getFileName()));
+    view.resultsTable.getHeader().setSortColumnId(toColumnId(AudioFileTableColumn::name), false);
+    ASSERT_TRUE(dispatchUntil([&] { return view.sortState.primaryColumn == AudioFileTableColumn::name; }));
+    EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(valid.getFullPathName()));
+    EXPECT_EQ(view.preview.getFile(), valid);
+    const auto metadataAfterSort = view.preview.getSeratoData();
+    if (!metadataAfterSort || !metadataAfterSort->overview) {
+        ADD_FAILURE() << "Sorting discarded the selected Serato metadata";
+        return;
+    }
+    EXPECT_EQ(metadataAfterSort->overview->slices.size(), 240U);
+    EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, valid.getFileName()));
+    ASSERT_TRUE(waitForWaveform(view, valid));
+    EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
+    EXPECT_EQ(view.getPeer(), nullptr);
+}
+
+/// Converts only a copied WAV through the real Normalize control and follows the committed output everywhere.
+void AudioBatchIntegrationTest::normalizeSelection()
+{
+    const auto source = copyFixture("sine_stereo_44100_16.wav");
+    const auto output = source.withFileExtension(".aif");
+    AudioBatchComponent view(configuration());
+    view.openPaths({source.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(view, 1));
+    ASSERT_TRUE(selectFile(view, source));
+    ASSERT_TRUE(waitForWaveform(view, source));
+    auto* normalize = findButton(view.previewWorkspace.normalizationTargetControl, "Normalize");
+    ASSERT_NE(normalize, nullptr);
+    ASSERT_TRUE(normalize->isEnabled());
+    normalize->onClick();
+    ASSERT_TRUE(dispatchUntil([&] {
+        return !view.isBackgroundWorkRunning() && view.analysisResults.findRow(output.getFullPathName()).has_value();
+    }));
+    EXPECT_TRUE(output.existsAsFile());
+    EXPECT_FALSE(source.exists());
+    EXPECT_EQ(view.analysisResults.size(), 1);
+    EXPECT_FALSE(view.analysisResults.findRow(source.getFullPathName()));
+    EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(output.getFullPathName()));
+    EXPECT_EQ(view.preview.getFile(), output);
+    ASSERT_TRUE(waitForWaveform(view, output));
+    EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, output.getFileName()));
+    const auto outputRow = view.analysisResults.findRow(output.getFullPathName());
+    if (!outputRow) {
+        ADD_FAILURE() << "The output row was not retained";
+        return;
+    }
+    const auto& record = view.analysisResults[*outputRow];
+    EXPECT_TRUE(record.isReady());
+    EXPECT_NEAR(
+        static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak))),
+        AudioNormalizationOptions::defaultTargetPeakDbfs,
+        0.01
+    );
+    EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
+}
+
+/// Cancels and clears before queued delivery.
+/// Completes a new load to expose stale callbacks deterministically.
+void AudioBatchIntegrationTest::cancelAndClear()
+{
+    const auto first = copyFixture("sine_stereo_44100_16.wav");
+    const auto second = copyFixture("sine_mono_44100_16.wav");
+    AudioBatchComponent view(configuration());
+    view.openPaths({first.getFullPathName()}, false);
+    ASSERT_TRUE(view.isBackgroundWorkRunning());
+    view.cancelCurrentWork();
+    EXPECT_FALSE(view.isBackgroundWorkRunning());
+    view.clearAllRecords();
+    EXPECT_TRUE(view.analysisResults.empty());
+    view.openPaths({first.getFullPathName()}, false);
+    view.clearAllRecords();
+    view.openPaths({second.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(view, 1));
+    ASSERT_TRUE(selectFile(view, second));
+    ASSERT_TRUE(waitForWaveform(view, second));
+    EXPECT_FALSE(view.analysisResults.findRow(first.getFullPathName()));
+    EXPECT_EQ(view.preview.getFile(), second);
+    EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(second.getFullPathName()));
+    view.clearAllRecords();
+    auto delivered = std::make_shared<bool>(false);
+    juce::MessageManager::callAsync([delivered] { *delivered = true; });
+    ASSERT_TRUE(dispatchUntil([&] { return *delivered; }));
+    EXPECT_TRUE(view.analysisResults.empty());
+    EXPECT_EQ(view.preview.getFile(), juce::File());
+    EXPECT_FALSE(view.previewWorkspace.thumbnail.getSourceIdentity());
+}
+
+/// Persists an explicit slider edit and a real preference action, then restores them in a new view instance.
+void AudioBatchIntegrationTest::restorePreferencesAndGain()
+{
+    const auto file = copyFixture("sine_stereo_44100_16.wav");
+    bool expectedPreference = false;
+    {
+        AudioBatchComponent view(configuration());
+        view.openPaths({file.getFullPathName()}, false);
+        ASSERT_TRUE(waitForRows(view, 1));
+        ASSERT_TRUE(selectFile(view, file));
+        view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        view.toggleLoudnessGraph();
+        expectedPreference = view.isLoudnessGraphEnabled();
+        AnalysisCache observer(temporary.get().getChildFile("AudioBatch/analysis.db"));
+        ASSERT_TRUE(dispatchUntil([&] {
+            const auto stored = observer.getAnalysis(file);
+            return stored && stored->customGain && juce::approximatelyEqual(stored->customGain->value, -3.0f);
+        }));
+    }
+    AudioBatchComponent recreated(configuration());
+    EXPECT_EQ(recreated.isLoudnessGraphEnabled(), expectedPreference);
+    recreated.openPaths({file.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(recreated, 1));
+    ASSERT_TRUE(selectFile(recreated, file));
+    const auto restoredRow = recreated.analysisResults.findRow(file.getFullPathName());
+    if (!restoredRow) {
+        ADD_FAILURE() << "The restored file was not loaded";
+        return;
+    }
+    const auto& record = recreated.analysisResults[*restoredRow];
+    if (!record.customGain) {
+        ADD_FAILURE() << "The explicit custom gain was not restored";
+        return;
+    }
+    EXPECT_NEAR(record.customGain->value, -3.0f, 0.001f);
+    EXPECT_NEAR(recreated.previewWorkspace.gainSlider.getValue(), -3.0, 0.001);
+    EXPECT_FALSE(recreated.previewPlayer.getOutputStatus().open);
+}
+
+/// Dispatches a workflow with no native window or installed plugins.
+void AudioBatchIntegrationTest::TestBody()
+{
+    switch (workflow) {
+        case IntegrationWorkflow::storage:
+            storageIsolation();
+            break;
+        case IntegrationWorkflow::openAndSort:
+            openAndSort();
+            break;
+        case IntegrationWorkflow::normalize:
+            normalizeSelection();
+            break;
+        case IntegrationWorkflow::cancelAndClear:
+            cancelAndClear();
+            break;
+        case IntegrationWorkflow::restore:
+            restorePreferencesAndGain();
+            break;
+    }
+}
+
 }  // namespace audiobatch
 
 /// Initializes JUCE's real message thread but never creates or shows a desktop window.

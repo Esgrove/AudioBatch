@@ -94,19 +94,20 @@ struct AudioAnalysisOptions {
 /// Each reading describes the trailing three seconds, with libebur128's zero-filled startup history.
 /// Times are block ends, with the final partial block clamped to the source length.
 struct ShortTermLoudnessHistory {
+    // Preserve the timing fields before readings for aggregate histories shared with test helpers.
     [[nodiscard]] double timeAt(std::size_t index) const noexcept;
 
     /// EBU-mode meter update rate, independent of the three-second measurement window.
     static constexpr double updateRateHz {10.0};
 
-    /// Short-term loudness readings in LUFS, one per block in time order.
-    std::vector<float> values;
     /// Sample rate of the analyzed file.
     double sampleRate {0.0};
-    /// Length of the analyzed file in samples.
-    std::int64_t lengthInSamples {0};
     /// Source samples per reading, a tenth of a second at the file's sample rate.
     int samplesPerPoint {0};
+    /// Length of the analyzed file in samples.
+    std::int64_t lengthInSamples {0};
+    /// Short-term loudness readings in LUFS, one per block in time order.
+    std::vector<float> values;
 };
 
 /// Returns the exact measurement time, including a final block shorter than the normal interval.
@@ -129,31 +130,36 @@ inline double ShortTermLoudnessHistory::timeAt(const std::size_t index) const no
 /// so they mark the analysis blocks the meter measured them in.
 /// A history with no flags set describes a file without overloads, unlike a missing history.
 struct OverloadHistory {
-    [[nodiscard]] std::uint8_t flagsAt(std::size_t bucket, int channel) const noexcept;
-    [[nodiscard]] std::size_t bucketCount() const noexcept;
-    [[nodiscard]] double bucketStartTime(std::size_t bucket) const noexcept;
     [[nodiscard]] double bucketEndTime(std::size_t bucket) const noexcept;
+    [[nodiscard]] double bucketStartTime(std::size_t bucket) const noexcept;
+
     [[nodiscard]] bool hasOverloads() const noexcept;
+    [[nodiscard]] std::size_t bucketCount() const noexcept;
+    [[nodiscard]] std::uint8_t flagsAt(std::size_t bucket, int channel) const noexcept;
 
     /// Flag bit of a decoded sample whose magnitude exceeds 1.0.
     static constexpr std::uint8_t sampleOver {0x01};
     /// Flag bit of a true peak above 1.0.
     static constexpr std::uint8_t truePeakOver {0x02};
-    /// Every legal flag bit.
+    /// Every legal flag bit. Depends on the two individual bits above.
     static constexpr std::uint8_t allFlags {sampleOver | truePeakOver};
+
     /// Largest number of buckets, reached by merging neighbouring buckets of longer files.
     static constexpr std::size_t maximumBuckets {8192};
 
-    /// Bucket flags in time order, channelCount bytes per bucket.
-    std::vector<std::uint8_t> flags;
+    // Preserve the timing, channel, and flag aggregate contract used by overload-history clients.
     /// Sample rate of the analyzed file.
     double sampleRate {0.0};
+    /// Number of channels the flags describe.
+    int channelCount {0};
+
     /// Length of the analyzed file in samples.
     std::int64_t lengthInSamples {0};
     /// Source frames per bucket, the analysis block size times a power of two.
     std::int64_t samplesPerBucket {0};
-    /// Number of channels the flags describe.
-    int channelCount {0};
+
+    /// Bucket flags in time order, channelCount bytes per bucket.
+    std::vector<std::uint8_t> flags;
 };
 
 /// Returns the flags of one bucket and channel, or zero outside the history.
@@ -198,63 +204,19 @@ inline bool OverloadHistory::hasOverloads() const noexcept
 
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
-    /// Loudness that stands for silence, where no finite LUFS value exists.
-    static constexpr double negativeInfinityLoudness {-1000.0};
-
-    /// The analyzed file.
-    juce::File file;
-    /// Name of the file with its extension.
-    juce::String fileName;
-    /// Absolute path of the file, which identifies its table row and its cache row.
-    juce::String fullPath;
-    /// Name of the audio format that decoded the file, such as "WAV file".
-    juce::String formatName;
-    /// Why the analysis failed, or empty when it did not.
-    juce::String errorMessage;
-    /// Short-term loudness over the length of the file, shared between copies of the record.
-    std::shared_ptr<const ShortTermLoudnessHistory> shortTermLoudness;
-    /// Source sample and true peak overloads over the length of the file, shared between copies of the record.
-    std::shared_ptr<const OverloadHistory> overloads;
-    /// Size of the file in bytes when it was analyzed.
-    std::int64_t fileSize {0};
-    /// Modification time of the file when it was analyzed, in milliseconds since the epoch.
-    std::int64_t modifiedTimeMs {0};
-    /// Length of the audio in samples per channel.
-    std::int64_t lengthInSamples {0};
-    /// Length of the audio in seconds.
-    double durationSeconds {0.0};
-    /// Sample peak of the left or only channel as a linear sample value that keeps its sign.
-    float peakLeft {0.0f};
-    /// Sample peak of the right channel as a linear sample value that keeps its sign, the left one for a mono file.
-    float peakRight {0.0f};
-    /// The sample peak of the channel with the largest magnitude.
-    float overallPeak {0.0f};
-    /// True peak of the left or only channel as a linear amplitude.
-    double truePeakLeft {0.0};
-    /// True peak of the right channel as a linear amplitude, the left one for a mono file.
-    double truePeakRight {0.0};
-    /// The larger of the channel true peaks.
-    double overallTruePeak {0.0};
-    /// Largest short-term loudness in LUFS, or negativeInfinityLoudness for silence.
-    double maxShortTermLufs {negativeInfinityLoudness};
-    /// Integrated loudness in LUFS, or negativeInfinityLoudness for silence.
-    double integratedLufs {negativeInfinityLoudness};
-    /// Sample rate of the file in hertz.
-    int sampleRate {0};
-    /// Number of audio channels of the file.
-    int channels {0};
-    /// Bit depth of the source audio, as BitDepthDetection resolves it.
-    int bitsPerSample {0};
-    /// Per-file gain that the user set for this version of the file, which processing applies first.
-    std::optional<Decibels> customGain;
-    /// Where the record is in its lifecycle, from a pending placeholder to an analyzed, cached, or failed file.
-    AudioAnalysisStatus status {AudioAnalysisStatus::pending};
-    /// Implementation that produced the measurements, not the last writer of gain or preview data.
-    MeasurementProducer measurementProducer {MeasurementProducer::cpp};
-    /// Why the analysis failed, set on the records of failed analyses.
-    std::optional<AnalysisError> error;
-    /// True when the record was read from the analysis cache instead of decoding the file.
-    bool fromCache {false};
+    /// Builds a baseline record from filesystem metadata before analysis begins.
+    /// A missing file gets a size and modification time of zero,
+    /// which JUCE reports for it without a separate existence check.
+    static AudioAnalysisRecord fromFile(const juce::File& file)
+    {
+        AudioAnalysisRecord record;
+        record.file = file;
+        record.fileName = file.getFileName();
+        record.fullPath = file.getFullPathName();
+        record.fileSize = file.getSize();
+        record.modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
+        return record;
+    }
 
     /// Returns true when the record represents a failed analysis attempt.
     [[nodiscard]] bool hasError() const noexcept
@@ -276,19 +238,69 @@ struct AudioAnalysisRecord {
             && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
     }
 
-    /// Builds a baseline record from filesystem metadata before analysis begins.
-    /// A missing file gets a size and modification time of zero,
-    /// which JUCE reports for it without a separate existence check.
-    static AudioAnalysisRecord fromFile(const juce::File& file)
-    {
-        AudioAnalysisRecord record;
-        record.file = file;
-        record.fileName = file.getFileName();
-        record.fullPath = file.getFullPathName();
-        record.fileSize = file.getSize();
-        record.modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
-        return record;
-    }
+    /// Loudness that stands for silence, where no finite LUFS value exists.
+    static constexpr double negativeInfinityLoudness {-1000.0};
+
+    /// Where the record is in its lifecycle, from a pending placeholder to an analyzed, cached, or failed file.
+    AudioAnalysisStatus status {AudioAnalysisStatus::pending};
+    /// Implementation that produced the measurements, not the last writer of gain or preview data.
+    MeasurementProducer measurementProducer {MeasurementProducer::cpp};
+    /// The analyzed file.
+    juce::File file;
+
+    /// Why the analysis failed, or empty when it did not.
+    juce::String errorMessage;
+    /// Name of the file with its extension.
+    juce::String fileName;
+    /// Name of the audio format that decoded the file, such as "WAV file".
+    juce::String formatName;
+    /// Absolute path of the file, which identifies its table row and its cache row.
+    juce::String fullPath;
+
+    /// Per-file gain that the user set for this version of the file, which processing applies first.
+    std::optional<Decibels> customGain;
+    /// Why the analysis failed, set on the records of failed analyses.
+    std::optional<AnalysisError> error;
+    /// Source sample and true peak overloads over the length of the file, shared between copies of the record.
+    std::shared_ptr<const OverloadHistory> overloads;
+    /// Short-term loudness over the length of the file, shared between copies of the record.
+    std::shared_ptr<const ShortTermLoudnessHistory> shortTermLoudness;
+
+    /// Length of the audio in seconds.
+    double durationSeconds {0.0};
+    /// Integrated loudness in LUFS, or negativeInfinityLoudness for silence.
+    double integratedLufs {negativeInfinityLoudness};
+    /// Largest short-term loudness in LUFS, or negativeInfinityLoudness for silence.
+    double maxShortTermLufs {negativeInfinityLoudness};
+    /// The larger of the channel true peaks.
+    double overallTruePeak {0.0};
+    /// True peak of the left or only channel as a linear amplitude.
+    double truePeakLeft {0.0};
+    /// True peak of the right channel as a linear amplitude, the left one for a mono file.
+    double truePeakRight {0.0};
+
+    /// The sample peak of the channel with the largest magnitude.
+    float overallPeak {0.0f};
+    /// Sample peak of the left or only channel as a linear sample value that keeps its sign.
+    float peakLeft {0.0f};
+    /// Sample peak of the right channel as a linear sample value that keeps its sign, the left one for a mono file.
+    float peakRight {0.0f};
+
+    /// Bit depth of the source audio, as BitDepthDetection resolves it.
+    int bitsPerSample {0};
+    /// Number of audio channels of the file.
+    int channels {0};
+    /// Sample rate of the file in hertz.
+    int sampleRate {0};
+    /// True when the record was read from the analysis cache instead of decoding the file.
+    bool fromCache {false};
+
+    /// Size of the file in bytes when it was analyzed.
+    std::int64_t fileSize {0};
+    /// Length of the audio in samples per channel.
+    std::int64_t lengthInSamples {0};
+    /// Modification time of the file when it was analyzed, in milliseconds since the epoch.
+    std::int64_t modifiedTimeMs {0};
 };
 
 /// Returns true for an error that reading the same bytes again would repeat, so a cached failure stays valid.

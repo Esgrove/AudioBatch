@@ -24,48 +24,10 @@ public:
     /// Creates a tracker for a stream with the given length in samples.
     explicit DecodeFailureTracker(const juce::int64 streamLength) noexcept : totalSamples(streamLength) {}
 
-    /// Records the outcome of reading one block.
-    /// Returns false when decoding must stop, after which errorMessage describes the failure.
-    [[nodiscard]] bool recordBlock(
-        const bool readSucceeded,
-        const juce::int64 samplePosition,
-        const int samplesInBlock
-    ) noexcept
+    /// Returns the user-facing error after recordBlock returned false.
+    [[nodiscard]] juce::String getErrorMessage() const
     {
-        if (readSucceeded) {
-            consecutiveFailures = 0;
-            return true;
-        }
-
-        if (samplePosition + samplesInBlock >= totalSamples) {
-            return true;
-        }
-
-        ++failedBlocks;
-        ++consecutiveFailures;
-
-        if (failedBlockPosition < 0) {
-            failedBlockPosition = samplePosition;
-        }
-
-        if (consecutiveFailures >= maximumConsecutiveFailures) {
-            stoppedAt = samplePosition;
-            return false;
-        }
-
-        return true;
-    }
-
-    /// Returns the number of failed blocks before the final block.
-    [[nodiscard]] int getFailedBlockCount() const noexcept
-    {
-        return failedBlocks;
-    }
-
-    /// Returns the sample position of the first failed block before the final block, or -1 when there was none.
-    [[nodiscard]] juce::int64 getFirstFailurePosition() const noexcept
-    {
-        return failedBlockPosition;
+        return utils::format("Audio decoding failed at sample {} of {}", stoppedAt, totalSamples);
     }
 
     /// Returns a user-facing notice about the tolerated failures of a completed pass,
@@ -76,31 +38,63 @@ public:
         if (failedBlocks == 0) {
             return {};
         }
-
         return utils::format(
             "{} audio block(s) failed to decode, first at sample {}", failedBlocks, failedBlockPosition
         );
     }
 
-    /// Returns the user-facing error after recordBlock returned false.
-    [[nodiscard]] juce::String getErrorMessage() const
+    /// Returns the sample position of the first failed block before the final block, or -1 when there was none.
+    [[nodiscard]] juce::int64 getFirstFailurePosition() const noexcept
     {
-        return utils::format("Audio decoding failed at sample {} of {}", stoppedAt, totalSamples);
+        return failedBlockPosition;
+    }
+
+    /// Returns the number of failed blocks before the final block.
+    [[nodiscard]] int getFailedBlockCount() const noexcept
+    {
+        return failedBlocks;
+    }
+
+    /// Records the outcome of reading one block.
+    /// Returns false when decoding must stop, after which getErrorMessage describes the failure.
+    [[nodiscard]] bool recordBlock(
+        const bool readSucceeded,
+        const juce::int64 samplePosition,
+        const int samplesInBlock
+    ) noexcept
+    {
+        if (readSucceeded) {
+            consecutiveFailures = 0;
+            return true;
+        }
+        if (samplePosition + samplesInBlock >= totalSamples) {
+            return true;
+        }
+        ++failedBlocks;
+        ++consecutiveFailures;
+        if (failedBlockPosition < 0) {
+            failedBlockPosition = samplePosition;
+        }
+        if (consecutiveFailures >= maximumConsecutiveFailures) {
+            stoppedAt = samplePosition;
+            return false;
+        }
+        return true;
     }
 
     /// Number of consecutive failed blocks, outside the final block, after which decoding stops.
     static constexpr int maximumConsecutiveFailures {3};
 
 private:
-    /// Length of the decoded audio in samples, which locates the final block.
-    juce::int64 totalSamples;
     /// Position of the first failed block before the final block, or -1 when there was none.
     juce::int64 failedBlockPosition {-1};
     /// Position of the block at which decoding gave up, or -1 while it goes on.
     juce::int64 stoppedAt {-1};
-    /// Failed blocks before the final block.
-    int failedBlocks {0};
+    /// Length of the decoded audio in samples, which locates the final block.
+    juce::int64 totalSamples;
     /// Failed blocks in a row up to the last recorded block.
     int consecutiveFailures {0};
+    /// Failed blocks before the final block.
+    int failedBlocks {0};
 };
 }  // namespace audiobatch

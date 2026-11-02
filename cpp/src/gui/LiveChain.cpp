@@ -1,5 +1,5 @@
-/// Implementation of the slots and the core of LiveChain.
-/// Covers the slot teardown order, slot editing operations by slot id,
+/// Core live-chain editing and persistence. LiveSlot.cpp owns processor lifecycle operations.
+/// Covers slot editing operations by slot id,
 /// reaping closed editor windows and capturing live plugin state from loaded slots before a run or save,
 /// and XML persistence of the chain in application settings,
 /// with migration of the legacy single-plugin selection into a one-slot chain.
@@ -8,6 +8,7 @@
 
 #include "gui/LiveChain.h"
 
+#include "gui/LiveSlot.h"
 #include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
@@ -46,100 +47,6 @@ PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description
 juce::String formatPluginDescription(const juce::PluginDescription& description)
 {
     return utils::format("{} {} ({})", description.manufacturerName, description.name, description.pluginFormatName);
-}
-
-/// Builds a slot without a processor from its stored form.
-LiveSlot::LiveSlot(SavedChainSlot savedSlot) :
-    description(std::move(savedSlot.description)),
-    state(std::move(savedSlot.state)),
-    enabled(savedSlot.enabled)
-{}
-
-/// Tears the live processor down, so erasing or clearing slots can never skip the teardown order.
-LiveSlot::~LiveSlot()
-{
-    destroyProcessor();
-}
-
-/// Takes over the processor and the editor window of the other slot, which is left without either.
-/// The editor window has to be taken explicitly, because a copied safe pointer would let both slots delete it.
-LiveSlot::LiveSlot(LiveSlot&& other) noexcept :
-    id(other.id),
-    description(std::move(other.description)),
-    state(std::move(other.state)),
-    enabled(other.enabled),
-    instance(std::move(other.instance)),
-    listener(std::exchange(other.listener, nullptr)),
-    editorWindow(std::exchange(other.editorWindow, nullptr)),
-    preparationError(std::move(other.preparationError)),
-    latencySamples(std::exchange(other.latencySamples, std::nullopt)),
-    prepared(std::exchange(other.prepared, false)),
-    wasEditorOpen(std::exchange(other.wasEditorOpen, false))
-{}
-
-/// Tears down the processor this slot holds before taking over the processor and editor window of the other slot.
-LiveSlot& LiveSlot::operator=(LiveSlot&& other) noexcept
-{
-    if (this != &other) {
-        destroyProcessor();
-        id = other.id;
-        description = std::move(other.description);
-        state = std::move(other.state);
-        enabled = other.enabled;
-        instance = std::move(other.instance);
-        listener = std::exchange(other.listener, nullptr);
-        editorWindow = std::exchange(other.editorWindow, nullptr);
-        preparationError = std::move(other.preparationError);
-        latencySamples = std::exchange(other.latencySamples, std::nullopt);
-        prepared = std::exchange(other.prepared, false);
-        wasEditorOpen = std::exchange(other.wasEditorOpen, false);
-    }
-
-    return *this;
-}
-
-/// Gives the slot its live processor and registers the listener that observes its parameter and state changes.
-/// The listener must outlive the slot, since the slot unregisters it again when the processor is destroyed.
-void LiveSlot::attachInstance(
-    std::unique_ptr<juce::AudioPluginInstance> newInstance,
-    juce::AudioProcessorListener& newListener
-)
-{
-    destroyProcessor();
-    instance = std::move(newInstance);
-    if (instance != nullptr) {
-        instance->addListener(&newListener);
-        listener = &newListener;
-    }
-}
-
-/// Deletes only the editor window. The slot continues owning its live processor.
-void LiveSlot::closeEditor()
-{
-    if (editorWindow != nullptr) {
-        editorWindow.deleteAndZero();
-    }
-
-    wasEditorOpen = false;
-}
-
-/// Closes the editor before unregistering the listener, releasing the prepared resources, and destroying the processor.
-/// The editor refers to the processor, and the plugin must not call the listener while it is being destroyed.
-void LiveSlot::destroyProcessor()
-{
-    closeEditor();
-    if (instance != nullptr) {
-        if (listener != nullptr) {
-            instance->removeListener(listener);
-        }
-        if (prepared) {
-            instance->releaseResources();
-        }
-        instance = nullptr;
-    }
-    listener = nullptr;
-    prepared = false;
-    latencySamples.reset();
 }
 
 /// Restores the persisted chain from application settings.

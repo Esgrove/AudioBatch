@@ -6,8 +6,8 @@
 
 #include "gui/components/ThumbnailComponent.h"
 
-#include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/NativeWaveformData.h"
 #include "analysis/OverloadHistory.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"

@@ -4,8 +4,8 @@
 
 #include "gui/NativeWaveformBuilder.h"
 
-#include "analysis/AnalysisCache.h"
 #include "analysis/DecodeFailureTracker.h"
+#include "analysis/NativeWaveformData.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/ThreadUtils.h"
