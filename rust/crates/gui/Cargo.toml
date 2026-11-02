@@ -32,6 +32,7 @@ vst3-host = { workspace = true, features = ["editor"] }
 [dev-dependencies]
 audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
+test-fixtures.workspace = true
 
 # The OLE drag source of `src/file_drag/windows.rs`, which drags files out of the results table.
 [target.'cfg(windows)'.dependencies]

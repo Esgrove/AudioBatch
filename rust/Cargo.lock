@@ -678,6 +678,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "test-fixtures",
  "tracing",
  "trash",
  "vst3-host",
