@@ -45,7 +45,12 @@ which explains how its parts work together.
   Its `output/` directory is ignored by git, and the benchmarks skip files that are absent.
   Run it through uv before measuring decoding or file analysis throughput.
 - `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
-- `pyproject.toml` configures ruff for the Python scripts in `fixtures/` and `rust/scripts/`,
+- `tests/cli_integration.py` runs the same executable-level CLI contracts against either built CLI through uv.
+  Pass `--cli <absolute-executable-path>` and optionally `--artifacts <directory>` for failure diagnostics.
+  It isolates application storage with `AUDIOBATCH_DATA_ROOT`
+  and normalizes only temporary fixture copies with `--delete`.
+  CTest runs it with the `integration` label, and the Rust workflow runs it after building the CLI.
+- `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, and `rust/scripts/`,
   and pins it in `uv.lock`.
   Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.
   Each script declares its Python version and packages in an inline `# /// script` block
@@ -63,6 +68,16 @@ which explains how its parts work together.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
+
+## Isolated Application Storage
+
+`AUDIOBATCH_DATA_ROOT` selects an absolute storage root for integration tests and isolated runs.
+Under it, both applications share `AudioBatch/analysis.db`,
+while Rust-specific settings, logs, and plugin data stay in `AudioBatch-rs/`
+and C++-specific data in `AudioBatch/`.
+An unset variable preserves the native production paths.
+A supplied invalid root must never fall back to normal application storage.
+In-process tests inject their paths instead of changing environment variables while workers or other tests run.
 
 ## Behavioral Parity
 
