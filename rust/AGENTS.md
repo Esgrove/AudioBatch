@@ -468,8 +468,27 @@ Mention the C++ application only when it matters for the implementation:
 
 ## Testing
 
-- Only add lightweight, focused unit tests that complete in under one second.
-  Do not add GUI tests or rendering-based assertions.
+- Keep unit tests lightweight and focused, targeting under one second per case.
+  Put executable CLI contracts and nonvisual production-view workflows in the separately identified integration tier.
+  Integration tests may take longer, but must have bounded waits and process timeouts.
+  Use isolated application storage and copied fixtures,
+  with no system trash, physical audio devices, or installed plugins.
+  Do not add screenshot comparisons, pixel assertions, or desktop automation.
+  GPUI integration tests use the production view and real event handlers, not a parallel test-only model.
+  They prove application composition and event delivery, not packaged-app or native OS behavior.
+- Run the nonvisual production-view tier with `cargo nextest run -p audiobatch-gui -E 'test(integration_tests::)'`.
+  The default workspace run includes these cases too.
+  Build `audiobatch-rs`
+  and run the executable contracts with `uv run --script ../tests/cli_integration.py --cli target/debug/audiobatch-rs`.
+  Both tiers preserve production workers and use isolated storage.
+  Under `cfg(test)`, the normal GUI constructor owns unique temporary storage,
+  disables playback, and deletes source copies.
+  Test-only helpers and storage ownership remain under `cfg(test)`, without changing process-wide environment variables.
+  The CLI subprocess suite supplies its storage override automatically because it runs the ordinary production executable.
+- Put public-library integration contracts in each package's `tests/` directory, such as `crates/core/tests/storage.rs`.
+  Cargo does not automatically discover `tests/` beneath this virtual workspace root.
+  Integration targets link the ordinary library, so its `cfg(test)` helpers are unavailable there.
+  Keep private-state GUI workflows in their `cfg(test)` module instead of exposing application internals for tests.
 - Test the core and the CLI against the shared fixtures through `test-fixtures`.
   Tests that modify files work on copies in a temporary directory.
 - **NEVER use nested modules inside test modules.**

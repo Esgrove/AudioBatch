@@ -3,9 +3,11 @@
 
 use std::sync::Arc;
 
+use audiobatch_core::storage::StoragePaths;
+
 use audiobatch_core::{AnalysisCache, AnalysisCoordinator, NormalizeCoordinator};
 use audiobatch_playback::Player;
-use audiobatch_plugins::{ProcessingCoordinator, default_worker_count};
+use audiobatch_plugins::{PluginDataPaths, ProcessingCoordinator, default_worker_count};
 use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
 use gpui_kit::component::table::TableState;
 use gpui_kit::{AppContext as _, Context, Entity, SharedString, Subscription, Window};
@@ -128,24 +130,36 @@ pub(super) fn open_startup(
     dispatcher: UiDispatcher,
     editor_owner: Option<RawWindowHandle>,
     menu_state: &mut MenuState,
+    paths: &StoragePaths,
+    playback: bool,
+    workers: usize,
 ) -> Startup {
     let mut status = SharedString::default();
-    let coordinators = open_coordinators().unwrap_or_else(|error| {
+    let coordinators = open_coordinators(paths, workers).unwrap_or_else(|error| {
         status = format!("Analysis unavailable: {error:#}").into();
         Coordinators::default()
     });
-    let player = match open_player(&settings.output_config()) {
-        Ok(player) => {
-            menu_state.output_device = Some(player.device_name().to_string());
-            Some(player)
+    let player = if playback {
+        match open_player(&settings.output_config()) {
+            Ok(player) => {
+                menu_state.output_device = Some(player.device_name().to_string());
+                Some(player)
+            }
+            Err(error) => {
+                status = format!("Playback unavailable: {error:#}").into();
+                None
+            }
         }
-        Err(error) => {
-            status = format!("Playback unavailable: {error:#}").into();
-            None
-        }
+    } else {
+        None
     };
     let sample_rate = player.as_ref().map_or(FALLBACK_SAMPLE_RATE, Player::output_rate);
-    let (plugins, plugin_problems) = PluginHost::open(dispatcher, sample_rate, editor_owner);
+    let (plugins, plugin_problems) = PluginHost::open_with_paths(
+        dispatcher,
+        sample_rate,
+        editor_owner,
+        PluginDataPaths::in_folder(paths.data()),
+    );
     for problem in plugin_problems {
         tracing::warn!("{problem}");
         if status.is_empty() {
@@ -195,20 +209,19 @@ fn new_target_slider(mode: NormalizeMode, target: f64, cx: &mut Context<AppView>
     })
 }
 
-/// Creates coordinators sharing a lazily opened default analysis cache.
+/// Creates coordinators sharing a lazily opened cache at the captured storage destination.
 /// Analysis and normalization get one worker per CPU.
 /// Plugin processing leaves one physical core free, because plugins are much heavier per file
 /// and the preview and the editors keep running on the UI thread.
 /// Opening SQLite and migrating the shared schema happen on the first worker lookup, never during GUI startup.
 /// Cache failures remain misses and do not prevent native analysis or processing.
-fn open_coordinators() -> anyhow::Result<Coordinators> {
-    let cache = Arc::new(AnalysisCache::new());
-    let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+fn open_coordinators(paths: &StoragePaths, workers: usize) -> anyhow::Result<Coordinators> {
+    let cache = Arc::new(AnalysisCache::with_path(paths.database()));
     Ok(Coordinators {
         normalize: Some(Arc::new(NormalizeCoordinator::new(Arc::clone(&cache), workers)?)),
         process: Some(Arc::new(ProcessingCoordinator::new(
             Arc::clone(&cache),
-            default_worker_count(),
+            workers.min(default_worker_count()),
         )?)),
         analysis: Some(Arc::new(AnalysisCoordinator::new(cache, workers)?)),
     })

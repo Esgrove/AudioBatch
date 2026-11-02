@@ -1,9 +1,18 @@
 //! Builders shared by the unit tests of several modules.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use audiobatch_plugins::PluginDescription;
-use vst3_host::ClassId;
+use vst3_host::{ClassId, UiDispatcher, UiThread};
+
+/// Shares the one legal VST3 lifecycle thread between unit tests and nonvisual GUI workflows.
+pub fn plugin_dispatcher() -> UiDispatcher {
+    static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
+    DISPATCHER
+        .get_or_init(|| UiThread::spawn_dedicated().expect("test VST3 UI thread"))
+        .clone()
+}
 
 /// Returns a stereo effect of a vendor, in a bundle named after it.
 pub fn effect(vendor: &str, name: &str) -> PluginDescription {

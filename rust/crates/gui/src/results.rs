@@ -26,6 +26,8 @@ use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
 use audiobatch_core::{AnalysisRecord, AnalysisStatus, MeasurementProducer, WaveformOverview};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
+#[cfg(test)]
+use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
     App, AppContext as _, Bounds, ClickEvent, Context, Div, FocusHandle, InteractiveElement as _, IntoElement,
     MouseButton, MouseDownEvent, ParentElement as _, PathBuilder, Pixels, SharedString, Stateful,
@@ -1426,6 +1428,8 @@ impl TableDelegate for ResultsDelegate {
             Some(message) => cell.tooltip(tooltip(message)),
             None => cell,
         };
+        #[cfg(test)]
+        let cell = cell.test_support();
         cell.child(div().min_w_0().truncate().child(text))
     }
 
@@ -1812,7 +1816,8 @@ mod test_measurement_provenance {
         })
     }
 
-    /// Exposes foreign cached provenance only in GUI presentation so users see decoder origin without changing CLI status.
+    /// Exposes foreign cached provenance only in GUI presentation
+    /// so users see decoder origin without changing CLI status.
     #[test]
     fn only_foreign_cache_hits_have_a_gui_origin_suffix() {
         let foreign = row(AnalysisStatus::Cached, MeasurementProducer::Cpp);

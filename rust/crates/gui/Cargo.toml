@@ -30,6 +30,7 @@ trash.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }
 
 [dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
 audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
 test-fixtures.workspace = true
