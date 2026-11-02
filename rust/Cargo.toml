@@ -55,12 +55,12 @@ rtrb = "0.4.1"
 rubato = "5.0.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1.0.154"
 sha2 = "0.11.1"
 symphonia = { version = "0.6.1", features = ["all-codecs", "all-formats"] }
 symphonia-common = "0.6.1"
 tempfile = "3.27.0"
-thiserror = "2"
+thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "fmt", "registry", "std", "tracing-log"] }
@@ -69,6 +69,13 @@ unicode-width = "0.2.3"
 walkdir = "2.5.0"
 winapi-util = "0.1.11"
 windows-sys = "0.61.2"
+winresource = { version = "0.1.34", default-features = false }
+
+gpui-kit = "0.8.1"
+# The GPUI and platform crates under the kit, only for the test support the GUI `snapshot` feature needs.
+# The kit's own `test-support` feature is not used, because it pulls in conflicting `proptest` requirements.
+gpui-pre = { version = "0.3.10", features = ["test-support"] }
+gpui-pre-platform = { version = "0.3.10", features = ["test-support"] }
 
 # The bindings of VST SDK 3.8.0, the SDK JUCE bundles for the C++ application.
 # Keep both applications on the same SDK version.

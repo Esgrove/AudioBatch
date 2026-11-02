@@ -62,6 +62,10 @@ This section lists the files.
 `rust/Cargo.toml` is a virtual workspace.
 Shared package metadata, dependency versions, and lints are defined once there,
 and every crate inherits them with `.workspace = true`.
+The versions of all external dependencies are declared in its `[workspace.dependencies]` table,
+including those that only one crate uses.
+Write them as full `major.minor.patch` versions, so updates are picked up.
+Possible breaking changes are not a reason to pin a dependency with `=`.
 
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
@@ -149,7 +153,7 @@ and every crate inherits them with `.workspace = true`.
   `output.rs` the table, CSV, and JSON output, `plugin_list.rs` the `list` subcommand,
   and `messages.rs` the coloured log messages, which the log file also receives.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
-  It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
+  It is the only crate that depends on gpui-kit.
   `app/mod.rs` holds the main view state, `app/startup.rs` what it opens at startup,
   `app/analysis.rs` the analysis runs, `app/selection.rs` the selection, `app/gain.rs` the per-file gain,
   `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
