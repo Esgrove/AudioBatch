@@ -304,14 +304,20 @@ async fn integration_cancel_and_clear_pending_work_never_resurrects_rows(cx: &mu
     workflow.idle(cx).await;
     workflow.select(&source, cx);
     workflow.focus(cx);
-    cx.dispatch_action(workflow.window, ReanalyzeSelected);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ReanalyzeSelected), cx);
+    })
+    .expect("dispatch reanalysis without polling worker events");
     cx.read(|cx| {
         let view = workflow.view.read(cx);
         assert!(view.is_analyzing());
         assert_eq!(view.analysis_workers, 1);
     });
-    cx.dispatch_action(workflow.window, CancelRun);
-    cx.dispatch_action(workflow.window, ClearList);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.dispatch_action(Box::new(CancelRun), cx);
+        window.dispatch_action(Box::new(ClearList), cx);
+    })
+    .expect("cancel and clear before polling worker events");
     workflow.idle(cx).await;
     cx.read(|cx| {
         let view = workflow.view.read(cx);
