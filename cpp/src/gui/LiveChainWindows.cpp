@@ -7,6 +7,7 @@
 #include "gui/components/PluginChainEditor.h"
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
+#include "gui/LiveSlot.h"
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"

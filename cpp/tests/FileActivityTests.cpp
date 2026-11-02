@@ -2,7 +2,7 @@
 /// Covers marking files busy, clearing activities by kind, progress reporting,
 /// and how a new operation replaces the last message.
 
-#include "gui/AudioFileTableModel.h"
+#include "gui/FileActivity.h"
 #include "gui/FileActivityTracker.h"
 #include "TestSuites.h"
 
