@@ -12,6 +12,7 @@ pub mod cache;
 pub mod coordinator;
 pub mod decode;
 pub mod discovery;
+pub mod file_selection;
 pub mod format;
 #[cfg(test)]
 mod golden;
