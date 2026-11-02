@@ -343,6 +343,13 @@ pub fn install(cx: &mut App) {
 
 /// Builds the menu bar, with check marks on the options and the current output device,
 /// and the normalization target in the normalize items.
+#[cfg_attr(
+    not(target_os = "windows"),
+    expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "only Windows mutates the app, to hand the menus to its in-window menu bar"
+    )
+)]
 pub fn set_menus(cx: &mut App, state: &MenuState) {
     let devices = Player::output_device_names()
         .into_iter()
