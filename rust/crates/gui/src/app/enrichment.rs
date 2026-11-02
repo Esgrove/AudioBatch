@@ -40,14 +40,6 @@ enum EnrichmentPart {
     Waveform(Arc<WaveformOverview>),
 }
 
-/// A lightweight candidate belonging to exactly one measured source version.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct EnrichmentIdentity {
-    path: PathBuf,
-    file_size: u64,
-    modified_time_ms: i64,
-}
-
 /// GUI-owned admission state, separate from playback and selected-preview generations.
 #[derive(Default)]
 pub(super) struct EnrichmentQueue {
@@ -62,6 +54,14 @@ pub(super) struct EnrichmentQueue {
     tags: VecDeque<(EnrichmentIdentity, Option<Arc<FileTags>>)>,
 }
 
+/// A lightweight candidate belonging to exactly one measured source version.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct EnrichmentIdentity {
+    path: PathBuf,
+    file_size: u64,
+    modified_time_ms: i64,
+}
+
 /// One admitted job, whose cancellation does not release its blocking-worker slot.
 #[derive(Clone)]
 struct EnrichmentRequest {
@@ -71,30 +71,6 @@ struct EnrichmentRequest {
     preview: Option<(PreviewVersion, u64)>,
     generation: u64,
     mode: EnrichmentMode,
-}
-
-impl EnrichmentIdentity {
-    /// Captures only the identity already established by successful analysis.
-    fn from_record(record: &AnalysisRecord) -> Self {
-        Self {
-            path: record.path.clone(),
-            file_size: record.file_size,
-            modified_time_ms: record.modified_time_ms,
-        }
-    }
-
-    /// Rejects source replacement before every expensive stage and publication.
-    fn matches_disk(&self) -> bool {
-        file_identity(&self.path) == Some((self.file_size, self.modified_time_ms))
-    }
-
-    /// Checks a result row without replacing any measurement or operation fields.
-    fn matches_record(&self, record: &AnalysisRecord) -> bool {
-        record.is_ready()
-            && record.path == self.path
-            && record.file_size == self.file_size
-            && record.modified_time_ms == self.modified_time_ms
-    }
 }
 
 impl EnrichmentQueue {
@@ -259,6 +235,30 @@ impl EnrichmentQueue {
 impl Drop for EnrichmentQueue {
     fn drop(&mut self) {
         self.pause();
+    }
+}
+
+impl EnrichmentIdentity {
+    /// Captures only the identity already established by successful analysis.
+    fn from_record(record: &AnalysisRecord) -> Self {
+        Self {
+            path: record.path.clone(),
+            file_size: record.file_size,
+            modified_time_ms: record.modified_time_ms,
+        }
+    }
+
+    /// Rejects source replacement before every expensive stage and publication.
+    fn matches_disk(&self) -> bool {
+        file_identity(&self.path) == Some((self.file_size, self.modified_time_ms))
+    }
+
+    /// Checks a result row without replacing any measurement or operation fields.
+    fn matches_record(&self, record: &AnalysisRecord) -> bool {
+        record.is_ready()
+            && record.path == self.path
+            && record.file_size == self.file_size
+            && record.modified_time_ms == self.modified_time_ms
     }
 }
 

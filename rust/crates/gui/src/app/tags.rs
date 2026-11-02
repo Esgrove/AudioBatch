@@ -13,7 +13,8 @@ use super::AppView;
 use crate::waveform::CueMarker;
 
 impl AppView {
-    /// Applies an identity-checked display read without changing playback or an already consumed cue intent.
+    /// Applies an identity-checked display read and may fulfill a pending cue-start playback intent.
+    /// An already consumed cue intent is never replayed.
     pub(super) fn adopt_display_tags(&mut self, path: &Path, tags: Option<Arc<FileTags>>, cx: &mut Context<Self>) {
         if self.selected.as_deref() != Some(path) {
             return;

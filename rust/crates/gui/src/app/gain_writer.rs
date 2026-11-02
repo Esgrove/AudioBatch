@@ -169,10 +169,11 @@ mod test_gain_coalescing {
         release.send(()).expect("release worker");
         worker.join().expect("writer exits without UI delivery");
         let results: Vec<_> = results.try_iter().collect();
-        assert_eq!(
-            results,
-            [(PathBuf::from("active"), Some(1.0)), (PathBuf::from("pending"), None)]
-        );
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, PathBuf::from("active"));
+        assert_eq!(results[1].0, PathBuf::from("pending"));
+        assert!(audiobatch_core::record::same_custom_gain(results[0].1, Some(1.0)));
+        assert!(results[1].1.is_none());
     }
 
     /// Captures only persistence fields so queued slider edits cannot extend the lifetime of native preview artifacts.

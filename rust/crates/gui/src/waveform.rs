@@ -289,49 +289,6 @@ impl WaveformView {
         cx.notify();
     }
 
-    /// Applies source-matched artifacts without touching transport, cue, gain, zoom or scrubbing state.
-    fn update_record(&mut self, record: &AnalysisRecord) {
-        let source = (record.path.clone(), record.file_size, record.modified_time_ms);
-        let same_source = self.source.as_ref() == Some(&source);
-        let visible_start = self.visible_start;
-        let overview = record
-            .waveform
-            .clone()
-            .or_else(|| same_source.then(|| self.overview.clone()).flatten());
-        self.update_overview(overview, record.short_term_loudness.clone());
-        self.source = Some(source);
-        if same_source {
-            self.visible_start = visible_start;
-            self.clamp_visible_start();
-        }
-        self.overloads.set_record(record);
-    }
-
-    /// Updates only overview presentation state so pure tests can prove same-source viewport retention.
-    fn update_overview(
-        &mut self,
-        overview: Option<Arc<WaveformOverview>>,
-        loudness: Option<Arc<ShortTermLoudnessHistory>>,
-    ) {
-        let same_file = match (&self.overview, &overview) {
-            (Some(current), Some(next)) => Arc::ptr_eq(current, next),
-            _ => false,
-        };
-        if !same_file {
-            self.visible_start = 0.0;
-        }
-        self.placeholder = if overview.is_some() {
-            SharedString::default()
-        } else {
-            SharedString::from("No waveform for this file")
-        };
-        self.overloads.clear();
-        self.source = None;
-        self.overview = overview;
-        self.loudness = loudness;
-        self.clamp_visible_start();
-    }
-
     /// Shows a text instead of an overview, for example while the file is analyzed.
     /// The cue points stay, so they reappear once the overview of the same file is shown.
     pub fn show_placeholder(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -416,6 +373,49 @@ impl WaveformView {
     pub fn set_loudness_range(&mut self, minimum: i32, maximum: i32, cx: &mut Context<Self>) {
         self.loudness_range = LoudnessRange { minimum, maximum };
         cx.notify();
+    }
+
+    /// Applies source-matched artifacts without touching transport, cue, gain, zoom or scrubbing state.
+    fn update_record(&mut self, record: &AnalysisRecord) {
+        let source = (record.path.clone(), record.file_size, record.modified_time_ms);
+        let same_source = self.source.as_ref() == Some(&source);
+        let visible_start = self.visible_start;
+        let overview = record
+            .waveform
+            .clone()
+            .or_else(|| same_source.then(|| self.overview.clone()).flatten());
+        self.update_overview(overview, record.short_term_loudness.clone());
+        self.source = Some(source);
+        if same_source {
+            self.visible_start = visible_start;
+            self.clamp_visible_start();
+        }
+        self.overloads.set_record(record);
+    }
+
+    /// Updates only overview presentation state so pure tests can prove same-source viewport retention.
+    fn update_overview(
+        &mut self,
+        overview: Option<Arc<WaveformOverview>>,
+        loudness: Option<Arc<ShortTermLoudnessHistory>>,
+    ) {
+        let same_file = match (&self.overview, &overview) {
+            (Some(current), Some(next)) => Arc::ptr_eq(current, next),
+            _ => false,
+        };
+        if !same_file {
+            self.visible_start = 0.0;
+        }
+        self.placeholder = if overview.is_some() {
+            SharedString::default()
+        } else {
+            SharedString::from("No waveform for this file")
+        };
+        self.overloads.clear();
+        self.source = None;
+        self.overview = overview;
+        self.loudness = loudness;
+        self.clamp_visible_start();
     }
 
     /// Returns the duration of the shown file in seconds.

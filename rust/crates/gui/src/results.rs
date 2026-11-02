@@ -358,15 +358,6 @@ impl ResultRow {
     }
 }
 
-/// Formats GUI measurement provenance without changing core statuses or CLI output.
-fn gui_measurement_status(record: &AnalysisRecord) -> &'static str {
-    if record.status == AnalysisStatus::Cached && record.measurement_producer == MeasurementProducer::Cpp {
-        "Cached (C++)"
-    } else {
-        format_status(record.status)
-    }
-}
-
 impl ResultsDelegate {
     /// Creates an empty table whose visible columns share the available width by weight.
     /// The table's scrollbars overlay the rows, so the columns can use its whole width.
@@ -1512,6 +1503,15 @@ const fn column_weight(key: ColumnKey) -> f64 {
     match key {
         ColumnKey::Name | ColumnKey::Path | ColumnKey::Status => 10.0,
         _ => 1.0,
+    }
+}
+
+/// Formats GUI measurement provenance without changing core statuses or CLI output.
+fn gui_measurement_status(record: &AnalysisRecord) -> &'static str {
+    if record.status == AnalysisStatus::Cached && record.measurement_producer == MeasurementProducer::Cpp {
+        "Cached (C++)"
+    } else {
+        format_status(record.status)
     }
 }
 
