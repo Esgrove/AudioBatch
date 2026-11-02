@@ -64,7 +64,8 @@ fn independent_waveforms_preserve_gain_producer_and_cpp_bytes() {
     assert_eq!(bytes, [1, 2, 3, 4]);
 }
 
-/// Treats corrupt optional artifacts as independent misses without discarding valid measurements or negative tag states.
+/// Treats corrupt optional artifacts as independent misses
+/// without discarding valid measurements or negative tag states.
 #[test]
 fn malformed_optional_blobs_do_not_invalidate_measurements_or_negative_tag_outcomes() {
     let directory = TempDir::new().expect("temporary directory");

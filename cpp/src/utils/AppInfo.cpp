@@ -6,6 +6,13 @@
 #include "utils/StringFormat.h"
 #include "utils/version.h"
 
+#include <filesystem>
+#if JUCE_WINDOWS
+#include <cstdlib>
+#endif
+#include <optional>
+#include <stdexcept>
+
 namespace audiobatch::utils
 {
 /// Recognizes a version-only launch before logging, single-instance forwarding, or GUI initialization.
@@ -38,15 +45,97 @@ juce::StringArray getPathArguments(const juce::String& commandLine)
     return paths;
 }
 
-/// Returns the storage options for the AudioBatch.settings file that holds the GUI settings and plugin chain.
-/// The CLI only reads this file, for example the plugin search folders of the last GUI scan.
+/// Validates an optional absolute storage root before JUCE can resolve relative paths against the working directory.
+/// Invalid nonempty values throw instead of falling back to any production storage.
+std::optional<juce::File> parseDataRootOverride(const juce::String& value)
+{
+    if (value.isEmpty()) {
+        return std::nullopt;
+    }
+#if JUCE_WINDOWS
+    const std::filesystem::path path(value.toWideCharPointer());
+#else
+    const std::filesystem::path path(value.toStdString());
+#endif
+    if (!path.is_absolute() || value.containsChar('\n') || value.containsChar('\r')) {
+        throw std::invalid_argument("AUDIOBATCH_DATA_ROOT must be an absolute path");
+    }
+    juce::File root(value);
+    if (root.existsAsFile()) {
+        throw std::invalid_argument("AUDIOBATCH_DATA_ROOT must name a directory, not a file");
+    }
+    return root;
+}
+
+/// Reads the process storage override without caching it or changing the environment.
+std::optional<juce::File> getDataRootOverride()
+{
+    // JUCE's Windows environment helper treats an empty value as absent, so check presence separately.
+#if JUCE_WINDOWS
+    std::size_t valueLength = 0;
+    if (_wgetenv_s(&valueLength, nullptr, 0, L"AUDIOBATCH_DATA_ROOT") != 0) {
+        throw std::invalid_argument("Could not read AUDIOBATCH_DATA_ROOT");
+    }
+    if (valueLength == 0) {
+        return std::nullopt;
+    }
+#endif
+    const auto value = juce::SystemStats::getEnvironmentVariable("AUDIOBATCH_DATA_ROOT", {});
+#if !JUCE_WINDOWS
+    // On POSIX, a present empty value stays empty even when the default is nonempty.
+    if (value.isEmpty() && juce::SystemStats::getEnvironmentVariable("AUDIOBATCH_DATA_ROOT", "unset").isNotEmpty()) {
+        return std::nullopt;
+    }
+#endif
+    if (value.isEmpty()) {
+        throw std::invalid_argument("AUDIOBATCH_DATA_ROOT must be an absolute path, not empty");
+    }
+    return parseDataRootOverride(value);
+}
+
+/// Keeps the analysis database shared with Rust while isolating all default cache connections when requested.
+juce::File defaultAnalysisDatabaseFile()
+{
+    return defaultAnalysisDatabaseFile(getDataRootOverride());
+}
+
+/// Resolves the shared cache for an explicitly supplied root without reading the process environment.
+juce::File defaultAnalysisDatabaseFile(const std::optional<juce::File>& dataRoot)
+{
+    const auto root = dataRoot.value_or(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory));
+    return root.getChildFile("AudioBatch/analysis.db");
+}
+
+/// Gives isolated applications their own scanner lock, while preserving the native lock name when unset.
+juce::String scopedPluginScanLockName(const juce::String& name)
+{
+    return scopedPluginScanLockName(name, getDataRootOverride());
+}
+
+/// Derives a stable lock namespace without mutating global state or sharing the production scanner lock.
+juce::String scopedPluginScanLockName(const juce::String& name, const std::optional<juce::File>& dataRoot)
+{
+    if (dataRoot) {
+        return format("{}-{}", name, juce::String::toHexString(dataRoot->getFullPathName().hashCode64()));
+    }
+    return name;
+}
+
+/// Returns the process-default settings location, failing closed on an invalid storage override.
 juce::PropertiesFile::Options createApplicationSettingsOptions()
+{
+    return createApplicationSettingsOptions(getDataRootOverride());
+}
+
+/// Resolves settings and the adjacent plugin files beneath an explicitly supplied isolation root.
+/// An absolute folderName overrides JUCE's platform settings directory without changing native unset defaults.
+juce::PropertiesFile::Options createApplicationSettingsOptions(const std::optional<juce::File>& dataRoot)
 {
     juce::PropertiesFile::Options options;
     options.applicationName = "AudioBatch";
     options.filenameSuffix = ".settings";
     options.osxLibrarySubFolder = "Application Support";
-    options.folderName = "AudioBatch";
+    options.folderName = dataRoot ? dataRoot->getChildFile("AudioBatch/settings").getFullPathName() : "AudioBatch";
     options.storageFormat = juce::PropertiesFile::storeAsXML;
     return options;
 }

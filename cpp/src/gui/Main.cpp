@@ -11,6 +11,7 @@
 
 #include <JuceHeader.h>
 
+#include <exception>
 #include <memory>
 
 namespace audiobatch
@@ -44,7 +45,15 @@ public:
     bool moreThanOneInstanceAllowed() override
     {
         const auto commandLine = getCommandLineParameters();
-        const auto independent = utils::isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
+        bool isolated = false;
+        try {
+            isolated = utils::getDataRootOverride().has_value();
+        } catch (const std::exception&) {
+            // Validation is reported by initialise, not forwarded to an unrelated production instance.
+            isolated = true;
+        }
+        const auto independent
+            = isolated || utils::isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
         if (!independent && !utils::isHeadlessRequest(commandLine)) {
             utils::allowExistingInstanceToActivate(getApplicationName());
         }
@@ -70,6 +79,15 @@ public:
 
         if (isPluginScanWorkerCommandLine(commandLineParameters)) {
             startPluginScanWorker(commandLineParameters);
+            return;
+        }
+
+        try {
+            juce::ignoreUnused(utils::getDataRootOverride());
+        } catch (const std::exception& error) {
+            console::printLineToConsole(error.what());
+            setApplicationReturnValue(1);
+            quit();
             return;
         }
 

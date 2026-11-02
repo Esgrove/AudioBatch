@@ -20,9 +20,6 @@ mod schema;
 mod serato;
 mod waveform_cache;
 
-/// Directory name of the application data, kept apart from the C++ application's `AudioBatch` directory.
-pub(crate) const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
-
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
 const ANALYSIS_VERSION: i64 = 13;
 
@@ -513,24 +510,27 @@ impl Default for AnalysisCache {
 }
 
 /// Returns the directory for Rust settings, logs, and plugin data, separate from the shared measurement database.
-/// Falls back to the temporary directory when the platform has no user data directory.
+///
+/// An explicit absolute `AUDIOBATCH_DATA_ROOT` takes precedence over platform paths.
+/// Falls back to the temporary directory only when no override or platform user directory exists.
+///
+/// # Panics
+/// Panics for an invalid explicit data root instead of falling back to production storage.
 #[must_use]
 pub fn data_directory() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(DATA_DIRECTORY_NAME)
+    crate::storage::StoragePaths::from_environment()
+        .expect("valid AUDIOBATCH_DATA_ROOT")
+        .data()
+        .to_path_buf()
 }
 
 /// Returns the default database path in the user data directory.
 #[must_use]
 fn default_database_path() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    let base = dirs::home_dir().unwrap_or_else(std::env::temp_dir).join("Library");
-    #[cfg(target_os = "windows")]
-    let base = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let base = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
-    base.join("AudioBatch").join("analysis.db")
+    crate::storage::StoragePaths::from_environment()
+        .expect("valid AUDIOBATCH_DATA_ROOT")
+        .database()
+        .to_path_buf()
 }
 
 /// Reads a signed SQLite integer without allowing a negative source length to become an empty stream.

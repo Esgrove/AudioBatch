@@ -11,6 +11,7 @@
 #include "utils/ThreadUtils.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace audiobatch::utils
@@ -26,6 +27,11 @@ inline double elapsedSecondsSince(const double startedAtMilliseconds)
 }
 
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
+std::unique_ptr<juce::FileLogger> createDefaultLogger(
+    const juce::String& appName,
+    const juce::String& logName,
+    const std::optional<juce::File>& dataRoot
+);
 
 void setConsoleEcho(bool enabled);
 void writeToLog(const juce::String& message, Level logLevel = Level::info);
