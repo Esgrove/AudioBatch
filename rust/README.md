@@ -109,7 +109,6 @@ cargo build --release
 
 - **Windows**: Bash and PowerShell
 - **macOS**: Zsh
-- **Linux**: Zsh and Bash
 
 ```shell
 # Install the completions for the shells of this platform

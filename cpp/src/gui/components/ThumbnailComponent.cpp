@@ -491,7 +491,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
         return;
     }
 
-    // Ctrl on Windows/Linux, Cmd on macOS. Both map to commandModifier in JUCE.
+    // Ctrl on Windows, Cmd on macOS. Both map to commandModifier in JUCE.
     if (event.mods.isCommandDown() && std::abs(wheel.deltaY) > 0.0f && mouseWheelGainCallback) {
         constexpr float dbPerWheelNotch = 6.0f;
         mouseWheelGainCallback(wheel.deltaY * dbPerWheelNotch);
