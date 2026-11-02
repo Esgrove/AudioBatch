@@ -11,6 +11,7 @@
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
 #include "plugins/PluginChainPreparation.h"
+#include "utils/GuiUtils.h"
 #include "utils/StringFormat.h"
 
 #include <cstddef>
@@ -456,7 +457,7 @@ void PluginChainEditor::showAddPluginMenu()
 
     const SafePointer safeThis(this);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addButton), [safeThis, types](const int result) {
-        if (safeThis == nullptr || result == 0) {
+        if (safeThis == nullptr || result == utils::MENU_RESULT_DISMISSED) {
             return;
         }
 

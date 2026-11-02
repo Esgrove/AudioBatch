@@ -275,7 +275,7 @@ Tests:
 ## Code Style
 
 - Prefer direct brace initialization for data members and namespace-scope constants,
-  such as `int blockSize {512};` and `constexpr int fileSize {0};`,
+  such as `int blockSize {512};` and `constexpr int FILE_SIZE {0};`,
   instead of copy initialization with `=`.
   Apply this to classes and structs, including those defined in source files.
   Do not extend this preference to local variables, loop initializers, or constructor initializer lists.
@@ -283,6 +283,9 @@ Tests:
   Do not add redundant empty initializers to default-constructed class objects or members initialized by a constructor.
   Keep another initialization form when braces would change type deduction or constructor overload selection.
   Examples include container size constructors and copies of `juce::Array`.
+- Name constants in `SCREAMING_SNAKE_CASE`.
+- Prefer named constants over unexplained numeric literals when values represent domain concepts, protocol fields,
+  policy limits, or reused values. Keep self-evident arithmetic and conventional values inline.
 - Use apostrophe digit separators in C++ decimal numeric literals with more than four digits in the integer part.
   Group digits in threes from the right, for example `48'000`, `100'000`, and `48'000.0`.
   Leave literals with four or fewer integer digits unchanged, for example `1024`.

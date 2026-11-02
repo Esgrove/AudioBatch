@@ -54,7 +54,10 @@ constexpr std::size_t legacyTypeOffset {20};
 constexpr std::size_t legacyLockOffset {21};
 constexpr std::size_t legacyEndOffset {6};
 constexpr std::uint8_t legacyUnset {0x7f};
+constexpr std::uint8_t LEGACY_MAJOR_VERSION {2};
 constexpr std::uint8_t legacyMinorVersion {5};
+constexpr std::uint8_t LEGACY_CUE_TYPE {1};
+constexpr std::uint8_t LEGACY_LOOP_TYPE {3};
 constexpr std::uint8_t maxAsciiByte {127};
 constexpr unsigned int seratoGroupBits {7};
 constexpr std::uint32_t seratoGroupMask {0x7f};
@@ -511,7 +514,7 @@ std::optional<Markers> parseMarkers2(const std::span<const std::uint8_t> bytes)
 std::optional<Markers> parseLegacyMarkers(const std::span<const std::uint8_t> bytes)
 {
     constexpr auto expected = gridHeaderBytes + legacyCount * legacyRecordBytes + sizeof(std::uint32_t);
-    if (bytes.size() != expected || bytes[0] != 2 || bytes[1] != legacyMinorVersion
+    if (bytes.size() != expected || bytes[0] != LEGACY_MAJOR_VERSION || bytes[1] != legacyMinorVersion
         || integer(bytes.subspan<2, sizeof(std::uint32_t)>()) != legacyCount)
     {
         return std::nullopt;
@@ -525,15 +528,15 @@ std::optional<Markers> parseLegacyMarkers(const std::span<const std::uint8_t> by
         if ((record[0] != 0 && record[0] != legacyUnset) || record[legacyLockOffset] > 1) {
             return std::nullopt;
         }
-        const auto slot = type == 1 ? cueIndex++ : loopIndex++;
+        const auto slot = type == LEGACY_CUE_TYPE ? cueIndex++ : loopIndex++;
         if (record[0] == legacyUnset) {
             continue;
         }
         const auto position = legacyNumber(record.subspan(1));
         const juce::Colour colour(opaqueAlpha | legacyNumber(record.subspan(legacyColourOffset)));
-        if (type == 1) {
+        if (type == LEGACY_CUE_TYPE) {
             markers.cues.push_back({.positionMilliseconds = position, .index = slot, .colour = colour, .name = {}});
-        } else if (type == 3) {
+        } else if (type == LEGACY_LOOP_TYPE) {
             if (record[legacyEndOffset - 1] != 0) {
                 return std::nullopt;
             }

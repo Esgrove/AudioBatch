@@ -416,6 +416,8 @@ Module boundaries:
 ## Code Style and Conventions
 
 - Rust 2024 edition, with clippy pedantic and nursery lints denied.
+- Prefer named constants over unexplained numeric literals when values represent domain concepts, protocol fields,
+  policy limits, or reused values. Keep self-evident arithmetic and conventional values inline.
 - Do not use plain `unwrap`. Use proper error handling, or `.expect()` in constants and tests.
 - Use domain-specific errors derived with `thiserror` in library and internal crates.
   Preserve concrete source errors and structured context, and match variants instead of parsing messages.

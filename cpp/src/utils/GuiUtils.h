@@ -18,6 +18,8 @@ namespace audiobatch::utils
 inline constexpr int DIALOG_RESULT_OK {1};
 /// Result code for cancelling or dismissing a dialog.
 inline constexpr int DIALOG_RESULT_CANCEL {0};
+/// Result code returned when a popup menu closes without a selection.
+inline constexpr int MENU_RESULT_DISMISSED {0};
 
 void allowExistingInstanceToActivate(const juce::String& applicationName);
 void bringWindowToFront(juce::TopLevelWindow& window);
