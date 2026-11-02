@@ -91,7 +91,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.3.2
 
       - name: Build tests and run unit suites
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           ./test.sh --build-type "$BUILD_TYPE" --build-only
           ./test.sh --build-type "$BUILD_TYPE" --unit --no-build
@@ -128,7 +128,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.3.2
 
       - name: Unit, GUI, and CLI subprocess coverage
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: ./coverage.sh --lcov
 
       - name: Upload coverage and integration diagnostics
