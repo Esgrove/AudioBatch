@@ -5,6 +5,7 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/DecodeFailureTracker.h"
 #include "gui/NativeWaveformBuilder.h"
 #include "gui/PreviewEnrichmentScheduler.h"
 #include "serato/SeratoPreviewLoader.h"
@@ -19,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <limits>
@@ -38,6 +40,48 @@ struct EnrichmentCall {
     juce::File file;
     bool readMissing {false};
     bool cancelled {false};
+};
+
+/// Supplies deterministic float PCM and decoder failures without disk I/O or a source-backed thumbnail.
+class WaveformTestReader final : public juce::AudioFormatReader
+{
+public:
+    /// Creates a mono stream long enough to exercise consecutive block failure handling.
+    WaveformTestReader() : juce::AudioFormatReader(nullptr, "Waveform test")
+    {
+        sampleRate = 48'000.0;
+        bitsPerSample = 32;
+        lengthInSamples = 65'536;
+        numChannels = 1;
+        usesFloatingPointData = true;
+    }
+
+    /// Fills float sample bit patterns through JUCE's reader ABI and optionally reports a failed block.
+    bool readSamples(
+        int* const* destination,
+        const int channelCount,
+        const int destinationOffset,
+        juce::int64 /*sourcePosition*/,
+        const int sampleCount
+    ) override
+    {
+        ++reads;
+        for (auto* channel : std::span(destination, static_cast<std::size_t>(channelCount))) {
+            if (channel != nullptr) {
+                const auto samples = std::span(channel, static_cast<std::size_t>(destinationOffset + sampleCount))
+                                         .subspan(static_cast<std::size_t>(destinationOffset));
+                std::ranges::fill(samples, std::bit_cast<int>(sample));
+            }
+        }
+        return readSucceeded;
+    }
+
+    /// PCM value delivered for every decoded sample, including nonfinite rejection cases.
+    float sample {0.25f};
+    /// Result reported after supplying PCM for a block.
+    bool readSucceeded {true};
+    /// Blocks requested, proving invalid geometry is rejected before decoding.
+    int reads {0};
 };
 
 /// Holds worker input by shared ownership, so scheduler shutdown never leaves dangling test captures.
@@ -422,6 +466,66 @@ public:
             expectEquals(samplesPerThumbnailPoint(16LL * 16'384), 16);
             expectEquals(samplesPerThumbnailPoint(16LL * 16'385), 32);
             expectEquals(samplesPerThumbnailPoint(std::numeric_limits<juce::int64>::max()), 1024);
+        }
+
+        beginTest("Invalid waveform geometry is rejected before any PCM read");
+        {
+            for (const auto channels : {0U, 3U}) {
+                WaveformTestReader reader;
+                reader.numChannels = channels;
+                expect(!buildNativeWaveform(reader));
+                expectEquals(reader.reads, 0);
+            }
+            for (const auto rate :
+                 {
+                     0.0,
+                     -1.0,
+                     768'001.0,
+                     std::numeric_limits<double>::infinity(),
+                     std::numeric_limits<double>::quiet_NaN(),
+                 })
+            {
+                WaveformTestReader reader;
+                reader.sampleRate = rate;
+                expect(!buildNativeWaveform(reader));
+                expectEquals(reader.reads, 0);
+            }
+            for (const auto length : {juce::int64 {0}, juce::int64 {-1}, juce::int64 {4'194'304} * 1024}) {
+                WaveformTestReader reader;
+                reader.lengthInSamples = length;
+                expect(!buildNativeWaveform(reader));
+                expectEquals(reader.reads, 0);
+            }
+        }
+
+        beginTest("Nonfinite PCM and repeated decode failures never publish a partial native waveform");
+        {
+            for (const auto sample :
+                 {
+                     std::numeric_limits<float>::infinity(),
+                     -std::numeric_limits<float>::infinity(),
+                     std::numeric_limits<float>::quiet_NaN(),
+                 })
+            {
+                WaveformTestReader reader;
+                reader.sample = sample;
+                expect(!buildNativeWaveform(reader));
+                expectEquals(reader.reads, 1);
+            }
+            WaveformTestReader reader;
+            reader.readSucceeded = false;
+            expect(!buildNativeWaveform(reader));
+            expectEquals(reader.reads, DecodeFailureTracker::maximumConsecutiveFailures);
+        }
+
+        beginTest("Obsolete filesystem identities never open or publish native waveforms");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_mono_44100_16.wav", "replaced.wav");
+            const utils::FileIdentity identity(source);
+            expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(source));
+            expect(!buildNativeWaveform(identity));
+            expect(!buildNativeWaveform(utils::FileIdentity(directory.getChildFile("missing.wav"))));
         }
 
         beginTest("Waveform cancellation is checked between bounded native PCM reads");

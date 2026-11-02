@@ -18,18 +18,18 @@ pub struct GainWrite {
     record: AnalysisRecord,
 }
 
+/// GUI-owned writer whose thread never waits for the GUI to adopt a completion.
+pub(super) struct GainWriter {
+    pending: Arc<(Mutex<PendingWrites>, Condvar)>,
+    thread: Option<JoinHandle<()>>,
+}
+
 /// Coalesced FIFO paths and their latest explicit edit.
 #[derive(Default)]
 struct PendingWrites {
     order: VecDeque<PathBuf>,
     edits: HashMap<PathBuf, GainWrite>,
     closing: bool,
-}
-
-/// GUI-owned writer whose thread never waits for the GUI to adopt a completion.
-pub(super) struct GainWriter {
-    pending: Arc<(Mutex<PendingWrites>, Condvar)>,
-    thread: Option<JoinHandle<()>>,
 }
 
 impl GainWrite {
@@ -129,6 +129,8 @@ mod test_gain_coalescing {
 
     use super::*;
 
+    /// Proves a blocked sink leaves edit admission responsive and shutdown drains coalesced edits in FIFO order.
+    /// Explicit clears survive coalescing, and closing admission prevents writes after the drain begins.
     #[test]
     fn blocked_persistence_does_not_block_admission_and_shutdown_drains_in_order() {
         let (entered_sender, entered) = mpsc::channel();
@@ -173,6 +175,7 @@ mod test_gain_coalescing {
         );
     }
 
+    /// Captures only persistence fields so queued slider edits cannot extend the lifetime of native preview artifacts.
     #[test]
     fn queued_gain_capture_does_not_retain_native_artifacts() {
         let mut builder = WaveformBuilder::new(1, Some(64));
@@ -192,6 +195,7 @@ mod test_gain_coalescing {
         assert!(write.record.overloads.is_none());
     }
 
+    /// Coalesces repeated edits in their original FIFO position and preserves a final clear as an explicit write.
     #[test]
     fn latest_nullable_edit_keeps_fifo_order() {
         let writer = GainWriter {
@@ -214,5 +218,46 @@ mod test_gain_coalescing {
         assert_eq!(pending.edits.len(), 2);
         assert!(pending.edits[&PathBuf::from("a")].record.custom_gain_db.is_none());
         drop(pending);
+    }
+
+    /// Exercises the real database sink, including explicit clears and same-source provenance preservation.
+    #[test]
+    fn database_writer_persists_nullable_gains_without_changing_measurements() {
+        let directory = tempfile::TempDir::new().expect("source directory");
+        let path = test_fixtures::copy_fixture(&directory, "sine_mono_24000_16.wav", None);
+        let cache = Arc::new(AnalysisCache::in_memory());
+        let mut record = audiobatch_core::analyze_file(&path, &|| false, &mut |_| {});
+        cache.store_analysis(&record).expect("initial measurements");
+        for gain in [Some(-3.0), None] {
+            record.custom_gain_db = gain;
+            let mut writer = GainWriter::new(Arc::clone(&cache));
+            writer.enqueue(GainWrite::new(&record));
+            writer.finish().expect("draining writer").join().expect("writer exits");
+            let stored = cache.get_analysis(&path).expect("stored measurements");
+            assert!(audiobatch_core::record::same_custom_gain(stored.custom_gain_db, gain));
+            assert_eq!(stored.measurement_producer, record.measurement_producer);
+            assert_eq!(stored.length_in_samples, record.length_in_samples);
+            assert_eq!(stored.short_term_loudness, record.short_term_loudness);
+        }
+    }
+
+    /// A queued edit carries its original identity and cannot leak into a replacement at the same path.
+    #[test]
+    fn database_writer_discards_an_edit_for_a_replaced_source() {
+        let directory = tempfile::TempDir::new().expect("source directory");
+        let path = test_fixtures::copy_fixture(&directory, "sine_mono_24000_16.wav", Some("source.wav"));
+        let cache = Arc::new(AnalysisCache::in_memory());
+        let mut record = audiobatch_core::analyze_file(&path, &|| false, &mut |_| {});
+        record.custom_gain_db = Some(-6.0);
+        let stale = GainWrite::new(&record);
+        let path = test_fixtures::copy_fixture(&directory, "sine_stereo_44100_16.wav", Some("source.wav"));
+        let replacement = audiobatch_core::analyze_file(&path, &|| false, &mut |_| {});
+        cache.store_analysis(&replacement).expect("replacement measurements");
+        let mut writer = GainWriter::new(Arc::clone(&cache));
+        writer.enqueue(stale);
+        writer.finish().expect("draining writer").join().expect("writer exits");
+        let stored = cache.get_analysis(&path).expect("replacement retained");
+        assert!(stored.custom_gain_db.is_none());
+        assert_eq!(stored.file_size, replacement.file_size);
     }
 }

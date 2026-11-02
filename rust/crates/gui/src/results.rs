@@ -1737,6 +1737,7 @@ mod test_preview_artifacts {
         row
     }
 
+    /// Limits artifact attachment to the waveform field so optional enrichment cannot replace authoritative row state.
     #[test]
     fn attachment_preserves_measurements_origin_messages_selection_and_row_order() {
         let mut delegate = ResultsDelegate::new(1600.0);
@@ -1760,6 +1761,7 @@ mod test_preview_artifacts {
         );
     }
 
+    /// Requires both captured identity fields to match so reusing a path cannot attach an obsolete waveform.
     #[test]
     fn stale_same_path_artifact_never_attaches_to_replacement_measurements() {
         let mut delegate = ResultsDelegate::new(1600.0);
@@ -1777,6 +1779,7 @@ mod test_preview_artifacts {
         );
     }
 
+    /// Bounds retained native artifacts to the selected row and releases the final waveform when selection clears.
     #[test]
     fn unselected_artifacts_are_released_but_the_selected_artifact_survives() {
         let mut delegate = ResultsDelegate::new(1600.0);
@@ -1809,6 +1812,7 @@ mod test_measurement_provenance {
         })
     }
 
+    /// Exposes foreign cached provenance only in GUI presentation so users see decoder origin without changing CLI status.
     #[test]
     fn only_foreign_cache_hits_have_a_gui_origin_suffix() {
         let foreign = row(AnalysisStatus::Cached, MeasurementProducer::Cpp);
@@ -1830,6 +1834,7 @@ mod test_measurement_provenance {
         }
     }
 
+    /// Keeps actionable operation notices and current activity ahead of provenance so origin cannot obscure row status.
     #[test]
     fn operation_messages_and_activity_take_precedence_over_origin() {
         let mut foreign = row(AnalysisStatus::Cached, MeasurementProducer::Cpp);
@@ -1844,6 +1849,7 @@ mod test_measurement_provenance {
         assert!(foreign.status_tooltip().is_none());
     }
 
+    /// Sorts cached rows by the status text users see so provenance labels and table ordering remain consistent.
     #[test]
     fn status_sorting_uses_the_presented_origin() {
         let native = row(AnalysisStatus::Cached, MeasurementProducer::Rust);
@@ -1895,6 +1901,7 @@ mod test_custom_gain {
         assert!(!delegate.set_custom_gain(Path::new("/b.wav"), Some(1.0)));
     }
 
+    /// Treats an incoming persisted clear as authoritative so a stale displayed gain cannot become a new write.
     #[test]
     fn new_persisted_clear_does_not_inherit_or_replay_an_old_gain() {
         let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
@@ -1903,6 +1910,7 @@ mod test_custom_gain {
         assert!(delegate.take_gain_write(Path::new("/a.wav")).is_none());
     }
 
+    /// Consumes each explicit edit once so a later cross-process clear is not overwritten by replayed GUI state.
     #[test]
     fn submitted_explicit_edit_is_not_replayed_over_a_later_external_clear() {
         let mut delegate = delegate_with(vec![record("/a.wav", None)]);
@@ -2201,6 +2209,7 @@ mod test_operation_rows {
         assert_eq!(delegate.index_of(Path::new("/a.aif")), Some(0));
     }
 
+    /// Keeps an unsubmitted edit only for the unchanged source identity so rewritten audio cannot inherit stale gain.
     #[test]
     fn an_unchanged_file_keeps_its_custom_gain_and_a_rewritten_one_loses_it() {
         let mut source = record("/a.aif");

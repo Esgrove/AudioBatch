@@ -1025,6 +1025,7 @@ mod test_artifact_presentation {
         }
     }
 
+    /// Preserves navigation and transport state across a same-source artifact refresh so enrichment cannot disrupt use.
     #[test]
     fn replacing_same_source_artifact_preserves_viewport_and_interaction_state() {
         let mut view = WaveformView::new();
@@ -1051,6 +1052,7 @@ mod test_artifact_presentation {
         assert!(view.playhead.is_some());
     }
 
+    /// Retains the selected overview across waveform-free measurement refreshes so independent cache reads do not blank it.
     #[test]
     fn waveform_free_same_source_measurements_keep_the_selected_artifact() {
         let mut record = record();
@@ -1068,6 +1070,7 @@ mod test_artifact_presentation {
         assert!((view.visible_start - 0.04).abs() < f64::EPSILON);
     }
 
+    /// Clears an overview after a source identity change so replacement audio cannot display the previous source's peaks.
     #[test]
     fn different_source_does_not_borrow_a_released_waveform() {
         let mut record = record();

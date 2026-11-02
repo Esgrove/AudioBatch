@@ -33,30 +33,19 @@ enum EnrichmentMode {
     Repair,
 }
 
+/// Independent artifact parts delivered before a potentially long waveform pass completes.
+enum EnrichmentPart {
+    Overview(SeratoOverviewState),
+    Tags(Option<Arc<FileTags>>),
+    Waveform(Arc<WaveformOverview>),
+}
+
 /// A lightweight candidate belonging to exactly one measured source version.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct EnrichmentIdentity {
     path: PathBuf,
     file_size: u64,
     modified_time_ms: i64,
-}
-
-/// One admitted job, whose cancellation does not release its blocking-worker slot.
-#[derive(Clone)]
-struct EnrichmentRequest {
-    identity: EnrichmentIdentity,
-    cancelled: Arc<AtomicBool>,
-    selected: Arc<AtomicBool>,
-    preview: Option<(PreviewVersion, u64)>,
-    generation: u64,
-    mode: EnrichmentMode,
-}
-
-/// Independent artifact parts delivered before a potentially long waveform pass completes.
-enum EnrichmentPart {
-    Overview(SeratoOverviewState),
-    Tags(Option<Arc<FileTags>>),
-    Waveform(Arc<WaveformOverview>),
 }
 
 /// GUI-owned admission state, separate from playback and selected-preview generations.
@@ -71,6 +60,17 @@ pub(super) struct EnrichmentQueue {
     completed: HashSet<EnrichmentIdentity>,
     active: Option<EnrichmentRequest>,
     tags: VecDeque<(EnrichmentIdentity, Option<Arc<FileTags>>)>,
+}
+
+/// One admitted job, whose cancellation does not release its blocking-worker slot.
+#[derive(Clone)]
+struct EnrichmentRequest {
+    identity: EnrichmentIdentity,
+    cancelled: Arc<AtomicBool>,
+    selected: Arc<AtomicBool>,
+    preview: Option<(PreviewVersion, u64)>,
+    generation: u64,
+    mode: EnrichmentMode,
 }
 
 impl EnrichmentIdentity {
@@ -94,18 +94,6 @@ impl EnrichmentIdentity {
             && record.path == self.path
             && record.file_size == self.file_size
             && record.modified_time_ms == self.modified_time_ms
-    }
-}
-
-impl EnrichmentRequest {
-    /// Checks the cancellation token cheaply between decoded blocks.
-    fn is_running(&self) -> bool {
-        !self.cancelled.load(Ordering::Acquire)
-    }
-
-    /// Checks both runtime cancellation and the captured filesystem identity at stage boundaries.
-    fn is_current(&self) -> bool {
-        self.is_running() && self.identity.matches_disk()
     }
 }
 
@@ -271,6 +259,18 @@ impl EnrichmentQueue {
 impl Drop for EnrichmentQueue {
     fn drop(&mut self) {
         self.pause();
+    }
+}
+
+impl EnrichmentRequest {
+    /// Checks the cancellation token cheaply between decoded blocks.
+    fn is_running(&self) -> bool {
+        !self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Checks both runtime cancellation and the captured filesystem identity at stage boundaries.
+    fn is_current(&self) -> bool {
+        self.is_running() && self.identity.matches_disk()
     }
 }
 
@@ -625,6 +625,7 @@ mod test_enrichment_parts {
         }
     }
 
+    /// Keeps a cache-only miss free of source I/O so foreground work cannot start optional repair readers.
     #[test]
     fn cache_only_miss_never_invokes_artifact_readers() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -669,6 +670,7 @@ mod test_enrichment_parts {
             .expect("cached overview");
     }
 
+    /// Makes persisted overview and waveform artifacts available during foreground work without parsing or decoding.
     #[test]
     fn cache_only_load_delivers_existing_parts_without_source_readers() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -693,6 +695,7 @@ mod test_enrichment_parts {
         assert!(receiver.is_empty());
     }
 
+    /// Leaves missing artifacts uncached so deferred repair can distinguish an unread source from confirmed absence.
     #[test]
     fn cache_only_misses_neither_invoke_readers_nor_manufacture_negative_tags() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -715,6 +718,7 @@ mod test_enrichment_parts {
         assert!(cache.get_waveform(&record.path).is_none());
     }
 
+    /// Reuses in-memory selected artifacts without source I/O so foreground selection can retain an available preview.
     #[test]
     fn cache_only_load_reuses_remembered_tags_and_an_attached_waveform() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -737,6 +741,7 @@ mod test_enrichment_parts {
         assert!(receiver.is_empty());
     }
 
+    /// Publishes metadata before waveform construction so cues and inspector fields remain usable if decoding fails.
     #[test]
     fn metadata_is_delivered_before_failed_waveform_work() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -765,6 +770,7 @@ mod test_enrichment_parts {
         assert!(receiver.is_empty());
     }
 
+    /// Keeps waveform repair independent of tag failure and avoids persisting a transient read error as tag absence.
     #[test]
     fn transient_metadata_failure_does_not_block_waveform_or_cache_false_absence() {
         let directory = tempfile::TempDir::new().expect("cache directory");
@@ -787,6 +793,7 @@ mod test_enrichment_parts {
         assert!(cache.get_serato_overview(&record.path).is_none());
     }
 
+    /// Releases background waveform ownership after construction so unselected results cannot accumulate in memory.
     #[test]
     fn unselected_generated_waveform_is_released_not_delivered_or_retained() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -809,6 +816,7 @@ mod test_enrichment_parts {
         assert!(receiver.is_empty());
     }
 
+    /// Treats persisted negative Serato outcomes as terminal so background repair does not repeatedly parse them.
     #[test]
     fn stable_negative_serato_outcomes_do_not_invoke_the_background_reader() {
         let directory = tempfile::TempDir::new().expect("cache directory");
@@ -839,6 +847,7 @@ mod test_enrichment_parts {
         }
     }
 
+    /// Rejects metadata read across a source replacement and skips decoding so stale artifacts cannot reach the preview.
     #[test]
     fn replacement_during_metadata_rejects_all_parts_and_skips_waveform() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -876,6 +885,8 @@ mod test_enrichment_cache_admission {
         }
     }
 
+    /// Restricts foreground admission to the selected cache lookup even when a prior repair gate remains open.
+    /// Background work and additional selected readers must wait for the occupied slot.
     #[test]
     fn foreground_admits_only_the_selected_cache_load_even_with_an_open_gate() {
         let first = tempfile::NamedTempFile::new().expect("background source");
@@ -896,6 +907,7 @@ mod test_enrichment_cache_admission {
         }
     }
 
+    /// Retains one deferred repair after a cache-only attempt without spinning selected retries during foreground work.
     #[test]
     fn cache_completion_defers_repair_without_an_immediate_selected_retry() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -921,6 +933,7 @@ mod test_enrichment_cache_admission {
         assert_eq!(repair.identity, identity);
     }
 
+    /// Keeps an admitted reader's cache-only mode fixed so opening repair admission cannot change its I/O contract.
     #[test]
     fn completion_reconciliation_does_not_upgrade_an_active_cache_only_reader() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -939,6 +952,7 @@ mod test_enrichment_cache_admission {
         );
     }
 
+    /// Holds admission through cancellation so changing selection cannot overlap two blocking cache readers.
     #[test]
     fn cancelled_cache_load_retains_the_slot_until_its_worker_returns() {
         let first = tempfile::NamedTempFile::new().expect("first source");
@@ -963,6 +977,7 @@ mod test_enrichment_cache_admission {
         assert_eq!(next.mode, EnrichmentMode::CacheOnly);
     }
 
+    /// Rejects a cache delivery from an earlier visit to the same path so a selection round trip cannot revive it.
     #[test]
     fn cache_load_round_trip_accepts_only_the_latest_preview_token() {
         let first = tempfile::NamedTempFile::new().expect("first source");
@@ -992,6 +1007,7 @@ mod test_enrichment_cache_admission {
         assert!(current.is_running());
     }
 
+    /// Forgets old cache attempts on load invalidation while retaining admission until the obsolete reader drains.
     #[test]
     fn new_load_generation_discards_cache_attempts_but_not_active_admission() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -1021,6 +1037,7 @@ mod test_enrichment_admission {
         }
     }
 
+    /// Requires completed-load admission and an empty active slot so background repair stays deferred and serial.
     #[test]
     fn completion_gate_and_one_active_reader_are_required() {
         let mut queue = EnrichmentQueue::default();
@@ -1032,6 +1049,7 @@ mod test_enrichment_admission {
         assert!(queue.take_next(None, None, true).is_none());
     }
 
+    /// Allows the selected preview to reuse its cache during a foreground run while reserving repair for completion.
     #[test]
     fn foreground_run_allows_selected_cache_reads_but_defers_repairs() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -1058,6 +1076,7 @@ mod test_enrichment_admission {
         assert_eq!(repair.mode, EnrichmentMode::Repair);
     }
 
+    /// Promotes selected work ahead of background candidates without duplicating source identities in the queue.
     #[test]
     fn selection_promotes_and_deduplicates_candidates() {
         let mut queue = EnrichmentQueue::default();
@@ -1076,6 +1095,7 @@ mod test_enrichment_admission {
         );
     }
 
+    /// Retains the cancelled reader's slot until completion so reopening the gate cannot create concurrent repairs.
     #[test]
     fn cancellation_does_not_release_a_blocking_slot() {
         let mut queue = EnrichmentQueue::default();
@@ -1094,6 +1114,7 @@ mod test_enrichment_admission {
         );
     }
 
+    /// Avoids background reads for terminal Serato outcomes while still reading selected display tags for cue data.
     #[test]
     fn valid_negative_serato_outcomes_skip_background_metadata_but_not_selected_cues() {
         for state in [
@@ -1107,6 +1128,7 @@ mod test_enrichment_admission {
         assert!(needs_display_tags(None, false));
     }
 
+    /// Prevents an invalidated load from marking new work complete or releasing its reader slot before the drain.
     #[test]
     fn load_invalidation_keeps_the_active_slot_and_rejects_the_old_generation() {
         let mut queue = EnrichmentQueue::default();
@@ -1125,6 +1147,7 @@ mod test_enrichment_admission {
         );
     }
 
+    /// Invalidates an earlier preview generation even for the same path and waits for its reader before restarting.
     #[test]
     fn selection_round_trip_rejects_old_preview_without_freeing_the_reader() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -1147,6 +1170,7 @@ mod test_enrichment_admission {
         assert!(queue.take_next(Some(Path::new("a")), source.token(), true).is_some());
     }
 
+    /// Interrupts background work for selection but joins an already matching preview so repeated requests do not restart it.
     #[test]
     fn selection_cancels_unselected_work_but_joins_the_current_preview() {
         let file = tempfile::NamedTempFile::new().expect("source");
@@ -1173,6 +1197,8 @@ mod test_enrichment_admission {
         assert!(queue.accepts_preview(&selected, &source));
     }
 
+    /// Retains negative display-tag results within the fixed limit to avoid repeated reads without unbounded memory.
+    /// Load invalidation clears those results and closes admission so they cannot leak into a new load.
     #[test]
     fn terminal_negative_tags_are_retained_but_bounded() {
         let mut queue = EnrichmentQueue::default();
@@ -1184,5 +1210,86 @@ mod test_enrichment_admission {
         queue.invalidate();
         assert!(queue.tags.is_empty());
         assert!(!queue.gate_open);
+    }
+}
+
+#[cfg(test)]
+mod test_native_waveform {
+    use std::cell::Cell;
+
+    use audiobatch_core::analyze_file;
+
+    use super::*;
+
+    /// Proves waveform-only enrichment preserves the decoder timeline and the independently measured overview.
+    #[test]
+    fn waveform_only_decode_matches_analysis_for_lossless_lossy_and_silent_sources() {
+        for name in [
+            "sine_mono_24000_16.wav",
+            "sine_stereo_44100_16.wav",
+            "sine_stereo_44100_320k.mp3",
+            "silence_stereo_44100_16.wav",
+        ] {
+            let record = analyze_file(&test_fixtures::fixture(name), &|| false, &mut |_| {});
+            assert!(record.is_ready(), "{name}: {}", record.error_message);
+            let actual = build_waveform(&record, || true).expect("waveform decode");
+            assert_eq!(actual, record.waveform, "{name}");
+        }
+    }
+
+    /// Rejects cancellation and changed identities before trying to open an invalid or replaced source.
+    #[test]
+    fn cancelled_and_replaced_sources_do_not_begin_decoding() {
+        let directory = tempfile::TempDir::new().expect("source directory");
+        let path = test_fixtures::copy_fixture(&directory, "sine_mono_24000_16.wav", None);
+        let record = analyze_file(&path, &|| false, &mut |_| {});
+        assert!(build_waveform(&record, || false).expect("cancelled").is_none());
+        std::fs::write(&path, b"replacement").expect("replaces source");
+        assert!(build_waveform(&record, || true).expect("stale identity").is_none());
+    }
+
+    /// An existing identity does not authorize geometry from a different stream or a failed decoder.
+    #[test]
+    fn mismatched_geometry_and_decode_errors_do_not_publish_waveforms() {
+        let mut record = analyze_file(
+            &test_fixtures::fixture("sine_mono_24000_16.wav"),
+            &|| false,
+            &mut |_| {},
+        );
+        record.channels += 1;
+        assert!(build_waveform(&record, || true).is_err());
+        record.channels -= 1;
+        record.sample_rate += 1;
+        assert!(build_waveform(&record, || true).is_err());
+        let broken = analyze_file(&test_fixtures::fixture("broken.wav"), &|| false, &mut |_| {});
+        assert!(build_waveform(&broken, || true).is_err());
+    }
+
+    /// Cancellation after decoding starts must discard every accumulated bucket instead of publishing partial PCM.
+    #[test]
+    fn cancellation_between_packets_discards_the_partial_waveform() {
+        let record = analyze_file(
+            &test_fixtures::fixture("sine_stereo_44100_16.wav"),
+            &|| false,
+            &mut |_| {},
+        );
+        let checks = Cell::new(0);
+        let actual = build_waveform(&record, || {
+            checks.set(checks.get() + 1);
+            checks.get() < 3
+        })
+        .expect("cancelled waveform decode");
+        assert!(actual.is_none());
+        assert_eq!(checks.get(), 3);
+    }
+
+    /// Transient metadata failures stay retryable rather than becoming a fabricated absent-tag result.
+    #[test]
+    fn display_tag_reader_distinguishes_valid_absence_from_failed_reads() {
+        let path = test_fixtures::fixture("sine_stereo_44100_16.wav");
+        assert!(read_tags(&path).is_some());
+        let directory = tempfile::TempDir::new().expect("source directory");
+        assert!(read_tags(&directory.path().join("missing.wav")).is_none());
+        assert!(read_tags(&test_fixtures::fixture("broken.wav")).is_none());
     }
 }

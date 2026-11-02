@@ -250,7 +250,7 @@ impl AppView {
             gain_slider: sliders.gain,
             peak_target_slider: sliders.peak_target,
             loudness_target_slider: sliders.loudness_target,
-            coordinator: coordinators.analysis.clone(),
+            coordinator: coordinators.analysis,
             normalize_coordinator: coordinators.normalize,
             normalize_run: None,
             normalize_task: None,
