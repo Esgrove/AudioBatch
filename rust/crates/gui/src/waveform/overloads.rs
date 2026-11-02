@@ -10,11 +10,8 @@ use audiobatch_core::overload::{OverloadHistory, SAMPLE_OVER, TRUE_PEAK_OVER};
 use gpui_kit::{Bounds, Hsla, PathBuilder, Window, fill, point, px, size};
 
 use super::{PaintData, Viewport};
-use crate::theme::color;
+use crate::theme::{color, palette};
 
-/// Amber #CEAF6C, the warning color of the application palette,
-/// which the C++ warning renderer also uses so overload marks look the same in both applications.
-const WARNING_AMBER: u32 = 0x00CE_AF6C;
 /// Height of solid or hollow caps at each channel edge.
 const CAP_HEIGHT: f32 = 4.0;
 /// Minimum warning width, retaining a visible hollow interior for isolated true peak overs.
@@ -86,7 +83,8 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
     let columns = f32::from(plot.size.width) as usize;
     let channels = data.overview.channels().clamp(1, 2) as usize;
     let lane_height = f32::from(plot.size.height) / channels as f32;
-    let amber = color(WARNING_AMBER);
+    // The C++ warning renderer uses the same palette warning color, so overload marks match in both applications.
+    let amber = color(palette::YELLOW_WARNING);
     let tint = Hsla { a: TINT_ALPHA, ..amber };
     for channel in 0..channels {
         let projected = project_columns(history, channel, viewport.start, viewport.length, columns);

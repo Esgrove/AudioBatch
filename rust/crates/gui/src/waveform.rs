@@ -27,7 +27,7 @@ use gpui_kit::{
     App, Bounds, ContentMask, Context, EventEmitter, Hsla, InteractiveElement as _, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollEvent,
     SharedString, StatefulInteractiveElement as _, Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font,
-    point, px, size,
+    point, px, rgb, size,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
@@ -799,7 +799,7 @@ fn paint_envelope(extents: &[(f32, f32)], left: f32, window: &mut Window) {
 /// Paints one envelope as a one pixel wide bar per column in its Serato colour, blue where a column has none.
 fn paint_coloured_columns(extents: &[(f32, f32)], colours: &[Option<OverviewColour>], left: f32, window: &mut Window) {
     for (column, (&(top, bottom), colour)) in extents.iter().zip(colours).enumerate() {
-        let fill_color = colour.map_or_else(|| color(palette::BLUE), |colour| color(colour.to_rgb_u32()));
+        let fill_color = colour.map_or_else(|| color(palette::BLUE), |colour| color(rgb(colour.to_rgb_u32())));
         window.paint_quad(fill(
             Bounds {
                 origin: point(px(left + column as f32), px(top)),
@@ -994,7 +994,7 @@ fn paint_cues(cues: &[CueMarker], duration: f64, viewport: &Viewport, window: &m
             let mut body = PathBuilder::fill();
             body.add_polygon(triangle, true);
             if let Ok(path) = body.build() {
-                window.paint_path(path, color(cue.color));
+                window.paint_path(path, color(rgb(cue.color)));
             }
         }
     }
