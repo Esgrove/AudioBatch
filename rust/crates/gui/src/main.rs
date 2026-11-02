@@ -24,6 +24,7 @@ mod artwork;
 mod build_info;
 mod controls;
 mod demo;
+mod file_drag;
 mod files;
 mod info_panel;
 mod menus;

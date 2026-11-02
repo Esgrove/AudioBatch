@@ -44,6 +44,7 @@ The Rust version covers the key features of the C++ application:
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the waveform and to the plugin chain preview.
 - Accept files and folders dropped onto the GUI.
+- Drag the selected rows out of the GUI to other applications as file copies, on macOS and Windows.
 - Offer a right-click menu on the rows of the GUI, with the items of the C++ menu except Normalization Format Support.
 - Normalize files from the CLI and the GUI to a sample peak or loudness target,
   written as AIFF with tags and Serato data.
@@ -122,7 +123,7 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   `discovery.rs` finds bundles on disk, `module_info.rs` reads their `moduleinfo.json` without loading them,
   `platform_events.rs` runs the platform event loop in a process without a GUI framework,
   `strings.rs` converts the fixed-size string fields of the VST3 structs, and `enums.rs` the enum constants.
-  It is the only crate besides the test plugin that contains unsafe code.
+  It holds the unsafe code of VST3 hosting.
 - `crates/plugins` (`audiobatch-plugins`): the plugin features, in safe code only.
   `scanner.rs` scans out of process through `scan_worker.rs`, `library.rs` keeps the known plugins,
   `chain.rs` the saved chain, `presets.rs` the named chain presets,
@@ -173,6 +174,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   `settings.rs` the saved preferences, `normalization.rs` the normalization target and options,
   `operation_run.rs` the progress of a normalization or processing run,
   and `files.rs` revealing files and opening their folders.
+  `file_drag.rs` drags the selected rows out to other applications,
+  and `file_drag/windows.rs` is its OLE drag source on Windows, where gpui has no outbound file drag.
   `single_instance.rs` hands the paths of a second launch to the running app,
   `demo.rs` holds the data of the `--demo-rows` stress test, and `snapshot.rs` the `snapshot` feature.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
@@ -230,8 +233,9 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Methods that need the UI thread take a `&UiThread`, a token that only exists there and is not `Send`.
   Other threads reach the UI thread through `UiDispatcher`, and the GUI drains its `UiJobs` on the foreground executor.
   A worker that waits on the UI thread passes its cancellation check, so it never blocks a UI thread waiting on it.
-- **Unsafe code** is allowed only in `vst3-host` and the test plugin, module by module,
-  with `#![expect(unsafe_code, reason = "...")]`.
+- **Unsafe code.** The workspace denies `unsafe_code`,
+  and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`, kept as narrow as possible.
+  Mostly this is in `vst3-host` and the test plugin, plus the Windows file drag in `gui/src/file_drag/windows.rs`.
   Every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
   Keep COM pointers inside `vst3-host`, so the crates above it stay safe.
 - **The SDK version.** The `vst3` crate is pinned to `=0.3.0`, whose bindings are generated from VST SDK 3.8.0,

@@ -33,6 +33,20 @@ vst3-host = { workspace = true, features = ["editor"] }
 audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
 
+# The OLE drag source of `src/file_drag/windows.rs`, which drags files out of the results table.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+] }
+
 # Records the version, build time, and commit for the About dialog and `--version`, see `build.rs`.
 [build-dependencies]
 build-info.workspace = true
