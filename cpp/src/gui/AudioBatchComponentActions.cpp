@@ -229,7 +229,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     addItem(FileMenuItemId::normalizeSupport, "Normalization Format Support...", true);
     menu.addSeparator();
     const bool canProcess = backgroundWork.isIdle() && liveChain->getNumEnabledValidSlots() > 0;
-    addItem(FileMenuItemId::process, "Process With Plugin Chain (output AIFF)", canProcess);
+    addItem(FileMenuItemId::process, "Process With Plugin Chain", canProcess);
     // Every selected row counts, since a gain can be cleared from a row that cannot be normalized.
     const auto selectedRows = resultsTable.getSelectedRows();
     bool anyHasGain {false};
