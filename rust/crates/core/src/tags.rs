@@ -8,12 +8,14 @@
 
 use std::borrow::Cow;
 use std::fs::File;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFile};
 use lofty::flac::FlacFile;
+use lofty::id3::v2::util::synchsafe::UnsynchronizedStream;
 use lofty::id3::v2::{Frame, GeneralEncapsulatedObject, Id3v2Tag};
 use lofty::iff::aiff::AiffFile;
 use lofty::iff::wav::WavFile;
@@ -200,25 +202,249 @@ fn read_tags_with_options(path: &Path, options: ParseOptions) -> Result<FileTags
         tags.key = tag.get_string(ItemKey::InitialKey).map(str::to_string);
         tags.has_picture = !tag.pictures().is_empty();
     }
-    tags.serato = if lowercase_extension(path).as_deref() == Some("flac") {
-        read_flac_serato_data(path)
-    } else {
-        read_display_id3v2(path).as_ref().and_then(serato_data)
-    };
+    tags.serato = read_serato_data(path).map_err(|source| TagsError {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(tags)
 }
 
-/// Reads a concrete `ID3v2` tag for Serato data without changing metadata-copy parsing.
-fn read_display_id3v2(path: &Path) -> Option<Id3v2Tag> {
-    let extension = lowercase_extension(path)?;
-    let mut file = File::open(path).ok()?;
+/// Reads a concrete `ID3v2` tag without suppressing a second-open or container parsing failure.
+fn read_display_id3v2(path: &Path) -> Result<Option<Id3v2Tag>, lofty::error::FileParseError> {
+    let mut file = File::open(path)?;
     let options = display_parse_options();
-    match extension.as_str() {
-        "mp3" => MpegFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
-        "aif" | "aiff" | "aifc" => AiffFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
-        "wav" | "wave" => WavFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
+    Ok(match lowercase_extension(path).as_deref() {
+        Some("mp3") => MpegFile::read_from(&mut file, options)?.id3v2().cloned(),
+        Some("aif" | "aiff" | "aifc") => AiffFile::read_from(&mut file, options)?.id3v2().cloned(),
+        Some("wav" | "wave") => WavFile::read_from(&mut file, options)?.id3v2().cloned(),
         _ => None,
+    })
+}
+
+/// Reads Serato values independently of generic-tag conversion and preserves physical GEOB duplicate order.
+fn read_serato_data(path: &Path) -> Result<Option<SeratoData>, lofty::error::FileParseError> {
+    if !supports_serato_data(path) {
+        return Ok(None);
     }
+    if lowercase_extension(path).as_deref() == Some("flac") {
+        return read_flac_serato_data(path);
+    }
+    let Some(tag) = read_display_id3v2(path)? else {
+        return Ok(None);
+    };
+    // A single retained GEOB has no ordering ambiguity, including byte-identical repeated copies.
+    if (&tag)
+        .into_iter()
+        .filter(|frame| frame.id_str() == "GEOB")
+        .take(2)
+        .count()
+        < 2
+    {
+        return Ok(serato_data(&tag));
+    }
+    // Lofty's FrameList replaces byte-identical binary frames and moves the surviving copy to the end.
+    // Recover source order before first-valid selection, while retaining Lofty's frame decoding.
+    let objects = read_ordered_geob(path)?;
+    if objects.is_empty() {
+        return Err(invalid_id3("Cannot locate the source GEOB frames").into());
+    }
+    Ok(parse_serato_objects(&objects))
+}
+
+/// Parses retained GEOB objects when no duplicate-order recovery is required.
+fn serato_data(tag: &Id3v2Tag) -> Option<SeratoData> {
+    let objects: Vec<_> = tag
+        .into_iter()
+        .filter_map(|frame| {
+            if frame.id_str() != "GEOB" {
+                return None;
+            }
+            let Frame::Binary(binary) = frame else {
+                return None;
+            };
+            let object = GeneralEncapsulatedObject::parse(&binary.data, frame.flags()).ok()?;
+            Some((object.descriptor.unwrap_or_default(), object.data))
+        })
+        .collect();
+    parse_serato_objects(&objects)
+}
+
+/// Selects the first valid object of each kind from a source-ordered object list.
+fn parse_serato_objects(objects: &[(String, Vec<u8>)]) -> Option<SeratoData> {
+    SeratoData::parse(
+        objects
+            .iter()
+            .map(|(description, bytes)| (description.as_str(), bytes.as_slice())),
+    )
+}
+
+/// Creates an extraction failure, which must not become a stable absent tag result.
+fn invalid_id3(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+/// Decodes a checked four-byte syncsafe ID3 size.
+fn syncsafe_size(bytes: [u8; 4]) -> io::Result<usize> {
+    if bytes.iter().any(|byte| byte & 0x80 != 0) {
+        return Err(invalid_id3("Invalid syncsafe ID3 size"));
+    }
+    Ok(bytes.into_iter().fold(0, |size, byte| (size << 7) | usize::from(byte)))
+}
+
+/// Locates the first ID3 chunk without reading PCM, rejecting truncated container chunks.
+fn read_ordered_geob(path: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    if lowercase_extension(path).as_deref() == Some("mp3") {
+        return read_geob_tag(&mut file, length);
+    }
+    let mut header = [0; 12];
+    file.read_exact(&mut header)?;
+    let little_endian = &header[..4] == b"RIFF";
+    if !(little_endian && &header[8..] == b"WAVE"
+        || &header[..4] == b"FORM" && matches!(&header[8..], b"AIFF" | b"AIFC"))
+    {
+        return Err(invalid_id3("Invalid ID3 audio container"));
+    }
+    while file.stream_position()?.checked_add(8).is_some_and(|end| end <= length) {
+        let mut chunk = [0; 8];
+        file.read_exact(&mut chunk)?;
+        let size = chunk[4..].try_into().expect("four-byte chunk size");
+        let size = u64::from(if little_endian {
+            u32::from_le_bytes(size)
+        } else {
+            u32::from_be_bytes(size)
+        });
+        let start = file.stream_position()?;
+        let end = start
+            .checked_add(size)
+            .filter(|end| *end <= length)
+            .ok_or_else(|| invalid_id3("Truncated audio container chunk"))?;
+        if chunk[..4].eq_ignore_ascii_case(b"ID3 ") {
+            return read_geob_tag(&mut file, size);
+        }
+        file.seek(SeekFrom::Start(end + size % 2))?;
+    }
+    Ok(Vec::new())
+}
+
+/// Reads bounded ID3 framing in source order, leaving GEOB decoding and flag handling to Lofty.
+fn read_geob_tag(file: &mut File, available: u64) -> io::Result<Vec<(String, Vec<u8>)>> {
+    let mut header = [0; 10];
+    if available < 10 {
+        return Ok(Vec::new());
+    }
+    file.read_exact(&mut header)?;
+    if &header[..3] != b"ID3" {
+        return Ok(Vec::new());
+    }
+    let version = header[3];
+    if !matches!(version, 2..=4) {
+        return Err(invalid_id3("Unsupported ID3 version"));
+    }
+    let length = syncsafe_size(header[6..].try_into().expect("four-byte ID3 size"))?;
+    // Bounds the temporary tag body, including unrelated frames, before allocating it.
+    if length > 64 * 1024 * 1024 || length as u64 > available - 10 {
+        return Err(invalid_id3("Oversized or truncated ID3 tag"));
+    }
+    let mut body = vec![0; length];
+    file.read_exact(&mut body)?;
+    if version < 4 && header[5] & 0x80 != 0 {
+        let mut decoded = Vec::with_capacity(body.len());
+        UnsynchronizedStream::new(body.as_slice()).read_to_end(&mut decoded)?;
+        body = decoded;
+        header[5] &= !0x80;
+    }
+    let mut remaining = body.as_slice();
+    if version >= 3 && header[5] & 0x40 != 0 {
+        let size: [u8; 4] = remaining
+            .get(..4)
+            .ok_or_else(|| invalid_id3("Truncated extended ID3 header"))?
+            .try_into()
+            .expect("four-byte extended header size");
+        let skip = if version == 4 {
+            syncsafe_size(size)?
+        } else {
+            u32::from_be_bytes(size) as usize + 4
+        };
+        remaining = remaining
+            .get(skip..)
+            .ok_or_else(|| invalid_id3("Truncated extended ID3 header"))?;
+    }
+    let mut objects = Vec::new();
+    let frame_header_length = if version == 2 { 6 } else { 10 };
+    while remaining.first().is_some_and(|byte| *byte != 0) {
+        let frame_header = remaining
+            .get(..frame_header_length)
+            .ok_or_else(|| invalid_id3("Truncated ID3 frame header"))?;
+        let length = match version {
+            2 => frame_header
+                .get(3..6)
+                .expect("validated six-byte frame header")
+                .iter()
+                .fold(0, |size, byte| (size << 8) | usize::from(*byte)),
+            3 => u32::from_be_bytes(
+                frame_header
+                    .get(4..8)
+                    .expect("validated ten-byte frame header")
+                    .try_into()
+                    .expect("four-byte frame size"),
+            ) as usize,
+            _ => syncsafe_size(
+                frame_header
+                    .get(4..8)
+                    .expect("validated ten-byte frame header")
+                    .try_into()
+                    .expect("four-byte frame size"),
+            )?,
+        };
+        let end = frame_header_length + length;
+        let frame = remaining.get(..end).ok_or_else(|| invalid_id3("Truncated ID3 frame"))?;
+        if (version == 2 && frame.starts_with(b"GEO")) || (version != 2 && frame.starts_with(b"GEOB")) {
+            if length > 2 + serato_tags::MAXIMUM_SLICES * serato_tags::BAND_COUNT + 1024 {
+                return Err(invalid_id3("Oversized GEOB frame"));
+            }
+            objects.extend(decode_geob_frame(header, frame)?);
+        }
+        remaining = remaining.get(end..).expect("validated complete frame");
+    }
+    Ok(objects)
+}
+
+/// Decodes one source frame in an isolated ID3 chunk so Lofty's deduplication cannot change source order.
+fn decode_geob_frame(mut header: [u8; 10], frame: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
+    header[5] &= 0x80;
+    let length = u32::try_from(frame.len()).map_err(|_| invalid_id3("Oversized GEOB frame"))?;
+    header[6..].copy_from_slice(&[
+        ((length >> 21) & 0x7f) as u8,
+        ((length >> 14) & 0x7f) as u8,
+        ((length >> 7) & 0x7f) as u8,
+        (length & 0x7f) as u8,
+    ]);
+    let chunk_length = 10 + length;
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend_from_slice(&(12 + chunk_length + chunk_length % 2).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEID3 ");
+    bytes.extend_from_slice(&chunk_length.to_le_bytes());
+    bytes.extend_from_slice(&header);
+    bytes.extend_from_slice(frame);
+    if chunk_length % 2 != 0 {
+        bytes.push(0);
+    }
+    let wav = WavFile::read_from(&mut Cursor::new(bytes), display_parse_options())
+        .map_err(|_| invalid_id3("Failed to decode source GEOB frame"))?;
+    Ok(wav
+        .id3v2()
+        .into_iter()
+        .flat_map(IntoIterator::into_iter)
+        .filter_map(|frame| {
+            let Frame::Binary(binary) = frame else {
+                return None;
+            };
+            let object = GeneralEncapsulatedObject::parse(&binary.data, frame.flags()).ok()?;
+            Some((object.descriptor.unwrap_or_default(), object.data))
+        })
+        .collect())
 }
 
 /// Returns true for the formats Serato data is read from:
@@ -234,22 +460,24 @@ fn supports_serato_data(path: &Path) -> bool {
 
 /// Parses the Serato data among the native `SERATO_*` Vorbis comments of a FLAC file.
 /// A value that is not a valid wrapper is passed on empty, so its tag reads as invalid rather than absent.
-fn read_flac_serato_data(path: &Path) -> Option<SeratoData> {
-    let mut file = File::open(path).ok()?;
-    let flac = FlacFile::read_from(&mut file, display_parse_options()).ok()?;
-    let objects: Vec<(&'static str, Vec<u8>)> = flac
-        .vorbis_comments()?
+fn read_flac_serato_data(path: &Path) -> Result<Option<SeratoData>, lofty::error::FileParseError> {
+    let mut file = File::open(path)?;
+    let flac = FlacFile::read_from(&mut file, display_parse_options())?;
+    let Some(comments) = flac.vorbis_comments() else {
+        return Ok(None);
+    };
+    let objects: Vec<(&'static str, Vec<u8>)> = comments
         .items()
         .filter_map(|(key, value)| {
             let description = native_field_description(key)?;
             Some((description, decode_native_value(value, description).unwrap_or_default()))
         })
         .collect();
-    SeratoData::parse(
+    Ok(SeratoData::parse(
         objects
             .iter()
             .map(|(description, data)| (*description, data.as_slice())),
-    )
+    ))
 }
 
 /// Moves out one suitable front cover or fallback, searching the primary tag first within each preference group.
@@ -277,24 +505,6 @@ fn select_artwork(mut tagged: TaggedFile) -> Option<Vec<u8>> {
 /// Returns the lowercase extension of a path.
 fn lowercase_extension(path: &Path) -> Option<String> {
     Some(path.extension()?.to_str()?.to_ascii_lowercase())
-}
-
-/// Parses the Serato data among the `GEOB` frames of an `ID3v2` tag.
-fn serato_data(tag: &Id3v2Tag) -> Option<SeratoData> {
-    let objects: Vec<(String, Vec<u8>)> = tag
-        .into_iter()
-        .filter(|frame| frame.id_str() == "GEOB")
-        .filter_map(|frame| match frame {
-            Frame::Binary(binary) => GeneralEncapsulatedObject::parse(&binary.data, frame.flags()).ok(),
-            _ => None,
-        })
-        .map(|object| (object.descriptor.unwrap_or_default(), object.data))
-        .collect();
-    SeratoData::parse(
-        objects
-            .iter()
-            .map(|(description, data)| (description.as_str(), data.as_slice())),
-    )
 }
 
 #[cfg(test)]
@@ -401,7 +611,7 @@ mod test_artwork {
             if tag_type == TagType::Id3v2 {
                 let copy_tag = read_id3v2(&path).expect("reads metadata-copy tag");
                 assert!(copy_tag.into_iter().any(|frame| frame.id_str() == "APIC"), "{name}");
-                let display_tag = read_display_id3v2(&path).expect("reads display tag");
+                let display_tag = read_display_id3v2(&path).expect("reads display tag").expect("ID3 tag");
                 assert!(!display_tag.into_iter().any(|frame| frame.id_str() == "APIC"), "{name}");
             }
         }
@@ -510,6 +720,7 @@ mod test_artwork {
 mod test_serato_overview_state {
     use super::*;
 
+    use base64::Engine as _;
     use lofty::config::WriteOptions;
     use lofty::ogg::tag::VorbisComments;
     use lofty::prelude::TagExt;
@@ -522,6 +733,180 @@ mod test_serato_overview_state {
             serato: SeratoData::parse(frames.iter().copied()),
             ..FileTags::default()
         }
+    }
+
+    /// Encodes independent ID3v2.3/v2.4 framing without a library's duplicate normalization.
+    fn raw_id3(payloads: &[&[u8]], version: u8) -> Vec<u8> {
+        let mut frames = Vec::new();
+        for payload in payloads {
+            let mut body = b"\0application/octet-stream\0\0Serato Overview\0".to_vec();
+            body.extend_from_slice(payload);
+            frames.extend_from_slice(b"GEOB");
+            let length = u32::try_from(body.len()).expect("small test frame");
+            frames.extend_from_slice(&if version == 3 {
+                length.to_be_bytes()
+            } else {
+                syncsafe(length)
+            });
+            frames.extend_from_slice(&[0, 0]);
+            frames.extend_from_slice(&body);
+        }
+        let mut tag = vec![b'I', b'D', b'3', version, 0, 0];
+        tag.extend_from_slice(&syncsafe(u32::try_from(frames.len()).expect("small test tag")));
+        tag.extend_from_slice(&frames);
+        tag
+    }
+
+    /// Encodes a test size without relying on production ID3 parsing.
+    fn syncsafe(length: u32) -> [u8; 4] {
+        [
+            ((length >> 21) & 127) as u8,
+            ((length >> 14) & 127) as u8,
+            ((length >> 7) & 127) as u8,
+            (length & 127) as u8,
+        ]
+    }
+
+    /// Places raw frames in a copied container, retaining committed audio bytes unchanged.
+    fn write_raw_id3(path: &Path, payloads: &[&[u8]], version: u8) {
+        let source = std::fs::read(path).expect("reads fixture copy");
+        let tag = raw_id3(payloads, version);
+        let output = if path.extension().is_some_and(|extension| extension == "mp3") {
+            let skip = if source.starts_with(b"ID3") {
+                10 + source[6..10]
+                    .iter()
+                    .fold(0, |length, byte| (length << 7) | usize::from(*byte))
+            } else {
+                0
+            };
+            [tag, source[skip..].to_vec()].concat()
+        } else {
+            let little_endian = source.starts_with(b"RIFF");
+            let mut output = source;
+            output.extend_from_slice(b"ID3 ");
+            let length = u32::try_from(tag.len()).expect("small test tag");
+            output.extend_from_slice(&if little_endian {
+                length.to_le_bytes()
+            } else {
+                length.to_be_bytes()
+            });
+            output.extend_from_slice(&tag);
+            if !tag.len().is_multiple_of(2) {
+                output.push(0);
+            }
+            let length = u32::try_from(output.len() - 8).expect("small fixture");
+            output[4..8].copy_from_slice(&if little_endian {
+                length.to_le_bytes()
+            } else {
+                length.to_be_bytes()
+            });
+            output
+        };
+        std::fs::write(path, &output).expect("writes raw ID3 fixture");
+    }
+
+    /// Constructs the same native wrapper as the independently specified C++ extraction tests.
+    fn native_overview(payload: &[u8]) -> String {
+        let mut bytes = b"application/octet-stream\0\0Serato Overview\0".to_vec();
+        bytes.extend_from_slice(payload);
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn physical_geob_duplicates_keep_first_valid_in_every_container() {
+        let directory = TempDir::new().expect("temp dir");
+        let first = [1, 5, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37];
+        let mut second = first;
+        second[2] = 180;
+        let invalid = [1, 5, 0];
+        for name in [
+            "sine_stereo_44100_320k.mp3",
+            "sine_stereo_44100_16.aif",
+            "sine_stereo_44100_16.wav",
+        ] {
+            for version in [3, 4] {
+                for payloads in [
+                    vec![first.as_slice(), &second, &first],
+                    vec![invalid.as_slice(), &first, &second, &first],
+                    vec![first.as_slice(), &invalid, &second],
+                ] {
+                    let path = test_fixtures::copy_fixture(&directory, name, None);
+                    write_raw_id3(&path, &payloads, version);
+                    let tags = read_display_tags(&path).expect("reads raw duplicate tags");
+                    let state = SeratoOverviewState::from_tags(&path, &tags);
+                    assert_eq!(
+                        state.overview().expect("first valid overview").slices(),
+                        &[[37; 16]],
+                        "{name} v{version}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_duplicates_keep_first_valid_and_reject_padding_after_padding() {
+        let directory = TempDir::new().expect("temp dir");
+        let path = test_fixtures::copy_fixture(&directory, "sine_stereo_44100_16.flac", None);
+        let first = [1, 5, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37, 37];
+        let mut second = first;
+        second[2] = 180;
+        let first_encoded = native_overview(&first);
+        let second_encoded = native_overview(&second);
+        for values in [
+            vec![first_encoded.as_str(), &second_encoded, &first_encoded],
+            vec!["!invalid!", &first_encoded, &second_encoded, &first_encoded],
+            vec![first_encoded.as_str(), "!invalid!", &second_encoded],
+        ] {
+            let mut comments = VorbisComments::default();
+            for value in values {
+                comments.push("SERATO_OVERVIEW".to_string(), value.to_string());
+            }
+            comments
+                .save_to_path(&path, WriteOptions::default())
+                .expect("writes duplicates");
+            let tags = read_display_tags(&path).expect("reads");
+            let state = SeratoOverviewState::from_tags(&path, &tags);
+            assert_eq!(state.overview().expect("first valid overview").slices(), &[[37; 16]]);
+        }
+        for (payload, expected) in [
+            ([first.as_slice(), &[0]].concat(), true),
+            ([first.as_slice(), &[1]].concat(), false),
+            ([first.as_slice(), &[0, 0]].concat(), false),
+        ] {
+            let mut comments = VorbisComments::default();
+            comments.insert("SERATO_OVERVIEW".to_string(), native_overview(&payload));
+            comments
+                .save_to_path(&path, WriteOptions::default())
+                .expect("writes padding");
+            let tags = read_display_tags(&path).expect("reads padding");
+            assert_eq!(
+                SeratoOverviewState::from_tags(&path, &tags).overview().is_some(),
+                expected
+            );
+        }
+        let mut comments = VorbisComments::default();
+        comments.insert(
+            "SERATO_OVERVIEW".to_string(),
+            native_overview(&[first.as_slice(), &[0]].concat()) + "A",
+        );
+        comments
+            .save_to_path(&path, WriteOptions::default())
+            .expect("writes invalid padding");
+        let tags = read_display_tags(&path).expect("reads invalid padding");
+        assert_eq!(
+            SeratoOverviewState::from_tags(&path, &tags),
+            SeratoOverviewState::Invalid
+        );
+    }
+
+    #[test]
+    fn extraction_read_failures_never_return_absent() {
+        let directory = TempDir::new().expect("temp dir");
+        for name in ["missing.mp3", "missing.aif", "missing.wav", "missing.flac"] {
+            assert!(read_serato_data(&directory.path().join(name)).is_err(), "{name}");
+        }
+        assert!(read_serato_data(&test_fixtures::fixture("broken.wav")).is_err());
     }
 
     #[test]
