@@ -474,7 +474,7 @@ fn plugins_menu(state: &MenuState) -> Menu {
         MenuItem::separator(),
         MenuItem::action("Plugin Manager…", OpenPluginManager),
         MenuItem::separator(),
-        MenuItem::action("Process Selected With Plugin Chain (output AIFF)", ProcessSelected),
-        MenuItem::action("Process All Files With Plugin Chain…", ProcessAll),
+        MenuItem::action("Process Selected With Plugin Chain", ProcessSelected),
+        MenuItem::action("Process All Files With Plugin Chain", ProcessAll),
     ])
 }

@@ -35,7 +35,8 @@ const FILTER_TAPS: usize = 48;
 /// Distance from zero below which the coefficient generator uses the sinc limit.
 const ALMOST_ZERO: f64 = 0.000_001;
 
-/// Smallest product, 2^-102, above which the spacing is at least 2^-126, so sums of such products cannot become subnormal.
+/// Smallest product, 2^-102, above which the spacing is at least 2^-126,
+/// so sums of such products cannot become subnormal.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const MINIMUM_PRODUCT: f64 = f32::MIN_POSITIVE as f64 * (1_u32 << f32::MANTISSA_DIGITS) as f64;
 
