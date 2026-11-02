@@ -12,6 +12,7 @@ on:
       - "fixtures/**"
       - "!fixtures/normalization/**"
       - "test-plugin/**"
+      - "tests/**"
       - "!**/*.md"
   pull_request:
     paths:
@@ -22,6 +23,7 @@ on:
       - "fixtures/**"
       - "!fixtures/normalization/**"
       - "test-plugin/**"
+      - "tests/**"
       - "!**/*.md"
 
 # Cancel previous runs for PRs but not pushes to main
@@ -87,7 +89,11 @@ jobs:
           chmod +x build.sh
           ./build.sh --build-type "$BUILD_TYPE"
 
-      - name: Build and run tests
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Build tests and run unit suites
+        timeout-minutes: 20
         run: |
           BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
           if [ "$RUNNER_OS" = "macOS" ]; then
@@ -99,47 +105,61 @@ jobs:
           export CCACHE_DIR="$PWD/$BUILD_DIR/ccache"
           # build.sh configures without tests, so enable the test target explicitly.
           cmake -S . -B "$BUILD_DIR" -DBUILD_TESTING=ON
-          cmake --build "$BUILD_DIR" --target AudioBatchTests --config "$BUILD_TYPE"
-          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure --no-tests=error
+          cmake --build "$BUILD_DIR" --target AudioBatchTests AudioBatchIntegrationTests AudioBatchCli --config "$BUILD_TYPE"
+          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" -LE integration --output-on-failure --no-tests=error
 
-      # Runs the CLI that build.sh copied to the C++ project root on the committed test fixtures,
-      # and checks the reported level and the exit codes.
-      - name: CLI smoke test
+      - name: CLI contracts and nonvisual GUI integration
+        timeout-minutes: 5
         run: |
-          CLI=./audiobatch
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            CLI=./audiobatch.exe
+          BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            BUILD_DIR="cmake-build-mac-$BUILD_TYPE_LOWER"
+          else
+            BUILD_DIR="cmake-build-windows-$BUILD_TYPE_LOWER"
           fi
-          "$CLI" --help
-          "$CLI" ../fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
-          grep -- "-6.02" smoke-output.txt
-          set +e
-          "$CLI" ../fixtures/broken.wav
-          EXIT_CODE=$?
-          set -e
-          if [ "$EXIT_CODE" -ne 2 ]; then
-            echo "Expected exit code 2 for a broken file, got $EXIT_CODE"
-            exit 1
-          fi
+          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" -L integration --output-on-failure --no-tests=error
 
-      # Reads, lists, caches, and writes a file whose name and folder are outside ASCII,
-      # which on Windows depends on the UTF-16 command line and wide file APIs.
-      - name: CLI smoke test with non-ASCII paths
-        run: |
-          CLI="$PWD/audiobatch"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            CLI="$PWD/audiobatch.exe"
-          fi
-          UNICODE_DIR="$RUNNER_TEMP/Ääni ja kuva"
-          UNICODE_FILE="$UNICODE_DIR/Łódź テスト.wav"
-          mkdir -p "$UNICODE_DIR"
-          cp ../fixtures/sine_stereo_44100_16.wav "$UNICODE_FILE"
-          "$CLI" --output csv "$UNICODE_FILE" | tee unicode-output.txt
-          grep -- "Łódź テスト.wav" unicode-output.txt
-          grep -- "-6.02" unicode-output.txt
-          "$CLI" --output csv "$UNICODE_DIR" | grep -- "Łódź テスト.wav"
-          "$CLI" --normalize "$UNICODE_FILE"
-          ls "$UNICODE_DIR"/Łódź\ テスト.aif*
+      # CTest's integration label includes the shared executable CLI contracts and the nonvisual GUI workflows.
+      - name: Upload integration failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpp-integration-${{ runner.os }}-${{ matrix.build-type }}
+          path: |
+            cpp/cmake-build-*/integration-artifacts
+            cpp/cmake-build-*/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  coverage:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Ninja and ccache
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install ninja ccache
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Unit, GUI, and CLI subprocess coverage
+        timeout-minutes: 25
+        run: ./coverage.sh --lcov
+
+      - name: Upload coverage and integration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpp-coverage
+          path: |
+            cpp/cmake-build-mac-coverage/coverage/lcov.info
+            cpp/cmake-build-mac-coverage/integration-artifacts
+            cpp/cmake-build-mac-coverage/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
 
   lint:
     # Use macOS with the latest LLVM from Homebrew, since Ubuntu apt has an older clang-tidy
@@ -177,6 +197,9 @@ jobs:
           key: ${{ runner.os }}-Debug-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-Debug-cmake-
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
       # clang-tidy only needs the compile database and the generated JUCE and binary data headers,
       # so the application itself is not built.
       - name: Configure CMake and generate headers
@@ -186,6 +209,7 @@ jobs:
             AudioBatch_artefacts/JuceLibraryCode/JuceHeader.h \
             AudioBatchCli_artefacts/JuceLibraryCode/JuceHeader.h \
             AudioBatchTests_artefacts/JuceLibraryCode/JuceHeader.h \
+            AudioBatchIntegrationTests_artefacts/JuceLibraryCode/JuceHeader.h \
             juce_binarydata_Assets/JuceLibraryCode/BinaryData.h
 
       # Only this step uses the Homebrew LLVM tools,
@@ -224,6 +248,9 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install ninja
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
       - name: Build and run tests with sanitizers
         run: |
           if [ "${{ matrix.sanitizer }}" = "thread" ]; then
@@ -246,6 +273,9 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install llvm ninja
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
 
       - name: Build harnesses
         run: |

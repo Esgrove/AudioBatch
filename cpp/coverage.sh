@@ -77,6 +77,8 @@ PRESET="macos-coverage"
 BUILD_DIR="$REPO/cmake-build-mac-coverage"
 COVERAGE_DIR="$BUILD_DIR/coverage"
 TEST_BINARY="$BUILD_DIR/AudioBatchTests_artefacts/Debug/AudioBatchTests"
+INTEGRATION_BINARY="$BUILD_DIR/AudioBatchIntegrationTests_artefacts/Debug/AudioBatchIntegrationTests"
+CLI_BINARY="$BUILD_DIR/AudioBatchCli_artefacts/Debug/audiobatch"
 PROFDATA="$COVERAGE_DIR/coverage.profdata"
 # Keep only the project sources, so JUCE, the tests, the fetched dependencies, and the SDK headers do not count.
 IGNORE_REGEX='/(JUCE|tests|cmake-build[^/]*|_deps)/|/Applications/Xcode|/Library/Developer'
@@ -93,27 +95,28 @@ mkdir -p "$COVERAGE_DIR/raw"
 
 print_magenta "Configuring and building with the $PRESET preset..."
 cmake --preset "$PRESET" -DBUILD_TESTING=ON
-cmake --build --preset "$PRESET" --target AudioBatchTests
+cmake --build --preset "$PRESET" --target AudioBatchTests AudioBatchIntegrationTests AudioBatchCli
 
 print_magenta "Running tests with coverage..."
-# %p gives each test process its own profile, so ctest can run them in parallel.
+# %m-%p separates both instrumented binaries and child processes, including CLI runs through the Python suite.
 # Failing tests still leave profiles, so the report is written before the exit status is checked.
 TEST_STATUS=0
-LLVM_PROFILE_FILE="$COVERAGE_DIR/raw/%p.profraw" \
+LLVM_PROFILE_FILE="$COVERAGE_DIR/raw/%m-%p.profraw" \
     ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error || TEST_STATUS=$?
 
 "$LLVM_PROFDATA" merge -sparse "$COVERAGE_DIR"/raw/*.profraw -o "$PROFDATA"
 
-"$LLVM_COV" report "$TEST_BINARY" -instr-profile="$PROFDATA" -ignore-filename-regex="$IGNORE_REGEX"
+COVERAGE_OBJECTS=("$TEST_BINARY" -object "$INTEGRATION_BINARY" -object "$CLI_BINARY")
+"$LLVM_COV" report "${COVERAGE_OBJECTS[@]}" -instr-profile="$PROFDATA" -ignore-filename-regex="$IGNORE_REGEX"
 
 if [ "$LCOV" = true ]; then
-    "$LLVM_COV" export "$TEST_BINARY" -instr-profile="$PROFDATA" -ignore-filename-regex="$IGNORE_REGEX" \
+    "$LLVM_COV" export "${COVERAGE_OBJECTS[@]}" -instr-profile="$PROFDATA" -ignore-filename-regex="$IGNORE_REGEX" \
         -format=lcov > "$COVERAGE_DIR/lcov.info"
     print_green "LCOV report: $COVERAGE_DIR/lcov.info"
 fi
 
 if [ "$OPEN" = true ]; then
-    "$LLVM_COV" show "$TEST_BINARY" -instr-profile="$PROFDATA" -ignore-filename-regex="$IGNORE_REGEX" \
+    "$LLVM_COV" show "${COVERAGE_OBJECTS[@]}" -instr-profile="$PROFDATA" -ignore-filename-regex="$IGNORE_REGEX" \
         -format=html -output-dir="$COVERAGE_DIR/html"
     open "$COVERAGE_DIR/html/index.html"
     print_green "HTML report: $COVERAGE_DIR/html/index.html"
