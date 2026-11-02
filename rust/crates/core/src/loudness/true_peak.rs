@@ -35,6 +35,21 @@ const FILTER_TAPS: usize = 48;
 /// Distance from zero below which the coefficient generator uses the sinc limit.
 const ALMOST_ZERO: f64 = 0.000_001;
 
+/// Smallest product, 2^-102, above which the spacing is at least 2^-126, so sums of such products cannot become subnormal.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const MINIMUM_PRODUCT: f64 = f32::MIN_POSITIVE as f64 * (1_u32 << f32::MANTISSA_DIGITS) as f64;
+
+/// Returns the smaller of `minimum` and the magnitude of `value`, ignoring zeros.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const fn smallest_nonzero_magnitude(minimum: f32, value: f32) -> f32 {
+    let magnitude = value.abs();
+    if magnitude > 0.0 {
+        minimum.min(magnitude)
+    } else {
+        minimum
+    }
+}
+
 /// Interpolation factor and its fixed size channel histories.
 #[derive(Debug, Clone)]
 enum Interpolation {
@@ -214,15 +229,17 @@ impl<const TAPS: usize> Filter<TAPS> {
     const fn new(coefficients: [[f32; 4]; TAPS]) -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let minimum_fast_sample = {
-            let minimum_coefficient = coefficients
-                .iter()
-                .flatten()
-                .map(|value| value.abs())
-                .filter(|&value| value > 0.0)
-                .fold(f32::INFINITY, f32::min);
-            // Products above 2^-102 have spacing of at least 2^-126, so their sums cannot become subnormal.
-            let minimum_product = f64::from(f32::MIN_POSITIVE) * f64::from(1_u32 << f32::MANTISSA_DIGITS);
-            (minimum_product / f64::from(minimum_coefficient)) as f32
+            // Iterators are not usable in const fn, so walk the rows with slice patterns.
+            let mut minimum_coefficient = f32::INFINITY;
+            let mut rows = coefficients.as_slice();
+            while let [[first, second, third, fourth], rest @ ..] = rows {
+                minimum_coefficient = smallest_nonzero_magnitude(minimum_coefficient, *first);
+                minimum_coefficient = smallest_nonzero_magnitude(minimum_coefficient, *second);
+                minimum_coefficient = smallest_nonzero_magnitude(minimum_coefficient, *third);
+                minimum_coefficient = smallest_nonzero_magnitude(minimum_coefficient, *fourth);
+                rows = rest;
+            }
+            (MINIMUM_PRODUCT / minimum_coefficient as f64) as f32
         }
         .next_up();
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
