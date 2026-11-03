@@ -5,10 +5,13 @@
 #include "analysis/AudioMeasurement.h"
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/NativeWaveformBuilder.h"
 #include "analysis/OverloadHistory.h"
+#include "analysis/SpectrogramBuilder.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include "utils/ThreadUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +19,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -81,6 +85,17 @@ struct AudioMeasurementState {
         minimums(static_cast<std::size_t>(channels), 0.0f),
         flags(static_cast<std::size_t>(channels), 0)
     {
+        // Optional preview allocation must never prevent the loudness measurement from starting.
+        try {
+            spectrogram = std::make_unique<SpectrogramBuilder>(channels, juce::roundToInt(rate));
+        } catch (...) {
+            utils::logWarn("Spectrogram initialization failed: {}", utils::describeCurrentException());
+        }
+        try {
+            waveform = std::make_unique<NativeWaveformBuilder>(channels, juce::roundToInt(rate), length);
+        } catch (...) {
+            utils::logWarn("Waveform initialization failed: {}", utils::describeCurrentException());
+        }
         history->sampleRate = rate;
         history->lengthInSamples = length;
         history->samplesPerPoint = partial.getNumSamples();
@@ -96,6 +111,22 @@ struct AudioMeasurementState {
         const int frames
     )
     {
+        if (spectrogram != nullptr) {
+            try {
+                spectrogram->push(samples, offset, frames);
+            } catch (...) {
+                spectrogram.reset();
+                utils::logWarn("Spectrogram processing failed: {}", utils::describeCurrentException());
+            }
+        }
+        if (waveform != nullptr) {
+            try {
+                waveform->push(samples, offset, frames);
+            } catch (...) {
+                waveform.reset();
+                utils::logWarn("Waveform processing failed: {}", utils::describeCurrentException());
+            }
+        }
         const auto channels = minimums.size();
         for (std::size_t channel = 0; channel < channels; ++channel) {
             const std::span plane(
@@ -137,6 +168,38 @@ struct AudioMeasurementState {
         return {};
     }
 
+    /// Finalizes the optional preview independently of the required measurement result.
+    std::shared_ptr<const SpectrogramData> finishSpectrogram()
+    {
+        if (spectrogram == nullptr) {
+            return {};
+        }
+        std::shared_ptr<const SpectrogramData> result;
+        try {
+            result = spectrogram->finish();
+        } catch (...) {
+            utils::logWarn("Spectrogram completion failed: {}", utils::describeCurrentException());
+        }
+        spectrogram.reset();
+        return result;
+    }
+
+    /// Finalizes native waveform bytes without allowing optional failures to invalidate measurements.
+    std::optional<juce::MemoryBlock> finishWaveform()
+    {
+        if (waveform == nullptr) {
+            return std::nullopt;
+        }
+        std::optional<juce::MemoryBlock> result;
+        try {
+            result = waveform->finish();
+        } catch (...) {
+            utils::logWarn("Waveform completion failed: {}", utils::describeCurrentException());
+        }
+        waveform.reset();
+        return result;
+    }
+
     /// Storage for an interval crossing input chunk boundaries.
     juce::AudioBuffer<float> partial;
     /// Bounded overload history builder. Its interval depends on partial's initialized buffer size.
@@ -148,6 +211,10 @@ struct AudioMeasurementState {
     std::shared_ptr<ShortTermLoudnessHistory> history {std::make_shared<ShortTermLoudnessHistory>()};
     /// Continuous loudness and true-peak state.
     std::unique_ptr<ebur128_state, EbuR128StateDeleter> meter;
+    /// Optional spectral preview fed the exact PCM intervals consumed by the loudness meter.
+    std::unique_ptr<SpectrogramBuilder> spectrogram;
+    /// Optional native waveform fed the same fixed PCM intervals as the spectral preview and meter.
+    std::unique_ptr<NativeWaveformBuilder> waveform;
 
     /// Meter input reused for every interval.
     std::vector<float> interleaved;
@@ -253,6 +320,22 @@ std::expected<void, juce::String> AudioMeasurement::push(
     return {};
 }
 
+/// Copies a bounded waveform snapshot on the measurement's worker thread.
+/// Only completed measurement intervals are exposed, and optional serialization failures remain nonfatal.
+/// These sparse provisional bytes are display-only and must never be persisted.
+std::optional<juce::MemoryBlock> AudioMeasurement::waveformSnapshot() const
+{
+    if (state == nullptr || state->finished || state->error.isNotEmpty() || state->waveform == nullptr) {
+        return std::nullopt;
+    }
+    try {
+        return state->waveform->snapshot();
+    } catch (...) {
+        utils::logWarn("Waveform snapshot failed: {}", utils::describeCurrentException());
+        return std::nullopt;
+    }
+}
+
 /// Measures the final partial interval and reduces every channel to a complete analysis record.
 std::expected<AudioAnalysisRecord, juce::String> AudioMeasurement::finish()
 {
@@ -313,6 +396,8 @@ std::expected<AudioAnalysisRecord, juce::String> AudioMeasurement::finish()
     record.shortTermLoudness = std::move(measurement.history);
     record.overloads = measurement.overloads.finish();
     record.status = AudioAnalysisStatus::analyzed;
+    record.spectrogram = measurement.finishSpectrogram();
+    record.nativeWaveform = measurement.finishWaveform();
     return record;
 }
 
@@ -333,9 +418,21 @@ AudioAnalysisRecord completeRenderedAnalysis(
     measurements.modifiedTimeMs = identity.modifiedTimeMs;
     measurements.formatName = "AIFF file";
     measurements.bitsPerSample = bitsPerSample;
+    // Retain the pre-commit inode receipt, rather than adopting potentially replaced bytes at persistence time.
+    measurements.renderedIdentity.reset();
+    try {
+        measurements.renderedIdentity = std::make_shared<const utils::FileIdentity>(renderedIdentity);
+    } catch (...) {
+        measurements.nativeWaveform.reset();
+        measurements.spectrogram.reset();
+        utils::logWarn("Rendered preview identity capture failed: {}", utils::describeCurrentException());
+    }
     const auto unchanged = renderedIdentity.owns(file);
     const auto readable = file.existsAsFile() && file.createInputStream() != nullptr;
     if (!unchanged || !readable || !renderedIdentity.owns(file)) {
+        measurements.nativeWaveform.reset();
+        measurements.spectrogram.reset();
+        measurements.renderedIdentity.reset();
         measurements.status = AudioAnalysisStatus::failed;
         measurements.error = AnalysisError::unreadable;
         measurements.errorMessage = !readable

@@ -117,7 +117,8 @@ std::vector<AudioAnalysisRecord> analyzeWithProgress(
 std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
     const std::vector<AudioAnalysisRecord>& records,
     const AudioNormalizationOptions& options,
-    const int workerCount
+    const int workerCount,
+    AnalysisCache& cache
 )
 {
     console::ProgressLine progress;
@@ -128,6 +129,26 @@ std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
 
     // The coordinator is declared last, so it is destroyed, waiting for its jobs, before the locals they use.
     NormalizeCoordinator coordinator(workerCount);
+    coordinator.setResultPersistenceCallback([&cache](AudioNormalizationResult& result) {
+        const auto* succeeded = std::get_if<OperationSucceeded>(&result.outcome);
+        if (succeeded == nullptr || !succeeded->output.isReady()) {
+            return;
+        }
+        const auto& output = succeeded->output;
+        const utils::FileIdentity identity(output.file);
+        if (!output.fromCache && output.matchesFileOnDisk() && identity.matches(output.file)
+            && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file))
+            && cache.storeAnalysis(output) && output.matchesFileOnDisk() && identity.matches(output.file)
+            && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file)))
+        {
+            if (output.nativeWaveform) {
+                static_cast<void>(cache.storeWaveformData(identity, *output.nativeWaveform));
+            }
+            if (output.spectrogram != nullptr) {
+                static_cast<void>(cache.storeSpectrogramData(identity, *output.spectrogram));
+            }
+        }
+    });
     coordinator.setStartingCallback([&progress](const juce::File& file, int /*runId*/) {
         progress.setMessage(file.getFileName());
     });
@@ -266,7 +287,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
             return !record.hasError();
         });
         normalizationConflicts = findBatchOutputConflicts(normalizableResults);
-        normalizations = normalizeWithProgress(normalizableResults, *command.normalization, command.workerCount);
+        normalizations = normalizeWithProgress(normalizableResults, *command.normalization, command.workerCount, cache);
     }
 
     // The CSV and JSON output of a normalize run lists failed files too, with their error.
@@ -332,7 +353,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
                 [&](const OperationSucceeded& succeeded) {
                     forgetConvertedSource(succeeded.output);
                     printNormalizationNotice(succeeded);
-                    static_cast<void>(cache.storeAnalysis(succeeded.output));
+                    // Successful output persistence already ran on its worker before result publication.
                     normalizedResults.push_back(succeeded.output);
                 },
             },

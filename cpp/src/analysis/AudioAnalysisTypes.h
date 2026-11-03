@@ -19,6 +19,14 @@
 
 namespace audiobatch
 {
+/// Optional bounded spectral product, defined separately from the lightweight measurement record.
+struct SpectrogramData;
+
+namespace utils
+{
+struct FileIdentity;
+}
+
 /// Lifecycle states for a file analysis record.
 enum class AudioAnalysisStatus : std::uint8_t {
     pending = 0,
@@ -265,6 +273,12 @@ struct AudioAnalysisRecord {
     std::shared_ptr<const OverloadHistory> overloads;
     /// Short-term loudness over the length of the file, shared between copies of the record.
     std::shared_ptr<const ShortTermLoudnessHistory> shortTermLoudness;
+    /// Transient worker product only. Persist or discard before publishing to event queues or table rows.
+    std::shared_ptr<const SpectrogramData> spectrogram;
+    /// Transient native waveform bytes. Persist or discard before publishing to event queues or table rows.
+    std::optional<juce::MemoryBlock> nativeWaveform;
+    /// Transient rendered-file receipt. Uses owns across the commit rename and is dropped before publication.
+    std::shared_ptr<const utils::FileIdentity> renderedIdentity;
 
     /// Length of the audio in seconds.
     double durationSeconds {0.0};

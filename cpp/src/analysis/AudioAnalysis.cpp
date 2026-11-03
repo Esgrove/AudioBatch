@@ -129,7 +129,8 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
     AudioMeasurement& measurement,
     const juce::String& fullPath,
     const utils::CancellationCheck& isCancelled,
-    const utils::ProgressCallback& onProgress
+    const utils::ProgressCallback& onProgress,
+    const AnalysisPreviewObserver& onPreview
 )
 {
     const auto channelCount = static_cast<int>(reader.numChannels);
@@ -182,9 +183,18 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
             );
         }
 
-        utils::reportProgress(
-            onProgress, utils::progressFraction(samplePosition + framesThisBlock, reader.lengthInSamples)
-        );
+        const auto decodedFrames = samplePosition + framesThisBlock;
+        if (onPreview) {
+            try {
+                onPreview(measurement, decodedFrames);
+            } catch (...) {
+                utils::logWarn(
+                    "Analysis preview failed for {}: {}", fullPath.quoted(), utils::describeCurrentException()
+                );
+            }
+        }
+
+        utils::reportProgress(onProgress, utils::progressFraction(decodedFrames, reader.lengthInSamples));
     }
 
     return {};
@@ -267,10 +277,13 @@ juce::Array<juce::File> collectInputFiles(
 /// When isCancelled starts returning true, decoding stops and a failed record is returned,
 /// which callers must not cache.
 /// The decoded fraction of the file is reported to onProgress while decoding.
+/// onPreview borrows the live measurement after every successful block, before progress is reported.
+/// Exceptions from this optional observer are logged without interrupting analysis.
 AudioAnalysisRecord analyzeFile(
     const juce::File& file,
     const utils::CancellationCheck& isCancelled,
-    const utils::ProgressCallback& onProgress
+    const utils::ProgressCallback& onProgress,
+    const AnalysisPreviewObserver& onPreview
 )
 {
     auto record = AudioAnalysisRecord::fromFile(file);
@@ -303,7 +316,8 @@ AudioAnalysisRecord analyzeFile(
         return failAnalysis(std::move(record), AnalysisError::measurementFailed, initialized.error());
     }
 
-    if (const auto decoded = measureDecodedAudio(*reader, measurement, record.fullPath, isCancelled, onProgress);
+    if (const auto decoded
+        = measureDecodedAudio(*reader, measurement, record.fullPath, isCancelled, onProgress, onPreview);
         !decoded)
     {
         return failAnalysis(std::move(record), decoded.error().error, decoded.error().message);

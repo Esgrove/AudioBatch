@@ -1,6 +1,6 @@
 /// Serializes optional artifact repair and explicit GUI cache edits on one owned connection.
 /// The single detached worker owns all of its dependencies, never waits for UI delivery,
-/// and polls cancellation between waveform blocks and metadata stages.
+/// and polls cancellation between combined waveform/spectrogram blocks and metadata stages.
 
 #include "gui/PreviewEnrichmentScheduler.h"
 
@@ -47,6 +47,8 @@ struct PreviewEnrichmentState {
     PreviewEnrichmentScheduler::Completion completion;
     PreviewEnrichmentScheduler::Work work;
     juce::String activePath;
+    /// Optional audio repair stage, protected by mutex and cleared at job retirement.
+    juce::String activity;
 
     std::atomic<bool> stopped {false};
     std::atomic<std::uint64_t> interruption {0};
@@ -61,6 +63,11 @@ struct PreviewEnrichmentState {
     std::optional<utils::FileIdentity> selected;
     std::unordered_map<juce::String, CustomGainUpdate> deferredGains;
     std::unordered_map<juce::String, CustomGainUpdate> gains;
+
+    /// Directory paths accepted for this pass. Selected paths outside this set do not inflate its total.
+    std::unordered_set<juce::String> candidatePaths;
+    /// Successfully retired directory paths, preventing selected promotion from counting a file twice.
+    std::unordered_set<juce::String> completedPaths;
 
     bool gateOpen {false};
     bool retryDeferredGains {false};
@@ -99,7 +106,9 @@ void deliver(
     const std::uint64_t loadGeneration,
     std::shared_ptr<const serato::SeratoData> tags,
     std::optional<juce::MemoryBlock> waveform,
-    const bool tagsReady
+    const bool tagsReady,
+    std::shared_ptr<const SpectrogramData> spectrogram = {},
+    const bool spectrogramReady = false
 )
 {
     std::uint64_t selectionGeneration = 0;
@@ -122,13 +131,117 @@ void deliver(
             .loadGeneration = loadGeneration,
             .seratoData = std::move(tags),
             .waveform = std::move(waveform),
+            .spectrogram = std::move(spectrogram),
             .tagsReady = tagsReady,
+            .spectrogramReady = spectrogramReady,
         });
     }
 }
 
-/// Rechecks both artifacts at admission, reads tags first, and persists only the missing native waveform.
-/// Cancellation borrows the state only during synchronous metadata and waveform calls.
+/// Reads and publishes metadata before audio repair, retaining independent tag failure and cancellation behavior.
+void enrichTags(
+    PreviewEnrichmentState& state,
+    const utils::FileIdentity& identity,
+    const bool readMissing,
+    const std::uint64_t loadGeneration,
+    const utils::CancellationCheck& cancelled
+)
+{
+    const auto cachedTags = serato::getCachedTags(state.cache, identity, serato::allTagKinds);
+    const auto tagsCached = std::ranges::all_of(cachedTags, [](const auto& result) { return result.has_value(); });
+    std::shared_ptr<const serato::SeratoData> tags;
+    try {
+        tags = serato::loadPreviewData(state.cache, identity, cancelled, readMissing);
+    } catch (...) {
+        // Metadata failure must not prevent independent audio-artifact repair.
+        utils::logDebug("Preview metadata enrichment failed: {}", utils::describeCurrentException());
+    }
+    if (cancelled() || !identity.matches(juce::File(identity.path))) {
+        return;
+    }
+    const auto finalTags = readMissing && !tagsCached
+        ? serato::getCachedTags(state.cache, identity, serato::allTagKinds)
+        : std::vector<std::optional<serato::TagReadResult>> {};
+    const auto tagsReady = tagsCached
+        || (readMissing && std::ranges::all_of(finalTags, [](const auto& result) { return result.has_value(); }));
+    // Tag success is independently visible even if audio decoding is interrupted or fails.
+    // A completed transient read resolves cue positioning too, but is retried only on a later request or load.
+    if (tagsReady || tags || readMissing) {
+        deliver(state, identity, loadGeneration, std::move(tags), std::nullopt, true);
+    }
+}
+
+/// Loads each optional cache independently, retaining neither bulk artifact in the directory queue.
+PreviewAudioArtifacts loadCachedArtifacts(AnalysisCache& cache, const juce::File& file)
+{
+    PreviewAudioArtifacts artifacts;
+    try {
+        artifacts.waveform = cache.getWaveformData(file);
+    } catch (...) {
+        utils::logDebug("Preview waveform cache read failed: {}", utils::describeCurrentException());
+    }
+    try {
+        artifacts.spectrogram = cache.getSpectrogramData(file);
+    } catch (...) {
+        utils::logDebug("Preview spectrogram cache read failed: {}", utils::describeCurrentException());
+    }
+    return artifacts;
+}
+
+/// Decodes only missing audio artifacts and persists each independently before selected delivery.
+void repairArtifacts(
+    PreviewEnrichmentState& state,
+    const utils::FileIdentity& identity,
+    const bool needWaveform,
+    const bool needSpectrogram,
+    const std::uint64_t loadGeneration,
+    const utils::CancellationCheck& cancelled
+)
+{
+    const juce::File file(identity.path);
+    {
+        const std::scoped_lock lock(state.mutex);
+        if (cancelled()) {
+            return;
+        }
+        state.activity = "spectrogram";
+        if (needWaveform) {
+            state.activity = needSpectrogram ? "waveform and spectrogram" : "waveform";
+        }
+    }
+    PreviewAudioArtifacts artifacts;
+    try {
+        artifacts = buildPreviewAudioArtifacts(identity, needWaveform, needSpectrogram, cancelled);
+    } catch (...) {
+        utils::logDebug("Preview audio artifact decoding failed: {}", utils::describeCurrentException());
+    }
+    if (cancelled() || !identity.matches(file)) {
+        return;
+    }
+    if (artifacts.waveform) {
+        try {
+            static_cast<void>(state.cache.storeWaveformData(identity, *artifacts.waveform));
+        } catch (...) {
+            utils::logDebug("Preview waveform cache write failed: {}", utils::describeCurrentException());
+        }
+        if (!cancelled()) {
+            deliver(state, identity, loadGeneration, {}, std::move(artifacts.waveform), false);
+        }
+    }
+    if (artifacts.spectrogram && !cancelled() && identity.matches(file)) {
+        try {
+            static_cast<void>(state.cache.storeSpectrogramData(identity, *artifacts.spectrogram));
+        } catch (...) {
+            utils::logDebug("Preview spectrogram cache write failed: {}", utils::describeCurrentException());
+        }
+    }
+    if (needSpectrogram && !cancelled() && identity.matches(file)) {
+        deliver(state, identity, loadGeneration, {}, std::nullopt, false, std::move(artifacts.spectrogram), true);
+    }
+}
+
+/// Reads tags early and publishes cached audio before one combined missing-artifact repair pass.
+/// Source checks and cancellation surround every stage, without changing single-worker admission.
 void enrich(
     PreviewEnrichmentState& state,
     const PreviewEnrichmentCandidate& candidate,
@@ -146,38 +259,31 @@ void enrich(
     {
         return;
     }
-
-    const auto cachedTags = serato::getCachedTags(state.cache, identity, serato::allTagKinds);
-    const auto tagsCached = std::ranges::all_of(cachedTags, [](const auto& result) { return result.has_value(); });
-    std::shared_ptr<const serato::SeratoData> tags;
-    try {
-        tags = serato::loadPreviewData(state.cache, identity, cancelled, readMissing);
-    } catch (...) {
-        // Metadata failure must not prevent independent waveform repair.
-        utils::logDebug("Preview metadata enrichment failed: {}", utils::describeCurrentException());
-    }
+    enrichTags(state, identity, readMissing, loadGeneration, cancelled);
     if (cancelled() || !identity.matches(candidate.file)) {
         return;
     }
-    const auto finalTags = readMissing && !tagsCached
-        ? serato::getCachedTags(state.cache, identity, serato::allTagKinds)
-        : std::vector<std::optional<serato::TagReadResult>> {};
-    const auto tagsReady = tagsCached
-        || (readMissing && std::ranges::all_of(finalTags, [](const auto& result) { return result.has_value(); }));
-    // Tag success is independently visible even if waveform decoding is interrupted or fails.
-    // A completed transient read resolves cue positioning too, but is retried only on a later request or load.
-    if (tagsReady || tags || readMissing) {
-        deliver(state, identity, loadGeneration, std::move(tags), std::nullopt, true);
+    auto cached = loadCachedArtifacts(state.cache, candidate.file);
+    if (cancelled() || !identity.matches(candidate.file)) {
+        return;
     }
-    auto waveform = state.cache.getWaveformData(candidate.file);
-    if (!waveform && readMissing && !cancelled()) {
-        waveform = buildNativeWaveform(identity, cancelled);
-        if (waveform && !cancelled() && identity.matches(candidate.file)) {
-            static_cast<void>(state.cache.storeWaveformData(identity, *waveform));
-        }
+    const auto needWaveform = !cached.waveform;
+    const auto needSpectrogram = !cached.spectrogram;
+    if (cached.waveform || cached.spectrogram) {
+        const auto spectrogramReady = cached.spectrogram != nullptr;
+        deliver(
+            state,
+            identity,
+            loadGeneration,
+            {},
+            std::move(cached.waveform),
+            false,
+            std::move(cached.spectrogram),
+            spectrogramReady
+        );
     }
-    if (!cancelled() && waveform && identity.matches(candidate.file)) {
-        deliver(state, identity, loadGeneration, {}, std::move(waveform), false);
+    if (readMissing && (needWaveform || needSpectrogram) && !cancelled()) {
+        repairArtifacts(state, identity, needWaveform, needSpectrogram, loadGeneration, cancelled);
     }
 }
 
@@ -270,7 +376,10 @@ void executeJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
     if (!job.gains.empty()) {
         persistGains(state, job);
     } else if (job.output) {
-        static_cast<void>(state.cache.storeAnalysis(job.output->output));
+        // Cached no-ops own no fresh measurements and must not republish a superseded cache snapshot.
+        if (!job.output->output.fromCache) {
+            static_cast<void>(state.cache.storeAnalysis(job.output->output));
+        }
         if (job.output->convertedSource) {
             static_cast<void>(state.cache.removeAnalysis(*job.output->convertedSource));
         }
@@ -287,9 +396,15 @@ void executeJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
 }
 
 /// Atomically retires admission and requeues only interrupted work in the surviving load generation.
-void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
+void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job, const bool succeeded)
 {
     const std::scoped_lock lock(state.mutex);
+    if (succeeded && job.candidate && job.readMissing && !state.stopped && state.loadGeneration == job.loadGeneration
+        && state.interruption == job.interruption
+        && state.candidatePaths.contains(job.candidate->file.getFullPathName()))
+    {
+        state.completedPaths.insert(job.candidate->file.getFullPathName());
+    }
     if (job.candidate && !state.stopped && state.loadGeneration == job.loadGeneration
         && state.interruption != job.interruption && job.readMissing
         && std::ranges::none_of(state.pending, [&](const auto& item) { return item.file == job.candidate->file; }))
@@ -306,6 +421,7 @@ void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
     // Retirement and requeue share the selection lock, so a late request cannot join an exited job.
     state.activePath.clear();
     state.activeCandidate.reset();
+    state.activity.clear();
 }
 
 /// Runs one job at a time, giving coalesced explicit gains precedence over optional audio work.
@@ -313,12 +429,14 @@ void retireJob(PreviewEnrichmentState& state, const EnrichmentJob& job)
 void run(PreviewEnrichmentState& state)
 {
     while (auto job = nextJob(state)) {
+        bool succeeded = false;
         try {
             executeJob(state, *job);
+            succeeded = true;
         } catch (...) {
             utils::logDebug("Preview enrichment failed: {}", utils::describeCurrentException());
         }
-        retireJob(state, *job);
+        retireJob(state, *job, succeeded);
     }
 }
 }  // namespace
@@ -352,6 +470,9 @@ void PreviewEnrichmentScheduler::beginForeground()
     ++state->loadGeneration;
     ++state->interruption;
     state->pending.clear();
+    state->candidatePaths.clear();
+    state->completedPaths.clear();
+    state->activity.clear();
 }
 
 /// Opens admission only after applied results and restored selection, including all-cache-hit runs.
@@ -360,9 +481,10 @@ void PreviewEnrichmentScheduler::completeForeground(std::vector<PreviewEnrichmen
     {
         const std::scoped_lock lock(state->mutex);
         state->pending.clear();
-        std::unordered_set<juce::String> paths;
+        state->candidatePaths.clear();
+        state->completedPaths.clear();
         for (auto& candidate : candidates) {
-            if (paths.insert(candidate.file.getFullPathName()).second) {
+            if (state->candidatePaths.insert(candidate.file.getFullPathName()).second) {
                 state->pending.push_back(std::move(candidate));
             }
         }
@@ -373,7 +495,7 @@ void PreviewEnrichmentScheduler::completeForeground(std::vector<PreviewEnrichmen
     state->condition.notify_one();
 }
 
-/// Promotes or joins the selected path and cooperatively interrupts unselected waveform decoding.
+/// Promotes or joins the selected path and cooperatively interrupts unselected optional-artifact decoding.
 void PreviewEnrichmentScheduler::select(const utils::FileIdentity& identity, const std::uint64_t selectionGeneration)
 {
     {
@@ -404,6 +526,10 @@ void PreviewEnrichmentScheduler::remove(const juce::StringArray& paths)
     ++state->loadGeneration;
     ++state->interruption;
     std::erase_if(state->pending, [&](const auto& item) { return paths.contains(item.file.getFullPathName()); });
+    for (const auto& path : paths) {
+        state->candidatePaths.erase(path);
+        state->completedPaths.erase(path);
+    }
     if (state->gateOpen && state->activeCandidate && !paths.contains(state->activePath)
         && std::ranges::none_of(
             state->pending, [&](const auto& item) { return item.file == state->activeCandidate->file; }
@@ -452,17 +578,46 @@ void PreviewEnrichmentScheduler::storeCustomGains(std::vector<CustomGainUpdate> 
     state->condition.notify_one();
 }
 
-/// Moves committed output persistence off the GUI thread, before optional repair can publish its waveform.
+/// Moves committed measurement-row persistence off the GUI thread, before optional repair can publish artifacts.
+/// Callers persist transient audio artifacts before this handoff. This queue deliberately retains no spectral product.
 void PreviewEnrichmentScheduler::persistOperation(
     AudioAnalysisRecord output,
     std::optional<AudioAnalysisRecord> convertedSource
 )
 {
+    // Processing workers persist transient audio artifacts before events. The write queue retains only the row.
+    output.spectrogram.reset();
+    output.nativeWaveform.reset();
+    if (convertedSource) {
+        convertedSource->spectrogram.reset();
+        convertedSource->nativeWaveform.reset();
+    }
     {
         const std::scoped_lock lock(state->mutex);
         state->outputs.emplace_back(std::move(output), std::move(convertedSource));
     }
     state->condition.notify_one();
+}
+
+/// Copies file-level optional-preview progress under the queue mutex without filesystem or cache work.
+/// Only directory candidates contribute counts. Cache-only requests before the gate never report activity.
+PreviewEnrichmentProgress PreviewEnrichmentScheduler::getProgress() const
+{
+    const std::scoped_lock lock(state->mutex);
+    const auto completed = static_cast<int>(state->completedPaths.size());
+    const auto total = static_cast<int>(state->candidatePaths.size());
+    const auto active = !state->stopped && state->gateOpen && total > completed
+        && (state->activeCandidate.has_value() || !state->pending.empty());
+    juce::String activity;
+    if (active) {
+        activity = state->activity.isNotEmpty() ? state->activity : juce::String("preview analysis");
+    }
+    return {
+        .completedFiles = completed,
+        .totalFiles = total,
+        .active = active,
+        .activity = std::move(activity),
+    };
 }
 
 /// Rejects an artifact message queued before a newer foreground generation or removal.

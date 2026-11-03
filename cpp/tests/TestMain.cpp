@@ -7,6 +7,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "PluginBenchmark.h"
+#include "SpectrogramBenchmark.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
@@ -139,6 +140,9 @@ int main(int argumentCount, char* arguments[])
     if (const auto helperExitCode = audiobatch::tests::runSharedCacheHelper(helperArguments)) {
         return *helperExitCode;
     }
+    if (helperArguments.contains("--benchmark-spectrogram")) {
+        return audiobatch::tests::runSpectrogramBenchmark(helperArguments);
+    }
     if (helperArguments.contains("--vst3-benchmark")) {
         return audiobatch::tests::runPluginBenchmark(helperArguments);
     }
@@ -153,6 +157,7 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createAnalysisTests());
     suites.push_back(audiobatch::tests::createMeasurementTests());
     suites.push_back(audiobatch::tests::createAnalysisCoordinatorTests());
+    suites.push_back(audiobatch::tests::createAnalysisPreviewTests());
     suites.push_back(audiobatch::tests::createArtworkTests());
     suites.push_back(audiobatch::tests::createBackgroundWorkTests());
     suites.push_back(audiobatch::tests::createCacheTests());
@@ -173,8 +178,12 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createPreviewEnrichmentTests());
     suites.push_back(audiobatch::tests::createPreviewPlaybackTests());
     suites.push_back(audiobatch::tests::createPreviewPlayerTests());
+    suites.push_back(audiobatch::tests::createPlaybackStatusTests());
+    suites.push_back(audiobatch::tests::createPreviewSeekTests());
     suites.push_back(audiobatch::tests::createResultsModelTests());
     suites.push_back(audiobatch::tests::createSortingTests());
+    suites.push_back(audiobatch::tests::createSpectrogramTests());
+    suites.push_back(audiobatch::tests::createSpectrogramFixtureTests());
     suites.push_back(audiobatch::tests::createSeratoOverviewTests());
     suites.push_back(audiobatch::tests::createSeratoTagReaderTests());
     suites.push_back(audiobatch::tests::createRealMetadataTests());

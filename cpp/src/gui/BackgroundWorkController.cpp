@@ -8,6 +8,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCoordinator.h"
+#include "analysis/AnalysisPreview.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentState.h"
 #include "gui/FileActivity.h"
@@ -16,9 +17,11 @@
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "plugins/PluginRunChains.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -94,6 +97,34 @@ BackgroundWorkController::BackgroundWorkController(
     listener(workListener),
     analysisCoordinator(analysisCache)
 {
+    // Cache ownership is outside the controller and outlives its joined operation workers.
+    const auto persistResult = [&analysisCache](auto& result) {
+        const auto* succeeded = std::get_if<OperationSucceeded>(&result.outcome);
+        if (succeeded == nullptr || !succeeded->output.isReady()) {
+            return;
+        }
+        const auto& output = succeeded->output;
+        const utils::FileIdentity identity(output.file);
+        if (!output.matchesFileOnDisk() || !identity.matches(output.file)
+            || (output.renderedIdentity != nullptr && !output.renderedIdentity->owns(output.file)))
+        {
+            return;
+        }
+        // Cached no-ops keep their existing measurement provenance and compatible artifact.
+        if (!output.fromCache && analysisCache.storeAnalysis(output) && output.matchesFileOnDisk()
+            && identity.matches(output.file)
+            && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file)))
+        {
+            if (output.nativeWaveform) {
+                static_cast<void>(analysisCache.storeWaveformData(identity, *output.nativeWaveform));
+            }
+            if (output.spectrogram != nullptr) {
+                static_cast<void>(analysisCache.storeSpectrogramData(identity, *output.spectrogram));
+            }
+        }
+    };
+    normalizeCoordinator.setResultPersistenceCallback(persistResult);
+    pluginCoordinator.setResultPersistenceCallback(persistResult);
     connectAnalysisCallbacks();
     connectOperationCallbacks();
 }
@@ -108,6 +139,28 @@ BackgroundWorkController::~BackgroundWorkController()
 const BackgroundWork& BackgroundWorkController::getWork() const noexcept
 {
     return work;
+}
+
+/// Takes the selected source's latest transient snapshot without posting bulk data to the message queue.
+std::optional<AnalysisPreview> BackgroundWorkController::takeAnalysisPreview()
+{
+    return analysisCoordinator.takePreview();
+}
+
+/// Selects a source for progressive analysis previews, or clears selection with an empty file.
+/// Prefer the captured-identity overload when the caller already owns a source identity.
+void BackgroundWorkController::selectAnalysisPreview(const juce::File& file, const std::uint64_t selectionGeneration)
+{
+    analysisCoordinator.setPreviewFile(file, selectionGeneration);
+}
+
+/// Reuses a captured identity without filesystem work on the message thread.
+void BackgroundWorkController::selectAnalysisPreview(
+    const utils::FileIdentity& identity,
+    const std::uint64_t selectionGeneration
+)
+{
+    analysisCoordinator.setPreviewFile(identity, selectionGeneration);
 }
 
 /// True while no analysis, normalization, or plugin processing is running.

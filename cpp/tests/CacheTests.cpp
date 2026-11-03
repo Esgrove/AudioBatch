@@ -13,6 +13,7 @@
 #include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/NativeWaveformData.h"
+#include "analysis/SpectrogramData.h"
 #include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
 #include "normalization/AudioNormalization.h"
@@ -61,6 +62,25 @@ juce::MemoryBlock waveformForRecord(const AudioAnalysisRecord& record)
     output.writeRepeatedByte(0, static_cast<std::size_t>(points) * static_cast<std::size_t>(record.channels) * 2);
     return result;
 }
+/// Makes a deterministic canonical artifact without performing spectral analysis.
+SpectrogramData spectrogramForRecord(const AudioAnalysisRecord& record)
+{
+    SpectrogramData data;
+    data.sampleRate = record.sampleRate;
+    data.channelCount = record.channels;
+    data.lengthInSamples = record.lengthInSamples;
+    while (std::cmp_greater(
+        data.lengthInSamples / data.samplesPerColumn + (data.lengthInSamples % data.samplesPerColumn != 0 ? 1 : 0),
+        SpectrogramData::maximumColumns
+    ))
+    {
+        data.samplesPerColumn *= 2;
+    }
+    const auto columns
+        = data.lengthInSamples / data.samplesPerColumn + (data.lengthInSamples % data.samplesPerColumn != 0 ? 1 : 0);
+    data.intensities.resize(static_cast<std::size_t>(columns) * SpectrogramData::frequencyRows, 73);
+    return data;
+}
 }  // namespace
 
 /// Checks that cached analysis is returned for unchanged files and dropped for changed ones.
@@ -74,6 +94,7 @@ public:
 private:
     void runLoudnessHistoryTests();
     void runSharedContractTests();
+    void runSpectrogramTests();
 };
 
 /// Runs the cache checks.
@@ -456,6 +477,7 @@ void CacheTests::runTest()
 
     runSharedContractTests();
     runLoudnessHistoryTests();
+    runSpectrogramTests();
 }
 
 /// Exercises cross-producer reporting, explicit edits, conditional removal and native operation fallback.
@@ -827,6 +849,211 @@ void CacheTests::runLoudnessHistoryTests()
     expect(cache.storeAnalysis(cancelled));
     expect(loadCached(cancelledFile));
     expect(!cached.hasError());
+}
+
+/// Exercises optional artifacts independently of measurements, gains, producers and future format revisions.
+void CacheTests::runSpectrogramTests()
+{
+    const TemporaryDirectory directory;
+    const auto databaseFile = directory.getChildFile("spectrogram.db");
+    const auto file = directory.copyFixture("sine_stereo_44100_16.wav");
+    auto record = analyzeFile(file);
+    record.measurementProducer = MeasurementProducer::rust;
+    const utils::FileIdentity identity(file);
+    const auto artifact = spectrogramForRecord(record);
+    AnalysisCache cache(databaseFile);
+
+    beginTest("Spectrograms require matching successful measurements, not just a valid artifact");
+    expect(isValidSpectrogramData(artifact));
+    expect(!cache.storeSpectrogramData(identity, artifact));
+    expect(cache.storeAnalysis(record));
+    auto mismatched = artifact;
+    mismatched.channelCount = 1;
+    expect(!cache.storeSpectrogramData(identity, mismatched));
+    expect(!cache.getSpectrogramData(file));
+    auto invalid = artifact;
+    invalid.intensities.pop_back();
+    expect(!cache.storeSpectrogramData(identity, invalid));
+
+    beginTest("Spectrograms round trip across connections without changing gains or measurement provenance");
+    expect(cache.storeCustomGain(file, Decibels {-2.5f}));
+    expect(executeSql(*this, databaseFile, "UPDATE file_analysis SET updated_at_ms = 123;"));
+    expect(cache.storeSpectrogramData(identity, artifact));
+    AnalysisCache second(databaseFile);
+    const auto loaded = second.getSpectrogramData(file);
+    expect(loaded && loaded->intensities == artifact.intensities);
+    expect(loaded && spectrogramMatches(*loaded, record));
+    auto measured = second.getAnalysis(file);
+    expect(measured && measured->measurementProducer == MeasurementProducer::rust);
+    expect(measured && measured->customGain && juce::approximatelyEqual(measured->customGain->value, -2.5f));
+    expect(measured && measured->overloads && measured->overloads->flags == record.overloads->flags);
+    expect(
+        measured && measured->shortTermLoudness
+        && measured->shortTermLoudness->values == record.shortTermLoudness->values
+    );
+    expectSqlScalar(*this, databaseFile, "SELECT updated_at_ms FROM file_analysis;", 123);
+    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 13);
+
+    beginTest("An identical Rust-produced spectrogram is adopted without native producer provenance");
+    expect(executeSql(*this, databaseFile, "UPDATE spectrogram_cache SET producer = 'rust';"));
+    const auto adopted = second.getSpectrogramData(file);
+    expect(adopted && adopted->intensities == artifact.intensities);
+    expect(adopted && spectrogramMatches(*adopted, record));
+
+    beginTest("Future revisions coexist and compatible native refills preserve every revision and explicit clears");
+    expect(executeSql(*this, databaseFile, R"SQL(
+        INSERT INTO spectrogram_cache
+        SELECT file_path, algorithm_version + 1, serialization_version + 1, file_size, modified_time_ms,
+            sample_rate, num_channels, length_in_samples, producer, spectrogram_data FROM spectrogram_cache;
+    )SQL"));
+    expect(second.storeSpectrogramData(identity, artifact));
+    expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 2);
+    expect(second.storeCustomGain(file, std::nullopt));
+    record.measurementProducer = MeasurementProducer::cpp;
+    record.customGain = Decibels {9.0f};
+    expect(cache.storeAnalysis(record));
+    expect(second.getSpectrogramData(file) != nullptr);
+    expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 2);
+    measured = second.getAnalysis(file);
+    expect(measured && !measured->customGain && measured->measurementProducer == MeasurementProducer::cpp);
+
+    beginTest("Corrupt and oversized spectrogram payloads miss without invalidating measurements");
+    for (const auto* mutation :
+         {
+             "spectrogram_data = X'00'",
+             "spectrogram_data = zeroblob(2097409)",
+             "spectrogram_data = CAST(spectrogram_data AS TEXT)",
+             "spectrogram_data = substr(spectrogram_data, 1, length(spectrogram_data) - 1)",
+             "spectrogram_data = CAST(spectrogram_data || X'00' AS BLOB)",
+             "sample_rate = sample_rate + 1",
+             "num_channels = num_channels + 1",
+             "length_in_samples = length_in_samples + 1",
+             "producer = 'other'",
+             "file_size = file_size + 1",
+             "modified_time_ms = modified_time_ms + 1",
+         })
+    {
+        expect(cache.storeSpectrogramData(identity, artifact));
+        expect(
+            executeSql(*this, databaseFile, utils::format("UPDATE spectrogram_cache SET {};", mutation).toRawUTF8())
+        );
+        expect(!second.getSpectrogramData(file), mutation);
+        expect(second.getAnalysis(file).has_value(), mutation);
+    }
+    expect(cache.storeSpectrogramData(identity, artifact));
+
+    beginTest("Artifact lookup does not load required measurement histories");
+    expect(executeSql(*this, databaseFile, "UPDATE file_analysis SET short_term_loudness = X'00';"));
+    expect(!second.getAnalysis(file));
+    expect(second.getSpectrogramData(file) != nullptr);
+    expect(cache.storeAnalysis(record));
+
+    beginTest("Measurement status, contract and geometry independently gate artifact lookup and publication");
+    for (const auto* mutation : {"status = 3", "analysis_version = 99", "channels = 1", "sample_rate = 44100.5"}) {
+        expect(cache.storeAnalysis(record));
+        expect(cache.storeSpectrogramData(identity, artifact));
+        expect(executeSql(*this, databaseFile, utils::format("UPDATE file_analysis SET {};", mutation).toRawUTF8()));
+        expect(!second.getSpectrogramData(file), mutation);
+        expect(!second.storeSpectrogramData(identity, artifact), mutation);
+    }
+    expect(cache.storeAnalysis(record));
+
+    beginTest("Aborted optional spectrum cleanup preserves committed measurements, gains and provenance");
+    for (const bool changedIdentity : {false, true}) {
+        const TemporaryDirectory cleanupDirectory;
+        const auto cleanupDatabase = cleanupDirectory.getChildFile("cleanup.db");
+        const auto cleanupFile = cleanupDirectory.copyFixture("sine_stereo_44100_16.wav");
+        AnalysisCache cleanupCache(cleanupDatabase);
+        auto prior = analyzeFile(cleanupFile);
+        prior.measurementProducer = MeasurementProducer::rust;
+        expect(cleanupCache.storeAnalysis(prior));
+        expect(cleanupCache.storeCustomGain(cleanupFile, Decibels {-2.5f}));
+        expect(cleanupCache.storeSpectrogramData(utils::FileIdentity(cleanupFile), spectrogramForRecord(prior)));
+        expect(executeSql(*this, cleanupDatabase, R"SQL(
+            CREATE TRIGGER abort_spectrum_cleanup BEFORE DELETE ON spectrogram_cache
+            BEGIN SELECT RAISE(ABORT, 'optional spectrum cleanup failed'); END;
+        )SQL"));
+
+        if (changedIdentity) {
+            expect(cleanupFile.setLastModificationTime(juce::Time(prior.modifiedTimeMs + 10'000)));
+        }
+        auto fresh = analyzeFile(cleanupFile);
+        fresh.customGain = Decibels {4.0f};
+        if (!changedIdentity) {
+            fresh.channels = 1;
+            auto overloads = std::make_shared<OverloadHistory>(*fresh.overloads);
+            overloads->channelCount = 1;
+            overloads->flags.resize(fresh.overloads->bucketCount());
+            fresh.overloads = std::move(overloads);
+        }
+        expect(cleanupCache.storeAnalysis(fresh));
+        AnalysisCache reader(cleanupDatabase);
+        const auto committed = reader.getAnalysis(cleanupFile);
+        expect(committed && committed->measurementProducer == MeasurementProducer::cpp);
+        expect(committed && committed->fileSize == fresh.fileSize && committed->modifiedTimeMs == fresh.modifiedTimeMs);
+        expect(
+            committed && committed->channels == fresh.channels && committed->sampleRate == fresh.sampleRate
+            && committed->lengthInSamples == fresh.lengthInSamples
+        );
+        expect(
+            committed && committed->customGain
+            && juce::approximatelyEqual(committed->customGain->value, changedIdentity ? 4.0f : -2.5f)
+        );
+        expect(
+            committed && committed->shortTermLoudness
+            && committed->shortTermLoudness->values == fresh.shortTermLoudness->values
+        );
+        expect(committed && committed->overloads && committed->overloads->flags == fresh.overloads->flags);
+        expectSqlScalar(*this, cleanupDatabase, "SELECT COUNT(*) FROM spectrogram_cache;", 1);
+        expect(!reader.getSpectrogramData(cleanupFile));
+
+        expect(executeSql(*this, cleanupDatabase, "DROP TRIGGER abort_spectrum_cleanup;"));
+        expect(cleanupCache.storeAnalysis(fresh));
+        expectSqlScalar(*this, cleanupDatabase, "SELECT COUNT(*) FROM spectrogram_cache;", 0);
+        expect(reader.getAnalysis(cleanupFile).has_value());
+        expect(cleanupCache.storeSpectrogramData(utils::FileIdentity(cleanupFile), spectrogramForRecord(fresh)));
+        expect(reader.getSpectrogramData(cleanupFile) != nullptr);
+    }
+
+    beginTest("A winning same-source geometry refill removes incompatible spectrogram revisions");
+    expect(cache.storeSpectrogramData(identity, artifact));
+    auto mono = record;
+    mono.channels = 1;
+    auto monoOverloads = std::make_shared<OverloadHistory>(*record.overloads);
+    monoOverloads->channelCount = 1;
+    monoOverloads->flags.resize(record.overloads->bucketCount());
+    mono.overloads = std::move(monoOverloads);
+    expect(cache.storeAnalysis(mono));
+    expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 0);
+    expect(!second.getSpectrogramData(file));
+    expect(second.getAnalysis(file).has_value());
+    expect(cache.storeAnalysis(record));
+
+    beginTest("Changed source identities reject delayed publication and invalidate every incompatible revision");
+    expect(cache.storeSpectrogramData(identity, artifact));
+    expect(file.setLastModificationTime(juce::Time(identity.modifiedTimeMs + 10'000)));
+    expect(!second.getSpectrogramData(file));
+    expect(!second.storeSpectrogramData(identity, artifact));
+    auto forgedIdentity = utils::FileIdentity(file);
+    ++forgedIdentity.preciseTimes.first;
+    expect(!second.storeSpectrogramData(forgedIdentity, artifact));
+    const auto replacement = analyzeFile(file);
+    expect(second.storeAnalysis(replacement));
+    expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 0);
+    const utils::FileIdentity replacementIdentity(file);
+    expect(second.storeSpectrogramData(replacementIdentity, spectrogramForRecord(replacement)));
+    expect(cache.removeAnalysis(record));
+    expect(second.getSpectrogramData(file) != nullptr);
+    expect(cache.removeAnalysis(replacement));
+    expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 0);
+
+    beginTest("Pruning removes orphaned spectrogram revisions of missing files");
+    expect(cache.storeAnalysis(replacement));
+    expect(cache.storeSpectrogramData(replacementIdentity, spectrogramForRecord(replacement)));
+    expect(executeSql(*this, databaseFile, "DELETE FROM file_analysis;"));
+    expect(file.deleteFile());
+    expectEquals(cache.pruneMissingFiles(), 1);
+    expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 0);
 }
 
 std::unique_ptr<juce::UnitTest> createCacheTests()

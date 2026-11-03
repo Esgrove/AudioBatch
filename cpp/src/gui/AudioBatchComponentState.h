@@ -27,6 +27,13 @@ enum class AnalysisRows : std::uint8_t {
     sync,
 };
 
+/// Source visualization and arrangement shown in the preview.
+enum class PreviewViewMode : std::uint8_t { waveform, spectrogram, sideBySide, stacked };
+
+[[nodiscard]] juce::String previewViewModeLabel(PreviewViewMode mode);
+[[nodiscard]] PreviewViewMode previewViewModeFromName(const juce::String& name);
+[[nodiscard]] juce::String previewViewModeName(PreviewViewMode mode);
+
 /// Persisted preview choices, independent of the current file and audio device.
 struct AudioPreviewPreferences {
     /// Initial top of the LUFS axis, shared by the settings and the waveform.
@@ -49,7 +56,7 @@ struct AudioPreviewPreferences {
     bool playFromFirstCuePoint {false};
     /// True to colour the waveform with the Serato overview of the file.
     bool seratoWaveformColours {true};
-    /// True to draw the short-term loudness curve over the waveform.
+    /// True to draw source short-term loudness over the waveform, or over a full spectrogram.
     bool loudnessGraphEnabled {false};
 
     /// Bottom of the loudness axis in LUFS.
@@ -60,6 +67,16 @@ struct AudioPreviewPreferences {
     /// True to show the embedded album artwork beside the file name.
     /// Only the Options menu changes it, so Audio Settings carries it over unchanged.
     bool showAlbumArtwork {true};
+
+    /// Source visualization and arrangement, shared by Audio Settings and the Options menu.
+    PreviewViewMode viewMode {PreviewViewMode::waveform};
+
+    /// True to show source sample-peak overload indicators.
+    bool showSampleOverloads {true};
+    /// True to show source true-peak overload indicators independently of sample peaks.
+    bool showTruePeakOverloads {true};
+    /// True to extend enabled overload indicators as vertical lines across the preview.
+    bool showOverloadLines {true};
 };
 
 /// The album artwork of the selected file, requested once per file version.

@@ -1,5 +1,5 @@
 /// Audio settings content combining JUCE device selection with the application's preview preferences.
-/// The main view remains the preference authority, while this panel forwards checkbox and loudness-axis changes
+/// The main view remains the preference authority, while this panel forwards view, checkbox, and loudness-axis changes
 /// and reflects updates made through the Options menu.
 
 #pragma once
@@ -66,6 +66,11 @@ private:
     juce::GroupComponent deviceGroup {"deviceSettings", "Audio interface and playback"};
     juce::GroupComponent previewGroup {"previewSettings", "Preview preferences"};
 
+    /// Source visualization and arrangement, synchronized with the Options menu.
+    juce::ComboBox previewView;
+    /// Caption of the source visualization selector.
+    juce::Label previewViewLabel {"previewView", "Preview view"};
+
     /// Top and bottom loudness axis captions.
     juce::Label loudnessMaximumLabel {"loudnessMaximum", "Max (LUFS)"};
     juce::Label loudnessMinimumLabel {"loudnessMinimum", "Min (LUFS)"};
@@ -81,6 +86,11 @@ private:
     juce::ToggleButton loudnessGraphToggle {"Show loudness graph"};
     juce::ToggleButton playFromFirstCuePointToggle {"Play from first cue point"};
     juce::ToggleButton pluginToggle {"Preview plugin chain"};
+
+    /// Independent source overload signals and their optional vertical lines.
+    juce::ToggleButton overloadLinesToggle {"Overload vertical lines"};
+    juce::ToggleButton sampleOverloadsToggle {"Peak overloads"};
+    juce::ToggleButton truePeakOverloadsToggle {"True-peak overloads"};
 
     /// Borrows the content while the dialog is shorter than its settings.
     juce::Viewport viewport;

@@ -61,6 +61,9 @@ jobs:
           rm -rf fixtures/plugin_expected
           uv run fixtures/plugin_expected.py
 
+      - name: Check independent spectrogram fixtures
+        run: uv run --script fixtures/spectrogram_expected.py --check
+
       - name: Check for differences
         run: |
           git status --porcelain fixtures/plugin_expected

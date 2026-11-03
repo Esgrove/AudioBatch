@@ -6,14 +6,19 @@
 #pragma once
 
 #include "analysis/AnalysisCache.h"
+#include "analysis/AnalysisPreview.h"
 #include "analysis/AudioAnalysis.h"
 #include "utils/BackgroundRunner.h"
 
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
@@ -67,7 +72,12 @@ public:
         const ResultObserver& onResult = nullptr
     );
 
+    [[nodiscard]] std::optional<AnalysisPreview> takePreview();
+
     [[nodiscard]] int start(const AudioAnalysisOptions& options);
+
+    void setPreviewFile(const juce::File& file, std::uint64_t selectionGeneration);
+    void setPreviewFile(const utils::FileIdentity& identity, std::uint64_t selectionGeneration);
 
     void cancel();
     void cancelAndWait();
@@ -81,6 +91,12 @@ public:
 private:
     void analyzeStaleFile(const juce::File& file, int runId, int totalFiles, std::atomic<int>& pendingFiles) const;
     void planRun(const AudioAnalysisOptions& options, int runId);
+    void publishPreview(
+        const utils::FileIdentity& identity,
+        int runId,
+        const AudioMeasurement& measurement,
+        std::int64_t decodedFrames
+    ) const;
 
     /// The cache the runs look files up in and store their results in, which outlives the coordinator.
     AnalysisCache& cache;
@@ -96,7 +112,20 @@ private:
     /// Receives each file a worker starts to analyze.
     RunCallback<const juce::File&, int> startingCallback;
 
-    /// Declared last, so the callbacks the jobs publish to outlive it.
+    /// Guards selection and the single latest snapshot, never a queue of partial waveforms.
+    mutable std::mutex previewMutex;
+    /// Latest unread snapshot, replaced rather than appended by the selected source worker.
+    mutable std::optional<AnalysisPreview> latestPreview;
+    /// Identity supplied by selection, absent when selection is cleared.
+    std::optional<utils::FileIdentity> previewIdentity;
+    /// Last admitted snapshot time, reset on selection changes and new runs.
+    mutable std::optional<std::chrono::steady_clock::time_point> lastPreviewPublish;
+    /// Selection request to stamp onto admitted snapshots.
+    std::uint64_t previewSelectionGeneration {0};
+    /// Run to which the current throttle interval belongs.
+    mutable int previewRunId {-1};
+
+    /// Declared last, so the callbacks and preview state the jobs publish to outlive it.
     BackgroundRunner runner;
 };
 }  // namespace audiobatch

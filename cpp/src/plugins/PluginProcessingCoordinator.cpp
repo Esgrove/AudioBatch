@@ -105,6 +105,12 @@ void PluginProcessingCoordinator::setResultCallback(ResultCallback callback)
     resultCallback.set(std::move(callback));
 }
 
+/// Sets worker-side persistence, which must finish before the lightweight result is published.
+void PluginProcessingCoordinator::setResultPersistenceCallback(ResultPersistenceCallback callback)
+{
+    resultPersistenceCallback.set(std::move(callback));
+}
+
 /// Sets the callback that is invoked when a run completes.
 void PluginProcessingCoordinator::setCompletionCallback(CompletionCallback callback)
 {
@@ -162,6 +168,31 @@ void PluginProcessingCoordinator::requestStop()
     }
 }
 
+/// Persists optional worker products and releases them even when the persistence callback throws.
+void PluginProcessingCoordinator::persistResult(PluginProcessingResult& result) const
+{
+    try {
+        resultPersistenceCallback(result);
+    } catch (...) {
+        utils::logWarn(
+            "Plugin result persistence failed for {}: {}",
+            result.originalFullPath.quoted(),
+            utils::describeCurrentException()
+        );
+    }
+    std::visit(
+        Overloaded {
+            [](OperationFailed&) {},
+            [](auto& committed) {
+                committed.output.nativeWaveform.reset();
+                committed.output.spectrogram.reset();
+                committed.output.renderedIdentity.reset();
+            },
+        },
+        result.outcome
+    );
+}
+
 /// Processes one queued file on a worker thread.
 /// Waits for a free chain of the run, runs the file through it, publishes the result,
 /// and publishes completion when it was the last pending file of the run, counted in pendingFiles.
@@ -185,12 +216,13 @@ void PluginProcessingCoordinator::runFileJob(
         return;
     }
 
-    const auto result = lease && !runner.isStopRequested(runId)
+    auto result = lease && !runner.isStopRequested(runId)
         ? processLeasedFile(record, options, runId, lease->getChainView())
         : PluginProcessingResult::cancelled(record.file);
 
     // The chain goes back to the pool before the result is published, so a waiting worker can start right away.
     lease.reset();
+    persistResult(result);
     runner.publish(resultCallback, runId, result);
 
     if (pendingFiles.fetch_sub(1) == 1) {

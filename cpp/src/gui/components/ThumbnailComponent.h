@@ -1,21 +1,25 @@
-/// Waveform preview for the currently loaded audio file.
-/// Declares ThumbnailComponent, a JUCE component that draws the audio thumbnail,
+/// Waveform and source spectrogram preview for the currently loaded audio file.
+/// Declares ThumbnailComponent, a single JUCE host with full, side-by-side and stacked plots that share one viewport,
+/// draws the native thumbnail and a retained bounded source-power raster,
 /// shows the playback position of the shared transport source and scrubs it,
 /// overlays optional cached short-term loudness with an adjustable LUFS-S axis,
-/// marks source sample and true peak overloads in amber,
+/// marks source sample overloads in yellow and true peak overloads in orange,
 /// supports zoom and gain mouse-wheel gestures, Serato hot cue jumps with the number keys, file drag-and-drop,
 /// and caching of the rendered waveform data.
 
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/SpectrogramData.h"
 #include "gui/AudioBatchComponentState.h"
+#include "gui/components/PreviewPlotGeometry.h"
 #include "serato/SeratoTagTypes.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -24,6 +28,15 @@
 namespace audiobatch
 {
 class AudioPreviewPlayer;
+
+/// Applies a display-only smoothstep to quantized source power without changing stored intensities.
+/// Quiet values become darker and strong values brighter while both palette endpoints remain fixed.
+[[nodiscard]] constexpr float spectrogramDisplayIntensity(const std::uint8_t intensity) noexcept
+{
+    constexpr float SMOOTHSTEP_QUADRATIC_COEFFICIENT {3.0f};
+    const auto normalized = static_cast<float>(intensity) / 255.0f;
+    return normalized * normalized * (SMOOTHSTEP_QUADRATIC_COEFFICIENT - 2.0f * normalized);
+}
 
 /// Placement of the two arrows that mark one Serato cue on the waveform, in component coordinates.
 /// One arrow hangs from the top edge of the waveform and one rises from its bottom edge, both pointing inwards.
@@ -68,7 +81,25 @@ struct OverloadMark {
     float laneBottom {0.0f};
     /// True for a sample over, drawn solid, and false for a true peak over alone, drawn as an outline.
     bool sampleOver {false};
+    /// Caps touch only the waveform's outer top edge, never the stereo divider.
+    bool topEdge {false};
+    /// Caps touch only the waveform's outer bottom edge, never the stereo divider.
+    bool bottomEdge {false};
+    /// Optional lane tint is independent of the overload kind and cap visibility.
+    bool showLine {false};
 };
+
+/// Removes disabled raw overload kinds before sample-over precedence or neighboring-column merging.
+[[nodiscard]] constexpr std::uint8_t visibleOverloadFlags(
+    const std::uint8_t flags,
+    const bool sample,
+    const bool truePeak
+) noexcept
+{
+    const auto mask = (sample ? static_cast<unsigned int>(OverloadHistory::sampleOver) : 0u)
+        | (truePeak ? static_cast<unsigned int>(OverloadHistory::truePeakOver) : 0u);
+    return static_cast<std::uint8_t>(static_cast<unsigned int>(flags) & mask);
+}
 
 /// Waveform preview component with a playback cursor, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
@@ -92,7 +123,16 @@ public:
     juce::StringArray getLastDroppedFiles() const;
     juce::MemoryBlock saveToCacheData() const;
 
+    [[nodiscard]] PreviewPlotGeometry getPlotGeometry() const;
+    [[nodiscard]] PreviewViewMode getViewMode() const noexcept;
+    [[nodiscard]] std::optional<double> getPendingSeekPosition() const noexcept;
+    [[nodiscard]] bool hasSpectrogramRaster() const noexcept;
+    void setViewMode(PreviewViewMode mode);
+    void setViewModeChangedCallback(std::function<void(PreviewViewMode)> callback);
+    void setSpectrogramData(std::shared_ptr<const SpectrogramData> data);
+
     [[nodiscard]] std::vector<CueArrows> getCueArrows() const;
+    [[nodiscard]] std::vector<CueArrows> getCueArrows(juce::Rectangle<int> bounds) const;
     [[nodiscard]] std::vector<OverloadMark> getOverloadMarks() const;
 
     [[nodiscard]] const std::optional<utils::FileIdentity>& getSourceIdentity() const noexcept;
@@ -110,6 +150,7 @@ public:
     void setMouseWheelGainCallback(std::function<void(float)> callback);
     void setMouseWheelZoomCallback(std::function<void(double)> callback);
     void setOverloadHistory(std::shared_ptr<const OverloadHistory> history);
+    void setOverloadIndicatorSettings(bool sample, bool truePeak, bool lines);
     void setPendingSource(juce::int64 lengthInSamples, double durationSeconds, const utils::FileIdentity& identity);
     void setRange(juce::Range<double> newRange);
 
@@ -133,6 +174,7 @@ public:
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
+    void mouseMagnify(const juce::MouseEvent& event, float scaleFactor) override;
     void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void paint(juce::Graphics& graphics) override;
@@ -153,11 +195,17 @@ private:
     [[nodiscard]] juce::Rectangle<int> waveformBounds() const;
 
     bool drawColouredWaveform(juce::Graphics& graphics, juce::Rectangle<int> bounds);
-    [[nodiscard]] double xToTime(float xPosition) const;
+    [[nodiscard]] double sourceDuration() const;
     [[nodiscard]] float loudnessToY(double value, juce::Rectangle<int> bounds) const;
-    [[nodiscard]] float timeToX(double time) const;
 
-    void drawCueMarkers(juce::Graphics& graphics) const;
+    void drawCueMarkers(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    void drawSpectrogram(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    void drawFrequencyAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const;
+    void drawWaveformAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const;
+    void drawSourceWarning(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    void drawPlayheads(juce::Graphics& graphics) const;
+    void drawPositionMarker(juce::Graphics& graphics, double time, juce::Colour colour) const;
+    void showViewModeMenu();
     void drawLoudnessAxis(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawLoudnessCurve(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawLoudnessGraph(juce::Graphics& graphics) const;
@@ -176,11 +224,42 @@ private:
     /// Must outlive the thumbnails referring into it.
     juce::AudioThumbnailCache thumbnailCache {128};
 
-    /// Cursor geometry must precede the child that copies it during initialization.
-    juce::DrawableRectangle currentPositionMarker;
-    juce::DrawableComponent currentPositionMarkerComponent {currentPositionMarker};
+    /// Retained source-only raster, rebuilt only when the immutable artifact changes.
+    juce::Image spectrogramRaster;
+    /// Pane chosen at mouse-down, retained when scrubbing crosses a split.
+    juce::Rectangle<int> scrubBounds;
     /// Visible file time range in seconds.
     juce::Range<double> visibleRange;
+    /// Visualization preference, retained across source changes and compact layouts.
+    PreviewViewMode viewMode {PreviewViewMode::waveform};
+    /// Requests owner-side preference publication rather than persisting from the preview.
+    std::function<void(PreviewViewMode)> viewModeChangedCallback;
+    /// Null before a request completes, including while pending.
+    std::shared_ptr<const SpectrogramData> spectrogramData;
+
+    /// Display-only release target, independent of the transport's continuously advancing position.
+    std::optional<double> pendingSeekTime;
+
+    /// Last painted actual and pending marker bounds, for bounded refresh invalidation.
+    std::vector<juce::Rectangle<int>> playheadBounds;
+    /// Playback position captured once per display refresh for every pane.
+    double playheadTime {0.0};
+    /// A popup gesture never becomes a transport gesture on mouse-up.
+    bool popupGesture {false};
+    /// True only for a non-popup scrub started inside a plot.
+    bool scrubbing {false};
+    /// Distinguishes an unavailable result from an artifact still computing.
+    bool spectrogramCompleted {false};
+
+    /// Source metadata remains available before native peaks arrive.
+    double pendingDuration {0.0};
+    /// Source sample rate inferred from explicit metadata or validated native peaks.
+    double pendingSampleRate {0.0};
+    /// Exact source length from pending metadata or validated native peaks.
+    juce::int64 sourceLengthInSamples {0};
+    /// Native source channels, zero until peaks establish the actual count.
+    int sourceChannels {0};
+
     /// Files last dropped onto the waveform.
     juce::StringArray lastDroppedFiles;
     /// First file last dropped onto the waveform.
@@ -211,6 +290,12 @@ private:
     bool hasNotifiedFullyLoaded {false};
     bool loudnessGraphEnabled {false};
     bool seratoWaveformColouringEnabled {true};
+    /// Optional lane tints for either overload kind, retained across source changes.
+    bool showOverloadLines {true};
+    /// Display-only sample cap visibility, independent of retained source histories.
+    bool showSampleOverloads {true};
+    /// Display-only true peak cap visibility, independent of retained source histories.
+    bool showTruePeakOverloads {true};
     /// Loudness axis limits in LUFS.
     double loudnessMaximum {AudioPreviewPreferences::defaultLoudnessGraphMaximum};
     double loudnessMinimum {AudioPreviewPreferences::defaultLoudnessGraphMinimum};

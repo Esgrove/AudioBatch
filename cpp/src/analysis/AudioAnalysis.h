@@ -8,14 +8,23 @@
 #include "analysis/AudioAnalysisTypes.h"
 #include "utils/ThreadUtils.h"
 
+#include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace audiobatch
 {
+class AudioMeasurement;
+
+/// Observes the decoder's measurement after each successful push, before progress is reported.
+/// The measurement is borrowed only for the call. Optional preview failures never fail analysis.
+using AnalysisPreviewObserver = std::function<void(const AudioMeasurement&, std::int64_t decodedFrames)>;
+
 AudioAnalysisRecord analyzeFile(
     const juce::File& file,
     const utils::CancellationCheck& isCancelled = {},
-    const utils::ProgressCallback& onProgress = {}
+    const utils::ProgressCallback& onProgress = {},
+    const AnalysisPreviewObserver& onPreview = {}
 );
 
 juce::Array<juce::File> collectInputFiles(

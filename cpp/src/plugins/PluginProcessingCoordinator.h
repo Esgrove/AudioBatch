@@ -42,6 +42,9 @@ public:
     /// Called for each processed file as plugin-processing results become available.
     using ResultCallback = std::function<void(const PluginProcessingResult& result, int runId)>;
 
+    /// Called on the worker before publication to persist optional products without queueing their payloads.
+    using ResultPersistenceCallback = std::function<void(PluginProcessingResult& result)>;
+
     /// Called from the worker thread once a file has a plugin chain and its processing begins.
     using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
@@ -72,6 +75,7 @@ public:
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
     void setResultCallback(ResultCallback callback);
+    void setResultPersistenceCallback(ResultPersistenceCallback callback);
     void setStartErrorCallback(StartErrorCallback callback);
     void setStartingCallback(StartingCallback callback);
 
@@ -83,6 +87,7 @@ private:
         std::span<juce::AudioPluginInstance* const> chainView
     ) const;
 
+    void persistResult(PluginProcessingResult& result) const;
     void runFileJob(
         const AudioAnalysisRecord& record,
         const PluginProcessingOptions& options,
@@ -98,6 +103,8 @@ private:
     RunCallback<const juce::File&, float, int> progressCallback;
     /// Receives the result of each file.
     RunCallback<const PluginProcessingResult&, int> resultCallback;
+    /// Persists completed worker products before their transient payloads are discarded.
+    RunCallback<PluginProcessingResult&> resultPersistenceCallback;
     /// Receives the reason a run could not start its workers.
     RunCallback<juce::String, int> startErrorCallback;
     /// Receives each file a worker starts on.

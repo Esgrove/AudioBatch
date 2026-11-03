@@ -4,8 +4,11 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/SpectrogramData.h"
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/AudioBatchComponentState.h"
+#include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginScanner.h"
@@ -36,6 +39,7 @@ enum class IntegrationWorkflow : std::uint8_t {
     storage,
     openAndSort,
     normalize,
+    previewModes,
     cancelAndClear,
     restore,
 };
@@ -173,6 +177,7 @@ private:
     void cancelAndClear();
     void normalizeSelection();
     void openAndSort();
+    void previewModes();
     void restorePreferencesAndGain();
     void storageIsolation();
 
@@ -259,6 +264,11 @@ void AudioBatchIntegrationTest::openAndSort()
     AudioBatchComponent view(configuration());
     view.openPaths({valid.getFullPathName(), broken.getFullPathName(), other.getFullPathName()}, false);
     ASSERT_TRUE(waitForRows(view, 3));
+    AnalysisCache completedArtifacts(temporary.get().getChildFile("AudioBatch/analysis.db"));
+    EXPECT_TRUE(completedArtifacts.getWaveformData(valid).has_value());
+    EXPECT_NE(completedArtifacts.getSpectrogramData(valid), nullptr);
+    EXPECT_TRUE(completedArtifacts.getWaveformData(other).has_value());
+    EXPECT_NE(completedArtifacts.getSpectrogramData(other), nullptr);
     const auto brokenRow = view.analysisResults.findRow(broken.getFullPathName());
     if (!brokenRow) {
         ADD_FAILURE() << "The broken input was lost instead of producing an error row";
@@ -332,6 +342,74 @@ void AudioBatchIntegrationTest::normalizeSelection()
         0.01
     );
     EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
+}
+
+/// Exercises canonical mode actions against the real selected preview, its cache, and persisted preferences.
+void AudioBatchIntegrationTest::previewModes()
+{
+    const auto file = copyFixture("serato_rainbow_stereo_44100_16.flac");
+    {
+        AudioBatchComponent view(configuration());
+        view.openPaths({file.getFullPathName()}, false);
+        ASSERT_TRUE(waitForRows(view, 1));
+        ASSERT_TRUE(selectFile(view, file));
+        ASSERT_TRUE(waitForWaveform(view, file));
+        AnalysisCache observer(temporary.get().getChildFile("AudioBatch/analysis.db"));
+        ASSERT_TRUE(dispatchUntil([&] {
+            return observer.getSpectrogramData(file) != nullptr
+                && view.previewWorkspace.thumbnail.hasSpectrogramRaster();
+        }));
+        const auto spectrum = observer.getSpectrogramData(file);
+        ASSERT_NE(spectrum, nullptr);
+        EXPECT_TRUE(isValidSpectrogramData(*spectrum));
+        view.previewWorkspace.zoomSlider.setValue(200.0, juce::sendNotificationSync);
+        view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        view.toggleLoudnessGraph();
+        const auto waveform = view.previewWorkspace.thumbnail.saveToCacheData();
+        constexpr std::array modes {
+            PreviewViewMode::waveform,
+            PreviewViewMode::spectrogram,
+            PreviewViewMode::sideBySide,
+            PreviewViewMode::stacked,
+        };
+        for (const auto mode : modes) {
+            view.setPreviewViewMode(mode);
+            EXPECT_EQ(view.getPreviewViewMode(), mode);
+            EXPECT_EQ(view.preview.getFile(), file);
+            EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(file.getFullPathName()));
+            EXPECT_EQ(view.previewWorkspace.thumbnail.saveToCacheData(), waveform);
+            EXPECT_NEAR(view.previewWorkspace.zoomSlider.getValue(), 200.0, 0.001);
+            EXPECT_NEAR(view.previewWorkspace.gainSlider.getValue(), -3.0, 0.001);
+            EXPECT_TRUE(view.isLoudnessGraphEnabled());
+            EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
+            const auto saved = loadAudioPreviewPreferences(*view.pluginAppProperties.getUserSettings());
+            EXPECT_EQ(saved.viewMode, mode);
+        }
+        view.toggleSampleOverloads();
+        view.toggleTruePeakOverloads();
+        view.toggleOverloadLines();
+        EXPECT_FALSE(view.isSampleOverloadVisible());
+        EXPECT_FALSE(view.isTruePeakOverloadVisible());
+        EXPECT_FALSE(view.areOverloadLinesVisible());
+        const auto savedOverloads = loadAudioPreviewPreferences(*view.pluginAppProperties.getUserSettings());
+        EXPECT_FALSE(savedOverloads.showSampleOverloads);
+        EXPECT_FALSE(savedOverloads.showTruePeakOverloads);
+        EXPECT_FALSE(savedOverloads.showOverloadLines);
+        view.togglePreviewSection();
+        EXPECT_EQ(view.getPreviewViewMode(), PreviewViewMode::stacked);
+        view.togglePreviewSection();
+        EXPECT_EQ(view.getPreviewViewMode(), PreviewViewMode::stacked);
+    }
+    AudioBatchComponent recreated(configuration());
+    EXPECT_EQ(recreated.getPreviewViewMode(), PreviewViewMode::stacked);
+    EXPECT_FALSE(recreated.isSampleOverloadVisible());
+    EXPECT_FALSE(recreated.isTruePeakOverloadVisible());
+    EXPECT_FALSE(recreated.areOverloadLinesVisible());
+    recreated.openPaths({file.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(recreated, 1));
+    ASSERT_TRUE(selectFile(recreated, file));
+    ASSERT_TRUE(waitForWaveform(recreated, file));
+    EXPECT_EQ(recreated.getPreviewViewMode(), PreviewViewMode::stacked);
 }
 
 /// Cancels and clears before queued delivery.
@@ -417,6 +495,9 @@ void AudioBatchIntegrationTest::TestBody()
         case IntegrationWorkflow::normalize:
             normalizeSelection();
             break;
+        case IntegrationWorkflow::previewModes:
+            previewModes();
+            break;
         case IntegrationWorkflow::cancelAndClear:
             cancelAndClear();
             break;
@@ -438,6 +519,7 @@ int main(int argumentCount, char* arguments[])
         std::pair {"StorageIsolation", audiobatch::IntegrationWorkflow::storage},
         std::pair {"OpenAndSortPreserveSelection", audiobatch::IntegrationWorkflow::openAndSort},
         std::pair {"NormalizeTracksOutputIdentity", audiobatch::IntegrationWorkflow::normalize},
+        std::pair {"PreviewModesPreserveState", audiobatch::IntegrationWorkflow::previewModes},
         std::pair {"CancelAndClearRejectStaleCallbacks", audiobatch::IntegrationWorkflow::cancelAndClear},
         std::pair {"RecreateRestoresGainAndPreference", audiobatch::IntegrationWorkflow::restore},
     };

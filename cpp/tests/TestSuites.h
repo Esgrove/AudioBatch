@@ -12,6 +12,8 @@ namespace audiobatch::tests
 {
 /// Creates the suite that checks the plans, results, and replaced runs of the analysis coordinator.
 std::unique_ptr<juce::UnitTest> createAnalysisCoordinatorTests();
+/// Creates the suite that checks selected-file progressive waveform publication and stale snapshot rejection.
+std::unique_ptr<juce::UnitTest> createAnalysisPreviewTests();
 /// Creates the suite that analyzes the committed audio fixtures and checks the measured levels.
 std::unique_ptr<juce::UnitTest> createAnalysisTests();
 /// Creates the suite that checks artwork extraction, bounded thumbnail decoding, and stale artwork rejection.
@@ -77,6 +79,14 @@ std::unique_ptr<juce::UnitTest> createSeratoTagReaderTests();
 std::unique_ptr<juce::UnitTest> createSeratoTagsTests();
 /// Creates the suite that checks the results table column comparators and sort order.
 std::unique_ptr<juce::UnitTest> createSortingTests();
+/// Creates the suite that checks calibrated spectral analysis, bounded aggregation, and the shared spectral codec.
+std::unique_ptr<juce::UnitTest> createSpectrogramTests();
+/// Creates the suite that compares spectral calibration and high-frequency cutoffs with shared independent fixtures.
+std::unique_ptr<juce::UnitTest> createSpectrogramFixtureTests();
+/// Creates the suite that checks playback-clock formatting and independent status-bar sections.
+std::unique_ptr<juce::UnitTest> createPlaybackStatusTests();
+/// Creates the suite that checks click-and-release seeking with the production preview transport.
+std::unique_ptr<juce::UnitTest> createPreviewSeekTests();
 /// Creates the suite that checks the shared file, format, string, cancellation, and decode failure helpers.
 std::unique_ptr<juce::UnitTest> createUtilsTests();
 }  // namespace audiobatch::tests

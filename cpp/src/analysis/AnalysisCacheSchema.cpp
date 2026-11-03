@@ -292,6 +292,20 @@ bool AnalysisCache::openUnlocked()
             waveform_version INTEGER NOT NULL,
             waveform_data BLOB NOT NULL
         );
+    )SQL") || !sqlite::execute(*database, R"SQL(
+        CREATE TABLE IF NOT EXISTS spectrogram_cache (
+            file_path TEXT NOT NULL,
+            algorithm_version INTEGER NOT NULL,
+            serialization_version INTEGER NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified_time_ms INTEGER NOT NULL,
+            sample_rate INTEGER NOT NULL,
+            num_channels INTEGER NOT NULL,
+            length_in_samples INTEGER NOT NULL,
+            producer TEXT NOT NULL,
+            spectrogram_data BLOB NOT NULL,
+            PRIMARY KEY (file_path, algorithm_version, serialization_version)
+        );
     )SQL"))
         {
             return false;

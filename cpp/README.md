@@ -99,15 +99,38 @@ Removing a row does not delete the file. Moving a file to the trash is a separat
 
 ### Waveform Preview
 
-View and play tracks with a zoomable waveform.
+View and play tracks with a zoomable waveform, a Mel-scaled spectrogram, or both in equal side-by-side or stacked panes.
+Choose the mode from the preview's context menu, **Options → Preview view**, or **Audio Settings → Preview view**.
+The choice persists across sessions. Both panes share the same time interval, zoom, seeking, and cue positions.
+Playback continues while either plot is pressed or dragged, without releasing the audio device.
+The white line follows actual playback. A dimmer grey line previews the release target while dragging.
+Release the pointer to seek once and continue playing, or to start a stopped preview from that position.
+The waveform magnitude axis is labeled in dBFS, with 0.0 dBFS at full scale on both polarities.
+The status bar shows current and total time as `mm:ss / mm:ss`, alongside file-level background preview progress.
+Both times use `h:mm:ss` when the total duration reaches one hour.
+Choose a folder with Command/Ctrl+O, or open Audio Settings with Command/Ctrl+P.
+
+The spectrogram shows decoded source power from zero to the file's Nyquist frequency.
+Its fixed colour scale does not follow custom gain, plugins, or the playback device's sample rate.
+The fixed intensity palette suppresses very quiet signals with a gentle S-shaped display curve.
+Fresh analysis builds the complete waveform and spectrogram alongside loudness in one decode pass.
+The selected track's waveform fills progressively while analysis runs.
+Completed waveform and spectrogram artifacts are cached independently before analysis results are delivered.
+Background decoding repairs only missing or outdated artifacts, without invalidating successful loudness analysis.
+High-frequency cutoffs can reveal limited bandwidth, but cannot prove whether a file has a lossless encoding history.
+
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
 Embedded album artwork appears beside the file name when available.
 Artwork can be hidden from the Options menu.
 
-An optional orange-red short-term loudness line overlays the waveform, with a compact numeric axis on the left.
-It measures the trailing three seconds and follows waveform zoom and scrolling.
-Amber waveform markers identify source sample overloads and true-peak overloads.
+An optional orange-red short-term loudness line overlays the waveform, or the spectrogram in spectrogram-only mode,
+with a separate compact numeric axis.
+It measures the trailing three seconds and follows preview zoom and scrolling.
+Compact outer-edge waveform markers show source sample overloads in yellow and true-peak overloads in orange.
 They describe the original audio, not the custom gain or live plugin output.
+The **Overload indicators** menu and Audio Settings independently control peak markers, true-peak markers,
+and subdued vertical overload lines. Hiding lines preserves the selected edge markers.
+Waveform magnitude grid lines appear when the loudness graph is disabled.
 
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.

@@ -3,21 +3,27 @@
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/OverloadHistory.h"
+#include "analysis/SpectrogramData.h"
+#include "gui/AudioBatchComponentState.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioInfoPanel.h"
+#include "gui/components/PreviewPlotGeometry.h"
 #include "gui/components/ThumbnailComponent.h"
 #include "gui/GuiLayout.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace audiobatch::tests
@@ -50,16 +56,17 @@ juce::MemoryBlock previewPeaks(juce::AudioFormatManager& formats, const int chan
 constexpr int previewWidth {260};
 /// Height of the preview in the tests, in logical pixels.
 constexpr int previewHeight {104};
-/// Inset of the waveform from each edge of the preview, in logical pixels.
-constexpr float waveformInset {2.0f};
-/// Width of the waveform inside the preview, in logical pixels.
-constexpr float waveformWidth {previewWidth - 2.0f * waveformInset};
-
-/// Returns the horizontal position of a time in a preview that shows the given range.
-float expectedCuePosition(const double seconds, const juce::Range<double> visibleRange)
+/// Returns the horizontal position of a time using the actual waveform plot, excluding its axis gutters.
+float expectedCuePosition(
+    const ThumbnailComponent& thumbnail,
+    const double seconds,
+    const juce::Range<double> visibleRange
+)
 {
-    return waveformInset
-        + waveformWidth * static_cast<float>((seconds - visibleRange.getStart()) / visibleRange.getLength());
+    const auto plot = thumbnail.getPlotGeometry().waveform;
+    return static_cast<float>(plot.getX())
+        + static_cast<float>(plot.getWidth())
+        * static_cast<float>((seconds - visibleRange.getStart()) / visibleRange.getLength());
 }
 
 /// Returns true when both arrow lists place the same cues in the same places.
@@ -111,7 +118,19 @@ private:
     void testCueReset();
     void testHotCueKeys();
     void testOverloadMarks();
+    void testOverloadSettings();
+    void testOverloadFlagFiltering();
+    void verifyOverloadProjection(ThumbnailComponent& thumbnail, int channels, bool sample, bool truePeak, bool lines);
     void testTrackInfo();
+    void testPreviewModes();
+    void testPreviewAxes();
+    void testPreviewAxesForMode(bool enabled, PreviewViewMode mode);
+    void testAmplitudeLabels();
+    void verifyAmplitudeLabel(const PreviewAmplitudeLabel& label, const PreviewPlotGeometry& geometry, int channels);
+    void testCompactAmplitudeLabels();
+    void testSpectrogramDisplayIntensity();
+    void testSpectrogramReset();
+    void testPaneScrubbing();
 };
 
 /// Checks the arrow placement, colour, projection, clipping, resets and info-field precedence.
@@ -120,8 +139,16 @@ void SeratoPreviewTests::runTest()
     testCueArrows();
     testCueReset();
     testOverloadMarks();
+    testOverloadSettings();
     testHotCueKeys();
     testTrackInfo();
+    testPreviewModes();
+    testPreviewAxes();
+    testAmplitudeLabels();
+    testCompactAmplitudeLabels();
+    testSpectrogramDisplayIntensity();
+    testSpectrogramReset();
+    testPaneScrubbing();
 }
 
 /// Checks the cue arrow placement at full view, zoom and pan, and that only the cues and the viewport move it.
@@ -144,9 +171,10 @@ void SeratoPreviewTests::testCueArrows()
     if (arrows.size() == 1) {
         const auto& cue = arrows.front();
         expect(cue.colour == colour);
-        expectWithinAbsoluteError(cue.horizontalPosition, expectedCuePosition(0.5, {0.0, 1.0}), 0.001f);
-        expectWithinAbsoluteError(cue.top, waveformInset, 0.001f);
-        expectWithinAbsoluteError(cue.bottom, previewHeight - waveformInset, 0.001f);
+        expectWithinAbsoluteError(cue.horizontalPosition, expectedCuePosition(thumbnail, 0.5, {0.0, 1.0}), 0.001f);
+        const auto plot = thumbnail.getPlotGeometry().waveform;
+        expectWithinAbsoluteError(cue.top, static_cast<float>(plot.getY()), 0.001f);
+        expectWithinAbsoluteError(cue.bottom, static_cast<float>(plot.getBottom()), 0.001f);
         expectWithinAbsoluteError(cue.height, layout::waveform::cueArrowHeight, 0.001f);
         expectWithinAbsoluteError(cue.halfWidth, layout::waveform::cueArrowWidth / 2.0f, 0.001f);
         // The arrows stay near the edges, so they never cover the middle of the waveform.
@@ -184,7 +212,9 @@ void SeratoPreviewTests::testCueArrows()
         const auto zoomed = thumbnail.getCueArrows();
         expectEquals(static_cast<int>(zoomed.size()), 1);
         if (!zoomed.empty()) {
-            expectWithinAbsoluteError(zoomed.front().horizontalPosition, expectedCuePosition(0.5, range), 0.001f);
+            expectWithinAbsoluteError(
+                zoomed.front().horizontalPosition, expectedCuePosition(thumbnail, 0.5, range), 0.001f
+            );
         }
     }
     thumbnail.setRange({0.6, 1.1});
@@ -298,28 +328,33 @@ void SeratoPreviewTests::testOverloadMarks()
     expect(thumbnail.getOverloadMarks().empty());
     thumbnail.setOverloadHistory(history);
     const auto marks = thumbnail.getOverloadMarks();
-    constexpr auto laneHeight = (previewHeight - 2.0f * waveformInset) / 2.0f;
+    const auto plot = thumbnail.getPlotGeometry().waveform;
+    const auto laneTop = static_cast<float>(plot.getY());
+    const auto laneHeight = std::floor(static_cast<float>(plot.getHeight()) * 0.5f);
     const auto inLane
         = [](const OverloadMark& mark, const float top) { return juce::approximatelyEqual(mark.laneTop, top); };
     const auto solid
-        = std::ranges::find_if(marks, [&](const auto& mark) { return mark.sampleOver && inLane(mark, waveformInset); });
+        = std::ranges::find_if(marks, [&](const auto& mark) { return mark.sampleOver && inLane(mark, laneTop); });
     expect(solid != marks.end());
     if (solid != marks.end()) {
-        expectWithinAbsoluteError(solid->laneBottom, waveformInset + laneHeight, 0.001f);
+        expectWithinAbsoluteError(solid->laneBottom, laneTop + laneHeight, 0.001f);
+        expect(solid->topEdge && !solid->bottomEdge);
+        expect(solid->showLine);
         const auto blockSeconds = static_cast<double>(blockSize) / sampleRate;
         expectWithinAbsoluteError(
-            solid->horizontal.getStart(), expectedCuePosition(2 * blockSeconds, {0.0, 1.0}), 1.0f
+            solid->horizontal.getStart(), expectedCuePosition(thumbnail, 2 * blockSeconds, {0.0, 1.0}), 1.0f
         );
     }
     expect(std::ranges::none_of(marks, [&](const auto& mark) {
-        return mark.sampleOver && inLane(mark, waveformInset + laneHeight);
+        return mark.sampleOver && inLane(mark, laneTop + laneHeight);
     }));
     expect(std::ranges::any_of(marks, [&](const auto& mark) {
-        return !mark.sampleOver && inLane(mark, waveformInset + laneHeight);
+        return !mark.sampleOver && inLane(mark, laneTop + laneHeight) && !mark.topEdge && mark.bottomEdge
+            && mark.showLine;
     }));
     // The true peak coverage of the filter delay reaches at most a column before the solid run.
     expect(std::ranges::all_of(marks, [&](const auto& mark) {
-        return mark.sampleOver || !inLane(mark, waveformInset) || solid == marks.end()
+        return mark.sampleOver || !inLane(mark, laneTop) || solid == marks.end()
             || mark.horizontal.getEnd() <= solid->horizontal.getEnd();
     }));
     thumbnail.setDisplayGain(4.0f);
@@ -355,11 +390,130 @@ void SeratoPreviewTests::testOverloadMarks()
         expect(thumbnail.getTooltip().isEmpty());
         thumbnail.setOverloadHistory(history);
         expect(thumbnail.getTooltip().isNotEmpty());
+        thumbnail.setViewMode(PreviewViewMode::spectrogram);
+        expect(thumbnail.getTooltip().isEmpty());
+        thumbnail.setViewMode(PreviewViewMode::waveform);
+        expect(thumbnail.getTooltip().isNotEmpty());
         expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
         expect(thumbnail.getOverloadMarks().empty());
         thumbnail.setOverloadHistory(history);
         expect(thumbnail.getOverloadMarks().empty());
     }
+}
+
+/// Checks each raw flag combination independently of projection and sample-over precedence.
+void SeratoPreviewTests::testOverloadFlagFiltering()
+{
+    beginTest("Raw overload kinds are filtered before precedence, including columns with both bits");
+    for (const bool sample : {false, true}) {
+        for (const bool truePeak : {false, true}) {
+            for (const auto flags :
+                 {
+                     std::uint8_t {0},
+                     OverloadHistory::sampleOver,
+                     OverloadHistory::truePeakOver,
+                     static_cast<std::uint8_t>(OverloadHistory::sampleOver | OverloadHistory::truePeakOver),
+                 })
+            {
+                const auto filtered = visibleOverloadFlags(flags, sample, truePeak);
+                expect(
+                    ((filtered & OverloadHistory::sampleOver) != 0)
+                    == (sample && (flags & OverloadHistory::sampleOver) != 0)
+                );
+                expect(
+                    ((filtered & OverloadHistory::truePeakOver) != 0)
+                    == (truePeak && (flags & OverloadHistory::truePeakOver) != 0)
+                );
+            }
+        }
+    }
+}
+
+/// Verifies one display-policy combination against native integer channel geometry.
+void SeratoPreviewTests::verifyOverloadProjection(
+    ThumbnailComponent& thumbnail,
+    const int channels,
+    const bool sample,
+    const bool truePeak,
+    const bool lines
+)
+{
+    thumbnail.setOverloadIndicatorSettings(sample, truePeak, lines);
+    const auto marks = thumbnail.getOverloadMarks();
+    const auto plot = thumbnail.getPlotGeometry().waveform;
+    expectEquals(static_cast<int>(marks.size()), sample || truePeak ? channels : 0);
+    for (std::size_t channel = 0; channel < marks.size(); ++channel) {
+        const auto& mark = marks[channel];
+        expect(mark.sampleOver == sample);
+        expect(mark.showLine == lines);
+        expect(mark.topEdge == (channel == 0UZ));
+        expect(mark.bottomEdge == std::cmp_equal(channel, channels - 1));
+        const int laneTop = plot.getY() + static_cast<int>(channel) * plot.getHeight() / channels;
+        const int laneBottom = plot.getY() + (static_cast<int>(channel) + 1) * plot.getHeight() / channels;
+        expectWithinAbsoluteError(mark.laneTop, static_cast<float>(laneTop), 0.001f);
+        expectWithinAbsoluteError(mark.laneBottom, static_cast<float>(laneBottom), 0.001f);
+    }
+}
+
+/// Pins raw-kind filtering, outer-edge caps and kind-independent line policy without drawing pixels.
+void SeratoPreviewTests::testOverloadSettings()
+{
+    testOverloadFlagFiltering();
+    beginTest("Mono caps touch both outer edges, stereo caps never touch the channel divider");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(previewWidth, previewHeight + 1);
+    for (const int channels : {1, 2}) {
+        expect(thumbnail.loadFromCacheData(previewPeaks(formats, channels)));
+        const auto history = std::make_shared<OverloadHistory>();
+        history->channelCount = channels;
+        history->sampleRate = 8192.0;
+        history->lengthInSamples = 8192;
+        history->samplesPerBucket = overloadBlockSize(history->sampleRate);
+        history->flags.assign(
+            static_cast<std::size_t>(channels) * 11, OverloadHistory::sampleOver | OverloadHistory::truePeakOver
+        );
+        expect(isValidOverloadHistory(*history));
+        thumbnail.setOverloadHistory(history);
+        const auto originalFlags = history->flags;
+        for (const bool sample : {false, true}) {
+            for (const bool truePeak : {false, true}) {
+                for (const bool lines : {false, true}) {
+                    verifyOverloadProjection(thumbnail, channels, sample, truePeak, lines);
+                    expect(history->flags == originalFlags);
+                }
+            }
+        }
+        thumbnail.setOverloadIndicatorSettings(false, true, false);
+        thumbnail.setDisplayGain(4.0f);
+        thumbnail.setRange({0.25, 0.75});
+        const auto trueOnly = thumbnail.getOverloadMarks();
+        expectEquals(static_cast<int>(trueOnly.size()), channels);
+        expect(std::ranges::all_of(trueOnly, [](const auto& mark) { return !mark.sampleOver && !mark.showLine; }));
+        thumbnail.setRange({0.0, 1.0});
+        thumbnail.setDisplayGain(1.0f);
+    }
+
+    beginTest("Overload display preferences survive source replacement without retaining source history");
+    thumbnail.setOverloadIndicatorSettings(false, false, false);
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+    const auto history = std::make_shared<OverloadHistory>();
+    history->channelCount = 1;
+    history->sampleRate = 8192.0;
+    history->lengthInSamples = 8192;
+    history->samplesPerBucket = overloadBlockSize(history->sampleRate);
+    history->flags.assign(11, OverloadHistory::sampleOver);
+    expect(isValidOverloadHistory(*history));
+    thumbnail.setOverloadHistory(history);
+    expect(thumbnail.getOverloadMarks().empty());
+    expect(thumbnail.getTooltip().isEmpty());
+    thumbnail.setOverloadIndicatorSettings(true, true, true);
+    expectEquals(static_cast<int>(thumbnail.getOverloadMarks().size()), 1);
+    expect(thumbnail.getTooltip().contains("solid yellow"));
+    expect(thumbnail.getTooltip().contains("outlined orange"));
+    thumbnail.setViewMode(PreviewViewMode::spectrogram);
+    expect(thumbnail.getTooltip().isEmpty());
 }
 
 /// Shows metadata only when available, preserving it during pending/failed analysis and clearing it on replacement.
@@ -407,6 +561,369 @@ void SeratoPreviewTests::testTrackInfo()
     expect(panelValue(panel, "Key").isEmpty());
     panel.clear();
     expect(panelValue(panel, "BPM").isEmpty());
+}
+
+/// Checks pane semantics and a shared time projection without screenshot or raster assertions.
+void SeratoPreviewTests::testPreviewModes()
+{
+    beginTest("Four preview modes preserve one viewport and choose exactly one loudness host");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(600, 240);
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 2)));
+    const auto markers = std::make_shared<serato::Markers>();
+    markers->cues.push_back({.positionMilliseconds = 500, .colour = juce::Colours::red, .name = {}});
+    thumbnail.setSeratoMarkers(markers);
+    thumbnail.setRange({0.25, 0.75});
+    int ownerRequests = 0;
+    thumbnail.setViewModeChangedCallback([&](PreviewViewMode) { ++ownerRequests; });
+    for (const auto mode :
+         {
+             PreviewViewMode::waveform,
+             PreviewViewMode::spectrogram,
+             PreviewViewMode::sideBySide,
+             PreviewViewMode::stacked,
+         })
+    {
+        thumbnail.setViewMode(mode);
+        expect(thumbnail.getViewMode() == mode);
+        thumbnail.setLoudnessGraphSettings(true, -24.0, -4.0);
+        const auto geometry = thumbnail.getPlotGeometry();
+        expect(geometry.loudness == (mode == PreviewViewMode::spectrogram ? geometry.spectrogram : geometry.waveform));
+        expect(!geometry.loudnessAxis.intersects(geometry.frequencyAxis));
+        expect(geometry.waveform.isEmpty() == (mode == PreviewViewMode::spectrogram));
+        expect(geometry.spectrogram.isEmpty() == (mode == PreviewViewMode::waveform));
+        if (mode == PreviewViewMode::stacked) {
+            expectEquals(geometry.waveform.getX(), geometry.spectrogram.getX());
+            expectEquals(geometry.waveform.getRight(), geometry.spectrogram.getRight());
+            expect(geometry.waveform.getBottom() < geometry.spectrogram.getY());
+        }
+        if (mode == PreviewViewMode::sideBySide) {
+            expect(geometry.waveform.getRight() < geometry.spectrogram.getX());
+        }
+        const auto arrows = thumbnail.getCueArrows();
+        expectEquals(
+            static_cast<int>(arrows.size()),
+            mode == PreviewViewMode::waveform || mode == PreviewViewMode::spectrogram ? 1 : 2
+        );
+        for (const auto plot : {geometry.waveform, geometry.spectrogram}) {
+            if (plot.isEmpty()) {
+                continue;
+            }
+            const auto horizontal = previewTimeToX(0.5, {0.25, 0.75}, plot);
+            expectWithinAbsoluteError(horizontal, static_cast<float>(plot.getCentreX()), 0.5f);
+            expectWithinAbsoluteError(previewXToTime(horizontal, {0.25, 0.75}, plot), 0.5, 0.001);
+            expectWithinAbsoluteError(
+                previewXToTime(static_cast<float>(plot.getRight() + 100), {0.25, 0.75}, plot), 0.75, 0.001
+            );
+            expect(std::ranges::any_of(arrows, [&](const auto& arrow) {
+                return juce::approximatelyEqual(arrow.horizontalPosition, horizontal);
+            }));
+        }
+        thumbnail.setSize(1, 1);
+        const auto tiny = thumbnail.getPlotGeometry();
+        expect(tiny.waveform.isEmpty() && tiny.spectrogram.isEmpty());
+        expect(thumbnail.getViewMode() == mode);
+        thumbnail.setSize(600, 240);
+    }
+    expectEquals(ownerRequests, 0);
+}
+
+/// Pins separate left LUFS and right source axes, equal gutters, and non-overlapping channel dBFS labels.
+void SeratoPreviewTests::testPreviewAxes()
+{
+    beginTest("Equal source-axis gutters align both panes and separate LUFS from amplitude or frequency");
+    for (const auto enabled : {false, true}) {
+        for (const auto mode :
+             {
+                 PreviewViewMode::waveform,
+                 PreviewViewMode::spectrogram,
+                 PreviewViewMode::sideBySide,
+                 PreviewViewMode::stacked,
+             })
+        {
+            testPreviewAxesForMode(enabled, mode);
+        }
+        const auto waveform = previewPlotGeometry({0, 0, 600, 240}, PreviewViewMode::waveform, enabled);
+        const auto spectrum = previewPlotGeometry({0, 0, 600, 240}, PreviewViewMode::spectrogram, enabled);
+        expectEquals(waveform.waveform.getX(), spectrum.spectrogram.getX());
+        expectEquals(waveform.waveform.getRight(), spectrum.spectrogram.getRight());
+        expectEquals(spectrum.sourceWarning.getX(), spectrum.spectrogram.getX());
+        expectEquals(spectrum.sourceWarning.getRight(), spectrum.spectrogram.getRight());
+    }
+}
+
+/// Checks axis ownership and non-overlap for one visualization mode.
+void SeratoPreviewTests::testPreviewAxesForMode(const bool enabled, const PreviewViewMode mode)
+{
+    const auto geometry = previewPlotGeometry({0, 0, 600, 240}, mode, enabled);
+    for (const auto& pair :
+         {
+             std::pair {geometry.waveform, geometry.amplitudeAxis},
+             std::pair {geometry.spectrogram, geometry.frequencyAxis},
+         })
+    {
+        const auto plot = pair.first;
+        const auto axis = pair.second;
+        if (plot.isEmpty()) {
+            expect(axis.isEmpty());
+            continue;
+        }
+        expect(!plot.intersects(axis));
+        expectEquals(axis.getWidth(), layout::waveform::AXIS_GUTTER_WIDTH - layout::waveform::AXIS_LABEL_GAP);
+        expect(enabled ? axis.getX() >= plot.getRight() : axis.getRight() <= plot.getX());
+    }
+    if (enabled) {
+        expect(geometry.loudnessAxis.getRight() <= geometry.loudness.getX());
+        expect(!geometry.loudnessAxis.intersects(geometry.amplitudeAxis));
+        expect(!geometry.loudnessAxis.intersects(geometry.frequencyAxis));
+    } else {
+        expect(geometry.loudnessAxis.isEmpty());
+    }
+    if (mode == PreviewViewMode::stacked) {
+        expectEquals(geometry.waveform.getX(), geometry.spectrogram.getX());
+        expectEquals(geometry.waveform.getRight(), geometry.spectrogram.getRight());
+    }
+    if (mode == PreviewViewMode::sideBySide) {
+        expectEquals(geometry.waveform.getWidth(), geometry.spectrogram.getWidth());
+    }
+}
+
+/// Checks analytical dBFS conversion and signed linear positions independently for each source channel.
+void SeratoPreviewTests::testAmplitudeLabels()
+{
+    beginTest("Both waveform polarities show the same dBFS magnitude, with silence at negative infinity");
+    for (const auto channels : {1, 2}) {
+        const auto geometry = previewPlotGeometry({0, 0, 600, 2000}, PreviewViewMode::waveform, true);
+        const auto labels = previewAmplitudeLabels(geometry, channels);
+        expectEquals(static_cast<int>(labels.size()), channels * 9);
+        for (const auto& label : labels) {
+            verifyAmplitudeLabel(label, geometry, channels);
+        }
+        for (int channel = 0; channel < channels; ++channel) {
+            for (const auto decibels : {0.0f, -6.0f, -12.0f, -24.0f}) {
+                for (const auto polarity : {1.0f, -1.0f}) {
+                    const auto amplitude
+                        = polarity * static_cast<float>(std::pow(10.0, static_cast<double>(decibels) / 20.0));
+                    expect(std::ranges::any_of(labels, [&](const auto& label) {
+                        return label.channel == channel && juce::approximatelyEqual(label.amplitude, amplitude)
+                            && juce::approximatelyEqual(label.decibels, decibels);
+                    }));
+                }
+            }
+        }
+    }
+}
+
+/// Verifies one caption's dBFS magnitude and linear position, including edge clamping and silence.
+void SeratoPreviewTests::verifyAmplitudeLabel(
+    const PreviewAmplitudeLabel& label,
+    const PreviewPlotGeometry& geometry,
+    const int channels
+)
+{
+    const auto top = geometry.waveform.getY() + label.channel * geometry.waveform.getHeight() / channels;
+    const auto bottom = geometry.waveform.getY() + (label.channel + 1) * geometry.waveform.getHeight() / channels;
+    if (std::isfinite(label.decibels)) {
+        const auto magnitude = std::pow(10.0, static_cast<double>(label.decibels) / 20.0);
+        expectWithinAbsoluteError(static_cast<double>(std::abs(label.amplitude)), magnitude, 0.000001);
+        expect(label.decibels <= 0.0f);
+        if (juce::approximatelyEqual(label.decibels, 0.0f)) {
+            expectEquals(
+                label.amplitude > 0.0f ? label.bounds.getY() : label.bounds.getBottom(),
+                label.amplitude > 0.0f ? top : bottom
+            );
+            return;
+        }
+    } else {
+        expect(std::isinf(label.decibels) && label.decibels < 0.0f);
+        expectWithinAbsoluteError(label.amplitude, 0.0f, 0.000001f);
+    }
+    const auto vertical = static_cast<float>(top) + (1.0f - label.amplitude) * static_cast<float>(bottom - top) * 0.5f;
+    expectWithinAbsoluteError(static_cast<float>(label.bounds.getCentreY()), vertical, 1.0f);
+}
+
+/// Checks compact amplitude captions remain bounded and never overlap neighboring labels.
+void SeratoPreviewTests::testCompactAmplitudeLabels()
+{
+    beginTest("Compact dBFS captions preserve full scale and omit crowded lower-priority references");
+    for (int height = 5; height <= 100; ++height) {
+        const auto geometry = previewPlotGeometry({0, 0, 600, height}, PreviewViewMode::waveform, false);
+        const auto labels = previewAmplitudeLabels(geometry, 2);
+        for (std::size_t first = 0; first < labels.size(); ++first) {
+            expect(geometry.amplitudeAxis.contains(labels[first].bounds));
+            for (auto second = first + 1; second < labels.size(); ++second) {
+                expect(!labels[first].bounds.intersects(labels[second].bounds));
+                if (labels[first].channel == labels[second].channel) {
+                    expect(labels[first].decibels >= labels[second].decibels);
+                    expect(!labels[first]
+                                .bounds.expanded(0, layout::waveform::AMPLITUDE_LABEL_SPACING)
+                                .intersects(labels[second].bounds));
+                }
+            }
+        }
+    }
+    const auto compact = previewPlotGeometry({0, 0, 600, 24}, PreviewViewMode::waveform, false);
+    const auto compactLabels = previewAmplitudeLabels(compact, 1);
+    expectEquals(static_cast<int>(compactLabels.size()), 1);
+    if (!compactLabels.empty()) {
+        expectWithinAbsoluteError(compactLabels.front().amplitude, 1.0f, 0.000001f);
+        expectWithinAbsoluteError(compactLabels.front().decibels, 0.0f, 0.000001f);
+    }
+}
+
+/// Checks the presentation transfer independently of calibration, quantization, caches or rendered pixels.
+void SeratoPreviewTests::testSpectrogramDisplayIntensity()
+{
+    beginTest("Smoothstep display preserves saturated endpoints and monotonically darkens quiet values");
+    expectWithinAbsoluteError(spectrogramDisplayIntensity(0), 0.0f, 0.000001f);
+    expectWithinAbsoluteError(spectrogramDisplayIntensity(255), 1.0f, 0.000001f);
+    expectWithinAbsoluteError(spectrogramDisplayIntensity(51), 0.104f, 0.000001f);
+    expectWithinAbsoluteError(spectrogramDisplayIntensity(204), 0.896f, 0.000001f);
+    for (int value = 0; value <= 255; ++value) {
+        const auto displayed = spectrogramDisplayIntensity(static_cast<std::uint8_t>(value));
+        const auto normalized = static_cast<float>(value) / 255.0f;
+        expect(displayed >= 0.0f && displayed <= 1.0f);
+        if (value > 0) {
+            expect(displayed > spectrogramDisplayIntensity(static_cast<std::uint8_t>(value - 1)));
+        }
+        if (value > 0 && value < 128) {
+            expect(displayed < normalized);
+        } else if (value >= 128 && value < 255) {
+            expect(displayed > normalized);
+        }
+        expectWithinAbsoluteError(
+            displayed + spectrogramDisplayIntensity(static_cast<std::uint8_t>(255 - value)), 1.0f, 0.000001f
+        );
+    }
+}
+
+/// Verifies retained artifact lifecycle independently of native waveform readiness or painting.
+void SeratoPreviewTests::testSpectrogramReset()
+{
+    beginTest("Pending source can adopt a spectrogram before peaks, and source replacement clears its raster");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(600, 240);
+    const utils::FileIdentity identity(fixtureFile("silence_stereo_44100_16.wav"));
+    thumbnail.setPendingSource(44'100, 1.0, identity);
+    thumbnail.setViewMode(PreviewViewMode::spectrogram);
+    const auto data = std::make_shared<SpectrogramData>();
+    data->sampleRate = 44'100;
+    data->channelCount = 2;
+    data->lengthInSamples = 44'100;
+    const auto columns = 1 + (data->lengthInSamples - 1) / data->samplesPerColumn;
+    data->intensities.resize(static_cast<std::size_t>(columns) * SpectrogramData::frequencyRows, 128);
+    expect(isValidSpectrogramData(*data));
+    thumbnail.setSpectrogramData(data);
+    expect(thumbnail.hasSpectrogramRaster());
+    thumbnail.setDisplayGain(4.0f);
+    thumbnail.setRange({0.25, 0.75});
+    thumbnail.setViewMode(PreviewViewMode::stacked);
+    expect(thumbnail.hasSpectrogramRaster());
+    expect(!thumbnail.getPlotGeometry().spectrogram.isEmpty());
+    thumbnail.setPendingSource(44'100, 1.0, identity);
+    expect(!thumbnail.hasSpectrogramRaster());
+    expect(thumbnail.getViewMode() == PreviewViewMode::stacked);
+    thumbnail.setSpectrogramData(data);
+    expect(thumbnail.hasSpectrogramRaster());
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 2), identity));
+    expect(!thumbnail.hasSpectrogramRaster());
+    thumbnail.setSpectrogramData(data);
+    expect(!thumbnail.hasSpectrogramRaster(), "Cached peaks establish a different source rate and frame count");
+    const auto nativeGeometry = std::make_shared<SpectrogramData>();
+    nativeGeometry->sampleRate = 8192;
+    nativeGeometry->channelCount = 1;
+    nativeGeometry->lengthInSamples = 8192;
+    nativeGeometry->intensities.resize(std::size_t {8} * SpectrogramData::frequencyRows, 128);
+    thumbnail.setSpectrogramData(nativeGeometry);
+    expect(!thumbnail.hasSpectrogramRaster(), "Actual native channel geometry must also match");
+    nativeGeometry->channelCount = 2;
+    thumbnail.setSpectrogramData(nativeGeometry);
+    expect(thumbnail.hasSpectrogramRaster());
+    thumbnail.setPendingSource(44'100, 1.0, identity);
+    const auto wrongRate = std::make_shared<SpectrogramData>(*data);
+    wrongRate->sampleRate = 48'000;
+    thumbnail.setSpectrogramData(wrongRate);
+    expect(!thumbnail.hasSpectrogramRaster());
+    const auto wrongLength = std::make_shared<SpectrogramData>(*data);
+    --wrongLength->lengthInSamples;
+    thumbnail.setSpectrogramData(wrongLength);
+    expect(!thumbnail.hasSpectrogramRaster());
+    thumbnail.setSpectrogramData(data);
+    expect(thumbnail.hasSpectrogramRaster());
+    thumbnail.setURL({});
+    expect(!thumbnail.hasSpectrogramRaster());
+    const auto invalid = std::make_shared<SpectrogramData>(*data);
+    invalid->intensities.pop_back();
+    thumbnail.setSpectrogramData(invalid);
+    expect(!thumbnail.hasSpectrogramRaster());
+}
+
+/// Delivers real mouse handlers to both plots without a desktop peer or audio device.
+void SeratoPreviewTests::testPaneScrubbing()
+{
+    beginTest("Each pane seeks in its own plot, crossing a split keeps the mouse-down projection");
+    juce::AudioFormatManager formats;
+    AudioPreviewPlayer transport;
+    expect(transport.load(juce::URL(fixtureFile("silence_stereo_44100_16.wav"))));
+    ThumbnailComponent thumbnail(formats, transport);
+    thumbnail.setSize(600, 240);
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 2)));
+    const auto eventAt = [&](const juce::Point<float> position, const int modifiers) {
+        return juce::MouseEvent(
+            juce::Desktop::getInstance().getMainMouseSource(),
+            position,
+            juce::ModifierKeys(modifiers),
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            0.0f,
+            &thumbnail,
+            &thumbnail,
+            juce::Time(),
+            position,
+            juce::Time(),
+            1,
+            false
+        );
+    };
+    for (const auto mode : {PreviewViewMode::sideBySide, PreviewViewMode::stacked}) {
+        thumbnail.setViewMode(mode);
+        const auto geometry = thumbnail.getPlotGeometry();
+        for (const auto plot : {geometry.waveform, geometry.spectrogram}) {
+            transport.suspend();
+            thumbnail.setRange({0.25, 0.75});
+            const auto position
+                = juce::Point<float>(previewTimeToX(0.5, {0.25, 0.75}, plot), static_cast<float>(plot.getCentreY()));
+            const auto beforePress = transport.getCurrentPosition();
+            thumbnail.mouseDown(eventAt(position, juce::ModifierKeys::leftButtonModifier));
+            expectWithinAbsoluteError(transport.getCurrentPosition(), beforePress, 0.001);
+            const auto crossing = juce::Point<float>(static_cast<float>(plot.getRight() + 100), position.y);
+            thumbnail.mouseDrag(eventAt(crossing, juce::ModifierKeys::leftButtonModifier));
+            expectWithinAbsoluteError(transport.getCurrentPosition(), beforePress, 0.001);
+            thumbnail.mouseUp(eventAt(crossing, juce::ModifierKeys::leftButtonModifier));
+            expectWithinAbsoluteError(transport.getCurrentPosition(), 0.75, 0.001);
+            transport.suspend();
+            transport.setPosition(0.5);
+            thumbnail.mouseDown(eventAt(position, juce::ModifierKeys::middleButtonModifier));
+            thumbnail.mouseDrag(eventAt(crossing, juce::ModifierKeys::middleButtonModifier));
+            thumbnail.mouseUp(eventAt(crossing, juce::ModifierKeys::middleButtonModifier));
+            thumbnail.mouseDoubleClick(eventAt(position, juce::ModifierKeys::middleButtonModifier));
+            expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
+            expect(!transport.isPlaying());
+            // Exercise popup drag, release and double-click guards without opening a native popup menu.
+            thumbnail.mouseDrag(eventAt(crossing, juce::ModifierKeys::rightButtonModifier));
+            thumbnail.mouseUp(eventAt(crossing, juce::ModifierKeys::rightButtonModifier));
+            thumbnail.mouseDoubleClick(eventAt(position, juce::ModifierKeys::rightButtonModifier));
+            expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
+            expect(!transport.isPlaying());
+        }
+    }
+    transport.release();
 }
 
 /// Constructs the synthetic cue and track-info presentation suite.
