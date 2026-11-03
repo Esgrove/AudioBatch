@@ -1,18 +1,41 @@
-/// Bounded waveform-only decoding for the GUI enrichment worker.
-/// Produces the native JUCE thumbnail encoding without an AudioThumbnail source or hidden time-slice decoder.
-/// Geometry, quantization and the unfilled partial-final bucket follow JUCE's source-backed thumbnail format.
+/// Bounded optional waveform and spectrogram decoding for the GUI enrichment worker.
+/// One PCM pass feeds the requested artifacts without a loudness meter or hidden decoder thread.
+/// Native thumbnail geometry, quantization and the empty final bucket retain JUCE's source-backed format.
 
 #pragma once
 
+#include "analysis/NativeWaveformBuilder.h"
 #include "utils/FileUtils.h"
 #include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
+#include <memory>
 #include <optional>
 
 namespace audiobatch
 {
+struct SpectrogramData;
+
+/// Independently available audio artifacts, with no retained decoded PCM.
+struct PreviewAudioArtifacts {
+    std::optional<juce::MemoryBlock> waveform;
+    std::shared_ptr<const SpectrogramData> spectrogram;
+};
+
+[[nodiscard]] PreviewAudioArtifacts buildPreviewAudioArtifacts(
+    juce::AudioFormatReader& reader,
+    bool needWaveform,
+    bool needSpectrogram,
+    const utils::CancellationCheck& isCancelled = {}
+);
+[[nodiscard]] PreviewAudioArtifacts buildPreviewAudioArtifacts(
+    const utils::FileIdentity& identity,
+    bool needWaveform,
+    bool needSpectrogram,
+    const utils::CancellationCheck& isCancelled = {}
+);
+
 [[nodiscard]] std::optional<juce::MemoryBlock> buildNativeWaveform(
     juce::AudioFormatReader& reader,
     const utils::CancellationCheck& isCancelled = {}
@@ -21,6 +44,4 @@ namespace audiobatch
     const utils::FileIdentity& identity,
     const utils::CancellationCheck& isCancelled = {}
 );
-
-[[nodiscard]] int samplesPerThumbnailPoint(juce::int64 lengthInSamples);
 }  // namespace audiobatch

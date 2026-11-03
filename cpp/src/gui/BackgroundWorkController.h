@@ -8,6 +8,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCoordinator.h"
+#include "analysis/AnalysisPreview.h"
 #include "gui/AudioBatchComponentState.h"
 #include "normalization/NormalizeCoordinator.h"
 #include "plugins/PluginProcessingCoordinator.h"
@@ -15,6 +16,7 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -125,6 +127,10 @@ public:
     BackgroundWorkController& operator=(BackgroundWorkController&&) = delete;
 
     [[nodiscard]] const BackgroundWork& getWork() const noexcept;
+    [[nodiscard]] std::optional<AnalysisPreview> takeAnalysisPreview();
+
+    void selectAnalysisPreview(const juce::File& file, std::uint64_t selectionGeneration);
+    void selectAnalysisPreview(const utils::FileIdentity& identity, std::uint64_t selectionGeneration);
 
     bool cancelCurrentWork();
     [[nodiscard]] bool isAnalysisInProgress() const noexcept;

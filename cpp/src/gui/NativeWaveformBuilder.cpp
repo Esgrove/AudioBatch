@@ -1,156 +1,195 @@
-/// Serializes JUCE-native thumbnail peaks from bounded PCM blocks on the admitted enrichment worker.
-/// Only complete thumbnail buckets are encoded, matching JUCE's source-backed final-bucket behavior.
-/// No loudness meter, true-peak processing, source-backed thumbnail or auxiliary decoder thread is created.
+/// Builds optional native thumbnail peaks and spectra from one bounded PCM pass on the enrichment worker.
+/// Shared streaming builders isolate optional artifact failures without a second decoder or thread.
 
 #include "gui/NativeWaveformBuilder.h"
 
 #include "analysis/DecodeFailureTracker.h"
-#include "analysis/NativeWaveformData.h"
+#include "analysis/NativeWaveformBuilder.h"
+#include "analysis/SpectrogramBuilder.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
+#include "utils/Log.h"
 #include "utils/ThreadUtils.h"
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
+#include <memory>
 #include <optional>
-#include <span>
 #include <utility>
 
 namespace audiobatch
 {
 namespace
 {
-constexpr juce::int64 thumbnailTargetPoints {16'384};
-constexpr int minimumDetail {16};
-constexpr int maximumDetail {1024};
-constexpr juce::int64 maximumPoints {4'194'304};
-constexpr int decodeBlockSize {16'384};
-constexpr int maximumQuantizedPeak {127};
-constexpr int minimumQuantizedPeak {-128};
-constexpr float quantizationScale {127.0f};
-constexpr double maximumSampleRate {768'000.0};
+constexpr juce::int64 MAXIMUM_POINTS {4'194'304};
+constexpr int DECODE_BLOCK_SIZE {16'384};
+/// Both preview artifacts share the native thumbnail decoder's supported source-rate ceiling.
+constexpr double MAXIMUM_SAMPLE_RATE {768'000.0};
 
-/// Writes JUCE's quantized minimum and maximum, expanding a flat range by one step.
-void writeRange(juce::OutputStream& output, const juce::Range<float> range)
+/// Feeds a spectral block, discarding only the optional spectral state if processing throws.
+void pushSpectrogram(
+    std::unique_ptr<SpectrogramBuilder>& spectrum,
+    const juce::AudioBuffer<float>& buffer,
+    const int count
+)
 {
-    const auto quantize = [](const float value) {
-        if (value <= -1.0f) {
-            return value * quantizationScale <= static_cast<float>(minimumQuantizedPeak)
-                ? minimumQuantizedPeak
-                : juce::roundToInt(value * quantizationScale);
+    if (!spectrum) {
+        return;
+    }
+    try {
+        spectrum->push(buffer, 0, count);
+    } catch (...) {
+        spectrum.reset();
+        utils::logDebug("Preview spectrogram processing failed: {}", utils::describeCurrentException());
+    }
+}
+
+/// Feeds the shared waveform accumulator without letting its failures discard independent spectra.
+void pushWaveform(
+    std::unique_ptr<NativeWaveformBuilder>& waveform,
+    const juce::AudioBuffer<float>& buffer,
+    const int count,
+    const juce::int64 decodedFrames
+)
+{
+    if (!waveform) {
+        return;
+    }
+    try {
+        waveform->push(buffer, 0, count);
+        if (waveform->framesReceived() != decodedFrames) {
+            waveform.reset();
         }
-        return value >= 1.0f ? maximumQuantizedPeak : juce::roundToInt(value * quantizationScale);
-    };
-    auto minimum = quantize(range.getStart());
-    auto maximum = quantize(range.getEnd());
-    if (minimum == maximum) {
-        if (maximum == maximumQuantizedPeak) {
-            --minimum;
-        } else {
-            ++maximum;
+    } catch (...) {
+        waveform.reset();
+        utils::logDebug("Preview waveform processing failed: {}", utils::describeCurrentException());
+    }
+}
+
+/// Completes independent artifacts after all PCM has been consumed, with no provisional data persisted.
+PreviewAudioArtifacts finishArtifacts(
+    std::unique_ptr<NativeWaveformBuilder> waveform,
+    std::unique_ptr<SpectrogramBuilder> spectrum
+)
+{
+    PreviewAudioArtifacts artifacts;
+    if (waveform) {
+        try {
+            artifacts.waveform = waveform->finish();
+        } catch (...) {
+            utils::logDebug("Preview waveform completion failed: {}", utils::describeCurrentException());
         }
     }
-    output.writeByte(static_cast<char>(minimum));
-    output.writeByte(static_cast<char>(maximum));
+    if (spectrum) {
+        try {
+            artifacts.spectrogram = spectrum->finish();
+        } catch (...) {
+            utils::logDebug("Preview spectrogram completion failed: {}", utils::describeCurrentException());
+        }
+    }
+    return artifacts;
 }
 }  // namespace
 
-/// Chooses the same power-of-two detail as the preview, bounded for both short and long files.
-int samplesPerThumbnailPoint(const juce::int64 lengthInSamples)
-{
-    if (lengthInSamples <= 0) {
-        return maximumDetail;
-    }
-    auto detail = minimumDetail;
-    while (detail < maximumDetail && lengthInSamples / detail > thumbnailTargetPoints) {
-        detail *= 2;
-    }
-    return detail;
-}
-
-/// Reads corrected native PCM in bounded blocks and serializes the exact source-backed thumbnail geometry.
-/// The extra trailing point stays zero, and unfinished final buckets remain empty, as in JUCE's native reader path.
-/// Decode failures use the same tolerance as analysis, but repeated failures never publish a partial waveform.
-std::optional<juce::MemoryBlock> buildNativeWaveform(
+/// Decodes requested optional artifacts together, never constructing a loudness or true-peak meter.
+/// Artifact-specific failures remain independent, while cancellation and repeated read failures discard both.
+PreviewAudioArtifacts buildPreviewAudioArtifacts(
     juce::AudioFormatReader& reader,
+    const bool needWaveform,
+    const bool needSpectrogram,
     const utils::CancellationCheck& isCancelled
 )
 {
-    const auto detail = samplesPerThumbnailPoint(reader.lengthInSamples);
-    const auto completePoints = reader.lengthInSamples / detail;
-    if (reader.lengthInSamples <= 0 || (reader.numChannels != 1 && reader.numChannels != 2)
-        || !std::isfinite(reader.sampleRate) || reader.sampleRate <= 0.0 || reader.sampleRate > maximumSampleRate
-        || completePoints >= maximumPoints || utils::isCancellationRequested(isCancelled))
+    if ((!needWaveform && !needSpectrogram) || reader.lengthInSamples <= 0
+        || (reader.numChannels != 1 && reader.numChannels != 2) || !std::isfinite(reader.sampleRate)
+        || reader.sampleRate <= 0.0 || reader.sampleRate > MAXIMUM_SAMPLE_RATE
+        || utils::isCancellationRequested(isCancelled))
     {
-        return std::nullopt;
+        return {};
     }
     const auto channels = static_cast<int>(reader.numChannels);
-    juce::MemoryBlock data;
-    juce::MemoryOutputStream output(data, false);
-    output.write("jatm", 4);
-    output.writeInt(detail);
-    output.writeInt64(reader.lengthInSamples);
-    output.writeInt64(completePoints * detail);
-    output.writeInt(static_cast<int>(completePoints + 1));
-    output.writeInt(channels);
-    output.writeInt(static_cast<int>(reader.sampleRate));
-    output.writeInt64(0);
-    output.writeInt64(0);
-
-    juce::AudioBuffer<float> buffer(channels, decodeBlockSize);
-    DecodeFailureTracker failures(reader.lengthInSamples);
-    for (juce::int64 position = 0; position < reader.lengthInSamples; position += decodeBlockSize) {
-        if (utils::isCancellationRequested(isCancelled)) {
-            return std::nullopt;
+    std::unique_ptr<NativeWaveformBuilder> waveform;
+    if (needWaveform && reader.lengthInSamples / samplesPerThumbnailPoint(reader.lengthInSamples) < MAXIMUM_POINTS) {
+        try {
+            waveform = std::make_unique<NativeWaveformBuilder>(
+                channels, static_cast<int>(reader.sampleRate), reader.lengthInSamples
+            );
+        } catch (...) {
+            utils::logDebug("Preview waveform setup failed: {}", utils::describeCurrentException());
         }
-        const auto count = static_cast<int>(std::min<juce::int64>(decodeBlockSize, reader.lengthInSamples - position));
+    }
+    std::unique_ptr<SpectrogramBuilder> spectrum;
+    if (needSpectrogram) {
+        try {
+            spectrum = std::make_unique<SpectrogramBuilder>(channels, static_cast<int>(reader.sampleRate));
+        } catch (...) {
+            utils::logDebug("Preview spectrogram setup failed: {}", utils::describeCurrentException());
+        }
+    }
+    if (!waveform && !spectrum) {
+        return {};
+    }
+    juce::AudioBuffer<float> buffer(channels, DECODE_BLOCK_SIZE);
+    DecodeFailureTracker failures(reader.lengthInSamples);
+    for (juce::int64 position = 0; position < reader.lengthInSamples; position += DECODE_BLOCK_SIZE) {
+        if (utils::isCancellationRequested(isCancelled)) {
+            return {};
+        }
+        const auto count
+            = static_cast<int>(std::min<juce::int64>(DECODE_BLOCK_SIZE, reader.lengthInSamples - position));
         buffer.clear();
         if (!failures.recordBlock(
                 utils::readFloatSamples(reader, utils::writePointers(buffer), position, count), position, count
             ))
         {
-            return std::nullopt;
+            return {};
         }
-        for (int offset = 0; offset + detail <= count; offset += detail) {
-            for (int channel = 0; channel < channels; ++channel) {
-                const auto* samples = buffer.getReadPointer(channel, offset);
-                if (!std::ranges::all_of(
-                        std::span(samples, static_cast<std::size_t>(detail)),
-                        [](const float value) { return std::isfinite(value); }
-                    ))
-                {
-                    return std::nullopt;
-                }
-                writeRange(output, juce::FloatVectorOperations::findMinAndMax(samples, detail));
-            }
+        pushSpectrogram(spectrum, buffer, count);
+        pushWaveform(waveform, buffer, count, position + count);
+        if (!waveform && !spectrum) {
+            return {};
         }
     }
-    for (int channel = 0; channel < channels; ++channel) {
-        output.writeShort(0);
-    }
-    output.flush();
-    if (utils::isCancellationRequested(isCancelled) || !isValidWaveformData(data)) {
-        return std::nullopt;
-    }
-    return data;
+    auto artifacts = finishArtifacts(std::move(waveform), std::move(spectrum));
+    return utils::isCancellationRequested(isCancelled) ? PreviewAudioArtifacts {} : std::move(artifacts);
 }
 
-/// Captures no new identity during publication, rejecting replacement before and after waveform-only decoding.
+/// Rejects source replacement before opening, after opening and after the single optional-artifact decode.
+PreviewAudioArtifacts buildPreviewAudioArtifacts(
+    const utils::FileIdentity& identity,
+    const bool needWaveform,
+    const bool needSpectrogram,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    const juce::File file(identity.path);
+    if ((!needWaveform && !needSpectrogram) || !identity.matches(file) || utils::isCancellationRequested(isCancelled)) {
+        return {};
+    }
+    const auto reader = utils::createAudioReader(file);
+    if (!reader || !identity.matches(file)) {
+        return {};
+    }
+    auto artifacts = buildPreviewAudioArtifacts(*reader, needWaveform, needSpectrogram, isCancelled);
+    return identity.matches(file) && !utils::isCancellationRequested(isCancelled) ? std::move(artifacts)
+                                                                                  : PreviewAudioArtifacts {};
+}
+
+/// Preserves waveform-only decoding and native thumbnail compatibility for existing callers.
+std::optional<juce::MemoryBlock> buildNativeWaveform(
+    juce::AudioFormatReader& reader,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    return buildPreviewAudioArtifacts(reader, true, false, isCancelled).waveform;
+}
+
+/// Preserves identity-guarded waveform-only decoding without requesting a spectral artifact.
 std::optional<juce::MemoryBlock> buildNativeWaveform(
     const utils::FileIdentity& identity,
     const utils::CancellationCheck& isCancelled
 )
 {
-    const juce::File file(identity.path);
-    if (!identity.matches(file) || utils::isCancellationRequested(isCancelled)) {
-        return std::nullopt;
-    }
-    const auto reader = utils::createAudioReader(file);
-    if (!reader || !identity.matches(file)) {
-        return std::nullopt;
-    }
-    auto data = buildNativeWaveform(*reader, isCancelled);
-    return identity.matches(file) ? std::move(data) : std::nullopt;
+    return buildPreviewAudioArtifacts(identity, true, false, isCancelled).waveform;
 }
 }  // namespace audiobatch

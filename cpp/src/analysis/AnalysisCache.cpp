@@ -47,7 +47,7 @@ struct CachedRow {
     std::int64_t fileSize {0};
     /// Modification time of the file when the row was stored, in milliseconds since the epoch.
     std::int64_t modifiedTimeMs {0};
-    /// The Serato tag kind of a tag row, or empty for an analysis row.
+    /// The Serato tag kind, -1 for a Rust waveform, -2 for a spectrogram, or empty for an analysis row.
     std::optional<std::int64_t> tagKind;
 };
 
@@ -390,6 +390,33 @@ bool invalidateIncompatiblePreviews(
     return tags.isValid() && sqlite::bindText(*tags, 1, record.fullPath) && sqlite::bindInt64(*tags, 2, record.fileSize)
         && sqlite::bindInt64(*tags, 3, record.modifiedTimeMs) && sqlite::stepToCompletion(*tags);
 }
+
+/// Removes incompatible optional spectra after commit only while the published source and geometry still win.
+/// The predicate and deletion share one statement so another connection's newer artifact cannot be removed.
+bool invalidateIncompatibleSpectrograms(
+    sqlite3& connection,
+    sqlite::StatementCache& statements,
+    const AudioAnalysisRecord& record
+)
+{
+    constexpr int CHANNELS_PARAMETER {5};
+    constexpr int LENGTH_PARAMETER {6};
+    constexpr auto sql = R"SQL(
+        DELETE FROM spectrogram_cache WHERE file_path = ?1
+            AND (file_size <> ?2 OR modified_time_ms <> ?3 OR sample_rate <> ?4
+                OR num_channels <> ?5 OR length_in_samples <> ?6)
+            AND EXISTS (SELECT 1 FROM file_analysis AS a WHERE a.file_path = ?1
+                AND a.file_size = ?2 AND a.modified_time_ms = ?3 AND a.sample_rate = ?4
+                AND a.channels = ?5 AND a.length_in_samples = ?6);
+    )SQL";
+    const auto statement = statements.borrow(connection, sql);
+    return statement.isValid() && sqlite::bindText(*statement, 1, record.fullPath)
+        && sqlite::bindInt64(*statement, 2, record.fileSize) && sqlite::bindInt64(*statement, 3, record.modifiedTimeMs)
+        && sqlite::bindInt64(*statement, 4, record.sampleRate)
+        && sqlite::bindInt64(*statement, CHANNELS_PARAMETER, record.channels)
+        && sqlite::bindInt64(*statement, LENGTH_PARAMETER, record.lengthInSamples)
+        && sqlite::stepToCompletion(*statement);
+}
 }  // namespace
 
 /// Runs the function with the open database connection and its prepared statements while holding the cache lock,
@@ -676,10 +703,17 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     {
         return false;
     }
-    if (sqlite3_changes(database.get()) > 0 && !invalidateIncompatiblePreviews(*database, statements, record)) {
+    const bool published = sqlite3_changes(database.get()) > 0;
+    if (published && !invalidateIncompatiblePreviews(*database, statements, record)) {
         return false;
     }
-    return transaction.commit();
+    if (!transaction.commit()) {
+        return false;
+    }
+    if (published && !invalidateIncompatibleSpectrograms(*database, statements, record)) {
+        utils::logWarn("Cannot remove incompatible cached spectrograms for {}", record.fullPath.quoted());
+    }
+    return true;
 }
 
 /// Loads the custom gain stored for a file when the stored row has the given size and modification time,
@@ -811,7 +845,8 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
             connection,
             "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1 "
             "UNION ALL SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1 "
-            "UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1 LIMIT 1;"
+            "UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1 "
+            "UNION ALL SELECT file_size, modified_time_ms FROM spectrogram_cache WHERE file_path = ?1 LIMIT 1;"
         );
         if (statement.isValid() && sqlite::bindText(*statement, 1, normalizedPath(file))
             && sqlite3_step(statement.get()) == SQLITE_ROW)
@@ -823,7 +858,7 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     return removeAnalysis(captured);
 }
 
-/// Removes the captured analysis, waveform and matching independently cached tags atomically.
+/// Removes the captured analysis, waveforms, spectrogram revisions and matching independently cached tags atomically.
 /// Delayed completion cannot delete a newer source row or its preview.
 bool AnalysisCache::removeAnalysis(const AudioAnalysisRecord& record)
 {
@@ -843,6 +878,7 @@ bool AnalysisCache::removeAnalysis(const AudioAnalysisRecord& record)
              "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
              "DELETE FROM serato_tag_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
              "DELETE FROM rust_waveform_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
+             "DELETE FROM spectrogram_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;",
          })
     {
         const auto statement = statements.borrow(*database, sql);
@@ -882,7 +918,9 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
             UNION ALL
             SELECT file_path, file_size, modified_time_ms, tag_kind FROM serato_tag_cache
             UNION ALL
-            SELECT file_path, file_size, modified_time_ms, -1 FROM rust_waveform_cache;
+            SELECT file_path, file_size, modified_time_ms, -1 FROM rust_waveform_cache
+            UNION ALL
+            SELECT DISTINCT file_path, file_size, modified_time_ms, -2 FROM spectrogram_cache;
         )SQL";
         const auto prepared = sqlite::prepare(*database, sql);
         if (prepared == nullptr) {
@@ -953,9 +991,12 @@ bool AnalysisCache::removeRowVersion(
         return false;
     }
     const bool rustWaveform = tagKind == std::optional<std::int64_t> {-1};
+    const bool spectrogram = tagKind == std::optional<std::int64_t> {-2};
     const char* sql = "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
     if (rustWaveform) {
         sql = "DELETE FROM rust_waveform_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
+    } else if (spectrogram) {
+        sql = "DELETE FROM spectrogram_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
     } else if (tagKind.has_value()) {
         sql = "DELETE FROM serato_tag_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND "
               "tag_kind = ?;";
@@ -968,7 +1009,7 @@ bool AnalysisCache::removeRowVersion(
 
     const bool bound = sqlite::bindText(*statement, 1, path) && sqlite::bindInt64(*statement, 2, fileSize)
         && sqlite::bindInt64(*statement, 3, modifiedTimeMs)
-        && (!tagKind.has_value() || rustWaveform || sqlite::bindInt64(*statement, 4, *tagKind));
+        && (!tagKind.has_value() || rustWaveform || spectrogram || sqlite::bindInt64(*statement, 4, *tagKind));
 
     if (!bound || !sqlite::stepToCompletion(*statement)) {
         return false;

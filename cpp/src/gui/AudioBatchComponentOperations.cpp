@@ -9,6 +9,7 @@
 #include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/FileActivity.h"
+#include "gui/PreviewController.h"
 #include "gui/ResultsModel.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginProcessing.h"
@@ -100,6 +101,9 @@ void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecor
     }
 
     if (currentFileChanged) {
+        if (const auto* loaded = std::get_if<LoadedPreview>(&preview.getState())) {
+            enrichment.select(loaded->identity, preview.getGeneration());
+        }
         if (const auto currentRow = analysisResults.findRow(preview.getFile().getFullPathName())) {
             updateAudioInfo(analysisResults[*currentRow]);
             updateGainControlsForSelection();

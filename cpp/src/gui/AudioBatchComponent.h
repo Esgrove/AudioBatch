@@ -74,6 +74,7 @@ class AudioBatchComponent :
     public juce::DragAndDropContainer,
     juce::ChangeListener,
     juce::KeyListener,
+    private juce::Timer,
     private juce::ComponentListener,
     private BackgroundWorkListener
 {
@@ -87,6 +88,8 @@ public:
     AudioBatchComponent(AudioBatchComponent&&) = delete;
     AudioBatchComponent& operator=(AudioBatchComponent&&) = delete;
 
+    [[nodiscard]] PreviewViewMode getPreviewViewMode() const noexcept;
+
     [[nodiscard]] juce::String describeNormalizationTarget() const;
 
     /// Returns the plugin chain, which the constructor creates and the destructor destroys.
@@ -97,6 +100,9 @@ public:
 
     [[nodiscard]] bool hasSelectedRecords() const;
     [[nodiscard]] bool isAlbumArtworkEnabled() const noexcept;
+    [[nodiscard]] bool isSampleOverloadVisible() const noexcept;
+    [[nodiscard]] bool isTruePeakOverloadVisible() const noexcept;
+    [[nodiscard]] bool areOverloadLinesVisible() const noexcept;
     [[nodiscard]] bool isBackgroundWorkRunning() const noexcept;
     [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
@@ -121,12 +127,16 @@ public:
     void removeSelectedRecords();
     void rescanCurrentRoot();
     void revealSelectedRecord();
+    void setPreviewViewMode(PreviewViewMode mode);
     void setViewOptionsChangedCallback(std::function<void()> callback);
     void showAudioSettingsWindow();
     void showSupportedNormalizationFormats();
     void toggleAlbumArtwork();
     void toggleContinuePreviewPlayback();
     void toggleLoudnessGraph();
+    void toggleSampleOverloads();
+    void toggleTruePeakOverloads();
+    void toggleOverloadLines();
     void togglePlayFromFirstCuePoint();
     void togglePluginPreview();
     void togglePreviewLatencyCompensation();
@@ -156,6 +166,8 @@ private:
 #ifdef AUDIOBATCH_TESTING
     friend class AudioBatchIntegrationTest;
 #endif
+
+    void timerCallback() override;
 
     ArtworkLoader::Completion createArtworkCompletion();
     PreviewEnrichmentScheduler::Completion createPreviewEnrichmentCompletion();
@@ -380,6 +392,8 @@ private:
     bool previewFitInitialized {false};
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};
+    /// True while the status text is owned by the optional preview-artifact pass.
+    bool backgroundPreviewStatusVisible {false};
     /// True once an expanding animation ended, so the next layout gives the divider back its expanded height.
     bool restoreExpandedLayout {false};
 

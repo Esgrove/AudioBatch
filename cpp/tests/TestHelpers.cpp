@@ -6,6 +6,7 @@
 #include "TestHelpers.h"
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/SpectrogramData.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginScanner.h"
 #include "serato/SeratoTagTypes.h"
@@ -385,6 +386,20 @@ void expectAnalysisMeasurementsEqual(
 )
 {
     test.expect(actual.isReady() && expected.isReady());
+    test.expect(actual.nativeWaveform.has_value() == expected.nativeWaveform.has_value());
+    if (actual.nativeWaveform && expected.nativeWaveform) {
+        test.expect(
+            *actual.nativeWaveform == *expected.nativeWaveform,
+            "Native waveform must describe the same measured PCM independent of chunk boundaries"
+        );
+    }
+    test.expect((actual.spectrogram != nullptr) == (expected.spectrogram != nullptr));
+    if (actual.spectrogram != nullptr && expected.spectrogram != nullptr) {
+        test.expect(
+            serializeSpectrogram(*actual.spectrogram) == serializeSpectrogram(*expected.spectrogram),
+            "The spectral product must describe the exact measured PCM, including final output quantization"
+        );
+    }
     test.expectWithinAbsoluteError(actual.peakLeft, expected.peakLeft, 0.0f);
     test.expectWithinAbsoluteError(actual.peakRight, expected.peakRight, 0.0f);
     test.expectWithinAbsoluteError(actual.overallPeak, expected.overallPeak, 0.0f);

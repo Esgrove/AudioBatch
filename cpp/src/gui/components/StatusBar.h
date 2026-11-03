@@ -1,6 +1,7 @@
 /// Classic desktop status bar along the bottom of the main window.
 /// Declares StatusBar, which shows the root folders, the background activity or the list summary,
-/// and the preview audio output device, with the overall progress of a running pass along its top edge.
+/// the source playback clock, and the audio output device.
+/// Overall foreground progress remains a separate strip along the top edge.
 
 #pragma once
 
@@ -11,6 +12,7 @@
 namespace audiobatch
 {
 [[nodiscard]] juce::String formatAudioOutputStatus(const AudioOutputStatus& status);
+[[nodiscard]] juce::String formatPlaybackTime(double positionSeconds, double durationSeconds);
 
 /// Bottom bar of the main window.
 /// The root path on the left and the status text share the width left of the output device,
@@ -24,6 +26,7 @@ public:
 
     void setOutputStatus(const AudioOutputStatus& status);
     void setPath(const juce::String& text, const juce::String& tooltip);
+    void setPlaybackTime(double positionSeconds, double durationSeconds, bool visible);
     void setProgress(int permille);
     void setStatusText(const juce::String& text);
 
@@ -38,6 +41,8 @@ private:
     juce::Label outputLabel {"Audio output"};
     /// The root folders of the list.
     juce::Label pathLabel {"Root folders"};
+    /// Current playback time and total source duration, independent of background work text.
+    juce::Label playbackLabel {"Playback time"};
     /// What the application is doing, or a summary of the list.
     juce::Label statusLabel {"Status"};
 

@@ -427,9 +427,12 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/analysis/AnalysisCache.cpp"
     "src/analysis/AnalysisCache.h"
     "src/analysis/AnalysisCacheSchema.cpp"
+    "src/analysis/AnalysisCacheSpectrogram.cpp"
     "src/analysis/AnalysisCacheSql.h"
     "src/analysis/AnalysisCacheWaveform.cpp"
     "src/analysis/AnalysisCoordinator.cpp"
+    "src/analysis/AnalysisCoordinatorPreview.cpp"
+    "src/analysis/AnalysisPreview.h"
     "src/analysis/AnalysisCoordinator.h"
     "src/analysis/AudioAnalysis.cpp"
     "src/analysis/AudioAnalysis.h"
@@ -442,9 +445,15 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/analysis/BitDepthDetection.h"
     "src/analysis/DecodeFailureTracker.h"
     "src/analysis/NativeWaveformData.cpp"
+    "src/analysis/NativeWaveformBuilder.cpp"
+    "src/analysis/NativeWaveformBuilder.h"
     "src/analysis/NativeWaveformData.h"
     "src/analysis/OverloadHistory.cpp"
     "src/analysis/OverloadHistory.h"
+    "src/analysis/SpectrogramBuilder.cpp"
+    "src/analysis/SpectrogramBuilder.h"
+    "src/analysis/SpectrogramData.cpp"
+    "src/analysis/SpectrogramData.h"
     "src/analysis/Sqlite.cpp"
     "src/analysis/Sqlite.h"
     "src/analysis/SqliteTransaction.cpp"
@@ -552,6 +561,9 @@ set(AUDIOBATCH_GUI_SOURCES
     "src/gui/components/StatusBar.cpp"
     "src/gui/components/StatusBar.h"
     "src/gui/components/ThumbnailComponent.cpp"
+    "src/gui/components/ThumbnailComponentSpectrogram.cpp"
+    "src/gui/components/ThumbnailComponentOverloads.cpp"
+    "src/gui/components/PreviewPlotGeometry.h"
     "src/gui/components/ThumbnailComponent.h"
     "src/gui/FileActivity.cpp"
     "src/gui/FileActivity.h"
@@ -870,6 +882,9 @@ if(BUILD_TESTING)
             "src/gui/components/StatusBar.cpp"
             "src/gui/components/StatusBar.h"
             "src/gui/components/ThumbnailComponent.cpp"
+            "src/gui/components/ThumbnailComponentSpectrogram.cpp"
+            "src/gui/components/ThumbnailComponentOverloads.cpp"
+            "src/gui/components/PreviewPlotGeometry.h"
             "src/gui/components/ThumbnailComponent.h"
             "src/gui/FileActivity.cpp"
             "src/gui/FileActivity.h"
@@ -911,6 +926,7 @@ if(BUILD_TESTING)
             "src/serato/SeratoWaveformColouring.cpp"
             "src/serato/SeratoWaveformColouring.h"
             "tests/AnalysisCoordinatorTests.cpp"
+            "tests/AnalysisPreviewTests.cpp"
             "tests/AnalysisTests.cpp"
             "tests/MeasurementTests.cpp"
             "tests/ArtworkTests.cpp"
@@ -940,6 +956,8 @@ if(BUILD_TESTING)
             "tests/PreviewEnrichmentTests.cpp"
             "tests/PreviewPlaybackTests.cpp"
             "tests/PreviewPlayerTests.cpp"
+            "tests/PlaybackStatusTests.cpp"
+            "tests/PreviewSeekTests.cpp"
             "tests/ResultsModelTests.cpp"
             "tests/SeratoOverviewTests.cpp"
             "tests/SeratoPreviewLoaderTests.cpp"
@@ -949,6 +967,10 @@ if(BUILD_TESTING)
             "tests/SeratoTagCacheTests.cpp"
             "tests/SeratoTagsTests.cpp"
             "tests/SortingTests.cpp"
+            "tests/SpectrogramTests.cpp"
+            "tests/SpectrogramFixtureTests.cpp"
+            "tests/SpectrogramBenchmark.cpp"
+            "tests/SpectrogramBenchmark.h"
             "tests/TestHelpers.cpp"
             "tests/TestHelpers.h"
             "tests/TestMain.cpp"
@@ -986,6 +1008,7 @@ if(BUILD_TESTING)
             juce::juce_audio_basics
             juce::juce_audio_formats
             juce::juce_audio_processors
+            juce::juce_dsp
             juce::juce_audio_utils
             juce::juce_core
             juce::juce_data_structures
@@ -1047,6 +1070,7 @@ if(BUILD_TESTING)
             tag
             juce::juce_audio_utils
             juce::juce_audio_processors
+            juce::juce_dsp
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags
     )
@@ -1119,6 +1143,7 @@ if(AUDIOBATCH_FUZZ)
                 juce::juce_audio_basics
                 juce::juce_audio_formats
                 juce::juce_audio_processors
+                juce::juce_dsp
                 juce::juce_core
                 juce::juce_data_structures
                 juce::juce_events
@@ -1198,6 +1223,7 @@ target_link_libraries(
         juce::juce_audio_basics
         juce::juce_audio_formats
         juce::juce_audio_processors
+        juce::juce_dsp
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events

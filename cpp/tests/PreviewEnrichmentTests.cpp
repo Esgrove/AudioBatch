@@ -1,4 +1,4 @@
-/// Focused admission and native waveform tests without windows, rendering, or source-backed thumbnails.
+/// Focused admission and combined audio-artifact tests without windows, rendering, or source-backed thumbnails.
 /// Deterministic worker gates check the completion boundary, selection promotion and cooperative cancellation.
 /// Native JUCE serialization is the independent reference for thumbnail quantization and final-bucket geometry.
 
@@ -6,6 +6,9 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/DecodeFailureTracker.h"
+#include "analysis/NativeWaveformBuilder.h"
+#include "analysis/NativeWaveformData.h"
+#include "analysis/SpectrogramData.h"
 #include "gui/NativeWaveformBuilder.h"
 #include "gui/PreviewEnrichmentScheduler.h"
 #include "serato/SeratoPreviewLoader.h"
@@ -23,6 +26,7 @@
 #include <bit>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -66,6 +70,8 @@ public:
     ) override
     {
         ++reads;
+        framesRead += sampleCount;
+        maximumReadSize = std::max(maximumReadSize, sampleCount);
         for (auto* channel : std::span(destination, static_cast<std::size_t>(channelCount))) {
             if (channel != nullptr) {
                 const auto samples = std::span(channel, static_cast<std::size_t>(destinationOffset + sampleCount))
@@ -80,6 +86,10 @@ public:
     bool readSucceeded {true};
     /// PCM value delivered for every decoded sample, including nonfinite rejection cases.
     float sample {0.25f};
+    /// Total frames requested, proving combined artifacts share exactly one decode pass.
+    juce::int64 framesRead {0};
+    /// Largest requested block, proving PCM working memory stays bounded.
+    int maximumReadSize {0};
     /// Blocks requested, proving invalid geometry is rejected before decoding.
     int reads {0};
 };
@@ -176,10 +186,29 @@ public:
         return condition.wait_for(lock, std::chrono::milliseconds(500), [&] { return results.size() >= count; });
     }
 
+    /// Waits for the explicit post-persistence spectral completion stage, not a result count or elapsed delay.
+    /// FFT work normally finishes well below one second, but concurrent builds can starve this detached worker.
+    /// The five-second deadline detects deadlock only, without turning CPU contention into a performance assertion.
+    bool waitForSpectrogram()
+    {
+        std::unique_lock lock(mutex);
+        return condition.wait_for(lock, std::chrono::seconds(5), [&] { return spectrogramCompleted; });
+    }
+
+    /// Waits for a cached waveform independently of any preceding metadata publication.
+    bool waitForWaveform()
+    {
+        std::unique_lock lock(mutex);
+        return condition.wait_for(lock, std::chrono::milliseconds(500), [&] {
+            return std::ranges::any_of(results, [](const auto& result) { return result.waveform.has_value(); });
+        });
+    }
+
     /// Records worker completion under a test-owned lock, never waiting for the GUI thread.
     void record(PreviewEnrichmentResult result)
     {
         const std::scoped_lock lock(mutex);
+        spectrogramCompleted = spectrogramCompleted || result.spectrogramReady;
         results.push_back(std::move(result));
         condition.notify_all();
     }
@@ -188,6 +217,7 @@ private:
     std::condition_variable condition;
     mutable std::mutex mutex;
     std::vector<PreviewEnrichmentResult> results;
+    bool spectrogramCompleted {false};
 };
 
 /// Captures lightweight source geometry without retaining measurements or waveform blobs.
@@ -216,9 +246,15 @@ public:
     void runTest() override;
 
 private:
+    void testArtifacts(const juce::File& first);
     void testMetadata(const juce::File& first);
     void testPersistence(const juce::File& first);
+    void testProgress(const juce::File& first, const juce::File& second);
     void testScheduling(const juce::File& first, const juce::File& second);
+    void testStreamingWaveformChunks();
+    void testStreamingWaveformInvalidInputs();
+    void testStreamingWaveformSnapshots();
+    void testStreamingWaveforms();
     void testWaveforms(const juce::File& first);
 };
 
@@ -228,9 +264,12 @@ void PreviewEnrichmentTests::runTest()
     const auto first = fixtureFile("sine_mono_44100_16.wav");
     const auto second = fixtureFile("silence_stereo_44100_16.wav");
     testScheduling(first, second);
+    testProgress(first, second);
     testPersistence(first);
     testMetadata(first);
+    testArtifacts(first);
     testWaveforms(first);
+    testStreamingWaveforms();
 }
 
 /// Checks admission, selection generations and cancellation with deterministic worker gates.
@@ -344,6 +383,110 @@ void PreviewEnrichmentTests::testScheduling(const juce::File& first, const juce:
     }
 }
 
+/// Uses subsequent admissions as retirement barriers, without polling sleeps or GUI delivery.
+void PreviewEnrichmentTests::testProgress(const juce::File& first, const juce::File& second)
+{
+    beginTest("Preview progress counts unique retirements, not cache-only reads or interrupted attempts");
+    {
+        const TemporaryDirectory directory;
+        const auto probe = std::make_shared<EnrichmentProbe>();
+        PreviewEnrichmentScheduler scheduler(directory.getChildFile("cache.db"), {}, workFor(probe));
+        scheduler.beginForeground();
+        scheduler.select(utils::FileIdentity(first), 1);
+        expect(probe->waitForCalls(1));
+        auto progress = scheduler.getProgress();
+        expect(!progress.active);
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 0);
+        expect(progress.activity.isEmpty());
+        scheduler.completeForeground({candidateFor(first), candidateFor(second), candidateFor(first)});
+        probe->release(1);
+        expect(probe->waitForCalls(2));
+        progress = scheduler.getProgress();
+        expect(progress.active);
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 2);
+        expectEquals(progress.activity, juce::String("preview analysis"));
+
+        scheduler.select(utils::FileIdentity(second), 2);
+        probe->release(2);
+        expect(probe->waitForCalls(3));
+        progress = scheduler.getProgress();
+        expect(progress.active);
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 2);
+        const auto interrupted = probe->snapshot();
+        expect(interrupted.size() >= 2 && interrupted[1].cancelled);
+        probe->release(3);
+        expect(probe->waitForCalls(4));
+        progress = scheduler.getProgress();
+        expect(progress.active);
+        expectEquals(progress.completedFiles, 1);
+        expectEquals(progress.totalFiles, 2);
+
+        // A later selection of the same path forces another admission after this file retires.
+        scheduler.select(utils::FileIdentity(first), 3);
+        probe->release(4);
+        expect(probe->waitForCalls(5));
+        progress = scheduler.getProgress();
+        expect(!progress.active);
+        expectEquals(progress.completedFiles, 2);
+        expectEquals(progress.totalFiles, 2);
+        expect(progress.activity.isEmpty());
+        scheduler.select(utils::FileIdentity(first), 4);
+        probe->release(5);
+        expect(probe->waitForCalls(6));
+        expectEquals(scheduler.getProgress().completedFiles, 2);
+
+        scheduler.beginForeground();
+        progress = scheduler.getProgress();
+        expect(!progress.active);
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 0);
+        scheduler.completeForeground({candidateFor(second)});
+        probe->release(6);
+        expect(probe->waitForCalls(7));
+        // Selection outside the directory pass is useful work but does not inflate its counts.
+        progress = scheduler.getProgress();
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 1);
+        probe->release(7);
+        expect(probe->waitForCalls(8));
+        progress = scheduler.getProgress();
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 1);
+        scheduler.stop();
+        expect(!scheduler.getProgress().active);
+        probe->release(std::numeric_limits<std::size_t>::max());
+        expect(probe->waitForFinished(8));
+    }
+
+    beginTest("Removing candidates adjusts totals without counting cancelled work as completed");
+    {
+        const TemporaryDirectory directory;
+        const auto probe = std::make_shared<EnrichmentProbe>();
+        PreviewEnrichmentScheduler scheduler(directory.getChildFile("cache.db"), {}, workFor(probe));
+        scheduler.completeForeground({candidateFor(first), candidateFor(second)});
+        expect(probe->waitForCalls(1));
+        scheduler.remove({second.getFullPathName()});
+        auto progress = scheduler.getProgress();
+        expect(progress.active);
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 1);
+        probe->release(1);
+        expect(probe->waitForCalls(2));
+        expectEquals(scheduler.getProgress().completedFiles, 0);
+        scheduler.remove({first.getFullPathName()});
+        progress = scheduler.getProgress();
+        expect(!progress.active);
+        expectEquals(progress.completedFiles, 0);
+        expectEquals(progress.totalFiles, 0);
+        scheduler.stop();
+        probe->release(std::numeric_limits<std::size_t>::max());
+        expect(probe->waitForFinished(2));
+    }
+}
+
 /// Verifies explicit edits and committed outputs are persisted before optional repair resumes.
 void PreviewEnrichmentTests::testPersistence(const juce::File& first)
 {
@@ -385,6 +528,76 @@ void PreviewEnrichmentTests::testPersistence(const juce::File& first)
         probe->release(std::numeric_limits<std::size_t>::max());
         expect(probe->waitForFinished(3));
         expectEquals(probe->getMaximumActive(), 1);
+    }
+
+    beginTest("Queued cached no-ops preserve newer same-source measurements, provenance and cleared gains");
+    {
+        const TemporaryDirectory directory;
+        const auto database = directory.getChildFile("cache.db");
+        AnalysisCache cache(database);
+        auto original = analyzeFile(first);
+        original.customGain = Decibels {2.0f};
+        expect(cache.storeAnalysis(original));
+        auto captured = cache.getAnalysis(first);
+        expect(captured.has_value());
+        if (captured) {
+            expect(captured->fromCache);
+            expect(captured->measurementProducer == MeasurementProducer::cpp);
+            const auto probe = std::make_shared<EnrichmentProbe>();
+            PreviewEnrichmentScheduler scheduler(database, {}, workFor(probe));
+            scheduler.select(utils::FileIdentity(first), 1);
+            expect(probe->waitForCalls(1));
+            // No-op publication may change its presentation status without producing fresh measurements.
+            captured->status = AudioAnalysisStatus::analyzed;
+            scheduler.persistOperation(*captured);
+            auto replacement = original;
+            replacement.measurementProducer = MeasurementProducer::rust;
+            replacement.overallPeak = replacement.peakLeft = replacement.peakRight = 0.25f;
+            replacement.overallTruePeak = replacement.truePeakLeft = replacement.truePeakRight = 0.3;
+            replacement.integratedLufs = -18.0;
+            replacement.maxShortTermLufs = -17.0;
+            expect(cache.storeAnalysis(replacement));
+            expect(cache.storeCustomGain(first, std::nullopt));
+            // The next selected admission is a barrier after the queued persistence job has retired.
+            scheduler.select(utils::FileIdentity(first), 2);
+            probe->release(1);
+            expect(probe->waitForCalls(2));
+            AnalysisCache observer(database);
+            const auto retained = observer.getAnalysis(first);
+            expect(retained.has_value());
+            if (retained) {
+                expect(retained->measurementProducer == MeasurementProducer::rust);
+                expectWithinAbsoluteError(retained->overallPeak, replacement.overallPeak, 1.0e-6f);
+                expectWithinAbsoluteError(retained->overallTruePeak, replacement.overallTruePeak, 1.0e-12);
+                expectWithinAbsoluteError(retained->integratedLufs, replacement.integratedLufs, 1.0e-12);
+                expectWithinAbsoluteError(retained->maxShortTermLufs, replacement.maxShortTermLufs, 1.0e-12);
+                expect(!retained->customGain);
+            }
+            scheduler.stop();
+            probe->release(std::numeric_limits<std::size_t>::max());
+            expect(probe->waitForFinished(2));
+        }
+    }
+
+    beginTest("Queued output rows never retain transient spectra from direct scheduler callers");
+    {
+        const TemporaryDirectory directory;
+        const auto probe = std::make_shared<EnrichmentProbe>();
+        PreviewEnrichmentScheduler scheduler(directory.getChildFile("cache.db"), {}, workFor(probe));
+        scheduler.select(utils::FileIdentity(first), 1);
+        expect(probe->waitForCalls(1));
+        AudioAnalysisRecord output;
+        AudioAnalysisRecord source;
+        output.spectrogram = std::make_shared<SpectrogramData>();
+        source.spectrogram = std::make_shared<SpectrogramData>();
+        const std::weak_ptr<const SpectrogramData> outputSpectrum(output.spectrogram);
+        const std::weak_ptr<const SpectrogramData> sourceSpectrum(source.spectrogram);
+        scheduler.persistOperation(std::move(output), std::move(source));
+        expect(outputSpectrum.expired());
+        expect(sourceSpectrum.expired());
+        scheduler.stop();
+        probe->release(std::numeric_limits<std::size_t>::max());
+        expect(probe->waitForFinished(1));
     }
 
     beginTest("Committed conversion persists its output and removes its captured source before repair");
@@ -493,6 +706,154 @@ void PreviewEnrichmentTests::testMetadata(const juce::File& first)
         expectEquals(reads, 1);
         const auto cached = serato::getCachedTags(cache, identity, serato::allTagKinds);
         expect(std::ranges::all_of(cached, [](const auto& result) { return result.has_value(); }));
+    }
+}
+
+/// Checks one-pass audio artifacts, independent cache repair, early delivery and stale-source rejection.
+void PreviewEnrichmentTests::testArtifacts(const juce::File& first)
+{
+    beginTest("Combined artifacts decode every frame once in bounded blocks and preserve waveform bytes");
+    {
+        WaveformTestReader reader;
+        reader.lengthInSamples += 7;
+        const auto artifacts = buildPreviewAudioArtifacts(reader, true, true);
+        expect(artifacts.waveform.has_value());
+        expect(artifacts.spectrogram != nullptr);
+        expectEquals(reader.framesRead, reader.lengthInSamples);
+        expectEquals(reader.reads, 5);
+        expect(reader.maximumReadSize <= 16'384);
+        if (artifacts.spectrogram) {
+            expect(isValidSpectrogramData(*artifacts.spectrogram));
+            expectEquals(artifacts.spectrogram->lengthInSamples, static_cast<std::int64_t>(reader.lengthInSamples));
+        }
+        WaveformTestReader reference;
+        reference.lengthInSamples = reader.lengthInSamples;
+        expect(artifacts.waveform == buildNativeWaveform(reference));
+    }
+
+    beginTest("Optional artifact requests do no unrequested work and spectral-only input decodes once");
+    {
+        WaveformTestReader none;
+        const auto empty = buildPreviewAudioArtifacts(none, false, false);
+        expect(!empty.waveform && !empty.spectrogram);
+        expectEquals(none.reads, 0);
+        WaveformTestReader spectrum;
+        const auto artifacts = buildPreviewAudioArtifacts(spectrum, false, true);
+        expect(!artifacts.waveform && artifacts.spectrogram != nullptr);
+        expectEquals(spectrum.framesRead, spectrum.lengthInSamples);
+        expectEquals(spectrum.reads, 4);
+    }
+
+    beginTest("Combined cancellation and failed decoding never expose partial audio artifacts");
+    {
+        WaveformTestReader reader;
+        const auto cancelled = buildPreviewAudioArtifacts(reader, true, true, [&reader] { return reader.reads >= 1; });
+        expect(!cancelled.waveform && !cancelled.spectrogram);
+        expectEquals(reader.reads, 1);
+        WaveformTestReader failed;
+        failed.readSucceeded = false;
+        const auto artifacts = buildPreviewAudioArtifacts(failed, true, true);
+        expect(!artifacts.waveform && !artifacts.spectrogram);
+        expectEquals(failed.reads, DecodeFailureTracker::maximumConsecutiveFailures);
+        WaveformTestReader nonfinite;
+        nonfinite.sample = std::numeric_limits<float>::quiet_NaN();
+        const auto invalid = buildPreviewAudioArtifacts(nonfinite, true, true);
+        expect(!invalid.waveform && !invalid.spectrogram);
+    }
+
+    beginTest("Nonfinite PCM in an omitted final bucket still rejects each optional artifact");
+    {
+        WaveformTestReader reader;
+        reader.lengthInSamples = 7;
+        reader.sample = std::numeric_limits<float>::quiet_NaN();
+        const auto artifacts = buildPreviewAudioArtifacts(reader, true, true);
+        expect(!artifacts.waveform);
+        expect(!artifacts.spectrogram);
+        WaveformTestReader reference;
+        reference.lengthInSamples = reader.lengthInSamples;
+        reference.sample = reader.sample;
+        expect(artifacts.waveform == buildNativeWaveform(reference));
+        expectEquals(reader.reads, 1);
+    }
+
+    beginTest("Combined source identity checks reject replacements before and after decoding");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.copyFixture("sine_mono_44100_16.wav", "source.wav");
+        const utils::FileIdentity identity(source);
+        int checks = 0;
+        const auto replaced = buildPreviewAudioArtifacts(identity, true, true, [&] {
+            if (++checks == 6) {
+                static_cast<void>(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(source));
+            }
+            return false;
+        });
+        expect(!replaced.waveform && !replaced.spectrogram);
+        const auto stale = buildPreviewAudioArtifacts(identity, true, true);
+        expect(!stale.waveform && !stale.spectrogram);
+    }
+
+    beginTest("A spectral cache miss preserves measurement and publishes cached waveform before repair");
+    {
+        const TemporaryDirectory directory;
+        const auto database = directory.getChildFile("cache.db");
+        AnalysisCache cache(database);
+        auto measured = analyzeFile(first);
+        measured.spectrogram.reset();
+        expect(!measured.hasError());
+        expect(cache.storeAnalysis(measured));
+        const utils::FileIdentity identity(first);
+        const auto waveform = buildNativeWaveform(identity);
+        expect(waveform.has_value());
+        if (waveform) {
+            expect(cache.storeWaveformData(identity, *waveform));
+        }
+        expect(!cache.getSpectrogramData(first));
+        expect(cache.getAnalysis(first).has_value());
+        const auto deliveries = std::make_shared<EnrichmentDeliveries>();
+        PreviewEnrichmentScheduler scheduler(database, [deliveries](PreviewEnrichmentResult result) {
+            deliveries->record(std::move(result));
+        });
+        scheduler.select(identity, 7);
+        expect(deliveries->waitForWaveform());
+        const auto cached = deliveries->snapshot();
+        expect(std::ranges::any_of(cached, [](const auto& result) {
+            return result.waveform.has_value() && !result.spectrogram && !result.spectrogramReady;
+        }));
+        expect(!cache.getSpectrogramData(first));
+        scheduler.completeForeground({candidateFor(first)});
+        expect(deliveries->waitForSpectrogram());
+        const auto repaired = deliveries->snapshot();
+        expect(std::ranges::any_of(repaired, [](const auto& result) {
+            return result.spectrogramReady && result.spectrogram && !result.waveform;
+        }));
+        expect(cache.getSpectrogramData(first) != nullptr);
+        const auto retained = cache.getAnalysis(first);
+        expect(retained.has_value());
+        if (retained) {
+            expectWithinAbsoluteError(retained->overallPeak, measured.overallPeak, 1.0e-6f);
+            expectEquals(retained->lengthInSamples, measured.lengthInSamples);
+        }
+        scheduler.stop();
+    }
+
+    beginTest("Unavailable spectra complete independently of successful cached tags");
+    {
+        const TemporaryDirectory directory;
+        const auto source = directory.copyFixture("broken.wav", "broken.wav");
+        const auto deliveries = std::make_shared<EnrichmentDeliveries>();
+        PreviewEnrichmentScheduler scheduler(directory.getChildFile("cache.db"), [deliveries](auto result) {
+            deliveries->record(std::move(result));
+        });
+        scheduler.select(utils::FileIdentity(source), 1);
+        scheduler.completeForeground({candidateFor(source)});
+        expect(deliveries->waitForSpectrogram());
+        const auto results = deliveries->snapshot();
+        expect(std::ranges::any_of(results, [](const auto& result) { return result.tagsReady; }));
+        expect(std::ranges::any_of(results, [](const auto& result) {
+            return result.spectrogramReady && !result.spectrogram;
+        }));
+        scheduler.stop();
     }
 }
 
@@ -624,6 +985,155 @@ void PreviewEnrichmentTests::testWaveforms(const juce::File& first)
             int checks = 0;
             expect(!buildNativeWaveform(*reader, [&checks] { return ++checks >= 3; }));
             expectEquals(checks, 3);
+        }
+    }
+}
+
+/// Proves streaming chunks preserve native bytes and display snapshots never expose unfinished buckets.
+void PreviewEnrichmentTests::testStreamingWaveforms()
+{
+    testStreamingWaveformChunks();
+    testStreamingWaveformSnapshots();
+    testStreamingWaveformInvalidInputs();
+}
+
+/// Compares arbitrary streaming chunk boundaries against independent native JUCE serialization.
+void PreviewEnrichmentTests::testStreamingWaveformChunks()
+{
+    beginTest("Arbitrary chunks including 4410-frame meter blocks match independent JUCE native bytes");
+    for (const auto* fixtureName : {"sine_mono_44100_16.wav", "sine_stereo_44100_32f.wav"}) {
+        const auto reader = utils::createAudioReader(fixtureFile(fixtureName));
+        expect(reader != nullptr);
+        if (!reader) {
+            continue;
+        }
+        const auto channels = static_cast<int>(reader->numChannels);
+        const auto length = static_cast<int>(reader->lengthInSamples);
+        const auto detail = samplesPerThumbnailPoint(length);
+        const auto completeSamples = (length / detail) * detail;
+        juce::AudioBuffer<float> pcm(channels, length);
+        expect(utils::readFloatSamples(*reader, utils::writePointers(pcm), 0, length));
+        juce::AudioFormatManager formats;
+        juce::AudioThumbnailCache thumbnails(1);
+        juce::AudioThumbnail reference(detail, formats, thumbnails);
+        reference.reset(channels, reader->sampleRate, length);
+        reference.addBlock(0, pcm, 0, completeSamples);
+        juce::MemoryBlock expected;
+        {
+            juce::MemoryOutputStream output(expected, false);
+            reference.saveTo(output);
+            output.flush();
+        }
+        for (const auto chunkSize : {1, 7, 17, 4410, 16'384}) {
+            NativeWaveformBuilder builder(channels, static_cast<int>(reader->sampleRate), length);
+            expect(!builder.finish());
+            for (int position = 0; position < length; position += chunkSize) {
+                const auto count = std::min(chunkSize, length - position);
+                builder.push(pcm, position, count);
+                expectEquals(builder.framesReceived(), static_cast<juce::int64>(position) + count);
+            }
+            const auto result = builder.finish();
+            expect(result.has_value());
+            if (result) {
+                expect(*result == expected, juce::String(chunkSize));
+            }
+            expect(!builder.finish());
+            expect(!builder.snapshot());
+        }
+    }
+}
+
+/// Checks full-geometry snapshots remain sparse until complete buckets have arrived.
+void PreviewEnrichmentTests::testStreamingWaveformSnapshots()
+{
+    beginTest("Sparse display snapshots retain full geometry and zero partial and unread buckets");
+    {
+        constexpr int channels {2};
+        constexpr int length {71};
+        constexpr int detail {16};
+        juce::AudioBuffer<float> pcm(channels, length);
+        for (int frame = 0; frame < length; ++frame) {
+            pcm.setSample(0, frame, frame % 2 == 0 ? -0.5f : 0.25f);
+            pcm.setSample(1, frame, frame % 2 == 0 ? -0.125f : 0.75f);
+        }
+        NativeWaveformBuilder builder(channels, 44'100, length);
+        NativeWaveformBuilder whole(channels, 44'100, length);
+        whole.push(pcm, 0, length);
+        const auto expected = whole.finish();
+        expect(expected.has_value());
+        for (const auto end : {0, 15, 17, 35, 64, length}) {
+            const auto first = static_cast<int>(builder.framesReceived());
+            builder.push(pcm, first, end - first);
+            const auto snapshot = builder.snapshot();
+            expect(snapshot.has_value());
+            expectEquals(builder.framesReceived(), static_cast<juce::int64>(end));
+            if (!snapshot || !expected) {
+                continue;
+            }
+            expect(isValidWaveformData(*snapshot));
+            expectEquals(snapshot->getSize(), expected->getSize());
+            juce::MemoryInputStream header(*snapshot, false);
+            expectEquals(header.readInt(), 0x6d74616a);
+            expectEquals(header.readInt(), detail);
+            expectEquals(header.readInt64(), static_cast<juce::int64>(length));
+            expectEquals(header.readInt64(), static_cast<juce::int64>(length));
+            const auto completeBytes = static_cast<std::size_t>(end / detail) * channels * 2;
+            const auto snapshotBytes
+                = std::span(static_cast<const std::byte*>(snapshot->getData()), snapshot->getSize());
+            const auto expectedBytes
+                = std::span(static_cast<const std::byte*>(expected->getData()), expected->getSize());
+            expect(
+                std::ranges::equal(snapshotBytes.subspan(52, completeBytes), expectedBytes.subspan(52, completeBytes))
+            );
+            expect(std::ranges::all_of(snapshotBytes.subspan(52 + completeBytes), [](const auto value) {
+                return value == std::byte {0};
+            }));
+            if (end < length) {
+                expect(!builder.finish());
+            }
+        }
+        expect(builder.finish() == expected);
+    }
+}
+
+/// Rejects malformed streaming input without producing cacheable or provisional artifacts.
+void PreviewEnrichmentTests::testStreamingWaveformInvalidInputs()
+{
+    beginTest("Invalid streaming geometry, slices, excess frames and nonfinite tails cannot finish");
+    {
+        juce::AudioBuffer<float> pcm(1, 33);
+        pcm.clear();
+        for (const auto length : {juce::int64 {-1}, juce::int64 {0}, juce::int64 {4'194'304} * 1024}) {
+            NativeWaveformBuilder builder(1, 44'100, length);
+            expect(!builder.snapshot());
+            expect(!builder.finish());
+        }
+        for (const auto channels : {0, 3}) {
+            const NativeWaveformBuilder builder(channels, 44'100, 33);
+            expect(!builder.snapshot());
+        }
+        for (const auto rate : {0, -1, 768'001}) {
+            const NativeWaveformBuilder builder(1, rate, 33);
+            expect(!builder.snapshot());
+        }
+        for (const auto slice : {std::pair {-1, 1}, std::pair {0, -1}, std::pair {32, 2}, std::pair {0, 34}}) {
+            NativeWaveformBuilder builder(1, 44'100, 33);
+            builder.push(pcm, slice.first, slice.second);
+            expect(!builder.snapshot());
+            expect(!builder.finish());
+        }
+        NativeWaveformBuilder excess(1, 44'100, 32);
+        excess.push(pcm, 0, 33);
+        expect(!excess.finish());
+        NativeWaveformBuilder wrongChannels(2, 44'100, 33);
+        wrongChannels.push(pcm, 0, 33);
+        expect(!wrongChannels.snapshot());
+        for (const auto value : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+            NativeWaveformBuilder nonfinite(1, 44'100, 33);
+            pcm.setSample(0, 32, value);
+            nonfinite.push(pcm, 0, 33);
+            expect(!nonfinite.snapshot());
+            expect(!nonfinite.finish());
         }
     }
 }

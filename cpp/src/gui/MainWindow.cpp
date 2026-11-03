@@ -5,6 +5,7 @@
 #include "gui/MainWindow.h"
 
 #include "gui/AudioBatchComponent.h"
+#include "gui/AudioBatchComponentState.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
@@ -14,6 +15,7 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -30,11 +32,9 @@ constexpr int presetsMenuFirstItemId {1000};
 /// Menu bar items that menuItemSelected runs directly.
 /// Their ids stay below the command ids, and both stay far below the Add Plugin submenu ids of juce::KnownPluginList.
 enum class MenuItemId : std::uint8_t {
-    chooseFolder = 1,
-    addFolder,
+    addFolder = 1,
     clearFiles,
     reanalyzeSelected,
-    audioSettings,
     supportedFormats,
     editChain,
     clearChain,
@@ -59,7 +59,24 @@ enum class CommandId : std::uint8_t {
     togglePreviewCompensation,
     toggleContinuePlayback,
     togglePlayFromFirstCuePoint,
+    previewWaveform,
+    previewSpectrogram,
+    previewSideBySide,
+    previewStacked,
+    toggleSampleOverloads,
+    toggleTruePeakOverloads,
+    toggleOverloadLines,
+    chooseFolder,
+    audioSettings,
     cancelRun,
+};
+
+/// Paired menu commands and preview modes in their canonical display order.
+constexpr std::array PREVIEW_VIEW_COMMANDS {
+    std::pair {CommandId::previewWaveform, PreviewViewMode::waveform},
+    std::pair {CommandId::previewSpectrogram, PreviewViewMode::spectrogram},
+    std::pair {CommandId::previewSideBySide, PreviewViewMode::sideBySide},
+    std::pair {CommandId::previewStacked, PreviewViewMode::stacked},
 };
 
 /// First of the contiguous command ids.
@@ -70,7 +87,7 @@ constexpr CommandId lastCommand {CommandId::cancelRun};
 /// Returns the menu item for a menu bar result id, or nullopt for a command or an Add Plugin submenu id.
 constexpr std::optional<MenuItemId> menuItemFromId(const int menuItemID) noexcept
 {
-    return utils::enumFromId<MenuItemId, MenuItemId::chooseFolder, MenuItemId::processAll>(menuItemID);
+    return utils::enumFromId<MenuItemId, MenuItemId::addFolder, MenuItemId::processAll>(menuItemID);
 }
 
 /// Returns the command for a JUCE command id, or nullopt for an id this window does not register.
@@ -224,7 +241,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::quit);
             break;
         case 1:
-            addMenuItem(menu, MenuItemId::chooseFolder, "Choose Folder...");
+            addCommandItem(menu, commandManager, CommandId::chooseFolder);
             addMenuItem(menu, MenuItemId::addFolder, "Add Folder...");
             addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
             menu.addSeparator();
@@ -239,6 +256,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             break;
         case 2:
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
+            appendPreviewViewMenuItems(menu);
+            appendOverloadMenuItems(menu);
             addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
             addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
             addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
@@ -249,7 +268,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
-            addMenuItem(menu, MenuItemId::audioSettings, "Audio Settings...");
+            addCommandItem(menu, commandManager, CommandId::audioSettings);
             break;
         case 3:
             addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
@@ -262,7 +281,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
 #else
     switch (topLevelMenuIndex) {
         case 0:
-            addMenuItem(menu, MenuItemId::chooseFolder, "Choose Folder...");
+            addCommandItem(menu, commandManager, CommandId::chooseFolder);
             addMenuItem(menu, MenuItemId::addFolder, "Add Folder...");
             addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
             menu.addSeparator();
@@ -279,6 +298,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             break;
         case 1:
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
+            appendPreviewViewMenuItems(menu);
+            appendOverloadMenuItems(menu);
             addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
             addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
             addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
@@ -289,7 +310,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
-            addMenuItem(menu, MenuItemId::audioSettings, "Audio Settings...");
+            addCommandItem(menu, commandManager, CommandId::audioSettings);
             break;
         case 2:
             addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
@@ -320,9 +341,6 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
     }
 
     switch (*item) {
-        case MenuItemId::chooseFolder:
-            getAudioBatch().chooseRootFolder();
-            break;
         case MenuItemId::addFolder:
             getAudioBatch().addRootFolder();
             break;
@@ -331,9 +349,6 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
             break;
         case MenuItemId::reanalyzeSelected:
             getAudioBatch().reanalyzeSelectedRecords();
-            break;
-        case MenuItemId::audioSettings:
-            getAudioBatch().showAudioSettingsWindow();
             break;
         case MenuItemId::supportedFormats:
             getAudioBatch().showSupportedNormalizationFormats();
@@ -390,9 +405,49 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     }
 
     switch (*command) {
+        case CommandId::chooseFolder:
+            result.setInfo("Choose Folder...", "Choose the root folder to analyze", fileCategory, 0);
+            result.addDefaultKeypress('o', juce::ModifierKeys::commandModifier);
+            result.setActive(!blockedByDialog && !audioBatch.isFileOperationInProgress());
+            break;
+        case CommandId::audioSettings:
+            result.setInfo("Audio Settings...", "Configure audio playback and preview preferences", "Options", 0);
+            result.addDefaultKeypress('p', juce::ModifierKeys::commandModifier);
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::previewWaveform:
+        case CommandId::previewSpectrogram:
+        case CommandId::previewSideBySide:
+        case CommandId::previewStacked:
+            for (const auto& [viewCommand, mode] : PREVIEW_VIEW_COMMANDS) {
+                if (*command == viewCommand) {
+                    result.setInfo(previewViewModeLabel(mode), "Choose the preview visualization", "Options", 0);
+                    result.setTicked(audioBatch.getPreviewViewMode() == mode);
+                    result.setActive(!blockedByDialog);
+                    break;
+                }
+            }
+            break;
+        case CommandId::toggleSampleOverloads:
+            result.setInfo("Peak overloads", "Show source sample-peak overload indicators", "Options", 0);
+            result.setTicked(audioBatch.isSampleOverloadVisible());
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::toggleTruePeakOverloads:
+            result.setInfo("True-peak overloads", "Show source true-peak overload indicators", "Options", 0);
+            result.setTicked(audioBatch.isTruePeakOverloadVisible());
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::toggleOverloadLines:
+            result.setInfo(
+                "Overload vertical lines", "Extend enabled overload indicators as vertical lines", "Options", 0
+            );
+            result.setTicked(audioBatch.areOverloadLinesVisible());
+            result.setActive(!blockedByDialog);
+            break;
         case CommandId::toggleLoudnessGraph:
             result.setInfo(
-                "Show Loudness Graph", "Overlay source-file short-term loudness on the waveform", "Options", 0
+                "Show Loudness Graph", "Overlay source-file short-term loudness on the preview", "Options", 0
             );
             result.setTicked(audioBatch.isLoudnessGraphEnabled());
             result.setActive(!blockedByDialog);
@@ -539,6 +594,32 @@ bool MainWindow::perform(const InvocationInfo& info)
     }
 
     switch (*command) {
+        case CommandId::chooseFolder:
+            getAudioBatch().chooseRootFolder();
+            return true;
+        case CommandId::audioSettings:
+            getAudioBatch().showAudioSettingsWindow();
+            return true;
+        case CommandId::previewWaveform:
+        case CommandId::previewSpectrogram:
+        case CommandId::previewSideBySide:
+        case CommandId::previewStacked:
+            for (const auto& [viewCommand, mode] : PREVIEW_VIEW_COMMANDS) {
+                if (*command == viewCommand) {
+                    getAudioBatch().setPreviewViewMode(mode);
+                    return true;
+                }
+            }
+            return false;
+        case CommandId::toggleSampleOverloads:
+            getAudioBatch().toggleSampleOverloads();
+            return true;
+        case CommandId::toggleTruePeakOverloads:
+            getAudioBatch().toggleTruePeakOverloads();
+            return true;
+        case CommandId::toggleOverloadLines:
+            getAudioBatch().toggleOverloadLines();
+            return true;
         case CommandId::toggleLoudnessGraph:
             getAudioBatch().toggleLoudnessGraph();
             return true;
@@ -599,6 +680,26 @@ bool MainWindow::perform(const InvocationInfo& info)
             return true;
     }
     return false;
+}
+
+/// Groups independent overload switches without imposing a radio selection or changing the stored line preference.
+void MainWindow::appendOverloadMenuItems(juce::PopupMenu& menu)
+{
+    juce::PopupMenu overloads;
+    addCommandItem(overloads, commandManager, CommandId::toggleSampleOverloads);
+    addCommandItem(overloads, commandManager, CommandId::toggleTruePeakOverloads);
+    addCommandItem(overloads, commandManager, CommandId::toggleOverloadLines);
+    menu.addSubMenu("Overload indicators", overloads);
+}
+
+/// Builds mutually exclusive preview choices from the canonical preference owner through command tick states.
+void MainWindow::appendPreviewViewMenuItems(juce::PopupMenu& menu)
+{
+    juce::PopupMenu views;
+    for (const auto& [command, mode] : PREVIEW_VIEW_COMMANDS) {
+        addCommandItem(views, commandManager, command, previewViewModeLabel(mode));
+    }
+    menu.addSubMenu("Preview view", views);
 }
 
 /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.

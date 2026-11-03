@@ -1,10 +1,13 @@
 /// Device-free tests for the preview player around the renderer:
 /// the cue start position, the deferred initial position, the ownership of the simulated output device,
 /// the output device status shown in the status bar, the persisted preview preferences, and the loudness axis ticks.
+/// Also checks settings group geometry and validation space, and the inspector's status-free file summary.
 /// The committed silence fixture exercises playback without opening hardware or third-party plugins.
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentState.h"
 #include "gui/AudioPreviewPlayer.h"
+#include "gui/components/AudioInfoPanel.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/StatusBar.h"
 #include "gui/GuiLayout.h"
@@ -12,7 +15,10 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -35,12 +41,16 @@ private:
     void testCueStartPosition();
     void testDeviceOwnership();
     void testInitialPosition();
+    void testInspectorStatusRemoval();
 
     void testLoudnessAxisIntervals();
     void testOutputStatusFormatting();
+    void testOverloadPreferences();
     void testPreferences();
     void testPreviewFitHeight();
+    void testPreviewViewModes();
     void testSettingsDeviceFailure();
+    void testSettingsGeometry();
 };
 
 /// Runs the device-independent player and persistence checks.
@@ -53,6 +63,10 @@ void PreviewPlayerTests::runTest()
     testSettingsDeviceFailure();
     testOutputStatusFormatting();
     testPreferences();
+    testOverloadPreferences();
+    testSettingsGeometry();
+    testInspectorStatusRemoval();
+    testPreviewViewModes();
     testLoudnessAxisIntervals();
     testPreviewFitHeight();
 }
@@ -580,6 +594,7 @@ void PreviewPlayerTests::testPreferences()
         AudioSettingsComponent settingsComponent(manager);
         AudioPreviewPreferences shown;
         shown.showAlbumArtwork = false;
+        shown.viewMode = PreviewViewMode::spectrogram;
         settingsComponent.setPreferences(shown);
         std::optional<AudioPreviewPreferences> reported;
         settingsComponent.setPreferencesChangedCallback([&reported](const AudioPreviewPreferences& changed) {
@@ -608,6 +623,7 @@ void PreviewPlayerTests::testPreferences()
         if (reported) {
             expect(!reported->showAlbumArtwork);
             expect(!reported->seratoWaveformColours);
+            expect(reported->viewMode == PreviewViewMode::spectrogram);
         }
     }
 
@@ -739,6 +755,408 @@ void PreviewPlayerTests::testPreferences()
     for (const auto* input : {"123", "-123", "006", "6.0", "-2.5", "1-2", "--6", "nan", "6 "}) {
         expect(!isValidLoudnessGraphLimitInput(input), input);
     }
+}
+
+/// Keeps all eight overload combinations independent in storage and checkbox synchronization.
+/// Unrelated settings edits preserve all three choices.
+void PreviewPlayerTests::testOverloadPreferences()
+{
+    const TemporaryDirectory temporary;
+    juce::PropertiesFile::Options options;
+    options.storageFormat = juce::PropertiesFile::storeAsXML;
+    const auto file = temporary.getChildFile("overload-settings.xml");
+    const std::array keys {"showSampleOverloads", "showTruePeakOverloads", "showOverloadLines"};
+    const std::array labels {"Peak overloads", "True-peak overloads", "Overload vertical lines"};
+    const std::array members {
+        &AudioPreviewPreferences::showSampleOverloads,
+        &AudioPreviewPreferences::showTruePeakOverloads,
+        &AudioPreviewPreferences::showOverloadLines,
+    };
+
+    beginTest("Absent overload settings and aggregate initialization enable all three independent preferences");
+    {
+        const juce::PropertiesFile settings(file, options);
+        const auto loaded = loadAudioPreviewPreferences(settings);
+        expect(AudioPreviewPreferences().showSampleOverloads);
+        expect(AudioPreviewPreferences().showTruePeakOverloads);
+        expect(AudioPreviewPreferences().showOverloadLines);
+        expect(loaded.showSampleOverloads);
+        expect(loaded.showTruePeakOverloads);
+        expect(loaded.showOverloadLines);
+    }
+
+    juce::AudioDeviceManager manager;
+    AudioSettingsComponent panel(manager);
+    std::array<juce::ToggleButton*, 3> toggles {};
+    juce::ComboBox* selector = nullptr;
+    const auto& content = *dynamic_cast<juce::Viewport&>(*panel.getChildComponent(0)).getViewedComponent();
+    for (auto* child : content.getChildren()) {
+        if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) {
+            const auto* label = std::ranges::find(labels, toggle->getButtonText(), [](const auto* optionText) {
+                return juce::String(optionText);
+            });
+            if (label != labels.end()) {
+                toggles[static_cast<std::size_t>(label - labels.begin())] = toggle;
+            }
+        }
+        if (auto* combo = dynamic_cast<juce::ComboBox*>(child)) {
+            selector = combo;
+        }
+    }
+    expect(selector != nullptr);
+    const auto* missingToggle = std::ranges::find(toggles, nullptr);
+    expect(missingToggle == toggles.end());
+    if (selector == nullptr || missingToggle != toggles.end()) {
+        return;
+    }
+    panel.setSize(layout::audioSettings::preferredWidth, layout::audioSettings::preferredHeight);
+    expectEquals(toggles[0]->getY(), toggles[1]->getY());
+    expectEquals(toggles[0]->getRight(), toggles[1]->getX());
+    expectEquals(toggles[0]->getBottom(), toggles[2]->getY());
+    for (const auto* toggle : toggles) {
+        expect(toggle->getWidth() > 0);
+        expectEquals(toggle->getHeight(), layout::audioSettings::rowHeight);
+    }
+    AudioPreviewPreferences canonical;
+    int callbacks = 0;
+    panel.setPreferencesChangedCallback([&](const AudioPreviewPreferences& changed) {
+        ++callbacks;
+        canonical = changed;
+        panel.setPreferences(canonical);
+    });
+
+    beginTest("Every overload combination persists and reflects silently in independent non-radio checkboxes");
+    constexpr std::array combinations {
+        std::array {false, false, false},
+        std::array {false, false, true},
+        std::array {false, true, false},
+        std::array {false, true, true},
+        std::array {true, false, false},
+        std::array {true, false, true},
+        std::array {true, true, false},
+        std::array {true, true, true},
+    };
+    for (const auto& expected : combinations) {
+        canonical = AudioPreviewPreferences {
+            .pluginChainEnabled = true,
+            .showAlbumArtwork = false,
+            .viewMode = PreviewViewMode::spectrogram,
+            .showSampleOverloads = expected[0],
+            .showTruePeakOverloads = expected[1],
+            .showOverloadLines = expected[2],
+        };
+        {
+            juce::PropertiesFile settings(file, options);
+            settings.setValue("unrelatedSetting", "keep me");
+            expect(saveAudioPreviewPreferences(settings, canonical));
+            for (std::size_t index = 0; index < keys.size(); ++index) {
+                expect(settings.containsKey(keys[index]));
+                expect(settings.getBoolValue(keys[index]) == expected[index]);
+            }
+        }
+        {
+            const juce::PropertiesFile settings(file, options);
+            const auto loaded = loadAudioPreviewPreferences(settings);
+            for (std::size_t index = 0; index < members.size(); ++index) {
+                expect(loaded.*members[index] == expected[index]);
+            }
+            expectEquals(settings.getValue("unrelatedSetting"), juce::String("keep me"));
+        }
+        const auto beforeSync = callbacks;
+        panel.setPreferences(canonical);
+        expectEquals(callbacks, beforeSync);
+        for (std::size_t index = 0; index < toggles.size(); ++index) {
+            expect(toggles[index]->getToggleState() == expected[index]);
+            expect(toggles[index]->isEnabled());
+            expectEquals(toggles[index]->getRadioGroupId(), 0);
+        }
+        // Unrelated selector edits must carry all overload choices, including lines with both signals off.
+        selector->setSelectedItemIndex(0, juce::dontSendNotification);
+        selector->onChange();
+        expectEquals(callbacks, beforeSync + 1);
+        for (std::size_t index = 0; index < members.size(); ++index) {
+            expect(canonical.*members[index] == expected[index]);
+        }
+        for (std::size_t changed = 0; changed < toggles.size(); ++changed) {
+            toggles[changed]->setToggleState(!expected[changed], juce::dontSendNotification);
+            toggles[changed]->onClick();
+            auto changedExpected = expected;
+            changedExpected[changed] = !changedExpected[changed];
+            for (std::size_t index = 0; index < members.size(); ++index) {
+                expect(canonical.*members[index] == changedExpected[index]);
+                expect(toggles[index]->getToggleState() == changedExpected[index]);
+            }
+            expect(canonical.pluginChainEnabled);
+            expect(!canonical.showAlbumArtwork);
+            expect(canonical.viewMode == PreviewViewMode::waveform);
+            canonical.*members[changed] = expected[changed];
+            panel.setPreferences(canonical);
+        }
+    }
+}
+
+/// Verifies stable names, isolated fallback, and the settings selector's round trip through its canonical owner.
+void PreviewPlayerTests::testPreviewViewModes()
+{
+    const std::array modes {
+        PreviewViewMode::waveform,
+        PreviewViewMode::spectrogram,
+        PreviewViewMode::sideBySide,
+        PreviewViewMode::stacked,
+    };
+    const std::array names {"waveform", "spectrogram", "side_by_side", "stacked"};
+    const std::array labels {"Waveform", "Spectrogram", "Both: side by side", "Both: stacked"};
+    const TemporaryDirectory temporary;
+    juce::PropertiesFile::Options options;
+    options.storageFormat = juce::PropertiesFile::storeAsXML;
+    const auto file = temporary.getChildFile("preview-view-settings.xml");
+
+    beginTest("Absent view settings and aggregate initialization default to waveform");
+    expect(AudioPreviewPreferences().viewMode == PreviewViewMode::waveform);
+    {
+        const juce::PropertiesFile settings(file, options);
+        expect(loadAudioPreviewPreferences(settings).viewMode == PreviewViewMode::waveform);
+    }
+
+    beginTest("Every preview mode has a canonical label and a stable persisted name");
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+        expectEquals(previewViewModeLabel(modes[index]), juce::String(labels[index]));
+        expectEquals(previewViewModeName(modes[index]), juce::String(names[index]));
+        expect(previewViewModeFromName(names[index]) == modes[index]);
+        {
+            juce::PropertiesFile settings(file, options);
+            settings.setValue("unrelatedSetting", "keep me");
+            const AudioPreviewPreferences preferences {
+                .pluginChainEnabled = true,
+                .latencyCompensated = false,
+                .continuePlayback = true,
+                .playFromFirstCuePoint = true,
+                .seratoWaveformColours = false,
+                .loudnessGraphEnabled = true,
+                .loudnessGraphMinimum = -32.0,
+                .loudnessGraphMaximum = -2.0,
+                .showAlbumArtwork = false,
+                .viewMode = modes[index],
+            };
+            expect(saveAudioPreviewPreferences(settings, preferences));
+            expectEquals(settings.getValue("previewViewMode"), juce::String(names[index]));
+        }
+        const juce::PropertiesFile settings(file, options);
+        expect(loadAudioPreviewPreferences(settings).viewMode == modes[index]);
+        expectEquals(settings.getValue("unrelatedSetting"), juce::String("keep me"));
+    }
+
+    beginTest("Unknown saved names repair only the view mode, preserving other preferences");
+    for (const auto* invalid : {"", "unknown", "Spectrogram", "sideBySide", "side_by_side ", "4"}) {
+        juce::PropertiesFile settings(file, options);
+        settings.setValue("previewViewMode", invalid);
+        const auto restored = loadAudioPreviewPreferences(settings);
+        expect(restored.viewMode == PreviewViewMode::waveform);
+        expect(restored.pluginChainEnabled);
+        expect(!restored.latencyCompensated);
+        expect(restored.continuePlayback);
+        expect(restored.playFromFirstCuePoint);
+        expect(!restored.seratoWaveformColours);
+        expect(restored.loudnessGraphEnabled);
+        expectEquals(restored.loudnessGraphMinimum, -32.0);
+        expectEquals(restored.loudnessGraphMaximum, -2.0);
+        expect(!restored.showAlbumArtwork);
+        expectEquals(settings.getValue("unrelatedSetting"), juce::String("keep me"));
+    }
+
+    beginTest("Menu-originated state updates the selector silently and settings changes return a complete snapshot");
+    juce::AudioDeviceManager manager;
+    AudioSettingsComponent panel(manager);
+    juce::ComboBox* selector = nullptr;
+    std::function<void(juce::Component&)> findSelector = [&](juce::Component& parent) {
+        for (auto* child : parent.getChildren()) {
+            if (auto* combo = dynamic_cast<juce::ComboBox*>(child);
+                combo != nullptr && combo->getName() == "Preview view")
+            {
+                selector = combo;
+            }
+            findSelector(*child);
+        }
+    };
+    findSelector(panel);
+    expect(selector != nullptr);
+    if (selector == nullptr) {
+        return;
+    }
+    expectEquals(selector->getNumItems(), 4);
+    AudioPreviewPreferences canonical {
+        .pluginChainEnabled = true,
+        .loudnessGraphMinimum = -32.0,
+        .loudnessGraphMaximum = -2.0,
+        .showAlbumArtwork = false,
+    };
+    int callbacks = 0;
+    panel.setPreferencesChangedCallback([&](const AudioPreviewPreferences& changed) {
+        ++callbacks;
+        canonical = changed;
+        panel.setPreferences(canonical);
+    });
+    for (std::size_t index = 0; index < modes.size(); ++index) {
+        const auto previousCallbacks = callbacks;
+        canonical.viewMode = modes[index];
+        panel.setPreferences(canonical);
+        expectEquals(callbacks, previousCallbacks);
+        expectEquals(selector->getText(), juce::String(labels[index]));
+        expectEquals(selector->getSelectedItemIndex(), static_cast<int>(index));
+        const auto selectedIndex = (index + 1) % modes.size();
+        // Invoke synchronously because the lightweight runner has no message dispatch loop.
+        selector->setSelectedItemIndex(static_cast<int>(selectedIndex), juce::dontSendNotification);
+        selector->onChange();
+        expectEquals(callbacks, previousCallbacks + 1);
+        expect(canonical.viewMode == modes[selectedIndex]);
+        expect(canonical.pluginChainEnabled);
+        expect(!canonical.showAlbumArtwork);
+        expectEquals(canonical.loudnessGraphMinimum, -32.0);
+        expectEquals(canonical.loudnessGraphMaximum, -2.0);
+    }
+}
+
+/// Verifies settings bounds follow actual controls and reserve an error row only while it contains a message.
+void PreviewPlayerTests::testSettingsGeometry()
+{
+    beginTest("Settings groups share their heading inset and have no empty validation row");
+    juce::AudioDeviceManager manager;
+    AudioSettingsComponent panel(manager);
+    panel.setPreferences(AudioPreviewPreferences {.loudnessGraphEnabled = true});
+    panel.setSize(layout::audioSettings::preferredWidth, layout::audioSettings::preferredHeight);
+    auto* viewport = dynamic_cast<juce::Viewport*>(panel.getChildComponent(0));
+    expect(viewport != nullptr);
+    if (viewport == nullptr || viewport->getViewedComponent() == nullptr) {
+        return;
+    }
+    const auto& content = *viewport->getViewedComponent();
+    const juce::GroupComponent* deviceGroup = nullptr;
+    const juce::GroupComponent* previewGroup = nullptr;
+    const juce::AudioDeviceSelectorComponent* deviceSelector = nullptr;
+    const juce::ComboBox* previewView = nullptr;
+    const juce::ToggleButton* loudnessToggle = nullptr;
+    juce::TextEditor* minimumEditor = nullptr;
+    const juce::Label* errorLabel = nullptr;
+    for (auto* child : content.getChildren()) {
+        if (const auto* group = dynamic_cast<const juce::GroupComponent*>(child)) {
+            if (group->getName() == "deviceSettings") {
+                deviceGroup = group;
+            } else if (group->getName() == "previewSettings") {
+                previewGroup = group;
+            }
+        }
+        if (const auto* selector = dynamic_cast<const juce::AudioDeviceSelectorComponent*>(child)) {
+            deviceSelector = selector;
+        }
+        if (const auto* combo = dynamic_cast<const juce::ComboBox*>(child)) {
+            previewView = combo;
+        }
+        if (const auto* toggle = dynamic_cast<const juce::ToggleButton*>(child);
+            toggle != nullptr && toggle->getButtonText() == "Show loudness graph")
+        {
+            loudnessToggle = toggle;
+        }
+        if (auto* editor = dynamic_cast<juce::TextEditor*>(child); editor != nullptr && editor->getText() == "-24") {
+            minimumEditor = editor;
+        }
+        if (const auto* label = dynamic_cast<const juce::Label*>(child); label != nullptr && label->getName().isEmpty())
+        {
+            errorLabel = label;
+        }
+    }
+    expect(
+        deviceGroup != nullptr && previewGroup != nullptr && deviceSelector != nullptr && previewView != nullptr
+        && loudnessToggle != nullptr && minimumEditor != nullptr && errorLabel != nullptr
+    );
+    if (deviceGroup == nullptr || previewGroup == nullptr || deviceSelector == nullptr || previewView == nullptr
+        || loudnessToggle == nullptr || minimumEditor == nullptr || errorLabel == nullptr)
+    {
+        return;
+    }
+    expectEquals(deviceSelector->getY() - deviceGroup->getY(), layout::audioSettings::GROUP_TOP_INSET);
+    expectEquals(deviceGroup->getBottom() - deviceSelector->getBottom(), layout::audioSettings::padding);
+    expectEquals(previewGroup->getY() - deviceGroup->getBottom(), layout::audioSettings::SECTION_SPACING);
+    expectEquals(
+        previewView->getY() - previewGroup->getY(),
+        layout::audioSettings::GROUP_TOP_INSET + layout::audioSettings::rangeEditorPadding
+    );
+    const auto controlLaneWidth
+        = previewGroup->getWidth() - layout::audioSettings::padding * 2 - layout::audioSettings::rangeLabelWidth * 2;
+    expectEquals(
+        previewView->getWidth(),
+        juce::roundToInt(controlLaneWidth * layout::audioSettings::PREVIEW_SELECTOR_WIDTH_PROPORTION)
+    );
+    expect(layout::audioSettings::MINIMUM_WINDOW_HEIGHT < layout::audioSettings::preferredHeight);
+    expectEquals(previewGroup->getBottom() - loudnessToggle->getBottom(), layout::audioSettings::padding);
+    expectEquals(content.getHeight() - previewGroup->getBottom(), layout::audioSettings::padding);
+    expect(!errorLabel->isVisible());
+    expectEquals(errorLabel->getHeight(), 0);
+    const auto validHeight = content.getHeight();
+
+    beginTest("Invalid loudness settings add one reachable row and a valid edit reclaims it");
+    minimumEditor->setText("6", false);
+    minimumEditor->onReturnKey();
+    expect(errorLabel->isVisible());
+    expect(errorLabel->getText().isNotEmpty());
+    expectEquals(content.getHeight(), validHeight + layout::audioSettings::rowHeight);
+    expectEquals(errorLabel->getY(), loudnessToggle->getBottom());
+    expectEquals(previewGroup->getBottom() - errorLabel->getBottom(), layout::audioSettings::padding);
+    minimumEditor->onReturnKey();
+    expect(!errorLabel->isVisible());
+    expectEquals(content.getHeight(), validHeight);
+
+    beginTest("A shorter settings viewport preserves complete scrollable content");
+    panel.setSize(layout::audioSettings::preferredWidth, 180);
+    expectEquals(content.getHeight(), validHeight);
+    expect(content.getHeight() > viewport->getHeight());
+    viewport->setViewPosition(0, content.getHeight());
+    expect(viewport->getViewPositionY() > 0);
+    expect(viewport->getViewPositionY() + viewport->getViewHeight() >= previewGroup->getBottom());
+}
+
+/// Keeps lifecycle and foreign cache labels out of the inspector without losing failure detail or operation context.
+void PreviewPlayerTests::testInspectorStatusRemoval()
+{
+    beginTest("Inspector omits lifecycle and cache provenance labels, including cached Rust results");
+    AudioInfoPanel panel;
+    panel.setSize(480, 600);
+    AudioAnalysisRecord record;
+    record.fullPath = "/test/track.wav";
+    record.fileName = "track.wav";
+    record.status = AudioAnalysisStatus::analyzed;
+    panel.showRecord(record, {});
+    const auto analyzedHeight = panel.getPreferredHeight();
+    record.status = AudioAnalysisStatus::cached;
+    record.measurementProducer = MeasurementProducer::rust;
+    panel.showRecord(record, {});
+    expectEquals(panel.getPreferredHeight(), analyzedHeight);
+    expectEquals(panel.getDescription(), record.fullPath);
+    record.status = AudioAnalysisStatus::pending;
+    panel.showRecord(record, {});
+    expectEquals(panel.getDescription(), record.fullPath);
+    record.status = AudioAnalysisStatus::failed;
+    record.errorMessage = "Unable to decode this audio stream";
+    panel.showRecord(record, {});
+    expectEquals(panel.getDescription(), record.fullPath);
+    bool foundError = false;
+    std::function<void(const juce::Component&)> inspect = [&](const juce::Component& parent) {
+        for (const auto* child : parent.getChildren()) {
+            if (const auto* label = dynamic_cast<const juce::Label*>(child)) {
+                expect(label->getName() != "Status");
+                expect(!label->getText().contains("Cached"));
+                expect(label->getText() != "Failed");
+                expect(label->getText() != "Analyzed");
+                if (label->getName() == "Error") {
+                    foundError = label->isVisible() && label->getText() == record.errorMessage;
+                }
+            }
+            inspect(*child);
+        }
+    };
+    inspect(panel);
+    expect(foundError);
+    panel.showRecord(record, "Writing processed audio");
+    expect(panel.getDescription().contains("Writing processed audio"));
 }
 
 /// Creates the device-free preview player suite for explicit test registration.

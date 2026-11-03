@@ -1,6 +1,7 @@
 /// Streaming audio measurement shared by file analysis and PCM output rendering.
 /// AudioMeasurement retains a continuous libebur128 meter and regroups planar chunks into fixed short-term
 /// and overload intervals without depending on a decoder or writer.
+/// Optional bounded waveform and spectrogram builders consume the same PCM and finish as transient worker products.
 
 #pragma once
 
@@ -9,6 +10,7 @@
 
 #include <expected>
 #include <memory>
+#include <optional>
 
 namespace audiobatch
 {
@@ -29,6 +31,7 @@ public:
     AudioMeasurement& operator=(AudioMeasurement&&) = delete;
 
     [[nodiscard]] std::expected<AudioAnalysisRecord, juce::String> finish();
+    [[nodiscard]] std::optional<juce::MemoryBlock> waveformSnapshot() const;
 
     [[nodiscard]] std::expected<void, juce::String> checkInitialization() const;
     [[nodiscard]] std::expected<void, juce::String> push(

@@ -6,6 +6,7 @@
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/AudioBatchComponentState.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/FileActivity.h"
@@ -30,6 +31,48 @@ namespace audiobatch
 bool AudioBatchComponent::isLoudnessGraphEnabled() const noexcept
 {
     return previewPreferences.loudnessGraphEnabled;
+}
+
+/// Reports whether decoded sample overload caps are visible.
+bool AudioBatchComponent::isSampleOverloadVisible() const noexcept
+{
+    return previewPreferences.showSampleOverloads;
+}
+
+/// Reports whether source true-peak overload caps are visible.
+bool AudioBatchComponent::isTruePeakOverloadVisible() const noexcept
+{
+    return previewPreferences.showTruePeakOverloads;
+}
+
+/// Reports the shared vertical overload-line preference, independently of cap visibility.
+bool AudioBatchComponent::areOverloadLinesVisible() const noexcept
+{
+    return previewPreferences.showOverloadLines;
+}
+
+/// Changes sample-overload presentation without changing the measured history.
+void AudioBatchComponent::toggleSampleOverloads()
+{
+    auto preferences = previewPreferences;
+    preferences.showSampleOverloads = !preferences.showSampleOverloads;
+    setPreviewPreferences(preferences);
+}
+
+/// Changes true-peak-overload presentation independently of decoded sample overloads.
+void AudioBatchComponent::toggleTruePeakOverloads()
+{
+    auto preferences = previewPreferences;
+    preferences.showTruePeakOverloads = !preferences.showTruePeakOverloads;
+    setPreviewPreferences(preferences);
+}
+
+/// Changes both overload kinds' vertical lines without hiding their edge caps.
+void AudioBatchComponent::toggleOverloadLines()
+{
+    auto preferences = previewPreferences;
+    preferences.showOverloadLines = !preferences.showOverloadLines;
+    setPreviewPreferences(preferences);
 }
 
 /// Shares the Audio Settings preference path without decoding audio or moving the playhead.
@@ -183,6 +226,20 @@ void AudioBatchComponent::togglePlayFromFirstCuePoint()
     setPreviewPreferences(preferences);
 }
 
+/// Returns the canonical visualization choice shared by menus and the Audio Settings panel.
+PreviewViewMode AudioBatchComponent::getPreviewViewMode() const noexcept
+{
+    return previewPreferences.viewMode;
+}
+
+/// Changes only the presentation without reloading transport, source artifacts, gain, or the viewport.
+void AudioBatchComponent::setPreviewViewMode(const PreviewViewMode mode)
+{
+    auto preferences = previewPreferences;
+    preferences.viewMode = mode;
+    setPreviewPreferences(preferences);
+}
+
 /// Applies requested changes before publishing actual successful state to every preference surface.
 void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& preferences)
 {
@@ -210,6 +267,12 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
         juce::ignoreUnused(enabled);
     }
     previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
+    previewWorkspace.thumbnail.setViewMode(previewPreferences.viewMode);
+    previewWorkspace.thumbnail.setOverloadIndicatorSettings(
+        previewPreferences.showSampleOverloads,
+        previewPreferences.showTruePeakOverloads,
+        previewPreferences.showOverloadLines
+    );
     previewWorkspace.thumbnail.setSeratoWaveformColouringEnabled(previewPreferences.seratoWaveformColours);
     previewWorkspace.thumbnail.setLoudnessGraphSettings(
         previewPreferences.loudnessGraphEnabled,
@@ -303,6 +366,7 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
         loaded.identity
     );
 
+    backgroundWork.selectAnalysisPreview(file, preview.getGeneration());
     requestSeratoPreview();
     updatePreviewLoudnessHistory();
 }
@@ -386,6 +450,9 @@ void AudioBatchComponent::adoptPreviewEnrichment(PreviewEnrichmentResult result)
     if (result.waveform && previewWorkspace.thumbnail.adoptWaveformData(*result.waveform, result.identity)) {
         preview.setWaveformLoadedFromCache(true);
     }
+    if (result.spectrogramReady) {
+        previewWorkspace.thumbnail.setSpectrogramData(std::move(result.spectrogram));
+    }
 }
 
 /// Relabels and recolours the play button to match whether the transport is playing.
@@ -404,6 +471,7 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
     if (source == &previewPlayer) {
         updatePlaybackButtonForTransportState();
         updateOutputStatus();
+        timerCallback();
         return;
     }
 
@@ -450,6 +518,7 @@ void AudioBatchComponent::releasePreviewPlayback()
 /// The next info panel update requests the artwork of the displayed file again.
 void AudioBatchComponent::clearPreviewDisplay()
 {
+    backgroundWork.selectAnalysisPreview({}, preview.getGeneration());
     previewWorkspace.thumbnail.setSeratoOverview({});
     previewWorkspace.thumbnail.setSeratoMarkers({});
     previewWorkspace.audioInfo.clear();

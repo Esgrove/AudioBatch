@@ -7,6 +7,7 @@
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/NativeWaveformData.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
@@ -80,6 +81,43 @@ public:
             expectEquals(static_cast<int>(results.size()), 1);
             expect(!results.empty() && results.front().customGain.has_value());
             expectEquals(results.empty() ? 0.0f : results.front().customGain.value_or(Decibels {}).value, -2.5f);
+        }
+
+        beginTest("Fresh waveform bytes are persisted before result and completion delivery");
+        {
+            const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "waveform.wav");
+            const auto reference = analyzeFile(file);
+            expect(reference.nativeWaveform.has_value());
+            AnalysisCoordinator coordinator(cache, 1);
+            bool resultDelivered {false};
+            bool resultWasStripped {false};
+            bool cacheFilledBeforeResult {false};
+            bool cacheFilledBeforeCompletion {false};
+            juce::WaitableEvent completed;
+            coordinator.setResultCallback([&](const AudioAnalysisRecord& record, int /*runId*/) {
+                const auto cached = cache.getWaveformData(file);
+                cacheFilledBeforeResult = cached.has_value() && reference.nativeWaveform.has_value()
+                    && *cached == *reference.nativeWaveform && isValidWaveformData(*cached);
+                resultWasStripped = !record.nativeWaveform && record.spectrogram == nullptr;
+                resultDelivered = true;
+            });
+            coordinator.setCompletionCallback([&](int /*totalFiles*/, int /*runId*/) {
+                const auto cached = cache.getWaveformData(file);
+                cacheFilledBeforeCompletion = resultDelivered && cached.has_value()
+                    && reference.nativeWaveform.has_value() && *cached == *reference.nativeWaveform;
+                completed.signal();
+            });
+            AudioAnalysisOptions options;
+            options.inputPaths.add(file);
+            options.refresh = true;
+            static_cast<void>(coordinator.start(options));
+            expect(completed.wait(5000));
+            coordinator.cancelAndWait();
+            expect(resultWasStripped, "Published records must not retain transient preview products");
+            expect(cacheFilledBeforeResult, "Fresh analysis must persist exact native bytes before its result");
+            expect(cacheFilledBeforeCompletion, "Completion must observe the finished waveform cache");
+            const auto cachedRecord = cache.getAnalysis(file);
+            expect(cachedRecord.has_value() && !cachedRecord->nativeWaveform);
         }
 
         beginTest("Results of a replaced run are not delivered after the new run started");

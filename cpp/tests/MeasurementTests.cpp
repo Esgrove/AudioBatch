@@ -5,6 +5,12 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/AudioMeasurement.h"
+#include "analysis/NativeWaveformBuilder.h"
+#include "analysis/NativeWaveformData.h"
+#include "analysis/SpectrogramBuilder.h"
+#include "analysis/SpectrogramData.h"
+#include "normalization/AudioNormalization.h"
+#include "normalization/NormalizeCoordinator.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
@@ -22,6 +28,8 @@
 #include <numbers>
 #include <optional>
 #include <span>
+#include <stdexcept>
+#include <variant>
 #include <vector>
 
 namespace audiobatch::tests
@@ -82,10 +90,15 @@ private:
     );
 
     void expectKnownAnswer(const KnownAnswerCase& testCase, double sampleRate);
+    void expectSpectrogram(const AudioAnalysisRecord& measured, const AudioAnalysisRecord& reference);
+    void expectWaveform(const AudioAnalysisRecord& measured, const AudioAnalysisRecord& reference);
+    void expectSpectrogramPcm(const juce::AudioBuffer<float>& samples, const AudioAnalysisRecord& reference);
+    void runChunkOverloadTests();
     void runChunkTests();
     void runKnownAnswerTests();
     void runPcmCase(juce::AiffAudioFormat& format, int bits, int channels, float gain, std::span<const float> values);
     void runPcmTests();
+    void runPersistenceTests();
 };
 
 /// Runs chunking, PCM roundtrip, and initialization failure checks.
@@ -94,6 +107,7 @@ void MeasurementTests::runTest()
     runChunkTests();
     runPcmTests();
     runKnownAnswerTests();
+    runPersistenceTests();
 
     beginTest("Rendered identity survives a rename but rejects measurements for replaced bytes");
     {
@@ -106,9 +120,25 @@ void MeasurementTests::runTest()
         const auto completed = completeRenderedAnalysis(reference, committed, 16, identity);
         expectAnalysisMeasurementsEqual(*this, completed, reference);
         expect(completed.matchesFileOnDisk());
-        expect(committed.replaceWithText("external output replacement"));
+        expect(completed.spectrogram != nullptr);
+        expect(completed.spectrogram == reference.spectrogram);
+        expectWaveform(completed, reference);
+        expect(completed.renderedIdentity != nullptr);
+        if (completed.renderedIdentity != nullptr) {
+            expect(completed.renderedIdentity->owns(committed));
+        }
+        const auto replacement = directory.copyFixture("sine_stereo_44100_16.aif");
+        const auto originalModificationTime = committed.getLastModificationTime();
+        expect(committed.deleteFile());
+        expect(replacement.moveFileTo(committed));
+        expect(committed.setLastModificationTime(originalModificationTime));
+        expect(completed.matchesFileOnDisk(), "Coarse metadata alone cannot identify replaced output bytes");
+        expect(completed.renderedIdentity != nullptr && !completed.renderedIdentity->owns(committed));
         const auto replaced = completeRenderedAnalysis(reference, committed, 16, identity);
         expect(replaced.hasError());
+        expect(replaced.spectrogram == nullptr);
+        expect(!replaced.nativeWaveform);
+        expect(replaced.renderedIdentity == nullptr);
         expect(replaced.errorMessage.containsIgnoreCase("changed"));
     }
 
@@ -116,6 +146,7 @@ void MeasurementTests::runTest()
     AudioMeasurement invalid(0, 44'100.0, 10);
     expect(!invalid.checkInitialization());
     expect(!invalid.finish());
+    expect(!invalid.waveformSnapshot());
     AudioMeasurement incomplete(1, 44'100.0, 10);
     expect(!incomplete.finish());
     juce::AudioBuffer<float> samples(1, 10);
@@ -129,6 +160,18 @@ void MeasurementTests::runTest()
     expect(complete.finish().has_value());
     expect(!complete.finish());
     expect(!complete.push(samples, 0, 0));
+
+    beginTest("Unsupported spectral channel counts do not fail loudness measurement");
+    juce::AudioBuffer<float> multichannel(3, 4410);
+    multichannel.clear();
+    AudioMeasurement multichannelMeter(3, 44'100.0, multichannel.getNumSamples());
+    expect(multichannelMeter.push(multichannel, 0, multichannel.getNumSamples()).has_value());
+    const auto multichannelResult = multichannelMeter.finish();
+    expect(multichannelResult.has_value());
+    if (multichannelResult) {
+        expect(multichannelResult->isReady());
+        expect(multichannelResult->spectrogram == nullptr);
+    }
 
     beginTest("Invalid PCM buffers and non-finite samples fail explicitly");
     std::array<float, 1> input {std::numeric_limits<float>::infinity()};
@@ -278,6 +321,43 @@ void MeasurementTests::runKnownAnswerTests()
     }
 }
 
+/// Checks complete spectral geometry and bytes independently of the existing level assertions.
+void MeasurementTests::expectSpectrogram(const AudioAnalysisRecord& measured, const AudioAnalysisRecord& reference)
+{
+    expect(measured.spectrogram != nullptr && reference.spectrogram != nullptr);
+    if (measured.spectrogram == nullptr || reference.spectrogram == nullptr) {
+        return;
+    }
+    expect(isValidSpectrogramData(*measured.spectrogram));
+    expect(spectrogramMatches(*measured.spectrogram, measured));
+    expect(measured.spectrogram->intensities == reference.spectrogram->intensities);
+    expectEquals(measured.spectrogram->samplesPerColumn, reference.spectrogram->samplesPerColumn);
+}
+
+/// Checks valid native waveform serialization and exact chunk-independent bytes.
+void MeasurementTests::expectWaveform(const AudioAnalysisRecord& measured, const AudioAnalysisRecord& reference)
+{
+    expect(measured.nativeWaveform.has_value() && reference.nativeWaveform.has_value());
+    if (!measured.nativeWaveform || !reference.nativeWaveform) {
+        return;
+    }
+    expect(isValidWaveformData(*measured.nativeWaveform));
+    expect(*measured.nativeWaveform == *reference.nativeWaveform);
+}
+
+/// Compares the shared measurement product with direct construction from the decoded fixture samples.
+void MeasurementTests::expectSpectrogramPcm(
+    const juce::AudioBuffer<float>& samples,
+    const AudioAnalysisRecord& reference
+)
+{
+    SpectrogramBuilder spectral(samples.getNumChannels(), reference.sampleRate);
+    spectral.push(samples, 0, samples.getNumSamples());
+    auto measured = reference;
+    measured.spectrogram = spectral.finish();
+    expectSpectrogram(measured, reference);
+}
+
 /// Feeds fixtures and overloads in chunks unrelated to the meter's fixed update interval.
 void MeasurementTests::runChunkTests()
 {
@@ -293,6 +373,7 @@ void MeasurementTests::runChunkTests()
         beginTest(utils::format("Chunk boundaries preserve every measurement: {}", fixtureName));
         const auto file = fixtureFile(fixtureName);
         const auto reference = analyzeFile(file);
+        expect(!AudioAnalysisRecord::fromFile(file).nativeWaveform);
         const auto reader = utils::createAudioReader(file);
         expect(reference.isReady(), reference.errorMessage);
         expect(reader != nullptr);
@@ -303,6 +384,12 @@ void MeasurementTests::runChunkTests()
             static_cast<int>(reader->numChannels), static_cast<int>(reader->lengthInSamples)
         );
         expect(reader->read(&samples, 0, samples.getNumSamples(), 0, true, true));
+        expectSpectrogramPcm(samples, reference);
+        NativeWaveformBuilder waveform(samples.getNumChannels(), reference.sampleRate, reference.lengthInSamples);
+        waveform.push(samples, 0, samples.getNumSamples());
+        auto waveformReference = reference;
+        waveformReference.nativeWaveform = waveform.finish();
+        expectWaveform(waveformReference, reference);
         for (const auto chunk : {1, 1024, 32'768, samples.getNumSamples()}) {
             AudioMeasurement meter(samples.getNumChannels(), reader->sampleRate, reader->lengthInSamples);
             for (int offset = 0; offset < samples.getNumSamples(); offset += chunk) {
@@ -316,10 +403,18 @@ void MeasurementTests::runChunkTests()
             expect(measured.has_value(), measured ? juce::String() : measured.error());
             if (measured) {
                 expectAnalysisMeasurementsEqual(*this, *measured, reference);
+                expectSpectrogram(*measured, reference);
+                expectWaveform(*measured, reference);
+                expect(!meter.waveformSnapshot());
             }
         }
     }
+    runChunkOverloadTests();
+}
 
+/// Checks interval-local overload flags, provisional waveform validity, and final partial measurement points.
+void MeasurementTests::runChunkOverloadTests()
+{
     beginTest("Overs spanning a chunk boundary retain interval-local flags and a final partial point");
     constexpr int interval {4410};
     juce::AudioBuffer<float> samples(2, interval * 2 + 17);
@@ -331,11 +426,17 @@ void MeasurementTests::runChunkTests()
     expect(whole.push(samples, 0, samples.getNumSamples()).has_value());
     expect(split.push(samples, 0, interval - 1).has_value());
     expect(split.push(samples, interval - 1, samples.getNumSamples() - interval + 1).has_value());
+    const auto snapshot = whole.waveformSnapshot();
+    expect(snapshot.has_value());
+    if (snapshot) {
+        expect(isValidWaveformData(*snapshot));
+    }
     const auto first = whole.finish();
     const auto second = split.finish();
     expect(first.has_value() && second.has_value());
     if (first && second) {
         expectAnalysisMeasurementsEqual(*this, *first, *second);
+        expectWaveform(*first, *second);
         expectEquals(static_cast<int>(second->shortTermLoudness->values.size()), 3);
         expect((second->overloads->flagsAt(0, 0) & OverloadHistory::sampleOver) != 0);
         expect((second->overloads->flagsAt(1, 1) & OverloadHistory::sampleOver) != 0);
@@ -469,6 +570,60 @@ void MeasurementTests::runPcmCase(
                 "Observed PCM must equal the actual decoder result"
             );
         }
+    }
+}
+
+/// Verifies that worker persistence sees rendered PCM products, but result delivery never retains them.
+void MeasurementTests::runPersistenceTests()
+{
+    beginTest("Worker persistence consumes preview products before normalization result delivery");
+    for (const bool failPersistence : {false, true}) {
+        const TemporaryDirectory directory;
+        const auto file = directory.copyFixture("sine_stereo_44100_16.aif");
+        auto source = analyzeFile(file);
+        source.spectrogram.reset();
+        source.nativeWaveform.reset();
+        auto options = testNormalizationOptions();
+        options.targetPeakDbfs = -3.0;
+        bool persisted {false};
+        bool published {false};
+        bool quantizedMatches {false};
+        std::weak_ptr<const SpectrogramData> product;
+        std::weak_ptr<const utils::FileIdentity> renderedReceipt;
+        juce::WaitableEvent completed;
+        NormalizeCoordinator coordinator(1);
+        coordinator.setResultPersistenceCallback([&](AudioNormalizationResult& result) {
+            const auto* succeeded = std::get_if<OperationSucceeded>(&result.outcome);
+            if (succeeded != nullptr) {
+                persisted = succeeded->output.spectrogram != nullptr && succeeded->output.nativeWaveform.has_value()
+                    && isValidWaveformData(*succeeded->output.nativeWaveform)
+                    && succeeded->output.renderedIdentity != nullptr
+                    && succeeded->output.renderedIdentity->owns(succeeded->output.file);
+                product = succeeded->output.spectrogram;
+                renderedReceipt = succeeded->output.renderedIdentity;
+                const auto decoded = analyzeFile(succeeded->output.file);
+                quantizedMatches = persisted && decoded.spectrogram != nullptr
+                    && decoded.spectrogram->intensities == succeeded->output.spectrogram->intensities
+                    && decoded.nativeWaveform.has_value()
+                    && *decoded.nativeWaveform == *succeeded->output.nativeWaveform;
+            }
+            if (failPersistence) {
+                throw std::runtime_error("Optional artifact persistence failure");
+            }
+        });
+        coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
+            const auto* succeeded = std::get_if<OperationSucceeded>(&result.outcome);
+            published = succeeded != nullptr && !succeeded->output.nativeWaveform
+                && succeeded->output.spectrogram == nullptr && succeeded->output.renderedIdentity == nullptr
+                && product.expired() && renderedReceipt.expired();
+        });
+        coordinator.setCompletionCallback([&](int /*total*/, int /*runId*/) { completed.signal(); });
+        expectEquals(coordinator.start({source}, options), 1);
+        expect(completed.wait(5000));
+        coordinator.cancelAndWait();
+        expect(persisted, "Persistence must receive the output PCM product");
+        expect(quantizedMatches, "Preview products must describe the final quantized AIFF samples");
+        expect(published, "Publication must release the product even when optional persistence throws");
     }
 }
 

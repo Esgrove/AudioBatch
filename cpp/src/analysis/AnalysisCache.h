@@ -1,6 +1,6 @@
 /// SQLite-backed cache for audio analysis results.
 /// AnalysisCache stores per-file analysis records, short-term loudness history,
-/// and waveform preview data keyed by path, size, and modification time,
+/// and independent waveform and spectrogram previews keyed by path, size, and modification time,
 /// so unchanged files are not re-read on later runs.
 /// It owns the database and its schema, including the Serato tag table that serato/SeratoTagCache reads and writes.
 
@@ -14,11 +14,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace audiobatch
 {
+struct SpectrogramData;
+
 /// A user-controlled gain to store for one file.
 struct CustomGainUpdate {
     // Preserve the file, gain, and captured version order used by aggregate edit requests.
@@ -54,6 +57,7 @@ public:
         std::int64_t fileSize,
         std::int64_t modifiedTimeMs
     );
+    [[nodiscard]] std::shared_ptr<const SpectrogramData> getSpectrogramData(const juce::File& file);
     [[nodiscard]] std::optional<juce::MemoryBlock> getWaveformData(const juce::File& file);
 
     [[nodiscard]] bool open();
@@ -62,6 +66,10 @@ public:
     [[nodiscard]] bool storeAnalysis(const AudioAnalysisRecord& record);
     [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<Decibels> customGain);
     [[nodiscard]] bool storeWaveformData(const utils::FileIdentity& identity, const juce::MemoryBlock& waveformData);
+    [[nodiscard]] bool storeSpectrogramData(
+        const utils::FileIdentity& identity,
+        const SpectrogramData& spectrogramData
+    );
 
     [[nodiscard]] int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
     [[nodiscard]] int storeCustomGains(const std::vector<CustomGainUpdate>& updates);

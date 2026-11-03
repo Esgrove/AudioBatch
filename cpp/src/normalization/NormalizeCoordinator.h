@@ -31,6 +31,9 @@ public:
     /// Called for each processed file as normalize results become available.
     using ResultCallback = std::function<void(const AudioNormalizationResult& result, int runId)>;
 
+    /// Called on the worker before publication to persist optional products without queueing their payloads.
+    using ResultPersistenceCallback = std::function<void(AudioNormalizationResult& result)>;
+
     /// Called from the worker thread right before a file's normalization begins.
     using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
@@ -53,15 +56,20 @@ public:
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
     void setResultCallback(ResultCallback callback);
+    void setResultPersistenceCallback(ResultPersistenceCallback callback);
     void setStartingCallback(StartingCallback callback);
 
 private:
+    void persistResult(AudioNormalizationResult& result) const;
+
     /// Receives the completion of each run.
     RunCallback<int, int> completionCallback;
     /// Receives the normalized fraction of each file.
     RunCallback<const juce::File&, float, int> progressCallback;
     /// Receives the result of each file.
     RunCallback<const AudioNormalizationResult&, int> resultCallback;
+    /// Persists completed worker products before their transient payloads are discarded.
+    RunCallback<AudioNormalizationResult&> resultPersistenceCallback;
     /// Receives each file a worker starts on.
     RunCallback<const juce::File&, int> startingCallback;
 

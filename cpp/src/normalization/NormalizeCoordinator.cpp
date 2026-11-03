@@ -51,6 +51,12 @@ void NormalizeCoordinator::setResultCallback(ResultCallback callback)
     resultCallback.set(std::move(callback));
 }
 
+/// Sets worker-side persistence, which must finish before the lightweight result is published.
+void NormalizeCoordinator::setResultPersistenceCallback(ResultPersistenceCallback callback)
+{
+    resultPersistenceCallback.set(std::move(callback));
+}
+
 /// Sets the callback that is invoked when a run completes.
 void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
 {
@@ -87,6 +93,31 @@ void NormalizeCoordinator::cancel()
 void NormalizeCoordinator::requestStop()
 {
     runner.requestStop();
+}
+
+/// Persists optional worker products and releases them even when the persistence callback throws.
+void NormalizeCoordinator::persistResult(AudioNormalizationResult& result) const
+{
+    try {
+        resultPersistenceCallback(result);
+    } catch (...) {
+        utils::logWarn(
+            "Normalization result persistence failed for {}: {}",
+            result.fullPath.quoted(),
+            utils::describeCurrentException()
+        );
+    }
+    std::visit(
+        Overloaded {
+            [](OperationFailed&) {},
+            [](auto& committed) {
+                committed.output.nativeWaveform.reset();
+                committed.output.spectrogram.reset();
+                committed.output.renderedIdentity.reset();
+            },
+        },
+        result.outcome
+    );
 }
 
 /// Starts a background normalize run and returns the number of queued files.
@@ -161,6 +192,7 @@ int NormalizeCoordinator::start(
                     result = AudioNormalizationResult::cancelled(record.file);
                 }
 
+                persistResult(result);
                 runner.publish(resultCallback, runId, result);
             }
 

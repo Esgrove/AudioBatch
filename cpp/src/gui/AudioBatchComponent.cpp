@@ -4,15 +4,18 @@
 
 #include "gui/AudioBatchComponent.h"
 
+#include "analysis/AnalysisPreview.h"
 #include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/ArtworkLoader.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/AudioBatchComponentState.h"
 #include "gui/AudioFileTableModel.h"
 #include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "gui/PreviewController.h"
 #include "gui/PreviewEnrichmentScheduler.h"
 #include "gui/ResultsSorting.h"
 #include "gui/SecondarySortTableHeader.h"
@@ -30,6 +33,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <variant>
 #ifdef AUDIOBATCH_TESTING
 #include <stdexcept>
 #endif
@@ -38,6 +42,12 @@
 
 namespace audiobatch
 {
+namespace
+{
+/// Polls only GUI-owned status state, independently of animation and audio callbacks.
+constexpr int STATUS_REFRESH_RATE_HZ {5};
+}  // namespace
+
 /// Chooses production defaults normally, or unique lifetime-owned storage and safe capabilities in test targets.
 AudioBatchComponentConfig::AudioBatchComponentConfig()
 {
@@ -102,6 +112,7 @@ void AudioBatchComponent::configurePreviewControls()
 
     auto& thumbnail = previewWorkspace.thumbnail;
     thumbnail.addChangeListener(this);
+    thumbnail.setViewModeChangedCallback([this](const PreviewViewMode mode) { setPreviewViewMode(mode); });
     previewPlayer.addChangeListener(this);
     thumbnail.setMouseWheelZoomCallback([this](const double zoomFactor) {
         auto& zoomSlider = previewWorkspace.zoomSlider;
@@ -276,12 +287,14 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
     setWantsKeyboardFocus(true);
+    startTimerHz(STATUS_REFRESH_RATE_HZ);
     logStartupCheckpoint("constructor complete");
 }
 
 /// Stops background work and releases audio and dialog resources.
 AudioBatchComponent::~AudioBatchComponent()
 {
+    stopTimer();
     previewAnimationAttachment = {};
     if (settingsWindow != nullptr) {
         settingsWindow->removeComponentListener(this);
@@ -415,6 +428,12 @@ void AudioBatchComponent::showAudioSettingsWindow()
         "Audio Settings",
         layout::audioSettings::preferredWidth,
         layout::audioSettings::preferredHeight
+    );
+    settingsWindow->setResizeLimits(
+        settingsWindow->getWidth(),
+        layout::audioSettings::MINIMUM_WINDOW_HEIGHT,
+        layout::dialogMaximumWindowSize,
+        layout::dialogMaximumWindowSize
     );
     settingsWindow->addComponentListener(this);
 }
@@ -585,6 +604,40 @@ void AudioBatchComponent::updateProcessButtonState()
     previewWorkspace.processButton.setButtonText("Process");
     previewWorkspace.processButton.setTooltip("Process selected files through the plugin chain.");
     previewWorkspace.processButton.setEnabled(hasChain && hasAnyRecords());
+}
+
+/// Refreshes low-frequency playback and optional-artifact status without involving the audio callback.
+void AudioBatchComponent::timerCallback()
+{
+    const auto duration = previewPlayer.getLoadedDurationSeconds().value_or(0.0);
+    statusBar.setPlaybackTime(previewPlayer.getCurrentPosition(), duration, duration > 0.0);
+    if (auto snapshot = backgroundWork.takeAnalysisPreview()) {
+        const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
+        const auto row = analysisResults.findRow(snapshot->identity.path);
+        if (loaded != nullptr && snapshot->selectionGeneration == preview.getGeneration()
+            && snapshot->identity.path == loaded->identity.path
+            && snapshot->identity.platformId == loaded->identity.platformId
+            && snapshot->identity.preciseTimes == loaded->identity.preciseTimes
+            && snapshot->identity.matches(loaded->file) && row && !analysisResults[*row].isReady()
+            && snapshot->waveform)
+        {
+            static_cast<void>(previewWorkspace.thumbnail.adoptWaveformData(*snapshot->waveform, snapshot->identity));
+        }
+    }
+    if (!backgroundWork.isIdle()) {
+        backgroundPreviewStatusVisible = false;
+        return;
+    }
+    const auto progress = enrichment.getProgress();
+    if (progress.active) {
+        statusBar.setStatusText(
+            utils::format("Background previews: {}/{} files", progress.completedFiles, progress.totalFiles)
+        );
+        backgroundPreviewStatusVisible = true;
+    } else if (backgroundPreviewStatusVisible) {
+        backgroundPreviewStatusVisible = false;
+        updateStatusLabel();
+    }
 }
 
 /// Shows the most relevant progress or summary text for the current background activity.

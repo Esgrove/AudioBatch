@@ -151,9 +151,6 @@ AudioInfoPanel::AudioInfoPanel()
             *label, textFont.withHeight(layout::information::headingFontHeight), CustomLookAndFeel::greySuperLight()
         );
     }
-    utils::styleLabel(
-        statusLabel, textFont.withHeight(layout::information::captionFontHeight), CustomLookAndFeel::greyMiddleLight()
-    );
     utils::styleLabel(errorLabel, textFont.withHeight(layout::information::valueFontHeight), CustomLookAndFeel::red());
     errorLabel.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(filenameLabel);
@@ -163,7 +160,6 @@ AudioInfoPanel::AudioInfoPanel()
     artworkImage.setInterceptsMouseClicks(false, false);
     artworkImage.setDescription("Embedded album artwork of the selected file");
     addChildComponent(artworkImage);
-    addAndMakeVisible(statusLabel);
     for (auto& metric : metrics) {
         addAndMakeVisible(metric);
     }
@@ -180,7 +176,6 @@ AudioInfoPanel::AudioInfoPanel()
 void AudioInfoPanel::clear()
 {
     hasTitle = false;
-    hasStatus = false;
     setDescription("No file selected");
     displayedPath.clear();
     filenameLabel.setText("No file selected", juce::dontSendNotification);
@@ -190,8 +185,6 @@ void AudioInfoPanel::clear()
     titleLabel.setTooltip({});
     titleLabel.setDescription({});
     titleLabel.setVisible(false);
-    statusLabel.setVisible(false);
-    statusLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddleLight());
     errorLabel.setText({}, juce::dontSendNotification);
     for (auto& metric : metrics) {
         metric.setValue("-");
@@ -285,7 +278,7 @@ std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& 
 }
 /// Shows full-width file details and fixed metrics, clearing analysis values for pending or failed records.
 /// Splits the filename at the first literal " - ", keeping subsequent separators in the title.
-/// Cached measurements show their origin-aware status, with activity and operation messages taking precedence.
+/// Omits analysis lifecycle and cache provenance, retaining error details and accessible operation context.
 /// Musical metadata remains independent of analysis readiness.
 /// Same-file updates preserve the detail scroll position.
 void AudioInfoPanel::showRecord(
@@ -313,13 +306,8 @@ void AudioInfoPanel::showRecord(
         label->setTooltip(path);
         label->setDescription(path);
     }
-    hasStatus = !record.isReady() || record.status == AudioAnalysisStatus::cached || activeStatusLabel.isNotEmpty();
-    const auto status = activeStatusLabel.isNotEmpty() ? activeStatusLabel : formatGuiStatus(record);
-    statusLabel.setText(status, juce::dontSendNotification);
-    setDescription(utils::format("{}: {}", path, status));
-    statusLabel.setColour(
-        juce::Label::textColourId, record.hasError() ? CustomLookAndFeel::red() : CustomLookAndFeel::greyMiddleLight()
-    );
+    // Keep transient operation context accessible without adding a lifecycle or provenance row to the inspector.
+    setDescription(activeStatusLabel.isNotEmpty() ? utils::format("{}: {}", path, activeStatusLabel) : path);
     errorLabel.setText(record.hasError() ? record.errorMessage : juce::String(), juce::dontSendNotification);
     for (auto& metric : metrics) {
         metric.setValue("-");
@@ -358,8 +346,7 @@ int AudioInfoPanel::getPreferredHeight() const
         ? layout::information::summaryHeight - layout::information::metricHeight - layout::sectionSpacing
         : layout::information::summaryHeight;
     return layout::information::verticalPadding * 2 + summaryHeight - layout::information::filenameHeight
-        + getHeaderHeight() + (hasStatus ? layout::information::statusHeight : 0)
-        + getDetailLineCount() * layout::information::rowHeight
+        + getHeaderHeight() + getDetailLineCount() * layout::information::rowHeight
         + getErrorHeight(getWidth() - layout::information::horizontalPadding * 2 - layout::scrollBarThickness);
 }
 
@@ -414,7 +401,6 @@ void AudioInfoPanel::resized()
     filenameLabel.setVisible(!compactMode);
     titleLabel.setVisible(!compactMode && hasTitle);
     artworkImage.setVisible(!compactMode && hasArtwork());
-    statusLabel.setVisible(!compactMode && hasStatus);
     detailsViewport.setVisible(!compactMode);
     if (compactMode) {
         auto bounds = getLocalBounds();
@@ -442,7 +428,6 @@ void AudioInfoPanel::resized()
     auto text = header.withSizeKeepingCentre(header.getWidth(), textHeight);
     filenameLabel.setBounds(text.removeFromTop(layout::information::filenameHeight));
     titleLabel.setBounds(text.removeFromTop(titleLabel.isVisible() ? layout::information::filenameHeight : 0));
-    statusLabel.setBounds(bounds.removeFromTop(statusLabel.isVisible() ? layout::information::statusHeight : 0));
     bounds.removeFromTop(layout::sectionSpacing);
     if (wideMode) {
         auto metricRow = bounds.removeFromTop(layout::information::metricHeight);

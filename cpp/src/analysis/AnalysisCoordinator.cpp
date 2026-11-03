@@ -10,11 +10,14 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/AudioMeasurement.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -169,10 +172,18 @@ void AnalysisCoordinator::analyzeStaleFile(
         runner.publish(progressCallback, runId, file, progress);
     });
 
+    const utils::FileIdentity sourceIdentity(file);
     AudioAnalysisRecord result;
 
     try {
-        result = analyzeFile(file, runner.makeCancellationCheck(runId), onProgress);
+        result = analyzeFile(
+            file,
+            runner.makeCancellationCheck(runId),
+            onProgress,
+            [this, &sourceIdentity, runId](const AudioMeasurement& measurement, const std::int64_t decodedFrames) {
+                publishPreview(sourceIdentity, runId, measurement, decodedFrames);
+            }
+        );
     } catch (...) {
         result = AudioAnalysisRecord::fromFile(file);
         result.status = AudioAnalysisStatus::failed;
@@ -192,7 +203,28 @@ void AnalysisCoordinator::analyzeStaleFile(
 
     // The cache keeps only failures that repeat for the same bytes, so the next run retries the others.
     // The cache logs its own failures, and the result is still published, so the next run only reads it again.
-    static_cast<void>(cache.storeAnalysis(result));
+    const auto stored = cache.storeAnalysis(result);
+    if (stored && result.isReady() && result.nativeWaveform && sourceIdentity.matches(file)) {
+        try {
+            static_cast<void>(cache.storeWaveformData(sourceIdentity, *result.nativeWaveform));
+        } catch (...) {
+            utils::logWarn(
+                "Waveform persistence failed for {}: {}", result.fullPath.quoted(), utils::describeCurrentException()
+            );
+        }
+    }
+    if (stored && result.isReady() && result.spectrogram != nullptr && sourceIdentity.matches(file)) {
+        try {
+            static_cast<void>(cache.storeSpectrogramData(sourceIdentity, *result.spectrogram));
+        } catch (...) {
+            utils::logWarn(
+                "Spectrogram persistence failed for {}: {}", result.fullPath.quoted(), utils::describeCurrentException()
+            );
+        }
+    }
+    // Keep optional bulk data bounded by active workers, never by the delivery queue or result count.
+    result.nativeWaveform.reset();
+    result.spectrogram.reset();
 
     runner.publish(resultCallback, runId, result);
 

@@ -38,7 +38,9 @@ private:
     AudioBatchComponent& getAudioBatch() const;
     [[nodiscard]] juce::String getNormalizeAllLabel() const;
 
+    void appendOverloadMenuItems(juce::PopupMenu& menu);
     void appendPluginOptionsMenuItems(juce::PopupMenu& menu);
+    void appendPreviewViewMenuItems(juce::PopupMenu& menu);
     void handlePluginChoiceMenuItem(int menuItemID) const;
 
     // juce::MenuBarModel

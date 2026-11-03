@@ -222,16 +222,21 @@ constexpr int managerWindowHeight {520};
 namespace audioSettings
 {
 constexpr int preferredWidth {560};
-constexpr int preferredHeight {660};
+constexpr int preferredHeight {560};
+/// Audio Settings can shrink below its initial size while the content viewport remains scrollable.
+constexpr int MINIMUM_WINDOW_HEIGHT {440};
+/// Selector width relative to the available control lane, leaving room without spanning the whole group.
+constexpr double PREVIEW_SELECTOR_WIDTH_PROPORTION {0.7};
 constexpr int padding {12};
-constexpr int sectionSpacing {16};
-constexpr int headingHeight {24};
+constexpr int SECTION_SPACING {10};
+/// Includes the heading and its clearance, rather than adding another vertical padding inset.
+constexpr int GROUP_TOP_INSET {18};
 constexpr int rowHeight {30};
-constexpr int preferenceRowCount {7};
+constexpr int PREFERENCE_ROW_COUNT {9};
 constexpr int rangeLabelWidth {80};
 constexpr int rangeEditorWidth {48};
 constexpr int rangeEditorPadding {3};
-constexpr int preferencesHeight {padding * 2 + headingHeight + rowHeight * preferenceRowCount};
+constexpr int PREFERENCES_HEIGHT {GROUP_TOP_INSET + rowHeight * PREFERENCE_ROW_COUNT + padding};
 }  // namespace audioSettings
 
 /// Waveform overlays retain fixed logical sizes independently of channel and zoom geometry.
@@ -250,18 +255,41 @@ constexpr float positionMarkerWidth {1.5f};
 constexpr float loudnessFontHeight {10.0f};
 constexpr float loudnessLineWidth {1.5f};
 constexpr float loudnessOutlineWidth {1.4f};
-constexpr int loudnessAxisGap {6};
-constexpr int loudnessAxisWidth {16};
+/// Equal total gutter for loudness, amplitude and frequency axes.
+constexpr int AXIS_GUTTER_WIDTH {22};
+constexpr int AXIS_LABEL_GAP {2};
+constexpr int AMPLITUDE_LABEL_HEIGHT {10};
+constexpr int AMPLITUDE_LABEL_SPACING {2};
+constexpr int loudnessAxisGap {AXIS_LABEL_GAP};
+constexpr int loudnessAxisWidth {AXIS_GUTTER_WIDTH - AXIS_LABEL_GAP};
 constexpr int loudnessTickSpacing {32};
 
-/// Height of the amber overload caps at the outer edges of a channel lane.
-constexpr float overloadCapHeight {4.0f};
+/// Separation between equal preview panes.
+constexpr int paneGap {2};
+/// Frequency captions stay outside the spectral raster.
+constexpr int frequencyAxisWidth {AXIS_GUTTER_WIDTH - AXIS_LABEL_GAP};
+constexpr int frequencyAxisGap {AXIS_LABEL_GAP};
+constexpr int frequencyTickSpacing {16};
+/// Dedicated source-overload strip does not share the frequency axis.
+constexpr int sourceWarningHeight {4};
+/// Fixed spectral presentation opacities, independent of calibrated raster power.
+constexpr float spectrogramPlaceholderAlpha {0.7f};
+constexpr float frequencyLabelAlpha {0.8f};
+constexpr float frequencyGridAlpha {0.1f};
+constexpr float playheadAlpha {0.85f};
+/// The pointer's release target stays quieter than the actual playback cursor.
+constexpr float SEEK_PREVIEW_ALPHA {0.45f};
+
+/// Height of overload caps at the outer edges of the waveform.
+constexpr float overloadCapHeight {2.5f};
 /// Narrowest overload mark, so a single-column overload stays visible when zoomed out.
 constexpr float overloadMinimumWidth {3.0f};
 /// Outline width of the hollow true peak caps.
 constexpr float overloadOutlineWidth {1.0f};
-/// Opacity of the amber tint over a channel lane with sample overloads.
-constexpr float overloadTintAlpha {0.18f};
+/// Opacity of the optional yellow or orange tint over the overloaded source channel.
+constexpr float overloadTintAlpha {0.06f};
+/// Amplitude reference lines match the subtle loudness grid without adding a second grid over it.
+constexpr float amplitudeGridAlpha {0.12f};
 
 /// Chooses a uniform whole-LU interval for valid integer loudness limits.
 /// Even steps keep labels anchored to even values, except when a narrow range needs one-LU detail.

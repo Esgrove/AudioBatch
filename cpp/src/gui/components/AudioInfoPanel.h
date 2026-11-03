@@ -1,6 +1,6 @@
 /// Selected-file inspector beside the waveform preview.
 /// Keeps the filename, optionally split into artist and title, and four analysis metrics above scrolling file details.
-/// Pending and failed records also show their status.
+/// Analysis errors remain available in the details, without lifecycle or cache-provenance badges.
 /// The wide layout puts the metrics in one row, and the details with short values two to a line,
 /// above the tags that can be long, such as the album and the comment, which keep the full width.
 
@@ -94,8 +94,6 @@ private:
     juce::Label errorLabel {"Error"};
     /// File name, or artist when split into artist and title.
     juce::Label filenameLabel {"File"};
-    /// Status while pending or failed.
-    juce::Label statusLabel {"Status"};
     /// Title when the file name was split.
     juce::Label titleLabel {"Title"};
 
@@ -121,8 +119,6 @@ private:
 
     /// True for the compact metric-only layout.
     bool compactMode {false};
-    /// Whether the status label is shown.
-    bool hasStatus {false};
     /// Whether the file name was split.
     bool hasTitle {false};
     /// True for the wide metrics and short-detail layout.
