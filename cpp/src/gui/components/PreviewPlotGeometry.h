@@ -37,9 +37,15 @@ struct PreviewPlotGeometry {
 
 /// One magnitude dBFS caption at a signed linear position within its native waveform channel lane.
 struct PreviewAmplitudeLabel {
+    /// Caption bounds in the axis gutter, clamped to stay within the channel lane.
     juce::Rectangle<int> bounds;
+    /// Signed linear amplitude the caption names, from -1 at the lane bottom to 1 at its top.
     float amplitude {0.0f};
+    /// Magnitude in dBFS, negative infinity for silence.
     float decibels {-std::numeric_limits<float>::infinity()};
+    /// Unclamped vertical position of the amplitude within the waveform, shared by grid lines.
+    float vertical {0.0f};
+    /// Zero-based channel lane of the caption.
     int channel {0};
 };
 
@@ -92,7 +98,13 @@ inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
             {
                 return;
             }
-            labels.push_back({.bounds = bounds, .amplitude = amplitude, .decibels = decibels, .channel = channel});
+            labels.push_back({
+                .bounds = bounds,
+                .amplitude = amplitude,
+                .decibels = decibels,
+                .vertical = vertical,
+                .channel = channel,
+            });
         };
         for (std::size_t index = 0; index < DECIBEL_LEVELS.size(); ++index) {
             for (const auto polarity : POLARITIES) {

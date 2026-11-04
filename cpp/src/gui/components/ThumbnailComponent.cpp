@@ -466,14 +466,18 @@ void ThumbnailComponent::mouseDown(const juce::MouseEvent& event)
     } else if (geometry.spectrogram.contains(event.getPosition())) {
         scrubBounds = geometry.spectrogram;
     }
-    if (scrubBounds.isEmpty() || sourceDuration() <= 0.0) {
+    if (scrubBounds.isEmpty() || sourceDuration() <= 0.0 || visibleRange.getLength() <= 0.0) {
         return;
     }
     if (isShowing()) {
         grabKeyboardFocus();
     }
+    scrubRange = visibleRange;
     scrubbing = true;
-    pendingSeekTime = std::clamp(previewXToTime(event.position.x, visibleRange, scrubBounds), 0.0, sourceDuration());
+    // The second press of a double click previews the restart position rather than a seek target.
+    pendingSeekTime = event.getNumberOfClicks() >= 2
+        ? 0.0
+        : std::clamp(previewXToTime(event.position.x, scrubRange, scrubBounds), 0.0, sourceDuration());
     updateCursorPosition();
 }
 
@@ -540,23 +544,26 @@ void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent& event)
 /// Moves only the grey release-target marker while actual playback continues independently.
 void ThumbnailComponent::mouseDrag(const juce::MouseEvent& event)
 {
-    if (popupGesture || event.mods.isPopupMenu() || !event.mods.isLeftButtonDown() || !scrubbing) {
+    if (popupGesture || event.mods.isPopupMenu() || !event.mods.isLeftButtonDown() || !scrubbing
+        || event.getNumberOfClicks() >= 2)
+    {
         return;
     }
-    pendingSeekTime = std::clamp(previewXToTime(event.position.x, visibleRange, scrubBounds), 0.0, sourceDuration());
+    pendingSeekTime = std::clamp(previewXToTime(event.position.x, scrubRange, scrubBounds), 0.0, sourceDuration());
     updateCursorPosition();
 }
 
 /// Seeks once on release, preserving active playback and starting a stopped preview.
 /// Starting an already playing preview would reposition and wait for read-ahead a second time.
 /// Scrubbing identifies a left-button gesture, since a real release may have no button modifier.
+/// The release that completes a double click leaves the restart to mouseDoubleClick, without seeking first.
 void ThumbnailComponent::mouseUp(const juce::MouseEvent& event)
 {
-    const auto commit = scrubbing && !popupGesture && !event.mods.isPopupMenu();
+    const auto commit = scrubbing && !popupGesture && !event.mods.isPopupMenu() && event.getNumberOfClicks() < 2;
     if (commit) {
         const auto wasPlaying = transportSource.isPlaying();
         transportSource.setPosition(
-            std::clamp(previewXToTime(event.position.x, visibleRange, scrubBounds), 0.0, sourceDuration())
+            std::clamp(previewXToTime(event.position.x, scrubRange, scrubBounds), 0.0, sourceDuration())
         );
         if (!wasPlaying) {
             transportSource.start();
@@ -566,6 +573,7 @@ void ThumbnailComponent::mouseUp(const juce::MouseEvent& event)
     scrubbing = false;
     pendingSeekTime.reset();
     scrubBounds = {};
+    scrubRange = {};
     updateCursorPosition();
 }
 

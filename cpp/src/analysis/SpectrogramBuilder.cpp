@@ -16,7 +16,14 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <span>
 #include <utility>
+
+// The shared contract rounds every multiplication and addition separately, as the Rust implementation does.
+// CMakeLists.txt disables contraction for Clang, and this pragma does it for MSVC, which has no undoing option.
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma fp_contract(off)
+#endif
 
 namespace audiobatch
 {
@@ -67,6 +74,10 @@ const SpectrogramWindow& spectrogramWindow()
 }
 
 /// Clips power to the fixed dB profile and rounds to nearest byte, with half-way values rounded upward.
+/// Parity exception: this uses juce::dsp::FFT and the Rust application realfft.
+/// Their last-bit FFT rounding can move a power across a byte boundary,
+/// so cached grids may differ by one intensity step in at most one cell per thousand.
+/// The Rust shared-cache tests measure that bound against this executable on the shared spectral fixtures.
 std::uint8_t quantizePower(const double power)
 {
     const auto decibels = POWER_DECIBEL_FACTOR * std::log10(std::max(power, MINIMUM_POWER));
@@ -140,15 +151,19 @@ SpectrogramBuilderState::SpectrogramBuilderState(const int channels, const int s
 }
 
 /// Reduces adjacent byte columns in place without allocating another image or losing isolated peaks.
+/// Destination column k reads source columns 2k and 2k + 1 before writing,
+/// and never overlaps a source column that a later destination still needs.
 void SpectrogramBuilderState::mergePairs()
 {
+    constexpr auto ROWS = static_cast<std::size_t>(SpectrogramData::frequencyRows);
     const auto columns = data.columnCount();
+    const std::span intensities(data.intensities);
     for (std::size_t column = 0; column < columns / 2; ++column) {
-        for (std::size_t row = 0; row < SpectrogramData::frequencyRows; ++row) {
-            data.intensities[column * SpectrogramData::frequencyRows + row] = std::max(
-                data.intensities[(2 * column) * SpectrogramData::frequencyRows + row],
-                data.intensities[(2 * column + 1) * SpectrogramData::frequencyRows + row]
-            );
+        const auto first = intensities.subspan(2 * column * ROWS, ROWS);
+        const auto second = intensities.subspan((2 * column + 1) * ROWS, ROWS);
+        const auto destination = intensities.subspan(column * ROWS, ROWS);
+        for (std::size_t row = 0; row < ROWS; ++row) {
+            destination[row] = std::max(first[row], second[row]);
         }
     }
     data.intensities.resize((columns / 2) * SpectrogramData::frequencyRows);
@@ -162,16 +177,22 @@ void SpectrogramBuilderState::appendColumn()
 {
     const auto& window = spectrogramWindow().symmetricHann;
     powers.fill(0.0);
+    // The window covers source frames [center - HALF_WINDOW, center + HALF_WINDOW).
+    // Frames before zero or at EOF stay zero, and the valid span maps to at most two contiguous ring segments.
+    const auto firstFrame = static_cast<std::size_t>(std::max<std::int64_t>(HALF_WINDOW - nextCenter, 0));
+    const auto firstSource = std::max<std::int64_t>(nextCenter - HALF_WINDOW, 0);
+    const auto lastSource = std::min<std::int64_t>(nextCenter + HALF_WINDOW, data.lengthInSamples);
+    const auto validFrames = static_cast<std::size_t>(std::max<std::int64_t>(lastSource - firstSource, 0));
+    const auto ringStart = static_cast<std::size_t>(firstSource % SpectrogramData::fftSize);
+    const auto leading = std::min(validFrames, static_cast<std::size_t>(SpectrogramData::fftSize) - ringStart);
     for (int channel = 0; channel < data.channelCount; ++channel) {
         scratch.fill(0.0f);
-        for (int frame = 0; frame < SpectrogramData::fftSize; ++frame) {
-            const auto sourceFrame = nextCenter - HALF_WINDOW + frame;
-            if (sourceFrame >= 0 && sourceFrame < data.lengthInSamples) {
-                scratch[static_cast<std::size_t>(frame)]
-                    = pcm[static_cast<std::size_t>(channel)]
-                         [static_cast<std::size_t>(sourceFrame % SpectrogramData::fftSize)]
-                    * window[static_cast<std::size_t>(frame)];
-            }
+        const auto& ring = pcm[static_cast<std::size_t>(channel)];
+        for (std::size_t index = 0; index < leading; ++index) {
+            scratch[firstFrame + index] = ring[ringStart + index] * window[firstFrame + index];
+        }
+        for (std::size_t index = leading; index < validFrames; ++index) {
+            scratch[firstFrame + index] = ring[index - leading] * window[firstFrame + index];
         }
         transform.performRealOnlyForwardTransform(scratch.data(), true);
         for (int bin = 0; bin < FREQUENCY_BINS; ++bin) {

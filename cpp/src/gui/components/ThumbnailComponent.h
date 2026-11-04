@@ -228,6 +228,8 @@ private:
     juce::Image spectrogramRaster;
     /// Pane chosen at mouse-down, retained when scrubbing crosses a split.
     juce::Rectangle<int> scrubBounds;
+    /// Visible time range latched at mouse-down, so zooming or scrolling during a drag cannot move the target.
+    juce::Range<double> scrubRange;
     /// Visible file time range in seconds.
     juce::Range<double> visibleRange;
     /// Visualization preference, retained across source changes and compact layouts.

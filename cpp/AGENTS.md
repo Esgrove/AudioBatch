@@ -47,17 +47,25 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `AudioMeasurement.*` groups decoded or rendered PCM into fixed libebur128 measurement intervals
       and supplies peaks, loudness, and overload histories without decoding rendered output again.
       `OverloadHistory.*` build, validate, project, and serialize the bounded per-channel source overload flags.
+      `NativeWaveformBuilder.*` and `SpectrogramBuilder.*` build the optional native waveform and mel spectrogram.
+      They read the same PCM intervals, so fresh analysis produces both in its single decode pass.
+      `SpectrogramData.*` holds the bounded spectral grid, its validation, the mel conversions,
+      and the little-endian `SPEC` codec shared byte for byte with the Rust application.
+      `SpectrogramBuilder.cpp` and `SpectrogramData.cpp` compile without floating-point contraction,
+      so compiler FMA choices cannot change the shared intensity bytes.
     - `AnalysisCache.*` manage the SQLite result cache shared with the Rust application.
       Its implementation is split into `AnalysisCache.cpp` (measurement and custom gain persistence),
       `AnalysisCacheSchema.cpp` (database lifecycle and schema),
-      and `AnalysisCacheWaveform.cpp` (native waveform persistence and validation),
+      `AnalysisCacheWaveform.cpp` (native waveform persistence and validation),
+      and `AnalysisCacheSpectrogram.cpp` (the shared `spectrogram_cache` table),
       which share the column and parameter constants in `AnalysisCacheSql.h`.
       `NativeWaveformData.*` holds bounded native thumbnail validation and identity-sensitive waveform keys,
       independently of database persistence.
       Measurement contract version 13 is coordinated across both implementations.
       Successful foreign measurements are reusable for reporting, while decoder failures are producer-specific.
       Rust waveforms live in `rust_waveform_cache`, separate from the optional JUCE waveform columns.
-      A missing waveform or Serato payload must not invalidate successful measurements.
+      Both applications share `spectrogram_cache`, keyed by path and its algorithm and serialization revisions.
+      A missing waveform, spectrogram, or Serato payload must not invalidate successful measurements.
       Preserve current persisted gains, including explicit clears, and compatible previews during measurement refills.
       Gain and preview writes never change measurement provenance.
       Foreign measurements require native remeasurement before normalization gain, refusal, ceiling, or no-op decisions.
@@ -66,6 +74,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       with the execute, prepare, step, bind and column helpers that check results and log errors.
       `SqliteTransaction.*` holds `sqlite::Transaction`, which rolls back unless committed.
     - `AnalysisCoordinator.*` orchestrates background analysis.
+      `AnalysisCoordinatorPreview.cpp` publishes throttled, latest-only waveform snapshots of the selected file.
+      They are `AnalysisPreview` values from `AnalysisPreview.h`, and are never persisted.
 - `src/normalization/` holds `AudioNormalization.*` for normalization and AIFF conversion,
   `NormalizationFormatSupport.cpp`, which reports which formats this build can normalize,
   and `NormalizeCoordinator.*`, which orchestrates background normalization.
@@ -175,7 +185,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Its state is a variant of no preview, a released preview that keeps its file, and a loaded preview.
     - `PreviewEnrichmentScheduler.*` admits one optional-artifact worker after foreground results settle,
       prioritizes selection, and persists explicit gain edits and committed outputs outside the message thread.
-      `NativeWaveformBuilder.*` decodes bounded PCM blocks and serializes native JUCE thumbnails without a second pool.
+      `PreviewArtifactDecoder.*` decodes bounded PCM blocks once for every missing waveform and spectrogram,
+      without a loudness meter or a second pool.
     - `ArtworkLoader.*` reads the album artwork of the selected file on its own worker,
       checks the image header before decoding a bounded thumbnail, and drops results of replaced or changed files.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,
@@ -187,9 +198,13 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
   `AudioInfoPanel.*`, `AudioSettingsComponent.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`,
   `ThumbnailComponent.*`, `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
+  `ThumbnailComponent` hosts the four preview modes.
+  `ThumbnailComponentSpectrogram.cpp` holds its spectrogram raster and frequency axis,
+  and `ThumbnailComponentOverloads.cpp` its overload caps.
+  `PreviewPlotGeometry.h` holds the pane layout, axis gutters, and time projections they share.
   `PluginChainSlotRow.*` implements each independently identified row of the chain editor.
-  `StatusBar.*` is the bottom bar with the root folders, the status text, the preview audio output device,
-  and the overall progress line along its top edge.
+  `StatusBar.*` is the bottom bar with the root folders, the status text, the playback clock,
+  the preview audio output device, and the overall progress line along its top edge.
   `PreviewWorkspace.*` holds the waveform, the metrics, and the controls below the results table,
   and lays them out as an expanded section, a wide section, or a compact row.
 

@@ -61,8 +61,11 @@ jobs:
           rm -rf fixtures/plugin_expected
           uv run fixtures/plugin_expected.py
 
+      # The script formats its JSON with jq, as format.sh does, so both checks accept the same bytes.
       - name: Check independent spectrogram fixtures
-        run: uv run --script fixtures/spectrogram_expected.py --check
+        run: |
+          jq --version
+          uv run --script fixtures/spectrogram_expected.py --check
 
       - name: Check for differences
         run: |

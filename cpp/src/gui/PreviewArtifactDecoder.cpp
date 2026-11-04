@@ -1,7 +1,7 @@
 /// Builds optional native thumbnail peaks and spectra from one bounded PCM pass on the enrichment worker.
 /// Shared streaming builders isolate optional artifact failures without a second decoder or thread.
 
-#include "gui/NativeWaveformBuilder.h"
+#include "gui/PreviewArtifactDecoder.h"
 
 #include "analysis/DecodeFailureTracker.h"
 #include "analysis/NativeWaveformBuilder.h"

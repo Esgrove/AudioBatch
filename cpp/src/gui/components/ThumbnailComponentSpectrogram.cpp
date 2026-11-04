@@ -267,16 +267,11 @@ void ThumbnailComponent::drawWaveformAxis(juce::Graphics& graphics, const Previe
         graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::frequencyLabelAlpha));
         graphics.drawText(text, label.bounds, justification);
         if (!loudnessGraphEnabled) {
-            const auto top = geometry.waveform.getY() + label.channel * geometry.waveform.getHeight() / sourceChannels;
-            const auto bottom
-                = geometry.waveform.getY() + (label.channel + 1) * geometry.waveform.getHeight() / sourceChannels;
-            const auto vertical
-                = static_cast<float>(top) + (1.0f - label.amplitude) * static_cast<float>(bottom - top) * 0.5f;
             const juce::Graphics::ScopedSaveState savedState(graphics);
             graphics.reduceClipRegion(geometry.waveform);
             graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::amplitudeGridAlpha));
             graphics.drawHorizontalLine(
-                juce::roundToInt(vertical),
+                juce::roundToInt(label.vertical),
                 static_cast<float>(geometry.waveform.getX()),
                 static_cast<float>(geometry.waveform.getRight())
             );

@@ -19,7 +19,13 @@ namespace audiobatch::tests
 namespace
 {
 /// Constructs a component-local event, allowing releases with no button still held.
-juce::MouseEvent seekEvent(ThumbnailComponent& thumbnail, const juce::Point<float> position, const int modifiers)
+/// A click count of two marks the press and release that complete a double click.
+juce::MouseEvent seekEvent(
+    ThumbnailComponent& thumbnail,
+    const juce::Point<float> position,
+    const int modifiers,
+    const int clicks = 1
+)
 {
     return {
         juce::Desktop::getInstance().getMainMouseSource(),
@@ -35,7 +41,7 @@ juce::MouseEvent seekEvent(ThumbnailComponent& thumbnail, const juce::Point<floa
         juce::Time(),
         position,
         juce::Time(),
-        1,
+        clicks,
         false
     };
 }
@@ -72,6 +78,7 @@ private:
         const TestAudioDeviceState& device,
         juce::Range<double> range
     );
+    void testDoubleClickAndLatchedRange(ThumbnailComponent& thumbnail, AudioPreviewPlayer& player);
 };
 
 /// Checks held and immediate clicks, crossing drags, and non-seeking mouse gestures.
@@ -103,6 +110,8 @@ void PreviewSeekTests::runTest()
     thumbnail.setRange(range);
     testClicks(player, thumbnail, device, range);
     testCrossingGestures(player, thumbnail, device, range);
+    testDoubleClickAndLatchedRange(thumbnail, player);
+    thumbnail.setRange(range);
     player.suspend();
     beginTest("Source replacement clears a held target without committing its seek");
     thumbnail.setViewMode(PreviewViewMode::waveform);
@@ -336,6 +345,43 @@ void PreviewSeekTests::testCrossingGestures(
         expectWithinAbsoluteError(player.getCurrentPosition(), scrubPosition, 0.000001);
         expect(!player.isPlaying());
     }
+    player.suspend();
+}
+
+/// Checks that a double click restarts without an intermediate seek,
+/// and that zooming during a held drag keeps the mouse-down time projection.
+void PreviewSeekTests::testDoubleClickAndLatchedRange(ThumbnailComponent& thumbnail, AudioPreviewPlayer& player)
+{
+    thumbnail.setViewMode(PreviewViewMode::waveform);
+    const juce::Range<double> range(0.25, 0.75);
+    thumbnail.setRange(range);
+    const auto plot = thumbnail.getPlotGeometry().waveform;
+    const auto target = juce::Point<float>(previewTimeToX(0.6, range, plot), static_cast<float>(plot.getCentreY()));
+
+    beginTest("The release completing a double click leaves the restart to the double-click handler");
+    player.suspend();
+    player.setPosition(0.4);
+    thumbnail.mouseDown(seekEvent(thumbnail, target, juce::ModifierKeys::leftButtonModifier, 2));
+    expectWithinAbsoluteError(thumbnail.getPendingSeekPosition().value_or(-1.0), 0.0, 0.000001);
+    thumbnail.mouseDrag(seekEvent(thumbnail, target, juce::ModifierKeys::leftButtonModifier, 2));
+    expectWithinAbsoluteError(thumbnail.getPendingSeekPosition().value_or(-1.0), 0.0, 0.000001);
+    thumbnail.mouseUp(seekEvent(thumbnail, target, 0, 2));
+    expect(!thumbnail.getPendingSeekPosition());
+    expect(!player.isPlaying());
+    expectWithinAbsoluteError(player.getCurrentPosition(), 0.4, 0.000001);
+    thumbnail.mouseDoubleClick(seekEvent(thumbnail, target, juce::ModifierKeys::leftButtonModifier, 2));
+    expect(player.isPlaying());
+    expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 0.000001);
+
+    beginTest("Zooming during a held drag keeps the mouse-down time projection");
+    player.suspend();
+    player.setPosition(0.1);
+    thumbnail.mouseDown(seekEvent(thumbnail, target, juce::ModifierKeys::leftButtonModifier));
+    thumbnail.setRange({0.5, 0.6});
+    thumbnail.mouseDrag(seekEvent(thumbnail, target, juce::ModifierKeys::leftButtonModifier));
+    expectWithinAbsoluteError(thumbnail.getPendingSeekPosition().value_or(-1.0), 0.6, 0.000001);
+    thumbnail.mouseUp(seekEvent(thumbnail, target, 0));
+    expectWithinAbsoluteError(player.getCurrentPosition(), 0.6, 0.000001);
     player.suspend();
 }
 

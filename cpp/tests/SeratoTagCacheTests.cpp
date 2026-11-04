@@ -8,7 +8,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/Sqlite.h"
-#include "gui/NativeWaveformBuilder.h"
+#include "gui/PreviewArtifactDecoder.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagCache.h"
 #include "serato/SeratoTags.h"
