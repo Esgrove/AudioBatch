@@ -22,7 +22,7 @@ mod spectrogram;
 mod waveform_cache;
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
-const ANALYSIS_VERSION: i64 = 13;
+const ANALYSIS_VERSION: i64 = 14;
 
 /// Largest accepted loudness history payload, limiting allocations from untrusted databases to 16 MiB.
 const MAXIMUM_HISTORY_BYTES: usize = 16 * 1024 * 1024;
@@ -188,7 +188,8 @@ impl AnalysisCache {
                         duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
                         overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels,
                         bits_per_sample, status, error_message, custom_gain_db, short_term_loudness,
-                        has_custom_gain, analysis_producer, overload_history
+                        has_custom_gain, analysis_producer, overload_history,
+                        plr_db, psr_db, crest_factor_db, dc_offsets, clip_counts, stereo_correlation
                  FROM file_analysis WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3
                     AND analysis_version = ?4 AND analysis_producer IN ('cpp', 'rust')
                     AND (status IN (1, 2) OR (status = 3 AND analysis_producer = 'rust'))",
@@ -210,7 +211,7 @@ impl AnalysisCache {
                             record.error = Some(AnalysisError::Unsupported);
                             return Ok(Some(record));
                         }
-                        if !valid_measurements(&record) {
+                        if !read_signal_metrics(row, &mut record)? || !valid_measurements(&record) {
                             return Ok(None);
                         }
                         let Some(history) = row
@@ -310,6 +311,12 @@ impl AnalysisCache {
                         custom_gain.is_some(),
                         overload_history,
                         producer_name(record.measurement_producer),
+                        record.signal_metrics.plr_db,
+                        record.signal_metrics.psr_db,
+                        record.signal_metrics.crest_factor_db,
+                        record.signal_metrics.dc_offsets.iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>(),
+                        record.signal_metrics.clip_counts.iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>(),
+                        record.signal_metrics.stereo_correlation,
                     ],
                 )
                 .map_err(CacheError::StoreAnalysis)?;
@@ -650,6 +657,65 @@ fn read_record_row(row: &Row<'_>, record: &mut AnalysisRecord) -> rusqlite::Resu
         None
     };
     Ok(())
+}
+
+/// Reads required bounded source statistics without accepting SQLite text coercions or oversized arrays.
+fn read_signal_metrics(row: &Row<'_>, record: &mut AnalysisRecord) -> rusqlite::Result<bool> {
+    let metrics = &mut record.signal_metrics;
+    for (column, destination) in [
+        (25, &mut metrics.plr_db),
+        (26, &mut metrics.psr_db),
+        (27, &mut metrics.crest_factor_db),
+        (30, &mut metrics.stereo_correlation),
+    ] {
+        *destination = match row.get_ref(column)? {
+            ValueRef::Null => None,
+            ValueRef::Real(value) if value.is_finite() => Some(value),
+            ValueRef::Integer(value) => Some(value as f64),
+            _ => return Ok(false),
+        };
+    }
+    let channels = record.channels as usize;
+    if !(1..=64).contains(&channels) {
+        return Ok(false);
+    }
+    let Ok(offsets) = row.get_ref(28)?.as_blob() else {
+        return Ok(false);
+    };
+    let Ok(counts) = row.get_ref(29)?.as_blob() else {
+        return Ok(false);
+    };
+    let mean_channels = if record.length_in_samples == 0 { 0 } else { channels };
+    if offsets.len() != mean_channels * 8 || counts.len() != channels * 8 {
+        return Ok(false);
+    }
+    metrics.dc_offsets = offsets
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| f64::from_le_bytes(*bytes))
+        .collect();
+    metrics.clip_counts = counts
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|bytes| u64::from_le_bytes(*bytes))
+        .collect();
+    Ok(metrics
+        .dc_offsets
+        .iter()
+        .all(|value| value.is_finite() && value.abs() <= f64::from(f32::MAX))
+        && metrics
+            .clip_counts
+            .iter()
+            .all(|value| *value <= record.length_in_samples)
+        && metrics
+            .stereo_correlation
+            .is_none_or(|value| value.abs() <= 1.0 && channels <= 2)
+        && (channels != 1
+            || metrics
+                .stereo_correlation
+                .is_some_and(|value| (value - 1.0).abs() < f64::EPSILON)))
 }
 
 /// Returns a stored custom gain as decibels, dropping a value that is not a usable gain.

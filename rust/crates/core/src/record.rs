@@ -142,6 +142,8 @@ pub struct AnalysisRecord {
     pub max_short_term_lufs: f64,
     /// Integrated loudness of the whole file, in LUFS.
     pub integrated_lufs: f64,
+    /// Source-only whole-file ratios, channel means, counts, and correlation.
+    pub signal_metrics: crate::signal_metrics::SignalMetrics,
     /// Sample rate in hertz.
     pub sample_rate: u32,
     /// Number of channels.

@@ -9,6 +9,7 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace audiobatch::tests
@@ -42,6 +43,21 @@ public:
             expectEquals(
                 formatFolder(source), formatFolderText(source.getParentDirectory().getFullPathName(), JUCE_MAC != 0)
             );
+        }
+
+        beginTest("Source statistics keep undefined values distinct from zero and name every channel");
+        {
+            expectEquals(formatMetric(std::nullopt), juce::String("-"));
+            expectEquals(formatMetric(1.0, true), juce::String("+1.00"));
+            expectEquals(formatMetric(-0.0001, true), juce::String("+0.00"));
+            expectEquals(formatMetric(3.0102999566), juce::String("3.01"));
+            SignalMetrics metrics;
+            metrics.dcOffsets = {0.25, -0.5};
+            metrics.clipCounts = {4, 3};
+            expectEquals(formatDcOffsets(metrics), juce::String("Ch 1: +25.0000%, Ch 2: -50.0000%"));
+            expectEquals(formatClipCounts(metrics), juce::String("Ch 1: 4, Ch 2: 3"));
+            expectEquals(static_cast<juce::int64>(metrics.totalClips()), juce::int64 {7});
+            expectWithinAbsoluteError(metrics.maximumDcOffset().value_or(-1.0), 0.5, 0.0);
         }
 
         beginTest("Peaks format as dBFS, with silence as -INF");

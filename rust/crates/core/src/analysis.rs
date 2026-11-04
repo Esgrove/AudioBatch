@@ -56,6 +56,7 @@ struct DecodeMeasurements {
     waveform: Arc<WaveformOverview>,
     spectrogram: Option<Arc<SpectrogramData>>,
     overloads: Arc<OverloadHistory>,
+    signal_metrics: crate::signal_metrics::SignalMetrics,
 }
 
 impl MeasurementError {
@@ -126,6 +127,7 @@ pub fn analyze_file_with_observer(
             record.overall_true_peak = true_peaks.overall;
             record.max_short_term_lufs = measurements.max_short_term_lufs;
             record.integrated_lufs = measurements.integrated_lufs;
+            record.signal_metrics = measurements.signal_metrics;
             record.short_term_loudness = Some(measurements.short_term_loudness);
             record.waveform = Some(measurements.waveform);
             record.spectrogram = measurements.spectrogram;
@@ -195,6 +197,7 @@ pub(crate) fn record_from_meter(
     record.true_peak_right = true_peaks.right;
     record.overall_true_peak = true_peaks.overall;
     record.integrated_lufs = output.integrated_lufs;
+    record.signal_metrics = output.signal_metrics;
     record.max_short_term_lufs = output.max_short_term_lufs;
     record.short_term_loudness = Some(Arc::new(ShortTermLoudnessHistory {
         values: output.history,
@@ -267,6 +270,7 @@ fn measure_file(
         signed_peaks: output.signed_peaks,
         true_peaks: output.true_peaks,
         integrated_lufs: output.integrated_lufs,
+        signal_metrics: output.signal_metrics,
         max_short_term_lufs: output.max_short_term_lufs,
         short_term_loudness,
         waveform: output.waveform,

@@ -58,11 +58,17 @@ const SELECTION_BACKGROUND: u32 = 0x76A8_DA38;
 
 /// Columns hidden until the user shows them.
 /// The Folder column shows where a file is more compactly than Path, which stays available from the Columns menu.
-pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 4] = [
+pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 10] = [
     ColumnKey::Path,
     ColumnKey::PeakLeft,
     ColumnKey::PeakRight,
     ColumnKey::Gain,
+    ColumnKey::Plr,
+    ColumnKey::Psr,
+    ColumnKey::Crest,
+    ColumnKey::Dc,
+    ColumnKey::Clips,
+    ColumnKey::Correlation,
 ];
 
 /// Font size of the column titles.
@@ -99,7 +105,7 @@ const STATUS_MAXIMUM_WIDTH: f32 = 8192.0;
 /// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
 /// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
 /// These are preferred widths, which automatic sizing adjusts to fit the visible columns in the window.
-const COLUMNS: [ColumnSpec; 16] = [
+const COLUMNS: [ColumnSpec; 22] = [
     column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
     column_spec(
         ColumnKey::Folder,
@@ -156,6 +162,48 @@ const COLUMNS: [ColumnSpec; 16] = [
         78.0,
         true,
     ),
+    column_spec(
+        ColumnKey::Plr,
+        "PLR",
+        "Source true peak minus integrated loudness, dB",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::Psr,
+        "PSR",
+        "Source whole-file true peak minus maximum short-term loudness, dB",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::Crest,
+        "Crest",
+        "Source sample peak to unweighted whole-file RMS, dB",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::Dc,
+        "DC",
+        "Largest absolute source channel mean, percent full scale",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::Clips,
+        "Clips",
+        "Source samples with magnitude at least one, summed across channels",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::Correlation,
+        "Corr",
+        "Source whole-file centered Pearson correlation, mono +1",
+        76.0,
+        true,
+    ),
     column_spec(ColumnKey::Gain, "Gain", "Per-file gain in dB", 76.0, true),
     column_spec(ColumnKey::Status, "Status", "Analysis status", 180.0, false),
 ];
@@ -192,6 +240,12 @@ pub enum ColumnKey {
     TruePeak,
     ShortTerm,
     Integrated,
+    Plr,
+    Psr,
+    Crest,
+    Dc,
+    Clips,
+    Correlation,
     Gain,
     Status,
 }
@@ -1439,7 +1493,15 @@ impl TableDelegate for ResultsDelegate {
         // The Status cell shows a failure reason or a notice as its tooltip, because the cell is too narrow for it.
         let status_tooltip = row
             .filter(|_| key == ColumnKey::Status)
-            .and_then(ResultRow::status_tooltip);
+            .and_then(ResultRow::status_tooltip)
+            .or_else(|| {
+                let record = row?.ready_record()?;
+                match key {
+                    ColumnKey::Clips => Some(audiobatch_core::format::format_clip_counts(&record.signal_metrics)),
+                    ColumnKey::Dc => Some(audiobatch_core::format::format_dc_offsets(&record.signal_metrics)),
+                    _ => None,
+                }
+            });
         let cell = match status_tooltip {
             Some(message) => cell.tooltip(tooltip(message)),
             None => cell,
@@ -1645,6 +1707,12 @@ const fn column_id(key: ColumnKey) -> &'static str {
         ColumnKey::TruePeak => "true_peak",
         ColumnKey::ShortTerm => "short_term",
         ColumnKey::Integrated => "integrated",
+        ColumnKey::Plr => "plr",
+        ColumnKey::Psr => "psr",
+        ColumnKey::Crest => "crest",
+        ColumnKey::Dc => "dc",
+        ColumnKey::Clips => "clips",
+        ColumnKey::Correlation => "correlation",
         ColumnKey::Gain => "custom_gain",
         ColumnKey::Status => "status",
     }
@@ -1663,6 +1731,23 @@ fn level_text(record: &AnalysisRecord, key: ColumnKey) -> String {
         ColumnKey::TruePeak => format_true_peak_compact(record.overall_true_peak),
         ColumnKey::ShortTerm => format_loudness_compact(record.max_short_term_lufs),
         ColumnKey::Integrated => format_loudness_compact(record.integrated_lufs),
+        ColumnKey::Plr => audiobatch_core::format::format_metric(record.signal_metrics.plr_db, false),
+        ColumnKey::Psr => audiobatch_core::format::format_metric(record.signal_metrics.psr_db, false),
+        ColumnKey::Crest => audiobatch_core::format::format_metric(record.signal_metrics.crest_factor_db, false),
+        ColumnKey::Dc => audiobatch_core::format::format_metric(
+            record.signal_metrics.maximum_dc_offset().map(|value| value * 100.0),
+            false,
+        ),
+        ColumnKey::Clips => {
+            if record.signal_metrics.clip_counts.is_empty() {
+                "-".into()
+            } else {
+                record.signal_metrics.total_clips().to_string()
+            }
+        }
+        ColumnKey::Correlation => {
+            audiobatch_core::format::format_metric(record.signal_metrics.stereo_correlation, true)
+        }
         ColumnKey::Gain => format_custom_gain_compact(record),
         ColumnKey::Name | ColumnKey::Folder | ColumnKey::Path | ColumnKey::Type | ColumnKey::Status => String::new(),
     }
@@ -1712,6 +1797,26 @@ fn compare_column(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orde
             .abs()
             .total_cmp(&second_record.overall_peak.abs()),
         ColumnKey::Integrated => first_record.integrated_lufs.total_cmp(&second_record.integrated_lufs),
+        ColumnKey::Clips => first_record
+            .signal_metrics
+            .total_clips()
+            .cmp(&second_record.signal_metrics.total_clips()),
+        ColumnKey::Plr | ColumnKey::Psr | ColumnKey::Crest | ColumnKey::Dc | ColumnKey::Correlation => {
+            let value = |record: &AnalysisRecord| match key {
+                ColumnKey::Plr => record.signal_metrics.plr_db,
+                ColumnKey::Psr => record.signal_metrics.psr_db,
+                ColumnKey::Crest => record.signal_metrics.crest_factor_db,
+                ColumnKey::Dc => record.signal_metrics.maximum_dc_offset(),
+                ColumnKey::Correlation => record.signal_metrics.stereo_correlation,
+                _ => None,
+            };
+            match (value(first_record), value(second_record)) {
+                (Some(first), Some(second)) => first.total_cmp(&second),
+                (Some(_), None) => Ordering::Greater,
+                (None, Some(_)) => Ordering::Less,
+                (None, None) => Ordering::Equal,
+            }
+        }
         ColumnKey::Status => first.status_text().cmp(&second.status_text()),
         ColumnKey::PeakLeft => first_record.peak_left.abs().total_cmp(&second_record.peak_left.abs()),
         ColumnKey::PeakRight => first_record.peak_right.abs().total_cmp(&second_record.peak_right.abs()),
@@ -2443,6 +2548,12 @@ mod test_column_visibility_and_sort {
                 ColumnKey::Path,
                 ColumnKey::PeakLeft,
                 ColumnKey::PeakRight,
+                ColumnKey::Plr,
+                ColumnKey::Psr,
+                ColumnKey::Crest,
+                ColumnKey::Dc,
+                ColumnKey::Clips,
+                ColumnKey::Correlation,
                 ColumnKey::Gain
             ]
         );
@@ -2514,7 +2625,17 @@ mod test_column_visibility_and_sort {
         assert!(!column_keys(&delegate).contains(&String::from("path")));
         assert_eq!(
             delegate.hidden_columns(),
-            [ColumnKey::Path, ColumnKey::PeakRight, ColumnKey::Gain]
+            [
+                ColumnKey::Path,
+                ColumnKey::PeakRight,
+                ColumnKey::Plr,
+                ColumnKey::Psr,
+                ColumnKey::Crest,
+                ColumnKey::Dc,
+                ColumnKey::Clips,
+                ColumnKey::Correlation,
+                ColumnKey::Gain
+            ]
         );
         delegate.set_column_visible(ColumnKey::Folder, false);
         assert!(!column_keys(&delegate).contains(&String::from("folder")));

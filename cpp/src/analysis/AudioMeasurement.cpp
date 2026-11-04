@@ -82,6 +82,10 @@ struct AudioMeasurementState {
         meter(createLoudnessState(channels, rate)),
         interleaved(static_cast<std::size_t>(channels) * static_cast<std::size_t>(partial.getNumSamples()), 0.0f),
         maximums(static_cast<std::size_t>(channels), 0.0f),
+        means(static_cast<std::size_t>(channels), 0.0),
+        moments(static_cast<std::size_t>(channels), 0.0),
+        energies(static_cast<std::size_t>(channels), 0.0),
+        clips(static_cast<std::size_t>(channels), 0),
         minimums(static_cast<std::size_t>(channels), 0.0f),
         flags(static_cast<std::size_t>(channels), 0)
     {
@@ -129,6 +133,7 @@ struct AudioMeasurementState {
                 utils::logWarn("Waveform processing failed: {}", utils::describeCurrentException());
             }
         }
+        measureSignalMetrics(samples, offset, frames);
         const auto channels = minimums.size();
         for (std::size_t channel = 0; channel < channels; ++channel) {
             const std::span plane(
@@ -168,6 +173,67 @@ struct AudioMeasurementState {
         maxShortTerm = std::max(maxShortTerm, normalized);
         history->values.push_back(static_cast<float>(normalized));
         return {};
+    }
+
+    /// Updates fixed-size source moments in frame order, without touching loudness or peak calculations.
+    void measureSignalMetrics(const juce::AudioBuffer<float>& samples, const int offset, const int frames)
+    {
+        for (int frame = 0; frame < frames; ++frame) {
+            ++statisticFrames;
+            double leftDelta = 0.0;
+            for (std::size_t channel = 0; channel < means.size(); ++channel) {
+                const auto sample = static_cast<double>(samples.getSample(static_cast<int>(channel), offset + frame));
+                const auto delta = sample - means[channel];
+                means[channel] += delta / static_cast<double>(statisticFrames);
+                moments[channel] = std::fma(delta, sample - means[channel], moments[channel]);
+                energies[channel] = std::fma(sample, sample, energies[channel]);
+                clips[channel] += std::abs(sample) >= 1.0 ? 1U : 0U;
+                if (channel == 0) {
+                    leftDelta = delta;
+                } else if (channel == 1) {
+                    covariance = std::fma(leftDelta, sample - means[channel], covariance);
+                }
+            }
+        }
+    }
+
+    /// Reduces source-only statistics from bounded moments and the finalized native peak/loudness scalars.
+    [[nodiscard]] SignalMetrics finishSignalMetrics(const AudioAnalysisRecord& record) const
+    {
+        const auto ratio = [&](const double loudness) -> std::optional<double> {
+            if (record.overallTruePeak <= 0.0 || loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+                return std::nullopt;
+            }
+            const auto value = std::fma(20.0, std::log10(record.overallTruePeak), -loudness);
+            return std::isfinite(value) ? std::optional(value) : std::nullopt;
+        };
+        SignalMetrics metrics;
+        metrics.plrDb = ratio(record.integratedLufs);
+        metrics.psrDb = ratio(record.maxShortTermLufs);
+        double energy = 0.0;
+        for (const auto value : energies) {
+            energy += value;
+        }
+        const auto rms = std::sqrt(energy / (static_cast<double>(record.lengthInSamples) * record.channels));
+        if (rms > 0.0 && std::abs(record.overallPeak) > 0.0f) {
+            const auto value = 20.0 * std::log10(std::abs(static_cast<double>(record.overallPeak)) / rms);
+            if (std::isfinite(value)) {
+                metrics.crestFactorDb = value;
+            }
+        }
+        if (record.lengthInSamples > 0) {
+            metrics.dcOffsets = means;
+        }
+        metrics.clipCounts = clips;
+        if (record.channels == 1) {
+            metrics.stereoCorrelation = 1.0;
+        } else if (record.channels == 2 && moments[0] > 0.0 && moments[1] > 0.0) {
+            const auto value = covariance / (std::sqrt(moments[0]) * std::sqrt(moments[1]));
+            if (std::isfinite(value)) {
+                metrics.stereoCorrelation = std::clamp(value, -1.0, 1.0);
+            }
+        }
+        return metrics;
     }
 
     /// Finalizes the optional preview independently of the required measurement result.
@@ -222,6 +288,18 @@ struct AudioMeasurementState {
     std::vector<float> interleaved;
     /// Per-channel positive sample extremes.
     std::vector<float> maximums;
+    /// Per-channel online arithmetic means.
+    std::vector<double> means;
+    /// Per-channel centered second moments for stable correlation.
+    std::vector<double> moments;
+    /// Per-channel unweighted energy, including DC.
+    std::vector<double> energies;
+    /// Full-scale sample counts by channel.
+    std::vector<std::uint64_t> clips;
+    /// Centered stereo cross moment.
+    double covariance {0.0};
+    /// Number of source frames accumulated in the moments.
+    std::uint64_t statisticFrames {0};
     /// Per-channel negative sample extremes.
     std::vector<float> minimums;
     /// Per-channel overload flags of the current interval.
@@ -400,6 +478,7 @@ std::expected<AudioAnalysisRecord, juce::String> AudioMeasurement::finish()
     }
     record.integratedLufs = normalizeLoudness(integrated);
     record.maxShortTermLufs = measurement.maxShortTerm;
+    record.signalMetrics = measurement.finishSignalMetrics(record);
     record.shortTermLoudness = std::move(measurement.history);
     record.overloads = measurement.overloads.finish();
     record.status = AudioAnalysisStatus::analyzed;

@@ -117,6 +117,16 @@ AudioInfoDetails formatInfoDetails(const AudioAnalysisRecord& record, const sera
         }
         appendTechnicalValue(details.audio, "Sample rate", formatSampleRateDisplay(record));
         appendTechnicalValue(details.audio, "Bitrate", formatBitrateDisplay(record));
+        const auto& metrics = record.signalMetrics;
+        details.dynamics = utils::format(
+            "PLR {} dB · PSR {} dB · Crest {} dB",
+            formatMetric(metrics.plrDb),
+            formatMetric(metrics.psrDb),
+            formatMetric(metrics.crestFactorDb)
+        );
+        details.dcOffsets = formatDcOffsets(metrics);
+        details.clips = utils::format("{} total, {}", metrics.totalClips(), formatClipCounts(metrics));
+        details.correlation = formatMetric(metrics.stereoCorrelation, true);
     }
     if (data == nullptr) {
         return details;
@@ -733,7 +743,15 @@ void AudioInfoPanel::setDetails(const AudioInfoDetails& details)
         detailRowsVisible[index / AUDIO_INFO_COLUMN_COUNT]
             = detailRowsVisible[index / AUDIO_INFO_COLUMN_COUNT] || cell.isVisible();
     }
-    const std::array tags {&details.genre, &details.album, &details.comment};
+    const std::array tags {
+        &details.dynamics,
+        &details.dcOffsets,
+        &details.clips,
+        &details.correlation,
+        &details.genre,
+        &details.album,
+        &details.comment,
+    };
     for (std::size_t index = 0; index < tagValues.size(); ++index) {
         auto& value = tagValues[index];
         value.setText(*tags[index], juce::dontSendNotification);

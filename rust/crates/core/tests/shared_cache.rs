@@ -373,6 +373,29 @@ fn deterministic_spectral_codec_is_byte_exact_in_both_directions() {
     }
 }
 
+/// Compares source statistics across producers for identical lossless PCM, retaining decoder-specific lossy reporting.
+fn assert_source_metrics(first: &audiobatch_core::AnalysisRecord, second: &audiobatch_core::AnalysisRecord) {
+    assert_eq!(first.signal_metrics.clip_counts, second.signal_metrics.clip_counts);
+    if !first
+        .path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp3"))
+    {
+        for (first, second) in first
+            .signal_metrics
+            .dc_offsets
+            .iter()
+            .zip(&second.signal_metrics.dc_offsets)
+        {
+            assert!((first - second).abs() < 1e-12);
+        }
+        assert_eq!(
+            first.signal_metrics.stereo_correlation,
+            second.signal_metrics.stereo_correlation
+        );
+    }
+}
+
 /// Verifies both real cache implementations reuse each other's measurements while preserving independent artifacts.
 #[test]
 fn both_implementations_reuse_the_other_producers_measurements() {
@@ -401,6 +424,7 @@ fn both_implementations_reuse_the_other_producers_measurements() {
         );
         let native = analyze_file(&source, &|| false, &mut |_| {});
         assert!(native.is_ready(), "{}", native.error_message);
+        assert_source_metrics(&foreign, &native);
         cache.store_analysis(&native).expect("writes Rust measurements");
         assert!(
             cache.get_waveform(&source).is_some(),

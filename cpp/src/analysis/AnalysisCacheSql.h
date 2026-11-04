@@ -38,6 +38,12 @@ constexpr int hasCustomGain {21};
 constexpr int shortTermLoudness {22};
 constexpr int overloadHistory {23};
 constexpr int measurementProducer {24};
+constexpr int plrDb {25};
+constexpr int psrDb {26};
+constexpr int crestFactorDb {27};
+constexpr int dcOffsets {28};
+constexpr int clipCounts {29};
+constexpr int stereoCorrelation {30};
 }  // namespace analysis_column
 
 /// One-based bind parameter indices for the analysis record upsert in AnalysisCache::storeAnalysis.
@@ -73,9 +79,15 @@ constexpr int hasCustomGain {26};
 constexpr int shortTermLoudness {27};
 constexpr int overloadHistory {28};
 constexpr int measurementProducer {29};
-constexpr int observedSourcePresent {30};
-constexpr int observedFileSize {31};
-constexpr int observedModifiedTimeMs {32};
+constexpr int plrDb {30};
+constexpr int psrDb {31};
+constexpr int crestFactorDb {32};
+constexpr int dcOffsets {33};
+constexpr int clipCounts {34};
+constexpr int stereoCorrelation {35};
+constexpr int observedSourcePresent {36};
+constexpr int observedFileSize {37};
+constexpr int observedModifiedTimeMs {38};
 }  // namespace analysis_parameter
 
 /// One-based bind parameter indices for the waveform UPDATE in AnalysisCache::storeWaveformData.

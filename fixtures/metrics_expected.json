@@ -1,0 +1,309 @@
+{
+  "fixtures": [
+    {
+      "fixture": "sine_mono_24000_16.wav",
+      "crestFactorDb": 3.010299708565955,
+      "dcOffsets": [
+        0.0
+      ],
+      "clipCounts": [
+        0
+      ],
+      "stereoCorrelation": 1.0,
+      "plrDb": -0.03252106585578751,
+      "psrDb": 4.738765543932391
+    },
+    {
+      "fixture": "sine_stereo_44100_16.wav",
+      "crestFactorDb": 3.0102621456811574,
+      "dcOffsets": [
+        0.0,
+        0.0
+      ],
+      "clipCounts": [
+        0,
+        0
+      ],
+      "stereoCorrelation": 1.0,
+      "plrDb": -0.0047757657490894445,
+      "psrDb": 4.766513838134496
+    },
+    {
+      "fixture": "stereo_split_44100_16.wav",
+      "crestFactorDb": 5.051471470897969,
+      "dcOffsets": [
+        0.0,
+        0.0
+      ],
+      "clipCounts": [
+        0,
+        0
+      ],
+      "stereoCorrelation": -7.8226450305871e-07,
+      "plrDb": 2.16571928658574,
+      "psrDb": 6.937072229065593
+    },
+    {
+      "fixture": "silence_stereo_44100_16.wav",
+      "crestFactorDb": null,
+      "dcOffsets": [
+        0.0,
+        0.0
+      ],
+      "clipCounts": [
+        0,
+        0
+      ],
+      "stereoCorrelation": null,
+      "plrDb": null,
+      "psrDb": null
+    }
+  ],
+  "signals": [
+    {
+      "name": "mono",
+      "planes": [
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ]
+      ],
+      "crestFactorDb": 3.4198860334288756,
+      "dcOffsets": [
+        0.03125
+      ],
+      "clipCounts": [
+        4
+      ],
+      "stereoCorrelation": 1.0
+    },
+    {
+      "name": "identical",
+      "planes": [
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ],
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ]
+      ],
+      "crestFactorDb": 3.4198860334288756,
+      "dcOffsets": [
+        0.03125,
+        0.03125
+      ],
+      "clipCounts": [
+        4,
+        4
+      ],
+      "stereoCorrelation": 1.0
+    },
+    {
+      "name": "inverted",
+      "planes": [
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ],
+        [
+          1.25,
+          1.0,
+          0.5,
+          -0.0,
+          -0.5,
+          -1.0,
+          -1.25,
+          -0.25
+        ]
+      ],
+      "crestFactorDb": 3.4198860334288756,
+      "dcOffsets": [
+        0.03125,
+        -0.03125
+      ],
+      "clipCounts": [
+        4,
+        4
+      ],
+      "stereoCorrelation": -1.0
+    },
+    {
+      "name": "dc",
+      "planes": [
+        [
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25
+        ],
+        [
+          -0.5,
+          -0.5,
+          -0.5,
+          -0.5,
+          -0.5,
+          -0.5,
+          -0.5,
+          -0.5
+        ]
+      ],
+      "crestFactorDb": 2.041199826559248,
+      "dcOffsets": [
+        0.25,
+        -0.5
+      ],
+      "clipCounts": [
+        0,
+        0
+      ],
+      "stereoCorrelation": null
+    },
+    {
+      "name": "one_silent",
+      "planes": [
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "crestFactorDb": 6.430185990068688,
+      "dcOffsets": [
+        0.03125,
+        0.0
+      ],
+      "clipCounts": [
+        4,
+        0
+      ],
+      "stereoCorrelation": null
+    },
+    {
+      "name": "silence",
+      "planes": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "crestFactorDb": null,
+      "dcOffsets": [
+        0.0,
+        0.0
+      ],
+      "clipCounts": [
+        0,
+        0
+      ],
+      "stereoCorrelation": null
+    },
+    {
+      "name": "multichannel",
+      "planes": [
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ],
+        [
+          -1.25,
+          -1.0,
+          -0.5,
+          0.0,
+          0.5,
+          1.0,
+          1.25,
+          0.25
+        ],
+        [
+          1.25,
+          1.0,
+          0.5,
+          -0.0,
+          -0.5,
+          -1.0,
+          -1.25,
+          -0.25
+        ]
+      ],
+      "crestFactorDb": 3.4198860334288756,
+      "dcOffsets": [
+        0.03125,
+        0.03125,
+        -0.03125
+      ],
+      "clipCounts": [
+        4,
+        4,
+        4
+      ],
+      "stereoCorrelation": null
+    }
+  ]
+}

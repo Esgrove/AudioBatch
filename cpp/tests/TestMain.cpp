@@ -192,7 +192,13 @@ std::optional<int> runSharedCacheHelper(const juce::StringArray& arguments)
     }
     if (mode == "read-rust") {
         const auto record = cache.getAnalysis(source);
-        return record && record->fromCache && !record->hasError()
+        const auto native = analyzeFile(source);
+        const auto metricsValid = record && record->signalMetrics.clipCounts == native.signalMetrics.clipCounts
+            && record->signalMetrics.dcOffsets.size() == static_cast<std::size_t>(record->channels)
+            && (record->channels != 1
+                || (record->signalMetrics.stereoCorrelation
+                    && juce::approximatelyEqual(*record->signalMetrics.stereoCorrelation, 1.0)));
+        return record && record->fromCache && !record->hasError() && metricsValid
                 && record->measurementProducer == MeasurementProducer::rust
             ? 0
             : 1;

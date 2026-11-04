@@ -46,6 +46,35 @@ int comparePeaks(const Value left, const Value right)
     return compareValues(std::abs(left), std::abs(right));
 }
 
+/// Selects one nullable source metric for numeric ordering without parsing display strings.
+std::optional<double> sourceMetricValue(const SignalMetrics& metrics, const AudioFileTableColumn column)
+{
+    if (column == AudioFileTableColumn::plr) {
+        return metrics.plrDb;
+    }
+    if (column == AudioFileTableColumn::psr) {
+        return metrics.psrDb;
+    }
+    if (column == AudioFileTableColumn::crestFactor) {
+        return metrics.crestFactorDb;
+    }
+    if (column == AudioFileTableColumn::dcOffset) {
+        return metrics.maximumDcOffset();
+    }
+    return metrics.stereoCorrelation;
+}
+
+/// Orders absent metrics before finite source values.
+int compareSourceMetrics(const SignalMetrics& left, const SignalMetrics& right, const AudioFileTableColumn column)
+{
+    const auto first = sourceMetricValue(left, column);
+    const auto second = sourceMetricValue(right, column);
+    if (first.has_value() != second.has_value()) {
+        return first ? 1 : -1;
+    }
+    return first ? compareValues(*first, *second) : 0;
+}
+
 /// Three-way comparison by average bitrate.
 int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
@@ -141,6 +170,20 @@ int compareRecordsByColumn(
         case AudioFileTableColumn::integratedLufs:
             return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
 
+        case AudioFileTableColumn::plr:
+        case AudioFileTableColumn::psr:
+        case AudioFileTableColumn::crestFactor:
+        case AudioFileTableColumn::dcOffset:
+        case AudioFileTableColumn::correlation:
+            return compareSourceMetrics(lhs.signalMetrics, rhs.signalMetrics, column);
+        case AudioFileTableColumn::clips: {
+            const auto left = lhs.signalMetrics.totalClips();
+            const auto right = rhs.signalMetrics.totalClips();
+            if (left < right) {
+                return -1;
+            }
+            return left > right ? 1 : 0;
+        }
         case AudioFileTableColumn::customGain: {
             if (lhs.customGain.has_value() != rhs.customGain.has_value()) {
                 return lhs.customGain ? 1 : -1;

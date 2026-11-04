@@ -12,6 +12,7 @@
 #include <fmt/base.h>
 
 #include <cmath>
+#include <optional>
 #include <vector>
 
 namespace audiobatch::cli
@@ -27,7 +28,9 @@ constexpr int cliLoudnessColumnWidth {8};
 /// Most decimals a number has in the CSV and JSON output.
 /// Levels are rounded to two decimals and durations to milliseconds,
 /// and the limit keeps the binary rounding error of those values out of the text.
-constexpr int machineReadableDecimalPlaces {3};
+constexpr int machineReadableDecimalPlaces {6};
+/// Precision used for signed channel means and correlation in machine-readable output.
+constexpr double SOURCE_STATISTIC_SCALE {1'000'000.0};
 
 /// Returns the JSON options that write numbers with at most the machine-readable number of decimals.
 juce::JSON::FormatOptions machineReadableJsonOptions()
@@ -38,7 +41,9 @@ juce::JSON::FormatOptions machineReadableJsonOptions()
 /// Returns the CSV text of one field value, writing a number the same way as the JSON output does.
 juce::String csvFieldText(const juce::var& value)
 {
-    return value.isDouble() ? juce::JSON::toString(value, machineReadableJsonOptions()) : value.toString();
+    return value.isDouble() || value.isArray()
+        ? juce::JSON::toString(value, machineReadableJsonOptions().withSpacing(juce::JSON::Spacing::none))
+        : value.toString();
 }
 
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
@@ -144,6 +149,27 @@ juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& record)
     object->setProperty("truePeakDbtp", decibelsOrNull(record.overallTruePeak));
     object->setProperty("integratedLufs", loudnessOrNull(record.integratedLufs));
     object->setProperty("maxShortTermLufs", loudnessOrNull(record.maxShortTermLufs));
+    const auto rounded = [](const std::optional<double> value, const double scale) -> juce::var {
+        return value && std::isfinite(*value) ? juce::var(std::round(*value * scale) / scale) : juce::var();
+    };
+    const auto& metrics = record.signalMetrics;
+    object->setProperty("plrDb", rounded(metrics.plrDb, 100.0));
+    object->setProperty("psrDb", rounded(metrics.psrDb, 100.0));
+    object->setProperty("crestFactorDb", rounded(metrics.crestFactorDb, 100.0));
+    juce::Array<juce::var> offsets;
+    for (const auto value : metrics.dcOffsets) {
+        offsets.add(rounded(value, SOURCE_STATISTIC_SCALE));
+    }
+    juce::Array<juce::var> counts;
+    for (const auto value : metrics.clipCounts) {
+        counts.add(juce::var(static_cast<juce::int64>(value)));
+    }
+    object->setProperty("dcOffsets", offsets);
+    object->setProperty("clipCounts", counts);
+    object->setProperty(
+        "clipsTotal", record.isReady() ? juce::var(static_cast<juce::int64>(metrics.totalClips())) : juce::var()
+    );
+    object->setProperty("stereoCorrelation", rounded(metrics.stereoCorrelation, SOURCE_STATISTIC_SCALE));
     object->setProperty("status", formatStatus(record).toLowerCase());
     object->setProperty("error", record.errorMessage);
     return object;

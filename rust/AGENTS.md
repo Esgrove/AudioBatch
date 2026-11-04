@@ -72,6 +72,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
     `meter.rs` groups the decoded chunks into the blocks that feed the measurements.
+    `signal_metrics.rs` uses bounded channel moments for source-only PLR, PSR, unweighted crest factor,
+    signed DC means, full-scale sample counts, and centered stereo correlation, separate from gain predictions.
     `loudness/k_weighting.rs` holds the combined fourth order K-weighting filter,
     `loudness/gating.rs` the weighted block-energy windows and integrated gates,
     and `loudness/true_peak.rs` the SIMD interpolator.
@@ -231,7 +233,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Keep header and frame-count validation, without a full output re-decode.
   Fuse one `f32` gain multiplication into the writer, without a scaled copy or per-chunk plane-reference `Vec`.
   An in-place file already at target returns the current record after cancellation and source-identity checks.
-- Shared measurement contract version 13 is coordinated with the C++ cache.
+- Shared measurement contract version 14 is coordinated with the C++ cache.
   A measurement-affecting change in either implementation requires a coordinated invalidation.
   Preserve same-identity custom gains, including explicit clears, and compatible previews when refilling measurements.
   Keep ebur128 as a development dependency only.

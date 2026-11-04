@@ -229,9 +229,10 @@ The cache key is the file path, and a cached row only counts while source size, 
 and the coordinated measurement contract still match.
 Both applications read and write `file_analysis` in the main AudioBatch `analysis.db`.
 On macOS it lives at `~/Library/AudioBatch/analysis.db`, and on Windows at `%APPDATA%\\AudioBatch\\analysis.db`.
-Contract version 13 accepts either producer's successful measurements with validated stream geometry and histories.
+Contract version 14 accepts either producer's successful measurements with validated stream geometry,
+histories, source ratios, DC offsets, clip counts, and centered correlation.
 The loudness-history and `OVLD` overload encodings are shared, but decoder failures remain producer-specific.
-Known-compatible C++ measurements migrate without discarding gains or compatible previews.
+Older measurements refill to collect required source statistics without discarding gains or compatible previews.
 Unknown or malformed required measurements refill normally.
 Same-source UPSERTs preserve the database's latest gain, including explicit clears, and compatible native artifacts.
 Gain and artifact writes never change the producer of the measurements.
@@ -293,6 +294,11 @@ sequenceDiagram
 - It accepts planar chunks from decoding or PCM output writing and measures fixed intervals,
   borrowing complete intervals and buffering only those that cross chunk boundaries.
   Its final reduction supplies the same record fields to all three services.
+  Bounded per-channel online moments collect signed DC means, unweighted RMS, full-scale sample counts,
+  and centered stereo correlation without retaining audio or changing existing peak/loudness operation order.
+  PLR and PSR subtract integrated and maximum short-term loudness from whole-file true peak in dBTP.
+  Crest factor uses the unweighted RMS over every channel sample, including DC.
+  These source statistics stay separate from gain-adjusted display estimates and overload flags.
 - `measureDecodedAudio` reads blocks of a tenth of a second, which keeps the short-term loudness history at 10 Hz.
   `DecodeFailureTracker` tolerates a failed final block and isolated failed blocks,
   and fails the file after three failed blocks in a row.

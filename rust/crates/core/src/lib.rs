@@ -33,6 +33,7 @@ pub mod operation;
 pub mod output_file;
 pub mod overload;
 pub mod record;
+pub mod signal_metrics;
 #[doc(hidden)]
 pub mod signals;
 pub mod sorting;

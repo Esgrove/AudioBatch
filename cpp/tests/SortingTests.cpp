@@ -25,7 +25,7 @@ namespace
 static_assert(!tableColumnFromId(0).has_value());
 static_assert(tableColumnFromId(1) == AudioFileTableColumn::name);
 static_assert(tableColumnFromId(std::to_underlying(AudioFileTableColumn::length)) == AudioFileTableColumn::length);
-static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::folder) + 1).has_value());
+static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::correlation) + 1).has_value());
 static_assert(toColumnId(AudioFileTableColumn::status) == std::to_underlying(AudioFileTableColumn::status));
 static_assert(toColumnId(std::nullopt) == 0);
 static_assert(!fileMenuItemFromId(0).has_value());

@@ -27,6 +27,40 @@ Folder shows the parent directory without the file name.
 On macOS, user-home prefixes become `~/`, while `/Users/Shared` and non-home folders stay absolute.
 Windows keeps the full parent path. Sorting uses the full parent path in natural order, then the file name.
 
+## Source statistics
+
+Both applications measure these in the existing streaming decode or quantized-output render pass:
+
+- PLR is whole-file true peak in dBTP minus integrated LUFS.
+- PSR is whole-file true peak in dBTP minus maximum short-term LUFS.
+  It is a ratio of independent whole-file extrema, not the maximum of a time-local peak-to-short-term curve.
+  Short-term loudness retains the meter's three-second window and zero-filled startup for short files.
+- Crest factor is sample peak divided by unweighted whole-file RMS, expressed in dB.
+  RMS averages squared samples across all channels, includes DC, and has no loudness gating or mono weighting.
+- DC offset is the signed arithmetic mean of each decoded channel, in linear full-scale units.
+  The compact DC column shows the largest absolute channel mean as percent full scale.
+- Clips counts samples with absolute amplitude at least 1.0, including exact positive and negative full scale.
+  Clips is summed across channels, not affected frames or contiguous events, with channel counts in its tooltip.
+  It identifies full-scale samples, not proof of analog clipping or an audible defect.
+  The existing waveform sample-over flags remain strictly above 1.0 and are a different measurement.
+- Correlation is the whole-file centered Pearson coefficient of stereo channels, clamped to [-1, +1].
+  Mono reports +1, including silence. Stereo silence or a constant channel has zero variance and is undefined.
+  Multichannel correlation is absent. Correlation describes linear co-variation, not stereo width or sound quality.
+
+Undefined ratios and coefficients show a dash and use SQL NULL and JSON null, with empty CSV scalar fields.
+Channel arrays are JSON arrays in both JSON and CSV, with CSV quoting applied normally.
+The new fields are `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `clipsTotal`, and `stereoCorrelation`.
+Ratios use two decimal places of precision, DC and correlation use six, and counts are integers.
+Source values never inherit custom-gain or limiter predictions.
+The inspector labels them Source, and the six optional table columns are hidden by default.
+Normalized and plugin-rendered output records describe the actual quantized output samples.
+
+Shared measurement contract 14 adds nullable scalar columns and bounded little-endian channel arrays:
+`dc_offsets` contains one IEEE binary64 per channel, and `clip_counts` one unsigned 64-bit count per channel.
+Older measurements refill on demand without discarding same-source gains or compatible previews.
+`../fixtures/metrics_expected.py --check` verifies the independent NumPy expectations read by both test suites.
+Online centered moments and energy sums use bounded per-channel state, with no audio retained for these statistics.
+
 ## Processing performance
 
 Normalization and plugin processing measure the exact quantized PCM while writing the final AIFF,

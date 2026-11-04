@@ -207,6 +207,35 @@ pub fn render_info_panel(
     }
     let formatted = info_details(ready, tags);
     details = details.child(details_grid(&formatted));
+    if let Some(record) = ready {
+        let metrics = &record.signal_metrics;
+        for (field, value) in [
+            (
+                "Source",
+                format!(
+                    "PLR {} dB · PSR {} dB · Crest {} dB",
+                    audiobatch_core::format::format_metric(metrics.plr_db, false),
+                    audiobatch_core::format::format_metric(metrics.psr_db, false),
+                    audiobatch_core::format::format_metric(metrics.crest_factor_db, false)
+                ),
+            ),
+            ("DC", audiobatch_core::format::format_dc_offsets(metrics)),
+            (
+                "Clips",
+                format!(
+                    "{} total, {}",
+                    metrics.total_clips(),
+                    audiobatch_core::format::format_clip_counts(metrics)
+                ),
+            ),
+            (
+                "Corr",
+                audiobatch_core::format::format_metric(metrics.stereo_correlation, true),
+            ),
+        ] {
+            details = details.child(tag_block(field, value, true));
+        }
+    }
     for (field, value, wrap) in [
         ("Genre", formatted.genre, false),
         ("Album", formatted.album, true),

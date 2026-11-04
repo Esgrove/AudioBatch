@@ -10,7 +10,7 @@ use crate::record::{MeasurementProducer, same_custom_gain};
 use crate::tags::SeratoOverviewState;
 use crate::test_helpers::{analyze_fixture_copy, temporary_cache, temporary_cache_path, update_cached_measurements};
 
-/// Adopts known compatible measurements without losing persisted gain or independent tag outcomes.
+/// Refills legacy measurements for source statistics without losing persisted gain or independent tag outcomes.
 #[test]
 fn current_cpp_schema_migrates_only_known_successes_and_preserves_gain_and_tags() {
     let directory = TempDir::new().expect("temporary directory");
@@ -31,16 +31,16 @@ fn current_cpp_schema_migrates_only_known_successes_and_preserves_gain_and_tags(
         )
         .expect("known C++ v12 schema");
     let cache = AnalysisCache::with_path(&database);
-    let cached = cache
-        .get_analysis(&record.path)
-        .expect("adopted known C++ measurements");
-    assert_eq!(cached.measurement_producer, MeasurementProducer::Cpp);
+    assert!(cache.get_analysis(&record.path).is_none());
+    cache.store_analysis(&record).expect("refill source statistics");
+    let cached = cache.get_analysis(&record.path).expect("refilled measurements");
+    assert_eq!(cached.measurement_producer, MeasurementProducer::Rust);
     assert!(same_custom_gain(cached.custom_gain_db, Some(3.0)));
     assert_eq!(
         cache.get_serato_overview(&record.path),
         Some(SeratoOverviewState::Absent)
     );
-    assert_eq!(ANALYSIS_VERSION, 13);
+    assert_eq!(ANALYSIS_VERSION, 14);
     cache.open().expect("idempotent migration");
 }
 
@@ -105,7 +105,7 @@ fn concurrent_initialization_is_atomic_and_retryable() {
     assert_eq!(producers, 1);
 }
 
-/// Accepts explicitly identified compatible C++ rows consistently with the other application's migration.
+/// Invalidates explicitly identified legacy rows consistently with the other application's migration.
 #[test]
 fn explicit_cpp_origin_v12_migration_agrees_with_cpp_initialization() {
     let directory = TempDir::new().expect("temporary directory");
@@ -116,12 +116,14 @@ fn explicit_cpp_origin_v12_migration_agrees_with_cpp_initialization() {
     }
     update_cached_measurements(&directory, "analysis_version = 12, analysis_producer = 'cpp'");
     let cache = AnalysisCache::with_path(temporary_cache_path(&directory));
+    assert!(cache.get_analysis(&record.path).is_none());
+    cache.store_analysis(&record).expect("native refill");
     assert_eq!(
         cache
             .get_analysis(&record.path)
-            .expect("adopted C++ v12")
+            .expect("current contract")
             .measurement_producer,
-        MeasurementProducer::Cpp
+        MeasurementProducer::Rust
     );
 }
 
