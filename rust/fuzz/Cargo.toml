@@ -1,0 +1,73 @@
+[package]
+name = "audiobatch-fuzz"
+description = "cargo-fuzz targets for the AudioBatch parsers and decoders"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# The fuzz targets build only with cargo-fuzz on a nightly toolchain,
+# so this crate is its own workspace instead of a member of the main one.
+[workspace]
+
+[dependencies]
+audiobatch-cli = { path = "../crates/cli" }
+audiobatch-core = { path = "../crates/core" }
+clap = "4.6.7"
+libfuzzer-sys = "0.4.13"
+serato-tags = { path = "../crates/serato" }
+tempfile = "3.27.0"
+
+[[bin]]
+name = "serato_tags"
+path = "fuzz_targets/serato_tags.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cli_arguments"
+path = "fuzz_targets/cli_arguments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cache_blobs"
+path = "fuzz_targets/cache_blobs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_audio"
+path = "fuzz_targets/decode_audio.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
+
+# symphonia-format-riff 0.6.1 multiplies the channel count and sample size of a WAV fmt chunk in u16,
+# only to log a mismatched block align, and the product overflows for hostile headers.
+# Release builds wrap without effect, and analysis catches the panic of a debug build.
+# Its overflow checks stay off here as in release builds, so fuzzing continues past it.
+# The wav-block-align-overflow seed is the input that found it.
+# Both settings are given, so Cargo passes the overflow checks explicitly next to the debug assertions of cargo-fuzz.
+[profile.release.package.symphonia-format-riff]
+debug-assertions = true
+overflow-checks = false
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+indexing_slicing = "deny"
+panic = "deny"
+unwrap_used = "deny"
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

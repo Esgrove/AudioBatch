@@ -47,12 +47,15 @@ require_command cargo "Cargo not found in path. Maybe install rustup?"
 
 cd "$REPO"
 
+# The fuzz crate is its own workspace, so it is formatted through its own manifest.
 if [ "$CHECK" = true ]; then
     print_magenta "Checking Rust formatting..."
     cargo fmt --all --check
+    cargo fmt --manifest-path fuzz/Cargo.toml --check
 else
     print_magenta "Formatting Rust files..."
     cargo fmt --all
+    cargo fmt --manifest-path fuzz/Cargo.toml
 fi
 
 if [ -n "$(command -v shfmt)" ]; then

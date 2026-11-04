@@ -1,0 +1,5 @@
+/target/
+/artifacts/
+/coverage/
+# New inputs that fuzz.sh finds, kept apart from the committed seed corpus.
+/scratch/

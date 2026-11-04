@@ -53,6 +53,13 @@ which the GUI implements with `ChainInsert`, a wrapper of the `PreviewChain` fro
 The workspace lints deny unsafe code, and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`.
 These are mostly modules of `vst3-host` and `test-plugin`, plus the Windows file drag in `gui/src/file_drag/windows.rs`.
 
+Two checks look past the tests for memory errors and untrusted input.
+`miri.sh` runs the tests of `vst3-host`, `test-plugin`, `serato`, and the cache blob readers of `core` under Miri,
+which reports undefined behaviour in the COM pointer handling and the byte parsers.
+The `fuzz` directory is a separate workspace of cargo-fuzz targets,
+which feed libFuzzer input to the Serato tag parsers, the CLI argument parser, the cache blob readers, and the decoder.
+They reach these only through the public interfaces that the CLI and the cache already use.
+
 ## Threads
 
 ```mermaid

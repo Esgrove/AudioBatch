@@ -1,0 +1,153 @@
+#!/bin/bash
+set -eo pipefail
+
+USAGE="Usage: $0 [OPTIONS]
+
+Build the cargo-fuzz targets, replay the committed corpus, and fuzz each target.
+The serato_tags and cli_arguments targets also replay the corpus of the matching C++ harness.
+New inputs go to fuzz/scratch/, and crashing inputs go to fuzz/artifacts/.
+The committed corpus is never modified. Requires the nightly toolchain and cargo-fuzz.
+
+OPTIONS: All options are optional
+    -h | --help
+        Display these instructions.
+
+    --build-only
+        Build the targets without running them.
+
+    --no-build
+        Use existing targets without building.
+        Cannot be combined with --build-only.
+
+    --replay
+        Only replay the committed corpus.
+
+    --fuzz
+        Only fuzz, without a separate corpus replay.
+        Cannot be combined with --replay.
+
+    --seconds <count>
+        Fuzz each target for this many seconds. Defaults to 60.
+
+    -v | --verbose
+        Display commands being executed.
+"
+
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
+# The targets, in the order they run.
+TARGETS=(serato_tags cli_arguments cache_blobs decode_audio)
+
+BUILD_ONLY=false
+NO_BUILD=false
+MODE=all
+SECONDS_PER_TARGET=60
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h | --help)
+            print_usage_and_exit 0
+            ;;
+        --build-only)
+            BUILD_ONLY=true
+            ;;
+        --no-build)
+            NO_BUILD=true
+            ;;
+        --replay | --fuzz)
+            if [ "$MODE" != all ] && [ "$MODE" != "${1#--}" ]; then
+                print_error_and_exit "--replay and --fuzz cannot be used together."
+            fi
+            MODE="${1#--}"
+            ;;
+        --seconds)
+            if [ $# -lt 2 ]; then
+                print_error_and_exit "Missing value for $1."
+            fi
+            SECONDS_PER_TARGET="$2"
+            shift
+            ;;
+        -v | --verbose)
+            set -x
+            ;;
+        *)
+            print_error "Unknown option: $1"
+            print_usage_and_exit
+            ;;
+    esac
+    shift
+done
+
+if [ "$BUILD_ONLY" = true ] && [ "$NO_BUILD" = true ]; then
+    print_error_and_exit "--build-only and --no-build cannot be used together."
+fi
+case "$SECONDS_PER_TARGET" in
+    "" | *[!0-9]*)
+        print_error_and_exit "--seconds must be a positive integer."
+        ;;
+esac
+if ! [ "$SECONDS_PER_TARGET" -gt 0 ] 2> /dev/null; then
+    print_error_and_exit "--seconds must be a positive integer."
+fi
+if [ "$BASH_PLATFORM" = windows ]; then
+    print_error_and_exit "cargo-fuzz does not support Windows."
+fi
+require_command rustup "rustup not found in path, it provides the nightly toolchain that cargo-fuzz needs"
+require_command cargo-fuzz "cargo-fuzz not found in path, install it with: cargo install cargo-fuzz"
+
+cd "$REPO/fuzz"
+
+# The native CPU flags of .cargo/config.toml would make the targets depend on the build machine.
+export RUSTFLAGS=""
+
+# Sets CORPUS to the directories a target replays,
+# its own and the C++ one for the targets that share the input layout of a C++ harness.
+set_corpus_directories() {
+    CORPUS=("corpus/$1")
+    case "$1" in
+        serato_tags)
+            CORPUS+=("../../cpp/tests/fuzz/corpus/SeratoTagFuzzer")
+            ;;
+        cli_arguments)
+            CORPUS+=("../../cpp/tests/fuzz/corpus/CliArgumentsFuzzer")
+            ;;
+    esac
+}
+
+if [ "$NO_BUILD" != true ]; then
+    print_magenta "Building fuzz targets..."
+    cargo +nightly fuzz build
+fi
+if [ "$BUILD_ONLY" = true ]; then
+    exit 0
+fi
+
+# cargo fuzz run always rebuilds, so the built targets run directly, like the C++ harnesses.
+HOST=$(rustc +nightly -vV | awk '/^host:/ { print $2 }')
+TARGET_DIRECTORY="target/$HOST/release"
+for target in "${TARGETS[@]}"; do
+    if [ ! -x "$TARGET_DIRECTORY/$target" ]; then
+        print_error_and_exit "Missing fuzz target $TARGET_DIRECTORY/$target, run without --no-build first."
+    fi
+done
+
+mkdir -p artifacts
+if [ "$MODE" != fuzz ]; then
+    for target in "${TARGETS[@]}"; do
+        print_magenta "Replaying the committed corpus of $target..."
+        set_corpus_directories "$target"
+        # With -runs=0, libFuzzer runs every input of the directories once and writes nothing to them.
+        "$TARGET_DIRECTORY/$target" -runs=0 -artifact_prefix="artifacts/$target-" "${CORPUS[@]}"
+    done
+fi
+if [ "$MODE" != replay ]; then
+    for target in "${TARGETS[@]}"; do
+        print_magenta "Fuzzing $target for $SECONDS_PER_TARGET seconds..."
+        mkdir -p "scratch/$target"
+        set_corpus_directories "$target"
+        # libFuzzer adds new inputs only to the first directory, so the committed seeds stay unchanged.
+        "$TARGET_DIRECTORY/$target" -max_total_time="$SECONDS_PER_TARGET" -artifact_prefix="artifacts/$target-" \
+            "scratch/$target" "${CORPUS[@]}"
+    done
+fi

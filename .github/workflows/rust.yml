@@ -10,6 +10,7 @@ on:
       - "assets/**"
       - "common.sh"
       - "cpp/JUCE"
+      - "cpp/tests/fuzz/corpus/**"
       - "fixtures/**"
       - "rust/**"
       - "test-plugin/**"
@@ -22,6 +23,7 @@ on:
       - "assets/**"
       - "common.sh"
       - "cpp/JUCE"
+      - "cpp/tests/fuzz/corpus/**"
       - "fixtures/**"
       - "rust/**"
       - "test-plugin/**"
@@ -125,10 +127,17 @@ jobs:
 
       - name: Check formatting
         if: runner.os == 'macOS'
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all --check
+          cargo fmt --manifest-path fuzz/Cargo.toml --check
 
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
+      - name: Lint fuzz targets
+        if: runner.os == 'macOS'
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
 
       # The snapshot feature is off in normal builds, so it needs its own compile check.
       - name: Build GUI with the snapshot feature
@@ -162,6 +171,71 @@ jobs:
         with:
           name: rust-integration-${{ runner.os }}
           path: rust/target/integration-artifacts
+          if-no-files-found: ignore
+
+  miri:
+    # Checks the unsafe VST3 hosting code, the test plugin, the Serato parsers, and the cache blob readers
+    # for undefined behaviour. Needs no JUCE or test plugin bundle, since Miri cannot load native libraries.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up nightly Rust with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri,rust-src
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: miri
+
+      - name: Run tests under Miri
+        run: ./miri.sh
+
+  fuzz:
+    # Replays the committed corpus, including the corpus of the matching C++ harnesses, then fuzzes each target.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/fuzz
+
+      - name: Build fuzz targets
+        run: ./fuzz.sh --build-only
+
+      - name: Replay corpus
+        run: ./fuzz.sh --no-build --replay
+
+      # New inputs go to a scratch corpus, so the committed corpus stays as it is.
+      - name: Fuzz
+        run: ./fuzz.sh --no-build --fuzz --seconds 60
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-fuzz-artifacts
+          path: rust/fuzz/artifacts
           if-no-files-found: ignore
 
   coverage:
