@@ -428,6 +428,7 @@ mod test_module_loading {
     use crate::test_helpers::{class_id, on_ui};
 
     #[test]
+    #[cfg_attr(miri, ignore = "loads a native plugin bundle from disk, which Miri cannot run")]
     fn loads_a_bundle_and_lists_its_classes() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let bundle = create_bundle(folder.path(), "ListClasses").expect("test plugin bundle");
@@ -448,6 +449,7 @@ mod test_module_loading {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "loads a native plugin bundle from disk, which Miri cannot run")]
     fn a_loaded_bundle_is_reused_and_creates_working_instances() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let bundle = create_bundle(folder.path(), "Reuse").expect("test plugin bundle");
@@ -465,6 +467,7 @@ mod test_module_loading {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "loads a native plugin bundle from disk, which Miri cannot run")]
     fn missing_and_invalid_bundles_fail_to_load() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let missing = folder.path().join("Missing.vst3");
