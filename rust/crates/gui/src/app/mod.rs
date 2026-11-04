@@ -33,6 +33,7 @@ mod tags;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use audiobatch_core::output_file::FileDisposer;
 #[cfg(not(test))]
@@ -214,6 +215,8 @@ pub struct AppView {
     /// Opens the paths that later launches of the app hand over, when this launch is the running app.
     launch_task: Option<Task<()>>,
     _plugin_tick_task: Task<()>,
+    /// Removes cache rows of deleted files once after startup, stopping at quit through its flag.
+    cache_prune: Option<(Arc<AtomicBool>, Task<()>)>,
     /// Keeps scratch storage alive until every view-owned worker and persistence service has been dropped.
     #[cfg(test)]
     test_directory: Arc<tempfile::TempDir>,
@@ -353,9 +356,11 @@ impl AppView {
             _player_poll_task: player_poll_task,
             launch_task: None,
             _plugin_tick_task: plugin_tick_task,
+            cache_prune: None,
             #[cfg(test)]
             test_directory: services.directory,
         };
+        view.start_cache_prune(&*cx);
         view.connect_playhead(cx);
         view.refresh_plugin_preview(cx);
         if let Some(rows) = options.demo_rows {
@@ -373,8 +378,31 @@ impl AppView {
         }
     }
 
+    /// Removes cache rows of deleted files on a background task, keeping filesystem checks off the GUI thread.
+    /// Rows of files in missing folders stay, since an unmounted drive must not lose its custom gains.
+    fn start_cache_prune(&mut self, cx: &Context<Self>) {
+        let Some(cache) = self
+            .coordinator
+            .as_ref()
+            .map(|coordinator| Arc::clone(coordinator.cache()))
+        else {
+            return;
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let task = cx.background_executor().spawn(async move {
+            if let Err(error) = cache.prune_missing_files(&|| worker_stop.load(Ordering::Acquire)) {
+                tracing::warn!("Could not prune cache rows of missing files: {error}");
+            }
+        });
+        self.cache_prune = Some((stop, task));
+    }
+
     /// Invalidates readers and drains ordered explicit gains off the message thread before application quit.
     fn prepare_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        if let Some((stop, _)) = &self.cache_prune {
+            stop.store(true, Ordering::Release);
+        }
         self.flush_gain_store(cx);
         self.save_plugin_chain();
         self.invalidate_artwork(cx);
