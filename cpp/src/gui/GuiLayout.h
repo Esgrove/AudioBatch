@@ -186,7 +186,11 @@ constexpr int statusHeight {18};
 constexpr int metricHeight {52};
 constexpr int metricPadding {6};
 constexpr int metricCaptionHeight {16};
-constexpr int metricUnitWidth {30};
+/// Minimum separation between a full metric caption and its unit.
+constexpr int metricCaptionSpacing {4};
+/// Shared property gap, with the second lane yielding extra trailing whitespace.
+constexpr int propertyColumnGap {4};
+constexpr int sampleRateColumnReduction {12};
 constexpr int detailFieldWidth {60};
 constexpr int rowHeight {20};
 /// Vertical clearance for fully wrapped detail text, shared by measurement and painting.

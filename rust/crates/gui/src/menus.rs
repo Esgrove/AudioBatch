@@ -101,6 +101,11 @@ pub struct ToggleSeratoColours;
 #[action(namespace = audiobatch)]
 pub struct ToggleAlbumArtwork;
 
+/// Shows or hides custom-gain predictions beside the measured metrics.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleGainAdjustedMetrics;
+
 /// Selects the source visualization and arrangement shown in the preview.
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
@@ -295,6 +300,8 @@ pub struct MenuState {
     pub serato_colours: bool,
     /// True when the album artwork shows beside the file name.
     pub show_album_artwork: bool,
+    /// True when custom-gain estimates show beside the source measurements.
+    pub show_gain_adjusted_metrics: bool,
     /// True while the preview is collapsed into its compact row.
     pub preview_compact: bool,
     /// True when the preview plays through the plugin chain.
@@ -465,6 +472,8 @@ pub fn set_menus(cx: &mut App, state: &MenuState) {
             MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
             MenuItem::action("Serato Waveform Colours", ToggleSeratoColours).checked(state.serato_colours),
             MenuItem::action("Show Album Artwork", ToggleAlbumArtwork).checked(state.show_album_artwork),
+            MenuItem::action("Show custom gain estimates", ToggleGainAdjustedMetrics)
+                .checked(state.show_gain_adjusted_metrics),
             MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
                 MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
             }))),

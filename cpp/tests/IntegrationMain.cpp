@@ -4,6 +4,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/SpectrogramData.h"
 #include "gui/AudioBatchComponent.h"
@@ -426,14 +427,35 @@ void AudioBatchIntegrationTest::previewModes()
         view.previewWorkspace.zoomSlider.setValue(200.0, juce::sendNotificationSync);
         view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
         EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
-        auto preferences = view.previewPreferences;
-        preferences.showGainAdjustedMetrics = false;
-        view.setPreviewPreferences(preferences);
+        const auto selectedRow = view.analysisResults.findRow(file.getFullPathName());
+        ASSERT_TRUE(selectedRow.has_value());
+        if (!selectedRow) {
+            return;
+        }
+        const auto row = *selectedRow;
+        const auto measured = view.analysisResults[row];
+        EXPECT_TRUE(view.isCustomGainEstimatesEnabled());
+        view.toggleCustomGainEstimates();
+        EXPECT_FALSE(view.isCustomGainEstimatesEnabled());
         EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
+        EXPECT_TRUE(
+            containsLabel(view.previewWorkspace.audioInfo, formatPeakCompact(static_cast<double>(measured.overallPeak)))
+        );
+        EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, formatLoudnessCompact(measured.integratedLufs)));
+        const auto retainedGain = view.analysisResults[row].customGain;
+        ASSERT_TRUE(retainedGain.has_value());
+        ASSERT_TRUE(measured.customGain.has_value());
+        if (retainedGain && measured.customGain) {
+            EXPECT_EQ(retainedGain->value, measured.customGain->value);
+        }
+        EXPECT_EQ(view.analysisResults[row].overallPeak, measured.overallPeak);
+        EXPECT_EQ(view.analysisResults[row].integratedLufs, measured.integratedLufs);
         EXPECT_FALSE(loadAudioPreviewPreferences(*view.pluginAppProperties.getUserSettings()).showGainAdjustedMetrics);
-        preferences.showGainAdjustedMetrics = true;
-        view.setPreviewPreferences(preferences);
+        view.toggleCustomGainEstimates();
+        EXPECT_TRUE(view.isCustomGainEstimatesEnabled());
+        EXPECT_TRUE(loadAudioPreviewPreferences(*view.pluginAppProperties.getUserSettings()).showGainAdjustedMetrics);
         EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
+        auto preferences = view.previewPreferences;
         // Successive edits replace the debounced request without displaying the naive gain-only value.
         view.previewWorkspace.gainSlider.setValue(12.0, juce::sendNotificationSync);
         EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, juce::String::fromUTF8("(≈-1.0)")));

@@ -55,6 +55,7 @@ enum class CommandId : std::uint8_t {
     toggleSeratoWaveformColouring,
     toggleLoudnessGraph,
     toggleAlbumArtwork,
+    toggleCustomGainEstimates,
     togglePluginPreview,
     togglePreviewCompensation,
     toggleContinuePlayback,
@@ -261,6 +262,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
             addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
             addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
+            addCommandItem(menu, commandManager, CommandId::toggleCustomGainEstimates);
             addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
             addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
             addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
@@ -303,6 +305,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
             addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
             addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
+            addCommandItem(menu, commandManager, CommandId::toggleCustomGainEstimates);
             addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
             addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
             addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
@@ -455,6 +458,16 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
         case CommandId::toggleAlbumArtwork:
             result.setInfo("Show Album Artwork", "Show the embedded album artwork beside the file name", "Options", 0);
             result.setTicked(audioBatch.isAlbumArtworkEnabled());
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::toggleCustomGainEstimates:
+            result.setInfo(
+                "Show custom gain estimates",
+                "Show custom-gain estimates beside the unchanged source measurements",
+                "Options",
+                0
+            );
+            result.setTicked(audioBatch.isCustomGainEstimatesEnabled());
             result.setActive(!blockedByDialog);
             break;
         case CommandId::togglePluginPreview:
@@ -625,6 +638,9 @@ bool MainWindow::perform(const InvocationInfo& info)
             return true;
         case CommandId::toggleAlbumArtwork:
             getAudioBatch().toggleAlbumArtwork();
+            return true;
+        case CommandId::toggleCustomGainEstimates:
+            getAudioBatch().toggleCustomGainEstimates();
             return true;
         case CommandId::togglePluginPreview:
             getAudioBatch().togglePluginPreview();

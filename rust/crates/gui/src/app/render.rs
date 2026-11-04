@@ -47,9 +47,9 @@ use crate::menus::{
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenParentFolder, OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected,
     RemoveSelected, Rescan, RescanPlugins, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice,
-    SetPreviewViewMode, StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleLoudnessGraph, ToggleOverloadLines,
-    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSampleOverloads,
-    ToggleSeratoColours, ToggleTruePeakOverloads, TrashSelected, TrashSelectedNow,
+    SetPreviewViewMode, StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleGainAdjustedMetrics, ToggleLoudnessGraph,
+    ToggleOverloadLines, TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection,
+    ToggleSampleOverloads, ToggleSeratoColours, ToggleTruePeakOverloads, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
 use crate::playback_status::format_playback_time;
@@ -589,6 +589,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &ToggleOverloadLines, _, cx| view.toggle_overload_lines(cx)))
             .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
             .on_action(cx.listener(|view, _: &ToggleAlbumArtwork, _, cx| view.toggle_album_artwork(cx)))
+            .on_action(cx.listener(|view, _: &ToggleGainAdjustedMetrics, _, cx| view.toggle_gain_adjusted_metrics(cx)))
             .on_action(cx.listener(|view, _: &TogglePreviewSection, _, cx| view.toggle_preview_section(cx)))
             .on_action(cx.listener(|view, action: &JumpToHotCue, _, cx| view.jump_to_hot_cue(action.slot, cx)))
             .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))

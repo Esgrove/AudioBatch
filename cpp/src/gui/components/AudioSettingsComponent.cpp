@@ -330,7 +330,7 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
     );
     gainAdjustedMetricsToggle.setTooltip(
         "Show predicted peaks and estimated loudness after custom gain. "
-        "Loudness assumes unchanged gating. Excludes clipping, limiting, and plugins."
+        "Source measurements stay unchanged. Estimates are not actual plugin renders."
     );
     sampleOverloadsToggle.setTooltip("Show source sample-peak overload indicators independently of true peaks.");
     truePeakOverloadsToggle.setTooltip("Show source true-peak overload indicators independently of sample peaks.");

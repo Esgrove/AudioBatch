@@ -543,6 +543,7 @@ fn initial_menu_state(
         show_overload_lines: settings.show_overload_lines,
         serato_colours: settings.serato_waveform_colours,
         show_album_artwork: settings.show_album_artwork,
+        show_gain_adjusted_metrics: settings.show_gain_adjusted_metrics,
         preview_plugin_chain: settings.preview_plugin_chain,
         compensate_preview_latency: settings.compensate_preview_latency,
         normalize_target: describe_target(settings),

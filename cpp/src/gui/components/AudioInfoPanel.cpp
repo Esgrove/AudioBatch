@@ -239,7 +239,14 @@ void AudioInfoText::paint(juce::Graphics& graphics)
 }
 
 /// Creates accessible labels for a metric, with the unit separate from the large numeric value.
-AudioInfoMetric::AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit)
+AudioInfoMetric::AudioInfoMetric(
+    const juce::String& name,
+    const juce::String& caption,
+    const juce::String& unit,
+    const juce::String& compactCaption
+) :
+    compactUnit(compactCaption.isNotEmpty() ? compactCaption : unit),
+    measurementUnit(unit)
 {
     Component::setName(name);
     captionLabel.setText(caption, juce::dontSendNotification);
@@ -278,7 +285,7 @@ void AudioInfoMetric::setValue(
     valueLabel.setText(value, juce::dontSendNotification);
     adjustedValueLabel.setText(adjustedValue, juce::dontSendNotification);
     adjustedValueLabel.setVisible(adjustedValue.isNotEmpty());
-    auto description = utils::format("{}: {} {}", getName(), value, unitLabel.getText());
+    auto description = utils::format("{}: {} {}", getName(), value, measurementUnit);
     if (adjustedValue.isNotEmpty()) {
         juce::String modelDescription = "Gain only, before clipping or plugins.";
         if (limiterEstimate) {
@@ -292,7 +299,7 @@ void AudioInfoMetric::setValue(
                                "Excludes actual limiter and plugin behavior.";
         }
         description = utils::format(
-            "{}. After custom gain: {} {}. {}", description, adjustedValue, unitLabel.getText(), modelDescription
+            "{}. After custom gain: {} {}. {}", description, adjustedValue, measurementUnit, modelDescription
         );
     }
     adjustedValueLabel.setDescription(description);
@@ -331,24 +338,49 @@ void AudioInfoMetric::paint(juce::Graphics& graphics)
 void AudioInfoMetric::resized()
 {
     auto bounds = getLocalBounds().reduced(layout::information::metricPadding);
+    const auto captionWidth
+        = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(captionLabel.getFont(), captionLabel.getText())));
+    const auto unitWidth
+        = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(unitLabel.getFont(), measurementUnit)));
+    unitLabel.setText(measurementUnit, juce::dontSendNotification);
     if (compactMode) {
         const auto sourceWidth
             = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(valueLabel.getFont(), valueLabel.getText())));
-        const auto labelWidth = juce::jmin(
+        const auto compactUnitWidth
+            = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(unitLabel.getFont(), compactUnit)));
+        const auto preferredLabelWidth = juce::jmin(
             (bounds.getWidth() - layout::compactPreview::metricSpacing) / 2,
             juce::jmax(0, bounds.getWidth() - sourceWidth - layout::compactPreview::metricSpacing)
         );
+        const auto labelWidth
+            = juce::jmin(juce::jmax(0, bounds.getWidth()), juce::jmax(compactUnitWidth, preferredLabelWidth));
         auto labels = bounds.removeFromLeft(labelWidth);
         labels = labels.withSizeKeepingCentre(labels.getWidth(), layout::compactPreview::metricCaptionHeight * 2);
-        captionLabel.setBounds(labels.removeFromTop(layout::compactPreview::metricCaptionHeight));
-        unitLabel.setBounds(labels);
+        const auto fullCaptionFits = labelWidth >= juce::jmax(captionWidth, unitWidth);
+        captionLabel.setVisible(fullCaptionFits);
+        if (fullCaptionFits) {
+            captionLabel.setBounds(labels.removeFromTop(layout::compactPreview::metricCaptionHeight));
+            unitLabel.setBounds(labels);
+        } else {
+            unitLabel.setText(compactUnit, juce::dontSendNotification);
+            unitLabel.setBounds(labels);
+        }
         bounds.removeFromLeft(layout::compactPreview::metricSpacing);
         layoutValues(bounds);
         return;
     }
     auto caption = bounds.removeFromTop(layout::information::metricCaptionHeight);
-    unitLabel.setBounds(caption.removeFromRight(layout::information::metricUnitWidth));
-    captionLabel.setBounds(caption);
+    const auto fullCaptionFits
+        = caption.getWidth() >= captionWidth + layout::information::metricCaptionSpacing + unitWidth;
+    captionLabel.setVisible(fullCaptionFits);
+    if (fullCaptionFits) {
+        unitLabel.setBounds(caption.removeFromRight(unitWidth));
+        caption.removeFromRight(layout::information::metricCaptionSpacing);
+        captionLabel.setBounds(caption);
+    } else {
+        unitLabel.setText(compactUnit, juce::dontSendNotification);
+        unitLabel.setBounds(caption);
+    }
     layoutValues(bounds);
 }
 
@@ -789,7 +821,7 @@ void AudioInfoPanel::resized()
     errorLabel.setVisible(errorHeight > 0);
     auto detailsHeight = errorHeight;
     constexpr auto COLUMN_COUNT = static_cast<int>(AUDIO_INFO_COLUMN_COUNT);
-    constexpr int COLUMN_GAP {4};
+    constexpr auto COLUMN_GAP = layout::information::propertyColumnGap;
     const auto columnsWidth = juce::jmax(0, contentWidth - COLUMN_GAP * (COLUMN_COUNT - 1));
     for (std::size_t row = 0; row < detailRowsVisible.size(); ++row) {
         if (!detailRowsVisible[row]) {
@@ -799,7 +831,10 @@ void AudioInfoPanel::resized()
             const auto left = columnsWidth * column / COLUMN_COUNT + COLUMN_GAP * column;
             const auto right = columnsWidth * (column + 1) / COLUMN_COUNT + COLUMN_GAP * column;
             detailCells[row * COLUMN_COUNT + static_cast<std::size_t>(column)].setBounds(
-                left, detailsHeight, right - left, layout::information::rowHeight
+                left,
+                detailsHeight,
+                juce::jmax(0, right - left - (column == 1 ? layout::information::sampleRateColumnReduction : 0)),
+                layout::information::rowHeight
             );
         }
         detailsHeight += layout::information::rowHeight;

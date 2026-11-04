@@ -105,6 +105,7 @@ public:
     [[nodiscard]] bool areOverloadLinesVisible() const noexcept;
     [[nodiscard]] bool isBackgroundWorkRunning() const noexcept;
     [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
+    [[nodiscard]] bool isCustomGainEstimatesEnabled() const noexcept;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
     [[nodiscard]] bool isLoudnessGraphEnabled() const noexcept;
     [[nodiscard]] bool isPlayFromFirstCuePointEnabled() const noexcept;
@@ -133,6 +134,7 @@ public:
     void showSupportedNormalizationFormats();
     void toggleAlbumArtwork();
     void toggleContinuePreviewPlayback();
+    void toggleCustomGainEstimates();
     void toggleLoudnessGraph();
     void toggleSampleOverloads();
     void toggleTruePeakOverloads();
