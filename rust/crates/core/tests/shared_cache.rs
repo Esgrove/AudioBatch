@@ -16,6 +16,10 @@ use rusqlite::Connection;
 use rusqlite::types::Value;
 
 const HELPER_TIMEOUT: Duration = Duration::from_secs(30);
+/// Size of the shared `SPEC` envelope that precedes the intensity grid.
+const SPECTRAL_HEADER_BYTES: usize = 72;
+/// Intensity cells per cell that may differ by one step between the two FFT libraries.
+const FFT_DIFFERENCE_CELLS_PER_ALLOWED: usize = 1000;
 
 /// Resolves the opt-in helper without requiring a C++ build in Rust-only CI jobs.
 fn cpp_executable() -> Option<PathBuf> {
@@ -247,6 +251,74 @@ fn both_implementations_reuse_production_spectra_without_reanalysis() {
             .expect("unchanged measurement producer")
             .measurement_producer,
         MeasurementProducer::Cpp,
+    );
+}
+
+/// Both production analyzers produce matching spectral bytes for the same lossless PCM.
+///
+/// The headers must be identical. The FFT libraries differ, `juce::dsp::FFT` against `realfft`,
+/// and their last-bit rounding can move a power across a quantization boundary.
+/// That documented exception allows only one intensity step, in at most one cell per thousand and file.
+/// Window, power normalization, mel support, quantization, and reduction are otherwise identical,
+/// and the C++ sources disable floating-point contraction so compiler FMA choices cannot widen this bound.
+#[test]
+fn both_implementations_produce_matching_spectra_from_the_same_pcm() {
+    let Some(executable) = cpp_executable() else {
+        return;
+    };
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let unused_database = directory.path().join("unused.db");
+    let fixtures = std::fs::read_dir(test_fixtures::fixture("spectrogram_expected")).expect("spectral fixtures");
+    let mut names: Vec<String> = fixtures
+        .map(|entry| entry.expect("fixture entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"))
+        })
+        .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .collect();
+    names.sort();
+    assert!(!names.is_empty(), "spectral fixtures are present");
+    let mut mismatches = Vec::new();
+    for name in &names {
+        let source = normalize_path(&test_fixtures::fixture(&format!("spectrogram_expected/{name}")));
+        let native = analyze_file(&source, &|| false, &mut |_| {});
+        assert!(native.is_ready(), "{name}: {}", native.error_message);
+        let rust_bytes = native
+            .spectrogram
+            .as_deref()
+            .expect("production Rust spectrum")
+            .to_bytes();
+        let cpp_bytes = cpp_spectrum(&executable, "analyze-spectrum", &unused_database, &source);
+        assert_eq!(rust_bytes.len(), cpp_bytes.len(), "{name}: spectral geometry");
+        let (rust_header, rust_grid) = rust_bytes.split_at(SPECTRAL_HEADER_BYTES);
+        let (cpp_header, cpp_grid) = cpp_bytes.split_at(SPECTRAL_HEADER_BYTES);
+        assert_eq!(rust_header, cpp_header, "{name}: identical codec header and geometry");
+        let differing: Vec<(usize, u8, u8)> = rust_grid
+            .iter()
+            .zip(cpp_grid)
+            .enumerate()
+            .filter(|(_, (rust, cpp))| rust != cpp)
+            .map(|(index, (rust, cpp))| (index, *rust, *cpp))
+            .collect();
+        let largest = differing
+            .iter()
+            .map(|(_, rust, cpp)| rust.abs_diff(*cpp))
+            .max()
+            .unwrap_or_default();
+        let allowed_cells = rust_grid.len().div_ceil(FFT_DIFFERENCE_CELLS_PER_ALLOWED);
+        if largest > 1 || differing.len() > allowed_cells {
+            mismatches.push(format!(
+                "{name}: {} cells differ (allowed {allowed_cells}), largest difference {largest}, first at {:?}",
+                differing.len(),
+                differing.first()
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "spectral bytes exceed the documented FFT bound:\n{}",
+        mismatches.join("\n")
     );
 }
 

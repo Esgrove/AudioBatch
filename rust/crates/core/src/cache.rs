@@ -453,6 +453,63 @@ impl AnalysisCache {
         })
     }
 
+    /// Deletes the rows of files that no longer exist, in every measurement and artifact table.
+    ///
+    /// Rows whose folder is missing are kept, since that usually means an unmounted drive, not deleted files,
+    /// and those rows hold custom gains that would be lost for good.
+    /// A row is only deleted while it still describes the checked version,
+    /// so a file recreated in the meantime keeps its new row.
+    /// Filesystem checks run without holding the connection lock, and `should_stop` ends the pass early.
+    /// Returns the number of deleted rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be read or written.
+    pub fn prune_missing_files(&self, should_stop: &dyn Fn() -> bool) -> Result<usize> {
+        let versions = self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT file_path, file_size, modified_time_ms FROM (
+                    SELECT file_path, file_size, modified_time_ms FROM file_analysis
+                    UNION ALL SELECT file_path, file_size, modified_time_ms FROM serato_tag_cache
+                    UNION ALL SELECT file_path, file_size, modified_time_ms FROM rust_waveform_cache
+                    UNION ALL SELECT file_path, file_size, modified_time_ms FROM spectrogram_cache)
+                WHERE typeof(file_path) = 'text' AND typeof(file_size) = 'integer'
+                    AND typeof(modified_time_ms) = 'integer'",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    PathBuf::from(row.get::<_, String>(0)?),
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })?;
+        let mut removed = 0;
+        for (path, size, modified) in versions {
+            if should_stop() {
+                break;
+            }
+            let parent_exists = path.parent().is_some_and(Path::is_dir);
+            if !path.is_absolute() || path.is_file() || !parent_exists {
+                continue;
+            }
+            let Ok(size) = u64::try_from(size) else {
+                continue;
+            };
+            removed += self.with_connection(|connection| {
+                let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                let removed = remove_identity(&transaction, &path, size, modified)?;
+                transaction.commit()?;
+                Ok(removed)
+            })?;
+        }
+        if removed > 0 {
+            tracing::info!("Removed {removed} cached rows for files that no longer exist");
+        }
+        Ok(removed)
+    }
+
     /// Returns the custom gain stored for a file when its row describes the given version of the file,
     /// so a fresh analysis of an unchanged file keeps the gain the user set.
     #[must_use]
@@ -870,6 +927,8 @@ mod test_publication;
 mod test_shared;
 #[cfg(test)]
 mod test_spectrogram;
+#[cfg(test)]
+mod test_spectrogram_cleanup;
 
 #[cfg(test)]
 mod test_analysis_cache {

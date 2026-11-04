@@ -319,7 +319,13 @@ impl SpectrogramState {
 
     /// Adds checked source frames and schedules a centered window as soon as its right half is available.
     fn push<P: AsRef<[f32]>>(&mut self, planes: &[P]) -> Option<()> {
-        let frames = planes.first()?.as_ref().len();
+        if planes.len() != self.channels {
+            return None;
+        }
+        let frames = planes.first().map_or(0, |plane| plane.as_ref().len());
+        if frames == 0 {
+            return planes.iter().all(|plane| plane.as_ref().is_empty()).then_some(());
+        }
         if planes.len() != self.channels
             || planes.iter().any(|plane| plane.as_ref().len() != frames)
             || self.length.checked_add(frames as u64)? > MAXIMUM_LENGTH - FFT_SIZE as u64
@@ -347,14 +353,28 @@ impl SpectrogramState {
     fn append_column(&mut self) -> Option<()> {
         self.powers.fill(0.0);
         let window = &spectrogram_window().coefficients;
+        // The window covers source frames [center - HALF_WINDOW, center + HALF_WINDOW).
+        // Frames before zero or at EOF stay zero, and the valid span maps to at most two contiguous ring segments.
+        let first_frame = (HALF_WINDOW as u64).saturating_sub(self.next_center);
+        let first_source = self.next_center.saturating_sub(HALF_WINDOW as u64);
+        let last_source = (self.next_center + HALF_WINDOW as u64).min(self.length);
+        let valid_frames = usize::try_from(last_source.saturating_sub(first_source)).ok()?;
+        let first_frame = usize::try_from(first_frame).ok()?;
+        let ring_start = (first_source % FFT_SIZE as u64) as usize;
+        let leading = valid_frames.min(FFT_SIZE - ring_start);
         for ring in self.pcm.iter().take(self.channels) {
             self.input.fill(0.0);
-            for (frame, (input, coefficient)) in self.input.iter_mut().zip(window).enumerate() {
-                if let Some(source) = (self.next_center + frame as u64)
-                    .checked_sub(HALF_WINDOW as u64)
-                    .filter(|&source| source < self.length)
-                {
-                    *input = ring.get((source % FFT_SIZE as u64) as usize)? * coefficient;
+            let destination = self.input.get_mut(first_frame..first_frame + valid_frames)?;
+            let coefficients = window.get(first_frame..first_frame + valid_frames)?;
+            let (head, tail) = destination.split_at_mut(leading);
+            let (head_coefficients, tail_coefficients) = coefficients.split_at(leading);
+            let segments = [
+                (head, head_coefficients, ring.get(ring_start..ring_start + leading)?),
+                (tail, tail_coefficients, ring.get(..valid_frames - leading)?),
+            ];
+            for (inputs, weights, samples) in segments {
+                for ((input, coefficient), sample) in inputs.iter_mut().zip(weights).zip(samples) {
+                    *input = sample * coefficient;
                 }
             }
             self.transform
@@ -395,16 +415,25 @@ impl SpectrogramState {
     }
 
     /// Reduces adjacent byte columns in place, preserving isolated maxima without another grid allocation.
+    /// Destination column `k` is written only after source columns `2k` and `2k + 1` were read,
+    /// and never overlaps a source column that a later destination still needs.
     fn merge_pairs(&mut self) -> Option<()> {
-        let merged_bytes = self.intensities.len() / 2;
-        for destination in 0..merged_bytes {
-            let column = destination / FREQUENCY_ROWS;
-            let row = destination % FREQUENCY_ROWS;
-            let source = 2 * column * FREQUENCY_ROWS + row;
-            let maximum = (*self.intensities.get(source)?).max(*self.intensities.get(source + FREQUENCY_ROWS)?);
-            *self.intensities.get_mut(destination)? = maximum;
+        let merged_columns = self.intensities.len() / FREQUENCY_ROWS / 2;
+        let mut pair = [0; 2 * FREQUENCY_ROWS];
+        for column in 0..merged_columns {
+            pair.copy_from_slice(
+                self.intensities
+                    .get(2 * column * FREQUENCY_ROWS..(2 * column + 2) * FREQUENCY_ROWS)?,
+            );
+            let (first, second) = pair.split_at(FREQUENCY_ROWS);
+            let destination = self
+                .intensities
+                .get_mut(column * FREQUENCY_ROWS..(column + 1) * FREQUENCY_ROWS)?;
+            for ((maximum, &left), &right) in destination.iter_mut().zip(first).zip(second) {
+                *maximum = left.max(right);
+            }
         }
-        self.intensities.truncate(merged_bytes);
+        self.intensities.truncate(merged_columns * FREQUENCY_ROWS);
         self.stride = self.stride.checked_mul(2)?;
         Some(())
     }
@@ -458,6 +487,11 @@ fn spectrogram_window() -> &'static SpectrogramWindow {
 }
 
 /// Clips calibrated power and rounds to the nearest intensity, with ties toward the larger byte.
+///
+/// Parity exception: the C++ application uses `juce::dsp::FFT` and this one `realfft`.
+/// Their last-bit FFT rounding can move a power across a byte boundary,
+/// so cached grids may differ by one intensity step in at most one cell per thousand.
+/// `tests/shared_cache.rs` measures that bound on the shared spectral fixtures.
 fn quantize_power(power: f64) -> u8 {
     let decibels = 10.0 * power.max(MINIMUM_POWER).log10();
     let normalized =

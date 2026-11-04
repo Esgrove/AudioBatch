@@ -216,6 +216,18 @@ after startup geometry settles, including deferred platform maximization.
 The initial split is committed once and is not refitted on later window resizing or artwork arrival.
 The divider state survives selection changes and collapse/expand.
 
+`WaveformView` in `gui/src/waveform.rs` shows the Waveform, Spectrogram, side-by-side, or stacked preview mode,
+chosen from its context menu, the Options menu, or Audio Settings through one preference setter.
+`waveform/geometry.rs` divides the bounds into panes and axis gutters and projects time in each pane,
+`waveform/render.rs` paints the panes, cues, and cursors through one canvas,
+`waveform/axes.rs` the dBFS and LUFS labels, `waveform/loudness.rs` the loudness graph,
+`waveform/overloads.rs` the overload caps, and `waveform/spectrogram.rs` the frequency axis and the raster.
+The raster is one bounded `RenderImage` built when a spectral artifact is adopted, never while painting,
+and a replaced image is released through `drop_image` after the current update.
+A press latches its pane and viewport and moves only a grey target cursor, leaving the player untouched.
+The release seeks once, starting a stopped preview there.
+`playback_status.rs` formats the elapsed and total source time in the status bar.
+
 The information panel shows the embedded album artwork of the selected file beside its name,
 unless the Show Album Artwork option is off.
 `app/artwork.rs` reads it on a background task, separate from the tag read,
@@ -388,9 +400,24 @@ The history retains rate, decoded length, channel count, and a validated power-o
 A present all-clear history is distinct from missing analysis.
 These source measurements remain independent of preview gain and plugins.
 The waveform attaches history only when the record, waveform timing, and on-disk identity agree.
-Sample overs use solid amber edge caps and a restrained channel tint, while true-peak-only overs use hollow caps.
+Sample overs use compact yellow caps and true-peak overs orange caps, only on the outer waveform edges,
+with optional subdued vertical lines that Options and Audio Settings toggle independently of each kind.
 Projection merges flags per screen column so isolated subpixel warnings stay visible,
 and extends true peak coverage conservatively across interpolation boundaries without shifting sample regions.
+
+`spectrogram.rs` builds the source spectrogram from the same blocks, so fresh analysis needs no second decode.
+Centered 4096-point symmetric Hann windows advance by 1024 frames through a `realfft` plan owned by each builder.
+Each column averages independent channel powers, calibrated so a full-scale interior sinusoid reads 0 dB,
+and keeps the maximum power of the FFT cells overlapping each of 512 equal HTK mel intervals up to source Nyquist.
+Quantization to bytes on a fixed -120 to 24 dB scale is monotone, so keeping byte maxima is exact.
+At 4096 columns, adjacent columns merge in place, doubling the stride without skipping source regions.
+Unsupported channel counts, nonfinite samples, or a float FFT overflow disable only the artifact.
+`SpectrogramData` validates its canonical geometry and owns the little-endian `SPEC` codec,
+whose 72-byte header pins every profile field before the payload is allocated.
+The C++ application uses `juce::dsp::FFT`, so grids may differ by one intensity step in at most one cell per thousand.
+`tests/shared_cache.rs` measures that bound against the C++ test executable when `AUDIOBATCH_CPP_TESTS` is set.
+For the selected file, the coordinator publishes a throttled, latest-only waveform snapshot,
+rejecting stale runs, selections, and source identities, and never persisting it.
 
 **The shared cache.**
 `AnalysisCache` in `core/src/cache.rs` reads and writes the same `file_analysis` table as the C++ application.
@@ -411,10 +438,16 @@ WAL, short transactions, and prepared statements reduce contention, but SQLite s
 Potentially blocking persistence belongs on background paths, never the audio callback.
 
 Rust waveforms are stored in `rust_waveform_cache`, leaving JUCE waveform columns available to the C++ application.
-A missing native waveform or corrupt optional preview is not a measurement-cache miss.
-Measurement reads do not hydrate every waveform, and selected artifacts are loaded asynchronously.
-After initial loading, one active enrichment job fills missing native waveforms and Serato outcomes,
+Both applications share `spectrogram_cache` through `cache/spectrogram.rs`,
+keyed by path and the algorithm and serialization revisions, with source identity, geometry, and producer per row.
+Spectral writes require matching successful measurement geometry and a still-current source,
+and incompatible rows are removed only after the measurement commit.
+A missing native waveform, spectrogram, or corrupt optional preview is not a measurement-cache miss.
+Measurement reads do not hydrate every waveform or spectrogram, and selected artifacts are loaded asynchronously.
+After initial loading, one active enrichment job fills missing native waveforms, spectrograms, and Serato outcomes,
+decoding once for every missing audio artifact,
 prioritizing selection and yielding to foreground file operations.
+`prune_missing_files` removes rows of every cache table whose source file no longer exists.
 Valid absent, unsupported, and invalid Serato source-tag outcomes complete that work without repeated retries.
 The parser-result revision is independent of the shared `SOVR` raster encoding revision.
 

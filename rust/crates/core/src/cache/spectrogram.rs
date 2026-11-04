@@ -13,10 +13,10 @@ use crate::output_file::SourceIdentity;
 use crate::record::{AnalysisRecord, file_identity};
 use crate::spectrogram::{ALGORITHM_VERSION, SERIALIZATION_VERSION, SpectrogramData};
 
-/// Largest intensity grid plus a bounded allowance for its independently versioned header.
-const MAXIMUM_SPECTROGRAM_BYTES: usize = 2 * 1024 * 1024 + 256;
-/// SQLite's signed integer representation of the bounded payload limit.
+/// SQLite's signed integer form of the largest intensity grid plus a bounded allowance for its header.
 const MAXIMUM_SPECTROGRAM_SQL_BYTES: i64 = 2 * 1024 * 1024 + 256;
+/// The same bounded payload limit as a byte length.
+const MAXIMUM_SPECTROGRAM_BYTES: usize = MAXIMUM_SPECTROGRAM_SQL_BYTES.unsigned_abs() as usize;
 
 /// Shared spectral table, independent of the measurement contract and native waveform layouts.
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS spectrogram_cache (
@@ -142,23 +142,6 @@ impl AnalysisCache {
             Ok(true)
         })
     }
-}
-
-/// Publishes a valid artifact using a caller-owned connection or short transaction.
-/// The caller must protect publication with source checks and roll back if its final identity check fails.
-#[expect(
-    dead_code,
-    reason = "Reserved for workers that already own a short artifact transaction"
-)]
-pub(super) fn store(
-    connection: &Connection,
-    record: &AnalysisRecord,
-    data: &SpectrogramData,
-) -> rusqlite::Result<bool> {
-    let Some(bytes) = encoded_artifact(record, data) else {
-        return Ok(false);
-    };
-    store_encoded(connection, record, data, &bytes)
 }
 
 /// Removes incompatible revisions only while the just-published measurement identity and geometry still win.

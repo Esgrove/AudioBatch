@@ -665,6 +665,7 @@ name = "audiobatch-gui"
 version = "1.2.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "audiobatch-core",
  "audiobatch-playback",
  "audiobatch-plugins",

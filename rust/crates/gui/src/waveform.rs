@@ -971,6 +971,29 @@ mod test_artifact_presentation {
         assert_eq!(view.source_channels, 1);
     }
 
+    /// Zooming or scrolling during a held drag must not move the target, so drags keep the press-time viewport.
+    #[test]
+    fn pending_drag_targets_keep_the_latched_viewport_after_zoom() {
+        let mut view = WaveformView::new();
+        view.update_record(&record());
+        let plot = Bounds::new(point(px(10.0), px(0.0)), size(px(100.0), px(50.0)));
+        let latched = Viewport {
+            start: 0.0,
+            length: 0.1,
+            plot,
+        };
+        view.pending_seek = Some(PendingSeek {
+            viewport: latched,
+            seconds: latched.x_to_time(px(60.0)),
+            restart: false,
+        });
+        view.zoom = 4.0;
+        view.visible_start = 0.05;
+        let pending = view.pending_seek.expect("held gesture");
+        assert!((pending.viewport.x_to_time(px(60.0)) - 0.05).abs() < 1.0e-9);
+        assert!((pending.seconds - 0.05).abs() < 1.0e-9);
+    }
+
     #[test]
     fn source_change_discards_pending_pointer_intent() {
         let mut record = record();

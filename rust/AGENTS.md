@@ -78,6 +78,7 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
     Ebur128 is a development-only differential reference, not a production dependency.
   - `benches/` measures analysis, decoding, normalization, waveform construction,
     cache reads, and sorting with Criterion.
+    `benches/spectrogram.rs` isolates spectral setup, streaming, finalization, merging, and codec costs.
     The longer inputs come from `../fixtures/benchmark/generate.py` and are generated locally, not committed.
   - `decode.rs` wraps symphonia: probing, the decode loop, and the read failure rules.
     It trims the gapless padding the way the decoders of the C++ application do, keeping the source timeline aligned,
@@ -86,8 +87,11 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
     `overload.rs` builds and validates bounded per-channel source overload flags and their independent cache blob.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
+  - `spectrogram.rs` builds the bounded mel spectrogram from the measurement blocks with `realfft`,
+    and holds `SpectrogramData` with its little-endian `SPEC` codec shared with the C++ application.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
-  - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`,
+  - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`
+    and the shared `spectrogram_cache` table in `cache/spectrogram.rs`,
     `coordinator.rs` runs analysis in parallel with cancellation and progress events,
     and `normalize_coordinator.rs` does the same for normalization, keeping the cache in step with the outputs.
   - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
@@ -169,12 +173,14 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   the Plugin Chain and Plugin Manager windows in `chain_window.rs` and `manager_window.rs`,
   the preview insert in `preview.rs`, and their texts in `labels.rs`,
   and `app/plugins.rs`, `app/process.rs`, and `app/preview.rs` connect them to the main view.
-  The views outside `app/` are `results.rs` for the table, `waveform.rs` for the waveform,
+  The views outside `app/` are `results.rs` for the table, `waveform.rs` for the four preview modes,
+  with `waveform/` holding their geometry, rendering, axes, loudness graph, overloads, and spectrogram raster,
   `controls.rs` and `info_panel.rs` for the controls column and the information panel,
   and `settings_window.rs` for the Audio Settings window.
   `menus.rs` defines the actions, the shortcuts, and the menu bar, `theme.rs` the palette and the fonts,
   `settings.rs` the saved preferences, `normalization.rs` the normalization target and options,
   `operation_run.rs` the progress of a normalization or processing run,
+  `playback_status.rs` the status bar's playback clock,
   and `files.rs` revealing files and opening their folders.
   `file_drag.rs` drags the selected rows out to other applications,
   and `file_drag/windows.rs` is its OLE drag source on Windows, where gpui has no outbound file drag.
@@ -283,8 +289,12 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 - Measurement provenance names the application that measured the audio, not the last writer of gain or preview data.
   Successful measurements are reusable in either direction, while decoder failures are producer-specific.
   Rust waveforms use `rust_waveform_cache`, leaving JUCE waveform columns untouched for compatible unchanged sources.
-  Missing or corrupt waveforms and Serato cache payloads are artifact misses, not measurement misses.
-- The GUI fills missing native waveforms and Serato outcomes after initial loading through a bounded background queue.
+  Both applications share `spectrogram_cache` and its `SPEC` codec.
+  Grids may differ by one intensity step in at most one cell per thousand, because the FFT libraries differ.
+  `tests/shared_cache.rs` measures that documented bound when `AUDIOBATCH_CPP_TESTS` names the C++ test executable.
+  Missing or corrupt waveforms, spectrograms, and Serato cache payloads are artifact misses, not measurement misses.
+- The GUI fills missing native waveforms, spectrograms, and Serato outcomes after initial loading.
+  A bounded background queue does it, decoding once for every missing audio artifact.
   Keep selected-file work within the same admission limit,
   retain stable negative tag outcomes, and reject stale identities.
   Do not persist inherited gain values as new user edits, hydrate every waveform in measurement reads,

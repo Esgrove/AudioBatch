@@ -630,7 +630,12 @@ mod test_previews {
         let first = harness.coordinator.take_preview().expect("first prefix");
         harness.publish();
         assert!(harness.coordinator.take_preview().is_none());
-        harness.progress.last_preview = Some((8, Instant::now().checked_sub(PREVIEW_INTERVAL).unwrap()));
+        harness.progress.last_preview = Some((
+            8,
+            Instant::now()
+                .checked_sub(PREVIEW_INTERVAL)
+                .expect("monotonic clock past one interval"),
+        ));
         harness.publish();
         let second = harness.coordinator.take_preview().expect("next admitted prefix");
         assert!(!Arc::ptr_eq(first.waveform(), second.waveform()));

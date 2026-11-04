@@ -1,6 +1,5 @@
 //! Optional spectral cache contracts, independent revisions, and captured-source publication tests.
 
-use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use rusqlite::types::Value;
@@ -13,7 +12,7 @@ use crate::spectrogram::SpectrogramData;
 use crate::test_helpers::{analyze_fixture_copy, temporary_cache, temporary_cache_path, update_cached_measurements};
 
 /// Constructs a deterministic valid shared envelope without depending on FFT output or builder behavior.
-fn artifact(record: &AnalysisRecord) -> SpectrogramData {
+pub(super) fn artifact(record: &AnalysisRecord) -> SpectrogramData {
     let mut stride = 1024_u64;
     while record.length_in_samples.div_ceil(stride) > 4096 {
         stride *= 2;
@@ -56,7 +55,7 @@ fn measurement_values(connection: &Connection) -> Vec<Value> {
 }
 
 /// Counts spectral revisions without requiring successful measurement adoption.
-fn artifact_count(connection: &Connection) -> i64 {
+pub(super) fn artifact_count(connection: &Connection) -> i64 {
     connection
         .query_row("SELECT count(*) FROM spectrogram_cache", [], |row| row.get(0))
         .expect("spectral row count")
@@ -124,7 +123,7 @@ fn optional_publication_failure_leaves_required_measurements_committed() {
     connection
         .execute_batch(
             "CREATE TRIGGER abort_spectrum_publication BEFORE INSERT ON spectrogram_cache
-             BEGIN SELECT RAISE(ABORT, 'optional spectrum publication failed'); END;",
+         BEGIN SELECT RAISE(ABORT, 'optional spectrum publication failed'); END;",
         )
         .expect("aborting optional publication");
     assert!(cache.store_spectrogram(&record, &artifact(&record)).is_err());
@@ -226,8 +225,8 @@ fn future_revisions_coexist_and_survive_compatible_measurement_refills() {
     connection
         .execute_batch(
             "INSERT INTO spectrogram_cache
-             SELECT file_path, algorithm_version + 1, serialization_version + 1, file_size, modified_time_ms,
-                sample_rate, num_channels, length_in_samples, producer, x'010203' FROM spectrogram_cache;",
+         SELECT file_path, algorithm_version + 1, serialization_version + 1, file_size, modified_time_ms,
+            sample_rate, num_channels, length_in_samples, producer, x'010203' FROM spectrogram_cache;",
         )
         .expect("future revision");
     assert!(cache.store_spectrogram(&record, &data).expect("current refill"));
@@ -279,110 +278,6 @@ fn mismatched_artifact_geometry_does_not_overwrite_existing_spectra() {
             data.to_bytes()
         );
     }
-}
-
-/// Discards stale source work and preserves newer artifacts during delayed captured-identity removal.
-#[test]
-fn changed_sources_reject_stale_publication_and_remove_only_the_captured_identity() {
-    let directory = TempDir::new().expect("temporary directory");
-    let cache = temporary_cache(&directory);
-    let old = analyze_fixture_copy(&directory, "sine_mono_24000_16.wav");
-    let old_data = artifact(&old);
-    cache.store_analysis(&old).expect("old measurements");
-    assert!(cache.store_spectrogram(&old, &old_data).expect("old artifact"));
-    let replacement = test_fixtures::copy_fixture(&directory, "sine_stereo_44100_16.wav", Some("replacement.wav"));
-    std::fs::copy(replacement, &old.path).expect("replace source");
-    assert!(cache.get_spectrogram(&old.path).is_none());
-    assert!(!cache.store_spectrogram(&old, &old_data).expect("reject stale artifact"));
-    let new = crate::analyze_file(&old.path, &|| false, &mut |_| {});
-    cache.store_analysis(&new).expect("new measurements");
-    let connection = Connection::open(temporary_cache_path(&directory)).expect("independent connection");
-    assert_eq!(artifact_count(&connection), 0);
-    assert!(cache.store_spectrogram(&new, &artifact(&new)).expect("new artifact"));
-    cache.remove_analysis_for_record(&old).expect("delayed removal");
-    assert!(cache.get_spectrogram(&new.path).is_some());
-    assert!(cache.remove_analysis_for_record(&new).expect("current removal"));
-    assert_eq!(artifact_count(&connection), 0);
-}
-
-/// Failed optional cleanup cannot roll back committed required results, gains, or measurement provenance.
-#[test]
-fn optional_cleanup_failure_preserves_committed_measurements() {
-    let directory = TempDir::new().expect("temporary directory");
-    let cache = temporary_cache(&directory);
-    let prior = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
-    cache.store_analysis(&prior).expect("prior measurements");
-    cache
-        .store_custom_gain_for_record(&prior, Some(-2.5))
-        .expect("prior gain");
-    assert!(
-        cache
-            .store_spectrogram(&prior, &artifact(&prior))
-            .expect("prior artifact")
-    );
-    let connection = Connection::open(temporary_cache_path(&directory)).expect("independent connection");
-    connection
-        .execute_batch(
-            "CREATE TRIGGER abort_spectrum_cleanup BEFORE DELETE ON spectrogram_cache
-         BEGIN SELECT RAISE(ABORT, 'optional spectrum cleanup failed'); END;",
-        )
-        .expect("aborting optional cleanup");
-    let mut fresh = prior;
-    fresh.measurement_producer = MeasurementProducer::Cpp;
-    fresh.channels = 1;
-    fresh.waveform = None;
-    let overloads = Arc::make_mut(fresh.overloads.as_mut().expect("overload history"));
-    overloads.channels = 1;
-    overloads.flags.truncate(overloads.flags.len() / 2);
-    cache.store_analysis(&fresh).expect("required measurements commit");
-    let cached = cache.get_analysis(&fresh.path).expect("committed measurement hit");
-    assert_eq!(cached.measurement_producer, MeasurementProducer::Cpp);
-    assert_eq!(cached.channels, 1);
-    assert_eq!(cached.custom_gain_db, Some(-2.5));
-    assert_eq!(cached.short_term_loudness, fresh.short_term_loudness);
-    assert_eq!(cached.overloads, fresh.overloads);
-    assert_eq!(artifact_count(&connection), 1);
-    assert!(cache.get_spectrogram(&fresh.path).is_none());
-    connection
-        .execute_batch("DROP TRIGGER abort_spectrum_cleanup")
-        .expect("allow cleanup");
-    cache.store_analysis(&fresh).expect("retry optional cleanup");
-    assert_eq!(artifact_count(&connection), 0);
-}
-
-/// Retains newer work when a delayed cleanup request no longer names the winning measurements.
-#[test]
-fn stale_cleanup_cannot_delete_a_newer_source_artifact() {
-    let directory = TempDir::new().expect("temporary directory");
-    let cache = temporary_cache(&directory);
-    let record = analyze_fixture_copy(&directory, "sine_mono_24000_16.wav");
-    cache.store_analysis(&record).expect("measurements");
-    assert!(cache.store_spectrogram(&record, &artifact(&record)).expect("artifact"));
-    let connection = Connection::open(temporary_cache_path(&directory)).expect("independent connection");
-    let mut stale = record;
-    stale.modified_time_ms -= 1;
-    super::spectrogram::prune_incompatible(&connection, &stale).expect("stale cleanup ignored");
-    assert_eq!(artifact_count(&connection), 1);
-}
-
-/// Removes orphaned spectra even when neither a source file nor a measurement row remains.
-#[test]
-fn remove_cleans_orphaned_spectral_revisions_of_missing_files() {
-    let directory = TempDir::new().expect("temporary directory");
-    let cache = temporary_cache(&directory);
-    let record = analyze_fixture_copy(&directory, "sine_mono_24000_16.wav");
-    cache.store_analysis(&record).expect("measurements");
-    assert!(cache.store_spectrogram(&record, &artifact(&record)).expect("artifact"));
-    let connection = Connection::open(temporary_cache_path(&directory)).expect("independent connection");
-    connection
-        .execute("DELETE FROM file_analysis", [])
-        .expect("orphan spectrum");
-    connection
-        .execute("DELETE FROM rust_waveform_cache", [])
-        .expect("remove native preview");
-    std::fs::remove_file(&record.path).expect("remove source");
-    assert!(cache.remove_analysis(&record.path).expect("orphan cleanup"));
-    assert_eq!(artifact_count(&connection), 0);
 }
 
 /// Rejects competing persisted identities and on-disk timestamp changes without publishing an artifact.

@@ -411,7 +411,8 @@ fn bench_spectrogram_cache(criterion: &mut Criterion) {
                 BatchSize::PerIteration,
             );
         });
-        group.bench_function(BenchmarkId::new("store_selected", &parameter), |bencher| {
+        // Times the complete publication, including serialization and the source identity checks around it.
+        group.bench_function(BenchmarkId::new("encode_check_store_selected", &parameter), |bencher| {
             bencher.iter(|| {
                 black_box(
                     cache
