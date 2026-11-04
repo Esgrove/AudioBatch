@@ -206,6 +206,10 @@ the `WaveformView`, and the four `SliderState` sliders.
 The controls column and the information panel are not entities.
 `render_controls` and `render_info_panel` draw them from the view's state on every render,
 and the controls send a `ControlsEvent` back through a listener.
+Below the fixed heading and metric cards, the information panel shows a two-row, five-column property grid,
+followed by genre, wrapped album, and wrapped comment tags in one scrollable region.
+Independent vertical dividers resize the controls and information widths within bounded, persisted preferences.
+Key presentation preserves the original tag spelling and appends its Camelot equivalent when recognized.
 `preview_widths` switches both to their wide layouts once half of the preview is wide enough for them to share,
 and leaves the other half to the waveform.
 The preview collapses into one row through the chevron, the Options menu, or the `TogglePreviewSection` shortcut.

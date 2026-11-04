@@ -1130,6 +1130,155 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
     });
 }
 
+/// Sends real native divider drags and proves that only release persists an independent preference.
+#[gpui_kit::test]
+fn integration_panel_width_drags_commit_independently_without_height_refit(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let path = workflow.paths.data().join("gui-settings.json");
+    for (id, controls) in [("controls-width-divider", true), ("information-width-divider", false)] {
+        let before = cx.read(|cx| workflow.view.read(cx).settings.clone());
+        let previous_file = fs::read(&path).ok();
+        let height = cx.read(|cx| workflow.view.read(cx).preview_height);
+        let start = cx
+            .update_window(workflow.window, |_, window, cx| {
+                window.render_frame(cx);
+                let first = window.find("controls-width-divider").bounds().center().x;
+                let second = window.find("information-width-divider").bounds().center().x;
+                let start = window.find(id).bounds().center();
+                window.pointer_down(start, MouseButton::Left, cx);
+                window.pointer_move(start + point(px(6.0), px(0.0)), Some(MouseButton::Left), cx);
+                window.pointer_move(start + point(px(16.0), px(0.0)), Some(MouseButton::Left), cx);
+                let changed_first = window.find("controls-width-divider").bounds().center().x;
+                let changed_second = window.find("information-width-divider").bounds().center().x;
+                if controls {
+                    assert!((f32::from(changed_first - first) - 16.0).abs() < 0.01);
+                    assert!((f32::from(changed_second - changed_first - (second - first))).abs() < 0.01);
+                } else {
+                    assert!((f32::from(changed_first - first)).abs() < 0.01);
+                    assert!((f32::from(changed_second - second) - 16.0).abs() < 0.01);
+                }
+                start
+            })
+            .expect("drag native preview divider");
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            assert_eq!(view.settings, before, "drag feedback is not a committed preference");
+            assert!(view.panel_width_drag.is_some());
+            assert!((view.preview_height - height).abs() < f32::EPSILON);
+        });
+        assert_eq!(fs::read(&path).ok(), previous_file, "movement never writes settings");
+        cx.update_window(workflow.window, |_, window, cx| {
+            window.pointer_up(start + point(px(16.0), px(0.0)), MouseButton::Left, cx);
+        })
+        .expect("release native preview divider");
+        cx.run_until_parked();
+        let committed = cx.read(|cx| workflow.view.read(cx).settings.clone());
+        if controls {
+            assert!(committed.controls_width_scale > before.controls_width_scale);
+            assert!((committed.information_width_scale - before.information_width_scale).abs() < f32::EPSILON);
+        } else {
+            assert!(committed.information_width_scale > before.information_width_scale);
+            assert!((committed.controls_width_scale - before.controls_width_scale).abs() < f32::EPSILON);
+        }
+        assert_eq!(GuiSettings::load_from(&path), committed);
+        cx.read(|cx| assert!((workflow.view.read(cx).preview_height - height).abs() < f32::EPSILON));
+    }
+}
+
+/// Keeps keyboard adjustment, individual reset, collapse, and recreation on the same production preference path.
+#[gpui_kit::test]
+fn integration_panel_width_keyboard_reset_collapse_and_recreation(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let path = workflow.paths.data().join("gui-settings.json");
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.click("controls-width-divider", cx);
+        window.press("right", cx);
+        window.press("right", cx);
+        let controls = window.find("controls-width-divider").bounds().center().x;
+        window.press("shift-right", cx);
+        let wider = window.find("controls-width-divider").bounds().center().x;
+        assert!((f32::from(wider - controls) - 16.0).abs() < 0.01);
+        window.press("shift-left", cx);
+        let restored = window.find("controls-width-divider").bounds().center().x;
+        assert!(f32::from(restored - controls).abs() < 0.01);
+        window.click("information-width-divider", cx);
+        window.press("right", cx);
+        let information = window.find("information-width-divider").bounds().center().x;
+        window.press("shift-right", cx);
+        let wider = window.find("information-width-divider").bounds().center().x;
+        assert!((f32::from(wider - information) - 16.0).abs() < 0.01);
+        assert!((f32::from(window.find("controls-width-divider").bounds().center().x - controls)).abs() < 0.01);
+        window.press("shift-left", cx);
+        let restored = window.find("information-width-divider").bounds().center().x;
+        assert!(f32::from(restored - information).abs() < 0.01);
+    })
+    .expect("adjust separately focused native dividers");
+    cx.run_until_parked();
+    let changed = cx.read(|cx| workflow.view.read(cx).settings.clone());
+    assert!(changed.controls_width_scale > 0.95);
+    assert!(changed.information_width_scale > 0.90);
+    assert_eq!(GuiSettings::load_from(&path), changed);
+    workflow.dispatch(TogglePreviewSection, cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("controls-width-divider").is_none());
+        assert!(window.try_find("information-width-divider").is_none());
+    })
+    .expect("compact preview contains no width handles");
+    workflow.dispatch(TogglePreviewSection, cx);
+    cx.read(|cx| assert_eq!(workflow.view.read(cx).settings, changed));
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.double_click("controls-width-divider", cx);
+    })
+    .expect("reset only controls by double click");
+    let reset = cx.read(|cx| workflow.view.read(cx).settings.clone());
+    assert!((reset.controls_width_scale - 0.95).abs() < f32::EPSILON);
+    assert!((reset.information_width_scale - changed.information_width_scale).abs() < f32::EPSILON);
+    assert_eq!(GuiSettings::load_from(&path), reset);
+    cx.update_window(workflow.window, |_, window, _| window.remove_window())
+        .expect("close original view");
+    let Workflow {
+        directory, paths, view, ..
+    } = workflow;
+    drop(view);
+    cx.run_until_parked();
+    let (window, view) = Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&directory))), cx);
+    cx.read(|cx| assert_eq!(view.read(cx).settings, reset));
+    cx.update_window(window, |_, window, cx| {
+        window.click("information-width-divider", cx);
+        window.press("home", cx);
+    })
+    .expect("reset restored information width from keyboard");
+    cx.run_until_parked();
+    let persisted = GuiSettings::load_from(&paths.data().join("gui-settings.json"));
+    assert!((persisted.controls_width_scale - 0.95).abs() < f32::EPSILON);
+    assert!((persisted.information_width_scale - 0.90).abs() < f32::EPSILON);
+}
+
+/// Window constraints change only resolved geometry and cannot replace a stored relative width.
+#[gpui_kit::test]
+fn integration_panel_width_preferences_survive_temporary_window_constraints(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.click("controls-width-divider", cx);
+        window.press("right", cx);
+        window.click("information-width-divider", cx);
+        window.press("left", cx);
+    })
+    .expect("establish explicit width preferences");
+    cx.run_until_parked();
+    let saved = cx.read(|cx| workflow.view.read(cx).settings.clone());
+    let path = workflow.paths.data().join("gui-settings.json");
+    let file = fs::read(&path).expect("saved settings");
+    for width in [300.0, 800.0, 1600.0, 2200.0, 1600.0] {
+        cx.simulate_window_resize(workflow.window, size(px(width), px(1000.0)));
+        cx.update_window(workflow.window, |_, window, cx| window.render_frame(cx))
+            .expect("render constrained view");
+        cx.read(|cx| assert_eq!(workflow.view.read(cx).settings, saved));
+        assert_eq!(fs::read(&path).expect("saved settings remain"), file);
+    }
+}
+
 /// Exercises transient prediction publication through the production view without any plugin or output file.
 #[gpui_kit::test]
 async fn integration_gained_loudness_rejects_stale_gain_selection_and_toggle(cx: &mut TestAppContext) {

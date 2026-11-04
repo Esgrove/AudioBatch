@@ -1,8 +1,9 @@
 /// Selected-file inspector beside the waveform preview.
 /// Keeps the filename, optionally split into artist and title, and four analysis metrics above scrolling file details.
+/// Technical and musical values share a two-row,
+/// five-column grid, followed by genre and wrapped album and comment tags.
 /// Analysis errors remain available in the details, without lifecycle or cache-provenance badges.
-/// The wide layout puts the metrics in one row, and the details with short values two to a line,
-/// above the tags that can be long, such as the album and the comment, which keep the full width.
+/// The wide layout puts the metrics in one row while keeping the same stacked details.
 
 #pragma once
 
@@ -15,20 +16,64 @@
 #include <JuceHeader.h>
 
 #include <array>
-#include <memory>
+#include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
 {
-/// One read-only detail with a field caption and value.
-struct AudioInfoRow {
-    /// Caption of the detail, such as "Format".
-    juce::String field;
-    /// The value shown next to the caption.
+/// Property grid dimensions shared by presentation and component storage.
+constexpr std::size_t AUDIO_INFO_COLUMN_COUNT {5};
+constexpr std::size_t AUDIO_INFO_ROW_COUNT {2};
+constexpr std::size_t AUDIO_INFO_CELL_COUNT {AUDIO_INFO_COLUMN_COUNT * AUDIO_INFO_ROW_COUNT};
+
+/// One value in a technical or musical line, with a label retained for its tooltip.
+struct AudioInfoValue {
+    /// Name of the value, such as "Format" or "Duration".
+    juce::String label;
+    /// Display text, including any unit.
     juce::String value;
-    /// True for a value that always stays short, such as the format or the tempo,
-    /// which the wide layout shows beside another one on the same line.
-    bool isShort {false};
+};
+
+/// Pure selected-file details, independent of component state and available width.
+struct AudioInfoDetails {
+    /// File type, channels, duration, and size, available only for ready records.
+    std::vector<AudioInfoValue> format;
+    /// Bit depth, sample rate, and bitrate, available only for ready records.
+    std::vector<AudioInfoValue> audio;
+    /// Tempo, original key with its Camelot equivalent, and year, independent of analysis readiness.
+    std::vector<AudioInfoValue> track;
+    /// Single-line genre tag.
+    juce::String genre;
+    /// Fully wrapped album tag.
+    juce::String album;
+    /// Fully wrapped comment tag.
+    juce::String comment;
+};
+
+// The optional Serato data is borrowed for this call only and may be null before metadata arrives.
+AudioInfoDetails formatInfoDetails(const AudioAnalysisRecord& record, const serato::SeratoData* data = nullptr);
+std::array<AudioInfoValue, AUDIO_INFO_CELL_COUNT> formatInfoGrid(const AudioInfoDetails& details);
+
+/// Read-only text rendered and measured with the same layout, including long-token wrapping.
+/// Inherits label text and accessibility so the actual visible content remains discoverable.
+class AudioInfoText final : public juce::Label
+{
+public:
+    AudioInfoText(const juce::String& name, bool shouldWrap);
+
+    [[nodiscard]] int getPreferredHeight(int width) const;
+    void setValues(const std::vector<AudioInfoValue>& values);
+
+protected:
+    // juce::Component
+    void paint(juce::Graphics& graphics) override;
+
+private:
+    [[nodiscard]] juce::TextLayout createTextLayout(int width) const;
+
+    /// True for unlimited album, comment, and error wrapping.
+    bool wrapping {false};
 };
 
 /// A labelled analysis value with an explicit unit and a restrained card background.
@@ -77,8 +122,6 @@ public:
     AudioInfoPanel& operator=(const AudioInfoPanel&) = delete;
     AudioInfoPanel& operator=(AudioInfoPanel&&) = delete;
 
-    static std::vector<AudioInfoRow> formatRows(const AudioAnalysisRecord& record);
-
     [[nodiscard]] bool hasArtwork() const noexcept;
     [[nodiscard]] int getPreferredHeight() const;
 
@@ -98,7 +141,7 @@ public:
     void resized() override;
 
 private:
-    [[nodiscard]] int getDetailLineCount() const;
+    [[nodiscard]] int getDetailsHeight(int width) const;
     [[nodiscard]] int getErrorHeight(int width) const;
     [[nodiscard]] int getHeaderHeight() const;
 
@@ -106,16 +149,15 @@ private:
 
     void updateLoudnessPreview(const AudioAnalysisRecord& record, bool enabled);
     void showLoudnessPreview();
-    void ensureLabelCount(std::size_t requiredCount);
-    void setRows(std::vector<AudioInfoRow> newRows);
+    void setDetails(const AudioInfoDetails& details);
 
-    /// Details parent outlives the viewport and the dynamically owned labels.
+    /// Details parent outlives the viewport and its text components.
     juce::Component detailsContent;
     /// Embedded album artwork beside the file name.
     juce::ImageComponent artworkImage {"Album artwork"};
 
     /// Error of a failed analysis, empty otherwise.
-    juce::Label errorLabel {"Error"};
+    AudioInfoText errorLabel {"Error", true};
     /// File name, or artist when split into artist and title.
     juce::Label filenameLabel {"File"};
     /// Title when the file name was split.
@@ -133,13 +175,22 @@ private:
         AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
         AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
     };
-    /// Detail rows displayed by the labels.
-    std::vector<AudioInfoRow> rows;
-
-    /// Caption labels created on demand.
-    std::vector<std::unique_ptr<juce::Label>> fieldLabels;
-    /// Value labels created on demand.
-    std::vector<std::unique_ptr<juce::Label>> valueLabels;
+    /// Two shared five-column rows, retaining empty slots when a property is unavailable.
+    std::array<juce::Label, AUDIO_INFO_CELL_COUNT> detailCells;
+    /// Populated rows, independent of whether the details viewport is currently visible.
+    std::array<bool, AUDIO_INFO_ROW_COUNT> detailRowsVisible {false, false};
+    /// Captions retain genre, album, and comment display order.
+    std::array<juce::Label, 3> tagCaptions {
+        juce::Label {{}, "Genre"},
+        juce::Label {{}, "Album"},
+        juce::Label {{}, "Comment"},
+    };
+    /// Genre truncates on one line while album and comment wrap without a line limit.
+    std::array<AudioInfoText, 3> tagValues {
+        AudioInfoText {"Genre", false},
+        AudioInfoText {"Album", true},
+        AudioInfoText {"Comment", true},
+    };
 
     /// Latest selected request, retained on failure to avoid retrying on every unrelated UI refresh.
     std::optional<utils::FileIdentity> loudnessIdentity;
@@ -156,7 +207,7 @@ private:
     bool compactMode {false};
     /// Whether the file name was split.
     bool hasTitle {false};
-    /// True for the wide metrics and short-detail layout.
+    /// True for the single-row wide metrics layout.
     bool wideMode {false};
 };
 }  // namespace audiobatch

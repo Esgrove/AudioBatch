@@ -126,9 +126,9 @@ pub enum SettingsEvent {
     /// The requested settings and the snapshot they were edited from, allowing stale fields to be ignored.
     Changed {
         /// Settings the window displayed before this edit.
-        previous: GuiSettings,
+        previous: Box<GuiSettings>,
         /// Settings containing the user's requested change.
-        settings: GuiSettings,
+        settings: Box<GuiSettings>,
     },
 }
 
@@ -296,7 +296,10 @@ impl SettingsView {
     /// Sends the changed settings to the main view.
     fn send(&mut self, settings: GuiSettings, cx: &mut Context<Self>) {
         let previous = std::mem::replace(&mut self.settings, settings.clone());
-        cx.emit(SettingsEvent::Changed { previous, settings });
+        cx.emit(SettingsEvent::Changed {
+            previous: Box::new(previous),
+            settings: Box::new(settings),
+        });
         cx.notify();
     }
 

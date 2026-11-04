@@ -22,6 +22,7 @@ pub mod gain_writer;
 #[cfg(test)]
 mod integration_tests;
 mod normalize;
+mod panel_widths;
 mod plugins;
 mod preferences;
 mod preview;
@@ -199,6 +200,10 @@ pub struct AppView {
     workspace_split: Entity<ResizableState>,
     /// True while the preview is collapsed into its compact row.
     preview_compact: bool,
+    /// Stable keyboard targets for the controls and information width dividers.
+    panel_width_focus: [FocusHandle; 2],
+    /// Live width feedback, committed to settings only on pointer release.
+    panel_width_drag: Option<panel_widths::PanelWidthDrag>,
     /// True until the first completed run has selected and started playing its first file.
     autoplay_pending: bool,
     /// Applies the events of the current run. Dropping it stops listening to the run.
@@ -299,6 +304,7 @@ impl AppView {
             .as_ref()
             .map(|coordinator| gain_writer::GainWriter::new(Arc::clone(coordinator.cache())));
 
+        let panel_width_focus = Self::new_panel_width_focus(cx);
         let mut view = Self {
             focus_handle,
             #[cfg(target_os = "windows")]
@@ -353,6 +359,8 @@ impl AppView {
             preview_fixed_size: true,
             workspace_split: cx.new(|_| ResizableState::default()),
             preview_compact: false,
+            panel_width_focus,
+            panel_width_drag: None,
             autoplay_pending: options.autoplay,
             analysis_task: None,
             demo_task: None,

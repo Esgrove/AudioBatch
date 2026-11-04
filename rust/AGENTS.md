@@ -379,6 +379,7 @@ and fresh copies and correctness checks outside timing.
 Raw hyperfine exports, combined run statistics, Markdown, and machine/build metadata stay in `target/cli-benchmark/`.
 
 The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,
+`AUDIOBATCH_GUI_SNAPSHOT_SIZE` as a window size such as `1000x800`,
 and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` with action names such as `audiobatch::ToggleLoudnessGraph`
 that are dispatched before the image is taken.
 The GUI shares its palette, fonts, and icons with the C++ application,

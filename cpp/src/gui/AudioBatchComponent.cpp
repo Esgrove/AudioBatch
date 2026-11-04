@@ -106,6 +106,7 @@ void AudioBatchComponent::configurePreviewControls()
         2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewMinimumHeight
     );
     addAndMakeVisible(waveformResizeBar);
+    previewWorkspace.loadWidthSettings();
     addAndMakeVisible(previewWorkspace);
 
     previewWorkspace.previewSectionButton.onClick = [this] { togglePreviewSection(); };

@@ -15,6 +15,15 @@ Regenerate them with:
 It needs ffmpeg with the libmp3lame encoder, and uv for the Python scripts.
 When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
 
+## Musical Key Expectations
+
+`camelot_keys.tsv` lists original key tag text and its expected Camelot key, separated by a tab.
+A `-` expectation means the input cannot be mapped, and `#` starts a comment line.
+Both applications read this independent table in their formatting tests.
+It covers major and minor keys, enharmonic sharps and flats, Unicode accidentals,
+Camelot and Open Key notation, whitespace, and invalid values.
+The mapping adds a Camelot equivalent for display without changing the original tag spelling.
+
 ## Input Identities
 
 `checksums.sha256` records the exact bytes and inventory of the ordinary fixtures,

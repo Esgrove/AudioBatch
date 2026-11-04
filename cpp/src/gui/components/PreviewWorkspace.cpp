@@ -9,13 +9,144 @@
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 
+#include <functional>
+#include <memory>
+#include <utility>
+
 namespace audiobatch
 {
+namespace
+{
+constexpr auto CONTROLS_WIDTH_KEY {"previewControlsWidthScale"};
+constexpr auto INFORMATION_WIDTH_KEY {"previewInformationWidthScale"};
+}  // namespace
+
+/// A native JUCE edge resizer whose constrainer updates a responsive width preference, not a fixed component size.
+/// Each divider owns only its selected panel's width. The workspace handles the waveform and the untouched sibling.
+class PreviewWidthDivider final : public juce::ResizableEdgeComponent, private juce::ComponentBoundsConstrainer
+{
+public:
+    /// Observes an existing panel and adapts JUCE's right-edge dragging to workspace column widths.
+    PreviewWidthDivider(
+        juce::Component& target,
+        const juce::String& name,
+        std::function<int()> currentWidth,
+        std::function<void(int)> resize,
+        std::function<void()> commit,
+        std::function<void()> reset
+    ) :
+        juce::ResizableEdgeComponent(&target, this, juce::ResizableEdgeComponent::rightEdge),
+        panel(target),
+        getPanelWidth(std::move(currentWidth)),
+        onCommit(std::move(commit)),
+        onReset(std::move(reset)),
+        onResize(std::move(resize))
+    {
+        setName(name);
+        setTitle(name);
+        setDescription(
+            "Drag left or right, or use arrow keys. Shift moves faster. Home or double-click resets the width."
+        );
+        setWantsKeyboardFocus(true);
+    }
+
+    /// Releases callbacks before the owning workspace destroys their observed panels.
+    ~PreviewWidthDivider() override = default;
+
+    PreviewWidthDivider(const PreviewWidthDivider&) = delete;
+    PreviewWidthDivider(PreviewWidthDivider&&) = delete;
+    PreviewWidthDivider& operator=(const PreviewWidthDivider&) = delete;
+    PreviewWidthDivider& operator=(PreviewWidthDivider&&) = delete;
+
+    /// Resizes only the selected column, with Shift providing a larger logical-pixel step and Home resetting it.
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        const auto code = key.getKeyCode();
+        if (code == juce::KeyPress::homeKey) {
+            onReset();
+            onCommit();
+            return true;
+        }
+        if (code != juce::KeyPress::leftKey && code != juce::KeyPress::rightKey) {
+            return false;
+        }
+        const auto step = key.getModifiers().isShiftDown() ? layout::previewWidths::LARGE_KEYBOARD_STEP
+                                                           : layout::previewWidths::KEYBOARD_STEP;
+        onResize(getPanelWidth() + (code == juce::KeyPress::leftKey ? -step : step));
+        onCommit();
+        return true;
+    }
+
+    /// Refreshes the grip when keyboard traversal reaches the divider.
+    void focusGained(const juce::Component::FocusChangeType cause) override
+    {
+        juce::ignoreUnused(cause);
+        repaint();
+    }
+
+    /// Removes the focused grip when traversal leaves the divider.
+    void focusLost(const juce::Component::FocusChangeType cause) override
+    {
+        juce::ignoreUnused(cause);
+        repaint();
+    }
+
+    /// Resets only this divider's preference, leaving the sibling and the preview height unchanged.
+    void mouseDoubleClick(const juce::MouseEvent& event) override
+    {
+        juce::ignoreUnused(event);
+        onReset();
+        onCommit();
+    }
+
+protected:
+    /// Shows a quiet vertical grip only when the divider is hovered, focused, or being dragged.
+    void paint(juce::Graphics& graphics) override
+    {
+        if (!isMouseOverOrDragging() && !hasKeyboardFocus(false)) {
+            return;
+        }
+        graphics.setColour(CustomLookAndFeel::greyMiddleLight().withAlpha(layout::previewWidths::INDICATOR_ALPHA));
+        auto indicator = getLocalBounds().toFloat().reduced(0.0f, layout::previewWidths::INDICATOR_INSET);
+        indicator = indicator.withSizeKeepingCentre(layout::previewWidths::INDICATOR_WIDTH, indicator.getHeight());
+        graphics.fillRoundedRectangle(indicator, layout::previewWidths::INDICATOR_WIDTH * 0.5f);
+    }
+
+private:
+    /// Leaves the component geometry to the workspace so a divider never moves or resizes its sibling panel.
+    void applyBoundsToComponent(juce::Component& component, const juce::Rectangle<int> bounds) override
+    {
+        juce::ignoreUnused(component);
+        onResize(bounds.getWidth() + columnInset);
+    }
+
+    /// Commits once after JUCE completes a pointer resize, rather than saving every drag sample.
+    void resizeEnd() override
+    {
+        onCommit();
+    }
+
+    /// Converts the borrowed control's inset width back to its complete workspace column.
+    void resizeStart() override
+    {
+        columnInset = getPanelWidth() - panel.getWidth();
+    }
+
+    /// Borrows a panel owned by the enclosing workspace, which outlives this divider.
+    juce::Component& panel;
+    std::function<int()> getPanelWidth;
+    std::function<void()> onCommit;
+    std::function<void()> onReset;
+    std::function<void(int)> onResize;
+    int columnInset {0};
+};
+
 /// Creates the controls and adds them to the workspace, with the playback controls disabled until a file loads.
-/// The settings must outlive the workspace, and are only read once the owner loads the normalization target.
+/// The settings must outlive the workspace, and are read only after the owner configures their storage.
 PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::ApplicationProperties& settings) :
     normalizationTargetControl(settings),
-    thumbnail(previewPlayer.getFormatManager(), previewPlayer)
+    thumbnail(previewPlayer.getFormatManager(), previewPlayer),
+    properties(settings)
 {
     configurePreviewSectionButton();
     controlsContent.addAndMakeVisible(previewSectionButton);
@@ -40,6 +171,103 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
     addAndMakeVisible(processButton);
 
     configureSecondaryControls();
+    controlsWidthDivider = std::make_unique<PreviewWidthDivider>(
+        controlsViewport,
+        "Resize preview controls width",
+        [this] {
+            return layout::previewColumns(
+                       getLocalBounds().reduced(layout::compactPreview::padding),
+                       true,
+                       controlsWidthScale,
+                       informationWidthScale
+            )
+                .controls.getWidth();
+        },
+        [this](const int width) { setPanelWidth(false, width); },
+        [this] { saveWidthSettings(); },
+        [this] {
+            controlsWidthScale = layout::previewWidths::DEFAULT_CONTROLS_SCALE;
+            resized();
+        }
+    );
+    informationWidthDivider = std::make_unique<PreviewWidthDivider>(
+        audioInfo,
+        "Resize preview information width",
+        [this] { return audioInfo.getWidth(); },
+        [this](const int width) { setPanelWidth(true, width); },
+        [this] { saveWidthSettings(); },
+        [this] {
+            informationWidthScale = layout::previewWidths::DEFAULT_INFORMATION_SCALE;
+            resized();
+        }
+    );
+    addAndMakeVisible(*controlsWidthDivider);
+    addAndMakeVisible(*informationWidthDivider);
+}
+
+/// Destroys the width dividers before their borrowed panel targets and settings disappear.
+PreviewWorkspace::~PreviewWorkspace() = default;
+
+/// Loads responsive width preferences after the owning view has configured application storage.
+void PreviewWorkspace::loadWidthSettings()
+{
+    if (const auto* settings = properties.getUserSettings()) {
+        controlsWidthScale = layout::constrainedPreviewWidthScale(
+            settings->getDoubleValue(CONTROLS_WIDTH_KEY, layout::previewWidths::DEFAULT_CONTROLS_SCALE), false
+        );
+        informationWidthScale = layout::constrainedPreviewWidthScale(
+            settings->getDoubleValue(INFORMATION_WIDTH_KEY, layout::previewWidths::DEFAULT_INFORMATION_SCALE), true
+        );
+    }
+    resized();
+}
+
+/// Writes only the width preferences when the user commits a resize or reset.
+void PreviewWorkspace::saveWidthSettings()
+{
+    if (auto* settings = properties.getUserSettings()) {
+        settings->setValue(CONTROLS_WIDTH_KEY, controlsWidthScale);
+        settings->setValue(INFORMATION_WIDTH_KEY, informationWidthScale);
+        properties.saveIfNeeded();
+    }
+}
+
+/// Updates only the requested column, preserving its sibling and reserving the waveform's minimum width.
+/// Window-size clamping never flows back into either saved factor.
+/// Below the application's minimum width, a resize that would disturb its squeezed sibling is ignored.
+void PreviewWorkspace::setPanelWidth(const bool information, const int width)
+{
+    if (isCompact()) {
+        return;
+    }
+    const auto bounds = getLocalBounds().reduced(layout::compactPreview::padding);
+    const auto baseline = layout::previewColumnBaseline(bounds);
+    const auto columns = layout::previewColumns(bounds, true, controlsWidthScale, informationWidthScale);
+    const auto otherWidth = information ? columns.controls.getWidth() : columns.information.getWidth();
+    const auto availableWidth = juce::jmax(
+        0, bounds.getWidth() - layout::sectionSpacing * 2 - layout::previewWidths::MINIMUM_WAVEFORM_WIDTH - otherWidth
+    );
+    const auto baselineWidth = information ? baseline.information.getWidth() : baseline.controls.getWidth();
+    const auto minimumScale = information ? layout::previewWidths::MINIMUM_INFORMATION_SCALE
+                                          : layout::previewWidths::MINIMUM_CONTROLS_SCALE;
+    const auto minimumWidth = juce::roundToInt(baselineWidth * minimumScale);
+    if (availableWidth < minimumWidth) {
+        return;
+    }
+    const auto scale = width <= minimumWidth
+        ? minimumScale
+        : layout::constrainedPreviewWidthScale(
+              static_cast<double>(juce::jmin(availableWidth, width)) / baselineWidth, information
+          );
+    const auto proposed = layout::previewColumns(
+        bounds, true, information ? controlsWidthScale : scale, information ? scale : informationWidthScale
+    );
+    const auto proposedOtherWidth = information ? proposed.controls.getWidth() : proposed.information.getWidth();
+    if (proposedOtherWidth != otherWidth) {
+        return;
+    }
+    (information ? informationWidthScale : controlsWidthScale) = scale;
+    resized();
 }
 
 /// Reports whether the workspace shows the compact row, in which the secondary controls are hidden.
@@ -61,6 +289,11 @@ void PreviewWorkspace::setCompact(const bool shouldBeCompact)
     } else {
         controlsContent.addAndMakeVisible(previewSectionButton);
     }
+    if (shouldBeCompact
+        && (controlsWidthDivider->hasKeyboardFocus(false) || informationWidthDivider->hasKeyboardFocus(false)))
+    {
+        previewSectionButton.grabKeyboardFocus();
+    }
     audioInfo.setCompact(shouldBeCompact);
     resized();
 }
@@ -81,13 +314,19 @@ void PreviewWorkspace::setPlaybackState(const bool enabled, const bool playing)
 
 /// Lays out the metrics, the waveform, and the controls in columns,
 /// or in one row with the toggle, the playback buttons, the metrics, and the waveform when compact.
-/// A wide workspace gives the controls and the metrics their wide layouts, which share half the width.
+/// A wide workspace selects wide layouts before applying the independently remembered width scales.
 /// The controls and the pinned playback row share the same margins, so the column is centred,
 /// and the scroll bar takes width only while the controls overflow the column.
 void PreviewWorkspace::resized()
 {
-    const auto workspace = getLocalBounds().reduced(layout::compactPreview::padding);
-    const auto columns = layout::previewColumns(workspace, !isCompact());
+    auto workspace = getLocalBounds().reduced(layout::compactPreview::padding);
+    workspace.setSize(juce::jmax(0, workspace.getWidth()), juce::jmax(0, workspace.getHeight()));
+    const auto columns = layout::previewColumns(workspace, !isCompact(), controlsWidthScale, informationWidthScale);
+    controlsWidthDivider->setVisible(!isCompact());
+    informationWidthDivider->setVisible(!isCompact());
+    if (workspace.isEmpty()) {
+        return;
+    }
     if (isCompact()) {
         layoutCompact(
             workspace, columns.controls.getWidth() - layout::previewToggle::size - layout::compactPreview::spacing
@@ -95,6 +334,18 @@ void PreviewWorkspace::resized()
         return;
     }
 
+    controlsWidthDivider->setBounds(
+        columns.controls.getRight(),
+        workspace.getY(),
+        juce::jmax(0, columns.information.getX() - columns.controls.getRight()),
+        workspace.getHeight()
+    );
+    informationWidthDivider->setBounds(
+        columns.information.getRight(),
+        workspace.getY(),
+        juce::jmax(0, columns.waveform.getX() - columns.information.getRight()),
+        workspace.getHeight()
+    );
     audioInfo.setWide(columns.wide);
     audioInfo.setBounds(columns.information);
     thumbnail.setBounds(columns.waveform);

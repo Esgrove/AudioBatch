@@ -4,6 +4,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "TestHelpers.h"
 #include "TestSuites.h"
 
 #include <limits>
@@ -68,6 +69,14 @@ public:
             expectEquals(formatDurationClockTenths(195.44), juce::String("3:15.4"));
             expectEquals(formatDurationClockTenths(59.96), juce::String("1:00.0"));
             expectEquals(formatDurationClockTenths(3'725.25), juce::String("1:02:05.3"));
+            expectEquals(formatDurationClockTenths(205.4), juce::String("3:25.4"));
+            expectEquals(formatDurationClockTenths(0.01), juce::String("0:00.0"));
+            expectEquals(formatDurationClockTenths(0.05), juce::String("0:00.1"));
+            expectEquals(formatDurationClockTenths(59.95), juce::String("1:00.0"));
+            expectEquals(formatDurationClockTenths(3'599.95), juce::String("1:00:00.0"));
+            expectEquals(formatDurationClockTenths(-1.0), juce::String("-"));
+            expectEquals(formatDurationClockTenths(std::numeric_limits<double>::quiet_NaN()), juce::String("-"));
+            expectEquals(formatDurationClockTenths(std::numeric_limits<double>::infinity()), juce::String("-"));
         }
 
         beginTest("Bit depth uses the analyzed value or the existing unavailable label");
@@ -122,6 +131,51 @@ public:
 
             record.formatName = {};
             expectEquals(formatTypeLabel(record), juce::String("Unknown"));
+        }
+
+        beginTest("Camelot mapping matches the shared independent key spellings");
+        {
+            const auto fixture = fixtureFile("camelot_keys.tsv");
+            expect(fixture.existsAsFile());
+            int cases = 0;
+            for (const auto& line : juce::StringArray::fromLines(fixture.loadFileAsString())) {
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                const auto separator = line.indexOfChar('\t');
+                expect(separator >= 0, line);
+                if (separator < 0) {
+                    continue;
+                }
+                const auto input = line.substring(0, separator);
+                const auto expected = line.substring(separator + 1);
+                const auto actual = camelotKey(input);
+                expectEquals(actual.value_or("-"), expected, input);
+                ++cases;
+            }
+            expect(cases >= 140);
+        }
+
+        beginTest("File sizes use decimal KB and MB with one decimal place");
+        {
+            AudioAnalysisRecord record;
+            expectEquals(formatFileSizeDisplay(record), juce::String("-"));
+            record.fileSize = -1;
+            expectEquals(formatFileSizeDisplay(record), juce::String("-"));
+            record.fileSize = 1;
+            expectEquals(formatFileSizeDisplay(record), juce::String("0.0 KB"));
+            record.fileSize = 1000;
+            expectEquals(formatFileSizeDisplay(record), juce::String("1.0 KB"));
+            record.fileSize = 36'200;
+            expectEquals(formatFileSizeDisplay(record), juce::String("36.2 KB"));
+            record.fileSize = 176'400;
+            expectEquals(formatFileSizeDisplay(record), juce::String("176.4 KB"));
+            record.fileSize = 999'999;
+            expectEquals(formatFileSizeDisplay(record), juce::String("1000.0 KB"));
+            record.fileSize = 1'000'000;
+            expectEquals(formatFileSizeDisplay(record), juce::String("1.0 MB"));
+            record.fileSize = 36'200'000;
+            expectEquals(formatFileSizeDisplay(record), juce::String("36.2 MB"));
         }
 
         beginTest("Records sort by peak and by name");

@@ -133,7 +133,12 @@ and subdued vertical overload lines. Hiding lines preserves the selected edge ma
 Waveform magnitude grid lines appear when the loudness graph is disabled.
 
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
-and the info panel shows BPM and musical key when available.
+and the info panel shows BPM and the original musical key with its Camelot equivalent when available.
+Below the peak and loudness cards, two aligned property rows show bit depth, sample rate, bitrate, duration, and size,
+then format, channels, BPM, the original key with Camelot equivalent, and year.
+Drag the vertical dividers to adjust the controls and information panel widths within their limits.
+Double-click a divider to restore its default width.
+Album and comment text wrap within the scrollable details.
 Playback supports jumping directly to Serato hot cues.
 
 ### Live Plugin Preview
