@@ -1,4 +1,5 @@
 //! File system actions on listed files: revealing files in the platform file manager and opening their folders.
+//! `open_folder` also opens single folders, such as the chain presets folder.
 //!
 //! Both act on the selected files grouped by parent folder through `group_by_parent_folder`,
 //! one file manager window per folder, up to `MAXIMUM_REVEAL_FOLDERS` folders,
@@ -82,7 +83,10 @@ fn explorer_reveal_command(file: &Path) -> Command {
 }
 
 /// Opens a folder in the platform file manager.
-fn open_folder(folder: &Path) -> io::Result<()> {
+///
+/// # Errors
+/// Returns an error when the file manager cannot be started.
+pub fn open_folder(folder: &Path) -> io::Result<()> {
     let program = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(target_os = "windows") {

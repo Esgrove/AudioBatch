@@ -154,6 +154,13 @@ User-facing messages and the serialized formats do not depend on the internal er
 
 ## GUI structure
 
+Native menus and shortcuts dispatch GPUI actions to the retained `AppView` handlers.
+Playback continuation and first-cue choices share the settings-window preference owner.
+The Folder column uses `core::format` for display and absolute parent paths for natural sorting.
+Folder starts visible next to Name, and Path starts hidden.
+The saved column revision migrates older preferences once without overriding a later explicit Path choice.
+The Chain Presets menu can create and open its backing folder.
+
 On Windows, the main window's native close request quits through GPUI without letting Win32 destroy the handle first.
 GPUI then owns native resource teardown, so application shutdown does not destroy the same window twice.
 Auxiliary windows use GPUI's normal close path.

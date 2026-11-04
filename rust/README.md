@@ -9,6 +9,21 @@ it processes files through a plugin chain, shows the plugins' editors, and can p
 The CLI lists the plugins a scan found.
 The CLI takes the same arguments and prints the same output as the C++ CLI, so the two can be compared directly.
 
+## GUI commands
+
+The File menu adds files or folders, selects all files, normalizes the selection, opens parent folders,
+and clears per-file gain. The Plugins menu processes the selection through the live chain.
+Options offers Output Device and Columns submenus, Continue Playback When Changing Files, and Play from First Cue Point.
+Chain Presets includes Show Presets Folder.
+Audio Settings uses Cmd/Ctrl+P only, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
+Escape stops playback and returns to the start.
+
+Folder is visible beside Name, while Path is hidden by default and remains available under Options > Columns.
+Folder shows the parent directory without the file name.
+On macOS, user-home prefixes become `~/`, while `/Users/Shared` and non-home folders stay absolute.
+Windows keeps the full parent path. Sorting uses the full parent path in natural order, then the file name.
+Saved column preferences migrate once to hide Path. Showing it again remains a persistent user choice.
+
 ## Audio formats
 
 Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis, and CAF files.

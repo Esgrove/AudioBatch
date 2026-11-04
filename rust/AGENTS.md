@@ -94,7 +94,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
     and the shared `spectrogram_cache` table in `cache/spectrogram.rs`,
     `coordinator.rs` runs analysis in parallel with cancellation and progress events,
     and `normalize_coordinator.rs` does the same for normalization, keeping the cache in step with the outputs.
-  - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
+  - `format.rs` formats levels, file properties, and Folder-column home shortening for display.
+    `sorting.rs` sorts records.
   - `tags.rs` reads display tags and Serato data with lofty, and tells what the Serato Overview read found.
     Serato data comes from the `GEOB` frames of MP3, AIFF, and WAV files, and the `SERATO_*` comments of FLAC files.
   - `normalize.rs` computes the normalization gain and writes the normalized file.

@@ -92,7 +92,8 @@ consteval ColumnDefinition defineColumn(
 /// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
 constexpr std::array columnDefinitions {
     defineColumn(AudioFileTableColumn::name, "Name", "File name", layout::table::nameMaximumWidth),
-    defineColumn(AudioFileTableColumn::path, "Path", "Full path of the file", layout::table::pathMaximumWidth),
+    defineColumn(AudioFileTableColumn::folder, "Folder", "Parent folder of the file", layout::table::pathMaximumWidth),
+    defineColumn(AudioFileTableColumn::path, "Path", "Full path of the file", layout::table::pathMaximumWidth, false),
     defineColumn(AudioFileTableColumn::type, "Type", "File type", layout::table::metricMaximumWidth),
     defineColumn(
         AudioFileTableColumn::bitDepth,
@@ -332,6 +333,9 @@ void AudioFileTableModel::paintCell(
     switch (*column) {
         case AudioFileTableColumn::name:
             text = record.fileName;
+            break;
+        case AudioFileTableColumn::folder:
+            text = formatFolder(record.file);
             break;
         case AudioFileTableColumn::path:
             text = record.fullPath;

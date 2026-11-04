@@ -188,6 +188,16 @@ pub struct TogglePluginPreview;
 #[action(namespace = audiobatch)]
 pub struct TogglePreviewLatencyCompensation;
 
+/// Turns continuing active playback on a newly selected file on or off.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleContinuePlayback;
+
+/// Turns starting a loaded file at its first cue point on or off.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct TogglePlayFromFirstCuePoint;
+
 /// Opens the Audio Settings window, or brings it to the front.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -245,6 +255,11 @@ pub struct ClearPluginChain;
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
 pub struct SaveChainPreset;
+
+/// Opens the chain presets folder in the platform file manager, creating it first.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ShowPresetsFolder;
 
 /// Replaces the plugin chain with a saved preset.
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
@@ -308,6 +323,10 @@ pub struct MenuState {
     pub preview_plugin_chain: bool,
     /// True when the plugin chain preview compensates its latency.
     pub compensate_preview_latency: bool,
+    /// True when active playback continues on a newly selected file.
+    pub continue_playback: bool,
+    /// True when a loaded file starts at its first cue point in the first half of the file.
+    pub play_from_first_cue_point: bool,
     /// Normalization target shown in the normalize items, for example "-14.0 LUFS".
     pub normalize_target: String,
     /// Summary of the plugin chain, for example "2 plugins".
@@ -380,7 +399,6 @@ pub fn install(cx: &mut App) {
         KeyBinding::new(primary!("shift-backspace"), TrashSelectedNow, outside_text),
         KeyBinding::new("space", TogglePlayback, outside_text),
         KeyBinding::new("escape", StopPlayback, outside_text),
-        KeyBinding::new(primary!(","), OpenAudioSettings, context),
         KeyBinding::new(primary!("p"), OpenAudioSettings, context),
         KeyBinding::new("escape", CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
         KeyBinding::new(primary!("w"), CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
@@ -400,20 +418,30 @@ pub fn install(cx: &mut App) {
     )
 )]
 pub fn set_menus(cx: &mut App, state: &MenuState) {
-    // Nonvisual tests must not initialize audio drivers, including during menu refreshes.
-    let devices = if cfg!(test) {
-        Vec::new()
-    } else {
-        Player::output_device_names()
-    };
-    let devices = devices
-        .into_iter()
-        .map(|name| {
-            let checked = state.output_device.as_deref() == Some(name.as_str());
-            MenuItem::action(name.clone(), SelectOutputDevice { name: name.into() }).checked(checked)
-        })
-        .collect::<Vec<_>>();
+    let mut menus = Vec::new();
+    if cfg!(target_os = "macos") {
+        menus.push(Menu::new("AudioBatchRs").items([
+            MenuItem::action("About AudioBatchRs", About),
+            MenuItem::separator(),
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Quit AudioBatchRs", Quit),
+        ]));
+    }
+    menus.push(file_menu(state));
+    menus.push(plugins_menu(state));
+    menus.push(options_menu(state));
+    menus.push(Menu::new("Help").items([MenuItem::action("About AudioBatchRs", About)]));
+    cx.set_menus(menus);
+    #[cfg(target_os = "windows")]
+    {
+        let menus = cx.get_menus().unwrap_or_default();
+        GlobalState::global_mut(cx).set_app_menus(menus);
+    }
+}
 
+/// Builds the File menu, which ends with Quit outside macOS.
+fn file_menu(state: &MenuState) -> Menu {
     let mut file_items = vec![
         MenuItem::action("Choose Folder…", ChooseFolder),
         MenuItem::action("Add Folder…", AddFolder),
@@ -443,70 +471,71 @@ pub fn set_menus(cx: &mut App, state: &MenuState) {
         file_items.push(MenuItem::separator());
         file_items.push(MenuItem::action("Quit", Quit));
     }
-
-    let mut menus = Vec::new();
-    if cfg!(target_os = "macos") {
-        menus.push(Menu::new("AudioBatchRs").items([
-            MenuItem::action("About AudioBatchRs", About),
-            MenuItem::separator(),
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Quit AudioBatchRs", Quit),
-        ]));
-    }
-    menus.push(Menu::new("File").items(file_items));
-    menus.push(plugins_menu(state));
-    menus.push(
-        Menu::new("Options").items([
-            MenuItem::submenu(Menu::new("Preview view").items(PreviewViewMode::ALL.map(|mode| {
-                MenuItem::action(mode.label(), SetPreviewViewMode { mode }).checked(state.preview_view_mode == mode)
-            }))),
-            MenuItem::submenu(
-                Menu::new("Overload indicators").items([
-                    MenuItem::action("Peak overloads", ToggleSampleOverloads).checked(state.show_sample_overloads),
-                    MenuItem::action("True-peak overloads", ToggleTruePeakOverloads)
-                        .checked(state.show_true_peak_overloads),
-                    MenuItem::action("Overload vertical lines", ToggleOverloadLines).checked(state.show_overload_lines),
-                ]),
-            ),
-            MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
-            MenuItem::action("Serato Waveform Colours", ToggleSeratoColours).checked(state.serato_colours),
-            MenuItem::action("Show Album Artwork", ToggleAlbumArtwork).checked(state.show_album_artwork),
-            MenuItem::action("Show custom gain estimates", ToggleGainAdjustedMetrics)
-                .checked(state.show_gain_adjusted_metrics),
-            MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
-                MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
-            }))),
-            MenuItem::action(
-                if state.preview_compact {
-                    "Expand Bottom Section"
-                } else {
-                    "Collapse Bottom Section"
-                },
-                TogglePreviewSection,
-            ),
-            MenuItem::separator(),
-            MenuItem::action("Preview Plugin Chain", TogglePluginPreview).checked(state.preview_plugin_chain),
-            MenuItem::action("Compensate Preview Plugin Latency", TogglePreviewLatencyCompensation)
-                .checked(state.compensate_preview_latency),
-            MenuItem::separator(),
-            MenuItem::submenu(Menu::new("Output Device").items(devices)),
-            MenuItem::separator(),
-            MenuItem::action("Audio Settings…", OpenAudioSettings),
-        ]),
-    );
-    menus.push(Menu::new("Help").items([MenuItem::action("About AudioBatchRs", About)]));
-    cx.set_menus(menus);
-    #[cfg(target_os = "windows")]
-    {
-        let menus = cx.get_menus().unwrap_or_default();
-        GlobalState::global_mut(cx).set_app_menus(menus);
-    }
+    Menu::new("File").items(file_items)
 }
 
-/// Builds the Chain Presets submenu: saving the chain, then the saved presets with the current one checked.
+/// Builds the Options menu with check marks on the preview options and the current output device.
+fn options_menu(state: &MenuState) -> Menu {
+    // Nonvisual tests must not initialize audio drivers, including during menu refreshes.
+    let devices = if cfg!(test) {
+        Vec::new()
+    } else {
+        Player::output_device_names()
+    };
+    let devices = devices
+        .into_iter()
+        .map(|name| {
+            let checked = state.output_device.as_deref() == Some(name.as_str());
+            MenuItem::action(name.clone(), SelectOutputDevice { name: name.into() }).checked(checked)
+        })
+        .collect::<Vec<_>>();
+    Menu::new("Options").items([
+        MenuItem::submenu(Menu::new("Preview view").items(PreviewViewMode::ALL.map(|mode| {
+            MenuItem::action(mode.label(), SetPreviewViewMode { mode }).checked(state.preview_view_mode == mode)
+        }))),
+        MenuItem::submenu(Menu::new("Overload indicators").items([
+            MenuItem::action("Peak overloads", ToggleSampleOverloads).checked(state.show_sample_overloads),
+            MenuItem::action("True-peak overloads", ToggleTruePeakOverloads).checked(state.show_true_peak_overloads),
+            MenuItem::action("Overload vertical lines", ToggleOverloadLines).checked(state.show_overload_lines),
+        ])),
+        MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
+        MenuItem::action("Serato Waveform Colours", ToggleSeratoColours).checked(state.serato_colours),
+        MenuItem::action("Show Album Artwork", ToggleAlbumArtwork).checked(state.show_album_artwork),
+        MenuItem::action("Show custom gain estimates", ToggleGainAdjustedMetrics)
+            .checked(state.show_gain_adjusted_metrics),
+        MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
+            MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
+        }))),
+        MenuItem::action(
+            if state.preview_compact {
+                "Expand Bottom Section"
+            } else {
+                "Collapse Bottom Section"
+            },
+            TogglePreviewSection,
+        ),
+        MenuItem::separator(),
+        MenuItem::action("Preview Plugin Chain", TogglePluginPreview).checked(state.preview_plugin_chain),
+        MenuItem::action("Compensate Preview Plugin Latency", TogglePreviewLatencyCompensation)
+            .checked(state.compensate_preview_latency),
+        MenuItem::action("Continue Playback When Changing Files", ToggleContinuePlayback)
+            .checked(state.continue_playback),
+        MenuItem::action("Play from First Cue Point", TogglePlayFromFirstCuePoint)
+            .checked(state.play_from_first_cue_point),
+        MenuItem::separator(),
+        MenuItem::submenu(Menu::new("Output Device").items(devices)),
+        MenuItem::separator(),
+        MenuItem::action("Audio Settings…", OpenAudioSettings),
+    ])
+}
+
+/// Builds the Chain Presets submenu: saving the chain, showing the presets folder,
+/// then the saved presets with the current one checked.
 fn presets_menu(state: &MenuState) -> Menu {
-    let mut items = vec![MenuItem::action("Save Chain as Preset…", SaveChainPreset)];
+    let mut items = vec![
+        MenuItem::action("Save Chain as Preset…", SaveChainPreset),
+        MenuItem::action("Show Presets Folder", ShowPresetsFolder),
+    ];
     if !state.presets.is_empty() {
         items.push(MenuItem::separator());
     }
@@ -614,6 +643,80 @@ mod test_preview_menus {
             assert!(bindings.bindings_for_action(&ChooseFolder).all(|binding| {
                 binding.match_keystrokes(&[Keystroke::parse(primary!("p")).expect("valid shortcut")]) != Some(false)
             }));
+            assert_eq!(
+                bindings.bindings_for_action(&OpenAudioSettings).count(),
+                1,
+                "Audio Settings has only the shared primary-P shortcut"
+            );
+        });
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
+    fn shared_shortcuts_bind_select_all_add_folder_and_stop(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            let bindings = cx.key_bindings();
+            let bindings = bindings.borrow();
+            let bound = |action: &dyn gpui_kit::Action, keystroke: &'static str| {
+                let keystroke = Keystroke::parse(keystroke).expect("valid shortcut");
+                bindings
+                    .bindings_for_action(action)
+                    .any(|binding| binding.match_keystrokes(std::slice::from_ref(&keystroke)) == Some(false))
+            };
+            assert!(bound(&SelectAll, primary!("a")));
+            assert!(bound(&AddFolder, primary!("shift-o")));
+            assert!(bound(&StopPlayback, "escape"));
+        });
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
+    fn playback_options_and_presets_folder_are_in_the_menus(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            for enabled in [false, true] {
+                set_menus(
+                    cx,
+                    &MenuState {
+                        continue_playback: enabled,
+                        play_from_first_cue_point: !enabled,
+                        ..MenuState::default()
+                    },
+                );
+                let options = options_menu(cx);
+                let checked = |name: &str| {
+                    options.items.iter().find_map(|item| match item {
+                        OwnedMenuItem::Action {
+                            name: item_name,
+                            checked,
+                            ..
+                        } if item_name == name => Some(*checked),
+                        _ => None,
+                    })
+                };
+                assert_eq!(checked("Continue Playback When Changing Files"), Some(enabled));
+                assert_eq!(checked("Play from First Cue Point"), Some(!enabled));
+            }
+            let plugins = cx
+                .get_menus()
+                .expect("menus installed")
+                .into_iter()
+                .find(|menu| menu.name == "Plugins")
+                .expect("Plugins menu exists");
+            let presets = submenu(&plugins, "Chain Presets");
+            assert!(presets.items.iter().any(|item| matches!(item,
+                OwnedMenuItem::Action { name, action, .. }
+                if name == "Show Presets Folder" && action.as_any().is::<ShowPresetsFolder>()
+            )));
         });
     }
 

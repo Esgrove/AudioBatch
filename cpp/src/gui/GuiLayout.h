@@ -432,6 +432,7 @@ consteval int initialColumnWidth(const AudioFileTableColumn column)
     switch (column) {
         case AudioFileTableColumn::name:
             return nameColumnDefaultWidth;
+        case AudioFileTableColumn::folder:
         case AudioFileTableColumn::path:
             return pathColumnDefaultWidth;
         case AudioFileTableColumn::type:
@@ -470,6 +471,7 @@ consteval int minimumColumnWidth(const AudioFileTableColumn column)
     switch (column) {
         case AudioFileTableColumn::name:
             return nameColumnMinimumWidth;
+        case AudioFileTableColumn::folder:
         case AudioFileTableColumn::path:
             return pathColumnMinimumWidth;
         case AudioFileTableColumn::type:

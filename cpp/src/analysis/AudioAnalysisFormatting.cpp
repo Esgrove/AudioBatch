@@ -110,8 +110,28 @@ juce::String formatLoudnessValue(const double loudness)
 }
 }  // namespace
 
-/// Maps musical, Camelot, and Open Key spellings without changing the original display tag.
-/// Rejects chords and extra suffixes rather than guessing a key from a partial match.
+/// Shortens macOS home folder prefixes for display, leaving shared and non-home folders absolute.
+juce::String formatFolderText(const juce::String& folder, const bool macos)
+{
+    if (!macos || !folder.startsWith("/Users/")) {
+        return folder;
+    }
+    const auto remainder = folder.substring(7);
+    const auto user = remainder.upToFirstOccurrenceOf("/", false, false);
+    if (user.isEmpty() || user == "Shared") {
+        return folder;
+    }
+    const auto inside = remainder.fromFirstOccurrenceOf("/", false, false);
+    return inside.isEmpty() ? juce::String("~") : "~/" + inside;
+}
+
+/// Formats a file's parent directory, shortening macOS home prefixes without changing stored paths.
+juce::String formatFolder(const juce::File& file)
+{
+    return formatFolderText(file.getParentDirectory().getFullPathName(), JUCE_MAC != 0);
+}
+
+/// Maps a recognized musical key to its canonical Camelot notation.
 std::optional<juce::String> camelotKey(const juce::String& key)
 {
     auto text = key.trim().toLowerCase();

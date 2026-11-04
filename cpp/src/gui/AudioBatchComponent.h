@@ -88,6 +88,8 @@ public:
     AudioBatchComponent(AudioBatchComponent&&) = delete;
     AudioBatchComponent& operator=(AudioBatchComponent&&) = delete;
 
+    [[nodiscard]] juce::PopupMenu createColumnsMenu(int firstItemId) const;
+    [[nodiscard]] juce::PopupMenu createOutputDeviceMenu(int firstItemId);
     [[nodiscard]] PreviewViewMode getPreviewViewMode() const noexcept;
 
     [[nodiscard]] juce::String describeNormalizationTarget() const;
@@ -114,13 +116,19 @@ public:
     [[nodiscard]] bool isPreviewSectionExpanded() const noexcept;
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
 
+    void addFiles();
     void addRootFolder();
     void cancelCurrentWork();
     void chooseRootFolder();
     void clearAllRecords();
+    void clearSelectedCustomGain();
     void fitPreviewToControls();
+    void handleColumnsMenuItem(int itemId, int firstItemId);
+    void handleOutputDeviceMenuItem(int itemId, int firstItemId);
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
     void normalizeAllRecords();
+    void normalizeSelectedRecords();
+    void openSelectedParentFolders();
     void openPaths(const juce::StringArray& paths, bool appendToRoots);
     void processAllRecords();
     void processSelectedRecords();
@@ -128,6 +136,8 @@ public:
     void removeSelectedRecords();
     void rescanCurrentRoot();
     void revealSelectedRecord();
+    void selectAllRecords();
+    void stopPlayback();
     void setPreviewViewMode(PreviewViewMode mode);
     void setViewOptionsChangedCallback(std::function<void()> callback);
     void showAudioSettingsWindow();
@@ -215,7 +225,6 @@ private:
     void handleSortRequested(std::optional<AudioFileTableColumn> column, bool isForwards);
     void launchFolderChooser(bool appendToRoots);
     void normalizeRecords(const std::vector<AudioAnalysisRecord>& recordsToNormalize);
-    void normalizeSelectedRecords();
     void openDialogWindow(
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
@@ -361,6 +370,10 @@ private:
     juce::TableListBox resultsTable;
     /// The folder chooser while it is open.
     std::unique_ptr<juce::FileChooser> directoryChooser;
+    /// Device names captured when the output submenu opens, keeping result ids stable.
+    juce::StringArray outputMenuDevices;
+    /// Backend name paired with each retained device name, including inactive device types.
+    juce::StringArray outputMenuTypes;
     /// Shows the tooltips of the main window.
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 

@@ -28,6 +28,7 @@
 #include "utils/StringFormat.h"
 #include <stop_token>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -343,12 +344,12 @@ void AudioBatchComponent::paint(juce::Graphics& graphics)
     graphics.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 }
 
-/// Distributes leftover table width between the name and path columns while preserving their current ratio.
+/// Distributes leftover table width among visible name, folder, and path columns, preserving their resize share.
 void AudioBatchComponent::updateResultsTableColumnWidths() const
 {
     auto& header = resultsTable.getHeader();
 
-    // Every column other than name and path keeps its width, so only visible ones take space from the flexible columns.
+    // Compact columns keep their width, so only visible ones take space from the flexible text columns.
     constexpr std::array fixedWidthColumns {
         AudioFileTableColumn::type,
         AudioFileTableColumn::bitDepth,
@@ -372,29 +373,38 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     }
 
     const auto availableFlexibleWidth = resultsTable.getVisibleContentWidth() - fixedColumnWidth;
-    const auto currentNameWidth = header.getColumnWidth(std::to_underlying(AudioFileTableColumn::name));
-    const auto currentPathWidth = header.getColumnWidth(std::to_underlying(AudioFileTableColumn::path));
-    const auto currentFlexibleWidth = currentNameWidth + currentPathWidth;
-    constexpr auto defaultFlexibleWidth = layout::table::nameColumnDefaultWidth + layout::table::pathColumnDefaultWidth;
-    const auto widthRatio
-        = static_cast<double>(currentFlexibleWidth > 0 ? currentNameWidth : layout::table::nameColumnDefaultWidth)
-        / static_cast<double>(currentFlexibleWidth > 0 ? currentFlexibleWidth : defaultFlexibleWidth);
-
-    int nameWidth = layout::table::nameColumnMinimumWidth;
-    int pathWidth = layout::table::pathColumnMinimumWidth;
-
-    if (availableFlexibleWidth >= layout::table::nameColumnMinimumWidth + layout::table::pathColumnMinimumWidth) {
-        nameWidth = juce::roundToInt(static_cast<double>(availableFlexibleWidth) * widthRatio);
-        nameWidth = juce::jlimit(
-            layout::table::nameColumnMinimumWidth,
-            availableFlexibleWidth - layout::table::pathColumnMinimumWidth,
-            nameWidth
-        );
-        pathWidth = availableFlexibleWidth - nameWidth;
+    constexpr std::array flexibleColumns {
+        AudioFileTableColumn::name,
+        AudioFileTableColumn::folder,
+        AudioFileTableColumn::path,
+    };
+    int currentWidth = 0;
+    int minimumWidth = 0;
+    for (const auto column : flexibleColumns) {
+        const auto columnId = std::to_underlying(column);
+        if (header.isColumnVisible(columnId)) {
+            const auto minimum = column == AudioFileTableColumn::name ? layout::table::nameColumnMinimumWidth
+                                                                      : layout::table::pathColumnMinimumWidth;
+            currentWidth += juce::jmax(0, header.getColumnWidth(columnId) - minimum);
+            minimumWidth += minimum;
+        }
     }
-
-    header.setColumnWidth(std::to_underlying(AudioFileTableColumn::name), nameWidth);
-    header.setColumnWidth(std::to_underlying(AudioFileTableColumn::path), pathWidth);
+    const auto surplus = juce::jmax(0, availableFlexibleWidth - minimumWidth);
+    const auto visibleCount = static_cast<int>(std::ranges::count_if(flexibleColumns, [&header](const auto column) {
+        return header.isColumnVisible(std::to_underlying(column));
+    }));
+    for (const auto column : flexibleColumns) {
+        const auto columnId = std::to_underlying(column);
+        if (!header.isColumnVisible(columnId)) {
+            continue;
+        }
+        const auto minimum = column == AudioFileTableColumn::name ? layout::table::nameColumnMinimumWidth
+                                                                  : layout::table::pathColumnMinimumWidth;
+        const auto proportion = currentWidth > 0
+            ? static_cast<double>(juce::jmax(0, header.getColumnWidth(columnId) - minimum)) / currentWidth
+            : 1.0 / juce::jmax(1, visibleCount);
+        header.setColumnWidth(columnId, minimum + juce::roundToInt(surplus * proportion));
+    }
 }
 
 /// True when the table has at least one selected row.

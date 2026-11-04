@@ -27,6 +27,34 @@ void AudioBatchComponent::filesDropped(const juce::StringArray& files, int /*x*/
     handleDroppedPaths(files);
 }
 
+/// Adds selected audio files through the ordinary path-opening workflow.
+void AudioBatchComponent::addFiles()
+{
+    directoryChooser = std::make_unique<juce::FileChooser>(
+        "Add Audio Files", utils::getDefaultBrowseDirectory(), supportedAudioFilePatterns, true
+    );
+    directoryChooser->launchAsync(
+        static_cast<int>(
+            static_cast<unsigned int>(juce::FileBrowserComponent::openMode)
+            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectFiles)
+            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectMultipleItems)
+        ),
+        [safeThis = SafePointer(this)](const juce::FileChooser& chooser) {
+            if (safeThis == nullptr) {
+                return;
+            }
+            juce::StringArray paths;
+            for (const auto& file : chooser.getResults()) {
+                paths.add(file.getFullPathName());
+            }
+            if (!paths.isEmpty()) {
+                safeThis->openPaths(paths, false);
+            }
+            safeThis->directoryChooser.reset();
+        }
+    );
+}
+
 /// Opens the folder chooser and replaces the current root folders with the chosen folder.
 void AudioBatchComponent::chooseRootFolder()
 {

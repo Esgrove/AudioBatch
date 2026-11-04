@@ -1,0 +1,17 @@
+# Platform<TAB>parent folder of a listed file<TAB>expected Folder column text.
+# On macOS a leading /Users/<user> home folder becomes ~, except the shared /Users/Shared folder.
+# Windows and other paths stay absolute. These expectations are shared by both applications.
+macos	/Users/akseli.lukkarila/Music/Album	~/Music/Album
+macos	/Users/someone/Music	~/Music
+macos	/Users/someone	~
+macos	/Users/Some User/Dropbox/Sets 2024	~/Dropbox/Sets 2024
+macos	/Users/someone/Music/Björk – Jóga	~/Music/Björk – Jóga
+macos	/Users/Shared/Music	/Users/Shared/Music
+macos	/Users	/Users
+macos	/Volumes/Music/Users/someone/Album	/Volumes/Music/Users/someone/Album
+macos	/Usersomething/Music	/Usersomething/Music
+macos	/tmp/AudioBatch	/tmp/AudioBatch
+macos	/	/
+windows	C:\Users\someone\Music\Album	C:\Users\someone\Music\Album
+windows	D:\Music	D:\Music
+windows	\\server\share\Music	\\server\share\Music

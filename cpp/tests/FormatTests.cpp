@@ -22,6 +22,28 @@ public:
     /// Runs the formatting and sorting checks.
     void runTest() override
     {
+        beginTest("Folder display matches shared platform expectations");
+        {
+            const auto cases = juce::StringArray::fromLines(fixtureFile("folder_display.tsv").loadFileAsString());
+            int count = 0;
+            for (const auto& line : cases) {
+                if (line.isEmpty() || line.startsWithChar('#')) {
+                    continue;
+                }
+                const auto fields = juce::StringArray::fromTokens(line, "\t", "");
+                expectEquals(fields.size(), 3);
+                if (fields.size() == 3) {
+                    expectEquals(formatFolderText(fields[1], fields[0] == "macos"), fields[2]);
+                    ++count;
+                }
+            }
+            expect(count >= 10);
+            const auto source = fixtureFile("sine_stereo_44100_16.wav");
+            expectEquals(
+                formatFolder(source), formatFolderText(source.getParentDirectory().getFullPathName(), JUCE_MAC != 0)
+            );
+        }
+
         beginTest("Peaks format as dBFS, with silence as -INF");
         {
             expectEquals(formatPeakCompact(1.0), juce::String("0.00"));

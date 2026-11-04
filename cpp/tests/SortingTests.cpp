@@ -25,7 +25,7 @@ namespace
 static_assert(!tableColumnFromId(0).has_value());
 static_assert(tableColumnFromId(1) == AudioFileTableColumn::name);
 static_assert(tableColumnFromId(std::to_underlying(AudioFileTableColumn::length)) == AudioFileTableColumn::length);
-static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::length) + 1).has_value());
+static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::folder) + 1).has_value());
 static_assert(toColumnId(AudioFileTableColumn::status) == std::to_underlying(AudioFileTableColumn::status));
 static_assert(toColumnId(std::nullopt) == 0);
 static_assert(!fileMenuItemFromId(0).has_value());
@@ -64,6 +64,24 @@ public:
     /// Runs the sorting checks.
     void runTest() override
     {
+        beginTest("Folder sorting retains absolute parents and naturally orders file-name ties");
+        {
+            auto first = makeRecord("track 2.wav", 0.5f, -14.0);
+            first.file = juce::File("/Users/z/Music/Album 2/track 2.wav");
+            first.fullPath = first.file.getFullPathName();
+            auto second = makeRecord("track 10.wav", 0.5f, -14.0);
+            second.file = first.file.getSiblingFile("track 10.wav");
+            second.fullPath = second.file.getFullPathName();
+            auto third = makeRecord("track 1.wav", 0.5f, -14.0);
+            third.file = juce::File("/Users/z/Music/Album 10/track 1.wav");
+            third.fullPath = third.file.getFullPathName();
+            expect(results_sorting::compareRecordsByColumn(first, second, AudioFileTableColumn::folder) < 0);
+            expect(results_sorting::compareRecordsByColumn(second, third, AudioFileTableColumn::folder) < 0);
+            auto otherUser = first;
+            otherUser.file = juce::File("/Users/a/Music/Album 20/track.wav");
+            expect(results_sorting::compareRecordsByColumn(otherUser, first, AudioFileTableColumn::folder) < 0);
+        }
+
         beginTest("GUI-only cached status preserves measurement producer and settled sort order");
         {
             auto native = makeRecord("native", 0.5f, -20.0);

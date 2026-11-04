@@ -546,6 +546,8 @@ fn initial_menu_state(
         show_gain_adjusted_metrics: settings.show_gain_adjusted_metrics,
         preview_plugin_chain: settings.preview_plugin_chain,
         compensate_preview_latency: settings.compensate_preview_latency,
+        continue_playback: settings.continue_playback,
+        play_from_first_cue_point: settings.play_from_first_cue_point,
         normalize_target: describe_target(settings),
         columns: column_choices(table.read(cx).delegate()),
         ..MenuState::default()

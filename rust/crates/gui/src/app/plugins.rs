@@ -24,6 +24,7 @@ use gpui_kit::{
 use vst3_host::UiThread;
 
 use super::AppView;
+use crate::files::open_folder;
 use crate::menus::AddPluginToChain;
 use crate::plugins::chain_window::{
     CHAIN_HEIGHT, CHAIN_TITLE, CHAIN_WIDTH, ChainEvent, ChainRow, ChainSnapshot, ChainView,
@@ -183,6 +184,15 @@ impl AppView {
         }
         .into();
         self.chain_changed(cx);
+    }
+
+    /// Opens the chain presets folder in the platform file manager, creating it first,
+    /// so there is always a folder to show, and reports a failure in the status bar.
+    pub(super) fn show_presets_folder(&mut self, cx: &mut Context<Self>) {
+        let folder = self.plugins.presets.folder().to_path_buf();
+        if let Err(error) = std::fs::create_dir_all(&folder).and_then(|()| open_folder(&folder)) {
+            self.report_status(format!("Could not open the presets folder: {error}"), cx);
+        }
     }
 
     /// Captures the settings of the instances and saves the chain, reporting a failure on stderr.
