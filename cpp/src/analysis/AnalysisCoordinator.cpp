@@ -236,9 +236,11 @@ void AnalysisCoordinator::analyzeStaleFile(
 /// Runs a full analysis synchronously and returns all collected results.
 /// Each result is also passed to onResult as it arrives, from a worker thread, when it is set.
 /// Replaces the result and completion callbacks for the run and clears them before returning.
+/// Cancellation drains all jobs before returning, because their callbacks borrow this call's stack frame.
 std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(
     const AudioAnalysisOptions& options,
-    const ResultObserver& onResult
+    const ResultObserver& onResult,
+    const utils::CancellationCheck& isCancelled
 )
 {
     std::vector<AudioAnalysisRecord> results;
@@ -257,7 +259,15 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(
 
     // The completion callback above stays in place for the whole run, so the run id is not needed.
     static_cast<void>(start(options));
-    finishedEvent.wait(-1);
+    constexpr int CANCELLATION_POLL_MILLISECONDS {20};
+    while (!finishedEvent.wait(CANCELLATION_POLL_MILLISECONDS)) {
+        if (utils::isCancellationRequested(isCancelled)) {
+            cancel();
+            // The callbacks borrow this stack frame, so drain every worker before releasing it.
+            runner.waitForAllJobs();
+            break;
+        }
+    }
 
     // The callbacks refer to this function's locals, so they must not outlive it.
     setResultCallback({});

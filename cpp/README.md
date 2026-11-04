@@ -256,6 +256,11 @@ CLI normalization can permanently delete replaced originals instead with `--dele
 
 ## CLI
 
+Ctrl-C requests cooperative cancellation during analysis or normalization and exits with status `130`.
+Analysis drains its workers without printing partial results.
+Normalization removes unfinished temporary outputs and retains already committed files and their cache updates.
+A second Ctrl-C exits immediately, without waiting for cleanup.
+
 Output of `audiobatch --help`:
 
 ```text
@@ -331,7 +336,7 @@ Short options can be combined, such as `-rf`,
 and an option that takes a value takes the rest of the group, such as `-rj4`.
 
 Exit codes: `0` for success, `1` for invalid arguments or output errors,
-and `2` when any file fails analysis or normalization.
+`2` when any file fails analysis or normalization, and `130` when interrupted.
 
 ### Plugin Listing
 

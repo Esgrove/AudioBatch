@@ -69,7 +69,8 @@ public:
 
     std::vector<AudioAnalysisRecord> analyzeBlocking(
         const AudioAnalysisOptions& options,
-        const ResultObserver& onResult = nullptr
+        const ResultObserver& onResult = nullptr,
+        const utils::CancellationCheck& isCancelled = {}
     );
 
     [[nodiscard]] std::optional<AnalysisPreview> takePreview();

@@ -137,6 +137,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       so they are not duplicated across services.
 - `src/cli/` holds the CLI front end.
     - `CliMain.cpp` is the CLI entry point.
+      Its first Ctrl-C sets a lock-free cancellation flag. A second exits immediately with status 130.
+      Analysis drains its workers, while normalization requests a stop and retains committed output results.
     - `AudioAnalysisCli.{h,cpp}` declare the CLI commands and the `cli` functions that run the analysis workflow.
       `AudioAnalysisCliParse.cpp` parses and validates the arguments into an `AnalyzeCommand`,
       or the `ListPluginsCommand` or `CompletionCommand` of the `list` and `completion` subcommands,

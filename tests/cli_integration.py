@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["psutil"]
 # ///
 """
 Executable-level CLI contracts shared by both implementations.
@@ -18,14 +18,21 @@ import io
 import json
 import os
 import shutil
+import signal
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import wave
 from contextlib import closing
 from pathlib import Path
 from typing import ClassVar
+
+import psutil
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 TONE = "sine_stereo_44100_16.wav"
@@ -242,6 +249,200 @@ class CliIntegration(unittest.TestCase):
         refreshed = self.analyze(source, refresh=True)[0]
         assert refreshed["status"] == "analyzed"
         assert self.database_row(source)["updated_at_ms"] != 1
+
+    def test_loudness_target_and_true_peak_ceiling(self) -> None:
+        """Loudness mode reaches a safe target while respecting the shared true-peak ceiling."""
+        source = self.copy_fixture()
+        result = self.invoke("--normalize", "--delete", "--lufs", "-14", "--output", "json", source)
+        record = json.loads(result.stdout)[0]
+        assert abs(float(record["integratedLufs"]) + 14.0) <= 0.02
+        assert float(record["truePeakDbtp"]) <= -0.29
+        assert Path(str(record["path"])).is_file()
+        assert not source.exists()
+
+    def test_force_preserves_existing_output_until_explicitly_requested(self) -> None:
+        """An output collision fails without force and replaces it only with an explicit force option."""
+        source = self.copy_fixture(destination="force.wav")
+        output = self.copy_fixture("sine_stereo_44100_16.aif", "force.aif")
+        original = output.read_bytes()
+        rejected = self.invoke("--normalize", "--delete", "--peak", "-1", "--output", "json", source, expected=2)
+        assert json.loads(rejected.stdout)[0]["status"] == "failed"
+        assert source.exists()
+        assert output.read_bytes() == original
+        forced = self.invoke("--normalize", "--delete", "--force", "--peak", "-1", "--output", "json", source)
+        assert json.loads(forced.stdout)[0]["peakDbfs"] == -1.0
+        assert output.exists()
+        assert output.read_bytes() != original
+        assert not source.exists()
+        assert list(self.audio.iterdir()) == [output]
+
+    def test_list_and_completion_leave_machine_output_clean(self) -> None:
+        """An isolated empty plugin list never scans installed plugins and completions need no storage."""
+        listed = self.invoke("list")
+        assert listed.stdout == ""
+        assert "No plugins found" in listed.stderr
+        completion_root = self.root / "completion-only"
+        for shell in ("bash", "zsh", "fish", "powershell"):
+            with self.subTest(shell=shell):
+                result = self.invoke("completion", shell, data_root=str(completion_root))
+                assert result.stdout.strip()
+                assert "normalize" in result.stdout
+                assert result.stderr == ""
+        assert not completion_root.exists()
+
+    def test_gain_refusal_and_shared_output_name_keep_originals(self) -> None:
+        """Near-silent inputs and colliding batch destinations fail without losing originals."""
+        silent = self.copy_fixture("silence_stereo_44100_16.wav", "silent.wav")
+        original = silent.read_bytes()
+        result = self.invoke("--normalize", "--delete", "--output", "json", silent, expected=2)
+        assert json.loads(result.stdout)[0]["status"] == "failed"
+        assert silent.read_bytes() == original
+        assert not silent.with_suffix(".aif").exists()
+        quiet = self.audio / "near-silent.wav"
+        with wave.open(str(quiet), "wb") as audio:
+            audio.setparams((2, 2, 44100, 44100, "NONE", "not compressed"))
+            audio.writeframes(struct.pack("<hhhh", 1, 1, -1, -1) * 22050)
+        result = self.invoke("--normalize", "--delete", "--output", "json", quiet, expected=2)
+        assert "40 dB" in str(json.loads(result.stdout)[0]["error"])
+        assert quiet.exists()
+        assert not quiet.with_suffix(".aif").exists()
+        first = self.copy_fixture(destination="shared.wav")
+        second = self.copy_fixture("sine_stereo_44100_16.flac", "shared.flac")
+        result = self.invoke("--normalize", "--delete", "--output", "json", first, second, expected=2)
+        records = json.loads(result.stdout)
+        assert len(records) == 2
+        assert sorted(record["status"] for record in records) == ["analyzed", "failed"]
+        assert first.with_suffix(".aif").exists()
+        assert sum(path.exists() for path in (first, second)) == 1
+
+    def test_in_place_aif_keeps_path_and_cleans_temporary_outputs(self) -> None:
+        """AIFF normalization publishes at the original path and retains no transaction files."""
+        source = self.copy_fixture("sine_stereo_44100_16.aif")
+        result = self.invoke("--normalize", "--delete", "--peak", "-1", "--output", "json", source)
+        record = json.loads(result.stdout)[0]
+        assert record["path"] == str(source)
+        assert record["peakDbfs"] == -1.0
+        assert list(self.audio.iterdir()) == [source]
+        assert self.analyze(source, refresh=True)[0]["peakDbfs"] == -1.0
+
+    def long_source(self) -> Path:
+        """Create a sparse thirty-second PCM input so cancellation cannot race a one-second decode."""
+        source = self.audio / "interrupt.wav"
+        rate = 96000
+        frames = rate * 30
+        size = frames * 4
+        with source.open("wb") as audio:
+            audio.write(
+                struct.pack(
+                    "<4sI4s4sIHHIIHH4sI",
+                    b"RIFF",
+                    size + 36,
+                    b"WAVE",
+                    b"fmt ",
+                    16,
+                    1,
+                    2,
+                    rate,
+                    rate * 4,
+                    4,
+                    16,
+                    b"data",
+                    size,
+                )
+            )
+            audio.write(struct.pack("<hh", 16384, -16384) * rate)
+            audio.seek(44 + size - 4)
+            audio.write(struct.pack("<hh", 16384, -16384))
+        return source
+
+    def interrupt_run(self, source: Path, *, normalize: bool, twice: bool = False) -> tuple[str, str]:
+        """Interrupt a live isolated child at a file-system readiness boundary, with bounded cleanup."""
+        environment = os.environ.copy()
+        environment.update(AUDIOBATCH_DATA_ROOT=str(self.storage), NO_COLOR="1", TERM="dumb")
+        command = [str(self.executable), "--jobs", "1", "--output", "json"]
+        if normalize:
+            command += ["--normalize", "--delete", "--peak", "-1"]
+        command.append(str(source))
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        with subprocess.Popen(  # noqa: S603
+            command,
+            cwd=self.audio,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=flags,
+        ) as child:
+            stdout: list[str] = []
+            stderr: list[str] = []
+
+            def drain(stream: io.TextIOBase, output: list[str]) -> None:
+                """Drain pipes concurrently so a verbose debug child cannot deadlock before readiness."""
+                output.append(stream.read())
+
+            readers = [
+                threading.Thread(target=drain, args=(child.stdout, stdout)),
+                threading.Thread(target=drain, args=(child.stderr, stderr)),
+            ]
+            for reader in readers:
+                reader.start()
+            deadline = time.monotonic() + TIMEOUT_SECONDS
+            try:
+                while child.poll() is None:
+                    ready = (
+                        any(path != source for path in self.audio.iterdir())
+                        if normalize
+                        else any(Path(file.path) == source for file in psutil.Process(child.pid).open_files())
+                    )
+                    if ready:
+                        break
+                    if time.monotonic() >= deadline:
+                        self.fail("Child did not reach the requested cancellation boundary")
+                    threading.Event().wait(0.005)
+                assert child.poll() is None, "Child completed before the interruption boundary"
+                child.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
+                if twice:
+                    # Two separate deliveries exercise the force-exit path without assuming cleanup is slow.
+                    threading.Event().wait(0.001)
+                    if child.poll() is None:
+                        child.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT)
+                assert child.wait(timeout=TIMEOUT_SECONDS) == 130
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=TIMEOUT_SECONDS)
+                for reader in readers:
+                    reader.join(timeout=TIMEOUT_SECONDS)
+                    assert not reader.is_alive()
+            text = ("".join(stdout), "".join(stderr))
+            self.invocations.append(
+                {"command": command, "exit_code": child.returncode, "stdout": text[0], "stderr": text[1]}
+            )
+            return text
+
+    def test_ctrl_c_analysis_cancels_cleanly(self) -> None:
+        """The first interrupt drains analysis without touching the input or printing partial JSON."""
+        source = self.long_source()
+        original = source.stat().st_size
+        stdout, _ = self.interrupt_run(source, normalize=False)
+        assert stdout == ""
+        assert source.stat().st_size == original
+        assert list(self.audio.iterdir()) == [source]
+
+    def test_repeated_ctrl_c_exits_with_interrupted_status(self) -> None:
+        """Repeated interrupts cannot hang shutdown or turn cancellation into a crash status."""
+        source = self.long_source()
+        self.interrupt_run(source, normalize=False, twice=True)
+        assert source.exists()
+
+    def test_ctrl_c_normalization_keeps_original_and_removes_temporary_output(self) -> None:
+        """Interrupt only after rendering starts, proving temporary output cleanup rather than startup exit."""
+        source = self.long_source()
+        self.analyze(source)
+        original = source.stat().st_size
+        self.interrupt_run(source, normalize=True)
+        assert source.stat().st_size == original
+        assert list(self.audio.iterdir()) == [source]
 
     def test_normalization_disposal_output_identity_and_restart(self) -> None:
         """CLI options reach the writer/disposer and persist the committed output, not its source."""

@@ -145,6 +145,10 @@ Bash completions go to `~/.bash_completion.d`.
 `audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
+Ctrl-C during analysis or normalization cancels the run with exit code 130.
+The first interrupt drains work and cleans unfinished outputs. A second exits immediately.
+The shared executable contracts check cancellation, normalization targets, output conflicts, gain refusal,
+plugin listing, shell completions, cache reuse, and in-place AIFF output with isolated storage.
 The `list` subcommand lists scanned VST3 effects, and `completion` generates shell completions.
 
 `--normalize` writes analyzed files as a sibling `<name>.aif` at the source sample rate,

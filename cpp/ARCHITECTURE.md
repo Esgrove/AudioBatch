@@ -58,6 +58,11 @@ The CLI runs the analysis through `AnalysisCoordinator::analyzeBlocking`,
 and normalizes the analyzed files through `NormalizeCoordinator` on the workers `--jobs` sets,
 updating the cache with the results once the run completes.
 Plugin processing and the preview exist only in the GUI.
+The CLI installs an allocation-free signal handler for analysis and normalization.
+The first interrupt sets a lock-free flag that the calling thread polls.
+Blocking analysis cancels and drains its jobs before releasing stack-borrowing callbacks.
+Normalization requests a stop without invalidating callbacks, so committed outputs are still reconciled.
+Interrupted commands return 130, and a second interrupt exits immediately.
 
 ## GUI structure
 

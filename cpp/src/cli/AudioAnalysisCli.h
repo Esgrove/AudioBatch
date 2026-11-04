@@ -129,6 +129,9 @@ using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand, CompletionCo
 
 namespace cli
 {
+/// Conventional process status for an interrupted command.
+inline constexpr int EXIT_INTERRUPTED {130};
+
 [[nodiscard]] CliSubcommand findSubcommand(const juce::ArgumentList& arguments);
 [[nodiscard]] juce::ArgumentList expandShortOptions(const juce::ArgumentList& arguments);
 
@@ -147,7 +150,11 @@ juce::StringArray findSkippedInputs(
     const std::optional<juce::String>& deleteEnvironmentValue
 );
 
-[[nodiscard]] int runAnalysis(const AnalyzeCommand& command);
-[[nodiscard]] int runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache);
+[[nodiscard]] int runAnalysis(const AnalyzeCommand& command, const utils::CancellationCheck& isInterrupted = {});
+[[nodiscard]] int runAnalysis(
+    const AnalyzeCommand& command,
+    AnalysisCache& cache,
+    const utils::CancellationCheck& isInterrupted = {}
+);
 }  // namespace cli
 }  // namespace audiobatch

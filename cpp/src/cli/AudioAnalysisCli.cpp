@@ -35,6 +35,9 @@ namespace audiobatch
 {
 namespace
 {
+/// Polling interval keeps cancellation responsive without busy waiting on the calling thread.
+constexpr int INTERRUPT_POLL_MILLISECONDS {20};
+
 /// Logs a message and prints it to stderr, where the CLI reports its progress apart from the results on stdout.
 void reportInfo(const juce::String& message)
 {
@@ -72,7 +75,8 @@ void reportAnalysisFailures(const std::vector<AudioAnalysisRecord>& results)
 /// leaving out the results that came from the cache.
 std::vector<AudioAnalysisRecord> analyzeWithProgress(
     AnalysisCoordinator& coordinator,
-    const AudioAnalysisOptions& options
+    const AudioAnalysisOptions& options,
+    const utils::CancellationCheck& isInterrupted
 )
 {
     console::ProgressLine progress;
@@ -92,16 +96,20 @@ std::vector<AudioAnalysisRecord> analyzeWithProgress(
         progress.setMessage(file.getFileName());
     });
 
-    auto results = coordinator.analyzeBlocking(options, [&](const AudioAnalysisRecord& record) {
-        bool decoded {false};
-        {
-            const std::scoped_lock lock(staleMutex);
-            decoded = stalePaths.contains(record.fullPath);
-        }
-        if (decoded) {
-            progress.increment();
-        }
-    });
+    auto results = coordinator.analyzeBlocking(
+        options,
+        [&](const AudioAnalysisRecord& record) {
+            bool decoded {false};
+            {
+                const std::scoped_lock lock(staleMutex);
+                decoded = stalePaths.contains(record.fullPath);
+            }
+            if (decoded) {
+                progress.increment();
+            }
+        },
+        isInterrupted
+    );
 
     // The callbacks refer to this function's locals, so they must not outlive it.
     coordinator.setPlanCallback({});
@@ -118,7 +126,8 @@ std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
     const std::vector<AudioAnalysisRecord>& records,
     const AudioNormalizationOptions& options,
     const int workerCount,
-    AnalysisCache& cache
+    AnalysisCache& cache,
+    const utils::CancellationCheck& isInterrupted
 )
 {
     console::ProgressLine progress;
@@ -162,7 +171,11 @@ std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
     coordinator.setCompletionCallback([&completed](int /*totalFiles*/, int /*runId*/) { completed.signal(); });
 
     static_cast<void>(coordinator.start(records, options));
-    completed.wait();
+    while (!completed.wait(INTERRUPT_POLL_MILLISECONDS)) {
+        if (utils::isCancellationRequested(isInterrupted)) {
+            coordinator.requestStop();
+        }
+    }
     progress.finish();
 
     const std::scoped_lock lock(resultsMutex);
@@ -218,16 +231,16 @@ juce::StringArray cli::findSkippedInputs(
 
 /// Executes the CLI analysis workflow with the analysis cache in the user's cache folder,
 /// and returns the process exit code.
-int cli::runAnalysis(const AnalyzeCommand& command)
+int cli::runAnalysis(const AnalyzeCommand& command, const utils::CancellationCheck& isInterrupted)
 {
     AnalysisCache cache;
-    return runAnalysis(command, cache);
+    return runAnalysis(command, cache, isInterrupted);
 }
 
 /// Executes the CLI analysis workflow with the given analysis cache, opening it first,
 /// and returns the process exit code: 0 when every input was analyzed, and normalized when requested,
 /// and 2 when any input was missing or skipped, or failed to analyze or normalize.
-int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
+int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache, const utils::CancellationCheck& isInterrupted)
 {
     auto inputPaths = command.inputPaths;
 
@@ -252,7 +265,11 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
     analysisOptions.refresh = command.refresh;
 
     const auto analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
-    auto results = analyzeWithProgress(coordinator, analysisOptions);
+    auto results = analyzeWithProgress(coordinator, analysisOptions, isInterrupted);
+    if (utils::isCancellationRequested(isInterrupted)) {
+        reportWarning("Interrupted. Analysis cancelled.");
+        return EXIT_INTERRUPTED;
+    }
     const auto analysisElapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
     const auto analysisFailureCount
         = std::ranges::count_if(results, [](const auto& record) { return record.hasError(); });
@@ -287,7 +304,9 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
             return !record.hasError();
         });
         normalizationConflicts = findBatchOutputConflicts(normalizableResults);
-        normalizations = normalizeWithProgress(normalizableResults, *command.normalization, command.workerCount, cache);
+        normalizations = normalizeWithProgress(
+            normalizableResults, *command.normalization, command.workerCount, cache, isInterrupted
+        );
     }
 
     // The CSV and JSON output of a normalize run lists failed files too, with their error.
@@ -368,6 +387,10 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
         cli::printRecords(results, command.outputFormat, false);
     }
 
+    if (utils::isCancellationRequested(isInterrupted)) {
+        reportWarning("Interrupted. Normalization cancelled, committed outputs retained.");
+        return EXIT_INTERRUPTED;
+    }
     return failureCount == 0 ? 0 : 2;
 }
 }  // namespace audiobatch
