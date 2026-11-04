@@ -30,7 +30,7 @@ use super::labels::VendorGroup;
 use super::live_chain::SlotId;
 use super::{ROW_SPACING, SMALL_FONT_SIZE, WINDOW_FONT_SIZE, WINDOW_PADDING, hint, panel};
 use crate::info_panel::CORNER_RADIUS;
-use crate::menus::{ClosePluginWindow, PLUGIN_WINDOW_KEY_CONTEXT};
+use crate::menus::{ClosePluginWindow, PLUGIN_WINDOW_KEY_CONTEXT, RescanPlugins};
 use crate::theme::{MONO_FONT, TEXT_FONT, color, palette, tooltip};
 
 /// Title of the window.
@@ -88,6 +88,8 @@ pub enum ChainEvent {
     Remove(SlotId),
     /// A plugin was added at the end.
     Add(PluginDescription),
+    /// The configured VST plugin folders were asked to be rescanned.
+    RescanPlugins,
     /// Every slot was removed.
     Clear,
     /// The chain was saved as the named preset, replacing a preset of the same name.
@@ -132,6 +134,8 @@ pub struct ChainSnapshot {
     pub current_preset: Option<String>,
     /// True when the chain was modified since it was loaded from or saved as `current_preset`.
     pub modified: bool,
+    /// True while plugin discovery is running, disabling duplicate scans.
+    pub scanning: bool,
 }
 
 /// The content of the Plugin Chain window.
@@ -487,6 +491,17 @@ impl Render for ChainView {
             .gap(px(ROW_SPACING))
             .child(self.render_add_plugin(cx))
             .child(
+                Button::new("chain-rescan-plugins")
+                    .label(if self.snapshot.scanning {
+                        "Scanning…"
+                    } else {
+                        "Rescan VST plugins"
+                    })
+                    .small()
+                    .disabled(self.snapshot.scanning)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ChainEvent::RescanPlugins))),
+            )
+            .child(
                 Button::new("chain-clear")
                     .label("Clear Chain")
                     .small()
@@ -497,7 +512,7 @@ impl Render for ChainView {
             .snapshot
             .plugin_groups
             .is_empty()
-            .then(|| hint("No effects are known yet. Scan for plugins in the Plugin Manager."));
+            .then(|| hint("No effects are known yet. Rescan VST plugins to find effects."));
         let footer = div()
             .flex()
             .flex_col()
@@ -516,6 +531,11 @@ impl Render for ChainView {
             .key_context(PLUGIN_WINDOW_KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|_, _: &ClosePluginWindow, window, _| window.remove_window()))
+            .on_action(cx.listener(|view, _: &RescanPlugins, _, cx| {
+                if !view.snapshot.scanning {
+                    cx.emit(ChainEvent::RescanPlugins);
+                }
+            }))
             .size_full()
             .overflow_y_scroll()
             .flex()
@@ -543,4 +563,58 @@ fn vendor_submenu(submenu: PopupMenu, plugins: &[PluginDescription], view: &Weak
             let _ = view.update(cx, |_, cx| cx.emit(ChainEvent::Add(plugin.clone())));
         }))
     })
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{TestAppContext, WindowOptions};
+
+    use super::*;
+
+    #[gpui_kit::test]
+    fn rescan_button_emits_request_and_is_disabled_while_scanning(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (handle, view, _subscription) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            let (handle, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| ChainView::new(ChainSnapshot::default(), window, cx))
+            })
+            .expect("opens the chain window");
+            let events = Rc::clone(&events);
+            let subscription = cx.subscribe(&view, move |_, event: &ChainEvent, _| {
+                events.borrow_mut().push(event.clone());
+            });
+            (handle, view, subscription)
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("chain-rescan-plugins", cx);
+        })
+        .expect("requests a scan");
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), vec![ChainEvent::RescanPlugins]);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.sync(
+                    ChainSnapshot {
+                        scanning: true,
+                        ..ChainSnapshot::default()
+                    },
+                    window,
+                    cx,
+                );
+            });
+            window.render_frame(cx);
+            assert_eq!(window.find("chain-rescan-plugins").disabled(), Some(true));
+            window.click("chain-rescan-plugins", cx);
+        })
+        .expect("disables duplicate scan requests");
+        cx.run_until_parked();
+        assert_eq!(events.borrow().len(), 1);
+    }
 }
