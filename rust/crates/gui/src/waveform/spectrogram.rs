@@ -23,6 +23,10 @@ const PALETTE_ANCHORS: [[u8; 3]; 9] = [
     [0xff, 0xdd, 0x83],
     [0xff, 0xf5, 0xd7],
 ];
+/// Fixed frequency captions, independent of source sample rate.
+const FREQUENCIES: [f64; 10] = [
+    0.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16_000.0, 18_000.0, 20_000.0,
+];
 /// Immutable 256-entry BGRA lookup shared by every source artifact.
 static PALETTE: OnceLock<[[u8; 4]; 256]> = OnceLock::new();
 
@@ -101,14 +105,17 @@ fn raster_bounds(source: &SpectrogramData, viewport: Viewport) -> (Bounds<Pixels
         point(px(start), viewport.plot.origin.y),
         size(px(finish - start), viewport.plot.size.height),
     );
+    let nyquist = rate * 0.5;
+    let fraction = frequency_to_mel(nyquist) / frequency_to_mel(nyquist.max(FREQUENCIES[9]));
+    let height = px(f32::from(viewport.plot.size.height) * fraction as f32);
     let image_bounds = Bounds::new(
-        point(px(start), viewport.plot.origin.y),
-        size(px(grid_finish - start), viewport.plot.size.height),
+        point(px(start), viewport.plot.bottom() - height),
+        size(px(grid_finish - start), height),
     );
     (viewport.plot.intersect(&source_bounds), image_bounds)
 }
 
-/// Prioritizes high-frequency references and source Nyquist, then admits lower ticks only without collisions.
+/// Draws fixed reference ticks across a Mel range extending to at least 20 kHz.
 pub(super) fn paint_frequency_axis(
     plot: Bounds<Pixels>,
     gutter: Bounds<Pixels>,
@@ -120,16 +127,11 @@ pub(super) fn paint_frequency_axis(
         return;
     }
     let nyquist = f64::from(rate) * 0.5;
-    let maximum_mel = frequency_to_mel(nyquist);
+    let maximum_mel = frequency_to_mel(nyquist.max(FREQUENCIES[9]));
     let height = relative(10.0, window.rem_size());
     let spacing = relative(16.0, window.rem_size());
     let mut occupied: Vec<(f32, f32)> = Vec::new();
-    for frequency in [
-        20_000.0, 18_000.0, 16_000.0, nyquist, 0.0, 1000.0, 4000.0, 8000.0, 250.0, 500.0, 2000.0,
-    ] {
-        if frequency > nyquist || maximum_mel <= 0.0 {
-            continue;
-        }
+    for frequency in FREQUENCIES {
         let y = (frequency_to_mel(frequency) / maximum_mel) as f32;
         let y = y.mul_add(-f32::from(plot.size.height), f32::from(plot.bottom()));
         let top = height.mul_add(-0.5, y).clamp(
@@ -157,7 +159,7 @@ pub(super) fn paint_frequency_axis(
     }
 }
 
-/// Keeps exact source Nyquist values legible without unnecessary trailing decimal zeroes.
+/// Formats fixed frequency references without unnecessary trailing decimal zeroes.
 fn frequency_label(frequency: f64) -> String {
     if frequency < 1000.0 {
         return format!("{frequency:.0}");
@@ -227,8 +229,39 @@ mod test_projection {
     }
 
     #[test]
-    fn frequency_captions_preserve_nyquist_without_redundant_zeroes() {
-        assert_eq!(frequency_label(22_050.0), "22.05k");
+    fn low_rate_raster_leaves_space_for_fixed_twenty_kilohertz_axis() {
+        let source =
+            SpectrogramData::new(8000, 1, 1024, HOP_SIZE as u64, vec![0; FREQUENCY_ROWS]).expect("low-rate source");
+        let viewport = Viewport {
+            start: 0.0,
+            length: 1024.0 / 8000.0,
+            plot: Bounds::new(point(px(10.0), px(20.0)), size(px(110.0), px(80.0))),
+        };
+        let (_, image) = raster_bounds(&source, viewport);
+        assert!(image.origin.y > viewport.plot.origin.y);
+        assert!((f32::from(image.bottom() - viewport.plot.bottom())).abs() < 0.001);
+        assert!((FREQUENCIES[9] - 20_000.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn high_rate_raster_retains_the_entire_frequency_height() {
+        let source = SpectrogramData::new(96_000, 1, 1024, HOP_SIZE as u64, vec![0; FREQUENCY_ROWS])
+            .expect("canonical high-rate source");
+        let viewport = Viewport {
+            start: 0.0,
+            length: 1024.0 / 96_000.0,
+            plot: Bounds::new(point(px(10.0), px(20.0)), size(px(110.0), px(80.0))),
+        };
+        let (clip, image) = raster_bounds(&source, viewport);
+        assert!((f32::from(image.origin.y - viewport.plot.origin.y)).abs() < f32::EPSILON);
+        assert!((f32::from(image.size.height - viewport.plot.size.height)).abs() < f32::EPSILON);
+        assert!((f32::from(clip.size.height - viewport.plot.size.height)).abs() < f32::EPSILON);
+        let label_fraction = frequency_to_mel(20_000.0) / frequency_to_mel(48_000.0);
+        assert!(label_fraction < 1.0);
+    }
+
+    #[test]
+    fn frequency_captions_preserve_low_nyquist_without_redundant_zeroes() {
         assert_eq!(frequency_label(20_000.0), "20k");
         assert_eq!(frequency_label(5512.0), "5.512k");
         assert_eq!(frequency_label(250.0), "250");

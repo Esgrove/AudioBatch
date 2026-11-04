@@ -401,10 +401,10 @@ void SeratoPreviewTests::testOverloadMarks()
     }
 }
 
-/// Checks each raw flag combination independently of projection and sample-over precedence.
+/// Checks each raw flag combination independently of projection and paint order.
 void SeratoPreviewTests::testOverloadFlagFiltering()
 {
-    beginTest("Raw overload kinds are filtered before precedence, including columns with both bits");
+    beginTest("Raw overload kinds are filtered independently, including columns with both bits");
     for (const bool sample : {false, true}) {
         for (const bool truePeak : {false, true}) {
             for (const auto flags :
@@ -441,10 +441,22 @@ void SeratoPreviewTests::verifyOverloadProjection(
     thumbnail.setOverloadIndicatorSettings(sample, truePeak, lines);
     const auto marks = thumbnail.getOverloadMarks();
     const auto plot = thumbnail.getPlotGeometry().waveform;
-    expectEquals(static_cast<int>(marks.size()), sample || truePeak ? channels : 0);
-    for (std::size_t channel = 0; channel < marks.size(); ++channel) {
-        const auto& mark = marks[channel];
-        expect(mark.sampleOver == sample);
+    expectEquals(static_cast<int>(marks.size()), (static_cast<int>(sample) + static_cast<int>(truePeak)) * channels);
+    bool reachedTruePeak = false;
+    for (std::size_t index = 0; index < marks.size(); ++index) {
+        const auto channel = index % static_cast<std::size_t>(channels);
+        const auto& mark = marks[index];
+        if (!mark.sampleOver) {
+            reachedTruePeak = true;
+        }
+        expect(!mark.sampleOver || !reachedTruePeak);
+        expect(mark.sampleOver == (sample && std::cmp_less(index, channels)));
+        if (sample && truePeak && !mark.sampleOver) {
+            const auto& sampleMark = marks[channel];
+            expect(mark.horizontal == sampleMark.horizontal);
+            expectWithinAbsoluteError(mark.laneTop, sampleMark.laneTop, 0.001f);
+            expectWithinAbsoluteError(mark.laneBottom, sampleMark.laneBottom, 0.001f);
+        }
         expect(mark.showLine == lines);
         expect(mark.topEdge == (channel == 0UZ));
         expect(mark.bottomEdge == std::cmp_equal(channel, channels - 1));
@@ -495,6 +507,34 @@ void SeratoPreviewTests::testOverloadSettings()
         thumbnail.setDisplayGain(1.0f);
     }
 
+    beginTest("True peaks paint last when separate columns overlap after minimum-width expansion");
+    expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+    thumbnail.setSize(layout::waveform::AXIS_GUTTER_WIDTH + layout::waveform::contentInset * 2 + 11, previewHeight);
+    const auto adjacent = std::make_shared<OverloadHistory>();
+    adjacent->channelCount = 1;
+    adjacent->sampleRate = 8192.0;
+    adjacent->lengthInSamples = 8192;
+    adjacent->samplesPerBucket = overloadBlockSize(adjacent->sampleRate);
+    adjacent->flags.assign(11, 0);
+    adjacent->flags[2] = OverloadHistory::truePeakOver;
+    adjacent->flags[3] = OverloadHistory::sampleOver;
+    thumbnail.setOverloadHistory(adjacent);
+    thumbnail.setOverloadIndicatorSettings(true, true, false);
+    const auto adjacentMarks = thumbnail.getOverloadMarks();
+    expectEquals(static_cast<int>(adjacentMarks.size()), 2);
+    if (adjacentMarks.size() == 2) {
+        expect(adjacentMarks[0].sampleOver);
+        expect(!adjacentMarks[1].sampleOver);
+        expect(adjacentMarks[0].horizontal.intersects(adjacentMarks[1].horizontal));
+        expectWithinAbsoluteError(
+            adjacentMarks[0].horizontal.getLength(), layout::waveform::overloadMinimumWidth, 0.001f
+        );
+        expectWithinAbsoluteError(
+            adjacentMarks[1].horizontal.getLength(), layout::waveform::overloadMinimumWidth, 0.001f
+        );
+    }
+    thumbnail.setSize(previewWidth, previewHeight);
+
     beginTest("Overload display preferences survive source replacement without retaining source history");
     thumbnail.setOverloadIndicatorSettings(false, false, false);
     expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
@@ -511,7 +551,7 @@ void SeratoPreviewTests::testOverloadSettings()
     thumbnail.setOverloadIndicatorSettings(true, true, true);
     expectEquals(static_cast<int>(thumbnail.getOverloadMarks().size()), 1);
     expect(thumbnail.getTooltip().contains("solid yellow"));
-    expect(thumbnail.getTooltip().contains("outlined orange"));
+    expect(thumbnail.getTooltip().contains("solid orange"));
     thumbnail.setViewMode(PreviewViewMode::spectrogram);
     expect(thumbnail.getTooltip().isEmpty());
 }
@@ -630,9 +670,13 @@ void SeratoPreviewTests::testPreviewModes()
     expectEquals(ownerRequests, 0);
 }
 
-/// Pins separate left LUFS and right source axes, equal gutters, and non-overlapping channel dBFS labels.
+/// Pins separate right LUFS and left source axes, equal gutters, and non-overlapping channel dBFS labels.
 void SeratoPreviewTests::testPreviewAxes()
 {
+    beginTest("Frequency captions use fixed references through 20 kHz");
+    expectEquals(static_cast<int>(PREVIEW_FREQUENCIES.size()), 10);
+    expectWithinAbsoluteError(PREVIEW_FREQUENCIES.front(), 0.0, 0.001);
+    expectWithinAbsoluteError(PREVIEW_FREQUENCIES.back(), 20'000.0, 0.001);
     beginTest("Equal source-axis gutters align both panes and separate LUFS from amplitude or frequency");
     for (const auto enabled : {false, true}) {
         for (const auto mode :
@@ -672,10 +716,10 @@ void SeratoPreviewTests::testPreviewAxesForMode(const bool enabled, const Previe
         }
         expect(!plot.intersects(axis));
         expectEquals(axis.getWidth(), layout::waveform::AXIS_GUTTER_WIDTH - layout::waveform::AXIS_LABEL_GAP);
-        expect(enabled ? axis.getX() >= plot.getRight() : axis.getRight() <= plot.getX());
+        expect(axis.getRight() <= plot.getX());
     }
     if (enabled) {
-        expect(geometry.loudnessAxis.getRight() <= geometry.loudness.getX());
+        expect(geometry.loudnessAxis.getX() >= geometry.loudness.getRight());
         expect(!geometry.loudnessAxis.intersects(geometry.amplitudeAxis));
         expect(!geometry.loudnessAxis.intersects(geometry.frequencyAxis));
     } else {
@@ -693,16 +737,16 @@ void SeratoPreviewTests::testPreviewAxesForMode(const bool enabled, const Previe
 /// Checks analytical dBFS conversion and signed linear positions independently for each source channel.
 void SeratoPreviewTests::testAmplitudeLabels()
 {
-    beginTest("Both waveform polarities show the same dBFS magnitude, with silence at negative infinity");
+    beginTest("Both waveform polarities show only -1 and -6 dBFS references");
     for (const auto channels : {1, 2}) {
         const auto geometry = previewPlotGeometry({0, 0, 600, 2000}, PreviewViewMode::waveform, true);
         const auto labels = previewAmplitudeLabels(geometry, channels);
-        expectEquals(static_cast<int>(labels.size()), channels * 9);
+        expectEquals(static_cast<int>(labels.size()), channels * 4);
         for (const auto& label : labels) {
             verifyAmplitudeLabel(label, geometry, channels);
         }
         for (int channel = 0; channel < channels; ++channel) {
-            for (const auto decibels : {0.0f, -6.0f, -12.0f, -24.0f}) {
+            for (const auto decibels : {-1.0f, -6.0f}) {
                 for (const auto polarity : {1.0f, -1.0f}) {
                     const auto amplitude
                         = polarity * static_cast<float>(std::pow(10.0, static_cast<double>(decibels) / 20.0));
@@ -716,7 +760,7 @@ void SeratoPreviewTests::testAmplitudeLabels()
     }
 }
 
-/// Verifies one caption's dBFS magnitude and linear position, including edge clamping and silence.
+/// Verifies one caption's allowed dBFS magnitude, signed linear position and bounded placement.
 void SeratoPreviewTests::verifyAmplitudeLabel(
     const PreviewAmplitudeLabel& label,
     const PreviewPlotGeometry& geometry,
@@ -728,28 +772,16 @@ void SeratoPreviewTests::verifyAmplitudeLabel(
     const auto vertical = static_cast<float>(top) + (1.0f - label.amplitude) * static_cast<float>(bottom - top) * 0.5f;
     // Grid lines reuse this unclamped position, so it must follow the amplitude even where the caption is clamped.
     expectWithinAbsoluteError(label.vertical, vertical, 0.0001f);
-    if (std::isfinite(label.decibels)) {
-        const auto magnitude = std::pow(10.0, static_cast<double>(label.decibels) / 20.0);
-        expectWithinAbsoluteError(static_cast<double>(std::abs(label.amplitude)), magnitude, 0.000001);
-        expect(label.decibels <= 0.0f);
-        if (juce::approximatelyEqual(label.decibels, 0.0f)) {
-            expectEquals(
-                label.amplitude > 0.0f ? label.bounds.getY() : label.bounds.getBottom(),
-                label.amplitude > 0.0f ? top : bottom
-            );
-            return;
-        }
-    } else {
-        expect(std::isinf(label.decibels) && label.decibels < 0.0f);
-        expectWithinAbsoluteError(label.amplitude, 0.0f, 0.000001f);
-    }
-    expectWithinAbsoluteError(static_cast<float>(label.bounds.getCentreY()), vertical, 1.0f);
+    const auto magnitude = std::pow(10.0, static_cast<double>(label.decibels) / 20.0);
+    expectWithinAbsoluteError(static_cast<double>(std::abs(label.amplitude)), magnitude, 0.000001);
+    expect(juce::approximatelyEqual(label.decibels, -1.0f) || juce::approximatelyEqual(label.decibels, -6.0f));
+    expect(geometry.amplitudeAxis.contains(label.bounds));
 }
 
 /// Checks compact amplitude captions remain bounded and never overlap neighboring labels.
 void SeratoPreviewTests::testCompactAmplitudeLabels()
 {
-    beginTest("Compact dBFS captions preserve full scale and omit crowded lower-priority references");
+    beginTest("Compact dBFS captions preserve -1 dBFS and omit crowded lower-priority references");
     for (int height = 5; height <= 100; ++height) {
         const auto geometry = previewPlotGeometry({0, 0, 600, height}, PreviewViewMode::waveform, false);
         const auto labels = previewAmplitudeLabels(geometry, 2);
@@ -770,8 +802,8 @@ void SeratoPreviewTests::testCompactAmplitudeLabels()
     const auto compactLabels = previewAmplitudeLabels(compact, 1);
     expectEquals(static_cast<int>(compactLabels.size()), 1);
     if (!compactLabels.empty()) {
-        expectWithinAbsoluteError(compactLabels.front().amplitude, 1.0f, 0.000001f);
-        expectWithinAbsoluteError(compactLabels.front().decibels, 0.0f, 0.000001f);
+        expectWithinAbsoluteError(compactLabels.front().amplitude, std::pow(10.0f, -1.0f / 20.0f), 0.000001f);
+        expectWithinAbsoluteError(compactLabels.front().decibels, -1.0f, 0.000001f);
     }
 }
 

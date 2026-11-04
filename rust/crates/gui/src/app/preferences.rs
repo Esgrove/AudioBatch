@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use audiobatch_playback::{OutputConfig, Player, device_capabilities};
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Bounds, Context, Entity, Subscription, TitlebarOptions, WeakEntity, WindowBounds,
-    WindowOptions, px, size,
+    AnyWindowHandle, AppContext as _, Bounds, Context, Entity, Subscription, TitlebarOptions, WeakEntity, Window,
+    WindowBounds, WindowOptions, px, size,
 };
 
 use super::AppView;
@@ -33,8 +33,9 @@ pub(super) struct SettingsWindow {
 }
 
 impl AppView {
-    /// Opens the settings window, or brings it to the front when it is already open.
-    pub(super) fn open_settings_window(&mut self, cx: &mut Context<Self>) {
+    /// Opens settings on the main window's display, or brings the existing settings window to the front.
+    /// Session dimensions are clamped to the target display's visible bounds when centered.
+    pub(super) fn open_settings_window(&mut self, window: &Window, cx: &mut Context<Self>) {
         if let Some(settings_window) = &self.settings_window
             && settings_window
                 .handle
@@ -44,8 +45,13 @@ impl AppView {
             return;
         }
         let snapshot = self.settings_snapshot();
-        let bounds = Bounds::centered(None, size(px(SETTINGS_WIDTH), px(SETTINGS_HEIGHT)), cx);
+        let display_id = window.display(cx).map(|display| display.id());
+        let dimensions = self
+            .settings_window_size
+            .unwrap_or(size(px(SETTINGS_WIDTH), px(SETTINGS_HEIGHT)));
+        let bounds = Bounds::centered(display_id, dimensions, cx);
         let options = WindowOptions {
+            display_id,
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(SETTINGS_MINIMUM_SIZE.0), px(SETTINGS_MINIMUM_SIZE.1))),
             titlebar: Some(TitlebarOptions {
@@ -290,9 +296,13 @@ impl AppView {
     /// Applies the settings the user changed in the settings window.
     /// Only fields changed from its displayed snapshot are merged, preserving newer choices from other surfaces.
     fn on_settings_event(&mut self, _view: Entity<SettingsView>, event: &SettingsEvent, cx: &mut Context<Self>) {
-        let SettingsEvent::Changed { previous, settings } = event;
-        let settings = merge_settings_window(&self.settings, previous, settings);
-        self.apply_settings(settings, cx);
+        match event {
+            SettingsEvent::Changed { previous, settings } => {
+                let settings = merge_settings_window(&self.settings, previous, settings);
+                self.apply_settings(settings, cx);
+            }
+            SettingsEvent::Resized(dimensions) => self.settings_window_size = Some(*dimensions),
+        }
     }
 
     /// Opens the player with another output configuration, keeping the loaded file, its position, and the gain.

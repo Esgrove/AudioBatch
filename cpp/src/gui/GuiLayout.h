@@ -232,7 +232,9 @@ constexpr int SECTION_SPACING {10};
 /// Includes the heading and its clearance, rather than adding another vertical padding inset.
 constexpr int GROUP_TOP_INSET {18};
 constexpr int rowHeight {30};
-constexpr int PREFERENCE_ROW_COUNT {9};
+constexpr int PREFERENCE_ROW_COUNT {7};
+constexpr int OVERLOAD_ROW_COUNT {2};
+constexpr int OVERLOAD_GROUP_HEIGHT {GROUP_TOP_INSET + rowHeight * OVERLOAD_ROW_COUNT + padding};
 constexpr int rangeLabelWidth {80};
 constexpr int rangeEditorWidth {48};
 constexpr int rangeEditorPadding {3};
@@ -284,8 +286,6 @@ constexpr float SEEK_PREVIEW_ALPHA {0.45f};
 constexpr float overloadCapHeight {2.5f};
 /// Narrowest overload mark, so a single-column overload stays visible when zoomed out.
 constexpr float overloadMinimumWidth {3.0f};
-/// Outline width of the hollow true peak caps.
-constexpr float overloadOutlineWidth {1.0f};
 /// Opacity of the optional yellow or orange tint over the overloaded source channel.
 constexpr float overloadTintAlpha {0.06f};
 /// Amplitude reference lines match the subtle loudness grid without adding a second grid over it.

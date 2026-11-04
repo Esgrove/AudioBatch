@@ -688,9 +688,7 @@ void ThumbnailComponent::drawLoudnessAxis(juce::Graphics& graphics, const juce::
         );
         graphics.setColour(juce::Colours::white.withAlpha(loudnessLabelAlpha));
         graphics.drawText(
-            utils::format("{}", value),
-            gutter.withY(labelTop).withHeight(labelHeight),
-            juce::Justification::centredRight
+            utils::format("{}", value), gutter.withY(labelTop).withHeight(labelHeight), juce::Justification::centredLeft
         );
         graphics.setColour(juce::Colours::white.withAlpha(loudnessGridAlpha));
         graphics.drawHorizontalLine(juce::roundToInt(vertical), plot.getX(), plot.getRight());

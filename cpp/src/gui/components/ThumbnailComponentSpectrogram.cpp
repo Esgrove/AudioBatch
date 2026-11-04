@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -171,15 +170,19 @@ void ThumbnailComponent::drawSpectrogram(juce::Graphics& graphics, const juce::R
             .getSmallestIntegerContainer()
     );
     const auto scaleX = (gridFinish - start) / static_cast<float>(spectrogramRaster.getWidth());
-    const auto scaleY = static_cast<float>(bounds.getHeight()) / static_cast<float>(spectrogramRaster.getHeight());
+    const auto nyquistMel = frequencyToMel(source.sampleRate * 0.5);
+    const auto frequencyFraction
+        = nyquistMel / frequencyToMel(std::max(source.sampleRate * 0.5, PREVIEW_FREQUENCIES.back()));
+    const auto imageHeight = static_cast<float>(bounds.getHeight() * frequencyFraction);
+    const auto imageTop = static_cast<float>(bounds.getBottom()) - imageHeight;
+    const auto scaleY = imageHeight / static_cast<float>(spectrogramRaster.getHeight());
     graphics.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
     graphics.drawImageTransformed(
-        spectrogramRaster,
-        juce::AffineTransform::scale(scaleX, scaleY).translated(start, static_cast<float>(bounds.getY()))
+        spectrogramRaster, juce::AffineTransform::scale(scaleX, scaleY).translated(start, imageTop)
     );
 }
 
-/// Prioritizes high-frequency reference ticks and Nyquist before filling lower Mel-spaced labels.
+/// Draws fixed reference ticks across a Mel range extending to at least 20 kHz.
 /// Occupied label bands suppress collisions rather than allowing compact layouts to overlap text.
 void ThumbnailComponent::drawFrequencyAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const
 {
@@ -191,29 +194,13 @@ void ThumbnailComponent::drawFrequencyAxis(juce::Graphics& graphics, const Previ
         return;
     }
     const auto nyquist = sampleRate * 0.5;
-    const auto maximumMel = frequencyToMel(nyquist);
+    const auto maximumMel = frequencyToMel(std::max(nyquist, PREVIEW_FREQUENCIES.back()));
     const auto plot = geometry.spectrogram;
     const auto gutter = geometry.frequencyAxis;
     const auto labelHeight = juce::roundToInt(layout::waveform::loudnessFontHeight);
     std::vector<juce::Range<int>> occupied;
-    const std::array candidates {
-        20'000.0,
-        18'000.0,
-        16'000.0,
-        nyquist,
-        0.0,
-        1000.0,
-        4000.0,
-        8000.0,
-        250.0,
-        500.0,
-        2000.0,
-    };
     graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
-    for (const auto frequency : candidates) {
-        if (frequency > nyquist || maximumMel <= 0.0) {
-            continue;
-        }
+    for (const auto frequency : PREVIEW_FREQUENCIES) {
         const auto vertical = static_cast<float>(plot.getBottom())
             - static_cast<float>(frequencyToMel(frequency) / maximumMel) * static_cast<float>(plot.getHeight());
         const auto top = std::clamp(
@@ -256,14 +243,7 @@ void ThumbnailComponent::drawWaveformAxis(juce::Graphics& graphics, const Previe
         ? juce::Justification::centredLeft
         : juce::Justification::centredRight;
     for (const auto& label : previewAmplitudeLabels(geometry, sourceChannels)) {
-        juce::String text;
-        if (!std::isfinite(label.decibels)) {
-            text = juce::String::fromUTF8("−∞");
-        } else if (juce::approximatelyEqual(label.decibels, 0.0f)) {
-            text = "0.0";
-        } else {
-            text = utils::format("{:.0f}", label.decibels);
-        }
+        const auto text = utils::format("{:.0f}", label.decibels);
         graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::frequencyLabelAlpha));
         graphics.drawText(text, label.bounds, justification);
         if (!loudnessGraphEnabled) {
@@ -333,7 +313,7 @@ juce::String ThumbnailComponent::getTooltip()
     if ((showSampleOverloads || showTruePeakOverloads) && overloadHistory && overloadHistory->hasOverloads()
         && sourceDuration() > 0.0)
     {
-        return "Source overs: solid yellow = sample > 0 dBFS, outlined orange = true peak > 0 dBTP.";
+        return "Source overs: solid yellow = sample > 0 dBFS, solid orange = true peak > 0 dBTP. Orange wins overlaps.";
     }
     return {};
 }

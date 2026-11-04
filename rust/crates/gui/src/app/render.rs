@@ -597,7 +597,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &TogglePreviewLatencyCompensation, _, cx| {
                 view.toggle_preview_latency_compensation(cx);
             }))
-            .on_action(cx.listener(|view, _: &OpenAudioSettings, _, cx| view.open_settings_window(cx)))
+            .on_action(cx.listener(|view, _: &OpenAudioSettings, window, cx| view.open_settings_window(window, cx)))
             .on_action(cx.listener(|view, _: &TogglePlayback, _, cx| view.toggle_playback(cx)))
             .on_action(cx.listener(|view, _: &StopPlayback, _, cx| view.stop_playback(cx)))
             .on_action(cx.listener(|view, action: &SelectOutputDevice, _, cx| {

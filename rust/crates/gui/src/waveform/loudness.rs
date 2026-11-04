@@ -41,7 +41,7 @@ impl LoudnessRange {
     }
 }
 
-/// Paints source LUFS captions in their separate left lane and subtle grid lines across only the host plot.
+/// Paints source LUFS captions in their separate right lane and subtle grid lines across only the host plot.
 pub(super) fn paint_axis(
     gutter: Bounds<Pixels>,
     plot: Bounds<Pixels>,
@@ -68,7 +68,7 @@ pub(super) fn paint_axis(
             point(gutter.origin.x, px(top)),
             size(gutter.size.width, px(label_height)),
         );
-        paint_label(format!("{value}").into(), bounds, false, white(0.8), window, cx);
+        paint_label(format!("{value}").into(), bounds, true, white(0.8), window, cx);
     }
 }
 

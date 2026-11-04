@@ -17,10 +17,10 @@ const AXIS_GAP: f32 = 2.0;
 const PANE_GAP: f32 = 2.0;
 /// Height of the separate spectral-only source warning strip.
 const WARNING_HEIGHT: f32 = 4.0;
-/// Domain levels prioritized from full scale toward silence.
-const DECIBEL_LEVELS: [f32; 4] = [0.0, -6.0, -12.0, -24.0];
+/// Magnitude references, with the near-full-scale warning prioritized in compact lanes.
+const DECIBEL_LEVELS: [f32; 2] = [-1.0, -6.0];
 /// Immutable display magnitude references, separate from pane-local label occupancy.
-static MAGNITUDES: OnceLock<[f32; 4]> = OnceLock::new();
+static MAGNITUDES: OnceLock<[f32; 2]> = OnceLock::new();
 
 /// The visible part of the file mapped into one explicitly chosen plot.
 #[derive(Debug, Clone, Copy, Default)]
@@ -115,15 +115,15 @@ impl PreviewGeometry {
         }
         let (waveform_left, waveform_right) = reserve_axes(&mut geometry.waveform, loudness, scale);
         let (spectral_left, spectral_right) = reserve_axes(&mut geometry.spectrogram, loudness, scale);
-        geometry.amplitude_axis = if loudness { waveform_right } else { waveform_left };
-        geometry.frequency_axis = if loudness { spectral_right } else { spectral_left };
+        geometry.amplitude_axis = waveform_left;
+        geometry.frequency_axis = spectral_left;
         if loudness {
             if mode == PreviewViewMode::Spectrogram {
                 geometry.loudness = geometry.spectrogram;
-                geometry.loudness_axis = spectral_left;
+                geometry.loudness_axis = spectral_right;
             } else {
                 geometry.loudness = geometry.waveform;
-                geometry.loudness_axis = waveform_left;
+                geometry.loudness_axis = waveform_right;
             }
         }
         geometry.warning.origin.x = geometry.spectrogram.origin.x;
@@ -149,7 +149,7 @@ pub(super) fn has_area(bounds: Bounds<Pixels>) -> bool {
     bounds.size.width > Pixels::ZERO && bounds.size.height > Pixels::ZERO
 }
 
-/// Fits full scale first on both polarities, then quieter levels and finally silence when space permits.
+/// Fits only -1 and -6 dBFS on both polarities, prioritizing -1 dBFS when captions would collide.
 pub(super) fn amplitude_labels(geometry: PreviewGeometry, channels: u32, rem: Pixels) -> Vec<AmplitudeLabel> {
     if !has_area(geometry.waveform) || !has_area(geometry.amplitude_axis) || channels == 0 {
         return Vec::new();
@@ -189,7 +189,6 @@ pub(super) fn amplitude_labels(geometry: PreviewGeometry, channels: u32, rem: Pi
                 add(polarity * magnitude, decibels);
             }
         }
-        add(0.0, f32::NEG_INFINITY);
     }
     labels
 }
@@ -261,27 +260,65 @@ mod test_geometry {
     }
 
     #[test]
-    fn source_axes_move_right_with_distinct_left_loudness_lane() {
-        let geometry = PreviewGeometry::new(bounds(), PreviewViewMode::Spectrogram, true, px(15.0));
-        assert!(geometry.frequency_axis.origin.x >= geometry.spectrogram.right());
-        assert!(geometry.loudness_axis.right() < geometry.spectrogram.origin.x);
-        assert_eq!(geometry.loudness.origin, geometry.spectrogram.origin);
-        assert!(geometry.warning.bottom() <= geometry.spectrogram.origin.y);
+    fn loudness_stays_right_of_its_host_with_separate_source_gutters() {
+        for rem in [12.0, 15.0, 20.0] {
+            for mode in [
+                PreviewViewMode::Waveform,
+                PreviewViewMode::Spectrogram,
+                PreviewViewMode::SideBySide,
+                PreviewViewMode::Stacked,
+            ] {
+                let geometry = PreviewGeometry::new(bounds(), mode, true, px(rem));
+                assert!(geometry.loudness_axis.origin.x > geometry.loudness.right());
+                assert!(geometry.plot_at(geometry.loudness_axis.origin).is_none());
+                if has_area(geometry.waveform) {
+                    assert!(geometry.amplitude_axis.right() < geometry.waveform.origin.x);
+                    assert_eq!(geometry.loudness.origin, geometry.waveform.origin);
+                }
+                if has_area(geometry.spectrogram) {
+                    assert!(geometry.frequency_axis.right() < geometry.spectrogram.origin.x);
+                    assert!(geometry.plot_at(geometry.frequency_axis.origin).is_none());
+                }
+                if mode == PreviewViewMode::Spectrogram {
+                    assert_eq!(geometry.loudness.origin, geometry.spectrogram.origin);
+                    assert!(geometry.warning.bottom() <= geometry.spectrogram.origin.y);
+                    assert!(!geometry.frequency_axis.intersects(&geometry.loudness_axis));
+                }
+            }
+        }
     }
 
     #[test]
-    fn amplitude_labels_prioritize_both_full_scales_and_never_collide() {
+    fn compact_stereo_lanes_prioritize_minus_one_and_keep_labels_inside_each_lane() {
+        let host = Bounds::new(bounds().origin, size(bounds().size.width, px(60.0)));
+        let geometry = PreviewGeometry::new(host, PreviewViewMode::Waveform, true, px(15.0));
+        let labels = amplitude_labels(geometry, 2, px(15.0));
+        assert_eq!(labels.len(), 4);
+        assert!(labels.iter().all(|label| (label.decibels + 1.0).abs() < f32::EPSILON));
+        for (index, label) in labels.iter().enumerate() {
+            assert!(label.bounds.origin.y >= host.origin.y);
+            assert!(label.bounds.bottom() <= host.bottom());
+            for other in labels.iter().skip(index + 1) {
+                assert!(!label.bounds.intersects(&other.bounds));
+            }
+        }
+    }
+
+    #[test]
+    fn amplitude_labels_show_only_minus_one_and_minus_six_on_both_polarities() {
         let host = Bounds::new(bounds().origin, size(bounds().size.width, px(1000.0)));
         let geometry = PreviewGeometry::new(host, PreviewViewMode::Waveform, false, px(15.0));
         let labels = amplitude_labels(geometry, 1, px(15.0));
-        assert_eq!(
-            labels
-                .iter()
-                .filter(|label| label.decibels.abs() < f32::EPSILON)
-                .count(),
-            2
-        );
-        assert!(labels.iter().any(|label| label.decibels.is_infinite()));
+        assert_eq!(labels.len(), 4);
+        for decibels in [-1.0, -6.0] {
+            assert_eq!(
+                labels
+                    .iter()
+                    .filter(|label| (label.decibels - decibels).abs() < f32::EPSILON)
+                    .count(),
+                2
+            );
+        }
         for (index, label) in labels.iter().enumerate() {
             for other in labels.iter().skip(index + 1) {
                 assert!(!label.bounds.intersects(&other.bounds));

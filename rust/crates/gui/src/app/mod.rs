@@ -185,6 +185,8 @@ pub struct AppView {
     dispose: FileDisposer,
     /// The Audio Settings window while it is open.
     settings_window: Option<SettingsWindow>,
+    /// User-resized Audio Settings dimensions, retained only for this app session.
+    settings_window_size: Option<Size<Pixels>>,
     window_title: String,
     /// Height the expanded preview starts at, the height that fits its controls in the opening window.
     preview_height: f32,
@@ -339,6 +341,7 @@ impl AppView {
             settings_path,
             dispose: services.dispose,
             settings_window: None,
+            settings_window_size: None,
             window_title: String::from(APP_TITLE),
             preview_height: render::preview_fit_height(content_width, workspace_height),
             preview_startup_fit: PreviewStartupFit::default(),
