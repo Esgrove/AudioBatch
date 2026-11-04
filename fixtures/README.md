@@ -223,6 +223,32 @@ uv run fixtures/plugin_expected.py
 The C++ tests in `../cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate list the same cases.
 The format workflow in CI fails when the committed files differ from what the script writes.
 
+## Limiter Model
+
+`limiter_model.py` fits the empirical model behind the gain-adjusted integrated loudness estimate
+that both applications show for custom gains from 0 to +6 dB.
+Its observations are integrated loudness measurements of four music files rendered through one saved
+FabFilter Pro-L 2 preset with a -0.3 dB ceiling, at six input gains, with no audio or plugin state committed.
+The model starts from the hard-clipped loudness at 0 dBFS, applies the ceiling offset,
+and subtracts extra attenuation that grows with the hard-clip loudness loss.
+Its fitted scale and exponent are the `LIMITER_LOSS_*` constants in `../cpp/src/analysis/AudioAnalysis.cpp`
+and `../rust/crates/core/src/gain_loudness.rs`.
+Print the coefficients and the leave-one-track-out errors from the repository root with:
+
+```shell
+uv run --script fixtures/limiter_model.py
+```
+
+To measure another preset or more tracks, run the Rust limiter probe from `../rust/`
+and copy its `source_lufs`, `hard_clip_lufs`, and `limiter_lufs` columns into the script's `TRACKS`:
+
+```shell
+cargo run --release -p audiobatch-plugins --example limiter_probe -- <preset folder> <preset name> <audio files>
+```
+
+The probe renders temporary copies only, at the gains the script lists.
+The fit is preset-specific, and four tracks cannot establish how well it generalizes.
+
 ## Normalization Collection
 
 `normalization/` holds a larger collection for comparing the normalized output of both applications.

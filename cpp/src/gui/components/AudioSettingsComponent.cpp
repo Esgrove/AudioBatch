@@ -330,7 +330,8 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
     );
     gainAdjustedMetricsToggle.setTooltip(
         "Show predicted peaks and estimated loudness after custom gain. "
-        "Source measurements stay unchanged. Estimates are not actual plugin renders."
+        "Integrated loudness uses a fitted L2 limiter model with a -0.3 dB ceiling for 0 through +6 dB gain. "
+        "Other gains and short-term loudness use hard clipping at 0 dBFS. Does not measure the active plugin chain."
     );
     sampleOverloadsToggle.setTooltip("Show source sample-peak overload indicators independently of true peaks.");
     truePeakOverloadsToggle.setTooltip("Show source true-peak overload indicators independently of sample peaks.");

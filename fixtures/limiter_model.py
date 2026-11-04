@@ -3,13 +3,25 @@
 # dependencies = ["numpy", "scipy"]
 # ///
 """
-Fit exploratory Pro-L 2 preset models from full-file release-render measurements.
+Fit the gain-adjusted limiter loudness model from full-file release-render measurements.
 
-The 24 observations come from four music files and one saved L2 preset.
+The 24 observations come from four music files rendered through one saved FabFilter Pro-L 2 preset, named L2,
+with a -0.3 dB output ceiling, at six input gains from 0 to +6 dB.
 They are numerical measurements only, with no audio or proprietary plugin state.
+`rust/crates/plugins/examples/limiter_probe.rs` produced them,
+and its `source_lufs`, `hard_clip_lufs`, and `limiter_lufs` CSV columns fill `TRACKS`.
+
+The content-aware model starts from the hard-clipped loudness at 0 dBFS,
+applies the ceiling offset, and subtracts extra attenuation that grows with the hard-clip loudness loss:
+
+    estimate = clipped + CEILING_OFFSET - scale * max(source + gain - clipped, 0) ** exponent
+
+Both applications use its fitted `scale` and `exponent` for integrated loudness between 0 and +6 dB of gain,
+as `LIMITER_LOSS_SCALE` and `LIMITER_LOSS_EXPONENT` in `cpp/src/analysis/AudioAnalysis.cpp`
+and `rust/crates/core/src/gain_loudness.rs`.
 Validation holds out complete tracks, never random gain points from the same track.
 Run through uv, optionally passing --output to save coefficients and validation data.
-These fits are preset-specific research models, not a universal limiter contract.
+The fit is a preset-specific research model, not a universal limiter contract.
 """
 
 from __future__ import annotations
@@ -52,14 +64,6 @@ TRACKS = {
         (-13.6298, -12.6452, -11.6946, -10.7813, -9.9186, -8.4090),
     ),
 }
-
-
-def source_saturation(parameters: NDArray, source: NDArray, gain: NDArray, _clipped: NDArray) -> NDArray:
-    """Apply a smooth loudness ceiling with a fitted transition width."""
-    ceiling, width = parameters
-    gained_excess = width * np.logaddexp(0.0, (source + gain - ceiling) / width)
-    original_excess = width * np.logaddexp(0.0, (source - ceiling) / width)
-    return source + CEILING_OFFSET + gain - gained_excess + original_excess
 
 
 def content_aware(parameters: NDArray, source: NDArray, gain: NDArray, clipped: NDArray) -> NDArray:
@@ -114,7 +118,7 @@ def fit_model(
 
 def main() -> None:
     """Print reproducible coefficients, comparisons, and held-out errors, optionally saving JSON."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", type=Path, help="Write the full fit report as JSON")
     args = parser.parse_args()
     observations = np.array(
@@ -148,7 +152,6 @@ def main() -> None:
             "hard_clip": errors(clipped, measured),
             "hard_clip_with_ceiling": errors(clipped + CEILING_OFFSET, measured),
         },
-        "source_saturation": fit_model(source_saturation, [-6.0, 2.0], ([-30.0, 0.05], [5.0, 20.0]), observations),
         "content_aware": fit_model(content_aware, [1.5, 0.7], ([0.0, 0.05], [20.0, 3.0]), observations),
     }
     text = json.dumps(report, indent=2, allow_nan=False)

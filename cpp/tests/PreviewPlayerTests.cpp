@@ -740,7 +740,9 @@ void PreviewPlayerTests::testPreferences()
                 gainToggle->getTooltip(),
                 juce::String(
                     "Show predicted peaks and estimated loudness after custom gain. "
-                    "Source measurements stay unchanged. Estimates are not actual plugin renders."
+                    "Integrated loudness uses a fitted L2 limiter model with a -0.3 dB ceiling for 0 through +6 dB "
+                    "gain. Other gains and short-term loudness use hard clipping at 0 dBFS. "
+                    "Does not measure the active plugin chain."
                 )
             );
             for (const auto enabled : {false, true}) {
