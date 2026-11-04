@@ -3,11 +3,13 @@
 /// and pumps bounded event-loop slices until observable state settles.
 
 #include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/SpectrogramData.h"
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/AudioBatchComponentState.h"
+#include "gui/components/AudioInfoPanel.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "normalization/AudioNormalization.h"
@@ -349,6 +351,39 @@ void AudioBatchIntegrationTest::previewModes()
 {
     const auto file = copyFixture("serato_rainbow_stereo_44100_16.flac");
     {
+        AudioInfoPanel panel;
+        auto record = analyzeFile(file);
+        record.customGain = Decibels {2.0f};
+        const auto hardClip = measureGainAdjustedLoudness(file, *record.customGain);
+        ASSERT_TRUE(hardClip.has_value());
+        if (!hardClip) {
+            return;
+        }
+        const auto estimated
+            = estimateLimiterIntegratedLoudness(record.integratedLufs, *record.customGain, hardClip->integratedLufs);
+        ASSERT_TRUE(estimated.has_value());
+        panel.showRecord(record, {});
+        ASSERT_TRUE(dispatchUntil([&] { return containsLabel(panel, utils::format("(≈{:.1f})", *estimated)); }));
+        EXPECT_TRUE(containsLabel(panel, utils::format("(≈{:.1f})", hardClip->maxShortTermLufs)));
+        EXPECT_TRUE(containsLabel(
+            panel, utils::format("({:+.1f})", 20.0 * std::log10(static_cast<double>(record.overallPeak)) + 2.0)
+        ));
+        EXPECT_TRUE(containsLabel(panel, utils::format("({:+.1f})", 20.0 * std::log10(record.overallTruePeak) + 2.0)));
+        record.customGain = Decibels {12.0f};
+        panel.showRecord(record, {});
+        panel.clear();
+        // Let an unrelated replacement request finish, proving cleared work cannot repopulate the old selection.
+        auto replacement = analyzeFile(copyFixture("silence_stereo_44100_16.wav"));
+        replacement.customGain = Decibels {3.0f};
+        panel.showRecord(replacement, {});
+        ASSERT_TRUE(dispatchUntil([&] { return containsLabel(panel, juce::String::fromUTF8("(≈-INF)")); }));
+        panel.showRecord(record, {});
+        record.status = AudioAnalysisStatus::failed;
+        panel.showRecord(record, {});
+        EXPECT_FALSE(containsLabel(panel, juce::String::fromUTF8("(≈-INF)")));
+        panel.clear();
+    }
+    {
         AudioBatchComponent view(configuration());
         view.openPaths({file.getFullPathName()}, false);
         ASSERT_TRUE(waitForRows(view, 1));
@@ -373,6 +408,30 @@ void AudioBatchIntegrationTest::previewModes()
         preferences.showGainAdjustedMetrics = true;
         view.setPreviewPreferences(preferences);
         EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
+        // Successive edits replace the debounced request without displaying the naive gain-only value.
+        view.previewWorkspace.gainSlider.setValue(12.0, juce::sendNotificationSync);
+        EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, juce::String::fromUTF8("(≈-1.0)")));
+        view.previewWorkspace.gainSlider.setValue(9.0, juce::sendNotificationSync);
+        const auto adjusted = measureGainAdjustedLoudness(file, Decibels {9.0f});
+        ASSERT_TRUE(adjusted.has_value());
+        if (!adjusted) {
+            return;
+        }
+        const auto adjustedText = utils::format("(≈{:.1f})", adjusted->integratedLufs);
+        ASSERT_TRUE(dispatchUntil([&] { return containsLabel(view.previewWorkspace.audioInfo, adjustedText); }));
+        preferences.showGainAdjustedMetrics = false;
+        view.setPreviewPreferences(preferences);
+        EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, adjustedText));
+        view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        preferences.showGainAdjustedMetrics = true;
+        view.setPreviewPreferences(preferences);
+        const auto attenuated = measureGainAdjustedLoudness(file, Decibels {-3.0f});
+        ASSERT_TRUE(attenuated.has_value());
+        ASSERT_TRUE(dispatchUntil([&] {
+            return containsLabel(
+                view.previewWorkspace.audioInfo, utils::format("(≈{:.1f})", attenuated->integratedLufs)
+            );
+        }));
         view.toggleLoudnessGraph();
         const auto waveform = view.previewWorkspace.thumbnail.saveToCacheData();
         constexpr std::array modes {

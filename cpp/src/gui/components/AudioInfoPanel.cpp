@@ -4,13 +4,16 @@
 
 #include "gui/components/AudioInfoPanel.h"
 
+#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "serato/SeratoTagTypes.h"
 #include "utils/GuiUtils.h"
+#include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -40,16 +43,11 @@ juce::String adjustedPeak(const double amplitude, const std::optional<Decibels> 
     return utils::format("({:+.1f})", juce::approximatelyEqual(rounded, 0.0) ? 0.0 : rounded);
 }
 
-/// Estimates gain-only loudness, which shifts one LU per dB while integrated gate membership stays unchanged.
-/// A gated-out source cannot be estimated from its stored silence sentinel alone.
-juce::String adjustedLoudness(const double loudness, const std::optional<Decibels> gain)
+/// Formats a completed hard-clip measurement or empirical limiter estimate, preserving the approximation marker.
+juce::String formatAdjustedLoudness(const double loudness)
 {
-    if (!gain || !std::isfinite(gain->value) || !std::isfinite(loudness)
-        || loudness <= AudioAnalysisRecord::negativeInfinityLoudness)
-    {
-        return {};
-    }
-    return utils::format("(≈{:.1f})", loudness + static_cast<double>(gain->value));
+    return loudness <= AudioAnalysisRecord::negativeInfinityLoudness ? juce::String::fromUTF8("(≈-INF)")
+                                                                     : utils::format("(≈{:.1f})", loudness);
 }
 
 /// Appends musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback,
@@ -123,19 +121,31 @@ AudioInfoMetric::AudioInfoMetric(const juce::String& name, const juce::String& c
 }
 
 /// Updates the displayed number and the complete, unit-bearing accessible description and tooltip.
-void AudioInfoMetric::setValue(const juce::String& value, const juce::String& adjustedValue)
+void AudioInfoMetric::setValue(
+    const juce::String& value,
+    const juce::String& adjustedValue,
+    const bool clippedLoudness,
+    const bool limiterEstimate
+)
 {
     valueLabel.setText(value, juce::dontSendNotification);
     adjustedValueLabel.setText(adjustedValue, juce::dontSendNotification);
     adjustedValueLabel.setVisible(adjustedValue.isNotEmpty());
     auto description = utils::format("{}: {} {}", getName(), value, unitLabel.getText());
     if (adjustedValue.isNotEmpty()) {
+        juce::String modelDescription = "Gain only, before clipping or plugins.";
+        if (limiterEstimate) {
+            modelDescription
+                = "Empirical integrated limiter estimate based on measured hard clipping, calibrated to the saved "
+                  "FabFilter Pro-L 2 L2 preset with a -0.3 dB ceiling. Four calibration tracks span -13.3286 to "
+                  "-8.676 LUFS-I and 0 to +6 dB gain. Other source loudness is extrapolated, not validated. "
+                  "Not an actual plugin render or a universal limiter prediction.";
+        } else if (clippedLoudness) {
+            modelDescription = "Approximate gain + hard clipping at 0 dBFS model, measured from decoded samples. "
+                               "Excludes actual limiter and plugin behavior.";
+        }
         description = utils::format(
-            "{}. After custom gain: {} {}. Gain only, before clipping or plugins. "
-            "Loudness is an estimate assuming unchanged gating.",
-            description,
-            adjustedValue,
-            unitLabel.getText()
+            "{}. After custom gain: {} {}. {}", description, adjustedValue, unitLabel.getText(), modelDescription
         );
     }
     adjustedValueLabel.setDescription(description);
@@ -250,9 +260,22 @@ AudioInfoPanel::AudioInfoPanel()
     clear();
 }
 
+/// Stops timers and joins the cancellable decoder before destroying request state or child labels.
+AudioInfoPanel::~AudioInfoPanel()
+{
+    stopTimer();
+    loudnessRunner.cancel();
+    loudnessRunner.waitForAllJobs();
+}
+
 /// Clears stale values while keeping a consistent empty-state summary.
 void AudioInfoPanel::clear()
 {
+    stopTimer();
+    loudnessRunner.cancel();
+    loudnessIdentity.reset();
+    loudnessGain.reset();
+    adjustedLoudness.reset();
     hasTitle = false;
     setDescription("No file selected");
     displayedPath.clear();
@@ -400,16 +423,97 @@ void AudioInfoPanel::showRecord(
             adjustedPeak(static_cast<double>(record.overallPeak), gain)
         );
         metrics[1].setValue(formatTruePeakCompact(record.overallTruePeak), adjustedPeak(record.overallTruePeak, gain));
-        metrics[2].setValue(
-            formatLoudnessCompact(record.maxShortTermLufs), adjustedLoudness(record.maxShortTermLufs, gain)
-        );
-        metrics[3].setValue(
-            formatLoudnessCompact(record.integratedLufs), adjustedLoudness(record.integratedLufs, gain)
-        );
+        sourceLoudness = {formatLoudnessCompact(record.maxShortTermLufs), formatLoudnessCompact(record.integratedLufs)};
+        sourceIntegratedLufs = record.integratedLufs;
+        metrics[2].setValue(sourceLoudness[0]);
+        metrics[3].setValue(sourceLoudness[1]);
         newRows = formatRows(record);
     }
+    updateLoudnessPreview(record, showGainAdjustedMetrics);
     appendTrackInfo(newRows, data);
     setRows(std::move(newRows));
+}
+
+/// Invalidates stale work immediately and debounces changed selection, gain, identity, or visibility policy.
+/// No linear loudness estimate is displayed while waiting, since clipping and absolute gating can change it.
+void AudioInfoPanel::updateLoudnessPreview(const AudioAnalysisRecord& record, const bool enabled)
+{
+    const bool eligible = enabled && record.isReady() && record.customGain && std::isfinite(record.customGain->value)
+        && record.file.existsAsFile();
+    if (eligible && loudnessIdentity && loudnessGain && loudnessIdentity->path == record.file.getFullPathName()
+        && loudnessIdentity->matches(record.file)
+        && juce::approximatelyEqual(loudnessGain->value, record.customGain->value))
+    {
+        showLoudnessPreview();
+        return;
+    }
+    stopTimer();
+    loudnessRunner.cancel();
+    adjustedLoudness.reset();
+    loudnessIdentity.reset();
+    loudnessGain.reset();
+    if (eligible) {
+        loudnessIdentity.emplace(record.file);
+        loudnessGain = record.customGain;
+        constexpr int debounceMilliseconds {200};
+        startTimer(debounceMilliseconds);
+    }
+}
+
+/// Launches one latest-only measurement after gain edits settle. Delivery touches the panel only on the message thread.
+void AudioInfoPanel::timerCallback()
+{
+    stopTimer();
+    if (!loudnessIdentity || !loudnessGain) {
+        return;
+    }
+    const auto identity = *loudnessIdentity;
+    const auto gain = *loudnessGain;
+    const auto runId = loudnessRunner.getCurrentRunId();
+    const auto cancelled = loudnessRunner.makeCancellationCheck(runId);
+    const juce::Component::SafePointer<AudioInfoPanel> safeThis(this);
+    loudnessRunner.addJob([identity, gain, runId, cancelled, safeThis] {
+        std::optional<GainAdjustedLoudness> result;
+        try {
+            result = measureGainAdjustedLoudness(juce::File(identity.path), gain, cancelled);
+        } catch (...) {
+            utils::logDebug("Gain-adjusted loudness preview failed: {}", utils::describeCurrentException());
+        }
+        if (cancelled()) {
+            return;
+        }
+        juce::MessageManager::callAsync([identity, gain, runId, safeThis, result] {
+            if (safeThis == nullptr || !safeThis->loudnessRunner.isCurrent(runId) || !safeThis->loudnessIdentity
+                || !safeThis->loudnessGain || safeThis->loudnessIdentity->path != identity.path
+                || !juce::approximatelyEqual(safeThis->loudnessGain->value, gain.value)
+                || !identity.matches(juce::File(identity.path)))
+            {
+                return;
+            }
+            safeThis->adjustedLoudness = result;
+            safeThis->showLoudnessPreview();
+        });
+    });
+}
+
+/// Adds only completed transient model values beside the untouched source measurements.
+void AudioInfoPanel::showLoudnessPreview()
+{
+    metrics[2].setValue(
+        sourceLoudness[0],
+        adjustedLoudness ? formatAdjustedLoudness(adjustedLoudness->maxShortTermLufs) : juce::String(),
+        true
+    );
+    const auto limiterEstimate = adjustedLoudness && loudnessGain
+        ? estimateLimiterIntegratedLoudness(sourceIntegratedLufs, *loudnessGain, adjustedLoudness->integratedLufs)
+        : std::nullopt;
+    metrics[3].setValue(
+        sourceLoudness[1],
+        adjustedLoudness ? formatAdjustedLoudness(limiterEstimate.value_or(adjustedLoudness->integratedLufs))
+                         : juce::String(),
+        true,
+        limiterEstimate.has_value()
+    );
 }
 
 /// Measures wrapped errors at the actual content width, keeping the entire message scrollable.

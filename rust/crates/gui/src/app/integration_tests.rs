@@ -1129,3 +1129,58 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
         assert!((record.custom_gain_db.expect("persisted gain") - gain).abs() < 0.001);
     });
 }
+
+/// Exercises transient prediction publication through the production view without any plugin or output file.
+#[gpui_kit::test]
+async fn integration_gained_loudness_rejects_stale_gain_selection_and_toggle(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "prediction.wav");
+    let other = workflow.copy("silence_stereo_44100_16.wav", "other.wav");
+    workflow.add(vec![source.clone(), other.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    workflow.preview(&source, cx).await;
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            view.change_selected_gain(12.0, cx);
+            view.update_gain_prediction(cx);
+            assert!(view.gained_loudness(cx).is_none());
+        });
+    });
+    let view = workflow.view.clone();
+    cx.wait_for(workflow.window, Duration::from_secs(15), move |_, cx| {
+        std::thread::yield_now();
+        view.read(cx).gained_loudness(cx).is_some()
+    })
+    .await;
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            let record = view.selected_record(cx).expect("source");
+            let predicted = view.gained_loudness(cx).expect("prediction");
+            assert!(record.integrated_lufs + 12.0 - predicted.integrated() > 3.0);
+            assert!((record.custom_gain_db.expect("gain") - 12.0).abs() < f32::EPSILON);
+            let original_lufs = record.integrated_lufs;
+            view.change_selected_gain(6.0, cx);
+            assert!(view.gained_loudness(cx).is_none(), "old gain is hidden immediately");
+            view.update_gain_prediction(cx);
+            let mut settings = view.settings.clone();
+            settings.show_gain_adjusted_metrics = false;
+            view.apply_settings(settings, cx);
+            assert!(view.gained_loudness(cx).is_none());
+            assert!(
+                (view.selected_record(cx).expect("unchanged source").integrated_lufs - original_lufs).abs()
+                    < f64::EPSILON
+            );
+            let mut settings = view.settings.clone();
+            settings.show_gain_adjusted_metrics = true;
+            view.apply_settings(settings, cx);
+            view.select_path(&other, false, cx);
+            assert!(
+                view.gained_loudness(cx).is_none(),
+                "other file cannot borrow prediction"
+            );
+            view.clear_selection(cx);
+            assert!(view.gained_loudness(cx).is_none());
+        });
+    });
+}

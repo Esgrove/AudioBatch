@@ -112,7 +112,8 @@ const LOUDNESS_GRAPH_TOOLTIP: &str = "Overlay source-file short-term loudness (t
 
 /// Tooltip of the gain-adjusted metrics option.
 const GAIN_ADJUSTED_METRICS_TOOLTIP: &str = "Show predicted peaks and estimated loudness after custom gain. \
-     Loudness assumes unchanged gating. Excludes clipping, limiting, and plugins.";
+     Integrated loudness uses a fitted L2 limiter model with a -0.3 dB ceiling for 0 through +6 dB gain. \
+     Other gains and short-term loudness use hard clipping at 0 dBFS. Does not measure the active plugin chain.";
 
 /// Tooltip of the loudness limit fields.
 const LOUDNESS_LIMIT_TOOLTIP: &str = "Whole-number LUFS from -60 to +6. Maximum must be at least 1 LU above minimum.";

@@ -21,7 +21,7 @@ struct AudioMeasurementState;
 class AudioMeasurement
 {
 public:
-    AudioMeasurement(int channelCount, double sampleRate, std::int64_t lengthInSamples);
+    AudioMeasurement(int channelCount, double sampleRate, std::int64_t lengthInSamples, bool buildPreviews = true);
 
     ~AudioMeasurement();
 

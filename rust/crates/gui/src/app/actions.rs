@@ -375,6 +375,7 @@ impl AppView {
                         cx.notify();
                     }
                     view.resolve_cue_start();
+                    view.update_gain_prediction(cx);
                     if let Some(preview) = view
                         .coordinator
                         .as_ref()

@@ -76,7 +76,7 @@ double normalizeLoudness(const double value)
 /// Internal state whose histories share the declared stream length and measurement interval.
 struct AudioMeasurementState {
     /// Allocates scratch storage once for the validated stream.
-    AudioMeasurementState(const int channels, const double rate, const std::int64_t length) :
+    AudioMeasurementState(const int channels, const double rate, const std::int64_t length, const bool buildPreviews) :
         partial(channels, overloadBlockSize(rate)),
         overloads(channels, rate, length, partial.getNumSamples()),
         meter(createLoudnessState(channels, rate)),
@@ -86,15 +86,17 @@ struct AudioMeasurementState {
         flags(static_cast<std::size_t>(channels), 0)
     {
         // Optional preview allocation must never prevent the loudness measurement from starting.
-        try {
-            spectrogram = std::make_unique<SpectrogramBuilder>(channels, juce::roundToInt(rate));
-        } catch (...) {
-            utils::logWarn("Spectrogram initialization failed: {}", utils::describeCurrentException());
-        }
-        try {
-            waveform = std::make_unique<NativeWaveformBuilder>(channels, juce::roundToInt(rate), length);
-        } catch (...) {
-            utils::logWarn("Waveform initialization failed: {}", utils::describeCurrentException());
+        if (buildPreviews) {
+            try {
+                spectrogram = std::make_unique<SpectrogramBuilder>(channels, juce::roundToInt(rate));
+            } catch (...) {
+                utils::logWarn("Spectrogram initialization failed: {}", utils::describeCurrentException());
+            }
+            try {
+                waveform = std::make_unique<NativeWaveformBuilder>(channels, juce::roundToInt(rate), length);
+            } catch (...) {
+                utils::logWarn("Waveform initialization failed: {}", utils::describeCurrentException());
+            }
         }
         history->sampleRate = rate;
         history->lengthInSamples = length;
@@ -243,13 +245,18 @@ bool isSupportedMeasurementStream(const int channelCount, const double sampleRat
 }
 
 /// Initializes a validated stream, retaining initialization failures for callers to report.
-AudioMeasurement::AudioMeasurement(const int channelCount, const double sampleRate, const std::int64_t lengthInSamples)
+AudioMeasurement::AudioMeasurement(
+    const int channelCount,
+    const double sampleRate,
+    const std::int64_t lengthInSamples,
+    const bool buildPreviews
+)
 {
     if (!isSupportedMeasurementStream(channelCount, sampleRate) || lengthInSamples < 0) {
         initializationError = "Unsupported audio stream parameters";
         return;
     }
-    state = std::make_unique<AudioMeasurementState>(channelCount, sampleRate, lengthInSamples);
+    state = std::make_unique<AudioMeasurementState>(channelCount, sampleRate, lengthInSamples, buildPreviews);
     if (state->meter == nullptr) {
         initializationError = "Could not initialize loudness analyzer";
     }

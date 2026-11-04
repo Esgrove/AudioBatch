@@ -14,6 +14,7 @@ pub mod decode;
 pub mod discovery;
 pub mod file_selection;
 pub mod format;
+pub mod gain_loudness;
 #[cfg(test)]
 mod golden;
 #[cfg(test)]

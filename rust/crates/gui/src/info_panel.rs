@@ -14,6 +14,7 @@ use audiobatch_core::format::{
     format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
     format_true_peak_compact, format_type_label, gain_to_decibels,
 };
+use audiobatch_core::gain_loudness::{GainLoudness, estimate_limiter_integrated};
 use audiobatch_core::record::is_silent_loudness;
 use audiobatch_core::serato_tags::SeratoData;
 use audiobatch_core::{AnalysisRecord, FileTags};
@@ -129,12 +130,13 @@ pub fn render_info_panel(
     artwork: Option<Arc<RenderImage>>,
     wide: bool,
     show_gain_adjusted_metrics: bool,
+    gained_loudness: Option<GainLoudness>,
 ) -> AnyElement {
     let metric_cards = |record| {
         if wide {
-            metric_row(record, show_gain_adjusted_metrics)
+            metric_row(record, show_gain_adjusted_metrics, gained_loudness)
         } else {
-            metric_grid(record, show_gain_adjusted_metrics)
+            metric_grid(record, show_gain_adjusted_metrics, gained_loudness)
         }
     };
     let panel = div()
@@ -273,8 +275,16 @@ fn heading_line(id: &'static str, text: String, path: Option<&str>) -> Stateful<
 /// each with its caption above its unit on the left and the value on the right, and dashes when there is no result.
 /// The source value never shrinks, while the caption, unit, and gain prediction can truncate in narrow cards.
 /// The file name and the details are left out, so the metrics fit next to the waveform.
-pub fn render_compact_info_panel(row: Option<&ResultRow>, show_gain_adjusted_metrics: bool) -> Div {
-    let metrics = metrics(row.and_then(ResultRow::ready_record), show_gain_adjusted_metrics);
+pub fn render_compact_info_panel(
+    row: Option<&ResultRow>,
+    show_gain_adjusted_metrics: bool,
+    gained_loudness: Option<GainLoudness>,
+) -> Div {
+    let metrics = metrics(
+        row.and_then(ResultRow::ready_record),
+        show_gain_adjusted_metrics,
+        gained_loudness,
+    );
     div()
         .size_full()
         .flex()
@@ -304,7 +314,11 @@ pub fn render_compact_info_panel(row: Option<&ResultRow>, show_gain_adjusted_met
 }
 
 /// Returns the four level metrics of a record, with dashes when there is no result.
-fn metrics(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) -> [Metric; 4] {
+fn metrics(
+    record: Option<&AnalysisRecord>,
+    show_gain_adjusted_metrics: bool,
+    gained_loudness: Option<GainLoudness>,
+) -> [Metric; 4] {
     let value = |format: fn(&AnalysisRecord) -> String| record.map_or_else(|| String::from("-"), format);
     let adjusted_record = record.filter(|_| show_gain_adjusted_metrics);
     [
@@ -329,16 +343,27 @@ fn metrics(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) ->
             caption: "Short-term",
             unit: "LUFS",
             value: value(|record| format_loudness_compact(record.max_short_term_lufs)),
-            adjusted_value: adjusted_record
-                .and_then(|record| adjusted_loudness(record.max_short_term_lufs, record.custom_gain_db)),
+            adjusted_value: adjusted_record.and_then(|record| {
+                adjusted_loudness(gained_loudness.map(GainLoudness::max_short_term), record.custom_gain_db)
+            }),
         },
         Metric {
             name: "Integrated loudness",
             caption: "Integrated",
             unit: "LUFS",
             value: value(|record| format_loudness_compact(record.integrated_lufs)),
-            adjusted_value: adjusted_record
-                .and_then(|record| adjusted_loudness(record.integrated_lufs, record.custom_gain_db)),
+            adjusted_value: adjusted_record.and_then(|record| {
+                let gain = record.custom_gain_db?;
+                let measured = gained_loudness?;
+                adjusted_loudness(
+                    Some(estimate_limiter_integrated(
+                        record.integrated_lufs,
+                        gain,
+                        measured.integrated(),
+                    )),
+                    Some(gain),
+                )
+            }),
         },
     ]
 }
@@ -358,21 +383,24 @@ fn adjusted_peak(amplitude: f64, gain_db: Option<f32>) -> Option<String> {
     })
 }
 
-/// Estimates gain-only loudness from the logarithmic energy shift, without decoding the file again.
-/// Linear K weighting scales energy by gain squared, so LUFS shifts by the gain in dB.
-/// Integrated loudness has this shift only while its gate membership stays unchanged.
-/// A gated-out source cannot be estimated from its stored silence sentinel alone.
-fn adjusted_loudness(loudness: f64, gain_db: Option<f32>) -> Option<String> {
-    let gain_db = gain_db.filter(|gain| gain.is_finite())?;
-    if !loudness.is_finite() || is_silent_loudness(loudness) {
-        return None;
-    }
-    Some(format!("(≈{:.1})", loudness + f64::from(gain_db)))
+/// Formats only completed gain-and-clip remeasurements, never a misleading source LUFS plus gain.
+fn adjusted_loudness(loudness: Option<f64>, gain_db: Option<f32>) -> Option<String> {
+    gain_db.filter(|gain| gain.is_finite())?;
+    let loudness = loudness.filter(|value| value.is_finite())?;
+    Some(if is_silent_loudness(loudness) {
+        String::from("(≈-INF)")
+    } else {
+        format!("(≈{loudness:.1})")
+    })
 }
 
 /// Renders the four level cards in two rows.
-fn metric_grid(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) -> Div {
-    let [peak, true_peak, short_term, integrated] = metrics(record, show_gain_adjusted_metrics);
+fn metric_grid(
+    record: Option<&AnalysisRecord>,
+    show_gain_adjusted_metrics: bool,
+    gained_loudness: Option<GainLoudness>,
+) -> Div {
+    let [peak, true_peak, short_term, integrated] = metrics(record, show_gain_adjusted_metrics, gained_loudness);
     div()
         .flex()
         .flex_col()
@@ -397,13 +425,21 @@ fn metric_grid(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool
 }
 
 /// Renders the four level cards in one row, for the wide panel.
-fn metric_row(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) -> Div {
+fn metric_row(
+    record: Option<&AnalysisRecord>,
+    show_gain_adjusted_metrics: bool,
+    gained_loudness: Option<GainLoudness>,
+) -> Div {
     div()
         .flex()
         .flex_row()
         .flex_none()
         .gap(px(WIDE_METRIC_SPACING))
-        .children(metrics(record, show_gain_adjusted_metrics).into_iter().map(metric_card))
+        .children(
+            metrics(record, show_gain_adjusted_metrics, gained_loudness)
+                .into_iter()
+                .map(metric_card),
+        )
 }
 
 /// Renders a metric card: the caption and unit on top, the value large below.
@@ -436,8 +472,11 @@ fn metric_card_frame(metric: &Metric) -> Stateful<Div> {
         || format!("{}: {} {}", metric.name, metric.value, metric.unit),
         |adjusted| {
             format!(
-                "{}: {} {}. After custom gain: {} {}. Gain only, before clipping or plugins. \
-                 Loudness is an estimate assuming unchanged gating.",
+                "{}: {} {}. After custom gain: {} {}. Peaks predict gain before clipping. \
+                 Short-term loudness uses hard clipping at 0 dBFS. Integrated loudness uses an empirical L2 limiter fit \
+                 with a -0.3 dB ceiling for 0 through +6 dB gain, otherwise hard clipping. \
+                 Calibrated on music at -13.33 through -8.68 LUFS-I, extrapolated outside that source range. \
+                 This is not a measurement of the active plugin chain.",
                 metric.name, metric.value, metric.unit, adjusted, metric.unit
             )
         },
@@ -620,16 +659,16 @@ mod test_metrics {
             integrated_lufs: -12.5,
             ..AnalysisRecord::default()
         };
-        let [peak, true_peak, short_term, integrated] = metrics(Some(&record), true);
+        let [peak, true_peak, short_term, integrated] = metrics(Some(&record), true, None);
         assert_eq!(peak.value, "0.90");
         assert_eq!(peak.adjusted_value.as_deref(), Some("(-0.1)"));
         assert_eq!(true_peak.value, "1.50");
         assert_eq!(true_peak.adjusted_value.as_deref(), Some("(+0.5)"));
-        assert_eq!(short_term.adjusted_value.as_deref(), Some("(≈-9.5)"));
-        assert_eq!(integrated.adjusted_value.as_deref(), Some("(≈-13.5)"));
+        assert!(short_term.adjusted_value.is_none());
+        assert!(integrated.adjusted_value.is_none());
         assert_eq!(integrated.value, "-12.50");
         assert!(
-            metrics(Some(&record), false)
+            metrics(Some(&record), false, None)
                 .iter()
                 .all(|metric| metric.adjusted_value.is_none())
         );
@@ -639,7 +678,7 @@ mod test_metrics {
     fn predictions_are_absent_without_gain_or_a_record() {
         for record in [None, Some(AnalysisRecord::default()).as_ref()] {
             assert!(
-                metrics(record, true)
+                metrics(record, true, None)
                     .iter()
                     .all(|metric| metric.adjusted_value.is_none())
             );
@@ -648,14 +687,40 @@ mod test_metrics {
     }
 
     #[test]
-    fn loudness_estimates_shift_one_lu_per_db_and_omit_unknown_silence() {
-        assert_eq!(adjusted_loudness(-14.0, Some(1.0)).as_deref(), Some("(≈-13.0)"));
-        assert_eq!(adjusted_loudness(-14.0, Some(-3.0)).as_deref(), Some("(≈-17.0)"));
-        assert!(adjusted_loudness(-14.0, None).is_none());
-        assert!(adjusted_loudness(-14.0, Some(f32::INFINITY)).is_none());
-        assert!(adjusted_loudness(f64::NEG_INFINITY, Some(10.0)).is_none());
-        assert!(adjusted_loudness(f64::NAN, Some(10.0)).is_none());
-        assert!(adjusted_loudness(audiobatch_core::record::NEGATIVE_INFINITY_LOUDNESS, Some(10.0)).is_none());
+    fn loudness_predictions_require_completed_measurements_and_do_not_add_gain_again() {
+        assert_eq!(adjusted_loudness(Some(-14.0), Some(12.0)).as_deref(), Some("(≈-14.0)"));
+        assert!(adjusted_loudness(None, Some(12.0)).is_none());
+        assert!(adjusted_loudness(Some(-14.0), None).is_none());
+        assert!(adjusted_loudness(Some(-14.0), Some(f32::INFINITY)).is_none());
+        assert!(adjusted_loudness(Some(f64::NAN), Some(10.0)).is_none());
+        assert_eq!(
+            adjusted_loudness(Some(audiobatch_core::record::NEGATIVE_INFINITY_LOUDNESS), Some(10.0)).as_deref(),
+            Some("(≈-INF)")
+        );
+    }
+
+    #[test]
+    fn only_integrated_loudness_uses_the_limiter_fit() {
+        let path = test_fixtures::fixture("sine_stereo_44100_16.wav");
+        let measured = audiobatch_core::gain_loudness::measure_gained_loudness(&path, 2.0, &|| false)
+            .expect("measures gained fixture");
+        let record = AnalysisRecord {
+            integrated_lufs: -12.0,
+            custom_gain_db: Some(2.0),
+            ..AnalysisRecord::default()
+        };
+        let [_, _, short_term, integrated] = metrics(Some(&record), true, Some(measured));
+        assert_eq!(
+            integrated.adjusted_value,
+            adjusted_loudness(
+                Some(estimate_limiter_integrated(-12.0, 2.0, measured.integrated())),
+                Some(2.0)
+            )
+        );
+        assert_eq!(
+            short_term.adjusted_value,
+            adjusted_loudness(Some(measured.max_short_term()), Some(2.0))
+        );
     }
 
     #[test]

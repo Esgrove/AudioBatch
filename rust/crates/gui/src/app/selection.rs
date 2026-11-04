@@ -238,6 +238,7 @@ impl AppView {
         self.refresh_selected_waveform(cx);
         self.apply_preview_gain(cx);
         self.request_selected_enrichment(cx);
+        self.update_gain_prediction(cx);
         cx.notify();
     }
 
@@ -249,6 +250,7 @@ impl AppView {
             coordinator.select_preview(None, 0);
         }
         self.selected = None;
+        self.gain_prediction.cancel();
         self.selected_tags = None;
         self.enrichment.deselect();
         self.table
