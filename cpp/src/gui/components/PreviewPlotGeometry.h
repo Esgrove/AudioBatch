@@ -16,6 +16,10 @@
 
 namespace audiobatch
 {
+/// Fixed frequency captions, independent of source sample rate.
+inline constexpr std::array
+    PREVIEW_FREQUENCIES {0.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16'000.0, 18'000.0, 20'000.0};
+
 /// Pane-local plots and separate axis gutters in component coordinates.
 struct PreviewPlotGeometry {
     /// Source waveform plot, empty in spectrogram-only mode.
@@ -113,10 +117,6 @@ inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
     }
     return labels;
 }
-
-/// Fixed frequency captions, independent of source sample rate.
-inline constexpr std::array
-    PREVIEW_FREQUENCIES {0.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16'000.0, 18'000.0, 20'000.0};
 
 /// Returns bounded plots without changing the requested mode when the host becomes compact.
 inline PreviewPlotGeometry previewPlotGeometry(

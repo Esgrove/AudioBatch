@@ -40,7 +40,7 @@ fearless_simd = "1.2.0"
 fearless_simd_macros = "0.1.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 indicatif = "0.18.6"
-jiff = "0.2.38"
+jiff = "0.2.39"
 libloading = "0.9.0"
 lofty = "0.25.5"
 log = "0.4.35"
