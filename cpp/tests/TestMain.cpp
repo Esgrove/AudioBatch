@@ -6,15 +6,19 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/SpectrogramData.h"
 #include "PluginBenchmark.h"
 #include "SpectrogramBenchmark.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 #include <fmt/base.h>
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -94,6 +98,51 @@ int benchmarkSharedCacheReads(AnalysisCache& cache, const juce::File& source)
     return hits == files.size() * passes ? 0 : 1;
 }
 
+/// Stores either production FFT output or an exact byte pattern through the real spectral cache writer.
+int writeSharedSpectrum(AnalysisCache& cache, const juce::File& source, const bool pattern)
+{
+    const utils::FileIdentity identity(source);
+    const auto record = analyzeFile(source);
+    if (record.hasError() || !record.spectrogram || !cache.storeAnalysis(record)) {
+        return 1;
+    }
+    auto data = *record.spectrogram;
+    if (pattern) {
+        for (std::size_t index = 0; index < data.intensities.size(); ++index) {
+            data.intensities[index] = static_cast<std::uint8_t>(index % 256);
+        }
+    }
+    if (!cache.storeSpectrogramData(identity, data)) {
+        return 1;
+    }
+    const auto loaded = cache.getSpectrogramData(source);
+    return loaded && serializeSpectrogram(*loaded) == serializeSpectrogram(data) ? 0 : 1;
+}
+
+/// Reads without analysis and exports the reserialized artifact as hexadecimal for exact codec comparison.
+/// Pattern mode additionally checks every payload byte independently of the Rust serializer.
+int readSharedSpectrum(AnalysisCache& cache, const juce::File& source, const bool pattern)
+{
+    const auto record = cache.getAnalysis(source);
+    const auto data = cache.getSpectrogramData(source);
+    if (!record || !record->fromCache || record->hasError() || !data || !spectrogramMatches(*data, *record)) {
+        return 1;
+    }
+    if (pattern) {
+        for (std::size_t index = 0; index < data->intensities.size(); ++index) {
+            if (data->intensities[index] != static_cast<std::uint8_t>(index % 256)) {
+                return 1;
+            }
+        }
+    }
+    const auto bytes = serializeSpectrogram(*data);
+    for (const auto byte : std::span(static_cast<const std::byte*>(bytes.getData()), bytes.getSize())) {
+        fmt::print("{:02x}", std::to_integer<unsigned int>(byte));
+    }
+    fmt::print("\n");
+    return 0;
+}
+
 /// Runs interoperability helpers against an explicit temporary database, never the user's cache.
 /// Other argument shapes fall through to the test executable's remaining helper modes.
 std::optional<int> runSharedCacheHelper(const juce::StringArray& arguments)
@@ -110,6 +159,12 @@ std::optional<int> runSharedCacheHelper(const juce::StringArray& arguments)
     }
     if (mode == "benchmark-read") {
         return benchmarkSharedCacheReads(cache, source);
+    }
+    if (mode == "write-spectrum" || mode == "write-spectrum-pattern") {
+        return writeSharedSpectrum(cache, source, mode == "write-spectrum-pattern");
+    }
+    if (mode == "read-spectrum" || mode == "read-spectrum-pattern") {
+        return readSharedSpectrum(cache, source, mode == "read-spectrum-pattern");
     }
     if (mode == "write") {
         const auto record = analyzeFile(source);
