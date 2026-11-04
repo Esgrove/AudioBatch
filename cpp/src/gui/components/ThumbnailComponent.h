@@ -79,7 +79,7 @@ struct OverloadMark {
     float laneTop {0.0f};
     /// Bottom of the channel lane the run marks.
     float laneBottom {0.0f};
-    /// True for a sample over, drawn solid, and false for a true peak over alone, drawn as an outline.
+    /// True for a yellow sample cap, false for an equally sized solid orange true peak cap.
     bool sampleOver {false};
     /// Caps touch only the waveform's outer top edge, never the stereo divider.
     bool topEdge {false};
@@ -89,7 +89,7 @@ struct OverloadMark {
     bool showLine {false};
 };
 
-/// Removes disabled raw overload kinds before sample-over precedence or neighboring-column merging.
+/// Removes disabled raw overload kinds while preserving both independently visible source signals.
 [[nodiscard]] constexpr std::uint8_t visibleOverloadFlags(
     const std::uint8_t flags,
     const bool sample,
@@ -193,6 +193,7 @@ public:
 
 private:
     [[nodiscard]] juce::Rectangle<int> waveformBounds() const;
+    [[nodiscard]] std::vector<OverloadMark> getOverloadMarks(bool sampleOver) const;
 
     bool drawColouredWaveform(juce::Graphics& graphics, juce::Rectangle<int> bounds);
     [[nodiscard]] double sourceDuration() const;

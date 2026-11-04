@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace audiobatch::tests
 {
@@ -51,6 +52,12 @@ private:
     void testPreviewViewModes();
     void testSettingsDeviceFailure();
     void testSettingsGeometry();
+    void verifyDisabledLoudnessRange(
+        AudioSettingsComponent& panel,
+        const juce::Component& content,
+        juce::TextEditor& minimumEditor
+    );
+    void verifyOverloadSettingsGroup(const juce::Component& content, const juce::GroupComponent& previewGroup);
 };
 
 /// Runs the device-independent player and persistence checks.
@@ -1088,7 +1095,9 @@ void PreviewPlayerTests::testSettingsGeometry()
     );
     expect(layout::audioSettings::MINIMUM_WINDOW_HEIGHT < layout::audioSettings::preferredHeight);
     expectEquals(previewGroup->getBottom() - loudnessToggle->getBottom(), layout::audioSettings::padding);
-    expectEquals(content.getHeight() - previewGroup->getBottom(), layout::audioSettings::padding);
+    verifyOverloadSettingsGroup(content, *previewGroup);
+
+    verifyDisabledLoudnessRange(panel, content, *minimumEditor);
     expect(!errorLabel->isVisible());
     expectEquals(errorLabel->getHeight(), 0);
     const auto validHeight = content.getHeight();
@@ -1111,7 +1120,76 @@ void PreviewPlayerTests::testSettingsGeometry()
     expect(content.getHeight() > viewport->getHeight());
     viewport->setViewPosition(0, content.getHeight());
     expect(viewport->getViewPositionY() > 0);
-    expect(viewport->getViewPositionY() + viewport->getViewHeight() >= previewGroup->getBottom());
+    expect(
+        viewport->getViewPositionY() + viewport->getViewHeight() >= content.getHeight() - layout::audioSettings::padding
+    );
+}
+
+/// Verifies range editing and publication remain independent of graph visibility.
+void PreviewPlayerTests::verifyDisabledLoudnessRange(
+    AudioSettingsComponent& panel,
+    const juce::Component& content,
+    juce::TextEditor& minimumEditor
+)
+{
+    beginTest("Loudness range remains editable while the graph is disabled");
+    AudioPreviewPreferences disabledPreferences;
+    int rangeCallbacks = 0;
+    panel.setPreferencesChangedCallback([&](const auto& preferences) {
+        ++rangeCallbacks;
+        disabledPreferences = preferences;
+        panel.setPreferences(preferences);
+    });
+    panel.setPreferences(disabledPreferences);
+    for (const auto* child : content.getChildren()) {
+        if (dynamic_cast<const juce::TextEditor*>(child) != nullptr) {
+            expect(child->isEnabled());
+        }
+        if (const auto* label = dynamic_cast<const juce::Label*>(child);
+            label != nullptr && (label->getName() == "loudnessMinimum" || label->getName() == "loudnessMaximum"))
+        {
+            expect(label->isEnabled());
+        }
+    }
+    minimumEditor.setText("-30", false);
+    minimumEditor.onReturnKey();
+    expectEquals(rangeCallbacks, 1);
+    expectEquals(disabledPreferences.loudnessGraphMinimum, -30.0);
+    expect(!disabledPreferences.loudnessGraphEnabled);
+    panel.setPreferencesChangedCallback({});
+}
+
+/// Verifies all overload controls share a dedicated group separate from playback and loudness preferences.
+void PreviewPlayerTests::verifyOverloadSettingsGroup(
+    const juce::Component& content,
+    const juce::GroupComponent& previewGroup
+)
+{
+    const juce::GroupComponent* overloadGroup = nullptr;
+    std::vector<const juce::ToggleButton*> overloadToggles;
+    for (const auto* child : content.getChildren()) {
+        if (const auto* group = dynamic_cast<const juce::GroupComponent*>(child);
+            group != nullptr && group->getName() == "overloadSettings")
+        {
+            overloadGroup = group;
+        }
+        if (const auto* toggle = dynamic_cast<const juce::ToggleButton*>(child);
+            toggle != nullptr && toggle->getButtonText().containsIgnoreCase("overload"))
+        {
+            overloadToggles.push_back(toggle);
+        }
+    }
+    expect(overloadGroup != nullptr);
+    if (overloadGroup == nullptr) {
+        return;
+    }
+    expectEquals(overloadGroup->getY() - previewGroup.getBottom(), layout::audioSettings::SECTION_SPACING);
+    expectEquals(static_cast<int>(overloadToggles.size()), 3);
+    for (const auto* toggle : overloadToggles) {
+        expect(overloadGroup->getBounds().contains(toggle->getBounds()));
+        expect(!previewGroup.getBounds().intersects(toggle->getBounds()));
+    }
+    expectEquals(content.getHeight() - overloadGroup->getBottom(), layout::audioSettings::padding);
 }
 
 /// Keeps lifecycle and foreign cache labels out of the inspector without losing failure detail or operation context.

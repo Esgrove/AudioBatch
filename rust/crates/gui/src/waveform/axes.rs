@@ -53,13 +53,7 @@ pub(super) fn paint_amplitude_axis(
     cx: &mut App,
 ) {
     for label in amplitude_labels(geometry, channels, window.rem_size()) {
-        let text = if label.decibels.is_infinite() {
-            "−∞".into()
-        } else if label.decibels.abs() < f32::EPSILON {
-            "0.0".into()
-        } else {
-            format!("{:.0}", label.decibels)
-        };
+        let text = format!("{:.0}", label.decibels);
         paint_label(
             text.into(),
             label.bounds,

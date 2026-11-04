@@ -9,7 +9,6 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
-#include <initializer_list>
 
 #include <algorithm>
 #include <array>
@@ -300,6 +299,7 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
     content.addAndMakeVisible(deviceGroup);
     content.addAndMakeVisible(deviceSelector);
     content.addAndMakeVisible(previewGroup);
+    content.addAndMakeVisible(overloadGroup);
     content.addAndMakeVisible(previewView);
     content.addAndMakeVisible(previewViewLabel);
     previewView.setName("Preview view");
@@ -391,16 +391,6 @@ void AudioSettingsComponent::setPreferences(const AudioPreviewPreferences& prefe
     loudnessGraphToggle.setToggleState(preferences.loudnessGraphEnabled, juce::dontSendNotification);
     loudnessMinimum.setText(utils::format("{:.0f}", preferences.loudnessGraphMinimum), false);
     loudnessMaximum.setText(utils::format("{:.0f}", preferences.loudnessGraphMaximum), false);
-    for (auto* component :
-         std::initializer_list<juce::Component*> {
-             &loudnessMinimum,
-             &loudnessMaximum,
-             &loudnessMinimumLabel,
-             &loudnessMaximumLabel,
-         })
-    {
-        component->setEnabled(preferences.loudnessGraphEnabled);
-    }
 }
 
 /// Installs the message-thread callback that receives user changes to preview preferences.
@@ -489,10 +479,6 @@ void AudioSettingsComponent::resized()
     {
         toggle->setBounds(preferences.removeFromTop(layout::audioSettings::rowHeight));
     }
-    auto overloadRow = preferences.removeFromTop(layout::audioSettings::rowHeight);
-    sampleOverloadsToggle.setBounds(overloadRow.removeFromLeft(overloadRow.getWidth() / 2));
-    truePeakOverloadsToggle.setBounds(overloadRow);
-    overloadLinesToggle.setBounds(preferences.removeFromTop(layout::audioSettings::rowHeight));
     auto loudnessRow = preferences.removeFromTop(layout::audioSettings::rowHeight);
     for (const auto& controls :
          {std::pair {&loudnessMaximumLabel, &loudnessMaximum}, std::pair {&loudnessMinimumLabel, &loudnessMinimum}})
@@ -505,7 +491,19 @@ void AudioSettingsComponent::resized()
     loudnessGraphToggle.setBounds(loudnessRow);
     loudnessRangeError.setVisible(errorHeight > 0);
     loudnessRangeError.setBounds(preferences.removeFromTop(errorHeight));
-    content.setSize(width, previewGroup.getBottom() + layout::audioSettings::padding);
+    overloadGroup.setBounds(
+        area.getX(),
+        previewGroup.getBottom() + layout::audioSettings::SECTION_SPACING,
+        area.getWidth(),
+        layout::audioSettings::OVERLOAD_GROUP_HEIGHT
+    );
+    auto overloads = overloadGroup.getBounds().reduced(layout::audioSettings::padding, 0);
+    overloads.removeFromTop(layout::audioSettings::GROUP_TOP_INSET);
+    auto overloadRow = overloads.removeFromTop(layout::audioSettings::rowHeight);
+    sampleOverloadsToggle.setBounds(overloadRow.removeFromLeft(overloadRow.getWidth() / 2));
+    truePeakOverloadsToggle.setBounds(overloadRow);
+    overloadLinesToggle.setBounds(overloads.removeFromTop(layout::audioSettings::rowHeight));
+    content.setSize(width, overloadGroup.getBottom() + layout::audioSettings::padding);
 }
 
 /// Relayouts when a device/backend change adds or removes native selector rows.

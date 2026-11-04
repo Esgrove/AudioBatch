@@ -212,7 +212,7 @@ impl AppView {
             ControlsEvent::TogglePlayback => self.toggle_playback(cx),
             ControlsEvent::TogglePreviewSection => self.toggle_preview_section(cx),
             ControlsEvent::ResetSlider(control) => self.reset_slider(control, window, cx),
-            ControlsEvent::OpenSettings => self.open_settings_window(cx),
+            ControlsEvent::OpenSettings => self.open_settings_window(window, cx),
             ControlsEvent::SetNormalizeMode(mode) => self.set_normalize_mode(mode, cx),
             ControlsEvent::SetOverwrite(overwrite) => {
                 self.overwrite_existing = overwrite;

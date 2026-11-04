@@ -862,6 +862,38 @@ async fn integration_preview_drag_commits_once_on_release_in_each_source_pane(cx
     }
 }
 
+/// Retains resized settings dimensions after dismissal without persisting them across app sessions.
+#[gpui_kit::test]
+fn integration_audio_settings_remember_session_size_after_close(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    workflow.dispatch(OpenAudioSettings, cx);
+    let settings_window = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|window| *window != workflow.window)
+            .expect("settings window")
+    });
+    let dimensions = size(px(720.0), px(640.0));
+    cx.simulate_window_resize(settings_window, dimensions);
+    cx.run_until_parked();
+    cx.update_window(settings_window, |_, window, _| window.remove_window())
+        .expect("closes settings");
+    cx.run_until_parked();
+    workflow.dispatch(OpenAudioSettings, cx);
+    cx.update(|cx| {
+        let view = workflow.view.read(cx);
+        let handle = cx
+            .windows()
+            .into_iter()
+            .find(|window| *window != workflow.window)
+            .expect("reopened settings");
+        assert_eq!(view.settings_window_size, Some(dimensions));
+        handle
+            .update(cx, |_, window, _| assert_eq!(window.bounds().size, dimensions))
+            .expect("reads reopened settings dimensions");
+    });
+}
+
 /// Keeps the open production settings controls, installed menus, and canonical root settings synchronized.
 #[gpui_kit::test]
 fn integration_preview_actions_sync_open_settings_and_independent_overload_choices(cx: &mut TestAppContext) {

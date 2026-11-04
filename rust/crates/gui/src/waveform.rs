@@ -4,7 +4,7 @@
 //! a thin white playhead, and a short-term loudness curve with its axis when the graph is enabled.
 //! The envelopes are blue, or coloured column by column from the Serato Overview tag when the file has one,
 //! while their shape still comes from the decoded audio.
-//! Identity-matched source overloads add solid yellow sample caps and hollow orange true peak caps,
+//! Identity-matched source overloads add equally sized solid yellow sample caps and orange true peak caps,
 //! independent of input gain.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
@@ -80,7 +80,7 @@ const PENDING_PLAYHEAD_ALPHA: f32 = 0.45;
 
 /// Explanation is attached only to the waveform pane, never the spectral plot or frequency axis.
 const SOURCE_OVERS_TOOLTIP: &str =
-    "Source overs: solid yellow = sample > 0 dBFS, outlined orange = true peak > 0 dBTP.";
+    "Source overs: yellow = sample > 0 dBFS, orange = true peak > 0 dBTP. Orange takes precedence.";
 
 /// Wheel distance in pixels for one zoom step or one decibel of gain.
 const WHEEL_STEP_PIXELS: f32 = 20.0;

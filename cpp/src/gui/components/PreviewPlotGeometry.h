@@ -12,7 +12,6 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <limits>
 #include <vector>
 
 namespace audiobatch
@@ -41,8 +40,8 @@ struct PreviewAmplitudeLabel {
     juce::Rectangle<int> bounds;
     /// Signed linear amplitude the caption names, from -1 at the lane bottom to 1 at its top.
     float amplitude {0.0f};
-    /// Magnitude in dBFS, negative infinity for silence.
-    float decibels {-std::numeric_limits<float>::infinity()};
+    /// Magnitude reference in dBFS, restricted to -1 and -6.
+    float decibels {-1.0f};
     /// Unclamped vertical position of the amplitude within the waveform, shared by grid lines.
     float vertical {0.0f};
     /// Zero-based channel lane of the caption.
@@ -50,7 +49,7 @@ struct PreviewAmplitudeLabel {
 };
 
 /// Fits post-display-gain dBFS magnitude references to JUCE's integer, linear-amplitude channel lanes.
-/// Both polarities share a level. Full scale takes priority, then -6, -12, -24 dBFS, then silence.
+/// Both polarities share a level. The -1 dBFS reference takes priority over -6 dBFS in compact lanes.
 inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
     const PreviewPlotGeometry& geometry,
     const int channels
@@ -60,7 +59,7 @@ inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
     if (channels <= 0 || geometry.waveform.isEmpty() || geometry.amplitudeAxis.isEmpty()) {
         return labels;
     }
-    constexpr std::array DECIBEL_LEVELS {0.0f, -6.0f, -12.0f, -24.0f};
+    constexpr std::array DECIBEL_LEVELS {-1.0f, -6.0f};
     constexpr float AMPLITUDE_DECIBEL_FACTOR {20.0f};
     constexpr float DECIBEL_LOG_BASE {10.0f};
     constexpr std::array POLARITIES {1.0f, -1.0f};
@@ -111,10 +110,13 @@ inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
                 addLabel(polarity * MAGNITUDES[index], DECIBEL_LEVELS[index]);
             }
         }
-        addLabel(0.0f, -std::numeric_limits<float>::infinity());
     }
     return labels;
 }
+
+/// Fixed frequency captions, independent of source sample rate.
+inline constexpr std::array
+    PREVIEW_FREQUENCIES {0.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16'000.0, 18'000.0, 20'000.0};
 
 /// Returns bounded plots without changing the requested mode when the host becomes compact.
 inline PreviewPlotGeometry previewPlotGeometry(
@@ -178,11 +180,10 @@ inline PreviewPlotGeometry previewPlotGeometry(
     };
     const auto waveformAxes = reserveAxes(result.waveform);
     const auto spectralAxes = reserveAxes(result.spectrogram);
-    const auto sourceAxisIndex = loudnessEnabled ? 1u : 0u;
-    result.amplitudeAxis = waveformAxes[sourceAxisIndex];
-    result.frequencyAxis = spectralAxes[sourceAxisIndex];
+    result.amplitudeAxis = waveformAxes[0];
+    result.frequencyAxis = spectralAxes[0];
     if (loudnessEnabled) {
-        result.loudnessAxis = mode == PreviewViewMode::spectrogram ? spectralAxes[0] : waveformAxes[0];
+        result.loudnessAxis = mode == PreviewViewMode::spectrogram ? spectralAxes[1] : waveformAxes[1];
         result.loudness = mode == PreviewViewMode::spectrogram ? result.spectrogram : result.waveform;
     }
     if (!result.sourceWarning.isEmpty()) {

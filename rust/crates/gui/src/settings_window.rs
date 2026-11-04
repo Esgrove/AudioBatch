@@ -1,9 +1,10 @@
 //! The Audio Settings window: the output device and the preview preferences.
 //!
-//! It is a separate window with two groups.
-//! "Audio interface and playback" chooses the output device, its sample rate, and its buffer size,
-//! and "Preview preferences" holds the plugin chain preview, the playback options,
-//! the source visualization, the waveform colours, independent overload indicators, and the loudness graph range.
+//! It is a separate window with groups for audio output, preview preferences, and source overload indicators.
+//! "Audio interface and playback" chooses the output device, its sample rate, and its buffer size.
+//! "Preview preferences" holds the plugin chain preview, the playback options,
+//! the source visualization, the waveform colours, and the loudness graph range.
+//! "Source overload indicators" keeps both warning types beside their shared vertical-line option.
 //! The main view stays the owner of the settings.
 //! This view sends every change with the previously displayed settings,
 //! so the main view applies only edited fields before syncing back what it actually opened.
@@ -16,8 +17,9 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{IndexPath, Sizable as _};
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, relative, rems,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, SharedString, Size,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, relative,
+    rems,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
@@ -29,10 +31,10 @@ use crate::theme::{TEXT_FONT, color, palette, tooltip, white};
 pub const SETTINGS_TITLE: &str = "Audio Settings";
 
 /// Initial width of the window.
-pub const SETTINGS_WIDTH: f32 = 540.0;
+pub const SETTINGS_WIDTH: f32 = 600.0;
 
 /// Initial height of the window.
-pub const SETTINGS_HEIGHT: f32 = 390.0;
+pub const SETTINGS_HEIGHT: f32 = 560.0;
 
 /// Padding inside the groups, in rem.
 const PADDING: f32 = 0.75;
@@ -114,6 +116,8 @@ const LOUDNESS_LIMIT_TOOLTIP: &str = "Whole-number LUFS from -60 to +6. Maximum 
 /// Events the settings window sends to the main view.
 #[derive(Debug, Clone)]
 pub enum SettingsEvent {
+    /// User-controlled window dimensions, retained by the main view for this session only.
+    Resized(Size<Pixels>),
     /// The requested settings and the snapshot they were edited from, allowing stale fields to be ignored.
     Changed {
         /// Settings the window displayed before this edit.
@@ -180,6 +184,9 @@ impl SettingsView {
         let minimum_input = cx.new(|cx| InputState::new(window, cx));
         let maximum_input = cx.new(|cx| InputState::new(window, cx));
         let subscriptions = vec![
+            cx.observe_window_bounds(window, |_, window, cx| {
+                cx.emit(SettingsEvent::Resized(window.bounds().size));
+            }),
             cx.subscribe_in(&device_select, window, Self::on_device_selected),
             cx.subscribe_in(&rate_select, window, Self::on_rate_selected),
             cx.subscribe_in(&buffer_select, window, Self::on_buffer_selected),
@@ -493,15 +500,6 @@ impl SettingsView {
                 |settings, checked| settings.serato_waveform_colours = checked,
                 cx,
             ))
-            .child(self.render_overload_types(cx))
-            .child(Self::option(
-                "show-overload-lines",
-                "Overload vertical lines",
-                OVERLOAD_LINES_TOOLTIP,
-                settings.show_overload_lines,
-                |settings, checked| settings.show_overload_lines = checked,
-                cx,
-            ))
             .child(self.render_loudness_range(cx))
             .when_some(self.range_error.clone(), |group, error| {
                 group.child(
@@ -511,6 +509,20 @@ impl SettingsView {
                         .child(error),
                 )
             })
+    }
+
+    /// Keeps the independent source warning types and their shared line option in one settings group.
+    fn render_overload_group(&self, cx: &Context<Self>) -> Div {
+        group("Source overload indicators")
+            .child(self.render_overload_types(cx))
+            .child(Self::option(
+                "show-overload-lines",
+                "Overload vertical lines",
+                OVERLOAD_LINES_TOOLTIP,
+                self.settings.show_overload_lines,
+                |settings, checked| settings.show_overload_lines = checked,
+                cx,
+            ))
     }
 
     /// Renders the two independently enabled overload types on a shared row.
@@ -554,18 +566,8 @@ impl SettingsView {
                 |settings, checked| settings.show_loudness_graph = checked,
                 cx,
             )))
-            .child(limit_field(
-                "loudness-minimum",
-                "Min (LUFS)",
-                &self.minimum_input,
-                enabled,
-            ))
-            .child(limit_field(
-                "loudness-maximum",
-                "Max (LUFS)",
-                &self.maximum_input,
-                enabled,
-            ))
+            .child(limit_field("loudness-minimum", "Min (LUFS)", &self.minimum_input))
+            .child(limit_field("loudness-maximum", "Max (LUFS)", &self.maximum_input))
     }
 
     /// Renders an option checkbox that changes one setting.
@@ -620,7 +622,8 @@ impl Render for SettingsView {
                     .gap(rems(SECTION_SPACING))
                     .p_4()
                     .child(self.render_device_group())
-                    .child(self.render_preview_group(cx)),
+                    .child(self.render_preview_group(cx))
+                    .child(self.render_overload_group(cx)),
             )
     }
 }
@@ -712,7 +715,7 @@ fn choice_row(caption: &'static str, tooltip_text: &'static str, control: impl I
 }
 
 /// Renders a captioned loudness limit field.
-fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputState>, enabled: bool) -> AnyElement {
+fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputState>) -> AnyElement {
     div()
         .id(id)
         .tooltip(tooltip(LOUDNESS_LIMIT_TOOLTIP))
@@ -720,19 +723,11 @@ fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputStat
         .flex_row()
         .items_center()
         .gap(rems(0.375))
-        .child(
-            div()
-                .text_color(color(if enabled {
-                    palette::GREY_MIDDLE_LIGHT
-                } else {
-                    palette::GREY_MIDDLE
-                }))
-                .child(caption),
-        )
+        .child(div().text_color(color(palette::GREY_MIDDLE_LIGHT)).child(caption))
         .child(
             div()
                 .w(rems(LIMIT_INPUT_WIDTH))
-                .child(Input::new(input).small().disabled(!enabled)),
+                .child(Input::new(input).id("loudness-limit-input").small()),
         )
         .into_any_element()
 }
@@ -765,6 +760,34 @@ mod integration_tests {
             .expect("opens the settings view")
         });
         (window, view)
+    }
+
+    #[gpui_kit::test]
+    fn loudness_range_remains_editable_when_graph_is_hidden(cx: &mut TestAppContext) {
+        let (handle, view) = open_settings(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            if window.find("show-loudness-graph").checked() == Some(true) {
+                window.click("show-loudness-graph", cx);
+            }
+            window.render_frame(cx);
+            for id in ["loudness-minimum", "loudness-maximum"] {
+                assert_ne!(window.within(id).find("loudness-limit-input").disabled(), Some(true));
+            }
+            let minimum = view.read(cx).minimum_input.clone();
+            let maximum = view.read(cx).maximum_input.clone();
+            minimum.update(cx, |input, cx| input.set_value("-36", window, cx));
+            maximum.update(cx, |input, cx| input.set_value("-3", window, cx));
+            window.within("loudness-minimum").click("input-state", cx);
+            window.press("enter", cx);
+        })
+        .expect("edits the hidden graph range");
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let settings = &view.read(cx).settings;
+            assert!(!settings.show_loudness_graph);
+            assert_eq!((settings.loudness_minimum, settings.loudness_maximum), (-36, -3));
+        });
     }
 
     #[gpui_kit::test]

@@ -1,5 +1,5 @@
 /// Source overload presentation for waveform edges and the spectrogram-only warning strip.
-/// Filters immutable analysis flags before choosing solid yellow sample caps or outlined orange true peak caps.
+/// Projects independent source flags into equal-size solid caps, painting orange true peaks over yellow samples.
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/OverloadHistory.h"
@@ -39,7 +39,7 @@ void ThumbnailComponent::setOverloadIndicatorSettings(const bool sample, const b
 }
 
 /// Returns visible overload runs with channel-local tint bounds and waveform-outer-edge cap policy.
-/// Disabled raw kinds are removed before precedence and merging, so hidden samples cannot hide true peaks.
+/// Each kind retains its own runs. All sample marks precede true peaks so orange wins overlapping caps.
 /// Returns nothing while the history and the waveform disagree on the channel count.
 std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
 {
@@ -50,12 +50,25 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
     {
         return {};
     }
+    auto marks = showSampleOverloads ? getOverloadMarks(true) : std::vector<OverloadMark>();
+    if (showTruePeakOverloads) {
+        const auto truePeakMarks = getOverloadMarks(false);
+        marks.insert(marks.end(), truePeakMarks.begin(), truePeakMarks.end());
+    }
+    return marks;
+}
+
+/// Projects one enabled kind independently, preserving overlaps with the other kind for paint-order precedence.
+std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks(const bool sampleOver) const
+{
+    const auto bounds = waveformBounds();
     const auto channels = overloadHistory->channelCount;
+    const auto kind = sampleOver ? OverloadHistory::sampleOver : OverloadHistory::truePeakOver;
     std::vector<OverloadMark> marks;
     for (int channel = 0; channel < channels; ++channel) {
         auto columns = projectOverloadColumns(*overloadHistory, channel, visibleRange, bounds.getWidth());
         for (auto& flags : columns) {
-            flags = visibleOverloadFlags(flags, showSampleOverloads, showTruePeakOverloads);
+            flags &= kind;
         }
         // The same integer lane split as AudioThumbnail::drawChannels.
         const int laneTopPixel = bounds.getY() + channel * bounds.getHeight() / channels;
@@ -67,11 +80,8 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
                 ++column;
                 continue;
             }
-            const auto sampleOver = (columnFlags & OverloadHistory::sampleOver) != 0;
             auto end = column + 1;
-            while (end < columns.size() && columns[end] != 0
-                   && ((columns[end] & OverloadHistory::sampleOver) != 0) == sampleOver)
-            {
+            while (end < columns.size() && columns[end] != 0) {
                 ++end;
             }
             auto start = static_cast<float>(bounds.getX()) + static_cast<float>(column);
@@ -96,7 +106,7 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
     return marks;
 }
 
-/// Draws solid yellow sample caps and outlined orange true peak caps only at the waveform's outer edges.
+/// Draws equal solid yellow sample caps and orange true peak caps only at the waveform's outer edges.
 /// Both kinds may tint their own channel, independently of caps and without tinting another channel.
 void ThumbnailComponent::drawOverloads(juce::Graphics& graphics) const
 {
@@ -106,7 +116,6 @@ void ThumbnailComponent::drawOverloads(juce::Graphics& graphics) const
     }
     const juce::Graphics::ScopedSaveState savedState(graphics);
     graphics.reduceClipRegion(waveformBounds());
-    const auto outline = layout::waveform::overloadOutlineWidth;
     for (const auto& mark : marks) {
         const auto colour = mark.sampleOver ? CustomLookAndFeel::yellow() : CustomLookAndFeel::orange();
         const auto width = mark.horizontal.getLength();
@@ -119,11 +128,7 @@ void ThumbnailComponent::drawOverloads(juce::Graphics& graphics) const
         graphics.setColour(colour);
         const auto drawCap = [&](const float top) {
             const juce::Rectangle<float> cap(mark.horizontal.getStart(), top, width, height);
-            if (mark.sampleOver) {
-                graphics.fillRect(cap);
-            } else {
-                graphics.drawRect(cap.reduced(outline * 0.5f), outline);
-            }
+            graphics.fillRect(cap);
         };
         if (mark.topEdge) {
             drawCap(mark.laneTop);
@@ -158,13 +163,9 @@ void ThumbnailComponent::drawSourceWarning(juce::Graphics& graphics, const juce:
         }
         const auto rectangle
             = juce::Rectangle<int>(bounds.getX() + static_cast<int>(column), bounds.getY(), 1, bounds.getHeight());
-        const auto sampleOver = (mixed[column] & OverloadHistory::sampleOver) != 0;
-        graphics.setColour(sampleOver ? CustomLookAndFeel::yellow() : CustomLookAndFeel::orange());
-        if (sampleOver) {
-            graphics.fillRect(rectangle);
-        } else {
-            graphics.drawRect(rectangle);
-        }
+        const auto truePeakOver = (mixed[column] & OverloadHistory::truePeakOver) != 0;
+        graphics.setColour(truePeakOver ? CustomLookAndFeel::orange() : CustomLookAndFeel::yellow());
+        graphics.fillRect(rectangle);
     }
 }
 }  // namespace audiobatch

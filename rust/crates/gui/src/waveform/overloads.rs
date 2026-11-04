@@ -2,24 +2,23 @@
 //!
 //! Sample regions retain their original buckets, while true peak regions conservatively cover interpolation history.
 //! Projection combines flags before choosing a warning shape, so isolated subpixel overs remain visible.
-//! Cap, outline, and minimum-mark dimensions are fixed raster-visibility geometry, not application spacing.
+//! Both warning kinds use identical solid caps, with orange true peaks painted last where expanded marks overlap.
+//! Cap and minimum-mark dimensions are fixed raster-visibility geometry, not application spacing.
 
 use std::sync::Arc;
 
 use audiobatch_core::AnalysisRecord;
 use audiobatch_core::overload::{OverloadHistory, SAMPLE_OVER, TRUE_PEAK_OVER};
-use gpui_kit::{Bounds, Hsla, PathBuilder, Window, fill, point, px, size};
+use gpui_kit::{Bounds, Hsla, Window, fill, point, px, size};
 
 use super::PaintData;
 use super::geometry::Viewport;
 use crate::theme::{color, palette};
 
-/// Height of solid or hollow caps at each channel edge.
+/// Shared solid cap height at each channel edge.
 const CAP_HEIGHT: f32 = 2.5;
-/// Minimum warning width, retaining a visible hollow interior for isolated true peak overs.
+/// Shared minimum warning width, keeping isolated overs visible for either kind.
 const MINIMUM_MARK_WIDTH: f32 = 3.0;
-/// Width of the hollow cap outline.
-const OUTLINE_WIDTH: f32 = 1.0;
 /// Restrained source-over tint for either warning kind, leaving the underlying colors legible.
 const TINT_ALPHA: f32 = 0.06;
 
@@ -30,9 +29,9 @@ const TRUE_PEAK_COVERAGE_FRAMES: u64 = 32;
 /// Warning shape after all flags in a screen column have been combined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WarningKind {
-    /// Solid caps and a restrained lane tint, taking precedence over true peak flags.
+    /// Solid yellow caps with an optional channel-local tint.
     Sample,
-    /// Hollow orange edge caps, with an optional channel-local tint.
+    /// Equally sized solid orange caps, taking precedence over sample flags and overlapping caps.
     TruePeak,
 }
 
@@ -68,7 +67,7 @@ impl OverloadSettings {
         }
     }
 
-    /// Removes disabled raw kinds before sample precedence is selected.
+    /// Removes disabled raw kinds before true peak precedence is selected.
     const fn visible_flags(self, flags: u8) -> u8 {
         flags & ((if self.sample { SAMPLE_OVER } else { 0 }) | (if self.true_peak { TRUE_PEAK_OVER } else { 0 }))
     }
@@ -111,7 +110,7 @@ impl SourceOverloads {
     }
 }
 
-/// Paints source-only caps and sample tint before loudness, cue markers, and the playhead.
+/// Paints source-only caps and optional lane tints before loudness, cue markers, and the playhead.
 /// The lane split is the same as the envelopes, independent of display gain and plugin preview.
 pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) {
     let Some(history) = data.overloads.as_deref() else {
@@ -130,44 +129,35 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
             .into_iter()
             .map(|flags| data.overload_settings.visible_flags(flags))
             .collect();
-        let runs = warning_runs(&filtered);
+        let runs = warning_paint_runs(&filtered);
         let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
         let cap_height = CAP_HEIGHT.min(lane_height / 4.0);
-        // Sample marks paint last, so their stronger treatment wins even where minimum-width caps overlap.
-        for kind in [WarningKind::TruePeak, WarningKind::Sample] {
-            for run in runs.iter().filter(|run| run.kind == kind) {
-                let width = ((run.end - run.start) as f32).max(MINIMUM_MARK_WIDTH);
-                let center = f32::midpoint(run.start as f32, run.end as f32);
-                let half_width = width * 0.5;
-                let left = f32::from(plot.origin.x) + center - half_width;
-                let warning_color = warning_color(kind);
-                let tint = Hsla {
-                    a: TINT_ALPHA,
-                    ..warning_color
+        for run in runs {
+            let (left, width) = mark_span(run);
+            let left = f32::from(plot.origin.x) + left;
+            let warning_color = warning_color(run.kind);
+            let tint = Hsla {
+                a: TINT_ALPHA,
+                ..warning_color
+            };
+            if data.overload_settings.lines {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(px(left), px(lane_top)),
+                        size: size(px(width), px(lane_height)),
+                    },
+                    tint,
+                ));
+            }
+            for top in edge_caps(channel, channels, lane_top, lane_height, cap_height)
+                .into_iter()
+                .flatten()
+            {
+                let bounds = Bounds {
+                    origin: point(px(left), px(top)),
+                    size: size(px(width), px(cap_height)),
                 };
-                if data.overload_settings.lines {
-                    window.paint_quad(fill(
-                        Bounds {
-                            origin: point(px(left), px(lane_top)),
-                            size: size(px(width), px(lane_height)),
-                        },
-                        tint,
-                    ));
-                }
-                for top in edge_caps(channel, channels, lane_top, lane_height, cap_height)
-                    .into_iter()
-                    .flatten()
-                {
-                    let bounds = Bounds {
-                        origin: point(px(left), px(top)),
-                        size: size(px(width), px(cap_height)),
-                    };
-                    if kind == WarningKind::Sample {
-                        window.paint_quad(fill(bounds, warning_color));
-                    } else {
-                        paint_outline(left, top, width, cap_height, warning_color, window);
-                    }
-                }
+                window.paint_quad(fill(bounds, warning_color));
             }
         }
     }
@@ -180,20 +170,16 @@ pub(super) fn paint_warning_strip(data: &PaintData, viewport: &Viewport, window:
     };
     let columns = f32::from(viewport.plot.size.width) as usize;
     let mixed = mixed_columns(history, viewport, columns, data.overload_settings);
-    for run in warning_runs(&mixed) {
-        let left = f32::from(viewport.plot.origin.x) + run.start as f32;
-        let width = (run.end - run.start) as f32;
+    for run in warning_paint_runs(&mixed) {
+        let (left, width) = mark_span(run);
+        let left = f32::from(viewport.plot.origin.x) + left;
         let top = f32::from(viewport.plot.origin.y);
         let height = f32::from(viewport.plot.size.height);
         let color = warning_color(run.kind);
-        if run.kind == WarningKind::Sample {
-            window.paint_quad(fill(
-                Bounds::new(point(px(left), px(top)), size(px(width), px(height))),
-                color,
-            ));
-        } else {
-            paint_outline(left, top, width, height, color, window);
-        }
+        window.paint_quad(fill(
+            Bounds::new(point(px(left), px(top)), size(px(width), px(height))),
+            color,
+        ));
     }
 }
 
@@ -295,14 +281,28 @@ fn project_columns(
     projected
 }
 
-/// Groups equal warning shapes after projection, with sample overs stronger than simultaneous true peak overs.
+/// Orders solid caps so true peaks cover neighboring sample marks wherever their minimum widths overlap.
+fn warning_paint_runs(columns: &[u8]) -> Vec<WarningRun> {
+    let mut runs = warning_runs(columns);
+    runs.sort_by_key(|run| run.kind == WarningKind::TruePeak);
+    runs
+}
+
+/// Expands either kind identically around its source-column center to keep isolated warnings legible.
+const fn mark_span(run: WarningRun) -> (f32, f32) {
+    let width = ((run.end - run.start) as f32).max(MINIMUM_MARK_WIDTH);
+    let center = f32::midpoint(run.start as f32, run.end as f32);
+    (width.mul_add(-0.5, center), width)
+}
+
+/// Groups equal warning shapes after projection, with true peaks stronger than simultaneous sample overs.
 fn warning_runs(columns: &[u8]) -> Vec<WarningRun> {
     let mut runs: Vec<WarningRun> = Vec::new();
     for (column, &flags) in columns.iter().enumerate() {
-        let kind = if flags & SAMPLE_OVER != 0 {
-            WarningKind::Sample
-        } else if flags & TRUE_PEAK_OVER != 0 {
+        let kind = if flags & TRUE_PEAK_OVER != 0 {
             WarningKind::TruePeak
+        } else if flags & SAMPLE_OVER != 0 {
+            WarningKind::Sample
         } else {
             continue;
         };
@@ -338,24 +338,6 @@ fn matching_history(record: &AnalysisRecord) -> Option<Arc<OverloadHistory>> {
         return None;
     }
     Some(Arc::clone(history))
-}
-
-/// Strokes a hollow edge cap inside its bounds, retaining the underlying waveform in its interior.
-fn paint_outline(left: f32, top: f32, width: f32, height: f32, amber: Hsla, window: &mut Window) {
-    let inset = OUTLINE_WIDTH * 0.5;
-    let mut builder = PathBuilder::stroke(px(OUTLINE_WIDTH));
-    builder.add_polygon(
-        &[
-            point(px(left + inset), px(top + inset)),
-            point(px(left + width - inset), px(top + inset)),
-            point(px(left + width - inset), px(top + height - inset)),
-            point(px(left + inset), px(top + height - inset)),
-        ],
-        true,
-    );
-    if let Ok(path) = builder.build() {
-        window.paint_path(path, amber);
-    }
 }
 
 #[cfg(test)]
@@ -445,7 +427,7 @@ mod test_projection {
     }
 
     #[test]
-    fn subpixel_aggregation_preserves_isolated_flags_and_sample_precedence() {
+    fn subpixel_aggregation_preserves_isolated_flags_and_true_peak_precedence() {
         let history = history(1, 500, &[0, TRUE_PEAK_OVER, 0, SAMPLE_OVER, 0]);
         let columns = project_columns(&history, 0, 0.0, 0.5, 1);
         assert_eq!(columns, [SAMPLE_OVER | TRUE_PEAK_OVER]);
@@ -454,7 +436,7 @@ mod test_projection {
             [WarningRun {
                 start: 0,
                 end: 1,
-                kind: WarningKind::Sample
+                kind: WarningKind::TruePeak
             }]
         );
         assert_eq!(
@@ -468,11 +450,11 @@ mod test_projection {
             [
                 WarningRun {
                     start: 0,
-                    end: 2,
+                    end: 1,
                     kind: WarningKind::Sample
                 },
                 WarningRun {
-                    start: 2,
+                    start: 1,
                     end: 3,
                     kind: WarningKind::TruePeak
                 },
@@ -483,6 +465,44 @@ mod test_projection {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn both_warning_kinds_have_identical_minimum_width_geometry() {
+        for length in [1, 2, 3, 8] {
+            let sample = WarningRun {
+                start: 4,
+                end: 4 + length,
+                kind: WarningKind::Sample,
+            };
+            let true_peak = WarningRun {
+                kind: WarningKind::TruePeak,
+                ..sample
+            };
+            let (sample_left, sample_width) = mark_span(sample);
+            let (true_left, true_width) = mark_span(true_peak);
+            assert!((sample_left - true_left).abs() < f32::EPSILON);
+            assert!((sample_width - true_width).abs() < f32::EPSILON);
+            assert!((sample_width - (length as f32).max(3.0)).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn neighboring_minimum_width_overlaps_always_paint_true_peaks_last() {
+        for columns in [
+            vec![TRUE_PEAK_OVER, SAMPLE_OVER],
+            vec![SAMPLE_OVER, TRUE_PEAK_OVER],
+            vec![TRUE_PEAK_OVER, 0, SAMPLE_OVER],
+            vec![SAMPLE_OVER, 0, TRUE_PEAK_OVER],
+        ] {
+            let runs = warning_paint_runs(&columns);
+            assert_eq!(runs.len(), 2);
+            assert_eq!(runs[0].kind, WarningKind::Sample);
+            assert_eq!(runs[1].kind, WarningKind::TruePeak);
+            let (sample_left, sample_width) = mark_span(runs[0]);
+            let (true_left, true_width) = mark_span(runs[1]);
+            assert!(sample_left < true_left + true_width && true_left < sample_left + sample_width);
+        }
     }
 
     #[test]

@@ -65,6 +65,7 @@ private:
     juce::Component content;
     juce::GroupComponent deviceGroup {"deviceSettings", "Audio interface and playback"};
     juce::GroupComponent previewGroup {"previewSettings", "Preview preferences"};
+    juce::GroupComponent overloadGroup {"overloadSettings", "Source overload indicators"};
 
     /// Source visualization and arrangement, synchronized with the Options menu.
     juce::ComboBox previewView;
