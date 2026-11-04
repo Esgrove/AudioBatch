@@ -453,11 +453,13 @@ impl SettingsView {
             .child(choice_row(
                 "Preview view",
                 PREVIEW_VIEW_TOOLTIP,
-                div().w(relative(PREVIEW_SELECTOR_WIDTH_PROPORTION)).child(
-                    Select::new(&self.preview_view_select)
-                        .id("preview-view-mode")
-                        .small()
-                        .accessibility_label("Preview view"),
+                div().flex().justify_end().w_full().child(
+                    div().w(relative(PREVIEW_SELECTOR_WIDTH_PROPORTION)).child(
+                        Select::new(&self.preview_view_select)
+                            .id("preview-view-mode")
+                            .small()
+                            .accessibility_label("Preview view"),
+                    ),
                 ),
             ))
             .child(Self::option(
@@ -511,43 +513,39 @@ impl SettingsView {
             })
     }
 
-    /// Keeps the independent source warning types and their shared line option in one settings group.
+    /// Keeps the independent source warning types and their shared line option on one row.
     fn render_overload_group(&self, cx: &Context<Self>) -> Div {
-        group("Source overload indicators")
-            .child(self.render_overload_types(cx))
-            .child(Self::option(
-                "show-overload-lines",
-                "Overload vertical lines",
-                OVERLOAD_LINES_TOOLTIP,
-                self.settings.show_overload_lines,
-                |settings, checked| settings.show_overload_lines = checked,
-                cx,
-            ))
-    }
-
-    /// Renders the two independently enabled overload types on a shared row.
-    fn render_overload_types(&self, cx: &Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap_3()
-            .child(div().flex_1().child(Self::option(
-                "show-sample-overloads",
-                "Peak overloads",
-                SAMPLE_OVERLOADS_TOOLTIP,
-                self.settings.show_sample_overloads,
-                |settings, checked| settings.show_sample_overloads = checked,
-                cx,
-            )))
-            .child(div().flex_1().child(Self::option(
-                "show-true-peak-overloads",
-                "True-peak overloads",
-                TRUE_PEAK_OVERLOADS_TOOLTIP,
-                self.settings.show_true_peak_overloads,
-                |settings, checked| settings.show_true_peak_overloads = checked,
-                cx,
-            )))
+        group("Source overload indicators").child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .child(div().flex_1().child(Self::option(
+                    "show-sample-overloads",
+                    "Peak",
+                    SAMPLE_OVERLOADS_TOOLTIP,
+                    self.settings.show_sample_overloads,
+                    |settings, checked| settings.show_sample_overloads = checked,
+                    cx,
+                )))
+                .child(div().flex_1().child(Self::option(
+                    "show-true-peak-overloads",
+                    "True Peak",
+                    TRUE_PEAK_OVERLOADS_TOOLTIP,
+                    self.settings.show_true_peak_overloads,
+                    |settings, checked| settings.show_true_peak_overloads = checked,
+                    cx,
+                )))
+                .child(div().flex_1().child(Self::option(
+                    "show-overload-lines",
+                    "Vertical lines",
+                    OVERLOAD_LINES_TOOLTIP,
+                    self.settings.show_overload_lines,
+                    |settings, checked| settings.show_overload_lines = checked,
+                    cx,
+                ))),
+        )
     }
 
     /// Renders the loudness graph toggle and its two associated axis limits.
