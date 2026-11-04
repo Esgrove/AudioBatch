@@ -12,9 +12,14 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[cfg(test)]
+use gpui_kit::test::TestSupportExt as _;
+
+use crate::settings::PreviewViewMode;
 use audiobatch_core::format::format_kilohertz;
 use audiobatch_playback::Player;
 use gpui_kit::base::{ResizableState, ResizeHandleContext, ResizeHandleRenderer, ResizeHandleState};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
 use gpui_kit::component::table::DataTable;
 use gpui_kit::component::{Sizable as _, Size};
@@ -40,11 +45,13 @@ use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenParentFolder, OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected,
-    RemoveSelected, Rescan, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback,
-    ToggleAlbumArtwork, ToggleColumn, ToggleLoudnessGraph, TogglePlayback, TogglePluginPreview,
-    TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSeratoColours, TrashSelected, TrashSelectedNow,
+    RemoveSelected, Rescan, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, SetPreviewViewMode,
+    StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleLoudnessGraph, ToggleOverloadLines, TogglePlayback,
+    TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSampleOverloads,
+    ToggleSeratoColours, ToggleTruePeakOverloads, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
+use crate::playback_status::format_playback_time;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, RowMenuState, fit_results_columns};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
 use crate::waveform::MINIMUM_ZOOM;
@@ -244,6 +251,18 @@ impl AppView {
             path.tooltip(tooltip(roots))
         };
         let output = self.output_label();
+        let playback_time = self.player.as_ref().and_then(|player| {
+            let duration = player.duration_seconds()?;
+            (duration > 0.0).then(|| format_playback_time(player.position_seconds(), duration))
+        });
+        let status = if self.is_running() {
+            self.status.clone()
+        } else {
+            self.enrichment.progress().map_or_else(
+                || self.status.clone(),
+                |(completed, total)| SharedString::from(format!("Background previews: {completed}/{total} files")),
+            )
+        };
         div()
             .relative()
             .h(px(STATUS_BAR_HEIGHT))
@@ -267,8 +286,16 @@ impl AppView {
                     .min_w_0()
                     .truncate()
                     .tooltip(tooltip(STATUS_TOOLTIP))
-                    .child(self.status.clone()),
+                    .child(status),
             )
+            .children(playback_time.map(|time| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(status_separator())
+                    .child(div().id("playback-time").flex_none().child(time))
+            }))
             .child(status_separator())
             .child(
                 div()
@@ -389,7 +416,38 @@ impl AppView {
                         wide,
                     )),
             )
-            .child(div().flex_1().min_w_0().h_full().child(self.waveform.clone()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(self.render_preview_plot("preview-plot")),
+            )
+    }
+
+    /// Composes the retained plot with a standard context menu targeting the canonical preference owner.
+    fn render_preview_plot(&self, id: &'static str) -> impl IntoElement {
+        let focus = self.focus_handle.clone();
+        let mode = self.settings.preview_view_mode;
+        let plot = div().id(id).size_full().child(self.waveform.clone());
+        #[cfg(test)]
+        let plot = plot.test_support();
+        plot.context_menu(move |mut menu, _, _| {
+            menu = menu.action_context(focus.clone());
+            for choice in [
+                PreviewViewMode::Waveform,
+                PreviewViewMode::Spectrogram,
+                PreviewViewMode::SideBySide,
+                PreviewViewMode::Stacked,
+            ] {
+                menu = menu.menu_with_check(
+                    choice.label(),
+                    choice == mode,
+                    Box::new(SetPreviewViewMode { mode: choice }),
+                );
+            }
+            menu
+        })
     }
 
     /// Renders the collapsed preview in one row:
@@ -430,7 +488,7 @@ impl AppView {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.waveform.clone()),
+                    .child(self.render_preview_plot("compact-preview-plot")),
             )
     }
 
@@ -525,6 +583,12 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &TrashSelectedNow, window, cx| view.trash_selected(false, window, cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
             .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
+            .on_action(
+                cx.listener(|view, action: &SetPreviewViewMode, _, cx| view.set_preview_view_mode(action.mode, cx)),
+            )
+            .on_action(cx.listener(|view, _: &ToggleSampleOverloads, _, cx| view.toggle_sample_overloads(cx)))
+            .on_action(cx.listener(|view, _: &ToggleTruePeakOverloads, _, cx| view.toggle_true_peak_overloads(cx)))
+            .on_action(cx.listener(|view, _: &ToggleOverloadLines, _, cx| view.toggle_overload_lines(cx)))
             .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
             .on_action(cx.listener(|view, _: &ToggleAlbumArtwork, _, cx| view.toggle_album_artwork(cx)))
             .on_action(cx.listener(|view, _: &TogglePreviewSection, _, cx| view.toggle_preview_section(cx)))

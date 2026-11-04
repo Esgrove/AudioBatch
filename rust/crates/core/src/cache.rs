@@ -1,7 +1,7 @@
 //! SQLite-backed cache for analysis results.
 //!
 //! Measurements are shared with the C++ application and validated against source identity and a common contract.
-//! Native previews live independently, so measurement reads never retain waveform blobs.
+//! Optional previews live independently, so measurement reads never retain waveform or spectral blobs.
 //! Gain and artifact updates preserve the original measurement producer.
 
 use std::path::{Path, PathBuf};
@@ -18,6 +18,7 @@ use crate::record::{
 
 mod schema;
 mod serato;
+mod spectrogram;
 mod waveform_cache;
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
@@ -244,6 +245,7 @@ impl AnalysisCache {
     /// Same-source writes preserve the latest explicit gain, including a clear, and compatible native previews.
     /// Repeatable failures never replace a same-source success.
     /// Stale work is ignored when the source no longer matches the record.
+    /// Incompatible spectral artifacts are removed best effort only after required measurements commit.
     ///
     /// # Errors
     ///
@@ -262,29 +264,14 @@ impl AnalysisCache {
         if !record.matches_file_on_disk() {
             return Ok(());
         }
-        let (history, overload_history) = if record.has_error() {
-            (None, None)
-        } else {
-            let overload_history = record
-                .overloads
-                .as_deref()
-                .filter(|history| valid_overload_timing(history, record))
-                .and_then(OverloadHistory::to_bytes)
-                .ok_or(CacheError::InvalidOverloadHistory)?;
-            let history = record
-                .short_term_loudness
-                .as_deref()
-                .and_then(|history| serialize_history(history, record))
-                .ok_or(CacheError::InvalidHistory)?;
-            if !valid_measurements(record) {
-                return Err(CacheError::InvalidHistory);
-            }
-            (Some(history), Some(overload_history))
-        };
+        let (history, overload_history) = measurement_payloads(record)?;
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
             // Taking the write lock up front keeps a concurrent writer from failing the upgrade from the read.
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if !record.matches_file_on_disk() {
+                return Ok(());
+            }
             let current_identity = stored_identity(&transaction, &record.path)?;
             if current_identity != observed_identity
                 && current_identity != Some((record.file_size, record.modified_time_ms))
@@ -343,7 +330,14 @@ impl AnalysisCache {
             {
                 waveform_cache::store(&transaction, record, waveform)?;
             }
+            if !record.matches_file_on_disk() {
+                return Ok(());
+            }
             transaction.commit()?;
+            // Optional spectral cleanup cannot undo the required measurement commit.
+            if let Err(error) = spectrogram::prune_incompatible(connection, record) {
+                tracing::warn!(path = %record.path.display(), %error, "Could not remove obsolete spectrogram artifacts");
+            }
             Ok(())
         })
     }
@@ -399,7 +393,8 @@ impl AnalysisCache {
         })
     }
 
-    /// Removes the cached analysis and Serato tag rows of a file. Returns true when a row was removed.
+    /// Removes captured-identity measurements, tags, native previews, and all spectral revisions for one file.
+    /// Returns true when at least one row was removed.
     ///
     /// # Errors
     ///
@@ -431,7 +426,7 @@ impl AnalysisCache {
         })
     }
 
-    /// Removes the cached analysis and Serato tag rows of several files in one transaction.
+    /// Removes captured-identity measurements and optional artifacts of several files in one transaction.
     ///
     /// # Errors
     ///
@@ -635,7 +630,8 @@ fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Opt
         .query_row(
             "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1
          UNION ALL SELECT file_size, modified_time_ms FROM serato_tag_cache WHERE file_path = ?1
-         UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1 LIMIT 1",
+         UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1
+         UNION ALL SELECT file_size, modified_time_ms FROM spectrogram_cache WHERE file_path = ?1 LIMIT 1",
             [path_key(path)],
             |row| Ok((read_nonnegative_integer(row, 0)?, row.get(1)?)),
         )
@@ -645,7 +641,12 @@ fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Opt
 /// Deletes each artifact with its own identity predicate in the caller's short transaction.
 fn remove_identity(connection: &Connection, path: &Path, size: u64, modified: i64) -> rusqlite::Result<usize> {
     let mut removed = 0;
-    for table in ["file_analysis", "serato_tag_cache", "rust_waveform_cache"] {
+    for table in [
+        "file_analysis",
+        "serato_tag_cache",
+        "rust_waveform_cache",
+        "spectrogram_cache",
+    ] {
         removed += connection.execute(
             &format!("DELETE FROM {table} WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3"),
             params![path_key(path), i64::try_from(size).unwrap_or(-1), modified],
@@ -714,6 +715,32 @@ const fn producer_name(producer: MeasurementProducer) -> &'static str {
         MeasurementProducer::Cpp => "cpp",
         MeasurementProducer::Rust => "rust",
     }
+}
+
+/// Validates and serializes required histories before taking the measurement write lock.
+#[expect(
+    clippy::type_complexity,
+    reason = "The pair contains the required loudness and source-overload blobs"
+)]
+fn measurement_payloads(record: &AnalysisRecord) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+    if record.has_error() {
+        return Ok((None, None));
+    }
+    let overloads = record
+        .overloads
+        .as_deref()
+        .filter(|history| valid_overload_timing(history, record))
+        .and_then(OverloadHistory::to_bytes)
+        .ok_or(CacheError::InvalidOverloadHistory)?;
+    let history = record
+        .short_term_loudness
+        .as_deref()
+        .and_then(|history| serialize_history(history, record))
+        .ok_or(CacheError::InvalidHistory)?;
+    if !valid_measurements(record) {
+        return Err(CacheError::InvalidHistory);
+    }
+    Ok((Some(history), Some(overloads)))
 }
 
 /// Rejects invalid geometry and nonfinite measurements without confusing digital silence with corruption.
@@ -841,6 +868,8 @@ mod test_overload;
 mod test_publication;
 #[cfg(test)]
 mod test_shared;
+#[cfg(test)]
+mod test_spectrogram;
 
 #[cfg(test)]
 mod test_analysis_cache {

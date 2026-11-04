@@ -3,11 +3,10 @@
 //! It is a separate window with two groups.
 //! "Audio interface and playback" chooses the output device, its sample rate, and its buffer size,
 //! and "Preview preferences" holds the plugin chain preview, the playback options,
-//! and the loudness graph with its axis range.
-//! Colouring the waveform from the Serato Overview tag is turned on and off in the Options menu, not in this window.
+//! the source visualization, the waveform colours, independent overload indicators, and the loudness graph range.
 //! The main view stays the owner of the settings.
-//! This view sends every change as a complete `GuiSettings`,
-//! and the main view applies it and syncs the window back with what it actually opened.
+//! This view sends every change with the previously displayed settings,
+//! so the main view applies only edited fields before syncing back what it actually opened.
 
 use audiobatch_core::format::format_kilohertz;
 use audiobatch_playback::DeviceCapabilities;
@@ -18,12 +17,12 @@ use gpui_kit::component::{IndexPath, Sizable as _};
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, px,
+    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, relative, rems,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::menus::{CloseAudioSettings, SETTINGS_KEY_CONTEXT};
-use crate::settings::{GuiSettings, is_valid_loudness_range, parse_loudness_limit};
+use crate::settings::{GuiSettings, PreviewViewMode, is_valid_loudness_range, parse_loudness_limit};
 use crate::theme::{TEXT_FONT, color, palette, tooltip, white};
 
 /// Title of the window.
@@ -33,28 +32,28 @@ pub const SETTINGS_TITLE: &str = "Audio Settings";
 pub const SETTINGS_WIDTH: f32 = 540.0;
 
 /// Initial height of the window.
-pub const SETTINGS_HEIGHT: f32 = 410.0;
+pub const SETTINGS_HEIGHT: f32 = 390.0;
 
-/// Padding around the content and inside the groups.
-const PADDING: f32 = 12.0;
+/// Padding inside the groups, in rem.
+const PADDING: f32 = 0.75;
 
-/// Space between the groups.
-const SECTION_SPACING: f32 = 16.0;
+/// Space between the groups, in rem.
+const SECTION_SPACING: f32 = 1.0;
 
-/// Space between the rows of a group.
-const ROW_SPACING: f32 = 8.0;
+/// Space between the rows of a group, in rem.
+const ROW_SPACING: f32 = 0.5;
 
-/// Width of the row captions.
-const CAPTION_WIDTH: f32 = 110.0;
+/// Width of the row captions, in rem.
+const CAPTION_WIDTH: f32 = 6.875;
 
-/// Width of a loudness limit field.
-const LIMIT_INPUT_WIDTH: f32 = 44.0;
+/// Width of a loudness limit field, in rem.
+const LIMIT_INPUT_WIDTH: f32 = 2.75;
 
-/// Font size of the window text.
-const FONT_SIZE: f32 = 13.0;
+/// Font size of the window text, in rem.
+const FONT_SIZE: f32 = 0.8125;
 
-/// Font size of the group headings.
-const HEADING_FONT_SIZE: f32 = 12.0;
+/// Font size of the group headings, in rem.
+const HEADING_FONT_SIZE: f32 = 0.75;
 
 /// Label of the buffer size that leaves the choice to the device.
 const DEFAULT_BUFFER_LABEL: &str = "Device default";
@@ -71,9 +70,28 @@ const SAMPLE_RATE_TOOLTIP: &str = "Choose the audio device's playback sample rat
 /// Tooltip of the buffer size choice.
 const BUFFER_SIZE_TOOLTIP: &str = "Smaller buffers reduce preview latency. Larger buffers can prevent dropouts.";
 
+/// Tooltip of the preview visualization choice.
+const PREVIEW_VIEW_TOOLTIP: &str = "Choose the source visualization and its arrangement in the preview.";
+
+/// Tooltip of the Serato waveform colours option.
+const SERATO_COLOURS_TOOLTIP: &str =
+    "Use Serato spectral waveform colours where available, without changing cues or playback.";
+
+/// Tooltip of the sample-peak overload option.
+const SAMPLE_OVERLOADS_TOOLTIP: &str = "Show source sample-peak overload indicators independently of true peaks.";
+
+/// Tooltip of the true-peak overload option.
+const TRUE_PEAK_OVERLOADS_TOOLTIP: &str = "Show source true-peak overload indicators independently of sample peaks.";
+
+/// Tooltip of the overload line option.
+const OVERLOAD_LINES_TOOLTIP: &str = "Extend enabled overload indicators as vertical lines across the preview.";
+
+/// Proportion of the available control lane occupied by the preview mode selector.
+const PREVIEW_SELECTOR_WIDTH_PROPORTION: f32 = 0.7;
+
 /// Tooltip of the plugin chain preview option.
 const PLUGIN_PREVIEW_TOOLTIP: &str =
-    "Listen through the enabled plugins of the chain. Does not normalize or write files.";
+    "Listen through enabled plugins and the file's custom input gain. Does not normalize or write files.";
 
 /// Tooltip of the latency compensation option.
 const COMPENSATION_TOOLTIP: &str = "Align processed audio with the file position. \
@@ -88,7 +106,7 @@ const FIRST_CUE_TOOLTIP: &str = "When loading a file, start at its first cue poi
 
 /// Tooltip of the loudness graph option.
 const LOUDNESS_GRAPH_TOOLTIP: &str = "Overlay source-file short-term loudness (the trailing three seconds). \
-     Uses cached analysis, not preview gain.";
+     Uses cached analysis, not preview gain or live plugins.";
 
 /// Tooltip of the loudness limit fields.
 const LOUDNESS_LIMIT_TOOLTIP: &str = "Whole-number LUFS from -60 to +6. Maximum must be at least 1 LU above minimum.";
@@ -96,11 +114,17 @@ const LOUDNESS_LIMIT_TOOLTIP: &str = "Whole-number LUFS from -60 to +6. Maximum 
 /// Events the settings window sends to the main view.
 #[derive(Debug, Clone)]
 pub enum SettingsEvent {
-    /// The user changed a setting, carrying the complete settings to apply.
-    Changed(GuiSettings),
+    /// The requested settings and the snapshot they were edited from, allowing stale fields to be ignored.
+    Changed {
+        /// Settings the window displayed before this edit.
+        previous: GuiSettings,
+        /// Settings containing the user's requested change.
+        settings: GuiSettings,
+    },
 }
 
 /// What the settings window shows, collected by the main view from its player and settings.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct SettingsSnapshot {
     /// Output devices of the audio host.
@@ -123,6 +147,7 @@ pub struct SettingsView {
     device_select: Entity<SelectState<Vec<SharedString>>>,
     rate_select: Entity<SelectState<Vec<SharedString>>>,
     buffer_select: Entity<SelectState<Vec<SharedString>>>,
+    preview_view_select: Entity<SelectState<Vec<SharedString>>>,
     minimum_input: Entity<InputState>,
     maximum_input: Entity<InputState>,
     /// Sample rates in the order of the rate choice.
@@ -142,12 +167,23 @@ impl SettingsView {
         let device_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let rate_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let buffer_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
+        let preview_view_select = cx.new(|cx| {
+            SelectState::new(
+                PreviewViewMode::ALL
+                    .map(|mode| SharedString::from(mode.label()))
+                    .to_vec(),
+                None,
+                window,
+                cx,
+            )
+        });
         let minimum_input = cx.new(|cx| InputState::new(window, cx));
         let maximum_input = cx.new(|cx| InputState::new(window, cx));
         let subscriptions = vec![
             cx.subscribe_in(&device_select, window, Self::on_device_selected),
             cx.subscribe_in(&rate_select, window, Self::on_rate_selected),
             cx.subscribe_in(&buffer_select, window, Self::on_buffer_selected),
+            cx.subscribe_in(&preview_view_select, window, Self::on_preview_view_selected),
             cx.subscribe_in(&minimum_input, window, Self::on_limit_input),
             cx.subscribe_in(&maximum_input, window, Self::on_limit_input),
         ];
@@ -158,6 +194,7 @@ impl SettingsView {
             device_select,
             rate_select,
             buffer_select,
+            preview_view_select,
             minimum_input,
             maximum_input,
             sample_rates: Vec::new(),
@@ -222,6 +259,13 @@ impl SettingsView {
             .position(|&frames| frames == snapshot.buffer_size);
         set_choices(&self.buffer_select, buffer_labels, buffer_index, window, cx);
 
+        let mode_index = PreviewViewMode::ALL
+            .iter()
+            .position(|&mode| mode == self.settings.preview_view_mode);
+        self.preview_view_select.update(cx, |state, cx| {
+            state.set_selected_index(mode_index.map(IndexPath::new), window, cx);
+        });
+
         set_text(
             &self.minimum_input,
             self.settings.loudness_minimum.to_string(),
@@ -239,8 +283,8 @@ impl SettingsView {
 
     /// Sends the changed settings to the main view.
     fn send(&mut self, settings: GuiSettings, cx: &mut Context<Self>) {
-        self.settings = settings.clone();
-        cx.emit(SettingsEvent::Changed(settings));
+        let previous = std::mem::replace(&mut self.settings, settings.clone());
+        cx.emit(SettingsEvent::Changed { previous, settings });
         cx.notify();
     }
 
@@ -303,6 +347,30 @@ impl SettingsView {
         let mut settings = self.settings.clone();
         settings.buffer_size = frames;
         self.send(settings, cx);
+    }
+
+    /// Requests a source visualization while leaving the other preview preferences unchanged.
+    fn on_preview_view_selected(
+        &mut self,
+        _select: &Entity<SelectState<Vec<SharedString>>>,
+        event: &SelectEvent<Vec<SharedString>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(label)) = event else {
+            return;
+        };
+        let Some(mode) = PreviewViewMode::ALL
+            .into_iter()
+            .find(|mode| mode.label() == label.as_ref())
+        else {
+            return;
+        };
+        if mode != self.settings.preview_view_mode {
+            let mut settings = self.settings.clone();
+            settings.preview_view_mode = mode;
+            self.send(settings, cx);
+        }
     }
 
     /// Applies the typed loudness range when Enter is pressed or a field loses focus.
@@ -371,41 +439,20 @@ impl SettingsView {
             ))
     }
 
-    /// Renders the preview group: the playback options and the loudness graph with its axis range.
+    /// Renders the preview group: the playback options, source visualization, and source indicators.
     fn render_preview_group(&self, cx: &Context<Self>) -> Div {
         let settings = &self.settings;
-        let limits_enabled = settings.show_loudness_graph;
-        let loudness_row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(PADDING))
-            .child(div().flex_1().child(Self::option(
-                "show-loudness-graph",
-                "Show loudness graph",
-                LOUDNESS_GRAPH_TOOLTIP,
-                settings.show_loudness_graph,
-                |settings, checked| settings.show_loudness_graph = checked,
-                cx,
-            )))
-            .child(limit_field(
-                "loudness-minimum",
-                "Min (LUFS)",
-                &self.minimum_input,
-                limits_enabled,
-            ))
-            .child(limit_field(
-                "loudness-maximum",
-                "Max (LUFS)",
-                &self.maximum_input,
-                limits_enabled,
-            ));
-        let error = div()
-            .min_h(px(18.0))
-            .text_size(px(HEADING_FONT_SIZE))
-            .text_color(color(palette::ORANGE_RED))
-            .children(self.range_error.clone());
         group("Preview preferences")
+            .child(choice_row(
+                "Preview view",
+                PREVIEW_VIEW_TOOLTIP,
+                div().w(relative(PREVIEW_SELECTOR_WIDTH_PROPORTION)).child(
+                    Select::new(&self.preview_view_select)
+                        .id("preview-view-mode")
+                        .small()
+                        .accessibility_label("Preview view"),
+                ),
+            ))
             .child(Self::option(
                 "preview-plugin-chain",
                 "Preview plugin chain",
@@ -438,8 +485,87 @@ impl SettingsView {
                 |settings, checked| settings.play_from_first_cue_point = checked,
                 cx,
             ))
-            .child(loudness_row)
-            .child(error)
+            .child(Self::option(
+                "serato-waveform-colours",
+                "Serato waveform colours",
+                SERATO_COLOURS_TOOLTIP,
+                settings.serato_waveform_colours,
+                |settings, checked| settings.serato_waveform_colours = checked,
+                cx,
+            ))
+            .child(self.render_overload_types(cx))
+            .child(Self::option(
+                "show-overload-lines",
+                "Overload vertical lines",
+                OVERLOAD_LINES_TOOLTIP,
+                settings.show_overload_lines,
+                |settings, checked| settings.show_overload_lines = checked,
+                cx,
+            ))
+            .child(self.render_loudness_range(cx))
+            .when_some(self.range_error.clone(), |group, error| {
+                group.child(
+                    div()
+                        .text_size(rems(HEADING_FONT_SIZE))
+                        .text_color(color(palette::ORANGE_RED))
+                        .child(error),
+                )
+            })
+    }
+
+    /// Renders the two independently enabled overload types on a shared row.
+    fn render_overload_types(&self, cx: &Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_3()
+            .child(div().flex_1().child(Self::option(
+                "show-sample-overloads",
+                "Peak overloads",
+                SAMPLE_OVERLOADS_TOOLTIP,
+                self.settings.show_sample_overloads,
+                |settings, checked| settings.show_sample_overloads = checked,
+                cx,
+            )))
+            .child(div().flex_1().child(Self::option(
+                "show-true-peak-overloads",
+                "True-peak overloads",
+                TRUE_PEAK_OVERLOADS_TOOLTIP,
+                self.settings.show_true_peak_overloads,
+                |settings, checked| settings.show_true_peak_overloads = checked,
+                cx,
+            )))
+    }
+
+    /// Renders the loudness graph toggle and its two associated axis limits.
+    fn render_loudness_range(&self, cx: &Context<Self>) -> Div {
+        let enabled = self.settings.show_loudness_graph;
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(rems(PADDING))
+            .child(div().flex_1().child(Self::option(
+                "show-loudness-graph",
+                "Show loudness graph",
+                LOUDNESS_GRAPH_TOOLTIP,
+                enabled,
+                |settings, checked| settings.show_loudness_graph = checked,
+                cx,
+            )))
+            .child(limit_field(
+                "loudness-minimum",
+                "Min (LUFS)",
+                &self.minimum_input,
+                enabled,
+            ))
+            .child(limit_field(
+                "loudness-maximum",
+                "Max (LUFS)",
+                &self.maximum_input,
+                enabled,
+            ))
     }
 
     /// Renders an option checkbox that changes one setting.
@@ -456,7 +582,7 @@ impl SettingsView {
             .small()
             .checked(checked)
             .tooltip(tooltip_text)
-            .text_size(px(FONT_SIZE))
+            .text_size(rems(FONT_SIZE))
             .on_change(cx.listener(move |view, checked: &bool, _, cx| {
                 let mut settings = view.settings.clone();
                 update(&mut settings, *checked);
@@ -481,17 +607,21 @@ impl Render for SettingsView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|_, _: &CloseAudioSettings, window, _| window.remove_window()))
             .size_full()
+            .min_h_0()
             .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(SECTION_SPACING))
-            .p(px(PADDING + 4.0))
             .bg(color(palette::GREY_DARK))
             .text_color(color(palette::GREY_LIGHT))
             .font_family(TEXT_FONT)
-            .text_size(px(FONT_SIZE))
-            .child(self.render_device_group())
-            .child(self.render_preview_group(cx))
+            .text_size(rems(FONT_SIZE))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(rems(SECTION_SPACING))
+                    .p_4()
+                    .child(self.render_device_group())
+                    .child(self.render_preview_group(cx)),
+            )
     }
 }
 
@@ -547,16 +677,16 @@ fn group(title: &'static str) -> Div {
     div()
         .flex()
         .flex_col()
-        .gap(px(ROW_SPACING))
-        .p(px(PADDING))
-        .rounded(px(CORNER_RADIUS))
+        .gap(rems(ROW_SPACING))
+        .p(rems(PADDING))
+        .rounded(rems(CORNER_RADIUS * 0.0625))
         .bg(color(palette::GREY_SEMI_DARK))
         .border_1()
         .border_color(white(OUTLINE_ALPHA))
         .child(
             div()
-                .pb(px(2.0))
-                .text_size(px(HEADING_FONT_SIZE))
+                .pb(rems(0.125))
+                .text_size(rems(HEADING_FONT_SIZE))
                 .text_color(color(palette::GREY_MIDDLE_LIGHT))
                 .child(title),
         )
@@ -570,10 +700,10 @@ fn choice_row(caption: &'static str, tooltip_text: &'static str, control: impl I
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(PADDING))
+        .gap(rems(PADDING))
         .child(
             div()
-                .w(px(CAPTION_WIDTH))
+                .w(rems(CAPTION_WIDTH))
                 .flex_none()
                 .text_color(color(palette::GREY_MIDDLE_LIGHT))
                 .child(caption),
@@ -589,7 +719,7 @@ fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputStat
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(rems(0.375))
         .child(
             div()
                 .text_color(color(if enabled {
@@ -601,10 +731,106 @@ fn limit_field(id: &'static str, caption: &'static str, input: &Entity<InputStat
         )
         .child(
             div()
-                .w(px(LIMIT_INPUT_WIDTH))
+                .w(rems(LIMIT_INPUT_WIDTH))
                 .child(Input::new(input).small().disabled(!enabled)),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{AnyWindowHandle, Bounds, Point, TestAppContext, WindowBounds, WindowOptions, px, size};
+
+    use super::*;
+
+    /// Opens the production settings view with enough space to exercise every preference without audio hardware.
+    fn open_settings(cx: &TestAppContext) -> (AnyWindowHandle, Entity<SettingsView>) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+        });
+        let (window, view) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Point::default(),
+                        size(px(800.0), px(900.0)),
+                    ))),
+                    ..WindowOptions::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| SettingsView::new(&SettingsSnapshot::default(), window, cx)),
+            )
+            .expect("opens the settings view")
+        });
+        (window, view)
+    }
+
+    #[gpui_kit::test]
+    fn overload_controls_accept_all_eight_independent_combinations(cx: &mut TestAppContext) {
+        let (handle, view) = open_settings(cx);
+        for sample in [false, true] {
+            for true_peak in [false, true] {
+                for lines in [false, true] {
+                    for (id, checked) in [
+                        ("show-sample-overloads", sample),
+                        ("show-true-peak-overloads", true_peak),
+                        ("show-overload-lines", lines),
+                    ] {
+                        cx.update_window(handle, |_, window, cx| {
+                            window.render_frame(cx);
+                            if window.find(id).checked() != Some(checked) {
+                                window.click(id, cx);
+                            }
+                            assert_eq!(window.find(id).checked(), Some(checked));
+                        })
+                        .expect("operates an overload checkbox");
+                        cx.run_until_parked();
+                    }
+                    cx.read(|cx| {
+                        let settings = &view.read(cx).settings;
+                        assert_eq!(settings.show_sample_overloads, sample);
+                        assert_eq!(settings.show_true_peak_overloads, true_peak);
+                        assert_eq!(settings.show_overload_lines, lines);
+                    });
+                }
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn preview_selector_uses_keyboard_and_retains_its_identity_when_synced(cx: &mut TestAppContext) {
+        let (handle, view) = open_settings(cx);
+        let selector = cx.read(|cx| view.read(cx).preview_view_select.entity_id());
+        for mode in PreviewViewMode::ALL {
+            if mode != PreviewViewMode::Waveform {
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.within("preview-view-mode").click("input", cx);
+                    window.press("down", cx);
+                    window.press("enter", cx);
+                })
+                .expect("selects the next preview mode");
+                cx.run_until_parked();
+            }
+            cx.read(|cx| assert_eq!(view.read(cx).settings.preview_view_mode, mode));
+        }
+        let snapshot = SettingsSnapshot {
+            settings: GuiSettings {
+                preview_view_mode: PreviewViewMode::Spectrogram,
+                ..GuiSettings::default()
+            },
+            ..SettingsSnapshot::default()
+        };
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.sync(&snapshot, window, cx));
+            window.render_frame(cx);
+            assert_eq!(window.find("preview-view-mode").value(), Some("Spectrogram"));
+            assert_eq!(view.read(cx).preview_view_select.entity_id(), selector);
+        })
+        .expect("syncs the canonical preview mode");
+    }
 }
 
 #[cfg(test)]

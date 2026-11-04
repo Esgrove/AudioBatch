@@ -223,11 +223,12 @@ fn normalize_job(record: &AnalysisRecord, conflicting: bool, context: &RunContex
     };
     // A panic in a decoder on a malformed file fails only this file,
     // since a panic in a pool job would otherwise abort the whole process.
-    let result = catch_unwind(AssertUnwindSafe(|| {
+    let mut result = catch_unwind(AssertUnwindSafe(|| {
         normalize_file(record, &context.options, &|| context.is_cancelled(), &mut on_progress)
     }))
     .unwrap_or_else(|_| OperationResult::failure(&record.path, "Normalization failed unexpectedly"));
     update_cache(&context.cache, record, &result);
+    result.clear_preview_artifacts();
     let committed = result.output().is_some();
     let finished = NormalizeEvent::Finished {
         run_id: context.run_id,

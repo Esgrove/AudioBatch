@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use audiobatch_core::file_selection::MAXIMUM_REVEAL_FOLDERS;
@@ -19,6 +20,7 @@ use crate::build_info::about_message;
 use crate::controls::{ControlsEvent, SliderControl};
 use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
 use crate::files::{open_parent_folders, reveal_in_file_manager};
+use crate::playback_status::format_playback_time;
 use crate::results::ResultsDelegate;
 use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, PlayheadSource, WaveformEvent, WaveformView};
 
@@ -278,22 +280,14 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match event {
-            WaveformEvent::ScrubStarted(seconds) => {
+            WaveformEvent::SeekAndPlayRequested(seconds) => {
                 self.start_after_cues = None;
                 if let Some(player) = &mut self.player {
-                    player.pause();
+                    let playing = player.is_playing();
                     player.seek(*seconds);
-                }
-            }
-            WaveformEvent::SeekRequested(seconds) => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    player.seek(*seconds);
-                }
-            }
-            WaveformEvent::ScrubEnded => {
-                if let Some(player) = &mut self.player {
-                    player.play();
+                    if !playing {
+                        player.play();
+                    }
                 }
             }
             WaveformEvent::RestartRequested => {
@@ -381,6 +375,39 @@ impl AppView {
                         cx.notify();
                     }
                     view.resolve_cue_start();
+                    if let Some(preview) = view
+                        .coordinator
+                        .as_ref()
+                        .and_then(|coordinator| coordinator.take_preview())
+                    {
+                        let token = view.preview_source.token();
+                        if view.selected.as_deref() == Some(preview.path())
+                            && token.is_some_and(|(_, generation)| generation == preview.generation())
+                            && preview.matches_file_on_disk()
+                            && view
+                                .table
+                                .read(cx)
+                                .delegate()
+                                .row_for(preview.path())
+                                .is_some_and(|row| row.ready_record().is_none())
+                        {
+                            view.waveform.update(cx, |waveform, cx| {
+                                waveform.update_progressive_overview(
+                                    Arc::clone(preview.waveform()),
+                                    preview.expected_frames(),
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                    let playback_time = view.player.as_ref().and_then(|player| {
+                        let duration = player.duration_seconds()?;
+                        (duration > 0.0).then(|| format_playback_time(player.position_seconds(), duration))
+                    });
+                    if playback_time != view.shown_playback_time {
+                        view.shown_playback_time = playback_time;
+                        cx.notify();
+                    }
                     let output = view.output_label();
                     if output != view.shown_output {
                         view.shown_output = output;

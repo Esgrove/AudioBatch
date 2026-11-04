@@ -263,6 +263,7 @@ impl AppView {
                         finished += 1;
                         selected_finished |= selected == Some(record.path.as_path());
                         let mut record = *record;
+                        record.spectrogram = None;
                         if selected != Some(record.path.as_path()) {
                             record.waveform = None;
                         }

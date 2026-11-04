@@ -2,6 +2,7 @@
 //!
 //! Sample regions retain their original buckets, while true peak regions conservatively cover interpolation history.
 //! Projection combines flags before choosing a warning shape, so isolated subpixel overs remain visible.
+//! Cap, outline, and minimum-mark dimensions are fixed raster-visibility geometry, not application spacing.
 
 use std::sync::Arc;
 
@@ -9,17 +10,18 @@ use audiobatch_core::AnalysisRecord;
 use audiobatch_core::overload::{OverloadHistory, SAMPLE_OVER, TRUE_PEAK_OVER};
 use gpui_kit::{Bounds, Hsla, PathBuilder, Window, fill, point, px, size};
 
-use super::{PaintData, Viewport};
+use super::PaintData;
+use super::geometry::Viewport;
 use crate::theme::{color, palette};
 
 /// Height of solid or hollow caps at each channel edge.
-const CAP_HEIGHT: f32 = 4.0;
+const CAP_HEIGHT: f32 = 2.5;
 /// Minimum warning width, retaining a visible hollow interior for isolated true peak overs.
 const MINIMUM_MARK_WIDTH: f32 = 3.0;
 /// Width of the hollow cap outline.
 const OUTLINE_WIDTH: f32 = 1.0;
-/// Restrained sample-over tint, leaving the underlying Serato colors legible.
-const TINT_ALPHA: f32 = 0.18;
+/// Restrained source-over tint for either warning kind, leaving the underlying colors legible.
+const TINT_ALPHA: f32 = 0.06;
 
 /// Conservative source-frame coverage before a true peak bucket, covering the interpolator's retained history.
 /// This is not a precise peak timestamp and does not extend the analyzer's unflushed EOF tail.
@@ -30,11 +32,19 @@ const TRUE_PEAK_COVERAGE_FRAMES: u64 = 32;
 enum WarningKind {
     /// Solid caps and a restrained lane tint, taking precedence over true peak flags.
     Sample,
-    /// Hollow edge caps without a reconstructed waveform or lane tint.
+    /// Hollow orange edge caps, with an optional channel-local tint.
     TruePeak,
 }
 
-/// Validated history belonging to the waveform and the current on-disk source identity.
+/// Independent display preferences, applied before warning precedence.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OverloadSettings {
+    sample: bool,
+    true_peak: bool,
+    lines: bool,
+}
+
+/// Validated history belonging to the source stream and the current on-disk source identity.
 #[derive(Default)]
 pub(super) struct SourceOverloads {
     history: Option<Arc<OverloadHistory>>,
@@ -46,6 +56,28 @@ struct WarningRun {
     start: usize,
     end: usize,
     kind: WarningKind,
+}
+
+impl OverloadSettings {
+    /// Constructs independent filters without imposing a mutually exclusive choice.
+    pub(super) const fn new(sample: bool, true_peak: bool, lines: bool) -> Self {
+        Self {
+            sample,
+            true_peak,
+            lines,
+        }
+    }
+
+    /// Removes disabled raw kinds before sample precedence is selected.
+    const fn visible_flags(self, flags: u8) -> u8 {
+        flags & ((if self.sample { SAMPLE_OVER } else { 0 }) | (if self.true_peak { TRUE_PEAK_OVER } else { 0 }))
+    }
+}
+
+impl Default for OverloadSettings {
+    fn default() -> Self {
+        Self::new(true, true, true)
+    }
 }
 
 impl SourceOverloads {
@@ -65,11 +97,17 @@ impl SourceOverloads {
         self.history.as_ref()
     }
 
-    /// Returns whether the attached source has a warning to explain in the contextual tooltip.
-    pub(super) fn has_overloads(&self) -> bool {
+    /// Reports source warnings that survive independent presentation filters.
+    pub(super) fn has_visible_overloads(&self, settings: OverloadSettings) -> bool {
         self.history
             .as_ref()
-            .is_some_and(|history| history.flags.iter().any(|&flags| flags != 0))
+            .is_some_and(|history| history.flags.iter().any(|&flags| settings.visible_flags(flags) != 0))
+    }
+
+    /// Reports any attached source warning for attachment contract tests.
+    #[cfg(test)]
+    fn has_overloads(&self) -> bool {
+        self.has_visible_overloads(OverloadSettings::default())
     }
 }
 
@@ -81,14 +119,18 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
     };
     let plot = viewport.plot;
     let columns = f32::from(plot.size.width) as usize;
-    let channels = data.overview.channels().clamp(1, 2) as usize;
+    let channels = data.source_channels.clamp(1, 2) as usize;
+    if history.channels as usize != channels {
+        return;
+    }
     let lane_height = f32::from(plot.size.height) / channels as f32;
-    // The C++ warning renderer uses the same palette warning color, so overload marks match in both applications.
-    let amber = color(palette::YELLOW_WARNING);
-    let tint = Hsla { a: TINT_ALPHA, ..amber };
     for channel in 0..channels {
         let projected = project_columns(history, channel, viewport.start, viewport.length, columns);
-        let runs = warning_runs(&projected);
+        let filtered: Vec<_> = projected
+            .into_iter()
+            .map(|flags| data.overload_settings.visible_flags(flags))
+            .collect();
+        let runs = warning_runs(&filtered);
         let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
         let cap_height = CAP_HEIGHT.min(lane_height / 4.0);
         // Sample marks paint last, so their stronger treatment wins even where minimum-width caps overlap.
@@ -98,7 +140,12 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
                 let center = f32::midpoint(run.start as f32, run.end as f32);
                 let half_width = width * 0.5;
                 let left = f32::from(plot.origin.x) + center - half_width;
-                if kind == WarningKind::Sample {
+                let warning_color = warning_color(kind);
+                let tint = Hsla {
+                    a: TINT_ALPHA,
+                    ..warning_color
+                };
+                if data.overload_settings.lines {
                     window.paint_quad(fill(
                         Bounds {
                             origin: point(px(left), px(lane_top)),
@@ -107,20 +154,85 @@ pub(super) fn paint(data: &PaintData, viewport: &Viewport, window: &mut Window) 
                         tint,
                     ));
                 }
-                for top in [lane_top, lane_top + lane_height - cap_height] {
+                for top in edge_caps(channel, channels, lane_top, lane_height, cap_height)
+                    .into_iter()
+                    .flatten()
+                {
                     let bounds = Bounds {
                         origin: point(px(left), px(top)),
                         size: size(px(width), px(cap_height)),
                     };
                     if kind == WarningKind::Sample {
-                        window.paint_quad(fill(bounds, amber));
+                        window.paint_quad(fill(bounds, warning_color));
                     } else {
-                        paint_outline(left, top, width, cap_height, amber, window);
+                        paint_outline(left, top, width, cap_height, warning_color, window);
                     }
                 }
             }
         }
     }
+}
+
+/// Paints source warnings in a dedicated spectral-only strip, with the same filters and precedence as the waveform.
+pub(super) fn paint_warning_strip(data: &PaintData, viewport: &Viewport, window: &mut Window) {
+    let Some(history) = data.overloads.as_deref() else {
+        return;
+    };
+    let columns = f32::from(viewport.plot.size.width) as usize;
+    let mixed = mixed_columns(history, viewport, columns, data.overload_settings);
+    for run in warning_runs(&mixed) {
+        let left = f32::from(viewport.plot.origin.x) + run.start as f32;
+        let width = (run.end - run.start) as f32;
+        let top = f32::from(viewport.plot.origin.y);
+        let height = f32::from(viewport.plot.size.height);
+        let color = warning_color(run.kind);
+        if run.kind == WarningKind::Sample {
+            window.paint_quad(fill(
+                Bounds::new(point(px(left), px(top)), size(px(width), px(height))),
+                color,
+            ));
+        } else {
+            paint_outline(left, top, width, height, color, window);
+        }
+    }
+}
+
+/// Combines only enabled source-channel warnings, independently of the optional waveform tint setting.
+fn mixed_columns(
+    history: &OverloadHistory,
+    viewport: &Viewport,
+    columns: usize,
+    settings: OverloadSettings,
+) -> Vec<u8> {
+    let mut mixed = vec![0; columns];
+    for channel in 0..history.channels as usize {
+        for (mixed, flags) in mixed.iter_mut().zip(project_columns(
+            history,
+            channel,
+            viewport.start,
+            viewport.length,
+            columns,
+        )) {
+            *mixed |= settings.visible_flags(flags);
+        }
+    }
+    mixed
+}
+
+/// Resolves a semantic source-warning color from the product palette, not the calibrated raster palette.
+fn warning_color(kind: WarningKind) -> Hsla {
+    match kind {
+        WarningKind::Sample => color(palette::YELLOW_WARNING),
+        WarningKind::TruePeak => color(palette::ORANGE),
+    }
+}
+
+/// Limits edge caps to the top of the first channel and the bottom of the last, never the middle seam.
+fn edge_caps(channel: usize, channels: usize, top: f32, height: f32, cap_height: f32) -> [Option<f32>; 2] {
+    [
+        (channel == 0).then_some(top),
+        (channel + 1 == channels).then_some(top + height - cap_height),
+    ]
 }
 
 /// Projects one actual source channel onto the visible range, combining every overlapping bucket with bitwise OR.
@@ -213,13 +325,14 @@ fn warning_runs(columns: &[u8]) -> Vec<WarningRun> {
 /// Rejects stale file measurements and mismatched stream metadata before sharing history with the paint closure.
 fn matching_history(record: &AnalysisRecord) -> Option<Arc<OverloadHistory>> {
     let history = record.overloads.as_ref()?;
-    let overview = record.waveform.as_ref()?;
     if !record.is_ready()
         || !history.matches_stream(record.sample_rate, record.length_in_samples, record.channels)
-        || overview.sample_rate() != record.sample_rate
-        || overview.channels() != record.channels
-        || (overview.duration_seconds() - record.length_in_samples as f64 / f64::from(record.sample_rate)).abs()
-            > f64::EPSILON
+        || record.waveform.as_ref().is_some_and(|overview| {
+            overview.sample_rate() != record.sample_rate
+                || overview.channels() != record.channels
+                || (overview.duration_seconds() - record.length_in_samples as f64 / f64::from(record.sample_rate)).abs()
+                    > f64::EPSILON
+        })
         || !record.matches_file_on_disk()
     {
         return None;
@@ -260,6 +373,53 @@ mod test_projection {
         };
         assert!(history.is_valid());
         history
+    }
+
+    #[test]
+    fn independent_filters_remove_disabled_sample_flags_before_precedence() {
+        let both = SAMPLE_OVER | TRUE_PEAK_OVER;
+        for (sample, true_peak, expected) in [
+            (true, true, both),
+            (true, false, SAMPLE_OVER),
+            (false, true, TRUE_PEAK_OVER),
+            (false, false, 0),
+        ] {
+            for lines in [false, true] {
+                let settings = OverloadSettings::new(sample, true_peak, lines);
+                assert_eq!(settings.visible_flags(both), expected);
+            }
+        }
+        let filtered = OverloadSettings::new(false, true, false).visible_flags(both);
+        assert!(
+            warning_runs(&[filtered])
+                .iter()
+                .all(|run| run.kind == WarningKind::TruePeak)
+        );
+    }
+
+    #[test]
+    fn stereo_caps_never_mark_the_middle_channel_seam() {
+        assert_eq!(edge_caps(0, 2, 10.0, 50.0, CAP_HEIGHT), [Some(10.0), None]);
+        assert_eq!(edge_caps(1, 2, 60.0, 50.0, CAP_HEIGHT), [None, Some(107.5)]);
+        assert_eq!(edge_caps(0, 1, 10.0, 100.0, CAP_HEIGHT), [Some(10.0), Some(107.5)]);
+    }
+
+    #[test]
+    fn spectral_warning_strip_obeys_filters_but_not_waveform_line_preference() {
+        let history = history(2, 200, &[SAMPLE_OVER, TRUE_PEAK_OVER, 0, 0]);
+        let viewport = Viewport {
+            start: 0.0,
+            length: 0.2,
+            ..Viewport::default()
+        };
+        for lines in [false, true] {
+            let columns = mixed_columns(&history, &viewport, 2, OverloadSettings::new(false, true, lines));
+            assert_eq!(columns, [TRUE_PEAK_OVER, 0]);
+            assert_eq!(
+                mixed_columns(&history, &viewport, 2, OverloadSettings::new(false, false, lines)),
+                [0, 0]
+            );
+        }
     }
 
     #[test]
@@ -390,6 +550,20 @@ mod test_attachment {
     }
 
     #[test]
+    fn source_only_warnings_remain_available_without_waveform_pixels() {
+        let source = NamedTempFile::new().expect("source");
+        let mut record = record(&source, TRUE_PEAK_OVER);
+        record.waveform = None;
+        let mut attached = SourceOverloads::default();
+        attached.set_record(&record);
+        assert!(attached.has_overloads());
+        assert!(Arc::ptr_eq(
+            attached.history().expect("source-only history"),
+            record.overloads.as_ref().expect("history")
+        ));
+    }
+
+    #[test]
     fn identity_changes_missing_sources_and_clear_drop_previous_warnings() {
         let first = NamedTempFile::new().expect("first source");
         let second = NamedTempFile::new().expect("second source");
@@ -427,10 +601,6 @@ mod test_attachment {
         for invalid in [
             AnalysisRecord {
                 overloads: None,
-                ..original.clone()
-            },
-            AnalysisRecord {
-                waveform: None,
                 ..original.clone()
             },
             AnalysisRecord {

@@ -51,6 +51,7 @@ objc2-core-foundation = "0.3.2"
 objc2-foundation = "0.3.2"
 raw-window-handle = "0.6.2"
 rayon = "1.12.0"
+realfft = "3.5.1"
 rtrb = "0.4.1"
 rubato = "5.0.1"
 rusqlite = { version = "0.41.1", features = ["bundled"] }

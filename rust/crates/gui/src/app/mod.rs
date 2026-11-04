@@ -173,6 +173,8 @@ pub struct AppView {
     status: SharedString,
     /// Output text of the status bar at the last check, so a change in the buffer size renders again.
     shown_output: SharedString,
+    /// Last formatted source time, avoiding whole-window redraws at every player poll.
+    shown_playback_time: Option<String>,
     menu_state: MenuState,
     /// Preferences saved between launches.
     settings: GuiSettings,
@@ -328,6 +330,7 @@ impl AppView {
             artwork_task: None,
             status,
             shown_output: SharedString::default(),
+            shown_playback_time: None,
             menu_state,
             settings,
             settings_path,
@@ -464,6 +467,13 @@ impl Default for AppOptions {
 /// Applies saved waveform presentation before any source is selected.
 fn configure_waveform(waveform: &Entity<WaveformView>, settings: &GuiSettings, cx: &mut Context<AppView>) {
     waveform.update(cx, |waveform, cx| {
+        waveform.set_view_mode(settings.preview_view_mode, cx);
+        waveform.set_overload_settings(
+            settings.show_sample_overloads,
+            settings.show_true_peak_overloads,
+            settings.show_overload_lines,
+            cx,
+        );
         waveform.set_show_loudness(settings.show_loudness_graph, cx);
         waveform.set_serato_colours(settings.serato_waveform_colours, cx);
         waveform.set_loudness_range(settings.loudness_minimum, settings.loudness_maximum, cx);
@@ -479,6 +489,10 @@ fn initial_menu_state(
     MenuState {
         output_device: None,
         show_loudness_graph: settings.show_loudness_graph,
+        preview_view_mode: settings.preview_view_mode,
+        show_sample_overloads: settings.show_sample_overloads,
+        show_true_peak_overloads: settings.show_true_peak_overloads,
+        show_overload_lines: settings.show_overload_lines,
         serato_colours: settings.serato_waveform_colours,
         show_album_artwork: settings.show_album_artwork,
         preview_plugin_chain: settings.preview_plugin_chain,

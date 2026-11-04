@@ -10,8 +10,10 @@ use std::sync::Arc;
 
 use crate::decode::{AudioFileDecoder, DecodeError, StreamInfo};
 use crate::meter::{BlockMeter, MeterError, MeterOutput};
+use crate::output_file::SourceIdentity;
 use crate::overload::OverloadHistory;
 use crate::record::{AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
+use crate::spectrogram::SpectrogramData;
 use crate::waveform::WaveformOverview;
 
 /// Error message of a cancelled analysis, which callers must not cache.
@@ -52,6 +54,7 @@ struct DecodeMeasurements {
     max_short_term_lufs: f64,
     short_term_loudness: Arc<ShortTermLoudnessHistory>,
     waveform: Arc<WaveformOverview>,
+    spectrogram: Option<Arc<SpectrogramData>>,
     overloads: Arc<OverloadHistory>,
 }
 
@@ -73,13 +76,35 @@ impl MeasurementError {
 /// The decoded fraction of the file is reported to `on_progress` while decoding,
 /// when the container states the length.
 pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &mut dyn FnMut(f32)) -> AnalysisRecord {
+    analyze_file_with_observer(path, is_cancelled, on_progress, &mut |_, _, _| {})
+}
+
+/// Analyzes a file while exposing the same-pass meter after each decoded chunk.
+///
+/// The observer runs on the decoding worker and should only copy a snapshot after admission and throttling.
+/// Provisional snapshots never establish completed measurement or cache authority.
+pub fn analyze_file_with_observer(
+    path: &Path,
+    is_cancelled: &dyn Fn() -> bool,
+    on_progress: &mut dyn FnMut(f32),
+    on_decoded: &mut dyn FnMut(&BlockMeter, u64, &StreamInfo),
+) -> AnalysisRecord {
     let _span = tracing::info_span!("analyze", file = %path.display()).entered();
+    let source_identity = SourceIdentity::capture(path).ok();
     let mut record = AnalysisRecord::from_path(path);
+    record.source_identity = source_identity;
     if !path.is_file() {
         return fail(record, AnalysisError::MissingFile, "File does not exist");
     }
-    match measure_file(path, is_cancelled, on_progress) {
+    match measure_file(path, is_cancelled, on_progress, on_decoded) {
         Ok(measurements) => {
+            if record.source_identity.is_none() || !record.matches_file_on_disk() {
+                return fail(
+                    record,
+                    AnalysisError::Unreadable,
+                    "File changed while it was being analyzed",
+                );
+            }
             let peaks = summarize(&measurements.signed_peaks, dominant_peak_f32);
             let true_peaks = summarize(&measurements.true_peaks, dominant_peak_f64);
 
@@ -103,6 +128,7 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
             record.integrated_lufs = measurements.integrated_lufs;
             record.short_term_loudness = Some(measurements.short_term_loudness);
             record.waveform = Some(measurements.waveform);
+            record.spectrogram = measurements.spectrogram;
             record.overloads = Some(measurements.overloads);
             record.status = AnalysisStatus::Analyzed;
             record.from_cache = false;
@@ -122,7 +148,20 @@ pub fn analyze_file_catching_panics(
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
 ) -> AnalysisRecord {
-    catch_unwind(AssertUnwindSafe(|| analyze_file(path, is_cancelled, on_progress))).unwrap_or_else(|_| {
+    analyze_file_with_observer_catching_panics(path, is_cancelled, on_progress, &mut |_, _, _| {})
+}
+
+/// Catches decoder and observer panics without allowing a worker job to abort the run.
+pub(crate) fn analyze_file_with_observer_catching_panics(
+    path: &Path,
+    is_cancelled: &dyn Fn() -> bool,
+    on_progress: &mut dyn FnMut(f32),
+    on_decoded: &mut dyn FnMut(&BlockMeter, u64, &StreamInfo),
+) -> AnalysisRecord {
+    catch_unwind(AssertUnwindSafe(|| {
+        analyze_file_with_observer(path, is_cancelled, on_progress, on_decoded)
+    }))
+    .unwrap_or_else(|_| {
         fail(
             AnalysisRecord::from_path(path),
             AnalysisError::Panicked,
@@ -137,8 +176,10 @@ pub(crate) fn record_from_meter(
     info: &StreamInfo,
     length_in_samples: u64,
     output: MeterOutput,
+    source_identity: SourceIdentity,
 ) -> AnalysisRecord {
     let mut record = AnalysisRecord::from_path(path);
+    record.source_identity = Some(source_identity);
     let peaks = summarize(&output.signed_peaks, dominant_peak_f32);
     let true_peaks = summarize(&output.true_peaks, dominant_peak_f64);
     record.format_name.clone_from(&info.format_name);
@@ -162,6 +203,7 @@ pub(crate) fn record_from_meter(
         samples_per_point: output.samples_per_point,
     }));
     record.waveform = Some(output.waveform);
+    record.spectrogram = output.spectrogram;
     record.overloads = Some(output.overloads);
     record.status = AnalysisStatus::Analyzed;
     record
@@ -183,6 +225,7 @@ fn measure_file(
     path: &Path,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
+    on_decoded: &mut dyn FnMut(&BlockMeter, u64, &StreamInfo),
 ) -> Result<DecodeMeasurements, MeasurementError> {
     let mut decoder = AudioFileDecoder::open(path)?;
     let info = decoder.info().clone();
@@ -196,9 +239,13 @@ fn measure_file(
             break;
         };
         meter.push(chunk);
+        on_decoded(&meter, decoder.position(), &info);
         if let Some(expected) = info.expected_frames.filter(|&frames| frames > 0) {
             on_progress((decoder.position() as f64 / expected as f64).min(1.0) as f32);
         }
+    }
+    if is_cancelled() {
+        return Err(AnalysisFailure::new(AnalysisError::Cancelled, CANCELLED_MESSAGE).into());
     }
     on_progress(1.0);
 
@@ -223,6 +270,7 @@ fn measure_file(
         max_short_term_lufs: output.max_short_term_lufs,
         short_term_loudness,
         waveform: output.waveform,
+        spectrogram: output.spectrogram,
         overloads: output.overloads,
     })
 }

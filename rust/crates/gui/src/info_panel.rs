@@ -1,7 +1,7 @@
 //! The information panel of the selected file, beside the waveform.
 //!
 //! It shows the file name split into artist and title at the first " - ", beside the embedded album artwork,
-//! a status line while the file has no result,
+//! actionable error details when analysis fails,
 //! four metric cards for the levels, and a scrollable list of technical details and tags.
 //! The tooltips show the full path on the name, and each value spelled out.
 //! The wide variant puts the metric cards in one row, and the details with short values two to a line,
@@ -153,23 +153,7 @@ pub fn render_info_panel(
         .map_or((file_name, None), |(artist, title)| (artist, Some(title)));
     let path = row.path.display().to_string();
     let ready = row.ready_record();
-    let mut panel = panel.child(heading(artist, title, &path, artwork));
-    if ready.is_none() {
-        let status_color = if row.has_error() {
-            color(palette::RED)
-        } else {
-            color(palette::GREY_MIDDLE_LIGHT)
-        };
-        panel = panel.child(
-            div()
-                .h(px(18.0))
-                .flex()
-                .items_center()
-                .text_size(px(CAPTION_FONT_SIZE))
-                .text_color(status_color)
-                .child(row.status_text()),
-        );
-    }
+    let panel = panel.child(heading(artist, title, &path, artwork));
 
     let mut details = div()
         .id("info-details")

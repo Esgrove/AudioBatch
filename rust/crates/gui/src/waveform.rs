@@ -4,10 +4,11 @@
 //! a thin white playhead, and a short-term loudness curve with its axis when the graph is enabled.
 //! The envelopes are blue, or coloured column by column from the Serato Overview tag when the file has one,
 //! while their shape still comes from the decoded audio.
-//! Identity-matched source overloads add solid amber sample caps and hollow true peak caps, independent of input gain.
+//! Identity-matched source overloads add solid yellow sample caps and hollow orange true peak caps,
+//! independent of input gain.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
-//! Pressing pauses at the clicked time, dragging scrubs, releasing plays from there,
+//! Pressing and dragging show a pending target without changing playback, releasing seeks and plays once,
 //! and a double-click plays from the start.
 //! The mouse wheel zooms, and Command or Control with the wheel changes the gain.
 //! While audio plays the view requests a new frame on every render, so the playhead moves smoothly.
@@ -18,25 +19,31 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use audiobatch_core::overload::OverloadHistory;
-use audiobatch_core::record::NEGATIVE_INFINITY_LOUDNESS;
 use audiobatch_core::serato_tags::Overview;
 use audiobatch_core::serato_tags::colouring::{OverviewColour, column_colours};
+use audiobatch_core::spectrogram::SpectrogramData;
 use audiobatch_core::{AnalysisRecord, ShortTermLoudnessHistory, WaveformOverview};
 use audiobatch_playback::PlayheadHandle;
 use gpui_kit::{
-    App, Bounds, ContentMask, Context, EventEmitter, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollEvent,
-    SharedString, StatefulInteractiveElement as _, Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font,
-    point, px, rgb, size,
+    App, Bounds, Context, EventEmitter, FocusHandle, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PathBuilder, Pixels, Point, ScrollEvent, SharedString, TextAlign, TextRun, Window, fill, font, point, px, rgb,
+    size,
 };
 
-use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
-use crate::settings::{DEFAULT_LOUDNESS_MAXIMUM, DEFAULT_LOUDNESS_MINIMUM};
-use crate::theme::{TEXT_FONT, black, color, palette, tooltip, white};
+use crate::settings::{DEFAULT_LOUDNESS_MAXIMUM, DEFAULT_LOUDNESS_MINIMUM, PreviewViewMode};
+use crate::theme::{TEXT_FONT, black, color, palette, white};
 
-use self::overloads::SourceOverloads;
+use self::geometry::{PreviewGeometry, Viewport, has_area, relative};
+use self::loudness::LoudnessRange;
+use self::overloads::{OverloadSettings, SourceOverloads};
+use self::spectrogram::SpectrogramRaster;
 
+mod axes;
+mod geometry;
+mod loudness;
 mod overloads;
+mod render;
+mod spectrogram;
 
 /// Lowest zoom level, the whole file.
 pub const MINIMUM_ZOOM: f64 = 1.0;
@@ -49,24 +56,6 @@ pub const NO_FILE_TEXT: &str = "No audio file selected";
 
 /// Inset of the plot inside the panel.
 const PLOT_INSET: f32 = 2.0;
-
-/// Width of the loudness axis labels.
-const LOUDNESS_AXIS_WIDTH: f32 = 16.0;
-
-/// Gap between the loudness axis labels and the plot.
-const LOUDNESS_AXIS_GAP: f32 = 6.0;
-
-/// Target vertical distance between two loudness ticks.
-const LOUDNESS_TICK_SPACING: f32 = 32.0;
-
-/// Font size of the loudness axis labels.
-const LOUDNESS_FONT_SIZE: f32 = 10.0;
-
-/// Width of the loudness curve.
-const LOUDNESS_LINE_WIDTH: f32 = 1.5;
-
-/// Extra width of the dark outline around the loudness curve.
-const LOUDNESS_OUTLINE_WIDTH: f32 = 1.4;
 
 /// Height of a cue arrow.
 const CUE_ARROW_HEIGHT: f32 = 8.0;
@@ -86,8 +75,12 @@ const PLAYING_PLAYHEAD_ALPHA: f32 = 0.85;
 /// Opacity of the playhead while paused away from the start.
 const PAUSED_PLAYHEAD_ALPHA: f32 = 0.4;
 
-/// Contextual explanation shown only when the displayed source has overload warnings.
-const SOURCE_OVERS_TOOLTIP: &str = "Source overs: solid = sample > 0 dBFS, outlined = true peak > 0 dBTP.";
+/// Opacity of the pending release target, quieter than the actual playback cursor.
+const PENDING_PLAYHEAD_ALPHA: f32 = 0.45;
+
+/// Explanation is attached only to the waveform pane, never the spectral plot or frequency axis.
+const SOURCE_OVERS_TOOLTIP: &str =
+    "Source overs: solid yellow = sample > 0 dBFS, outlined orange = true peak > 0 dBTP.";
 
 /// Wheel distance in pixels for one zoom step or one decibel of gain.
 const WHEEL_STEP_PIXELS: f32 = 20.0;
@@ -98,12 +91,8 @@ const WHEEL_ZOOM_FACTOR: f64 = 1.2;
 /// Events the waveform sends to the app view.
 #[derive(Debug, Clone)]
 pub enum WaveformEvent {
-    /// The user pressed the mouse at a time in seconds, which pauses playback there while the mouse is held.
-    ScrubStarted(f64),
-    /// The user dragged to a time in seconds while scrubbing.
-    SeekRequested(f64),
-    /// The user released the mouse after scrubbing, which plays from the scrubbed time.
-    ScrubEnded,
+    /// The user committed a pending target on release, requesting one seek followed by playback.
+    SeekAndPlayRequested(f64),
     /// The user double-clicked, which plays from the start.
     RestartRequested,
     /// The user zoomed with the wheel by a factor.
@@ -140,6 +129,14 @@ pub struct CueMarker {
 /// Paints the overview of one file.
 pub struct WaveformView {
     overview: Option<Arc<WaveformOverview>>,
+    spectrogram: Option<SpectrogramRaster>,
+    spectrogram_completed: bool,
+    view_mode: PreviewViewMode,
+    source_rate: u32,
+    source_channels: u32,
+    source_frames: u64,
+    source_duration: f64,
+    overload_settings: OverloadSettings,
     /// Captured analysis source, independent of waveform allocation and selected-preview generation.
     source: Option<(std::path::PathBuf, u64, i64)>,
     /// Source-only warnings validated against the record, waveform, and on-disk file identity.
@@ -155,14 +152,16 @@ pub struct WaveformView {
     visible_start: f64,
     /// Linear gain applied to the drawn envelope.
     display_gain: f32,
-    /// True from a press on the waveform until the mouse is released.
-    scrubbing: bool,
+    /// Pending display-only target and the pressed pane's latched source-time mapping.
+    pending_seek: Option<PendingSeek>,
+    /// Created once for this retained view, preserving root action bubbling and hot-cue shortcuts.
+    focus_handle: Option<FocusHandle>,
     /// Whether the Serato Overview colours the envelope.
     serato_colours: bool,
     show_loudness: bool,
     loudness_range: LoudnessRange,
-    /// Plot bounds from the last paint, used to turn a mouse position into a time.
-    plot_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Current frame's shared pane geometry, resolved from the window's rem size.
+    geometry: Rc<Cell<PreviewGeometry>>,
     /// Counts redraws when `AUDIOBATCH_GUI_DEBUG` is set, for checking the playhead frame rate.
     frame_counter: Option<FrameCounter>,
 }
@@ -173,34 +172,26 @@ struct FrameCounter {
     frames: u32,
 }
 
-/// The visible part of the file and its mapping to the plot.
+/// A display-only seek gesture, latched to its initial pane and viewport until committed or cleared.
 #[derive(Debug, Clone, Copy)]
-struct Viewport {
-    start: f64,
-    length: f64,
-    plot: Bounds<Pixels>,
-}
-
-/// The loudness at the bottom and the top of the loudness graph axis, in whole LUFS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LoudnessRange {
-    minimum: i32,
-    maximum: i32,
-}
-
-/// The loudness readings that fall into one pixel column, as index and value pairs.
-#[derive(Debug, Clone, Copy)]
-struct ColumnBucket {
-    column: i64,
-    first: (usize, f32),
-    lowest: (usize, f32),
-    highest: (usize, f32),
-    last: (usize, f32),
+struct PendingSeek {
+    viewport: Viewport,
+    seconds: f64,
+    restart: bool,
 }
 
 /// Everything the paint closure needs, copied out of the view for one frame.
 struct PaintData {
-    overview: Arc<WaveformOverview>,
+    overview: Option<Arc<WaveformOverview>>,
+    spectrogram: Option<SpectrogramRaster>,
+    spectrogram_completed: bool,
+    view_mode: PreviewViewMode,
+    source_rate: u32,
+    source_channels: u32,
+    source_duration: f64,
+    placeholder: SharedString,
+    overload_settings: OverloadSettings,
+    pending_seek: Option<f64>,
     overloads: Option<Arc<OverloadHistory>>,
     serato_overview: Option<Arc<Overview>>,
     loudness: Option<Arc<ShortTermLoudnessHistory>>,
@@ -245,6 +236,14 @@ impl WaveformView {
     pub fn new() -> Self {
         Self {
             overview: None,
+            spectrogram: None,
+            spectrogram_completed: false,
+            view_mode: PreviewViewMode::Waveform,
+            source_rate: 0,
+            source_channels: 0,
+            source_frames: 0,
+            source_duration: 0.0,
+            overload_settings: OverloadSettings::default(),
             source: None,
             overloads: SourceOverloads::default(),
             serato_overview: None,
@@ -255,14 +254,15 @@ impl WaveformView {
             zoom: MINIMUM_ZOOM,
             visible_start: 0.0,
             display_gain: 1.0,
-            scrubbing: false,
+            pending_seek: None,
+            focus_handle: None,
             serato_colours: true,
             show_loudness: false,
             loudness_range: LoudnessRange {
                 minimum: DEFAULT_LOUDNESS_MINIMUM,
                 maximum: DEFAULT_LOUDNESS_MAXIMUM,
             },
-            plot_bounds: Rc::new(Cell::new(Bounds::default())),
+            geometry: Rc::new(Cell::new(PreviewGeometry::default())),
             frame_counter: crate::debug_enabled().then(|| FrameCounter {
                 window_start: Instant::now(),
                 frames: 0,
@@ -273,8 +273,92 @@ impl WaveformView {
     /// Shows an analyzed record and attaches source warnings only while its file identity and waveform match.
     /// Warning attachment does not change input gain, cues, playback, or the visible range of the same overview.
     pub fn set_record(&mut self, record: &AnalysisRecord, cx: &mut Context<Self>) {
+        let source = (record.path.clone(), record.file_size, record.modified_time_ms);
+        if self.source.as_ref() != Some(&source) {
+            self.clear_spectrogram(cx);
+        }
         self.update_record(record);
+        if self.spectrogram.as_ref().is_some_and(|raster| {
+            !raster
+                .source()
+                .matches_stream(self.source_rate, self.source_frames, self.source_channels)
+        }) {
+            self.clear_spectrogram(cx);
+        }
         cx.notify();
+    }
+
+    /// Changes the presentation only, retaining artifacts, viewport, gain, and transport state.
+    pub fn set_view_mode(&mut self, mode: PreviewViewMode, cx: &mut Context<Self>) {
+        self.view_mode = mode;
+        cx.notify();
+    }
+
+    /// Sets independent warning filters before precedence and the shared lane-tint preference.
+    pub fn set_overload_settings(&mut self, sample: bool, true_peak: bool, lines: bool, cx: &mut Context<Self>) {
+        self.overload_settings = OverloadSettings::new(sample, true_peak, lines);
+        cx.notify();
+    }
+
+    /// Adopts only source-matched bounded data, building one raster when the immutable artifact changes.
+    /// The caller rejects stale asynchronous selection generations before calling this method.
+    pub fn update_spectrogram(&mut self, source: Option<Arc<SpectrogramData>>, cx: &mut Context<Self>) {
+        let source =
+            source.filter(|data| data.matches_stream(self.source_rate, self.source_frames, self.source_channels));
+        let same = match (&self.spectrogram, &source) {
+            (Some(current), Some(next)) => Arc::ptr_eq(current.source(), next),
+            (None, None) => true,
+            _ => false,
+        };
+        if self.spectrogram_completed && same {
+            return;
+        }
+        self.clear_spectrogram(cx);
+        self.spectrogram_completed = true;
+        self.spectrogram = source.map(SpectrogramRaster::new);
+        cx.notify();
+    }
+
+    /// Reports completed spectral loading, including an unavailable optional artifact.
+    pub const fn has_spectrogram_result(&self) -> bool {
+        self.spectrogram_completed
+    }
+
+    /// Replaces only the decoded waveform prefix, retaining the complete source timeline and viewport.
+    /// The owner validates run, source identity, and selection generation before adoption.
+    pub fn update_progressive_overview(
+        &mut self,
+        overview: Arc<WaveformOverview>,
+        expected_frames: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        self.source_rate = overview.sample_rate();
+        self.source_channels = overview.channels();
+        self.source_frames = expected_frames
+            .unwrap_or(self.source_frames)
+            .max(overview.length_in_frames());
+        self.source_duration = self.source_frames as f64 / f64::from(self.source_rate);
+        self.overview = Some(overview);
+        cx.notify();
+    }
+
+    /// Reports the pending display target independently of the actual playback cursor.
+    #[cfg(test)]
+    pub fn pending_seek_position(&self) -> Option<f64> {
+        self.pending_seek.map(|pending| pending.seconds)
+    }
+
+    /// Reports retained raster availability without exposing pixels to semantic integration tests.
+    #[cfg(test)]
+    pub const fn has_spectrogram_raster(&self) -> bool {
+        self.spectrogram.is_some()
+    }
+
+    /// Returns the two source plots for production-handler integration tests, excluding all axis gutters.
+    #[cfg(test)]
+    pub fn preview_plots(&self) -> [Bounds<Pixels>; 2] {
+        let geometry = self.geometry.get();
+        [geometry.waveform, geometry.spectrogram]
     }
 
     /// Returns the source currently owning a real waveform, for nonvisual workflow assertions.
@@ -292,6 +376,7 @@ impl WaveformView {
         loudness: Option<Arc<ShortTermLoudnessHistory>>,
         cx: &mut Context<Self>,
     ) {
+        self.clear_spectrogram(cx);
         self.update_overview(overview, loudness);
         cx.notify();
     }
@@ -299,6 +384,13 @@ impl WaveformView {
     /// Shows a text instead of an overview, for example while the file is analyzed.
     /// The cue points stay, so they reappear once the overview of the same file is shown.
     pub fn show_placeholder(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.clear_spectrogram(cx);
+        self.pending_seek = None;
+        self.source_rate = 0;
+        self.source_channels = 0;
+        self.source_frames = 0;
+        self.source_duration = 0.0;
+        self.geometry.set(PreviewGeometry::default());
         self.placeholder = text.into();
         self.overloads.clear();
         self.source = None;
@@ -382,20 +474,56 @@ impl WaveformView {
         cx.notify();
     }
 
-    /// Applies source-matched artifacts without touching transport, cue, gain, zoom or scrubbing state.
+    /// Drops the old image after GPUI releases any window borrow held by the current update.
+    fn clear_spectrogram(&mut self, cx: &mut Context<Self>) {
+        if let Some(raster) = self.spectrogram.take() {
+            let image = raster.into_image();
+            cx.defer(move |cx| cx.drop_image(image, None));
+        }
+        self.spectrogram_completed = false;
+    }
+
+    /// Applies source-matched artifacts without touching transport, cue, gain, zoom or pending same-source gestures.
     fn update_record(&mut self, record: &AnalysisRecord) {
         let source = (record.path.clone(), record.file_size, record.modified_time_ms);
         let same_source = self.source.as_ref() == Some(&source);
         let visible_start = self.visible_start;
+        let pending_seek = self.pending_seek;
+        let loudness = record
+            .short_term_loudness
+            .clone()
+            .or_else(|| same_source.then(|| self.loudness.clone()).flatten());
         let overview = record
             .waveform
             .clone()
             .or_else(|| same_source.then(|| self.overview.clone()).flatten());
-        self.update_overview(overview, record.short_term_loudness.clone());
+        self.update_overview(overview, loudness);
         self.source = Some(source);
+        self.source_rate = record.sample_rate;
+        self.source_channels = record.channels;
+        self.source_frames = record.length_in_samples;
+        self.source_duration = if record.sample_rate > 0 && record.length_in_samples > 0 {
+            record.length_in_samples as f64 / f64::from(record.sample_rate)
+        } else if record.duration_seconds.is_finite() {
+            record.duration_seconds.max(0.0)
+        } else {
+            0.0
+        };
+        if self.source_duration <= 0.0 {
+            self.source_duration = self
+                .overview
+                .as_ref()
+                .map_or(0.0, |overview| overview.duration_seconds());
+        }
         if same_source {
+            self.pending_seek = pending_seek;
             self.visible_start = visible_start;
             self.clamp_visible_start();
+        }
+        if !same_source {
+            self.visible_start = 0.0;
+            self.pending_seek = None;
+            self.geometry.set(PreviewGeometry::default());
         }
         self.overloads.set_record(record);
     }
@@ -412,6 +540,7 @@ impl WaveformView {
         };
         if !same_file {
             self.visible_start = 0.0;
+            self.pending_seek = None;
         }
         self.placeholder = if overview.is_some() {
             SharedString::default()
@@ -420,16 +549,18 @@ impl WaveformView {
         };
         self.overloads.clear();
         self.source = None;
+        self.source_rate = overview.as_ref().map_or(0, |overview| overview.sample_rate());
+        self.source_channels = overview.as_ref().map_or(0, |overview| overview.channels());
+        self.source_duration = overview.as_ref().map_or(0.0, |overview| overview.duration_seconds());
+        self.source_frames = (self.source_duration * f64::from(self.source_rate)).round() as u64;
         self.overview = overview;
         self.loudness = loudness;
         self.clamp_visible_start();
     }
 
     /// Returns the duration of the shown file in seconds.
-    fn duration_seconds(&self) -> f64 {
-        self.overview
-            .as_ref()
-            .map_or(0.0, |overview| overview.duration_seconds())
+    const fn duration_seconds(&self) -> f64 {
+        self.source_duration
     }
 
     /// Returns the length of the visible range in seconds.
@@ -443,15 +574,6 @@ impl WaveformView {
         self.visible_start = self.visible_start.clamp(0.0, latest_start);
     }
 
-    /// Returns the visible range and the plot bounds from the last paint.
-    fn viewport(&self) -> Viewport {
-        Viewport {
-            start: self.visible_start,
-            length: self.visible_length(),
-            plot: self.plot_bounds.get(),
-        }
-    }
-
     /// Keeps the playhead in the middle of the view while playing zoomed in.
     fn follow_playhead(&mut self, position: f64) {
         if self.zoom > MINIMUM_ZOOM {
@@ -461,34 +583,72 @@ impl WaveformView {
         }
     }
 
-    /// Starts scrubbing at the pressed time, or asks to play from the start on a double-click.
-    fn on_mouse_down(&mut self, event: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    /// Latches the pressed source pane and shows a target without pausing or seeking the player.
+    fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.duration_seconds() <= 0.0 {
             return;
         }
-        if event.click_count == 2 {
-            self.scrubbing = false;
-            cx.emit(WaveformEvent::RestartRequested);
+        if cfg!(target_os = "macos") && event.modifiers.control {
+            self.cancel_pending_seek(cx);
             return;
         }
-        self.scrubbing = true;
-        cx.emit(WaveformEvent::ScrubStarted(self.viewport().x_to_time(event.position.x)));
+        let Some(plot) = self.geometry.get().plot_at(event.position) else {
+            return;
+        };
+        if let Some(handle) = &self.focus_handle {
+            window.focus(handle, cx);
+        }
+        let viewport = Viewport {
+            start: self.visible_start,
+            length: self.visible_length(),
+            plot,
+        };
+        self.pending_seek = Some(PendingSeek {
+            viewport,
+            seconds: if event.click_count == 2 {
+                0.0
+            } else {
+                viewport.x_to_time(event.position.x)
+            },
+            restart: event.click_count == 2,
+        });
+        cx.notify();
     }
 
-    /// Follows the mouse while it is dragged with the left button held after a press on the waveform.
+    /// Updates only the grey target, clamping crossing drags to the initially pressed pane.
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.scrubbing && event.pressed_button == Some(MouseButton::Left) && self.duration_seconds() > 0.0 {
-            cx.emit(WaveformEvent::SeekRequested(
-                self.viewport().x_to_time(event.position.x),
-            ));
+        if let Some(pending) = &mut self.pending_seek
+            && event.pressed_button == Some(MouseButton::Left)
+        {
+            if !pending.restart {
+                pending.seconds = pending.viewport.x_to_time(event.position.x);
+            }
+            cx.notify();
         }
     }
 
-    /// Ends scrubbing when the mouse is released, inside the waveform or outside it,
-    /// which plays from the scrubbed time.
-    fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.scrubbing) {
-            cx.emit(WaveformEvent::ScrubEnded);
+    /// Clears pointer intent before a popup gesture without changing transport.
+    fn cancel_pending_seek(&mut self, cx: &mut Context<Self>) {
+        if self.pending_seek.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Commits the release coordinate exactly once, including a release outside the preview.
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if cfg!(target_os = "macos") && event.modifiers.control {
+            self.cancel_pending_seek(cx);
+            return;
+        }
+        if let Some(pending) = self.pending_seek.take() {
+            if pending.restart {
+                cx.emit(WaveformEvent::RestartRequested);
+            } else {
+                cx.emit(WaveformEvent::SeekAndPlayRequested(
+                    pending.viewport.x_to_time(event.position.x),
+                ));
+            }
+            cx.notify();
         }
     }
 
@@ -506,7 +666,15 @@ impl WaveformView {
         } else if vertical.abs() > horizontal.abs() / WHEEL_STEP_PIXELS {
             cx.emit(WaveformEvent::ZoomBy(WHEEL_ZOOM_FACTOR.powf(f64::from(vertical))));
         } else if horizontal.abs() > f32::EPSILON {
-            let width = f32::from(self.plot_bounds.get().size.width).max(1.0);
+            let geometry = self.geometry.get();
+            let plot = geometry.plot_at(event.position).unwrap_or_else(|| {
+                if has_area(geometry.waveform) {
+                    geometry.waveform
+                } else {
+                    geometry.spectrogram
+                }
+            });
+            let width = f32::from(plot.size.width).max(1.0);
             self.visible_start = f64::from(-horizontal / width).mul_add(self.visible_length(), self.visible_start);
             self.clamp_visible_start();
             cx.notify();
@@ -521,91 +689,6 @@ impl Default for WaveformView {
 }
 
 impl EventEmitter<WaveformEvent> for WaveformView {}
-
-impl Render for WaveformView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(counter) = &mut self.frame_counter {
-            counter.tick();
-        }
-        let playing = self.playhead.as_ref().is_some_and(PlayheadSource::is_playing);
-        let position = self.playhead.as_ref().map(PlayheadSource::position_seconds);
-        if playing && self.overview.is_some() {
-            window.request_animation_frame();
-            if let Some(position) = position {
-                self.follow_playhead(position);
-            }
-        }
-
-        let body = self.overview.clone().map_or_else(
-            || {
-                div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_size(px(14.0))
-                    .text_color(color(palette::BLUE))
-                    .child(self.placeholder.clone())
-                    .into_any_element()
-            },
-            |overview| {
-                let playhead = position.and_then(|position| {
-                    if playing {
-                        Some((position, PLAYING_PLAYHEAD_ALPHA))
-                    } else if position > 0.0 {
-                        Some((position, PAUSED_PLAYHEAD_ALPHA))
-                    } else {
-                        None
-                    }
-                });
-                let data = PaintData {
-                    overview,
-                    overloads: self.overloads.history().cloned(),
-                    serato_overview: self.serato_overview.clone().filter(|_| self.serato_colours),
-                    loudness: self.loudness.clone(),
-                    show_loudness: self.show_loudness,
-                    loudness_range: self.loudness_range,
-                    cues: self.cues.clone(),
-                    visible_start: self.visible_start,
-                    visible_length: self.visible_length(),
-                    display_gain: self.display_gain,
-                    playhead,
-                };
-                let show_loudness = self.show_loudness;
-                let plot_cell = Rc::clone(&self.plot_bounds);
-                canvas(
-                    move |bounds, _, _| {
-                        plot_cell.set(plot_bounds(bounds, show_loudness));
-                    },
-                    move |bounds, (), window, cx| paint_waveform(&data, bounds, window, cx),
-                )
-                .size_full()
-                .into_any_element()
-            },
-        );
-
-        let panel = div()
-            .id("waveform")
-            .size_full()
-            .p(px(PLOT_INSET))
-            .rounded(px(CORNER_RADIUS))
-            .bg(color(palette::GREY_MEDIUM_DARK))
-            .border_1()
-            .border_color(white(OUTLINE_ALPHA))
-            .overflow_hidden()
-            .child(body)
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_scroll(cx.listener(Self::on_scroll));
-        if self.overloads.has_overloads() {
-            panel.tooltip(tooltip(SOURCE_OVERS_TOOLTIP))
-        } else {
-            panel
-        }
-    }
-}
 
 impl FrameCounter {
     /// Records one redraw and prints the rate once per second.
@@ -623,95 +706,41 @@ impl FrameCounter {
     }
 }
 
-impl Viewport {
-    /// Returns the horizontal position of a time.
-    fn time_to_x(&self, seconds: f64) -> f32 {
-        let fraction = if self.length > 0.0 {
-            ((seconds - self.start) / self.length) as f32
-        } else {
-            0.0
-        };
-        fraction.mul_add(f32::from(self.plot.size.width), f32::from(self.plot.origin.x))
-    }
-
-    /// Returns the time at a horizontal position.
-    fn x_to_time(&self, x: Pixels) -> f64 {
-        let width = f32::from(self.plot.size.width);
-        if width <= 0.0 {
-            return self.start;
-        }
-        let fraction = f64::from((f32::from(x - self.plot.origin.x) / width).clamp(0.0, 1.0));
-        fraction.mul_add(self.length, self.start)
-    }
-
-    /// Returns true when a time is inside the visible range.
-    fn contains(&self, seconds: f64) -> bool {
-        seconds >= self.start && seconds <= self.start + self.length
-    }
-}
-
-impl LoudnessRange {
-    /// Returns the vertical position of a loudness value, without clamping values outside the axis range.
-    fn to_y(self, value: f64, plot: Bounds<Pixels>) -> f32 {
-        let minimum = f64::from(self.minimum);
-        let fraction = ((value - minimum) / (f64::from(self.maximum) - minimum)) as f32;
-        fraction.mul_add(
-            -f32::from(plot.size.height),
-            f32::from(plot.origin.y + plot.size.height),
-        )
-    }
-}
-
-/// Returns the plot area inside the canvas, leaving room for the loudness axis labels when the graph is shown.
-fn plot_bounds(bounds: Bounds<Pixels>, show_loudness: bool) -> Bounds<Pixels> {
-    if !show_loudness {
-        return bounds;
-    }
-    let gutter = (LOUDNESS_AXIS_WIDTH + LOUDNESS_AXIS_GAP).min((f32::from(bounds.size.width) - 1.0).max(0.0));
-    Bounds {
-        origin: point(bounds.origin.x + px(gutter), bounds.origin.y),
-        size: size(bounds.size.width - px(gutter), bounds.size.height),
-    }
-}
-
-/// Paints the channel envelopes, the loudness graph, the cue arrows, and the playhead.
-fn paint_waveform(data: &PaintData, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
-    let plot = plot_bounds(bounds, data.show_loudness);
-    if f32::from(plot.size.width) < 2.0 || f32::from(plot.size.height) < 2.0 {
-        return;
-    }
-    let viewport = Viewport {
-        start: data.visible_start,
-        length: data.visible_length,
-        plot,
-    };
-    paint_channels(data, &viewport, window);
-    window.with_content_mask(Some(ContentMask { bounds: plot }), |window| {
-        overloads::paint(data, &viewport, window);
-    });
-    if data.show_loudness {
-        paint_loudness_axis(bounds, plot, data.loudness_range, window, cx);
-        if let Some(history) = data.loudness.as_deref() {
-            window.with_content_mask(Some(ContentMask { bounds: plot }), |window| {
-                paint_loudness_curve(history, &viewport, data.loudness_range, window);
-            });
-        }
-    }
-    window.with_content_mask(Some(ContentMask { bounds: plot }), |window| {
-        paint_cues(&data.cues, data.overview.duration_seconds(), &viewport, window);
-    });
-    if let Some((position, alpha)) = data.playhead
-        && viewport.contains(position)
-    {
-        let x = viewport.time_to_x(position);
-        let half_width = PLAYHEAD_WIDTH * 0.5;
+/// Paints a source-time cursor inside one explicit pane, leaving all axis gutters untouched.
+fn paint_position(seconds: f64, color: Hsla, viewport: Viewport, window: &mut Window) {
+    if viewport.contains(seconds) {
+        let width = relative(PLAYHEAD_WIDTH, window.rem_size());
         window.paint_quad(fill(
-            Bounds {
-                origin: point(px(x - half_width), bounds.origin.y),
-                size: size(px(PLAYHEAD_WIDTH), bounds.size.height),
-            },
-            white(alpha),
+            Bounds::new(
+                point(
+                    px(width.mul_add(-0.5, viewport.time_to_x(seconds))),
+                    viewport.plot.origin.y,
+                ),
+                size(px(width), viewport.plot.size.height),
+            ),
+            color,
         ));
+    }
+}
+
+/// Centers a pending or unavailable-source message inside its own pane without allocating a retained entity.
+fn paint_placeholder(text: SharedString, plot: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+    let run = TextRun {
+        len: text.len(),
+        font: font(TEXT_FONT),
+        color: white(0.7),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let height = relative(14.0, window.rem_size());
+    let line = window.text_system().shape_line(text, px(height), &[run], None);
+    let origin = point(
+        plot.origin.x + (plot.size.width - line.width()) * 0.5,
+        plot.origin.y + (plot.size.height - px(height)) * 0.5,
+    );
+    if let Err(error) = line.paint(origin, px(height), TextAlign::Left, None, window, cx) {
+        tracing::warn!("Failed to paint preview placeholder: {error:#}");
     }
 }
 
@@ -719,13 +748,16 @@ fn paint_waveform(data: &PaintData, bounds: Bounds<Pixels>, window: &mut Window,
 /// Every column keeps at least one pixel of height, so silence shows as a line.
 /// With Serato colours each column is painted in its own colour, otherwise each envelope is one blue shape.
 fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
+    let Some(overview) = data.overview.as_deref() else {
+        return;
+    };
     let plot = viewport.plot;
     let columns = f32::from(plot.size.width) as usize;
-    let channels = data.overview.channels().clamp(1, 2) as usize;
+    let channels = overview.channels().clamp(1, 2) as usize;
     let lane_height = f32::from(plot.size.height) / channels as f32;
     let half_height = lane_height * 0.5;
     let half = (half_height - 1.0).max(0.5);
-    let sample_rate = f64::from(data.overview.sample_rate());
+    let sample_rate = f64::from(overview.sample_rate());
     let start_frame = viewport.start * sample_rate;
     let end_frame = (viewport.start + viewport.length) * sample_rate;
     let colours = serato_column_colours(data, viewport, columns);
@@ -734,7 +766,7 @@ fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
         let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
         let center = lane_top + half_height;
         let scale = |value: f32| (value * data.display_gain).clamp(-1.0, 1.0);
-        let mut extents = data.overview.column_peaks(channel, start_frame, end_frame, columns);
+        let mut extents = overview.column_peaks(channel, start_frame, end_frame, columns);
         for (minimum, maximum) in &mut extents {
             let top = scale(*maximum).mul_add(-half, center).min(center - 0.5);
             let bottom = scale(*minimum).mul_add(-half, center).max(center + 0.5);
@@ -752,7 +784,7 @@ fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
 /// Returns the Serato colour of each plot column, or nothing when the file has no Serato Overview.
 /// When the plot is wider than the colour limit, each colour covers several neighbouring columns.
 fn serato_column_colours(data: &PaintData, viewport: &Viewport, columns: usize) -> Vec<Option<OverviewColour>> {
-    let duration = data.overview.duration_seconds();
+    let duration = data.source_duration;
     let Some(serato_overview) = data.serato_overview.as_deref() else {
         return Vec::new();
     };
@@ -810,162 +842,12 @@ fn paint_coloured_columns(extents: &[(f32, f32)], colours: &[Option<OverviewColo
     }
 }
 
-/// Paints the loudness axis: evenly spaced labels left of the plot and faint grid lines across it.
-fn paint_loudness_axis(
-    bounds: Bounds<Pixels>,
-    plot: Bounds<Pixels>,
-    range: LoudnessRange,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let height = f32::from(plot.size.height);
-    let interval = loudness_tick_interval(range.minimum, range.maximum, height);
-    let label_right = f32::from(plot.origin.x) - LOUDNESS_AXIS_GAP;
-    let label_font = font(TEXT_FONT);
-    let first_tick = range.minimum.div_euclid(interval) * interval;
-    let first_tick = if first_tick < range.minimum {
-        first_tick + interval
-    } else {
-        first_tick
-    };
-    for value in (first_tick..=range.maximum).step_by(interval.unsigned_abs() as usize) {
-        let y = range.to_y(f64::from(value), plot);
-        window.paint_quad(fill(
-            Bounds {
-                origin: point(plot.origin.x, px(y.round())),
-                size: size(plot.size.width, px(1.0)),
-            },
-            white(0.12),
-        ));
-        let text = SharedString::from(format!("{value}"));
-        let run = TextRun {
-            len: text.len(),
-            font: label_font.clone(),
-            color: white(0.8),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let line = window
-            .text_system()
-            .shape_line(text, px(LOUDNESS_FONT_SIZE), &[run], None);
-        let line_height = LOUDNESS_FONT_SIZE + 2.0;
-        let half_height = line_height * 0.5;
-        let top = (y - half_height).clamp(
-            f32::from(bounds.origin.y),
-            (f32::from(bounds.origin.y + bounds.size.height) - line_height).max(f32::from(bounds.origin.y)),
-        );
-        let origin = point(px(label_right) - line.width(), px(top));
-        if let Err(error) = line.paint(origin, px(line_height), TextAlign::Left, None, window, cx) {
-            tracing::warn!("Failed to paint a loudness label: {error:#}");
-        }
-    }
-}
-
-/// Paints the short-term loudness history as an orange-red line with a dark outline.
-/// Readings that fall into the same pixel column keep their first, lowest, highest, and last values,
-/// and silent readings break the line.
-fn paint_loudness_curve(
-    history: &ShortTermLoudnessHistory,
-    viewport: &Viewport,
-    range: LoudnessRange,
-    window: &mut Window,
-) {
-    if history.values.is_empty() || history.sample_rate <= 0.0 || history.samples_per_point == 0 {
-        return;
-    }
-    let interval = f64::from(history.samples_per_point) / history.sample_rate;
-    let last_index = history.values.len() - 1;
-    let first = ((viewport.start / interval).floor() - 1.0).clamp(0.0, last_index as f64) as usize;
-    let last = ((viewport.start + viewport.length) / interval)
-        .ceil()
-        .clamp(0.0, last_index as f64) as usize;
-    let plot_left = f32::from(viewport.plot.origin.x);
-
-    let mut segments: Vec<Vec<Point<Pixels>>> = Vec::new();
-    let mut current: Vec<Point<Pixels>> = Vec::new();
-    let mut bucket: Option<ColumnBucket> = None;
-    let flush = |bucket: &mut Option<ColumnBucket>, current: &mut Vec<Point<Pixels>>| {
-        if let Some(column) = bucket.take() {
-            let mut readings = [column.first, column.lowest, column.highest, column.last];
-            readings.sort_unstable_by_key(|&(index, _)| index);
-            let mut previous = None;
-            for (index, value) in readings {
-                if previous == Some(index) {
-                    continue;
-                }
-                previous = Some(index);
-                let x = viewport.time_to_x(history.time_at(index));
-                let y = range.to_y(f64::from(value), viewport.plot);
-                current.push(point(px(x), px(y)));
-            }
-        }
-    };
-    for (index, &value) in history.values.iter().enumerate().take(last + 1).skip(first) {
-        if !value.is_finite() || f64::from(value) <= NEGATIVE_INFINITY_LOUDNESS {
-            flush(&mut bucket, &mut current);
-            if !current.is_empty() {
-                segments.push(std::mem::take(&mut current));
-            }
-            continue;
-        }
-        let column = (viewport.time_to_x(history.time_at(index)) - plot_left).floor() as i64;
-        if bucket.as_ref().is_some_and(|bucket| bucket.column != column) {
-            flush(&mut bucket, &mut current);
-        }
-        match &mut bucket {
-            Some(bucket) => {
-                if value < bucket.lowest.1 {
-                    bucket.lowest = (index, value);
-                }
-                if value > bucket.highest.1 {
-                    bucket.highest = (index, value);
-                }
-                bucket.last = (index, value);
-            }
-            None => {
-                bucket = Some(ColumnBucket {
-                    column,
-                    first: (index, value),
-                    lowest: (index, value),
-                    highest: (index, value),
-                    last: (index, value),
-                });
-            }
-        }
-    }
-    flush(&mut bucket, &mut current);
-    if !current.is_empty() {
-        segments.push(current);
-    }
-
-    let stroke = |width: f32, color: Hsla, window: &mut Window| {
-        for segment in &segments {
-            let Some((&start, rest)) = segment.split_first() else {
-                continue;
-            };
-            if rest.is_empty() {
-                continue;
-            }
-            let mut builder = PathBuilder::stroke(px(width));
-            builder.move_to(start);
-            for &point in rest {
-                builder.line_to(point);
-            }
-            if let Ok(path) = builder.build() {
-                window.paint_path(path, color);
-            }
-        }
-    };
-    stroke(LOUDNESS_LINE_WIDTH + LOUDNESS_OUTLINE_WIDTH, black(0.65), window);
-    stroke(LOUDNESS_LINE_WIDTH, color(palette::ORANGE_RED), window);
-}
-
 /// Paints each visible cue point as a pair of inward arrows at the top and bottom edges, in the cue color.
 fn paint_cues(cues: &[CueMarker], duration: f64, viewport: &Viewport, window: &mut Window) {
     let plot = viewport.plot;
-    let arrow_height = CUE_ARROW_HEIGHT.min(f32::from(plot.size.height) / 4.0);
-    let half_width = CUE_ARROW_WIDTH.min(arrow_height * CUE_ARROW_WIDTH / CUE_ARROW_HEIGHT) * 0.5;
+    let arrow_height = relative(CUE_ARROW_HEIGHT, window.rem_size()).min(f32::from(plot.size.height) / 4.0);
+    let half_width =
+        relative(CUE_ARROW_WIDTH, window.rem_size()).min(arrow_height * CUE_ARROW_WIDTH / CUE_ARROW_HEIGHT) * 0.5;
     let top = f32::from(plot.origin.y);
     let bottom = top + f32::from(plot.size.height);
     for cue in cues
@@ -986,7 +868,7 @@ fn paint_cues(cues: &[CueMarker], duration: f64, viewport: &Viewport, window: &m
             ],
         ];
         for triangle in &triangles {
-            let mut outline = PathBuilder::stroke(px(CUE_ARROW_OUTLINE_WIDTH));
+            let mut outline = PathBuilder::stroke(px(relative(CUE_ARROW_OUTLINE_WIDTH, window.rem_size())));
             outline.add_polygon(triangle, true);
             if let Ok(path) = outline.build() {
                 window.paint_path(path, black(0.8));
@@ -998,16 +880,6 @@ fn paint_cues(cues: &[CueMarker], duration: f64, viewport: &Viewport, window: &m
             }
         }
     }
-}
-
-/// Chooses a whole-LU tick interval that fits the plot height.
-fn loudness_tick_interval(minimum: i32, maximum: i32, height: f32) -> i32 {
-    const INTERVALS: [i32; 9] = [1, 2, 4, 6, 8, 10, 12, 16, 20];
-    let target_count = ((height / LOUDNESS_TICK_SPACING) as i32).max(2);
-    INTERVALS
-        .into_iter()
-        .find(|interval| interval * target_count >= maximum - minimum)
-        .unwrap_or(20)
 }
 
 #[cfg(test)]
@@ -1027,6 +899,10 @@ mod test_artifact_presentation {
             file_size: 100,
             modified_time_ms: 200,
             status: AnalysisStatus::Cached,
+            sample_rate: 48_000,
+            channels: 1,
+            length_in_samples: 4_800,
+            duration_seconds: 0.1,
             waveform: Some(builder.finish(48_000, 4_800)),
             ..AnalysisRecord::default()
         }
@@ -1040,7 +916,11 @@ mod test_artifact_presentation {
         view.zoom = 4.0;
         view.visible_start = 0.04;
         view.display_gain = 0.5;
-        view.scrubbing = true;
+        view.pending_seek = Some(PendingSeek {
+            viewport: Viewport::default(),
+            seconds: 0.02,
+            restart: false,
+        });
         view.cues = vec![CueMarker {
             seconds: 0.02,
             color: 0,
@@ -1054,7 +934,7 @@ mod test_artifact_presentation {
         assert!((view.visible_start - 0.04).abs() < f64::EPSILON);
         assert!((view.zoom - 4.0).abs() < f64::EPSILON);
         assert!((view.display_gain - 0.5).abs() < f32::EPSILON);
-        assert!(view.scrubbing);
+        assert!(view.pending_seek.is_some());
         assert_eq!(view.cues.len(), 1);
         assert!(view.playhead.is_some());
     }
@@ -1078,6 +958,35 @@ mod test_artifact_presentation {
         assert!((view.visible_start - 0.04).abs() < f64::EPSILON);
     }
 
+    #[test]
+    fn waveform_free_sources_retain_independent_timing_for_spectral_interaction() {
+        let mut record = record();
+        record.waveform = None;
+        let mut view = WaveformView::new();
+        view.update_record(&record);
+        assert!(view.overview.is_none());
+        assert!((view.duration_seconds() - 0.1).abs() < f64::EPSILON);
+        assert_eq!(view.source_rate, 48_000);
+        assert_eq!(view.source_frames, 4_800);
+        assert_eq!(view.source_channels, 1);
+    }
+
+    #[test]
+    fn source_change_discards_pending_pointer_intent() {
+        let mut record = record();
+        let mut view = WaveformView::new();
+        view.update_record(&record);
+        view.pending_seek = Some(PendingSeek {
+            viewport: Viewport::default(),
+            seconds: 0.02,
+            restart: false,
+        });
+        record.modified_time_ms += 1;
+        view.update_record(&record);
+        assert!(view.pending_seek.is_none());
+        assert!(view.visible_start.abs() < f64::EPSILON);
+    }
+
     /// Clears an overview after a source identity change so replacement audio cannot display the previous source's peaks.
     #[test]
     fn different_source_does_not_borrow_a_released_waveform() {
@@ -1088,17 +997,5 @@ mod test_artifact_presentation {
         record.waveform = None;
         view.update_record(&record);
         assert!(view.overview.is_none());
-    }
-}
-
-#[cfg(test)]
-mod test_loudness_axis {
-    use super::*;
-
-    #[test]
-    fn tick_interval_grows_as_the_plot_shrinks() {
-        assert_eq!(loudness_tick_interval(-24, -4, 400.0), 2);
-        assert_eq!(loudness_tick_interval(-24, -4, 200.0), 4);
-        assert_eq!(loudness_tick_interval(-24, -4, 40.0), 10);
     }
 }

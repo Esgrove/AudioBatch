@@ -225,13 +225,44 @@ Normalization, processing, and file actions work on the selection, with confirme
 Right-click a row for a menu of these actions on the selection.
 Drag selected rows out to other applications, such as Finder, Explorer, or a DAW, to give them copies of the files.
 
+### Spectrogram benchmarks
+
+Run `cargo bench -p audiobatch-core --bench spectrogram` from this directory.
+The Criterion suite separates FFT setup, streaming pushes, finalization, bounded long-file merging,
+serialization, selected-cache access, and combined artifact-only backfill.
+Use `-- --save-baseline <name>` and `-- --baseline <name>` for repeatable local comparisons.
+The existing `analysis` benchmark measures full-meter and decoded-file impact independently.
+
 ### Waveform and playback
 
 The preview shows the selected file's levels, tags, embedded album artwork, waveform, and Serato cue points.
 Album artwork can be hidden, and PNG and JPEG covers are decoded into bounded thumbnails in the background.
-It supports mono and stereo playback, waveform zoom and scrubbing, and playback from Serato hot cues.
-Serato Overview tags provide optional waveform colours, and a short-term loudness graph can overlay the waveform.
-Source sample overs and true-peak overs have separate waveform markers, independent of preview gain and plugins.
+It supports mono and stereo playback, preview zoom, release-time seeking, and playback from Serato hot cues.
+Choose Waveform, Spectrogram, Both: side by side, or Both: stacked from the preview context menu,
+Options > Preview view, or Audio Settings. Both panes show the same time interval and linked playheads and cues.
+Serato Overview tags provide optional waveform colours.
+The short-term loudness graph overlays the waveform when present, or a full spectrogram otherwise.
+
+The spectrogram uses a Mel frequency axis from zero to the source Nyquist frequency and a fixed source-power palette.
+A gentle S-shaped display curve darkens quiet content without changing cached numerical intensities.
+Preview gain, plugins, and output-device resampling do not alter the source spectrogram.
+Frequency cutoffs can reveal limited bandwidth, but do not prove a file's lossless encoding history.
+
+Fresh analysis builds both previews during the loudness decode pass and persists them
+before delivering completed results.
+The selected waveform fills progressively from a bounded, replaceable snapshot.
+Background decoding is reserved for missing or outdated artifacts, with separate completed/total file status.
+
+Playback continues while a plot is pressed or dragged, without releasing the audio device.
+The white cursor follows actual playback, while a dimmer grey cursor shows the pending release target.
+Release performs one seek and preserves running playback, or starts a stopped source from that position.
+The status bar shows elapsed and total source time, with hours on both clocks for sources at least one hour long.
+
+Waveform magnitude references use dBFS values without a unit caption, with grid lines while loudness is disabled.
+Yellow sample-overload caps and orange true-peak caps appear only at the waveform's outer edges.
+Options > Overload indicators and Audio Settings independently toggle both kinds and their subdued vertical lines.
+These source warnings remain independent of preview gain and plugins.
+Command/Ctrl+O chooses a folder and Command/Ctrl+P opens the compact, scrollable Audio Settings window.
 Multichannel playback is not supported.
 
 Per-file input gain scales the waveform and feeds plugin preview and processing.

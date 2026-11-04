@@ -351,7 +351,7 @@ fn processing_job(record: &AnalysisRecord, refusal: Option<String>, context: &Ru
     };
     // Plugins are third party code, so a panic while processing fails only this file,
     // and its chain still goes back to the pool.
-    let result = catch_unwind(AssertUnwindSafe(|| {
+    let mut result = catch_unwind(AssertUnwindSafe(|| {
         process_file(
             record,
             &context.options,
@@ -364,6 +364,7 @@ fn processing_job(record: &AnalysisRecord, refusal: Option<String>, context: &Ru
     // The chain goes back before the result is published, so a waiting worker can start right away.
     drop(lease);
     update_cache(&context.cache, record, &result);
+    result.clear_preview_artifacts();
     context.publish_result(result);
     context.finish_file();
 }

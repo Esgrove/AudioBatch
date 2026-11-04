@@ -1,8 +1,8 @@
-//! Atomic additive migrations for the shared measurement schema and Rust's independent preview table.
+//! Atomic additive migrations for shared measurements, spectral artifacts, and independent native previews.
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use super::{ANALYSIS_VERSION, Result, add_missing_columns, serato};
+use super::{ANALYSIS_VERSION, Result, add_missing_columns, serato, spectrogram};
 
 /// Shared columns absent from older C++ databases, added without dropping gains or tag results.
 const ADDED_COLUMNS: &[(&str, &str)] = &[
@@ -64,7 +64,7 @@ WHERE NOT (excluded.status = 3 AND file_analysis.status IN (1, 2)
     AND file_analysis.file_size = excluded.file_size
     AND file_analysis.modified_time_ms = excluded.modified_time_ms)";
 
-/// Creates both native cache layouts under one write lock, making simultaneous startup retryable.
+/// Creates shared and native cache layouts under one write lock, making simultaneous startup retryable.
 /// Only a proven C++ schema without provenance may adopt the known-current version 12 measurements.
 pub(super) fn initialize(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -113,6 +113,7 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<()> {
         [ANALYSIS_VERSION],
     )?;
     transaction.execute_batch(serato::SCHEMA)?;
+    transaction.execute_batch(spectrogram::SCHEMA)?;
     transaction.commit()?;
     Ok(())
 }

@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+use crate::output_file::SourceIdentity;
 use crate::overload::OverloadHistory;
+use crate::spectrogram::SpectrogramData;
 use crate::waveform::WaveformOverview;
 
 /// Loudness reported for silence and other unmeasurable signals, in LUFS.
@@ -109,12 +111,17 @@ pub struct AnalysisRecord {
     pub short_term_loudness: Option<Arc<ShortTermLoudnessHistory>>,
     /// Min and max overview of the decoded samples, absent for failed records.
     pub waveform: Option<Arc<WaveformOverview>>,
+    /// Same-pass spectral artifact, transient until persisted independently of measurement rows.
+    pub spectrogram: Option<Arc<SpectrogramData>>,
     /// Bounded per-channel source overload flags, absent when analysis is unavailable.
     pub overloads: Option<Arc<OverloadHistory>>,
     /// File size in bytes when the record was made.
     pub file_size: u64,
     /// Modification time in milliseconds since the Unix epoch when the record was made.
     pub modified_time_ms: i64,
+    /// Transient native measurement receipt captured before decoding or inherited from the committed render.
+    /// Cache-loaded records omit it, while fresh results retain it through background publication.
+    pub source_identity: Option<SourceIdentity>,
     /// Decoded length in frames.
     pub length_in_samples: u64,
     /// Decoded duration in seconds.
@@ -224,11 +231,29 @@ impl AnalysisRecord {
         matches!(self.status, AnalysisStatus::Cached | AnalysisStatus::Analyzed)
     }
 
-    /// Returns true when the file still has the size and modification time recorded at analysis,
-    /// so the measured levels still describe it.
+    /// Captures source object identity before artifact decoding, retaining any existing measurement receipt.
+    /// Failure leaves the record unauthorized rather than adopting a new source after a mismatch.
+    #[must_use]
+    pub fn capture_source_identity(&mut self) -> bool {
+        if !self.matches_file_on_disk() {
+            return false;
+        }
+        if self.source_identity.is_none() {
+            self.source_identity = SourceIdentity::capture(&self.path).ok();
+        }
+        self.source_identity.is_some() && self.matches_file_on_disk()
+    }
+
+    /// Returns true when recorded source stats and any native measurement receipt still match the file.
+    /// Fresh results retain platform object identity through persistence, rejecting equal-size, equal-mtime replacements.
+    /// Cache-loaded records without a transient receipt use the persisted size and modification-time contract.
     #[must_use]
     pub fn matches_file_on_disk(&self) -> bool {
         file_identity(&self.path) == Some((self.file_size, self.modified_time_ms))
+            && self
+                .source_identity
+                .as_ref()
+                .is_none_or(|identity| identity.validate(&self.path).is_ok())
     }
 
     /// Returns the path as a display string.
