@@ -40,6 +40,7 @@ constexpr auto PREVIEW_VIEW_MODE_KEY {"previewViewMode"};
 constexpr auto SHOW_SAMPLE_OVERLOADS_KEY {"showSampleOverloads"};
 constexpr auto SHOW_TRUE_PEAK_OVERLOADS_KEY {"showTruePeakOverloads"};
 constexpr auto SHOW_OVERLOAD_LINES_KEY {"showOverloadLines"};
+constexpr auto SHOW_GAIN_ADJUSTED_METRICS_KEY {"showGainAdjustedMetrics"};
 
 /// Stable storage names and canonical labels in the settings selector's display order.
 constexpr std::array PREVIEW_VIEW_MODES {
@@ -209,6 +210,7 @@ AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& 
         .showSampleOverloads = settings.getBoolValue(SHOW_SAMPLE_OVERLOADS_KEY, true),
         .showTruePeakOverloads = settings.getBoolValue(SHOW_TRUE_PEAK_OVERLOADS_KEY, true),
         .showOverloadLines = settings.getBoolValue(SHOW_OVERLOAD_LINES_KEY, true),
+        .showGainAdjustedMetrics = settings.getBoolValue(SHOW_GAIN_ADJUSTED_METRICS_KEY, true),
     };
     // PropertiesFile's numeric conversion accepts a numeric prefix, so parse the complete saved text.
     const auto minimum = readLoudnessLimit(
@@ -251,6 +253,7 @@ bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPrev
     settings.setValue(SHOW_SAMPLE_OVERLOADS_KEY, preferences.showSampleOverloads);
     settings.setValue(SHOW_TRUE_PEAK_OVERLOADS_KEY, preferences.showTruePeakOverloads);
     settings.setValue(SHOW_OVERLOAD_LINES_KEY, preferences.showOverloadLines);
+    settings.setValue(SHOW_GAIN_ADJUSTED_METRICS_KEY, preferences.showGainAdjustedMetrics);
     if (!settings.saveIfNeeded()) {
         utils::logError(
             "Could not save audio preview preferences to {}", settings.getFile().getFullPathName().quoted()
@@ -325,6 +328,10 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
     coloursToggle.setTooltip(
         "Use Serato spectral waveform colours where available, without changing cues or playback."
     );
+    gainAdjustedMetricsToggle.setTooltip(
+        "Show predicted peaks and estimated loudness after custom gain. "
+        "Loudness assumes unchanged gating. Excludes clipping, limiting, and plugins."
+    );
     sampleOverloadsToggle.setTooltip("Show source sample-peak overload indicators independently of true peaks.");
     truePeakOverloadsToggle.setTooltip("Show source true-peak overload indicators independently of sample peaks.");
     overloadLinesToggle.setTooltip("Extend enabled overload indicators as vertical lines across the preview.");
@@ -339,6 +346,7 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
              &continuationToggle,
              &playFromFirstCuePointToggle,
              &coloursToggle,
+             &gainAdjustedMetricsToggle,
              &sampleOverloadsToggle,
              &truePeakOverloadsToggle,
              &overloadLinesToggle,
@@ -385,6 +393,7 @@ void AudioSettingsComponent::setPreferences(const AudioPreviewPreferences& prefe
     continuationToggle.setToggleState(preferences.continuePlayback, juce::dontSendNotification);
     playFromFirstCuePointToggle.setToggleState(preferences.playFromFirstCuePoint, juce::dontSendNotification);
     coloursToggle.setToggleState(preferences.seratoWaveformColours, juce::dontSendNotification);
+    gainAdjustedMetricsToggle.setToggleState(preferences.showGainAdjustedMetrics, juce::dontSendNotification);
     sampleOverloadsToggle.setToggleState(preferences.showSampleOverloads, juce::dontSendNotification);
     truePeakOverloadsToggle.setToggleState(preferences.showTruePeakOverloads, juce::dontSendNotification);
     overloadLinesToggle.setToggleState(preferences.showOverloadLines, juce::dontSendNotification);
@@ -432,6 +441,7 @@ void AudioSettingsComponent::preferencesChanged()
             .showSampleOverloads = sampleOverloadsToggle.getToggleState(),
             .showTruePeakOverloads = truePeakOverloadsToggle.getToggleState(),
             .showOverloadLines = overloadLinesToggle.getToggleState(),
+            .showGainAdjustedMetrics = gainAdjustedMetricsToggle.getToggleState(),
         });
     }
 }
@@ -459,7 +469,10 @@ void AudioSettingsComponent::resized()
     const auto groupTop = deviceGroup.getBottom() + layout::audioSettings::SECTION_SPACING;
     const auto errorHeight = loudnessRangeError.getText().isNotEmpty() ? layout::audioSettings::rowHeight : 0;
     previewGroup.setBounds(
-        area.getX(), groupTop, area.getWidth(), layout::audioSettings::PREFERENCES_HEIGHT + errorHeight
+        area.getX(),
+        groupTop,
+        area.getWidth(),
+        layout::audioSettings::PREFERENCES_HEIGHT + layout::audioSettings::rowHeight + errorHeight
     );
     auto preferences = previewGroup.getBounds().reduced(layout::audioSettings::padding, 0);
     preferences.removeFromTop(layout::audioSettings::GROUP_TOP_INSET);
@@ -475,6 +488,7 @@ void AudioSettingsComponent::resized()
              &continuationToggle,
              &playFromFirstCuePointToggle,
              &coloursToggle,
+             &gainAdjustedMetricsToggle,
          })
     {
         toggle->setBounds(preferences.removeFromTop(layout::audioSettings::rowHeight));

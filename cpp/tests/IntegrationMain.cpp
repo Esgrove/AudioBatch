@@ -364,6 +364,15 @@ void AudioBatchIntegrationTest::previewModes()
         EXPECT_TRUE(isValidSpectrogramData(*spectrum));
         view.previewWorkspace.zoomSlider.setValue(200.0, juce::sendNotificationSync);
         view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
+        auto preferences = view.previewPreferences;
+        preferences.showGainAdjustedMetrics = false;
+        view.setPreviewPreferences(preferences);
+        EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
+        EXPECT_FALSE(loadAudioPreviewPreferences(*view.pluginAppProperties.getUserSettings()).showGainAdjustedMetrics);
+        preferences.showGainAdjustedMetrics = true;
+        view.setPreviewPreferences(preferences);
+        EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
         view.toggleLoudnessGraph();
         const auto waveform = view.previewWorkspace.thumbnail.saveToCacheData();
         constexpr std::array modes {

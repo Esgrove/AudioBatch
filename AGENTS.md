@@ -87,6 +87,13 @@ An unset variable preserves the native production paths.
 A supplied invalid root must never fall back to normal application storage.
 In-process tests inject their paths instead of changing environment variables while workers or other tests run.
 
+## Feature Scope
+
+Feature requests apply to both the C++ and Rust applications by default.
+Implement the feature in both versions, including matching behavior, presentation, settings, and tests where applicable.
+Work on only one version when the user explicitly specifies C++ or Rust.
+Do not infer single-version scope from the currently open file or the implementation discussed most recently.
+
 ## Behavioral Parity
 
 For the same input and supported operation, the C++ and Rust applications must produce the same meaningful results.

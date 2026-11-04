@@ -25,6 +25,33 @@ namespace audiobatch
 {
 namespace
 {
+/// Predicts gain-only peaks from unclamped source decibels, keeping silence and normalizing negative zero.
+juce::String adjustedPeak(const double amplitude, const std::optional<Decibels> gain)
+{
+    if (!gain || !std::isfinite(gain->value)) {
+        return {};
+    }
+    const auto magnitude = std::abs(amplitude);
+    if (magnitude <= 0.0) {
+        return "(-INF)";
+    }
+    const auto decibels = 20.0 * std::log10(magnitude) + static_cast<double>(gain->value);
+    const auto rounded = std::round(decibels * 10.0) / 10.0;
+    return utils::format("({:+.1f})", juce::approximatelyEqual(rounded, 0.0) ? 0.0 : rounded);
+}
+
+/// Estimates gain-only loudness, which shifts one LU per dB while integrated gate membership stays unchanged.
+/// A gated-out source cannot be estimated from its stored silence sentinel alone.
+juce::String adjustedLoudness(const double loudness, const std::optional<Decibels> gain)
+{
+    if (!gain || !std::isfinite(gain->value) || !std::isfinite(loudness)
+        || loudness <= AudioAnalysisRecord::negativeInfinityLoudness)
+    {
+        return {};
+    }
+    return utils::format("(≈{:.1f})", loudness + static_cast<double>(gain->value));
+}
+
 /// Appends musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback,
 /// followed by the key, album, genre, year, and comment tags that are set.
 /// The tempo, the key, and the year are short, and the album, the genre, and the comment can be long.
@@ -81,7 +108,14 @@ AudioInfoMetric::AudioInfoMetric(const juce::String& name, const juce::String& c
         CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight),
         CustomLookAndFeel::greySuperLight()
     );
+    adjustedValueLabel.setName(utils::format("{} after custom gain", name));
+    utils::styleLabel(
+        adjustedValueLabel,
+        CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::adjustedMetricFontHeight),
+        CustomLookAndFeel::greyMiddleLight()
+    );
     unitLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(adjustedValueLabel);
     addAndMakeVisible(captionLabel);
     addAndMakeVisible(unitLabel);
     addAndMakeVisible(valueLabel);
@@ -89,14 +123,28 @@ AudioInfoMetric::AudioInfoMetric(const juce::String& name, const juce::String& c
 }
 
 /// Updates the displayed number and the complete, unit-bearing accessible description and tooltip.
-void AudioInfoMetric::setValue(const juce::String& value)
+void AudioInfoMetric::setValue(const juce::String& value, const juce::String& adjustedValue)
 {
     valueLabel.setText(value, juce::dontSendNotification);
-    const auto description = utils::format("{}: {} {}", getName(), value, unitLabel.getText());
+    adjustedValueLabel.setText(adjustedValue, juce::dontSendNotification);
+    adjustedValueLabel.setVisible(adjustedValue.isNotEmpty());
+    auto description = utils::format("{}: {} {}", getName(), value, unitLabel.getText());
+    if (adjustedValue.isNotEmpty()) {
+        description = utils::format(
+            "{}. After custom gain: {} {}. Gain only, before clipping or plugins. "
+            "Loudness is an estimate assuming unchanged gating.",
+            description,
+            adjustedValue,
+            unitLabel.getText()
+        );
+    }
+    adjustedValueLabel.setDescription(description);
+    adjustedValueLabel.setTooltip(description);
     valueLabel.setDescription(description);
     valueLabel.setTooltip(description);
     captionLabel.setTooltip(description);
     unitLabel.setTooltip(description);
+    resized();
 }
 
 /// Keeps the same numeric font in both modes, with compact values beside stacked captions and units.
@@ -127,18 +175,48 @@ void AudioInfoMetric::resized()
 {
     auto bounds = getLocalBounds().reduced(layout::information::metricPadding);
     if (compactMode) {
-        auto labels = bounds.removeFromLeft((bounds.getWidth() - layout::compactPreview::metricSpacing) / 2);
+        const auto sourceWidth
+            = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(valueLabel.getFont(), valueLabel.getText())));
+        const auto labelWidth = juce::jmin(
+            (bounds.getWidth() - layout::compactPreview::metricSpacing) / 2,
+            juce::jmax(0, bounds.getWidth() - sourceWidth - layout::compactPreview::metricSpacing)
+        );
+        auto labels = bounds.removeFromLeft(labelWidth);
         labels = labels.withSizeKeepingCentre(labels.getWidth(), layout::compactPreview::metricCaptionHeight * 2);
         captionLabel.setBounds(labels.removeFromTop(layout::compactPreview::metricCaptionHeight));
         unitLabel.setBounds(labels);
         bounds.removeFromLeft(layout::compactPreview::metricSpacing);
-        valueLabel.setBounds(bounds);
+        layoutValues(bounds);
         return;
     }
     auto caption = bounds.removeFromTop(layout::information::metricCaptionHeight);
     unitLabel.setBounds(caption.removeFromRight(layout::information::metricUnitWidth));
     captionLabel.setBounds(caption);
-    valueLabel.setBounds(bounds);
+    layoutValues(bounds);
+}
+
+/// Reserves the source value first and aligns the smaller prediction to its typographic baseline.
+/// Narrow cards clip the prediction while the tooltip retains its complete value.
+void AudioInfoMetric::layoutValues(juce::Rectangle<int> bounds)
+{
+    if (!adjustedValueLabel.isVisible()) {
+        valueLabel.setJustificationType(
+            compactMode ? juce::Justification::centredRight : juce::Justification::centredLeft
+        );
+        valueLabel.setBounds(bounds);
+        return;
+    }
+    const auto sourceFont = valueLabel.getFont();
+    const auto adjustedFont = adjustedValueLabel.getFont();
+    const auto sourceWidth
+        = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(sourceFont, valueLabel.getText())));
+    valueLabel.setJustificationType(juce::Justification::centredLeft);
+    valueLabel.setBounds(bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sourceWidth)));
+    bounds.removeFromLeft(layout::information::adjustedMetricSpacing);
+    const auto baselineOffset = juce::roundToInt(
+        (sourceFont.getAscent() - sourceFont.getDescent() - adjustedFont.getAscent() + adjustedFont.getDescent()) * 0.5f
+    );
+    adjustedValueLabel.setBounds(bounds.translated(0, baselineOffset));
 }
 
 /// Creates the fixed summary and a non-owning viewport for secondary details.
@@ -284,7 +362,8 @@ std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& 
 void AudioInfoPanel::showRecord(
     const AudioAnalysisRecord& record,
     const juce::String& activeStatusLabel,
-    const serato::SeratoData* data
+    const serato::SeratoData* data,
+    const bool showGainAdjustedMetrics
 )
 {
     const auto path = record.fullPath.isNotEmpty() ? record.fullPath : record.file.getFullPathName();
@@ -315,10 +394,18 @@ void AudioInfoPanel::showRecord(
 
     std::vector<AudioInfoRow> newRows;
     if (record.isReady()) {
-        metrics[0].setValue(formatPeakCompact(static_cast<double>(record.overallPeak)));
-        metrics[1].setValue(formatTruePeakCompact(record.overallTruePeak));
-        metrics[2].setValue(formatLoudnessCompact(record.maxShortTermLufs));
-        metrics[3].setValue(formatLoudnessCompact(record.integratedLufs));
+        const auto gain = showGainAdjustedMetrics ? record.customGain : std::nullopt;
+        metrics[0].setValue(
+            formatPeakCompact(static_cast<double>(record.overallPeak)),
+            adjustedPeak(static_cast<double>(record.overallPeak), gain)
+        );
+        metrics[1].setValue(formatTruePeakCompact(record.overallTruePeak), adjustedPeak(record.overallTruePeak, gain));
+        metrics[2].setValue(
+            formatLoudnessCompact(record.maxShortTermLufs), adjustedLoudness(record.maxShortTermLufs, gain)
+        );
+        metrics[3].setValue(
+            formatLoudnessCompact(record.integratedLufs), adjustedLoudness(record.integratedLufs, gain)
+        );
         newRows = formatRows(record);
     }
     appendTrackInfo(newRows, data);

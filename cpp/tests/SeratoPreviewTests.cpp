@@ -585,6 +585,45 @@ void SeratoPreviewTests::testTrackInfo()
     panel.showRecord(record, {});
     expect(panelValue(panel, "BPM").isEmpty());
 
+    beginTest("Gain-adjusted metrics preserve source values and estimate one LU per dB");
+    record.overallPeak = static_cast<float>(std::pow(10.0, 0.9 / 20.0));
+    record.overallTruePeak = std::pow(10.0, 1.5 / 20.0);
+    record.maxShortTermLufs = -8.5;
+    record.integratedLufs = -12.5;
+    record.customGain = Decibels {-1.0f};
+    for (const auto compact : {false, true}) {
+        panel.setCompact(compact);
+        panel.showRecord(record, {});
+        expectEquals(panelValue(panel, "Peak"), juce::String("0.90"));
+        expectEquals(panelValue(panel, "Peak after custom gain"), juce::String("(-0.1)"));
+        expectEquals(panelValue(panel, "True peak after custom gain"), juce::String("(+0.5)"));
+        expectEquals(panelValue(panel, "Max short-term after custom gain"), juce::String::fromUTF8("(≈-9.5)"));
+        expectEquals(panelValue(panel, "Integrated loudness after custom gain"), juce::String::fromUTF8("(≈-13.5)"));
+        expectEquals(panelValue(panel, "Integrated loudness"), juce::String("-12.50"));
+        panel.showRecord(record, {}, nullptr, false);
+        expect(panelValue(panel, "Peak after custom gain").isEmpty());
+        expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
+    }
+    panel.setCompact(false);
+    record.customGain.reset();
+    panel.showRecord(record, {});
+    expect(panelValue(panel, "Peak after custom gain").isEmpty());
+    expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
+    record.customGain = Decibels {3.0f};
+    record.overallPeak = 0.0f;
+    record.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+    panel.showRecord(record, {});
+    expectEquals(panelValue(panel, "Peak after custom gain"), juce::String("(-INF)"));
+    expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
+    record.overallPeak = static_cast<float>(std::pow(10.0, -3.01 / 20.0));
+    panel.showRecord(record, {});
+    expectEquals(panelValue(panel, "Peak after custom gain"), juce::String("(+0.0)"));
+    record.status = AudioAnalysisStatus::pending;
+    panel.showRecord(record, {});
+    expect(panelValue(panel, "Peak after custom gain").isEmpty());
+    panel.clear();
+    expect(panelValue(panel, "Peak after custom gain").isEmpty());
+
     beginTest("Musical metadata survives pending or failed analysis without treating Analysis version as key");
     data.beatGrid.reset();
     data.trackInfo = makeTrackInfo(92.0, "F minor");

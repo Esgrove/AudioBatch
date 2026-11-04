@@ -634,6 +634,73 @@ void PreviewPlayerTests::testPreferences()
         }
     }
 
+    beginTest("Gain-adjusted metrics synchronize silently and toggle without changing other preferences");
+    {
+        juce::AudioDeviceManager manager;
+        AudioSettingsComponent panel(manager);
+        juce::ToggleButton* gainToggle = nullptr;
+        juce::ToggleButton* coloursToggle = nullptr;
+        const auto& content = *dynamic_cast<juce::Viewport&>(*panel.getChildComponent(0)).getViewedComponent();
+        for (auto* child : content.getChildren()) {
+            if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) {
+                if (toggle->getButtonText() == "Gain-adjusted metrics") {
+                    gainToggle = toggle;
+                } else if (toggle->getButtonText() == "Serato waveform colours") {
+                    coloursToggle = toggle;
+                }
+            }
+        }
+        expect(gainToggle != nullptr);
+        expect(coloursToggle != nullptr);
+        if (gainToggle != nullptr && coloursToggle != nullptr) {
+            AudioPreviewPreferences canonical {
+                .pluginChainEnabled = true,
+                .loudnessGraphMinimum = -32.0,
+                .loudnessGraphMaximum = -2.0,
+                .showAlbumArtwork = false,
+                .viewMode = PreviewViewMode::stacked,
+                .showSampleOverloads = false,
+                .showTruePeakOverloads = false,
+                .showOverloadLines = false,
+            };
+            int callbacks = 0;
+            panel.setPreferencesChangedCallback([&](const AudioPreviewPreferences& changed) {
+                ++callbacks;
+                canonical = changed;
+                panel.setPreferences(canonical);
+            });
+            panel.setPreferences(canonical);
+            expectEquals(callbacks, 0);
+            expect(gainToggle->getToggleState());
+            expect(gainToggle->isEnabled());
+            expectEquals(gainToggle->getRadioGroupId(), 0);
+            expectEquals(
+                gainToggle->getTooltip(),
+                juce::String(
+                    "Show predicted peaks and estimated loudness after custom gain. "
+                    "Loudness assumes unchanged gating. Excludes clipping, limiting, and plugins."
+                )
+            );
+            for (const auto enabled : {false, true}) {
+                gainToggle->setToggleState(enabled, juce::dontSendNotification);
+                gainToggle->onClick();
+                expect(canonical.showGainAdjustedMetrics == enabled);
+                expect(canonical.pluginChainEnabled);
+                expect(!canonical.showAlbumArtwork);
+                expect(canonical.viewMode == PreviewViewMode::stacked);
+                expect(!canonical.showSampleOverloads);
+                expect(!canonical.showTruePeakOverloads);
+                expect(!canonical.showOverloadLines);
+                expectEquals(canonical.loudnessGraphMinimum, -32.0);
+                expectEquals(canonical.loudnessGraphMaximum, -2.0);
+                coloursToggle->setToggleState(false, juce::dontSendNotification);
+                coloursToggle->onClick();
+                expect(canonical.showGainAdjustedMetrics == enabled);
+            }
+            expectEquals(callbacks, 4);
+        }
+    }
+
     beginTest("Preferences round-trip without changing their unset defaults or auto-starting stopped playback");
     const TemporaryDirectory temporary;
     juce::PropertiesFile::Options options;
@@ -652,6 +719,9 @@ void PreviewPlayerTests::testPreferences()
         expectEquals(defaults.loudnessGraphMinimum, -24.0);
         expectEquals(defaults.loudnessGraphMaximum, -4.0);
         expect(defaults.showAlbumArtwork);
+        expect(defaults.showGainAdjustedMetrics);
+        expect(AudioPreviewPreferences().showGainAdjustedMetrics);
+        settings.setValue("unrelatedSetting", "keep me");
         const AudioPreviewPreferences changed {
             .pluginChainEnabled = true,
             .latencyCompensated = false,
@@ -662,6 +732,7 @@ void PreviewPlayerTests::testPreferences()
             .loudnessGraphMinimum = -32.0,
             .loudnessGraphMaximum = -2.0,
             .showAlbumArtwork = false,
+            .showGainAdjustedMetrics = false,
         };
         expect(saveAudioPreviewPreferences(settings, changed));
     }
@@ -674,6 +745,9 @@ void PreviewPlayerTests::testPreferences()
         expect(saved.playFromFirstCuePoint);
         expect(!saved.seratoWaveformColours);
         expect(!saved.showAlbumArtwork);
+        expect(!saved.showGainAdjustedMetrics);
+        expect(settings.containsKey("showGainAdjustedMetrics"));
+        expectEquals(settings.getValue("unrelatedSetting"), juce::String("keep me"));
         expect(saved.loudnessGraphEnabled);
         expectEquals(saved.loudnessGraphMinimum, -32.0);
         expectEquals(saved.loudnessGraphMaximum, -2.0);
@@ -685,6 +759,7 @@ void PreviewPlayerTests::testPreferences()
         disabled.playFromFirstCuePoint = false;
         disabled.loudnessGraphEnabled = false;
         disabled.showAlbumArtwork = true;
+        disabled.showGainAdjustedMetrics = true;
         expect(saveAudioPreviewPreferences(settings, disabled));
     }
     {
@@ -693,6 +768,8 @@ void PreviewPlayerTests::testPreferences()
         const auto disabled = loadAudioPreviewPreferences(settings);
         expect(!disabled.loudnessGraphEnabled);
         expect(disabled.showAlbumArtwork);
+        expect(disabled.showGainAdjustedMetrics);
+        expectEquals(settings.getValue("unrelatedSetting"), juce::String("keep me"));
         expectEquals(disabled.loudnessGraphMinimum, -32.0);
         expectEquals(disabled.loudnessGraphMaximum, -2.0);
     }

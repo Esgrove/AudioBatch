@@ -212,11 +212,13 @@ impl AppView {
             || self.menu_state.plugin_groups != groups
             || self.menu_state.presets != presets
             || self.menu_state.current_preset != current_preset
+            || self.menu_state.scanning_plugins != self.plugins.is_scanning()
         {
             self.menu_state.chain_summary = summary;
             self.menu_state.plugin_groups = groups;
             self.menu_state.presets = presets;
             self.menu_state.current_preset = current_preset;
+            self.menu_state.scanning_plugins = self.plugins.is_scanning();
             self.refresh_menus(cx);
         }
         self.sync_chain_window(cx);
@@ -292,6 +294,10 @@ impl AppView {
             ChainEvent::Remove(id) => chain.remove(*id),
             ChainEvent::Add(plugin) => {
                 self.add_plugin(plugin.clone(), cx);
+                false
+            }
+            ChainEvent::RescanPlugins => {
+                self.start_plugin_scan(cx);
                 false
             }
             ChainEvent::Clear => {
@@ -457,6 +463,7 @@ impl AppView {
             presets: self.plugins.preset_names(),
             current_preset: chain.preset_name().map(str::to_owned),
             modified: chain.is_modified(),
+            scanning: self.plugins.is_scanning(),
         }
     }
 
@@ -523,7 +530,7 @@ impl AppView {
 
     /// Starts a scan of the scan folders on a background thread.
     /// The scan lock is held until the result is saved, so a scan in the CLI cannot run at the same time.
-    fn start_plugin_scan(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn start_plugin_scan(&mut self, cx: &mut Context<Self>) {
         if self.plugins.is_scanning() {
             return;
         }
