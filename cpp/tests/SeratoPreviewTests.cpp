@@ -725,6 +725,9 @@ void SeratoPreviewTests::verifyAmplitudeLabel(
 {
     const auto top = geometry.waveform.getY() + label.channel * geometry.waveform.getHeight() / channels;
     const auto bottom = geometry.waveform.getY() + (label.channel + 1) * geometry.waveform.getHeight() / channels;
+    const auto vertical = static_cast<float>(top) + (1.0f - label.amplitude) * static_cast<float>(bottom - top) * 0.5f;
+    // Grid lines reuse this unclamped position, so it must follow the amplitude even where the caption is clamped.
+    expectWithinAbsoluteError(label.vertical, vertical, 0.0001f);
     if (std::isfinite(label.decibels)) {
         const auto magnitude = std::pow(10.0, static_cast<double>(label.decibels) / 20.0);
         expectWithinAbsoluteError(static_cast<double>(std::abs(label.amplitude)), magnitude, 0.000001);
@@ -740,7 +743,6 @@ void SeratoPreviewTests::verifyAmplitudeLabel(
         expect(std::isinf(label.decibels) && label.decibels < 0.0f);
         expectWithinAbsoluteError(label.amplitude, 0.0f, 0.000001f);
     }
-    const auto vertical = static_cast<float>(top) + (1.0f - label.amplitude) * static_cast<float>(bottom - top) * 0.5f;
     expectWithinAbsoluteError(static_cast<float>(label.bounds.getCentreY()), vertical, 1.0f);
 }
 

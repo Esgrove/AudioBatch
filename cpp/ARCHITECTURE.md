@@ -81,7 +81,7 @@ flowchart TD
     AudioBatchComponent --> ArtworkLoader
     AudioBatchComponent --> PreviewEnrichmentScheduler
     PreviewController -.-> PreviewEnrichmentScheduler
-    PreviewEnrichmentScheduler --> NativeWaveformBuilder
+    PreviewEnrichmentScheduler --> PreviewArtifactDecoder
     PreviewEnrichmentScheduler -.-> SeratoPreviewLoader
     PreviewController -.-> AudioPreviewPlayer
     AudioBatchComponent --> PluginLibrary
@@ -105,6 +105,12 @@ Solid lines own, and dashed lines only refer to the other object.
 - `PreviewWorkspace` holds the waveform `ThumbnailComponent`, the metric cards of `AudioInfoPanel`,
   and the playback, gain, normalization, plugin, and settings controls,
   laid out as an expanded section, a wide section whose controls and metrics share half of the width, or a compact row.
+- `ThumbnailComponent` hosts the Waveform, Spectrogram, side-by-side, and stacked preview modes in one component.
+  `PreviewPlotGeometry.h` divides its bounds into panes and axis gutters,
+  and maps time to x and back for drawing, cues, and seeking in every pane.
+  `ThumbnailComponentSpectrogram.cpp` builds one colourized raster per spectral artifact and draws the frequency axis,
+  and `ThumbnailComponentOverloads.cpp` draws the outer-edge overload caps and their optional lines.
+  A press latches its pane and moves only a grey target cursor. The release seeks once.
 - `LiveChain` holds the plugin slots of the chain, its persistence and presets, and the editor and manager windows.
 
 `AudioBatchComponent` is split into topic files that share `AudioBatchComponentConstants.h`:
@@ -182,10 +188,12 @@ A normalization or processing result is still passed on after its pass ended, be
 - **The read-ahead thread** is the `TimeSliceThread` of `AudioPreviewPlayer`,
   which fills the `BufferingAudioSource` from the file, so the audio callback never decodes.
 - **Preview enrichment.** `PreviewEnrichmentScheduler` owns one worker and a separate cache connection.
-  It loads selected cached artifacts during foreground work, then repairs missing Serato tags
-  and native waveforms only after measurement results and restored selection settle.
+  It loads selected cached artifacts during foreground work, then repairs missing Serato tags,
+  native waveforms, and spectrograms only after measurement results and restored selection settle.
   Selection takes priority, and cancellation is checked between bounded PCM blocks.
-  `NativeWaveformBuilder` serializes JUCE thumbnails directly, without source-backed `AudioThumbnailCache` decoding.
+  `PreviewArtifactDecoder` decodes once for every missing audio artifact,
+  feeding the `analysis/` `NativeWaveformBuilder` and `SpectrogramBuilder` without a loudness meter.
+  The waveform builder serializes JUCE thumbnails directly, without source-backed `AudioThumbnailCache` decoding.
   Coalesced explicit gain edits and committed output persistence share the worker, ahead of optional repair.
   Shutdown cancels artifact publication without joining a worker against UI delivery.
 - **Other small workers.** `ArtworkLoader` reads and decodes bounded artwork thumbnails with one active
@@ -218,7 +226,12 @@ The GUI shows `Cached (Rust)` for Rust measurements and plain `Cached` for its o
 Foreign overload histories describe the originating decoder's measured source, not bit-identical local lossy playback.
 
 The optional JUCE waveform remains separate from Rust's `rust_waveform_cache` representation.
-Measurement lookups do not load waveform blobs, and missing native waveforms
+Both applications share the `spectrogram_cache` table, keyed by path, algorithm revision, and serialization revision.
+Its rows record source identity, stream geometry, and the producing application,
+and hold the bounded little-endian `SPEC` codec of `SpectrogramData`, with at most 4096 by 512 intensity bytes.
+`AnalysisCacheSpectrogram.cpp` publishes only against matching successful measurement geometry,
+and removes incompatible rows only after the measurement commit.
+Measurement lookups do not load waveform or spectral blobs, and missing native waveforms, spectrograms,
 or corrupt Serato cache payloads are artifact misses rather than measurement misses.
 Post-load enrichment uses one active expensive job per app, with selected-file priority,
 stable negative Serato outcomes, identity-conditional publication, and foreground-operation cancellation.
@@ -276,14 +289,25 @@ sequenceDiagram
   The history keeps at most 8192 buckets by merging neighbours with a bitwise or,
   and the cache stores it as a versioned blob beside the short-term loudness.
   A missing or malformed blob on a successful row makes the file analyze again.
-  `ThumbnailComponent` draws the flags in amber, solid for sample overs and outlined for true peak overs alone,
-  and they describe the source, so the gain and the plugin preview leave them unchanged.
+  `ThumbnailComponent` draws them as compact caps on the outer waveform edges,
+  yellow for sample overs and orange for true peak overs, with optional subdued vertical lines.
+  They describe the source, so the gain and the plugin preview leave them unchanged.
+- The same fixed intervals feed the `analysis/` `NativeWaveformBuilder` and `SpectrogramBuilder`,
+  so fresh analysis builds the complete waveform and spectrogram in its single decode pass.
+  The spectrogram uses a 4096-point symmetric Hann STFT with a 1024-frame hop, averages channel powers,
+  keeps the maximum power within each of 512 mel rows,
+  and merges adjacent time columns in place to stay within 4096 columns.
+  Both artifacts are optional, so their failures never fail the measurement.
+  `AnalysisCoordinator` persists them before publishing the lighter record without them.
+  For the selected file, `AnalysisCoordinatorPreview.cpp` publishes a throttled `AnalysisPreview` waveform snapshot,
+  keeping only the latest one, rejecting stale runs and selections, and never persisting it.
 - The sample peaks keep their sign, and the overall values take the channel with the largest magnitude.
 - `storeAnalysis` keeps only failures that would repeat for the same bytes, so the next run retries the others.
-- The waveform is not part of the analysis.
+- Cached measurements from older runs may lack the waveform or spectrogram.
   `PreviewController` routes selected artifact requests to the shared enrichment admission policy.
-  `getWaveformData` loads cached thumbnails on the worker, and `NativeWaveformBuilder` fills missing thumbnails.
-  Identity-conditional `storeWaveformData` persists only the artifact.
+  `getWaveformData` and `getSpectrogramData` load cached artifacts on the worker,
+  and `PreviewArtifactDecoder` fills only the missing ones.
+  Identity-conditional `storeWaveformData` and `storeSpectrogramData` persist only the artifact.
   Selected adoption changes neither transport nor gain, histories, operation messages, or measurement provenance.
 
 ## Normalization and processing

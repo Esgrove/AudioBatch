@@ -577,12 +577,12 @@ set(AUDIOBATCH_GUI_SOURCES
     "src/gui/LiveChainWindows.cpp"
     "src/gui/LiveSlot.cpp"
     "src/gui/LiveSlot.h"
+    "src/gui/PreviewArtifactDecoder.cpp"
+    "src/gui/PreviewArtifactDecoder.h"
     "src/gui/PreviewController.cpp"
     "src/gui/PreviewController.h"
     "src/gui/PreviewEnrichmentScheduler.cpp"
     "src/gui/PreviewEnrichmentScheduler.h"
-    "src/gui/NativeWaveformBuilder.cpp"
-    "src/gui/NativeWaveformBuilder.h"
     "src/gui/ResultsModel.cpp"
     "src/gui/ResultsModel.h"
     "src/gui/ResultsSorting.cpp"
@@ -702,6 +702,23 @@ if(NOT MSVC)
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors/juce_audio_processors.mm"
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors_headless/juce_audio_processors_headless.mm"
         PROPERTIES COMPILE_OPTIONS "-Wno-deprecated-declarations"
+    )
+endif()
+
+# The shared spectrogram contract keeps each multiplication and addition separately rounded,
+# as the Rust implementation does, so cached intensity bytes do not depend on the compiler's FMA choices.
+# The later Clang option overrides the global contraction setting for these files only.
+# MSVC has no option that undoes /fp:contract, so the sources disable contraction with a pragma there.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    if(MSVC)
+        set(audiobatch_exact_float_option /clang:-ffp-contract=off)
+    else()
+        set(audiobatch_exact_float_option -ffp-contract=off)
+    endif()
+    set_property(
+        SOURCE src/analysis/SpectrogramBuilder.cpp src/analysis/SpectrogramData.cpp
+        APPEND
+        PROPERTY COMPILE_OPTIONS ${audiobatch_exact_float_option}
     )
 endif()
 
@@ -897,12 +914,12 @@ if(BUILD_TESTING)
             "src/gui/LiveChainWindows.cpp"
             "src/gui/LiveSlot.cpp"
             "src/gui/LiveSlot.h"
+            "src/gui/PreviewArtifactDecoder.cpp"
+            "src/gui/PreviewArtifactDecoder.h"
             "src/gui/PreviewController.cpp"
             "src/gui/PreviewController.h"
             "src/gui/PreviewEnrichmentScheduler.cpp"
             "src/gui/PreviewEnrichmentScheduler.h"
-            "src/gui/NativeWaveformBuilder.cpp"
-            "src/gui/NativeWaveformBuilder.h"
             "src/gui/ResultsModel.cpp"
             "src/gui/ResultsModel.h"
             "src/gui/ResultsSorting.cpp"

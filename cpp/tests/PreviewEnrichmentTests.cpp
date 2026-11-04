@@ -9,7 +9,7 @@
 #include "analysis/NativeWaveformBuilder.h"
 #include "analysis/NativeWaveformData.h"
 #include "analysis/SpectrogramData.h"
-#include "gui/NativeWaveformBuilder.h"
+#include "gui/PreviewArtifactDecoder.h"
 #include "gui/PreviewEnrichmentScheduler.h"
 #include "serato/SeratoPreviewLoader.h"
 #include "serato/SeratoTagCache.h"

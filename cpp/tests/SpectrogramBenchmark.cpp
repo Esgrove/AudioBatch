@@ -9,7 +9,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/SpectrogramBuilder.h"
 #include "analysis/SpectrogramData.h"
-#include "gui/NativeWaveformBuilder.h"
+#include "gui/PreviewArtifactDecoder.h"
 #include "TestHelpers.h"
 #include "utils/ConsolePrint.h"
 #include "utils/FileUtils.h"

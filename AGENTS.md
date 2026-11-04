@@ -35,6 +35,14 @@ which explains how its parts work together.
   `uv run fixtures/plugin_expected.py` computes its expected outputs with numpy into `fixtures/plugin_expected/`.
   When its processing changes, update the script, regenerate the files,
   and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
+- `fixtures/spectrogram_expected/` holds short PCM16 inputs and sparse NumPy power expectations for the spectrogram,
+ which both test suites read in place.
+ `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
+ and `format.yml` runs it with `--check`.
+ Both applications share the bounded `spectrogram_cache` table and its `SPEC` codec.
+ Their grids may differ by one intensity step in at most one cell per thousand,
+ because `juce::dsp::FFT` and `realfft` round their last bits differently.
+ The Rust shared-cache tests measure that documented exception against the C++ test executable.
 - `fixtures/normalization/` holds a larger collection for comparing the normalized output of both applications.
   It has music-like audio in representative supported formats, sample rates, and bit depths,
   from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.

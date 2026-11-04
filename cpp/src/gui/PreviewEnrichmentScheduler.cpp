@@ -6,7 +6,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
-#include "gui/NativeWaveformBuilder.h"
+#include "gui/PreviewArtifactDecoder.h"
 #include "serato/SeratoPreviewLoader.h"
 #include "serato/SeratoTagCache.h"
 #include "serato/SeratoTagTypes.h"

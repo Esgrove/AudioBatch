@@ -20,6 +20,9 @@ Mel landmarks do not prescribe how an implementation maps bins onto display rows
 import argparse
 import io
 import json
+import shutil
+import subprocess
+import sys
 import wave
 from pathlib import Path
 
@@ -214,8 +217,21 @@ def generate_outputs() -> dict[str, bytes]:
         "mel": [mel_expectations(sample_rate) for sample_rate in SAMPLE_RATES],
         "files": files,
     }
-    outputs["expected.json"] = (json.dumps(expectations, indent=2, allow_nan=False) + "\n").encode()
+    outputs["expected.json"] = jq_formatted(json.dumps(expectations, indent=2, allow_nan=False))
     return outputs
+
+
+def jq_formatted(text: str) -> bytes:
+    """
+    Format JSON exactly as the repository format check does, so both checks accept the same bytes.
+
+    Python and jq print floating-point numbers differently, and format.sh rewrites every tracked JSON file with jq.
+    """
+    jq = shutil.which("jq")
+    if jq is None:
+        sys.exit("jq not found in path, it formats the expected JSON like format.sh")
+    command = [jq, "--indent", "2", "."]
+    return subprocess.run(command, input=text.encode(), capture_output=True, check=True).stdout  # noqa: S603
 
 
 def main() -> None:

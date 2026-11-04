@@ -119,6 +119,27 @@ int writeSharedSpectrum(AnalysisCache& cache, const juce::File& source, const bo
     return loaded && serializeSpectrogram(*loaded) == serializeSpectrogram(data) ? 0 : 1;
 }
 
+/// Prints serialized bytes as one hexadecimal line, a text-safe export for the Rust interoperability tests.
+void printHexadecimal(const juce::MemoryBlock& bytes)
+{
+    for (const auto byte : std::span(static_cast<const std::byte*>(bytes.getData()), bytes.getSize())) {
+        fmt::print("{:02x}", std::to_integer<unsigned int>(byte));
+    }
+    fmt::print("\n");
+}
+
+/// Analyzes the source with the production decoder and exports its spectrogram without using the cache.
+/// The Rust tests compare these bytes with their own analysis of the same lossless PCM.
+int analyzeSharedSpectrum(const juce::File& source)
+{
+    const auto record = analyzeFile(source);
+    if (record.hasError() || !record.spectrogram) {
+        return 1;
+    }
+    printHexadecimal(serializeSpectrogram(*record.spectrogram));
+    return 0;
+}
+
 /// Reads without analysis and exports the reserialized artifact as hexadecimal for exact codec comparison.
 /// Pattern mode additionally checks every payload byte independently of the Rust serializer.
 int readSharedSpectrum(AnalysisCache& cache, const juce::File& source, const bool pattern)
@@ -135,11 +156,7 @@ int readSharedSpectrum(AnalysisCache& cache, const juce::File& source, const boo
             }
         }
     }
-    const auto bytes = serializeSpectrogram(*data);
-    for (const auto byte : std::span(static_cast<const std::byte*>(bytes.getData()), bytes.getSize())) {
-        fmt::print("{:02x}", std::to_integer<unsigned int>(byte));
-    }
-    fmt::print("\n");
+    printHexadecimal(serializeSpectrogram(*data));
     return 0;
 }
 
@@ -153,6 +170,9 @@ std::optional<int> runSharedCacheHelper(const juce::StringArray& arguments)
     const auto& mode = arguments[1];
     const juce::File database(arguments[2]);
     const juce::File source(arguments[3]);
+    if (mode == "analyze-spectrum") {
+        return analyzeSharedSpectrum(source);
+    }
     AnalysisCache cache(database);
     if (!cache.open()) {
         return 1;
