@@ -280,6 +280,12 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
         previewPreferences.loudnessGraphMaximum
     );
     updatePreviewInputGain(true);
+    if (previous.showGainAdjustedMetrics != previewPreferences.showGainAdjustedMetrics) {
+        const auto row = getSelectionDisplayRow(resultsTable.getSelectedRows(), resultsTable.getSelectedRow());
+        if (analysisResults.containsRow(row)) {
+            updateAudioInfo(analysisResults[row]);
+        }
+    }
     synchronizePreviewPreferences();
 }
 
@@ -313,7 +319,12 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     const auto seratoData = record.file == preview.getFile() ? preview.getSeratoData() : nullptr;
     const auto operation = fileActivity.getMessage(record.fullPath);
     const auto activity = fileActivity.getActiveLabel(record.fullPath);
-    previewWorkspace.audioInfo.showRecord(record, activity.isNotEmpty() ? activity : operation.text, seratoData.get());
+    previewWorkspace.audioInfo.showRecord(
+        record,
+        activity.isNotEmpty() ? activity : operation.text,
+        seratoData.get(),
+        previewPreferences.showGainAdjustedMetrics
+    );
     // Follows the displayed record rather than the loaded preview,
     // so a pending or failed file whose audio cannot load still shows its artwork.
     requestArtwork(record.file);
@@ -576,6 +587,10 @@ void AudioBatchComponent::applyCustomGainToSelection(const std::optional<Decibel
         resultsTable.repaint();
         updateThumbnailDisplayGain();
         updatePreviewInputGain();
+        const auto row = getSelectionDisplayRow(resultsTable.getSelectedRows(), resultsTable.getSelectedRow());
+        if (analysisResults.containsRow(row)) {
+            updateAudioInfo(analysisResults[row]);
+        }
     }
 }
 

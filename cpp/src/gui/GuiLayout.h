@@ -158,6 +158,9 @@ constexpr float outlineAlpha {0.08f};
 constexpr float captionFontHeight {12.0f};
 constexpr float valueFontHeight {13.0f};
 constexpr float metricFontHeight {20.0f};
+/// Smaller secondary values remain readable beside the source metric.
+constexpr float adjustedMetricFontHeight {15.0f};
+constexpr int adjustedMetricSpacing {4};
 constexpr float minimumValueHorizontalScale {0.7f};
 constexpr float headingFontHeight {13.0f};
 constexpr int filenameHeight {22};

@@ -252,6 +252,25 @@ mod test_gates {
     }
 
     #[test]
+    fn uniform_gain_shifts_integrated_loudness_one_lu_per_db_with_unchanged_gates() {
+        for gain_db in [-6.0, 1.0, 6.0] {
+            let gain = crate::record::decibels_to_gain(gain_db) as f32;
+            let mut source = LoudnessMeter::new(1, 8_000, None);
+            let mut adjusted = LoudnessMeter::new(1, 8_000, None);
+            for block in 0..60 {
+                let amplitude = if block < 30 { 0.1 } else { 0.001 };
+                let samples: Vec<f32> = (0..800)
+                    .map(|index| if index % 2 == 0 { amplitude } else { -amplitude })
+                    .collect();
+                let gained: Vec<f32> = samples.iter().map(|sample| sample * gain).collect();
+                source.push(&[&samples]);
+                adjusted.push(&[&gained]);
+            }
+            assert!((adjusted.integrated() - source.integrated() - gain_db).abs() < 0.000_01);
+        }
+    }
+
+    #[test]
     fn partial_window_retains_a_quiet_suffix_after_a_loud_prefix_expires() {
         let mut meter = LoudnessMeter::new(1, 8_000, None);
         meter.energies[0] = 1e20;

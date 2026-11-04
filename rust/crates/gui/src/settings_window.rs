@@ -110,6 +110,10 @@ const FIRST_CUE_TOOLTIP: &str = "When loading a file, start at its first cue poi
 const LOUDNESS_GRAPH_TOOLTIP: &str = "Overlay source-file short-term loudness (the trailing three seconds). \
      Uses cached analysis, not preview gain or live plugins.";
 
+/// Tooltip of the gain-adjusted metrics option.
+const GAIN_ADJUSTED_METRICS_TOOLTIP: &str = "Show predicted peaks and estimated loudness after custom gain. \
+     Loudness assumes unchanged gating. Excludes clipping, limiting, and plugins.";
+
 /// Tooltip of the loudness limit fields.
 const LOUDNESS_LIMIT_TOOLTIP: &str = "Whole-number LUFS from -60 to +6. Maximum must be at least 1 LU above minimum.";
 
@@ -502,6 +506,14 @@ impl SettingsView {
                 |settings, checked| settings.serato_waveform_colours = checked,
                 cx,
             ))
+            .child(Self::option(
+                "show-gain-adjusted-metrics",
+                "Gain-adjusted metrics",
+                GAIN_ADJUSTED_METRICS_TOOLTIP,
+                settings.show_gain_adjusted_metrics,
+                |settings, checked| settings.show_gain_adjusted_metrics = checked,
+                cx,
+            ))
             .child(self.render_loudness_range(cx))
             .when_some(self.range_error.clone(), |group, error| {
                 group.child(
@@ -758,6 +770,23 @@ mod integration_tests {
             .expect("opens the settings view")
         });
         (window, view)
+    }
+
+    #[gpui_kit::test]
+    fn gain_adjusted_metrics_are_enabled_by_default_and_can_be_toggled(cx: &mut TestAppContext) {
+        let (handle, view) = open_settings(cx);
+        for enabled in [false, true] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.find("show-gain-adjusted-metrics").checked(), Some(!enabled));
+                window.click("show-gain-adjusted-metrics", cx);
+                window.render_frame(cx);
+                assert_eq!(window.find("show-gain-adjusted-metrics").checked(), Some(enabled));
+                assert_eq!(view.read(cx).settings.show_gain_adjusted_metrics, enabled);
+            })
+            .expect("toggles gain-adjusted metrics");
+            cx.run_until_parked();
+        }
     }
 
     #[gpui_kit::test]

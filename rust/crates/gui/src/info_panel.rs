@@ -12,13 +12,14 @@ use std::sync::Arc;
 
 use audiobatch_core::format::{
     format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
-    format_true_peak_compact, format_type_label,
+    format_true_peak_compact, format_type_label, gain_to_decibels,
 };
+use audiobatch_core::record::is_silent_loudness;
 use audiobatch_core::serato_tags::SeratoData;
 use audiobatch_core::{AnalysisRecord, FileTags};
 use gpui_kit::{
     AnyElement, Div, Hsla, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
-    StatefulInteractiveElement as _, Styled as _, StyledImage as _, div, img, px,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, div, img, px, rems,
 };
 
 use crate::results::{ResultRow, RowState};
@@ -102,6 +103,8 @@ struct Metric {
     unit: &'static str,
     /// Formatted value, or a dash when there is no result.
     value: String,
+    /// Predicted level after custom gain, with approximate loudness values marked by "≈".
+    adjusted_value: Option<String>,
 }
 
 /// One row of the details below the metric cards.
@@ -125,8 +128,15 @@ pub fn render_info_panel(
     tags: Option<&FileTags>,
     artwork: Option<Arc<RenderImage>>,
     wide: bool,
+    show_gain_adjusted_metrics: bool,
 ) -> AnyElement {
-    let metric_cards = if wide { metric_row } else { metric_grid };
+    let metric_cards = |record| {
+        if wide {
+            metric_row(record, show_gain_adjusted_metrics)
+        } else {
+            metric_grid(record, show_gain_adjusted_metrics)
+        }
+    };
     let panel = div()
         .id("info-panel")
         .size_full()
@@ -261,10 +271,10 @@ fn heading_line(id: &'static str, text: String, path: Option<&str>) -> Stateful<
 
 /// Renders the compact variant for the collapsed preview: the four level cards in one row,
 /// each with its caption above its unit on the left and the value on the right, and dashes when there is no result.
-/// The value never shrinks, so in the narrowest cards the caption and unit are cut off instead.
+/// The source value never shrinks, while the caption, unit, and gain prediction can truncate in narrow cards.
 /// The file name and the details are left out, so the metrics fit next to the waveform.
-pub fn render_compact_info_panel(row: Option<&ResultRow>) -> Div {
-    let metrics = metrics(row.and_then(ResultRow::ready_record));
+pub fn render_compact_info_panel(row: Option<&ResultRow>, show_gain_adjusted_metrics: bool) -> Div {
+    let metrics = metrics(row.and_then(ResultRow::ready_record), show_gain_adjusted_metrics);
     div()
         .size_full()
         .flex()
@@ -289,48 +299,80 @@ pub fn render_compact_info_panel(row: Option<&ResultRow>) -> Div {
                         .child(div().truncate().child(metric.caption))
                         .child(div().truncate().child(metric.unit)),
                 )
-                .child(
-                    metric_value(metric.value)
-                        .flex_none()
-                        .text_size(px(COMPACT_METRIC_FONT_SIZE)),
-                )
+                .child(metric_value(metric.value, metric.adjusted_value).text_size(px(COMPACT_METRIC_FONT_SIZE)))
         }))
 }
 
 /// Returns the four level metrics of a record, with dashes when there is no result.
-fn metrics(record: Option<&AnalysisRecord>) -> [Metric; 4] {
+fn metrics(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) -> [Metric; 4] {
     let value = |format: fn(&AnalysisRecord) -> String| record.map_or_else(|| String::from("-"), format);
+    let adjusted_record = record.filter(|_| show_gain_adjusted_metrics);
     [
         Metric {
             name: "Peak",
             caption: "Peak",
             unit: "dBFS",
             value: value(|record| format_peak_compact(f64::from(record.overall_peak))),
+            adjusted_value: adjusted_record
+                .and_then(|record| adjusted_peak(f64::from(record.overall_peak), record.custom_gain_db)),
         },
         Metric {
             name: "True peak",
             caption: "True peak",
             unit: "dBTP",
             value: value(|record| format_true_peak_compact(record.overall_true_peak)),
+            adjusted_value: adjusted_record
+                .and_then(|record| adjusted_peak(record.overall_true_peak, record.custom_gain_db)),
         },
         Metric {
             name: "Max short-term",
             caption: "Short-term",
             unit: "LUFS",
             value: value(|record| format_loudness_compact(record.max_short_term_lufs)),
+            adjusted_value: adjusted_record
+                .and_then(|record| adjusted_loudness(record.max_short_term_lufs, record.custom_gain_db)),
         },
         Metric {
             name: "Integrated loudness",
             caption: "Integrated",
             unit: "LUFS",
             value: value(|record| format_loudness_compact(record.integrated_lufs)),
+            adjusted_value: adjusted_record
+                .and_then(|record| adjusted_loudness(record.integrated_lufs, record.custom_gain_db)),
         },
     ]
 }
 
+/// Formats the predicted peak after custom gain without changing the source measurement.
+/// Silence stays silent, and values rounding to zero have a positive sign rather than negative zero.
+fn adjusted_peak(amplitude: f64, gain_db: Option<f32>) -> Option<String> {
+    let gain_db = gain_db.filter(|gain| gain.is_finite())?;
+    let decibels = gain_to_decibels(amplitude.abs(), f64::NEG_INFINITY) + f64::from(gain_db);
+    let rounded = (decibels * 10.0).round() / 10.0;
+    Some(if amplitude.abs() <= 0.0 {
+        String::from("(-INF)")
+    } else if rounded.abs() < f64::EPSILON {
+        String::from("(+0.0)")
+    } else {
+        format!("({rounded:+.1})")
+    })
+}
+
+/// Estimates gain-only loudness from the logarithmic energy shift, without decoding the file again.
+/// Linear K weighting scales energy by gain squared, so LUFS shifts by the gain in dB.
+/// Integrated loudness has this shift only while its gate membership stays unchanged.
+/// A gated-out source cannot be estimated from its stored silence sentinel alone.
+fn adjusted_loudness(loudness: f64, gain_db: Option<f32>) -> Option<String> {
+    let gain_db = gain_db.filter(|gain| gain.is_finite())?;
+    if !loudness.is_finite() || is_silent_loudness(loudness) {
+        return None;
+    }
+    Some(format!("(≈{:.1})", loudness + f64::from(gain_db)))
+}
+
 /// Renders the four level cards in two rows.
-fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
-    let [peak, true_peak, short_term, integrated] = metrics(record);
+fn metric_grid(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) -> Div {
+    let [peak, true_peak, short_term, integrated] = metrics(record, show_gain_adjusted_metrics);
     div()
         .flex()
         .flex_col()
@@ -355,13 +397,13 @@ fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
 }
 
 /// Renders the four level cards in one row, for the wide panel.
-fn metric_row(record: Option<&AnalysisRecord>) -> Div {
+fn metric_row(record: Option<&AnalysisRecord>, show_gain_adjusted_metrics: bool) -> Div {
     div()
         .flex()
         .flex_row()
         .flex_none()
         .gap(px(WIDE_METRIC_SPACING))
-        .children(metrics(record).into_iter().map(metric_card))
+        .children(metrics(record, show_gain_adjusted_metrics).into_iter().map(metric_card))
 }
 
 /// Renders a metric card: the caption and unit on top, the value large below.
@@ -385,14 +427,24 @@ fn metric_card(metric: Metric) -> Stateful<Div> {
                 .child(div().min_w_0().truncate().child(metric.caption))
                 .child(div().flex_none().child(metric.unit)),
         )
-        .child(metric_value(metric.value))
+        .child(metric_value(metric.value, metric.adjusted_value))
 }
 
 /// Renders the outlined frame of a metric card, with a tooltip spelling out the measurement with its value and unit.
 fn metric_card_frame(metric: &Metric) -> Stateful<Div> {
+    let description = metric.adjusted_value.as_ref().map_or_else(
+        || format!("{}: {} {}", metric.name, metric.value, metric.unit),
+        |adjusted| {
+            format!(
+                "{}: {} {}. After custom gain: {} {}. Gain only, before clipping or plugins. \
+                 Loudness is an estimate assuming unchanged gating.",
+                metric.name, metric.value, metric.unit, adjusted, metric.unit
+            )
+        },
+    );
     div()
         .id(metric.name)
-        .tooltip(tooltip(format!("{}: {} {}", metric.name, metric.value, metric.unit)))
+        .tooltip(tooltip(description))
         .flex_1()
         .min_w_0()
         .flex()
@@ -402,16 +454,28 @@ fn metric_card_frame(metric: &Metric) -> Stateful<Div> {
         .border_color(white(OUTLINE_ALPHA))
 }
 
-/// Renders the large value of a metric card.
-fn metric_value(value: String) -> Div {
+/// Renders the source value with a smaller, muted custom-gain prediction on the same baseline.
+/// The source value stays visible first when the card is too narrow for both.
+fn metric_value(value: String, adjusted_value: Option<String>) -> Div {
     div()
         .min_w_0()
+        .flex()
+        .items_baseline()
+        .gap_1()
         .font_family(MONO_FONT)
         .text_size(px(METRIC_FONT_SIZE))
         .line_height(px(METRIC_LINE_HEIGHT))
         .text_color(color(palette::GREY_SUPER_LIGHT))
-        .truncate()
-        .child(value)
+        .overflow_hidden()
+        .child(div().flex_none().child(value))
+        .children(adjusted_value.map(|adjusted| {
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(rems(0.75))
+                .text_color(color(palette::GREY_MIDDLE_LIGHT))
+                .child(adjusted)
+        }))
 }
 
 /// Renders a field name and its value aligned to the right edge, with both in the tooltip for a value too long to show.
@@ -538,6 +602,74 @@ fn describe_duration(seconds: f64) -> String {
         return format!("{milliseconds} ms");
     }
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod test_metrics {
+    use audiobatch_core::record::decibels_to_gain;
+
+    use super::*;
+
+    #[test]
+    fn custom_gain_predicts_both_peaks_without_changing_source_values() {
+        let record = AnalysisRecord {
+            overall_peak: decibels_to_gain(0.9) as f32,
+            overall_true_peak: decibels_to_gain(1.5),
+            custom_gain_db: Some(-1.0),
+            max_short_term_lufs: -8.5,
+            integrated_lufs: -12.5,
+            ..AnalysisRecord::default()
+        };
+        let [peak, true_peak, short_term, integrated] = metrics(Some(&record), true);
+        assert_eq!(peak.value, "0.90");
+        assert_eq!(peak.adjusted_value.as_deref(), Some("(-0.1)"));
+        assert_eq!(true_peak.value, "1.50");
+        assert_eq!(true_peak.adjusted_value.as_deref(), Some("(+0.5)"));
+        assert_eq!(short_term.adjusted_value.as_deref(), Some("(≈-9.5)"));
+        assert_eq!(integrated.adjusted_value.as_deref(), Some("(≈-13.5)"));
+        assert_eq!(integrated.value, "-12.50");
+        assert!(
+            metrics(Some(&record), false)
+                .iter()
+                .all(|metric| metric.adjusted_value.is_none())
+        );
+    }
+
+    #[test]
+    fn predictions_are_absent_without_gain_or_a_record() {
+        for record in [None, Some(AnalysisRecord::default()).as_ref()] {
+            assert!(
+                metrics(record, true)
+                    .iter()
+                    .all(|metric| metric.adjusted_value.is_none())
+            );
+        }
+        assert!(adjusted_peak(1.0, Some(f32::NAN)).is_none());
+    }
+
+    #[test]
+    fn loudness_estimates_shift_one_lu_per_db_and_omit_unknown_silence() {
+        assert_eq!(adjusted_loudness(-14.0, Some(1.0)).as_deref(), Some("(≈-13.0)"));
+        assert_eq!(adjusted_loudness(-14.0, Some(-3.0)).as_deref(), Some("(≈-17.0)"));
+        assert!(adjusted_loudness(-14.0, None).is_none());
+        assert!(adjusted_loudness(-14.0, Some(f32::INFINITY)).is_none());
+        assert!(adjusted_loudness(f64::NEG_INFINITY, Some(10.0)).is_none());
+        assert!(adjusted_loudness(f64::NAN, Some(10.0)).is_none());
+        assert!(adjusted_loudness(audiobatch_core::record::NEGATIVE_INFINITY_LOUDNESS, Some(10.0)).is_none());
+    }
+
+    #[test]
+    fn positive_gain_and_silence_are_formatted() {
+        assert_eq!(
+            adjusted_peak(decibels_to_gain(-2.0), Some(3.0)).as_deref(),
+            Some("(+1.0)")
+        );
+        assert_eq!(adjusted_peak(0.0, Some(3.0)).as_deref(), Some("(-INF)"));
+        assert_eq!(
+            adjusted_peak(decibels_to_gain(0.99), Some(-1.0)).as_deref(),
+            Some("(+0.0)")
+        );
+    }
 }
 
 #[cfg(test)]

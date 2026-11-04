@@ -45,9 +45,9 @@ use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenParentFolder, OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected,
-    RemoveSelected, Rescan, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, SetPreviewViewMode,
-    StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleLoudnessGraph, ToggleOverloadLines, TogglePlayback,
-    TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSampleOverloads,
+    RemoveSelected, Rescan, RescanPlugins, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice,
+    SetPreviewViewMode, StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleLoudnessGraph, ToggleOverloadLines,
+    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSampleOverloads,
     ToggleSeratoColours, ToggleTruePeakOverloads, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
@@ -166,6 +166,14 @@ impl PreviewStartupFit {
 }
 
 impl AppView {
+    /// Applies a queued zoom reset through the retained slider state before composing the frame.
+    fn apply_pending_zoom_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.zoom_reset_pending) {
+            self.zoom_slider
+                .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
+        }
+    }
+
     /// Returns the status bar text for the audio output:
     /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
     /// The buffer size is left out until the first audio callback reports it.
@@ -414,6 +422,7 @@ impl AppView {
                         selected_tags.as_deref(),
                         self.selected_artwork(),
                         wide,
+                        self.settings.show_gain_adjusted_metrics,
                     )),
             )
             .child(
@@ -480,7 +489,10 @@ impl AppView {
                     .w(px(metrics_width))
                     .h_full()
                     .flex_none()
-                    .child(render_compact_info_panel(self.selected_row(cx).as_ref())),
+                    .child(render_compact_info_panel(
+                        self.selected_row(cx).as_ref(),
+                        self.settings.show_gain_adjusted_metrics,
+                    )),
             )
             .child(
                 div()
@@ -557,10 +569,7 @@ impl Render for AppView {
             state.delegate_mut().set_row_menu_state(row_menu);
         });
         self.sync_gain_slider(window, cx);
-        if std::mem::take(&mut self.zoom_reset_pending) {
-            self.zoom_slider
-                .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
-        }
+        self.apply_pending_zoom_reset(window, cx);
 
         div()
             .id("app")
@@ -605,6 +614,7 @@ impl Render for AppView {
             }))
             .on_action(cx.listener(|view, _: &OpenPluginChain, _, cx| view.open_chain_window(cx)))
             .on_action(cx.listener(|view, _: &OpenPluginManager, _, cx| view.open_manager_window(cx)))
+            .on_action(cx.listener(|view, _: &RescanPlugins, _, cx| view.start_plugin_scan(cx)))
             .on_action(cx.listener(|view, _: &ClearPluginChain, _, cx| view.clear_plugin_chain(cx)))
             .on_action(cx.listener(|view, action: &AddPluginToChain, _, cx| view.add_plugin_from_menu(action, cx)))
             .on_action(cx.listener(|view, _: &SaveChainPreset, _, cx| view.open_chain_window(cx)))

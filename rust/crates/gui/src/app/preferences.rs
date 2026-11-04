@@ -391,6 +391,7 @@ fn merge_settings_window(current: &GuiSettings, previous: &GuiSettings, changed:
         show_overload_lines,
         serato_waveform_colours,
         show_loudness_graph,
+        show_gain_adjusted_metrics,
         loudness_minimum,
         loudness_maximum,
     );
@@ -426,6 +427,32 @@ mod test_settings_merge {
             );
             assert_eq!(merged.serato_waveform_colours, enabled);
             assert_eq!(merged.buffer_size, Some(512));
+        }
+    }
+
+    #[test]
+    fn gain_metric_preference_merges_edits_without_restoring_stale_values() {
+        for enabled in [false, true] {
+            let previous = GuiSettings {
+                show_gain_adjusted_metrics: !enabled,
+                ..GuiSettings::default()
+            };
+            let current = GuiSettings {
+                show_gain_adjusted_metrics: enabled,
+                ..previous.clone()
+            };
+            let unrelated = GuiSettings {
+                buffer_size: Some(512),
+                ..previous.clone()
+            };
+            assert_eq!(
+                merge_settings_window(&current, &previous, &unrelated).show_gain_adjusted_metrics,
+                enabled
+            );
+            assert_eq!(
+                merge_settings_window(&previous, &previous, &current).show_gain_adjusted_metrics,
+                enabled
+            );
         }
     }
 

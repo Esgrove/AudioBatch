@@ -35,13 +35,17 @@ public:
     AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit);
 
     void setCompact(bool compact);
-    void setValue(const juce::String& value);
+    void setValue(const juce::String& value, const juce::String& adjustedValue = {});
 
     // juce::Component
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
 private:
+    void layoutValues(juce::Rectangle<int> bounds);
+
+    /// Smaller custom-gain prediction beside the source value.
+    juce::Label adjustedValueLabel;
     /// Name of the value, such as "Peak".
     juce::Label captionLabel;
     /// Unit of the value, such as "dBFS".
@@ -53,7 +57,7 @@ private:
 };
 
 /// Read-only inspector with a fixed summary and a vertically scrolling details region.
-class AudioInfoPanel : public juce::Component
+class AudioInfoPanel final : public juce::Component
 {
 public:
     AudioInfoPanel();
@@ -70,7 +74,8 @@ public:
     void showRecord(
         const AudioAnalysisRecord& record,
         const juce::String& activeStatusLabel,
-        const serato::SeratoData* data = nullptr
+        const serato::SeratoData* data = nullptr,
+        bool showGainAdjustedMetrics = true
     );
 
     // juce::Component

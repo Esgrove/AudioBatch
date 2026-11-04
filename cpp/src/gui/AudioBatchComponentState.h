@@ -77,6 +77,9 @@ struct AudioPreviewPreferences {
     bool showTruePeakOverloads {true};
     /// True to extend enabled overload indicators as vertical lines across the preview.
     bool showOverloadLines {true};
+
+    /// True to show predicted peaks and estimated loudness after custom gain in the file metrics.
+    bool showGainAdjustedMetrics {true};
 };
 
 /// The album artwork of the selected file, requested once per file version.

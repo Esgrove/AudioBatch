@@ -109,6 +109,8 @@ pub struct GuiSettings {
     pub serato_waveform_colours: bool,
     /// Shows the embedded album artwork of the selected file beside its name in the information panel.
     pub show_album_artwork: bool,
+    /// Shows custom-gain peak predictions and loudness estimates beside the source metrics.
+    pub show_gain_adjusted_metrics: bool,
 }
 
 impl NormalizeMode {
@@ -161,6 +163,7 @@ impl Default for GuiSettings {
             hidden_columns: None,
             serato_waveform_colours: true,
             show_album_artwork: true,
+            show_gain_adjusted_metrics: true,
         }
     }
 }
@@ -274,6 +277,7 @@ mod test_settings_file {
             hidden_columns: Some(vec![String::from("path"), String::from("peak_left")]),
             serato_waveform_colours: false,
             show_album_artwork: false,
+            show_gain_adjusted_metrics: false,
         };
         settings.save_to(&path).expect("saves the settings");
         assert_eq!(GuiSettings::load_from(&path), settings);
@@ -300,6 +304,7 @@ mod test_settings_file {
         assert!(!settings.preview_plugin_chain);
         assert!(settings.compensate_preview_latency);
         assert!(settings.show_album_artwork);
+        assert!(settings.show_gain_adjusted_metrics);
         assert_eq!(settings.preview_view_mode, PreviewViewMode::Waveform);
         assert!(settings.show_sample_overloads);
         assert!(settings.show_true_peak_overloads);

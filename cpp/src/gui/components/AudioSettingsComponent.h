@@ -84,6 +84,7 @@ private:
     juce::ToggleButton coloursToggle {"Serato waveform colours"};
     juce::ToggleButton compensationToggle {"Compensate plugin latency"};
     juce::ToggleButton continuationToggle {"Continue playback when changing files"};
+    juce::ToggleButton gainAdjustedMetricsToggle {"Gain-adjusted metrics"};
     juce::ToggleButton loudnessGraphToggle {"Show loudness graph"};
     juce::ToggleButton playFromFirstCuePointToggle {"Play from first cue point"};
     juce::ToggleButton pluginToggle {"Preview plugin chain"};
