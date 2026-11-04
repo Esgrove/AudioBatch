@@ -221,6 +221,11 @@ pub struct OpenPluginChain;
 #[action(namespace = audiobatch)]
 pub struct OpenPluginManager;
 
+/// Rescans VST plugins in the configured search folders.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct RescanPlugins;
+
 /// Closes the focused Plugin Chain or Plugin Manager window.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -302,6 +307,8 @@ pub struct MenuState {
     pub chain_summary: String,
     /// The known effects by vendor, for the Add Plugin submenu.
     pub plugin_groups: Vec<VendorGroup>,
+    /// True while a plugin scan is running, disabling duplicate scan commands.
+    pub scanning_plugins: bool,
     /// Names of the saved chain presets, for the Chain Presets submenu.
     pub presets: Vec<String>,
     /// Name of the preset the chain matches, which the submenu checks.
@@ -538,6 +545,7 @@ fn plugins_menu(state: &MenuState) -> Menu {
         MenuItem::action("Clear Chain", ClearPluginChain),
         MenuItem::separator(),
         MenuItem::action("Plugin Manager…", OpenPluginManager),
+        MenuItem::action("Rescan VST plugins", RescanPlugins).disabled(state.scanning_plugins),
         MenuItem::separator(),
         MenuItem::action("Process Selected With Plugin Chain", ProcessSelected),
         MenuItem::action("Process All Files With Plugin Chain", ProcessAll),
@@ -597,6 +605,37 @@ mod test_preview_menus {
             assert!(bindings.bindings_for_action(&ChooseFolder).all(|binding| {
                 binding.match_keystrokes(&[Keystroke::parse(primary!("p")).expect("valid shortcut")]) != Some(false)
             }));
+        });
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
+    fn plugin_rescan_menu_tracks_scan_state(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            for scanning in [false, true] {
+                set_menus(
+                    cx,
+                    &MenuState {
+                        scanning_plugins: scanning,
+                        ..MenuState::default()
+                    },
+                );
+                let menu = cx
+                    .get_menus()
+                    .expect("menus installed")
+                    .into_iter()
+                    .find(|menu| menu.name == "Plugins")
+                    .expect("Plugins menu exists");
+                assert!(menu.items.iter().any(|item| matches!(item,
+                    OwnedMenuItem::Action { name, action, disabled, .. }
+                    if name == "Rescan VST plugins" && action.as_any().is::<RescanPlugins>() && *disabled == scanning
+                )));
+            }
         });
     }
 
