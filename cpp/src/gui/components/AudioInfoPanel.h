@@ -80,7 +80,12 @@ private:
 class AudioInfoMetric final : public juce::Component
 {
 public:
-    AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit);
+    AudioInfoMetric(
+        const juce::String& name,
+        const juce::String& caption,
+        const juce::String& unit,
+        const juce::String& compactCaption = {}
+    );
 
     void setCompact(bool compact);
     void setValue(
@@ -105,6 +110,10 @@ private:
     juce::Label unitLabel;
     /// The formatted value.
     juce::Label valueLabel;
+    /// Distinct unit-only caption used when the full metric name does not fit.
+    juce::String compactUnit;
+    /// Measurement unit retained in expanded captions and accessible descriptions.
+    juce::String measurementUnit;
     /// True in the compact row, which stacks the caption over the unit beside the value.
     bool compactMode {false};
 };
@@ -172,8 +181,8 @@ private:
     std::array<AudioInfoMetric, 4> metrics {
         AudioInfoMetric {"Peak", "Peak", "dBFS"},
         AudioInfoMetric {"True peak", "True peak", "dBTP"},
-        AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
-        AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
+        AudioInfoMetric {"Max short-term", "Short-term", "LUFS", "LUFS-S"},
+        AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS", "LUFS-I"},
     };
     /// Two shared five-column rows, retaining empty slots when a property is unavailable.
     std::array<juce::Label, AUDIO_INFO_CELL_COUNT> detailCells;

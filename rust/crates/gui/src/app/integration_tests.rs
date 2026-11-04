@@ -25,8 +25,9 @@ use tempfile::TempDir;
 use super::cue_start::CueStartIntent;
 use super::{AppOptions, AppView, LaunchOptions};
 use crate::menus::{
-    AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, SetPreviewViewMode, ToggleLoudnessGraph,
-    ToggleOverloadLines, TogglePreviewSection, ToggleSampleOverloads, ToggleSeratoColours, ToggleTruePeakOverloads,
+    AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, SetPreviewViewMode,
+    ToggleGainAdjustedMetrics, ToggleLoudnessGraph, ToggleOverloadLines, TogglePreviewSection, ToggleSampleOverloads,
+    ToggleSeratoColours, ToggleTruePeakOverloads,
 };
 use crate::settings::{GuiSettings, PreviewViewMode};
 use crate::test_helpers::plugin_dispatcher;
@@ -1276,6 +1277,46 @@ fn integration_panel_width_preferences_survive_temporary_window_constraints(cx: 
             .expect("render constrained view");
         cx.read(|cx| assert_eq!(workflow.view.read(cx).settings, saved));
         assert_eq!(fs::read(&path).expect("saved settings remain"), file);
+    }
+}
+
+/// The menu action persists one canonical preference while keeping the source record and custom gain intact.
+#[gpui_kit::test]
+async fn integration_gain_estimate_menu_toggles_and_persists_without_changing_source(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "metric-menu.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let original = cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            view.change_selected_gain(2.0, cx);
+            view.selected_record(cx).expect("selected source").clone()
+        })
+    });
+    for enabled in [false, true] {
+        workflow.dispatch(ToggleGainAdjustedMetrics, cx);
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            assert_eq!(view.settings.show_gain_adjusted_metrics, enabled);
+            assert_eq!(view.menu_state.show_gain_adjusted_metrics, enabled);
+            let record = view.selected_record(cx).expect("unchanged source");
+            assert!((record.integrated_lufs - original.integrated_lufs).abs() < f64::EPSILON);
+            assert_eq!(record.custom_gain_db, original.custom_gain_db);
+            let options = cx
+                .get_menus()
+                .expect("menus installed")
+                .into_iter()
+                .find(|menu| menu.name == "Options")
+                .expect("Options menu");
+            assert!(options.items.iter().any(|item| matches!(item,
+                OwnedMenuItem::Action { name, action, checked, disabled, .. }
+                if name == "Show custom gain estimates" && action.as_any().is::<ToggleGainAdjustedMetrics>()
+                    && *checked == enabled && !disabled
+            )));
+        });
+        let saved = GuiSettings::load_from(&workflow.paths.data().join("gui-settings.json"));
+        assert_eq!(saved.show_gain_adjusted_metrics, enabled);
     }
 }
 

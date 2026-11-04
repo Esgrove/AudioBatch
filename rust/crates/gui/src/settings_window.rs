@@ -512,7 +512,7 @@ impl SettingsView {
             ))
             .child(Self::option(
                 "show-gain-adjusted-metrics",
-                "Gain-adjusted metrics",
+                "Show custom gain estimates",
                 GAIN_ADJUSTED_METRICS_TOOLTIP,
                 settings.show_gain_adjusted_metrics,
                 |settings, checked| settings.show_gain_adjusted_metrics = checked,

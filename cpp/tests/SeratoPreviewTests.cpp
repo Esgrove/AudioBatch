@@ -104,6 +104,15 @@ juce::String panelValue(const AudioInfoPanel& panel, const juce::String& name)
     }
     return {};
 }
+/// Finds actual visible metric text without depending on private label storage.
+bool hasVisibleMetricText(const AudioInfoMetric& metric, const juce::String& text)
+{
+    return std::ranges::any_of(metric.getChildren(), [&](const juce::Component* child) {
+        const auto* label = dynamic_cast<const juce::Label*>(child);
+        return label != nullptr && label->isVisible() && label->getText() == text;
+    });
+}
+
 /// Retrieves one labelled value from the pure details model, without relying on hidden component names.
 juce::String trackValue(const AudioInfoDetails& details, const juce::String& label)
 {
@@ -131,6 +140,7 @@ private:
     void verifyOverloadProjection(ThumbnailComponent& thumbnail, int channels, bool sample, bool truePeak, bool lines);
     void testTrackInfo();
     void testInfoDetails();
+    void testMetricCaptions();
     void testPreviewModes();
     void testPreviewAxes();
     void testPreviewAxesForMode(bool enabled, PreviewViewMode mode);
@@ -152,6 +162,7 @@ void SeratoPreviewTests::runTest()
     testHotCueKeys();
     testTrackInfo();
     testInfoDetails();
+    testMetricCaptions();
     testPreviewModes();
     testPreviewAxes();
     testAmplitudeLabels();
@@ -670,6 +681,31 @@ void SeratoPreviewTests::testTrackInfo()
     panel.clear();
     expect(panelValue(panel, "BPM").isEmpty());
     expect(panelValue(panel, "Key").isEmpty());
+}
+
+/// Checks width-dependent captions without altering values or their accessible metric names.
+void SeratoPreviewTests::testMetricCaptions()
+{
+    beginTest("Metric captions switch to distinct unit-only labels when measured names cannot fit");
+    constexpr std::array CAPTIONS {"Peak", "True peak", "Short-term", "Integrated"};
+    constexpr std::array UNITS {"dBFS", "dBTP", "LUFS", "LUFS"};
+    constexpr std::array COMPACT_UNITS {"dBFS", "dBTP", "LUFS-S", "LUFS-I"};
+    for (std::size_t index = 0; index < CAPTIONS.size(); ++index) {
+        AudioInfoMetric metric(CAPTIONS[index], CAPTIONS[index], UNITS[index], COMPACT_UNITS[index]);
+        metric.setValue("-12.50");
+        for (const auto compact : {false, true}) {
+            metric.setCompact(compact);
+            for (const auto width : {30, 400, 30}) {
+                metric.setSize(width, layout::information::metricHeight);
+                expect(hasVisibleMetricText(metric, "-12.50"));
+                expectEquals(metric.getName(), juce::String(CAPTIONS[index]));
+                expect(hasVisibleMetricText(metric, CAPTIONS[index]) == (width == 400));
+                if (width == 30) {
+                    expect(hasVisibleMetricText(metric, COMPACT_UNITS[index]));
+                }
+            }
+        }
+    }
 }
 
 /// Pins the pure details contract, units, omissions, original key spelling, and readiness-independent tags.

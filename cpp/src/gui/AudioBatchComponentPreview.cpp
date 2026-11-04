@@ -124,6 +124,20 @@ void AudioBatchComponent::toggleAlbumArtwork()
     setPreviewPreferences(preferences);
 }
 
+/// Reports the shared, persisted custom-gain estimate visibility for menu check marks.
+bool AudioBatchComponent::isCustomGainEstimatesEnabled() const noexcept
+{
+    return previewPreferences.showGainAdjustedMetrics;
+}
+
+/// Toggles estimates without modifying custom gain, source measurements, or playback.
+void AudioBatchComponent::toggleCustomGainEstimates()
+{
+    auto preferences = previewPreferences;
+    preferences.showGainAdjustedMetrics = !preferences.showGainAdjustedMetrics;
+    setPreviewPreferences(preferences);
+}
+
 /// Requests the album artwork of the displayed file, unless this version was already requested.
 /// A forced refresh reads it again, for a file rewritten under the same path.
 /// While the option is off, it only remembers the file, so enabling it later can request the artwork.

@@ -8,7 +8,7 @@ use gpui_kit::component::resizable::resize_handle;
 use gpui_kit::{
     AccessibleAction, App, AppContext as _, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle, Global,
     InteractiveElement as _, IntoElement, KeyBinding, MouseButton, Orientation, ParentElement as _, Render, Role,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px, transparent_black,
 };
 
 use super::{AppView, SECTION_SPACING};
@@ -387,7 +387,7 @@ fn width_divider_appearance(focus: FocusHandle) -> ResizeHandleRenderer {
             ResizeHandleState::Pressed | ResizeHandleState::Dragging => cx.theme().ring,
             ResizeHandleState::Hovered => cx.theme().muted_foreground,
             ResizeHandleState::Idle if focus.is_focused(window) => cx.theme().ring,
-            ResizeHandleState::Idle => cx.theme().border.opacity(0.35),
+            ResizeHandleState::Idle => transparent_black(),
         };
         Some(div().flex_none().h_full().w(px(1.0)).bg(color).into_any_element())
     })

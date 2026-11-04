@@ -705,7 +705,7 @@ void PreviewPlayerTests::testPreferences()
         const auto& content = *dynamic_cast<juce::Viewport&>(*panel.getChildComponent(0)).getViewedComponent();
         for (auto* child : content.getChildren()) {
             if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) {
-                if (toggle->getButtonText() == "Gain-adjusted metrics") {
+                if (toggle->getButtonText() == "Show custom gain estimates") {
                     gainToggle = toggle;
                 } else if (toggle->getButtonText() == "Serato waveform colours") {
                     coloursToggle = toggle;
@@ -740,7 +740,7 @@ void PreviewPlayerTests::testPreferences()
                 gainToggle->getTooltip(),
                 juce::String(
                     "Show predicted peaks and estimated loudness after custom gain. "
-                    "Loudness assumes unchanged gating. Excludes clipping, limiting, and plugins."
+                    "Source measurements stay unchanged. Estimates are not actual plugin renders."
                 )
             );
             for (const auto enabled : {false, true}) {

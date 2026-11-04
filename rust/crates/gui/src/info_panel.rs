@@ -18,12 +18,13 @@ use audiobatch_core::gain_loudness::{GainLoudness, estimate_limiter_integrated};
 use audiobatch_core::record::is_silent_loudness;
 use audiobatch_core::{AnalysisRecord, FileTags};
 use gpui_kit::{
-    AnyElement, Div, Hsla, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
-    StatefulInteractiveElement as _, Styled as _, StyledImage as _, div, img, px, rems,
+    AnyElement, Div, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, TextAlign, TextRun, canvas, div, font, img, point,
+    px, rems,
 };
 
 use crate::results::{ResultRow, RowState};
-use crate::theme::{MONO_FONT, color, palette, tooltip, white};
+use crate::theme::{MONO_FONT, TEXT_FONT, color, palette, tooltip, white};
 
 /// Corner radius of the panel and its metric cards.
 pub const CORNER_RADIUS: f32 = 6.0;
@@ -107,6 +108,8 @@ struct Metric {
     caption: &'static str,
     /// Unit of the value.
     unit: &'static str,
+    /// Unambiguous unit-only caption used when the full labels cannot fit.
+    compact_unit: &'static str,
     /// Formatted value, or a dash when there is no result.
     value: String,
     /// Predicted level after custom gain, with approximate loudness values marked by "≈".
@@ -298,18 +301,7 @@ pub fn render_compact_info_panel(
                 .items_center()
                 .gap(px(COMPACT_METRIC_SPACING))
                 .px(px(6.0))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .text_size(px(CAPTION_FONT_SIZE))
-                        .line_height(px(METRIC_CAPTION_LINE_HEIGHT))
-                        .text_color(color(palette::GREY_MIDDLE_LIGHT))
-                        .child(div().truncate().child(metric.caption))
-                        .child(div().truncate().child(metric.unit)),
-                )
+                .child(metric_labels(&metric, true))
                 .child(metric_value(metric.value, metric.adjusted_value).text_size(px(COMPACT_METRIC_FONT_SIZE)))
         }))
 }
@@ -327,6 +319,7 @@ fn metrics(
             name: "Peak",
             caption: "Peak",
             unit: "dBFS",
+            compact_unit: "dBFS",
             value: value(|record| format_peak_compact(f64::from(record.overall_peak))),
             adjusted_value: adjusted_record
                 .and_then(|record| adjusted_peak(f64::from(record.overall_peak), record.custom_gain_db)),
@@ -335,6 +328,7 @@ fn metrics(
             name: "True peak",
             caption: "True peak",
             unit: "dBTP",
+            compact_unit: "dBTP",
             value: value(|record| format_true_peak_compact(record.overall_true_peak)),
             adjusted_value: adjusted_record
                 .and_then(|record| adjusted_peak(record.overall_true_peak, record.custom_gain_db)),
@@ -343,6 +337,7 @@ fn metrics(
             name: "Max short-term",
             caption: "Short-term",
             unit: "LUFS",
+            compact_unit: "LUFS-S",
             value: value(|record| format_loudness_compact(record.max_short_term_lufs)),
             adjusted_value: adjusted_record.and_then(|record| {
                 adjusted_loudness(gained_loudness.map(GainLoudness::max_short_term), record.custom_gain_db)
@@ -352,6 +347,7 @@ fn metrics(
             name: "Integrated loudness",
             caption: "Integrated",
             unit: "LUFS",
+            compact_unit: "LUFS-I",
             value: value(|record| format_loudness_compact(record.integrated_lufs)),
             adjusted_value: adjusted_record.and_then(|record| {
                 let gain = record.custom_gain_db?;
@@ -443,28 +439,82 @@ fn metric_row(
         )
 }
 
-/// Renders a metric card: the caption and unit on top, the value large below.
-/// A card too narrow for both cuts off the caption, never the unit.
+/// Renders a metric card, replacing labels with an unambiguous unit when they no longer fit.
 fn metric_card(metric: Metric) -> Stateful<Div> {
-    let caption_color: Hsla = color(palette::GREY_MIDDLE_LIGHT);
     metric_card_frame(&metric)
         .h(px(METRIC_HEIGHT))
         .flex_col()
         .justify_between()
         .p(px(6.0))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .justify_between()
-                .gap(px(4.0))
-                .text_size(px(CAPTION_FONT_SIZE))
-                .line_height(px(METRIC_CAPTION_LINE_HEIGHT))
-                .text_color(caption_color)
-                .child(div().min_w_0().truncate().child(metric.caption))
-                .child(div().flex_none().child(metric.unit)),
-        )
+        .child(metric_labels(&metric, false))
         .child(metric_value(metric.value, metric.adjusted_value))
+}
+
+/// Measures captions against their resolved lane, so resizing never leaves a partially truncated metric name.
+/// The card owns the accessible full description through its tooltip, independent of the painted abbreviation.
+fn metric_labels(metric: &Metric, stacked: bool) -> impl IntoElement + use<> {
+    let labels = [metric.caption, metric.unit, metric.compact_unit];
+    canvas(
+        move |_, window, _| {
+            labels.map(|text| {
+                window.text_system().shape_line(
+                    text.into(),
+                    rems(CAPTION_FONT_SIZE / 15.0).to_pixels(window.rem_size()),
+                    &[TextRun {
+                        len: text.len(),
+                        font: font(TEXT_FONT),
+                        color: color(palette::GREY_MIDDLE_LIGHT),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+            })
+        },
+        move |bounds, [caption, unit, compact_unit], window, cx| {
+            let line_height = rems(METRIC_CAPTION_LINE_HEIGHT / 15.0).to_pixels(window.rem_size());
+            let gap = rems(4.0 / 15.0).to_pixels(window.rem_size());
+            let required = if stacked {
+                caption.width().max(unit.width())
+            } else {
+                caption.width() + gap + unit.width()
+            };
+            let full = metric_labels_fit(f32::from(bounds.size.width), f32::from(required));
+            let labels = if full {
+                let unit_position = if stacked {
+                    point(bounds.origin.x, bounds.origin.y + line_height)
+                } else {
+                    point(bounds.right() - unit.width(), bounds.origin.y)
+                };
+                vec![(caption, bounds.origin), (unit, unit_position)]
+            } else {
+                let origin = if stacked {
+                    point(bounds.origin.x, bounds.origin.y + line_height * 0.5)
+                } else {
+                    bounds.origin
+                };
+                vec![(compact_unit, origin)]
+            };
+            for (label, origin) in labels {
+                if let Err(error) = label.paint(origin, line_height, TextAlign::Left, None, window, cx) {
+                    tracing::warn!("Failed to paint metric label: {error:#}");
+                }
+            }
+        },
+    )
+    .w_full()
+    .min_w_0()
+    .h(rems(
+        METRIC_CAPTION_LINE_HEIGHT / 15.0 * if stacked { 2.0 } else { 1.0 },
+    ))
+    .flex_1()
+    .overflow_hidden()
+}
+
+/// Keeps the full labels only when their measured glyphs and inter-label gap fit completely.
+fn metric_labels_fit(available: f32, required: f32) -> bool {
+    available >= required
 }
 
 /// Renders the outlined frame of a metric card, with a tooltip spelling out the measurement with its value and unit.
@@ -564,12 +614,14 @@ fn details_grid(details: &InfoDetails) -> Div {
             .text_size(rems(DETAIL_VALUE_FONT_SIZE))
             .text_color(color(palette::GREY_LIGHT));
         for (column, (field, value)) in row.iter().enumerate() {
-            let mut cell = div()
-                .id(*field)
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(value.replace(['\r', '\n'], " "));
+            let content = div().min_w_0().truncate().child(value.replace(['\r', '\n'], " "));
+            let content = if column == 1 {
+                // Reserve a wider trailing gap without moving the remaining columns.
+                content.mr_3()
+            } else {
+                content
+            };
+            let mut cell = div().id(*field).flex_1().min_w_0().overflow_hidden().child(content);
             if column > 0 {
                 cell = cell.text_right();
             }
@@ -730,6 +782,17 @@ mod test_metrics {
                 .iter()
                 .all(|metric| metric.adjusted_value.is_none())
         );
+    }
+
+    #[test]
+    fn narrow_metric_labels_use_distinct_units_and_switch_at_the_measured_width() {
+        assert_eq!(
+            metrics(None, false, None).map(|metric| metric.compact_unit),
+            ["dBFS", "dBTP", "LUFS-S", "LUFS-I"]
+        );
+        assert!(!metric_labels_fit(99.0, 100.0));
+        assert!(metric_labels_fit(100.0, 100.0));
+        assert!(metric_labels_fit(101.0, 100.0));
     }
 
     #[test]

@@ -121,6 +121,13 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
+    /// Toggles custom-gain estimates without changing source measurements or the preview gain.
+    pub(super) fn toggle_gain_adjusted_metrics(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.show_gain_adjusted_metrics = !settings.show_gain_adjusted_metrics;
+        self.apply_settings(settings, cx);
+    }
+
     /// Collapses the preview into its compact row, or expands it again with the divider where it was.
     /// The choice lasts for this session only.
     pub(super) fn toggle_preview_section(&mut self, cx: &mut Context<Self>) {
@@ -243,6 +250,7 @@ impl AppView {
         self.menu_state.show_loudness_graph = show;
         self.menu_state.serato_colours = serato_colours;
         self.menu_state.show_album_artwork = settings.show_album_artwork;
+        self.menu_state.show_gain_adjusted_metrics = settings.show_gain_adjusted_metrics;
         self.menu_state.preview_plugin_chain = settings.preview_plugin_chain;
         self.menu_state.compensate_preview_latency = settings.compensate_preview_latency;
         self.refresh_menus(cx);
