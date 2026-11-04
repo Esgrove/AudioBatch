@@ -14,13 +14,6 @@
 #include <memory>
 #include <span>
 #include <utility>
-
-// The mel conversions feed shared row boundaries, so every operation is rounded separately as in Rust.
-// CMakeLists.txt disables contraction for Clang, and this pragma does it for MSVC, which has no undoing option.
-#if defined(_MSC_VER) && !defined(__clang__)
-#pragma fp_contract(off)
-#endif
-
 namespace audiobatch
 {
 namespace

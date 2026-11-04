@@ -259,8 +259,9 @@ fn both_implementations_reuse_production_spectra_without_reanalysis() {
 /// The headers must be identical. The FFT libraries differ, `juce::dsp::FFT` against `realfft`,
 /// and their last-bit rounding can move a power across a quantization boundary.
 /// That documented exception allows only one intensity step, in at most one cell per thousand and file.
-/// Window, power normalization, mel support, quantization, and reduction are otherwise identical,
-/// and the C++ sources disable floating-point contraction so compiler FMA choices cannot widen this bound.
+/// Window, power normalization, mel support, quantization, and reduction are otherwise identical.
+/// The C++ Release build's floating-point contraction leaves these bytes unchanged,
+/// and this test against that build keeps it from widening the bound.
 #[test]
 fn both_implementations_produce_matching_spectra_from_the_same_pcm() {
     let Some(executable) = cpp_executable() else {

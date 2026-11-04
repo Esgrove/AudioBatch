@@ -705,23 +705,6 @@ if(NOT MSVC)
     )
 endif()
 
-# The shared spectrogram contract keeps each multiplication and addition separately rounded,
-# as the Rust implementation does, so cached intensity bytes do not depend on the compiler's FMA choices.
-# The later Clang option overrides the global contraction setting for these files only.
-# MSVC has no option that undoes /fp:contract, so the sources disable contraction with a pragma there.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-    if(MSVC)
-        set(audiobatch_exact_float_option /clang:-ffp-contract=off)
-    else()
-        set(audiobatch_exact_float_option -ffp-contract=off)
-    endif()
-    set_property(
-        SOURCE src/analysis/SpectrogramBuilder.cpp src/analysis/SpectrogramData.cpp
-        APPEND
-        PROPERTY COMPILE_OPTIONS ${audiobatch_exact_float_option}
-    )
-endif()
-
 # Applies the stricter warning set to the project's own sources only.
 # JUCE module sources are compiled into the targets and are not written to these rules,
 # so the options are attached per source file instead of per target.
