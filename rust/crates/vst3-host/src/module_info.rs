@@ -158,6 +158,7 @@ mod test_module_info {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "uses the file system, which Miri isolation blocks")]
     fn reads_the_file_from_the_resources_folder() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let bundle = folder.path().join("Example.vst3");

@@ -316,6 +316,7 @@ mod test_column_colours {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "colours a very wide waveform, which takes minutes under Miri")]
     fn colour_count_is_bounded_on_a_very_wide_waveform() {
         let colours = column_colours(&overview_of(&[RED_INDEX, GREEN_INDEX]), 0.0, 1.0, 100_000);
         assert_eq!(colours.len(), MAXIMUM_COLOUR_STOPS);

@@ -123,6 +123,7 @@ mod test_discovery {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore = "uses the file system, which Miri isolation blocks")]
     fn finds_bundles_without_descending_into_them() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let nested = folder.path().join("Vendor");
@@ -136,6 +137,7 @@ mod test_discovery {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "uses the file system, which Miri isolation blocks")]
     fn skips_hidden_entries_and_missing_folders() {
         let folder = tempfile::tempdir().expect("temporary folder");
         std::fs::create_dir_all(folder.path().join(".hidden").join("Hidden.vst3")).expect("hidden bundle");
@@ -148,6 +150,7 @@ mod test_discovery {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "uses the file system, which Miri isolation blocks")]
     fn a_bundle_given_as_a_folder_is_returned_as_is() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let bundle = folder.path().join("Effect.vst3");
@@ -157,6 +160,7 @@ mod test_discovery {
 
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(miri, ignore = "uses the file system, which Miri isolation blocks")]
     fn a_symlink_back_up_the_tree_is_not_followed_forever() {
         let folder = tempfile::tempdir().expect("temporary folder");
         let vendor = folder.path().join("Vendor");

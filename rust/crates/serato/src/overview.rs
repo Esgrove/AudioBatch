@@ -216,6 +216,7 @@ mod test_parse {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "parses the largest overview, which takes minutes under Miri")]
     fn accepts_silent_slices_and_bounds_the_slice_count() {
         let mut silent = payload(1);
         silent[2..].fill(0);
@@ -254,6 +255,7 @@ mod test_cache_representation {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "parses the largest overview, which takes minutes under Miri")]
     fn round_trips_the_largest_overview() {
         let overview = overview(MAXIMUM_SLICES);
         assert_eq!(Overview::deserialize(&overview.serialize()), Some(overview));
@@ -287,6 +289,7 @@ mod test_cache_representation {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "parses the largest overview, which takes minutes under Miri")]
     fn invalid_overviews_have_no_cache_representation() {
         assert_eq!(Overview::default().serialize(), Vec::<u8>::new());
         assert_eq!(overview(MAXIMUM_SLICES + 1).serialize(), Vec::<u8>::new());

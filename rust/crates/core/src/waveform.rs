@@ -539,6 +539,7 @@ mod test_waveform_extrema {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "builds a full-size overview, which takes minutes under Miri")]
     fn extrema_match_when_buckets_merge() {
         let block: Vec<_> = (0..64).map(|frame| (frame as f32 * 0.13).sin()).collect();
         let mut reference = WaveformBuilder::new(2, None);
@@ -674,6 +675,7 @@ mod test_waveform {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "builds a full-size overview, which takes minutes under Miri")]
     fn bucket_count_stays_bounded_for_long_input() {
         let mut builder = WaveformBuilder::new(2, None);
         let block = sine(4096, 0.5);

@@ -358,6 +358,7 @@ mod test_builder {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "fills the bucket limit, which takes minutes under Miri")]
     fn several_merges_preserve_isolated_flags_and_pending_channel_state() {
         let blocks = MAXIMUM_BUCKETS * 5 + 13;
         let mut builder = OverloadHistoryBuilder::new(3, 44_100);
@@ -390,6 +391,7 @@ mod test_builder {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "fills the bucket limit, which takes minutes under Miri")]
     fn finishing_at_the_limit_and_immediately_after_merging_is_canonical() {
         for (blocks, stride) in [
             (MAXIMUM_BUCKETS, 1),
