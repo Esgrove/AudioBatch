@@ -124,6 +124,7 @@ impl AppView {
     /// Collapses the preview into its compact row, or expands it again with the divider where it was.
     /// The choice lasts for this session only.
     pub(super) fn toggle_preview_section(&mut self, cx: &mut Context<Self>) {
+        self.finish_panel_width_drag(cx);
         self.preview_compact = !self.preview_compact;
         self.menu_state.preview_compact = self.preview_compact;
         self.refresh_menus(cx);
@@ -455,6 +456,24 @@ mod test_settings_merge {
                 enabled
             );
         }
+    }
+
+    #[test]
+    fn stale_audio_settings_preserve_independent_panel_width_preferences() {
+        let previous = GuiSettings::default();
+        let current = GuiSettings {
+            controls_width_scale: 1.04,
+            information_width_scale: 0.83,
+            ..previous.clone()
+        };
+        let changed = GuiSettings {
+            buffer_size: Some(512),
+            ..previous.clone()
+        };
+        let merged = merge_settings_window(&current, &previous, &changed);
+        assert!((merged.controls_width_scale - current.controls_width_scale).abs() < f32::EPSILON);
+        assert!((merged.information_width_scale - current.information_width_scale).abs() < f32::EPSILON);
+        assert_eq!(merged.buffer_size, Some(512));
     }
 
     #[test]

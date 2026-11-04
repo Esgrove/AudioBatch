@@ -2,8 +2,8 @@
 //!
 //! The results table, and below a draggable divider the preview with the controls, the information panel,
 //! and the waveform.
-//! In a wide window the controls and the information panel switch to their wide layouts and share half the width,
-//! so they take less height and the waveform keeps at least the other half.
+//! In a wide window the controls and the information panel switch to their wide layouts.
+//! Their independently resizable widths follow responsive baselines, leaving the waveform the remaining space.
 //! A status bar along the bottom edge shows the listed folders, the run status with its progress,
 //! and the output device with its sample rate and buffer size.
 //! The window title shows the progress of analysis, normalization, or plugin processing,
@@ -30,6 +30,7 @@ use gpui_kit::{
     Window, div, px, relative, transparent_black,
 };
 
+use super::panel_widths::{PreviewPanel, baseline_widths, compact_controls_width};
 use super::{
     APP_TITLE, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
     TABLE_FRAME_BORDER, content_size,
@@ -88,37 +89,6 @@ const PREVIEW_MAXIMUM_PROPORTION: f32 = 0.7;
 
 /// Space on each side of the divider between the table and the preview.
 const DIVIDER_SPACING: f32 = 4.0;
-
-/// Narrowest width of the controls column.
-const CONTROLS_MINIMUM_WIDTH: f32 = 209.0;
-
-/// Widest width of the controls column.
-const CONTROLS_MAXIMUM_WIDTH: f32 = 228.0;
-
-/// Share of the window width given to the controls column.
-const CONTROLS_WIDTH_PROPORTION: f32 = 0.14;
-
-/// Narrowest width of the information panel.
-const INFORMATION_MINIMUM_WIDTH: f32 = 234.0;
-
-/// Widest width of the information panel.
-const INFORMATION_MAXIMUM_WIDTH: f32 = 270.0;
-
-/// Share of the window width given to the information panel.
-const INFORMATION_WIDTH_PROPORTION: f32 = 0.22;
-
-/// Narrowest half of the content width that turns on the wide preview,
-/// in which the controls and the information panel share half the width and the waveform gets the other half.
-const WIDE_MINIMUM_HALF_WIDTH: f32 = 790.0;
-
-/// Share of the wide half given to the controls, the rest going to the information panel.
-const WIDE_CONTROLS_PROPORTION: f32 = 0.48;
-
-/// Widest width of the controls in the wide preview, so on very wide windows the waveform grows instead.
-const WIDE_CONTROLS_MAXIMUM_WIDTH: f32 = 500.0;
-
-/// Widest width of the information panel in the wide preview.
-const WIDE_INFORMATION_MAXIMUM_WIDTH: f32 = 540.0;
 
 /// Height of the collapsed preview, including the space below the table.
 const COMPACT_PREVIEW_HEIGHT: f32 = 52.0;
@@ -375,9 +345,10 @@ impl AppView {
     }
 
     /// Renders the preview: the controls, the information panel, and the waveform side by side.
-    /// A wide window gives the controls and the information panel their wide layouts, see `preview_widths`.
+    /// A wide window gives the controls and the information panel their wide layouts, see `baseline_widths`.
     fn render_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
-        let (controls_width, information_width, wide) = preview_widths(content_width);
+        let widths = self.panel_widths(content_width);
+        let (controls_width, information_width, wide) = (widths.controls, widths.information, widths.wide);
         let selected_tags = self
             .selected_tags
             .as_ref()
@@ -405,13 +376,14 @@ impl AppView {
             .pt(px(DIVIDER_SPACING))
             .flex()
             .flex_row()
-            .gap(px(SECTION_SPACING))
+            .on_drag_move(cx.listener(move |view, event, _, cx| view.drag_panel_width(event, content_width, cx)))
             .child(div().w(px(controls_width)).h_full().flex_none().child(render_controls(
                 &controls,
                 wide,
                 &Self::controls_listener(cx),
                 cx,
             )))
+            .child(self.render_panel_width_divider(PreviewPanel::Controls, content_width, cx))
             .child(
                 div()
                     .w(px(information_width))
@@ -426,10 +398,11 @@ impl AppView {
                         self.gained_loudness(cx),
                     )),
             )
+            .child(self.render_panel_width_divider(PreviewPanel::Information, content_width, cx))
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(widths.waveform))
                     .h_full()
                     .child(self.render_preview_plot("preview-plot")),
             )
@@ -461,11 +434,11 @@ impl AppView {
     }
 
     /// Renders the collapsed preview in one row:
-    /// the chevron, Play/Stop and Process as wide as in the expanded controls, the four metrics, and the waveform.
+    /// the chevron, Play/Stop and Process at their original responsive widths, the four metrics, and the waveform.
     fn render_compact_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
         let on_event = Self::controls_listener(cx);
-        let playback_width = controls_width(content_width) - SECTION_TOGGLE_SIZE - COMPACT_SPACING;
-        let remaining = SECTION_SPACING.mul_add(-2.0, content_width - controls_width(content_width));
+        let playback_width = compact_controls_width(content_width) - SECTION_TOGGLE_SIZE - COMPACT_SPACING;
+        let remaining = SECTION_SPACING.mul_add(-2.0, content_width - compact_controls_width(content_width));
         let metrics_width = (remaining * COMPACT_METRICS_PROPORTION).clamp(
             COMPACT_METRICS_MINIMUM_WIDTH,
             (remaining - COMPACT_WAVEFORM_MINIMUM_WIDTH).max(COMPACT_METRICS_MINIMUM_WIDTH),
@@ -558,11 +531,11 @@ impl Focusable for AppView {
     }
 }
 
-impl Render for AppView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl AppView {
+    /// Synchronizes table sizing and pending controls before composing the main frame.
+    fn prepare_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> (Option<f32>, f32, f32) {
         let progress = self.overall_progress(cx);
         self.update_window_title(progress, window);
-        let progress = progress.map(|(_, fraction)| fraction);
         let (content_width, workspace_height) = content_size(window.viewport_size());
         let table_width = TABLE_FRAME_BORDER.mul_add(-2.0, content_width);
         let row_menu = self.row_menu_state();
@@ -572,11 +545,25 @@ impl Render for AppView {
         });
         self.sync_gain_slider(window, cx);
         self.apply_pending_zoom_reset(window, cx);
+        (progress.map(|(_, fraction)| fraction), content_width, workspace_height)
+    }
+}
 
+impl Render for AppView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (progress, content_width, workspace_height) = self.prepare_frame(window, cx);
         div()
             .id("app")
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_mouse_up(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|view, _, _, cx| view.finish_panel_width_drag(cx)),
+            )
+            .on_mouse_up_out(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|view, _, _, cx| view.finish_panel_width_drag(cx)),
+            )
             .on_action(cx.listener(|_, _: &ChooseFolder, _, cx| Self::prompt_for_paths(true, true, cx)))
             .on_action(cx.listener(|_, _: &AddFolder, _, cx| Self::prompt_for_paths(true, false, cx)))
             .on_action(cx.listener(|_, _: &AddFiles, _, cx| Self::prompt_for_paths(false, false, cx)))
@@ -688,8 +675,7 @@ fn divider_appearance() -> ResizeHandleRenderer {
 /// It stays within the range the divider allows, so a short window keeps the table usable
 /// and the controls scroll instead.
 pub(super) fn preview_fit_height(content_width: f32, workspace_height: f32) -> f32 {
-    let (_, _, wide) = preview_widths(content_width);
-    (DIVIDER_SPACING + controls_fit_height(wide))
+    (DIVIDER_SPACING + controls_fit_height(baseline_widths(content_width).wide))
         .clamp(PREVIEW_MINIMUM_HEIGHT, preview_maximum_height(workspace_height))
 }
 
@@ -698,31 +684,6 @@ fn preview_maximum_height(workspace_height: f32) -> f32 {
     (workspace_height * PREVIEW_MAXIMUM_PROPORTION)
         .min(workspace_height - TABLE_MINIMUM_HEIGHT)
         .max(PREVIEW_MINIMUM_HEIGHT + 1.0)
-}
-
-/// Returns the width of the controls column, which the compact row also uses for its chevron and playback buttons.
-fn controls_width(content_width: f32) -> f32 {
-    (content_width * CONTROLS_WIDTH_PROPORTION).clamp(CONTROLS_MINIMUM_WIDTH, CONTROLS_MAXIMUM_WIDTH)
-}
-
-/// Returns the widths of the controls and the information panel of the expanded preview,
-/// and whether they use their wide layouts.
-/// The wide layouts apply once half the content width is at least `WIDE_MINIMUM_HALF_WIDTH`.
-/// The controls and the panel then share that half, each up to its maximum,
-/// so the waveform gets at least the other half.
-fn preview_widths(content_width: f32) -> (f32, f32, bool) {
-    let half = content_width * 0.5;
-    if half < WIDE_MINIMUM_HALF_WIDTH {
-        let information_width =
-            (content_width * INFORMATION_WIDTH_PROPORTION).clamp(INFORMATION_MINIMUM_WIDTH, INFORMATION_MAXIMUM_WIDTH);
-        return (controls_width(content_width), information_width, false);
-    }
-    let shared = half - SECTION_SPACING;
-    (
-        (shared * WIDE_CONTROLS_PROPORTION).min(WIDE_CONTROLS_MAXIMUM_WIDTH),
-        (shared * (1.0 - WIDE_CONTROLS_PROPORTION)).min(WIDE_INFORMATION_MAXIMUM_WIDTH),
-        true,
-    )
 }
 
 /// Hands a drag of result rows to the OLE drag of `file_drag::windows` once the pointer leaves the window.
@@ -790,7 +751,7 @@ mod test_preview_startup_fit {
 
     #[test]
     fn width_breakpoint_matches_the_controls_layout() {
-        let breakpoint = WIDE_MINIMUM_HALF_WIDTH * 2.0;
+        let breakpoint = 1580.0;
         let wide = preview_fit_height(breakpoint, 1000.0);
         let narrow = preview_fit_height(breakpoint - 1.0, 1000.0);
         assert!((wide - (DIVIDER_SPACING + controls_fit_height(true))).abs() < f32::EPSILON);

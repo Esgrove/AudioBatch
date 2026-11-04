@@ -37,6 +37,21 @@ pub const DEFAULT_LOUDNESS_MAXIMUM: i32 = -4;
 /// File name of the settings in the data directory.
 pub const SETTINGS_FILE_NAME: &str = "gui-settings.json";
 
+/// Default controls width relative to its original responsive baseline.
+pub const DEFAULT_CONTROLS_WIDTH_SCALE: f32 = 0.95;
+
+/// Default information-panel width relative to its original responsive baseline.
+pub const DEFAULT_INFORMATION_WIDTH_SCALE: f32 = 0.90;
+
+/// Smallest controls width scale, retaining readable controls.
+pub const MINIMUM_CONTROLS_WIDTH_SCALE: f32 = 0.855;
+
+/// Smallest information-panel width scale.
+pub const MINIMUM_INFORMATION_WIDTH_SCALE: f32 = 0.81;
+
+/// Largest width scale of either independently resized preview column.
+pub const MAXIMUM_PANEL_WIDTH_SCALE: f32 = 1.10;
+
 /// The level normalization brings files to, as stored in the settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -111,6 +126,12 @@ pub struct GuiSettings {
     pub show_album_artwork: bool,
     /// Shows custom-gain peak predictions and loudness estimates beside the source metrics.
     pub show_gain_adjusted_metrics: bool,
+    /// Controls width relative to the original responsive expanded-preview baseline.
+    #[serde(deserialize_with = "deserialize_controls_width_scale")]
+    pub controls_width_scale: f32,
+    /// Information-panel width relative to the original responsive expanded-preview baseline.
+    #[serde(deserialize_with = "deserialize_information_width_scale")]
+    pub information_width_scale: f32,
 }
 
 impl NormalizeMode {
@@ -164,6 +185,8 @@ impl Default for GuiSettings {
             serato_waveform_colours: true,
             show_album_artwork: true,
             show_gain_adjusted_metrics: true,
+            controls_width_scale: DEFAULT_CONTROLS_WIDTH_SCALE,
+            information_width_scale: DEFAULT_INFORMATION_WIDTH_SCALE,
         }
     }
 }
@@ -239,6 +262,33 @@ fn deserialize_preview_view_mode<'de, D: Deserializer<'de>>(deserializer: D) -> 
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
+/// Reads a controls scale independently, so a malformed field does not reset unrelated preferences.
+fn deserialize_controls_width_scale<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    deserialize_width_scale(deserializer, MINIMUM_CONTROLS_WIDTH_SCALE, DEFAULT_CONTROLS_WIDTH_SCALE)
+}
+
+/// Reads an information scale independently, preserving other settings when this field has an invalid JSON type.
+fn deserialize_information_width_scale<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    deserialize_width_scale(
+        deserializer,
+        MINIMUM_INFORMATION_WIDTH_SCALE,
+        DEFAULT_INFORMATION_WIDTH_SCALE,
+    )
+}
+
+/// Validates a relative width at the storage boundary, not from temporarily constrained window geometry.
+fn deserialize_width_scale<'de, D: Deserializer<'de>>(
+    deserializer: D,
+    minimum: f32,
+    default: f32,
+) -> Result<f32, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value::<f32>(value)
+        .ok()
+        .filter(|value| value.is_finite())
+        .map_or(default, |value| value.clamp(minimum, MAXIMUM_PANEL_WIDTH_SCALE)))
+}
+
 /// Clamps a stored normalization target into its range, with the default for a value that is not a number.
 const fn clamp_target(value: f64, minimum: f64, maximum: f64, default: f64) -> f64 {
     if value.is_finite() {
@@ -278,6 +328,8 @@ mod test_settings_file {
             serato_waveform_colours: false,
             show_album_artwork: false,
             show_gain_adjusted_metrics: false,
+            controls_width_scale: 1.02,
+            information_width_scale: 0.84,
         };
         settings.save_to(&path).expect("saves the settings");
         assert_eq!(GuiSettings::load_from(&path), settings);
@@ -340,6 +392,47 @@ mod test_settings_file {
 #[cfg(test)]
 mod test_preview_preferences {
     use super::*;
+
+    #[test]
+    fn panel_scales_default_independently_for_old_or_malformed_settings() {
+        for (value, controls, information) in [
+            (
+                serde_json::json!({}),
+                DEFAULT_CONTROLS_WIDTH_SCALE,
+                DEFAULT_INFORMATION_WIDTH_SCALE,
+            ),
+            (
+                serde_json::json!({"controls_width_scale": null, "information_width_scale": 1.05}),
+                DEFAULT_CONTROLS_WIDTH_SCALE,
+                1.05,
+            ),
+            (
+                serde_json::json!({"controls_width_scale": 1.01, "information_width_scale": "bad"}),
+                1.01,
+                DEFAULT_INFORMATION_WIDTH_SCALE,
+            ),
+            (
+                serde_json::json!({"controls_width_scale": -10.0, "information_width_scale": 100.0}),
+                MINIMUM_CONTROLS_WIDTH_SCALE,
+                MAXIMUM_PANEL_WIDTH_SCALE,
+            ),
+            (
+                serde_json::json!({"controls_width_scale": 100.0, "information_width_scale": -10.0}),
+                MAXIMUM_PANEL_WIDTH_SCALE,
+                MINIMUM_INFORMATION_WIDTH_SCALE,
+            ),
+        ] {
+            let mut value = value;
+            value
+                .as_object_mut()
+                .expect("settings object")
+                .insert("continue_playback".into(), true.into());
+            let settings: GuiSettings = serde_json::from_value(value).expect("loads valid fields independently");
+            assert!(settings.continue_playback);
+            assert!((settings.controls_width_scale - controls).abs() < f32::EPSILON);
+            assert!((settings.information_width_scale - information).abs() < f32::EPSILON);
+        }
+    }
 
     #[test]
     fn modes_have_stable_storage_names_and_canonical_labels() {

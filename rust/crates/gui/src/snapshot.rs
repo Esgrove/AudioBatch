@@ -5,13 +5,14 @@
 //! and then quits.
 //! `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` takes a comma separated list of action names,
 //! such as `audiobatch::ToggleLoudnessGraph`, dispatched one second before the image is taken.
+//! `AUDIOBATCH_GUI_SNAPSHOT_SIZE` optionally resizes the main window first, for example `1000x800`.
 //! Setting `AUDIOBATCH_GUI_SNAPSHOT_ACTIVE_WINDOW` saves the active window instead of the main window,
 //! for example the Audio Settings window that `audiobatch::OpenAudioSettings` opens.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gpui_kit::{AnyWindowHandle, App};
+use gpui_kit::{AnyWindowHandle, App, px, size};
 
 /// Delay before the image is taken when `AUDIOBATCH_GUI_SNAPSHOT_DELAY` is not set.
 const DEFAULT_DELAY: Duration = Duration::from_secs(5);
@@ -33,7 +34,22 @@ pub fn schedule(window: AnyWindowHandle, cx: &App) {
         .map(|names| names.split(',').map(|name| name.trim().to_string()).collect())
         .unwrap_or_default();
     let capture_active_window = std::env::var_os("AUDIOBATCH_GUI_SNAPSHOT_ACTIVE_WINDOW").is_some();
+    let dimensions = std::env::var("AUDIOBATCH_GUI_SNAPSHOT_SIZE").ok().and_then(|value| {
+        let (width, height) = value.split_once('x')?;
+        let width = width
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite() && *value > 0.0)?;
+        let height = height
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite() && *value > 0.0)?;
+        Some(size(px(width), px(height)))
+    });
     cx.spawn(async move |cx| {
+        if let Some(dimensions) = dimensions {
+            let _ = window.update(cx, |_, window, _| window.resize(dimensions));
+        }
         cx.background_executor()
             .timer(delay.saturating_sub(ACTION_SETTLE_TIME))
             .await;

@@ -105,6 +105,10 @@ Solid lines own, and dashed lines only refer to the other object.
 - `PreviewWorkspace` holds the waveform `ThumbnailComponent`, the metric cards of `AudioInfoPanel`,
   and the playback, gain, normalization, plugin, and settings controls,
   laid out as an expanded section, a wide section whose controls and metrics share half of the width, or a compact row.
+  Below its fixed heading and metrics, `AudioInfoPanel` shows a two-row, five-column property grid,
+  followed by genre, wrapped album, and wrapped comment tags in one scrollable region.
+  Independent vertical dividers resize the controls and information widths within bounded, persisted preferences.
+  Key presentation preserves the original tag spelling and appends its Camelot equivalent when recognized.
 - `ThumbnailComponent` hosts the Waveform, Spectrogram, side-by-side, and stacked preview modes in one component.
   `PreviewPlotGeometry.h` divides its bounds into panes and axis gutters,
   and maps time to x and back for drawing, cues, and seeking in every pane.

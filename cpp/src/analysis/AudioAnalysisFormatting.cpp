@@ -1,6 +1,6 @@
 /// Implementation of the functions that format analysis values for display in the GUI and CLI:
-/// peak, true peak, and loudness levels, bitrate, sample rate, bit depth, per-file gain, duration, file type,
-/// and status.
+/// peak, true peak, and loudness levels, bitrate, sample rate, bit depth, per-file gain, duration, file size,
+/// file type, and status. Musical key mapping recognizes common tag spellings and DJ wheel notation.
 
 #include "analysis/AudioAnalysisFormatting.h"
 
@@ -9,8 +9,11 @@
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 namespace audiobatch
@@ -33,6 +36,42 @@ constexpr std::int64_t minutesPerHour {60};
 constexpr std::int64_t secondsPerHour {secondsPerMinute * minutesPerHour};
 /// Number of tenths of a second in a second, the precision of the detailed duration.
 constexpr std::int64_t tenthsPerSecond {10};
+
+/// Number of pitch classes in a chromatic octave and entries on each Camelot wheel.
+constexpr int KEY_COUNT {12};
+/// Camelot wheel numbers indexed by chromatic pitch class from C to B.
+constexpr std::array<int, KEY_COUNT> MINOR_CAMELOT {5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10};
+constexpr std::array<int, KEY_COUNT> MAJOR_CAMELOT {8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1};
+/// Decimal byte units used for the detailed file size.
+constexpr std::int64_t BYTES_PER_KILOBYTE {1000};
+constexpr std::int64_t BYTES_PER_MEGABYTE {1'000'000};
+
+/// Parses numbered DJ key notation, allowing a single leading zero and whitespace before its suffix.
+std::optional<juce::String> numberedCamelotKey(const juce::String& text)
+{
+    int digitCount = 0;
+    while (digitCount < text.length() && text[digitCount] >= '0' && text[digitCount] <= '9') {
+        ++digitCount;
+    }
+    const auto rawDigits = text.substring(0, digitCount);
+    const auto digits = rawDigits.startsWith("0") ? rawDigits.substring(1) : rawDigits;
+    if (digits.isEmpty() || digits.length() > 2 || digits.startsWith("0")) {
+        return std::nullopt;
+    }
+    const auto number = digits.getIntValue();
+    const auto suffix = text.substring(digitCount).trim();
+    if (number < 1 || number > KEY_COUNT || suffix.length() != 1) {
+        return std::nullopt;
+    }
+    if (suffix == "a" || suffix == "b") {
+        return utils::format("{}{}", number, suffix.toUpperCase());
+    }
+    if (suffix == "m" || suffix == "d") {
+        constexpr int OPEN_KEY_OFFSET {6};
+        return utils::format("{}{}", (number + OPEN_KEY_OFFSET) % KEY_COUNT + 1, suffix == "m" ? "A" : "B");
+    }
+    return std::nullopt;
+}
 
 /// Converts a linear amplitude into decibels as text.
 /// Silence renders as "-INF" so it never shows a misleading finite value.
@@ -70,6 +109,60 @@ juce::String formatLoudnessValue(const double loudness)
     return utils::format("{:.2f}", loudness);
 }
 }  // namespace
+
+/// Maps musical, Camelot, and Open Key spellings without changing the original display tag.
+/// Rejects chords and extra suffixes rather than guessing a key from a partial match.
+std::optional<juce::String> camelotKey(const juce::String& key)
+{
+    auto text = key.trim().toLowerCase();
+    if (text.isEmpty()) {
+        return std::nullopt;
+    }
+    if (text[0] >= '0' && text[0] <= '9') {
+        return numberedCamelotKey(text);
+    }
+
+    const auto tonicIndex = juce::String("cdefgab").indexOfChar(text[0]);
+    if (tonicIndex < 0) {
+        return std::nullopt;
+    }
+    // Natural-note pitch classes ordered C, D, E, F, G, A, B in the chromatic octave.
+    constexpr std::array NATURAL_PITCH_CLASSES {0, 2, 4, 5, 7, 9, 11};
+    auto pitchClass = NATURAL_PITCH_CLASSES[static_cast<std::size_t>(tonicIndex)];
+    text = text.substring(1).trim();
+    if (text.startsWith("#") || text.startsWith(juce::String::fromUTF8("♯"))) {
+        ++pitchClass;
+        text = text.substring(1).trim();
+    } else if (text.startsWith("b") || text.startsWith(juce::String::fromUTF8("♭"))) {
+        --pitchClass;
+        text = text.substring(1).trim();
+    } else if (text.startsWith("sharp")) {
+        ++pitchClass;
+        text = text.substring(juce::String("sharp").length()).trim();
+    } else if (text.startsWith("flat")) {
+        --pitchClass;
+        text = text.substring(juce::String("flat").length()).trim();
+    }
+    const bool minor = text == "m" || text == "min" || text == "minor";
+    if (!minor && text.isNotEmpty() && text != "maj" && text != "major") {
+        return std::nullopt;
+    }
+    const auto index = static_cast<std::size_t>((pitchClass + KEY_COUNT) % KEY_COUNT);
+    return utils::format("{}{}", minor ? MINOR_CAMELOT[index] : MAJOR_CAMELOT[index], minor ? "A" : "B");
+}
+
+/// Formats a known file size in decimal KB or MB with one decimal place, or "-" when unavailable.
+juce::String formatFileSizeDisplay(const AudioAnalysisRecord& record)
+{
+    if (record.fileSize <= 0) {
+        return "-";
+    }
+    const bool megabytes = record.fileSize >= BYTES_PER_MEGABYTE;
+    const auto divisor = megabytes ? BYTES_PER_MEGABYTE : BYTES_PER_KILOBYTE;
+    return utils::format(
+        "{:.1f} {}", static_cast<double>(record.fileSize) / static_cast<double>(divisor), megabytes ? "MB" : "KB"
+    );
+}
 
 /// Formats a peak value in dBFS without a unit suffix, for the CLI and the results table.
 juce::String formatPeakCompact(const double peak)

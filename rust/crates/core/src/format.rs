@@ -1,6 +1,6 @@
 //! Display formatting of analysis values for the GUI and the CLI.
 //!
-//! Formats peak, true peak, and loudness levels, bitrate, sample rate, bit depth, file type, duration, and status.
+//! Formats levels, audio properties, duration, decimal file size, musical keys, and status.
 //! The CLI table uses the same text as the C++ CLI, so `scripts/parity.sh` can compare the two.
 
 use std::error::Error;
@@ -156,6 +156,75 @@ pub fn format_duration(seconds: f64) -> String {
     }
 }
 
+/// Formats a duration rounded to the nearest tenth as "m:ss.t", or "h:mm:ss.t" from one hour on.
+/// Returns "-" when the duration is unknown.
+#[must_use]
+pub fn format_duration_tenths(seconds: f64) -> String {
+    const TENTHS_PER_SECOND: u64 = 10;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return String::from("-");
+    }
+    let tenths = (seconds * TENTHS_PER_SECOND as f64).round() as u64;
+    let total_seconds = tenths / TENTHS_PER_SECOND;
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let remaining_seconds = total_seconds % 60;
+    let fraction = tenths % TENTHS_PER_SECOND;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{remaining_seconds:02}.{fraction}")
+    } else {
+        format!("{minutes}:{remaining_seconds:02}.{fraction}")
+    }
+}
+
+/// Formats decimal file size in KB below one MB, or MB otherwise, with one decimal place.
+/// Returns "-" for an unknown size.
+#[must_use]
+pub fn format_file_size(record: &AnalysisRecord) -> String {
+    const BYTES_PER_KILOBYTE: u64 = 1000;
+    const BYTES_PER_MEGABYTE: u64 = 1_000_000;
+    match record.file_size {
+        0 => String::from("-"),
+        size if size < BYTES_PER_MEGABYTE => format!("{:.1} KB", size as f64 / BYTES_PER_KILOBYTE as f64),
+        size => format!("{:.1} MB", size as f64 / BYTES_PER_MEGABYTE as f64),
+    }
+}
+
+/// Maps a major or minor key, Camelot code, or Open Key code to canonical Camelot notation.
+/// Parsing ignores case and surrounding whitespace, without changing the original display spelling.
+#[must_use]
+pub fn camelot_key(key: &str) -> Option<String> {
+    const MINOR_NUMBERS: [u8; 12] = [5, 12, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10];
+    const MAJOR_NUMBERS: [u8; 12] = [8, 3, 10, 5, 12, 7, 2, 9, 4, 11, 6, 1];
+
+    let key = key.trim().to_lowercase();
+    let tonic = key.chars().next()?;
+    if tonic.is_ascii_digit() {
+        return camelot_number(&key);
+    }
+    let pitch_class: usize = match tonic {
+        'c' => 0,
+        'd' => 2,
+        'e' => 4,
+        'f' => 5,
+        'g' => 7,
+        'a' => 9,
+        'b' => 11,
+        _ => return None,
+    };
+    let remainder = key.strip_prefix(tonic)?.trim();
+    let (offset, mode) = [("#", 1), ("♯", 1), ("sharp", 1), ("b", 11), ("♭", 11), ("flat", 11)]
+        .into_iter()
+        .find_map(|(accidental, offset)| remainder.strip_prefix(accidental).map(|mode| (offset, mode.trim())))
+        .unwrap_or((0, remainder));
+    let pitch_class = (pitch_class + offset) % 12;
+    match mode {
+        "m" | "min" | "minor" => Some(format!("{}A", MINOR_NUMBERS.get(pitch_class)?)),
+        "" | "maj" | "major" => Some(format!("{}B", MAJOR_NUMBERS.get(pitch_class)?)),
+        _ => None,
+    }
+}
+
 /// Returns the human-readable status text.
 #[must_use]
 pub const fn format_status(status: AnalysisStatus) -> &'static str {
@@ -164,6 +233,27 @@ pub const fn format_status(status: AnalysisStatus) -> &'static str {
         AnalysisStatus::Analyzed => "Analyzed",
         AnalysisStatus::Failed => "Failed",
         AnalysisStatus::Pending => "Pending",
+    }
+}
+
+/// Parses numbered Camelot and Open Key notation, allowing one leading zero and whitespace before the suffix.
+fn camelot_number(key: &str) -> Option<String> {
+    let suffix = key.chars().next_back()?;
+    let digits = key.strip_suffix(suffix)?.trim_end();
+    let digits = digits.strip_prefix('0').unwrap_or(digits);
+    if digits.is_empty()
+        || digits.len() > 2
+        || digits.starts_with('0')
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let number = digits.parse::<u8>().ok().filter(|number| (1..=12).contains(number))?;
+    match suffix {
+        'a' | 'b' => Some(format!("{number}{}", suffix.to_ascii_uppercase())),
+        'm' => Some(format!("{}A", ((number + 6) % 12) + 1)),
+        'd' => Some(format!("{}B", ((number + 6) % 12) + 1)),
+        _ => None,
     }
 }
 
@@ -333,5 +423,101 @@ mod test_property_formatting {
         assert_eq!(format_duration(3725.0), "1:02:05");
         assert_eq!(format_duration(0.0), "-");
         assert_eq!(format_status(AnalysisStatus::Cached), "Cached");
+    }
+
+    #[test]
+    fn duration_tenths_round_across_minute_and_hour_boundaries() {
+        for (seconds, expected) in [
+            (205.4, "3:25.4"),
+            (3725.0, "1:02:05.0"),
+            (0.01, "0:00.0"),
+            (0.05, "0:00.1"),
+            (59.95, "1:00.0"),
+            (3599.95, "1:00:00.0"),
+        ] {
+            assert_eq!(format_duration_tenths(seconds), expected);
+        }
+        for seconds in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(format_duration_tenths(seconds), "-");
+        }
+    }
+
+    #[test]
+    fn file_sizes_use_decimal_units_and_one_decimal_place() {
+        let mut value = record("a.flac");
+        for (size, expected) in [
+            (0, "-"),
+            (1, "0.0 KB"),
+            (1000, "1.0 KB"),
+            (36_200, "36.2 KB"),
+            (999_999, "1000.0 KB"),
+            (1_000_000, "1.0 MB"),
+            (36_200_000, "36.2 MB"),
+        ] {
+            value.file_size = size;
+            assert_eq!(format_file_size(&value), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_camelot_keys {
+    use super::*;
+
+    #[test]
+    fn keys_match_the_shared_independent_expectations() {
+        let cases =
+            std::fs::read_to_string(test_fixtures::fixture("camelot_keys.tsv")).expect("reads shared key cases");
+        let mut count = 0;
+        for line in cases.lines().filter(|line| !line.starts_with('#') && !line.is_empty()) {
+            let (input, expected) = line
+                .split_once('\t')
+                .expect("key case has an input and expected result");
+            let expected = (expected != "-").then_some(expected);
+            assert_eq!(camelot_key(input).as_deref(), expected, "key {input:?}");
+            count += 1;
+        }
+        assert!(count >= 24, "shared table covers every major and minor pitch class");
+    }
+
+    #[test]
+    fn enharmonics_and_mode_suffixes_map_without_changing_the_source() {
+        for (input, expected) in [
+            ("Gm", "6A"),
+            ("AM", "8A"),
+            ("Abmin", "1A"),
+            (" G sharp MINOR ", "1A"),
+            ("F♯m", "11A"),
+            ("g♭ minor", "11A"),
+            ("C flat major", "1B"),
+            ("B#", "8B"),
+            ("Cbmin", "10A"),
+            ("E♯major", "7B"),
+        ] {
+            assert_eq!(camelot_key(input).as_deref(), Some(expected), "key {input:?}");
+        }
+    }
+
+    #[test]
+    fn numbered_wheels_allow_one_leading_zero_and_whitespace() {
+        for (input, expected) in [
+            ("08A", "8A"),
+            ("012b", "12B"),
+            ("1d", "8B"),
+            ("8m", "3A"),
+            ("12 m", "7A"),
+            (" 01 D ", "8B"),
+        ] {
+            assert_eq!(camelot_key(input).as_deref(), Some(expected), "key {input:?}");
+        }
+    }
+
+    #[test]
+    fn unsupported_and_malformed_keys_are_not_mapped() {
+        for input in [
+            "", "H", "13A", "0B", "001A", "13d", "Am7", "C##", "Cbb", "1 2A", "+8A", "C dorian",
+        ] {
+            assert_eq!(camelot_key(input), None, "key {input:?}");
+        }
     }
 }

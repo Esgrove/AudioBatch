@@ -12,6 +12,7 @@
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiLayout.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
@@ -42,6 +43,7 @@ enum class IntegrationWorkflow : std::uint8_t {
     openAndSort,
     normalize,
     previewModes,
+    previewWidths,
     cancelAndClear,
     restore,
 };
@@ -106,6 +108,29 @@ juce::Button* findButton(const juce::Component& component, const juce::String& t
         pending.insert(pending.end(), child->getChildren().begin(), child->getChildren().end());
     }
     return nullptr;
+}
+
+/// Creates a divider-local drag event with a stable press position and no native pointer automation.
+juce::MouseEvent dividerEvent(juce::Component& divider, const int distance, const int clicks = 1)
+{
+    const juce::Point<float> start {5.0f, 20.0f};
+    return {
+        juce::Desktop::getInstance().getMainMouseSource(),
+        start.translated(static_cast<float>(distance), 0.0f),
+        juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier),
+        1.0f,
+        0.0f,
+        0.0f,
+        0.0f,
+        0.0f,
+        &divider,
+        &divider,
+        juce::Time(),
+        start,
+        juce::Time(),
+        clicks,
+        distance != 0,
+    };
 }
 
 /// Reads visible inspector text, rather than duplicating its formatting logic in the test.
@@ -180,6 +205,7 @@ private:
     void normalizeSelection();
     void openAndSort();
     void previewModes();
+    void previewWidths();
     void restorePreferencesAndGain();
     void storageIsolation();
 
@@ -480,6 +506,134 @@ void AudioBatchIntegrationTest::previewModes()
     EXPECT_EQ(recreated.getPreviewViewMode(), PreviewViewMode::stacked);
 }
 
+/// Drives the actual native divider components and verifies independent responsive persistence through recreation.
+void AudioBatchIntegrationTest::previewWidths()
+{
+    double savedControls = 0.0;
+    double savedInformation = 0.0;
+    {
+        AudioBatchComponent view(configuration());
+        view.setSize(1920, 1080);
+        auto& workspace = view.previewWorkspace;
+        juce::Component* controlsDivider = nullptr;
+        juce::Component* informationDivider = nullptr;
+        for (auto* child : workspace.getChildren()) {
+            if (child->getName() == "Resize preview controls width") {
+                controlsDivider = child;
+            } else if (child->getName() == "Resize preview information width") {
+                informationDivider = child;
+            }
+        }
+        ASSERT_NE(controlsDivider, nullptr);
+        ASSERT_NE(informationDivider, nullptr);
+        EXPECT_TRUE(controlsDivider->getWantsKeyboardFocus());
+        EXPECT_TRUE(informationDivider->getWantsKeyboardFocus());
+        EXPECT_EQ(controlsDivider->getMouseCursor(), juce::MouseCursor(juce::MouseCursor::LeftRightResizeCursor));
+        EXPECT_FALSE(controlsDivider->getTitle().isEmpty());
+        EXPECT_EQ(controlsDivider->getWidth(), 10);
+        EXPECT_EQ(informationDivider->getWidth(), 10);
+        EXPECT_EQ(informationDivider->getX(), workspace.audioInfo.getRight());
+        EXPECT_EQ(informationDivider->getRight(), workspace.thumbnail.getX());
+        const auto height = workspace.getHeight();
+        const auto initialControlsWidth = controlsDivider->getX() - layout::compactPreview::padding;
+        const auto initialInformationWidth = workspace.audioInfo.getWidth();
+        auto& settings = *view.pluginAppProperties.getUserSettings();
+        EXPECT_FALSE(settings.containsKey("previewControlsWidthScale"));
+        EXPECT_FALSE(settings.containsKey("previewInformationWidthScale"));
+        settings.setValue("unrelatedWidthSetting", "keep me");
+
+        controlsDivider->mouseDown(dividerEvent(*controlsDivider, 0));
+        controlsDivider->mouseDrag(dividerEvent(*controlsDivider, 24));
+        EXPECT_EQ(controlsDivider->getX() - layout::compactPreview::padding, initialControlsWidth + 24);
+        EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth);
+        EXPECT_EQ(workspace.getHeight(), height);
+        EXPECT_FALSE(settings.containsKey("previewControlsWidthScale"));
+        controlsDivider->mouseUp(dividerEvent(*controlsDivider, 24));
+        EXPECT_TRUE(settings.containsKey("previewControlsWidthScale"));
+        const auto controlsAfterDrag = controlsDivider->getX();
+        const auto storedControls = settings.getDoubleValue("previewControlsWidthScale");
+        informationDivider->mouseDown(dividerEvent(*informationDivider, 0));
+        informationDivider->mouseDrag(dividerEvent(*informationDivider, 20));
+        EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth + 20);
+        EXPECT_EQ(controlsDivider->getX(), controlsAfterDrag);
+        EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), 0.90, 0.000001);
+        informationDivider->mouseUp(dividerEvent(*informationDivider, 20));
+        EXPECT_NEAR(settings.getDoubleValue("previewControlsWidthScale"), storedControls, 0.000001);
+        EXPECT_TRUE(controlsDivider->keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+        EXPECT_EQ(controlsDivider->getX(), controlsAfterDrag - 4);
+        EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth + 20);
+        EXPECT_EQ(workspace.getHeight(), height);
+
+        informationDivider->mouseDoubleClick(dividerEvent(*informationDivider, 0, 2));
+        EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), 0.90, 0.000001);
+        EXPECT_EQ(controlsDivider->getX(), controlsAfterDrag - 4);
+        EXPECT_TRUE(informationDivider->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        const auto informationAfterKey = workspace.audioInfo.getWidth();
+        const auto baseline
+            = layout::previewColumnBaseline(workspace.getLocalBounds().reduced(layout::compactPreview::padding));
+        for (const auto distance : {-1000, 1000}) {
+            controlsDivider->mouseDown(dividerEvent(*controlsDivider, 0));
+            controlsDivider->mouseDrag(dividerEvent(*controlsDivider, distance));
+            controlsDivider->mouseUp(dividerEvent(*controlsDivider, distance));
+            EXPECT_EQ(workspace.audioInfo.getWidth(), informationAfterKey);
+            EXPECT_EQ(
+                controlsDivider->getX() - layout::compactPreview::padding,
+                juce::roundToInt(baseline.controls.getWidth() * (distance < 0 ? 0.855 : 1.10))
+            );
+        }
+        controlsDivider->mouseDoubleClick(dividerEvent(*controlsDivider, 0, 2));
+        EXPECT_NEAR(settings.getDoubleValue("previewControlsWidthScale"), 0.95, 0.000001);
+        EXPECT_EQ(workspace.audioInfo.getWidth(), informationAfterKey);
+        EXPECT_TRUE(controlsDivider->keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+        const auto controlsBeforeInformationBounds = controlsDivider->getX();
+        for (const auto distance : {-1000, 1000}) {
+            informationDivider->mouseDown(dividerEvent(*informationDivider, 0));
+            informationDivider->mouseDrag(dividerEvent(*informationDivider, distance));
+            informationDivider->mouseUp(dividerEvent(*informationDivider, distance));
+            EXPECT_EQ(controlsDivider->getX(), controlsBeforeInformationBounds);
+            EXPECT_EQ(
+                workspace.audioInfo.getWidth(),
+                juce::roundToInt(baseline.information.getWidth() * (distance < 0 ? 0.81 : 1.10))
+            );
+        }
+        informationDivider->mouseDoubleClick(dividerEvent(*informationDivider, 0, 2));
+        EXPECT_TRUE(informationDivider->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        savedControls = settings.getDoubleValue("previewControlsWidthScale");
+        savedInformation = settings.getDoubleValue("previewInformationWidthScale");
+        const auto fullWidth = workspace.getWidth();
+        const auto informationBeforeClamp = workspace.audioInfo.getWidth();
+        workspace.setSize(300, height);
+        EXPECT_GE(workspace.thumbnail.getWidth(), 140);
+        EXPECT_NEAR(settings.getDoubleValue("previewControlsWidthScale"), savedControls, 0.000001);
+        EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), savedInformation, 0.000001);
+        workspace.setSize(fullWidth, height);
+        EXPECT_EQ(workspace.audioInfo.getWidth(), informationBeforeClamp);
+        workspace.setCompact(true);
+        EXPECT_FALSE(controlsDivider->isVisible());
+        EXPECT_FALSE(informationDivider->isVisible());
+        const auto compact
+            = layout::previewColumns(workspace.getLocalBounds().reduced(layout::compactPreview::padding), false);
+        EXPECT_EQ(workspace.startStopButton.getX(), layout::compactPreview::padding + 14 + 6);
+        EXPECT_EQ(workspace.processButton.getRight(), layout::compactPreview::padding + compact.controls.getWidth());
+        workspace.setCompact(false);
+        EXPECT_TRUE(controlsDivider->isVisible());
+        EXPECT_TRUE(informationDivider->isVisible());
+        EXPECT_EQ(workspace.audioInfo.getWidth(), informationBeforeClamp);
+        EXPECT_NEAR(settings.getDoubleValue("previewControlsWidthScale"), savedControls, 0.000001);
+        EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), savedInformation, 0.000001);
+        EXPECT_EQ(settings.getValue("unrelatedWidthSetting"), juce::String("keep me"));
+    }
+    AudioBatchComponent recreated(configuration());
+    recreated.setSize(1300, 900);
+    const auto& workspace = recreated.previewWorkspace;
+    const auto expected = layout::previewColumns(
+        workspace.getLocalBounds().reduced(layout::compactPreview::padding), true, savedControls, savedInformation
+    );
+    EXPECT_EQ(workspace.audioInfo.getBounds(), expected.information);
+    EXPECT_EQ(workspace.thumbnail.getBounds(), expected.waveform);
+    EXPECT_FALSE(recreated.previewPlayer.getOutputStatus().open);
+}
+
 /// Cancels and clears before queued delivery.
 /// Completes a new load to expose stale callbacks deterministically.
 void AudioBatchIntegrationTest::cancelAndClear()
@@ -566,6 +720,9 @@ void AudioBatchIntegrationTest::TestBody()
         case IntegrationWorkflow::previewModes:
             previewModes();
             break;
+        case IntegrationWorkflow::previewWidths:
+            previewWidths();
+            break;
         case IntegrationWorkflow::cancelAndClear:
             cancelAndClear();
             break;
@@ -588,6 +745,7 @@ int main(int argumentCount, char* arguments[])
         std::pair {"OpenAndSortPreserveSelection", audiobatch::IntegrationWorkflow::openAndSort},
         std::pair {"NormalizeTracksOutputIdentity", audiobatch::IntegrationWorkflow::normalize},
         std::pair {"PreviewModesPreserveState", audiobatch::IntegrationWorkflow::previewModes},
+        std::pair {"PreviewWidthsResizeIndependentlyAndPersist", audiobatch::IntegrationWorkflow::previewWidths},
         std::pair {"CancelAndClearRejectStaleCallbacks", audiobatch::IntegrationWorkflow::cancelAndClear},
         std::pair {"RecreateRestoresGainAndPreference", audiobatch::IntegrationWorkflow::restore},
     };

@@ -10,12 +10,16 @@
 #include "gui/components/IntervalStepSlider.h"
 #include "gui/components/NormalizationTargetControl.h"
 #include "gui/components/ThumbnailComponent.h"
+#include "gui/GuiLayout.h"
 
 #include <JuceHeader.h>
+
+#include <memory>
 
 namespace audiobatch
 {
 class AudioPreviewPlayer;
+class PreviewWidthDivider;
 
 /// Holds and lays out the controls of the preview workspace.
 /// The constructor sets up how the controls look,
@@ -26,8 +30,16 @@ class PreviewWorkspace final : public juce::Component
 public:
     PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::ApplicationProperties& settings);
 
+    ~PreviewWorkspace() override;
+
+    PreviewWorkspace(const PreviewWorkspace&) = delete;
+    PreviewWorkspace(PreviewWorkspace&&) = delete;
+    PreviewWorkspace& operator=(const PreviewWorkspace&) = delete;
+    PreviewWorkspace& operator=(PreviewWorkspace&&) = delete;
+
     [[nodiscard]] bool isCompact() const noexcept;
 
+    void loadWidthSettings();
     void setCompact(bool shouldBeCompact);
     void setPlaybackState(bool enabled, bool playing);
 
@@ -72,6 +84,15 @@ public:
     /// Scrolls borrowed secondary controls independently of the playback controls.
     juce::Viewport controlsViewport;
 
+    /// Width interaction state stays public with this component's existing all-public UI facade.
+    /// Shared application settings outlive the workspace. Reads are deferred until storage is configured.
+    juce::ApplicationProperties& properties;
+    /// Dividers are destroyed before the controls they observe.
+    std::unique_ptr<PreviewWidthDivider> controlsWidthDivider;
+    std::unique_ptr<PreviewWidthDivider> informationWidthDivider;
+    double controlsWidthScale {layout::previewWidths::DEFAULT_CONTROLS_SCALE};
+    double informationWidthScale {layout::previewWidths::DEFAULT_INFORMATION_SCALE};
+
 private:
     juce::Rectangle<int> layoutSliders(juce::Rectangle<int> content);
 
@@ -81,5 +102,7 @@ private:
     void layoutNarrowControls(juce::Rectangle<int> content);
     void layoutPlaybackButtons(juce::Rectangle<int> bounds);
     void layoutWideControls(juce::Rectangle<int> content);
+    void saveWidthSettings();
+    void setPanelWidth(bool information, int width);
 };
 }  // namespace audiobatch

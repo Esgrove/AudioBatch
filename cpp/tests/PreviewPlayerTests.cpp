@@ -1,7 +1,7 @@
 /// Device-free tests for the preview player around the renderer:
 /// the cue start position, the deferred initial position, the ownership of the simulated output device,
 /// the output device status shown in the status bar, the persisted preview preferences, and the loudness axis ticks.
-/// Also checks settings group geometry and validation space, and the inspector's status-free file summary.
+/// Also checks settings geometry and validation space, and the inspector's status-free summary and wrapped details.
 /// The committed silence fixture exercises playback without opening hardware or third-party plugins.
 
 #include "analysis/AudioAnalysisTypes.h"
@@ -43,6 +43,7 @@ private:
     void testDeviceOwnership();
     void testInitialPosition();
     void testInspectorStatusRemoval();
+    void testInspectorDetailsLayout();
 
     void testLoudnessAxisIntervals();
     void testOutputStatusFormatting();
@@ -50,6 +51,7 @@ private:
     void testPreferences();
     void testPreviewFitHeight();
     void testPreviewViewModes();
+    void testPreviewWidths();
     void testSettingsDeviceFailure();
     void testSettingsGeometry();
     void verifyDisabledLoudnessRange(
@@ -73,9 +75,11 @@ void PreviewPlayerTests::runTest()
     testOverloadPreferences();
     testSettingsGeometry();
     testInspectorStatusRemoval();
+    testInspectorDetailsLayout();
     testPreviewViewModes();
     testLoudnessAxisIntervals();
     testPreviewFitHeight();
+    testPreviewWidths();
 }
 
 /// Checks the status bar text of the output device for fractional rates and values that are not known yet.
@@ -125,6 +129,64 @@ void PreviewPlayerTests::testPreviewFitHeight()
         expectEquals(layout::constrainedPreviewHeight(preferred, 1000), preferred);
         static_cast<void>(layout::constrainedPreviewHeight(preferred, 530));
         expectEquals(layout::constrainedPreviewHeight(preferred, 1000), preferred);
+    }
+}
+
+/// Checks scaled defaults, independent bounds, compact compatibility, and transient window constraints.
+void PreviewPlayerTests::testPreviewWidths()
+{
+    beginTest("Preview defaults narrow the original responsive controls by five percent and information by ten");
+    const auto narrow = layout::previewColumns({0, 0, 1200, 300});
+    expectEquals(narrow.controls.getWidth(), 199);
+    expectEquals(narrow.information.getWidth(), 238);
+    expectEquals(narrow.waveform.getWidth(), 743);
+    expect(!narrow.wide);
+    const auto wide = layout::previewColumns({0, 0, 1900, 300});
+    expectEquals(wide.controls.getWidth(), 428);
+    expectEquals(wide.information.getWidth(), 440);
+    expectEquals(wide.waveform.getWidth(), 1012);
+    expect(wide.wide);
+    expect(!layout::previewColumns({0, 0, 1579, 300}).wide);
+    expect(layout::previewColumns({0, 0, 1580, 300}).wide);
+
+    beginTest("Changing either scale changes only that column and the waveform, never its sibling width");
+    for (const auto width : {800, 1200, 1580, 1900, 4000}) {
+        const juce::Rectangle<int> bounds {0, 0, width, 300};
+        const auto defaults = layout::previewColumns(bounds);
+        const auto controls = layout::previewColumns(bounds, true, 1.10, 0.90);
+        expectEquals(controls.information.getWidth(), defaults.information.getWidth());
+        expectEquals(controls.information.getX() - controls.controls.getRight(), layout::sectionSpacing);
+        const auto information = layout::previewColumns(bounds, true, 0.95, 1.10);
+        expectEquals(information.controls.getWidth(), defaults.controls.getWidth());
+        expectEquals(information.waveform.getX() - information.information.getRight(), layout::sectionSpacing);
+        const auto minimum = layout::previewColumns(bounds, true, -1.0, -1.0);
+        const auto maximum = layout::previewColumns(bounds, true, 100.0, 100.0);
+        const auto baseline = layout::previewColumnBaseline(bounds);
+        expectEquals(minimum.controls.getWidth(), juce::roundToInt(baseline.controls.getWidth() * 0.855));
+        expectEquals(minimum.information.getWidth(), juce::roundToInt(baseline.information.getWidth() * 0.81));
+        expectEquals(maximum.controls.getWidth(), juce::roundToInt(baseline.controls.getWidth() * 1.10));
+        expectEquals(maximum.information.getWidth(), juce::roundToInt(baseline.information.getWidth() * 1.10));
+        expect(maximum.waveform.getWidth() >= 140);
+        const auto compact = layout::previewColumns(bounds, false, 1.10, 1.10);
+        expectEquals(compact.controls.getWidth(), layout::previewColumnBaseline(bounds, false).controls.getWidth());
+        expect(!compact.wide);
+    }
+
+    beginTest("Nonfinite scales fall back independently and undersized windows keep every rectangle nonnegative");
+    const auto invalid = layout::previewColumns(
+        {0, 0, 1200, 300}, true, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()
+    );
+    expect(invalid.controls == narrow.controls);
+    expect(invalid.information == narrow.information);
+    for (const auto width : {0, 1, 20, 100, 140, 141, 159, 160, 300, 600, 800}) {
+        const auto columns = layout::previewColumns({0, 0, width, 300}, true, 1.10, 1.10);
+        for (const auto rectangle : {columns.controls, columns.information, columns.waveform}) {
+            expect(rectangle.getWidth() >= 0);
+            expect(rectangle.getHeight() >= 0);
+            expect(rectangle.getX() >= 0);
+            expect(rectangle.getRight() <= width);
+        }
+        expect(columns.waveform.getWidth() >= std::min(width, 140));
     }
 }
 
@@ -1312,6 +1374,183 @@ void PreviewPlayerTests::testInspectorStatusRemoval()
     expect(foundError);
     panel.showRecord(record, "Writing processed audio");
     expect(panel.getDescription().contains("Writing processed audio"));
+}
+
+/// Verifies unlimited tag wrapping, exact preferred sizing, and stable stacked layout without rendering pixels.
+void PreviewPlayerTests::testInspectorDetailsLayout()
+{
+    beginTest("Wrapped inspector text measures its actual layout including newlines and long tokens");
+    AudioInfoText wrapped("Album", true);
+    expectEquals(wrapped.getPreferredHeight(180), 0);
+    const std::array texts {
+        juce::String("An album title that continues across many lines without a line limit"),
+        juce::String("First line\nSecond line\nThird line\nFourth line"),
+        juce::String::repeatedString("LongUnbrokenToken", 30),
+        juce::String::fromUTF8("Ääkköset 日本語\nComment with a second line and more words"),
+    };
+    for (const auto& text : texts) {
+        wrapped.setText(text, juce::dontSendNotification);
+        for (const auto width : {40, 180, 480}) {
+            juce::AttributedString attributed;
+            attributed.setJustification(juce::Justification::topLeft);
+            attributed.setWordWrap(juce::AttributedString::byChar);
+            attributed.append(text, wrapped.getFont(), juce::Colours::white);
+            juce::TextLayout textLayout;
+            textLayout.createLayout(attributed, static_cast<float>(width));
+            const auto expectedHeight = juce::jmax(
+                layout::information::rowHeight,
+                juce::roundToInt(std::ceil(textLayout.getHeight())) + layout::information::DETAIL_TEXT_PADDING * 2
+            );
+            expectEquals(wrapped.getPreferredHeight(width), expectedHeight);
+            expect(wrapped.getPreferredHeight(width) >= wrapped.getPreferredHeight(480));
+            expectEquals(wrapped.getText(), text);
+        }
+    }
+    wrapped.setText(texts[2], juce::dontSendNotification);
+    expect(wrapped.getPreferredHeight(40) > layout::information::rowHeight * 3);
+    expect(wrapped.getPreferredHeight(40) > wrapped.getPreferredHeight(480));
+    expectEquals(wrapped.getPreferredHeight(0), wrapped.getPreferredHeight(1));
+    AudioInfoText singleLine("Genre", false);
+    singleLine.setText(texts[2], juce::dontSendNotification);
+    expectEquals(singleLine.getPreferredHeight(40), layout::information::rowHeight);
+    expectEquals(singleLine.getPreferredHeight(480), layout::information::rowHeight);
+
+    beginTest("Single-line values retain full labelled tooltips while narrow bounds clip their visible text");
+    singleLine.setValues({
+        {.label = "Format", .value = "FLAC"},
+        {.label = "Channels", .value = "Stereo"},
+        {.label = "Duration", .value = "3:25.4"},
+        {.label = "Size", .value = "36.2 MB"},
+    });
+    singleLine.setSize(20, layout::information::rowHeight);
+    expectEquals(singleLine.getText(), juce::String::fromUTF8("FLAC · Stereo · 3:25.4 · 36.2 MB"));
+    expectEquals(
+        singleLine.getTooltip(), juce::String("Format: FLAC, Channels: Stereo, Duration: 3:25.4, Size: 36.2 MB")
+    );
+    singleLine.setValues({{.label = "Key", .value = "Gm / 6A"}});
+    expectEquals(singleLine.getText(), juce::String("Gm / 6A"));
+    expectEquals(singleLine.getTooltip(), juce::String("Key: Gm / 6A"));
+    singleLine.setValues({});
+    expect(singleLine.getText().isEmpty());
+    expect(singleLine.getTooltip().isEmpty());
+
+    beginTest("Preferred inspector height fits complete tag layouts with the same stacked lines in both modes");
+    AudioInfoPanel panel;
+    panel.setSize(260, 240);
+    AudioAnalysisRecord record;
+    record.file = juce::File("/test/details.flac");
+    record.fileName = "Artist - Title";
+    record.fullPath = record.file.getFullPathName();
+    record.status = AudioAnalysisStatus::analyzed;
+    record.channels = 2;
+    record.sampleRate = 44'100;
+    record.bitsPerSample = 24;
+    record.durationSeconds = 205.4;
+    record.fileSize = 36'200'000;
+    serato::SeratoData data;
+    data.trackInfo = makeTrackInfo(128.0, "Gm");
+    data.trackInfo->genre = texts[0];
+    data.trackInfo->album = texts[2];
+    data.trackInfo->comment = texts[1];
+    panel.showRecord(record, {}, &data);
+    const juce::Viewport* viewport = nullptr;
+    for (const auto* child : panel.getChildren()) {
+        if (const auto* candidate = dynamic_cast<const juce::Viewport*>(child)) {
+            viewport = candidate;
+        }
+    }
+    expect(viewport != nullptr && viewport->getViewedComponent() != nullptr);
+    if (viewport == nullptr || viewport->getViewedComponent() == nullptr) {
+        return;
+    }
+    auto& content = *viewport->getViewedComponent();
+    const auto cellNamed = [&](const juce::String& name) -> const juce::Label* {
+        for (const auto* child : content.getChildren()) {
+            if (const auto* label = dynamic_cast<const juce::Label*>(child);
+                label != nullptr && label->getName() == name)
+            {
+                return label;
+            }
+        }
+        return nullptr;
+    };
+    const auto* format = cellNamed("Format");
+    const auto* audio = cellNamed("Bit depth");
+    const auto* track = cellNamed("BPM");
+    const auto* genre = dynamic_cast<const AudioInfoText*>(cellNamed("Genre"));
+    const auto* album = dynamic_cast<const AudioInfoText*>(cellNamed("Album"));
+    const auto* comment = dynamic_cast<const AudioInfoText*>(cellNamed("Comment"));
+    const auto* error = dynamic_cast<const AudioInfoText*>(cellNamed("Error"));
+    expect(
+        format != nullptr && audio != nullptr && track != nullptr && genre != nullptr && album != nullptr
+        && comment != nullptr && error != nullptr
+    );
+    if (format == nullptr || audio == nullptr || track == nullptr || genre == nullptr || album == nullptr
+        || comment == nullptr || error == nullptr)
+    {
+        return;
+    }
+    const auto verifyLayout = [&] {
+        expectEquals(format->getX(), 0);
+        expectEquals(audio->getX(), format->getX());
+        expectEquals(audio->getWidth(), format->getWidth());
+        expectEquals(format->getY(), audio->getBottom());
+        expectEquals(track->getY(), format->getY());
+        const auto* bitrate = cellNamed("Bitrate");
+        expect(bitrate != nullptr);
+        if (bitrate != nullptr) {
+            expectEquals(track->getRight(), bitrate->getRight());
+        }
+        expectEquals(genre->getY(), format->getBottom());
+        expectEquals(album->getY(), genre->getBottom());
+        expectEquals(comment->getY(), album->getBottom());
+        expectEquals(genre->getHeight(), layout::information::rowHeight);
+        expectEquals(album->getHeight(), album->getPreferredHeight(album->getWidth()));
+        expectEquals(comment->getHeight(), comment->getPreferredHeight(comment->getWidth()));
+        expectEquals(album->getX(), layout::information::detailFieldWidth);
+        expectEquals(album->getRight(), content.getWidth());
+        expectEquals(content.getHeight(), comment->getBottom());
+        expectEquals(genre->getDescription(), juce::String("Genre: ") + texts[0]);
+    };
+    verifyLayout();
+    const auto narrowHeight = panel.getPreferredHeight();
+    panel.setWide(true);
+    expectEquals(panel.getPreferredHeight(), narrowHeight - layout::information::metricHeight - layout::sectionSpacing);
+    verifyLayout();
+    panel.setWide(false);
+    panel.setSize(260, panel.getPreferredHeight());
+    expectEquals(content.getHeight(), viewport->getHeight());
+    verifyLayout();
+    panel.setSize(540, 240);
+    expect(panel.getPreferredHeight() < narrowHeight);
+    verifyLayout();
+
+    beginTest("Pending, failed, cleared, and replacement selections never retain stale technical details or tags");
+    record.status = AudioAnalysisStatus::pending;
+    panel.showRecord(record, "Analyzing", &data);
+    expect(!format->isVisible() && !audio->isVisible());
+    expect(track->isVisible() && album->isVisible() && comment->isVisible());
+    const auto pendingHeight = panel.getPreferredHeight();
+    panel.showRecord(record, "Waiting", &data);
+    expectEquals(panel.getPreferredHeight(), pendingHeight);
+    record.status = AudioAnalysisStatus::failed;
+    record.errorMessage = texts[2];
+    panel.showRecord(record, {}, &data);
+    expect(error->isVisible());
+    expectEquals(error->getText(), record.errorMessage);
+    expectEquals(error->getY(), 0);
+    expectEquals(track->getY(), error->getBottom());
+    expectEquals(
+        panel.getPreferredHeight(),
+        pendingHeight + error->getPreferredHeight(error->getWidth()) + layout::information::verticalPadding
+    );
+    panel.clear();
+    expect(!format->isVisible() && !audio->isVisible() && !track->isVisible());
+    expect(!genre->isVisible() && !album->isVisible() && !comment->isVisible() && !error->isVisible());
+    expectEquals(viewport->getViewPositionY(), 0);
+    const auto emptyHeight = panel.getPreferredHeight();
+    panel.clear();
+    expectEquals(panel.getPreferredHeight(), emptyHeight);
 }
 
 /// Creates the device-free preview player suite for explicit test registration.

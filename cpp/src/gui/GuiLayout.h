@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 namespace audiobatch
 {
@@ -23,7 +24,7 @@ struct PreviewColumns {
     juce::Rectangle<int> information;
     /// The waveform, which takes the rest of the width.
     juce::Rectangle<int> waveform;
-    /// True when the controls and the information use their wide layouts, which share half the width.
+    /// True when the controls and the information use their wide layouts at the original window breakpoint.
     bool wide {false};
 };
 
@@ -65,6 +66,23 @@ constexpr int informationMinimumWidth {234};
 constexpr int informationMaximumWidth {270};
 constexpr double controlsWidthProportion {0.14};
 constexpr double informationWidthProportion {0.22};
+
+/// Persisted widths scale the original responsive layout instead of storing a fixed pixel width.
+namespace previewWidths
+{
+constexpr double DEFAULT_CONTROLS_SCALE {0.95};
+constexpr double DEFAULT_INFORMATION_SCALE {0.90};
+constexpr double MINIMUM_CONTROLS_SCALE {0.855};
+constexpr double MINIMUM_INFORMATION_SCALE {0.81};
+constexpr double MAXIMUM_SCALE {1.10};
+constexpr int MINIMUM_WAVEFORM_WIDTH {140};
+constexpr int KEYBOARD_STEP {4};
+constexpr int LARGE_KEYBOARD_STEP {16};
+constexpr float INDICATOR_WIDTH {2.0f};
+constexpr int INDICATOR_INSET {8};
+constexpr float INDICATOR_ALPHA {0.45f};
+}  // namespace previewWidths
+
 constexpr int sliderRowHeight {24};
 /// The Peak and Loudness buttons above the target slider and the Normalize button.
 constexpr int normalizationTargetHeight {controlButtonHeight * 2 + normalizeTargetSpacing};
@@ -171,6 +189,8 @@ constexpr int metricCaptionHeight {16};
 constexpr int metricUnitWidth {30};
 constexpr int detailFieldWidth {60};
 constexpr int rowHeight {20};
+/// Vertical clearance for fully wrapped detail text, shared by measurement and painting.
+constexpr int DETAIL_TEXT_PADDING {3};
 constexpr int verticalPadding {8};
 constexpr int horizontalPadding {10};
 /// Side of the square album artwork slot beside the file name, in logical pixels.
@@ -472,12 +492,20 @@ consteval int minimumColumnWidth(const AudioFileTableColumn column)
 }
 }  // namespace table
 
-/// Allocates stable sidebar widths and gives the waveform the remaining horizontal space.
-/// When wide layouts are allowed and half the width is at least widePreview::minimumHalfWidth,
-/// the controls and the information share that half, each up to its maximum, so the waveform gets the other half.
-/// Widths are bounded even during transient zero-sized construction layouts.
-inline PreviewColumns previewColumns(juce::Rectangle<int> bounds, const bool allowWide = true)
+/// Repairs nonfinite stored scales and bounds finite values without depending on the current window size.
+inline double constrainedPreviewWidthScale(const double scale, const bool information)
 {
+    const auto fallback
+        = information ? previewWidths::DEFAULT_INFORMATION_SCALE : previewWidths::DEFAULT_CONTROLS_SCALE;
+    const auto minimum = information ? previewWidths::MINIMUM_INFORMATION_SCALE : previewWidths::MINIMUM_CONTROLS_SCALE;
+    return std::isfinite(scale) ? juce::jlimit(minimum, previewWidths::MAXIMUM_SCALE, scale) : fallback;
+}
+
+/// Computes the original responsive column widths, preserving the established wide-layout breakpoint.
+/// This unscaled baseline is also used to interpret the persisted width preferences at every window size.
+inline PreviewColumns previewColumnBaseline(juce::Rectangle<int> bounds, const bool allowWide = true)
+{
+    bounds.setSize(juce::jmax(0, bounds.getWidth()), juce::jmax(0, bounds.getHeight()));
     const auto half = bounds.getWidth() / 2;
     const bool wide = allowWide && half >= widePreview::minimumHalfWidth;
     auto controlsWidth = juce::jlimit(
@@ -494,11 +522,48 @@ inline PreviewColumns previewColumns(juce::Rectangle<int> bounds, const bool all
             = juce::jmin(widePreview::controlsMaximumWidth, static_cast<int>(shared * widePreview::controlsProportion));
         informationWidth = juce::jmin(widePreview::informationMaximumWidth, shared - controlsWidth);
     }
+    return {
+        .controls = bounds.withWidth(controlsWidth),
+        .information = bounds.withWidth(informationWidth),
+        .waveform = bounds,
+        .wide = wide,
+    };
+}
+
+/// Allocates independently scaled sidebars and gives the waveform the remaining horizontal space.
+/// The existing gaps host dividers without using additional width. Very small layouts reserve the waveform first,
+/// then proportionally constrain the sidebars without modifying their stored scales.
+/// Disallowing wide mode selects the unchanged compact controls width and ignores both scales.
+inline PreviewColumns previewColumns(
+    juce::Rectangle<int> bounds,
+    const bool allowWide = true,
+    const double controlsScale = previewWidths::DEFAULT_CONTROLS_SCALE,
+    const double informationScale = previewWidths::DEFAULT_INFORMATION_SCALE
+)
+{
+    bounds.setSize(juce::jmax(0, bounds.getWidth()), juce::jmax(0, bounds.getHeight()));
+    const auto baseline = previewColumnBaseline(bounds, allowWide);
+    auto controlsWidth = baseline.controls.getWidth();
+    auto informationWidth = baseline.information.getWidth();
+    const auto gap = allowWide
+        ? juce::jmin(sectionSpacing, juce::jmax(0, bounds.getWidth() - previewWidths::MINIMUM_WAVEFORM_WIDTH) / 2)
+        : sectionSpacing;
+    if (allowWide) {
+        controlsWidth = juce::roundToInt(controlsWidth * constrainedPreviewWidthScale(controlsScale, false));
+        informationWidth = juce::roundToInt(informationWidth * constrainedPreviewWidthScale(informationScale, true));
+        const auto sidebarBudget
+            = juce::jmax(0, bounds.getWidth() - previewWidths::MINIMUM_WAVEFORM_WIDTH - sectionSpacing * 2);
+        const auto requestedWidth = controlsWidth + informationWidth;
+        if (requestedWidth > sidebarBudget) {
+            controlsWidth = static_cast<int>(static_cast<double>(controlsWidth) * sidebarBudget / requestedWidth);
+            informationWidth = sidebarBudget - controlsWidth;
+        }
+    }
     const auto controls = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), controlsWidth));
-    bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sectionSpacing));
+    bounds.removeFromLeft(juce::jmin(bounds.getWidth(), gap));
     const auto information = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), informationWidth));
-    bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sectionSpacing));
-    return {.controls = controls, .information = information, .waveform = bounds, .wide = wide};
+    bounds.removeFromLeft(juce::jmin(bounds.getWidth(), gap));
+    return {.controls = controls, .information = information, .waveform = bounds, .wide = baseline.wide};
 }
 
 /// Returns the expanded workspace height that shows controls of the given content height without scrolling.

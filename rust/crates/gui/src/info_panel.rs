@@ -2,21 +2,20 @@
 //!
 //! It shows the file name split into artist and title at the first " - ", beside the embedded album artwork,
 //! actionable error details when analysis fails,
-//! four metric cards for the levels, and a scrollable list of technical details and tags.
-//! The tooltips show the full path on the name, and each value spelled out.
-//! The wide variant puts the metric cards in one row, and the details with short values two to a line,
-//! above the tags that can be long, such as the album and the comment, which keep the full width.
+//! four metric cards for the levels, and a scrollable two-row, five-column grid of technical and musical details.
+//! The first column aligns left and the other four align right, with field names in tooltips.
+//! Genre truncates, while Album and Comment wrap without a line limit.
+//! The wide variant puts the metric cards in one row and keeps the same stacked details.
 //! The compact variant for the collapsed preview shows only the four metric cards, in one row.
 
 use std::sync::Arc;
 
 use audiobatch_core::format::{
-    format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
-    format_true_peak_compact, format_type_label, gain_to_decibels,
+    camelot_key, format_bitrate, format_duration_tenths, format_file_size, format_loudness_compact,
+    format_peak_compact, format_sample_rate, format_true_peak_compact, format_type_label, gain_to_decibels,
 };
 use audiobatch_core::gain_loudness::{GainLoudness, estimate_limiter_integrated};
 use audiobatch_core::record::is_silent_loudness;
-use audiobatch_core::serato_tags::SeratoData;
 use audiobatch_core::{AnalysisRecord, FileTags};
 use gpui_kit::{
     AnyElement, Div, Hsla, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
@@ -53,11 +52,17 @@ const ARTWORK_SIZE: f32 = 48.0;
 /// Space between the album artwork and the artist and title.
 const ARTWORK_SPACING: f32 = 8.0;
 
-/// Height of a detail row.
-const DETAIL_ROW_HEIGHT: f32 = 20.0;
+/// Detail line height in rems, preserving the panel's compact rhythm at the default theme size.
+const DETAIL_ROW_HEIGHT: f32 = 4.0 / 3.0;
 
-/// Width of the field names of the detail rows.
-const DETAIL_FIELD_WIDTH: f32 = 64.0;
+/// Width of the tag caption column in rems.
+const DETAIL_FIELD_WIDTH: f32 = 64.0 / 15.0;
+
+/// Detail value font size in rems, keeping its ratio to the line height when the interface zooms.
+const DETAIL_VALUE_FONT_SIZE: f32 = 11.0 / 15.0;
+
+/// Tag caption font size in rems.
+const DETAIL_CAPTION_FONT_SIZE: f32 = 10.25 / 15.0;
 
 /// Font size of the artist and title.
 /// The sizes are derived from JUCE font heights, so the text is as large as in the C++ application's panel.
@@ -108,20 +113,32 @@ struct Metric {
     adjusted_value: Option<String>,
 }
 
-/// One row of the details below the metric cards.
-struct Detail {
-    /// Field name shown on the left, also used as the element id.
+/// Pure presentation of the selected file's details, independent of the window and panel width.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct InfoDetails {
+    /// Container, channel layout, duration, and decimal file size.
+    format: Vec<InfoPart>,
+    /// Source bit depth, sample rate, and average bitrate.
+    audio: Vec<InfoPart>,
+    /// Tempo, original key with Camelot mapping, and release year.
+    track: Vec<InfoPart>,
+    /// Single-line genre, when present.
+    genre: Option<String>,
+    /// Album title, displayed without a line limit.
+    album: Option<String>,
+    /// Comment, displayed without a line limit.
+    comment: Option<String>,
+}
+
+/// One available value of a detail line, with its field name retained for the tooltip.
+#[derive(Debug, PartialEq, Eq)]
+struct InfoPart {
     field: &'static str,
-    /// Value shown aligned to the right.
     value: String,
-    /// True for a value that always stays short, such as the format or the tempo,
-    /// which the wide panel shows beside another one on the same line.
-    short: bool,
 }
 
 /// Renders the panel for the selected row and its tags, or the empty state when nothing is selected.
-/// The wide panel puts the four metric cards in one row,
-/// and the details with short values two to a line, above the long ones at the full width.
+/// The wide panel puts the four metric cards in one row and preserves the stacked details.
 /// The album artwork, when there is one, shows beside the artist and title,
 /// and the heading grows to its height.
 pub fn render_info_panel(
@@ -185,32 +202,16 @@ pub fn render_info_panel(
                 .child(record.error_message.clone()),
         );
     }
-    let all_details = ready
-        .map(record_rows)
-        .unwrap_or_default()
-        .into_iter()
-        .chain(tags.map(tag_rows).unwrap_or_default());
-    if wide {
-        let (short, long): (Vec<Detail>, Vec<Detail>) = all_details.partition(|detail| detail.short);
-        let mut short = short.into_iter();
-        while let Some(first) = short.next() {
-            let second = short.next().map_or_else(
-                || div().flex_1().into_any_element(),
-                |detail| detail_row(detail).flex_1().min_w_0().into_any_element(),
-            );
-            details = details.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_none()
-                    .gap(px(SECTION_SPACING))
-                    .child(detail_row(first).flex_1().min_w_0())
-                    .child(second),
-            );
+    let formatted = info_details(ready, tags);
+    details = details.child(details_grid(&formatted));
+    for (field, value, wrap) in [
+        ("Genre", formatted.genre, false),
+        ("Album", formatted.album, true),
+        ("Comment", formatted.comment, true),
+    ] {
+        if let Some(value) = value {
+            details = details.child(tag_block(field, value, wrap));
         }
-        details = details.children(long.into_iter().map(detail_row));
-    } else {
-        details = details.children(all_details.map(detail_row));
     }
 
     panel
@@ -517,130 +518,187 @@ fn metric_value(value: String, adjusted_value: Option<String>) -> Div {
         }))
 }
 
-/// Renders a field name and its value aligned to the right edge, with both in the tooltip for a value too long to show.
-fn detail_row(detail: Detail) -> Stateful<Div> {
-    let Detail { field, value, .. } = detail;
+/// Places properties in stable row-major slots, preserving empty cells for missing values.
+fn info_grid(details: &InfoDetails) -> [(&'static str, &str); 10] {
+    const FIELDS: [&str; 10] = [
+        "Bit depth",
+        "Sample rate",
+        "Bitrate",
+        "Duration",
+        "Size",
+        "Format",
+        "Channels",
+        "BPM",
+        "Key",
+        "Year",
+    ];
+    FIELDS.map(|field| {
+        let value = details
+            .format
+            .iter()
+            .chain(&details.audio)
+            .chain(&details.track)
+            .find(|part| part.field == field)
+            .map_or("", |part| part.value.as_str());
+        (field, value)
+    })
+}
+
+/// Renders two shared five-column rows, with the first column leading and the other four trailing.
+/// Each cell truncates independently and keeps its complete labelled value in a tooltip.
+fn details_grid(details: &InfoDetails) -> Div {
+    let cells = info_grid(details);
+    let mut grid = div().flex().flex_col().flex_none().min_w_0();
+    for row in cells.as_chunks::<5>().0 {
+        if row.iter().all(|(_, value)| value.is_empty()) {
+            continue;
+        }
+        let mut line = div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .min_w_0()
+            .h(rems(DETAIL_ROW_HEIGHT))
+            .items_center()
+            .gap(rems(4.0 / 15.0))
+            .text_size(rems(DETAIL_VALUE_FONT_SIZE))
+            .text_color(color(palette::GREY_LIGHT));
+        for (column, (field, value)) in row.iter().enumerate() {
+            let mut cell = div()
+                .id(*field)
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(value.replace(['\r', '\n'], " "));
+            if column > 0 {
+                cell = cell.text_right();
+            }
+            if !value.is_empty() {
+                cell = cell.tooltip(tooltip(format!("{field}: {value}")));
+            }
+            line = line.child(cell);
+        }
+        grid = grid.child(line);
+    }
+    grid
+}
+
+/// Renders a caption and left-aligned value, wrapping Album and Comment without a line limit.
+fn tag_block(field: &'static str, value: String, wrap: bool) -> Stateful<Div> {
+    let description = format!("{field}: {value}");
+    let value = if wrap { value } else { value.replace(['\r', '\n'], " ") };
+    let value = div()
+        .flex_1()
+        .min_w_0()
+        .text_size(rems(DETAIL_VALUE_FONT_SIZE))
+        .text_color(color(palette::GREY_LIGHT))
+        .child(value);
+    let value = if wrap {
+        value.whitespace_normal()
+    } else {
+        value.truncate()
+    };
     div()
         .id(field)
-        .tooltip(tooltip(format!("{field}: {value}")))
-        .h(px(DETAIL_ROW_HEIGHT))
+        .tooltip(tooltip(description))
+        .min_h(rems(DETAIL_ROW_HEIGHT))
+        .line_height(rems(DETAIL_ROW_HEIGHT))
         .flex_none()
         .flex()
         .flex_row()
-        .items_center()
+        .items_start()
         .child(
             div()
-                .w(px(DETAIL_FIELD_WIDTH))
+                .w(rems(DETAIL_FIELD_WIDTH))
                 .flex_none()
-                .text_size(px(CAPTION_FONT_SIZE))
+                .text_size(rems(DETAIL_CAPTION_FONT_SIZE))
                 .text_color(color(palette::GREY_MIDDLE_LIGHT))
                 .child(field),
         )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_right()
-                .truncate()
-                .text_size(px(VALUE_FONT_SIZE))
-                .text_color(color(palette::GREY_LIGHT))
-                .child(value),
-        )
+        .child(value)
 }
 
-/// Returns the technical details of a ready record, all of them short.
-fn record_rows(record: &AnalysisRecord) -> Vec<Detail> {
-    let channels = match record.channels {
-        1 => String::from("Mono"),
-        2 => String::from("Stereo"),
-        count => count.to_string(),
-    };
-    [
-        (
-            "Format",
-            format!(
-                "{} / {channels} / {} bit",
-                format_type_label(record),
-                format_bits_per_sample(record)
-            ),
-        ),
-        (
-            "Audio",
-            format!("{} / {}", format_sample_rate(record), format_bitrate(record)),
-        ),
-        ("Duration", describe_duration(record.duration_seconds)),
-        ("Samples", record.length_in_samples.to_string()),
-    ]
-    .into_iter()
-    .map(|(field, value)| Detail {
-        field,
-        value,
-        short: true,
-    })
-    .collect()
-}
-
-/// Returns the musical details and tags that are set.
-/// The tempo prefers Serato's analyzed value over the tag and the beat grid.
-/// The tempo, the key, and the year are short, and the album, the genre, and the comment can be long.
-fn tag_rows(tags: &FileTags) -> Vec<Detail> {
-    let serato_bpm = tags.serato.as_ref().and_then(SeratoData::bpm);
-    let bpm = serato_bpm
-        .or_else(|| tags.bpm.as_deref().and_then(|bpm| bpm.trim().parse::<f64>().ok()))
-        .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
-        .map(|bpm| format!("{bpm:.2}"));
-    [
-        ("BPM", bpm, true),
-        ("Key", tags.key.clone(), true),
-        ("Album", tags.album.clone(), false),
-        ("Genre", tags.genre.clone(), false),
-        ("Year", tags.year.map(|year| year.to_string()), true),
-        ("Comment", tags.comment.clone(), false),
-    ]
-    .into_iter()
-    .filter_map(|(field, value, short)| {
-        value
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| Detail { field, value, short })
-    })
-    .collect()
-}
-
-/// Describes a duration in words.
-/// Shows the two largest nonzero units, for example "3 mins 25 secs" or "1 hr 2 mins",
-/// and milliseconds only for durations under one second.
-fn describe_duration(seconds: f64) -> String {
-    if !seconds.is_finite() || seconds.abs() < 0.001 {
-        return String::from("0");
-    }
-    if seconds < 0.0 {
-        return format!("-{}", describe_duration(-seconds));
-    }
-    let whole_seconds = seconds as u64;
-    let fields = [
-        (whole_seconds / 604_800, "week", "weeks"),
-        ((whole_seconds / 86_400) % 7, "day", "days"),
-        ((whole_seconds / 3600) % 24, "hr", "hrs"),
-        ((whole_seconds / 60) % 60, "min", "mins"),
-        (whole_seconds % 60, "sec", "secs"),
-    ];
-    let parts: Vec<String> = fields
-        .iter()
-        .filter(|(count, ..)| *count > 0)
-        .take(2)
-        .map(|&(count, singular, plural)| {
-            if count == 1 {
-                format!("1 {singular}")
-            } else {
-                format!("{count} {plural}")
-            }
-        })
+/// Builds detail lines from ready technical data and independently available tags.
+/// Missing values and their separators are omitted, while tags remain visible during pending or failed analysis.
+fn info_details(record: Option<&AnalysisRecord>, tags: Option<&FileTags>) -> InfoDetails {
+    let mut details = InfoDetails::default();
+    if let Some(record) = record.filter(|record| record.is_ready()) {
+        let channels = match record.channels {
+            0 => String::new(),
+            1 => String::from("Mono"),
+            2 => String::from("Stereo"),
+            count => format!("{count} ch"),
+        };
+        let format = format_type_label(record);
+        details.format = info_parts([
+            ("Format", if format == "Unknown" { String::new() } else { format }),
+            ("Channels", channels),
+            ("Duration", format_duration_tenths(record.duration_seconds)),
+            ("Size", format_file_size(record)),
+        ])
+        .into_iter()
+        .filter(|part| part.value != "-")
         .collect();
-    if parts.is_empty() {
-        let milliseconds = ((seconds * 1000.0) as u64) % 1000;
-        return format!("{milliseconds} ms");
+        details.audio = info_parts([
+            (
+                "Bit depth",
+                if record.bits_per_sample == 0 {
+                    String::new()
+                } else {
+                    format!("{}-bit", record.bits_per_sample)
+                },
+            ),
+            ("Sample rate", format_sample_rate(record)),
+            ("Bitrate", format_bitrate(record)),
+        ])
+        .into_iter()
+        .filter(|part| part.value != "-")
+        .collect();
     }
-    parts.join(" ")
+    if let Some(tags) = tags {
+        let valid_bpm = |bpm: &f64| bpm.is_finite() && *bpm > 0.0;
+        let serato = tags.serato.as_ref();
+        let bpm = serato
+            .and_then(|data| data.autotags.as_ref())
+            .map(|autotags| autotags.bpm)
+            .filter(valid_bpm)
+            .or_else(|| tags.bpm.as_deref()?.trim().parse::<f64>().ok().filter(valid_bpm))
+            .or_else(|| serato?.beatgrid.as_ref()?.bpm().map(f64::from).filter(valid_bpm));
+        details.track = info_parts([
+            ("BPM", bpm.map_or_else(String::new, |bpm| format!("{bpm:.2} BPM"))),
+            ("Key", tags.key.as_deref().map_or_else(String::new, display_key)),
+            ("Year", tags.year.map_or_else(String::new, |year| year.to_string())),
+        ]);
+        let present = |value: &Option<String>| value.as_ref().filter(|value| !value.trim().is_empty()).cloned();
+        details.genre = present(&tags.genre);
+        details.album = present(&tags.album);
+        details.comment = present(&tags.comment);
+    }
+    details
+}
+
+/// Keeps populated values in their original order, preserving literal source tag text.
+fn info_parts<const COUNT: usize>(parts: [(&'static str, String); COUNT]) -> Vec<InfoPart> {
+    parts
+        .into_iter()
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(field, value)| InfoPart { field, value })
+        .collect()
+}
+
+/// Appends the Camelot mapping without respelling the trimmed source or duplicating an existing Camelot code.
+fn display_key(key: &str) -> String {
+    let key = key.trim();
+    let Some(mapped) = camelot_key(key) else {
+        return key.to_string();
+    };
+    let already_camelot =
+        key.starts_with(|character: char| character.is_ascii_digit()) && key.ends_with(['a', 'A', 'b', 'B']);
+    if already_camelot {
+        key.to_string()
+    } else {
+        format!("{key} / {mapped}")
+    }
 }
 
 #[cfg(test)]
@@ -738,20 +796,218 @@ mod test_metrics {
 }
 
 #[cfg(test)]
-mod test_describe_duration {
+mod test_info_details {
+    use audiobatch_core::AnalysisStatus;
+    use audiobatch_core::serato_tags::{AutoTags, BeatGrid, BeatGridMarker, SeratoData};
+
     use super::*;
 
-    #[test]
-    fn shows_the_two_largest_units() {
-        assert_eq!(describe_duration(1.0), "1 sec");
-        assert_eq!(describe_duration(205.4), "3 mins 25 secs");
-        assert_eq!(describe_duration(3725.0), "1 hr 2 mins");
-        assert_eq!(describe_duration(120.0), "2 mins");
+    /// Returns a complete source record with predictable decimal size and average bitrate.
+    fn record() -> AnalysisRecord {
+        AnalysisRecord {
+            path: "track.flac".into(),
+            status: AnalysisStatus::Analyzed,
+            channels: 2,
+            duration_seconds: 205.4,
+            file_size: 36_200_000,
+            bits_per_sample: 24,
+            sample_rate: 44_100,
+            ..AnalysisRecord::default()
+        }
+    }
+
+    /// Joins the production model's values in their display order for readable presentation assertions.
+    fn line(parts: &[InfoPart]) -> String {
+        parts
+            .iter()
+            .map(|part| part.value.as_str())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    /// Supplies all three tempo sources to test their independent priority and validity rules.
+    fn tempo_tags(autotags: f64, tag: &str, grid: f32) -> FileTags {
+        FileTags {
+            bpm: Some(tag.to_string()),
+            serato: Some(SeratoData {
+                autotags: Some(AutoTags {
+                    bpm: autotags,
+                    ..Default::default()
+                }),
+                beatgrid: Some(BeatGrid {
+                    marker_count: 1,
+                    markers: vec![BeatGridMarker::Terminal {
+                        position: 0.0,
+                        bpm: grid,
+                    }],
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn short_durations_use_milliseconds() {
-        assert_eq!(describe_duration(0.25), "250 ms");
-        assert_eq!(describe_duration(0.0), "0");
+    fn technical_lines_have_the_expected_order_units_and_tooltip_fields() {
+        let details = info_details(Some(&record()), None);
+        assert_eq!(line(&details.format), "FLAC · Stereo · 3:25.4 · 36.2 MB");
+        assert_eq!(line(&details.audio), "24-bit · 44.1 kHz · 1410 kbps");
+        assert_eq!(
+            details.format.iter().map(|part| part.field).collect::<Vec<_>>(),
+            ["Format", "Channels", "Duration", "Size"]
+        );
+        assert_eq!(details.track, []);
+        assert!(
+            !details
+                .format
+                .iter()
+                .chain(&details.audio)
+                .any(|part| part.field == "Samples")
+        );
+    }
+
+    #[test]
+    fn grid_columns_share_stable_slots_across_both_rows() {
+        let tags = FileTags {
+            bpm: Some("128".into()),
+            key: Some("Gm".into()),
+            year: Some(2019),
+            ..Default::default()
+        };
+        let details = info_details(Some(&record()), Some(&tags));
+        assert_eq!(
+            info_grid(&details),
+            [
+                ("Bit depth", "24-bit"),
+                ("Sample rate", "44.1 kHz"),
+                ("Bitrate", "1410 kbps"),
+                ("Duration", "3:25.4"),
+                ("Size", "36.2 MB"),
+                ("Format", "FLAC"),
+                ("Channels", "Stereo"),
+                ("BPM", "128.00 BPM"),
+                ("Key", "Gm / 6A"),
+                ("Year", "2019"),
+            ]
+        );
+        let tags_only = info_details(None, Some(&tags));
+        let cells = info_grid(&tags_only);
+        assert!(cells[..7].iter().all(|(_, value)| value.is_empty()));
+        assert_eq!(&cells[7..], &info_grid(&details)[7..]);
+        assert!(
+            info_grid(&InfoDetails::default())
+                .iter()
+                .all(|(_, value)| value.is_empty())
+        );
+    }
+
+    #[test]
+    fn unknown_properties_are_omitted_without_placeholder_separators() {
+        let mut record = record();
+        record.bits_per_sample = 0;
+        record.sample_rate = 0;
+        record.duration_seconds = 0.0;
+        record.file_size = 0;
+        record.channels = 0;
+        let details = info_details(Some(&record), None);
+        assert_eq!(line(&details.format), "FLAC");
+        assert_eq!(details.audio, []);
+        record.path = "track.mp3".into();
+        assert_eq!(info_details(Some(&record), None).audio, []);
+        record.path = "no_extension".into();
+        assert_eq!(info_details(Some(&record), None), InfoDetails::default());
+    }
+
+    #[test]
+    fn channels_use_mono_stereo_or_a_count_with_a_unit() {
+        let mut record = record();
+        for (channels, expected) in [(1, "Mono"), (2, "Stereo"), (6, "6 ch")] {
+            record.channels = channels;
+            assert_eq!(info_details(Some(&record), None).format[1].value, expected);
+        }
+    }
+
+    #[test]
+    fn track_line_preserves_original_key_spelling_and_tag_order() {
+        let tags = FileTags {
+            bpm: Some(String::from("128")),
+            key: Some(String::from(" Gm ")),
+            year: Some(2019),
+            ..Default::default()
+        };
+        let details = info_details(None, Some(&tags));
+        assert_eq!(line(&details.track), "128.00 BPM · Gm / 6A · 2019");
+        assert_eq!(
+            details.track.iter().map(|part| part.field).collect::<Vec<_>>(),
+            ["BPM", "Key", "Year"]
+        );
+        for (key, expected) in [
+            (" F#m ", "F#m / 11A"),
+            ("Abmin", "Abmin / 1A"),
+            (" 08A ", "08A"),
+            ("8a", "8a"),
+            ("012A", "012A"),
+            ("8 a", "8 a"),
+            ("-", "-"),
+            ("1d", "1d / 8B"),
+            ("unknown key", "unknown key"),
+        ] {
+            assert_eq!(display_key(key), expected);
+        }
+    }
+
+    #[test]
+    fn tempo_priority_is_autotags_then_standard_tag_then_beatgrid() {
+        for (autotags, tag, grid, expected) in [
+            (130.0, "128", 125.0, "130.00 BPM"),
+            (0.0, "128", 125.0, "128.00 BPM"),
+            (f64::NAN, "128", 125.0, "128.00 BPM"),
+            (0.0, "invalid", 125.0, "125.00 BPM"),
+            (0.0, "NaN", 125.0, "125.00 BPM"),
+            (f64::INFINITY, "-2", 125.0, "125.00 BPM"),
+            (0.0, "", f32::INFINITY, ""),
+        ] {
+            let details = info_details(None, Some(&tempo_tags(autotags, tag, grid)));
+            assert_eq!(line(&details.track), expected);
+        }
+    }
+
+    #[test]
+    fn tags_remain_available_for_pending_and_failed_analysis() {
+        let tags = FileTags {
+            key: Some(String::from("Gm")),
+            genre: Some(String::from("Deep House")),
+            album: Some(String::from("An album title long enough to wrap across multiple lines")),
+            comment: Some("A long comment. ".repeat(100)),
+            ..Default::default()
+        };
+        let mut record = record();
+        for status in [AnalysisStatus::Pending, AnalysisStatus::Failed] {
+            record.status = status;
+            let details = info_details(Some(&record), Some(&tags));
+            assert_eq!(details.format, []);
+            assert_eq!(details.audio, []);
+            assert_eq!(line(&details.track), "Gm / 6A");
+            assert_eq!(details.genre, tags.genre);
+            assert_eq!(details.album, tags.album);
+            assert_eq!(details.comment, tags.comment);
+        }
+        assert_eq!(
+            info_details(None, Some(&tags)),
+            info_details(Some(&record), Some(&tags))
+        );
+    }
+
+    #[test]
+    fn absent_and_blank_metadata_produce_no_empty_lines_or_tag_blocks() {
+        let tags = FileTags {
+            key: Some(String::from("  ")),
+            album: Some(String::from("\t")),
+            genre: Some(String::new()),
+            comment: Some(String::from("\n")),
+            ..Default::default()
+        };
+        assert_eq!(info_details(None, Some(&tags)), InfoDetails::default());
+        assert_eq!(info_details(None, None), InfoDetails::default());
     }
 }

@@ -236,6 +236,9 @@ The existing `analysis` benchmark measures full-meter and decoded-file impact in
 ### Waveform and playback
 
 The preview shows the selected file's levels, tags, embedded album artwork, waveform, and Serato cue points.
+Two aligned five-column property rows sit below the level cards, above the genre, wrapped album, and wrapped comment.
+Drag the vertical dividers to adjust the controls and information widths within their limits.
+Double-click a divider to restore its default width.
 Album artwork can be hidden, and PNG and JPEG covers are decoded into bounded thumbnails in the background.
 It supports mono and stereo playback, preview zoom, release-time seeking, and playback from Serato hot cues.
 Choose Waveform, Spectrogram, Both: side by side, or Both: stacked from the preview context menu,
