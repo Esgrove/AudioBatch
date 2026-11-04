@@ -70,6 +70,14 @@ enum class CommandId : std::uint8_t {
     chooseFolder,
     audioSettings,
     cancelRun,
+    addFolder,
+    addFiles,
+    selectAll,
+    normalizeSelected,
+    openParentFolder,
+    clearCustomGain,
+    processSelected,
+    stopPlayback,
 };
 
 /// Paired menu commands and preview modes in their canonical display order.
@@ -83,7 +91,12 @@ constexpr std::array PREVIEW_VIEW_COMMANDS {
 /// First of the contiguous command ids.
 constexpr CommandId firstCommand {CommandId::rescan};
 /// Last of the contiguous command ids, which new commands replace.
-constexpr CommandId lastCommand {CommandId::cancelRun};
+constexpr CommandId lastCommand {CommandId::stopPlayback};
+
+/// Disjoint submenu ranges below the plugin library's generated ids.
+constexpr int COLUMNS_MENU_FIRST_ID {2000};
+constexpr int OUTPUT_MENU_FIRST_ID {3000};
+constexpr int SUBMENU_RANGE_SIZE {1000};
 
 /// Returns the menu item for a menu bar result id, or nullopt for a command or an Add Plugin submenu id.
 constexpr std::optional<MenuItemId> menuItemFromId(const int menuItemID) noexcept
@@ -220,9 +233,9 @@ void MainWindow::closeButtonPressed()
 juce::StringArray MainWindow::getMenuBarNames()
 {
 #if JUCE_MAC
-    return {juce::JUCEApplication::getInstance()->getApplicationName(), "File", "Options", "Help"};
+    return {juce::JUCEApplication::getInstance()->getApplicationName(), "File", "Plugins", "Options", "Help"};
 #else
-    return {"File", "Options", "Help"};
+    return {"File", "Plugins", "Options", "Help"};
 #endif
 }
 
@@ -243,19 +256,24 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             break;
         case 1:
             addCommandItem(menu, commandManager, CommandId::chooseFolder);
-            addMenuItem(menu, MenuItemId::addFolder, "Add Folder...");
+            addCommandItem(menu, commandManager, CommandId::addFolder);
+            addCommandItem(menu, commandManager, CommandId::addFiles);
             addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
             addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+            addCommandItem(menu, commandManager, CommandId::normalizeSelected);
             addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
+            addCommandItem(menu, commandManager, CommandId::openParentFolder);
+            addCommandItem(menu, commandManager, CommandId::clearCustomGain);
+            addCommandItem(menu, commandManager, CommandId::selectAll);
             addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
             addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
             addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::cancelRun);
             break;
-        case 2:
+        case 3:
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
             appendPreviewViewMenuItems(menu);
             appendOverloadMenuItems(menu);
@@ -268,14 +286,18 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
             addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
             menu.addSeparator();
-            appendPluginOptionsMenuItems(menu);
+            menu.addSubMenu("Columns", getAudioBatch().createColumnsMenu(COLUMNS_MENU_FIRST_ID));
+            menu.addSubMenu("Output Device", getAudioBatch().createOutputDeviceMenu(OUTPUT_MENU_FIRST_ID));
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::audioSettings);
             break;
-        case 3:
+        case 4:
             addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::about);
+            break;
+        case 2:
+            appendPluginOptionsMenuItems(menu);
             break;
         default:
             break;
@@ -284,12 +306,17 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
     switch (topLevelMenuIndex) {
         case 0:
             addCommandItem(menu, commandManager, CommandId::chooseFolder);
-            addMenuItem(menu, MenuItemId::addFolder, "Add Folder...");
+            addCommandItem(menu, commandManager, CommandId::addFolder);
+            addCommandItem(menu, commandManager, CommandId::addFiles);
             addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
             addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+            addCommandItem(menu, commandManager, CommandId::normalizeSelected);
             addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
+            addCommandItem(menu, commandManager, CommandId::openParentFolder);
+            addCommandItem(menu, commandManager, CommandId::clearCustomGain);
+            addCommandItem(menu, commandManager, CommandId::selectAll);
             addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
             addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
             addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
@@ -298,7 +325,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::quit);
             break;
-        case 1:
+        case 2:
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
             appendPreviewViewMenuItems(menu);
             appendOverloadMenuItems(menu);
@@ -311,14 +338,18 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
             addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
             menu.addSeparator();
-            appendPluginOptionsMenuItems(menu);
+            menu.addSubMenu("Columns", getAudioBatch().createColumnsMenu(COLUMNS_MENU_FIRST_ID));
+            menu.addSubMenu("Output Device", getAudioBatch().createOutputDeviceMenu(OUTPUT_MENU_FIRST_ID));
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::audioSettings);
             break;
-        case 2:
+        case 3:
             addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::about);
+            break;
+        case 1:
+            appendPluginOptionsMenuItems(menu);
             break;
         default:
             break;
@@ -335,11 +366,28 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
 {
     juce::ignoreUnused(topLevelMenuIndex);
 
+    if (menuItemID > COLUMNS_MENU_FIRST_ID && menuItemID < COLUMNS_MENU_FIRST_ID + SUBMENU_RANGE_SIZE) {
+        getAudioBatch().handleColumnsMenuItem(menuItemID, COLUMNS_MENU_FIRST_ID);
+        menuItemsChanged();
+        return;
+    }
+    if (menuItemID >= OUTPUT_MENU_FIRST_ID && menuItemID < OUTPUT_MENU_FIRST_ID + SUBMENU_RANGE_SIZE) {
+        getAudioBatch().handleOutputDeviceMenuItem(menuItemID, OUTPUT_MENU_FIRST_ID);
+        return;
+    }
+    if (std::cmp_greater_equal(menuItemID, std::to_underlying(firstCommand))
+        && std::cmp_less_equal(menuItemID, std::to_underlying(lastCommand)))
+    {
+        return;
+    }
+    if (std::cmp_less(menuItemID, std::to_underlying(MenuItemId::addFolder))
+        || std::cmp_greater(menuItemID, std::to_underlying(MenuItemId::processAll)))
+    {
+        handlePluginChoiceMenuItem(menuItemID);
+        return;
+    }
     const auto item = menuItemFromId(menuItemID);
-    if (!item.has_value()) {
-        if (!commandFromId(menuItemID).has_value()) {
-            handlePluginChoiceMenuItem(menuItemID);
-        }
+    if (!item) {
         return;
     }
 
@@ -408,6 +456,54 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     }
 
     switch (*command) {
+        case CommandId::addFolder:
+            result.setInfo("Add Folder...", "Add a root folder", fileCategory, 0);
+            result.addDefaultKeypress(
+                'o',
+                juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier)
+            );
+            result.setActive(!blockedByDialog && !audioBatch.isFileOperationInProgress());
+            break;
+        case CommandId::addFiles:
+            result.setInfo("Add Files...", "Add audio files to the results", fileCategory, 0);
+            result.setActive(!blockedByDialog && !audioBatch.isFileOperationInProgress());
+            break;
+        case CommandId::selectAll:
+            result.setInfo("Select All Files", "Select every listed file", fileCategory, 0);
+            result.addDefaultKeypress('a', juce::ModifierKeys::commandModifier);
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::stopPlayback:
+            result.setInfo("Stop Playback", "Stop playback and return to the start", fileCategory, 0);
+            result.addDefaultKeypress(juce::KeyPress::escapeKey, juce::ModifierKeys::noModifiers);
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::normalizeSelected:
+            result.setInfo(
+                utils::format("Normalize Selected to {}", audioBatch.describeNormalizationTarget()),
+                "Normalize selected files",
+                fileCategory,
+                0
+            );
+            result.setActive(canActOnSelection && !audioBatch.isFileOperationInProgress());
+            break;
+        case CommandId::openParentFolder:
+            result.setInfo("Open Parent Folder", "Open the selected files' parent folders", fileCategory, 0);
+            result.setActive(canActOnSelection);
+            break;
+        case CommandId::clearCustomGain:
+            result.setInfo("Clear Per-file Gain", "Clear the selected files' explicit gains", fileCategory, 0);
+            result.setActive(canActOnSelection);
+            break;
+        case CommandId::processSelected:
+            result.setInfo(
+                "Process Selected With Plugin Chain", "Render selected files through enabled plugins", "Plugins", 0
+            );
+            result.setActive(
+                canActOnSelection && !audioBatch.isFileOperationInProgress()
+                && audioBatch.getLiveChain().getNumEnabledValidSlots() > 0
+            );
+            break;
         case CommandId::chooseFolder:
             result.setInfo("Choose Folder...", "Choose the root folder to analyze", fileCategory, 0);
             result.addDefaultKeypress('o', juce::ModifierKeys::commandModifier);
@@ -607,6 +703,30 @@ bool MainWindow::perform(const InvocationInfo& info)
     }
 
     switch (*command) {
+        case CommandId::addFolder:
+            getAudioBatch().addRootFolder();
+            return true;
+        case CommandId::addFiles:
+            getAudioBatch().addFiles();
+            return true;
+        case CommandId::selectAll:
+            getAudioBatch().selectAllRecords();
+            return true;
+        case CommandId::stopPlayback:
+            getAudioBatch().stopPlayback();
+            return true;
+        case CommandId::normalizeSelected:
+            getAudioBatch().normalizeSelectedRecords();
+            return true;
+        case CommandId::openParentFolder:
+            getAudioBatch().openSelectedParentFolders();
+            return true;
+        case CommandId::clearCustomGain:
+            getAudioBatch().clearSelectedCustomGain();
+            return true;
+        case CommandId::processSelected:
+            getAudioBatch().processSelectedRecords();
+            return true;
         case CommandId::chooseFolder:
             getAudioBatch().chooseRootFolder();
             return true;
@@ -738,6 +858,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
     addMenuItem(menu, MenuItemId::clearChain, "Clear Chain", chain.getNumSlots() > 0);
     addMenuItem(menu, MenuItemId::scanPlugins, "Scan for Plugins...");
     menu.addSeparator();
+    addCommandItem(menu, commandManager, CommandId::processSelected);
     addMenuItem(menu, MenuItemId::processAll, "Process All Files...", chain.getNumEnabledValidSlots() > 0);
 }
 

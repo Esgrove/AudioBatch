@@ -2,7 +2,8 @@
 //!
 //! The titles are short, and their tooltips describe each column with its unit, so the cells hold only numbers.
 //! Columns can be reordered and resized by dragging their headers.
-//! Name, Path, and Status share extra window width with ten times the weight of the other columns.
+//! Name, Folder, Path, and Status share extra window width with ten times the weight of the other columns.
+//! Folder shows the parent folder of each file, and the full Path column is hidden until the user shows it.
 //! Failed files have white text with reduced opacity, cells have a faint divider between them,
 //! and the Status column shows a progress ring while a file is analyzed, normalized, or processed with plugins.
 //! A failure or notice of a normalization or plugin processing replaces the status text of its row,
@@ -18,8 +19,8 @@ use std::sync::Arc;
 
 use audiobatch_core::format::{
     average_bitrate_kbps, format_bitrate_compact, format_bits_per_sample, format_custom_gain_compact, format_duration,
-    format_loudness_compact, format_peak_compact, format_sample_rate_compact, format_status, format_true_peak_compact,
-    format_type_label,
+    format_folder, format_loudness_compact, format_peak_compact, format_sample_rate_compact, format_status,
+    format_true_peak_compact, format_type_label,
 };
 use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
@@ -56,7 +57,13 @@ const CELL_FONT_SIZE: f32 = 14.0;
 const SELECTION_BACKGROUND: u32 = 0x76A8_DA38;
 
 /// Columns hidden until the user shows them.
-pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 3] = [ColumnKey::PeakLeft, ColumnKey::PeakRight, ColumnKey::Gain];
+/// The Folder column shows where a file is more compactly than Path, which stays available from the Columns menu.
+pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 4] = [
+    ColumnKey::Path,
+    ColumnKey::PeakLeft,
+    ColumnKey::PeakRight,
+    ColumnKey::Gain,
+];
 
 /// Font size of the column titles.
 const HEADER_FONT_SIZE: f32 = 14.0;
@@ -92,8 +99,15 @@ const STATUS_MAXIMUM_WIDTH: f32 = 8192.0;
 /// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
 /// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
 /// These are preferred widths, which automatic sizing adjusts to fit the visible columns in the window.
-const COLUMNS: [ColumnSpec; 15] = [
+const COLUMNS: [ColumnSpec; 16] = [
     column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
+    column_spec(
+        ColumnKey::Folder,
+        "Folder",
+        "Folder of the file, starting with ~ inside a macOS home folder",
+        160.0,
+        false,
+    ),
     column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
     column_spec(ColumnKey::Type, "Type", "File type", 66.0, false),
     column_spec(
@@ -165,6 +179,7 @@ pub enum RowState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ColumnKey {
     Name,
+    Folder,
     Path,
     Type,
     Length,
@@ -1194,6 +1209,7 @@ impl ResultsDelegate {
         };
         match key {
             ColumnKey::Name => row.file_name.to_string(),
+            ColumnKey::Folder => format_folder(&row.path),
             ColumnKey::Path => row.path.to_string_lossy().into_owned(),
             ColumnKey::Status => row.status_text(),
             ColumnKey::Type => row
@@ -1505,7 +1521,7 @@ pub fn fit_results_columns(
 /// Gives long text columns ten times the resize share of a compact value column.
 const fn column_weight(key: ColumnKey) -> f64 {
     match key {
-        ColumnKey::Name | ColumnKey::Path | ColumnKey::Status => 10.0,
+        ColumnKey::Name | ColumnKey::Folder | ColumnKey::Path | ColumnKey::Status => 10.0,
         _ => 1.0,
     }
 }
@@ -1616,6 +1632,7 @@ fn circle_path(center_x: f32, center_y: f32, radius: f32, mut builder: PathBuild
 const fn column_id(key: ColumnKey) -> &'static str {
     match key {
         ColumnKey::Name => "name",
+        ColumnKey::Folder => "folder",
         ColumnKey::Path => "path",
         ColumnKey::Type => "type",
         ColumnKey::Length => "length",
@@ -1647,8 +1664,14 @@ fn level_text(record: &AnalysisRecord, key: ColumnKey) -> String {
         ColumnKey::ShortTerm => format_loudness_compact(record.max_short_term_lufs),
         ColumnKey::Integrated => format_loudness_compact(record.integrated_lufs),
         ColumnKey::Gain => format_custom_gain_compact(record),
-        ColumnKey::Name | ColumnKey::Path | ColumnKey::Type | ColumnKey::Status => String::new(),
+        ColumnKey::Name | ColumnKey::Folder | ColumnKey::Path | ColumnKey::Type | ColumnKey::Status => String::new(),
     }
+}
+
+/// Returns the full parent folder of a file as text, for sorting the Folder column.
+fn parent_text(path: &Path) -> String {
+    path.parent()
+        .map_or_else(String::new, |parent| parent.to_string_lossy().into_owned())
 }
 
 /// Returns the uppercase extension of a path.
@@ -1681,6 +1704,8 @@ fn compare_column(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orde
     };
     match key {
         ColumnKey::Name => compare_natural(&first.file_name, &second.file_name),
+        // The full parent path orders the folders, so home folders of different users do not interleave.
+        ColumnKey::Folder => compare_natural(&parent_text(&first.path), &parent_text(&second.path)),
         ColumnKey::Path => compare_natural(&first.path.to_string_lossy(), &second.path.to_string_lossy()),
         ColumnKey::Peak => first_record
             .overall_peak
@@ -2340,9 +2365,9 @@ mod test_column_reorder {
         delegate.reorder_column(0, 3);
         assert_eq!(delegate.order[3], ColumnKey::Name);
         assert_eq!(delegate.spec_at(3).map(|spec| spec.title), Some("Name"));
-        assert_eq!(delegate.spec_at(0).map(|spec| spec.key), Some(ColumnKey::Path));
+        assert_eq!(delegate.spec_at(0).map(|spec| spec.key), Some(ColumnKey::Folder));
         assert_eq!(column_keys(&delegate)[3], "name");
-        assert_eq!(column_keys(&delegate)[0], "path");
+        assert_eq!(column_keys(&delegate)[0], "folder");
     }
 
     #[test]
@@ -2407,6 +2432,75 @@ mod test_column_visibility_and_sort {
     }
 
     #[test]
+    fn folder_shows_next_to_name_and_path_starts_hidden_in_its_place() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        let keys = column_keys(&delegate);
+        assert_eq!(keys.get(..2), Some(&[String::from("name"), String::from("folder")][..]));
+        assert!(!keys.contains(&String::from("path")));
+        assert_eq!(
+            delegate.hidden_columns(),
+            [
+                ColumnKey::Path,
+                ColumnKey::PeakLeft,
+                ColumnKey::PeakRight,
+                ColumnKey::Gain
+            ]
+        );
+        delegate.set_column_visible(ColumnKey::Path, true);
+        assert_eq!(column_keys(&delegate).get(2).map(String::as_str), Some("path"));
+        assert!(ResultsDelegate::column_choices().any(|(key, title)| key == ColumnKey::Folder && title == "Folder"));
+        assert_eq!(ResultsDelegate::column_from_id("folder"), Some(ColumnKey::Folder));
+    }
+
+    #[test]
+    fn folder_cells_leave_out_the_file_name_and_sort_by_the_full_parent_path() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        let record = |path: &str| AnalysisRecord {
+            path: PathBuf::from(path),
+            file_name: Path::new(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            status: AnalysisStatus::Analyzed,
+            ..AnalysisRecord::default()
+        };
+        let rows = [
+            ResultRow::from_record(record("/Volumes/Music/b/track.wav")),
+            ResultRow::from_record(record("/Users/zed/Music/a.wav")),
+            ResultRow::from_record(record("/Users/amy/Music 10/a.wav")),
+            ResultRow::from_record(record("/Users/amy/Music 9/b.wav")),
+        ];
+        let folder = delegate
+            .order
+            .iter()
+            .position(|&key| key == ColumnKey::Folder)
+            .expect("folder");
+        delegate.rows = vec![rows[1].clone()];
+        delegate.rebuild_index();
+        let expected = if cfg!(target_os = "macos") {
+            "~/Music"
+        } else {
+            "/Users/zed/Music"
+        };
+        assert_eq!(delegate.cell_string(0, folder), expected);
+        let mut sorted = rows.to_vec();
+        sorted.sort_by(|first, second| compare_rows(first, second, ColumnKey::Folder));
+        let order: Vec<_> = sorted
+            .iter()
+            .map(|row| row.path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "/Users/amy/Music 9/b.wav",
+                "/Users/amy/Music 10/a.wav",
+                "/Users/zed/Music/a.wav",
+                "/Volumes/Music/b/track.wav",
+            ]
+        );
+    }
+
+    #[test]
     fn peak_l_peak_r_and_gain_start_hidden_and_come_back_in_their_place() {
         let mut delegate = ResultsDelegate::new(1600.0);
         assert!(!column_keys(&delegate).contains(&String::from("peak_left")));
@@ -2422,6 +2516,8 @@ mod test_column_visibility_and_sort {
             delegate.hidden_columns(),
             [ColumnKey::Path, ColumnKey::PeakRight, ColumnKey::Gain]
         );
+        delegate.set_column_visible(ColumnKey::Folder, false);
+        assert!(!column_keys(&delegate).contains(&String::from("folder")));
         delegate.set_column_visible(ColumnKey::Name, false);
         assert!(delegate.is_column_visible(ColumnKey::Name));
     }
@@ -2524,6 +2620,35 @@ mod test_column_sizing {
             assert!((column_weight(*key) as f32).mul_add(-10.0, growth).abs() < 0.001);
         }
         assert_budget(&delegate, target, 1.0);
+    }
+
+    #[test]
+    fn folder_display_and_sort_use_parent_directory_then_name() {
+        let row = |path: &str| {
+            ResultRow::from_record(AnalysisRecord {
+                path: PathBuf::from(path),
+                file_name: Path::new(path)
+                    .file_name()
+                    .expect("file name")
+                    .to_string_lossy()
+                    .into_owned(),
+                status: AnalysisStatus::Analyzed,
+                ..AnalysisRecord::default()
+            })
+        };
+        let first = row("/Music/Album 2/track 2.wav");
+        let second = row("/Music/Album 2/track 10.wav");
+        let third = row("/Music/Album 10/track 1.wav");
+        assert_eq!(compare_rows(&first, &second, ColumnKey::Folder), Ordering::Less);
+        assert_eq!(compare_rows(&second, &third, ColumnKey::Folder), Ordering::Less);
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(vec![first]);
+        let folder = delegate
+            .order
+            .iter()
+            .position(|key| *key == ColumnKey::Folder)
+            .expect("visible Folder");
+        assert_eq!(delegate.cell_string(0, folder), "/Music/Album 2");
     }
 
     #[test]

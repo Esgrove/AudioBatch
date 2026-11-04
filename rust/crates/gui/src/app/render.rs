@@ -26,8 +26,8 @@ use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Axis, Context, Div, ExternalPaths, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, px, relative, transparent_black,
+    IntoElement, ParentElement as _, Pixels, Render, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, div, px, relative, transparent_black,
 };
 
 use super::panel_widths::{PreviewPanel, baseline_widths, compact_controls_width};
@@ -47,9 +47,10 @@ use crate::menus::{
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenParentFolder, OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected,
     RemoveSelected, Rescan, RescanPlugins, RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice,
-    SetPreviewViewMode, StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleGainAdjustedMetrics, ToggleLoudnessGraph,
-    ToggleOverloadLines, TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection,
-    ToggleSampleOverloads, ToggleSeratoColours, ToggleTruePeakOverloads, TrashSelected, TrashSelectedNow,
+    SetPreviewViewMode, ShowPresetsFolder, StopPlayback, ToggleAlbumArtwork, ToggleColumn, ToggleContinuePlayback,
+    ToggleGainAdjustedMetrics, ToggleLoudnessGraph, ToggleOverloadLines, TogglePlayFromFirstCuePoint, TogglePlayback,
+    TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSampleOverloads,
+    ToggleSeratoColours, ToggleTruePeakOverloads, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
 use crate::playback_status::format_playback_time;
@@ -549,11 +550,37 @@ impl AppView {
     }
 }
 
+impl AppView {
+    /// Handles the Options menu actions that change the preview and the preferences.
+    fn on_option_actions(element: Stateful<Div>, cx: &Context<Self>) -> Stateful<Div> {
+        element
+            .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
+            .on_action(
+                cx.listener(|view, action: &SetPreviewViewMode, _, cx| view.set_preview_view_mode(action.mode, cx)),
+            )
+            .on_action(cx.listener(|view, _: &ToggleSampleOverloads, _, cx| view.toggle_sample_overloads(cx)))
+            .on_action(cx.listener(|view, _: &ToggleTruePeakOverloads, _, cx| view.toggle_true_peak_overloads(cx)))
+            .on_action(cx.listener(|view, _: &ToggleOverloadLines, _, cx| view.toggle_overload_lines(cx)))
+            .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
+            .on_action(cx.listener(|view, _: &ToggleAlbumArtwork, _, cx| view.toggle_album_artwork(cx)))
+            .on_action(cx.listener(|view, _: &ToggleGainAdjustedMetrics, _, cx| view.toggle_gain_adjusted_metrics(cx)))
+            .on_action(cx.listener(|view, _: &TogglePreviewSection, _, cx| view.toggle_preview_section(cx)))
+            .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))
+            .on_action(cx.listener(|view, _: &TogglePreviewLatencyCompensation, _, cx| {
+                view.toggle_preview_latency_compensation(cx);
+            }))
+            .on_action(cx.listener(|view, _: &ToggleContinuePlayback, _, cx| view.toggle_continue_playback(cx)))
+            .on_action(cx.listener(|view, _: &TogglePlayFromFirstCuePoint, _, cx| {
+                view.toggle_play_from_first_cue_point(cx);
+            }))
+            .on_action(cx.listener(|view, _: &OpenAudioSettings, window, cx| view.open_settings_window(window, cx)))
+    }
+}
+
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (progress, content_width, workspace_height) = self.prepare_frame(window, cx);
-        div()
-            .id("app")
+        Self::on_option_actions(div().id("app"), cx)
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_mouse_up(
@@ -580,23 +607,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &TrashSelected, window, cx| view.trash_selected(true, window, cx)))
             .on_action(cx.listener(|view, _: &TrashSelectedNow, window, cx| view.trash_selected(false, window, cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
-            .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
-            .on_action(
-                cx.listener(|view, action: &SetPreviewViewMode, _, cx| view.set_preview_view_mode(action.mode, cx)),
-            )
-            .on_action(cx.listener(|view, _: &ToggleSampleOverloads, _, cx| view.toggle_sample_overloads(cx)))
-            .on_action(cx.listener(|view, _: &ToggleTruePeakOverloads, _, cx| view.toggle_true_peak_overloads(cx)))
-            .on_action(cx.listener(|view, _: &ToggleOverloadLines, _, cx| view.toggle_overload_lines(cx)))
-            .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
-            .on_action(cx.listener(|view, _: &ToggleAlbumArtwork, _, cx| view.toggle_album_artwork(cx)))
-            .on_action(cx.listener(|view, _: &ToggleGainAdjustedMetrics, _, cx| view.toggle_gain_adjusted_metrics(cx)))
-            .on_action(cx.listener(|view, _: &TogglePreviewSection, _, cx| view.toggle_preview_section(cx)))
             .on_action(cx.listener(|view, action: &JumpToHotCue, _, cx| view.jump_to_hot_cue(action.slot, cx)))
-            .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))
-            .on_action(cx.listener(|view, _: &TogglePreviewLatencyCompensation, _, cx| {
-                view.toggle_preview_latency_compensation(cx);
-            }))
-            .on_action(cx.listener(|view, _: &OpenAudioSettings, window, cx| view.open_settings_window(window, cx)))
             .on_action(cx.listener(|view, _: &TogglePlayback, _, cx| view.toggle_playback(cx)))
             .on_action(cx.listener(|view, _: &StopPlayback, _, cx| view.stop_playback(cx)))
             .on_action(cx.listener(|view, action: &SelectOutputDevice, _, cx| {
@@ -608,6 +619,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &ClearPluginChain, _, cx| view.clear_plugin_chain(cx)))
             .on_action(cx.listener(|view, action: &AddPluginToChain, _, cx| view.add_plugin_from_menu(action, cx)))
             .on_action(cx.listener(|view, _: &SaveChainPreset, _, cx| view.open_chain_window(cx)))
+            .on_action(cx.listener(|view, _: &ShowPresetsFolder, _, cx| view.show_presets_folder(cx)))
             .on_action(cx.listener(|view, action: &LoadChainPreset, _, cx| {
                 view.load_chain_preset(&action.name, cx);
             }))

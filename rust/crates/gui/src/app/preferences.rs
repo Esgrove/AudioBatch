@@ -160,6 +160,20 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
+    /// Turns continuing active playback on a newly selected file on or off, from the Options menu.
+    pub(super) fn toggle_continue_playback(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.continue_playback = !settings.continue_playback;
+        self.apply_settings(settings, cx);
+    }
+
+    /// Turns starting a loaded file at its first cue point on or off, from the Options menu.
+    pub(super) fn toggle_play_from_first_cue_point(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.play_from_first_cue_point = !settings.play_from_first_cue_point;
+        self.apply_settings(settings, cx);
+    }
+
     /// Switches playback to another output device with its default sample rate and buffer size, from the menu.
     pub(super) fn select_output_device(&mut self, name: &str, cx: &mut Context<Self>) {
         let mut settings = self.settings.clone();
@@ -253,6 +267,8 @@ impl AppView {
         self.menu_state.show_gain_adjusted_metrics = settings.show_gain_adjusted_metrics;
         self.menu_state.preview_plugin_chain = settings.preview_plugin_chain;
         self.menu_state.compensate_preview_latency = settings.compensate_preview_latency;
+        self.menu_state.continue_playback = settings.continue_playback;
+        self.menu_state.play_from_first_cue_point = settings.play_from_first_cue_point;
         self.refresh_menus(cx);
         let artwork_changed = settings.show_album_artwork != self.settings.show_album_artwork;
         self.settings = settings;

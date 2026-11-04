@@ -223,6 +223,12 @@ uv run fixtures/plugin_expected.py
 The C++ tests in `../cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate list the same cases.
 The format workflow in CI fails when the committed files differ from what the script writes.
 
+## Folder Display
+
+`folder_display.tsv` holds shared platform-specific expectations for the results table's Folder column.
+Both formatting suites check user-home shortening, shared folders, absolute paths, Unicode, and Windows paths.
+These are presentation expectations only. Sorting and stored identities retain the complete source paths.
+
 ## Limiter Model
 
 `limiter_model.py` fits the empirical model behind the gain-adjusted integrated loudness estimate

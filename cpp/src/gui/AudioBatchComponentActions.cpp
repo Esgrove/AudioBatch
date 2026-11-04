@@ -67,6 +67,15 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
+    if (key == juce::KeyPress('a', juce::ModifierKeys::commandModifier, 0)) {
+        selectAllRecords();
+        return true;
+    }
+    if (key == juce::KeyPress::escapeKey) {
+        stopPlayback();
+        return true;
+    }
+
     if (key == juce::KeyPress::spaceKey) {
         previewPlayer.togglePlayback();
         return true;
@@ -78,6 +87,105 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
     }
 
     return false;
+}
+
+/// Selects every listed row through the table's ordinary selection notifications.
+void AudioBatchComponent::selectAllRecords()
+{
+    if (!analysisResults.empty()) {
+        resultsTable.selectRangeOfRows(0, analysisResults.size() - 1);
+    }
+}
+
+/// Stops playback and resets pending cue intent and source position.
+void AudioBatchComponent::stopPlayback()
+{
+    previewPlayer.stop();
+    previewPlayer.setPosition(0.0);
+}
+
+/// Clears explicit gain edits for every selected file through the shared gain owner.
+void AudioBatchComponent::clearSelectedCustomGain()
+{
+    previewWorkspace.gainSlider.setValue(0.0, juce::dontSendNotification);
+    applyCustomGainToSelection(std::nullopt);
+}
+
+/// Opens the selected parent directories using the same bounded policy as the context menu.
+void AudioBatchComponent::openSelectedParentFolders()
+{
+    reportFolderLimit(utils::openParentDirectories(getSelectedListedFiles()));
+}
+
+/// Builds the columns submenu from the retained header's actual order and visibility.
+juce::PopupMenu AudioBatchComponent::createColumnsMenu(const int firstItemId) const
+{
+    juce::PopupMenu menu;
+    const auto& header = resultsTable.getHeader();
+    for (int index = 0; index < header.getNumColumns(false); ++index) {
+        const auto columnId = header.getColumnIdOfIndex(index, false);
+        menu.addItem(firstItemId + columnId, header.getColumnName(columnId), true, header.isColumnVisible(columnId));
+    }
+    return menu;
+}
+
+/// Toggles a known column id without confusing it with plugin or device menu ids.
+void AudioBatchComponent::handleColumnsMenuItem(const int itemId, const int firstItemId)
+{
+    if (const auto column = tableColumnFromId(itemId - firstItemId)) {
+        const auto columnId = toColumnId(column);
+        auto& header = resultsTable.getHeader();
+        header.setColumnVisible(columnId, !header.isColumnVisible(columnId));
+    }
+}
+
+/// Lists output devices without opening an audio stream, retaining the menu's device-name snapshot.
+juce::PopupMenu AudioBatchComponent::createOutputDeviceMenu(const int firstItemId)
+{
+    juce::PopupMenu menu;
+    outputMenuDevices.clear();
+    outputMenuTypes.clear();
+    if (!configuration.allowAudioHardware) {
+        return menu;
+    }
+    auto& manager = previewPlayer.getDeviceManager();
+    for (auto* type : manager.getAvailableDeviceTypes()) {
+        type->scanForDevices();
+        for (const auto& name : type->getDeviceNames(false)) {
+            outputMenuDevices.add(name);
+            outputMenuTypes.add(type->getTypeName());
+        }
+    }
+    const auto current = manager.getAudioDeviceSetup().outputDeviceName;
+    for (int index = 0; index < outputMenuDevices.size(); ++index) {
+        menu.addItem(
+            firstItemId + index,
+            outputMenuDevices[index],
+            true,
+            current == outputMenuDevices[index] && manager.getCurrentAudioDeviceType() == outputMenuTypes[index]
+        );
+    }
+    return menu;
+}
+
+/// Applies a selected output device through JUCE's setup validation and normal persistence callback.
+void AudioBatchComponent::handleOutputDeviceMenuItem(const int itemId, const int firstItemId)
+{
+    const auto index = itemId - firstItemId;
+    if (!juce::isPositiveAndBelow(index, outputMenuDevices.size())) {
+        return;
+    }
+    auto& manager = previewPlayer.getDeviceManager();
+    manager.setCurrentAudioDeviceType(outputMenuTypes[index], true);
+    auto setup = manager.getAudioDeviceSetup();
+    setup.inputChannels.clear();
+    setup.useDefaultInputChannels = false;
+    setup.outputChannels.setRange(0, 2, true);
+    setup.useDefaultOutputChannels = false;
+    setup.outputDeviceName = outputMenuDevices[index];
+    if (const auto error = manager.setAudioDeviceSetup(setup, true); error.isNotEmpty()) {
+        statusBar.setStatusText(error);
+    }
 }
 
 /// Removes every analyzed file from the table without touching the files on disk.
@@ -293,8 +401,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
                     safeThis->processSelectedRecords();
                     break;
                 case FileMenuItemId::clearCustomGain:
-                    safeThis->previewWorkspace.gainSlider.setValue(0.0, juce::dontSendNotification);
-                    safeThis->applyCustomGainToSelection(std::nullopt);
+                    safeThis->clearSelectedCustomGain();
                     break;
             }
         }

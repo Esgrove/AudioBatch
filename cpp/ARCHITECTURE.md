@@ -61,7 +61,11 @@ Plugin processing and the preview exist only in the GUI.
 
 ## GUI structure
 
-`MainWindow` is the top level `DocumentWindow` with the menu bar and the application commands.
+`MainWindow` is the top level `DocumentWindow` with File, Plugins, Options, and Help commands.
+Menu actions and keyboard shortcuts delegate to the same main-view operations.
+The Columns submenu reflects the retained table header, and the Output Device submenu retains device/backend pairs.
+Folder display is shared through `AudioAnalysisFormatting`, while natural sorting retains absolute parent paths.
+Folder starts visible next to Name, and Path starts hidden.
 It owns `AudioBatchComponent`, the main view, which owns everything else and wires the parts together:
 
 ```mermaid

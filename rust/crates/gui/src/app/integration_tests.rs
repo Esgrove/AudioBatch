@@ -25,9 +25,10 @@ use tempfile::TempDir;
 use super::cue_start::CueStartIntent;
 use super::{AppOptions, AppView, LaunchOptions};
 use crate::menus::{
-    AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, SetPreviewViewMode,
-    ToggleGainAdjustedMetrics, ToggleLoudnessGraph, ToggleOverloadLines, TogglePreviewSection, ToggleSampleOverloads,
-    ToggleSeratoColours, ToggleTruePeakOverloads,
+    AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, SetPreviewViewMode, ToggleColumn,
+    ToggleContinuePlayback, ToggleGainAdjustedMetrics, ToggleLoudnessGraph, ToggleOverloadLines,
+    TogglePlayFromFirstCuePoint, TogglePreviewSection, ToggleSampleOverloads, ToggleSeratoColours,
+    ToggleTruePeakOverloads,
 };
 use crate::settings::{GuiSettings, PreviewViewMode};
 use crate::test_helpers::plugin_dispatcher;
@@ -1318,6 +1319,42 @@ async fn integration_gain_estimate_menu_toggles_and_persists_without_changing_so
         let saved = GuiSettings::load_from(&workflow.paths.data().join("gui-settings.json"));
         assert_eq!(saved.show_gain_adjusted_metrics, enabled);
     }
+}
+
+/// Routes menu preferences through the real root and persists column visibility and playback choices.
+#[gpui_kit::test]
+fn integration_playback_and_folder_menu_preferences(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.read(|cx| {
+        let delegate = workflow.view.read(cx).table.read(cx).delegate();
+        assert!(delegate.is_column_visible(crate::results::ColumnKey::Folder));
+        assert!(!delegate.is_column_visible(crate::results::ColumnKey::Path));
+    });
+    workflow.dispatch(ToggleContinuePlayback, cx);
+    workflow.dispatch(TogglePlayFromFirstCuePoint, cx);
+    workflow.dispatch(ToggleColumn { id: "path".into() }, cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.settings.continue_playback);
+        assert!(view.settings.play_from_first_cue_point);
+        assert!(menu_checked(cx, &ToggleContinuePlayback));
+        assert!(menu_checked(cx, &TogglePlayFromFirstCuePoint));
+        assert!(
+            view.table
+                .read(cx)
+                .delegate()
+                .is_column_visible(crate::results::ColumnKey::Path)
+        );
+    });
+    let saved = GuiSettings::load_from(&workflow.paths.data().join("gui-settings.json"));
+    assert!(saved.continue_playback && saved.play_from_first_cue_point);
+    assert!(
+        !saved
+            .hidden_columns
+            .expect("explicit columns")
+            .iter()
+            .any(|id| id == "path")
+    );
 }
 
 /// Exercises transient prediction publication through the production view without any plugin or output file.

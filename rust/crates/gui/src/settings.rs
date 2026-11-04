@@ -34,6 +34,13 @@ pub const DEFAULT_LOUDNESS_MINIMUM: i32 = -24;
 /// Top of the loudness graph axis by default, in LUFS.
 pub const DEFAULT_LOUDNESS_MAXIMUM: i32 = -4;
 
+/// Revision of the results table column defaults.
+/// Revision 1 shows the Folder column and hides the Path column by default.
+pub const COLUMNS_REVISION: u32 = 1;
+
+/// Identifier of the Path column in `hidden_columns`.
+const PATH_COLUMN_ID: &str = "path";
+
 /// File name of the settings in the data directory.
 pub const SETTINGS_FILE_NAME: &str = "gui-settings.json";
 
@@ -120,6 +127,10 @@ pub struct GuiSettings {
     pub normalize_target_lufs: f64,
     /// Identifiers of the hidden results table columns, or none for the columns hidden by default.
     pub hidden_columns: Option<Vec<String>>,
+    /// Revision of the saved column defaults, which `load_from` migrates from.
+    /// A file without it was saved before the Folder column, so it reads as zero.
+    #[serde(default)]
+    pub columns_revision: u32,
     /// Colour the waveform from the Serato Overview tag of a file that has one.
     pub serato_waveform_colours: bool,
     /// Shows the embedded album artwork of the selected file beside its name in the information panel.
@@ -182,6 +193,7 @@ impl Default for GuiSettings {
             normalize_target_peak_dbfs: DEFAULT_TARGET_PEAK_DBFS,
             normalize_target_lufs: DEFAULT_TARGET_LUFS,
             hidden_columns: None,
+            columns_revision: COLUMNS_REVISION,
             serato_waveform_colours: true,
             show_album_artwork: true,
             show_gain_adjusted_metrics: true,
@@ -196,12 +208,22 @@ impl GuiSettings {
     /// An unknown preview mode falls back to waveform without changing the other preferences.
     /// An invalid loudness range falls back to the default range on its own,
     /// and a normalization target outside its range is clamped into it.
+    /// A saved column choice from before the Folder column hides the Path column once,
+    /// so existing users get the new default and can show Path again from the Columns menu.
     #[must_use]
     pub fn load_from(path: &Path) -> Self {
         let mut settings: Self = fs::read_to_string(path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
+        if settings.columns_revision < COLUMNS_REVISION {
+            if let Some(hidden) = &mut settings.hidden_columns
+                && !hidden.iter().any(|id| id == PATH_COLUMN_ID)
+            {
+                hidden.push(String::from(PATH_COLUMN_ID));
+            }
+            settings.columns_revision = COLUMNS_REVISION;
+        }
         if !is_valid_loudness_range(settings.loudness_minimum, settings.loudness_maximum) {
             settings.loudness_minimum = DEFAULT_LOUDNESS_MINIMUM;
             settings.loudness_maximum = DEFAULT_LOUDNESS_MAXIMUM;
@@ -325,6 +347,7 @@ mod test_settings_file {
             normalize_target_peak_dbfs: -1.0,
             normalize_target_lufs: -9.5,
             hidden_columns: Some(vec![String::from("path"), String::from("peak_left")]),
+            columns_revision: COLUMNS_REVISION,
             serato_waveform_colours: false,
             show_album_artwork: false,
             show_gain_adjusted_metrics: false,
@@ -505,6 +528,52 @@ mod test_preview_preferences {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test_column_migration {
+    use super::*;
+
+    /// Writes settings JSON and reads it back through the production loader.
+    fn load(json: &serde_json::Value) -> GuiSettings {
+        let directory = tempfile::tempdir().expect("creates a temporary directory");
+        let path = directory.path().join(SETTINGS_FILE_NAME);
+        fs::write(&path, json.to_string()).expect("writes the file");
+        GuiSettings::load_from(&path)
+    }
+
+    #[test]
+    fn columns_saved_before_the_folder_column_hide_path_once() {
+        let settings = load(&serde_json::json!({"hidden_columns": ["peak_left", "custom_gain"]}));
+        assert_eq!(
+            settings.hidden_columns,
+            Some(vec![
+                String::from("peak_left"),
+                String::from("custom_gain"),
+                String::from("path")
+            ])
+        );
+        assert_eq!(settings.columns_revision, COLUMNS_REVISION);
+        let settings = load(&serde_json::json!({"hidden_columns": ["path"]}));
+        assert_eq!(settings.hidden_columns, Some(vec![String::from("path")]));
+    }
+
+    #[test]
+    fn current_column_choices_keep_a_shown_path() {
+        let settings = load(&serde_json::json!({
+            "hidden_columns": ["peak_left"],
+            "columns_revision": COLUMNS_REVISION,
+        }));
+        assert_eq!(settings.hidden_columns, Some(vec![String::from("peak_left")]));
+    }
+
+    #[test]
+    fn default_column_choices_need_no_migration() {
+        let settings = load(&serde_json::json!({"show_loudness_graph": true}));
+        assert_eq!(settings.hidden_columns, None);
+        assert_eq!(settings.columns_revision, COLUMNS_REVISION);
+        assert_eq!(GuiSettings::default().columns_revision, COLUMNS_REVISION);
     }
 }
 

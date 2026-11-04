@@ -14,6 +14,19 @@ On macOS, Core Audio also reads AAC and ALAC.
 Windows Media decoding is disabled, so the Windows build does not provide those decoders or WMA support.
 Multichannel audio is not currently supported.
 
+## GUI commands
+
+The File menu adds files or folders, selects all files, normalizes the selection, opens parent folders,
+and clears per-file gain. The Plugins menu processes the selection through the live chain.
+Options offers Output Device and Columns submenus, plus the playback and preview preferences.
+Audio Settings uses Cmd/Ctrl+P, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
+Escape stops playback and returns to the start.
+
+Folder is visible beside Name, while Path is hidden by default and remains available under Options > Columns.
+Folder shows the parent directory without the file name.
+On macOS, user-home prefixes become `~/`, while `/Users/Shared` and non-home folders stay absolute.
+Windows keeps the full parent path. Sorting uses the full parent path in natural order, then the file name.
+
 ## Processing performance
 
 Normalization and plugin processing measure the exact quantized PCM while writing the final AIFF,

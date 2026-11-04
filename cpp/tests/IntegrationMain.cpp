@@ -293,6 +293,26 @@ void AudioBatchIntegrationTest::openAndSort()
     AudioBatchComponent view(configuration());
     view.openPaths({valid.getFullPathName(), broken.getFullPathName(), other.getFullPathName()}, false);
     ASSERT_TRUE(waitForRows(view, 3));
+    auto& header = view.resultsTable.getHeader();
+    EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::folder)));
+    EXPECT_FALSE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
+    view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::path), 2000);
+    EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
+    EXPECT_FALSE(view.createColumnsMenu(2000).getNumItems() == 0);
+    EXPECT_EQ(view.createOutputDeviceMenu(3000).getNumItems(), 0);
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress('a', juce::ModifierKeys::commandModifier, 0)));
+    EXPECT_EQ(view.getSelectedRecordPaths().size(), 3);
+    view.applyCustomGainToSelection(Decibels(2.0f));
+    view.clearSelectedCustomGain();
+    for (const auto& record : view.analysisResults) {
+        EXPECT_FALSE(record.customGain.has_value());
+    }
+    view.previewPlayer.setPosition(0.25);
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    EXPECT_FALSE(view.previewPlayer.isPlaying());
+    EXPECT_NEAR(view.previewPlayer.getCurrentPosition(), 0.0, 0.00001);
+    header.setSortColumnId(toColumnId(AudioFileTableColumn::folder), true);
+    ASSERT_TRUE(dispatchUntil([&] { return view.sortState.primaryColumn == AudioFileTableColumn::folder; }));
     AnalysisCache completedArtifacts(temporary.get().getChildFile("AudioBatch/analysis.db"));
     EXPECT_TRUE(completedArtifacts.getWaveformData(valid).has_value());
     EXPECT_NE(completedArtifacts.getSpectrogramData(valid), nullptr);

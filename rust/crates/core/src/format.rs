@@ -1,9 +1,10 @@
 //! Display formatting of analysis values for the GUI and the CLI.
 //!
-//! Formats levels, audio properties, duration, decimal file size, musical keys, and status.
+//! Formats levels, audio properties, duration, decimal file size, folders, musical keys, and status.
 //! The CLI table uses the same text as the C++ CLI, so `scripts/parity.sh` can compare the two.
 
 use std::error::Error;
+use std::path::Path;
 
 use crate::decode::is_mp3_path;
 use crate::record::{AnalysisRecord, AnalysisStatus, is_silent_loudness};
@@ -187,6 +188,37 @@ pub fn format_file_size(record: &AnalysisRecord) -> String {
         0 => String::from("-"),
         size if size < BYTES_PER_MEGABYTE => format!("{:.1} KB", size as f64 / BYTES_PER_KILOBYTE as f64),
         size => format!("{:.1} MB", size as f64 / BYTES_PER_MEGABYTE as f64),
+    }
+}
+
+/// Formats the parent folder of a file for the Folder column, without the file name.
+/// On macOS a folder inside a user's home folder starts with `~`, see `format_folder_text`.
+#[must_use]
+pub fn format_folder(path: &Path) -> String {
+    let folder = path
+        .parent()
+        .map_or_else(String::new, |parent| parent.to_string_lossy().into_owned());
+    format_folder_text(&folder, cfg!(target_os = "macos"))
+}
+
+/// Shortens a folder inside a macOS user home, so `/Users/<user>/Music` shows as `~/Music`.
+///
+/// Any user's home is shortened, not only the current user's, because a listed folder can belong to another account.
+/// `/Users/Shared` is not a home folder and stays absolute, as do all other folders and every folder on Windows.
+/// `fixtures/folder_display.tsv` holds the expectations shared with the C++ application.
+#[must_use]
+pub fn format_folder_text(folder: &str, macos: bool) -> String {
+    const USERS_PREFIX: &str = "/Users/";
+    const SHARED_FOLDER: &str = "Shared";
+    let home_relative = folder
+        .strip_prefix(USERS_PREFIX)
+        .filter(|_| macos)
+        .map(|rest| rest.split_once('/').unwrap_or((rest, "")))
+        .filter(|(user, _)| !user.is_empty() && *user != SHARED_FOLDER);
+    match home_relative {
+        Some((_, "")) => String::from("~"),
+        Some((_, inside)) => format!("~/{inside}"),
+        None => folder.to_string(),
     }
 }
 
@@ -519,5 +551,57 @@ mod test_camelot_keys {
         ] {
             assert_eq!(camelot_key(input), None, "key {input:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod test_folder_formatting {
+    use super::*;
+
+    #[test]
+    fn folders_match_the_shared_independent_expectations() {
+        let cases =
+            std::fs::read_to_string(test_fixtures::fixture("folder_display.tsv")).expect("reads shared folder cases");
+        let mut count = 0;
+        for line in cases.lines().filter(|line| !line.starts_with('#') && !line.is_empty()) {
+            let mut fields = line.split('\t');
+            let (Some(platform), Some(folder), Some(expected), None) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+            else {
+                panic!("folder case has a platform, a folder, and an expected text: {line:?}");
+            };
+            assert_eq!(
+                format_folder_text(folder, platform == "macos"),
+                expected,
+                "{platform} folder {folder:?}"
+            );
+            count += 1;
+        }
+        assert!(count >= 10, "shared table covers home, shared, and non-home folders");
+    }
+
+    #[test]
+    fn folder_leaves_out_the_file_name() {
+        let expected = if cfg!(target_os = "macos") {
+            "~/Music/Album"
+        } else {
+            "/Users/someone/Music/Album"
+        };
+        assert_eq!(
+            format_folder(Path::new("/Users/someone/Music/Album/track.wav")),
+            expected
+        );
+        assert_eq!(format_folder(Path::new("/tmp/track.wav")), "/tmp");
+        assert_eq!(format_folder(Path::new("track.wav")), "");
+    }
+
+    #[test]
+    fn only_macos_shortens_home_folders() {
+        assert_eq!(format_folder_text("/Users/someone/Music", true), "~/Music");
+        assert_eq!(
+            format_folder_text("/Users/someone/Music", false),
+            "/Users/someone/Music"
+        );
+        assert_eq!(format_folder_text("/Users/", true), "/Users/");
     }
 }
