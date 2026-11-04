@@ -17,6 +17,7 @@ mod artwork;
 mod cue_start;
 mod enrichment;
 mod gain;
+mod gain_loudness;
 pub mod gain_writer;
 #[cfg(test)]
 mod integration_tests;
@@ -212,6 +213,10 @@ pub struct AppView {
     zoom_reset_pending: bool,
     /// Writes the pending gain after the delay. Replacing it restarts the delay.
     gain_store_task: Option<Task<()>>,
+    /// Debounced transient loudness after custom gain and hard clipping.
+    gain_prediction: gain_loudness::GainPrediction,
+    /// Drains the sole prediction worker even after cooperative cancellation.
+    gain_prediction_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     _player_poll_task: Task<()>,
     /// Opens the paths that later launches of the app hand over, when this launch is the running app.
@@ -355,6 +360,8 @@ impl AppView {
             start_after_cues: None,
             zoom_reset_pending: false,
             gain_store_task: None,
+            gain_prediction: gain_loudness::GainPrediction::default(),
+            gain_prediction_task: None,
             _subscriptions: subscriptions,
             _player_poll_task: player_poll_task,
             launch_task: None,
@@ -410,6 +417,8 @@ impl AppView {
         self.save_plugin_chain();
         self.invalidate_artwork(cx);
         self.enrichment.invalidate();
+        self.gain_prediction.stopped = true;
+        self.gain_prediction.cancel();
         let writer = self.gain_writer.as_mut().and_then(gain_writer::GainWriter::finish);
         cx.background_executor().spawn(async move {
             if let Some(writer) = writer {

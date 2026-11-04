@@ -10,11 +10,31 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
 {
 class AudioMeasurement;
+
+/// Transient loudness of decoded samples after custom gain and hard clipping at 0 dBFS.
+/// Never persisted or substituted for source measurements, and excludes limiter and plugin behavior.
+struct GainAdjustedLoudness {
+    double integratedLufs {AudioAnalysisRecord::negativeInfinityLoudness};
+    double maxShortTermLufs {AudioAnalysisRecord::negativeInfinityLoudness};
+};
+
+[[nodiscard]] std::optional<double> estimateLimiterIntegratedLoudness(
+    double sourceIntegratedLufs,
+    Decibels gain,
+    double hardClipIntegratedLufs
+);
+
+[[nodiscard]] std::optional<GainAdjustedLoudness> measureGainAdjustedLoudness(
+    const juce::File& file,
+    Decibels gain,
+    const utils::CancellationCheck& isCancelled = {}
+);
 
 /// Observes the decoder's measurement after each successful push, before progress is reported.
 /// The measurement is borrowed only for the call. Optional preview failures never fail analysis.

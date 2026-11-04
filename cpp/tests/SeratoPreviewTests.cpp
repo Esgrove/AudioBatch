@@ -585,7 +585,7 @@ void SeratoPreviewTests::testTrackInfo()
     panel.showRecord(record, {});
     expect(panelValue(panel, "BPM").isEmpty());
 
-    beginTest("Gain-adjusted metrics preserve source values and estimate one LU per dB");
+    beginTest("Gain-adjusted peaks remain immediate, loudness waits for sample-based measurement");
     record.overallPeak = static_cast<float>(std::pow(10.0, 0.9 / 20.0));
     record.overallTruePeak = std::pow(10.0, 1.5 / 20.0);
     record.maxShortTermLufs = -8.5;
@@ -597,8 +597,8 @@ void SeratoPreviewTests::testTrackInfo()
         expectEquals(panelValue(panel, "Peak"), juce::String("0.90"));
         expectEquals(panelValue(panel, "Peak after custom gain"), juce::String("(-0.1)"));
         expectEquals(panelValue(panel, "True peak after custom gain"), juce::String("(+0.5)"));
-        expectEquals(panelValue(panel, "Max short-term after custom gain"), juce::String::fromUTF8("(≈-9.5)"));
-        expectEquals(panelValue(panel, "Integrated loudness after custom gain"), juce::String::fromUTF8("(≈-13.5)"));
+        expect(panelValue(panel, "Max short-term after custom gain").isEmpty());
+        expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
         expectEquals(panelValue(panel, "Integrated loudness"), juce::String("-12.50"));
         panel.showRecord(record, {}, nullptr, false);
         expect(panelValue(panel, "Peak after custom gain").isEmpty());

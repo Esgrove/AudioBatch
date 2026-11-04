@@ -6,8 +6,11 @@
 
 #pragma once
 
+#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "serato/SeratoTagTypes.h"
+#include "utils/BackgroundRunner.h"
+#include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
 
@@ -35,7 +38,12 @@ public:
     AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit);
 
     void setCompact(bool compact);
-    void setValue(const juce::String& value, const juce::String& adjustedValue = {});
+    void setValue(
+        const juce::String& value,
+        const juce::String& adjustedValue = {},
+        bool clippedLoudness = false,
+        bool limiterEstimate = false
+    );
 
     // juce::Component
     void paint(juce::Graphics& graphics) override;
@@ -57,10 +65,17 @@ private:
 };
 
 /// Read-only inspector with a fixed summary and a vertically scrolling details region.
-class AudioInfoPanel final : public juce::Component
+class AudioInfoPanel final : public juce::Component, private juce::Timer
 {
 public:
     AudioInfoPanel();
+
+    ~AudioInfoPanel() override;
+
+    AudioInfoPanel(const AudioInfoPanel&) = delete;
+    AudioInfoPanel(AudioInfoPanel&&) = delete;
+    AudioInfoPanel& operator=(const AudioInfoPanel&) = delete;
+    AudioInfoPanel& operator=(AudioInfoPanel&&) = delete;
 
     static std::vector<AudioInfoRow> formatRows(const AudioAnalysisRecord& record);
 
@@ -87,6 +102,10 @@ private:
     [[nodiscard]] int getErrorHeight(int width) const;
     [[nodiscard]] int getHeaderHeight() const;
 
+    void timerCallback() override;
+
+    void updateLoudnessPreview(const AudioAnalysisRecord& record, bool enabled);
+    void showLoudnessPreview();
     void ensureLabelCount(std::size_t requiredCount);
     void setRows(std::vector<AudioInfoRow> newRows);
 
@@ -121,6 +140,17 @@ private:
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
     /// Value labels created on demand.
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
+
+    /// Latest selected request, retained on failure to avoid retrying on every unrelated UI refresh.
+    std::optional<utils::FileIdentity> loudnessIdentity;
+    std::optional<Decibels> loudnessGain;
+    std::optional<GainAdjustedLoudness> adjustedLoudness;
+    /// Source text is never replaced by the transient model result.
+    std::array<juce::String, 2> sourceLoudness;
+    /// Unmodified source loudness used only for the integrated presentation fit.
+    double sourceIntegratedLufs {AudioAnalysisRecord::negativeInfinityLoudness};
+    /// One cancellable worker, joined in the destructor before any request state is destroyed.
+    BackgroundRunner loudnessRunner {1, -1};
 
     /// True for the compact metric-only layout.
     bool compactMode {false};

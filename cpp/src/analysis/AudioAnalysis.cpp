@@ -17,6 +17,7 @@
 #include "utils/ThreadUtils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <compare>
 #include <concepts>
 #include <cstdint>
@@ -32,6 +33,12 @@ namespace audiobatch
 namespace
 {
 constexpr auto cancelledMessage {"Analysis was cancelled"};
+
+/// Preset-specific fit reproduced by fixtures/limiter_model.py from four full-file L2 renders.
+constexpr double LIMITER_CEILING_OFFSET_LU {-0.30};
+constexpr double LIMITER_LOSS_SCALE {1.3481396721815457};
+constexpr double LIMITER_LOSS_EXPONENT {0.7035904112335774};
+constexpr double LIMITER_MAX_GAIN_DB {6.0};
 
 /// Why decoding or measuring a file failed.
 struct MeasurementFailure {
@@ -118,6 +125,32 @@ std::weak_ordering compareBySortMode(
     std::unreachable();
 }
 
+/// Converts custom gain in double precision without a decibel floor, so very quiet samples can cross the gate.
+double previewLinearGain(const Decibels gain)
+{
+    constexpr double decibelBase {10.0};
+    constexpr double amplitudeDecibelScale {20.0};
+    return std::pow(decibelBase, static_cast<double>(gain.value) / amplitudeDecibelScale);
+}
+
+/// Applies the transient model only when requested, rejecting non-finite PCM rather than inventing loudness.
+bool applyPreviewGain(juce::AudioBuffer<float>& samples, const int frames, const std::optional<double> linearGain)
+{
+    if (!linearGain) {
+        return true;
+    }
+    for (int channel = 0; channel < samples.getNumChannels(); ++channel) {
+        for (int frame = 0; frame < frames; ++frame) {
+            const auto sample = static_cast<double>(samples.getSample(channel, frame));
+            if (!std::isfinite(sample)) {
+                return false;
+            }
+            samples.setSample(channel, frame, static_cast<float>(std::clamp(sample * *linearGain, -1.0, 1.0)));
+        }
+    }
+    return true;
+}
+
 /// Decodes the whole file block by block, feeding the loudness meter and collecting the sample extremes.
 /// Read failures follow the shared DecodeFailureTracker rules.
 /// A tolerated failed block still holds the samples decoded before the error with the remainder zeroed.
@@ -130,7 +163,8 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
     const juce::String& fullPath,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress,
-    const AnalysisPreviewObserver& onPreview
+    const AnalysisPreviewObserver& onPreview,
+    const std::optional<Decibels> gain = std::nullopt
 )
 {
     const auto channelCount = static_cast<int>(reader.numChannels);
@@ -140,6 +174,7 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
     juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
     bool reportedPartialDecode = false;
+    const auto linearGain = gain ? std::optional(previewLinearGain(*gain)) : std::nullopt;
 
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
     {
@@ -155,7 +190,7 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
         const auto readSucceeded
             = utils::readFloatSamples(reader, utils::writePointers(readBuffer), samplePosition, framesThisBlock);
 
-        if (!failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
+        if ((gain && !readSucceeded) || !failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
             return std::unexpected(
                 MeasurementFailure {
                     .error = AnalysisError::decodeFailed,
@@ -174,6 +209,9 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
             reportedPartialDecode = true;
         }
 
+        if (!applyPreviewGain(readBuffer, framesThisBlock, linearGain)) {
+            return std::unexpected(MeasurementFailure {.message = "Non-finite decoded sample"});
+        }
         if (const auto measured = measurement.push(readBuffer, 0, framesThisBlock); !measured) {
             return std::unexpected(
                 MeasurementFailure {
@@ -336,6 +374,71 @@ AudioAnalysisRecord analyzeFile(
     measured->formatName = reader->getFormatName();
     measured->bitsPerSample = analysis::resolveSourceBitsPerSample(*reader, file);
     return std::move(*measured);
+}
+
+/// Estimates integrated loudness for the saved FabFilter Pro-L 2 L2 preset with a -0.3 dB ceiling.
+/// Uses the full-file hard-clip measurement and the source's gain-only loudness loss as a content proxy.
+/// Calibrated on four tracks spanning -13.3286 to -8.676 LUFS-I, with gains from 0 through 6 dB.
+/// Source loudness outside that range is extrapolated, not independently validated.
+/// Returns no fit for invalid or silent measurements and gains outside the calibrated interval.
+/// Presentation only: never replaces measured short-term loudness, peaks, stored analysis, or rendered audio.
+std::optional<double> estimateLimiterIntegratedLoudness(
+    const double sourceIntegratedLufs,
+    const Decibels gain,
+    const double hardClipIntegratedLufs
+)
+{
+    if (!std::isfinite(sourceIntegratedLufs) || !std::isfinite(hardClipIntegratedLufs) || !std::isfinite(gain.value)
+        || sourceIntegratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness
+        || hardClipIntegratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness || gain.value < 0.0f
+        || static_cast<double>(gain.value) > LIMITER_MAX_GAIN_DB)
+    {
+        return std::nullopt;
+    }
+    const auto loss = std::max(0.0, sourceIntegratedLufs + static_cast<double>(gain.value) - hardClipIntegratedLufs);
+    const auto estimate = hardClipIntegratedLufs + LIMITER_CEILING_OFFSET_LU
+        - LIMITER_LOSS_SCALE * std::pow(loss, LIMITER_LOSS_EXPONENT);
+    return std::isfinite(estimate) ? std::optional {estimate} : std::nullopt;
+}
+
+/// Remeasures the complete gained, hard-clipped PCM stream, including absolute and relative loudness gating.
+/// Uses bounded decode buffers and the source measurement cadence without allocating waveform or spectrogram previews.
+/// Read-only and cache-independent. Any cancellation, changed file, or measurement failure yields no estimate.
+std::optional<GainAdjustedLoudness> measureGainAdjustedLoudness(
+    const juce::File& file,
+    const Decibels gain,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    if (!std::isfinite(gain.value) || !std::isfinite(previewLinearGain(gain))
+        || utils::isCancellationRequested(isCancelled))
+    {
+        return std::nullopt;
+    }
+    const utils::FileIdentity identity(file);
+    const auto reader = utils::createAudioReader(file);
+    if (reader == nullptr || !identity.matches(file)
+        || !isSupportedMeasurementStream(static_cast<int>(reader->numChannels), reader->sampleRate))
+    {
+        return std::nullopt;
+    }
+    AudioMeasurement measurement(
+        static_cast<int>(reader->numChannels), reader->sampleRate, reader->lengthInSamples, false
+    );
+    if (!measurement.checkInitialization()
+        || !measureDecodedAudio(*reader, measurement, file.getFullPathName(), isCancelled, {}, {}, gain)
+        || utils::isCancellationRequested(isCancelled) || !identity.matches(file))
+    {
+        return std::nullopt;
+    }
+    const auto result = measurement.finish();
+    if (!result || utils::isCancellationRequested(isCancelled) || !identity.matches(file)) {
+        return std::nullopt;
+    }
+    return GainAdjustedLoudness {
+        .integratedLufs = result->integratedLufs,
+        .maxShortTermLufs = result->maxShortTermLufs,
+    };
 }
 
 /// Sorts records by the requested field and direction.

@@ -224,6 +224,8 @@ public:
         }
 
         testLoudnessHistory();
+        testGainAdjustedLoudness();
+        testLimiterIntegratedLoudness();
 
         beginTest("Hidden and AppleDouble files are skipped when collecting inputs");
         {
@@ -419,6 +421,145 @@ public:
     }
 
 private:
+    /// Checks the preset-specific integrated presentation fit against independent scipy predictions.
+    void testLimiterIntegratedLoudness()
+    {
+        beginTest("L2 integrated estimate matches four independently fitted +2 dB track cases");
+        // fixtures/limiter_model.py content_aware.fitted_predictions, gain index 2.
+        for (const auto& values :
+             std::array {
+                 std::array {-10.8243, -8.9767, -9.635531818443239},
+                 std::array {-11.1205, -9.1929, -9.70544841850931},
+                 std::array {-8.6760, -6.7819, -7.359654457001012},
+                 std::array {-13.3286, -11.3533, -11.753035984135359},
+             })
+        {
+            const auto estimate = estimateLimiterIntegratedLoudness(values[0], Decibels {2.0f}, values[1]);
+            expect(estimate.has_value());
+            if (estimate) {
+                expectWithinAbsoluteError(*estimate, values[2], 1.0e-12);
+            }
+        }
+
+        beginTest("L2 estimate includes both gain endpoints and extrapolates source loudness only");
+        expectWithinAbsoluteError(
+            estimateLimiterIntegratedLoudness(-10.8243, Decibels {0.0f}, -10.8243).value_or(0.0), -11.1243, 1.0e-12
+        );
+        expectWithinAbsoluteError(
+            estimateLimiterIntegratedLoudness(-10.8243, Decibels {6.0f}, -6.2739).value_or(0.0),
+            -8.324502573333149,
+            1.0e-12
+        );
+        // Negative measured loss is clamped before the fractional power, without inventing attenuation.
+        expectWithinAbsoluteError(
+            estimateLimiterIntegratedLoudness(-25.0, Decibels {2.0f}, -22.0).value_or(0.0), -22.3, 1.0e-12
+        );
+        expect(estimateLimiterIntegratedLoudness(-5.0, Decibels {2.0f}, -4.0).has_value());
+
+        beginTest("Invalid, silent, negative and excessive gains use unchanged hard-clip fallback");
+        for (const auto gain :
+             {-1.0f, 6.001f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()})
+        {
+            const auto estimate = estimateLimiterIntegratedLoudness(-10.0, Decibels {gain}, -8.1);
+            expect(!estimate);
+            expectEquals(estimate.value_or(-8.1), -8.1);
+        }
+        for (const auto invalid :
+             {
+                 AudioAnalysisRecord::negativeInfinityLoudness,
+                 -1001.0,
+                 std::numeric_limits<double>::infinity(),
+                 -std::numeric_limits<double>::infinity(),
+                 std::numeric_limits<double>::quiet_NaN(),
+             })
+        {
+            expect(!estimateLimiterIntegratedLoudness(invalid, Decibels {2.0f}, -8.1));
+            expect(!estimateLimiterIntegratedLoudness(-10.0, Decibels {2.0f}, invalid));
+        }
+        const auto silence = AudioAnalysisRecord::negativeInfinityLoudness;
+        expectEquals(estimateLimiterIntegratedLoudness(silence, Decibels {2.0f}, silence).value_or(silence), silence);
+    }
+
+    /// Compares the model with independently written clipped PCM, including absolute-gate changes and silence.
+    void testGainAdjustedLoudness()
+    {
+        beginTest("Gain plus hard clipping remeasures PCM instead of adding gain to stored loudness");
+        const TemporaryDirectory temporary;
+        const auto source = temporary.copyFixture("sine_stereo_44100_16.wav", "source.wav");
+        juce::MemoryBlock sourceBytes;
+        expect(source.loadFileAsData(sourceBytes));
+        const auto sourceRecord = analyzeFile(source);
+        const auto reader = utils::createAudioReader(source);
+        expect(reader != nullptr);
+        if (!reader) {
+            return;
+        }
+        juce::AudioBuffer<float> samples(2, static_cast<int>(reader->lengthInSamples));
+        expect(reader->read(&samples, 0, samples.getNumSamples(), 0, true, true));
+        for (const float gain : {-80.0f, -3.0f, 12.0f}) {
+            juce::AudioBuffer<float> clipped(2, samples.getNumSamples());
+            const auto linear = std::pow(10.0, static_cast<double>(gain) / 20.0);
+            for (int channel = 0; channel < 2; ++channel) {
+                for (int frame = 0; frame < clipped.getNumSamples(); ++frame) {
+                    clipped.setSample(
+                        channel,
+                        frame,
+                        static_cast<float>(
+                            std::clamp(static_cast<double>(samples.getSample(channel, frame)) * linear, -1.0, 1.0)
+                        )
+                    );
+                }
+            }
+            const auto rendered = temporary.getChildFile(utils::format("clipped-{}.wav", gain));
+            juce::WavAudioFormat format;
+            std::unique_ptr<juce::OutputStream> stream = rendered.createOutputStream();
+            auto writer = format.createWriterFor(
+                stream,
+                juce::AudioFormatWriterOptions()
+                    .withSampleRate(reader->sampleRate)
+                    .withNumChannels(2)
+                    .withBitsPerSample(24)
+            );
+            expect(writer != nullptr);
+            if (!writer) {
+                continue;
+            }
+            expect(writer->writeFromAudioSampleBuffer(clipped, 0, clipped.getNumSamples()));
+            writer.reset();
+            const auto expected = analyzeFile(rendered);
+            const auto actual = measureGainAdjustedLoudness(source, Decibels {gain});
+            expect(actual.has_value());
+            if (actual) {
+                expectWithinAbsoluteError(actual->integratedLufs, expected.integratedLufs, 0.001);
+                expectWithinAbsoluteError(actual->maxShortTermLufs, expected.maxShortTermLufs, 0.001);
+                if (gain > 0.0f) {
+                    expect(actual->integratedLufs < sourceRecord.integratedLufs + static_cast<double>(gain) - 1.0);
+                }
+            }
+        }
+        const auto gatedSource = temporary.getChildFile("clipped--80.wav");
+        expectEquals(analyzeFile(gatedSource).integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+        const auto raisedAboveGate = measureGainAdjustedLoudness(gatedSource, Decibels {80.0f});
+        expect(raisedAboveGate.has_value());
+        if (raisedAboveGate) {
+            expect(raisedAboveGate->integratedLufs > -20.0);
+        }
+        juce::MemoryBlock unchangedBytes;
+        expect(source.loadFileAsData(unchangedBytes));
+        expect(unchangedBytes == sourceBytes);
+        expect(!measureGainAdjustedLoudness(source, Decibels {3.0f}, [] { return true; }));
+        int cancellationChecks = 0;
+        expect(!measureGainAdjustedLoudness(source, Decibels {3.0f}, [&] { return ++cancellationChecks > 3; }));
+        expect(cancellationChecks > 3);
+        expect(!measureGainAdjustedLoudness(source, Decibels {std::numeric_limits<float>::infinity()}));
+        expect(!measureGainAdjustedLoudness(fixtureFile("broken.wav"), Decibels {3.0f}));
+        const auto silence = measureGainAdjustedLoudness(fixtureFile("silence_stereo_44100_16.wav"), Decibels {20.0f});
+        expect(silence.has_value());
+        if (silence) {
+            expectEquals(silence->integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+        }
+    }
+
     /// Analyzes one fixture and compares the results with its expected properties.
     void checkToneFixture(const ToneFixture& fixture)
     {

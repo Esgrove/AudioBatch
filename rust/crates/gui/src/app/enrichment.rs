@@ -115,6 +115,11 @@ impl EnrichmentQueue {
         (self.gate_open && completed < total).then_some((completed, total))
     }
 
+    /// Shares expensive decoder admission with the transient gain prediction reader.
+    pub(super) const fn has_active_reader(&self) -> bool {
+        self.active.is_some()
+    }
+
     /// Closes admission for a foreground run without dropping its still-running blocking reader.
     pub(super) fn pause(&mut self) {
         self.gate_open = false;
@@ -419,8 +424,8 @@ impl AppView {
     }
 
     /// Starts a blocking reader and keeps its drain alive through cancellation and foreground runs.
-    fn start_enrichment(&mut self, cx: &Context<Self>) {
-        if self.is_demo() || !self.artwork_rewrites.is_empty() {
+    pub(super) fn start_enrichment(&mut self, cx: &Context<Self>) {
+        if self.is_demo() || !self.artwork_rewrites.is_empty() || self.gain_prediction.has_active_reader() {
             return;
         }
         let repair_allowed = !self.is_running() && self.analysis_workers == 0;

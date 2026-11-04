@@ -423,6 +423,7 @@ impl AppView {
                         self.selected_artwork(),
                         wide,
                         self.settings.show_gain_adjusted_metrics,
+                        self.gained_loudness(cx),
                     )),
             )
             .child(
@@ -492,6 +493,7 @@ impl AppView {
                     .child(render_compact_info_panel(
                         self.selected_row(cx).as_ref(),
                         self.settings.show_gain_adjusted_metrics,
+                        self.gained_loudness(cx),
                     )),
             )
             .child(
