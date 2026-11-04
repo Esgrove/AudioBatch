@@ -51,8 +51,6 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       They read the same PCM intervals, so fresh analysis produces both in its single decode pass.
       `SpectrogramData.*` holds the bounded spectral grid, its validation, the mel conversions,
       and the little-endian `SPEC` codec shared byte for byte with the Rust application.
-      `SpectrogramBuilder.cpp` and `SpectrogramData.cpp` compile without floating-point contraction,
-      so compiler FMA choices cannot change the shared intensity bytes.
     - `AnalysisCache.*` manage the SQLite result cache shared with the Rust application.
       Its implementation is split into `AnalysisCache.cpp` (measurement and custom gain persistence),
       `AnalysisCacheSchema.cpp` (database lifecycle and schema),

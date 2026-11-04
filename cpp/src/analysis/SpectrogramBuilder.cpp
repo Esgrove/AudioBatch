@@ -18,13 +18,6 @@
 #include <numbers>
 #include <span>
 #include <utility>
-
-// The shared contract rounds every multiplication and addition separately, as the Rust implementation does.
-// CMakeLists.txt disables contraction for Clang, and this pragma does it for MSVC, which has no undoing option.
-#if defined(_MSC_VER) && !defined(__clang__)
-#pragma fp_contract(off)
-#endif
-
 namespace audiobatch
 {
 namespace
