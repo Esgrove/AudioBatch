@@ -1,6 +1,17 @@
 //! Manual gain sweep comparing a saved limiter preset against a zero-dBFS hard-clipping model.
 //! Operates only on temporary source copies, leaving the input audio and saved preset untouched.
-//! Run with a preset-folder path, preset name, and one or more input audio files.
+//! Run with a preset-folder path, preset name, and one or more input audio files:
+//!
+//! ```shell
+//! cargo run --release -p audiobatch-plugins --example limiter_probe -- \
+//!     ~/Library/Application\ Support/AudioBatch-rs/chain-presets L2 track1.flac track2.wav
+//! ```
+//!
+//! It prints one CSV row per file and gain in `GAINS`,
+//! with the source, gain-only, hard-clipped, and rendered integrated loudness, and the rendered peaks.
+//! The `source_lufs`, `hard_clip_lufs`, and `limiter_lufs` columns are the observations
+//! that `fixtures/limiter_model.py` fits the gain-adjusted limiter loudness model to.
+//! Use the release profile, which the committed observations were measured with.
 
 use std::fs;
 use std::path::{Path, PathBuf};

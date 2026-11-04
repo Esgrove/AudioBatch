@@ -43,6 +43,9 @@ which explains how its parts work together.
  Their grids may differ by one intensity step in at most one cell per thousand,
  because `juce::dsp::FFT` and `realfft` round their last bits differently.
  The Rust shared-cache tests measure that documented exception against the C++ test executable.
+- `fixtures/limiter_model.py` fits the empirical limiter model of the gain-adjusted integrated loudness estimate.
+ Its observations come from the Rust `limiter_probe` example, and `fixtures/README.md` describes both.
+ When the fit changes, update the `LIMITER_LOSS_*` constants and the expected estimates in both applications.
 - `fixtures/normalization/` holds a larger collection for comparing the normalized output of both applications.
   It has music-like audio in representative supported formats, sample rates, and bit depths,
   from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.
@@ -132,8 +135,13 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 - Prefer named constants over unexplained numeric literals when a value represents a domain concept,
   protocol field, policy limit, or reused value. Keep self-evident arithmetic and conventional values inline.
 - Preserve operation order, precision, rounding, and the behavioral parity contracts when optimizing numeric code.
-  Do not substitute approximate constants, arbitrary reciprocals, fused operations, or fast math without verification.
+  Do not substitute approximate constants, arbitrary reciprocals, or fast math without verification.
   Validate DSP tables against the native reference on every supported architecture before replacing native calculations.
+- Fused multiply-add operations, such as Rust's `mul_add` and C++ `std::fma`, are allowed.
+  They round once instead of twice, so they change the last bits of a result.
+  Check them where tests compare exact values,
+  such as the bit-exact true peak contract, the goldens, and peak normalization output.
+  Elsewhere results only need to be close enough that no difference is visible or audible.
 - Measure runtime changes with the existing benchmarks.
   Compilers often already optimize division by two and common subexpressions,
   so distinguish clearer source code from demonstrated performance improvements.
