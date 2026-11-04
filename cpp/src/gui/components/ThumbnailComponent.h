@@ -199,18 +199,23 @@ private:
     [[nodiscard]] double sourceDuration() const;
     [[nodiscard]] float loudnessToY(double value, juce::Rectangle<int> bounds) const;
 
-    void drawCueMarkers(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
-    void drawSpectrogram(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    // Source axes and loudness overlay.
     void drawFrequencyAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const;
-    void drawWaveformAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const;
-    void drawSourceWarning(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
-    void drawPlayheads(juce::Graphics& graphics) const;
-    void drawPositionMarker(juce::Graphics& graphics, double time, juce::Colour colour) const;
-    void showViewModeMenu();
     void drawLoudnessAxis(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawLoudnessCurve(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawLoudnessGraph(juce::Graphics& graphics) const;
+    void drawWaveformAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const;
+
+    // Source raster and warning overlays.
+    void drawCueMarkers(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawOverloads(juce::Graphics& graphics) const;
+    void drawSourceWarning(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    void drawSpectrogram(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+
+    // Playback markers and visualization selection.
+    void drawPlayheads(juce::Graphics& graphics) const;
+    void drawPositionMarker(juce::Graphics& graphics, double time, juce::Colour colour) const;
+    void showViewModeMenu();
 
     // Source and playback interaction.
     void jumpToHotCue(int slot);
