@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use super::{ANALYSIS_VERSION, Result, add_missing_columns, serato, spectrogram};
+use super::{Result, add_missing_columns, serato, spectrogram};
 
 /// Shared columns absent from older C++ databases, added without dropping gains or tag results.
 const ADDED_COLUMNS: &[(&str, &str)] = &[
@@ -18,6 +18,12 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("short_term_loudness", "BLOB"),
     ("overload_history", "BLOB"),
     ("analysis_producer", "TEXT NOT NULL DEFAULT 'cpp'"),
+    ("plr_db", "REAL"),
+    ("psr_db", "REAL"),
+    ("crest_factor_db", "REAL"),
+    ("dc_offsets", "BLOB"),
+    ("clip_counts", "BLOB"),
+    ("stereo_correlation", "REAL"),
 ];
 
 /// Measurement UPSERT, preserving the other application's compatible native waveform entirely inside SQLite.
@@ -26,9 +32,10 @@ pub(super) const STORE_ANALYSIS_SQL: &str = "INSERT INTO file_analysis (
     duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
     overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels, bits_per_sample,
     status, error_message, short_term_loudness, analysis_version,
-    updated_at_ms, custom_gain_db, has_custom_gain, overload_history, analysis_producer
+    updated_at_ms, custom_gain_db, has_custom_gain, overload_history, analysis_producer,
+    plr_db, psr_db, crest_factor_db, dc_offsets, clip_counts, stereo_correlation
 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-          ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+          ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)
 ON CONFLICT(file_path) DO UPDATE SET
     file_name = excluded.file_name, format_name = excluded.format_name,
     file_size = excluded.file_size, modified_time_ms = excluded.modified_time_ms,
@@ -37,6 +44,9 @@ ON CONFLICT(file_path) DO UPDATE SET
     true_peak_left = excluded.true_peak_left, true_peak_right = excluded.true_peak_right,
     overall_true_peak = excluded.overall_true_peak, max_short_term_lufs = excluded.max_short_term_lufs,
     integrated_lufs = excluded.integrated_lufs, sample_rate = excluded.sample_rate,
+    plr_db = excluded.plr_db, psr_db = excluded.psr_db, crest_factor_db = excluded.crest_factor_db,
+    dc_offsets = excluded.dc_offsets, clip_counts = excluded.clip_counts,
+    stereo_correlation = excluded.stereo_correlation,
     channels = excluded.channels, bits_per_sample = excluded.bits_per_sample,
     status = excluded.status, error_message = excluded.error_message,
     short_term_loudness = excluded.short_term_loudness, overload_history = excluded.overload_history,
@@ -65,7 +75,7 @@ WHERE NOT (excluded.status = 3 AND file_analysis.status IN (1, 2)
     AND file_analysis.modified_time_ms = excluded.modified_time_ms)";
 
 /// Creates shared and native cache layouts under one write lock, making simultaneous startup retryable.
-/// Only a proven C++ schema without provenance may adopt the known-current version 12 measurements.
+/// Provenance-free legacy schemas are identified conservatively, and older measurements refill source statistics.
 pub(super) fn initialize(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let columns: Vec<(String, bool)> = transaction
@@ -108,10 +118,7 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<()> {
         )?;
     }
     add_missing_columns(&transaction, "file_analysis", ADDED_COLUMNS)?;
-    transaction.execute(
-        "UPDATE file_analysis SET analysis_version = ?1 WHERE analysis_version = 12 AND analysis_producer = 'cpp'",
-        [ANALYSIS_VERSION],
-    )?;
+    // Older measurements lack required source statistics and must be refilled without deleting gains or previews.
     transaction.execute_batch(serato::SCHEMA)?;
     transaction.execute_batch(spectrogram::SCHEMA)?;
     transaction.commit()?;

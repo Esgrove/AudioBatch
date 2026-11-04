@@ -24,6 +24,39 @@ On macOS, user-home prefixes become `~/`, while `/Users/Shared` and non-home fol
 Windows keeps the full parent path. Sorting uses the full parent path in natural order, then the file name.
 Saved column preferences migrate once to hide Path. Showing it again remains a persistent user choice.
 
+## Source statistics
+
+PLR is whole-file true peak in dBTP minus integrated LUFS.
+PSR is whole-file true peak in dBTP minus maximum short-term LUFS, using the existing three-second window
+and zero-filled startup. It is not the maximum of a time-local peak-to-short-term curve.
+Crest factor is sample peak divided by unweighted RMS across all channel samples, in dB.
+RMS includes DC, without loudness gating or mono weighting.
+DC offsets are signed channel arithmetic means in linear full-scale units.
+The compact DC column shows the largest absolute channel mean as percent full scale.
+
+Clips counts samples with magnitude at least 1.0, including exact positive and negative full scale.
+The total sums channel samples, not affected frames or contiguous events, and its tooltip gives channel counts.
+Full-scale samples are not proof of analog clipping or an audible defect.
+The existing waveform sample-over flags remain strictly above 1.0 and describe a different threshold.
+Correlation is the whole-file centered stereo Pearson coefficient, clamped to [-1, +1].
+Mono reports +1, including silence. A silent or constant stereo channel has zero variance and no defined coefficient.
+Multichannel correlation is absent. This describes linear co-variation, not stereo width or sound quality.
+
+These source measurements share the decode pass and bounded per-channel online moments.
+They remain independent of custom-gain and limiter predictions, with Source lines in the inspector
+and six optional table columns hidden by default, including for saved preferences.
+Rendered records describe actual quantized normalization or plugin output.
+Normalization meters while writing, while plugin processing analyzes its committed output.
+Undefined scalar values show a dash, SQL NULL, JSON null, or an empty CSV field.
+JSON and CSV add `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `clipsTotal`, and `stereoCorrelation`.
+Arrays use JSON syntax inside CSV fields. Ratios have two decimal places of precision, DC and correlation six,
+and counts remain integers.
+
+Shared measurement contract 14 refills older rows while retaining same-source gains and compatible previews.
+The shared `dc_offsets` blob contains one little-endian IEEE binary64 per channel,
+and `clip_counts` one little-endian unsigned 64-bit count per channel.
+`uv run --script ../fixtures/metrics_expected.py --check` checks the independent NumPy oracle used by both test suites.
+
 ## Audio formats
 
 Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis, and CAF files.

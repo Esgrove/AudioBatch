@@ -11,6 +11,7 @@
 #include "gui/FileActivity.h"
 #include "gui/GuiLayout.h"
 #include "gui/ResultsModel.h"
+#include "utils/StringFormat.h"
 
 #include <array>
 #include <functional>
@@ -146,6 +147,48 @@ constexpr std::array columnDefinitions {
         "LUFS-I",
         "Integrated loudness in LUFS",
         layout::table::metricMaximumWidth
+    ),
+    defineColumn(
+        AudioFileTableColumn::plr,
+        "PLR",
+        "Source true peak minus integrated loudness, dB",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::psr,
+        "PSR",
+        "Source whole-file true peak minus maximum short-term loudness, dB",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::crestFactor,
+        "Crest",
+        "Source sample peak to unweighted whole-file RMS, dB",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::dcOffset,
+        "DC",
+        "Largest absolute source channel mean, percent full scale",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::clips,
+        "Clips",
+        "Source samples with magnitude at least one, summed across channels",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::correlation,
+        "Corr",
+        "Source whole-file centered Pearson correlation, mono +1",
+        layout::table::metricMaximumWidth,
+        false
     ),
     defineColumn(
         AudioFileTableColumn::customGain,
@@ -384,6 +427,33 @@ void AudioFileTableModel::paintCell(
             text = formatLoudnessCompact(record.integratedLufs);
             justification = juce::Justification::centredRight;
             break;
+        case AudioFileTableColumn::plr:
+            text = formatMetric(record.signalMetrics.plrDb);
+            justification = juce::Justification::centredRight;
+            break;
+        case AudioFileTableColumn::psr:
+            text = formatMetric(record.signalMetrics.psrDb);
+            justification = juce::Justification::centredRight;
+            break;
+        case AudioFileTableColumn::crestFactor:
+            text = formatMetric(record.signalMetrics.crestFactorDb);
+            justification = juce::Justification::centredRight;
+            break;
+        case AudioFileTableColumn::dcOffset:
+            text = formatMetric(record.signalMetrics.maximumDcOffset().transform([](double value) {
+                return value * 100.0;
+            }));
+            justification = juce::Justification::centredRight;
+            break;
+        case AudioFileTableColumn::clips:
+            text = record.signalMetrics.clipCounts.empty() ? juce::String("-")
+                                                           : utils::format("{}", record.signalMetrics.totalClips());
+            justification = juce::Justification::centredRight;
+            break;
+        case AudioFileTableColumn::correlation:
+            text = formatMetric(record.signalMetrics.stereoCorrelation, true);
+            justification = juce::Justification::centredRight;
+            break;
         case AudioFileTableColumn::customGain:
             text = formatCustomGainCompact(record);
             justification = juce::Justification::centredRight;
@@ -461,11 +531,21 @@ void AudioFileTableModel::sortOrderChanged(const int newSortColumnId, const bool
 /// Shows the full status text for the status column of a file with an error or notice, and no tooltip for other cells.
 juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int columnId)
 {
-    if (tableColumnFromId(columnId) != AudioFileTableColumn::status || !records.containsRow(rowNumber)) {
+    if (!records.containsRow(rowNumber)) {
         return {};
     }
 
     const auto& record = records[rowNumber];
+    const auto column = tableColumnFromId(columnId);
+    if (column == AudioFileTableColumn::clips && record.isReady()) {
+        return formatClipCounts(record.signalMetrics);
+    }
+    if (column == AudioFileTableColumn::dcOffset && record.isReady()) {
+        return formatDcOffsets(record.signalMetrics);
+    }
+    if (column != AudioFileTableColumn::status) {
+        return {};
+    }
 
     if (const auto [text, isError] = getOperationMessage(record); text.isNotEmpty()) {
         return text;

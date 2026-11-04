@@ -686,7 +686,8 @@ void CliTests::runOutputTests()
     beginTest("CSV output escapes fields and always has a header");
     {
         const juce::String header {"path,name,format,sampleRate,channels,bitsPerSample,durationSeconds,"
-                                   "peakDbfs,truePeakDbtp,integratedLufs,maxShortTermLufs,status,error"};
+                                   "peakDbfs,truePeakDbtp,integratedLufs,maxShortTermLufs,plrDb,psrDb,crestFactorDb,"
+                                   "dcOffsets,clipCounts,clipsTotal,stereoCorrelation,status,error"};
         const auto emptyLines = juce::StringArray::fromLines(cli::formatRecordsAsCsv({}).trimEnd());
         expectEquals(emptyLines.size(), 1);
         expectEquals(emptyLines[0], header);
@@ -699,7 +700,7 @@ void CliTests::runOutputTests()
         expectEquals(
             lines[1],
             juce::String(
-                R"("/music/a, ""b"".wav","a, ""b"".wav",WAV,44100,2,24,1.5,-6.02,-1.94,-14.25,-11.5,analyzed,)"
+                R"("/music/a, ""b"".wav","a, ""b"".wav",WAV,44100,2,24,1.5,-6.02,-1.94,-14.25,-11.5,,,,[],[],0,,analyzed,)"
             )
         );
         expect(lines[3].contains("failed"), lines[3]);

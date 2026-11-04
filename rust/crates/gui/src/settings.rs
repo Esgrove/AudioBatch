@@ -35,8 +35,8 @@ pub const DEFAULT_LOUDNESS_MINIMUM: i32 = -24;
 pub const DEFAULT_LOUDNESS_MAXIMUM: i32 = -4;
 
 /// Revision of the results table column defaults.
-/// Revision 1 shows the Folder column and hides the Path column by default.
-pub const COLUMNS_REVISION: u32 = 1;
+/// Revision 1 hides Path beside Folder. Revision 2 hides the optional source-statistics columns.
+pub const COLUMNS_REVISION: u32 = 2;
 
 /// Identifier of the Path column in `hidden_columns`.
 const PATH_COLUMN_ID: &str = "path";
@@ -216,14 +216,22 @@ impl GuiSettings {
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        if settings.columns_revision < COLUMNS_REVISION {
-            if let Some(hidden) = &mut settings.hidden_columns
-                && !hidden.iter().any(|id| id == PATH_COLUMN_ID)
-            {
-                hidden.push(String::from(PATH_COLUMN_ID));
+        if let Some(hidden) = &mut settings.hidden_columns {
+            let mut hide = |id: &str| {
+                if !hidden.iter().any(|value| value == id) {
+                    hidden.push(id.to_string());
+                }
+            };
+            if settings.columns_revision < 1 {
+                hide(PATH_COLUMN_ID);
             }
-            settings.columns_revision = COLUMNS_REVISION;
+            if settings.columns_revision < 2 {
+                for id in ["plr", "psr", "crest", "dc", "clips", "correlation"] {
+                    hide(id);
+                }
+            }
         }
+        settings.columns_revision = COLUMNS_REVISION;
         if !is_valid_loudness_range(settings.loudness_minimum, settings.loudness_maximum) {
             settings.loudness_minimum = DEFAULT_LOUDNESS_MINIMUM;
             settings.loudness_maximum = DEFAULT_LOUDNESS_MAXIMUM;
@@ -551,12 +559,20 @@ mod test_column_migration {
             Some(vec![
                 String::from("peak_left"),
                 String::from("custom_gain"),
-                String::from("path")
+                String::from("path"),
+                String::from("plr"),
+                String::from("psr"),
+                String::from("crest"),
+                String::from("dc"),
+                String::from("clips"),
+                String::from("correlation"),
             ])
         );
         assert_eq!(settings.columns_revision, COLUMNS_REVISION);
         let settings = load(&serde_json::json!({"hidden_columns": ["path"]}));
-        assert_eq!(settings.hidden_columns, Some(vec![String::from("path")]));
+        let hidden = settings.hidden_columns.expect("explicit hidden columns");
+        assert_eq!(hidden.iter().filter(|id| *id == "path").count(), 1);
+        assert!(hidden.contains(&String::from("clips")));
     }
 
     #[test]

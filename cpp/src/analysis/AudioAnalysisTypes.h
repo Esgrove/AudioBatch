@@ -210,6 +210,25 @@ inline bool OverloadHistory::hasOverloads() const noexcept
     return std::ranges::any_of(flags, [](const auto value) { return value != 0; });
 }
 
+/// Whole-file source statistics, independent of preview gain and loudness weighting.
+struct SignalMetrics {
+    [[nodiscard]] std::uint64_t totalClips() const;
+    [[nodiscard]] std::optional<double> maximumDcOffset() const;
+
+    /// True peak in dBTP minus integrated LUFS, absent for an undefined denominator.
+    std::optional<double> plrDb;
+    /// Whole-file true peak in dBTP minus maximum short-term LUFS, not a time-local ratio.
+    std::optional<double> psrDb;
+    /// Sample peak divided by unweighted RMS over every channel sample, in dB.
+    std::optional<double> crestFactorDb;
+    /// Signed channel means in linear full-scale units.
+    std::vector<double> dcOffsets;
+    /// Counts of channel samples whose magnitude is at least one.
+    std::vector<std::uint64_t> clipCounts;
+    /// Centered whole-file Pearson coefficient, +1 for mono, absent above two channels.
+    std::optional<double> stereoCorrelation;
+};
+
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
     /// Builds a baseline record from filesystem metadata before analysis begins.
@@ -264,6 +283,9 @@ struct AudioAnalysisRecord {
     juce::String formatName;
     /// Absolute path of the file, which identifies its table row and its cache row.
     juce::String fullPath;
+
+    /// Whole-file source metrics, never replaced by gain-adjusted display predictions.
+    SignalMetrics signalMetrics;
 
     /// Per-file gain that the user set for this version of the file, which processing applies first.
     std::optional<Decibels> customGain;

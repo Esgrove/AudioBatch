@@ -457,6 +457,12 @@ consteval int initialColumnWidth(const AudioFileTableColumn column)
             return maxShortTermLufsColumnDefaultWidth;
         case AudioFileTableColumn::integratedLufs:
             return integratedLufsColumnDefaultWidth;
+        case AudioFileTableColumn::plr:
+        case AudioFileTableColumn::psr:
+        case AudioFileTableColumn::crestFactor:
+        case AudioFileTableColumn::dcOffset:
+        case AudioFileTableColumn::clips:
+        case AudioFileTableColumn::correlation:
         case AudioFileTableColumn::customGain:
             return customGainColumnDefaultWidth;
         case AudioFileTableColumn::status:
@@ -490,6 +496,12 @@ consteval int minimumColumnWidth(const AudioFileTableColumn column)
         case AudioFileTableColumn::overallTruePeak:
         case AudioFileTableColumn::maxShortTermLufs:
         case AudioFileTableColumn::integratedLufs:
+        case AudioFileTableColumn::plr:
+        case AudioFileTableColumn::psr:
+        case AudioFileTableColumn::crestFactor:
+        case AudioFileTableColumn::dcOffset:
+        case AudioFileTableColumn::clips:
+        case AudioFileTableColumn::correlation:
         case AudioFileTableColumn::customGain:
         case AudioFileTableColumn::status:
             return metricColumnMinimumWidth;

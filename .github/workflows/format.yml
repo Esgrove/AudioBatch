@@ -66,6 +66,7 @@ jobs:
         run: |
           jq --version
           uv run --script fixtures/spectrogram_expected.py --check
+          uv run --script fixtures/metrics_expected.py --check
 
       - name: Check for differences
         run: |

@@ -24,6 +24,26 @@ It covers major and minor keys, enharmonic sharps and flats, Unicode accidentals
 Camelot and Open Key notation, whitespace, and invalid values.
 The mapping adds a Camelot equivalent for display without changing the original tag spelling.
 
+## Source Metric Expectations
+
+`metrics_expected.py` calculates batch NumPy expectations independently of both applications,
+reading existing PCM16 fixtures directly and defining exact float32 synthetic planes in `metrics_expected.json`.
+Both suites read that same JSON for whole-file unweighted crest factor, signed channel DC means,
+full-scale sample counts, and centered Pearson correlation.
+The corpus covers mono, identical and inverted stereo, different-tone stereo, DC, one silent channel,
+stereo silence, multichannel input, and exact positive and negative full-scale thresholds.
+PLR and PSR also have independent fixture expectations from SciPy K-weighting filters, NumPy loudness gates,
+and batch windowed-sinc true-peak interpolation, checked within 0.001 dB.
+The subtraction of production peak and loudness scalars is checked separately without changing their existing contracts.
+PSR means whole-file true peak minus maximum short-term loudness, not a time-local curve maximum.
+The RMS denominator averages squared samples across channels and includes DC.
+Clips counts channel samples with magnitude at least one, not audible clipping incidents.
+Mono correlation is +1 by convention, even for silence. Constant stereo channels are undefined.
+The coefficient describes linear co-variation, not a stereo-width or quality rating.
+
+Regenerate with `uv run --script fixtures/metrics_expected.py` from the root,
+or verify without writing with `--check`.
+
 ## Input Identities
 
 `checksums.sha256` records the exact bytes and inventory of the ordinary fixtures,

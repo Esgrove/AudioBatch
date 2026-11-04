@@ -45,7 +45,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       with a fixed default of 16 for MP3 and AAC files and the ALAC depth read through TagLib.
       `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
       `AudioMeasurement.*` groups decoded or rendered PCM into fixed libebur128 measurement intervals
-      and supplies peaks, loudness, and overload histories without decoding rendered output again.
+      and supplies peaks, loudness, source statistics, and overload histories without decoding rendered output again.
+      Source statistics use bounded channel moments for PLR, PSR, unweighted crest factor, signed DC means,
+      full-scale sample counts, and centered stereo correlation, separate from preview gain predictions.
       `OverloadHistory.*` build, validate, project, and serialize the bounded per-channel source overload flags.
       `NativeWaveformBuilder.*` and `SpectrogramBuilder.*` build the optional native waveform and mel spectrogram.
       They read the same PCM intervals, so fresh analysis produces both in its single decode pass.
@@ -59,7 +61,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       which share the column and parameter constants in `AnalysisCacheSql.h`.
       `NativeWaveformData.*` holds bounded native thumbnail validation and identity-sensitive waveform keys,
       independently of database persistence.
-      Measurement contract version 13 is coordinated across both implementations.
+      Measurement contract version 14 is coordinated across both implementations.
       Successful foreign measurements are reusable for reporting, while decoder failures are producer-specific.
       Rust waveforms live in `rust_waveform_cache`, separate from the optional JUCE waveform columns.
       Both applications share `spectrogram_cache`, keyed by path and its algorithm and serialization revisions.

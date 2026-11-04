@@ -307,6 +307,105 @@ bool readRequiredHistories(sqlite3_stmt& statement, AudioAnalysisRecord& record)
     return true;
 }
 
+/// Reads nullable finite scalars without SQLite text coercions.
+bool readMetricScalar(sqlite3_stmt& statement, const int column, std::optional<double>& destination)
+{
+    const auto type = sqlite3_column_type(&statement, column);
+    if (type == SQLITE_NULL) {
+        return true;
+    }
+    const auto value = sqlite3_column_double(&statement, column);
+    if ((type != SQLITE_FLOAT && type != SQLITE_INTEGER) || !std::isfinite(value)) {
+        return false;
+    }
+    destination = value;
+    return true;
+}
+
+/// Reads a required little-endian channel array after checking its exact bounded size.
+bool readMetricArray(sqlite3_stmt& statement, const int column, AudioAnalysisRecord& record)
+{
+    constexpr int METRIC_VALUE_BYTES {8};
+    const auto expected = column == analysis_column::dcOffsets && record.lengthInSamples == 0
+        ? 0
+        : record.channels * METRIC_VALUE_BYTES;
+    if (sqlite3_column_type(&statement, column) != SQLITE_BLOB || sqlite3_column_bytes(&statement, column) != expected)
+    {
+        return false;
+    }
+    juce::MemoryInputStream input(sqlite3_column_blob(&statement, column), static_cast<std::size_t>(expected), false);
+    for (int channel = 0; channel < expected / METRIC_VALUE_BYTES; ++channel) {
+        if (column == analysis_column::dcOffsets) {
+            const auto value = input.readDouble();
+            if (!std::isfinite(value) || std::abs(value) > static_cast<double>(std::numeric_limits<float>::max())) {
+                return false;
+            }
+            record.signalMetrics.dcOffsets.push_back(value);
+        } else {
+            const auto value = input.readInt64();
+            if (value < 0 || value > record.lengthInSamples) {
+                return false;
+            }
+            record.signalMetrics.clipCounts.push_back(static_cast<std::uint64_t>(value));
+        }
+    }
+    return true;
+}
+
+/// Reads bounded source statistics, rejecting malformed required data and invalid channel conventions.
+bool readSignalMetrics(sqlite3_stmt& statement, AudioAnalysisRecord& record)
+{
+    if (record.channels < 1 || record.channels > 64) {
+        return false;
+    }
+    auto& metrics = record.signalMetrics;
+    for (const auto& [column, destination] :
+         {
+             std::pair {analysis_column::plrDb, &metrics.plrDb},
+             std::pair {analysis_column::psrDb, &metrics.psrDb},
+             std::pair {analysis_column::crestFactorDb, &metrics.crestFactorDb},
+             std::pair {analysis_column::stereoCorrelation, &metrics.stereoCorrelation},
+         })
+    {
+        if (!readMetricScalar(statement, column, *destination)) {
+            return false;
+        }
+    }
+    return readMetricArray(statement, analysis_column::dcOffsets, record)
+        && readMetricArray(statement, analysis_column::clipCounts, record)
+        && (!metrics.stereoCorrelation || (std::abs(*metrics.stereoCorrelation) <= 1.0 && record.channels <= 2))
+        && (record.channels != 1
+            || (metrics.stereoCorrelation && juce::approximatelyEqual(*metrics.stereoCorrelation, 1.0)));
+}
+
+/// Binds nullable source ratios and bounded channel arrays in the shared little-endian layout.
+bool bindSignalMetrics(sqlite3_stmt& statement, const AudioAnalysisRecord& record)
+{
+    const auto& metrics = record.signalMetrics;
+    for (const auto& [parameter, value] :
+         {
+             std::pair {analysis_parameter::plrDb, metrics.plrDb},
+             std::pair {analysis_parameter::psrDb, metrics.psrDb},
+             std::pair {analysis_parameter::crestFactorDb, metrics.crestFactorDb},
+             std::pair {analysis_parameter::stereoCorrelation, metrics.stereoCorrelation},
+         })
+    {
+        if (!(value ? sqlite::bindDouble(statement, parameter, *value) : sqlite::bindNull(statement, parameter))) {
+            return false;
+        }
+    }
+    juce::MemoryOutputStream offsets;
+    for (const auto value : metrics.dcOffsets) {
+        offsets.writeDouble(value);
+    }
+    juce::MemoryOutputStream counts;
+    for (const auto value : metrics.clipCounts) {
+        counts.writeInt64(static_cast<std::int64_t>(value));
+    }
+    return sqlite::bindBlob(statement, analysis_parameter::dcOffsets, offsets.getMemoryBlock())
+        && sqlite::bindBlob(statement, analysis_parameter::clipCounts, counts.getMemoryBlock());
+}
+
 /// Refuses transient and foreign decoder failures rather than publishing them under this implementation's contract.
 bool ignoresFailure(const AudioAnalysisRecord& record)
 {
@@ -320,14 +419,16 @@ bool bindHistories(
     sqlite3_stmt& statement,
     const bool failed,
     const juce::MemoryBlock& loudness,
-    const juce::MemoryBlock& overloads
+    const juce::MemoryBlock& overloads,
+    const AudioAnalysisRecord& record
 )
 {
     return sqlite::bindNull(statement, analysis_parameter::waveformData)
         && (failed ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
                    : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudness))
         && (failed ? sqlite::bindNull(statement, analysis_parameter::overloadHistory)
-                   : sqlite::bindBlob(statement, analysis_parameter::overloadHistory, overloads));
+                   : sqlite::bindBlob(statement, analysis_parameter::overloadHistory, overloads))
+        && bindSignalMetrics(statement, record);
 }
 
 /// Binds the previously observed row version so a different-source writer cannot lose publication.
@@ -452,7 +553,8 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
                duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
                true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
                sample_rate, channels, bits_per_sample, status, error_message, analysis_version,
-               custom_gain_db, has_custom_gain, short_term_loudness, overload_history, analysis_producer
+               custom_gain_db, has_custom_gain, short_term_loudness, overload_history, analysis_producer,
+               plr_db, psr_db, crest_factor_db, dc_offsets, clip_counts, stereo_correlation
         FROM file_analysis
         WHERE file_path = ?;
     )SQL";
@@ -526,7 +628,7 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
     if (!validMeasurements(record)) {
         return std::nullopt;
     }
-    if (!record.hasError() && !readRequiredHistories(*statement, record)) {
+    if (!record.hasError() && (!readRequiredHistories(*statement, record) || !readSignalMetrics(*statement, record))) {
         return std::nullopt;
     }
     record.fromCache = true;
@@ -590,8 +692,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
             sample_rate, channels, bits_per_sample, status, error_message,
             waveform_data, waveform_version, analysis_version, updated_at_ms,
-            custom_gain_db, has_custom_gain, short_term_loudness, overload_history, analysis_producer
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            custom_gain_db, has_custom_gain, short_term_loudness, overload_history, analysis_producer,
+            plr_db, psr_db, crest_factor_db, dc_offsets, clip_counts, stereo_correlation
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -607,6 +710,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             overall_true_peak = excluded.overall_true_peak,
             max_short_term_lufs = excluded.max_short_term_lufs,
             integrated_lufs = excluded.integrated_lufs,
+            plr_db = excluded.plr_db, psr_db = excluded.psr_db, crest_factor_db = excluded.crest_factor_db,
+            dc_offsets = excluded.dc_offsets, clip_counts = excluded.clip_counts,
+            stereo_correlation = excluded.stereo_correlation,
             short_term_loudness = excluded.short_term_loudness,
             overload_history = excluded.overload_history,
             sample_rate = excluded.sample_rate,
@@ -695,7 +801,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         && sqlite::bindDouble(statement,
                               analysis_parameter::customGainDb,
                               static_cast<double>(record.customGain.value_or(Decibels {}).value));
-    const bool blobsBound = bindHistories(statement, record.hasError(), loudnessData, overloadData);
+    const bool blobsBound = bindHistories(statement, record.hasError(), loudnessData, overloadData, record);
 
     const bool sourceBound = bindObservedSource(statement, observedSource);
     if (!(textBound && integersBound && numbersBound && blobsBound && sourceBound

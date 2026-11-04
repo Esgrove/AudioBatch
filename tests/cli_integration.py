@@ -49,6 +49,13 @@ FIELDS = [
     "truePeakDbtp",
     "integratedLufs",
     "maxShortTermLufs",
+    "plrDb",
+    "psrDb",
+    "crestFactorDb",
+    "dcOffsets",
+    "clipCounts",
+    "clipsTotal",
+    "stereoCorrelation",
     "status",
     "error",
 ]
@@ -189,6 +196,36 @@ class CliIntegration(unittest.TestCase):
                 assert "AUDIOBATCH_DATA_ROOT" in result.stderr
                 assert not (self.audio / "relative-storage").exists()
                 assert not self.storage.exists()
+
+    def test_source_metric_fields_and_cache_roundtrip(self) -> None:
+        """Both executable front ends expose independent source statistics without gain projections."""
+        oracle = json.loads((FIXTURES / "metrics_expected.json").read_text())
+        for expected in oracle["fixtures"]:
+            with self.subTest(fixture=expected["fixture"]):
+                source = self.copy_fixture(expected["fixture"])
+                record = self.analyze(source)[0]
+                assert record["clipCounts"] == expected["clipCounts"]
+                assert record["clipsTotal"] == sum(expected["clipCounts"])
+                for field in ("plrDb", "psrDb", "crestFactorDb", "stereoCorrelation"):
+                    actual, reference = record[field], expected[field]
+                    if reference is None:
+                        assert actual is None
+                    else:
+                        tolerance = 0.006001 if field != "stereoCorrelation" else 0.000000501
+                        assert abs(actual - reference) <= tolerance
+                assert len(record["dcOffsets"]) == len(expected["dcOffsets"])
+                assert all(
+                    abs(actual - reference) <= 0.000000501
+                    for actual, reference in zip(record["dcOffsets"], expected["dcOffsets"], strict=True)
+                )
+                row = self.database_row(source)
+                assert row["analysis_version"] == 14
+                assert (row["stereo_correlation"] is None) == (expected["stereoCorrelation"] is None)
+                cached = self.analyze(source)[0]
+                assert cached | {"status": record["status"]} == record
+                csv_rows = list(csv.DictReader(io.StringIO(self.invoke("--output", "csv", source).stdout)))
+                assert json.loads(csv_rows[0]["clipCounts"]) == expected["clipCounts"]
+                assert json.loads(csv_rows[0]["dcOffsets"]) == cached["dcOffsets"]
 
     def test_structured_mixed_results_and_exit_status(self) -> None:
         """Successful and failed files survive JSON/CSV output with diagnostics on stderr."""

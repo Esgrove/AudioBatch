@@ -112,6 +112,14 @@ fn malformed_required_values_and_bounded_histories_miss_without_panicking() {
         "overload_history = zeroblob(1048576)",
         "overload_history = x'00'",
         "file_name = zeroblob(1)",
+        "dc_offsets = NULL",
+        "dc_offsets = zeroblob(513)",
+        "dc_offsets = x'000000000000f87f'",
+        "clip_counts = 'not a blob'",
+        "clip_counts = x'ffffffffffffffff'",
+        "plr_db = 'invalid'",
+        "stereo_correlation = -2",
+        "stereo_correlation = NULL",
     ] {
         update_cached_measurements(&directory, "custom_gain_db = 0, has_custom_gain = 0");
         cache.store_analysis(&record).expect("restores valid measurements");

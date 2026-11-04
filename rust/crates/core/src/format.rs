@@ -12,6 +12,51 @@ use crate::record::{AnalysisRecord, AnalysisStatus, is_silent_loudness};
 /// Lowest level shown in decibels, used for amplitudes just above silence.
 const MINIMUM_DISPLAY_DECIBELS: f64 = -100.0;
 
+/// Formats a finite source ratio or coefficient, using a dash when undefined.
+#[must_use]
+pub fn format_metric(value: Option<f64>, signed: bool) -> String {
+    let Some(value) = value.filter(|value| value.is_finite()) else {
+        return "-".into();
+    };
+    let rounded = (value * 100.0).round() / 100.0;
+    let normalized = if rounded.abs() < f64::EPSILON { 0.0 } else { rounded };
+    if signed {
+        format!("{normalized:+.2}")
+    } else {
+        format!("{normalized:.2}")
+    }
+}
+
+/// Formats each signed channel mean in percent full scale.
+#[must_use]
+pub fn format_dc_offsets(metrics: &crate::signal_metrics::SignalMetrics) -> String {
+    if metrics.dc_offsets.is_empty() {
+        return "-".into();
+    }
+    metrics
+        .dc_offsets
+        .iter()
+        .enumerate()
+        .map(|(channel, value)| format!("Ch {}: {:+.4}%", channel + 1, value * 100.0))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Formats source clip sample counts by channel, including valid zero counts.
+#[must_use]
+pub fn format_clip_counts(metrics: &crate::signal_metrics::SignalMetrics) -> String {
+    if metrics.clip_counts.is_empty() {
+        return "-".into();
+    }
+    metrics
+        .clip_counts
+        .iter()
+        .enumerate()
+        .map(|(channel, value)| format!("Ch {}: {value}", channel + 1))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Formats a contextual error and its causes at a diagnostic reporting boundary.
 /// The contextual error's display text must not already include its source.
 pub(crate) fn format_error_chain(mut error: &dyn Error) -> String {
@@ -359,6 +404,23 @@ mod test_level_formatting {
     fn loudness_formats_with_sentinel() {
         assert_eq!(format_loudness_compact(-14.256), "-14.26");
         assert_eq!(format_loudness_compact(NEGATIVE_INFINITY_LOUDNESS), "-INF");
+    }
+
+    #[test]
+    fn source_statistics_keep_missing_values_distinct_and_name_every_channel() {
+        assert_eq!(format_metric(None, false), "-");
+        assert_eq!(format_metric(Some(1.0), true), "+1.00");
+        assert_eq!(format_metric(Some(-0.0001), true), "+0.00");
+        assert_eq!(format_metric(Some(3.010_299_956_6), false), "3.01");
+        let metrics = crate::signal_metrics::SignalMetrics {
+            dc_offsets: vec![0.25, -0.5],
+            clip_counts: vec![4, 3],
+            ..Default::default()
+        };
+        assert_eq!(format_dc_offsets(&metrics), "Ch 1: +25.0000%, Ch 2: -50.0000%");
+        assert_eq!(format_clip_counts(&metrics), "Ch 1: 4, Ch 2: 3");
+        assert_eq!(metrics.total_clips(), 7);
+        assert_eq!(metrics.maximum_dc_offset(), Some(0.5));
     }
 
     #[test]

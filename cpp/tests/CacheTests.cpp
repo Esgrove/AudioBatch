@@ -538,6 +538,12 @@ void CacheTests::runSharedContractTests()
              "custom_gain_db = 1e999",
              "has_custom_gain = 2",
              "duration_seconds = -1",
+             "dc_offsets = NULL",
+             "dc_offsets = zeroblob(513)",
+             "clip_counts = 'not a blob'",
+             "clip_counts = x'ffffffffffffffff'",
+             "plr_db = 'invalid'",
+             "stereo_correlation = -2",
          })
     {
         expect(cache.storeAnalysis(record));
@@ -634,13 +640,13 @@ void CacheTests::runSharedContractTests()
     hit = second.getAnalysis(file);
     expect(hit && !hit->customGain && hit->sampleRate == 48'000);
 
-    beginTest("Known C++ version twelve rows migrate, unknown and foreign legacy rows do not");
+    beginTest("Legacy version twelve measurements miss so required source statistics can refill");
     expect(
         executeSql(*this, databaseFile, "UPDATE file_analysis SET analysis_version = 12, analysis_producer = 'cpp';")
     );
     {
         AnalysisCache migrated(databaseFile);
-        expect(migrated.getAnalysis(file).has_value());
+        expect(!migrated.getAnalysis(file));
     }
     expect(
         executeSql(*this, databaseFile, "UPDATE file_analysis SET analysis_version = 12, analysis_producer = 'rust';")
@@ -650,7 +656,7 @@ void CacheTests::runSharedContractTests()
         expect(!migrated.getAnalysis(file));
     }
 
-    beginTest("A proven producer-free C++ twelve database migrates measurements and gains");
+    beginTest("A producer-free legacy database refills measurements while preserving gains");
     const auto legacyDatabase = directory.getChildFile("legacy.db");
     {
         AnalysisCache legacy(legacyDatabase);
@@ -665,7 +671,10 @@ void CacheTests::runSharedContractTests()
     {
         AnalysisCache migrated(legacyDatabase);
         const auto adopted = migrated.getAnalysis(file);
-        expect(adopted && adopted->measurementProducer == MeasurementProducer::cpp && adopted->customGain);
+        expect(!adopted);
+        expect(migrated.getCustomGain(file, replacement.fileSize, replacement.modifiedTimeMs).has_value());
+        expect(migrated.storeAnalysis(replacement));
+        expect(migrated.getAnalysis(file).has_value());
     }
 
     beginTest("Simultaneous startup serializes additive migration and remains retryable");
@@ -892,7 +901,7 @@ void CacheTests::runSpectrogramTests()
         && measured->shortTermLoudness->values == record.shortTermLoudness->values
     );
     expectSqlScalar(*this, databaseFile, "SELECT updated_at_ms FROM file_analysis;", 123);
-    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 13);
+    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 14);
 
     beginTest("An identical Rust-produced spectrogram is adopted without native producer provenance");
     expect(executeSql(*this, databaseFile, "UPDATE spectrogram_cache SET producer = 'rust';"));
@@ -981,6 +990,9 @@ void CacheTests::runSpectrogramTests()
         fresh.customGain = Decibels {4.0f};
         if (!changedIdentity) {
             fresh.channels = 1;
+            fresh.signalMetrics.dcOffsets.resize(1);
+            fresh.signalMetrics.clipCounts.resize(1);
+            fresh.signalMetrics.stereoCorrelation = 1.0;
             auto overloads = std::make_shared<OverloadHistory>(*fresh.overloads);
             overloads->channelCount = 1;
             overloads->flags.resize(fresh.overloads->bucketCount());
@@ -1019,6 +1031,9 @@ void CacheTests::runSpectrogramTests()
     expect(cache.storeSpectrogramData(identity, artifact));
     auto mono = record;
     mono.channels = 1;
+    mono.signalMetrics.dcOffsets.resize(1);
+    mono.signalMetrics.clipCounts.resize(1);
+    mono.signalMetrics.stereoCorrelation = 1.0;
     auto monoOverloads = std::make_shared<OverloadHistory>(*record.overloads);
     monoOverloads->channelCount = 1;
     monoOverloads->flags.resize(record.overloads->bucketCount());

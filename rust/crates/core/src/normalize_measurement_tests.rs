@@ -31,6 +31,7 @@ fn assert_exact(actual: &AnalysisRecord, expected: &AnalysisRecord) {
     let mut expected_text = GoldenText::default();
     expected_text.record(expected);
     assert_eq!(actual_text.text(), expected_text.text());
+    assert_eq!(actual.signal_metrics, expected.signal_metrics);
     assert_eq!(actual.path, expected.path);
     assert_eq!(actual.file_name, expected.file_name);
     assert_eq!(actual.file_size, expected.file_size);

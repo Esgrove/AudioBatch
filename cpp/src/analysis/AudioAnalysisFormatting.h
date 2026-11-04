@@ -12,6 +12,10 @@
 
 namespace audiobatch
 {
+juce::String formatMetric(std::optional<double> value, bool signedValue = false);
+juce::String formatDcOffsets(const SignalMetrics& metrics);
+juce::String formatClipCounts(const SignalMetrics& metrics);
+
 std::optional<juce::String> camelotKey(const juce::String& key);
 
 juce::String formatBitrateCompact(const AudioAnalysisRecord& record);

@@ -142,6 +142,12 @@ bool AnalysisCache::addMissingColumns() const
         ColumnMigration {.name = "has_custom_gain", .definition = "INTEGER NOT NULL DEFAULT 0"},
         ColumnMigration {.name = "short_term_loudness", .definition = "BLOB"},
         ColumnMigration {.name = "overload_history", .definition = "BLOB"},
+        ColumnMigration {.name = "plr_db", .definition = "REAL"},
+        ColumnMigration {.name = "psr_db", .definition = "REAL"},
+        ColumnMigration {.name = "crest_factor_db", .definition = "REAL"},
+        ColumnMigration {.name = "dc_offsets", .definition = "BLOB"},
+        ColumnMigration {.name = "clip_counts", .definition = "BLOB"},
+        ColumnMigration {.name = "stereo_correlation", .definition = "REAL"},
     };
 
     return std::ranges::all_of(migrations, [this](const ColumnMigration& migration) {
@@ -259,13 +265,7 @@ bool AnalysisCache::openUnlocked()
             return false;
         }
 
-        if (!addMissingColumns()
-            || !sqlite::execute(
-                *database,
-                "UPDATE file_analysis SET analysis_version = 13 WHERE analysis_version = 12 AND analysis_producer = "
-                "'cpp';"
-            ))
-        {
+        if (!addMissingColumns()) {
             return false;
         }
 

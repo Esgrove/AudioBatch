@@ -25,12 +25,13 @@ LOUDNESS_TARGET_TOLERANCE = 0.1
 TRUE_PEAK_CEILING = -0.3
 TRUE_PEAK_CEILING_TOLERANCE = 0.1
 DURATION_TOLERANCE = 0.001000001
+SOURCE_STATISTIC_TOLERANCE = 0.000002
 MAXIMUM_GAIN_DB = 40
 SILENT_LOUDNESS = -1000
 GOLDENS = Path(__file__).resolve().parents[1] / "crates/core/tests/golden"
 AUDIO_EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".flac", ".mp3", ".m4a", ".mp4", ".ogg"}
-LEVEL_FIELDS = ["peakDbfs", "truePeakDbtp", "integratedLufs", "maxShortTermLufs"]
-EXACT_FIELDS = ["sampleRate", "channels", "bitsPerSample", "status"]
+LEVEL_FIELDS = ["peakDbfs", "truePeakDbtp", "integratedLufs", "maxShortTermLufs", "plrDb", "psrDb", "crestFactorDb"]
+EXACT_FIELDS = ["sampleRate", "channels", "bitsPerSample", "status", "clipCounts", "clipsTotal"]
 FRAME_FIELDS = ["lengthInSamples", "frameCount", "frames"]
 
 
@@ -169,6 +170,19 @@ def compare_rows(name: str, cpp: dict, rust: dict, tolerance: float) -> list[str
                 differences.append(f"{name}: {field} C++ {cpp_value} Rust {rust_value}")
         elif not (math.isfinite(cpp_value) and math.isfinite(rust_value)) or abs(cpp_value - rust_value) > allowed:
             differences.append(f"{name}: {field} C++ {cpp_value} Rust {rust_value}")
+    for field in ["dcOffsets", "stereoCorrelation"]:
+        first, second = cpp.get(field), rust.get(field)
+        if first is None or second is None:
+            if first is not second:
+                differences.append(f"{name}: {field} C++ {first} Rust {second}")
+            continue
+        first = first if isinstance(first, list) else [first]
+        second = second if isinstance(second, list) else [second]
+        if len(first) != len(second) or any(
+            not math.isfinite(a) or not math.isfinite(b) or abs(a - b) > SOURCE_STATISTIC_TOLERANCE
+            for a, b in zip(first, second, strict=False)
+        ):
+            differences.append(f"{name}: {field} C++ {first} Rust {second}")
     return differences
 
 

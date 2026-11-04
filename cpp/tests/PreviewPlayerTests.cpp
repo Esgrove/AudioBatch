@@ -1483,12 +1483,14 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
     const auto* album = dynamic_cast<const AudioInfoText*>(cellNamed("Album"));
     const auto* comment = dynamic_cast<const AudioInfoText*>(cellNamed("Comment"));
     const auto* error = dynamic_cast<const AudioInfoText*>(cellNamed("Error"));
+    const auto* correlation = cellNamed("Source correlation");
+    expect(correlation != nullptr);
     expect(
         format != nullptr && audio != nullptr && track != nullptr && genre != nullptr && album != nullptr
         && comment != nullptr && error != nullptr
     );
     if (format == nullptr || audio == nullptr || track == nullptr || genre == nullptr || album == nullptr
-        || comment == nullptr || error == nullptr)
+        || comment == nullptr || error == nullptr || correlation == nullptr)
     {
         return;
     }
@@ -1503,7 +1505,8 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
         if (bitrate != nullptr) {
             expectEquals(track->getRight(), bitrate->getRight());
         }
-        expectEquals(genre->getY(), format->getBottom());
+        expectEquals(genre->getY(), correlation->getBottom());
+        expect(correlation->getY() > format->getBottom());
         expectEquals(album->getY(), genre->getBottom());
         expectEquals(comment->getY(), album->getBottom());
         expectEquals(genre->getHeight(), layout::information::rowHeight);

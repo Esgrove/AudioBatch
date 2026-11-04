@@ -58,6 +58,9 @@ fn optional_cleanup_failure_preserves_committed_measurements() {
     let mut fresh = prior;
     fresh.measurement_producer = MeasurementProducer::Cpp;
     fresh.channels = 1;
+    fresh.signal_metrics.dc_offsets.truncate(1);
+    fresh.signal_metrics.clip_counts.truncate(1);
+    fresh.signal_metrics.stereo_correlation = Some(1.0);
     fresh.waveform = None;
     let overloads = Arc::make_mut(fresh.overloads.as_mut().expect("overload history"));
     overloads.channels = 1;

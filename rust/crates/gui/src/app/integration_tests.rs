@@ -1329,14 +1329,31 @@ fn integration_playback_and_folder_menu_preferences(cx: &mut TestAppContext) {
         let delegate = workflow.view.read(cx).table.read(cx).delegate();
         assert!(delegate.is_column_visible(crate::results::ColumnKey::Folder));
         assert!(!delegate.is_column_visible(crate::results::ColumnKey::Path));
+        for column in [
+            crate::results::ColumnKey::Plr,
+            crate::results::ColumnKey::Psr,
+            crate::results::ColumnKey::Crest,
+            crate::results::ColumnKey::Dc,
+            crate::results::ColumnKey::Clips,
+            crate::results::ColumnKey::Correlation,
+        ] {
+            assert!(!delegate.is_column_visible(column));
+        }
     });
     workflow.dispatch(ToggleContinuePlayback, cx);
     workflow.dispatch(TogglePlayFromFirstCuePoint, cx);
     workflow.dispatch(ToggleColumn { id: "path".into() }, cx);
+    workflow.dispatch(ToggleColumn { id: "clips".into() }, cx);
     cx.read(|cx| {
         let view = workflow.view.read(cx);
         assert!(view.settings.continue_playback);
         assert!(view.settings.play_from_first_cue_point);
+        assert!(
+            view.table
+                .read(cx)
+                .delegate()
+                .is_column_visible(crate::results::ColumnKey::Clips)
+        );
         assert!(menu_checked(cx, &ToggleContinuePlayback));
         assert!(menu_checked(cx, &TogglePlayFromFirstCuePoint));
         assert!(

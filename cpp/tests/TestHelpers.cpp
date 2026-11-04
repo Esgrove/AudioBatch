@@ -409,6 +409,12 @@ void expectAnalysisMeasurementsEqual(
     test.expectWithinAbsoluteError(actual.integratedLufs, expected.integratedLufs, 0.0);
     test.expectWithinAbsoluteError(actual.maxShortTermLufs, expected.maxShortTermLufs, 0.0);
     test.expectWithinAbsoluteError(actual.durationSeconds, expected.durationSeconds, 0.0);
+    test.expect(actual.signalMetrics.plrDb == expected.signalMetrics.plrDb);
+    test.expect(actual.signalMetrics.psrDb == expected.signalMetrics.psrDb);
+    test.expect(actual.signalMetrics.crestFactorDb == expected.signalMetrics.crestFactorDb);
+    test.expect(actual.signalMetrics.dcOffsets == expected.signalMetrics.dcOffsets);
+    test.expect(actual.signalMetrics.clipCounts == expected.signalMetrics.clipCounts);
+    test.expect(actual.signalMetrics.stereoCorrelation == expected.signalMetrics.stereoCorrelation);
     test.expectEquals(actual.lengthInSamples, expected.lengthInSamples);
     test.expectEquals(actual.sampleRate, expected.sampleRate);
     test.expectEquals(actual.channels, expected.channels);

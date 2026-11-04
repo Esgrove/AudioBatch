@@ -41,6 +41,7 @@ pub struct BlockMeter {
     waveform: WaveformBuilder,
     spectrogram: Option<SpectrogramBuilder>,
     overloads: OverloadHistoryBuilder,
+    signal_metrics: crate::signal_metrics::SignalMetricsAccumulator,
 }
 
 /// Everything the meter measured over a whole stream.
@@ -69,6 +70,8 @@ pub struct MeterOutput {
     pub spectrogram: Option<Arc<SpectrogramData>>,
     /// Bounded source overload flags measured at the same fixed block boundaries.
     pub overloads: Arc<OverloadHistory>,
+    /// Source-only whole-file statistics from the same PCM.
+    pub signal_metrics: crate::signal_metrics::SignalMetrics,
 }
 
 impl BlockMeter {
@@ -101,6 +104,7 @@ impl BlockMeter {
             waveform: WaveformBuilder::new(channel_count, expected_frames),
             spectrogram: (channel_count <= 2).then(|| SpectrogramBuilder::new(channel_count, sample_rate)),
             overloads: OverloadHistoryBuilder::new(channels, sample_rate),
+            signal_metrics: crate::signal_metrics::SignalMetricsAccumulator::new(channel_count),
         })
     }
 
@@ -190,12 +194,12 @@ impl BlockMeter {
             .get(..channels)
             .expect("validated channel count")
             .to_vec();
-        let signed_peaks = min_samples
+        let signed_peaks: Vec<f32> = min_samples
             .iter()
             .zip(&max_samples)
             .map(|(&minimum, &maximum)| crate::analysis::signed_peak_from_extrema(minimum, maximum))
             .collect();
-        let true_peaks = self.true_peak.as_ref().map_or_else(
+        let true_peaks: Vec<f64> = self.true_peak.as_ref().map_or_else(
             || {
                 // No interpolation is needed at these rates, reuse the signed sample extremes.
                 min_samples
@@ -207,7 +211,17 @@ impl BlockMeter {
             |meter| meter.peaks().to_vec(),
         );
         let integrated_lufs = normalize_loudness(self.meter.integrated());
+        let signal_metrics = self.signal_metrics.finish(
+            signed_peaks
+                .iter()
+                .map(|value| f64::from(*value).abs())
+                .fold(0.0, f64::max),
+            true_peaks.iter().copied().fold(0.0, f64::max),
+            integrated_lufs,
+            self.max_short_term_lufs,
+        );
         MeterOutput {
+            signal_metrics,
             min_samples,
             max_samples,
             signed_peaks,
@@ -242,6 +256,7 @@ impl BlockMeter {
 
     /// Measures one fixed analysis block, whether borrowed directly or assembled from decoder packets.
     fn measure_planes(&mut self, planes: &[&[f32]]) {
+        self.signal_metrics.push(planes);
         let mut flags = [0_u8; 64];
         let mut block_minima = [0.0_f32; 64];
         let mut block_maxima = [0.0_f32; 64];

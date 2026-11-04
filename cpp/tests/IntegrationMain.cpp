@@ -296,6 +296,20 @@ void AudioBatchIntegrationTest::openAndSort()
     auto& header = view.resultsTable.getHeader();
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::folder)));
     EXPECT_FALSE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
+    for (const auto column :
+         {
+             AudioFileTableColumn::plr,
+             AudioFileTableColumn::psr,
+             AudioFileTableColumn::crestFactor,
+             AudioFileTableColumn::dcOffset,
+             AudioFileTableColumn::clips,
+             AudioFileTableColumn::correlation,
+         })
+    {
+        EXPECT_FALSE(header.isColumnVisible(toColumnId(column)));
+    }
+    view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::clips), 2000);
+    EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::clips)));
     view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::path), 2000);
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
     EXPECT_FALSE(view.createColumnsMenu(2000).getNumItems() == 0);

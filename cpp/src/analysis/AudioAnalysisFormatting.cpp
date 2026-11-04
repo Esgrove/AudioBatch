@@ -9,6 +9,7 @@
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -18,6 +19,57 @@
 
 namespace audiobatch
 {
+/// Sums channel sample counts rather than counting affected frames.
+std::uint64_t SignalMetrics::totalClips() const
+{
+    std::uint64_t total = 0;
+    for (const auto count : clipCounts) {
+        total += count;
+    }
+    return total;
+}
+
+/// Returns the largest absolute channel mean for the compact table column.
+std::optional<double> SignalMetrics::maximumDcOffset() const
+{
+    std::optional<double> maximum;
+    for (const auto value : dcOffsets) {
+        maximum = std::max(maximum.value_or(0.0), std::abs(value));
+    }
+    return maximum;
+}
+
+/// Formats a source ratio or coefficient, with a dash for an undefined result.
+juce::String formatMetric(const std::optional<double> value, const bool signedValue)
+{
+    if (!value || !std::isfinite(*value)) {
+        return "-";
+    }
+    const auto rounded = std::round(*value * 100.0) / 100.0;
+    const auto normalized = juce::approximatelyEqual(rounded, 0.0) ? 0.0 : rounded;
+    return signedValue ? utils::format("{:+.2f}", normalized) : utils::format("{:.2f}", normalized);
+}
+
+/// Formats signed source means in percent full scale, one labelled value per channel.
+juce::String formatDcOffsets(const SignalMetrics& metrics)
+{
+    juce::StringArray values;
+    for (std::size_t channel = 0; channel < metrics.dcOffsets.size(); ++channel) {
+        values.add(utils::format("Ch {}: {:+.4f}%", channel + 1, metrics.dcOffsets[channel] * 100.0));
+    }
+    return values.isEmpty() ? juce::String("-") : values.joinIntoString(", ");
+}
+
+/// Formats source clip sample counts by channel, retaining zeros as valid measurements.
+juce::String formatClipCounts(const SignalMetrics& metrics)
+{
+    juce::StringArray values;
+    for (std::size_t channel = 0; channel < metrics.clipCounts.size(); ++channel) {
+        values.add(utils::format("Ch {}: {}", channel + 1, metrics.clipCounts[channel]));
+    }
+    return values.isEmpty() ? juce::String("-") : values.joinIntoString(", ");
+}
+
 namespace
 {
 /// Lowest level shown in dB, which very quiet peaks are floored at.

@@ -23,7 +23,7 @@ const TRUE_PEAK_COLUMN_WIDTH: usize = 7;
 const LOUDNESS_COLUMN_WIDTH: usize = 8;
 
 /// CSV header fields, in the order of the `RecordRow` fields.
-const CSV_HEADER: [&str; 13] = [
+const CSV_HEADER: [&str; 20] = [
     "path",
     "name",
     "format",
@@ -35,6 +35,13 @@ const CSV_HEADER: [&str; 13] = [
     "truePeakDbtp",
     "integratedLufs",
     "maxShortTermLufs",
+    "plrDb",
+    "psrDb",
+    "crestFactorDb",
+    "dcOffsets",
+    "clipCounts",
+    "clipsTotal",
+    "stereoCorrelation",
     "status",
     "error",
 ];
@@ -66,6 +73,20 @@ pub struct RecordRow {
     pub integrated_lufs: Option<f64>,
     /// Highest short-term loudness in LUFS, or null for silence.
     pub max_short_term_lufs: Option<f64>,
+    /// Source true peak minus integrated loudness, in dB.
+    pub plr_db: Option<f64>,
+    /// Source whole-file true peak minus maximum short-term loudness, in dB.
+    pub psr_db: Option<f64>,
+    /// Source sample peak to whole-file unweighted RMS, in dB.
+    pub crest_factor_db: Option<f64>,
+    /// Signed channel means in linear full-scale units, rounded to six decimals.
+    pub dc_offsets: Vec<f64>,
+    /// Full-scale sample counts for each source channel.
+    pub clip_counts: Vec<u64>,
+    /// Total channel sample count, absent for unready records.
+    pub clips_total: Option<u64>,
+    /// Centered whole-file coefficient, +1 for mono and absent above two channels.
+    pub stereo_correlation: Option<f64>,
     /// Lowercase status, for example "analyzed".
     pub status: String,
     /// Error message of a failed record, empty otherwise.
@@ -88,6 +109,24 @@ impl RecordRow {
             true_peak_dbtp: decibels_or_null(record.overall_true_peak),
             integrated_lufs: loudness_or_null(record.integrated_lufs),
             max_short_term_lufs: loudness_or_null(record.max_short_term_lufs),
+            plr_db: record.signal_metrics.plr_db.map(|value| round_to(value, 100.0)),
+            psr_db: record.signal_metrics.psr_db.map(|value| round_to(value, 100.0)),
+            crest_factor_db: record
+                .signal_metrics
+                .crest_factor_db
+                .map(|value| round_to(value, 100.0)),
+            dc_offsets: record
+                .signal_metrics
+                .dc_offsets
+                .iter()
+                .map(|value| round_to(*value, 1_000_000.0))
+                .collect(),
+            clip_counts: record.signal_metrics.clip_counts.clone(),
+            clips_total: record.is_ready().then(|| record.signal_metrics.total_clips()),
+            stereo_correlation: record
+                .signal_metrics
+                .stereo_correlation
+                .map(|value| round_to(value, 1_000_000.0)),
             status: format_status(record.status).to_ascii_lowercase(),
             error: record.error_message.clone(),
         }
@@ -145,6 +184,13 @@ pub fn format_csv(records: &[AnalysisRecord]) -> Result<String> {
             optional_number(row.true_peak_dbtp),
             optional_number(row.integrated_lufs),
             optional_number(row.max_short_term_lufs),
+            optional_number(row.plr_db),
+            optional_number(row.psr_db),
+            optional_number(row.crest_factor_db),
+            serde_json::to_string(&row.dc_offsets)?,
+            serde_json::to_string(&row.clip_counts)?,
+            row.clips_total.map(|value| value.to_string()).unwrap_or_default(),
+            optional_number(row.stereo_correlation),
             row.status,
             row.error,
         ])?;

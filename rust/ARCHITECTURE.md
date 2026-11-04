@@ -292,6 +292,12 @@ Delete that listener and module once gpui implements `start_external_drag` on Wi
 ## Analysis
 
 `analyze_file` decodes a file once, and every decoded block feeds all the measurements.
+`signal_metrics.rs` collects bounded per-channel online means, centered moments, unweighted energy,
+and full-scale sample counts in the same `BlockMeter` pass.
+The final reduction derives PLR and PSR from whole-file true peak and integrated or maximum short-term loudness,
+and crest factor from sample peak and RMS across all channel samples, including DC.
+Mono correlation is +1, zero-variance stereo is undefined, and multichannel correlation is absent.
+These source values never inherit preview-gain or limiter predictions.
 
 ```mermaid
 sequenceDiagram
@@ -434,10 +440,11 @@ rejecting stale runs, selections, and source identities, and never persisting it
 `AnalysisCache` in `core/src/cache.rs` reads and writes the same `file_analysis` table as the C++ application.
 The database is `~/Library/AudioBatch/analysis.db` on macOS and `%APPDATA%\\AudioBatch\\analysis.db` on Windows.
 Settings, logs, and plugin data keep their separate application paths.
-Shared measurement contract version 13 accepts either producer's successful levels and required histories.
+Shared measurement contract version 14 accepts either producer's successful levels, required histories,
+source ratios, channel DC offsets and clip counts, and centered stereo correlation.
 The short-term history and `OVLD` overload encoding are shared, while native waveform formats are separate.
 Both implementations must coordinate contract invalidation after measurement-affecting changes.
-Known-compatible C++ measurements are adopted through additive migration,
+Older measurements refill required source statistics through additive migration,
 and the old standalone Rust database is untouched.
 
 A row remains usable while source size, modification time, and accepted contract match.

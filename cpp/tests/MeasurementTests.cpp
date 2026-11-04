@@ -29,6 +29,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -99,6 +100,8 @@ private:
     void runPcmCase(juce::AiffAudioFormat& format, int bits, int channels, float gain, std::span<const float> values);
     void runPcmTests();
     void runPersistenceTests();
+    void runSignalMetricsTests();
+    void expectSignalMetrics(const AudioAnalysisRecord& record, const juce::var& oracle);
 };
 
 /// Runs chunking, PCM roundtrip, and initialization failure checks.
@@ -108,6 +111,7 @@ void MeasurementTests::runTest()
     runPcmTests();
     runKnownAnswerTests();
     runPersistenceTests();
+    runSignalMetricsTests();
 
     beginTest("Rendered identity survives a rename but rejects measurements for replaced bytes");
     {
@@ -181,6 +185,95 @@ void MeasurementTests::runTest()
     input[0] = 0.5f;
     expect(!utils::quantizeNormalizedSamples(input, pcm, observed, 1.0f, 12));
     expect(!utils::quantizeNormalizedSamples(input, std::span<int>(), observed, 1.0f, 16));
+}
+
+/// Compares all source statistics with independently generated batch expectations.
+void MeasurementTests::expectSignalMetrics(const AudioAnalysisRecord& record, const juce::var& oracle)
+{
+    const auto& metrics = record.signalMetrics;
+    for (const auto& [actual, key] :
+         {
+             std::pair {metrics.crestFactorDb, "crestFactorDb"},
+             std::pair {metrics.stereoCorrelation, "stereoCorrelation"},
+         })
+    {
+        const auto& value = oracle[key];
+        expect(actual.has_value() == !value.isVoid());
+        if (actual && !value.isVoid()) {
+            expectWithinAbsoluteError(*actual, static_cast<double>(value), 1.0e-10);
+        }
+    }
+    expectEquals(static_cast<int>(metrics.dcOffsets.size()), oracle["dcOffsets"].size());
+    for (std::size_t channel = 0; channel < metrics.dcOffsets.size(); ++channel) {
+        expectWithinAbsoluteError(
+            metrics.dcOffsets[channel], static_cast<double>(oracle["dcOffsets"][static_cast<int>(channel)]), 1.0e-12
+        );
+    }
+    expectEquals(static_cast<int>(metrics.clipCounts.size()), oracle["clipCounts"].size());
+    for (std::size_t channel = 0; channel < metrics.clipCounts.size(); ++channel) {
+        expectEquals(
+            static_cast<juce::int64>(metrics.clipCounts[channel]),
+            static_cast<juce::int64>(oracle["clipCounts"][static_cast<int>(channel)])
+        );
+    }
+    if (metrics.plrDb) {
+        expectWithinAbsoluteError(
+            *metrics.plrDb, 20.0 * std::log10(record.overallTruePeak) - record.integratedLufs, 1.0e-12
+        );
+    }
+    if (metrics.psrDb) {
+        expectWithinAbsoluteError(
+            *metrics.psrDb, 20.0 * std::log10(record.overallTruePeak) - record.maxShortTermLufs, 1.0e-12
+        );
+    }
+}
+
+/// Checks independent NumPy batch expectations against same-pass fixture and synthetic streaming metrics.
+void MeasurementTests::runSignalMetricsTests()
+{
+    beginTest("Shared NumPy source statistics, DC, clips, and centered correlation");
+    const auto expected = juce::JSON::parse(fixtureFile("metrics_expected.json"));
+    const auto& fixtures = expected["fixtures"];
+    expect(fixtures.isArray());
+    for (int index = 0; index < fixtures.size(); ++index) {
+        const auto& oracle = fixtures[index];
+        const auto record = analyzeFile(fixtureFile(oracle["fixture"].toString()));
+        expect(record.isReady());
+        expectSignalMetrics(record, oracle);
+        for (const auto& [actual, key] :
+             {std::pair {record.signalMetrics.plrDb, "plrDb"}, std::pair {record.signalMetrics.psrDb, "psrDb"}})
+        {
+            const auto& reference = oracle[key];
+            expect(actual.has_value() == !reference.isVoid());
+            if (actual && !reference.isVoid()) {
+                expectWithinAbsoluteError(*actual, static_cast<double>(reference), 0.001);
+            }
+        }
+    }
+    const auto& signals = expected["signals"];
+    expect(signals.isArray());
+    for (int index = 0; index < signals.size(); ++index) {
+        const auto& oracle = signals[index];
+        const auto& planes = oracle["planes"];
+        const auto frames = planes[0].size();
+        juce::AudioBuffer<float> samples(planes.size(), frames);
+        for (int channel = 0; channel < planes.size(); ++channel) {
+            for (int frame = 0; frame < frames; ++frame) {
+                samples.setSample(channel, frame, static_cast<float>(planes[channel][frame]));
+            }
+        }
+        for (const auto chunk : {1, 3, 7, frames}) {
+            AudioMeasurement meter(samples.getNumChannels(), 44'100.0, frames, false);
+            for (int offset = 0; offset < frames; offset += chunk) {
+                expect(meter.push(samples, offset, std::min(chunk, frames - offset)).has_value());
+            }
+            const auto record = meter.finish();
+            expect(record.has_value());
+            if (record) {
+                expectSignalMetrics(*record, oracle);
+            }
+        }
+    }
 }
 
 /// Measures planar samples in chunks and returns the record, which the caller checks.

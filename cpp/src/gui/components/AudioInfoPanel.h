@@ -25,6 +25,8 @@ namespace audiobatch
 /// Property grid dimensions shared by presentation and component storage.
 constexpr std::size_t AUDIO_INFO_COLUMN_COUNT {5};
 constexpr std::size_t AUDIO_INFO_ROW_COUNT {2};
+/// Scrollable source statistics and optional tag lines.
+constexpr std::size_t AUDIO_INFO_DETAIL_LINE_COUNT {7};
 constexpr std::size_t AUDIO_INFO_CELL_COUNT {AUDIO_INFO_COLUMN_COUNT * AUDIO_INFO_ROW_COUNT};
 
 /// One value in a technical or musical line, with a label retained for its tooltip.
@@ -43,6 +45,14 @@ struct AudioInfoDetails {
     std::vector<AudioInfoValue> audio;
     /// Tempo, original key with its Camelot equivalent, and year, independent of analysis readiness.
     std::vector<AudioInfoValue> track;
+    /// Whole-file source ratios, never gain-adjusted estimates.
+    juce::String dynamics;
+    /// Signed source channel means.
+    juce::String dcOffsets;
+    /// Source clipped sample counts by channel.
+    juce::String clips;
+    /// Whole-file centered source correlation.
+    juce::String correlation;
     /// Single-line genre tag.
     juce::String genre;
     /// Fully wrapped album tag.
@@ -189,13 +199,21 @@ private:
     /// Populated rows, independent of whether the details viewport is currently visible.
     std::array<bool, AUDIO_INFO_ROW_COUNT> detailRowsVisible {false, false};
     /// Captions retain genre, album, and comment display order.
-    std::array<juce::Label, 3> tagCaptions {
+    std::array<juce::Label, AUDIO_INFO_DETAIL_LINE_COUNT> tagCaptions {
+        juce::Label {{}, "Source"},
+        juce::Label {{}, "DC"},
+        juce::Label {{}, "Clips"},
+        juce::Label {{}, "Corr"},
         juce::Label {{}, "Genre"},
         juce::Label {{}, "Album"},
         juce::Label {{}, "Comment"},
     };
     /// Genre truncates on one line while album and comment wrap without a line limit.
-    std::array<AudioInfoText, 3> tagValues {
+    std::array<AudioInfoText, AUDIO_INFO_DETAIL_LINE_COUNT> tagValues {
+        AudioInfoText {"Source dynamics", true},
+        AudioInfoText {"Source DC offset", true},
+        AudioInfoText {"Source clip counts", true},
+        AudioInfoText {"Source correlation", false},
         AudioInfoText {"Genre", false},
         AudioInfoText {"Album", true},
         AudioInfoText {"Comment", true},
