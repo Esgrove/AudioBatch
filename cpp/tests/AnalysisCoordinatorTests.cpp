@@ -14,9 +14,11 @@
 #include <condition_variable>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace audiobatch::tests
@@ -118,6 +120,35 @@ public:
             expect(cacheFilledBeforeCompletion, "Completion must observe the finished waveform cache");
             const auto cachedRecord = cache.getAnalysis(file);
             expect(cachedRecord.has_value() && !cachedRecord->nativeWaveform);
+        }
+
+        beginTest("Blocking cancellation drains worker callbacks before returning");
+        {
+            const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "blocking_cancel.wav");
+            std::atomic<bool> started {false};
+            std::atomic<bool> finished {false};
+            AnalysisCoordinator coordinator(cache, 1);
+            coordinator.setStartingCallback([&](const juce::File&, int) {
+                started.store(true);
+                const auto deadline = std::chrono::steady_clock::now() + coordinatorTimeout;
+                while (!finished.load() && std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::yield();
+                }
+            });
+            AudioAnalysisOptions options;
+            options.inputPaths.add(file);
+            options.refresh = true;
+            const auto results = coordinator.analyzeBlocking(options, {}, [&] {
+                if (!started.load()) {
+                    return false;
+                }
+                finished.store(true);
+                return true;
+            });
+            expect(finished.load());
+            // A worker released at the cancellation boundary may finish before cancellation wins the race.
+            // Either outcome is valid, but no callback can outlive this return.
+            expect(results.size() <= 1);
         }
 
         beginTest("Results of a replaced run are not delivered after the new run started");

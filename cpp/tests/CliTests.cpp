@@ -752,6 +752,14 @@ void CliTests::runAnalysisExitCodeTests()
         return command;
     };
 
+    beginTest("A cancelled CLI run returns 130 and preserves its input without output files");
+    {
+        const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "cancelled.wav");
+        expectEquals(cli::runAnalysis(makeCommand({source}), cache, [] { return true; }), cli::EXIT_INTERRUPTED);
+        expect(source.existsAsFile());
+        expect(!source.withFileExtension(".aif").exists());
+    }
+
     beginTest("The analysis exits with 0 when every input is analyzed, and stores the results in the given cache");
     {
         const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");

@@ -19,8 +19,11 @@
 #include <fmt/base.h>
 #include <system_error>
 
+#include <atomic>
+#include <csignal>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <span>
 #include <variant>
@@ -29,6 +32,25 @@ namespace audiobatch
 {
 namespace
 {
+/// Signal-safe flag read by the ordinary workflow, never a coordinator call from the handler.
+std::atomic<bool> interrupted {false};
+static_assert(std::atomic<bool>::is_always_lock_free);
+
+/// Requests cooperative cleanup on the first interrupt and exits immediately on the second.
+/// No logging, allocation, locks, or object teardown runs in the asynchronous signal handler.
+void handleInterrupt(const int signalNumber)
+{
+    if (interrupted.exchange(true, std::memory_order_relaxed)) {
+        std::_Exit(cli::EXIT_INTERRUPTED);
+    }
+#if JUCE_WINDOWS
+    // The Windows CRT resets its signal disposition when it invokes a handler.
+    std::signal(signalNumber, handleInterrupt);
+#else
+    juce::ignoreUnused(signalNumber);
+#endif
+}
+
 /// Detaches the logger before returning the process exit code,
 /// so the juce::Logger never points at a logger that is about to be destroyed.
 int exitCli(const int exitCode)
@@ -126,7 +148,13 @@ int runCliMain(const std::span<char*> argv)
                     fmt::print("{}\n", cli::buildUsage(executableName, help.subcommand));
                     return 0;
                 },
-                [](const AnalyzeCommand& analysis) { return cli::runAnalysis(analysis); },
+                [](const AnalyzeCommand& analysis) {
+                    std::signal(SIGINT, handleInterrupt);
+#if JUCE_WINDOWS
+                    std::signal(SIGBREAK, handleInterrupt);
+#endif
+                    return cli::runAnalysis(analysis, [] { return interrupted.load(std::memory_order_relaxed); });
+                },
             },
             *command
         );
