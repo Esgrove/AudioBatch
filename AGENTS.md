@@ -55,6 +55,11 @@ which explains how its parts work together.
 - `fixtures/benchmark/generate.py` generates the long audio inputs for the Rust Criterion benchmarks.
   Its `output/` directory is ignored by git, and the benchmarks skip files that are absent.
   Run it through uv before measuring decoding or file analysis throughput.
+- `cpp/tests/fuzz/corpus/` holds the seeds of the C++ libFuzzer harnesses, run by `cpp/fuzz.sh`.
+ The Rust cargo-fuzz targets `serato_tags` and `cli_arguments` in `rust/fuzz/` share their input layouts,
+ and `rust/fuzz.sh` replays that corpus in place next to its own seeds in `rust/fuzz/corpus/`.
+ Change a harness input layout in both projects together.
+ `rust/miri.sh` runs the unsafe VST3 hosting code, the Serato parsers, and the cache blob readers under Miri.
 - `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
 - `tests/cli_integration.py` runs the same executable-level CLI contracts against either built CLI through uv.
   Pass `--cli <absolute-executable-path>` and optionally `--artifacts <directory>` for failure diagnostics.
@@ -76,6 +81,8 @@ which explains how its parts work together.
   `format.yml` runs the root `./format.sh --check` on every change,
   and checks that `fixtures/plugin_expected/` matches what its script writes.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
+ Its `miri` and `fuzz` jobs run `rust/miri.sh` and `rust/fuzz.sh` on macOS with nightly Rust,
+ and its path filters also include the C++ fuzz corpus that the Rust fuzz job replays.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.

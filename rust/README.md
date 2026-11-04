@@ -617,13 +617,71 @@ cargo llvm-cov nextest --workspace --html --open
 The coverage job in CI runs on macOS, adds the summary to the workflow run,
 and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
 
+## Miri
+
+[Miri](https://github.com/rust-lang/miri) interprets the tests and reports undefined behaviour,
+such as invalid pointer use or aliasing violations in unsafe code.
+`miri.sh` runs it with the Stacked Borrows model on the crates where that matters most:
+the unsafe COM code of `vst3-host` and the test plugin, the Serato tag parsers,
+and the readers of the waveform, overload, and spectrogram blobs in the cache.
+
+```shell
+# Install the nightly toolchain with Miri, then run the tests under it
+./miri.sh --install
+./miri.sh
+```
+
+Miri cannot open files, load plugin bundles, or run SQLite and audio devices,
+so tests that need them are marked `#[cfg_attr(miri, ignore = "reason")]`.
+So are the few tests that fill the largest overviews or bucket limits, which take minutes under Miri.
+The VST3 tests share a UI thread that runs until the test process exits,
+so `miri.sh` sets `-Zmiri-ignore-leaks` in `MIRIFLAGS`.
+The `miri` job in CI runs it on macOS.
+
+## Fuzzing
+
+`fuzz/` holds [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets for libFuzzer.
+It is its own workspace, excluded from the main one, because the targets build only on nightly.
+
+- `serato_tags` runs the Serato tag parsers and the Overview cache round trip.
+  Its input layout is that of the C++ `SeratoTagFuzzer`, so it also replays that corpus.
+- `cli_arguments` parses each line of the input as one argument, like the C++ `CliArgumentsFuzzer`,
+  and replays that corpus too.
+- `cache_blobs` reads the input as a waveform, overload, spectrogram, and Serato Overview blob,
+  and requires every accepted blob to be written back unchanged.
+- `decode_audio` writes the input to a file with an extension the first byte selects, and decodes it.
+  Inputs over 256 KiB are skipped, and decoding stops after about 20 seconds of audio.
+
+The seed corpus of each target is in `fuzz/corpus/<target>/`.
+`fuzz.sh` takes the same options as `cpp/fuzz.sh`.
+New inputs go to `fuzz/scratch/` and crashing inputs to `fuzz/artifacts/`, so the committed corpus never changes.
+
+```shell
+# Build the targets, replay the corpus, and fuzz each target for 60 seconds
+./fuzz.sh
+
+# Only replay the committed corpus, or only fuzz, for a chosen time
+./fuzz.sh --replay
+./fuzz.sh --fuzz --seconds 300
+
+# Build without running, or run what was built before
+./fuzz.sh --build-only
+./fuzz.sh --no-build --replay
+```
+
+Add an input that found a bug to the corpus of its target, so the replay keeps checking it.
+The `fuzz` job in CI replays the corpus, fuzzes each target for 60 seconds,
+and uploads crashing inputs as the `rust-fuzz-artifacts` artifact.
+
 ## Required Tools
 
 ```shell
 cargo install --locked cargo-nextest
 cargo install --locked cargo-llvm-cov
+cargo install --locked cargo-fuzz
 cargo install --locked samply
 rustup component add llvm-tools-preview
+rustup toolchain install nightly --component miri,rust-src
 ```
 
 [samply](https://github.com/mstange/samply) records sampling profiles of release or profiling builds.

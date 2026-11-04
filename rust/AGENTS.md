@@ -196,6 +196,9 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
 - `crates/build-info` (`build-info`): the build script helper of the CLI and the GUI.
   Its `emit` records the version, build time, git branch and commit, and compiler version as environment variables.
   The binaries read them at compile time, and `--version` and the About dialog show them.
+- `fuzz` (`audiobatch-fuzz`): the cargo-fuzz targets, a separate workspace excluded from this one,
+  because they build only on nightly.
+  `fuzz_targets/` holds one file per target, and `corpus/<target>/` its committed seeds.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
   It also locates the JUCE test VST3, lists the outputs that plugin must produce,
   and holds `null_test` in `null_test.rs`, which compares two decoded signals in 16-bit steps
@@ -253,6 +256,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Mostly this is in `vst3-host` and the test plugin, plus the Windows file drag in `gui/src/file_drag/windows.rs`.
   Every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
   Keep COM pointers inside `vst3-host`, so the crates above it stay safe.
+  Run `./miri.sh` after changing unsafe code, and keep the new tests runnable under Miri where possible.
 - **The SDK version.** The `vst3` crate is pinned to `=0.3.0`, whose bindings are generated from VST SDK 3.8.0,
   the SDK that JUCE bundles in the C++ application.
   Keep both applications on the same SDK version, and upgrade them together.
@@ -338,6 +342,12 @@ Other commands:
 # Run the tests with coverage and print the summary, add --open for the HTML report
 ./coverage.sh
 cargo llvm-cov nextest --workspace
+
+# Run the unsafe VST3 code, the Serato parsers, and the cache blob readers under Miri on nightly
+./miri.sh
+
+# Build the cargo-fuzz targets, replay their corpus, and fuzz each for 60 seconds, add --replay to only replay
+./fuzz.sh
 
 # Generate the long benchmark inputs, which the file benchmarks skip when absent
 uv run ../fixtures/benchmark/generate.py
@@ -515,6 +525,18 @@ Mention the C++ application only when it matters for the implementation:
   Avoid one-test modules by merging them into a related module,
   but a file with only a few tests can keep them in a single module.
   Split a module that grows past a few hundred lines by area.
+- `miri.sh` runs the tests of `vst3-host`, `audiobatch-test-plugin`, `serato-tags`,
+  and the waveform, overload, and spectrogram blob readers of the core under Miri with Stacked Borrows.
+  In those crates, mark a test that needs the file system, a plugin bundle, an audio device, or SQLite,
+  or that takes minutes under Miri, with `#[cfg_attr(miri, ignore = "reason")]`.
+  Fix undefined behaviour that Miri finds instead of ignoring the test.
+- The cargo-fuzz targets in `fuzz/` cover the Serato tag parsers, the CLI arguments, the cache blobs, and decoding.
+  `serato_tags` and `cli_arguments` share their input layout with the C++ harnesses in `../cpp/tests/fuzz/`,
+  and `fuzz.sh` replays the C++ corpus in place, so keep the layouts in step.
+  Add each input that found a bug to `fuzz/corpus/<target>/`.
+  The targets use only public library interfaces, so keep any item made public for them as narrow as possible.
+  Run `cargo clippy --manifest-path fuzz/Cargo.toml --all-targets` for them,
+  since the workspace clippy run does not include the excluded crate, and `format.sh` formats it.
 - Put test helpers used by several modules in a `#[cfg(test)]` module declared from the crate root,
   such as `crates/core/src/test_helpers.rs`.
   Helpers that only locate fixtures or list their properties belong in `test-fixtures`,
