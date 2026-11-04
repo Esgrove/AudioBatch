@@ -61,6 +61,18 @@ impl OperationResult {
         }
     }
 
+    /// Drops transient drawing payloads after cache persistence and before queuing a table result.
+    /// Selected-file readers load final artifacts independently, keeping batch event retention bounded.
+    pub fn clear_preview_artifacts(&mut self) {
+        match &mut self.outcome {
+            OperationOutcome::Failed { .. } => {}
+            OperationOutcome::CommittedButUnanalyzed { output, .. } | OperationOutcome::Succeeded { output, .. } => {
+                output.waveform = None;
+                output.spectrogram = None;
+            }
+        }
+    }
+
     /// Returns the user-facing error, when the operation failed in any way.
     #[must_use]
     pub fn error(&self) -> Option<&str> {
@@ -84,7 +96,8 @@ impl OperationResult {
 
 /// Keeps the cache in step with a committed output.
 ///
-/// A converted source leaves the cache, and an analyzed output is stored.
+/// A converted source leaves the cache, and a newly analyzed output is stored.
+/// Reused cached measurements do not overwrite newer measurements, provenance, gains, or spectral artifacts.
 /// A failed cache write only costs a re-analysis later, so it is reported and otherwise ignored.
 pub fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &OperationResult) {
     let Some(output) = result.output() else {
@@ -95,10 +108,15 @@ pub fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &Ope
     {
         tracing::warn!("Could not update the cache: {}", format_error_chain(&error));
     }
-    if matches!(result.outcome, OperationOutcome::Succeeded { .. })
-        && let Err(error) = cache.store_analysis(output)
-    {
-        tracing::warn!("Could not update the cache: {}", format_error_chain(&error));
+    if !output.from_cache && matches!(result.outcome, OperationOutcome::Succeeded { .. }) {
+        if let Err(error) = cache.store_analysis(output) {
+            tracing::warn!("Could not update the cache: {}", format_error_chain(&error));
+        }
+        if let Some(spectrogram) = &output.spectrogram
+            && let Err(error) = cache.store_spectrogram(output, spectrogram)
+        {
+            tracing::warn!("Could not cache the spectrogram: {}", format_error_chain(&error));
+        }
     }
 }
 
@@ -164,7 +182,8 @@ mod test_operation_cache {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::test_helpers::{ready_fixture_copy, temporary_cache};
+    use crate::record::MeasurementProducer;
+    use crate::test_helpers::{analyze, ready_fixture_copy, temporary_cache, temporary_cache_path};
 
     #[test]
     fn failed_operations_leave_the_cached_source_untouched() {
@@ -266,6 +285,88 @@ mod test_operation_cache {
         let retained = cache.get_analysis(&replacement.path).expect("newer source retained");
         assert_eq!(retained.file_size, replacement.file_size);
         assert_eq!(retained.sample_rate, replacement.sample_rate);
+    }
+
+    /// A delayed cached no-op has no authority over another connection's same-source measurement or gain clear.
+    #[test]
+    fn cached_no_op_preserves_newer_foreign_measurements_and_cleared_gain() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let writer = AnalysisCache::with_path(temporary_cache_path(&directory));
+        let mut original = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        original.custom_gain_db = Some(-3.0);
+        cache.store_analysis(&original).expect("stores native measurements");
+        let source = cache.get_analysis(&original.path).expect("cached native source");
+        assert!(source.from_cache);
+        assert_eq!(source.measurement_producer, MeasurementProducer::Rust);
+        let mut output = source.clone();
+        output.spectrogram = original.spectrogram.clone();
+        assert!(output.spectrogram.is_some());
+        let result = OperationResult::success(&source.path, output, None);
+
+        let mut newer = original;
+        newer.measurement_producer = MeasurementProducer::Cpp;
+        newer.overall_peak = 0.25;
+        newer.overall_true_peak = 0.3;
+        newer.integrated_lufs = -18.0;
+        writer
+            .store_analysis(&newer)
+            .expect("stores newer foreign measurements");
+        assert!(writer.store_custom_gain_for_record(&newer, None).expect("clears gain"));
+
+        update_cache(&cache, &source, &result);
+
+        let retained = cache
+            .get_analysis(&source.path)
+            .expect("retains newer cached measurements");
+        assert_eq!(retained.measurement_producer, MeasurementProducer::Cpp);
+        assert!((retained.overall_peak - newer.overall_peak).abs() < f32::EPSILON);
+        assert!((retained.overall_true_peak - newer.overall_true_peak).abs() < f64::EPSILON);
+        assert!((retained.integrated_lufs - newer.integrated_lufs).abs() < f64::EPSILON);
+        assert!(retained.custom_gain_db.is_none());
+        assert!(cache.get_spectrogram(&source.path).is_none());
+    }
+
+    /// A fresh native measurement remains publishable even when normalization does not rewrite the source.
+    #[test]
+    fn native_remeasurement_persists_same_path_measurements_and_spectrogram() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let writer = AnalysisCache::with_path(temporary_cache_path(&directory));
+        let mut foreign = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        foreign.measurement_producer = MeasurementProducer::Cpp;
+        foreign.overall_peak = 0.25;
+        foreign.overall_true_peak = 0.3;
+        foreign.integrated_lufs = -18.0;
+        foreign.custom_gain_db = Some(-3.0);
+        writer.store_analysis(&foreign).expect("stores foreign measurements");
+        let source = cache.get_analysis(&foreign.path).expect("cached foreign source");
+        let output = analyze(&source.path);
+        assert!(output.is_ready(), "{}", output.error_message);
+        assert!(!output.from_cache);
+        assert_eq!(output.measurement_producer, MeasurementProducer::Rust);
+        let spectrogram = output.spectrogram.clone().expect("native spectral artifact");
+        assert!(writer.store_custom_gain_for_record(&source, None).expect("clears gain"));
+
+        update_cache(
+            &cache,
+            &source,
+            &OperationResult::success(&source.path, output.clone(), None),
+        );
+
+        let cached = cache.get_analysis(&source.path).expect("native measurements persisted");
+        assert_eq!(cached.measurement_producer, MeasurementProducer::Rust);
+        assert!((cached.overall_peak - output.overall_peak).abs() < f32::EPSILON);
+        assert!((cached.overall_true_peak - output.overall_true_peak).abs() < f64::EPSILON);
+        assert!((cached.integrated_lufs - output.integrated_lufs).abs() < f64::EPSILON);
+        assert!(cached.custom_gain_db.is_none());
+        assert_eq!(
+            cache
+                .get_spectrogram(&source.path)
+                .expect("native spectral artifact persisted")
+                .to_bytes(),
+            spectrogram.to_bytes()
+        );
     }
 
     #[test]

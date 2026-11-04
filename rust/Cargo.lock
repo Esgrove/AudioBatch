@@ -643,6 +643,7 @@ dependencies = [
  "lofty",
  "log",
  "rayon",
+ "realfft",
  "rusqlite",
  "serato-tags",
  "serde_json",

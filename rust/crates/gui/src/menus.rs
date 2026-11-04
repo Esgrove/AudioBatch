@@ -13,6 +13,7 @@ use gpui_kit::{App, KeyBinding, Menu, MenuItem, SharedString, SystemMenuType};
 
 use crate::files::{OPEN_PARENT_FOLDER_LABEL, REVEAL_LABEL};
 use crate::plugins::labels::VendorGroup;
+use crate::settings::PreviewViewMode;
 
 /// Key context of the main view, which scopes the shortcuts that act on the results table.
 pub const KEY_CONTEXT: &str = "AudioBatch";
@@ -99,6 +100,30 @@ pub struct ToggleSeratoColours;
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
 pub struct ToggleAlbumArtwork;
+
+/// Selects the source visualization and arrangement shown in the preview.
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch, no_json)]
+pub struct SetPreviewViewMode {
+    /// Source visualization and arrangement to show.
+    pub mode: PreviewViewMode,
+}
+
+/// Shows or hides source sample-peak overload indicators.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleSampleOverloads;
+
+/// Shows or hides source true-peak overload indicators.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleTruePeakOverloads;
+
+/// Extends enabled overload indicators as vertical lines, or returns to edge markers only.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleOverloadLines;
 
 /// Collapses the preview into its compact row, or expands it again.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
@@ -246,10 +271,19 @@ pub struct AddPluginToChain {
 }
 
 /// Menu items whose check marks and labels reflect the app state.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MenuState {
     /// Name of the output device in use.
     pub output_device: Option<String>,
+    /// Source visualization and arrangement shown in the preview.
+    pub preview_view_mode: PreviewViewMode,
+    /// True when source sample-peak overload indicators are shown.
+    pub show_sample_overloads: bool,
+    /// True when source true-peak overload indicators are shown.
+    pub show_true_peak_overloads: bool,
+    /// True when enabled overload indicators extend as vertical lines.
+    pub show_overload_lines: bool,
     /// True when the loudness graph is shown.
     pub show_loudness_graph: bool,
     /// True when the Serato Overview colours the waveform.
@@ -333,6 +367,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("space", TogglePlayback, outside_text),
         KeyBinding::new("escape", StopPlayback, outside_text),
         KeyBinding::new(primary!(","), OpenAudioSettings, context),
+        KeyBinding::new(primary!("p"), OpenAudioSettings, context),
         KeyBinding::new("escape", CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
         KeyBinding::new(primary!("w"), CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
         KeyBinding::new("escape", ClosePluginWindow, Some(PLUGIN_WINDOW_KEY_CONTEXT)),
@@ -409,6 +444,17 @@ pub fn set_menus(cx: &mut App, state: &MenuState) {
     menus.push(plugins_menu(state));
     menus.push(
         Menu::new("Options").items([
+            MenuItem::submenu(Menu::new("Preview view").items(PreviewViewMode::ALL.map(|mode| {
+                MenuItem::action(mode.label(), SetPreviewViewMode { mode }).checked(state.preview_view_mode == mode)
+            }))),
+            MenuItem::submenu(
+                Menu::new("Overload indicators").items([
+                    MenuItem::action("Peak overloads", ToggleSampleOverloads).checked(state.show_sample_overloads),
+                    MenuItem::action("True-peak overloads", ToggleTruePeakOverloads)
+                        .checked(state.show_true_peak_overloads),
+                    MenuItem::action("Overload vertical lines", ToggleOverloadLines).checked(state.show_overload_lines),
+                ]),
+            ),
             MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
             MenuItem::action("Serato Waveform Colours", ToggleSeratoColours).checked(state.serato_colours),
             MenuItem::action("Show Album Artwork", ToggleAlbumArtwork).checked(state.show_album_artwork),
@@ -496,4 +542,143 @@ fn plugins_menu(state: &MenuState) -> Menu {
         MenuItem::action("Process Selected With Plugin Chain", ProcessSelected),
         MenuItem::action("Process All Files With Plugin Chain", ProcessAll),
     ])
+}
+
+#[cfg(test)]
+mod test_preview_menus {
+    use gpui_kit::{Keystroke, OwnedMenu, OwnedMenuItem, TestAppContext};
+
+    use super::*;
+
+    /// Finds a submenu by its canonical name in the installed Options menu.
+    fn submenu(options: &OwnedMenu, name: &str) -> OwnedMenu {
+        options
+            .items
+            .iter()
+            .find_map(|item| match item {
+                OwnedMenuItem::Submenu(menu) if menu.name == name => Some(menu.clone()),
+                _ => None,
+            })
+            .expect("the Options submenu exists")
+    }
+
+    /// Reads the native Options menu installed by the production builder.
+    fn options_menu(cx: &App) -> OwnedMenu {
+        cx.get_menus()
+            .expect("menus are installed")
+            .into_iter()
+            .find(|menu| menu.name == "Options")
+            .expect("the Options menu exists")
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
+    fn folder_and_settings_shortcuts_remain_distinct_and_settings_displays_p(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            let bindings = cx.key_bindings();
+            let bindings = bindings.borrow();
+            let folder_key = Keystroke::parse(primary!("o")).expect("valid folder shortcut");
+            let settings_key = Keystroke::parse(primary!("p")).expect("valid settings shortcut");
+            assert!(
+                bindings
+                    .bindings_for_action(&ChooseFolder)
+                    .any(|binding| { binding.match_keystrokes(std::slice::from_ref(&folder_key)) == Some(false) })
+            );
+            let settings = bindings
+                .bindings_for_action(&OpenAudioSettings)
+                .next_back()
+                .expect("settings shortcut");
+            assert_eq!(settings.match_keystrokes(&[settings_key]), Some(false));
+            assert!(bindings.bindings_for_action(&ChooseFolder).all(|binding| {
+                binding.match_keystrokes(&[Keystroke::parse(primary!("p")).expect("valid shortcut")]) != Some(false)
+            }));
+        });
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
+    fn preview_view_menu_checks_exactly_the_canonical_mode(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            for mode in PreviewViewMode::ALL {
+                set_menus(
+                    cx,
+                    &MenuState {
+                        preview_view_mode: mode,
+                        ..MenuState::default()
+                    },
+                );
+                let menu = submenu(&options_menu(cx), "Preview view");
+                assert_eq!(menu.items.len(), PreviewViewMode::ALL.len());
+                for (item, candidate) in menu.items.iter().zip(PreviewViewMode::ALL) {
+                    let OwnedMenuItem::Action {
+                        name,
+                        action,
+                        checked,
+                        disabled,
+                        ..
+                    } = item
+                    else {
+                        unreachable!("preview choices are actions")
+                    };
+                    assert_eq!(name, candidate.label());
+                    assert_eq!(
+                        action
+                            .as_any()
+                            .downcast_ref::<SetPreviewViewMode>()
+                            .expect("preview action")
+                            .mode,
+                        candidate
+                    );
+                    assert_eq!(*checked, candidate == mode);
+                    assert!(!disabled);
+                }
+            }
+        });
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
+    fn overload_menu_retains_all_eight_independent_checkmark_combinations(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            for sample in [false, true] {
+                for true_peak in [false, true] {
+                    for lines in [false, true] {
+                        set_menus(
+                            cx,
+                            &MenuState {
+                                show_sample_overloads: sample,
+                                show_true_peak_overloads: true_peak,
+                                show_overload_lines: lines,
+                                ..MenuState::default()
+                            },
+                        );
+                        let menu = submenu(&options_menu(cx), "Overload indicators");
+                        assert_eq!(menu.items.len(), 3);
+                        for (item, expected) in menu.items.iter().zip([sample, true_peak, lines]) {
+                            let OwnedMenuItem::Action { checked, disabled, .. } = item else {
+                                unreachable!("overload choices are actions")
+                            };
+                            assert_eq!(*checked, expected);
+                            assert!(!disabled);
+                        }
+                    }
+                }
+            }
+        });
+    }
 }

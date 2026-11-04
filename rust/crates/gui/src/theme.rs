@@ -94,6 +94,8 @@ pub mod palette {
     pub const GREEN_SUCCESS_HOVER: PaletteColor = PaletteColor::new("#7BC495");
     /// Active success buttons.
     pub const GREEN_SUCCESS_ACTIVE: PaletteColor = PaletteColor::new("#58A475");
+    /// Source true-peak overloads, distinct from decoded sample-peak warnings.
+    pub const ORANGE: PaletteColor = PaletteColor::new("#DD8B65");
     /// Warning indicators.
     pub const YELLOW_WARNING: PaletteColor = PaletteColor::new("#CEAF6C");
     /// The subtle hover background.

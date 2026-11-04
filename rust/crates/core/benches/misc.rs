@@ -1,6 +1,7 @@
 //! Benchmarks of the work around the analysis: reading cached records, and sorting and comparing names.
 //!
 //! A cached run loads measurements and bounded histories without retaining native preview blobs.
+//! Selected spectral reads and independent spectral publication include identity checks and portable blob processing.
 //! The CLI and the GUI sort the records by name, path, peak, or loudness.
 
 // Benchmarks are test code, which the workspace allows to index, like the tests.
@@ -351,6 +352,85 @@ fn bench_shared_cache(criterion: &mut Criterion) {
     group.finish();
 }
 
+/// Measures selected spectral hydration and publication without loading previews into folder measurements.
+/// A committed short source always runs, and an optional generated high-rate track covers a much larger blob.
+fn bench_spectrogram_cache(criterion: &mut Criterion) {
+    let mut sources = vec![(
+        "sine_stereo_44100_16.wav",
+        test_fixtures::fixture("sine_stereo_44100_16.wav"),
+    )];
+    let long_name = "music_stereo_192000_24.wav";
+    if let Some(path) = test_fixtures::benchmark_file(long_name) {
+        sources.push((long_name, path));
+    } else {
+        eprintln!(
+            "Skipping spectral cache {long_name}, generate it with uv run ../fixtures/benchmark/generate.py from rust/"
+        );
+    }
+
+    let mut group = criterion.benchmark_group("cache/spectrogram");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(2));
+    for (name, path) in sources {
+        let directory = tempfile::tempdir().expect("creates isolated spectral cache directory");
+        let database = directory.path().join("spectral.db");
+        let cache = AnalysisCache::with_path(&database);
+        let mut record = analyze_file(&path, &|| false, &mut |_| {});
+        assert!(record.is_ready(), "{name}: {}", record.error_message);
+        let data = record.spectrogram.take().expect("same-pass spectral artifact");
+        record.waveform = None;
+        cache
+            .store_analysis(&record)
+            .expect("stores measurements without previews");
+        assert!(cache.get_spectrogram(&path).is_none());
+        assert!(
+            cache
+                .store_spectrogram(&record, &data)
+                .expect("publishes selected spectrum")
+        );
+        let loaded = cache.get_spectrogram(&path).expect("selected spectral hit");
+        assert_eq!(loaded, data, "{name}: cache must preserve every spectral byte");
+        assert!(loaded.matches_stream(record.sample_rate, record.length_in_samples, record.channels));
+        let measurements = cache.get_analysis(&path).expect("measurements remain available");
+        assert!(measurements.waveform.is_none() && measurements.spectrogram.is_none());
+        let blob_bytes = data.to_bytes().len();
+        let parameter = format!("{name}_{blob_bytes}bytes");
+        group.throughput(Throughput::Bytes(blob_bytes as u64));
+        group.bench_function(BenchmarkId::new("get_selected", &parameter), |bencher| {
+            bencher.iter(|| black_box(cache.get_spectrogram(black_box(&path))));
+        });
+        group.bench_function(BenchmarkId::new("get_selected_new_connection", &parameter), |bencher| {
+            bencher.iter_batched(
+                || AnalysisCache::with_path(&database),
+                |reader| {
+                    let data = reader.get_spectrogram(black_box(&path));
+                    // Keep connection teardown and loaded-grid destruction outside the measured operation.
+                    black_box((reader, data))
+                },
+                BatchSize::PerIteration,
+            );
+        });
+        group.bench_function(BenchmarkId::new("store_selected", &parameter), |bencher| {
+            bencher.iter(|| {
+                black_box(
+                    cache
+                        .store_spectrogram(black_box(&record), black_box(&data))
+                        .expect("updates selected spectral artifact"),
+                )
+            });
+        });
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(
+            BenchmarkId::new("measurements_without_previews", &parameter),
+            |bencher| {
+                bencher.iter(|| black_box(cache.get_analysis(black_box(&path))));
+            },
+        );
+    }
+    group.finish();
+}
+
 /// Benchmarks natural name comparison and sorting records in every mode.
 fn bench_sorting(criterion: &mut Criterion) {
     let template = AnalysisRecord {
@@ -405,5 +485,11 @@ fn bench_sorting(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_cache, bench_shared_cache, bench_sorting);
+criterion_group!(
+    benches,
+    bench_cache,
+    bench_shared_cache,
+    bench_spectrogram_cache,
+    bench_sorting
+);
 criterion_main!(benches);

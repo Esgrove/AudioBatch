@@ -35,6 +35,7 @@ pub mod record;
 #[doc(hidden)]
 pub mod signals;
 pub mod sorting;
+pub mod spectrogram;
 pub mod storage;
 pub mod tags;
 #[cfg(test)]

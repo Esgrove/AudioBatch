@@ -4,7 +4,7 @@
 //! the output device with its sample rate and buffer size,
 //! previewing through the plugin chain with or without latency compensation,
 //! continuing playback when changing files, starting from the first cue point,
-//! and the loudness graph with its axis range.
+//! the source visualization and arrangement, independent overload indicators, and the loudness graph range.
 //! The Options menu choices for the Serato waveform colours and the album artwork are kept here too.
 //! The normalization mode and its peak and loudness targets are kept here too.
 //! They are stored as JSON in the Rust-specific `AudioBatch-rs` data directory.
@@ -20,7 +20,7 @@ use audiobatch_core::normalize::{
     MINIMUM_TARGET_PEAK_DBFS, NormalizationMode,
 };
 use audiobatch_playback::OutputConfig;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Lowest loudness the graph axis accepts, in LUFS.
 pub const LOUDNESS_LIMIT_MINIMUM: i32 = -60;
@@ -48,7 +48,23 @@ pub enum NormalizeMode {
     Loudness,
 }
 
+/// Source visualization and arrangement shown in the preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewViewMode {
+    /// Shows the source waveform.
+    #[default]
+    Waveform,
+    /// Shows the source spectrogram.
+    Spectrogram,
+    /// Shows the waveform and spectrogram beside each other.
+    SideBySide,
+    /// Shows the waveform above the spectrogram.
+    Stacked,
+}
+
 /// Preferences that persist between launches.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiSettings {
@@ -66,7 +82,16 @@ pub struct GuiSettings {
     pub continue_playback: bool,
     /// Starts a loaded file at its first cue point when it is in the first half of the file.
     pub play_from_first_cue_point: bool,
-    /// Draws the short-term loudness graph over the waveform.
+    /// Source visualization and arrangement shown in the preview.
+    #[serde(deserialize_with = "deserialize_preview_view_mode")]
+    pub preview_view_mode: PreviewViewMode,
+    /// Shows source sample-peak overload indicators independently of true peaks.
+    pub show_sample_overloads: bool,
+    /// Shows source true-peak overload indicators independently of sample peaks.
+    pub show_true_peak_overloads: bool,
+    /// Extends enabled overload indicators as vertical lines across the preview.
+    pub show_overload_lines: bool,
+    /// Draws the short-term loudness graph over the preview.
     pub show_loudness_graph: bool,
     /// Bottom of the loudness graph axis in LUFS.
     pub loudness_minimum: i32,
@@ -97,6 +122,22 @@ impl NormalizeMode {
     }
 }
 
+impl PreviewViewMode {
+    /// Modes in the canonical display order shared by the selector and menus.
+    pub const ALL: [Self; 4] = [Self::Waveform, Self::Spectrogram, Self::SideBySide, Self::Stacked];
+
+    /// Returns the canonical display label, independent of its stable storage name.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Waveform => "Waveform",
+            Self::Spectrogram => "Spectrogram",
+            Self::SideBySide => "Both: side by side",
+            Self::Stacked => "Both: stacked",
+        }
+    }
+}
+
 impl Default for GuiSettings {
     fn default() -> Self {
         Self {
@@ -107,6 +148,10 @@ impl Default for GuiSettings {
             compensate_preview_latency: true,
             continue_playback: false,
             play_from_first_cue_point: false,
+            preview_view_mode: PreviewViewMode::Waveform,
+            show_sample_overloads: true,
+            show_true_peak_overloads: true,
+            show_overload_lines: true,
             show_loudness_graph: false,
             loudness_minimum: DEFAULT_LOUDNESS_MINIMUM,
             loudness_maximum: DEFAULT_LOUDNESS_MAXIMUM,
@@ -122,6 +167,7 @@ impl Default for GuiSettings {
 
 impl GuiSettings {
     /// Reads the settings from a file, with the defaults when it is missing or invalid.
+    /// An unknown preview mode falls back to waveform without changing the other preferences.
     /// An invalid loudness range falls back to the default range on its own,
     /// and a normalization target outside its range is clamped into it.
     #[must_use]
@@ -184,6 +230,12 @@ pub fn parse_loudness_limit(text: &str) -> Option<i32> {
         .filter(|value| (LOUDNESS_LIMIT_MINIMUM..=LOUDNESS_LIMIT_MAXIMUM).contains(value))
 }
 
+/// Falls back only the preview mode when a saved value is unknown or has an invalid JSON type.
+fn deserialize_preview_view_mode<'de, D: Deserializer<'de>>(deserializer: D) -> Result<PreviewViewMode, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
 /// Clamps a stored normalization target into its range, with the default for a value that is not a number.
 const fn clamp_target(value: f64, minimum: f64, maximum: f64, default: f64) -> f64 {
     if value.is_finite() {
@@ -209,6 +261,10 @@ mod test_settings_file {
             compensate_preview_latency: false,
             continue_playback: true,
             play_from_first_cue_point: true,
+            preview_view_mode: PreviewViewMode::Stacked,
+            show_sample_overloads: false,
+            show_true_peak_overloads: false,
+            show_overload_lines: false,
             show_loudness_graph: true,
             loudness_minimum: -30,
             loudness_maximum: 0,
@@ -244,6 +300,10 @@ mod test_settings_file {
         assert!(!settings.preview_plugin_chain);
         assert!(settings.compensate_preview_latency);
         assert!(settings.show_album_artwork);
+        assert_eq!(settings.preview_view_mode, PreviewViewMode::Waveform);
+        assert!(settings.show_sample_overloads);
+        assert!(settings.show_true_peak_overloads);
+        assert!(settings.show_overload_lines);
     }
 
     #[test]
@@ -269,6 +329,84 @@ mod test_settings_file {
         assert_eq!(settings.normalize_mode, NormalizeMode::Loudness);
         assert!((settings.normalize_target_peak_dbfs - MAXIMUM_TARGET_PEAK_DBFS).abs() < f64::EPSILON);
         assert!((settings.normalize_target_lufs - MINIMUM_TARGET_LUFS).abs() < f64::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod test_preview_preferences {
+    use super::*;
+
+    #[test]
+    fn modes_have_stable_storage_names_and_canonical_labels() {
+        let expected = [
+            (PreviewViewMode::Waveform, "waveform", "Waveform"),
+            (PreviewViewMode::Spectrogram, "spectrogram", "Spectrogram"),
+            (PreviewViewMode::SideBySide, "side_by_side", "Both: side by side"),
+            (PreviewViewMode::Stacked, "stacked", "Both: stacked"),
+        ];
+        for (mode, name, label) in expected {
+            assert_eq!(serde_json::to_value(mode).expect("serializes a mode"), name);
+            assert_eq!(mode.label(), label);
+            let settings = GuiSettings {
+                preview_view_mode: mode,
+                ..GuiSettings::default()
+            };
+            let json = serde_json::to_string(&settings).expect("serializes settings");
+            assert_eq!(
+                serde_json::from_str::<GuiSettings>(&json).expect("reads settings"),
+                settings
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_modes_fall_back_without_resetting_other_preferences() {
+        let directory = tempfile::tempdir().expect("creates a temporary directory");
+        let path = directory.path().join(SETTINGS_FILE_NAME);
+        let expected = GuiSettings {
+            output_device: Some(String::from("Saved device")),
+            sample_rate: Some(96_000),
+            show_loudness_graph: true,
+            normalize_mode: NormalizeMode::Loudness,
+            normalize_target_lufs: -11.0,
+            serato_waveform_colours: false,
+            show_sample_overloads: false,
+            show_overload_lines: false,
+            ..GuiSettings::default()
+        };
+        for unknown in [
+            serde_json::json!("future_mode"),
+            serde_json::Value::Null,
+            serde_json::json!(42),
+        ] {
+            let mut value = serde_json::to_value(&expected).expect("serializes settings");
+            value
+                .as_object_mut()
+                .expect("settings serialize as an object")
+                .insert(String::from("preview_view_mode"), unknown);
+            fs::write(&path, serde_json::to_vec(&value).expect("serializes settings")).expect("writes settings");
+            assert_eq!(GuiSettings::load_from(&path), expected);
+        }
+    }
+
+    #[test]
+    fn all_overload_combinations_round_trip_independently() {
+        let directory = tempfile::tempdir().expect("creates a temporary directory");
+        let path = directory.path().join(SETTINGS_FILE_NAME);
+        for sample in [false, true] {
+            for true_peak in [false, true] {
+                for lines in [false, true] {
+                    let settings = GuiSettings {
+                        show_sample_overloads: sample,
+                        show_true_peak_overloads: true_peak,
+                        show_overload_lines: lines,
+                        ..GuiSettings::default()
+                    };
+                    settings.save_to(&path).expect("saves settings");
+                    assert_eq!(GuiSettings::load_from(&path), settings);
+                }
+            }
+        }
     }
 }
 

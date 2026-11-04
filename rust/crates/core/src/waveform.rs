@@ -216,7 +216,7 @@ impl WaveformOverview {
 
     /// Returns the source length in frames.
     #[must_use]
-    pub(crate) const fn length_in_frames(&self) -> u64 {
+    pub const fn length_in_frames(&self) -> u64 {
         self.length_in_frames
     }
 
@@ -397,6 +397,13 @@ impl WaveformBuilder {
         if self.frames_in_bucket == self.frames_per_bucket {
             self.close_bucket();
         }
+    }
+
+    /// Copies the bounded buckets into a provisional overview without consuming the builder.
+    /// The length describes decoded audio only, not the full source timeline or a cache-ready artifact.
+    #[must_use]
+    pub fn snapshot(&self, sample_rate: u32, decoded_frames: u64) -> Arc<WaveformOverview> {
+        self.clone().finish(sample_rate, decoded_frames)
     }
 
     /// Finishes the overview, closing a partial final bucket.

@@ -30,6 +30,7 @@ mod info_panel;
 mod menus;
 mod normalization;
 mod operation_run;
+mod playback_status;
 mod plugins;
 mod results;
 mod settings;

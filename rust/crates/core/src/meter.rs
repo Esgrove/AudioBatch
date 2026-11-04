@@ -14,6 +14,7 @@ use crate::loudness::gating::LoudnessMeter;
 use crate::loudness::true_peak::TruePeak;
 use crate::overload::{OverloadHistory, OverloadHistoryBuilder, SAMPLE_OVER, TRUE_PEAK_OVER};
 use crate::record::{NEGATIVE_INFINITY_LOUDNESS, ShortTermLoudnessHistory, normalize_loudness};
+use crate::spectrogram::{SpectrogramBuilder, SpectrogramData};
 use crate::waveform::{WaveformBuilder, WaveformOverview};
 
 /// A loudness measurement failure.
@@ -38,6 +39,7 @@ pub struct BlockMeter {
     max_short_term_lufs: f64,
     history: Vec<f32>,
     waveform: WaveformBuilder,
+    spectrogram: Option<SpectrogramBuilder>,
     overloads: OverloadHistoryBuilder,
 }
 
@@ -63,6 +65,8 @@ pub struct MeterOutput {
     pub samples_per_point: u32,
     /// Waveform overview of the stream.
     pub waveform: Arc<WaveformOverview>,
+    /// Same-pass bounded spectrum for mono or stereo streams, absent for unsupported streams.
+    pub spectrogram: Option<Arc<SpectrogramData>>,
     /// Bounded source overload flags measured at the same fixed block boundaries.
     pub overloads: Arc<OverloadHistory>,
 }
@@ -95,6 +99,7 @@ impl BlockMeter {
                     .unwrap_or(0),
             ),
             waveform: WaveformBuilder::new(channel_count, expected_frames),
+            spectrogram: (channel_count <= 2).then(|| SpectrogramBuilder::new(channel_count, sample_rate)),
             overloads: OverloadHistoryBuilder::new(channels, sample_rate),
         })
     }
@@ -148,6 +153,26 @@ impl BlockMeter {
         }
     }
 
+    /// Copies a provisional waveform including samples waiting in the partial loudness block.
+    /// This leaves all measurement state intact and allocates only for the bounded waveform buckets.
+    #[must_use]
+    pub fn waveform_snapshot(&self, decoded_frames: u64) -> Arc<WaveformOverview> {
+        if self.block.first().is_none_or(Vec::is_empty) {
+            return self.waveform.snapshot(self.sample_rate, decoded_frames);
+        }
+        let mut waveform = self.waveform.clone();
+        let mut planes = [&[][..]; 64];
+        for (plane, samples) in planes.iter_mut().zip(&self.block) {
+            *plane = samples;
+        }
+        waveform.push(
+            planes
+                .get(..self.block.len())
+                .expect("validated channel count fits fixed storage"),
+        );
+        waveform.finish(self.sample_rate, decoded_frames)
+    }
+
     /// Measures a final partial block and returns the measurements of the stream of `length_in_samples` frames.
     #[must_use]
     pub fn finish(mut self, length_in_samples: u64) -> MeterOutput {
@@ -192,6 +217,7 @@ impl BlockMeter {
             history: self.history,
             samples_per_point: self.block_size as u32,
             waveform: self.waveform.finish(self.sample_rate, length_in_samples),
+            spectrogram: self.spectrogram.and_then(SpectrogramBuilder::finish),
             overloads: Arc::new(self.overloads.finish(length_in_samples)),
         }
     }
@@ -252,6 +278,9 @@ impl BlockMeter {
             }
         }
         self.waveform.push_extrema(planes, &block_minima, &block_maxima);
+        if let Some(spectrogram) = &mut self.spectrogram {
+            spectrogram.push(planes);
+        }
         if let Some(true_peak) = &mut self.true_peak {
             true_peak.push(planes);
             for (flag, &peak) in flags.iter_mut().zip(true_peak.previous_peaks()) {
@@ -284,6 +313,9 @@ mod test_chunk_size_invariance {
             "overloads.blob",
             &output.overloads.to_bytes().expect("valid overload history"),
         );
+        if let Some(spectrogram) = &output.spectrogram {
+            text.blob("spectrogram.blob", &spectrogram.to_bytes());
+        }
         text.text().to_string()
     }
 

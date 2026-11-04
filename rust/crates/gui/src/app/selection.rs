@@ -190,6 +190,10 @@ impl AppView {
             self.preview_source.begin(path);
         }
         self.selected = Some(path.to_path_buf());
+        if let Some(coordinator) = &self.coordinator {
+            let generation = self.preview_source.token().map_or(0, |(_, generation)| generation);
+            coordinator.select_preview(Some(path), generation);
+        }
         self.table.update(cx, |state, _| {
             state.delegate_mut().set_selected_path(Some(path.to_path_buf()));
         });
@@ -241,6 +245,9 @@ impl AppView {
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.start_after_cues = None;
         self.preview_source.clear();
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.select_preview(None, 0);
+        }
         self.selected = None;
         self.selected_tags = None;
         self.enrichment.deselect();

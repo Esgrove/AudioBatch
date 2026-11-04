@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 
 use super::AppView;
-use crate::settings::GuiSettings;
+use crate::settings::{GuiSettings, PreviewViewMode};
 use crate::settings_window::{
     SETTINGS_HEIGHT, SETTINGS_TITLE, SETTINGS_WIDTH, SettingsEvent, SettingsSnapshot, SettingsView,
 };
@@ -23,7 +23,7 @@ use crate::waveform::CueMarker;
 
 /// Smallest size of the settings window.
 /// The width keeps the loudness graph checkbox and both range fields on one row without squeezing the checkbox label.
-const SETTINGS_MINIMUM_SIZE: (f32, f32) = (520.0, 320.0);
+const SETTINGS_MINIMUM_SIZE: (f32, f32) = (520.0, 260.0);
 
 /// The open settings window and the subscription to its changes.
 pub(super) struct SettingsWindow {
@@ -77,6 +77,34 @@ impl AppView {
     pub(super) fn toggle_serato_colours(&mut self, cx: &mut Context<Self>) {
         let mut settings = self.settings.clone();
         settings.serato_waveform_colours = !settings.serato_waveform_colours;
+        self.apply_settings(settings, cx);
+    }
+
+    /// Selects the source visualization and arrangement, from a menu or the preview.
+    pub(super) fn set_preview_view_mode(&mut self, mode: PreviewViewMode, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.preview_view_mode = mode;
+        self.apply_settings(settings, cx);
+    }
+
+    /// Shows or hides source sample-peak overload indicators without changing true peaks or lines.
+    pub(super) fn toggle_sample_overloads(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.show_sample_overloads = !settings.show_sample_overloads;
+        self.apply_settings(settings, cx);
+    }
+
+    /// Shows or hides source true-peak overload indicators without changing sample peaks or lines.
+    pub(super) fn toggle_true_peak_overloads(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.show_true_peak_overloads = !settings.show_true_peak_overloads;
+        self.apply_settings(settings, cx);
+    }
+
+    /// Toggles vertical overload lines, retaining the preference even while both indicator types are hidden.
+    pub(super) fn toggle_overload_lines(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.show_overload_lines = !settings.show_overload_lines;
         self.apply_settings(settings, cx);
     }
 
@@ -193,7 +221,18 @@ impl AppView {
             waveform.set_show_loudness(show, cx);
             waveform.set_loudness_range(minimum, maximum, cx);
             waveform.set_serato_colours(serato_colours, cx);
+            waveform.set_view_mode(settings.preview_view_mode, cx);
+            waveform.set_overload_settings(
+                settings.show_sample_overloads,
+                settings.show_true_peak_overloads,
+                settings.show_overload_lines,
+                cx,
+            );
         });
+        self.menu_state.preview_view_mode = settings.preview_view_mode;
+        self.menu_state.show_sample_overloads = settings.show_sample_overloads;
+        self.menu_state.show_true_peak_overloads = settings.show_true_peak_overloads;
+        self.menu_state.show_overload_lines = settings.show_overload_lines;
         self.menu_state.show_loudness_graph = show;
         self.menu_state.serato_colours = serato_colours;
         self.menu_state.show_album_artwork = settings.show_album_artwork;
@@ -249,11 +288,10 @@ impl AppView {
     }
 
     /// Applies the settings the user changed in the settings window.
-    /// The window does not edit the normalization settings or the album artwork option,
-    /// and its copy of them is stale once the main window changes the mode, a target, or the option.
+    /// Only fields changed from its displayed snapshot are merged, preserving newer choices from other surfaces.
     fn on_settings_event(&mut self, _view: Entity<SettingsView>, event: &SettingsEvent, cx: &mut Context<Self>) {
-        let SettingsEvent::Changed(changed) = event;
-        let settings = merge_settings_window(&self.settings, changed);
+        let SettingsEvent::Changed { previous, settings } = event;
+        let settings = merge_settings_window(&self.settings, previous, settings);
         self.apply_settings(settings, cx);
     }
 
@@ -316,17 +354,41 @@ pub(super) fn open_player(output: &OutputConfig) -> anyhow::Result<Player> {
         .or_else(|_| Player::new(None))?)
 }
 
-/// Applies editable Audio Settings fields without replacing newer menu-only preferences from a stale snapshot.
-fn merge_settings_window(current: &GuiSettings, changed: &GuiSettings) -> GuiSettings {
-    GuiSettings {
-        normalize_mode: current.normalize_mode,
-        normalize_target_peak_dbfs: current.normalize_target_peak_dbfs,
-        normalize_target_lufs: current.normalize_target_lufs,
-        show_album_artwork: current.show_album_artwork,
-        serato_waveform_colours: current.serato_waveform_colours,
-        hidden_columns: current.hidden_columns.clone(),
-        ..changed.clone()
+/// Applies only the editable fields changed from the displayed snapshot to the canonical settings.
+/// A stale edit cannot restore another control's older value, including controls shared with the Options menu.
+fn merge_settings_window(current: &GuiSettings, previous: &GuiSettings, changed: &GuiSettings) -> GuiSettings {
+    let mut merged = current.clone();
+    macro_rules! merge_fields {
+        ($($field:ident),+ $(,)?) => {
+            $(if changed.$field != previous.$field {
+                merged.$field = changed.$field;
+            })+
+        };
     }
+    if changed.output_device != previous.output_device {
+        merged.output_device.clone_from(&changed.output_device);
+    }
+    merge_fields!(
+        sample_rate,
+        buffer_size,
+        preview_plugin_chain,
+        compensate_preview_latency,
+        continue_playback,
+        play_from_first_cue_point,
+        preview_view_mode,
+        show_sample_overloads,
+        show_true_peak_overloads,
+        show_overload_lines,
+        serato_waveform_colours,
+        show_loudness_graph,
+        loudness_minimum,
+        loudness_maximum,
+    );
+    if changed.output_device != previous.output_device {
+        merged.sample_rate = changed.sample_rate;
+        merged.buffer_size = changed.buffer_size;
+    }
+    merged
 }
 
 #[cfg(test)]
@@ -342,10 +404,16 @@ mod test_settings_merge {
             };
             let stale = GuiSettings {
                 serato_waveform_colours: !enabled,
-                buffer_size: Some(512),
                 ..GuiSettings::default()
             };
-            let merged = merge_settings_window(&current, &stale);
+            let merged = merge_settings_window(
+                &current,
+                &stale,
+                &GuiSettings {
+                    buffer_size: Some(512),
+                    ..stale.clone()
+                },
+            );
             assert_eq!(merged.serato_waveform_colours, enabled);
             assert_eq!(merged.buffer_size, Some(512));
         }
@@ -359,10 +427,16 @@ mod test_settings_merge {
         };
         let stale = GuiSettings {
             hidden_columns: Some(vec![String::from("peak_left")]),
-            buffer_size: Some(512),
             ..GuiSettings::default()
         };
-        let merged = merge_settings_window(&current, &stale);
+        let merged = merge_settings_window(
+            &current,
+            &stale,
+            &GuiSettings {
+                buffer_size: Some(512),
+                ..stale.clone()
+            },
+        );
         assert_eq!(merged.hidden_columns, current.hidden_columns);
         assert_eq!(merged.buffer_size, Some(512));
     }
@@ -376,10 +450,16 @@ mod test_settings_merge {
             };
             let stale = GuiSettings {
                 show_album_artwork: !enabled,
-                buffer_size: Some(512),
                 ..GuiSettings::default()
             };
-            let merged = merge_settings_window(&current, &stale);
+            let merged = merge_settings_window(
+                &current,
+                &stale,
+                &GuiSettings {
+                    buffer_size: Some(512),
+                    ..stale.clone()
+                },
+            );
             assert_eq!(merged.show_album_artwork, enabled);
             assert_eq!(merged.buffer_size, Some(512));
         }
@@ -392,9 +472,108 @@ mod test_settings_merge {
             normalize_mode: crate::settings::NormalizeMode::Loudness,
             ..GuiSettings::default()
         };
-        let merged = merge_settings_window(&current, &GuiSettings::default());
+        let merged = merge_settings_window(&current, &GuiSettings::default(), &GuiSettings::default());
         assert!((merged.normalize_target_lufs + 12.0).abs() < f64::EPSILON);
         assert_eq!(merged.normalize_mode, current.normalize_mode);
+    }
+
+    #[test]
+    fn stale_device_edits_preserve_every_preview_mode_and_overload_combination() {
+        for mode in PreviewViewMode::ALL {
+            for sample in [false, true] {
+                for true_peak in [false, true] {
+                    for lines in [false, true] {
+                        let current = GuiSettings {
+                            preview_view_mode: mode,
+                            show_sample_overloads: sample,
+                            show_true_peak_overloads: true_peak,
+                            show_overload_lines: lines,
+                            ..GuiSettings::default()
+                        };
+                        let previous = GuiSettings {
+                            show_sample_overloads: !sample,
+                            show_true_peak_overloads: !true_peak,
+                            show_overload_lines: !lines,
+                            ..GuiSettings::default()
+                        };
+                        let changed = GuiSettings {
+                            buffer_size: Some(512),
+                            ..previous.clone()
+                        };
+                        let merged = merge_settings_window(&current, &previous, &changed);
+                        assert_eq!(merged.preview_view_mode, mode);
+                        assert_eq!(merged.show_sample_overloads, sample);
+                        assert_eq!(merged.show_true_peak_overloads, true_peak);
+                        assert_eq!(merged.show_overload_lines, lines);
+                        assert_eq!(merged.buffer_size, Some(512));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preview_edits_apply_only_the_requested_field_from_a_stale_snapshot() {
+        let previous = GuiSettings::default();
+        let current = GuiSettings {
+            preview_view_mode: PreviewViewMode::Spectrogram,
+            show_sample_overloads: false,
+            show_true_peak_overloads: false,
+            show_overload_lines: false,
+            serato_waveform_colours: false,
+            ..previous.clone()
+        };
+        let edits: [fn(&mut GuiSettings); 5] = [
+            |settings| settings.preview_view_mode = PreviewViewMode::Stacked,
+            |settings| settings.show_sample_overloads = false,
+            |settings| settings.show_true_peak_overloads = false,
+            |settings| settings.show_overload_lines = false,
+            |settings| settings.serato_waveform_colours = false,
+        ];
+        for edit in edits {
+            let mut changed = previous.clone();
+            edit(&mut changed);
+            let mut expected = current.clone();
+            edit(&mut expected);
+            assert_eq!(merge_settings_window(&current, &previous, &changed), expected);
+        }
+        let toggles: [fn(&mut GuiSettings, bool); 4] = [
+            |settings, enabled| settings.show_sample_overloads = enabled,
+            |settings, enabled| settings.show_true_peak_overloads = enabled,
+            |settings, enabled| settings.show_overload_lines = enabled,
+            |settings, enabled| settings.serato_waveform_colours = enabled,
+        ];
+        for toggle in toggles {
+            for enabled in [false, true] {
+                let mut current = current.clone();
+                toggle(&mut current, !enabled);
+                let mut previous = previous.clone();
+                toggle(&mut previous, !enabled);
+                let mut changed = previous.clone();
+                toggle(&mut changed, enabled);
+                let mut expected = current.clone();
+                toggle(&mut expected, enabled);
+                assert_eq!(merge_settings_window(&current, &previous, &changed), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn selecting_a_device_resets_stale_rate_and_buffer_choices_together() {
+        let previous = GuiSettings::default();
+        let current = GuiSettings {
+            sample_rate: Some(96_000),
+            buffer_size: Some(256),
+            ..previous.clone()
+        };
+        let changed = GuiSettings {
+            output_device: Some(String::from("New device")),
+            ..previous.clone()
+        };
+        let merged = merge_settings_window(&current, &previous, &changed);
+        assert_eq!(merged.output_device, changed.output_device);
+        assert_eq!(merged.sample_rate, None);
+        assert_eq!(merged.buffer_size, None);
     }
 
     #[test]
@@ -404,7 +583,7 @@ mod test_settings_merge {
             sample_rate: Some(48_000),
             ..GuiSettings::default()
         };
-        let merged = merge_settings_window(&GuiSettings::default(), &changed);
+        let merged = merge_settings_window(&GuiSettings::default(), &GuiSettings::default(), &changed);
         assert_eq!(merged.output_device, changed.output_device);
         assert_eq!(merged.sample_rate, changed.sample_rate);
         assert!(merged.show_album_artwork);

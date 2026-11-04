@@ -216,14 +216,16 @@ impl AppView {
             let delegate = state.delegate_mut();
             match result.outcome {
                 OperationOutcome::Failed { error } => delegate.fail_operation(&source, &error),
-                OperationOutcome::CommittedButUnanalyzed { output, error } => {
+                OperationOutcome::CommittedButUnanalyzed { mut output, error } => {
+                    output.spectrogram = None;
                     let message = RowMessage {
                         text: error,
                         is_error: true,
                     };
                     delegate.replace_after_operation(&source, output, Some(message));
                 }
-                OperationOutcome::Succeeded { output, notice } => {
+                OperationOutcome::Succeeded { mut output, notice } => {
+                    output.spectrogram = None;
                     let message = notice.map(|text| RowMessage { text, is_error: false });
                     delegate.replace_after_operation(&source, output, message);
                 }

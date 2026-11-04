@@ -22,12 +22,12 @@ use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, DecodeError
 use crate::format::{format_error_chain, gain_to_decibels};
 use crate::metadata::copy_metadata;
 use crate::meter::{BlockMeter, MeterError, MeterOutput};
-use crate::operation::{OperationResult, progress_range};
+use crate::operation::{OperationOutcome, OperationResult, progress_range};
 use crate::output_file::{
     FileDisposer, OutputValidationError, SourceIdentity, check_output_path, commit_temporary_output_expected,
     create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
-use crate::record::{AnalysisRecord, MeasurementProducer, NEGATIVE_INFINITY_LOUDNESS};
+use crate::record::{AnalysisError, AnalysisRecord, AnalysisStatus, MeasurementProducer, NEGATIVE_INFINITY_LOUDNESS};
 
 /// Lowest sample peak target, in dBFS.
 pub const MINIMUM_TARGET_PEAK_DBFS: f64 = -12.0;
@@ -384,14 +384,13 @@ pub fn normalize_file(
         Ok(temporary) => temporary,
         Err(error) => return fail(source, error.to_string()),
     };
-    let rendered = render_normalized_audio(
+    let rendered = match render_normalized_audio(
         &record,
         temporary.as_file(),
         gain,
         is_cancelled,
         &mut progress_range(on_progress, render_start, RENDER_PROGRESS_END),
-    );
-    let rendered = match rendered {
+    ) {
         Ok(rendered) => rendered,
         Err(error) => return fail(source, error),
     };
@@ -404,11 +403,14 @@ pub fn normalize_file(
         return fail(source, "Could not preserve metadata while writing normalized audio");
     }
     if let Err(error) = rendered.validate(temporary.path()) {
-        return fail(
-            source,
-            format!("Normalized output failed validation: {error}. The original file was left unchanged."),
-        );
+        let message = format!("Normalized output failed validation: {error}. The original file was left unchanged.");
+        return fail(source, message);
     }
+
+    let rendered_identity = match SourceIdentity::capture(temporary.path()) {
+        Ok(identity) => identity,
+        Err(error) => return fail(source, error),
+    };
 
     // Checked again before touching the original, since cancellation may arrive during the last block.
     if is_cancelled() {
@@ -431,9 +433,49 @@ pub fn normalize_file(
         return fail(source, error);
     }
 
-    let analysis = record_from_meter(&output, &rendered.info, rendered.frames, rendered.measurements);
+    complete_committed_output(source, &output, rendered, &rendered_identity, on_progress)
+}
+
+/// Attaches render-time measurements only while the committed output is still the rendered file.
+/// A replaced output remains a committed operation without granting the replacement old PCM artifacts.
+fn complete_committed_output(
+    source: &Path,
+    output: &Path,
+    rendered: RenderedAudio,
+    rendered_identity: &SourceIdentity,
+    on_progress: &mut dyn FnMut(f32),
+) -> OperationResult {
+    let Ok(source_identity) = rendered_identity.after_commit(output) else {
+        return changed_committed_output(source, output);
+    };
+    let analysis = record_from_meter(
+        output,
+        &rendered.info,
+        rendered.frames,
+        rendered.measurements,
+        source_identity,
+    );
     on_progress(1.0);
+    if !analysis.matches_file_on_disk() {
+        return changed_committed_output(source, output);
+    }
     succeed(source, analysis, rendered.notice)
+}
+
+/// Reports a committed output whose replacement cannot inherit the rendered file's measurements.
+fn changed_committed_output(source: &Path, output: &Path) -> OperationResult {
+    let mut analysis = AnalysisRecord::from_path(output);
+    analysis.status = AnalysisStatus::Failed;
+    analysis.error = Some(AnalysisError::Unreadable);
+    let error = "Output changed before its rendered measurements could be attached".to_string();
+    analysis.error_message.clone_from(&error);
+    OperationResult {
+        source: source.to_path_buf(),
+        outcome: OperationOutcome::CommittedButUnanalyzed {
+            output: analysis,
+            error,
+        },
+    }
 }
 
 /// Streams the source through the AIFF writer packet by packet, applying the gain.
@@ -622,7 +664,6 @@ mod test_apply_gain {
 #[cfg(test)]
 mod test_normalization_gain {
     use super::*;
-    use crate::record::AnalysisStatus;
 
     #[test]
     fn typed_gain_errors_keep_the_existing_messages() {
@@ -834,7 +875,6 @@ mod test_normalize_file {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::record::AnalysisStatus;
     use crate::tags::read_tags;
     use crate::test_helpers::ready_fixture_copy;
 

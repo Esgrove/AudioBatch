@@ -176,24 +176,38 @@ impl SourceIdentity {
         }
     }
 
+    /// Captures a committed receipt only when the path still names the rendered object and content stats.
+    /// Publication changes status time, so the receipt adopts that time without adopting an unrelated replacement.
+    pub(crate) fn after_commit(&self, path: &Path) -> Result<Self, OutputError> {
+        let actual = Self::capture(path).map_err(|_| OutputError::SourceChanged)?;
+        if self.same_object_and_content(&actual) {
+            Ok(actual)
+        } else {
+            Err(OutputError::SourceChanged)
+        }
+    }
+
     /// Compares object identity and content stats after a link or rename changed its status time.
-    fn owns(&self, path: &Path) -> bool {
-        Self::capture(path).is_ok_and(|actual| {
-            self.length == actual.length && self.modified == actual.modified && {
-                #[cfg(unix)]
-                {
-                    self.device == actual.device && self.inode == actual.inode
-                }
-                #[cfg(windows)]
-                {
-                    self.volume == actual.volume && self.index == actual.index
-                }
-                #[cfg(not(any(unix, windows)))]
-                {
-                    false
-                }
+    pub(crate) fn owns(&self, path: &Path) -> bool {
+        Self::capture(path).is_ok_and(|actual| self.same_object_and_content(&actual))
+    }
+
+    /// Compares stable file-object identity and content stats without rename-sensitive status time.
+    fn same_object_and_content(&self, actual: &Self) -> bool {
+        self.length == actual.length && self.modified == actual.modified && {
+            #[cfg(unix)]
+            {
+                self.device == actual.device && self.inode == actual.inode
             }
-        })
+            #[cfg(windows)]
+            {
+                self.volume == actual.volume && self.index == actual.index
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                false
+            }
+        }
     }
 }
 

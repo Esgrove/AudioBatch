@@ -16,6 +16,7 @@ fearless_simd_macros.workspace = true
 jiff.workspace = true
 lofty.workspace = true
 rayon.workspace = true
+realfft.workspace = true
 rusqlite.workspace = true
 serato-tags.workspace = true
 symphonia.workspace = true
@@ -54,6 +55,10 @@ harness = false
 
 [[bench]]
 name = "waveform"
+harness = false
+
+[[bench]]
+name = "spectrogram"
 harness = false
 
 [[bench]]
