@@ -1,6 +1,8 @@
 //! Bounded whole-file source statistics, independent of loudness weighting and preview gain.
 //! Pearson covariance uses online centered moments, so DC does not masquerade as correlation.
 
+use crate::meter::MAX_CHANNELS;
+
 /// Whole-file source measurements. Missing ratios have no finite denominator.
 #[derive(Debug, Default, Clone, PartialEq)]
 #[non_exhaustive]
@@ -23,10 +25,10 @@ pub struct SignalMetrics {
 pub(crate) struct SignalMetricsAccumulator {
     frames: u64,
     channels: usize,
-    means: [f64; 64],
-    moments: [f64; 64],
-    energies: [f64; 64],
-    clips: [u64; 64],
+    means: [f64; MAX_CHANNELS],
+    moments: [f64; MAX_CHANNELS],
+    energies: [f64; MAX_CHANNELS],
+    clips: [u64; MAX_CHANNELS],
     covariance: f64,
 }
 
@@ -50,10 +52,10 @@ impl SignalMetricsAccumulator {
         Self {
             frames: 0,
             channels,
-            means: [0.0; 64],
-            moments: [0.0; 64],
-            energies: [0.0; 64],
-            clips: [0; 64],
+            means: [0.0; MAX_CHANNELS],
+            moments: [0.0; MAX_CHANNELS],
+            energies: [0.0; MAX_CHANNELS],
+            clips: [0; MAX_CHANNELS],
             covariance: 0.0,
         }
     }
@@ -93,12 +95,7 @@ impl SignalMetricsAccumulator {
                 .then(|| 20.0_f64.mul_add(true_peak.log10(), -loudness))
                 .filter(|value| value.is_finite())
         };
-        let energy: f64 = self
-            .energies
-            .get(..self.channels)
-            .expect("validated channel count")
-            .iter()
-            .sum();
+        let energy: f64 = self.used(&self.energies).iter().sum();
         let rms = (energy / (self.frames as f64 * self.channels as f64)).sqrt();
         let correlation = if self.channels == 1 {
             Some(1.0)
@@ -115,19 +112,17 @@ impl SignalMetricsAccumulator {
                 .then(|| 20.0 * (peak / rms).log10())
                 .filter(|value| value.is_finite()),
             dc_offsets: if self.frames > 0 {
-                self.means
-                    .get(..self.channels)
-                    .expect("validated channel count")
-                    .to_vec()
+                self.used(&self.means).to_vec()
             } else {
                 Vec::new()
             },
-            clip_counts: self
-                .clips
-                .get(..self.channels)
-                .expect("validated channel count")
-                .to_vec(),
+            clip_counts: self.used(&self.clips).to_vec(),
             stereo_correlation: correlation,
         }
+    }
+
+    /// Returns the entries of a per-channel array that belong to the stream's channels.
+    fn used<'a, T>(&self, values: &'a [T; MAX_CHANNELS]) -> &'a [T] {
+        values.get(..self.channels).expect("validated channel count")
     }
 }

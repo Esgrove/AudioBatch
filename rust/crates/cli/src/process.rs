@@ -56,22 +56,13 @@ pub fn run_process(
 ) -> Result<u8> {
     let analysis = args.analysis_args();
     let normalization = analysis.normalization().map_err(anyhow::Error::msg)?;
-    let path = Path::new(&args.preset);
-    let preset = if path.is_file()
-        || args.preset.contains(['/', '\\'])
-        || path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-    {
-        load_preset_file_strict(path)?
+    let preset = if is_preset_path(&args.preset) {
+        load_preset_file_strict(Path::new(&args.preset))?
     } else {
         PresetStore::new(PluginDataPaths::default().presets).load_strict(&args.preset)?
     };
     let chain = preset.chain();
-    anyhow::ensure!(
-        chain.slots.iter().any(|slot| slot.enabled),
-        "The plugin chain has no enabled plugins"
-    );
+    ensure_enabled_plugins(&chain)?;
     let ui = UiThread::register_current()?;
     let (dispatcher, jobs) = ui_channel();
     let workers = analysis.worker_count();
@@ -204,4 +195,29 @@ pub fn process_records(
         )?;
     }
     Ok(reported)
+}
+
+/// Tells whether a `--preset` value names a preset file rather than a preset in the presets folder.
+/// An existing file, a value with a path separator, or a `.json` extension is a file,
+/// which matches the C++ CLI's rule for its `.xml` presets.
+fn is_preset_path(preset: &str) -> bool {
+    let path = Path::new(preset);
+    path.is_file()
+        || preset.contains(['/', '\\'])
+        || path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+}
+
+/// Rejects a chain that would copy the input unchanged, before any plugin is loaded or file is touched.
+///
+/// # Errors
+///
+/// Returns an error when no slot of the chain is enabled.
+fn ensure_enabled_plugins(chain: &audiobatch_plugins::PluginChain) -> Result<()> {
+    anyhow::ensure!(
+        chain.slots.iter().any(|slot| slot.enabled),
+        "The plugin chain has no enabled plugins"
+    );
+    Ok(())
 }
