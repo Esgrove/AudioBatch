@@ -26,20 +26,13 @@ The mapping adds a Camelot equivalent for display without changing the original 
 
 ## Source Metric Expectations
 
-`metrics_expected.py` calculates batch NumPy expectations independently of both applications,
-reading existing PCM16 fixtures directly and defining exact float32 synthetic planes in `metrics_expected.json`.
-Both suites read that same JSON for whole-file unweighted crest factor, signed channel DC means,
-full-scale sample counts, and centered Pearson correlation.
-The corpus covers mono, identical and inverted stereo, different-tone stereo, DC, one silent channel,
-stereo silence, multichannel input, and exact positive and negative full-scale thresholds.
-PLR and PSR also have independent fixture expectations from SciPy K-weighting filters, NumPy loudness gates,
-and batch windowed-sinc true-peak interpolation, checked within 0.001 dB.
-The subtraction of production peak and loudness scalars is checked separately without changing their existing contracts.
-PSR means whole-file true peak minus maximum short-term loudness, not a time-local curve maximum.
-The RMS denominator averages squared samples across channels and includes DC.
-Clips counts channel samples with magnitude at least one, not audible clipping incidents.
-Mono correlation is +1 by convention, even for silence. Constant stereo channels are undefined.
-The coefficient describes linear co-variation, not a stereo-width or quality rating.
+`metrics_expected.py` computes the source statistics with NumPy and SciPy, independently of both applications,
+into `metrics_expected.json`, which both test suites read.
+It covers the PCM16 fixtures and exact float32 synthetic signals:
+mono, identical and inverted stereo, different tones, DC, one silent channel, stereo silence, multichannel,
+and samples exactly at positive and negative full scale.
+PLR and PSR come from its own K-weighting, gating, and true-peak interpolation, and are checked within 0.001 dB.
+The metric definitions are in the project READMEs.
 
 Regenerate with `uv run --script fixtures/metrics_expected.py` from the root,
 or verify without writing with `--check`.

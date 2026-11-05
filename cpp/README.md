@@ -22,46 +22,29 @@ Options offers Output Device and Columns submenus, plus the playback and preview
 Audio Settings uses Cmd/Ctrl+P, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
 Escape stops playback and returns to the start.
 
-Folder is visible beside Name, while Path is hidden by default and remains available under Options > Columns.
-Folder shows the parent directory without the file name.
-On macOS, user-home prefixes become `~/`, while `/Users/Shared` and non-home folders stay absolute.
-Windows keeps the full parent path. Sorting uses the full parent path in natural order, then the file name.
+The Folder column, shown beside Name, holds the parent directory.
+On macOS a path under a user home starts with `~/`, and other paths stay absolute.
+Path is hidden by default and available under Options > Columns.
+Sorting by Folder uses the full parent path in natural order, then the file name.
 
 ## Source statistics
 
-Both applications measure these in the existing streaming decode or quantized-output render pass:
+The inspector's Source lines and six optional table columns, hidden by default, show:
 
-- PLR is whole-file true peak in dBTP minus integrated LUFS.
-- PSR is whole-file true peak in dBTP minus maximum short-term LUFS.
-  It is a ratio of independent whole-file extrema, not the maximum of a time-local peak-to-short-term curve.
-  Short-term loudness retains the meter's three-second window and zero-filled startup for short files.
-- Crest factor is sample peak divided by unweighted whole-file RMS, expressed in dB.
-  RMS averages squared samples across all channels, includes DC, and has no loudness gating or mono weighting.
-- DC offset is the signed arithmetic mean of each decoded channel, in linear full-scale units.
-  The compact DC column shows the largest absolute channel mean as percent full scale.
-- Clips counts samples with absolute amplitude at least 1.0, including exact positive and negative full scale.
-  Clips is summed across channels, not affected frames or contiguous events, with channel counts in its tooltip.
-  It identifies full-scale samples, not proof of analog clipping or an audible defect.
-  The existing waveform sample-over flags remain strictly above 1.0 and are a different measurement.
-- Correlation is the whole-file centered Pearson coefficient of stereo channels, clamped to [-1, +1].
-  Mono reports +1, including silence. Stereo silence or a constant channel has zero variance and is undefined.
-  Multichannel correlation is absent. Correlation describes linear co-variation, not stereo width or sound quality.
+- PLR: whole-file true peak in dBTP minus integrated loudness.
+- PSR: whole-file true peak in dBTP minus maximum short-term loudness.
+- Crest factor: sample peak over unweighted RMS of all channel samples, including DC, in dB.
+- DC: the signed mean of each channel. The column shows the largest absolute mean as percent full scale.
+- Clips: samples with magnitude at least 1.0, summed over channels, with per-channel counts in the tooltip.
+  Full-scale samples do not prove audible clipping.
+- Correlation: the centered Pearson coefficient of the two stereo channels.
+  Mono is +1, and a silent or constant stereo channel has no value.
 
-Undefined ratios and coefficients show a dash and use SQL NULL and JSON null, with empty CSV scalar fields.
-Channel arrays are JSON arrays in both JSON and CSV, with CSV quoting applied normally.
-The new fields are `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `clipsTotal`, and `stereoCorrelation`.
-Ratios use two decimal places of precision, DC and correlation use six, and counts are integers.
-Source values never inherit custom-gain or limiter predictions.
-The inspector labels them Source, and the six optional table columns are hidden by default.
-Normalized and plugin-rendered output records describe the actual quantized output samples.
-
-Shared measurement contract 16 requires finite decoded source PCM and stores nullable scalar columns
-and bounded little-endian channel arrays:
-`dc_offsets` contains one IEEE binary64 per channel, and `clip_counts` one unsigned 64-bit count per channel.
-Older measurements refill on demand without discarding same-source gains or compatible previews.
-Obsolete Rust MP4 lossy previews are rebuilt for native AAC reconstruction without deleting Serato outcomes.
-`../fixtures/metrics_expected.py --check` verifies the independent NumPy expectations read by both test suites.
-Online centered moments and energy sums use bounded per-channel state, with no audio retained for these statistics.
+The values describe the source, never custom gain or limiter estimates.
+Normalized and processed results describe the quantized output.
+Missing values show a dash in the table, `null` in JSON, and an empty field in CSV.
+JSON and CSV name them `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `clipsTotal`,
+and `stereoCorrelation`, with the channel arrays as JSON arrays in CSV too.
 
 ## Processing performance
 
@@ -292,11 +275,8 @@ CLI normalization can permanently delete replaced originals instead with `--dele
 
 ## CLI
 
-Ctrl-C requests cooperative cancellation during analysis, normalization, or plugin processing
-and exits with status `130`.
-Analysis drains its workers without printing partial results.
-Normalization removes unfinished temporary outputs and retains already committed files and their cache updates.
-A second Ctrl-C exits immediately, without waiting for cleanup.
+Ctrl-C cancels the run, removes unfinished temporary output, reports committed files, and exits with code 130.
+A second Ctrl-C exits immediately.
 
 Output of `audiobatch --help`:
 
@@ -386,31 +366,20 @@ audiobatch process --preset "Master" --recurse --jobs 2 --output json "music/alb
 audiobatch process -p "/path/to/Master.xml" -n --lufs -16 --force --delete "music/song.wav"
 ```
 
-`--preset` / `-p` is required. A name resolves in the GUI's `Chain Presets` folder next to its settings.
-The C++ CLI reads its own XML presets, not Rust JSON presets.
-CLI loading rejects the whole preset if any slot description, enabled flag, version, or nonempty base64 state is damaged,
-leaving sources and existing outputs unchanged rather than recovering a partial chain.
-Enabled flags must be complete `0` or `1` tokens. Omitted flags default to enabled.
-A supplied format version must be the complete `1` token, while an omitted version defaults to the current format.
-The GUI's tolerant recovery remains separate.
-Without input paths the current directory is processed.
-`--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output table|csv|json` work as in analysis.
-`--normalize` / `-n` optionally applies peak or LUFS normalization before the first enabled plugin.
-`--peak` and `--lufs` require `--normalize` and cannot be combined. Without either, the target is 0 dBFS peak.
-A persisted custom gain takes precedence over this optional normalization, as in the GUI.
-A refused normalization gain leaves processing at unity and reports a notice.
-There is no post-chain normalization, limiter, or dither.
+`--preset` / `-p` is required.
+A value that is a file, contains a path separator, or ends in `.xml` is a preset file,
+and any other value is a preset name in the GUI's `Chain Presets` folder.
+Only the C++ XML presets are read, not the Rust JSON presets.
+A preset with any damaged slot, enabled flag, or format version is rejected as a whole, before any file is touched.
+`--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output` work as in analysis.
+`--normalize` applies a peak or loudness gain before the first enabled plugin, by default a 0 dBFS peak.
+A saved custom gain takes precedence, as in the GUI.
+`--force` replaces existing outputs, and `--delete` deletes replaced originals instead of moving them to the trash.
 
-The shared processing service writes sibling 16-bit PCM `<name>.aif` files at the source rate,
-compensates chain latency, folds stereo plugin output back to mono for mono inputs, and drains bounded tails.
-It preserves metadata and album art, drops the obsolete Serato Overview, validates finite samples,
-and uses the same identity-checked temporary publication, disposal, and cache updates as the GUI.
-`--force` permits replacing an existing destination, and `--delete` selects permanent disposal instead of trash.
-Both options work without `--normalize` in this subcommand. In-place `.aif` processing retains its path.
-Results describe committed outputs, including their quantized-output measurements.
-Ctrl-C removes unfinished temporary files, reports committed results, and exits 130.
-Plugin loading, preparation, state restoration, and destruction run on the main event-loop thread.
-Only scanning is crash-isolated. A plugin crash or hang during rendering can end or block the CLI.
+The output is a 16-bit sibling `<name>.aif` written by the same processing service as the GUI,
+with latency compensation, effect tails, and the source tags and album art.
+Ctrl-C keeps committed outputs, removes unfinished ones, and exits with code 130.
+A plugin crash or hang can end or block the CLI, since only scanning runs in a separate process.
 
 ### Plugin Listing
 
@@ -673,35 +642,22 @@ A Windows baseline binary still requires AVX2.
 
 ### Local macOS signing
 
-Both Ninja and Xcode sign the completed `AudioBatch.app` after JUCE has installed its icons and resources.
-Xcode automatic signing is disabled, so both generators use the same local signing helper as Rust.
-Set `CODESIGN_IDENTITY` in the build environment to select an installed signing identity explicitly,
-for example `CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" cmake --build --preset macos-debug`.
-An unset or empty value uses ad-hoc signing (`-`), without searching or changing the keychain.
-An invalid explicit identity fails the build rather than falling back silently.
-The default build always runs `AudioBatchSign` after all resources, including resource-only incremental changes.
-When building only the application explicitly, request `--target AudioBatchSign` to include final signing.
-To sign or inspect an already completed bundle directly:
+The `AudioBatchSign` target signs the finished `AudioBatch.app` after every resource copy, with Ninja and Xcode alike,
+using `sign_mac_app_bundle` from the root `common.sh`, shared with the Rust build.
+Xcode automatic signing is disabled.
+`CODESIGN_IDENTITY` selects an installed identity, and an unset or empty value signs ad hoc.
+An invalid identity fails the build.
+Building only `--target AudioBatch` skips signing, so build `AudioBatchSign` too.
+The signature uses the hardened runtime,
+and the shared [`macos.entitlements`](../assets/macos.entitlements) only disables library validation,
+so third-party plugins load. The signature is for local use, without notarization.
 
 ```shell
-CODESIGN_IDENTITY=- bash ../common.sh sign_mac_app_bundle cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
 codesign --verify --deep --strict --verbose=2 cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
-codesign --display --entitlements - --xml cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
-plutil -lint ../assets/macos.entitlements
+uv run --script ../tests/test_mac_signing.py
 ```
 
-Signing enables hardened runtime with `--options runtime`, not an entitlement.
-The shared [`macos.entitlements`](../assets/macos.entitlements) disables library validation
-so external unsigned or differently signed plugins can load.
-It grants no audio-input or microphone entitlement, requests no microphone usage description, and enables no sandbox.
-Every signing operation validates both plists and verifies the final bundle, and failures stop the build.
-Do not modify the bundle after signing. Re-sign it after changing an executable, icon, license, or resource.
-These signatures are for local use only, without timestamping, notarization, distribution, or CI signing setup.
-Ad-hoc signatures do not establish a trusted developer identity.
-The CLI and Windows packaging are unchanged.
-Run the isolated signing and packaging contracts with `uv run --script ../tests/test_mac_signing.py`.
-On macOS, prefix that command with `AUDIOBATCH_TEST_NATIVE_SIGNING=1` to build disposable Ninja
-and Xcode app bundles, inspect real ad-hoc signatures, and detect resource tampering.
+`AUDIOBATCH_TEST_NATIVE_SIGNING=1` makes the test also sign and inspect real bundles on macOS.
 
 ### Build script and installation
 

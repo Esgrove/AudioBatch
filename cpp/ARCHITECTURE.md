@@ -58,24 +58,23 @@ Both apps link SQLite, libebur128, TagLib, and {fmt}.
 The CLI runs the analysis through `AnalysisCoordinator::analyzeBlocking`,
 and normalizes the analyzed files through `NormalizeCoordinator` on the workers `--jobs` sets,
 updating the cache with the results once the run completes.
-The `process --preset` CLI subcommand renders through native saved chains using `PluginProcessingCoordinator`.
-Its main thread runs the JUCE event loop while a workflow worker analyzes inputs and reports outcomes.
-Chain creation, per-file preparation, state restoration, and destruction are dispatched to the main thread.
-Rendering and persistence stay on workers, with `--jobs` controlling the pool and the number of chain instances.
-The preview remains GUI-only.
-The CLI installs an allocation-free signal handler for analysis and normalization.
-The first interrupt sets a lock-free flag that the calling thread polls.
-Blocking analysis cancels and drains its jobs before releasing stack-borrowing callbacks.
-Normalization requests a stop without invalidating callbacks, so committed outputs are still reconciled.
-Interrupted commands return 130, and a second interrupt exits immediately.
+The `process --preset` subcommand renders through a saved chain with `PluginProcessingCoordinator`.
+Its main thread runs the JUCE event loop and performs every plugin lifecycle call,
+while a worker thread runs the analysis and processing workflow.
+`--jobs` sets both the worker pool and the number of chain instances.
+The preview is GUI-only.
+
+The CLI's signal handler only sets a lock-free flag on the first interrupt and calls `std::_Exit` on the second.
+The workflow polls the flag: blocking analysis cancels and drains its jobs,
+and normalization and processing stop starting new files but still reconcile committed outputs.
+Interrupted commands return 130.
 
 ## GUI structure
 
-`MainWindow` is the top level `DocumentWindow` with File, Plugins, Options, and Help commands.
-Menu actions and keyboard shortcuts delegate to the same main-view operations.
-The Columns submenu reflects the retained table header, and the Output Device submenu retains device/backend pairs.
-Folder display is shared through `AudioAnalysisFormatting`, while natural sorting retains absolute parent paths.
-Folder starts visible next to Name, and Path starts hidden.
+`MainWindow` is the top level `DocumentWindow` with the File, Plugins, Options, and Help menus,
+whose items and keyboard shortcuts call the same main-view operations.
+The Columns submenu reads the table header, and the Output Device submenu lists device and backend pairs.
+The Folder column formats its text with `AudioAnalysisFormatting` and sorts by the absolute parent path.
 It owns `AudioBatchComponent`, the main view, which owns everything else and wires the parts together:
 
 ```mermaid
@@ -235,10 +234,11 @@ and the coordinated measurement contract still match.
 Both applications read and write `file_analysis` in the main AudioBatch `analysis.db`.
 On macOS it lives at `~/Library/AudioBatch/analysis.db`, and on Windows at `%APPDATA%\\AudioBatch\\analysis.db`.
 Contract version 16 accepts either producer's successful measurements with validated stream geometry,
-histories, source ratios, DC offsets, clip counts, and centered correlation.
-NaN and either infinity in any source channel fail analysis as unsupported PCM before successful publication.
-The stable failure is cached for that decoder, and normalization and plugin rendering reject it before publication.
-Non-finite samples are never replaced with silence or passed to plugins.
+histories, and source statistics.
+The nullable source scalars are plain columns,
+and `dc_offsets` and `clip_counts` hold one little-endian `f64` or `u64` per channel.
+A source with a NaN or infinite sample fails analysis as unsupported PCM,
+so normalization and plugin rendering never see non-finite input.
 The loudness-history and `OVLD` overload encodings are shared, but decoder failures remain producer-specific.
 Older measurements refill to collect required source statistics without discarding gains or compatible previews.
 Unknown or malformed required measurements refill normally.
@@ -302,11 +302,9 @@ sequenceDiagram
 - It accepts planar chunks from decoding or PCM output writing and measures fixed intervals,
   borrowing complete intervals and buffering only those that cross chunk boundaries.
   Its final reduction supplies the same record fields to all three services.
-  Bounded per-channel online moments collect signed DC means, unweighted RMS, full-scale sample counts,
-  and centered stereo correlation without retaining audio or changing existing peak/loudness operation order.
-  PLR and PSR subtract integrated and maximum short-term loudness from whole-file true peak in dBTP.
-  Crest factor uses the unweighted RMS over every channel sample, including DC.
-  These source statistics stay separate from gain-adjusted display estimates and overload flags.
+  Fixed per-channel online moments collect the DC means, unweighted energy, full-scale counts,
+  and centered stereo covariance in the same pass, without retaining audio.
+  The final reduction derives PLR, PSR, and crest factor from them and the peak and loudness results.
 - `measureDecodedAudio` reads blocks of a tenth of a second, which keeps the short-term loudness history at 10 Hz.
   `DecodeFailureTracker` tolerates a failed final block and isolated failed blocks,
   and fails the file after three failed blocks in a row.
