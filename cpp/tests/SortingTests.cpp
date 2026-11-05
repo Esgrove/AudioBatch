@@ -75,7 +75,23 @@ public:
             auto third = makeRecord("track 1.wav", 0.5f, -14.0);
             third.file = juce::File("/Users/z/Music/Album 10/track 1.wav");
             third.fullPath = third.file.getFullPathName();
-            expect(results_sorting::compareRecordsByColumn(first, second, AudioFileTableColumn::folder) < 0);
+            expectEquals(results_sorting::compareRecordsByColumn(first, second, AudioFileTableColumn::folder), 0);
+            first.integratedLufs = -10.0;
+            second.integratedLufs = -20.0;
+            for (const bool forwards : {true, false}) {
+                std::vector rows {first, second};
+                results_sorting::sortRecords(
+                    rows,
+                    {
+                        .primaryColumn = AudioFileTableColumn::folder,
+                        .primaryForwards = true,
+                        .secondaryColumn = AudioFileTableColumn::integratedLufs,
+                        .secondaryForwards = forwards,
+                        .statusText = {},
+                    }
+                );
+                expectEquals(rows.front().fileName, forwards ? second.fileName : first.fileName);
+            }
             expect(results_sorting::compareRecordsByColumn(second, third, AudioFileTableColumn::folder) < 0);
             auto otherUser = first;
             otherUser.file = juce::File("/Users/a/Music/Album 20/track.wav");

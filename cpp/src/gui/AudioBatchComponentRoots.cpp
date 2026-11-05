@@ -2,9 +2,9 @@
 /// the folder chooser, the root folders, drag and drop, and starting a rescan.
 
 #include "gui/AudioBatchComponent.h"
-#include "gui/AudioBatchComponentConstants.h"
 #include "gui/AudioBatchComponentState.h"
 #include "gui/BackgroundWorkController.h"
+#include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -31,7 +31,10 @@ void AudioBatchComponent::filesDropped(const juce::StringArray& files, int /*x*/
 void AudioBatchComponent::addFiles()
 {
     directoryChooser = std::make_unique<juce::FileChooser>(
-        "Add Audio Files", utils::getDefaultBrowseDirectory(), supportedAudioFilePatterns, true
+        "Add Audio Files",
+        utils::getDefaultBrowseDirectory(),
+        utils::threadLocalFormatManager().getWildcardForAllFormats(),
+        true
     );
     directoryChooser->launchAsync(
         static_cast<int>(
@@ -75,7 +78,10 @@ void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
     const auto lastRoot = currentRoots.isEmpty() ? juce::File() : currentRoots.getLast();
     const auto startDirectory = lastRoot.isDirectory() ? lastRoot : utils::getDefaultBrowseDirectory();
     directoryChooser = std::make_unique<juce::FileChooser>(
-        appendToRoots ? "Add Audio Folder" : "Choose Audio Folder", startDirectory, supportedAudioFilePatterns, true
+        appendToRoots ? "Add Audio Folder" : "Choose Audio Folder",
+        startDirectory,
+        utils::threadLocalFormatManager().getWildcardForAllFormats(),
+        true
     );
 
     directoryChooser->launchAsync(

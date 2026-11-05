@@ -308,10 +308,44 @@ void AudioBatchIntegrationTest::openAndSort()
     {
         EXPECT_FALSE(header.isColumnVisible(toColumnId(column)));
     }
+    for (const auto column :
+         {
+             AudioFileTableColumn::plr,
+             AudioFileTableColumn::psr,
+             AudioFileTableColumn::crestFactor,
+             AudioFileTableColumn::dcOffset,
+             AudioFileTableColumn::correlation,
+         })
+    {
+        view.handleColumnsMenuItem(2000 + toColumnId(column), 2000);
+    }
     view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::clips), 2000);
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::clips)));
     view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::path), 2000);
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
+    for (const int width : {2200, 800}) {
+        view.setSize(width, 800);
+        view.updateResultsTableColumnWidths();
+        int total = 0;
+        int fixed = 0;
+        for (int index = 0; index < header.getNumColumns(true); ++index) {
+            const int columnId = header.getColumnIdOfIndex(index, true);
+            total += header.getColumnWidth(columnId);
+            if (columnId != toColumnId(AudioFileTableColumn::name)
+                && columnId != toColumnId(AudioFileTableColumn::folder)
+                && columnId != toColumnId(AudioFileTableColumn::path))
+            {
+                fixed += header.getColumnWidth(columnId);
+            }
+        }
+        const int minimum = layout::table::nameColumnMinimumWidth + 2 * layout::table::pathColumnMinimumWidth;
+        EXPECT_NEAR(total, std::max(view.resultsTable.getVisibleContentWidth(), fixed + minimum), 3);
+        EXPECT_GE(header.getColumnWidth(toColumnId(AudioFileTableColumn::name)), layout::table::nameColumnMinimumWidth);
+        EXPECT_GE(
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)), layout::table::pathColumnMinimumWidth
+        );
+        EXPECT_GE(header.getColumnWidth(toColumnId(AudioFileTableColumn::path)), layout::table::pathColumnMinimumWidth);
+    }
     EXPECT_FALSE(view.createColumnsMenu(2000).getNumItems() == 0);
     EXPECT_EQ(view.createOutputDeviceMenu(3000).getNumItems(), 0);
     EXPECT_TRUE(view.keyPressed(juce::KeyPress('a', juce::ModifierKeys::commandModifier, 0)));

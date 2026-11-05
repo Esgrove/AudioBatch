@@ -76,8 +76,6 @@ enum class AudioFileTableColumn : std::uint8_t {
     return column.has_value() ? std::to_underlying(*column) : 0;
 }
 
-constexpr auto supportedAudioFilePatterns {"*.wav;*.aif;*.aiff;*.flac;*.mp3"};
-
 /// Range of the waveform zoom slider in percent of the unzoomed view and its conversion to a scale factor.
 namespace zoom_range
 {
