@@ -384,7 +384,7 @@ class CliIntegration(unittest.TestCase):
         output = source.with_suffix(".aif")
         output.write_bytes(b"existing output must survive")
         original = source.read_bytes()
-        for damage in ["description", "state"]:
+        for damage in ["description", "state", "enabled"]:
             with self.subTest(damage=damage):
                 preset = Path(self.plugin_preset())
                 if preset.suffix == ".json":
@@ -392,8 +392,10 @@ class CliIntegration(unittest.TestCase):
                     damaged = json.loads(json.dumps(value["slots"][0]))
                     if damage == "description":
                         damaged.pop("plugin")
-                    else:
+                    elif damage == "state":
                         damaged["component_state"] = "not base64!"
+                    else:
+                        damaged["enabled"] = "garbage"
                     value["slots"].append(damaged)
                     preset.write_text(json.dumps(value))
                 else:
@@ -407,6 +409,8 @@ class CliIntegration(unittest.TestCase):
                         start = damaged.index('state="') + len('state="')
                         end = damaged.index('"', start)
                         damaged = damaged[:start] + "not base64!" + damaged[end:]
+                    elif damage == "enabled":
+                        damaged = damaged.replace('enabled="1"', 'enabled="garbage"')
                     preset.write_text(text.replace("</PLUGIN_CHAIN>", damaged + "</PLUGIN_CHAIN>"))
                 result = self.invoke("process", "-p", preset, "-FD", "-o", "json", source, expected=1)
                 assert "preset" in result.stderr.lower()

@@ -574,12 +574,47 @@ void PluginPresetTests::testPresetFiles()
              {
                  R"(<SLOT enabled="1"/>)",
                  R"(<SLOT enabled="1" state="not base64!"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+                 R"(<SLOT enabled="garbage"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+                 R"(<SLOT enabled="1junk"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+                 R"(<SLOT enabled=""><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+                 R"(<SLOT enabled="true"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+                 R"(<SLOT enabled=" 1"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+                 R"(<SLOT enabled="2"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
              })
         {
             expect(file.replaceWithText(
                 utils::format(
                     R"(<PLUGIN_CHAIN_PRESET version="1"><PLUGIN_CHAIN><SLOT enabled="1"><PLUGIN name="Kept" format="VST3"/></SLOT>{}</PLUGIN_CHAIN></PLUGIN_CHAIN_PRESET>)",
                     damaged
+                )
+            ));
+            expect(plugin_presets::loadPreset(file).has_value());
+            expect(!plugin_presets::loadPreset(file, true).has_value());
+        }
+    }
+
+    beginTest("Strict enabled flags accept only complete serialized tokens and the omitted default");
+    {
+        const TemporaryDirectory temporary;
+        const auto file = temporary.getChildFile("flags.xml");
+        for (const auto* attribute : {"enabled=\"0\"", "enabled=\"1\"", ""}) {
+            expect(file.replaceWithText(
+                utils::format(
+                    R"(<PLUGIN_CHAIN_PRESET version="1"><PLUGIN_CHAIN><SLOT {}><PLUGIN name="Effect" format="VST3"/></SLOT></PLUGIN_CHAIN></PLUGIN_CHAIN_PRESET>)",
+                    attribute
+                )
+            ));
+            const auto loaded = plugin_presets::loadPreset(file, true);
+            expect(loaded.has_value() && loaded->size() == 1);
+            if (loaded.has_value() && loaded->size() == 1) {
+                expect(loaded->front().enabled == (juce::String(attribute) != "enabled=\"0\""));
+            }
+        }
+        for (const auto* version : {"garbage", "1junk", "", "-1", "0", "01"}) {
+            expect(file.replaceWithText(
+                utils::format(
+                    R"(<PLUGIN_CHAIN_PRESET version="{}"><PLUGIN_CHAIN><SLOT enabled="1"><PLUGIN name="Effect" format="VST3"/></SLOT></PLUGIN_CHAIN></PLUGIN_CHAIN_PRESET>)",
+                    version
                 )
             ));
             expect(plugin_presets::loadPreset(file).has_value());
