@@ -284,6 +284,46 @@ inline constexpr std::array analysisOptions {
     std::cref(outputOption),
 };
 
+/// Native saved chain selected by name or explicit preset path.
+inline constexpr CliOption presetOption {
+    .longName = "--preset",
+    .shortName = "-p",
+    .valueName = "preset",
+    .description = "Saved chain preset name or native preset file path",
+    .values = {},
+};
+/// Processing normalizes the input to the chain, never the rendered output.
+inline constexpr CliOption preNormalizeOption {
+    .longName = "--normalize",
+    .shortName = "-n",
+    .valueName = "",
+    .description = "Normalize before the plugin chain (default peak target 0 dBFS)",
+    .values = {},
+};
+/// Processing replacement is allowed without normalization.
+inline constexpr CliOption processForceOption {
+    .longName = "--force",
+    .shortName = "-F",
+    .valueName = "",
+    .description = "Let processing replace an existing output file",
+    .values = {},
+};
+/// The options of a processing run.
+inline constexpr std::array processOptions {
+    std::cref(presetOption),
+    std::cref(recurseOption),
+    std::cref(refreshOption),
+    std::cref(preNormalizeOption),
+    std::cref(processForceOption),
+    std::cref(deleteOption),
+    std::cref(peakOption),
+    std::cref(lufsOption),
+    std::cref(jobsOption),
+    std::cref(sortOption),
+    std::cref(reverseOption),
+    std::cref(outputOption),
+};
+
 /// The options of the list subcommand.
 inline constexpr std::array listOptions {std::cref(groupByOption), std::cref(rescanOption)};
 
@@ -291,11 +331,21 @@ inline constexpr std::array listOptions {std::cref(groupByOption), std::cref(res
 inline constexpr std::array completionOptions {std::cref(installOption), std::cref(verboseOption)};
 
 /// The commands the help subcommand describes.
-inline constexpr auto helpCommandValues {std::to_array<const char*>({"list", "completion", "help"})};
+inline constexpr auto helpCommandValues {std::to_array<const char*>({"process", "list", "completion", "help"})};
 
 /// The subcommands, in the order the usage text and the shell completions list them.
 inline constexpr auto subcommands {
     std::to_array<CliSubcommandInfo>({
+        {
+            .subcommand = CliSubcommand::process,
+            .name = "process",
+            .description = "Render audio through a saved plugin chain as 16-bit AIFF",
+            .options = processOptions,
+            .argumentName = "paths...",
+            .argumentDescription = "Files and directories, current directory when omitted",
+            .argumentRequired = false,
+            .argumentValues = {},
+        },
         {
             .subcommand = CliSubcommand::list,
             .name = "list",

@@ -148,6 +148,13 @@ int runCliMain(const std::span<char*> argv)
                     fmt::print("{}\n", cli::buildUsage(executableName, help.subcommand));
                     return 0;
                 },
+                [](const ProcessCommand& processing) {
+                    std::signal(SIGINT, handleInterrupt);
+#if JUCE_WINDOWS
+                    std::signal(SIGBREAK, handleInterrupt);
+#endif
+                    return cli::runProcess(processing, [] { return interrupted.load(std::memory_order_relaxed); });
+                },
                 [](const AnalyzeCommand& analysis) {
                     std::signal(SIGINT, handleInterrupt);
 #if JUCE_WINDOWS

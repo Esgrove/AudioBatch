@@ -216,6 +216,13 @@ impl UiDispatcher {
 }
 
 impl UiJobs {
+    /// Runs every currently queued job on the UI thread without blocking the platform event loop.
+    pub fn drain_pending(&self, ui: &UiThread) {
+        while let Ok(job) = self.receiver.try_recv() {
+            job.run(ui);
+        }
+    }
+
     /// Waits for the next job, or returns `None` once every dispatcher is dropped.
     pub async fn recv(&self) -> Option<UiJob> {
         self.receiver.recv().await.ok()

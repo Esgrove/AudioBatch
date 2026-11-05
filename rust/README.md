@@ -178,7 +178,7 @@ Bash completions go to `~/.bash_completion.d`.
 `audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
-Ctrl-C during analysis or normalization cancels the run with exit code 130.
+Ctrl-C during analysis, normalization, or plugin processing cancels the run with exit code 130.
 The first interrupt drains work and cleans unfinished outputs. A second exits immediately.
 The shared executable contracts check cancellation, normalization targets, output conflicts, gain refusal,
 plugin listing, shell completions, cache reuse, and in-place AIFF output with isolated storage.
@@ -194,7 +194,7 @@ The tags, album art, and Serato data are copied over without the Serato overview
 The converted original goes to the system trash, and an `.aif` file rewritten in place leaves a copy there.
 With `-D` or `--delete`, replaced originals are permanently deleted instead.
 `AUDIOBATCH_DELETE=true` (or `1`) enables the same option, and `false` (or `0`) disables it.
-The option requires `--normalize`.
+In the default analysis command the option requires `--normalize`.
 An existing output file is only replaced with `--force`,
 and when two selected files would write the same output, only one of them is normalized.
 Lossless output is sample-exact with C++ in peak mode and differs by at most one PCM step in loudness mode.
@@ -208,6 +208,7 @@ Usage: audiobatch-rs [OPTIONS] [PATHS]...
        audiobatch-rs <COMMAND>
 
 Commands:
+  process     Render audio through a saved plugin chain as 16-bit AIFF
   list        List the available VST3 plugins
   completion  Generate shell completion script
   help        Print this message or the help of the given subcommand(s)
@@ -240,6 +241,36 @@ in `~/Library/Logs/AudioBatch-rs` on macOS and in the `logs` folder of the `Audi
 Messages logged while a file is analyzed, normalized, or processed name the file,
 and a panic is logged with its backtrace.
 The CLI prints each message once to stderr, and the GUI prints everything it logs to stderr as well.
+
+### Plugin processing
+
+Save a native chain preset in the GUI, then process by name or by explicit JSON preset path:
+
+```shell
+audiobatch-rs process --preset "Master" --recurse --jobs 2 --output json "music/album"
+audiobatch-rs process -p "/path/to/Master.json" -n --lufs -16 --force --delete "music/song.wav"
+```
+
+`--preset` / `-p` is required. Names resolve in the GUI's `chain-presets` folder.
+Only native Rust JSON presets are accepted, not the C++ application's XML presets.
+Without input paths the current directory is processed.
+`--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output table|csv|json` match analysis.
+`--normalize` / `-n` optionally applies peak or LUFS normalization before the first enabled plugin,
+defaulting to a 0 dBFS peak target. `--peak` and `--lufs` require `--normalize` and cannot be combined.
+Persisted custom gain takes precedence, and a refused normalization gain uses unity with a notice, as in the GUI.
+There is no post-chain normalization, limiter, or dither.
+
+The same processing coordinator as the GUI writes 16-bit PCM sibling `<name>.aif` files,
+compensates latency, drains bounded tails, folds stereo plugin output back to mono for mono inputs,
+and preserves metadata and album art without the obsolete Serato Overview.
+Finite-output checks, exact PCM writing, quantized-output measurements, source identity checks,
+temporary publication, disposal, and cache updates remain in the shared services.
+`--force` and `--delete` work without normalization in this subcommand.
+They allow destination replacement and permanent disposal rather than trash, respectively.
+In-place `.aif` processing retains its path. Results report committed output paths and measurements.
+Ctrl-C cleans unfinished temporary files, retains and reports committed outputs, and exits 130.
+The main thread pumps native events and dispatches all plugin lifecycle work while workers render.
+Only scanning is crash-isolated. A plugin crash or hang during processing can end or block the CLI.
 
 ### Plugin Listing
 

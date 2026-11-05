@@ -50,7 +50,8 @@ The Rust version covers the key features of the C++ application:
   written as AIFF with tags and Serato data.
   Lossless sources produce identical samples in peak mode and differ by at most one PCM step in loudness mode.
 - Scan for VST3 plugins in a worker process and list them in the CLI and the GUI.
-- Process files in the GUI through a chain of VST3 effects, written as 16-bit AIFF with tags and Serato data.
+- Process files in the GUI or the CLI's `process --preset` subcommand through a chain of VST3 effects,
+  written as 16-bit AIFF with tags and Serato data.
 - Show plugin editors in native windows, and play the preview through the plugin chain.
 
 Plugin hosting covers VST3 on macOS and Windows.
@@ -159,6 +160,7 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   and both install them to the same per-user directories.
   Only the Rust CLI also supports elvish.
   `args.rs` defines the arguments, `run.rs` the analysis and normalization workflow,
+  `process.rs` the `process --preset` workflow with native JSON presets and main-thread event pumping,
   `output.rs` the table, CSV, and JSON output, `plugin_list.rs` the `list` subcommand,
   and `messages.rs` the coloured log messages, which the log file also receives.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.

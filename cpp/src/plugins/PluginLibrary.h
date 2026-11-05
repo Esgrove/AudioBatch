@@ -6,6 +6,7 @@
 #pragma once
 
 #include "plugins/PluginProcessing.h"
+#include "plugins/PluginProcessingCoordinator.h"
 #include "plugins/PluginScanner.h"
 #include "utils/ThreadUtils.h"
 
@@ -79,7 +80,8 @@ public:
     [[nodiscard]] std::expected<ProcessingRunSetup, juce::String> createProcessingRun(
         const std::vector<EnabledChainPlugin>& enabledPlugins,
         PluginProcessingOptions options,
-        int fileCount
+        int fileCount,
+        int workerCount = getPluginProcessingWorkerCount()
     ) const;
     [[nodiscard]] std::unique_ptr<juce::PluginListComponent> createScanComponent();
 

@@ -230,6 +230,27 @@ public:
             expect(command.rescan);
         }
 
+        beginTest("Processing validates its preset and keeps replacement independent of pre-chain normalization");
+        {
+            const auto command
+                = expectCommand<ProcessCommand>({"process", "-p", "Master", "-rFDj2", "-o", "json", "song.wav"});
+            expectEquals(command.preset, juce::String("Master"));
+            expect(command.analysis.recursive);
+            expectEquals(command.analysis.workerCount, 2);
+            expect(command.options.overwriteExisting);
+            expect(!command.options.normalizeBeforePlugin.has_value());
+            expect(command.analysis.outputFormat == AudioAnalysisOutputFormat::json);
+            const auto normalized = expectCommand<ProcessCommand>({"process", "-p", "Master", "-n", "--lufs", "-20"});
+            expect(normalized.options.normalizeBeforePlugin.has_value());
+            expectError({"process"}, CliParseErrorKind::missingRequiredOption);
+            expectError({"process", "-p", "Master", "--peak", "-1"}, CliParseErrorKind::missingRequiredOption);
+            expectError(
+                {"process", "-p", "Master", "-n", "--peak", "-1", "--lufs", "-14"},
+                CliParseErrorKind::conflictingOptions
+            );
+            expect(expectCommand<HelpCommand>({"help", "process"}).subcommand == CliSubcommand::process);
+        }
+
         beginTest("Subcommands are only recognised as the first argument");
         {
             const auto subcommandOf = [](const juce::StringArray& arguments) {

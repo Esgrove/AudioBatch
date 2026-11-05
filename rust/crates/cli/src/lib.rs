@@ -10,4 +10,5 @@ pub mod completion;
 pub mod messages;
 pub mod output;
 pub mod plugin_list;
+pub mod process;
 pub mod run;

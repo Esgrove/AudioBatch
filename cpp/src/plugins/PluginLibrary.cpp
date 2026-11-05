@@ -7,7 +7,6 @@
 
 #include "plugins/OutOfProcessPluginScanner.h"
 #include "plugins/PluginProcessing.h"
-#include "plugins/PluginProcessingCoordinator.h"
 #include "plugins/PluginScanner.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
@@ -182,11 +181,12 @@ ChainInstantiation PluginLibrary::instantiateChains(
 std::expected<ProcessingRunSetup, juce::String> PluginLibrary::createProcessingRun(
     const std::vector<EnabledChainPlugin>& enabledPlugins,
     PluginProcessingOptions options,
-    const int fileCount
+    const int fileCount,
+    const int workerCount
 ) const
 {
-    const auto workerCount = juce::jmin(fileCount, getPluginProcessingWorkerCount());
-    auto [errorMessage, failedPluginName, chains, initialStates] = instantiateChains(enabledPlugins, workerCount);
+    const auto chainCount = juce::jmin(fileCount, juce::jmax(1, workerCount));
+    auto [errorMessage, failedPluginName, chains, initialStates] = instantiateChains(enabledPlugins, chainCount);
 
     if (chains.empty() || errorMessage.isNotEmpty()) {
         return std::unexpected(

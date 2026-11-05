@@ -29,6 +29,7 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 unicode-width.workspace = true
+vst3-host.workspace = true
 
 # Records the version, build time, and commit that `--version` prints, see `build.rs`.
 [build-dependencies]

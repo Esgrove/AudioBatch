@@ -65,7 +65,7 @@ fn main() -> ExitCode {
     let mut log = io::stderr();
     let mut output = io::stdout().lock();
 
-    match args.command {
+    match &args.command {
         Some(CliCommand::Completion {
             shell,
             install,
@@ -73,10 +73,10 @@ fn main() -> ExitCode {
         }) => {
             let command_name = env!("CARGO_BIN_NAME");
             return match generate_shell_completion(
-                shell,
+                *shell,
                 CliArgs::command(),
-                install,
-                verbose,
+                *install,
+                *verbose,
                 command_name,
                 &mut output,
             ) {
@@ -88,7 +88,7 @@ fn main() -> ExitCode {
             };
         }
         Some(CliCommand::List(listing)) => {
-            return match list_plugins(listing, &mut output, &mut log) {
+            return match list_plugins(*listing, &mut output, &mut log) {
                 Ok(code) => ExitCode::from(code),
                 Err(error) => {
                     let _ = write_error!(&mut log, "{error:#}");
@@ -96,45 +96,74 @@ fn main() -> ExitCode {
                 }
             };
         }
-        None => {}
+        Some(CliCommand::Process(_)) | None => {}
     }
 
+    drop(output);
+    run_audio_command(&args, &mut io::stdout(), &mut log)
+}
+
+/// Installs cancellation and runs either shared analysis or plugin processing with isolated storage when configured.
+fn run_audio_command(args: &CliArgs, output: &mut io::Stdout, log: &mut io::Stderr) -> ExitCode {
     // The analysis still works without the cache, it only has to read every file again on the next run.
     let cache = AnalysisCache::open_default().unwrap_or_else(|error| {
         let error = anyhow::Error::from(error);
         let _ = write_warning!(
-            &mut log,
+            &mut *log,
             "Could not open the analysis cache, results are not cached: {error:#}"
         );
         Arc::new(AnalysisCache::in_memory())
     });
 
-    // The first Ctrl-C lets the run stop at a point where no temporary output is left behind,
-    // and a second one ends the process at once.
-    let handler = ctrlc::set_handler(|| {
-        if INTERRUPTED.swap(true, Ordering::SeqCst) {
-            std::process::exit(i32::from(EXIT_INTERRUPTED));
-        }
-    });
+    // A second interrupt deliberately bypasses cleanup if a plugin has stopped responding.
+    let handler = ctrlc::set_handler(handle_interrupt);
     if let Err(error) = handler {
-        let _ = write_warning!(&mut log, "Ctrl-C may leave temporary files behind: {error}");
+        let _ = write_warning!(&mut *log, "Ctrl-C may leave temporary files behind: {error}");
+    }
+
+    if let Some(CliCommand::Process(processing)) = &args.command {
+        return match audiobatch_cli::process::run_process(
+            processing,
+            cache,
+            trash_disposer(),
+            output,
+            &mut *log,
+            &|| INTERRUPTED.load(Ordering::SeqCst),
+        ) {
+            Ok(code) => ExitCode::from(code),
+            Err(error) => {
+                let _ = write_error!(&mut *log, "{error:#}");
+                ExitCode::from(EXIT_USAGE_ERROR)
+            }
+        };
     }
 
     match run_analysis(
-        &args,
+        args,
         cache,
         trash_disposer(),
-        &mut output,
-        &mut log,
+        output,
+        &mut *log,
         ProgressDrawTarget::stderr,
         &|| INTERRUPTED.load(Ordering::SeqCst),
     ) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             // Writing fails when stdout is closed early, for example when piping into head.
-            let _ = write_error!(&mut log, "{error:#}");
+            let _ = write_error!(&mut *log, "{error:#}");
             ExitCode::from(EXIT_USAGE_ERROR)
         }
+    }
+}
+
+/// Requests cooperative cancellation once and forces process termination on a repeated interrupt.
+#[expect(
+    clippy::exit,
+    reason = "a second Ctrl-C must escape hung plugin code without waiting for destructors"
+)]
+fn handle_interrupt() {
+    if INTERRUPTED.swap(true, Ordering::SeqCst) {
+        std::process::exit(i32::from(EXIT_INTERRUPTED));
     }
 }
 

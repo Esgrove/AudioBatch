@@ -275,7 +275,7 @@ pub fn sanitize_preset_name(name: &str) -> String {
 /// # Errors
 ///
 /// Returns an error when the file does not exist, cannot be parsed, or was saved by a newer version.
-pub(crate) fn load_preset_file(path: &Path) -> Result<ChainPreset, PresetError> {
+pub fn load_preset_file(path: &Path) -> Result<ChainPreset, PresetError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

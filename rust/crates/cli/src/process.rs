@@ -1,0 +1,207 @@
+//! CLI rendering through native chain presets with plugin lifecycle work on the main event-loop thread.
+//!
+//! Discovery and reporting share the analysis workflow, and rendering shares the GUI's processing coordinator.
+
+use std::collections::HashMap;
+use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Result;
+use audiobatch_core::operation::OperationOutcome;
+use audiobatch_core::output_file::{FileDisposer, delete_disposer};
+use audiobatch_core::{AnalysisCache, AnalysisRecord, AnalysisStatus};
+use audiobatch_plugins::presets::load_preset_file;
+use audiobatch_plugins::{
+    PluginDataPaths, PresetStore, ProcessingChain, ProcessingCoordinator, ProcessingEvent, ProcessingOptions,
+};
+use crossbeam_channel::RecvTimeoutError;
+use indicatif::ProgressDrawTarget;
+use vst3_host::{UiDispatcher, UiThread, pump_platform_events, ui_channel};
+
+use crate::args::ProcessArgs;
+use crate::run::{EXIT_INTERRUPTED, NormalizedRecords, run_workflow};
+use crate::{write_failure, write_warning};
+
+/// Bound on event-loop waits while a render or UI job is pending.
+const EVENT_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Processing resources whose plugin instances are bound to the main UI thread.
+pub struct ProcessContext<'a> {
+    /// Shared lifecycle dispatcher, drained by the main thread until all work has returned.
+    pub dispatcher: &'a UiDispatcher,
+    /// Native preset instantiated separately for each worker after discovery.
+    pub chain: audiobatch_plugins::PluginChain,
+    /// Output replacement, disposal, and pre-chain gain policy.
+    pub options: ProcessingOptions,
+    /// Requested number of rendering workers.
+    pub workers: usize,
+}
+
+/// Loads a native preset and runs analysis and processing while pumping the platform event loop on the main thread.
+///
+/// All workers and UI-bound teardown are drained before the main thread's job queue is dropped.
+///
+/// # Errors
+///
+/// Returns errors for invalid presets, unavailable plugins, worker setup, and output failures.
+pub fn run_process(
+    args: &ProcessArgs,
+    cache: Arc<AnalysisCache>,
+    dispose: FileDisposer,
+    output: &mut (dyn Write + Send),
+    log: &mut (dyn Write + Send),
+    is_interrupted: &(dyn Fn() -> bool + Sync),
+) -> Result<u8> {
+    let analysis = args.analysis_args();
+    let normalization = analysis.normalization().map_err(anyhow::Error::msg)?;
+    let path = Path::new(&args.preset);
+    let preset = if path.is_file()
+        || args.preset.contains(['/', '\\'])
+        || path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        load_preset_file(path)?
+    } else {
+        PresetStore::new(PluginDataPaths::default().presets).load(&args.preset)?
+    };
+    let chain = preset.chain();
+    anyhow::ensure!(
+        chain.slots.iter().any(|slot| slot.enabled),
+        "The plugin chain has no enabled plugins"
+    );
+    let ui = UiThread::register_current()?;
+    let (dispatcher, jobs) = ui_channel();
+    let workers = analysis.worker_count();
+    // Instances are created lazily after discovery, so --jobs cannot multiply plugins for an empty input.
+    let result = std::thread::scope(|scope| {
+        let dispatcher = &dispatcher;
+        let handle = scope.spawn(move || {
+            let context = ProcessContext {
+                dispatcher,
+                chain,
+                options: ProcessingOptions {
+                    overwrite_existing: args.force,
+                    dispose: if args.delete {
+                        delete_disposer()
+                    } else {
+                        Arc::clone(&dispose)
+                    },
+                    normalize_before_plugins: normalization,
+                },
+                workers,
+            };
+            run_workflow(
+                &analysis,
+                cache,
+                dispose,
+                output,
+                log,
+                ProgressDrawTarget::stderr,
+                is_interrupted,
+                Some(&context),
+            )
+        });
+        while !handle.is_finished() {
+            jobs.drain_pending(&ui);
+            pump_platform_events(&ui, EVENT_INTERVAL);
+        }
+        let result = handle.join().map_err(|_| anyhow::anyhow!("Processing worker failed"))?;
+        jobs.drain_pending(&ui);
+        result
+    });
+    jobs.drain_pending(&ui);
+    if is_interrupted() && result.is_err() {
+        return Ok(EXIT_INTERRUPTED);
+    }
+    result
+}
+
+/// Processes successful source records and collects only completed outcomes after interruption.
+/// The coordinator owns the common publication and cache update behavior.
+///
+/// # Errors
+///
+/// Returns errors when chains cannot be instantiated, the worker pool cannot start, or diagnostics cannot be written.
+pub fn process_records(
+    records: &[AnalysisRecord],
+    cache: Arc<AnalysisCache>,
+    context: &ProcessContext<'_>,
+    log: &mut dyn Write,
+    is_interrupted: &dyn Fn() -> bool,
+) -> Result<NormalizedRecords> {
+    let analyzed: Vec<_> = records.iter().filter(|record| !record.has_error()).cloned().collect();
+    let mut reported = NormalizedRecords {
+        records: records.iter().filter(|record| record.has_error()).cloned().collect(),
+        failure_count: 0,
+    };
+    if analyzed.is_empty() || is_interrupted() {
+        return Ok(reported);
+    }
+    let chain = context.chain.clone();
+    let dispatcher = context.dispatcher.clone();
+    let chain_count = context.workers.min(analyzed.len());
+    let chains = context.dispatcher.call(
+        move |ui| {
+            (0..chain_count)
+                .map(|_| ProcessingChain::instantiate(ui, &dispatcher, &chain))
+                .collect::<Result<Vec<_>, _>>()
+        },
+        is_interrupted,
+    )??;
+    let coordinator = ProcessingCoordinator::new(cache, context.workers)?;
+    let (_, receiver) = coordinator.start(analyzed, context.options.clone(), chains);
+    let mut results = HashMap::new();
+    loop {
+        if is_interrupted() {
+            coordinator.cancel();
+        }
+        match receiver.recv_timeout(EVENT_INTERVAL) {
+            Ok(ProcessingEvent::Finished { result, .. }) => {
+                results.insert(result.source.clone(), *result);
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+            Ok(
+                ProcessingEvent::Completed { .. } | ProcessingEvent::Started { .. } | ProcessingEvent::Progress { .. },
+            )
+            | Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+    for record in records.iter().filter(|record| !record.has_error()) {
+        let Some(result) = results.remove(&record.path) else {
+            continue;
+        };
+        match result.outcome {
+            OperationOutcome::Succeeded { output, notice } => {
+                if let Some(notice) = notice {
+                    write_warning!(log, "Processed \"{}\", {notice}", output.path.display())?;
+                }
+                reported.records.push(output);
+            }
+            OperationOutcome::Failed { error } => {
+                write_failure!(log, "Processing failed: \"{}\", {error}", record.path.display())?;
+                let mut failed = record.clone();
+                failed.status = AnalysisStatus::Failed;
+                failed.error_message = error;
+                reported.records.push(failed);
+                reported.failure_count += 1;
+            }
+            OperationOutcome::CommittedButUnanalyzed { mut output, error } => {
+                write_failure!(log, "Processing failed: \"{}\", {error}", record.path.display())?;
+                output.status = AnalysisStatus::Failed;
+                output.error_message = error;
+                reported.records.push(output);
+                reported.failure_count += 1;
+            }
+        }
+    }
+    if is_interrupted() {
+        write_warning!(
+            log,
+            "Interrupted. Processing cancelled, committed outputs retained (exit {EXIT_INTERRUPTED})."
+        )?;
+    }
+    Ok(reported)
+}
