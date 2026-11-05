@@ -98,13 +98,10 @@ and tests start a dedicated `vst3-ui` thread with `UiThread::spawn_dedicated`.
 While it waits, `call` polls the caller's cancellation check and abandons a job that has not started,
 so the UI thread can cancel a run and wait for its workers without a deadlock.
 The GUI runs the jobs from a foreground task, one by one as `UiJobs::recv` returns them.
-The CLI's `process --preset` subcommand registers its main thread
-and alternates `UiJobs::drain_pending` with `pump_platform_events`,
-while a scoped worker performs analysis and waits for processing events.
-It loads its native JSON preset by name or explicit path and creates at most one chain per discovered file and worker.
-It drains the processing event channel through disconnection,
-including teardown jobs and committed results after cancellation,
-before it drops the UI queue. Rendering, output publication, and cache updates use the GUI's `ProcessingCoordinator`.
+The CLI's `process --preset` subcommand registers its main thread as the UI thread
+and alternates `UiJobs::drain_pending` with `pump_platform_events`, while a scoped worker runs the workflow.
+It creates at most one chain per worker and file, and renders with the GUI's `ProcessingCoordinator`.
+The UI queue is dropped only after the worker has finished, so plugin teardown always runs on the main thread.
 `UiBound` holds a value that any thread may own but only the UI thread may reach or drop,
 which is how a processing worker owns its plugin instances.
 
@@ -168,12 +165,10 @@ User-facing messages and the serialized formats do not depend on the internal er
 
 ## GUI structure
 
-Native menus and shortcuts dispatch GPUI actions to the retained `AppView` handlers.
-Playback continuation and first-cue choices share the settings-window preference owner.
-The Folder column uses `core::format` for display and absolute parent paths for natural sorting.
-Folder starts visible next to Name, and Path starts hidden.
-The saved column revision migrates older preferences once without overriding a later explicit Path choice.
-The Chain Presets menu can create and open its backing folder.
+Native menus and shortcuts dispatch GPUI actions to the `AppView` handlers.
+The Folder column formats its text with `core::format` and sorts by the absolute parent path.
+`columns_revision` in the saved settings hides newly added default-hidden columns once,
+so a later choice to show them is kept.
 
 On Windows, the main window's native close request quits through GPUI without letting Win32 destroy the handle first.
 GPUI then owns native resource teardown, so application shutdown does not destroy the same window twice.
@@ -306,12 +301,9 @@ Delete that listener and module once gpui implements `start_external_drag` on Wi
 ## Analysis
 
 `analyze_file` decodes a file once, and every decoded block feeds all the measurements.
-`signal_metrics.rs` collects bounded per-channel online means, centered moments, unweighted energy,
-and full-scale sample counts in the same `BlockMeter` pass.
-The final reduction derives PLR and PSR from whole-file true peak and integrated or maximum short-term loudness,
-and crest factor from sample peak and RMS across all channel samples, including DC.
-Mono correlation is +1, zero-variance stereo is undefined, and multichannel correlation is absent.
-These source values never inherit preview-gain or limiter predictions.
+`signal_metrics.rs` collects fixed per-channel online means, centered moments, unweighted energy,
+and full-scale counts in the same `BlockMeter` pass,
+and its final reduction derives PLR, PSR, and crest factor from them and the peak and loudness results.
 
 ```mermaid
 sequenceDiagram
@@ -349,16 +341,12 @@ Lossy decoder samples can still differ between applications and platforms.
 Symphonia trims MP3 files with a LAME header itself,
 and for other MP3 files the decoder leaves out the 529 samples of synthesis delay.
 `decode/gapless.rs` reads the MP4 edit list or `iTunSMPB` atom, which symphonia parses but never applies.
-On macOS, `decode/native_aac.rs` selects Core Audio for single-track mono/stereo AAC-LC MP4 streams.
-AAC perceptual noise substitution synthesizes random spectral bands before inverse MDCT and overlap-add.
-Symphonia's private fixed FFmpeg-compatible generator cannot be configured to reproduce Core Audio's bands,
-and correcting final PCM would require decoding and reconstructing those bands again.
-The narrow native backend instead shares the C++ decoder, including native edit-list trimming and seek pre-roll.
-Read-only callbacks use a clone of the original open file handle, never a reopened path,
-and native PCM is converted to the same bounded planar interface at the source rate.
-All other codecs, multi-track files, AAC configurations, and platforms retain Symphonia.
-C++ does not support AAC on Windows, whose Rust decoding is unchanged.
-No parity tolerance is widened and no audio is trimmed to hide reconstruction residuals.
+On macOS, `decode/native_aac.rs` decodes single-track mono or stereo AAC-LC MP4 streams with Core Audio.
+AAC perceptual noise substitution fills spectral bands with generated noise,
+and Symphonia's generator cannot reproduce Core Audio's bands,
+so sharing the decoder of the C++ application is the only way to match its output.
+Its callbacks read a clone of the already open file handle, never a reopened path.
+All other streams and platforms use Symphonia.
 `DecodeFailureTracker` turns an isolated failed packet into silence and a notice,
 while three failures in a row stop the pass, so no pass works on truncated audio.
 
@@ -465,13 +453,14 @@ rejecting stale runs, selections, and source identities, and never persisting it
 The database is `~/Library/AudioBatch/analysis.db` on macOS and `%APPDATA%\\AudioBatch\\analysis.db` on Windows.
 Settings, logs, and plugin data keep their separate application paths.
 Shared measurement contract version 16 accepts either producer's successful levels, required histories,
-source ratios, channel DC offsets and clip counts, and centered stereo correlation.
-NaN and either infinity in any source channel fail analysis as unsupported PCM before successful publication.
-The stable failure is cached for that decoder, and normalization and plugin rendering reject it before publication.
-Non-finite samples are never replaced with silence or passed to plugins.
+and source statistics.
+The nullable source scalars are plain columns,
+and `dc_offsets` and `clip_counts` hold one little-endian `f64` or `u64` per channel.
+A source with a NaN or infinite sample fails analysis as unsupported PCM,
+so normalization and plugin rendering never see non-finite input.
 The short-term history and `OVLD` overload encoding are shared, while native waveform formats are separate.
 Both implementations must coordinate contract invalidation after measurement-affecting changes.
-Older measurements refill required source statistics through additive migration,
+Older rows refill through additive migration, keeping their gains and compatible previews,
 and the old standalone Rust database is untouched.
 
 A row remains usable while source size, modification time, and accepted contract match.
@@ -711,8 +700,7 @@ The Rust version differs from it on purpose in these points:
 - It shares measurements and compatible Serato outcomes with the C++ application in `AudioBatch/analysis.db`.
   Logs, settings, plugin list, chain, and presets remain in its own `AudioBatch-rs` folders,
   with plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
-- It decodes audio with Symphonia rather than JUCE,
-  except for the narrow native AAC-LC MP4 reconstruction shared with C++ on macOS.
+- It decodes audio with Symphonia rather than JUCE, except for AAC-LC MP4 on macOS, which uses Core Audio.
   It supports Ogg Vorbis but not the Opus decoder enabled in the C++ build.
   Lossy PCM can differ, so parity checks use a separate -72 dBFS sample-difference tolerance for lossy sources,
   not the exact peak-mode or one-step loudness-mode contract for lossless sources.

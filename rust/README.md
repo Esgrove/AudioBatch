@@ -18,57 +18,37 @@ Chain Presets includes Show Presets Folder.
 Audio Settings uses Cmd/Ctrl+P only, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
 Escape stops playback and returns to the start.
 
-Folder is visible beside Name, while Path is hidden by default and remains available under Options > Columns.
-Folder shows the parent directory without the file name.
-On macOS, user-home prefixes become `~/`, while `/Users/Shared` and non-home folders stay absolute.
-Windows keeps the full parent path. Sorting uses the full parent path in natural order, then the file name.
-Saved column preferences migrate once to hide Path. Showing it again remains a persistent user choice.
+The Folder column, shown beside Name, holds the parent directory.
+On macOS a path under a user home starts with `~/`, and other paths stay absolute.
+Path is hidden by default and available under Options > Columns.
+Sorting by Folder uses the full parent path in natural order, then the file name.
 
 ## Source statistics
 
-PLR is whole-file true peak in dBTP minus integrated LUFS.
-PSR is whole-file true peak in dBTP minus maximum short-term LUFS, using the existing three-second window
-and zero-filled startup. It is not the maximum of a time-local peak-to-short-term curve.
-Crest factor is sample peak divided by unweighted RMS across all channel samples, in dB.
-RMS includes DC, without loudness gating or mono weighting.
-DC offsets are signed channel arithmetic means in linear full-scale units.
-The compact DC column shows the largest absolute channel mean as percent full scale.
+The inspector's Source lines and six optional table columns, hidden by default, show:
 
-Clips counts samples with magnitude at least 1.0, including exact positive and negative full scale.
-The total sums channel samples, not affected frames or contiguous events, and its tooltip gives channel counts.
-Full-scale samples are not proof of analog clipping or an audible defect.
-The existing waveform sample-over flags remain strictly above 1.0 and describe a different threshold.
-Correlation is the whole-file centered stereo Pearson coefficient, clamped to [-1, +1].
-Mono reports +1, including silence. A silent or constant stereo channel has zero variance and no defined coefficient.
-Multichannel correlation is absent. This describes linear co-variation, not stereo width or sound quality.
+- PLR: whole-file true peak in dBTP minus integrated loudness.
+- PSR: whole-file true peak in dBTP minus maximum short-term loudness.
+- Crest factor: sample peak over unweighted RMS of all channel samples, including DC, in dB.
+- DC: the signed mean of each channel. The column shows the largest absolute mean as percent full scale.
+- Clips: samples with magnitude at least 1.0, summed over channels, with per-channel counts in the tooltip.
+  Full-scale samples do not prove audible clipping.
+- Correlation: the centered Pearson coefficient of the two stereo channels.
+  Mono is +1, and a silent or constant stereo channel or more than two channels has no value.
 
-These source measurements share the decode pass and bounded per-channel online moments.
-They remain independent of custom-gain and limiter predictions, with Source lines in the inspector
-and six optional table columns hidden by default, including for saved preferences.
-Rendered records describe actual quantized normalization or plugin output.
-Normalization meters while writing, while plugin processing analyzes its committed output.
-Undefined scalar values show a dash, SQL NULL, JSON null, or an empty CSV field.
-JSON and CSV add `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `clipsTotal`, and `stereoCorrelation`.
-Arrays use JSON syntax inside CSV fields. Ratios have two decimal places of precision, DC and correlation six,
-and counts remain integers.
-
-Shared measurement contract 16 requires finite decoded source PCM
-and refills older rows while retaining same-source gains and compatible previews.
-Obsolete Rust MP4 lossy previews are rebuilt for native AAC reconstruction without deleting Serato outcomes.
-The shared `dc_offsets` blob contains one little-endian IEEE binary64 per channel,
-and `clip_counts` one little-endian unsigned 64-bit count per channel.
-`uv run --script ../fixtures/metrics_expected.py --check` checks the independent NumPy oracle used by both test suites.
+The values describe the source, never custom gain or limiter estimates.
+Normalized and processed results describe the quantized output.
+Missing values show a dash in the table, `null` in JSON, and an empty field in CSV.
+JSON and CSV name them `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `clipsTotal`,
+and `stereoCorrelation`, with the channel arrays as JSON arrays in CSV too.
 
 ## Audio formats
 
 Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis, and CAF files.
 Decoding uses Symphonia on every platform, including lossless ALAC in M4A containers.
-Single-track mono/stereo AAC-LC MP4 files on macOS use Core Audio,
-matching the C++ application's perceptual noise substitution without changing the source timeline or parity tolerance.
-Windows and other AAC configurations retain Symphonia. The C++ application does not support AAC on Windows.
-`scripts/test_aac_reconstruction.py --cpp-cli <release-cli> --rust-cli <release-cli>`
-checks native/FFmpeg PNS controls, raw priming alignment, and strict normalized output on temporary copies.
-Pass `--input <aac-file>` for additional benchmark or tagged inputs.
+On macOS, single-track mono or stereo AAC-LC MP4 files decode with Core Audio,
+so perceptual noise substitution matches the C++ application.
+`scripts/test_aac_reconstruction.py --cpp-cli <cli> --rust-cli <cli>` compares both applications on AAC by hand.
 Opus is not supported.
 Analysis and normalization support multichannel audio, while playback and plugin processing accept only mono and stereo.
 
@@ -160,32 +140,20 @@ cargo build --release
 
 ### Local macOS signing
 
-`build.sh` and `install.sh` sign `AudioBatchRs.app` only after copying the executable, icons, licenses, and other resources.
-Set `CODESIGN_IDENTITY` in their environment to select an installed identity explicitly,
-for example `CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./build.sh --debug`.
-An unset or empty value uses ad-hoc signing (`-`), without searching or changing the keychain.
-An invalid explicit identity fails packaging, rather than silently falling back.
-Both applications use the same helper in the root `common.sh`
-and the shared [`macos.entitlements`](../assets/macos.entitlements).
-
-The signature enables hardened runtime with `--options runtime`, not an entitlement.
-Only library validation is disabled, allowing external unsigned or differently signed plugins to load.
-There is no audio-input or microphone entitlement, microphone usage description, or sandbox.
-Signing validates both plists and verifies the final bundle. Failures stop packaging and remain visible.
-Do not modify a signed bundle without signing it again, including when adding icons or license files.
-These signatures are for local use only, without timestamping, notarization, distribution, or CI signing setup.
-Ad-hoc signatures do not establish a trusted developer identity.
-Direct Cargo builds, the CLI, and Windows packaging are unchanged.
+`build.sh` and `install.sh` sign the finished `AudioBatchRs.app` with `sign_mac_app_bundle` from the root `common.sh`,
+shared with the C++ build.
+`CODESIGN_IDENTITY` selects an installed identity, and an unset or empty value signs ad hoc.
+An invalid identity fails the build.
+The signature uses the hardened runtime,
+and the shared [`macos.entitlements`](../assets/macos.entitlements) only disables library validation,
+so third-party plugins load. The signature is for local use, without notarization.
 
 ```shell
 codesign --verify --deep --strict --verbose=2 AudioBatchRs.app
-codesign --display --entitlements - --xml AudioBatchRs.app
-plutil -lint ../assets/macos.entitlements
 uv run --script ../tests/test_mac_signing.py
 ```
 
-On macOS, prefix the test command with `AUDIOBATCH_TEST_NATIVE_SIGNING=1` to inspect real ad-hoc Rust packages
-and disposable Ninja and Xcode bundles, including resource tampering checks.
+`AUDIOBATCH_TEST_NATIVE_SIGNING=1` makes the test also sign and inspect real bundles on macOS.
 
 ## Shell Completions
 
@@ -215,10 +183,8 @@ Bash completions go to `~/.bash_completion.d`.
 `audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
-Ctrl-C during analysis, normalization, or plugin processing cancels the run with exit code 130.
-The first interrupt drains work and cleans unfinished outputs. A second exits immediately.
-The shared executable contracts check cancellation, normalization targets, output conflicts, gain refusal,
-plugin listing, shell completions, cache reuse, and in-place AIFF output with isolated storage.
+Ctrl-C cancels the run, removes unfinished temporary output, reports committed files, and exits with code 130.
+A second Ctrl-C exits immediately.
 The `list` subcommand lists scanned VST3 effects, and `completion` generates shell completions.
 
 `--normalize` writes analyzed files as a sibling `<name>.aif` at the source sample rate,
@@ -288,28 +254,20 @@ audiobatch-rs process --preset "Master" --recurse --jobs 2 --output json "music/
 audiobatch-rs process -p "/path/to/Master.json" -n --lufs -16 --force --delete "music/song.wav"
 ```
 
-`--preset` / `-p` is required. Names resolve in the GUI's `chain-presets` folder.
-Only native Rust JSON presets are accepted, not the C++ application's XML presets.
-CLI loading rejects the whole preset if any slot description or nonempty base64 state is damaged,
-leaving sources and existing outputs unchanged rather than recovering a partial chain.
-Without input paths the current directory is processed.
-`--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output table|csv|json` match analysis.
-`--normalize` / `-n` optionally applies peak or LUFS normalization before the first enabled plugin,
-defaulting to a 0 dBFS peak target. `--peak` and `--lufs` require `--normalize` and cannot be combined.
-Persisted custom gain takes precedence, and a refused normalization gain uses unity with a notice, as in the GUI.
-There is no post-chain normalization, limiter, or dither.
+`--preset` / `-p` is required.
+A value that is a file, contains a path separator, or ends in `.json` is a preset file,
+and any other value is a preset name in the GUI's `chain-presets` folder.
+Only the Rust JSON presets are read, not the C++ XML presets.
+A preset with any damaged slot is rejected as a whole, before any file is touched.
+`--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output` work as in analysis.
+`--normalize` applies a peak or loudness gain before the first enabled plugin, by default a 0 dBFS peak.
+A saved custom gain takes precedence, as in the GUI.
+`--force` replaces existing outputs, and `--delete` deletes replaced originals instead of moving them to the trash.
 
-The same processing coordinator as the GUI writes 16-bit PCM sibling `<name>.aif` files,
-compensates latency, drains bounded tails, folds stereo plugin output back to mono for mono inputs,
-and preserves metadata and album art without the obsolete Serato Overview.
-Finite-output checks, exact PCM writing, quantized-output measurements, source identity checks,
-temporary publication, disposal, and cache updates remain in the shared services.
-`--force` and `--delete` work without normalization in this subcommand.
-They allow destination replacement and permanent disposal rather than trash, respectively.
-In-place `.aif` processing retains its path. Results report committed output paths and measurements.
-Ctrl-C cleans unfinished temporary files, retains and reports committed outputs, and exits 130.
-The main thread pumps native events and dispatches all plugin lifecycle work while workers render.
-Only scanning is crash-isolated. A plugin crash or hang during processing can end or block the CLI.
+The output is a 16-bit sibling `<name>.aif` written by the same processing coordinator as the GUI,
+with latency compensation, effect tails, and the source tags and album art.
+Ctrl-C keeps committed outputs, removes unfinished ones, and exits with code 130.
+A plugin crash or hang can end or block the CLI, since only scanning runs in a separate process.
 
 ### Plugin Listing
 
@@ -626,11 +584,9 @@ and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
 
 ## Miri
 
-[Miri](https://github.com/rust-lang/miri) interprets the tests and reports undefined behaviour,
-such as invalid pointer use or aliasing violations in unsafe code.
-`miri.sh` runs it with the Stacked Borrows model on the crates where that matters most:
-the unsafe COM code of `vst3-host` and the test plugin, the Serato tag parsers,
-and the readers of the waveform, overload, and spectrogram blobs in the cache.
+[Miri](https://github.com/rust-lang/miri) interprets tests and reports undefined behaviour in unsafe code.
+`miri.sh` runs it with Stacked Borrows on the unsafe COM code of `vst3-host` and the test plugin,
+the Serato tag parsers, and the waveform, overload, and spectrogram blob readers of the cache.
 
 ```shell
 # Install the nightly toolchain with Miri, then run the tests under it
@@ -638,203 +594,62 @@ and the readers of the waveform, overload, and spectrogram blobs in the cache.
 ./miri.sh
 ```
 
-The selected tests currently contain 189 cases, of which 173 run and 16 are explicitly ignored under Miri.
-`vst3-host` runs 68 of 76 tests, Serato runs 83 of 87, the core blob selection runs 22 of 26,
-and the test plugin has no standalone unit tests but supplies the in-process COM implementations exercised by the host.
-The 16 ignores are eight host tests needing native bundles or file-system access under Miri's default isolation,
-four slow Serato overview and colouring tests, and four slow waveform and overload builder tests.
-Another 452 core tests are excluded by the script's filter, not Miri ignores.
-Nextest reports filtered tests as skipped on each invocation, so its per-command skipped counts must not be summed.
-Miri supports some file-system access when isolation is disabled, but this script keeps isolation enabled.
-Native library loading, native editor windows, SQLite, physical devices, and third-party plugin code are not covered.
-
-The covered unsafe host paths include COM host objects, parameter queues, memory streams,
-instance lifecycle and state, processing buffers, and UI-bound ownership with in-process fake plugins.
-A clean run is bounded evidence for these tests and Miri's model, not proof that all plugin hosting is free of UB.
-The script runs 138 cases with leak and thread-exit checking enabled.
-Only the 35 cases starting the process-lifetime test UI thread get `-Zmiri-ignore-leaks`,
-which disables allocation leak detection and outstanding-thread checks but leaves pointer and aliasing checks enabled.
-The exception covers the instance tests, four processor tests, three dispatcher tests, and the UiBound test.
-The processor's buffer-binding-only test and other host-object tests retain leak checking.
-Caller-supplied `MIRIFLAGS` apply to all invocations, so additional user flags can weaken those defaults.
+Tests that need native bundles, the file system, SQLite, or audio devices, or that take minutes under Miri,
+are marked with `#[cfg_attr(miri, ignore = "...")]`.
+The tests that start the process-lifetime test UI thread run with `-Zmiri-ignore-leaks`,
+which keeps the pointer and aliasing checks.
 The `miri` job in CI runs the same script on macOS.
 
 ## Fuzzing
 
-`fuzz/` holds [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets for libFuzzer.
-It is its own workspace, excluded from the main one, because the targets build only on nightly.
+`fuzz/` holds [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets for libFuzzer,
+in its own workspace because the targets build only on nightly.
 
 - `serato_tags` runs the Serato tag parsers and the Overview cache round trip.
-  Its input layout is that of the C++ `SeratoTagFuzzer`, so it also replays that corpus.
-- `cli_arguments` parses each line of the input as one argument, like the C++ `CliArgumentsFuzzer`,
-  and replays that corpus too.
-- `cache_blobs` reads the input as a waveform, overload, spectrogram, and Serato Overview blob,
-  and requires every accepted blob to be written back unchanged.
-- `decode_audio` writes the input to a file with an extension the first byte selects, and decodes it.
-  File payloads over 256 KiB are skipped.
-  After opening, it admits at most eight channels and 192 kHz and requests at most 256 chunks
-  or 65,536 frames per pass, with at most one packet of frame-bound overshoot, before trying one seek and another pass.
-  Ordinary open, decode, and seek errors are accepted outcomes, not fuzz failures.
+  It shares its input layout with the C++ `SeratoTagFuzzer` and replays that corpus too.
+- `cli_arguments` parses each input line as one argument, like the C++ `CliArgumentsFuzzer`, and replays its corpus.
+- `cache_blobs` reads the input as each cache blob type and requires accepted blobs to round trip unchanged.
+- `decode_audio` writes the input to a file whose extension the first byte selects, then decodes and seeks it,
+  with bounded file size, channels, sample rate, and decoded frames.
+  Ordinary decode errors are accepted outcomes.
 
-The seed corpus of each target is in `fuzz/corpus/<target>/`.
-`fuzz.sh` takes the options of `cpp/fuzz.sh` and adds `--targets all|parsers|decoder`.
-The default is `all`, `parsers` selects Serato tags, CLI arguments, and cache blobs,
-and `decoder` selects only `decode_audio`.
-The selector applies to building, corpus replay, and mutation fuzzing.
-It never converts a failing command to success.
+The seeds of each target are in `fuzz/corpus/<target>/`.
+`fuzz.sh` takes the options of `cpp/fuzz.sh` plus `--targets all|parsers|decoder`.
 New inputs go to `fuzz/scratch/` and crashing inputs to `fuzz/artifacts/`, so the committed corpus never changes.
-Replay uses `-runs=0` and fuzzing puts the scratch directory first, the only corpus directory libFuzzer writes.
-
-A small compressed file can declare huge dimensions or packets, and the decoder allocates during opening
-and within individual chunk calls, before the harness can inspect the results.
-Both replay and fuzzing therefore use a five-second per-input timeout,
-a 128 MiB single-allocation reporting threshold, and a 512 MiB sampled RSS threshold.
-ASan retains a 64 MiB global quarantine and 64 KiB thread-local quarantine, instead of its 256 MiB global default.
-This keeps freed-allocation detection enabled while bounding sanitizer overhead under the unchanged RSS watchdog.
-Other caller-supplied `ASAN_OPTIONS` are preserved, with these quarantine bounds applied last.
-On macOS arm64, 100,000 replays of each saved Serato RSS finding retain about 24 MiB of live allocations.
-The default quarantine maps about 355 to 357 MiB.
-A 64 MiB global quarantine with a 256 KiB thread-local quarantine maps about 113 to 114 MiB.
-Freed parser allocations dominate that difference, not a growing live parser heap.
-The smaller quarantine retains delayed reuse but shortens the use-after-free detection window.
-These are libFuzzer watchdogs, not a hard OS memory sandbox or an exact maximum allocation footprint.
-Timeout or memory-limit violations remain findings with saved inputs, rather than silently discarded decoder errors.
-The cache blob readers independently validate dimensions and payload lengths before allocating.
-Serato output scales with the bounded payload, and CLI input is separately limited to 4096 bytes.
-
-### Exact malformed WAV and CAF arithmetic regressions
-
-Symphonia 0.6.1 has two independently reproduced checked arithmetic panics during decoder opening:
-
-- `symphonia-format-riff` computes PCM block alignment in `u16` at `src/wave/chunks.rs:100`
-  before validating the channel count.
-  The `wav-block-align-overflow` input reproduces that multiplication overflow.
-- `symphonia-format-caf` computes `bytes_per_packet * 8` in `u32` at `src/demuxer.rs:389`.
-  The `caf-bits-per-coded-sample-overflow` input declares 3,758,096,130 bytes per packet
-  and reproduces the multiplication overflow before a decoder can reject the inconsistent PCM parameters.
-
-Overflow checks stay enabled for all fuzz dependencies.
-Only those two byte-exact committed inputs, including their extension selector,
-call the actual `analyze_file_catching_panics` worker entry point instead of the raw decoder.
-The hook permits only the corresponding dependency location and multiplication-overflow payload inside that call.
-Each replay requires exactly one verified panic and a failed record with `AnalysisError::Panicked`.
-Mutations, unexpected locations, unrelated panics,
-and these same panics outside the production call still reach libFuzzer's aborting hook.
-A dependency update or a regression that stops reproducing fails closed and requires reviewing the allowance.
-
-Run `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions` to check both caught failures,
-both raw decoder aborts, mutation rejection, wrong-location rejection inside production,
-unrelated panic propagation, and ordinary decoder errors in isolated subprocesses.
-CI runs this with overflow checking before corpus replay.
-These third-party arithmetic defects remain unfixed.
-The verified analysis entry point fails the affected file without unwinding out of its worker.
-The normalization and processing coordinators also have catch-unwind boundaries,
-but these tests do not establish their behavior or the safety of plugin destructors during unwinding.
-Direct decoder callers, including preview decoding, do not acquire panic protection from this harness.
-A checked-arithmetic preview decoder panic can terminate its decode thread.
-Catch-unwind cannot contain aborts, allocation exhaustion, or hangs.
-Unchecked release arithmetic is not evidence of safety.
-Fuzz mutations may rediscover the same unfixed upstream defects and must remain visible findings,
-not be silently treated as ordinary decoder errors or evidence of a clean fuzz campaign.
-`fuzz/tests/wav-overflow-unallowlisted` retains one such fuzz-discovered WAV variant outside the replay corpus.
-The subprocess regression requires that variant to remain unallowlisted and abort through the original panic hook.
-The decode campaign remains blocked by that upstream WAV overflow, even when committed corpus replay passes.
-After building, reproduce the unallowlisted finding from `rust/`:
-
-```shell
-host=$(rustc +nightly -vV | awk '/^host:/ { print $2 }')
-"fuzz/target/$host/release/decode_audio" -runs=1 -timeout=5 -malloc_limit_mb=128 -rss_limit_mb=512 \
-    fuzz/tests/wav-overflow-unallowlisted
-```
-
-This command must exit unsuccessfully until the upstream defect is fixed or a separately reviewed production fix lands.
-
-### Production validation blocker
-
-The official crates.io release and the upstream GitHub releases have no version newer than 0.6.1.
-There is no released dependency update to verify against these regressions.
-The checked subprocess tests also establish why checking only the two overflowing fields is insufficient:
-
-- WAVE PCM computes `num_channels * (bits_per_sample / 8)` in `u16` before channel validation.
-  For 16-bit samples, 32767 channels reach a structured unsupported-stream error,
-  while 32768 channels panic before that rejection.
-- CAF computes `bytes_per_packet * 8` in `u32` before PCM width validation.
-  Values through `u32::MAX / 8` reach an ordinary codec error in the boundary test,
-  while the next value panics.
-  The retained original CAF declares 3,758,096,130 bytes per packet, not a valid mono 16-bit PCM frame size.
-- Both readers are selected after Symphonia scans for a container marker.
-  Junk-prefixed versions of both retained findings still panic through `AudioFileDecoder::open`,
-  so validation at file offset zero or by filename extension is not the production probe boundary.
-- The WAVE extensible reader repairs a channel mask using `((1 << channel_diff) - 1) << shift`
-  at `symphonia-format-riff-0.6.1/src/wave/chunks.rs:690`.
-  A PCM subtype with 33 channels and an empty mask causes a checked shift overflow.
-- The CAF packet-table reader accumulates `packet_offset += size` at `symphonia-format-caf-0.6.1/src/chunks.rs:529`.
-  Three legal nine-byte integer encodings of `2^63 - 1` overflow the aggregate offset,
-  even with a description whose `bytes_per_packet * 8` is safe.
-  The surrounding data-length product at `src/demuxer.rs:479-480`
-  and seek byte-offset product at `src/demuxer.rs:231-233` also use unchecked arithmetic.
-
-A correct bounded validator would have to agree with the bytes the downstream reader actually consumes,
-not merely walk spec-declared chunk ends.
-The WAVE IMA ADPCM reader accepts `cbSize = 2` in a larger format chunk,
-reads only that extension, and then treats the unread remainder as the next chunk header.
-The checked cursor-divergence regression puts an overflowing PCM format there,
-inside what a spec-based walker would skip as the preceding chunk's body.
-CAF `chan` and `pakt` readers likewise consume field-count-dependent bodies without skipping to the declared end.
-They also require nested channel-description and variable-length packet-table validation.
-A reliable guard would therefore need either a substantial second parser matching these consumption rules,
-or upstream bounds and checked-arithmetic changes at the actual reader construction points.
-No byte-pattern blacklist, partial header guard, dependency source patch, or additional panic allowance is installed.
-Nearby valid mono WAV and CAF inputs still decode,
-and malformed zero-channel WAV and inconsistent-width CAF inputs return structured errors without any allowance.
-The original findings still panic, so this is a documented blocker, not a production decoding fix.
-
-Until a verified upstream release or a separately reviewed complete boundary fix is available,
-decoder mutation fuzzing runs as non-blocking diagnostics in CI.
-The required `fuzz` job still checks the decoder regressions, builds every target,
-replays every committed corpus including the decoder seeds, and mutates the `parsers` group for 60 seconds per target.
-The `miri` job also remains required.
-There is no `continue-on-error` on either required job or any of their steps.
-
-The separate `Decoder mutation fuzz (non-blocking diagnostics)` job builds only the decoder target
-and requests 60 seconds of mutations, with `continue-on-error` only at job level.
-The mutation step retains its real failed outcome, and Bash `pipefail` preserves its exit status through `tee`.
-An always-run summary reports the job status and mutation step outcome,
-and emits a warning if the diagnostic failed or did not complete.
-The `rust-decoder-fuzz-diagnostics` artifact retains the mutation log and any saved crashing inputs,
-with upload attempted regardless of success or failure.
-A build or setup failure can prevent mutation output from being created, which the summary reports as incomplete.
-Runner termination or cancellation can prevent reporting or uploading.
-Repository branch protection is configured separately, the diagnostic job must not be selected as a required check.
-
-Arithmetic checks, exact-input allowances, resource watchdogs, and unexpected-panic behavior remain unchanged.
-A decoder campaign requested with a 60-second limit can stop immediately on these findings,
-so a successful workflow or committed-corpus replay does not establish a usable or clean decoder campaign.
-Local decoder commands still exit nonzero on findings, including rediscoveries of known upstream defects.
+Every run uses a five-second timeout, a 128 MiB single-allocation limit, and a 512 MiB RSS limit,
+because a small file can make a decoder allocate a lot,
+and a reduced ASan quarantine keeps the sanitizer's own memory under that limit.
 
 ```shell
 # Build the targets, replay the corpus, and fuzz each target for 60 seconds
 ./fuzz.sh
 
-# Required CI sequence, every replay plus only parser/cache mutations
-cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions
-./fuzz.sh --build-only
-./fuzz.sh --no-build --replay
-./fuzz.sh --no-build --fuzz --targets parsers --seconds 60
-
-# Decoder diagnostics, a known mutation can stop this with exit 77 before 60 seconds
-./fuzz.sh --build-only --targets decoder
-./fuzz.sh --no-build --fuzz --targets decoder --seconds 60
-
-# Other selections, with the same nonzero failure behavior
-./fuzz.sh --replay --targets decoder
+# Only replay the corpus, or fuzz only the parser and cache targets
+./fuzz.sh --replay
 ./fuzz.sh --fuzz --targets parsers --seconds 300
 ```
 
 Add an input that found a bug to the corpus of its target, so the replay keeps checking it.
-The required `fuzz` job uploads its crashing inputs as `rust-fuzz-artifacts` on failure.
-Decoder mutation logs and findings belong to the separate `rust-decoder-fuzz-diagnostics` artifact,
-not to a passing parser/cache campaign.
+
+### Known Symphonia findings
+
+Symphonia 0.6.1 panics on checked arithmetic overflow while opening some malformed WAV and CAF files,
+and no newer release fixes it.
+The committed inputs `wav-block-align-overflow`
+and `caf-bits-per-coded-sample-overflow` replay through the production `analyze_file_catching_panics` entry point,
+which must turn exactly that panic into a failed record.
+Any other panic, including mutations of those inputs, stays a fuzz finding.
+`fuzz/tests/decoder_regressions.rs` checks these rules in subprocesses:
+
+```shell
+cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions
+```
+
+Decoder mutation fuzzing keeps finding variants of the same overflows,
+so CI runs it in a separate non-blocking job that uploads its log and inputs as `rust-decoder-fuzz-diagnostics`.
+The required `fuzz` job runs the regression tests, replays every corpus, and fuzzes the parser targets,
+uploading crashing inputs as `rust-fuzz-artifacts`.
+Preview decoding calls the decoder directly, so one of these files can end its decode thread.
 
 ## Required Tools
 
