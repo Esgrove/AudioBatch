@@ -189,6 +189,28 @@ install_shell_completions() {
     done
 }
 
+# Sign a completed local macOS app after every executable, icon, license, and resource has been copied.
+# An explicit identity must succeed. An unset or empty identity selects ad-hoc signing, never keychain discovery.
+# Hardened runtime is a signing option. Only library validation is relaxed to host third-party plugins.
+sign_mac_app_bundle() {
+    local bundle="$1"
+    local root
+    root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return
+    local entitlements="$root/assets/macos.entitlements"
+    local identity="${CODESIGN_IDENTITY:--}"
+
+    if [ "$BASH_PLATFORM" != mac ]; then
+        print_error "macOS app signing is only supported on macOS."
+        return 1
+    fi
+    plutil -lint -s "$entitlements" || return
+    plutil -lint -s "$bundle/Contents/Info.plist" || return
+    print_magenta "Signing $(basename "$bundle") with identity: $identity"
+    codesign --force --sign "$identity" --options runtime --timestamp=none \
+        --entitlements "$entitlements" "$bundle" || return
+    codesign --verify --deep --strict --verbose=2 "$bundle" || return
+}
+
 # Enable calling functions directly as arguments:
 # ./common.sh print_green "hello"
 # shellcheck disable=SC2128

@@ -150,6 +150,35 @@ CI overrides it with an empty `RUSTFLAGS`.
 cargo build --release
 ```
 
+### Local macOS signing
+
+`build.sh` and `install.sh` sign `AudioBatchRs.app` only after copying the executable, icons, licenses, and other resources.
+Set `CODESIGN_IDENTITY` in their environment to select an installed identity explicitly,
+for example `CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./build.sh --debug`.
+An unset or empty value uses ad-hoc signing (`-`), without searching or changing the keychain.
+An invalid explicit identity fails packaging, rather than silently falling back.
+Both applications use the same helper in the root `common.sh`
+and the shared [`macos.entitlements`](../assets/macos.entitlements).
+
+The signature enables hardened runtime with `--options runtime`, not an entitlement.
+Only library validation is disabled, allowing external unsigned or differently signed plugins to load.
+There is no audio-input or microphone entitlement, microphone usage description, or sandbox.
+Signing validates both plists and verifies the final bundle. Failures stop packaging and remain visible.
+Do not modify a signed bundle without signing it again, including when adding icons or license files.
+These signatures are for local use only, without timestamping, notarization, distribution, or CI signing setup.
+Ad-hoc signatures do not establish a trusted developer identity.
+Direct Cargo builds, the CLI, and Windows packaging are unchanged.
+
+```shell
+codesign --verify --deep --strict --verbose=2 AudioBatchRs.app
+codesign --display --entitlements - --xml AudioBatchRs.app
+plutil -lint ../assets/macos.entitlements
+uv run --script ../tests/test_mac_signing.py
+```
+
+On macOS, prefix the test command with `AUDIOBATCH_TEST_NATIVE_SIGNING=1` to inspect real ad-hoc Rust packages
+and disposable Ninja and Xcode bundles, including resource tampering checks.
+
 ## Shell Completions
 
 `audiobatch-rs` generates shell completions with the `completion` subcommand.
