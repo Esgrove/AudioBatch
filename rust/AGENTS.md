@@ -551,7 +551,7 @@ Mention the C++ application only when it matters for the implementation:
   and `fuzz.sh` replays the C++ corpus in place, so keep the layouts in step.
   Add each input that found a bug to `fuzz/corpus/<target>/`.
   Keep overflow checking enabled, and do not suppress unexpected panics.
-  Only the two committed Symphonia WAV and CAF overflow inputs, described in the README, may panic,
+  Only the committed Symphonia WAV overflow input, described in the README, may panic,
   and `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions` checks that allowance.
   The targets use only public library interfaces, so keep any item made public for them as narrow as possible.
   Run `cargo clippy --manifest-path fuzz/Cargo.toml --all-targets` for them,

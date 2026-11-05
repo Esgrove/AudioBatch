@@ -44,7 +44,7 @@ and `stereoCorrelation`, with the channel arrays as JSON arrays in CSV too.
 
 ## Audio formats
 
-Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis, and CAF files.
+Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, and AAC and M4A files.
 Decoding uses Symphonia on every platform, including lossless ALAC in M4A containers.
 On macOS, single-track mono or stereo AAC-LC MP4 files decode with Core Audio,
 so perceptual noise substitution matches the C++ application.
@@ -192,7 +192,7 @@ The `list` subcommand lists scanned VST3 effects, and `completion` generates she
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
 A loudness target is limited by a -0.3 dBTP true peak ceiling, and a gain above 40 dB is refused.
 The output keeps the source bit depth when AIFF supports it, so 32-bit float files become 24-bit.
-Lossy MP3, AAC, and Ogg Vorbis files store no bit depth and become 16-bit,
+Lossy MP3 and AAC files store no bit depth and become 16-bit,
 while ALAC files keep the depth stored in the file.
 The tags, album art, and Serato data are copied over without the Serato overview.
 The converted original goes to the system trash, and an `.aif` file rewritten in place leaves a copy there.
@@ -634,10 +634,9 @@ Add an input that found a bug to the corpus of its target, so the replay keeps c
 
 ### Known Symphonia findings
 
-Symphonia 0.6.1 panics on checked arithmetic overflow while opening some malformed WAV and CAF files,
+Symphonia 0.6.1 panics on checked arithmetic overflow while opening some malformed WAV files,
 and no newer release fixes it.
-The committed inputs `wav-block-align-overflow`
-and `caf-bits-per-coded-sample-overflow` replay through the production `analyze_file_catching_panics` entry point,
+The committed input `wav-block-align-overflow` replays through the production `analyze_file_catching_panics` entry point,
 which must turn exactly that panic into a failed record.
 Any other panic, including mutations of those inputs, stays a fuzz finding.
 `fuzz/tests/decoder_regressions.rs` checks these rules in subprocesses:

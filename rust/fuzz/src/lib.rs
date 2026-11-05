@@ -1,4 +1,4 @@
-//! Exact-input regressions for checked arithmetic panics in Symphonia 0.6.1.
+//! Exact-input regression for a checked arithmetic panic in Symphonia 0.6.1.
 //!
 //! Only the real production analysis boundary may unwind through the libFuzzer panic hook,
 //! and only for the committed input's verified dependency location and overflow payload.
@@ -13,9 +13,6 @@ use audiobatch_core::record::{AnalysisError, AnalysisStatus};
 /// The complete WAV fuzz input, including its extension selector.
 const WAV_REGRESSION: &[u8] = include_bytes!("../corpus/decode_audio/wav-block-align-overflow");
 
-/// The complete CAF fuzz input, including its extension selector.
-const CAF_REGRESSION: &[u8] = include_bytes!("../corpus/decode_audio/caf-bits-per-coded-sample-overflow");
-
 thread_local! {
     /// The exact input being checked inside the production catch-unwind entry point.
     static IN_PRODUCTION_BOUNDARY: Cell<Option<DecoderRegression>> = const { Cell::new(None) };
@@ -28,28 +25,19 @@ thread_local! {
 pub enum DecoderRegression {
     /// PCM channel count times sample width overflows u16 during WAV probing.
     WavBlockAlignment,
-    /// CAF bytes per packet times eight overflows u32 during probing.
-    CafCodedSampleBits,
 }
 
 impl DecoderRegression {
     /// Identifies only a byte-exact committed regression, never a broader malformed-header class.
     #[must_use]
     pub fn from_input(input: &[u8]) -> Option<Self> {
-        if input == WAV_REGRESSION {
-            Some(Self::WavBlockAlignment)
-        } else if input == CAF_REGRESSION {
-            Some(Self::CafCodedSampleBits)
-        } else {
-            None
-        }
+        (input == WAV_REGRESSION).then_some(Self::WavBlockAlignment)
     }
 
     /// Matches the versioned dependency location verified by the checked subprocess tests.
     fn matches_location(self, location: &std::panic::Location<'_>) -> bool {
         let (suffix, line) = match self {
             Self::WavBlockAlignment => ("symphonia-format-riff-0.6.1/src/wave/chunks.rs", 100),
-            Self::CafCodedSampleBits => ("symphonia-format-caf-0.6.1/src/demuxer.rs", 389),
         };
         location.file().ends_with(suffix) && location.line() == line
     }
@@ -77,7 +65,7 @@ pub fn install_decoder_regression_hook() {
 
 /// Requires the exact regression to produce a failed record through the real production entry point.
 ///
-/// Both panics happen during probing, before meter construction or the first cancellation check.
+/// The panic happens during probing, before meter construction or the first cancellation check.
 /// Cancellation prevents an unexpectedly accepted input from starting an unbounded analysis pass.
 ///
 /// # Panics

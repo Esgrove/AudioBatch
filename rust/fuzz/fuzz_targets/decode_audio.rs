@@ -5,8 +5,8 @@
 //! Input size, accepted stream dimensions, chunk calls, and decoded frames have separate bounds.
 //! Probe and codec allocations happen before chunk checks, so fuzz.sh also enforces libFuzzer allocation,
 //! RSS, and per-input time limits. Exceeding those limits is a finding, not an ordinary decoder error.
-//! Only the exact committed WAV and CAF regressions check the production panic boundary.
-//! All other panics remain findings, including mutations that hit those same upstream defects.
+//! Only the exact committed WAV regression checks the production panic boundary.
+//! All other panics remain findings, including mutations that hit the same upstream defect.
 
 #![no_main]
 
@@ -34,7 +34,7 @@ const MAXIMUM_CHANNELS: u32 = 8;
 const MAXIMUM_SAMPLE_RATE: u32 = 192_000;
 
 /// File extensions the selector byte chooses from, one for each container the analysis supports.
-const EXTENSIONS: [&str; 8] = ["wav", "aiff", "flac", "mp3", "m4a", "ogg", "caf", "aac"];
+const EXTENSIONS: [&str; 6] = ["wav", "aiff", "flac", "mp3", "m4a", "aac"];
 
 /// The folder that holds the file of the current input, removed when the process exits normally.
 static FOLDER: OnceLock<TempDir> = OnceLock::new();

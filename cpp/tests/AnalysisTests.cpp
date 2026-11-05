@@ -39,7 +39,7 @@ struct ToneFixture {
     /// Expected sample rate in Hz.
     int sampleRate {};
     /// Expected source bit depth.
-    /// MP3 and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
+    /// MP3 and AAC files report the fixed default of 16 bits, since the formats store no source bit depth.
     int bitsPerSample {};
     /// True for lossy formats, which get a wider level tolerance.
     bool lossy {};
@@ -155,13 +155,6 @@ constexpr std::array toneFixtures {
         .bitsPerSample = 16,
         .lossy = true,
         .lengthInSamples = noXingFixtureLength,
-    },
-    ToneFixture {
-        .fileName = "sine_stereo_48000.ogg",
-        .channels = 2,
-        .sampleRate = 48'000,
-        .bitsPerSample = 16,
-        .lossy = true,
     },
 #if JUCE_MAC
     // Only Core Audio decodes AAC, and it removes the priming and padding that the MP4 edit list records.

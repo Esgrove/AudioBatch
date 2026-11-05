@@ -729,7 +729,6 @@ fn format_display_name(short_name: &str, path: &Path) -> String {
         ("ogg", _) | (_, "ogg" | "oga") => "Ogg-Vorbis",
         (_, "mp3") => "MP3",
         (_, "m4a" | "mp4" | "aac") => "M4A",
-        (_, "caf") => "CAF",
         _ => return format!("{} file", short_name.to_ascii_uppercase()),
     };
     format!("{name} file")
@@ -1071,7 +1070,7 @@ mod test_audio_file_decoder {
         assert_eq!(format_display_name("wave", Path::new("a.wav")), "WAV file");
         assert_eq!(format_display_name("aiff", Path::new("a.aif")), "AIFF file");
         assert_eq!(format_display_name("mp3", Path::new("a.mp3")), "MP3 file");
-        assert_eq!(format_display_name("ogg", Path::new("a.ogg")), "Ogg-Vorbis file");
+        assert_eq!(format_display_name("isomp4", Path::new("a.m4a")), "M4A file");
     }
 
     #[test]

@@ -293,7 +293,7 @@ jobs:
           {
             printf '## Decoder mutation fuzz, non-blocking diagnostics\n\n'
             printf 'Job status before reporting: %s. Mutation step outcome: %s.\n\n' "$DIAGNOSTIC_STATUS" "$MUTATION_OUTCOME"
-            printf 'Known Symphonia 0.6.1 WAV/CAF arithmetic defects remain unfixed.\n'
+            printf 'Known Symphonia 0.6.1 WAV arithmetic defects remain unfixed.\n'
             printf 'A failed or incomplete campaign is not a clean fuzz result. See the failed step and diagnostic artifacts.\n'
             printf 'Checked decoder regressions, every corpus replay, parser/cache mutations, and Miri remain required.\n'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -9,7 +9,7 @@ GUI and CLI tool (C++23 and JUCE) for analyzing and batch processing audio files
 - Write AIFF output while preserving tags and embedded artwork.
 - Cache analysis so unchanged files do not need to be read again.
 
-Supports mono and stereo audio, including WAV, AIFF, FLAC, MP3, Ogg Vorbis and Opus.
+Supports mono and stereo audio in WAV, AIFF, FLAC, and MP3.
 On macOS, Core Audio also reads AAC and ALAC.
 Windows Media decoding is disabled, so the Windows build does not provide those decoders or WMA support.
 Multichannel audio is not currently supported.

@@ -605,7 +605,6 @@ mod test_artwork {
             ("sine_stereo_44100_320k.mp3", TagType::Id3v2),
             ("sine_stereo_44100_16.wav", TagType::Id3v2),
             ("serato_rainbow_stereo_44100_16.aif", TagType::Id3v2),
-            ("sine_stereo_48000.ogg", TagType::VorbisComments),
             ("sine_stereo_44100_aac.m4a", TagType::Mp4Ilst),
         ] {
             let path = test_fixtures::copy_fixture(&directory, name, None);
@@ -961,7 +960,7 @@ mod test_serato_overview_state {
             &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
         )]);
         assert_eq!(
-            SeratoOverviewState::from_tags(Path::new("song.ogg"), &tags),
+            SeratoOverviewState::from_tags(Path::new("song.m4a"), &tags),
             SeratoOverviewState::Unsupported
         );
         assert_eq!(

@@ -36,18 +36,8 @@ fn production_boundary_catches_the_exact_wav_overflow() {
 }
 
 #[test]
-fn production_boundary_catches_the_exact_caf_overflow() {
-    succeeds("caf-production");
-}
-
-#[test]
 fn raw_wav_overflow_still_aborts() {
     aborts("wav-raw", "attempt to multiply with overflow");
-}
-
-#[test]
-fn raw_caf_overflow_still_aborts() {
-    aborts("caf-raw", "attempt to multiply with overflow");
 }
 
 #[test]
@@ -57,7 +47,7 @@ fn a_mutated_regression_is_not_allowlisted() {
 
 #[test]
 fn the_wrong_dependency_location_aborts_inside_production() {
-    aborts("caf-wrong-location", "attempt to multiply with overflow");
+    aborts("wav-wrong-location", "attempt to shift left with overflow");
 }
 
 #[test]
@@ -71,11 +61,6 @@ fn prefixed_wav_overflow_still_aborts() {
 }
 
 #[test]
-fn prefixed_caf_overflow_still_aborts() {
-    aborts("caf-prefixed", "attempt to multiply with overflow");
-}
-
-#[test]
 fn oversized_extensible_channel_count_still_aborts() {
     aborts("wav-extensible", "attempt to shift left with overflow");
 }
@@ -86,32 +71,19 @@ fn wav_declared_chunk_end_can_differ_from_the_next_parsed_header() {
 }
 
 #[test]
-fn caf_packet_offsets_can_overflow_after_a_safe_description() {
-    aborts("caf-packet-offset", "attempt to add with overflow");
-}
-
-#[test]
 fn wav_block_alignment_limit_is_checked_before_channel_rejection() {
     succeeds("wav-alignment-limit");
     aborts("wav-alignment-overflow", "attempt to multiply with overflow");
 }
 
 #[test]
-fn caf_coded_width_limit_is_checked_before_pcm_rejection() {
-    succeeds("caf-width-limit");
-    aborts("caf-width-overflow", "attempt to multiply with overflow");
-}
-
-#[test]
 fn nearby_valid_streams_need_no_allowance() {
     succeeds("wav-valid");
-    succeeds("caf-valid");
 }
 
 #[test]
 fn nearby_invalid_parameters_return_structured_errors() {
     succeeds("wav-invalid-channels");
-    succeeds("caf-invalid-width");
 }
 
 #[test]
@@ -142,45 +114,6 @@ fn wave(format: u16, channels: u16, bits: u16, extension: &[u8]) -> Vec<u8> {
     file.extend_from_slice(&u32::try_from(body.len()).expect("small RIFF body").to_le_bytes());
     file.extend_from_slice(&body);
     file
-}
-
-/// Appends one CAF chunk, whose size excludes the twelve-byte header and has no RIFF-style padding.
-fn caf_chunk(file: &mut Vec<u8>, kind: [u8; 4], body: &[u8]) {
-    file.extend_from_slice(&kind);
-    file.extend_from_slice(&i64::try_from(body.len()).expect("small CAF body").to_be_bytes());
-    file.extend_from_slice(body);
-}
-
-/// Builds a CAF description followed by optional packet-table bytes and a silent sample.
-fn caf(bytes_per_packet: u32, frames_per_packet: u32, packet_table: Option<&[u8]>) -> Vec<u8> {
-    let mut file = Vec::from(b"caff\0\x01\0\0");
-    let mut description = Vec::from(8000_f64.to_be_bytes());
-    description.extend_from_slice(b"lpcm");
-    description.extend_from_slice(&0_u32.to_be_bytes());
-    description.extend_from_slice(&bytes_per_packet.to_be_bytes());
-    description.extend_from_slice(&frames_per_packet.to_be_bytes());
-    description.extend_from_slice(&1_u32.to_be_bytes());
-    description.extend_from_slice(&16_u32.to_be_bytes());
-    caf_chunk(&mut file, *b"desc", &description);
-    if let Some(table) = packet_table {
-        caf_chunk(&mut file, *b"pakt", table);
-    }
-    caf_chunk(&mut file, *b"data", &[0; 6]);
-    file
-}
-
-/// Builds three individually representable packet sizes whose aggregate byte offset overflows u64.
-fn overflowing_packet_table() -> Vec<u8> {
-    let mut table = Vec::from(3_i64.to_be_bytes());
-    table.extend_from_slice(&3_i64.to_be_bytes());
-    table.extend_from_slice(&0_i32.to_be_bytes());
-    table.extend_from_slice(&0_i32.to_be_bytes());
-    for _ in 0..3 {
-        // Nine base-128 groups encode 2^63 - 1, which the dependency accepts as one packet size.
-        table.extend_from_slice(&[0xff; 8]);
-        table.push(0x7f);
-    }
-    table
 }
 
 /// Builds an extended fmt chunk whose ADPCM extra-data count leaves the parser inside its declared body.
@@ -215,12 +148,8 @@ fn wave_with_oversized_channel_mask() -> Vec<u8> {
 /// Checks the nearest representable and overflowing products without admitting any panic allowance.
 fn arithmetic_boundary(path: &Path, mode: &str) {
     let at_limit = mode.ends_with("-limit");
-    let input = if mode.starts_with("wav-") {
-        // A 16-bit sample occupies two bytes, so this tests the u16 frame-width product.
-        wave(1, u16::MAX / 2 + u16::from(!at_limit), 16, &[])
-    } else {
-        caf(u32::MAX / 8 + u32::from(!at_limit), 1, None)
-    };
+    // A 16-bit sample occupies two bytes, so this tests the u16 frame-width product.
+    let input = wave(1, u16::MAX / 2 + u16::from(!at_limit), 16, &[]);
     std::fs::write(path, input).expect("writes arithmetic boundary input");
     let error = AudioFileDecoder::open(path).err().expect("unsupported boundary input");
     assert!(at_limit, "above-limit input must retain its checked panic");
@@ -238,24 +167,16 @@ fn regression_child() {
         std::process::abort();
     }));
     install_decoder_regression_hook();
-    let seed: &[u8] = if mode.starts_with("caf-") {
-        include_bytes!("../corpus/decode_audio/caf-bits-per-coded-sample-overflow")
-    } else {
-        include_bytes!("../corpus/decode_audio/wav-block-align-overflow")
-    };
+    let seed: &[u8] = include_bytes!("../corpus/decode_audio/wav-block-align-overflow");
     let regression = DecoderRegression::from_input(seed).expect("exact committed regression");
     assert!(DecoderRegression::from_input(b"not a WAV").is_none());
     let (_, file) = seed.split_first().expect("selector");
     let directory = tempfile::tempdir().expect("temporary folder");
-    let path = directory.path().join(if mode.starts_with("caf-") {
-        "input.caf"
-    } else {
-        "input.wav"
-    });
+    let path = directory.path().join("input.wav");
     std::fs::write(&path, file).expect("writes regression input");
     match mode.as_str() {
-        "wav-production" | "caf-production" => check_decoder_production_boundary(&path, regression),
-        "wav-prefixed" | "caf-prefixed" => {
+        "wav-production" => check_decoder_production_boundary(&path, regression),
+        "wav-prefixed" => {
             let mut prefixed = Vec::from(b"junk before the probed container");
             prefixed.extend_from_slice(file);
             std::fs::write(&path, prefixed).expect("writes prefixed input");
@@ -269,38 +190,21 @@ fn regression_child() {
             std::fs::write(&path, wave_with_oversized_channel_mask()).expect("writes extensible WAV");
             let _ = AudioFileDecoder::open(&path);
         }
-        "caf-packet-offset" => {
-            std::fs::write(&path, caf(0, 1, Some(&overflowing_packet_table()))).expect("writes variable packet CAF");
-            let _ = AudioFileDecoder::open(&path);
-        }
-        "wav-alignment-limit" | "wav-alignment-overflow" | "caf-width-limit" | "caf-width-overflow" => {
-            arithmetic_boundary(&path, &mode);
-        }
-        "wav-valid" | "caf-valid" => {
-            let valid = if mode == "wav-valid" {
-                wave(1, 1, 16, &[])
-            } else {
-                caf(2, 1, None)
-            };
-            std::fs::write(&path, valid).expect("writes valid boundary input");
+        "wav-alignment-limit" | "wav-alignment-overflow" => arithmetic_boundary(&path, &mode),
+        "wav-valid" => {
+            std::fs::write(&path, wave(1, 1, 16, &[])).expect("writes valid boundary input");
             let mut decoder = AudioFileDecoder::open(&path).expect("valid input opens");
             assert_eq!(decoder.info().channels, 1);
             assert_eq!(decoder.info().sample_rate, 8000);
             assert!(decoder.next_chunk().expect("decodes silent sample").is_some());
         }
-        "wav-invalid-channels" | "caf-invalid-width" => {
-            let invalid = if mode == "wav-invalid-channels" {
-                wave(1, 0, 16, &[])
-            } else {
-                // Three bytes fit u32 multiplication, but cannot encode mono 16-bit PCM.
-                caf(3, 1, None)
-            };
-            std::fs::write(&path, invalid).expect("writes malformed boundary input");
+        "wav-invalid-channels" => {
+            std::fs::write(&path, wave(1, 0, 16, &[])).expect("writes malformed boundary input");
             let error = AudioFileDecoder::open(&path).err().expect("structured decoding error");
             assert!(matches!(error, DecodeError::Probe(_) | DecodeError::Codec(_)));
             assert_eq!(error.analysis_kind(), AnalysisError::Unsupported);
         }
-        "wav-raw" | "caf-raw" => {
+        "wav-raw" => {
             let _ = AudioFileDecoder::open(&path);
         }
         "wav-unallowlisted" => {
@@ -316,7 +220,11 @@ fn regression_child() {
             std::fs::write(&path, mutated.get(1..).expect("payload")).expect("writes mutated regression");
             let _ = AudioFileDecoder::open(&path);
         }
-        "caf-wrong-location" => check_decoder_production_boundary(&path, DecoderRegression::WavBlockAlignment),
+        "wav-wrong-location" => {
+            // The channel-mask overflow is in another dependency location, so the allowance must not apply.
+            std::fs::write(&path, wave_with_oversized_channel_mask()).expect("writes extensible WAV");
+            check_decoder_production_boundary(&path, regression);
+        }
         "unrelated" => {
             let _ = std::panic::catch_unwind(|| panic!("unrelated harness failure"));
         }
