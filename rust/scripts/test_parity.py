@@ -143,6 +143,20 @@ class TestLevelOracle(unittest.TestCase):
         assert peak[sources[2].name]["status"] == "failed"
         assert peak[sources[3].with_suffix(".aif").name]["status"] == "analyzed"
 
+    def test_spectrogram_silence_cannot_be_normalized(self) -> None:
+        """The independent spectral manifest identifies silence at every committed sample rate."""
+        root = Path("/fixtures/spectrogram_expected")
+        sources = [root / f"silence_{rate}.wav" for rate in (44100, 48000, 96000)]
+        analyzed = levels.expected_results(sources, root)
+        for source in sources:
+            assert analyzed[source.name]["status"] == "analyzed"
+            assert analyzed[source.name]["durationSeconds"] == 0.2
+        for target in ({"peak": 0}, {"lufs": -23}):
+            normalized = levels.expected_results(sources, root, **target)
+            for source in sources:
+                assert normalized[source.name]["status"] == "failed"
+                assert source.with_suffix(".aif").name not in normalized
+
     def test_duplicate_json_rows_are_rejected(self) -> None:
         """A repeated result must not overwrite a failed or otherwise differing result."""
         with tempfile.TemporaryDirectory() as temporary:
