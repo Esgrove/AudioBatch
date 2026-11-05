@@ -162,6 +162,11 @@ done
 # The RSS monitor reports resident memory above 512 MiB, sampled by libFuzzer rather than a hard OS cap.
 RESOURCE_LIMITS=(-timeout=5 -malloc_limit_mb=128 -rss_limit_mb=512 -max_len=262145)
 
+# Keep freed-allocation detection without letting ASan's default 256 MiB quarantine dominate the RSS watchdog.
+# High-throughput Serato runs otherwise retain hundreds of thousands of freed chunks despite a small live heap.
+# Preserve caller diagnostics, with bounded quarantine settings applied last for the same policy in CI and locally.
+export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}quarantine_size_mb=64:thread_local_quarantine_size_kb=64"
+
 mkdir -p artifacts
 if [ "$MODE" != fuzz ]; then
     for target in "${TARGETS[@]}"; do
