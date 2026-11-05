@@ -693,7 +693,7 @@ ASan retains a 64 MiB global quarantine and 64 KiB thread-local quarantine, inst
 This keeps freed-allocation detection enabled while bounding sanitizer overhead under the unchanged RSS watchdog.
 Other caller-supplied `ASAN_OPTIONS` are preserved, with these quarantine bounds applied last.
 On macOS arm64, 100,000 replays of each saved Serato RSS finding retain about 24 MiB of live allocations.
-The default quarantine maps about 356 to 357 MiB.
+The default quarantine maps about 355 to 357 MiB.
 A 64 MiB global quarantine with a 256 KiB thread-local quarantine maps about 113 to 114 MiB.
 Freed parser allocations dominate that difference, not a growing live parser heap.
 The smaller quarantine retains delayed reuse but shortens the use-after-free detection window.
