@@ -23,7 +23,7 @@ so changes to shared services must keep both targets working.
 - Normalize selected files to a target sample peak or integrated loudness from the GUI or the CLI.
 - Convert normalized output to AIFF while preserving source metadata,
   including embedded album art and custom tags, written back as ID3v2.4.
-- Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
+- Batch process files through a chain of VST3 or Audio Unit plugins from the GUI or the CLI's `process` subcommand.
 
 Analysis assumes mono or stereo sources, including MP3 joint stereo.
 Multichannel files are not a target.
@@ -155,6 +155,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `completions.sh` installs them for the shells of the platform,
       and `install.sh` installs them too after installing the CLI, through the shared `install_shell_completions`.
     - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
+    - `PluginProcessCli.{h,cpp}` load native saved chain presets for `process --preset`,
+      dispatch all plugin lifecycle work to the main JUCE event loop,
+      and reuse the processing coordinator, output reconciliation, and persistence of the shared services.
 - `src/gui/` holds the GUI application shell and its main screen.
     - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
       Folders and files given as arguments, or forwarded from a second launch, open as if dropped onto the window.
@@ -225,8 +228,9 @@ The source lists are defined in `CMakeLists.txt`.
 and each target adds its own entry point and target-specific files.
 The shared core is everything in `analysis/`, `metadata/`, `normalization/`,
 and `utils/` except `ConsoleProgress`,
-plus `plugins/PluginScanner.*`, `plugins/PluginScanWorker.*`, `plugins/OutOfProcessPluginScanner.*`,
+plus plugin scanning, presets, chain preparation, processing, and run chains,
 and the Serato tag, tag cache, and overview files.
+Only `PluginPreviewSource.*` stays in the GUI source list.
 Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.
 List sources as relative `src/...` paths,

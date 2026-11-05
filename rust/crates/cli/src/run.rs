@@ -25,6 +25,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::args::{CliArgs, OutputFormat};
 use crate::output::{format_csv, format_json, format_table};
+use crate::process::{ProcessContext, process_records};
 use crate::{write_error, write_failure, write_info, write_warning};
 
 /// Exit code when every file was analyzed.
@@ -43,9 +44,11 @@ pub const EXIT_INTERRUPTED: u8 = 130;
 const INTERRUPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Records to report after normalization, and how many files failed to normalize.
-struct NormalizedRecords {
-    records: Vec<AnalysisRecord>,
-    failure_count: usize,
+pub struct NormalizedRecords {
+    /// Records of completed operations and analysis failures.
+    pub records: Vec<AnalysisRecord>,
+    /// Operation failures, excluding analysis failures already counted by the caller.
+    pub failure_count: usize,
 }
 
 /// Runs the analysis workflow and returns the process exit code.
@@ -68,6 +71,28 @@ pub fn run_analysis(
     log: &mut dyn Write,
     progress_target: fn() -> ProgressDrawTarget,
     is_interrupted: &dyn Fn() -> bool,
+) -> Result<u8> {
+    run_workflow(args, cache, dispose, output, log, progress_target, is_interrupted, None)
+}
+
+/// Runs the common discovery, analysis, operation reporting, and output workflow.
+///
+/// # Errors
+///
+/// Returns errors when workers, plugin chains, or output streams cannot be used.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the CLI injects streams, cancellation, and operation context"
+)]
+pub fn run_workflow(
+    args: &CliArgs,
+    cache: Arc<AnalysisCache>,
+    dispose: FileDisposer,
+    output: &mut dyn Write,
+    log: &mut dyn Write,
+    progress_target: fn() -> ProgressDrawTarget,
+    is_interrupted: &dyn Fn() -> bool,
+    processing: Option<&ProcessContext<'_>>,
 ) -> Result<u8> {
     let normalization = match args.normalization() {
         Ok(normalization) => normalization.map(|options| NormalizationOptions {
@@ -134,7 +159,11 @@ pub fn run_analysis(
         write_failure!(log, "{error}")?;
     }
     failure_count += skipped_inputs.len();
-    let (mut reported, show_full_paths) = if let Some(options) = &normalization {
+    let (mut reported, show_full_paths) = if let Some(processing) = processing {
+        let processed = process_records(&records, normalization_cache, processing, log, is_interrupted)?;
+        failure_count += processed.failure_count;
+        (processed.records, true)
+    } else if let Some(options) = &normalization {
         let normalized = normalize_records(
             &records,
             options,

@@ -128,7 +128,12 @@ const CliOption* findShortOption(const juce::juce_wchar letter)
     }
 
     for (const auto options :
-         {CliOptionList(cli::analysisOptions), CliOptionList(cli::listOptions), CliOptionList(cli::completionOptions)})
+         {
+             CliOptionList(cli::analysisOptions),
+             CliOptionList(cli::processOptions),
+             CliOptionList(cli::listOptions),
+             CliOptionList(cli::completionOptions),
+         })
     {
         for (const CliOption& option : options) {
             if (matches(option)) {
@@ -483,7 +488,8 @@ std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(const juce
 /// The plugin listing options are rejected, and --force, --delete, --peak, and --lufs need --normalize.
 std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     juce::ArgumentList& arguments,
-    const std::optional<juce::String>& deleteEnvironmentValue
+    const std::optional<juce::String>& deleteEnvironmentValue,
+    ProcessCommand* processing = nullptr
 )
 {
     if (arguments.containsOption(cli::groupByOption.pattern()) || arguments.containsOption(cli::rescanOption.pattern()))
@@ -530,11 +536,11 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     const auto peakValue = takeOptionValue(arguments, cli::peakOption);
     const auto loudnessValue = takeOptionValue(arguments, cli::lufsOption);
 
-    if (force && !normalize) {
+    if (force && !normalize && processing == nullptr) {
         return parseError(CliParseErrorKind::missingRequiredOption, "--force can only be used with --normalize");
     }
 
-    if (*deleteOriginals && !normalize) {
+    if (*deleteOriginals && !normalize && processing == nullptr) {
         return parseError(CliParseErrorKind::missingRequiredOption, "--delete can only be used with --normalize");
     }
 
@@ -562,6 +568,13 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     }
     command.inputPaths = std::move(*paths);
 
+    if (processing != nullptr) {
+        processing->analysis = std::move(command);
+        processing->options.overwriteExisting = force;
+        processing->options.disposeFile = *deleteOriginals ? utils::deleteFile : utils::trashFile;
+        processing->options.normalizeBeforePlugin = processing->analysis.normalization;
+        return *processing;
+    }
     return command;
 }
 
@@ -643,7 +656,8 @@ juce::StringArray buildSubcommandUsage(const juce::String& executableName, const
         lines.add("Arguments:");
         lines.add(usageRow(
             argumentPlaceholder(subcommand),
-            fmt::format("{}: {}", subcommand.argumentDescription, values.joinIntoString(", "))
+            values.isEmpty() ? std::string(subcommand.argumentDescription)
+                             : fmt::format("{}: {}", subcommand.argumentDescription, values.joinIntoString(", "))
         ));
     }
 
@@ -775,6 +789,17 @@ std::expected<CliCommand, CliParseError> cli::parseArguments(
     }
 
     switch (subcommand) {
+        case CliSubcommand::process: {
+            ProcessCommand processing;
+            const auto preset = takeOptionValue(arguments, presetOption);
+            if (!preset.has_value() || preset->trim().isEmpty()) {
+                return parseError(
+                    CliParseErrorKind::missingRequiredOption, "The process command needs --preset <preset>"
+                );
+            }
+            processing.preset = *preset;
+            return parseAnalyzeCommand(arguments, deleteEnvironmentValue, &processing);
+        }
         case CliSubcommand::list:
             return parseListPluginsCommand(arguments);
         case CliSubcommand::completion:

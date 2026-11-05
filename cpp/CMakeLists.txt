@@ -503,6 +503,18 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/utils/ThreadUtils.cpp"
     "src/utils/ThreadUtils.h"
     "src/utils/version.h.in"
+    "src/plugins/PluginLibrary.cpp"
+    "src/plugins/PluginLibrary.h"
+    "src/plugins/PluginChainPreparation.cpp"
+    "src/plugins/PluginChainPreparation.h"
+    "src/plugins/PluginChainPresets.cpp"
+    "src/plugins/PluginChainPresets.h"
+    "src/plugins/PluginProcessing.cpp"
+    "src/plugins/PluginProcessing.h"
+    "src/plugins/PluginProcessingCoordinator.cpp"
+    "src/plugins/PluginProcessingCoordinator.h"
+    "src/plugins/PluginRunChains.cpp"
+    "src/plugins/PluginRunChains.h"
 )
 
 # CLI front end sources, also linked into the tests.
@@ -516,6 +528,8 @@ set(AUDIOBATCH_CLI_SOURCES
     "src/cli/CliOptions.h"
     "src/cli/PluginListCli.cpp"
     "src/cli/PluginListCli.h"
+    "src/cli/PluginProcessCli.cpp"
+    "src/cli/PluginProcessCli.h"
     "src/cli/ShellCompletion.cpp"
     "src/cli/ShellCompletion.h"
     "src/utils/ConsoleProgress.cpp"
@@ -587,20 +601,8 @@ set(AUDIOBATCH_GUI_SOURCES
     "src/gui/ResultsModel.h"
     "src/gui/ResultsSorting.cpp"
     "src/gui/ResultsSorting.h"
-    "src/plugins/PluginLibrary.cpp"
-    "src/plugins/PluginLibrary.h"
     "src/plugins/PluginPreviewSource.cpp"
     "src/plugins/PluginPreviewSource.h"
-    "src/plugins/PluginChainPreparation.cpp"
-    "src/plugins/PluginChainPreparation.h"
-    "src/plugins/PluginChainPresets.cpp"
-    "src/plugins/PluginChainPresets.h"
-    "src/plugins/PluginProcessing.cpp"
-    "src/plugins/PluginProcessing.h"
-    "src/plugins/PluginProcessingCoordinator.cpp"
-    "src/plugins/PluginProcessingCoordinator.h"
-    "src/plugins/PluginRunChains.cpp"
-    "src/plugins/PluginRunChains.h"
     "src/serato/SeratoPreviewLoader.cpp"
     "src/serato/SeratoPreviewLoader.h"
     "src/serato/SeratoWaveformColouring.cpp"
@@ -907,20 +909,8 @@ if(BUILD_TESTING)
             "src/gui/ResultsModel.h"
             "src/gui/ResultsSorting.cpp"
             "src/gui/ResultsSorting.h"
-            "src/plugins/PluginChainPreparation.cpp"
-            "src/plugins/PluginLibrary.cpp"
-            "src/plugins/PluginLibrary.h"
             "src/plugins/PluginPreviewSource.cpp"
             "src/plugins/PluginPreviewSource.h"
-            "src/plugins/PluginChainPreparation.h"
-            "src/plugins/PluginChainPresets.cpp"
-            "src/plugins/PluginChainPresets.h"
-            "src/plugins/PluginProcessing.cpp"
-            "src/plugins/PluginProcessing.h"
-            "src/plugins/PluginProcessingCoordinator.cpp"
-            "src/plugins/PluginProcessingCoordinator.h"
-            "src/plugins/PluginRunChains.cpp"
-            "src/plugins/PluginRunChains.h"
             "src/serato/SeratoPreviewLoader.cpp"
             "src/serato/SeratoPreviewLoader.h"
             "src/serato/SeratoWaveformColouring.cpp"
@@ -1098,8 +1088,10 @@ if(BUILD_TESTING)
     find_program(AUDIOBATCH_UV_EXECUTABLE uv REQUIRED)
     add_test(
         NAME AudioBatchCliIntegration
-        COMMAND "${AUDIOBATCH_UV_EXECUTABLE}" run --script "${CMAKE_SOURCE_DIR}/../tests/cli_integration.py" --cli
-                $<TARGET_FILE:AudioBatchCli> --artifacts "${CMAKE_BINARY_DIR}/integration-artifacts/cli"
+        COMMAND
+            "${AUDIOBATCH_UV_EXECUTABLE}" run --script "${CMAKE_SOURCE_DIR}/../tests/cli_integration.py" --cli
+            $<TARGET_FILE:AudioBatchCli> --test-plugin "${AUDIOBATCH_TEST_PLUGIN_BUNDLE}" --artifacts
+            "${CMAKE_BINARY_DIR}/integration-artifacts/cli"
     )
     set_tests_properties(AudioBatchCliIntegration PROPERTIES LABELS integration TIMEOUT 240)
     audiobatch_set_source_warnings(AudioBatchTests AudioBatchIntegrationTests)

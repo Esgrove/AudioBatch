@@ -91,6 +91,13 @@ and tests start a dedicated `vst3-ui` thread with `UiThread::spawn_dedicated`.
 While it waits, `call` polls the caller's cancellation check and abandons a job that has not started,
 so the UI thread can cancel a run and wait for its workers without a deadlock.
 The GUI runs the jobs from a foreground task, one by one as `UiJobs::recv` returns them.
+The CLI's `process --preset` subcommand registers its main thread
+and alternates `UiJobs::drain_pending` with `pump_platform_events`,
+while a scoped worker performs analysis and waits for processing events.
+It loads its native JSON preset by name or explicit path and creates at most one chain per discovered file and worker.
+It drains the processing event channel through disconnection,
+including teardown jobs and committed results after cancellation,
+before it drops the UI queue. Rendering, output publication, and cache updates use the GUI's `ProcessingCoordinator`.
 `UiBound` holds a value that any thread may own but only the UI thread may reach or drop,
 which is how a processing worker owns its plugin instances.
 

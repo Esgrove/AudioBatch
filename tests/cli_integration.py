@@ -13,6 +13,7 @@ No invocation normalizes committed fixtures or uses the system trash.
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import io
 import json
@@ -20,6 +21,7 @@ import os
 import shutil
 import signal
 import sqlite3
+import string
 import struct
 import subprocess
 import sys
@@ -31,6 +33,7 @@ import wave
 from contextlib import closing
 from pathlib import Path
 from typing import ClassVar
+from xml.sax.saxutils import quoteattr
 
 import psutil
 
@@ -66,6 +69,7 @@ class CliIntegration(unittest.TestCase):
 
     executable: ClassVar[Path]
     artifacts: ClassVar[Path | None] = None
+    test_plugin: ClassVar[Path | None] = None
 
     def setUp(self) -> None:
         """Create isolated audio, working-directory, and persistent-storage trees."""
@@ -168,6 +172,203 @@ class CliIntegration(unittest.TestCase):
         """Set a persistence sentinel without changing source identity or measured values."""
         with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("UPDATE file_analysis SET updated_at_ms = 1 WHERE file_path = ?", (str(path),))
+
+    def plugin_preset(
+        self, gain: float = 0.5, width: float = 0.5, latency: int = 256, *, named: bool = False
+    ) -> Path | str:
+        """Write each host's native preset independently for the repository's known test effect, without conversion."""
+        repository = FIXTURES.parent
+        candidates = [
+            self.test_plugin,
+            Path(os.environ["AUDIOBATCH_TEST_VST3"]) if "AUDIOBATCH_TEST_VST3" in os.environ else None,
+            repository / "test-plugin/build/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3",
+            repository
+            / "cpp/cmake-build-mac-debug/test-plugin/AudioBatchTestPlugin_artefacts/Debug/VST3/AudioBatch Test MS.vst3",
+        ]
+        bundle = next((candidate.resolve() for candidate in candidates if candidate and candidate.is_dir()), None)
+        assert bundle is not None, "Build AudioBatch Test MS or set AUDIOBATCH_TEST_VST3 before CLI contracts"
+
+        # JUCE's public XML-in-binary plugin state envelope. The component accepts this without private wrapper data.
+        def binary_xml(text: str) -> bytes:
+            """Encode the test plugin's documented parameter tree in JUCE's little-endian state envelope."""
+            encoded = text.encode("utf-8")
+            return struct.pack("<II", 0x21324356, len(encoded)) + encoded + b"\0"
+
+        component = binary_xml(
+            f'<AudioBatchTestMS><PARAM id="gain" value="{gain}"/><PARAM id="width" value="{width}"/>'
+            f'<PARAM id="latency" value="{latency}"/></AudioBatchTestMS>'
+        )
+        rust = self.executable.name.startswith("audiobatch-rs")
+        name = "CLI Test MS"
+        if rust:
+            folder = self.storage / "AudioBatch-rs/chain-presets"
+            path = folder / f"{name}.json" if named else self.root / "preset.json"
+            preset = {
+                "name": name,
+                "version": 1,
+                "slots": [
+                    {
+                        "plugin": {
+                            "name": "AudioBatch Test MS",
+                            "class_id": "ABCDEF019182FAEB4162747341626D73",
+                            "bundle": str(bundle),
+                        },
+                        "enabled": True,
+                        "component_state": base64.b64encode(component).decode(),
+                        "controller_state": "",
+                    }
+                ],
+            }
+            text = json.dumps(preset)
+        else:
+            # JUCE's host envelope uses its historical little-endian six-bit memory-block encoding internally.
+            alphabet = "." + string.ascii_uppercase + string.ascii_lowercase + string.digits + "+"
+            bits = int.from_bytes(component, "little")
+            packed = f"{len(component)}." + "".join(
+                alphabet[(bits >> shift) & 63] for shift in range(0, len(component) * 8, 6)
+            )
+            state = base64.b64encode(
+                binary_xml(f"<VST3PluginState><IComponent>{packed}</IComponent></VST3PluginState>")
+            ).decode()
+            unique_id = 0
+            for word in (0xABCDEF01, 0x9182FAEB, 0x41627473, 0x41626D73):
+                unique_id = (unique_id * 31 + word) & 0xFFFFFFFF
+            folder = self.storage / "AudioBatch/settings/Chain Presets"
+            path = folder / f"{name}.xml" if named else self.root / "preset.xml"
+            text = (
+                f'<PLUGIN_CHAIN_PRESET name="{name}" version="1"><PLUGIN_CHAIN><SLOT enabled="1" state="{state}">'
+                f'<PLUGIN name="AudioBatch Test MS" format="VST3" file={quoteattr(str(bundle))} '
+                f'uniqueId="{unique_id:x}" '
+                'numInputs="2" numOutputs="2"/></SLOT></PLUGIN_CHAIN></PLUGIN_CHAIN_PRESET>'
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return name if named else path
+
+    def test_process_matches_independent_plugin_outputs(self) -> None:
+        """Actual executable rendering restores native preset state, folds mono, and compensates latency exactly."""
+        cases = [
+            ("stereo_split_44100_16.wav", 0.5, 0.5, 0, "ms_gain_0.5_width_0.5_stereo_split_44100_16.wav"),
+            ("stereo_split_44100_16.wav", 1, 0, 0, "ms_gain_1_width_0_stereo_split_44100_16.wav"),
+            ("stereo_split_44100_16.wav", 1, 2, 0, "ms_gain_1_width_2_stereo_split_44100_16.wav"),
+            ("sine_mono_44100_16.wav", 0.5, 1, 0, "ms_gain_0.5_width_1_sine_mono_44100_16.wav"),
+            ("stereo_split_44100_16.wav", 0.5, 0.5, 256, "ms_gain_0.5_width_0.5_latency_256_stereo_split_44100_16.wav"),
+        ]
+        for index, (fixture, gain, width, latency, expected) in enumerate(cases):
+            with self.subTest(expected=expected):
+                source = self.copy_fixture(fixture, f"case{index}.wav")
+                preset = self.plugin_preset(gain, width, latency, named=index == 0)
+                result = self.invoke(
+                    "process", "--preset", preset, "--delete", "--jobs", "2", "--output", "json", source
+                )
+                records = json.loads(result.stdout)
+                assert len(records) == 1, result.stdout
+                assert records[0]["status"] == "analyzed", result.stdout
+                output = source.with_suffix(".aif")
+                assert records[0]["path"] == str(output)
+                assert not source.exists()
+                data = output.read_bytes()
+                position = data.index(b"SSND")
+                size = struct.unpack_from(">I", data, position + 4)[0]
+                offset = struct.unpack_from(">I", data, position + 8)[0]
+                samples = data[position + 16 + offset : position + 8 + size]
+                with wave.open(str(FIXTURES / "plugin_expected" / expected), "rb") as reader:
+                    expected_pcm = reader.readframes(reader.getnframes())
+                swapped = bytearray(samples)
+                swapped[0::2], swapped[1::2] = samples[1::2], samples[0::2]
+                assert swapped == expected_pcm, "Rendered PCM must match the independent plugin oracle exactly"
+                self.database_row(output)
+                fresh = self.analyze(output, refresh=True)[0]
+                assert fresh | {"status": records[0]["status"]} == records[0]
+
+    def test_process_recurse_prechain_gain_and_conflicts(self) -> None:
+        """Recurse/jobs reach the common discovery service and normalization runs before, never after, the chain."""
+        preset = self.plugin_preset(0.5, 1, 0)
+        mono = self.copy_fixture("sine_mono_44100_16.wav", "nested/mono.wav")
+        result = self.invoke("process", "-p", preset, "-rDnj2", "--peak", "0", "-o", "json", self.audio)
+        rows = json.loads(result.stdout)
+        assert len(rows) == 1
+        assert rows[0]["peakDbfs"] == -6.02, "Half gain must follow normalization to 0 dBFS"
+        assert mono.with_suffix(".aif").exists()
+        loudness = self.copy_fixture("sine_mono_44100_16.wav", "loudness.wav")
+        result = self.invoke("process", "-p", preset, "-Dn", "--lufs", "-20", "-o", "json", loudness)
+        assert abs(json.loads(result.stdout)[0]["integratedLufs"] - (-26.02)) < 0.01
+        first = self.copy_fixture(destination="conflict.wav")
+        second = self.copy_fixture("sine_stereo_44100_16.flac", "conflict.flac")
+        result = self.invoke("process", "-p", preset, "-Dj2", "-o", "json", first, second, expected=2)
+        rows = json.loads(result.stdout)
+        assert len(rows) == 2
+        assert sum(row["status"] == "failed" for row in rows) == 1
+        assert "Another selected file" in result.stdout
+
+    def test_process_preserves_source_metadata(self) -> None:
+        """Native preset rendering uses the production metadata copier before publishing its AIFF output."""
+        preset = self.plugin_preset(0.5, 1, 0)
+        source = self.copy_fixture("tagged_stereo_44100_16.flac", "tagged.flac")
+        self.invoke("process", "-p", preset, "-D", "-o", "json", source)
+        data = source.with_suffix(".aif").read_bytes()
+        assert b"ID3 " in data
+        for frame, text in [(b"TIT2", b"Test Tone"), (b"TPE1", b"AudioBatch"), (b"TALB", b"Fixtures")]:
+            assert frame in data
+            assert text in data
+
+    def test_process_custom_gain_refusal_and_mixed_failures(self) -> None:
+        """Persisted gain overrides pre-chain normalization, refusal uses unity, and unreadable files stay visible."""
+        preset = self.plugin_preset(0.5, 1, 0)
+        source = self.copy_fixture("sine_mono_44100_16.wav", "custom.wav")
+        self.analyze(source)
+        with closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute(
+                "UPDATE file_analysis SET has_custom_gain = 1, custom_gain_db = -6.020599913279624 WHERE file_path = ?",
+                (str(source),),
+            )
+        result = self.invoke("process", "-p", preset, "-Dn", "--peak", "0", "-o", "json", source)
+        assert abs(json.loads(result.stdout)[0]["peakDbfs"] - (-18.06)) < 0.01
+        silent = self.copy_fixture("silence_stereo_44100_16.wav", "silent.wav")
+        broken = self.copy_fixture("broken.wav")
+        result = self.invoke("process", "-p", preset, "-Dn", "-o", "json", silent, broken, expected=2)
+        rows = json.loads(result.stdout)
+        assert len(rows) == 2
+        assert sum(row["status"] == "failed" for row in rows) == 1
+        assert silent.with_suffix(".aif").exists()
+        assert broken.exists()
+        assert "Not normalized before the plugins" in result.stderr
+
+    def test_process_validation_and_output_safety(self) -> None:
+        """Invalid arguments/presets do not modify sources, and force/delete do not require normalization."""
+        source = self.copy_fixture()
+        for arguments in [
+            ("process",),
+            ("process", "--preset", "missing"),
+            ("process", "--preset", "missing", "--peak", "-1"),
+            ("process", "--preset", "missing", "-n", "--peak", "-1", "--lufs", "-14"),
+            ("process", "--preset", "missing", "--jobs", "0"),
+        ]:
+            self.invoke(*arguments, source, expected=1)
+            assert source.exists()
+            assert not source.with_suffix(".aif").exists()
+        preset = self.plugin_preset(1, 1, 0)
+        output = source.with_suffix(".aif")
+        output.write_bytes(b"sentinel")
+        self.invoke("process", "-p", preset, "-D", "-o", "json", source, expected=2)
+        assert source.exists()
+        assert output.read_bytes() == b"sentinel"
+        result = self.invoke("process", "-p", preset, "-FD", "-o", "csv", source)
+        assert next(iter(csv.DictReader(io.StringIO(result.stdout))))["path"] == str(output)
+        assert not source.exists()
+        self.invoke("process", "-p", preset, "-D", output)
+        native = Path(preset)
+        native.write_text(
+            '{"name":"Empty", "version":1, "slots":[]}'
+            if native.suffix == ".json"
+            else '<PLUGIN_CHAIN_PRESET version="1"><PLUGIN_CHAIN/></PLUGIN_CHAIN_PRESET>'
+        )
+        unchanged = output.read_bytes()
+        self.invoke("process", "-p", native, "-D", output, expected=1)
+        assert output.read_bytes() == unchanged
+        native.write_text("not a preset")
+        self.invoke("process", "-p", native, "-D", output, expected=1)
+        assert output.read_bytes() == unchanged
 
     def test_help_version_and_usage_streams(self) -> None:
         """Help/version avoid application storage and usage errors leave stdout empty."""
@@ -324,6 +525,8 @@ class CliIntegration(unittest.TestCase):
                 result = self.invoke("completion", shell, data_root=str(completion_root))
                 assert result.stdout.strip()
                 assert "normalize" in result.stdout
+                assert "process" in result.stdout
+                assert "preset" in result.stdout
                 assert result.stderr == ""
         assert not completion_root.exists()
 
@@ -392,11 +595,16 @@ class CliIntegration(unittest.TestCase):
             audio.write(struct.pack("<hh", 16384, -16384))
         return source
 
-    def interrupt_run(self, source: Path, *, normalize: bool, twice: bool = False) -> tuple[str, str]:
+    def interrupt_run(
+        self, source: Path, *, normalize: bool, twice: bool = False, preset: Path | str | None = None
+    ) -> tuple[str, str]:
         """Interrupt a live isolated child at a file-system readiness boundary, with bounded cleanup."""
         environment = os.environ.copy()
         environment.update(AUDIOBATCH_DATA_ROOT=str(self.storage), NO_COLOR="1", TERM="dumb")
-        command = [str(self.executable), "--jobs", "1", "--output", "json"]
+        command = [str(self.executable)]
+        if preset is not None:
+            command += ["process", "--preset", str(preset), "--delete"]
+        command += ["--jobs", "1", "--output", "json"]
         if normalize:
             command += ["--normalize", "--delete", "--peak", "-1"]
         command.append(str(source))
@@ -428,7 +636,7 @@ class CliIntegration(unittest.TestCase):
                 while child.poll() is None:
                     ready = (
                         any(path != source for path in self.audio.iterdir())
-                        if normalize
+                        if normalize or preset is not None
                         else any(Path(file.path) == source for file in psutil.Process(child.pid).open_files())
                     )
                     if ready:
@@ -456,6 +664,17 @@ class CliIntegration(unittest.TestCase):
                 {"command": command, "exit_code": child.returncode, "stdout": text[0], "stderr": text[1]}
             )
             return text
+
+    def test_ctrl_c_processing_keeps_original_and_removes_temporary_outputs(self) -> None:
+        """Interrupt a real plugin render after temporary-file creation and drain lifecycle work without deadlock."""
+        preset = self.plugin_preset(0.5, 1, 256)
+        source = self.long_source()
+        self.analyze(source)
+        size = source.stat().st_size
+        stdout, _ = self.interrupt_run(source, normalize=False, preset=preset)
+        assert json.loads(stdout) == []
+        assert source.stat().st_size == size
+        assert list(self.audio.iterdir()) == [source]
 
     def test_ctrl_c_analysis_cancels_cleanly(self) -> None:
         """The first interrupt drains analysis without touching the input or printing partial JSON."""
@@ -516,9 +735,11 @@ def main() -> int:
     """Configure one executable and run the portable process-contract suite."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", type=Path, required=True, help="Built C++ or Rust CLI executable")
+    parser.add_argument("--test-plugin", type=Path, help="Built AudioBatch Test MS VST3 bundle")
     parser.add_argument("--artifacts", type=Path, help="Keep per-case diagnostics after a failure")
     arguments, test_arguments = parser.parse_known_args()
     CliIntegration.executable = arguments.cli.resolve(strict=True)
+    CliIntegration.test_plugin = arguments.test_plugin.resolve(strict=True) if arguments.test_plugin else None
     CliIntegration.artifacts = arguments.artifacts.resolve() if arguments.artifacts else None
     program = unittest.main(argv=[sys.argv[0], *test_arguments], verbosity=2, exit=False)
     return 0 if program.result.wasSuccessful() else 1

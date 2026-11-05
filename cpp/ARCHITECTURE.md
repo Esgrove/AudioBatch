@@ -42,10 +42,11 @@ flowchart TD
 `CMakeLists.txt` decides which files each target builds, independently of the directories:
 
 - `AUDIOBATCH_CORE_SOURCES` is the shared core: `analysis`, `metadata`, `normalization`, most of `utils`,
-  the plugin scan helpers, worker, and out-of-process scanner, and the Serato tag parsing, overview, and tag cache.
+  plugin scanning and offline processing, including native presets and run chains,
+  and the Serato tag parsing, overview, and tag cache.
 - `AudioBatch` is the GUI app, `AudioBatch.app` or `AudioBatchApp.exe`, made with `juce_add_gui_app`.
   The Windows build target produces `AudioBatch.exe`, which `build.sh` copies as `AudioBatchApp.exe`.
-  It adds `gui`, `gui/components`, the rest of `plugins`, `SeratoPreviewLoader`, and `SeratoWaveformColouring`,
+  It adds `gui`, `gui/components`, `PluginPreviewSource`, `SeratoPreviewLoader`, and `SeratoWaveformColouring`,
   and links the JUCE device, GUI, and DSP modules and the embedded fonts.
 - `AudioBatchCli` is the console app, made with `juce_add_console_app` with the output name `audiobatch`.
   It adds `AUDIOBATCH_CLI_SOURCES`, which are `cli` and `utils/ConsoleProgress`, and the entry point `CliMain.cpp`.
@@ -57,7 +58,11 @@ Both apps link SQLite, libebur128, TagLib, and {fmt}.
 The CLI runs the analysis through `AnalysisCoordinator::analyzeBlocking`,
 and normalizes the analyzed files through `NormalizeCoordinator` on the workers `--jobs` sets,
 updating the cache with the results once the run completes.
-Plugin processing and the preview exist only in the GUI.
+The `process --preset` CLI subcommand renders through native saved chains using `PluginProcessingCoordinator`.
+Its main thread runs the JUCE event loop while a workflow worker analyzes inputs and reports outcomes.
+Chain creation, per-file preparation, state restoration, and destruction are dispatched to the main thread.
+Rendering and persistence stay on workers, with `--jobs` controlling the pool and the number of chain instances.
+The preview remains GUI-only.
 The CLI installs an allocation-free signal handler for analysis and normalization.
 The first interrupt sets a lock-free flag that the calling thread polls.
 Blocking analysis cancels and drains its jobs before releasing stack-borrowing callbacks.

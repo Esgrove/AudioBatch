@@ -52,6 +52,9 @@ pub enum PluginGrouping {
 /// Subcommands that run instead of the analysis.
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    /// Render audio through a saved plugin chain as 16-bit AIFF
+    Process(ProcessArgs),
+
     /// List the available VST3 plugins
     #[command(name = "list")]
     List(PluginListing),
@@ -133,6 +136,84 @@ pub struct CliArgs {
     /// Print results as table, csv, or json
     #[arg(short = 'o', long, value_enum, ignore_case = true, value_name = "FORMAT", default_value_t = OutputFormat::Table)]
     pub output: OutputFormat,
+}
+
+/// Processing options reuse discovery and reporting without accepting nested subcommands.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ProcessArgs {
+    /// Saved chain preset name or native preset file path
+    #[arg(short = 'p', long, value_name = "PRESET", required = true)]
+    pub preset: String,
+
+    /// Files and directories to process, the current directory when none are given
+    #[arg(value_hint = clap::ValueHint::AnyPath)]
+    pub paths: Vec<PathBuf>,
+
+    /// Recurse into directories
+    #[arg(short = 'r', long)]
+    pub recurse: bool,
+
+    /// Ignore cached analysis and re-analyze files
+    #[arg(short = 'f', long)]
+    pub refresh: bool,
+
+    /// Normalize before the plugin chain (default peak target 0 dBFS)
+    #[arg(short = 'n', long)]
+    pub normalize: bool,
+
+    /// Let processing replace an existing output file
+    #[arg(short = 'F', long)]
+    pub force: bool,
+
+    /// Permanently delete replaced originals instead of moving them to the trash
+    #[arg(short = 'D', long, env = "AUDIOBATCH_DELETE", value_parser = clap::builder::BoolishValueParser::new())]
+    pub delete: bool,
+
+    /// Normalize to this sample peak, -12 to 0 (default 0)
+    #[arg(long, value_name = "DBFS", allow_hyphen_values = true)]
+    pub peak: Option<String>,
+
+    /// Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
+    #[arg(long, value_name = "LUFS", allow_hyphen_values = true)]
+    pub lufs: Option<String>,
+
+    /// Override worker count
+    #[arg(short = 'j', long, value_name = "COUNT", value_parser = parse_worker_count)]
+    pub jobs: Option<usize>,
+
+    /// Sort by peak, lufs, name, or path
+    #[arg(short = 's', long, default_value = "peak", value_parser = parse_sort_mode)]
+    pub sort: SortMode,
+
+    /// Sort in descending order
+    #[arg(short = 'S', long)]
+    pub reverse: bool,
+
+    /// Print results as table, csv, or json
+    #[arg(short = 'o', long, value_enum, ignore_case = true, default_value_t = OutputFormat::Table)]
+    pub output: OutputFormat,
+}
+
+impl ProcessArgs {
+    /// Supplies common analysis and pre-chain normalization options without conflating output replacement.
+    #[must_use]
+    pub fn analysis_args(&self) -> CliArgs {
+        CliArgs {
+            command: None,
+            paths: self.paths.clone(),
+            recurse: self.recurse,
+            refresh: self.refresh,
+            normalize: self.normalize,
+            force: false,
+            delete: false,
+            peak: self.peak.clone(),
+            lufs: self.lufs.clone(),
+            jobs: self.jobs,
+            sort: self.sort,
+            reverse: self.reverse,
+            output: self.output,
+        }
+    }
 }
 
 /// Options of the `list` subcommand.
@@ -394,6 +475,26 @@ mod test_parse_arguments {
         );
         assert!(normalization(&["-n", "--lufs", "1e1"]).is_err());
         assert!(normalization(&["-n", "--lufs", "-1.2.3"]).is_err());
+    }
+
+    #[test]
+    fn process_keeps_output_policy_separate_from_prechain_normalization() {
+        let args = parse(&["process", "-p", "Master", "-rFDj2", "-o", "json", "song.wav"]).expect("parses");
+        let Some(CliCommand::Process(process)) = args.command else {
+            panic!("process command");
+        };
+        assert_eq!(process.preset, "Master");
+        assert!(process.force && process.delete && process.recurse);
+        assert_eq!(process.jobs, Some(2));
+        assert!(
+            process
+                .analysis_args()
+                .normalization()
+                .expect("valid without normalize")
+                .is_none()
+        );
+        assert!(parse(&["process"]).is_err());
+        assert!(parse(&["-r", "process"]).expect("path").command.is_none());
     }
 
     #[test]

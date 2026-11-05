@@ -232,7 +232,7 @@ std::string zshArguments(const CompletionScope& scope, const std::string_view in
         specs.push_back(zshOptionSpec(option));
     }
 
-    if (scope.name.empty()) {
+    if (scope.name.empty() || scope.name == "process") {
         specs.emplace_back("'*:path:_files'");
     } else if (!scope.argumentValues.empty()) {
         specs.push_back(fmt::format("'1:{}:({})'", scope.argumentName, joinWords(scope.argumentValues, " ")));
@@ -364,6 +364,8 @@ std::string bashScopeCase(const CompletionScope& scope)
             "            _@ID@_add_files \"$current\"\n",
             subcommandNames()
         );
+    } else if (scope.name == "process") {
+        result += "            _@ID@_add_files \"$current\"\n";
     } else if (!scope.argumentValues.empty()) {
         result += fmt::format("            _@ID@_add_words \"$current\" {}\n", joinWords(scope.argumentValues, " "));
     }
@@ -460,7 +462,7 @@ end
     for (const auto& scope : completionScopes()) {
         const auto condition = fmt::format("'__@ID@_using_command \"{}\"'", scope.name);
 
-        if (!scope.name.empty()) {
+        if (!scope.name.empty() && scope.name != "process") {
             completions += fmt::format("complete -c @COMMAND@ -n {} -f\n", condition);
         }
 
@@ -607,7 +609,7 @@ Register-ArgumentCompleter -Native -CommandName '@COMMAND@' -ScriptBlock {
                 [System.Management.Automation.CompletionResult]::new($value, $value, 'ParameterValue', $value)
             }
         }
-    } elseif ($command -eq '') {
+    } elseif ($command -eq '' -or $command -eq 'process') {
         [System.Management.Automation.CompletionCompleters]::CompleteFilename($wordToComplete)
     }
 }

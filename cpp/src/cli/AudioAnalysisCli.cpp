@@ -9,6 +9,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "cli/AudioAnalysisCliOutput.h"
+#include "cli/PluginProcessCli.h"
 #include "normalization/AudioNormalization.h"
 #include "normalization/NormalizeCoordinator.h"
 #include "utils/ConsolePrint.h"
@@ -139,24 +140,7 @@ std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
     // The coordinator is declared last, so it is destroyed, waiting for its jobs, before the locals they use.
     NormalizeCoordinator coordinator(workerCount);
     coordinator.setResultPersistenceCallback([&cache](AudioNormalizationResult& result) {
-        const auto* succeeded = std::get_if<OperationSucceeded>(&result.outcome);
-        if (succeeded == nullptr || !succeeded->output.isReady()) {
-            return;
-        }
-        const auto& output = succeeded->output;
-        const utils::FileIdentity identity(output.file);
-        if (!output.fromCache && output.matchesFileOnDisk() && identity.matches(output.file)
-            && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file))
-            && cache.storeAnalysis(output) && output.matchesFileOnDisk() && identity.matches(output.file)
-            && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file)))
-        {
-            if (output.nativeWaveform) {
-                static_cast<void>(cache.storeWaveformData(identity, *output.nativeWaveform));
-            }
-            if (output.spectrogram != nullptr) {
-                static_cast<void>(cache.storeSpectrogramData(identity, *output.spectrogram));
-            }
-        }
+        cli::persistOperationOutput(cache, result.outcome);
     });
     coordinator.setStartingCallback([&progress](const juce::File& file, int /*runId*/) {
         progress.setMessage(file.getFileName());
@@ -184,15 +168,125 @@ std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
 
 /// Prints the notice of a successful normalization, such as audio blocks that failed to decode, when it has one.
 /// The normalization itself already logged it.
-void printNormalizationNotice(const OperationSucceeded& succeeded)
+void printNormalizationNotice(const OperationSucceeded& succeeded, const bool processing)
 {
     if (succeeded.notice.isNotEmpty()) {
         console::printWarn(
-            utils::format("Normalized {}, {}", succeeded.output.file.getFullPathName().quoted(), succeeded.notice)
+            utils::format(
+                "{} {}, {}",
+                processing ? "Processed" : "Normalized",
+                succeeded.output.file.getFullPathName().quoted(),
+                succeeded.notice
+            )
         );
     }
 }
+
+/// Reconciles one completed operation with its original row, including cache removal after conversion.
+/// Committed but unanalyzed outputs are reported at their published path, never as the removed original.
+void reconcileOperation(
+    const AudioAnalysisRecord& source,
+    const AudioNormalizationResult& operation,
+    AnalysisCache& cache,
+    std::vector<AudioAnalysisRecord>& reported,
+    int& failureCount,
+    const bool processing,
+    const bool conflict
+)
+{
+    const auto* label = processing ? "Processing" : "Normalization";
+    const auto reportFailure = [&](AudioAnalysisRecord record, const juce::String& error) {
+        ++failureCount;
+        reportError(
+            utils::format(
+                "{}{}: {}, {}",
+                label,
+                conflict ? " output conflict" : " failed",
+                source.file.getFullPathName().quoted(),
+                error
+            )
+        );
+        record.status = AudioAnalysisStatus::failed;
+        record.errorMessage = error;
+        reported.push_back(std::move(record));
+    };
+    const auto forgetConvertedSource = [&](const AudioAnalysisRecord& output) {
+        if (output.fullPath != source.fullPath) {
+            static_cast<void>(cache.removeAnalysis(source));
+        }
+    };
+    std::visit(
+        Overloaded {
+            [&](const OperationFailed& failed) { reportFailure(source, failed.error); },
+            [&](const CommittedButUnanalyzed& unanalyzed) {
+                forgetConvertedSource(unanalyzed.output);
+                reportFailure(unanalyzed.output, unanalyzed.error);
+            },
+            [&](const OperationSucceeded& succeeded) {
+                forgetConvertedSource(succeeded.output);
+                printNormalizationNotice(succeeded, processing);
+                reported.push_back(succeeded.output);
+            },
+        },
+        operation.outcome
+    );
+}
+
+/// Collects operation results in source order, retaining analysis failures and omitting unstarted cancelled files.
+int collectOperationRecords(
+    const std::vector<AudioAnalysisRecord>& sources,
+    const std::map<juce::String, AudioNormalizationResult>& operations,
+    AnalysisCache& cache,
+    std::vector<AudioAnalysisRecord>& reported,
+    const juce::StringArray& conflicts,
+    const bool processing,
+    const utils::CancellationCheck& isInterrupted
+)
+{
+    int failures {0};
+    for (const auto& source : sources) {
+        if (source.hasError()) {
+            ++failures;
+            reported.push_back(source);
+            continue;
+        }
+        const auto found = operations.find(source.fullPath);
+        if (processing && found == operations.end() && utils::isCancellationRequested(isInterrupted)) {
+            continue;
+        }
+        const auto operation = found != operations.end()
+            ? found->second
+            : AudioNormalizationResult::failure(source.file, "The file was not processed");
+        reconcileOperation(
+            source, operation, cache, reported, failures, processing, conflicts.contains(source.fullPath)
+        );
+    }
+    return failures;
+}
 }  // namespace
+
+/// Persists exact rendered measurements and optional artifacts only while the committed identity still owns the output.
+void cli::persistOperationOutput(AnalysisCache& cache, const OperationOutcome& outcome)
+{
+    const auto* succeeded = std::get_if<OperationSucceeded>(&outcome);
+    if (succeeded == nullptr || !succeeded->output.isReady()) {
+        return;
+    }
+    const auto& output = succeeded->output;
+    const utils::FileIdentity identity(output.file);
+    if (!output.fromCache && output.matchesFileOnDisk() && identity.matches(output.file)
+        && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file))
+        && cache.storeAnalysis(output) && output.matchesFileOnDisk() && identity.matches(output.file)
+        && (output.renderedIdentity == nullptr || output.renderedIdentity->owns(output.file)))
+    {
+        if (output.nativeWaveform) {
+            static_cast<void>(cache.storeWaveformData(identity, *output.nativeWaveform));
+        }
+        if (output.spectrogram != nullptr) {
+            static_cast<void>(cache.storeSpectrogramData(identity, *output.spectrogram));
+        }
+    }
+}
 
 /// Returns an error for every path named on the command line that produced no result:
 /// a path that does not exist, or a file that the analysis skips because it is hidden or not a supported format.
@@ -240,7 +334,12 @@ int cli::runAnalysis(const AnalyzeCommand& command, const utils::CancellationChe
 /// Executes the CLI analysis workflow with the given analysis cache, opening it first,
 /// and returns the process exit code: 0 when every input was analyzed, and normalized when requested,
 /// and 2 when any input was missing or skipped, or failed to analyze or normalize.
-int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache, const utils::CancellationCheck& isInterrupted)
+int cli::runAnalysis(
+    const AnalyzeCommand& command,
+    AnalysisCache& cache,
+    const utils::CancellationCheck& isInterrupted,
+    const ProcessCommand* processing
+)
 {
     auto inputPaths = command.inputPaths;
 
@@ -297,98 +396,50 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache, const 
     juce::StringArray normalizationConflicts;
     std::map<juce::String, AudioNormalizationResult> normalizations;
 
-    if (command.normalization.has_value()) {
+    const bool rewriting = command.normalization.has_value() || processing != nullptr;
+    if (rewriting) {
         normalizedResults.reserve(results.size());
         std::vector<AudioAnalysisRecord> normalizableResults;
         std::ranges::copy_if(results, std::back_inserter(normalizableResults), [](const auto& record) {
             return !record.hasError();
         });
         normalizationConflicts = findBatchOutputConflicts(normalizableResults);
-        normalizations = normalizeWithProgress(
-            normalizableResults, *command.normalization, command.workerCount, cache, isInterrupted
-        );
-    }
-
-    // The CSV and JSON output of a normalize run lists failed files too, with their error.
-    const auto addNormalizationFailure = [&normalizedResults](AudioAnalysisRecord record, const juce::String& error) {
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = error;
-        normalizedResults.push_back(std::move(record));
-    };
-
-    for (const auto& result : results) {
-        if (result.hasError()) {
-            ++failureCount;
-
-            if (command.normalization.has_value()) {
-                normalizedResults.push_back(result);
+        if (processing != nullptr) {
+            auto processed = cli::processWithProgress(normalizableResults, *processing, cache, isInterrupted);
+            if (!processed) {
+                reportError(processed.error());
+                return utils::isCancellationRequested(isInterrupted) ? EXIT_INTERRUPTED : 1;
             }
-            continue;
-        }
-
-        if (!command.normalization.has_value()) {
-            continue;
-        }
-
-        if (normalizationConflicts.contains(result.file.getFullPathName())) {
-            ++failureCount;
-            const auto conflictMessage = batchOutputConflictMessage(result.file);
-            reportError(
-                utils::format(
-                    "Normalization output conflict: {}, {}", result.file.getFullPathName().quoted(), conflictMessage
-                )
+            normalizations = std::move(*processed);
+        } else if (command.normalization.has_value()) {
+            normalizations = normalizeWithProgress(
+                normalizableResults, *command.normalization, command.workerCount, cache, isInterrupted
             );
-            addNormalizationFailure(result, conflictMessage);
-            continue;
         }
-
-        const auto found = normalizations.find(result.file.getFullPathName());
-        const auto normalization = found != normalizations.end()
-            ? found->second
-            : AudioNormalizationResult::failure(result.file, "The file was not normalized");
-
-        // A converted original was moved to the trash, so its cached row is no longer needed,
-        // even when the committed output's analysis record could not be completed.
-        // The cache logs its own failures, and a stale row only costs another read later.
-        const auto forgetConvertedSource = [&](const AudioAnalysisRecord& output) {
-            if (output.fullPath != result.fullPath) {
-                static_cast<void>(cache.removeAnalysis(result));
-            }
-        };
-        const auto reportFailure = [&](const AudioAnalysisRecord& record, const juce::String& error) {
-            ++failureCount;
-            reportError(utils::format("Normalization failed: {}, {}", result.file.getFullPathName().quoted(), error));
-            addNormalizationFailure(record, error);
-        };
-
-        std::visit(
-            Overloaded {
-                [&](const OperationFailed& failed) { reportFailure(result, failed.error); },
-                [&](const CommittedButUnanalyzed& unanalyzed) {
-                    forgetConvertedSource(unanalyzed.output);
-                    // The output replaced the source, so its incomplete analysis record is reported instead.
-                    reportFailure(unanalyzed.output, unanalyzed.error);
-                },
-                [&](const OperationSucceeded& succeeded) {
-                    forgetConvertedSource(succeeded.output);
-                    printNormalizationNotice(succeeded);
-                    // Successful output persistence already ran on its worker before result publication.
-                    normalizedResults.push_back(succeeded.output);
-                },
-            },
-            normalization.outcome
-        );
     }
 
-    if (command.normalization.has_value()) {
+    if (rewriting) {
+        failureCount += collectOperationRecords(
+            results,
+            normalizations,
+            cache,
+            normalizedResults,
+            normalizationConflicts,
+            processing != nullptr,
+            isInterrupted
+        );
         sortRecords(normalizedResults, command.sortMode, !command.reverse);
         cli::printRecords(normalizedResults, command.outputFormat, true);
     } else {
+        failureCount += static_cast<int>(analysisFailureCount);
         cli::printRecords(results, command.outputFormat, false);
     }
 
     if (utils::isCancellationRequested(isInterrupted)) {
-        reportWarning("Interrupted. Normalization cancelled, committed outputs retained.");
+        reportWarning(
+            processing != nullptr ? "Interrupted. Processing cancelled, committed outputs retained."
+                                  : "Interrupted. Normalization cancelled, committed outputs retained."
+        );
         return EXIT_INTERRUPTED;
     }
     return failureCount == 0 ? 0 : 2;

@@ -290,7 +290,8 @@ CLI normalization can permanently delete replaced originals instead with `--dele
 
 ## CLI
 
-Ctrl-C requests cooperative cancellation during analysis or normalization and exits with status `130`.
+Ctrl-C requests cooperative cancellation during analysis, normalization, or plugin processing
+and exits with status `130`.
 Analysis drains its workers without printing partial results.
 Normalization removes unfinished temporary outputs and retains already committed files and their cache updates.
 A second Ctrl-C exits immediately, without waiting for cleanup.
@@ -300,11 +301,13 @@ Output of `audiobatch --help`:
 ```text
 audiobatch <version> <date> <commit>
 Usage: audiobatch [options] <paths...>
+       audiobatch process [paths...] [options]
        audiobatch list [options]
        audiobatch completion <shell> [options]
        audiobatch help [command] [options]
 
 Commands:
+  process                 Render audio through a saved plugin chain as 16-bit AIFF
   list                    List the available audio plugins
   completion              Print or install a shell completion script
   help                    Print this message or the help of the given command
@@ -348,7 +351,7 @@ Normalization follows the same targets and output rules as the GUI.
 Results report the levels and paths of the normalized output.
 
 `-D` / `--delete` permanently deletes replaced originals instead of moving them to the trash.
-It requires `--normalize` and also applies to an existing output replaced with `--force`.
+For the default analysis command it requires `--normalize`, and it also applies to an existing output replaced with `--force`.
 Set `AUDIOBATCH_DELETE=true` to enable it through the environment, or `false` to keep the default trash behavior.
 Accepted values are `true`, `1`, `yes`, and `on` to enable it, or `false`, `0`, `no`, and `off` to disable it.
 Values are case insensitive, and empty or unrecognized values are rejected.
@@ -370,7 +373,37 @@ Short options can be combined, such as `-rf`,
 and an option that takes a value takes the rest of the group, such as `-rj4`.
 
 Exit codes: `0` for success, `1` for invalid arguments or output errors,
-`2` when any file fails analysis or normalization, and `130` when interrupted.
+`2` when any file fails analysis, normalization, or processing, and `130` when interrupted.
+
+### Plugin processing
+
+Save a chain preset in the GUI, then render through it by name or explicit native XML preset path:
+
+```shell
+audiobatch process --preset "Master" --recurse --jobs 2 --output json "music/album"
+audiobatch process -p "/path/to/Master.xml" -n --lufs -16 --force --delete "music/song.wav"
+```
+
+`--preset` / `-p` is required. A name resolves in the GUI's `Chain Presets` folder next to its settings.
+The C++ CLI reads its own XML presets, not Rust JSON presets.
+Without input paths the current directory is processed.
+`--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output table|csv|json` work as in analysis.
+`--normalize` / `-n` optionally applies peak or LUFS normalization before the first enabled plugin.
+`--peak` and `--lufs` require `--normalize` and cannot be combined. Without either, the target is 0 dBFS peak.
+A persisted custom gain takes precedence over this optional normalization, as in the GUI.
+A refused normalization gain leaves processing at unity and reports a notice.
+There is no post-chain normalization, limiter, or dither.
+
+The shared processing service writes sibling 16-bit PCM `<name>.aif` files at the source rate,
+compensates chain latency, folds stereo plugin output back to mono for mono inputs, and drains bounded tails.
+It preserves metadata and album art, drops the obsolete Serato Overview, validates finite samples,
+and uses the same identity-checked temporary publication, disposal, and cache updates as the GUI.
+`--force` permits replacing an existing destination, and `--delete` selects permanent disposal instead of trash.
+Both options work without `--normalize` in this subcommand. In-place `.aif` processing retains its path.
+Results describe committed outputs, including their quantized-output measurements.
+Ctrl-C removes unfinished temporary files, reports committed results, and exits 130.
+Plugin loading, preparation, state restoration, and destruction run on the main event-loop thread.
+Only scanning is crash-isolated. A plugin crash or hang during rendering can end or block the CLI.
 
 ### Plugin Listing
 
@@ -384,7 +417,7 @@ audiobatch list -R --group-by type
 
 A subcommand is only recognised as the first argument,
 so `audiobatch -r list` analyzes a folder named `list`.
-Plugin processing itself is GUI-only. CLAP plugins are not supported.
+CLAP plugins are not supported.
 
 Output of `audiobatch list --help`:
 

@@ -9,6 +9,7 @@
 #include "analysis/AnalysisCoordinator.h"
 #include "cli/PluginListCli.h"
 #include "normalization/AudioNormalization.h"
+#include "plugins/PluginProcessing.h"
 
 #include <cstdint>
 #include <expected>
@@ -40,6 +41,8 @@ enum class CompletionShell : std::uint8_t {
 enum class CliSubcommand : std::uint8_t {
     /// No subcommand, so the arguments are an analysis run.
     none,
+    /// Renders files through a saved plugin chain.
+    process,
     /// Lists the available audio plugins.
     list,
     /// Prints or installs a shell completion script.
@@ -92,6 +95,16 @@ struct AnalyzeCommand {
     bool reverse {false};
 };
 
+/// A processing run using a native saved chain preset and the common discovery and reporting options.
+struct ProcessCommand {
+    /// Discovery, worker count, sorting, output format, and optional pre-chain normalization.
+    AnalyzeCommand analysis;
+    /// Preset name in the application's preset folder, or an explicit native preset file path.
+    juce::String preset;
+    /// Output replacement and disposal policy, independent of pre-chain normalization.
+    PluginProcessingOptions options;
+};
+
 /// A plugin listing parsed from the command line, selected by the list subcommand.
 struct ListPluginsCommand {
     /// How the plugin list is grouped and ordered.
@@ -125,7 +138,7 @@ struct CliParseError {
 };
 
 /// The command a CLI invocation runs.
-using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand, CompletionCommand, HelpCommand>;
+using CliCommand = std::variant<AnalyzeCommand, ProcessCommand, ListPluginsCommand, CompletionCommand, HelpCommand>;
 
 namespace cli
 {
@@ -150,11 +163,13 @@ juce::StringArray findSkippedInputs(
     const std::optional<juce::String>& deleteEnvironmentValue
 );
 
+[[nodiscard]] int runProcess(const ProcessCommand& command, const utils::CancellationCheck& isInterrupted = {});
 [[nodiscard]] int runAnalysis(const AnalyzeCommand& command, const utils::CancellationCheck& isInterrupted = {});
 [[nodiscard]] int runAnalysis(
     const AnalyzeCommand& command,
     AnalysisCache& cache,
-    const utils::CancellationCheck& isInterrupted = {}
+    const utils::CancellationCheck& isInterrupted = {},
+    const ProcessCommand* processing = nullptr
 );
 }  // namespace cli
 }  // namespace audiobatch
