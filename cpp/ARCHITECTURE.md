@@ -234,7 +234,7 @@ The cache key is the file path, and a cached row only counts while source size, 
 and the coordinated measurement contract still match.
 Both applications read and write `file_analysis` in the main AudioBatch `analysis.db`.
 On macOS it lives at `~/Library/AudioBatch/analysis.db`, and on Windows at `%APPDATA%\\AudioBatch\\analysis.db`.
-Contract version 15 accepts either producer's successful measurements with validated stream geometry,
+Contract version 16 accepts either producer's successful measurements with validated stream geometry,
 histories, source ratios, DC offsets, clip counts, and centered correlation.
 NaN and either infinity in any source channel fail analysis as unsupported PCM before successful publication.
 The stable failure is cached for that decoder, and normalization and plugin rendering reject it before publication.

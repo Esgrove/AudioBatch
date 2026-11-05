@@ -22,7 +22,7 @@ mod spectrogram;
 mod waveform_cache;
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
-const ANALYSIS_VERSION: i64 = 15;
+const ANALYSIS_VERSION: i64 = 16;
 
 /// Largest accepted loudness history payload, limiting allocations from untrusted databases to 16 MiB.
 const MAXIMUM_HISTORY_BYTES: usize = 16 * 1024 * 1024;

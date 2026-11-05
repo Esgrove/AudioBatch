@@ -284,7 +284,7 @@ void SeratoTagCacheTests::runSeratoTests()
     expect(cache.storeAnalysis(analyzed));
     const auto waveform = buildNativeWaveform(identity).value_or(juce::MemoryBlock {});
     expect(cache.storeWaveformData(utils::FileIdentity(file), waveform));
-    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 15);
+    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 16);
     expectSqlScalar(*this, databaseFile, "SELECT waveform_version FROM file_analysis;", 3);
     expect(serato::getCachedTag(cache, identity).has_value());
     const auto loadedWaveform = cache.getWaveformData(file);

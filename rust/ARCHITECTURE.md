@@ -464,7 +464,7 @@ rejecting stale runs, selections, and source identities, and never persisting it
 `AnalysisCache` in `core/src/cache.rs` reads and writes the same `file_analysis` table as the C++ application.
 The database is `~/Library/AudioBatch/analysis.db` on macOS and `%APPDATA%\\AudioBatch\\analysis.db` on Windows.
 Settings, logs, and plugin data keep their separate application paths.
-Shared measurement contract version 15 accepts either producer's successful levels, required histories,
+Shared measurement contract version 16 accepts either producer's successful levels, required histories,
 source ratios, channel DC offsets and clip counts, and centered stereo correlation.
 NaN and either infinity in any source channel fail analysis as unsupported PCM before successful publication.
 The stable failure is cached for that decoder, and normalization and plugin rendering reject it before publication.

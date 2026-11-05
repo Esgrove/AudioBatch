@@ -901,10 +901,10 @@ void CacheTests::runSpectrogramTests()
         && measured->shortTermLoudness->values == record.shortTermLoudness->values
     );
     expectSqlScalar(*this, databaseFile, "SELECT updated_at_ms FROM file_analysis;", 123);
-    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 15);
+    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 16);
     beginTest("Obsolete Rust AAC previews refill without losing gains or tags");
     expect(executeSql(*this, databaseFile, R"SQL(
-        UPDATE file_analysis SET analysis_version = 14, format_name = 'M4A file', bits_per_sample = 16;
+        UPDATE file_analysis SET analysis_version = 15, format_name = 'M4A file', bits_per_sample = 16;
         UPDATE spectrogram_cache SET producer = 'rust';
         INSERT INTO rust_waveform_cache
             SELECT file_path, file_size, modified_time_ms, sample_rate, channels, duration_seconds, 1, x'010203'

@@ -240,7 +240,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Keep header and frame-count validation, without a full output re-decode.
   Fuse one `f32` gain multiplication into the writer, without a scaled copy or per-chunk plane-reference `Vec`.
   An in-place file already at target returns the current record after cancellation and source-identity checks.
-- Shared measurement contract version 15 is coordinated with the C++ cache.
+- Shared measurement contract version 16 is coordinated with the C++ cache.
   A measurement-affecting change in either implementation requires a coordinated invalidation.
   Preserve same-identity custom gains, including explicit clears, and compatible previews when refilling measurements.
   Keep ebur128 as a development dependency only.

@@ -52,7 +52,7 @@ JSON and CSV add `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `
 Arrays use JSON syntax inside CSV fields. Ratios have two decimal places of precision, DC and correlation six,
 and counts remain integers.
 
-Shared measurement contract 15 requires finite decoded source PCM
+Shared measurement contract 16 requires finite decoded source PCM
 and refills older rows while retaining same-source gains and compatible previews.
 Obsolete Rust MP4 lossy previews are rebuilt for native AAC reconstruction without deleting Serato outcomes.
 The shared `dc_offsets` blob contains one little-endian IEEE binary64 per channel,
