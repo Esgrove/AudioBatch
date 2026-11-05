@@ -310,6 +310,18 @@ bool AnalysisCache::openUnlocked()
         {
             return false;
         }
+        // Native AAC reconstruction changes old Rust MP4 previews, not source identity, gains, tags, or PCM previews.
+        if (!sqlite::execute(*database, R"SQL(
+            DELETE FROM rust_waveform_cache WHERE file_path IN (
+                SELECT file_path FROM file_analysis WHERE analysis_version < 15
+                    AND format_name = 'M4A file' AND bits_per_sample = 16);
+            DELETE FROM spectrogram_cache WHERE producer = 'rust' AND file_path IN (
+                SELECT file_path FROM file_analysis WHERE analysis_version < 15
+                    AND format_name = 'M4A file' AND bits_per_sample = 16);
+        )SQL"))
+        {
+            return false;
+        }
         return transaction.commit();
     };
     if (!prepareSchema()) {

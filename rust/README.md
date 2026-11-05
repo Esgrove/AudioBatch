@@ -54,6 +54,7 @@ and counts remain integers.
 
 Shared measurement contract 15 requires finite decoded source PCM
 and refills older rows while retaining same-source gains and compatible previews.
+Obsolete Rust MP4 lossy previews are rebuilt for native AAC reconstruction without deleting Serato outcomes.
 The shared `dc_offsets` blob contains one little-endian IEEE binary64 per channel,
 and `clip_counts` one little-endian unsigned 64-bit count per channel.
 `uv run --script ../fixtures/metrics_expected.py --check` checks the independent NumPy oracle used by both test suites.
@@ -61,7 +62,13 @@ and `clip_counts` one little-endian unsigned 64-bit count per channel.
 ## Audio formats
 
 Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis, and CAF files.
-Decoding uses symphonia on every platform, including AAC and lossless ALAC in M4A containers.
+Decoding uses Symphonia on every platform, including lossless ALAC in M4A containers.
+Single-track mono/stereo AAC-LC MP4 files on macOS use Core Audio,
+matching the C++ application's perceptual noise substitution without changing the source timeline or parity tolerance.
+Windows and other AAC configurations retain Symphonia. The C++ application does not support AAC on Windows.
+`scripts/test_aac_reconstruction.py --cpp-cli <release-cli> --rust-cli <release-cli>`
+checks native/FFmpeg PNS controls, raw priming alignment, and strict normalized output on temporary copies.
+Pass `--input <aac-file>` for additional benchmark or tagged inputs.
 Opus is not supported.
 Analysis and normalization support multichannel audio, while playback and plugin processing accept only mono and stereo.
 

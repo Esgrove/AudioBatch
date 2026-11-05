@@ -83,7 +83,9 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
     cache reads, and sorting with Criterion.
     `benches/spectrogram.rs` isolates spectral setup, streaming, finalization, merging, and codec costs.
     The longer inputs come from `../fixtures/benchmark/generate.py` and are generated locally, not committed.
-  - `decode.rs` wraps symphonia: probing, the decode loop, and the read failure rules.
+  - `decode.rs` wraps Symphonia: probing, the decode loop, and the read failure rules.
+    On macOS, `decode/native_aac.rs` uses Core Audio for single-track mono/stereo AAC-LC MP4,
+    reconciling perceptual noise substitution while keeping Symphonia for every other codec and platform.
     It trims the gapless padding the way the decoders of the C++ application do, keeping the source timeline aligned,
     reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
     and leaving out the MP3 synthesis delay when no LAME header states the encoder delay.

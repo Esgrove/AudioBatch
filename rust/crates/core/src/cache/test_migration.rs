@@ -44,6 +44,53 @@ fn current_cpp_schema_migrates_only_known_successes_and_preserves_gain_and_tags(
     cache.open().expect("idempotent migration");
 }
 
+/// Invalidates old AAC reconstruction and its native previews while preserving same-identity gains and tag outcomes.
+#[test]
+fn old_rust_aac_previews_are_invalidated_without_losing_gain_or_tags() {
+    for (gain, producer) in [(Some(3.0), "rust"), (None, "cpp")] {
+        let directory = TempDir::new().expect("temporary directory");
+        let record = analyze_fixture_copy(&directory, test_fixtures::AAC_FIXTURE);
+        let database = temporary_cache_path(&directory);
+        {
+            let cache = temporary_cache(&directory);
+            cache.store_analysis(&record).expect("seed AAC");
+            cache.store_custom_gain_for_record(&record, gain).expect("gain");
+            cache
+                .store_serato_overview(&record.path, &SeratoOverviewState::Absent)
+                .expect("tags");
+            assert!(cache.get_waveform(&record.path).is_some());
+        }
+        let connection = Connection::open(&database).expect("connection");
+        connection
+            .execute_batch(
+                "UPDATE file_analysis SET analysis_version = 14;
+             INSERT INTO spectrogram_cache SELECT file_path, 1, 1, file_size, modified_time_ms,
+                 sample_rate, channels, length_in_samples, 'rust', x'010203' FROM file_analysis;",
+            )
+            .expect("old decoder artifacts");
+        connection
+            .execute("UPDATE file_analysis SET analysis_producer = ?1", [producer])
+            .expect("measurement producer");
+        let cache = AnalysisCache::with_path(&database);
+        assert!(cache.get_analysis(&record.path).is_none());
+        assert!(cache.get_waveform(&record.path).is_none());
+        let previews: i64 = connection
+            .query_row("SELECT COUNT(*) FROM spectrogram_cache", [], |row| row.get(0))
+            .expect("spectrogram count");
+        assert_eq!(previews, 0);
+        assert_eq!(
+            cache.get_serato_overview(&record.path),
+            Some(SeratoOverviewState::Absent)
+        );
+        cache.store_analysis(&record).expect("native refill");
+        let loaded = cache.get_analysis(&record.path).expect("refilled");
+        assert!(same_custom_gain(loaded.custom_gain_db, gain));
+        assert!(cache.get_waveform(&record.path).is_some());
+        cache.open().expect("idempotent");
+        assert!(cache.get_waveform(&record.path).is_some());
+    }
+}
+
 /// Invalidates rows whose schema cannot prove their origin even when their version claims compatibility.
 #[test]
 fn unproven_schema_cannot_adopt_forged_current_or_v12_rows() {
