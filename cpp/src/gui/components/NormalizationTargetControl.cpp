@@ -5,6 +5,7 @@
 #include "gui/components/NormalizationTargetControl.h"
 
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiControlIds.h"
 #include "gui/GuiLayout.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/StringFormat.h"
@@ -55,6 +56,12 @@ NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperti
 
     normalizeButton.setTooltip("Normalize the selected files to the target.");
     addAndMakeVisible(normalizeButton);
+
+    peakButton.setComponentID(control_ids::NORMALIZE_PEAK);
+    loudnessButton.setComponentID(control_ids::NORMALIZE_LOUDNESS);
+    normalizeButton.setComponentID(control_ids::NORMALIZE_SELECTED);
+    targetSlider.setComponentID(control_ids::NORMALIZE_TARGET);
+    targetSlider.setTitle(control_titles::NORMALIZE_TARGET);
 
     targetSlider.setSliderStyle(juce::Slider::LinearBar);
     targetSlider.setColour(

@@ -14,6 +14,7 @@
 #include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiControlIds.h"
 #include "gui/GuiLayout.h"
 #include "gui/PreviewController.h"
 #include "gui/PreviewEnrichmentScheduler.h"
@@ -80,6 +81,8 @@ void AudioBatchComponent::configureResultsTable()
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(layout::resultsTableRowHeight);
+    resultsTable.setComponentID(control_ids::RESULTS);
+    resultsTable.setTitle(control_titles::RESULTS);
     // The activity labels change while files are busy, so only the settled text decides the status column order.
     sortState.statusText = [this](const AudioAnalysisRecord& record) {
         const auto [text, isError] = fileActivity.getMessage(record.fullPath);

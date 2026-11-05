@@ -13,8 +13,10 @@
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiControlIds.h"
 #include "gui/GuiLayout.h"
 #include "gui/MainWindow.h"
+#include "GuiDriver.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
@@ -49,7 +51,14 @@ enum class IntegrationWorkflow : std::uint8_t {
     cancelAndClear,
     restore,
     menuShortcuts,
+    manifestControls,
+    dropFiles,
+    normalizeOptions,
+    disabledControls,
 };
+
+/// Horizontal offset of row clicks from the left edge of a row, inside its first visible cell.
+constexpr int ROW_CLICK_INSET {8};
 
 /// Storage owned by one case, deleted only after its view and all synchronous workers are destroyed.
 class IntegrationDirectory final
@@ -98,44 +107,6 @@ bool dispatchUntil(const std::function<bool()>& complete)
     return complete();
 }
 
-/// Finds a real normalization control through its semantic button text.
-juce::Button* findButton(const juce::Component& component, const juce::String& text)
-{
-    std::vector<juce::Component*> pending(component.getChildren().begin(), component.getChildren().end());
-    while (!pending.empty()) {
-        auto* child = pending.back();
-        pending.pop_back();
-        if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == text) {
-            return button;
-        }
-        pending.insert(pending.end(), child->getChildren().begin(), child->getChildren().end());
-    }
-    return nullptr;
-}
-
-/// Creates a divider-local drag event with a stable press position and no native pointer automation.
-juce::MouseEvent dividerEvent(juce::Component& divider, const int distance, const int clicks = 1)
-{
-    const juce::Point<float> start {5.0f, 20.0f};
-    return {
-        juce::Desktop::getInstance().getMainMouseSource(),
-        start.translated(static_cast<float>(distance), 0.0f),
-        juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier),
-        1.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        0.0f,
-        &divider,
-        &divider,
-        juce::Time(),
-        start,
-        juce::Time(),
-        clicks,
-        distance != 0,
-    };
-}
-
 /// Reads visible inspector text, rather than duplicating its formatting logic in the test.
 bool containsLabel(const juce::Component& component, const juce::String& text)
 {
@@ -168,6 +139,7 @@ public:
 
 private:
     /// Selects by stable source identity through the actual table callback.
+    /// Used only by peerless cases. Driven cases click the row with clickRow instead.
     static bool selectFile(AudioBatchComponent& view, const juce::File& file)
     {
         const auto row = view.analysisResults.findRow(file.getFullPathName());
@@ -176,6 +148,71 @@ private:
         }
         view.resultsTable.selectRow(*row);
         return view.getSelectedRecordPaths().contains(file.getFullPathName());
+    }
+
+    /// Clicks the first cell of a file's row through the window peer, with optional modifiers.
+    static bool clickRow(
+        tests::GuiDriver& driver,
+        AudioBatchComponent& view,
+        const juce::File& file,
+        juce::ModifierKeys modifiers = {}
+    )
+    {
+        const auto row = view.analysisResults.findRow(file.getFullPathName());
+        if (!row) {
+            return false;
+        }
+        view.resultsTable.scrollToEnsureRowIsOnscreen(*row);
+        auto& table = view.resultsTable;
+        const auto rowBounds = table.getRowPosition(*row, true);
+        driver.clickAt(table, rowBounds.getCentre().withX(rowBounds.getX() + ROW_CLICK_INSET), modifiers);
+        return view.getSelectedRecordPaths().contains(file.getFullPathName());
+    }
+
+    /// Clicks a visible column title in the table header through the window peer, with optional modifiers.
+    static void clickHeader(
+        tests::GuiDriver& driver,
+        AudioBatchComponent& view,
+        const AudioFileTableColumn column,
+        const juce::ModifierKeys modifiers = {}
+    )
+    {
+        auto& header = view.resultsTable.getHeader();
+        const auto index = header.getIndexOfColumnId(toColumnId(column), true);
+        if (index < 0) {
+            throw std::runtime_error("The header column to click is hidden");
+        }
+        driver.clickAt(header, header.getColumnPosition(index).getCentre(), modifiers);
+    }
+
+    /// Toggles a column through the View menu's Columns command handler, which the menu bar invokes.
+    /// Popup menus run in separate windows that macOS closes when the test process is not the foreground application,
+    /// so the driven tier never opens them and calls the item handler that their choice reaches.
+    static void toggleColumn(AudioBatchComponent& view, const AudioFileTableColumn column)
+    {
+        constexpr int firstItemId {2000};
+        const auto menu = view.createColumnsMenu(firstItemId);
+        const auto itemId = firstItemId + toColumnId(column);
+        bool listed = false;
+        for (juce::PopupMenu::MenuItemIterator item(menu); item.next();) {
+            listed = listed || item.getItem().itemID == itemId;
+        }
+        if (!listed) {
+            throw std::runtime_error("The Columns menu does not list the column");
+        }
+        view.handleColumnsMenuItem(itemId, firstItemId);
+    }
+
+    /// Right-clicks a file's row through the window peer, opening the row context menu.
+    static void rightClickRow(tests::GuiDriver& driver, AudioBatchComponent& view, const juce::File& file)
+    {
+        const auto row = view.analysisResults.findRow(file.getFullPathName());
+        if (!row) {
+            throw std::runtime_error("The row to right-click is missing");
+        }
+        auto& table = view.resultsTable;
+        const auto rowBounds = table.getRowPosition(*row, true);
+        driver.rightClickAt(table, rowBounds.getCentre().withX(rowBounds.getX() + ROW_CLICK_INSET));
     }
 
     /// Waits for completed rows, including failures, and the view's normal idle transition.
@@ -205,7 +242,11 @@ private:
     [[nodiscard]] juce::File copyFixture(const juce::String& name) const;
 
     void cancelAndClear();
+    void disabledControlsRejectInput();
+    void dropFilesAndFolders();
+    void manifestControls();
     void menuShortcuts();
+    void normalizeOptionsFollowControls();
     void normalizeSelection();
     void openAndSort();
     void previewModes();
@@ -294,9 +335,10 @@ void AudioBatchIntegrationTest::openAndSort()
     const auto other = copyFixture("sine_mono_44100_16.wav");
     const auto broken = copyFixture("broken.wav");
     AudioBatchComponent view(configuration());
+    tests::GuiDriver driver(view);
     view.openPaths({valid.getFullPathName(), broken.getFullPathName(), other.getFullPathName()}, false);
     ASSERT_TRUE(waitForRows(view, 3));
-    auto& header = view.resultsTable.getHeader();
+    const auto& header = view.resultsTable.getHeader();
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::folder)));
     EXPECT_FALSE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
     for (const auto column :
@@ -320,11 +362,12 @@ void AudioBatchIntegrationTest::openAndSort()
              AudioFileTableColumn::correlation,
          })
     {
-        view.handleColumnsMenuItem(2000 + toColumnId(column), 2000);
+        toggleColumn(view, column);
+        EXPECT_TRUE(header.isColumnVisible(toColumnId(column)));
     }
-    view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::clips), 2000);
+    toggleColumn(view, AudioFileTableColumn::clips);
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::clips)));
-    view.handleColumnsMenuItem(2000 + toColumnId(AudioFileTableColumn::path), 2000);
+    toggleColumn(view, AudioFileTableColumn::path);
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
     for (const int width : {2200, 800}) {
         view.setSize(width, 800);
@@ -349,9 +392,12 @@ void AudioBatchIntegrationTest::openAndSort()
         );
         EXPECT_GE(header.getColumnWidth(toColumnId(AudioFileTableColumn::path)), layout::table::pathColumnMinimumWidth);
     }
+    view.setSize(1920, 1080);
+    tests::GuiDriver::settle();
     EXPECT_FALSE(view.createColumnsMenu(2000).getNumItems() == 0);
     EXPECT_EQ(view.createOutputDeviceMenu(3000).getNumItems(), 0);
-    EXPECT_TRUE(view.keyPressed(juce::KeyPress('a', juce::ModifierKeys::commandModifier, 0)));
+    ASSERT_TRUE(clickRow(driver, view, other));
+    driver.press(juce::KeyPress('a', juce::ModifierKeys::commandModifier, 0));
     EXPECT_EQ(view.getSelectedRecordPaths().size(), 3);
     view.applyCustomGainToSelection(Decibels(2.0f));
     view.clearSelectedCustomGain();
@@ -359,10 +405,10 @@ void AudioBatchIntegrationTest::openAndSort()
         EXPECT_FALSE(record.customGain.has_value());
     }
     view.previewPlayer.setPosition(0.25);
-    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    driver.press(juce::KeyPress(juce::KeyPress::escapeKey));
     EXPECT_FALSE(view.previewPlayer.isPlaying());
     EXPECT_NEAR(view.previewPlayer.getCurrentPosition(), 0.0, 0.00001);
-    header.setSortColumnId(toColumnId(AudioFileTableColumn::folder), true);
+    clickHeader(driver, view, AudioFileTableColumn::folder);
     ASSERT_TRUE(dispatchUntil([&] { return view.sortState.primaryColumn == AudioFileTableColumn::folder; }));
     AnalysisCache completedArtifacts(temporary.get().getChildFile("AudioBatch/analysis.db"));
     EXPECT_TRUE(completedArtifacts.getWaveformData(valid).has_value());
@@ -375,7 +421,8 @@ void AudioBatchIntegrationTest::openAndSort()
         return;
     }
     EXPECT_TRUE(view.analysisResults[*brokenRow].hasError());
-    ASSERT_TRUE(selectFile(view, valid));
+    ASSERT_TRUE(clickRow(driver, view, valid));
+    EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(valid.getFullPathName()));
     ASSERT_TRUE(waitForWaveform(view, valid));
     ASSERT_TRUE(dispatchUntil([&] {
         const auto metadata = view.preview.getSeratoData();
@@ -422,8 +469,11 @@ void AudioBatchIntegrationTest::openAndSort()
     EXPECT_TRUE(containsLabel(
         view.previewWorkspace.audioInfo, utils::format("{} total, {}", metrics.totalClips(), formatClipCounts(metrics))
     ));
-    view.resultsTable.getHeader().setSortColumnId(toColumnId(AudioFileTableColumn::name), false);
+    clickHeader(driver, view, AudioFileTableColumn::name);
     ASSERT_TRUE(dispatchUntil([&] { return view.sortState.primaryColumn == AudioFileTableColumn::name; }));
+    clickHeader(driver, view, AudioFileTableColumn::folder, juce::ModifierKeys::commandModifier);
+    EXPECT_EQ(view.sortState.primaryColumn, AudioFileTableColumn::name);
+    EXPECT_EQ(view.sortState.secondaryColumn, AudioFileTableColumn::folder);
     EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(valid.getFullPathName()));
     EXPECT_EQ(view.preview.getFile(), valid);
     const auto metadataAfterSort = view.preview.getSeratoData();
@@ -435,7 +485,6 @@ void AudioBatchIntegrationTest::openAndSort()
     EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, valid.getFileName()));
     ASSERT_TRUE(waitForWaveform(view, valid));
     EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
-    EXPECT_EQ(view.getPeer(), nullptr);
 }
 
 /// Converts only a copied WAV through the real Normalize control and follows the committed output everywhere.
@@ -444,14 +493,14 @@ void AudioBatchIntegrationTest::normalizeSelection()
     const auto source = copyFixture("sine_stereo_44100_16.wav");
     const auto output = source.withFileExtension(".aif");
     AudioBatchComponent view(configuration());
+    tests::GuiDriver driver(view);
+    EXPECT_FALSE(driver.find(control_ids::NORMALIZE_SELECTED).enabled);
     view.openPaths({source.getFullPathName()}, false);
     ASSERT_TRUE(waitForRows(view, 1));
-    ASSERT_TRUE(selectFile(view, source));
+    ASSERT_TRUE(clickRow(driver, view, source));
     ASSERT_TRUE(waitForWaveform(view, source));
-    auto* normalize = findButton(view.previewWorkspace.normalizationTargetControl, "Normalize");
-    ASSERT_NE(normalize, nullptr);
-    ASSERT_TRUE(normalize->isEnabled());
-    normalize->onClick();
+    ASSERT_TRUE(driver.find(control_ids::NORMALIZE_SELECTED).enabled);
+    driver.click(control_ids::NORMALIZE_SELECTED);
     ASSERT_TRUE(dispatchUntil([&] {
         return !view.isBackgroundWorkRunning() && view.analysisResults.findRow(output.getFullPathName()).has_value();
     }));
@@ -517,9 +566,11 @@ void AudioBatchIntegrationTest::previewModes()
     }
     {
         AudioBatchComponent view(configuration());
+        tests::GuiDriver driver(view);
+        EXPECT_FALSE(driver.find(control_ids::GAIN_TRACK).enabled);
         view.openPaths({file.getFullPathName()}, false);
         ASSERT_TRUE(waitForRows(view, 1));
-        ASSERT_TRUE(selectFile(view, file));
+        ASSERT_TRUE(clickRow(driver, view, file));
         ASSERT_TRUE(waitForWaveform(view, file));
         AnalysisCache observer(temporary.get().getChildFile("AudioBatch/analysis.db"));
         ASSERT_TRUE(dispatchUntil([&] {
@@ -529,8 +580,8 @@ void AudioBatchIntegrationTest::previewModes()
         const auto spectrum = observer.getSpectrogramData(file);
         ASSERT_NE(spectrum, nullptr);
         EXPECT_TRUE(isValidSpectrogramData(*spectrum));
-        view.previewWorkspace.zoomSlider.setValue(200.0, juce::sendNotificationSync);
-        view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        driver.setValue(control_ids::ZOOM_TRACK, 200.0);
+        driver.setValue(control_ids::GAIN_TRACK, -3.0);
         EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
         const auto selectedRow = view.analysisResults.findRow(file.getFullPathName());
         ASSERT_TRUE(selectedRow.has_value());
@@ -562,9 +613,9 @@ void AudioBatchIntegrationTest::previewModes()
         EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, "(-9.0)"));
         auto preferences = view.previewPreferences;
         // Successive edits replace the debounced request without displaying the naive gain-only value.
-        view.previewWorkspace.gainSlider.setValue(12.0, juce::sendNotificationSync);
+        driver.setValue(control_ids::GAIN_TRACK, 12.0);
         EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, juce::String::fromUTF8("(≈-1.0)")));
-        view.previewWorkspace.gainSlider.setValue(9.0, juce::sendNotificationSync);
+        driver.setValue(control_ids::GAIN_TRACK, 9.0);
         const auto adjusted = measureGainAdjustedLoudness(file, Decibels {9.0f});
         ASSERT_TRUE(adjusted.has_value());
         if (!adjusted) {
@@ -575,7 +626,7 @@ void AudioBatchIntegrationTest::previewModes()
         preferences.showGainAdjustedMetrics = false;
         view.setPreviewPreferences(preferences);
         EXPECT_FALSE(containsLabel(view.previewWorkspace.audioInfo, adjustedText));
-        view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        driver.setValue(control_ids::GAIN_TRACK, -3.0);
         preferences.showGainAdjustedMetrics = true;
         view.setPreviewPreferences(preferences);
         const auto attenuated = measureGainAdjustedLoudness(file, Decibels {-3.0f});
@@ -616,10 +667,12 @@ void AudioBatchIntegrationTest::previewModes()
         EXPECT_FALSE(savedOverloads.showSampleOverloads);
         EXPECT_FALSE(savedOverloads.showTruePeakOverloads);
         EXPECT_FALSE(savedOverloads.showOverloadLines);
-        view.togglePreviewSection();
+        driver.click(control_ids::PREVIEW_SECTION);
         EXPECT_EQ(view.getPreviewViewMode(), PreviewViewMode::stacked);
-        view.togglePreviewSection();
+        ASSERT_TRUE(dispatchUntil([&] { return view.previewWorkspace.isCompact(); }));
+        driver.click(control_ids::PREVIEW_SECTION);
         EXPECT_EQ(view.getPreviewViewMode(), PreviewViewMode::stacked);
+        ASSERT_TRUE(dispatchUntil([&] { return !view.previewWorkspace.isCompact(); }));
     }
     AudioBatchComponent recreated(configuration());
     EXPECT_EQ(recreated.getPreviewViewMode(), PreviewViewMode::stacked);
@@ -640,19 +693,14 @@ void AudioBatchIntegrationTest::previewWidths()
     double savedInformation = 0.0;
     {
         AudioBatchComponent view(configuration());
-        view.setSize(1920, 1080);
+        tests::GuiDriver driver(view);
         auto& workspace = view.previewWorkspace;
-        juce::Component* controlsDivider = nullptr;
-        juce::Component* informationDivider = nullptr;
-        for (auto* child : workspace.getChildren()) {
-            if (child->getName() == "Resize preview controls width") {
-                controlsDivider = child;
-            } else if (child->getName() == "Resize preview information width") {
-                informationDivider = child;
-            }
-        }
-        ASSERT_NE(controlsDivider, nullptr);
-        ASSERT_NE(informationDivider, nullptr);
+        auto* controlsDivider = driver.find(control_ids::CONTROLS_WIDTH_DIVIDER).component;
+        const auto* informationDivider = driver.find(control_ids::INFORMATION_WIDTH_DIVIDER).component;
+        const auto dragControls
+            = [&](const int distance) { driver.drag(control_ids::CONTROLS_WIDTH_DIVIDER, {distance, 0}); };
+        const auto dragInformation
+            = [&](const int distance) { driver.drag(control_ids::INFORMATION_WIDTH_DIVIDER, {distance, 0}); };
         EXPECT_TRUE(controlsDivider->getWantsKeyboardFocus());
         EXPECT_TRUE(informationDivider->getWantsKeyboardFocus());
         EXPECT_EQ(controlsDivider->getMouseCursor(), juce::MouseCursor(juce::MouseCursor::LeftRightResizeCursor));
@@ -669,62 +717,59 @@ void AudioBatchIntegrationTest::previewWidths()
         EXPECT_FALSE(settings.containsKey("previewInformationWidthScale"));
         settings.setValue("unrelatedWidthSetting", "keep me");
 
-        controlsDivider->mouseDown(dividerEvent(*controlsDivider, 0));
-        controlsDivider->mouseDrag(dividerEvent(*controlsDivider, 24));
+        dragControls(24);
         EXPECT_EQ(controlsDivider->getX() - layout::compactPreview::padding, initialControlsWidth + 24);
         EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth);
         EXPECT_EQ(workspace.getHeight(), height);
-        EXPECT_FALSE(settings.containsKey("previewControlsWidthScale"));
-        controlsDivider->mouseUp(dividerEvent(*controlsDivider, 24));
         EXPECT_TRUE(settings.containsKey("previewControlsWidthScale"));
+        EXPECT_EQ(
+            driver.find(control_ids::CONTROLS_WIDTH_DIVIDER).value,
+            utils::format("{} pixels", controlsDivider->getX() - layout::compactPreview::padding)
+        );
         const auto controlsAfterDrag = controlsDivider->getX();
         const auto storedControls = settings.getDoubleValue("previewControlsWidthScale");
-        informationDivider->mouseDown(dividerEvent(*informationDivider, 0));
-        informationDivider->mouseDrag(dividerEvent(*informationDivider, 20));
+        // Committing one divider saves both scales, so the untouched information panel keeps its default.
+        EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), 0.90, 0.000001);
+        dragInformation(20);
         EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth + 20);
         EXPECT_EQ(controlsDivider->getX(), controlsAfterDrag);
-        EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), 0.90, 0.000001);
-        informationDivider->mouseUp(dividerEvent(*informationDivider, 20));
+        EXPECT_GT(settings.getDoubleValue("previewInformationWidthScale"), 0.90);
         EXPECT_NEAR(settings.getDoubleValue("previewControlsWidthScale"), storedControls, 0.000001);
-        EXPECT_TRUE(controlsDivider->keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+        driver.press(control_ids::CONTROLS_WIDTH_DIVIDER, juce::KeyPress(juce::KeyPress::leftKey));
         EXPECT_EQ(controlsDivider->getX(), controlsAfterDrag - 4);
         EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth + 20);
         EXPECT_EQ(workspace.getHeight(), height);
 
-        informationDivider->mouseDoubleClick(dividerEvent(*informationDivider, 0, 2));
+        driver.doubleClick(control_ids::INFORMATION_WIDTH_DIVIDER);
         EXPECT_NEAR(settings.getDoubleValue("previewInformationWidthScale"), 0.90, 0.000001);
         EXPECT_EQ(controlsDivider->getX(), controlsAfterDrag - 4);
-        EXPECT_TRUE(informationDivider->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        driver.press(control_ids::INFORMATION_WIDTH_DIVIDER, juce::KeyPress(juce::KeyPress::rightKey));
         const auto informationAfterKey = workspace.audioInfo.getWidth();
         const auto baseline
             = layout::previewColumnBaseline(workspace.getLocalBounds().reduced(layout::compactPreview::padding));
         for (const auto distance : {-1000, 1000}) {
-            controlsDivider->mouseDown(dividerEvent(*controlsDivider, 0));
-            controlsDivider->mouseDrag(dividerEvent(*controlsDivider, distance));
-            controlsDivider->mouseUp(dividerEvent(*controlsDivider, distance));
+            dragControls(distance);
             EXPECT_EQ(workspace.audioInfo.getWidth(), informationAfterKey);
             EXPECT_EQ(
                 controlsDivider->getX() - layout::compactPreview::padding,
                 juce::roundToInt(baseline.controls.getWidth() * (distance < 0 ? 0.855 : 1.10))
             );
         }
-        controlsDivider->mouseDoubleClick(dividerEvent(*controlsDivider, 0, 2));
+        driver.doubleClick(control_ids::CONTROLS_WIDTH_DIVIDER);
         EXPECT_NEAR(settings.getDoubleValue("previewControlsWidthScale"), 0.95, 0.000001);
         EXPECT_EQ(workspace.audioInfo.getWidth(), informationAfterKey);
-        EXPECT_TRUE(controlsDivider->keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+        driver.press(control_ids::CONTROLS_WIDTH_DIVIDER, juce::KeyPress(juce::KeyPress::leftKey));
         const auto controlsBeforeInformationBounds = controlsDivider->getX();
         for (const auto distance : {-1000, 1000}) {
-            informationDivider->mouseDown(dividerEvent(*informationDivider, 0));
-            informationDivider->mouseDrag(dividerEvent(*informationDivider, distance));
-            informationDivider->mouseUp(dividerEvent(*informationDivider, distance));
+            dragInformation(distance);
             EXPECT_EQ(controlsDivider->getX(), controlsBeforeInformationBounds);
             EXPECT_EQ(
                 workspace.audioInfo.getWidth(),
                 juce::roundToInt(baseline.information.getWidth() * (distance < 0 ? 0.81 : 1.10))
             );
         }
-        informationDivider->mouseDoubleClick(dividerEvent(*informationDivider, 0, 2));
-        EXPECT_TRUE(informationDivider->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        driver.doubleClick(control_ids::INFORMATION_WIDTH_DIVIDER);
+        driver.press(control_ids::INFORMATION_WIDTH_DIVIDER, juce::KeyPress(juce::KeyPress::rightKey));
         savedControls = settings.getDoubleValue("previewControlsWidthScale");
         savedInformation = settings.getDoubleValue("previewInformationWidthScale");
         const auto fullWidth = workspace.getWidth();
@@ -779,6 +824,7 @@ void AudioBatchIntegrationTest::cancelAndClear()
     view.openPaths({second.getFullPathName()}, false);
     ASSERT_TRUE(waitForRows(view, 1));
     ASSERT_TRUE(selectFile(view, second));
+    EXPECT_EQ(view.getPeer(), nullptr);
     ASSERT_TRUE(waitForWaveform(view, second));
     EXPECT_FALSE(view.analysisResults.findRow(first.getFullPathName()));
     EXPECT_EQ(view.preview.getFile(), second);
@@ -799,10 +845,20 @@ void AudioBatchIntegrationTest::restorePreferencesAndGain()
     bool expectedPreference = false;
     {
         AudioBatchComponent view(configuration());
+        tests::GuiDriver driver(view);
         view.openPaths({file.getFullPathName()}, false);
         ASSERT_TRUE(waitForRows(view, 1));
-        ASSERT_TRUE(selectFile(view, file));
-        view.previewWorkspace.gainSlider.setValue(-3.0, juce::sendNotificationSync);
+        ASSERT_TRUE(clickRow(driver, view, file));
+        ASSERT_TRUE(driver.find(control_ids::GAIN_TRACK).enabled);
+        // Each wheel notch steps the gain by exactly one interval, and a double click resets it.
+        const auto step = view.previewWorkspace.gainSlider.getInterval();
+        driver.scroll(control_ids::GAIN_TRACK, -0.5f);
+        driver.scroll(control_ids::GAIN_TRACK, -0.5f);
+        EXPECT_NEAR(view.previewWorkspace.gainSlider.getValue(), -2.0 * step, 0.0001);
+        driver.doubleClick(control_ids::GAIN_TRACK);
+        EXPECT_NEAR(view.previewWorkspace.gainSlider.getValue(), 0.0, 0.0001);
+        driver.setValue(control_ids::GAIN_TRACK, -3.0);
+        EXPECT_EQ(driver.find(control_ids::GAIN_TRACK).value, view.previewWorkspace.gainSlider.getTextFromValue(-3.0));
         view.toggleLoudnessGraph();
         expectedPreference = view.isLoudnessGraphEnabled();
         AnalysisCache observer(temporary.get().getChildFile("AudioBatch/analysis.db"));
@@ -856,7 +912,122 @@ void AudioBatchIntegrationTest::menuShortcuts()
     EXPECT_TRUE(dispatchUntil([&] { return view.getSelectedRecordPaths().size() == 1; }));
 }
 
-/// Dispatches a workflow with no native window or installed plugins.
+/// Places the real view in a desktop window at the manifest size
+/// and requires every shared control to exist exactly once with its shared role and,
+/// where the manifest names one, its accessibility title.
+void AudioBatchIntegrationTest::manifestControls()
+{
+    const auto manifestFile = juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getSiblingFile("tests/gui_controls.json");
+    const auto manifest = juce::JSON::parse(manifestFile);
+    ASSERT_TRUE(manifest.isObject()) << manifestFile.getFullPathName();
+    const auto* window = manifest["window"].getDynamicObject();
+    ASSERT_NE(window, nullptr);
+    AudioBatchComponent view(configuration());
+    const tests::GuiDriver driver(
+        view, {0, 0, static_cast<int>(window->getProperty("width")), static_cast<int>(window->getProperty("height"))}
+    );
+    const auto& roles = manifest["roles"];
+    const auto* controls = manifest["controls"].getArray();
+    ASSERT_NE(controls, nullptr);
+    ASSERT_FALSE(controls->isEmpty());
+    for (const auto& entry : *controls) {
+        const auto controlId = entry["id"].toString();
+        const auto role = entry["role"].toString();
+        SCOPED_TRACE(controlId.toStdString());
+        const auto matches = driver.findAll(controlId);
+        ASSERT_EQ(matches.size(), 1U) << "Registered ids: " << driver.registeredIds().joinIntoString(", ");
+        const auto& control = matches.front();
+        ASSERT_TRUE(control.role.has_value());
+        const auto* nativeRoles = roles[juce::Identifier(role)]["juce"].getArray();
+        ASSERT_NE(nativeRoles, nullptr) << role;
+        if (control.role) {
+            EXPECT_TRUE(nativeRoles->contains(tests::GuiDriver::roleName(*control.role)))
+                << "Native role " << tests::GuiDriver::roleName(*control.role);
+        }
+        if (entry.hasProperty("label")) {
+            EXPECT_EQ(control.title, entry["label"].toString());
+        }
+    }
+}
+
+/// Drops an unsupported file, a nested folder, and then an audio file through the window peer's drag and drop,
+/// matching the Rust `integration_drop_files_and_folders` test.
+void AudioBatchIntegrationTest::dropFilesAndFolders()
+{
+    const auto first = copyFixture("sine_stereo_44100_16.wav");
+    const auto nested = temporary.get().getChildFile("nested/inner");
+    ASSERT_TRUE(nested.createDirectory().wasOk());
+    const auto second = nested.getChildFile("second.wav");
+    ASSERT_TRUE(juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getChildFile("sine_mono_44100_16.wav").copyFileTo(second));
+    const auto unsupported = temporary.get().getChildFile("notes.txt");
+    ASSERT_TRUE(unsupported.replaceWithText("not audio"));
+    AudioBatchComponent view(configuration());
+    const tests::GuiDriver driver(view);
+    const auto dropPoint = view.resultsTable.getBounds().getCentre();
+
+    driver.dropFiles({unsupported.getFullPathName()}, dropPoint);
+    EXPECT_TRUE(view.analysisResults.empty());
+
+    driver.dropFiles({temporary.get().getChildFile("nested").getFullPathName()}, dropPoint);
+    ASSERT_TRUE(waitForRows(view, 1));
+    EXPECT_TRUE(view.analysisResults.findRow(second.getFullPathName()).has_value());
+
+    driver.dropFiles({first.getFullPathName()}, dropPoint);
+    ASSERT_TRUE(waitForRows(view, 2));
+    EXPECT_TRUE(view.analysisResults.findRow(first.getFullPathName()).has_value());
+    EXPECT_TRUE(view.analysisResults.findRow(second.getFullPathName()).has_value());
+}
+
+/// Switches the normalization mode and toggles the options through their controls,
+/// matching the Rust `integration_normalize_options_follow_controls` test.
+void AudioBatchIntegrationTest::normalizeOptionsFollowControls()
+{
+    AudioBatchComponent view(configuration());
+    tests::GuiDriver driver(view);
+    const auto& workspace = view.previewWorkspace;
+    EXPECT_FALSE(driver.find(control_ids::PROCESS_NORMALIZE_FIRST).checked);
+    EXPECT_FALSE(driver.find(control_ids::NORMALIZE_PEAK).enabled);
+    driver.click(control_ids::PROCESS_NORMALIZE_FIRST);
+    EXPECT_TRUE(workspace.normalizeBeforePluginToggle.getToggleState());
+    EXPECT_TRUE(driver.find(control_ids::NORMALIZE_PEAK).enabled);
+    driver.click(control_ids::NORMALIZE_LOUDNESS);
+    driver.click(control_ids::NORMALIZE_OVERWRITE);
+    EXPECT_TRUE(driver.find(control_ids::NORMALIZE_OVERWRITE).checked);
+    EXPECT_TRUE(workspace.forceOverwriteToggle.getToggleState());
+    EXPECT_EQ(workspace.normalizationTargetControl.getOptions().mode, AudioNormalizationMode::loudness);
+
+    driver.click(control_ids::NORMALIZE_PEAK);
+    driver.click(control_ids::PROCESS_NORMALIZE_FIRST);
+    EXPECT_FALSE(driver.find(control_ids::PROCESS_NORMALIZE_FIRST).checked);
+    EXPECT_FALSE(workspace.normalizeBeforePluginToggle.getToggleState());
+    EXPECT_EQ(workspace.normalizationTargetControl.getOptions().mode, AudioNormalizationMode::peak);
+}
+
+/// Requires Normalize and Process to reject input without a selection,
+/// then Normalize to accept it once a file is selected while Process stays disabled without plugins,
+/// matching the Rust `integration_disabled_controls_reject_input` test.
+/// Play is not part of this shared contract yet: this application enables it for a loaded preview
+/// without an audio output, while the Rust application disables it until a player exists.
+void AudioBatchIntegrationTest::disabledControlsRejectInput()
+{
+    const auto file = copyFixture("sine_stereo_44100_16.wav");
+    AudioBatchComponent view(configuration());
+    tests::GuiDriver driver(view);
+    view.openPaths({file.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(view, 1));
+    view.resultsTable.deselectAllRows();
+    tests::GuiDriver::settle();
+    for (const auto* controlId : {control_ids::NORMALIZE_SELECTED, control_ids::PROCESS_SELECTED}) {
+        EXPECT_FALSE(driver.find(controlId).enabled) << controlId << " without a selection";
+    }
+    EXPECT_THROW(driver.click(control_ids::NORMALIZE_SELECTED), std::runtime_error);
+    EXPECT_FALSE(view.isBackgroundWorkRunning());
+    ASSERT_TRUE(clickRow(driver, view, file));
+    EXPECT_TRUE(driver.find(control_ids::NORMALIZE_SELECTED).enabled);
+    EXPECT_FALSE(driver.find(control_ids::PROCESS_SELECTED).enabled) << "Process without plugins";
+}
+
+/// Dispatches one workflow, with no installed plugins or audio hardware.
 void AudioBatchIntegrationTest::TestBody()
 {
     switch (workflow) {
@@ -884,6 +1055,18 @@ void AudioBatchIntegrationTest::TestBody()
         case IntegrationWorkflow::menuShortcuts:
             menuShortcuts();
             break;
+        case IntegrationWorkflow::manifestControls:
+            manifestControls();
+            break;
+        case IntegrationWorkflow::dropFiles:
+            dropFilesAndFolders();
+            break;
+        case IntegrationWorkflow::normalizeOptions:
+            normalizeOptionsFollowControls();
+            break;
+        case IntegrationWorkflow::disabledControls:
+            disabledControlsRejectInput();
+            break;
     }
 }
 
@@ -904,6 +1087,10 @@ int main(int argumentCount, char* arguments[])
         std::pair {"CancelAndClearRejectStaleCallbacks", audiobatch::IntegrationWorkflow::cancelAndClear},
         std::pair {"RecreateRestoresGainAndPreference", audiobatch::IntegrationWorkflow::restore},
         std::pair {"MenuShortcutsInvokeSharedCommands", audiobatch::IntegrationWorkflow::menuShortcuts},
+        std::pair {"ManifestControlsExistWithRoles", audiobatch::IntegrationWorkflow::manifestControls},
+        std::pair {"DropFilesAndFolders", audiobatch::IntegrationWorkflow::dropFiles},
+        std::pair {"NormalizeOptionsFollowControls", audiobatch::IntegrationWorkflow::normalizeOptions},
+        std::pair {"DisabledControlsRejectInput", audiobatch::IntegrationWorkflow::disabledControls},
     };
     for (const auto& [name, workflow] : cases) {
         testing::RegisterTest("AudioBatchIntegration", name, nullptr, nullptr, __FILE__, __LINE__, [workflow] {

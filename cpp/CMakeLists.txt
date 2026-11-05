@@ -1036,7 +1036,7 @@ if(BUILD_TESTING)
     juce_generate_juce_header(AudioBatchIntegrationTests)
     target_sources(
         AudioBatchIntegrationTests PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_GUI_SOURCES}
-                                           "src/gui/MainWindow.cpp" "tests/IntegrationMain.cpp"
+                                           "src/gui/MainWindow.cpp" "tests/GuiDriver.cpp" "tests/IntegrationMain.cpp"
     )
     target_include_directories(
         AudioBatchIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}"
@@ -1077,9 +1077,10 @@ if(BUILD_TESTING)
             VERBATIM
         )
     endif()
+    # The driven GUI cases share the desktop pointer, keyboard focus, and frontmost window, so they run one at a time.
     gtest_discover_tests(
         AudioBatchIntegrationTests DISCOVERY_TIMEOUT 60
-        PROPERTIES LABELS integration
+        PROPERTIES LABELS integration RUN_SERIAL TRUE
         TIMEOUT 60
     )
 

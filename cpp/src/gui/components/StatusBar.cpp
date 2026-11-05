@@ -5,6 +5,7 @@
 
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiControlIds.h"
 #include "gui/GuiLayout.h"
 #include "utils/GuiUtils.h"
 #include "utils/StringFormat.h"
@@ -89,6 +90,7 @@ StatusBar::StatusBar()
         addAndMakeVisible(*label);
     }
 
+    statusLabel.setComponentID(control_ids::STATUS);
     statusLabel.setTooltip("Background analysis and normalization status.");
     playbackLabel.setVisible(false);
     setOutputStatus({});

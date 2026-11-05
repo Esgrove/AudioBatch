@@ -1,0 +1,150 @@
+{
+  "description": "Main-window controls that both GUIs expose with the same stable id, accessibility role, and label. The C++ and Rust GUI integration tests both read this file and fail when a control is missing, duplicated, or has another role or label.",
+  "window": {
+    "width": 1920,
+    "height": 1080
+  },
+  "roles": {
+    "button": {
+      "gpui": [
+        "Button"
+      ],
+      "juce": [
+        "button",
+        "radioButton"
+      ],
+      "note": "JUCE reports every button in a radio group, such as the Peak and Loudness modes, as a radio button."
+    },
+    "checkbox": {
+      "gpui": [
+        "CheckBox"
+      ],
+      "juce": [
+        "toggleButton"
+      ]
+    },
+    "slider": {
+      "gpui": [
+        "Slider"
+      ],
+      "juce": [
+        "slider"
+      ]
+    },
+    "splitter": {
+      "gpui": [
+        "Splitter"
+      ],
+      "juce": [
+        "group"
+      ],
+      "note": "JUCE has no splitter role, so the C++ width dividers expose a group with a value interface that reports their width."
+    },
+    "status": {
+      "gpui": [
+        "Status"
+      ],
+      "juce": [
+        "label"
+      ],
+      "note": "JUCE has no status role, so the C++ status text is the label role of its juce::Label."
+    },
+    "table": {
+      "gpui": [
+        "Grid",
+        "Table"
+      ],
+      "juce": [
+        "table"
+      ]
+    }
+  },
+  "controls": [
+    {
+      "id": "results",
+      "role": "table",
+      "label": "Results"
+    },
+    {
+      "id": "play-stop",
+      "role": "button"
+    },
+    {
+      "id": "process-selected",
+      "role": "button"
+    },
+    {
+      "id": "preview-section",
+      "role": "button"
+    },
+    {
+      "id": "zoom-track",
+      "role": "slider",
+      "label": "Zoom"
+    },
+    {
+      "id": "gain-track",
+      "role": "slider",
+      "label": "Input gain"
+    },
+    {
+      "id": "process-normalize-first",
+      "role": "checkbox",
+      "label": "Normalize"
+    },
+    {
+      "id": "normalize-overwrite",
+      "role": "checkbox",
+      "label": "Overwrite"
+    },
+    {
+      "id": "preview-chain",
+      "role": "checkbox",
+      "label": "Preview chain"
+    },
+    {
+      "id": "normalize-peak",
+      "role": "button",
+      "label": "Peak"
+    },
+    {
+      "id": "normalize-loudness",
+      "role": "button",
+      "label": "Loudness"
+    },
+    {
+      "id": "normalize-target",
+      "role": "slider",
+      "label": "Normalization target"
+    },
+    {
+      "id": "normalize-selected",
+      "role": "button",
+      "label": "Normalize"
+    },
+    {
+      "id": "plugin-chain",
+      "role": "button",
+      "label": "Plugin Chain"
+    },
+    {
+      "id": "audio-settings",
+      "role": "button",
+      "label": "Audio Settings"
+    },
+    {
+      "id": "controls-width-divider",
+      "role": "splitter",
+      "label": "Resize controls"
+    },
+    {
+      "id": "information-width-divider",
+      "role": "splitter",
+      "label": "Resize information panel"
+    },
+    {
+      "id": "status",
+      "role": "status"
+    }
+  ]
+}
