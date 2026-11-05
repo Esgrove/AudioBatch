@@ -37,6 +37,17 @@ FRAME_FIELDS = ["lengthInSamples", "frameCount", "frames"]
 
 def fixture_properties(path: Path) -> dict[str, str]:
     """Returns committed properties only for a recognized fixture collection and file name."""
+    if path.parent.name == "spectrogram_expected":
+        manifest = GOLDENS.parents[4] / "fixtures/spectrogram_expected/expected.json"
+        fixture = json.loads(manifest.read_text(encoding="utf-8"))["files"].get(path.name)
+        if fixture and fixture["source"]["kind"] == "silence":
+            return {
+                "status": "Analyzed",
+                "overall_peak": "0",
+                "integrated_lufs": "-inf",
+                "duration_seconds": str(fixture["sample_count"] / fixture["sample_rate"]),
+                "length_in_samples": str(fixture["sample_count"]),
+            }
     collection = {"fixtures": "fixtures", "normalization": "normalization"}.get(path.parent.name)
     candidates = (
         [GOLDENS / collection / f"{path.name}.txt"]
