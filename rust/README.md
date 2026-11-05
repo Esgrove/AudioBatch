@@ -52,7 +52,8 @@ JSON and CSV add `plrDb`, `psrDb`, `crestFactorDb`, `dcOffsets`, `clipCounts`, `
 Arrays use JSON syntax inside CSV fields. Ratios have two decimal places of precision, DC and correlation six,
 and counts remain integers.
 
-Shared measurement contract 14 refills older rows while retaining same-source gains and compatible previews.
+Shared measurement contract 15 requires finite decoded source PCM
+and refills older rows while retaining same-source gains and compatible previews.
 The shared `dc_offsets` blob contains one little-endian IEEE binary64 per channel,
 and `clip_counts` one little-endian unsigned 64-bit count per channel.
 `uv run --script ../fixtures/metrics_expected.py --check` checks the independent NumPy oracle used by both test suites.

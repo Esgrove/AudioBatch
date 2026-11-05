@@ -55,7 +55,8 @@ Source values never inherit custom-gain or limiter predictions.
 The inspector labels them Source, and the six optional table columns are hidden by default.
 Normalized and plugin-rendered output records describe the actual quantized output samples.
 
-Shared measurement contract 14 adds nullable scalar columns and bounded little-endian channel arrays:
+Shared measurement contract 15 requires finite decoded source PCM and stores nullable scalar columns
+and bounded little-endian channel arrays:
 `dc_offsets` contains one IEEE binary64 per channel, and `clip_counts` one unsigned 64-bit count per channel.
 Older measurements refill on demand without discarding same-source gains or compatible previews.
 `../fixtures/metrics_expected.py --check` verifies the independent NumPy expectations read by both test suites.
