@@ -153,6 +153,9 @@ init_options() {
     CLI_TARGET_NAME="AudioBatchCli"
     CLI_BINARY_NAME="audiobatch"
     BUILD_TARGETS=("$GUI_TARGET_NAME" "$CLI_TARGET_NAME")
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        BUILD_TARGETS=("${GUI_TARGET_NAME}Sign" "$CLI_TARGET_NAME")
+    fi
     if [ "$CLI_ONLY" = true ]; then
         BUILD_TARGETS=("$CLI_TARGET_NAME")
     fi

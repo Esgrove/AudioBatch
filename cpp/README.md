@@ -672,7 +672,9 @@ Set `CODESIGN_IDENTITY` in the build environment to select an installed signing 
 for example `CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" cmake --build --preset macos-debug`.
 An unset or empty value uses ad-hoc signing (`-`), without searching or changing the keychain.
 An invalid explicit identity fails the build rather than falling back silently.
-If an incremental build has no work after changing the identity, relink the app or sign the completed bundle directly:
+The default build always runs `AudioBatchSign` after all resources, including resource-only incremental changes.
+When building only the application explicitly, request `--target AudioBatchSign` to include final signing.
+To sign or inspect an already completed bundle directly:
 
 ```shell
 CODESIGN_IDENTITY=- bash ../common.sh sign_mac_app_bundle cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app

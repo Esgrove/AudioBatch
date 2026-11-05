@@ -9,17 +9,12 @@ function(audiobatch_sign_mac_app target)
     set_target_properties(
         ${target} PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
     )
-    # A changed signing policy must re-run the final link/sign step in incremental Ninja builds too.
-    set_property(
-        TARGET ${target}
-        APPEND
-        PROPERTY LINK_DEPENDS "${root}/common.sh" "${root}/assets/macos.entitlements"
-    )
-    # Register this after JUCE's icon and resource steps. Nothing may modify the bundle afterwards.
-    add_custom_command(
-        TARGET ${target}
-        POST_BUILD
+    # This dependent target runs after the executable and every resource copy, including resource-only rebuilds.
+    # It intentionally has no output stamp, since signing seals the complete mutable bundle.
+    add_custom_target(
+        ${target}Sign ALL
         COMMAND /bin/bash "${root}/common.sh" sign_mac_app_bundle "$<TARGET_BUNDLE_DIR:${target}>"
+        DEPENDS ${target}
         VERBATIM
     )
 endfunction()
