@@ -689,6 +689,14 @@ A small compressed file can declare huge dimensions or packets, and the decoder 
 and within individual chunk calls, before the harness can inspect the results.
 Both replay and fuzzing therefore use a five-second per-input timeout,
 a 128 MiB single-allocation reporting threshold, and a 512 MiB sampled RSS threshold.
+ASan retains a 64 MiB global quarantine and 64 KiB thread-local quarantine, instead of its 256 MiB global default.
+This keeps freed-allocation detection enabled while bounding sanitizer overhead under the unchanged RSS watchdog.
+Other caller-supplied `ASAN_OPTIONS` are preserved, with these quarantine bounds applied last.
+On macOS arm64, 100,000 replays of each saved Serato RSS finding retain about 24 MiB of live allocations.
+The default quarantine maps about 356 to 357 MiB.
+A 64 MiB global quarantine with a 256 KiB thread-local quarantine maps about 113 to 114 MiB.
+Freed parser allocations dominate that difference, not a growing live parser heap.
+The smaller quarantine retains delayed reuse but shortens the use-after-free detection window.
 These are libFuzzer watchdogs, not a hard OS memory sandbox or an exact maximum allocation footprint.
 Timeout or memory-limit violations remain findings with saved inputs, rather than silently discarded decoder errors.
 The cache blob readers independently validate dimensions and payload lengths before allocating.

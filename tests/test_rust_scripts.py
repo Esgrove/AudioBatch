@@ -76,6 +76,9 @@ fi
                 """#!/bin/bash
 set -eo pipefail
 target=${0##*/}
+if [ -n "${ASAN_ENV_LOG:-}" ]; then
+    printf '%s\\n' "${ASAN_OPTIONS:-unset}" >> "$ASAN_ENV_LOG"
+fi
 printf '%s\\0' "$target" "$PWD" unset "${RUSTFLAGS-unset}" unset "$@" >> "$COMMAND_LOG"
 printf '\\n' >> "$COMMAND_LOG"
 if [ "${FAIL_MATCH:-}" = "$target" ]; then
@@ -141,6 +144,22 @@ fi
         assert commands[1][-2:] == ["corpus/serato_tags", "../../cpp/tests/fuzz/corpus/SeratoTagFuzzer"]
         assert commands[2][-2:] == ["corpus/cli_arguments", "../../cpp/tests/fuzz/corpus/CliArgumentsFuzzer"]
         assert not (self.fuzz / "scratch").exists()
+
+    def test_fuzz_bounds_quarantine_without_disabling_sanitizer_diagnostics(self) -> None:
+        """Every target uses bounded quarantine and retains other explicitly requested ASan diagnostics."""
+        log = self.root / "asan-options.log"
+        result = self.invoke(
+            "fuzz.sh",
+            "--no-build",
+            "--replay",
+            ASAN_OPTIONS="detect_leaks=1:quarantine_size_mb=256",
+            ASAN_ENV_LOG=str(log),
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (
+            log.read_text().splitlines()
+            == ["detect_leaks=1:quarantine_size_mb=256:quarantine_size_mb=64:thread_local_quarantine_size_kb=64"] * 4
+        )
 
     def test_fuzz_selectors_limit_builds_and_runs(self) -> None:
         """Every mode uses exactly the selected group, with no decoder in parser mutations."""
