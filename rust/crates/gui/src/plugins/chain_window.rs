@@ -527,7 +527,7 @@ impl Render for ChainView {
             )
             .child(format!("Live instances run at {}", self.snapshot.sample_rate));
         div()
-            .id("plugin-chain")
+            .id(crate::control_ids::PLUGIN_CHAIN_WINDOW)
             .key_context(PLUGIN_WINDOW_KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|_, _: &ClosePluginWindow, window, _| window.remove_window()))

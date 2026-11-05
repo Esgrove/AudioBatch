@@ -184,6 +184,7 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   with `waveform/` holding their geometry, rendering, axes, loudness graph, overloads, and spectrogram raster,
   `controls.rs` and `info_panel.rs` for the controls column and the information panel,
   and `settings_window.rs` for the Audio Settings window.
+  `control_ids.rs` holds the element ids of the controls shared with the C++ application.
   `menus.rs` defines the actions, the shortcuts, and the menu bar, `theme.rs` the palette and the fonts,
   `settings.rs` the saved preferences, `normalization.rs` the normalization target and options,
   `operation_run.rs` the progress of a normalization or processing run,
@@ -499,14 +500,27 @@ Mention the C++ application only when it matters for the implementation:
 ## Testing
 
 - Keep unit tests lightweight and focused, targeting under one second per case.
-  Put executable CLI contracts and nonvisual production-view workflows in the separately identified integration tier.
+  Put executable CLI contracts and driven production-view workflows in the separately identified integration tier.
   Integration tests may take longer, but must have bounded waits and process timeouts.
   Use isolated application storage and copied fixtures,
   with no system trash, physical audio devices, or installed plugins.
-  Do not add screenshot comparisons, pixel assertions, or desktop automation.
+  Do not add screenshot comparisons, pixel assertions, or desktop automation outside the test process.
   GPUI integration tests use the production view and real event handlers, not a parallel test-only model.
   They prove application composition and event delivery, not packaged-app or native OS behavior.
-- Run the nonvisual production-view tier with `cargo nextest run -p audiobatch-gui -E 'test(integration_tests::)'`.
+- Drive GUI workflows through gpui-kit's `TestWindowExt`, `TestEventExt`, and `TestQueryExt`,
+  with clicks, keys, drags, wheel events, and platform file-drop events on the real window.
+  Find shared controls by the ids in `src/control_ids.rs`,
+  which match `../tests/gui_controls.json` and the C++ component ids.
+  Use those constants in production code and tests, never repeated string literals,
+  and keep the shared accessible labels there too.
+  The GPUI test platform renders no real window, so these tests cannot be watched on screen.
+  The C++ tier's `./test.sh --visible` shows the same shared workflows step by step.
+  Register a custom element for queries with `.test_support()` under `cfg(test)`,
+  and give shared controls the accessible label and role the manifest lists.
+  Dispatch root actions directly only for menu bar commands, which have no element in the window.
+  Write each shared workflow with the same name and steps as its C++ counterpart,
+  and document a remaining difference between the applications beside both tests.
+- Run the driven production-view tier with `cargo nextest run -p audiobatch-gui -E 'test(integration_tests::)'`.
   The default workspace run includes these cases too.
   Build `audiobatch-rs`
   and run the executable contracts with `uv run --script ../tests/cli_integration.py --cli target/debug/audiobatch-rs`.

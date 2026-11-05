@@ -26,7 +26,7 @@ use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Axis, Context, Div, ExternalPaths, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Render, SharedString, Stateful, StatefulInteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, Render, Role, SharedString, Stateful, StatefulInteractiveElement as _,
     Styled as _, Window, div, px, relative, transparent_black,
 };
 
@@ -35,6 +35,7 @@ use super::{
     APP_TITLE, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
     TABLE_FRAME_BORDER, content_size,
 };
+use crate::control_ids;
 use crate::controls::{
     ControlsEvent, ControlsState, EventCallback, NormalizeControls, PlaybackControls, SECTION_TOGGLE_SIZE,
     fit_height as controls_fit_height, render_controls, render_playback_row, render_section_toggle,
@@ -258,15 +259,7 @@ impl AppView {
             .text_color(color(palette::GREY_MIDDLE_LIGHT))
             .child(path)
             .child(status_separator())
-            .child(
-                div()
-                    .id("status")
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .tooltip(tooltip(STATUS_TOOLTIP))
-                    .child(status),
-            )
+            .child(status_text(status))
             .children(playback_time.map(|time| {
                 div()
                     .flex()
@@ -295,26 +288,32 @@ impl AppView {
         // since the rows' `external_drag_payload` then covers Windows as well.
         #[cfg(windows)]
         let frame = frame.on_drag_move::<DraggedFiles>(start_windows_file_drag);
-        div().id("results").size_full().pb(px(DIVIDER_SPACING)).child(
-            frame
-                .size_full()
-                .rounded(px(4.0))
-                .border(px(TABLE_FRAME_BORDER))
-                .border_color(color(palette::GREY_MEDIUM))
-                .overflow_hidden()
-                .drag_over::<ExternalPaths>(|style, _, _, _| {
-                    style
-                        .border_color(color(palette::BLUE))
-                        .bg(color(palette::BLUE).opacity(0.08))
-                })
-                .child(
-                    DataTable::new(&self.table)
-                        .stripe(true)
-                        .bordered(false)
-                        .with_size(Size::Size(px(ROW_HEIGHT)))
-                        .header_row_height(px(HEADER_HEIGHT)),
-                ),
-        )
+        // The table's own observed element is "table", so tests read the shared "results" control within this scope.
+        div()
+            .id(control_ids::RESULTS)
+            .size_full()
+            .pb(px(DIVIDER_SPACING))
+            .child(
+                frame
+                    .size_full()
+                    .rounded(px(4.0))
+                    .border(px(TABLE_FRAME_BORDER))
+                    .border_color(color(palette::GREY_MEDIUM))
+                    .overflow_hidden()
+                    .drag_over::<ExternalPaths>(|style, _, _, _| {
+                        style
+                            .border_color(color(palette::BLUE))
+                            .bg(color(palette::BLUE).opacity(0.08))
+                    })
+                    .child(
+                        DataTable::new(&self.table)
+                            .accessibility_label(control_ids::RESULTS_LABEL)
+                            .stripe(true)
+                            .bordered(false)
+                            .with_size(Size::Size(px(ROW_HEIGHT)))
+                            .header_row_height(px(HEADER_HEIGHT)),
+                    ),
+            )
     }
 
     /// Returns the row of the selected file, for the information panel.
@@ -739,6 +738,22 @@ fn render_progress_line(fraction: f32) -> Div {
         .h(px(PROGRESS_LINE_HEIGHT))
         .bg(color(palette::GREY_MIDDLE).opacity(0.25))
         .child(div().h_full().w(relative(fraction)).bg(color(palette::BLUE)))
+}
+
+/// Renders the status text as a live status region, so assistive technology and UI tests can read it.
+fn status_text(status: SharedString) -> impl IntoElement {
+    let text = div()
+        .id(control_ids::STATUS)
+        .role(Role::Status)
+        .aria_label(status.clone())
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .tooltip(tooltip(STATUS_TOOLTIP))
+        .child(status);
+    #[cfg(test)]
+    let text = text.test_support();
+    text
 }
 
 /// Renders the thin vertical line between two sections of the status bar.

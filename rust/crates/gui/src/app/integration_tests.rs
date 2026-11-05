@@ -24,6 +24,7 @@ use tempfile::TempDir;
 
 use super::cue_start::CueStartIntent;
 use super::{AppOptions, AppView, LaunchOptions};
+use crate::control_ids;
 use crate::menus::{
     AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, SetPreviewViewMode, ToggleColumn,
     ToggleContinuePlayback, ToggleGainAdjustedMetrics, ToggleLoudnessGraph, ToggleOverloadLines,
@@ -333,6 +334,235 @@ fn assert_preview_arrangement(plots: [Bounds<Pixels>; 2], mode: PreviewViewMode)
     }
 }
 
+/// Maps a shared manifest role name to the GPUI roles that satisfy it, as `tests/gui_controls.json` lists them.
+fn manifest_roles(manifest: &serde_json::Value, role: &str) -> Vec<String> {
+    manifest["roles"][role]["gpui"]
+        .as_array()
+        .unwrap_or_else(|| panic!("manifest role {role} lists GPUI roles"))
+        .iter()
+        .map(|name| name.as_str().expect("GPUI role name").to_owned())
+        .collect()
+}
+
+/// Opens the production view at the manifest window size, so the wide layout shows every shared control,
+/// and requires each shared control to be registered once with its shared role and accessible label.
+/// The C++ `ManifestControlsExistWithRoles` case checks the same manifest, so the two applications cannot drift.
+#[gpui_kit::test]
+fn integration_manifest_controls_exist_with_roles(cx: &mut TestAppContext) {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(test_fixtures::gui_controls_manifest()).expect("read the shared GUI control manifest"),
+    )
+    .expect("parse the shared GUI control manifest");
+    let width = manifest["window"]["width"].as_f64().expect("manifest window width");
+    let height = manifest["window"]["height"].as_f64().expect("manifest window height");
+    let workflow = Workflow::new(cx);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "manifest window sizes are small whole pixel counts"
+    )]
+    cx.simulate_window_resize(workflow.window, size(px(width as f32), px(height as f32)));
+    let controls = manifest["controls"].as_array().expect("manifest controls");
+    assert!(controls.len() > 1, "the manifest lists the shared controls");
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        for control in controls {
+            let id = control["id"].as_str().expect("control id");
+            let role = control["role"].as_str().expect("control role");
+            let element_id = gpui_kit::SharedString::from(id.to_owned());
+            let roles = manifest_roles(&manifest, role);
+            let has_role = |snapshot: &gpui_kit::test::ElementSnapshot| {
+                snapshot
+                    .role()
+                    .is_some_and(|native| roles.contains(&format!("{native:?}")))
+            };
+            let matches = window.find_all(element_id.clone());
+            assert!(matches.len() <= 1, "{id} is registered once: {matches:?}");
+            // A composite control, such as a slider track or the table frame,
+            // carries its semantics on exactly one descendant inside its shared id scope.
+            let snapshot = match matches.into_iter().next() {
+                Some(snapshot) if has_role(&snapshot) => snapshot,
+                _ => {
+                    let scope = window.within(element_id);
+                    let semantic: Vec<_> = scope
+                        .elements()
+                        .into_iter()
+                        .filter(|element| has_role(element))
+                        .collect();
+                    assert_eq!(semantic.len(), 1, "{id} has one {role} element: {semantic:?}");
+                    semantic.into_iter().next().expect("one semantic element")
+                }
+            };
+            if let Some(label) = control["label"].as_str() {
+                assert_eq!(snapshot.label(), Some(label), "{id} label");
+            }
+        }
+    })
+    .expect("query the production window");
+}
+
+/// Drops an unsupported file, a nested folder,
+/// and then an audio file onto the window through the platform file-drop events,
+/// so the window's own drop target handles each drop.
+/// The C++ `DropFilesAndFolders` case drops the same inputs in the same order.
+#[gpui_kit::test]
+async fn integration_drop_files_and_folders(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let first = workflow.copy("sine_stereo_44100_16.wav", "first.wav");
+    let nested = workflow.directory.path().join("nested/inner");
+    fs::create_dir_all(&nested).expect("nested folder");
+    fs::copy(
+        test_fixtures::fixture("sine_mono_44100_16.wav"),
+        nested.join("second.wav"),
+    )
+    .expect("nested copy");
+    let unsupported = workflow.directory.path().join("notes.txt");
+    fs::write(&unsupported, b"not audio").expect("unsupported file");
+    let drop = |paths: Vec<PathBuf>, cx: &mut TestAppContext| {
+        let position = point(px(400.0), px(200.0));
+        cx.update_window(workflow.window, |_, window, cx| {
+            for event in [
+                gpui_kit::FileDropEvent::Entered {
+                    position,
+                    paths: gpui_kit::ExternalPaths(paths.into_iter().collect()),
+                },
+                gpui_kit::FileDropEvent::Pending { position },
+                gpui_kit::FileDropEvent::Submit { position },
+            ] {
+                window.dispatch_event(event.to_platform_input(), cx);
+            }
+        })
+        .expect("drop onto the production window");
+        cx.run_until_parked();
+    };
+
+    drop(vec![unsupported], cx);
+    cx.read(|cx| assert_eq!(workflow.view.read(cx).table.read(cx).delegate().len(), 0));
+
+    // Drop the canonical folder, as the platform reports dropped paths, so listed paths compare exactly.
+    let nested_root = workflow
+        .directory
+        .path()
+        .join("nested")
+        .canonicalize()
+        .expect("canonical nested folder");
+    let second = nested_root.join("inner/second.wav");
+    drop(vec![nested_root], cx);
+    let view = workflow.view.clone();
+    cx.wait_for(workflow.window, Duration::from_secs(30), move |_, cx| {
+        std::thread::yield_now();
+        view.read(cx).table.read(cx).delegate().len() == 1 && !view.read(cx).is_running()
+    })
+    .await;
+    workflow.idle(cx).await;
+    cx.read(|cx| {
+        let table = workflow.view.read(cx).table.read(cx).delegate();
+        assert!(
+            table.row_for(&second).is_some(),
+            "the nested folder is searched recursively"
+        );
+    });
+
+    drop(vec![first.clone()], cx);
+    workflow.idle(cx).await;
+    cx.read(|cx| {
+        let table = workflow.view.read(cx).table.read(cx).delegate();
+        assert_eq!(table.len(), 2, "a dropped file is added to the listed folder");
+        assert!(table.row_for(&first).is_some());
+        assert!(table.row_for(&second).is_some());
+    });
+}
+
+/// Switches the normalization mode, toggles overwrite and normalizing before the plugins through their controls,
+/// and confirms that the mode buttons follow the option that enables them.
+/// The C++ `NormalizeOptionsFollowControls` case drives the same controls.
+#[gpui_kit::test]
+fn integration_normalize_options_follow_controls(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.simulate_window_resize(workflow.window, size(px(1920.0), px(1080.0)));
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(control_ids::PROCESS_NORMALIZE_FIRST).checked(), Some(false));
+        window.click(control_ids::PROCESS_NORMALIZE_FIRST, cx);
+        assert_eq!(window.find(control_ids::PROCESS_NORMALIZE_FIRST).checked(), Some(true));
+        window.click(control_ids::NORMALIZE_LOUDNESS, cx);
+        window.click(control_ids::NORMALIZE_OVERWRITE, cx);
+        assert_eq!(window.find(control_ids::NORMALIZE_OVERWRITE).checked(), Some(true));
+    })
+    .expect("drive the normalization controls");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.normalize_first);
+        assert!(view.overwrite_existing);
+        assert_eq!(view.settings.normalize_mode, crate::settings::NormalizeMode::Loudness);
+    });
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.click(control_ids::NORMALIZE_PEAK, cx);
+        window.click(control_ids::PROCESS_NORMALIZE_FIRST, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(control_ids::PROCESS_NORMALIZE_FIRST).checked(), Some(false));
+    })
+    .expect("drive the normalization controls back");
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(!view.normalize_first);
+        assert_eq!(view.settings.normalize_mode, crate::settings::NormalizeMode::Peak);
+    });
+}
+
+/// Requires Normalize and Process to reject input without a selection,
+/// then Normalize to accept it once a file is selected while Process stays disabled without plugins.
+/// The C++ `DisabledControlsRejectInput` case checks the same controls.
+/// Play is checked here only: this application disables it until a player exists,
+/// while the C++ application enables it for a loaded preview without an audio output.
+#[gpui_kit::test]
+async fn integration_disabled_controls_reject_input(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.simulate_window_resize(workflow.window, size(px(1920.0), px(1080.0)));
+    let file = workflow.copy("sine_stereo_44100_16.wav", "file.wav");
+    workflow.add(vec![file.clone()], cx);
+    workflow.idle(cx).await;
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        for id in [
+            control_ids::NORMALIZE_SELECTED,
+            control_ids::PROCESS_SELECTED,
+            control_ids::PLAY_STOP,
+        ] {
+            assert_eq!(window.find(id).disabled(), Some(true), "{id} without a selection");
+        }
+        window.click(control_ids::NORMALIZE_SELECTED, cx);
+    })
+    .expect("query controls without a selection");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(
+            !workflow.view.read(cx).is_running(),
+            "a disabled Normalize starts nothing"
+        );
+    });
+    workflow.select(&file, cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_ne!(
+            window.find(control_ids::NORMALIZE_SELECTED).disabled(),
+            Some(true),
+            "Normalize with a selection"
+        );
+        assert_eq!(
+            window.find(control_ids::PROCESS_SELECTED).disabled(),
+            Some(true),
+            "Process without plugins"
+        );
+        assert_eq!(
+            window.find(control_ids::PLAY_STOP).disabled(),
+            Some(true),
+            "Play without audio output"
+        );
+    })
+    .expect("query controls with a selection");
+}
+
 /// Keeps plugin processing and its optional normalization on the view's isolated disposal policy.
 #[gpui_kit::test]
 fn integration_plugin_processing_options_retain_isolated_disposal(cx: &mut TestAppContext) {
@@ -494,7 +724,7 @@ async fn integration_normalize_selected_replaces_row_and_preserves_selection(cx:
     workflow.idle(cx).await;
     workflow.select(&source, cx);
     cx.update_window(workflow.window, |_, window, cx| {
-        window.click("normalize-selected", cx);
+        window.click(control_ids::NORMALIZE_SELECTED, cx);
     })
     .expect("normalize through control handler");
     cx.run_until_parked();
@@ -602,9 +832,9 @@ async fn integration_preview_modes_retain_source_gain_viewport_and_cues(cx: &mut
         assert_eq!(cue.color.to_rgb_u32(), expected.rgb);
     }
     cx.update_window(workflow.window, |_, window, cx| {
-        let bounds = window.find("gain-track").bounds();
+        let bounds = window.find(control_ids::GAIN_TRACK).bounds();
         window.click_at(
-            "gain-track",
+            control_ids::GAIN_TRACK,
             point(bounds.size.width * 0.75, bounds.size.height * 0.5),
             cx,
         );
@@ -1081,9 +1311,9 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
     workflow.idle(cx).await;
     workflow.select(&source, cx);
     cx.update_window(workflow.window, |_, window, cx| {
-        let bounds = window.find("gain-track").bounds();
+        let bounds = window.find(control_ids::GAIN_TRACK).bounds();
         window.click_at(
-            "gain-track",
+            control_ids::GAIN_TRACK,
             point(bounds.size.width * 0.75, bounds.size.height * 0.5),
             cx,
         );
@@ -1179,21 +1409,24 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
 fn integration_panel_width_drags_commit_independently_without_height_refit(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
     let path = workflow.paths.data().join("gui-settings.json");
-    for (id, controls) in [("controls-width-divider", true), ("information-width-divider", false)] {
+    for (id, controls) in [
+        (control_ids::CONTROLS_WIDTH_DIVIDER, true),
+        (control_ids::INFORMATION_WIDTH_DIVIDER, false),
+    ] {
         let before = cx.read(|cx| workflow.view.read(cx).settings.clone());
         let previous_file = fs::read(&path).ok();
         let height = cx.read(|cx| workflow.view.read(cx).preview_height);
         let start = cx
             .update_window(workflow.window, |_, window, cx| {
                 window.render_frame(cx);
-                let first = window.find("controls-width-divider").bounds().center().x;
-                let second = window.find("information-width-divider").bounds().center().x;
+                let first = window.find(control_ids::CONTROLS_WIDTH_DIVIDER).bounds().center().x;
+                let second = window.find(control_ids::INFORMATION_WIDTH_DIVIDER).bounds().center().x;
                 let start = window.find(id).bounds().center();
                 window.pointer_down(start, MouseButton::Left, cx);
                 window.pointer_move(start + point(px(6.0), px(0.0)), Some(MouseButton::Left), cx);
                 window.pointer_move(start + point(px(16.0), px(0.0)), Some(MouseButton::Left), cx);
-                let changed_first = window.find("controls-width-divider").bounds().center().x;
-                let changed_second = window.find("information-width-divider").bounds().center().x;
+                let changed_first = window.find(control_ids::CONTROLS_WIDTH_DIVIDER).bounds().center().x;
+                let changed_second = window.find(control_ids::INFORMATION_WIDTH_DIVIDER).bounds().center().x;
                 if controls {
                     assert!((f32::from(changed_first - first) - 16.0).abs() < 0.01);
                     assert!((f32::from(changed_second - changed_first - (second - first))).abs() < 0.01);
@@ -1235,25 +1468,27 @@ fn integration_panel_width_keyboard_reset_collapse_and_recreation(cx: &mut TestA
     let workflow = Workflow::new(cx);
     let path = workflow.paths.data().join("gui-settings.json");
     cx.update_window(workflow.window, |_, window, cx| {
-        window.click("controls-width-divider", cx);
+        window.click(control_ids::CONTROLS_WIDTH_DIVIDER, cx);
         window.press("right", cx);
         window.press("right", cx);
-        let controls = window.find("controls-width-divider").bounds().center().x;
+        let controls = window.find(control_ids::CONTROLS_WIDTH_DIVIDER).bounds().center().x;
         window.press("shift-right", cx);
-        let wider = window.find("controls-width-divider").bounds().center().x;
+        let wider = window.find(control_ids::CONTROLS_WIDTH_DIVIDER).bounds().center().x;
         assert!((f32::from(wider - controls) - 16.0).abs() < 0.01);
         window.press("shift-left", cx);
-        let restored = window.find("controls-width-divider").bounds().center().x;
+        let restored = window.find(control_ids::CONTROLS_WIDTH_DIVIDER).bounds().center().x;
         assert!(f32::from(restored - controls).abs() < 0.01);
-        window.click("information-width-divider", cx);
+        window.click(control_ids::INFORMATION_WIDTH_DIVIDER, cx);
         window.press("right", cx);
-        let information = window.find("information-width-divider").bounds().center().x;
+        let information = window.find(control_ids::INFORMATION_WIDTH_DIVIDER).bounds().center().x;
         window.press("shift-right", cx);
-        let wider = window.find("information-width-divider").bounds().center().x;
+        let wider = window.find(control_ids::INFORMATION_WIDTH_DIVIDER).bounds().center().x;
         assert!((f32::from(wider - information) - 16.0).abs() < 0.01);
-        assert!((f32::from(window.find("controls-width-divider").bounds().center().x - controls)).abs() < 0.01);
+        assert!(
+            (f32::from(window.find(control_ids::CONTROLS_WIDTH_DIVIDER).bounds().center().x - controls)).abs() < 0.01
+        );
         window.press("shift-left", cx);
-        let restored = window.find("information-width-divider").bounds().center().x;
+        let restored = window.find(control_ids::INFORMATION_WIDTH_DIVIDER).bounds().center().x;
         assert!(f32::from(restored - information).abs() < 0.01);
     })
     .expect("adjust separately focused native dividers");
@@ -1265,14 +1500,14 @@ fn integration_panel_width_keyboard_reset_collapse_and_recreation(cx: &mut TestA
     workflow.dispatch(TogglePreviewSection, cx);
     cx.update_window(workflow.window, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("controls-width-divider").is_none());
-        assert!(window.try_find("information-width-divider").is_none());
+        assert!(window.try_find(control_ids::CONTROLS_WIDTH_DIVIDER).is_none());
+        assert!(window.try_find(control_ids::INFORMATION_WIDTH_DIVIDER).is_none());
     })
     .expect("compact preview contains no width handles");
     workflow.dispatch(TogglePreviewSection, cx);
     cx.read(|cx| assert_eq!(workflow.view.read(cx).settings, changed));
     cx.update_window(workflow.window, |_, window, cx| {
-        window.double_click("controls-width-divider", cx);
+        window.double_click(control_ids::CONTROLS_WIDTH_DIVIDER, cx);
     })
     .expect("reset only controls by double click");
     let reset = cx.read(|cx| workflow.view.read(cx).settings.clone());
@@ -1289,7 +1524,7 @@ fn integration_panel_width_keyboard_reset_collapse_and_recreation(cx: &mut TestA
     let (window, view) = Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&directory))), cx);
     cx.read(|cx| assert_eq!(view.read(cx).settings, reset));
     cx.update_window(window, |_, window, cx| {
-        window.click("information-width-divider", cx);
+        window.click(control_ids::INFORMATION_WIDTH_DIVIDER, cx);
         window.press("home", cx);
     })
     .expect("reset restored information width from keyboard");
@@ -1304,9 +1539,9 @@ fn integration_panel_width_keyboard_reset_collapse_and_recreation(cx: &mut TestA
 fn integration_panel_width_preferences_survive_temporary_window_constraints(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
     cx.update_window(workflow.window, |_, window, cx| {
-        window.click("controls-width-divider", cx);
+        window.click(control_ids::CONTROLS_WIDTH_DIVIDER, cx);
         window.press("right", cx);
-        window.click("information-width-divider", cx);
+        window.click(control_ids::INFORMATION_WIDTH_DIVIDER, cx);
         window.press("left", cx);
     })
     .expect("establish explicit width preferences");

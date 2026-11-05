@@ -12,6 +12,7 @@ use gpui_kit::{
 };
 
 use super::{AppView, SECTION_SPACING};
+use crate::control_ids;
 use crate::settings::{
     DEFAULT_CONTROLS_WIDTH_SCALE, DEFAULT_INFORMATION_WIDTH_SCALE, MAXIMUM_PANEL_WIDTH_SCALE,
     MINIMUM_CONTROLS_WIDTH_SCALE, MINIMUM_INFORMATION_WIDTH_SCALE,
@@ -179,10 +180,14 @@ impl AppView {
         cx: &Context<Self>,
     ) -> Div {
         let (id, label, focus) = match panel {
-            PreviewPanel::Controls => ("controls-width-divider", "Resize controls", &self.panel_width_focus[0]),
+            PreviewPanel::Controls => (
+                control_ids::CONTROLS_WIDTH_DIVIDER,
+                control_ids::CONTROLS_WIDTH_DIVIDER_LABEL,
+                &self.panel_width_focus[0],
+            ),
             PreviewPanel::Information => (
-                "information-width-divider",
-                "Resize information panel",
+                control_ids::INFORMATION_WIDTH_DIVIDER,
+                control_ids::INFORMATION_WIDTH_DIVIDER_LABEL,
                 &self.panel_width_focus[1],
             ),
         };
