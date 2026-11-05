@@ -81,6 +81,7 @@ which explains how its parts work together.
   `format.yml` runs the root `./format.sh --check` on every change,
   and checks that `fixtures/plugin_expected/` matches what its script writes.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
+ Its macOS build job also runs `tests/test_mac_signing.py`, the packaging contracts of the shared signing helper.
  Its `miri` and `fuzz` jobs run `rust/miri.sh` and `rust/fuzz.sh` on macOS with nightly Rust,
  and its path filters also include the C++ fuzz corpus that the Rust fuzz job replays.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.

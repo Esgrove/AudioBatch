@@ -10,6 +10,7 @@ on:
       - "assets/**"
       - "common.sh"
       - "cpp/JUCE"
+      - "cpp/cmake/MacSigning.cmake"
       - "cpp/tests/fuzz/corpus/**"
       - "fixtures/**"
       - "rust/**"
@@ -23,6 +24,7 @@ on:
       - "assets/**"
       - "common.sh"
       - "cpp/JUCE"
+      - "cpp/cmake/MacSigning.cmake"
       - "cpp/tests/fuzz/corpus/**"
       - "fixtures/**"
       - "rust/**"
@@ -120,6 +122,11 @@ jobs:
       - name: Check Rust shell entry points
         if: runner.os == 'macOS'
         run: uv run --script ../tests/test_rust_scripts.py
+
+      # Runs the isolated packaging contracts of both applications' shared signing helper, without native signing.
+      - name: Check local macOS signing contracts
+        if: runner.os == 'macOS'
+        run: uv run --script ../tests/test_mac_signing.py
 
       - name: Test parity oracles and benchmark tooling natively
         if: runner.os == 'Windows'

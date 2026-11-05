@@ -48,7 +48,8 @@ Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, AAC and M4A, Ogg Vorbis
 Decoding uses Symphonia on every platform, including lossless ALAC in M4A containers.
 On macOS, single-track mono or stereo AAC-LC MP4 files decode with Core Audio,
 so perceptual noise substitution matches the C++ application.
-`scripts/test_aac_reconstruction.py --cpp-cli <cli> --rust-cli <cli>` compares both applications on AAC by hand.
+`scripts/test_aac_reconstruction.py --cpp-cli <cli> --rust-cli <cli>` compares both applications on AAC.
+It needs both release CLIs on macOS, so it runs by hand rather than in CI.
 Opus is not supported.
 Analysis and normalization support multichannel audio, while playback and plugin processing accept only mono and stereo.
 
