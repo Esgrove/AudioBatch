@@ -11,11 +11,13 @@
 use std::sync::Arc;
 
 use audiobatch_core::format::{
-    camelot_key, format_bitrate, format_duration_tenths, format_file_size, format_loudness_compact,
-    format_peak_compact, format_sample_rate, format_true_peak_compact, format_type_label, gain_to_decibels,
+    camelot_key, format_bitrate, format_clip_counts, format_dc_offsets, format_duration_tenths, format_file_size,
+    format_loudness_compact, format_metric, format_peak_compact, format_sample_rate, format_true_peak_compact,
+    format_type_label, gain_to_decibels,
 };
 use audiobatch_core::gain_loudness::{GainLoudness, estimate_limiter_integrated};
 use audiobatch_core::record::is_silent_loudness;
+use audiobatch_core::signal_metrics::SignalMetrics;
 use audiobatch_core::{AnalysisRecord, FileTags};
 use gpui_kit::{
     AnyElement, Div, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
@@ -208,31 +210,7 @@ pub fn render_info_panel(
     let formatted = info_details(ready, tags);
     details = details.child(details_grid(&formatted));
     if let Some(record) = ready {
-        let metrics = &record.signal_metrics;
-        for (field, value) in [
-            (
-                "Source",
-                format!(
-                    "PLR {} dB · PSR {} dB · Crest {} dB",
-                    audiobatch_core::format::format_metric(metrics.plr_db, false),
-                    audiobatch_core::format::format_metric(metrics.psr_db, false),
-                    audiobatch_core::format::format_metric(metrics.crest_factor_db, false)
-                ),
-            ),
-            ("DC", audiobatch_core::format::format_dc_offsets(metrics)),
-            (
-                "Clips",
-                format!(
-                    "{} total, {}",
-                    metrics.total_clips(),
-                    audiobatch_core::format::format_clip_counts(metrics)
-                ),
-            ),
-            (
-                "Corr",
-                audiobatch_core::format::format_metric(metrics.stereo_correlation, true),
-            ),
-        ] {
+        for (field, value) in source_lines(&record.signal_metrics) {
             details = details.child(tag_block(field, value, true));
         }
     }
@@ -699,6 +677,27 @@ fn tag_block(field: &'static str, value: String, wrap: bool) -> Stateful<Div> {
         .child(value)
 }
 
+/// Builds the labelled source-statistics lines of a ready record, with a dash for each undefined value.
+fn source_lines(metrics: &SignalMetrics) -> [(&'static str, String); 4] {
+    [
+        (
+            "Source",
+            format!(
+                "PLR {} dB · PSR {} dB · Crest {} dB",
+                format_metric(metrics.plr_db, false),
+                format_metric(metrics.psr_db, false),
+                format_metric(metrics.crest_factor_db, false)
+            ),
+        ),
+        ("DC", format_dc_offsets(metrics)),
+        (
+            "Clips",
+            format!("{} total, {}", metrics.total_clips(), format_clip_counts(metrics)),
+        ),
+        ("Corr", format_metric(metrics.stereo_correlation, true)),
+    ]
+}
+
 /// Builds detail lines from ready technical data and independently available tags.
 /// Missing values and their separators are omitted, while tags remain visible during pending or failed analysis.
 fn info_details(record: Option<&AnalysisRecord>, tags: Option<&FileTags>) -> InfoDetails {
@@ -955,6 +954,24 @@ mod test_info_details {
                 .iter()
                 .chain(&details.audio)
                 .any(|part| part.field == "Samples")
+        );
+    }
+
+    #[test]
+    fn source_lines_label_ratios_channels_and_undefined_correlation() {
+        let mut metrics = SignalMetrics::default();
+        metrics.plr_db = Some(9.5);
+        metrics.crest_factor_db = Some(3.01);
+        metrics.dc_offsets = vec![0.001, -0.002];
+        metrics.clip_counts = vec![2, 5];
+        assert_eq!(
+            source_lines(&metrics),
+            [
+                ("Source", String::from("PLR 9.50 dB · PSR - dB · Crest 3.01 dB")),
+                ("DC", String::from("Ch 1: +0.1000%, Ch 2: -0.2000%")),
+                ("Clips", String::from("7 total, Ch 1: 2, Ch 2: 5")),
+                ("Corr", String::from("-")),
+            ]
         );
     }
 
