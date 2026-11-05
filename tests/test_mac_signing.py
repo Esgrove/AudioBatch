@@ -2,7 +2,8 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Check local signing policy and final packaging without touching installed apps or the keychain.
+"""
+Check local signing policy and final packaging without touching installed apps or the keychain.
 
 Set AUDIOBATCH_TEST_NATIVE_SIGNING=1 on macOS to also build and inspect disposable real app bundles.
 """
