@@ -16,6 +16,7 @@
 #include "utils/ConsolePrint.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 #include <fmt/base.h>
 #include <system_error>
 
@@ -49,6 +50,17 @@ void handleInterrupt(const int signalNumber)
 #else
     juce::ignoreUnused(signalNumber);
 #endif
+}
+
+/// Installs the interrupt handler for a command that cancels cooperatively,
+/// and returns the cancellation check its workflow polls.
+utils::CancellationCheck installInterruptHandler()
+{
+    std::signal(SIGINT, handleInterrupt);
+#if JUCE_WINDOWS
+    std::signal(SIGBREAK, handleInterrupt);
+#endif
+    return [] { return interrupted.load(std::memory_order_relaxed); };
 }
 
 /// Detaches the logger before returning the process exit code,
@@ -148,20 +160,8 @@ int runCliMain(const std::span<char*> argv)
                     fmt::print("{}\n", cli::buildUsage(executableName, help.subcommand));
                     return 0;
                 },
-                [](const ProcessCommand& processing) {
-                    std::signal(SIGINT, handleInterrupt);
-#if JUCE_WINDOWS
-                    std::signal(SIGBREAK, handleInterrupt);
-#endif
-                    return cli::runProcess(processing, [] { return interrupted.load(std::memory_order_relaxed); });
-                },
-                [](const AnalyzeCommand& analysis) {
-                    std::signal(SIGINT, handleInterrupt);
-#if JUCE_WINDOWS
-                    std::signal(SIGBREAK, handleInterrupt);
-#endif
-                    return cli::runAnalysis(analysis, [] { return interrupted.load(std::memory_order_relaxed); });
-                },
+                [](const ProcessCommand& processing) { return cli::runProcess(processing, installInterruptHandler()); },
+                [](const AnalyzeCommand& analysis) { return cli::runAnalysis(analysis, installInterruptHandler()); },
             },
             *command
         );

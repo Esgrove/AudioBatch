@@ -55,6 +55,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and the little-endian `SPEC` codec shared byte for byte with the Rust application.
     - `AnalysisCache.*` manage the SQLite result cache shared with the Rust application.
       Its implementation is split into `AnalysisCache.cpp` (measurement and custom gain persistence),
+      `AnalysisCacheColumns.*` (the loudness history and source-statistics column codecs),
       `AnalysisCacheSchema.cpp` (database lifecycle and schema),
       `AnalysisCacheWaveform.cpp` (native waveform persistence and validation),
       and `AnalysisCacheSpectrogram.cpp` (the shared `spectrogram_cache` table),

@@ -426,6 +426,8 @@ juce_generate_juce_header(AudioBatchCli)
 set(AUDIOBATCH_CORE_SOURCES
     "src/analysis/AnalysisCache.cpp"
     "src/analysis/AnalysisCache.h"
+    "src/analysis/AnalysisCacheColumns.cpp"
+    "src/analysis/AnalysisCacheColumns.h"
     "src/analysis/AnalysisCacheSchema.cpp"
     "src/analysis/AnalysisCacheSpectrogram.cpp"
     "src/analysis/AnalysisCacheSql.h"

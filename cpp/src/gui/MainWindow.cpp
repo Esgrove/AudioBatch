@@ -240,122 +240,45 @@ juce::StringArray MainWindow::getMenuBarNames()
 }
 
 /// Builds the popup menu for one top-level menu.
-/// The menu layout differs per platform because macOS moves About and Quit into the application menu.
+/// macOS moves About and Quit into the application menu, so its indices are offset by that menu.
 juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const juce::String& menuName)
 {
     juce::ignoreUnused(menuName);
 
     juce::PopupMenu menu;
-
 #if JUCE_MAC
-    switch (topLevelMenuIndex) {
-        case 0:
-            addCommandItem(menu, commandManager, CommandId::about);
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::quit);
-            break;
-        case 1:
-            addCommandItem(menu, commandManager, CommandId::chooseFolder);
-            addCommandItem(menu, commandManager, CommandId::addFolder);
-            addCommandItem(menu, commandManager, CommandId::addFiles);
-            addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
-            addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
-            addCommandItem(menu, commandManager, CommandId::normalizeSelected);
-            addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
-            addCommandItem(menu, commandManager, CommandId::openParentFolder);
-            addCommandItem(menu, commandManager, CommandId::clearCustomGain);
-            addCommandItem(menu, commandManager, CommandId::selectAll);
-            addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
-            addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
-            addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::cancelRun);
-            break;
-        case 3:
-            addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
-            appendPreviewViewMenuItems(menu);
-            appendOverloadMenuItems(menu);
-            addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
-            addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
-            addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
-            addCommandItem(menu, commandManager, CommandId::toggleCustomGainEstimates);
-            addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
-            addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
-            addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
-            addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
-            menu.addSeparator();
-            menu.addSubMenu("Columns", getAudioBatch().createColumnsMenu(COLUMNS_MENU_FIRST_ID));
-            menu.addSubMenu("Output Device", getAudioBatch().createOutputDeviceMenu(OUTPUT_MENU_FIRST_ID));
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::audioSettings);
-            break;
-        case 4:
-            addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::about);
-            break;
-        case 2:
-            appendPluginOptionsMenuItems(menu);
-            break;
-        default:
-            break;
+    if (topLevelMenuIndex == 0) {
+        addCommandItem(menu, commandManager, CommandId::about);
+        menu.addSeparator();
+        addCommandItem(menu, commandManager, CommandId::quit);
+        return menu;
     }
+    const auto index = topLevelMenuIndex - 1;
 #else
-    switch (topLevelMenuIndex) {
+    const auto index = topLevelMenuIndex;
+#endif
+    switch (index) {
         case 0:
-            addCommandItem(menu, commandManager, CommandId::chooseFolder);
-            addCommandItem(menu, commandManager, CommandId::addFolder);
-            addCommandItem(menu, commandManager, CommandId::addFiles);
-            addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
-            addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
-            addCommandItem(menu, commandManager, CommandId::normalizeSelected);
-            addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
-            addCommandItem(menu, commandManager, CommandId::openParentFolder);
-            addCommandItem(menu, commandManager, CommandId::clearCustomGain);
-            addCommandItem(menu, commandManager, CommandId::selectAll);
-            addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
-            addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
-            addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::cancelRun);
+            appendFileMenuItems(menu);
+#if !JUCE_MAC
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::quit);
+#endif
+            break;
+        case 1:
+            appendPluginOptionsMenuItems(menu);
             break;
         case 2:
-            addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
-            appendPreviewViewMenuItems(menu);
-            appendOverloadMenuItems(menu);
-            addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
-            addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
-            addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
-            addCommandItem(menu, commandManager, CommandId::toggleCustomGainEstimates);
-            addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
-            addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
-            addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
-            addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
-            menu.addSeparator();
-            menu.addSubMenu("Columns", getAudioBatch().createColumnsMenu(COLUMNS_MENU_FIRST_ID));
-            menu.addSubMenu("Output Device", getAudioBatch().createOutputDeviceMenu(OUTPUT_MENU_FIRST_ID));
-            menu.addSeparator();
-            addCommandItem(menu, commandManager, CommandId::audioSettings);
+            appendOptionsMenuItems(menu);
             break;
         case 3:
             addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::about);
             break;
-        case 1:
-            appendPluginOptionsMenuItems(menu);
-            break;
         default:
             break;
     }
-#endif
-
     return menu;
 }
 
@@ -816,6 +739,49 @@ bool MainWindow::perform(const InvocationInfo& info)
             return true;
     }
     return false;
+}
+
+/// Appends the File menu items shared by every platform, ending with Cancel.
+void MainWindow::appendFileMenuItems(juce::PopupMenu& menu)
+{
+    addCommandItem(menu, commandManager, CommandId::chooseFolder);
+    addCommandItem(menu, commandManager, CommandId::addFolder);
+    addCommandItem(menu, commandManager, CommandId::addFiles);
+    addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
+    menu.addSeparator();
+    addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
+    addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+    addCommandItem(menu, commandManager, CommandId::normalizeSelected);
+    addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
+    addCommandItem(menu, commandManager, CommandId::openParentFolder);
+    addCommandItem(menu, commandManager, CommandId::clearCustomGain);
+    addCommandItem(menu, commandManager, CommandId::selectAll);
+    addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
+    addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
+    addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
+    menu.addSeparator();
+    addCommandItem(menu, commandManager, CommandId::cancelRun);
+}
+
+/// Appends the Options menu: the preview preferences, the Columns and Output Device submenus, and Audio Settings.
+void MainWindow::appendOptionsMenuItems(juce::PopupMenu& menu)
+{
+    addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
+    appendPreviewViewMenuItems(menu);
+    appendOverloadMenuItems(menu);
+    addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
+    addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
+    addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
+    addCommandItem(menu, commandManager, CommandId::toggleCustomGainEstimates);
+    addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
+    addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
+    addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
+    addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
+    menu.addSeparator();
+    menu.addSubMenu("Columns", getAudioBatch().createColumnsMenu(COLUMNS_MENU_FIRST_ID));
+    menu.addSubMenu("Output Device", getAudioBatch().createOutputDeviceMenu(OUTPUT_MENU_FIRST_ID));
+    menu.addSeparator();
+    addCommandItem(menu, commandManager, CommandId::audioSettings);
 }
 
 /// Groups independent overload switches without imposing a radio selection or changing the stored line preference.
