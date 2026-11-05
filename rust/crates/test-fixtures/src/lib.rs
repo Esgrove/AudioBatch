@@ -224,6 +224,13 @@ pub fn fixtures_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures")
 }
 
+/// Returns the absolute path of `tests/gui_controls.json`,
+/// the main-window controls that both GUIs expose with the same id, role, and label.
+#[must_use]
+pub fn gui_controls_manifest() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/gui_controls.json")
+}
+
 /// Returns the absolute path of the fixture with the given file name.
 #[must_use]
 pub fn fixture(name: &str) -> PathBuf {

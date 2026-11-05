@@ -22,6 +22,7 @@ extern crate gpui_kit as gpui;
 mod app;
 mod artwork;
 mod build_info;
+mod control_ids;
 mod controls;
 mod demo;
 mod file_drag;

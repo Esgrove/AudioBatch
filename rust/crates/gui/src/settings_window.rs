@@ -618,7 +618,7 @@ impl Focusable for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("audio-settings")
+            .id(crate::control_ids::AUDIO_SETTINGS_WINDOW)
             .key_context(SETTINGS_KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|_, _: &CloseAudioSettings, window, _| window.remove_window()))

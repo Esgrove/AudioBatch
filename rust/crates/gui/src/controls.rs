@@ -37,6 +37,7 @@ use gpui_kit::{
     relative,
 };
 
+use crate::control_ids;
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::settings::NormalizeMode;
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
@@ -331,7 +332,7 @@ pub fn render_controls(state: &ControlsState<'_>, wide: bool, on_event: &EventCa
 pub fn render_playback_row(state: PlaybackControls, on_event: &EventCallback) -> Div {
     let play = {
         let on_event = Rc::clone(on_event);
-        let button = Button::new("play-stop")
+        let button = Button::new(control_ids::PLAY_STOP)
             .label(if state.playing { "Stop" } else { "Play" })
             .tooltip(PLAY_TOOLTIP)
             .disabled(!state.can_play)
@@ -356,7 +357,7 @@ pub fn render_playback_row(state: PlaybackControls, on_event: &EventCallback) ->
                 state.can_process,
             )
         };
-        let button = Button::new("process-selected")
+        let button = Button::new(control_ids::PROCESS_SELECTED)
             .label(label)
             .tooltip(tooltip_text)
             .disabled(!enabled)
@@ -377,7 +378,7 @@ pub fn render_playback_row(state: PlaybackControls, on_event: &EventCallback) ->
 /// Renders the chevron that collapses the preview, pointing down while expanded and up while collapsed.
 pub fn render_section_toggle(compact: bool, on_event: &EventCallback) -> Button {
     let on_event = Rc::clone(on_event);
-    Button::new("preview-section")
+    Button::new(control_ids::PREVIEW_SECTION)
         .icon(if compact {
             IconName::ChevronUp
         } else {
@@ -395,7 +396,7 @@ pub fn render_section_toggle(compact: bool, on_event: &EventCallback) -> Button 
 /// Renders the zoom slider below its caption, with the chevron that collapses the preview before the caption.
 fn zoom_group(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Stateful<Div> {
     slider_group(
-        "Zoom",
+        control_ids::ZOOM_LABEL,
         zoom_text(state, cx),
         ZOOM_TOOLTIP,
         true,
@@ -407,7 +408,7 @@ fn zoom_group(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> 
 /// Renders the input gain slider below its caption.
 fn gain_group(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Stateful<Div> {
     slider_group(
-        "Input gain",
+        control_ids::GAIN_LABEL,
         gain_text(state, cx),
         GAIN_TOOLTIP,
         state.can_adjust_gain,
@@ -422,7 +423,7 @@ fn gain_group(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> 
 fn wide_left_column(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
     let preview_chain = {
         let on_event = Rc::clone(on_event);
-        Checkbox::new("preview-chain")
+        Checkbox::new(control_ids::PREVIEW_CHAIN)
             .label("Preview chain")
             .small()
             .tooltip(PREVIEW_CHAIN_TOOLTIP)
@@ -466,30 +467,35 @@ fn gain_text(state: &ControlsState<'_>, cx: &App) -> String {
 }
 
 /// Renders the zoom slider, which resets on a double click.
-fn zoom_track(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
-    slider_track(
-        Slider::new(state.zoom),
+fn zoom_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_kit::IntoElement {
+    let track = slider_track(
+        Slider::new(state.zoom).accessibility_label(control_ids::ZOOM_LABEL),
         true,
         send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Zoom)),
     )
+    .id(control_ids::ZOOM_TRACK);
+    #[cfg(test)]
+    let track = track.test_support();
+    track
 }
 
 /// Renders the input gain slider, which resets on a double click while the gain can be adjusted.
 fn gain_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_kit::IntoElement {
     let track = slider_track(
-        Slider::new(state.gain),
+        Slider::new(state.gain).accessibility_label(control_ids::GAIN_LABEL),
         state.can_adjust_gain,
         send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
-    );
+    )
+    .id(control_ids::GAIN_TRACK);
     #[cfg(test)]
-    let track = track.id("gain-track").test_support();
+    let track = track.test_support();
     track
 }
 
 /// Renders the Plugin Chain button, with the chain summary in its tooltip.
 fn plugin_chain_button(state: &ControlsState<'_>, on_event: &EventCallback) -> Button {
     column_button(
-        "plugin-chain",
+        control_ids::PLUGIN_CHAIN,
         "Plugin Chain",
         format!("{CHAIN_TOOLTIP}\nChain: {}", state.chain_summary),
         ControlsEvent::OpenPluginChain,
@@ -500,7 +506,7 @@ fn plugin_chain_button(state: &ControlsState<'_>, on_event: &EventCallback) -> B
 /// Renders the Audio Settings button.
 fn audio_settings_button(on_event: &EventCallback) -> Button {
     column_button(
-        "audio-settings",
+        control_ids::AUDIO_SETTINGS,
         "Audio Settings",
         String::from(SETTINGS_TOOLTIP),
         ControlsEvent::OpenSettings,
@@ -530,7 +536,7 @@ fn column_button(
 fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
     let normalize_first = {
         let on_event = Rc::clone(on_event);
-        Checkbox::new("process-normalize-first")
+        Checkbox::new(control_ids::PROCESS_NORMALIZE_FIRST)
             .label("Normalize")
             .small()
             .tooltip(NORMALIZE_FIRST_TOOLTIP)
@@ -541,7 +547,7 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
     };
     let overwrite = {
         let on_event = Rc::clone(on_event);
-        Checkbox::new("normalize-overwrite")
+        Checkbox::new(control_ids::NORMALIZE_OVERWRITE)
             .label("Overwrite")
             .small()
             .tooltip(OVERWRITE_TOOLTIP)
@@ -580,8 +586,12 @@ fn target_group(state: &NormalizeControls<'_>, wide: bool, on_event: &EventCallb
         ButtonGroup::new("normalize-mode")
             .small()
             .w_full()
-            .child(mode_button("normalize-peak", "Peak", NormalizeMode::Peak))
-            .child(mode_button("normalize-loudness", "Loudness", NormalizeMode::Loudness))
+            .child(mode_button(control_ids::NORMALIZE_PEAK, "Peak", NormalizeMode::Peak))
+            .child(mode_button(
+                control_ids::NORMALIZE_LOUDNESS,
+                "Loudness",
+                NormalizeMode::Loudness,
+            ))
             .on_click(move |clicked: &Vec<usize>, window, cx| {
                 let mode = if clicked.contains(&1) {
                     NormalizeMode::Loudness
@@ -593,7 +603,7 @@ fn target_group(state: &NormalizeControls<'_>, wide: bool, on_event: &EventCallb
     };
     let normalize = {
         let on_event = Rc::clone(on_event);
-        Button::new("normalize-selected")
+        Button::new(control_ids::NORMALIZE_SELECTED)
             .label("Normalize")
             .tooltip(NORMALIZE_TOOLTIP)
             .disabled(!state.can_normalize)
@@ -672,7 +682,7 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
                 .child(state.target_text.clone()),
         );
     div()
-        .id("normalize-target")
+        .id(control_ids::NORMALIZE_TARGET)
         .flex_1()
         .min_w_0()
         .h(px(BUTTON_HEIGHT))
@@ -684,7 +694,7 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
         })
         .child(
             BaseSlider::new(state.target)
-                .accessibility_label("Normalization target")
+                .accessibility_label(control_ids::NORMALIZE_TARGET_LABEL)
                 .disabled(!enabled)
                 .size_full()
                 .child(
