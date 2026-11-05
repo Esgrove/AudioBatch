@@ -717,6 +717,14 @@ Catch-unwind cannot contain aborts, allocation exhaustion, or hangs.
 Unchecked release arithmetic is not evidence of safety.
 Fuzz mutations may rediscover the same unfixed upstream defects and must remain visible findings,
 not be silently treated as ordinary decoder errors or evidence of a clean fuzz campaign.
+`fuzz/tests/wav-overflow-unallowlisted` retains one such fuzz-discovered WAV variant outside the replay corpus.
+The subprocess regression requires that variant to remain unallowlisted and abort through the original panic hook.
+The captured `fuzz/tests/wav-overflow-unallowlisted` variant is intentionally outside the replay corpus,
+so replay checks the two exact production-boundary regressions while the subprocess suite requires this variant to abort.
+The decode campaign remains blocked by that upstream WAV overflow, even when committed corpus replay passes.
+After building, reproduce the unallowlisted finding from `rust/` with
+`fuzz/target/$(rustc +nightly -vV | awk '/^host:/ { print $2 }')/release/decode_audio -runs=1 -timeout=5 -malloc_limit_mb=128 -rss_limit_mb=512 fuzz/tests/wav-overflow-unallowlisted`.
+This command must exit unsuccessfully until the upstream defect is fixed or a separately reviewed production fix lands.
 
 ```shell
 # Build the targets, replay the corpus, and fuzz each target for 60 seconds

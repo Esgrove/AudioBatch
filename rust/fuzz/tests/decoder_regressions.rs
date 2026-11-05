@@ -60,6 +60,11 @@ fn the_wrong_dependency_location_aborts_inside_production() {
 }
 
 #[test]
+fn the_fuzz_discovered_wav_variant_remains_a_visible_failure() {
+    aborts("wav-unallowlisted", "attempt to multiply with overflow");
+}
+
+#[test]
 fn unrelated_panics_still_abort_even_inside_a_catch_unwind() {
     aborts("unrelated", "unrelated harness failure");
 }
@@ -98,6 +103,12 @@ fn regression_child() {
     match mode.as_str() {
         "wav-production" | "caf-production" => check_decoder_production_boundary(&path, regression),
         "wav-raw" | "caf-raw" => {
+            let _ = AudioFileDecoder::open(&path);
+        }
+        "wav-unallowlisted" => {
+            let variant = include_bytes!("wav-overflow-unallowlisted");
+            assert!(DecoderRegression::from_input(variant).is_none());
+            std::fs::write(&path, variant.get(1..).expect("payload")).expect("writes captured fuzz finding");
             let _ = AudioFileDecoder::open(&path);
         }
         "wav-mutated" => {
