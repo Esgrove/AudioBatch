@@ -644,6 +644,17 @@ void SeratoPreviewTests::testTrackInfo()
     panel.showRecord(record, {});
     expect(panelValue(panel, "Peak after custom gain").isEmpty());
     expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
+    // The 0.1 dB slider snaps zero to a tiny residue, which is no gain and must hide every estimate.
+    record.customGain = Decibels {6.66e-16f};
+    panel.showRecord(record, {});
+    expect(panelValue(panel, "Peak after custom gain").isEmpty());
+    expect(panelValue(panel, "True peak after custom gain").isEmpty());
+    expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
+    expect(!customGainFromDecibels(6.66e-16f).has_value());
+    expect(!customGainFromDecibels(-0.00001f).has_value());
+    expect(!customGainFromDecibels(std::numeric_limits<float>::quiet_NaN()).has_value());
+    expect(customGainFromDecibels(0.1f).has_value());
+    expect(customGainFromDecibels(-0.1f).has_value());
     record.customGain = Decibels {3.0f};
     record.overallPeak = 0.0f;
     record.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
