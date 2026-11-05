@@ -48,18 +48,15 @@ test = false
 doc = false
 bench = false
 
+# Regression tests exercise exactly the arithmetic checks used by cargo-fuzz.
+[profile.dev]
+overflow-checks = true
+
 [profile.release]
 debug = 1
 
-# symphonia-format-riff 0.6.1 multiplies the channel count and sample size of a WAV fmt chunk in u16,
-# only to log a mismatched block align, and the product overflows for hostile headers.
-# Release builds wrap without effect, and analysis catches the panic of a debug build.
-# Its overflow checks stay off here as in release builds, so fuzzing continues past it.
-# The wav-block-align-overflow seed is the input that found it.
-# Both settings are given, so Cargo passes the overflow checks explicitly next to the debug assertions of cargo-fuzz.
-[profile.release.package.symphonia-format-riff]
-debug-assertions = true
-overflow-checks = false
+# Keep arithmetic findings visible, including those in third-party container readers.
+overflow-checks = true
 
 [lints.rust]
 missing_docs = "warn"

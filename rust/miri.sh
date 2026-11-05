@@ -58,13 +58,21 @@ fi
 
 # Miri interprets the code for the host it runs on, so the native CPU flags of .cargo/config.toml do not apply.
 export RUSTFLAGS=""
-# Stacked Borrows is the default aliasing model, and the VST3 COM bindings pass it.
-# The vst3-host tests share one dedicated UI thread that runs until the test process exits,
-# like the UI thread of an application, so Miri's leak check would report that thread after every test.
-export MIRIFLAGS="${MIRIFLAGS:--Zmiri-ignore-leaks}"
+# Stacked Borrows is Miri's default. Keep leak and thread-exit checking enabled except for the tests
+# that start the process-lifetime UI thread in vst3-host's test_helpers::dispatcher.
+# All instance tests and four processor tests use it, as do three dispatcher tests and the UiBound test.
+# Caller-supplied MIRIFLAGS still apply to every command.
+UI_THREAD_TESTS='test(/^instance::/) | test(/^processor::test_in_place_processing::(failed_processing_restores_owned_bus_descriptions|in_place_matches_buffered_gain_delay_and_echo|invalid_buffers_are_rejected_without_touching_audio|short_blocks_preserve_suffixes_and_owned_buffers)$/) | test(/^ui_bound::/) | test(/^thread::test_dispatcher::(another_thread_cannot_register_as_the_ui_thread|call_returns_the_result_from_the_ui_thread|post_runs_jobs_in_order)$/)'
 
-print_magenta "Running the VST3 host, test plugin, and Serato tag tests under Miri..."
-cargo +nightly miri nextest run --no-fail-fast -p vst3-host -p audiobatch-test-plugin -p serato-tags --lib
+print_magenta "Running the host objects and parsers under Miri with leak checking..."
+cargo +nightly miri nextest run --no-fail-fast -p vst3-host -p audiobatch-test-plugin -p serato-tags --lib \
+    -E "not ($UI_THREAD_TESTS)"
+
+# These tests leave the dedicated UI thread alive at process exit.
+# This flag also disables allocation leak detection, but does not relax pointer or aliasing checks.
+print_magenta "Running the process-lifetime VST3 UI thread tests under Miri..."
+MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-ignore-leaks" \
+    cargo +nightly miri nextest run --no-fail-fast -p vst3-host --lib -E "$UI_THREAD_TESTS"
 
 # Only the core modules that decode cache blobs run, because the rest of the core decodes audio files,
 # uses SQLite, or runs minutes of DSP, none of which Miri can interpret in reasonable time.

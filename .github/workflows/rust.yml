@@ -220,6 +220,9 @@ jobs:
         with:
           workspaces: rust/fuzz
 
+      - name: Check exact decoder panic regressions with overflow checks
+        run: cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions
+
       - name: Build fuzz targets
         run: ./fuzz.sh --build-only
 
