@@ -730,6 +730,54 @@ host=$(rustc +nightly -vV | awk '/^host:/ { print $2 }')
 
 This command must exit unsuccessfully until the upstream defect is fixed or a separately reviewed production fix lands.
 
+### Production validation blocker
+
+The official crates.io release and the upstream GitHub releases have no version newer than 0.6.1.
+There is no released dependency update to verify against these regressions.
+The checked subprocess tests also establish why checking only the two overflowing fields is insufficient:
+
+- WAVE PCM computes `num_channels * (bits_per_sample / 8)` in `u16` before channel validation.
+  For 16-bit samples, 32767 channels reach a structured unsupported-stream error,
+  while 32768 channels panic before that rejection.
+- CAF computes `bytes_per_packet * 8` in `u32` before PCM width validation.
+  Values through `u32::MAX / 8` reach an ordinary codec error in the boundary test,
+  while the next value panics.
+  The retained original CAF declares 3,758,096,130 bytes per packet, not a valid mono 16-bit PCM frame size.
+- Both readers are selected after Symphonia scans for a container marker.
+  Junk-prefixed versions of both retained findings still panic through `AudioFileDecoder::open`,
+  so validation at file offset zero or by filename extension is not the production probe boundary.
+- The WAVE extensible reader repairs a channel mask using `((1 << channel_diff) - 1) << shift`
+  at `symphonia-format-riff-0.6.1/src/wave/chunks.rs:690`.
+  A PCM subtype with 33 channels and an empty mask causes a checked shift overflow.
+- The CAF packet-table reader accumulates `packet_offset += size` at `symphonia-format-caf-0.6.1/src/chunks.rs:529`.
+  Three legal nine-byte integer encodings of `2^63 - 1` overflow the aggregate offset,
+  even with a description whose `bytes_per_packet * 8` is safe.
+  The surrounding data-length product at `src/demuxer.rs:479-480`
+  and seek byte-offset product at `src/demuxer.rs:231-233` also use unchecked arithmetic.
+
+A correct bounded validator would have to agree with the bytes the downstream reader actually consumes,
+not merely walk spec-declared chunk ends.
+The WAVE IMA ADPCM reader accepts `cbSize = 2` in a larger format chunk,
+reads only that extension, and then treats the unread remainder as the next chunk header.
+The checked cursor-divergence regression puts an overflowing PCM format there,
+inside what a spec-based walker would skip as the preceding chunk's body.
+CAF `chan` and `pakt` readers likewise consume field-count-dependent bodies without skipping to the declared end.
+They also require nested channel-description and variable-length packet-table validation.
+A reliable guard would therefore need either a substantial second parser matching these consumption rules,
+or upstream bounds and checked-arithmetic changes at the actual reader construction points.
+No byte-pattern blacklist, partial header guard, dependency source patch, or additional panic allowance is installed.
+Nearby valid mono WAV and CAF inputs still decode,
+and malformed zero-channel WAV and inconsistent-width CAF inputs return structured errors without any allowance.
+The original findings still panic, so this is a documented blocker, not a production decoding fix.
+
+Until a verified upstream release or a separately reviewed complete boundary fix is available,
+the non-masking operational recommendation is a separate non-blocking decoder diagnostic job with retained artifacts,
+while Serato, CLI argument, and cache fuzz jobs remain gating.
+That policy needs coordinator approval and is not enacted here.
+The current gating job, arithmetic checks, exact-input allowances, and unexpected-panic behavior remain unchanged.
+A decoder campaign requested with a 60-second limit can stop immediately on these findings,
+so successful committed-corpus replay does not establish a usable or clean decoder campaign.
+
 ```shell
 # Build the targets, replay the corpus, and fuzz each target for 60 seconds
 ./fuzz.sh
