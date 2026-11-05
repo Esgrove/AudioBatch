@@ -13,6 +13,8 @@ Ratios use whole-file true peak minus the specified loudness scalar, not a time-
 
 import argparse
 import json
+import shutil
+import subprocess
 import wave
 from pathlib import Path
 
@@ -155,7 +157,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
-    text = json.dumps(expected(), indent=2, allow_nan=False) + "\n"
+    jq = shutil.which("jq")
+    if jq is None:
+        message = "jq not found in path, it formats the expected JSON like format.sh"
+        raise SystemExit(message)
+    text = subprocess.run(  # noqa: S603
+        [jq, "--indent", "2", "."],
+        input=json.dumps(expected(), indent=2, allow_nan=False),
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
     if arguments.check:
         if not OUTPUT.is_file() or OUTPUT.read_text() != text:
             message = "Source metric expectations are stale"
