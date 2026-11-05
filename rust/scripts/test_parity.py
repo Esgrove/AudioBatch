@@ -157,6 +157,20 @@ class TestLevelOracle(unittest.TestCase):
                 assert normalized[source.name]["status"] == "failed"
                 assert source.with_suffix(".aif").name not in normalized
 
+    def test_sub_400ms_spectral_signals_have_no_integrated_loudness(self) -> None:
+        """Every short spectral input is independently refused in loudness mode, including non-silent PCM."""
+        root = Path("/fixtures/spectrogram_expected")
+        manifest = levels.GOLDENS.parents[4] / "fixtures/spectrogram_expected/expected.json"
+        names = json.loads(manifest.read_text(encoding="utf-8"))["files"]
+        sources = [root / name for name in names]
+        expected = levels.expected_results(sources, root, lufs=-14)
+        for source in sources:
+            assert expected[source.name]["status"] == "failed"
+        peaks = levels.expected_results(sources, root, peak=0)
+        for source in sources:
+            if "silence" not in source.name:
+                assert peaks[source.with_suffix(".aif").name]["status"] == "analyzed"
+
     def test_duplicate_json_rows_are_rejected(self) -> None:
         """A repeated result must not overwrite a failed or otherwise differing result."""
         with tempfile.TemporaryDirectory() as temporary:
