@@ -12,7 +12,7 @@ use anyhow::Result;
 use audiobatch_core::operation::OperationOutcome;
 use audiobatch_core::output_file::{FileDisposer, delete_disposer};
 use audiobatch_core::{AnalysisCache, AnalysisRecord, AnalysisStatus};
-use audiobatch_plugins::presets::load_preset_file;
+use audiobatch_plugins::presets::load_preset_file_strict;
 use audiobatch_plugins::{
     PluginDataPaths, PresetStore, ProcessingChain, ProcessingCoordinator, ProcessingEvent, ProcessingOptions,
 };
@@ -63,9 +63,9 @@ pub fn run_process(
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
     {
-        load_preset_file(path)?
+        load_preset_file_strict(path)?
     } else {
-        PresetStore::new(PluginDataPaths::default().presets).load(&args.preset)?
+        PresetStore::new(PluginDataPaths::default().presets).load_strict(&args.preset)?
     };
     let chain = preset.chain();
     anyhow::ensure!(

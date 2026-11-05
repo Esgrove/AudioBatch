@@ -38,7 +38,7 @@ std::expected<std::vector<SavedChainSlot>, juce::String> loadChain(const juce::S
 {
     const auto file = juce::File::getCurrentWorkingDirectory().getChildFile(preset);
     if (file.existsAsFile() || preset.containsAnyOf("/\\") || preset.endsWithIgnoreCase(".xml")) {
-        return plugin_presets::loadPreset(file);
+        return plugin_presets::loadPreset(file, true);
     }
     const auto directory
         = plugin_presets::getPresetDirectory(utils::createApplicationSettingsOptions().getDefaultFile());
@@ -46,7 +46,7 @@ std::expected<std::vector<SavedChainSlot>, juce::String> loadChain(const juce::S
     if (!named) {
         return std::unexpected(utils::format("The preset {} does not exist", preset.quoted()));
     }
-    return plugin_presets::loadPreset(*named);
+    return plugin_presets::loadPreset(*named, true);
 }
 }  // namespace
 

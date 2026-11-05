@@ -267,6 +267,9 @@ std::expected<RenderSummary, juce::String> renderThroughChain(
             }
         }
 
+        if (!isBlockFinite(buffer, samplesThisBlock)) {
+            return std::unexpected(juce::String("Non-finite decoded sample"));
+        }
         const auto signalChannels = processBlockThroughChain(buffer, chainInstances, numChannels, midi);
 
         // JUCE carries on after a failed process call, so a plugin that reports one fails the file here.

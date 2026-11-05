@@ -636,6 +636,22 @@ juce::String outcomeError(const OperationOutcome& outcome)
     );
 }
 
+/// Writes exact floating-point PCM into an isolated WAV for invalid-source streaming contracts.
+bool writeFloatWav(const juce::File& file, const juce::AudioBuffer<float>& samples)
+{
+    std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+    juce::WavAudioFormat format;
+    const auto writer = format.createWriterFor(
+        stream,
+        juce::AudioFormatWriterOptions()
+            .withSampleRate(44'100.0)
+            .withNumChannels(samples.getNumChannels())
+            .withBitsPerSample(32)
+            .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint)
+    );
+    return writer != nullptr && writer->writeFromAudioSampleBuffer(samples, 0, samples.getNumSamples());
+}
+
 /// Returns the analysis of the output of an operation that wrote it, or an empty record for one that failed before.
 AudioAnalysisRecord outcomeRecord(const OperationOutcome& outcome)
 {

@@ -901,7 +901,7 @@ void CacheTests::runSpectrogramTests()
         && measured->shortTermLoudness->values == record.shortTermLoudness->values
     );
     expectSqlScalar(*this, databaseFile, "SELECT updated_at_ms FROM file_analysis;", 123);
-    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 14);
+    expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 15);
 
     beginTest("An identical Rust-produced spectrogram is adopted without native producer provenance");
     expect(executeSql(*this, databaseFile, "UPDATE spectrogram_cache SET producer = 'rust';"));

@@ -90,6 +90,9 @@ pub enum DecodeError {
         #[source]
         source: SymphoniaError,
     },
+    /// Decoded source PCM contains NaN or infinity and cannot be measured or rendered.
+    #[error("Non-finite decoded sample")]
+    NonFinitePcm,
     /// The requested seek time cannot be represented.
     #[error("Invalid seek time {0}")]
     InvalidSeek(f64),
@@ -161,7 +164,9 @@ impl DecodeError {
     pub const fn analysis_kind(&self) -> AnalysisError {
         match self {
             Self::Open(_) => AnalysisError::Unreadable,
-            Self::Probe(_) | Self::MissingTrack | Self::Parameters | Self::Codec(_) => AnalysisError::Unsupported,
+            Self::NonFinitePcm | Self::Probe(_) | Self::MissingTrack | Self::Parameters | Self::Codec(_) => {
+                AnalysisError::Unsupported
+            }
             Self::PacketLimit { .. } => AnalysisError::DecodeFailed,
             Self::Decode { .. } | Self::InvalidSeek(_) | Self::Seek(_) => AnalysisError::MeasurementFailed,
         }
@@ -590,6 +595,21 @@ pub(crate) fn is_mp3_path(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("mp3"))
 }
 
+/// Rejects non-finite source PCM before measurement, normalization, or plugin input.
+///
+/// # Errors
+///
+/// Returns a structured failure for NaN or either infinity in any channel.
+pub fn validate_finite_pcm<P: AsRef<[f32]>>(planes: &[P]) -> Result<(), DecodeError> {
+    if planes
+        .iter()
+        .any(|plane| plane.as_ref().iter().any(|sample| !sample.is_finite()))
+    {
+        return Err(DecodeError::NonFinitePcm);
+    }
+    Ok(())
+}
+
 /// Determines the best available source bit depth of a track.
 ///
 /// MPEG audio, AAC, and Vorbis get the default of 16, because the formats store no sample depth.
@@ -739,6 +759,20 @@ mod test_audio_file_decoder {
     use super::*;
     use crate::golden::{GoldenText, write_diagnostic_report};
     use crate::test_helpers::scrambled_fixture_copy;
+
+    #[test]
+    fn rejects_nonfinite_pcm_in_every_channel_before_publication() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for channel in 0..2 {
+                let mut planes = [vec![0.25; 10], vec![-0.25; 10]];
+                planes.get_mut(channel).expect("channel").push(value);
+                let error = validate_finite_pcm(&planes).expect_err("nonfinite source");
+                assert!(matches!(error, DecodeError::NonFinitePcm));
+                assert_eq!(error.analysis_kind(), AnalysisError::Unsupported);
+            }
+        }
+        assert!(validate_finite_pcm(&[vec![0.0, -1.0, 1.0]]).is_ok());
+    }
 
     #[test]
     #[ignore = "writes cross-platform PCM diagnostics; run explicitly with --ignored"]

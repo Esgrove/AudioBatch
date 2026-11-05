@@ -321,6 +321,41 @@ pub fn copy_fixture(directory: &TempDir, name: &str, copy_name: Option<&str>) ->
     destination
 }
 
+/// Writes short stereo floating-point PCM, retaining NaN and infinity for source rejection tests.
+///
+/// # Panics
+///
+/// Panics if the temporary file cannot be written.
+pub fn write_nonfinite_wav(path: &Path, channel: usize, value: f32) {
+    let mut payload = Vec::new();
+    for frame in 0..4410 {
+        for current in 0..2 {
+            let sample = if frame == 20 && current == channel {
+                value
+            } else {
+                0.25_f32
+            };
+            payload.extend_from_slice(&sample.to_le_bytes());
+        }
+    }
+    let size = u32::try_from(payload.len()).expect("short test audio");
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(size + 36).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    bytes.extend_from_slice(&3_u16.to_le_bytes());
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&44_100_u32.to_le_bytes());
+    bytes.extend_from_slice(&(44_100_u32 * 8).to_le_bytes());
+    bytes.extend_from_slice(&8_u16.to_le_bytes());
+    bytes.extend_from_slice(&32_u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&size.to_le_bytes());
+    bytes.extend_from_slice(&payload);
+    std::fs::write(path, bytes).expect("temporary float WAV");
+}
+
 /// Builds a tone fixture entry for the constant table.
 const fn tone(
     file_name: &'static str,

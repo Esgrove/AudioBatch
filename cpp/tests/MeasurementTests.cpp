@@ -165,6 +165,27 @@ void MeasurementTests::runTest()
     expect(!complete.finish());
     expect(!complete.push(samples, 0, 0));
 
+    beginTest("Non-finite PCM in either channel permanently invalidates a measurement");
+    for (const auto nonfinite :
+         {
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity(),
+         })
+    {
+        for (int channel = 0; channel < 2; ++channel) {
+            juce::AudioBuffer<float> invalidSamples(2, 10);
+            invalidSamples.clear();
+            invalidSamples.setSample(channel, 4, nonfinite);
+            AudioMeasurement meter(2, 44'100.0, 10);
+            const auto pushed = meter.push(invalidSamples, 0, 10);
+            expect(!pushed);
+            expect(!pushed && pushed.error().contains("Non-finite"));
+            expect(!meter.finish());
+            expect(!meter.waveformSnapshot());
+        }
+    }
+
     beginTest("Unsupported spectral channel counts do not fail loudness measurement");
     juce::AudioBuffer<float> multichannel(3, 4410);
     multichannel.clear();

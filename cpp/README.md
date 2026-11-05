@@ -386,6 +386,8 @@ audiobatch process -p "/path/to/Master.xml" -n --lufs -16 --force --delete "musi
 
 `--preset` / `-p` is required. A name resolves in the GUI's `Chain Presets` folder next to its settings.
 The C++ CLI reads its own XML presets, not Rust JSON presets.
+CLI loading rejects the whole preset if any slot description or nonempty base64 state is damaged,
+leaving sources and existing outputs unchanged rather than recovering a partial chain.
 Without input paths the current directory is processed.
 `--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output table|csv|json` work as in analysis.
 `--normalize` / `-n` optionally applies peak or LUFS normalization before the first enabled plugin.

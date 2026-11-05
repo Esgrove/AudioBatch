@@ -229,7 +229,8 @@ std::expected<juce::File, juce::String> savePreset(
 
 /// Reads the slots of a preset file in chain order, or returns the reason the file cannot be used.
 /// A file from a newer format version is refused instead of being read partially.
-std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::File& file)
+/// Strict loading also refuses damaged slots and noncanonical base64 state before destructive CLI operations.
+std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::File& file, const bool strict)
 {
     if (!file.existsAsFile()) {
         return std::unexpected(utils::format("The preset {} does not exist", file.getFullPathName().quoted()));
@@ -252,6 +253,22 @@ std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::
         return std::unexpected(utils::format("{} has no plugin chain", file.getFileName().quoted()));
     }
 
+    if (strict) {
+        for (const auto* child : chainElement->getChildIterator()) {
+            if (!child->hasTagName(slotXmlTag) || !parseSlot(*child)) {
+                return std::unexpected(juce::String("The preset contains a damaged plugin slot"));
+            }
+            const auto encoded = child->getStringAttribute(slotStateAttribute);
+            if (encoded.isNotEmpty()) {
+                juce::MemoryOutputStream decoded;
+                if (!juce::Base64::convertFromBase64(decoded, encoded)
+                    || juce::Base64::toBase64(decoded.getData(), decoded.getDataSize()) != encoded)
+                {
+                    return std::unexpected(juce::String("The preset contains invalid plugin state"));
+                }
+            }
+        }
+    }
     return std::move(*slots);
 }
 

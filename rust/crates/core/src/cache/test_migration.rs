@@ -40,7 +40,7 @@ fn current_cpp_schema_migrates_only_known_successes_and_preserves_gain_and_tags(
         cache.get_serato_overview(&record.path),
         Some(SeratoOverviewState::Absent)
     );
-    assert_eq!(ANALYSIS_VERSION, 14);
+    assert_eq!(ANALYSIS_VERSION, 15);
     cache.open().expect("idempotent migration");
 }
 
