@@ -10,6 +10,13 @@ This repository holds two versions of it side by side, each with its own agent i
 Each version also has an `ARCHITECTURE.md`, [`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md),
 which explains how its parts work together.
 
+## Platform Scope
+
+AudioBatch supports only macOS and Windows, as the README states.
+Linux is not a target, and VST3 plugin hosting does not exist there for this project.
+Do not add Linux builds, CI jobs, code paths, dependencies, tests, or documentation,
+and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
+
 ## Shared Files
 
 - `assets/` holds the icons and fonts that both applications bundle.
