@@ -167,7 +167,10 @@ MainWindow::MainWindow(const juce::String& name) :
     addKeyListener(commandManager.getKeyMappings());
 
 #if JUCE_MAC
+    // Test executables have no application menu to replace, so they only exercise the commands and key mappings.
+#ifndef AUDIOBATCH_TESTING
     juce::MenuBarModel::setMacMainMenu(this);
+#endif
 #else
     setMenuBar(this, layout::inWindowMenuBarHeight);
 #endif
@@ -213,7 +216,9 @@ MainWindow::~MainWindow()
 {
     removeKeyListener(commandManager.getKeyMappings());
 #if JUCE_MAC
+#ifndef AUDIOBATCH_TESTING
     juce::MenuBarModel::setMacMainMenu(nullptr);
+#endif
 #else
     setMenuBar(nullptr);
 #endif
@@ -233,7 +238,7 @@ void MainWindow::closeButtonPressed()
 juce::StringArray MainWindow::getMenuBarNames()
 {
 #if JUCE_MAC
-    return {juce::JUCEApplication::getInstance()->getApplicationName(), "File", "Plugins", "Options", "Help"};
+    return {juce::String(ProjectInfo::projectName), "File", "Plugins", "Options", "Help"};
 #else
     return {"File", "Plugins", "Options", "Help"};
 #endif
@@ -554,7 +559,7 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             break;
         case CommandId::about:
             result.setInfo(
-                utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName()),
+                utils::format("About {}", juce::String(ProjectInfo::projectName)),
                 "Shows application information",
                 "Help",
                 0
@@ -707,7 +712,7 @@ bool MainWindow::perform(const InvocationInfo& info)
             getAudioBatch().togglePreviewSection();
             return true;
         case CommandId::about: {
-            const auto appName = juce::JUCEApplication::getInstance()->getApplicationName();
+            const auto appName = juce::String(ProjectInfo::projectName);
             juce::AlertWindow::showAsync(
                 juce::MessageBoxOptions::makeOptionsOk(
                     juce::MessageBoxIconType::InfoIcon,
