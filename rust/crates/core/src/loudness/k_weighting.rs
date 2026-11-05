@@ -12,8 +12,7 @@
 
 use std::f64::consts::PI;
 
-/// Largest supported planar channel count, including channels excluded from loudness.
-const MAX_CHANNELS: usize = 64;
+use crate::meter::MAX_CHANNELS;
 
 /// Fixed-storage K weighting with the default BS.1770 channel map and dual-mono treatment of mono audio.
 #[derive(Debug, Clone)]

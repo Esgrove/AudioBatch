@@ -71,6 +71,16 @@ pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 10] = [
     ColumnKey::Correlation,
 ];
 
+/// Optional source-statistics columns, which saved column choices of revision 1 and older hide once.
+pub const SOURCE_STATISTICS_COLUMNS: [ColumnKey; 6] = [
+    ColumnKey::Plr,
+    ColumnKey::Psr,
+    ColumnKey::Crest,
+    ColumnKey::Dc,
+    ColumnKey::Clips,
+    ColumnKey::Correlation,
+];
+
 /// Font size of the column titles.
 const HEADER_FONT_SIZE: f32 = 14.0;
 

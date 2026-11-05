@@ -17,6 +17,9 @@ use crate::record::{NEGATIVE_INFINITY_LOUDNESS, ShortTermLoudnessHistory, normal
 use crate::spectrogram::{SpectrogramBuilder, SpectrogramData};
 use crate::waveform::{WaveformBuilder, WaveformOverview};
 
+/// Largest supported channel count, which sizes the fixed per-channel state of every measurement.
+pub(crate) const MAX_CHANNELS: usize = 64;
+
 /// A loudness measurement failure.
 #[doc(hidden)]
 #[derive(Debug, thiserror::Error)]
@@ -34,8 +37,8 @@ pub struct BlockMeter {
     sample_rate: u32,
     block_size: usize,
     block: Vec<Vec<f32>>,
-    min_samples: [f32; 64],
-    max_samples: [f32; 64],
+    min_samples: [f32; MAX_CHANNELS],
+    max_samples: [f32; MAX_CHANNELS],
     max_short_term_lufs: f64,
     history: Vec<f32>,
     waveform: WaveformBuilder,
@@ -81,7 +84,9 @@ impl BlockMeter {
     ///
     /// Returns an error when the meter does not support the channel count or the sample rate.
     pub fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self, MeterError> {
-        if !(1..=64).contains(&channels) || !(16..=2_822_400).contains(&sample_rate) {
+        if !usize::try_from(channels).is_ok_and(|count| (1..=MAX_CHANNELS).contains(&count))
+            || !(16..=2_822_400).contains(&sample_rate)
+        {
             return Err(MeterError::UnsupportedStream);
         }
         let channel_count = channels as usize;
@@ -93,8 +98,8 @@ impl BlockMeter {
             sample_rate,
             block_size,
             block: vec![Vec::with_capacity(block_size); channel_count],
-            min_samples: [0.0; 64],
-            max_samples: [0.0; 64],
+            min_samples: [0.0; MAX_CHANNELS],
+            max_samples: [0.0; MAX_CHANNELS],
             max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,
             history: Vec::with_capacity(
                 expected_frames
@@ -118,7 +123,7 @@ impl BlockMeter {
             let filled = self.block.first().map_or(0, Vec::len);
             let take = (self.block_size - filled).min(frame_count - offset);
             if filled == 0 && take == self.block_size {
-                let mut planes = [&[][..]; 64];
+                let mut planes = [&[][..]; MAX_CHANNELS];
                 let channels = self.block.len();
                 let mut complete = true;
                 for (channel, plane) in planes.iter_mut().take(channels).enumerate() {
@@ -165,7 +170,7 @@ impl BlockMeter {
             return self.waveform.snapshot(self.sample_rate, decoded_frames);
         }
         let mut waveform = self.waveform.clone();
-        let mut planes = [&[][..]; 64];
+        let mut planes = [&[][..]; MAX_CHANNELS];
         for (plane, samples) in planes.iter_mut().zip(&self.block) {
             *plane = samples;
         }
@@ -239,7 +244,7 @@ impl BlockMeter {
     /// Feeds a buffered block without allocating plane references and retains its sample storage for reuse.
     fn measure_block(&mut self) {
         let mut block = std::mem::take(&mut self.block);
-        let mut planes = [&[][..]; 64];
+        let mut planes = [&[][..]; MAX_CHANNELS];
         for (plane, samples) in planes.iter_mut().zip(&block) {
             *plane = samples;
         }
@@ -257,9 +262,9 @@ impl BlockMeter {
     /// Measures one fixed analysis block, whether borrowed directly or assembled from decoder packets.
     fn measure_planes(&mut self, planes: &[&[f32]]) {
         self.signal_metrics.push(planes);
-        let mut flags = [0_u8; 64];
-        let mut block_minima = [0.0_f32; 64];
-        let mut block_maxima = [0.0_f32; 64];
+        let mut flags = [0_u8; MAX_CHANNELS];
+        let mut block_minima = [0.0_f32; MAX_CHANNELS];
+        let mut block_maxima = [0.0_f32; MAX_CHANNELS];
         for (channel, ((samples, minimum), maximum)) in planes
             .iter()
             .zip(&mut self.min_samples)

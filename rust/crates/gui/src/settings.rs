@@ -22,6 +22,8 @@ use audiobatch_core::normalize::{
 use audiobatch_playback::OutputConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::results::{ColumnKey, ResultsDelegate, SOURCE_STATISTICS_COLUMNS};
+
 /// Lowest loudness the graph axis accepts, in LUFS.
 pub const LOUDNESS_LIMIT_MINIMUM: i32 = -60;
 
@@ -37,9 +39,6 @@ pub const DEFAULT_LOUDNESS_MAXIMUM: i32 = -4;
 /// Revision of the results table column defaults.
 /// Revision 1 hides Path beside Folder. Revision 2 hides the optional source-statistics columns.
 pub const COLUMNS_REVISION: u32 = 2;
-
-/// Identifier of the Path column in `hidden_columns`.
-const PATH_COLUMN_ID: &str = "path";
 
 /// File name of the settings in the data directory.
 pub const SETTINGS_FILE_NAME: &str = "gui-settings.json";
@@ -217,18 +216,17 @@ impl GuiSettings {
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
         if let Some(hidden) = &mut settings.hidden_columns {
-            let mut hide = |id: &str| {
+            let mut hide = |key: ColumnKey| {
+                let id = ResultsDelegate::column_identifier(key);
                 if !hidden.iter().any(|value| value == id) {
                     hidden.push(id.to_string());
                 }
             };
             if settings.columns_revision < 1 {
-                hide(PATH_COLUMN_ID);
+                hide(ColumnKey::Path);
             }
             if settings.columns_revision < 2 {
-                for id in ["plr", "psr", "crest", "dc", "clips", "correlation"] {
-                    hide(id);
-                }
+                SOURCE_STATISTICS_COLUMNS.into_iter().for_each(hide);
             }
         }
         settings.columns_revision = COLUMNS_REVISION;
