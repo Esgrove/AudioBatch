@@ -49,6 +49,33 @@ std::optional<SavedChainSlot> parseSlot(const juce::XmlElement& slotElement)
     slot.state = decodeState(slotElement.getStringAttribute(slotStateAttribute));
     return slot;
 }
+
+/// Validates every destructive-operation slot field without recovering a partial chain.
+std::expected<void, juce::String> validateStrictChain(const juce::XmlElement& chain)
+{
+    for (const auto* child : chain.getChildIterator()) {
+        if (!child->hasTagName(slotXmlTag) || !parseSlot(*child)) {
+            return std::unexpected(juce::String("The preset contains a damaged plugin slot"));
+        }
+        if (child->hasAttribute(slotEnabledAttribute)) {
+            const auto enabled = child->getStringAttribute(slotEnabledAttribute);
+            if (enabled != "0" && enabled != "1") {
+                return std::unexpected(juce::String("The preset contains an invalid plugin enabled flag"));
+            }
+        }
+        const auto encoded = child->getStringAttribute(slotStateAttribute);
+        if (encoded.isEmpty()) {
+            continue;
+        }
+        juce::MemoryOutputStream decoded;
+        if (!juce::Base64::convertFromBase64(decoded, encoded)
+            || juce::Base64::toBase64(decoded.getData(), decoded.getDataSize()) != encoded)
+        {
+            return std::unexpected(juce::String("The preset contains invalid plugin state"));
+        }
+    }
+    return {};
+}
 }  // namespace
 
 /// Builds the PLUGIN_CHAIN element of the slots in chain order.
@@ -229,7 +256,9 @@ std::expected<juce::File, juce::String> savePreset(
 
 /// Reads the slots of a preset file in chain order, or returns the reason the file cannot be used.
 /// A file from a newer format version is refused instead of being read partially.
-/// Strict loading also refuses damaged slots and noncanonical base64 state before destructive CLI operations.
+/// Strict loading also refuses damaged slots, malformed enabled/version attributes, and noncanonical base64 state.
+/// Enabled flags accept only complete "0" and "1" tokens. An omitted flag retains the legacy enabled default.
+/// An omitted version retains the legacy format default, otherwise the complete current version token is required.
 std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::File& file, const bool strict)
 {
     if (!file.existsAsFile()) {
@@ -247,6 +276,12 @@ std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::
         );
     }
 
+    if (strict && element->hasAttribute(presetVersionAttribute)
+        && element->getStringAttribute(presetVersionAttribute) != juce::String(presetFormatVersion))
+    {
+        return std::unexpected(juce::String("The preset contains an invalid format version"));
+    }
+
     const auto* chainElement = element->getChildByName(chainXmlTag);
     auto slots = chainElement != nullptr ? parseChainXml(*chainElement) : std::nullopt;
     if (!slots.has_value()) {
@@ -254,19 +289,8 @@ std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::
     }
 
     if (strict) {
-        for (const auto* child : chainElement->getChildIterator()) {
-            if (!child->hasTagName(slotXmlTag) || !parseSlot(*child)) {
-                return std::unexpected(juce::String("The preset contains a damaged plugin slot"));
-            }
-            const auto encoded = child->getStringAttribute(slotStateAttribute);
-            if (encoded.isNotEmpty()) {
-                juce::MemoryOutputStream decoded;
-                if (!juce::Base64::convertFromBase64(decoded, encoded)
-                    || juce::Base64::toBase64(decoded.getData(), decoded.getDataSize()) != encoded)
-                {
-                    return std::unexpected(juce::String("The preset contains invalid plugin state"));
-                }
-            }
+        if (const auto validation = validateStrictChain(*chainElement); !validation) {
+            return std::unexpected(validation.error());
         }
     }
     return std::move(*slots);
