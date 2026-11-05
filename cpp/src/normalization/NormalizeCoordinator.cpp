@@ -187,11 +187,6 @@ int NormalizeCoordinator::start(
                     result = AudioNormalizationResult::failure(record.file, message);
                 }
 
-                // A failure is the file left unchanged, so after a stop request it counts as cancelled.
-                if (runner.isStopRequested(runId) && std::holds_alternative<OperationFailed>(result.outcome)) {
-                    result = AudioNormalizationResult::cancelled(record.file);
-                }
-
                 persistResult(result);
                 runner.publish(resultCallback, runId, result);
             }

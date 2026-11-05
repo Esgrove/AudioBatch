@@ -199,6 +199,7 @@ std::optional<Value> tagValue(const serato::TagReadResult& result)
     return value != nullptr ? std::optional<Value>(*value) : std::nullopt;
 }
 
+bool writeFloatWav(const juce::File& file, const juce::AudioBuffer<float>& samples);
 bool deleteInsteadOfTrash(const juce::File& file);
 bool executeSql(juce::UnitTest& test, const juce::File& databaseFile, const char* sql);
 bool startHelperProcess(juce::ChildProcess& process, const juce::StringArray& helperArguments);

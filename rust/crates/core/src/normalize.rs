@@ -503,6 +503,7 @@ fn render_normalized_audio(
         let Some(chunk) = decoder.next_chunk()? else {
             break;
         };
+        crate::decode::validate_finite_pcm(chunk)?;
         let frames = chunk.first().map_or(0, Vec::len);
         for samples in &mut quantized {
             samples.clear();
@@ -958,6 +959,30 @@ mod test_normalize_file {
             "{}",
             output.integrated_lufs
         );
+    }
+
+    #[test]
+    fn nonfinite_source_fails_in_streaming_normalization_without_publication() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for channel in 0..2 {
+                let directory = tempfile::tempdir().expect("temp dir");
+                let source = directory.path().join("source.wav");
+                test_fixtures::write_nonfinite_wav(&source, channel, value);
+                let original = fs::read(&source).expect("original");
+                let mut record = AnalysisRecord::from_path(&source);
+                record.status = AnalysisStatus::Analyzed;
+                record.channels = 2;
+                record.sample_rate = 44_100;
+                record.length_in_samples = 4410;
+                record.bits_per_sample = 32;
+                record.overall_peak = 0.5;
+                let (options, _) = options(NormalizationMode::Peak);
+                let result = normalize(&record, &options);
+                assert_eq!(result.error(), Some("Non-finite decoded sample"));
+                assert_eq!(fs::read(&source).expect("retained"), original);
+                assert_eq!(file_names(&directory), ["source.wav"]);
+            }
+        }
     }
 
     #[test]

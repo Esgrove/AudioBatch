@@ -566,6 +566,27 @@ void PluginPresetTests::testPresetFiles()
         expectEquals(static_cast<int>(plugin_presets::listPresets(directory).size()), 2);
     }
 
+    beginTest("Strict CLI preset loading rejects damaged slots and nonempty invalid base64");
+    {
+        const TemporaryDirectory temporary;
+        const auto file = temporary.getChildFile("damaged.xml");
+        for (const auto* damaged :
+             {
+                 R"(<SLOT enabled="1"/>)",
+                 R"(<SLOT enabled="1" state="not base64!"><PLUGIN name="Effect" format="VST3"/></SLOT>)",
+             })
+        {
+            expect(file.replaceWithText(
+                utils::format(
+                    R"(<PLUGIN_CHAIN_PRESET version="1"><PLUGIN_CHAIN><SLOT enabled="1"><PLUGIN name="Kept" format="VST3"/></SLOT>{}</PLUGIN_CHAIN></PLUGIN_CHAIN_PRESET>)",
+                    damaged
+                )
+            ));
+            expect(plugin_presets::loadPreset(file).has_value());
+            expect(!plugin_presets::loadPreset(file, true).has_value());
+        }
+    }
+
     beginTest("Missing, malformed, and newer preset files are refused with a reason");
     {
         const TemporaryDirectory temporary;

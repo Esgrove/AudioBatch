@@ -282,6 +282,8 @@ audiobatch-rs process -p "/path/to/Master.json" -n --lufs -16 --force --delete "
 
 `--preset` / `-p` is required. Names resolve in the GUI's `chain-presets` folder.
 Only native Rust JSON presets are accepted, not the C++ application's XML presets.
+CLI loading rejects the whole preset if any slot description or nonempty base64 state is damaged,
+leaving sources and existing outputs unchanged rather than recovering a partial chain.
 Without input paths the current directory is processed.
 `--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output table|csv|json` match analysis.
 `--normalize` / `-n` optionally applies peak or LUFS normalization before the first enabled plugin,

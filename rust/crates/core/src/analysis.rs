@@ -241,6 +241,7 @@ fn measure_file(
         let Some(chunk) = decoder.next_chunk()? else {
             break;
         };
+        crate::decode::validate_finite_pcm(chunk)?;
         meter.push(chunk);
         on_decoded(&meter, decoder.position(), &info);
         if let Some(expected) = info.expected_frames.filter(|&frames| frames > 0) {

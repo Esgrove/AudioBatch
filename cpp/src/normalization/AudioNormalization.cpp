@@ -81,9 +81,12 @@ bool isAtTarget(const LinearGain gain, const int outputBitDepth)
     return std::abs(static_cast<double>(gain.value) - 1.0) <= atTargetToleranceSteps / fullScaleSteps;
 }
 
-/// Logs the failure and builds a failure result for the given file.
+/// Builds an explicitly cancelled result without error diagnostics, or logs and returns a genuine failure.
 AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
+    if (message == cancelledMessage || message == "Analysis was cancelled") {
+        return AudioNormalizationResult::cancelled(file);
+    }
     utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), message);
     return AudioNormalizationResult::failure(file, message);
 }

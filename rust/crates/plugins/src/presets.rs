@@ -236,6 +236,16 @@ impl PresetStore {
         load_preset_file(&path)
     }
 
+    /// Reads a named preset without discarding damaged slots or state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid names, missing, malformed, damaged, or newer presets.
+    pub fn load_strict(&self, name: &str) -> Result<ChainPreset, PresetError> {
+        let path = self.path_for(name).ok_or(PresetError::EmptyName)?;
+        load_preset_file_strict(&path)
+    }
+
     /// Deletes the named preset. Returns true when a file was removed.
     ///
     /// # Errors
@@ -276,6 +286,20 @@ pub fn sanitize_preset_name(name: &str) -> String {
 ///
 /// Returns an error when the file does not exist, cannot be parsed, or was saved by a newer version.
 pub fn load_preset_file(path: &Path) -> Result<ChainPreset, PresetError> {
+    load_preset_file_with_policy(path, false)
+}
+
+/// Reads every slot without GUI recovery, rejecting damaged descriptions or plugin state.
+///
+/// # Errors
+///
+/// Returns an error for missing, malformed, damaged, or newer presets.
+pub fn load_preset_file_strict(path: &Path) -> Result<ChainPreset, PresetError> {
+    load_preset_file_with_policy(path, true)
+}
+
+/// Applies the requested recovery policy before a preset can be used.
+fn load_preset_file_with_policy(path: &Path, strict: bool) -> Result<ChainPreset, PresetError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -300,6 +324,21 @@ pub fn load_preset_file(path: &Path) -> Result<ChainPreset, PresetError> {
             path: path.to_path_buf(),
             version: preset.version,
         });
+    }
+    if strict {
+        let value: serde_json::Value = serde_json::from_str(&text).map_err(|source| PresetError::Invalid {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        // Deserialize the raw slots directly, without the GUI's slot-skipping deserializer.
+        let slots: Vec<ChainSlot> = serde_json::from_value(
+            value.get("slots").cloned().unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|source| PresetError::Invalid {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        return Ok(ChainPreset { slots, ..preset });
     }
     Ok(preset)
 }
@@ -345,6 +384,31 @@ mod test_presets {
     /// Returns a store in a nested folder of the temporary directory, which the first save creates.
     fn store(directory: &TempDir) -> PresetStore {
         PresetStore::new(directory.path().join("data").join("chain-presets"))
+    }
+
+    #[test]
+    fn strict_loading_rejects_damaged_slots_and_state_without_gui_recovery() {
+        let folder = TempDir::new().expect("temp dir");
+        let store = PresetStore::new(folder.path().to_path_buf());
+        let chain = PluginChain {
+            slots: vec![slot("Kept", &[], true), slot("Damaged", &[1], true)],
+        };
+        for damage_state in [true, false] {
+            let path = store.save("Strict", &chain).expect("save");
+            let mut value = serde_json::to_value(ChainPreset::new("Strict".into(), &chain)).expect("json");
+            if damage_state {
+                value["slots"][1]["component_state"] = "not base64!".into();
+            } else {
+                value["slots"][1]["plugin"] = serde_json::Value::Null;
+            }
+            fs::write(&path, value.to_string()).expect("write");
+            assert_eq!(store.load("Strict").expect("GUI recovery").slots.len(), 1);
+            assert!(matches!(store.load_strict("Strict"), Err(PresetError::Invalid { .. })));
+            assert!(matches!(
+                load_preset_file_strict(&path),
+                Err(PresetError::Invalid { .. })
+            ));
+        }
     }
 
     #[test]

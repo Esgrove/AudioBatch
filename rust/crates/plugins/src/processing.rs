@@ -260,6 +260,7 @@ impl<'a> SourceBlocks<'a> {
             self.exhausted = true;
             return Ok(false);
         };
+        audiobatch_core::decode::validate_finite_pcm(chunk)?;
         self.pending.resize_with(chunk.len(), Vec::new);
         for (target, samples) in self.pending.iter_mut().zip(chunk) {
             target.clear();
@@ -1029,6 +1030,31 @@ mod test_process_file_failures {
         );
         assert_eq!(std::fs::read(&record.path).expect("source"), b"external");
         assert_eq!(std::fs::read(output).expect("output"), b"existing");
+    }
+
+    #[test]
+    fn nonfinite_source_fails_before_plugins_even_without_reanalysis() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for channel in 0..2 {
+                let directory = TempDir::new().expect("temp dir");
+                let source = directory.path().join("source.wav");
+                test_fixtures::write_nonfinite_wav(&source, channel, value);
+                let original = std::fs::read(&source).expect("original");
+                let mut record = analyze_file(&source, &|| false, &mut |_| {});
+                record.error = None;
+                record.error_message.clear();
+                record.status = audiobatch_core::AnalysisStatus::Analyzed;
+                record.channels = 2;
+                record.sample_rate = 44_100;
+                record.length_in_samples = 4410;
+                record.bits_per_sample = 32;
+                let chain = test_chain(&[(Kind::Gain, gain_state(0.0))]);
+                let result = process_file(&record, &deleting_options(), &chain, &|| false, &mut |_| {});
+                assert_eq!(result.error(), Some("Non-finite decoded sample"));
+                assert_eq!(std::fs::read(&source).expect("retained"), original);
+                assert_eq!(file_names(&directory), ["source.wav"]);
+            }
+        }
     }
 
     #[test]

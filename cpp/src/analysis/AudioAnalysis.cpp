@@ -136,16 +136,15 @@ double previewLinearGain(const Decibels gain)
 /// Applies the transient model only when requested, rejecting non-finite PCM rather than inventing loudness.
 bool applyPreviewGain(juce::AudioBuffer<float>& samples, const int frames, const std::optional<double> linearGain)
 {
-    if (!linearGain) {
-        return true;
-    }
     for (int channel = 0; channel < samples.getNumChannels(); ++channel) {
         for (int frame = 0; frame < frames; ++frame) {
             const auto sample = static_cast<double>(samples.getSample(channel, frame));
             if (!std::isfinite(sample)) {
                 return false;
             }
-            samples.setSample(channel, frame, static_cast<float>(std::clamp(sample * *linearGain, -1.0, 1.0)));
+            if (linearGain) {
+                samples.setSample(channel, frame, static_cast<float>(std::clamp(sample * *linearGain, -1.0, 1.0)));
+            }
         }
     }
     return true;
@@ -210,7 +209,9 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
         }
 
         if (!applyPreviewGain(readBuffer, framesThisBlock, linearGain)) {
-            return std::unexpected(MeasurementFailure {.message = "Non-finite decoded sample"});
+            return std::unexpected(
+                MeasurementFailure {.error = AnalysisError::unsupported, .message = "Non-finite decoded sample"}
+            );
         }
         if (const auto measured = measurement.push(readBuffer, 0, framesThisBlock); !measured) {
             return std::unexpected(

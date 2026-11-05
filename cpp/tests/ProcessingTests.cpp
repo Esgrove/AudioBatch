@@ -476,6 +476,40 @@ void ProcessingTests::runTest()
         expect(custom != written.properties.end() && custom->values[0] == "custom value");
     }
 
+    beginTest("Streaming plugin input rejects non-finite PCM even without source reanalysis");
+    for (const auto value :
+         {
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity(),
+         })
+    {
+        for (int channel = 0; channel < 2; ++channel) {
+            const TemporaryDirectory invalidDirectory;
+            const auto source = invalidDirectory.getChildFile("source.wav");
+            juce::AudioBuffer<float> samples(2, 4410);
+            samples.clear();
+            samples.setSample(channel, 20, value);
+            expect(writeFloatWav(source, samples));
+            auto record = AudioAnalysisRecord::fromFile(source);
+            record.status = AudioAnalysisStatus::analyzed;
+            record.channels = 2;
+            record.sampleRate = 44'100;
+            record.lengthInSamples = 4410;
+            record.bitsPerSample = 32;
+            juce::MemoryBlock original;
+            expect(source.loadFileAsData(original));
+            TestPlugin plugin({.gain = 0.0f});
+            const auto result = processFileWithPlugins(record, makeOptions({&plugin}), chainOf(plugin));
+            expect(result.hasError());
+            expect(outcomeError(result.outcome).contains("Non-finite"), outcomeError(result.outcome));
+            juce::MemoryBlock retained;
+            expect(source.loadFileAsData(retained));
+            expect(retained == original);
+            expect(!getProcessingOutputFile(source).exists());
+        }
+    }
+
     beginTest("A cancelled run leaves the source untouched and removes its temporary files");
     {
         const TemporaryDirectory cancelDirectory;

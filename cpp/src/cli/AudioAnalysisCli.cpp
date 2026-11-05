@@ -146,7 +146,8 @@ std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
         progress.setMessage(file.getFileName());
     });
     coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
-        {
+        const auto* failed = std::get_if<OperationFailed>(&result.outcome);
+        if (failed == nullptr || !failed->cancelled) {
             const std::scoped_lock lock(resultsMutex);
             results.insert_or_assign(result.file.getFullPathName(), result);
         }
@@ -251,7 +252,7 @@ int collectOperationRecords(
             continue;
         }
         const auto found = operations.find(source.fullPath);
-        if (processing && found == operations.end() && utils::isCancellationRequested(isInterrupted)) {
+        if (found == operations.end() && utils::isCancellationRequested(isInterrupted)) {
             continue;
         }
         const auto operation = found != operations.end()

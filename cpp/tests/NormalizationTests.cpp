@@ -438,6 +438,40 @@ void NormalizationTests::runFileTests()
 {
     const TemporaryDirectory directory;
 
+    beginTest("Streaming normalization rejects non-finite PCM without publishing output");
+    for (const auto value :
+         {
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity(),
+         })
+    {
+        for (int channel = 0; channel < 2; ++channel) {
+            const TemporaryDirectory invalidDirectory;
+            const auto source = invalidDirectory.getChildFile("source.wav");
+            juce::AudioBuffer<float> samples(2, 4410);
+            samples.clear();
+            samples.setSample(channel, 20, value);
+            expect(writeFloatWav(source, samples));
+            auto record = AudioAnalysisRecord::fromFile(source);
+            record.status = AudioAnalysisStatus::analyzed;
+            record.channels = 2;
+            record.sampleRate = 44'100;
+            record.lengthInSamples = 4410;
+            record.bitsPerSample = 32;
+            record.overallPeak = 0.5f;
+            juce::MemoryBlock original;
+            expect(source.loadFileAsData(original));
+            const auto result = normalizeFile(record, testNormalizationOptions());
+            expect(result.hasError());
+            expect(outcomeError(result.outcome).contains("invalid samples"), outcomeError(result.outcome));
+            juce::MemoryBlock retained;
+            expect(source.loadFileAsData(retained));
+            expect(retained == original);
+            expect(!getNormalizationOutputFile(source).exists());
+        }
+    }
+
     beginTest("No-op normalization logs the action before unpadded time and filename");
     {
         const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "log_noop.aif");

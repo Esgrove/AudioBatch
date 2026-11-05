@@ -137,6 +137,27 @@ void NormalizeCoordinatorTests::runTest()
         expect(converted.existsAsFile());
     }
 
+    beginTest("A genuine source failure racing interruption is not reclassified as cancellation");
+    {
+        const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "failed_during_stop.wav");
+        const auto record = analyzeFile(source);
+        NormalizeCoordinator coordinator(1);
+        juce::WaitableEvent completed;
+        bool genuineFailure = false;
+        coordinator.setStartingCallback([&](const juce::File& file, int) {
+            static_cast<void>(file.deleteFile());
+            coordinator.requestStop();
+        });
+        coordinator.setResultCallback([&](const AudioNormalizationResult& result, int) {
+            const auto* failed = std::get_if<OperationFailed>(&result.outcome);
+            genuineFailure = failed != nullptr && !failed->cancelled && failed->error == "File does not exist";
+        });
+        coordinator.setCompletionCallback([&](int, int) { completed.signal(); });
+        expectEquals(coordinator.start({record}, testNormalizationOptions()), 1);
+        expect(completed.wait(5000));
+        expect(genuineFailure);
+    }
+
     beginTest("A run without files completes at once with no files");
     {
         const auto run = runToCompletion({}, testNormalizationOptions(), 1);

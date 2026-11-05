@@ -377,6 +377,14 @@ std::expected<void, juce::String> AudioMeasurement::push(
         measurement.error = "Invalid audio measurement chunk";
         return std::unexpected(measurement.error);
     }
+    for (int channel = 0; channel < samples.getNumChannels(); ++channel) {
+        const auto plane = std::span(samples.getReadPointer(channel), static_cast<std::size_t>(samples.getNumSamples()))
+                               .subspan(static_cast<std::size_t>(firstSample), static_cast<std::size_t>(frames));
+        if (!std::ranges::all_of(plane, [](const float sample) { return std::isfinite(sample); })) {
+            measurement.error = "Non-finite decoded sample";
+            return std::unexpected(measurement.error);
+        }
+    }
     const auto interval = measurement.partial.getNumSamples();
     for (int offset = 0; offset < frames;) {
         const auto take = std::min(interval - measurement.partialFrames, frames - offset);

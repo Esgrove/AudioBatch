@@ -48,7 +48,10 @@ constexpr auto presetFolderName {"Chain Presets"};
 [[nodiscard]] juce::MemoryBlock decodeState(const juce::String& stateBase64);
 [[nodiscard]] juce::String sanitizePresetName(const juce::String& name);
 
-[[nodiscard]] std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::File& file);
+[[nodiscard]] std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(
+    const juce::File& file,
+    bool strict = false
+);
 [[nodiscard]] std::expected<juce::File, juce::String> savePreset(
     const juce::File& directory,
     const juce::String& name,

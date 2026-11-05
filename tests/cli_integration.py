@@ -245,6 +245,50 @@ class CliIntegration(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return name if named else path
 
+    def test_nonfinite_pcm_fails_cleanly_and_reuses_cached_failure(self) -> None:
+        """NaN and both infinities in either channel must never publish successful metrics or rendered audio."""
+        for label, value in [("nan", float("nan")), ("positive-inf", float("inf")), ("negative-inf", -float("inf"))]:
+            for channel in range(2):
+                with self.subTest(value=label, channel=channel):
+                    source = self.audio / f"{label}-{channel}.wav"
+                    samples = [0.25, -0.25] * 4410
+                    samples[20 + channel] = value
+                    payload = struct.pack(f"<{len(samples)}f", *samples)
+                    source.write_bytes(
+                        struct.pack(
+                            "<4sI4s4sIHHIIHH4sI",
+                            b"RIFF",
+                            len(payload) + 36,
+                            b"WAVE",
+                            b"fmt ",
+                            16,
+                            3,
+                            2,
+                            44100,
+                            44100 * 8,
+                            8,
+                            32,
+                            b"data",
+                            len(payload),
+                        )
+                        + payload
+                    )
+                    original = source.read_bytes()
+                    first = self.analyze(source, expected=2)[0]
+                    assert first["status"] == "failed"
+                    assert "Non-finite" in first["error"]
+                    assert "NaN" not in json.dumps(first)
+                    assert "Infinity" not in json.dumps(first)
+                    self.mark_cache_timestamp(source)
+                    cached = self.analyze(source, expected=2)[0]
+                    assert cached["status"] == "failed"
+                    assert self.database_row(source)["updated_at_ms"] == 1
+                    for output_format in ["json", "csv", "table"]:
+                        result = self.invoke("-nFD", "-o", output_format, source, expected=2)
+                        assert "Non-finite" in result.stderr
+                        assert source.read_bytes() == original
+                        assert not source.with_suffix(".aif").exists()
+
     def test_process_matches_independent_plugin_outputs(self) -> None:
         """Actual executable rendering restores native preset state, folds mono, and compensates latency exactly."""
         cases = [
@@ -334,6 +378,41 @@ class CliIntegration(unittest.TestCase):
         assert broken.exists()
         assert "Not normalized before the plugins" in result.stderr
 
+    def test_process_rejects_damaged_slots_without_touching_files(self) -> None:
+        """Never render a recovered partial chain, even with force and source deletion requested."""
+        source = self.copy_fixture("sine_mono_44100_16.wav")
+        output = source.with_suffix(".aif")
+        output.write_bytes(b"existing output must survive")
+        original = source.read_bytes()
+        for damage in ["description", "state"]:
+            with self.subTest(damage=damage):
+                preset = Path(self.plugin_preset())
+                if preset.suffix == ".json":
+                    value = json.loads(preset.read_text())
+                    damaged = json.loads(json.dumps(value["slots"][0]))
+                    if damage == "description":
+                        damaged.pop("plugin")
+                    else:
+                        damaged["component_state"] = "not base64!"
+                    value["slots"].append(damaged)
+                    preset.write_text(json.dumps(value))
+                else:
+                    text = preset.read_text()
+                    damaged = (
+                        '<SLOT enabled="1"/>'
+                        if damage == "description"
+                        else (text[text.index("<SLOT ") : text.index("</SLOT>") + len("</SLOT>")])
+                    )
+                    if damage == "state":
+                        start = damaged.index('state="') + len('state="')
+                        end = damaged.index('"', start)
+                        damaged = damaged[:start] + "not base64!" + damaged[end:]
+                    preset.write_text(text.replace("</PLUGIN_CHAIN>", damaged + "</PLUGIN_CHAIN>"))
+                result = self.invoke("process", "-p", preset, "-FD", "-o", "json", source, expected=1)
+                assert "preset" in result.stderr.lower()
+                assert source.read_bytes() == original
+                assert output.read_bytes() == b"existing output must survive"
+
     def test_process_validation_and_output_safety(self) -> None:
         """Invalid arguments/presets do not modify sources, and force/delete do not require normalization."""
         source = self.copy_fixture()
@@ -420,7 +499,7 @@ class CliIntegration(unittest.TestCase):
                     for actual, reference in zip(record["dcOffsets"], expected["dcOffsets"], strict=True)
                 )
                 row = self.database_row(source)
-                assert row["analysis_version"] == 14
+                assert row["analysis_version"] == 15
                 assert (row["stereo_correlation"] is None) == (expected["stereoCorrelation"] is None)
                 cached = self.analyze(source)[0]
                 assert cached | {"status": record["status"]} == record
@@ -595,8 +674,16 @@ class CliIntegration(unittest.TestCase):
             audio.write(struct.pack("<hh", 16384, -16384))
         return source
 
-    def interrupt_run(
-        self, source: Path, *, normalize: bool, twice: bool = False, preset: Path | str | None = None
+    def interrupt_run(  # noqa: PLR0913 - Independent subprocess controls keep each cancellation boundary explicit.
+        self,
+        source: Path,
+        *,
+        normalize: bool,
+        twice: bool = False,
+        preset: Path | str | None = None,
+        additional: tuple[Path, ...] = (),
+        output_format: str = "json",
+        ready_for: Path | None = None,
     ) -> tuple[str, str]:
         """Interrupt a live isolated child at a file-system readiness boundary, with bounded cleanup."""
         environment = os.environ.copy()
@@ -604,10 +691,11 @@ class CliIntegration(unittest.TestCase):
         command = [str(self.executable)]
         if preset is not None:
             command += ["process", "--preset", str(preset), "--delete"]
-        command += ["--jobs", "1", "--output", "json"]
+        command += ["--jobs", "1", "--output", output_format, "--sort", "name"]
         if normalize:
             command += ["--normalize", "--delete", "--peak", "-1"]
-        command.append(str(source))
+        command.extend(str(path) for path in (source, *additional))
+        baseline = set(self.audio.rglob("*"))
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         with subprocess.Popen(  # noqa: S603
             command,
@@ -635,7 +723,16 @@ class CliIntegration(unittest.TestCase):
             try:
                 while child.poll() is None:
                     ready = (
-                        any(path != source for path in self.audio.iterdir())
+                        (
+                            any(path not in baseline for path in self.audio.rglob("*"))
+                            and (
+                                ready_for is None
+                                or any(
+                                    ready_for.stem in path.name and path not in baseline
+                                    for path in self.audio.rglob("*")
+                                )
+                            )
+                        )
                         if normalize or preset is not None
                         else any(Path(file.path) == source for file in psutil.Process(child.pid).open_files())
                     )
@@ -690,6 +787,39 @@ class CliIntegration(unittest.TestCase):
         source = self.long_source()
         self.interrupt_run(source, normalize=False, twice=True)
         assert source.exists()
+
+    def test_ctrl_c_multifile_normalization_reports_only_completed_work(self) -> None:
+        """Interrupted JSON and CSV keep committed outputs and genuine failures, never cancelled/unstarted rows."""
+        for output_format in ["json", "csv"]:
+            with self.subTest(output_format=output_format):
+                folder = self.audio / output_format
+                folder.mkdir()
+                committed = self.copy_fixture(destination=f"{output_format}/a-committed.wav")
+                failure = self.copy_fixture("broken.wav", f"{output_format}/b-failed.wav")
+                active = self.long_source()
+                active.rename(folder / "c-active.wav")
+                active = folder / "c-active.wav"
+                unstarted = self.copy_fixture(destination=f"{output_format}/d-unstarted.wav")
+                self.analyze(committed, failure, active, unstarted, expected=2)
+                stdout, stderr = self.interrupt_run(
+                    committed,
+                    normalize=True,
+                    additional=(failure, active, unstarted),
+                    output_format=output_format,
+                    ready_for=active,
+                )
+                rows = json.loads(stdout) if output_format == "json" else list(csv.DictReader(io.StringIO(stdout)))
+                assert {Path(row["path"]).name for row in rows} == {"a-committed.aif", "b-failed.wav"}
+                assert {row["status"] for row in rows} == {"analyzed", "failed"}
+                assert "Analysis failed" in stderr
+                assert "b-failed.wav" in stderr
+                assert "Normalization failed" not in stderr
+                assert "not processed" not in stderr
+                assert not committed.exists()
+                assert committed.with_suffix(".aif").exists()
+                assert active.exists()
+                assert unstarted.exists()
+                assert set(folder.iterdir()) == {committed.with_suffix(".aif"), failure, active, unstarted}
 
     def test_ctrl_c_normalization_keeps_original_and_removes_temporary_output(self) -> None:
         """Interrupt only after rendering starts, proving temporary output cleanup rather than startup exit."""
