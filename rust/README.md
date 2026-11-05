@@ -631,12 +631,26 @@ and the readers of the waveform, overload, and spectrogram blobs in the cache.
 ./miri.sh
 ```
 
-Miri cannot open files, load plugin bundles, or run SQLite and audio devices,
-so tests that need them are marked `#[cfg_attr(miri, ignore = "reason")]`.
-So are the few tests that fill the largest overviews or bucket limits, which take minutes under Miri.
-The VST3 tests share a UI thread that runs until the test process exits,
-so `miri.sh` sets `-Zmiri-ignore-leaks` in `MIRIFLAGS`.
-The `miri` job in CI runs it on macOS.
+The selected tests currently contain 189 cases, of which 173 run and 16 are explicitly ignored under Miri.
+`vst3-host` runs 68 of 76 tests, Serato runs 83 of 87, the core blob selection runs 22 of 26,
+and the test plugin has no standalone unit tests but supplies the in-process COM implementations exercised by the host.
+The 16 ignores are eight host tests needing native bundles or file-system access under Miri's default isolation,
+four slow Serato overview and colouring tests, and four slow waveform and overload builder tests.
+Another 452 core tests are excluded by the script's filter, not Miri ignores.
+Nextest reports filtered tests as skipped on each invocation, so its per-command skipped counts must not be summed.
+Miri supports some file-system access when isolation is disabled, but this script keeps isolation enabled.
+Native library loading, native editor windows, SQLite, physical devices, and third-party plugin code are not covered.
+
+The covered unsafe host paths include COM host objects, parameter queues, memory streams,
+instance lifecycle and state, processing buffers, and UI-bound ownership with in-process fake plugins.
+A clean run is bounded evidence for these tests and Miri's model, not proof that all plugin hosting is free of UB.
+The script runs 138 cases with leak and thread-exit checking enabled.
+Only the 35 cases starting the process-lifetime test UI thread get `-Zmiri-ignore-leaks`,
+which disables allocation leak detection and outstanding-thread checks but leaves pointer and aliasing checks enabled.
+The exception covers the instance tests, four processor tests, three dispatcher tests, and the UiBound test.
+The processor's buffer-binding-only test and other host-object tests retain leak checking.
+Caller-supplied `MIRIFLAGS` apply to all invocations, so additional user flags can weaken those defaults.
+The `miri` job in CI runs the same script on macOS.
 
 ## Fuzzing
 
@@ -650,11 +664,59 @@ It is its own workspace, excluded from the main one, because the targets build o
 - `cache_blobs` reads the input as a waveform, overload, spectrogram, and Serato Overview blob,
   and requires every accepted blob to be written back unchanged.
 - `decode_audio` writes the input to a file with an extension the first byte selects, and decodes it.
-  Inputs over 256 KiB are skipped, and decoding stops after about 20 seconds of audio.
+  File payloads over 256 KiB are skipped.
+  After opening, it admits at most eight channels and 192 kHz and requests at most 256 chunks
+  or 65,536 frames per pass, with at most one packet of frame-bound overshoot, before trying one seek and another pass.
+  Ordinary open, decode, and seek errors are accepted outcomes, not fuzz failures.
 
 The seed corpus of each target is in `fuzz/corpus/<target>/`.
 `fuzz.sh` takes the same options as `cpp/fuzz.sh`.
 New inputs go to `fuzz/scratch/` and crashing inputs to `fuzz/artifacts/`, so the committed corpus never changes.
+Replay uses `-runs=0` and fuzzing puts the scratch directory first, the only corpus directory libFuzzer writes.
+
+A small compressed file can declare huge dimensions or packets, and the decoder allocates during opening
+and within individual chunk calls, before the harness can inspect the results.
+Both replay and fuzzing therefore use a five-second per-input timeout,
+a 128 MiB single-allocation reporting threshold, and a 512 MiB sampled RSS threshold.
+These are libFuzzer watchdogs, not a hard OS memory sandbox or an exact maximum allocation footprint.
+Timeout or memory-limit violations remain findings with saved inputs, rather than silently discarded decoder errors.
+The cache blob readers independently validate dimensions and payload lengths before allocating.
+Serato output scales with the bounded payload, and CLI input is separately limited to 4096 bytes.
+
+### Exact malformed WAV and CAF arithmetic regressions
+
+Symphonia 0.6.1 has two independently reproduced checked arithmetic panics during decoder opening:
+
+- `symphonia-format-riff` computes PCM block alignment in `u16` at `src/wave/chunks.rs:100`
+  before validating the channel count.
+  The `wav-block-align-overflow` input reproduces that multiplication overflow.
+- `symphonia-format-caf` computes `bytes_per_packet * 8` in `u32` at `src/demuxer.rs:389`.
+  The `caf-bits-per-coded-sample-overflow` input declares 3,758,096,130 bytes per packet
+  and reproduces the multiplication overflow before a decoder can reject the inconsistent PCM parameters.
+
+Overflow checks stay enabled for all fuzz dependencies.
+Only those two byte-exact committed inputs, including their extension selector,
+call the actual `analyze_file_catching_panics` worker entry point instead of the raw decoder.
+The hook permits only the corresponding dependency location and multiplication-overflow payload inside that call.
+Each replay requires exactly one verified panic and a failed record with `AnalysisError::Panicked`.
+Mutations, unexpected locations, unrelated panics,
+and these same panics outside the production call still reach libFuzzer's aborting hook.
+A dependency update or a regression that stops reproducing fails closed and requires reviewing the allowance.
+
+Run `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions` to check both caught failures,
+both raw decoder aborts, mutation rejection, wrong-location rejection inside production,
+unrelated panic propagation, and ordinary decoder errors in isolated subprocesses.
+CI runs this with overflow checking before corpus replay.
+These third-party arithmetic defects remain unfixed.
+The verified analysis entry point fails the affected file without unwinding out of its worker.
+The normalization and processing coordinators also have catch-unwind boundaries,
+but these tests do not establish their behavior or the safety of plugin destructors during unwinding.
+Direct decoder callers, including preview decoding, do not acquire panic protection from this harness.
+A checked-arithmetic preview decoder panic can terminate its decode thread.
+Catch-unwind cannot contain aborts, allocation exhaustion, or hangs.
+Unchecked release arithmetic is not evidence of safety.
+Fuzz mutations may rediscover the same unfixed upstream defects and must remain visible findings,
+not be silently treated as ordinary decoder errors or evidence of a clean fuzz campaign.
 
 ```shell
 # Build the targets, replay the corpus, and fuzz each target for 60 seconds

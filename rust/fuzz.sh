@@ -132,13 +132,19 @@ for target in "${TARGETS[@]}"; do
     fi
 done
 
+# File size does not bound a hostile decoder's allocations or time inside one next_chunk call.
+# libFuzzer treats resource exhaustion as a finding and preserves its input in artifacts/.
+# The allocation hook reports a single allocation of at least 128 MiB.
+# The RSS monitor reports resident memory above 512 MiB, sampled by libFuzzer rather than a hard OS cap.
+RESOURCE_LIMITS=(-timeout=5 -malloc_limit_mb=128 -rss_limit_mb=512 -max_len=262145)
+
 mkdir -p artifacts
 if [ "$MODE" != fuzz ]; then
     for target in "${TARGETS[@]}"; do
         print_magenta "Replaying the committed corpus of $target..."
         set_corpus_directories "$target"
         # With -runs=0, libFuzzer runs every input of the directories once and writes nothing to them.
-        "$TARGET_DIRECTORY/$target" -runs=0 -artifact_prefix="artifacts/$target-" "${CORPUS[@]}"
+        "$TARGET_DIRECTORY/$target" "${RESOURCE_LIMITS[@]}" -runs=0 -artifact_prefix="artifacts/$target-" "${CORPUS[@]}"
     done
 fi
 if [ "$MODE" != replay ]; then
@@ -147,7 +153,7 @@ if [ "$MODE" != replay ]; then
         mkdir -p "scratch/$target"
         set_corpus_directories "$target"
         # libFuzzer adds new inputs only to the first directory, so the committed seeds stay unchanged.
-        "$TARGET_DIRECTORY/$target" -max_total_time="$SECONDS_PER_TARGET" -artifact_prefix="artifacts/$target-" \
+        "$TARGET_DIRECTORY/$target" "${RESOURCE_LIMITS[@]}" -max_total_time="$SECONDS_PER_TARGET" -artifact_prefix="artifacts/$target-" \
             "scratch/$target" "${CORPUS[@]}"
     done
 fi

@@ -534,6 +534,13 @@ Mention the C++ application only when it matters for the implementation:
   `serato_tags` and `cli_arguments` share their input layout with the C++ harnesses in `../cpp/tests/fuzz/`,
   and `fuzz.sh` replays the C++ corpus in place, so keep the layouts in step.
   Add each input that found a bug to `fuzz/corpus/<target>/`.
+  Keep overflow checking enabled, and do not suppress unexpected panics.
+  Only the byte-exact committed Symphonia WAV and CAF regressions may unwind inside the real production analysis boundary,
+  each restricted to its verified dependency location and multiplication-overflow payload.
+  Mutations and other unexpected panics remain findings, including rediscoveries of those upstream defects.
+  Run `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions` after changing those allowances.
+  `fuzz.sh` applies timeout, single-allocation, and sampled RSS watchdogs during replay and fuzzing,
+  because bounded file bytes and decoded frame counts do not bound allocations within a decoder call.
   The targets use only public library interfaces, so keep any item made public for them as narrow as possible.
   Run `cargo clippy --manifest-path fuzz/Cargo.toml --all-targets` for them,
   since the workspace clippy run does not include the excluded crate, and `format.sh` formats it.
