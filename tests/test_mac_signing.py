@@ -180,7 +180,8 @@ fi
         assert "if(NOT APPLE)\n        return()\n    endif()" in module
         assert "XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO" in module
         assert "XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO" in module
-        assert "${root}/assets/macos.entitlements" in module
+        assert "${target}Sign ALL" in module
+        assert "DEPENDS ${target}" in module
 
     def test_nonmac_signing_is_rejected(self) -> None:
         """The shared helper never invokes macOS tools on Windows."""
@@ -217,7 +218,8 @@ fi
                 project.mkdir()
                 (project / "CMakeLists.txt").write_text(
                     "cmake_minimum_required(VERSION 3.24)\nproject(SigningContract C)\n"
-                    'add_executable(Contract MACOSX_BUNDLE "../main.c")\n'
+                    'add_executable(Contract MACOSX_BUNDLE "../main.c" resource.txt)\n'
+                    "set_source_files_properties(resource.txt PROPERTIES MACOSX_PACKAGE_LOCATION Resources)\n"
                     "add_custom_command(TARGET Contract POST_BUILD\n"
                     ' COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:Contract>/Contents/Resources"\n'
                     ' COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon_mac.icns"\n'
@@ -225,10 +227,18 @@ fi
                     'include("../cpp/cmake/MacSigning.cmake")\naudiobatch_sign_mac_app(Contract)\n',
                     encoding="utf-8",
                 )
+                resource = project / "resource.txt"
+                resource.write_text("original resource", encoding="utf-8")
                 build = project / "build"
                 self.run_native(["cmake", "-S", str(project), "-B", str(build), "-G", generator])
                 self.run_native(["cmake", "--build", str(build), "--config", "Debug"])
                 bundle = build / ("Debug/Contract.app" if generator == "Xcode" else "Contract.app")
+                self.inspect_signature(bundle)
+                resource.write_text("rebuilt resource with different content", encoding="utf-8")
+                rebuilt = self.run_native(["cmake", "--build", str(build), "--config", "Debug"])
+                assert (bundle / "Contents/Resources/resource.txt").read_text() == resource.read_text()
+                if generator == "Ninja":
+                    assert "Linking" not in rebuilt.stdout, "Resource rebuild must not need a relink"
                 self.inspect_signature(bundle)
                 (bundle / "Contents/Resources/icon_mac.icns").write_bytes(b"changed resource")
                 verification = self.run_native(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=False)
