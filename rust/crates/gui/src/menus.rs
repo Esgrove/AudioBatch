@@ -671,6 +671,13 @@ mod test_preview_menus {
             assert!(bound(&SelectAll, primary!("a")));
             assert!(bound(&AddFolder, primary!("shift-o")));
             assert!(bound(&StopPlayback, "escape"));
+            let comma = Keystroke::parse(primary!(",")).expect("valid shortcut");
+            assert!(
+                bindings
+                    .bindings()
+                    .all(|binding| binding.match_keystrokes(std::slice::from_ref(&comma)) != Some(false)),
+                "primary-comma is not bound, Audio Settings uses primary-P"
+            );
         });
     }
 

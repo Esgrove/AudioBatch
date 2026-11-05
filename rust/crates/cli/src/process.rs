@@ -221,3 +221,88 @@ fn ensure_enabled_plugins(chain: &audiobatch_plugins::PluginChain) -> Result<()>
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod test_process_preset {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    use audiobatch_plugins::{ChainSlot, PluginChain, PluginDescription};
+    use clap::Parser;
+    use tempfile::TempDir;
+
+    use crate::args::{CliArgs, CliCommand};
+
+    /// Returns an effect description that is never loaded.
+    fn description() -> PluginDescription {
+        PluginDescription {
+            name: "Effect".to_owned(),
+            vendor: "Vendor".to_owned(),
+            version: "1.0".to_owned(),
+            category: "Fx".to_owned(),
+            class_id: vst3_host::ClassId([7; 16]),
+            sdk_version: "VST 3.8.0".to_owned(),
+            bundle: PathBuf::from("/plugins/Effect.vst3"),
+            bundle_modified_ms: 0,
+            is_instrument: false,
+            main_input_channels: Some(2),
+            main_output_channels: Some(2),
+        }
+    }
+
+    /// Parses `process` arguments as the binary does.
+    fn process_args(arguments: &[&str]) -> ProcessArgs {
+        let args = CliArgs::try_parse_from(["audiobatch-rs", "process"].iter().chain(arguments).copied())
+            .expect("arguments parse");
+        match args.command {
+            Some(CliCommand::Process(process)) => process,
+            _ => panic!("process command"),
+        }
+    }
+
+    #[test]
+    fn preset_values_with_a_separator_or_json_extension_are_files() {
+        assert!(is_preset_path("presets/Master"));
+        assert!(is_preset_path("presets\\Master"));
+        assert!(is_preset_path("Master.json"));
+        assert!(is_preset_path("Master.JSON"));
+        assert!(!is_preset_path("Master"));
+        assert!(!is_preset_path("Master.xml"));
+    }
+
+    #[test]
+    fn a_chain_without_enabled_plugins_is_rejected_before_loading() {
+        let mut slot = ChainSlot::new(description());
+        assert!(
+            ensure_enabled_plugins(&PluginChain {
+                slots: vec![slot.clone()]
+            })
+            .is_ok()
+        );
+        slot.enabled = false;
+        let error = ensure_enabled_plugins(&PluginChain { slots: vec![slot] }).expect_err("all bypassed");
+        assert_eq!(error.to_string(), "The plugin chain has no enabled plugins");
+        assert!(ensure_enabled_plugins(&PluginChain::default()).is_err());
+    }
+
+    #[test]
+    fn a_missing_preset_file_fails_before_touching_inputs() {
+        let directory = TempDir::new().expect("temp dir");
+        let source = directory.path().join("song.wav");
+        std::fs::copy(test_fixtures::fixture("sine_stereo_44100_16.wav"), &source).expect("copies fixture");
+        let preset = directory.path().join("Missing.json");
+        let args = process_args(&[
+            "-p",
+            preset.to_str().expect("utf-8 path"),
+            source.to_str().expect("utf-8 path"),
+        ]);
+        let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
+        let dispose: FileDisposer = Arc::new(|path: &Path| std::fs::remove_file(path).is_ok());
+        let (mut output, mut log) = (Vec::new(), Vec::new());
+        assert!(run_process(&args, cache, dispose, &mut output, &mut log, &|| false).is_err());
+        assert!(source.exists());
+        assert!(!directory.path().join("song.aif").exists());
+        assert_eq!(output, [] as [u8; 0]);
+    }
+}

@@ -1504,14 +1504,7 @@ impl TableDelegate for ResultsDelegate {
         let status_tooltip = row
             .filter(|_| key == ColumnKey::Status)
             .and_then(ResultRow::status_tooltip)
-            .or_else(|| {
-                let record = row?.ready_record()?;
-                match key {
-                    ColumnKey::Clips => Some(audiobatch_core::format::format_clip_counts(&record.signal_metrics)),
-                    ColumnKey::Dc => Some(audiobatch_core::format::format_dc_offsets(&record.signal_metrics)),
-                    _ => None,
-                }
-            });
+            .or_else(|| channel_tooltip(key, row?.ready_record()?));
         let cell = match status_tooltip {
             Some(message) => cell.tooltip(tooltip(message)),
             None => cell,
@@ -1725,6 +1718,15 @@ const fn column_id(key: ColumnKey) -> &'static str {
         ColumnKey::Correlation => "correlation",
         ColumnKey::Gain => "custom_gain",
         ColumnKey::Status => "status",
+    }
+}
+
+/// Returns the per-channel breakdown that the compact Clips and DC cells show as their tooltip.
+fn channel_tooltip(key: ColumnKey, record: &AnalysisRecord) -> Option<String> {
+    match key {
+        ColumnKey::Clips => Some(audiobatch_core::format::format_clip_counts(&record.signal_metrics)),
+        ColumnKey::Dc => Some(audiobatch_core::format::format_dc_offsets(&record.signal_metrics)),
+        _ => None,
     }
 }
 
@@ -2533,6 +2535,23 @@ mod test_column_visibility_and_sort {
             .filter_map(|index| delegate.row(index))
             .map(|row| row.file_name.to_string())
             .collect()
+    }
+
+    #[test]
+    fn clips_and_dc_cells_explain_every_channel_in_their_tooltip() {
+        let mut source = record("clipped", 1.0, -9.0);
+        source.signal_metrics.clip_counts = vec![3, 0];
+        source.signal_metrics.dc_offsets = vec![0.01, -0.02];
+        assert_eq!(
+            channel_tooltip(ColumnKey::Clips, &source).as_deref(),
+            Some("Ch 1: 3, Ch 2: 0")
+        );
+        assert_eq!(
+            channel_tooltip(ColumnKey::Dc, &source).as_deref(),
+            Some("Ch 1: +1.0000%, Ch 2: -2.0000%")
+        );
+        assert_eq!(channel_tooltip(ColumnKey::Plr, &source), None);
+        assert_eq!(level_text(&source, ColumnKey::Clips), "3");
     }
 
     #[test]

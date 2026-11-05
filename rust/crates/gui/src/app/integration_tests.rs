@@ -362,6 +362,48 @@ fn integration_audio_settings_opens_without_audio_hardware(cx: &mut TestAppConte
     });
 }
 
+/// Delivers the shared primary-A and primary-P key events through the installed bindings to the root handlers.
+#[gpui_kit::test]
+async fn integration_primary_shortcuts_select_all_and_open_settings(cx: &mut TestAppContext) {
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    let workflow = Workflow::new(cx);
+    let first = workflow.copy("sine_stereo_44100_16.wav", "first.wav");
+    let second = workflow.copy("sine_mono_44100_16.wav", "second.wav");
+    workflow.add(vec![first.clone(), second.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.focus(cx);
+    workflow.menu_key(&format!("{primary}-a"), cx);
+    cx.read(|cx| {
+        let mut selected = workflow.view.read(cx).selected_paths(cx);
+        selected.sort();
+        let mut expected = vec![first, second];
+        expected.sort();
+        assert_eq!(selected, expected);
+    });
+    workflow.focus(cx);
+    workflow.menu_key(&format!("{primary}-p"), cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
+}
+
+/// Hides Path once when saved column choices predate the Folder column, then keeps the migrated revision.
+#[gpui_kit::test]
+fn integration_old_column_choices_hide_path_once(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let settings_path = workflow.paths.data().join(crate::settings::SETTINGS_FILE_NAME);
+    fs::create_dir_all(workflow.paths.data()).expect("create isolated data directory");
+    fs::write(&settings_path, r#"{"hidden_columns": ["peak_left"]}"#)
+        .expect("write settings saved before the Folder column");
+    let (_, view) = Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&workflow.directory))), cx);
+    cx.read(|cx| {
+        let view = view.read(cx);
+        let delegate = view.table.read(cx).delegate();
+        assert!(!delegate.is_column_visible(crate::results::ColumnKey::Path));
+        assert!(!delegate.is_column_visible(crate::results::ColumnKey::PeakLeft));
+        assert!(delegate.is_column_visible(crate::results::ColumnKey::Folder));
+        assert_eq!(view.settings.columns_revision, crate::settings::COLUMNS_REVISION);
+    });
+}
+
 /// Opens copied valid and broken inputs through the file picker and waits for real workers to reach idle.
 #[gpui_kit::test]
 async fn integration_open_valid_and_broken_files_reaches_idle(cx: &mut TestAppContext) {
