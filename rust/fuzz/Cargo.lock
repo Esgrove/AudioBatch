@@ -111,6 +111,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "unicode-width",
+ "vst3-host",
 ]
 
 [[package]]
@@ -123,6 +124,8 @@ dependencies = [
  "fearless_simd_macros",
  "jiff",
  "lofty",
+ "objc2-audio-toolbox",
+ "objc2-core-audio-types",
  "rayon",
  "realfft",
  "rusqlite",
@@ -978,6 +981,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
 dependencies = [
  "objc2-encode",
+]
+
+[[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6948501a91121d6399b79abaa33a8aa4ea7857fe019f341b8c23ad6e81b79b08"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2",
+ "objc2-core-audio-types",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-core-audio-types"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a89f2ec274a0cf4a32642b2991e8b351a404d290da87bb6a9a9d8632490bd1c"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2",
 ]
 
 [[package]]

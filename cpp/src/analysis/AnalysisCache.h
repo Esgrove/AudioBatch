@@ -96,7 +96,7 @@ private:
     void closeUnlocked();
 
     /// Raised when the analysis changed, so cached results of the older analysis are analyzed again.
-    static constexpr int analysisVersion {15};
+    static constexpr int analysisVersion {16};
     /// Raised when waveform detail or source-version rules change, so older peaks are generated again.
     static constexpr int waveformVersion {3};
 

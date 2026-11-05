@@ -40,7 +40,7 @@ fn current_cpp_schema_migrates_only_known_successes_and_preserves_gain_and_tags(
         cache.get_serato_overview(&record.path),
         Some(SeratoOverviewState::Absent)
     );
-    assert_eq!(ANALYSIS_VERSION, 15);
+    assert_eq!(ANALYSIS_VERSION, 16);
     cache.open().expect("idempotent migration");
 }
 
@@ -63,7 +63,7 @@ fn old_rust_aac_previews_are_invalidated_without_losing_gain_or_tags() {
         let connection = Connection::open(&database).expect("connection");
         connection
             .execute_batch(
-                "UPDATE file_analysis SET analysis_version = 14;
+                "UPDATE file_analysis SET analysis_version = 15;
              INSERT INTO spectrogram_cache SELECT file_path, 1, 1, file_size, modified_time_ms,
                  sample_rate, channels, length_in_samples, 'rust', x'010203' FROM file_analysis;",
             )

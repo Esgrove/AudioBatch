@@ -499,7 +499,7 @@ class CliIntegration(unittest.TestCase):
                     for actual, reference in zip(record["dcOffsets"], expected["dcOffsets"], strict=True)
                 )
                 row = self.database_row(source)
-                assert row["analysis_version"] == 15
+                assert row["analysis_version"] == 16
                 assert (row["stereo_correlation"] is None) == (expected["stereoCorrelation"] is None)
                 cached = self.analyze(source)[0]
                 assert cached | {"status": record["status"]} == record

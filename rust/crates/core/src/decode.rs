@@ -433,6 +433,7 @@ impl AudioFileDecoder {
                 self.record_end_of_stream();
                 return Ok(None);
             }
+            validate_finite_pcm(&self.planar)?;
             self.position += frames;
             return Ok(Some(&self.planar));
         }

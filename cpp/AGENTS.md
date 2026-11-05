@@ -61,7 +61,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       which share the column and parameter constants in `AnalysisCacheSql.h`.
       `NativeWaveformData.*` holds bounded native thumbnail validation and identity-sensitive waveform keys,
       independently of database persistence.
-      Measurement contract version 15 is coordinated across both implementations.
+      Measurement contract version 16 is coordinated across both implementations.
       Successful foreign measurements are reusable for reporting, while decoder failures are producer-specific.
       Rust waveforms live in `rust_waveform_cache`, separate from the optional JUCE waveform columns.
       Both applications share `spectrogram_cache`, keyed by path and its algorithm and serialization revisions.

@@ -167,6 +167,7 @@ impl NativeAacDecoder {
         if frames == 0 {
             return Ok(0);
         }
+        let requested_frames = frames;
         let mut buffers = AudioBufferList {
             mNumberBuffers: 1,
             mBuffers: [AudioBuffer {
@@ -187,7 +188,7 @@ impl NativeAacDecoder {
             },
             position,
         )?;
-        if frames > READ_FRAMES {
+        if frames > requested_frames {
             return Err(DecodeError::NativeAac {
                 position,
                 status: FILE_ERROR,

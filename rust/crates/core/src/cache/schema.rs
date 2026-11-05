@@ -124,10 +124,10 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<()> {
     // Native AAC reconstruction changes the old Rust MP4 previews, not source identity, gains, tags, or PCM previews.
     transaction.execute_batch(
         "DELETE FROM rust_waveform_cache WHERE file_path IN (
-            SELECT file_path FROM file_analysis WHERE analysis_version < 15
+            SELECT file_path FROM file_analysis WHERE analysis_version < 16
                 AND format_name = 'M4A file' AND bits_per_sample = 16);
          DELETE FROM spectrogram_cache WHERE producer = 'rust' AND file_path IN (
-            SELECT file_path FROM file_analysis WHERE analysis_version < 15
+            SELECT file_path FROM file_analysis WHERE analysis_version < 16
                 AND format_name = 'M4A file' AND bits_per_sample = 16);",
     )?;
     transaction.commit()?;
