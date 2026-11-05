@@ -17,7 +17,9 @@ import argparse
 import json
 import math
 import os
+import struct
 import sys
+import wave
 from pathlib import Path
 
 PEAK_TARGET_TOLERANCE = 0.01
@@ -28,6 +30,8 @@ DURATION_TOLERANCE = 0.001000001
 SOURCE_STATISTIC_TOLERANCE = 0.000002
 MAXIMUM_GAIN_DB = 40
 SILENT_LOUDNESS = -1000
+INTEGRATED_WINDOW_SECONDS = 0.4
+PCM16_FULL_SCALE = 32768
 GOLDENS = Path(__file__).resolve().parents[1] / "crates/core/tests/golden"
 AUDIO_EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".flac", ".mp3", ".m4a", ".mp4", ".ogg"}
 LEVEL_FIELDS = ["peakDbfs", "truePeakDbtp", "integratedLufs", "maxShortTermLufs", "plrDb", "psrDb", "crestFactorDb"]
@@ -40,10 +44,14 @@ def fixture_properties(path: Path) -> dict[str, str]:
     if path.parent.name == "spectrogram_expected":
         manifest = GOLDENS.parents[4] / "fixtures/spectrogram_expected/expected.json"
         fixture = json.loads(manifest.read_text(encoding="utf-8"))["files"].get(path.name)
-        if fixture and fixture["source"]["kind"] == "silence":
+        if fixture and fixture["sample_count"] < fixture["sample_rate"] * INTEGRATED_WINDOW_SECONDS:
+            # Integrated loudness requires a complete 400 ms window, independent of either implementation.
+            with wave.open(str(manifest.with_name(path.name)), "rb") as source:
+                pcm = source.readframes(source.getnframes())
+            peak = max(abs(sample[0]) for sample in struct.iter_unpack("<h", pcm)) / PCM16_FULL_SCALE
             return {
                 "status": "Analyzed",
-                "overall_peak": "0",
+                "overall_peak": str(peak),
                 "integrated_lufs": "-inf",
                 "duration_seconds": str(fixture["sample_count"] / fixture["sample_rate"]),
                 "length_in_samples": str(fixture["sample_count"]),
