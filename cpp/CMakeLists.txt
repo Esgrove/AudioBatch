@@ -667,10 +667,6 @@ set_target_properties(
         COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
         MACOSX_BUNDLE YES
-        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
-        XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
-        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
-        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "7522H7K6WF"
         XCODE_GENERATE_SCHEME ON
 )
 
@@ -1224,3 +1220,7 @@ target_link_libraries(
         juce::juce_recommended_warning_flags
 )
 # cmake-format: on
+
+# Signing must be registered last, after JUCE's bundle resources and Icon Composer post-build steps.
+include(cmake/MacSigning.cmake)
+audiobatch_sign_mac_app(AudioBatch)

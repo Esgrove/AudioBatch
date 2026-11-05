@@ -664,6 +664,36 @@ Do a clean rebuild after moving a native build directory to another CPU.
 Native binaries may not run on machines with fewer instruction extensions.
 A Windows baseline binary still requires AVX2.
 
+### Local macOS signing
+
+Both Ninja and Xcode sign the completed `AudioBatch.app` after JUCE has installed its icons and resources.
+Xcode automatic signing is disabled, so both generators use the same local signing helper as Rust.
+Set `CODESIGN_IDENTITY` in the build environment to select an installed signing identity explicitly,
+for example `CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" cmake --build --preset macos-debug`.
+An unset or empty value uses ad-hoc signing (`-`), without searching or changing the keychain.
+An invalid explicit identity fails the build rather than falling back silently.
+If an incremental build has no work after changing the identity, relink the app or sign the completed bundle directly:
+
+```shell
+CODESIGN_IDENTITY=- bash ../common.sh sign_mac_app_bundle cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
+codesign --verify --deep --strict --verbose=2 cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
+codesign --display --entitlements - --xml cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
+plutil -lint ../assets/macos.entitlements
+```
+
+Signing enables hardened runtime with `--options runtime`, not an entitlement.
+The shared [`macos.entitlements`](../assets/macos.entitlements) disables library validation
+so external unsigned or differently signed plugins can load.
+It grants no audio-input or microphone entitlement, requests no microphone usage description, and enables no sandbox.
+Every signing operation validates both plists and verifies the final bundle, and failures stop the build.
+Do not modify the bundle after signing. Re-sign it after changing an executable, icon, license, or resource.
+These signatures are for local use only, without timestamping, notarization, distribution, or CI signing setup.
+Ad-hoc signatures do not establish a trusted developer identity.
+The CLI and Windows packaging are unchanged.
+Run the isolated signing and packaging contracts with `uv run --script ../tests/test_mac_signing.py`.
+On macOS, prefix that command with `AUDIOBATCH_TEST_NATIVE_SIGNING=1` to build disposable Ninja
+and Xcode app bundles, inspect real ad-hoc signatures, and detect resource tampering.
+
 ### Build script and installation
 
 The build produces `AudioBatch.app` or `AudioBatch.exe` (GUI) and `audiobatch` (CLI).

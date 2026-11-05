@@ -226,6 +226,6 @@ EOF
     plutil -lint -s "$contents/Info.plist"
     printf "APPL????" > "$contents/PkgInfo"
 
-    # An ad hoc signature seals the resources added after linking, so the bundle verifies as a whole.
-    codesign --force --sign - "$bundle" 2> /dev/null
+    # Seal the complete bundle only after its icons, licenses, plist, and package information are final.
+    sign_mac_app_bundle "$bundle"
 }
