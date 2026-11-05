@@ -351,6 +351,40 @@ void AudioBatchIntegrationTest::openAndSort()
     }
     EXPECT_EQ(metadataBeforeSort->overview->slices.size(), 240U);
     EXPECT_TRUE(containsLabel(view.previewWorkspace.audioInfo, valid.getFileName()));
+    const auto selectedRow = view.analysisResults.findRow(valid.getFullPathName());
+    if (!selectedRow) {
+        ADD_FAILURE() << "The selected valid result disappeared before inspecting its source metrics";
+        return;
+    }
+    const auto& metrics = view.analysisResults[*selectedRow].signalMetrics;
+    EXPECT_EQ(
+        view.fileTableModel.getCellTooltip(*selectedRow, toColumnId(AudioFileTableColumn::clips)),
+        formatClipCounts(metrics)
+    );
+    EXPECT_EQ(
+        view.fileTableModel.getCellTooltip(*selectedRow, toColumnId(AudioFileTableColumn::dcOffset)),
+        formatDcOffsets(metrics)
+    );
+    EXPECT_EQ(
+        AudioFileTableModel::getColumnDescription(AudioFileTableColumn::psr),
+        juce::String("Source whole-file true peak minus maximum short-term loudness, dB")
+    );
+    EXPECT_EQ(
+        AudioFileTableModel::getColumnDescription(AudioFileTableColumn::clips),
+        juce::String("Source samples with magnitude at least one, summed across channels")
+    );
+    EXPECT_TRUE(containsLabel(
+        view.previewWorkspace.audioInfo,
+        utils::format(
+            "PLR {} dB · PSR {} dB · Crest {} dB",
+            formatMetric(metrics.plrDb),
+            formatMetric(metrics.psrDb),
+            formatMetric(metrics.crestFactorDb)
+        )
+    ));
+    EXPECT_TRUE(containsLabel(
+        view.previewWorkspace.audioInfo, utils::format("{} total, {}", metrics.totalClips(), formatClipCounts(metrics))
+    ));
     view.resultsTable.getHeader().setSortColumnId(toColumnId(AudioFileTableColumn::name), false);
     ASSERT_TRUE(dispatchUntil([&] { return view.sortState.primaryColumn == AudioFileTableColumn::name; }));
     EXPECT_EQ(view.getSelectedRecordPaths(), juce::StringArray(valid.getFullPathName()));
