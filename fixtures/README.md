@@ -130,7 +130,7 @@ and mono tones are analyzed as dual mono, so they measure the same loudness.
 
 The names give the channels, the sample rate, and the bit depth or the bitrate,
 such as `sine_stereo_48000_24.wav` or `sine_mono_44100_128k.mp3`.
-The tones cover WAV, AIFF, FLAC, MP3, Ogg Vorbis, and AAC in M4A,
+The tones cover WAV, AIFF, FLAC, MP3, and AAC in M4A,
 at 24, 44.1, 48, and 96 kHz, with 16 and 24 bit integer and 32 bit float samples.
 
 ## Special Cases
@@ -271,7 +271,7 @@ The fit is preset-specific, and four tracks cannot establish how well it general
 ## Normalization Collection
 
 `normalization/` holds a larger collection for comparing the normalized output of both applications.
-It has music-like audio in WAV, AIFF, AIFC, FLAC, MP3, Ogg Vorbis, and AAC and ALAC in M4A,
+It has music-like audio in WAV, AIFF, AIFC, FLAC, MP3, and AAC and ALAC in M4A,
 at 44.1, 48, and 96 kHz, with 16 and 24 bit integer and 32 bit float samples,
 from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases,
 such as silence, a gain above the 40 dB limit, float samples above full scale, a non-ASCII file name,
@@ -300,8 +300,8 @@ uv run fixtures/benchmark/generate.py
 
 It needs ffmpeg and uv, keeps existing files, and accepts `--force` to regenerate them.
 Music-like stereo signals cover 44.1, 48, 88.2, 96, and 192 kHz as WAV and FLAC at 16 and 24 bits.
-The 44.1 and 48 kHz sets also include MP3 at 320 kbps, AAC at 256 kbps, and Ogg Vorbis at quality 5.
-Mono sets at 44.1 and 48 kHz cover dual mono measurement, without Ogg because the chosen encoder requires stereo.
+The 44.1 and 48 kHz sets also include MP3 at 320 kbps and AAC at 256 kbps.
+Mono sets at 44.1 and 48 kHz cover dual mono measurement.
 White noise covers the FLAC decoding worst case, and a fading signal covers a quiet tail.
 The fade is stored as 24 bit PCM, so it reaches digital silence rather than retaining floating-point subnormals.
 The in-memory signal tests cover actual subnormal samples.

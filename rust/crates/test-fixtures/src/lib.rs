@@ -132,8 +132,8 @@ pub const PLUGIN_EXPECTATIONS: [PluginExpectation; 5] = [
 
 /// The tone fixtures and what analysis should report for them.
 ///
-/// MP3, AAC, and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
-pub const TONE_FIXTURES: [ToneFixture; 17] = [
+/// MP3 and AAC files report the fixed default of 16 bits, since the formats store no source bit depth.
+pub const TONE_FIXTURES: [ToneFixture; 16] = [
     tone("sine_stereo_44100_16.wav", 2, 44_100, 16, false),
     tone("sine_stereo_48000_24.wav", 2, 48_000, 24, false),
     tone("sine_mono_44100_16.wav", 1, 44_100, 16, false),
@@ -148,7 +148,6 @@ pub const TONE_FIXTURES: [ToneFixture; 17] = [
     tone("sine_stereo_44100_320k.mp3", 2, 44_100, 16, true),
     tone("sine_joint_stereo_44100_192k.mp3", 2, 44_100, 16, true),
     tone("sine_mono_44100_128k.mp3", 1, 44_100, 16, true),
-    tone("sine_stereo_48000.ogg", 2, 48_000, 16, true),
     tone(NO_XING_MP3_FIXTURE, 2, 44_100, 16, true),
     tone(AAC_FIXTURE, 2, 44_100, 16, true),
 ];
@@ -279,9 +278,9 @@ pub fn benchmark_file(name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// Returns true for a file extension the applications read as audio.
+/// Returns true for a file extension of a supported audio format.
 fn is_audio_file(path: &Path) -> bool {
-    const EXTENSIONS: [&str; 9] = ["aif", "aifc", "aiff", "flac", "m4a", "mp3", "ogg", "wav", "mp4"];
+    const EXTENSIONS: [&str; 8] = ["aif", "aifc", "aiff", "flac", "m4a", "mp3", "wav", "mp4"];
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))

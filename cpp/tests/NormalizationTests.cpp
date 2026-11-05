@@ -151,7 +151,6 @@ void NormalizationTests::runConversionTests()
              std::pair {"sine_stereo_48000_24.flac", 24},
              std::pair {"sine_stereo_44100_32f.wav", 24},
              std::pair {"sine_stereo_44100_320k.mp3", 16},
-             std::pair {"sine_stereo_48000.ogg", 16},
          })
     {
         const TemporaryDirectory directory;

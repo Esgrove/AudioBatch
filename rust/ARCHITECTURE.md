@@ -701,7 +701,6 @@ The Rust version differs from it on purpose in these points:
   Logs, settings, plugin list, chain, and presets remain in its own `AudioBatch-rs` folders,
   with plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
 - It decodes audio with Symphonia rather than JUCE, except for AAC-LC MP4 on macOS, which uses Core Audio.
-  It supports Ogg Vorbis but not the Opus decoder enabled in the C++ build.
   Lossy PCM can differ, so parity checks use a separate -72 dBFS sample-difference tolerance for lossy sources,
   not the exact peak-mode or one-step loudness-mode contract for lossless sources.
 - The GUI is built on gpui-kit, and plugin editors open in native windows that `vst3-host` creates.

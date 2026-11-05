@@ -62,14 +62,14 @@ rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
-symphonia = { version = "0.6.1", features = ["all-codecs", "all-formats"] }
+symphonia = { version = "0.6.1", features = ["aiff", "aac", "alac", "flac", "isomp4", "mp3", "wav"] }
 symphonia-common = "0.6.1"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "fmt", "registry", "std", "tracing-log"] }
-trash = "5.2.9"
+trash = "5.3.0"
 unicode-width = "0.2.3"
 walkdir = "2.5.0"
 winapi-util = "0.1.11"

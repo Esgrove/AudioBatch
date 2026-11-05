@@ -126,9 +126,10 @@ class TestDistributionLicenses(unittest.TestCase):
     def test_macos_bundle_carries_notice_before_signing(self) -> None:
         """App resources include the notice before the bundle receives its signature."""
         self.environment["TEST_UNAME"] = "Darwin"
+        # Both the signing and the verification call name the bundle as their last argument.
         self.write_executable(
             self.tools / "codesign",
-            'test -f "$4/Contents/Resources/licenses/ebur128.txt"\n',
+            'test -f "${!#}/Contents/Resources/licenses/ebur128.txt"\n',
         )
         self.run_script("build.sh")
         self.assert_notice(self.rust / "AudioBatchRs.app/Contents/Resources/licenses")

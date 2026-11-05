@@ -13,14 +13,13 @@ use audiobatch_core::decode::AudioFileDecoder;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 /// Generated files, every format at 44.1 kHz, the high rates as FLAC, and noise as the FLAC worst case.
-const FILES: [&str; 13] = [
+const FILES: [&str; 12] = [
     "music_stereo_44100_16.wav",
     "music_stereo_44100_24.wav",
     "music_stereo_44100_16.flac",
     "music_stereo_44100_24.flac",
     "music_stereo_44100_320k.mp3",
     "music_stereo_44100_256k.m4a",
-    "music_stereo_44100_q5.ogg",
     "music_mono_44100_16.flac",
     "music_stereo_96000_24.flac",
     "music_stereo_192000_24.flac",

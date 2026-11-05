@@ -496,7 +496,7 @@ mod test_property_formatting {
     #[test]
     fn bit_depth_reports_unknown_for_mp3() {
         assert_eq!(format_bits_per_sample(&record("a.mp3")), "Unknown");
-        assert_eq!(format_bits_per_sample(&record("a.ogg")), "-");
+        assert_eq!(format_bits_per_sample(&record("a.m4a")), "-");
         let mut value = record("a.wav");
         value.bits_per_sample = 24;
         assert_eq!(format_bits_per_sample(&value), "24");

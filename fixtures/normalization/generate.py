@@ -9,7 +9,7 @@ Generates the normalization fixture collection, which tests normalization and ou
 Every file is rendered by ffmpeg from a deterministic music-like signal:
 a detuned chord with a slow tremolo, a decaying kick drum every half second, and a short high hat between the kicks.
 The right channel uses a slightly different chord and a quieter kick, so swapped or mixed channels show up.
-The files cover WAV, AIFF, AIFC float, FLAC, MP3, Ogg Vorbis, and AAC and ALAC in M4A,
+The files cover WAV, AIFF, AIFC float, FLAC, MP3, and AAC and ALAC in M4A,
 at 44.1, 48, and 96 kHz, with 16 and 24 bit integer and 32 bit float samples,
 from a fifth of a second to 30 seconds long.
 The tags range from none to ID3v2.3 and ID3v2.4 frames with pictures and Serato data,
@@ -59,7 +59,6 @@ from mutagen.id3 import (
     WXXX,
 )
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
-from mutagen.oggvorbis import OggVorbis
 from mutagen.wave import WAVE
 
 DIRECTORY = Path(__file__).resolve().parent
@@ -363,20 +362,6 @@ def flac_tagger(title: str, serato: bool = False, pictures: bool = True) -> Tagg
     return tag_file
 
 
-def ogg_tagger(title: str) -> Tagger:
-    """Returns a tagger that writes Vorbis comments with a front cover in METADATA_BLOCK_PICTURE."""
-
-    def tag_file(path: Path) -> None:
-        audio = OggVorbis(path)
-        for key, values in vorbis_fields(title).items():
-            audio[key] = values
-        picture = flac_picture(FRONT_COVER, "image/jpeg", 3, "Front", 96)
-        audio["METADATA_BLOCK_PICTURE"] = [base64.b64encode(picture.write()).decode("ascii")]
-        audio.save()
-
-    return tag_file
-
-
 def mp4_tagger(title: str) -> Tagger:
     """Returns a tagger that writes iTunes atoms, a cover, and freeform fields onto an M4A file."""
 
@@ -531,24 +516,6 @@ FIXTURES = [
         5,
         [*NO_ID3, "-write_xing", "0", "-c:a", "libmp3lame", "-b:a", "192k"],
         gain_db=-6,
-    ),
-    # Ogg Vorbis
-    Fixture(
-        "ogg_stereo_44100_q5_tagged_15s.ogg",
-        44100,
-        2,
-        15,
-        ["-c:a", "vorbis", "-strict", "experimental", "-q:a", "5"],
-        gain_db=-7,
-        tags=ogg_tagger("Ogg Vorbis Tags"),
-    ),
-    Fixture(
-        "ogg_stereo_48000_q3_untagged_10s.ogg",
-        48000,
-        2,
-        10,
-        ["-c:a", "vorbis", "-strict", "experimental", "-q:a", "3"],
-        gain_db=-12,
     ),
     # M4A
     Fixture(

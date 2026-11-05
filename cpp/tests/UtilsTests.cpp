@@ -570,12 +570,11 @@ void UtilsTests::runPickerFilterTests()
             expect(patterns.containsIgnoreCase("*" + extension), extension);
         }
     }
-    expect(patterns.containsIgnoreCase("*.ogg"));
-#if JUCE_USE_OPUS
-    expect(patterns.containsIgnoreCase("*.opus"));
-#endif
+    for (const auto* extension : {"*.wav", "*.aif", "*.flac", "*.mp3"}) {
+        expect(patterns.containsIgnoreCase(extension), extension);
+    }
 #if JUCE_MAC
-    for (const auto* extension : {"*.m4a", "*.aac", "*.caf"}) {
+    for (const auto* extension : {"*.m4a", "*.aac"}) {
         expect(patterns.containsIgnoreCase(extension), extension);
     }
 #endif

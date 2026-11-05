@@ -50,7 +50,6 @@ tone 48000 2 -c:a flac -sample_fmt s32 -bits_per_raw_sample 24 sine_stereo_48000
 tone 44100 2 -c:a libmp3lame -b:a 320k sine_stereo_44100_320k.mp3
 tone 44100 2 -c:a libmp3lame -b:a 192k -joint_stereo 1 sine_joint_stereo_44100_192k.mp3
 tone 44100 1 -c:a libmp3lame -b:a 128k sine_mono_44100_128k.mp3
-tone 48000 2 -c:a vorbis -strict experimental -q:a 6 sine_stereo_48000.ogg
 
 # Gapless edge cases: an AAC tone whose priming and padding only the MP4 edit list records,
 # and an MP3 tone without the Xing frame, so no header states its delay or its length.

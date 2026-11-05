@@ -708,7 +708,7 @@ void SeratoTagReaderTests::testOverview()
     {
         expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_16.flac")), serato::ReadStatus::absent);
         expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_16.wav")), serato::ReadStatus::absent);
-        expectStatus(serato::readTag(fixtureFile("sine_stereo_48000.ogg")), serato::ReadStatus::unsupported);
+        expectStatus(serato::readTag(fixtureFile("sine_stereo_44100_aac.m4a")), serato::ReadStatus::unsupported);
         expectStatus(serato::readTag(fixtureFile("broken.wav")), serato::ReadStatus::ioError);
         expectStatus(serato::readTag(directory.getChildFile("missing.mp3")), serato::ReadStatus::ioError);
         expectStatus(

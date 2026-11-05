@@ -11,9 +11,8 @@ use walkdir::WalkDir;
 use crate::sorting::compare_natural;
 
 /// File extensions the decoder handles, in lowercase.
-pub(crate) const SUPPORTED_EXTENSIONS: [&str; 13] = [
-    "aac", "aif", "aifc", "aiff", "bwf", "caf", "flac", "m4a", "mp3", "oga", "ogg", "wav", "wave",
-];
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 10] =
+    ["aac", "aif", "aifc", "aiff", "bwf", "flac", "m4a", "mp3", "wav", "wave"];
 
 /// Returns true when the path has a supported audio file extension, without touching the file system.
 #[must_use]
@@ -154,7 +153,7 @@ mod test_collect_input_files {
             .filter_map(|file| file.file_name().map(|name| name.to_string_lossy().into_owned()))
             .collect();
         assert_eq!(names, ["mixed.Flac", "song.AiFf", "track.Mp3", "upper.WAV"]);
-        let explicit = create(directory.path(), "explicit.OGG");
+        let explicit = create(directory.path(), "explicit.AIFC");
         assert_eq!(
             collect_input_files(std::slice::from_ref(&explicit), false, &|| false),
             vec![normalize_path(&explicit)]

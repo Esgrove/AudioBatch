@@ -9,7 +9,7 @@ Generates the long audio files the Rust benchmarks decode and analyze, into fixt
 The files are 60 seconds long, so a benchmark measures steady throughput instead of setup costs.
 They are not committed, since they take about a gigabyte, so run this script once before benchmarking.
 Every rate the true peak oversampling treats differently gets a music-like stereo file in WAV and FLAC
-at 16 and 24 bits, and 44.1 and 48 kHz also get MP3, AAC, and Ogg Vorbis, the rates those are used at.
+at 16 and 24 bits, and 44.1 and 48 kHz also get MP3 and AAC, the rates those are used at.
 A mono set covers the dual mono path, white noise is the worst case for FLAC decoding,
 and a long fade stored as 24-bit PCM covers a quiet tail that reaches digital silence.
 Actual subnormal samples are covered by the in-memory signal tests, not these quantized files.
@@ -46,8 +46,6 @@ LOSSLESS_CODECS = {
 LOSSY_CODECS = {
     "320k.mp3": ["-c:a", "libmp3lame", "-b:a", "320k"],
     "256k.m4a": ["-c:a", "aac", "-b:a", "256k"],
-    # The native encoder, which every ffmpeg build has, unlike libvorbis.
-    "q5.ogg": ["-c:a", "vorbis", "-strict", "experimental", "-q:a", "5"],
 }
 
 
@@ -97,9 +95,7 @@ def sources() -> list[Source]:
         if rate in LOSSY_RATES:
             codecs |= LOSSY_CODECS
         result.append(Source("music", rate, 2, codecs))
-    # The native Vorbis encoder only writes stereo, so the mono set has no Ogg file.
-    mono_codecs = {suffix: codec for suffix, codec in LOSSY_CODECS.items() if not suffix.endswith(".ogg")}
-    result.extend(Source("music", rate, 1, {**LOSSLESS_CODECS, **mono_codecs}) for rate in LOSSY_RATES)
+    result.extend(Source("music", rate, 1, {**LOSSLESS_CODECS, **LOSSY_CODECS}) for rate in LOSSY_RATES)
     result.append(Source("noise", 44_100, 2, LOSSLESS_CODECS))
     result.append(Source("fade", 44_100, 2, {"24.wav": LOSSLESS_CODECS["24.wav"]}))
     return result

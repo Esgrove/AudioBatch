@@ -36,12 +36,11 @@ const RATES: [u32; 5] = [44_100, 48_000, 88_200, 96_000, 192_000];
 const CHUNK_FRAMES: usize = 4_096;
 
 /// Generated files for the end to end group, the common formats at 44.1 kHz and every rate as 24 bit WAV.
-const FILES: [&str; 11] = [
+const FILES: [&str; 10] = [
     "music_stereo_44100_16.wav",
     "music_stereo_44100_16.flac",
     "music_stereo_44100_320k.mp3",
     "music_stereo_44100_256k.m4a",
-    "music_stereo_44100_q5.ogg",
     "music_mono_44100_16.wav",
     "music_stereo_48000_24.wav",
     "music_stereo_88200_24.wav",

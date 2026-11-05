@@ -81,10 +81,10 @@ The main differences are format support, plugin hosting, and cancellation.
 
 ### Audio formats
 
-- The C++ version reads WAV, AIFF, FLAC, Ogg Vorbis, Opus, and MP3 with JUCE on every platform,
-  and on macOS also what Core Audio reads, such as AAC, Apple Lossless, and CAF.
-- The Rust version reads WAV and BWF, AIFF and AIFC, FLAC, Ogg Vorbis, MP3,
-  AAC and Apple Lossless in M4A, and CAF with symphonia on every platform, including AAC on Windows.
+- The C++ version reads WAV, AIFF, FLAC, and MP3 with JUCE on every platform,
+  and on macOS also AAC and Apple Lossless in M4A through Core Audio.
+- The Rust version reads WAV and BWF, AIFF and AIFC, FLAC, MP3,
+  and AAC and Apple Lossless in M4A with symphonia on every platform, including AAC on Windows.
 - Both write the normalized and processed files as AIFF.
   Lossy sources can produce different samples because the decoders differ.
 
