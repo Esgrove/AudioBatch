@@ -84,6 +84,9 @@ public:
     [[nodiscard]] bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
     bool refreshPluginChain();
     bool setPluginPreviewEnabled(bool enabled);
+#ifdef AUDIOBATCH_TESTING
+    [[nodiscard]] bool waitForReadAhead(int sourceSamples, juce::uint32 timeoutMilliseconds);
+#endif
 
     [[nodiscard]] double getCurrentPosition() const;
 

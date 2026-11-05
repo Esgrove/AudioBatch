@@ -163,10 +163,10 @@ juce::String formatLoudnessValue(const double loudness)
 }  // namespace
 
 /// Shortens macOS home folder prefixes for display, leaving shared and non-home folders absolute.
-juce::String formatFolderText(const juce::String& folder, const bool macos)
+juce::String formatFolderText(const juce::String& folder)
 {
     const juce::String usersPrefix {"/Users/"};
-    if (!macos || !folder.startsWith(usersPrefix)) {
+    if (!folder.startsWith(usersPrefix)) {
         return folder;
     }
     const auto remainder = folder.substring(usersPrefix.length());
@@ -181,7 +181,12 @@ juce::String formatFolderText(const juce::String& folder, const bool macos)
 /// Formats a file's parent directory, shortening macOS home prefixes without changing stored paths.
 juce::String formatFolder(const juce::File& file)
 {
-    return formatFolderText(file.getParentDirectory().getFullPathName(), JUCE_MAC != 0);
+    const auto folder = file.getParentDirectory().getFullPathName();
+#if JUCE_MAC
+    return formatFolderText(folder);
+#else
+    return folder;
+#endif
 }
 
 /// Maps a recognized musical key to its canonical Camelot notation.

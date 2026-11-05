@@ -206,25 +206,25 @@ void SpectrogramFixtureTests::runTest()
     expectEquals(properties.size(), 20);
     for (const auto rate : SAMPLE_RATES) {
         for (const auto* kind : {"silence", "tone", "antiphase", "noise_16000hz", "noise_18000hz", "noise_full"}) {
-            const auto name = utils::format("{}_{}.wav", kind, rate);
-            expect(files.hasProperty(juce::Identifier(name)), utils::format("Missing fixture {}", name));
+            const auto fixtureName = utils::format("{}_{}.wav", kind, rate);
+            expect(files.hasProperty(juce::Identifier(fixtureName)), utils::format("Missing fixture {}", fixtureName));
         }
     }
-    for (const auto* name : {"dc_48000.wav", "nyquist_48000.wav"}) {
-        expect(files.hasProperty(juce::Identifier(name)), utils::format("Missing fixture {}", name));
+    for (const auto* fixtureName : {"dc_48000.wav", "nyquist_48000.wav"}) {
+        expect(files.hasProperty(juce::Identifier(fixtureName)), utils::format("Missing fixture {}", fixtureName));
     }
 
     std::map<juce::String, std::shared_ptr<const SpectrogramData>> spectra;
     for (int index = 0; index < properties.size(); ++index) {
-        const auto name = properties.getName(index).toString();
+        const auto fixtureName = properties.getName(index).toString();
         const auto& expected = properties.getValueAt(index);
-        beginTest(utils::format("Source geometry and independent powers: {}", name));
+        beginTest(utils::format("Source geometry and independent powers: {}", fixtureName));
         const auto valid = validFileExpectation(expected);
         expect(valid, "Malformed fixture description");
         if (!valid) {
             continue;
         }
-        const auto file = fixtureFile(utils::format("spectrogram_expected/{}", name));
+        const auto file = fixtureFile(utils::format("spectrogram_expected/{}", fixtureName));
         expect(file.existsAsFile());
         if (!file.existsAsFile()) {
             continue;
@@ -253,7 +253,7 @@ void SpectrogramFixtureTests::runTest()
             continue;
         }
         checkPowers(data, expected);
-        spectra.emplace(name, record.spectrogram);
+        spectra.emplace(fixtureName, record.spectrogram);
     }
     checkNoiseCutoffs(spectra);
 }

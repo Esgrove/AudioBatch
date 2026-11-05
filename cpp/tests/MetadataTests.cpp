@@ -225,13 +225,17 @@ void MetadataTests::checkMappedTextFrames()
         expect(tagged.save(TagLib::ID3v2::v4));
     }
     expect(copyMetadata(source, output));
-    const auto& path = output.getFullPathName();
-    const TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
-    const auto& tag = *tagged.tag();
-    expect(tag.frameList("TMOO").isEmpty());
-    expectEquals(static_cast<int>(tag.frameList("TXXX").size()), 2);
-    expectEquals(onlyFrameText(tag, "TKEY"), juce::String("F#m"));
-    expectEquals(onlyFrameText(tag, "TIT2"), juce::String("Mood Test"));
+    {
+        // The handle closes before the reads below,
+        // because Windows refuses to open a file that is held open for writing.
+        const auto& path = output.getFullPathName();
+        const TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
+        const auto& tag = *tagged.tag();
+        expect(tag.frameList("TMOO").isEmpty());
+        expectEquals(static_cast<int>(tag.frameList("TXXX").size()), 2);
+        expectEquals(onlyFrameText(tag, "TKEY"), juce::String("F#m"));
+        expectEquals(onlyFrameText(tag, "TIT2"), juce::String("Mood Test"));
+    }
     AudioMetadata original;
     AudioMetadata copied;
     expect(readMetadata(source, original));

@@ -67,8 +67,8 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks(const bool sample
     std::vector<OverloadMark> marks;
     for (int channel = 0; channel < channels; ++channel) {
         auto columns = projectOverloadColumns(*overloadHistory, channel, visibleRange, bounds.getWidth());
-        for (auto& flags : columns) {
-            flags &= kind;
+        for (auto& overloadFlags : columns) {
+            overloadFlags &= kind;
         }
         // The same integer lane split as AudioThumbnail::drawChannels.
         const int laneTopPixel = bounds.getY() + channel * bounds.getHeight() / channels;

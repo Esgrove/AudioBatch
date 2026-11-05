@@ -27,6 +27,17 @@ constexpr juce::int64 EVENT_STEP_MILLISECONDS {20};
 constexpr juce::int64 DOUBLE_CLICK_GAP_MILLISECONDS {50};
 /// Milliseconds after a click before the next one, outside JUCE's double-click interval.
 constexpr juce::int64 SEPARATE_CLICK_GAP_MILLISECONDS {1000};
+/// Opacity of the default hidden window.
+/// Windows hit testing skips the pixels of a layered window that are fully transparent,
+/// so `WindowFromPoint` would report the window behind it and JUCE would find no component under the pointer.
+/// The smallest step above zero keeps the window invisible to the eye and hit testable.
+/// Like the macOS window, it then also receives the developer's own pointer and wheel input over it,
+/// so leave the mouse alone while the integration tier runs.
+#if JUCE_WINDOWS
+constexpr float HIDDEN_WINDOW_ALPHA {1.0f / 255.0f};
+#else
+constexpr float HIDDEN_WINDOW_ALPHA {0.0f};
+#endif
 /// Pointer positions between the start and the end of a drag.
 constexpr int DRAG_STEPS {4};
 /// JUCE roles with the names that `tests/gui_controls.json` uses for them.
@@ -83,7 +94,8 @@ int visibleStepDelay()
 /// then pumps the message loop until the peer has laid it out.
 /// On macOS, JUCE asks the window server which window is at each event position,
 /// so the window must be on screen, frontmost, and accept mouse events for its own peer events to reach it.
-/// By default the window is fully transparent, which does not change that hit testing.
+/// By default the window is transparent: fully on macOS, where that does not change hit testing,
+/// and one step above zero on Windows, where a fully transparent window is not hit tested.
 /// With `AUDIOBATCH_GUI_TESTS_VISIBLE=1` it stays opaque and pauses after each action, so a developer can follow it.
 /// The requested size is clamped to the display's user area, which keeps the wide layout on common displays.
 GuiDriver::GuiDriver(juce::Component& root, const juce::Rectangle<int> bounds) :
@@ -104,7 +116,7 @@ GuiDriver::GuiDriver(juce::Component& root, const juce::Rectangle<int> bounds) :
     );
     component.addToDesktop(juce::ComponentPeer::windowIsTemporary);
     component.setAlwaysOnTop(true);
-    component.setAlpha(visible ? 1.0f : 0.0f);
+    component.setAlpha(visible ? 1.0f : HIDDEN_WINDOW_ALPHA);
     component.setVisible(true);
     component.toFront(true);
     settle();

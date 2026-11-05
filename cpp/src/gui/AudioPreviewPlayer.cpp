@@ -534,6 +534,20 @@ void AudioPreviewPlayer::togglePlayback()
     }
 }
 
+#ifdef AUDIOBATCH_TESTING
+/// Test-only: blocks until the read-ahead thread has decoded the source samples after the buffered read position,
+/// or the timeout passes, and reports whether they are ready.
+/// A seek only waits for the first output block, which a real-time device never outruns,
+/// but device-free tests render many blocks back to back and would otherwise outpace the decoder.
+/// It holds the rendering lock, so the audio callback outputs silence while it waits.
+bool AudioPreviewPlayer::waitForReadAhead(const int sourceSamples, const juce::uint32 timeoutMilliseconds)
+{
+    const juce::ScopedLock lock(renderingLock);
+    return bufferingSource != nullptr
+        && bufferingSource->waitForNextAudioBlockReady({nullptr, 0, sourceSamples}, timeoutMilliseconds);
+}
+#endif
+
 /// Reports whether a source file is open.
 bool AudioPreviewPlayer::hasLoadedSource() const noexcept
 {

@@ -26,7 +26,7 @@ juce::String formatDurationClock(double durationSeconds);
 juce::String formatDurationClockTenths(double durationSeconds);
 juce::String formatFileSizeDisplay(const AudioAnalysisRecord& record);
 juce::String formatFolder(const juce::File& file);
-juce::String formatFolderText(const juce::String& folder, bool macos);
+juce::String formatFolderText(const juce::String& folder);
 juce::String formatGuiStatus(const AudioAnalysisRecord& record);
 juce::String formatLoudnessCompact(double loudness);
 juce::String formatPeakCompact(double peak);

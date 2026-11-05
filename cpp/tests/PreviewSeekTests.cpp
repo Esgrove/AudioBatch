@@ -18,6 +18,13 @@ namespace audiobatch::tests
 {
 namespace
 {
+/// Output blocks rendered while a click is held.
+constexpr int HOLD_BLOCKS {32};
+/// Source samples of the 44.1 kHz fixture that the held blocks consume at 48 kHz, with one block of margin.
+constexpr int HOLD_SOURCE_SAMPLES {(HOLD_BLOCKS + 1) * 512 * 44'100 / 48'000 + 512};
+/// Bounded wait for the read-ahead thread, generous for unoptimized and sanitizer builds.
+constexpr juce::uint32 READ_AHEAD_TIMEOUT_MILLISECONDS {2000};
+
 /// Constructs a component-local event, allowing releases with no button still held.
 /// A click count of two marks the press and release that complete a double click.
 juce::MouseEvent seekEvent(
@@ -195,7 +202,12 @@ void PreviewSeekTests::testClick(
     expectWithinAbsoluteError(player.getCurrentPosition(), originalPosition, 0.000001);
     if (hold) {
         // Exercise sustained playback while staying within the one-second fixture and initial read-ahead.
-        for (int block = 0; block < 32; ++block) {
+        // The loop renders faster than real time, so wait for the decoder to buffer the whole hold first,
+        // which an unoptimized build does not do within the single block that the seek waits for.
+        if (initiallyPlaying) {
+            expect(player.waitForReadAhead(HOLD_SOURCE_SAMPLES, READ_AHEAD_TIMEOUT_MILLISECONDS));
+        }
+        for (int block = 0; block < HOLD_BLOCKS; ++block) {
             const auto before = player.getCurrentPosition();
             renderTestAudioDevice(device);
             player.updatePlaybackStatus();
@@ -259,7 +271,8 @@ void PreviewSeekTests::testCrossingGestures(
         thumbnail.mouseDrag(seekEvent(thumbnail, intermediate, juce::ModifierKeys::leftButtonModifier));
         expectWithinAbsoluteError(thumbnail.getPendingSeekPosition().value_or(-1.0), 0.55, 0.000001);
         expectWithinAbsoluteError(player.getCurrentPosition(), originalDragPosition, 0.000001);
-        for (int block = 0; block < 32; ++block) {
+        expect(player.waitForReadAhead(HOLD_SOURCE_SAMPLES, READ_AHEAD_TIMEOUT_MILLISECONDS));
+        for (int block = 0; block < HOLD_BLOCKS; ++block) {
             const auto before = player.getCurrentPosition();
             thumbnail.mouseDrag(seekEvent(thumbnail, crossing, juce::ModifierKeys::leftButtonModifier));
             expectWithinAbsoluteError(thumbnail.getPendingSeekPosition().value_or(-1.0), endpoint, 0.000001);
