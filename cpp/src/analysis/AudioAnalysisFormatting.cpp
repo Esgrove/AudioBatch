@@ -165,10 +165,11 @@ juce::String formatLoudnessValue(const double loudness)
 /// Shortens macOS home folder prefixes for display, leaving shared and non-home folders absolute.
 juce::String formatFolderText(const juce::String& folder, const bool macos)
 {
-    if (!macos || !folder.startsWith("/Users/")) {
+    const juce::String usersPrefix {"/Users/"};
+    if (!macos || !folder.startsWith(usersPrefix)) {
         return folder;
     }
-    const auto remainder = folder.substring(7);
+    const auto remainder = folder.substring(usersPrefix.length());
     const auto user = remainder.upToFirstOccurrenceOf("/", false, false);
     if (user.isEmpty() || user == "Shared") {
         return folder;
