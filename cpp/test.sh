@@ -4,7 +4,7 @@ set -eo pipefail
 USAGE="Usage: $0 [OPTIONS]
 
 Configure and build the C++ tests, then run them with CTest.
-Runs unit suites and the CLI and nonvisual GUI integration tier by default.
+Runs unit suites and the CLI and driven GUI integration tier by default.
 Uses the same platform build directories and compilation cache as build.sh.
 
 OPTIONS: All options are optional
@@ -22,7 +22,7 @@ OPTIONS: All options are optional
         Build and run only the unit suites.
 
     --integration
-        Build and run only the CLI and nonvisual GUI integration tier.
+        Build and run only the CLI and driven GUI integration tier.
         Cannot be combined with --unit.
 
     --build-only
@@ -31,6 +31,13 @@ OPTIONS: All options are optional
     --no-build
         Run tests from an already configured and built workspace without configuring or building it.
         Cannot be combined with --build-only.
+
+    --visible [delay-ms]
+        Show the driven GUI integration window on screen, pausing after each action so you can follow it.
+        The optional delay sets the pause in milliseconds,
+        defaulting to and capped by the constants in tests/GuiDriver.h.
+        Off by default, and meant for local runs, because the window takes the frontmost position.
+        Selects the integration tier and cannot be combined with --unit.
 
     -v | --verbose
         Display commands being executed.
@@ -45,6 +52,8 @@ BUILD_DIR=""
 TIER="all"
 NO_BUILD=false
 BUILD_ONLY=false
+VISIBLE=false
+VISIBLE_DELAY=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -74,6 +83,13 @@ while [ $# -gt 0 ]; do
         --no-build)
             NO_BUILD=true
             ;;
+        --visible)
+            VISIBLE=true
+            if [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+                VISIBLE_DELAY="$2"
+                shift
+            fi
+            ;;
         -v | --verbose)
             set -x
             ;;
@@ -87,6 +103,17 @@ done
 
 if [ "$BUILD_ONLY" = true ] && [ "$NO_BUILD" = true ]; then
     print_error_and_exit "--build-only and --no-build cannot be used together."
+fi
+
+if [ "$VISIBLE" = true ]; then
+    if [ "$TIER" = unit ]; then
+        print_error_and_exit "--visible shows the GUI integration tier and cannot be used with --unit."
+    fi
+    TIER="integration"
+    export AUDIOBATCH_GUI_TESTS_VISIBLE=1
+    if [ -n "$VISIBLE_DELAY" ]; then
+        export AUDIOBATCH_GUI_TESTS_STEP_DELAY_MS="$VISIBLE_DELAY"
+    fi
 fi
 
 case "$BUILD_TYPE" in

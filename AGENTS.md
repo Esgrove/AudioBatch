@@ -73,6 +73,16 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   It isolates application storage with `AUDIOBATCH_DATA_ROOT`
   and normalizes only temporary fixture copies with `--delete`.
   CTest runs it with the `integration` label, and the Rust workflow runs it after building the CLI.
+- `tests/gui_controls.json` lists the main-window controls that both GUIs expose with the same stable id,
+  accessibility role, and label, and maps each shared role to the native GPUI and JUCE roles.
+  The C++ `ManifestControlsExistWithRoles` integration case
+  and the Rust `integration_manifest_controls_exist_with_roles` test both read it,
+  so a control renamed, removed, or given another role in one application fails both suites.
+  Add a control there when both applications gain it, and drive GUI workflows through these ids.
+  Both GUI integration tiers send real pointer, key, wheel, and file-drop events to the production view
+  and assert application results, never screenshots or pixels.
+  The C++ tier drives a transparent desktop window through `cpp/tests/GuiDriver.*`,
+  and the Rust tier uses gpui-kit's test window helpers.
 - `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, and `rust/scripts/`,
   and pins it in `uv.lock`.
   Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.

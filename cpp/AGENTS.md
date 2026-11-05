@@ -164,6 +164,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Folders and files given as arguments, or forwarded from a second launch, open as if dropped onto the window.
       `GuiLayout.h` holds shared UI dimensions and compile-time layout calculations,
       grouped by the window, workspace, status bar, table, inspector, plugin editor, waveform, and theme.
+      `GuiControlIds.h` holds the component ids and accessibility titles of the controls shared with the Rust application.
     - `AudioBatchComponent.*` is the main GUI component.
       Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, table, selection, status),
       `AudioBatchComponentActions.cpp`, `AudioBatchComponentLayout.cpp`, `AudioBatchComponentOperations.cpp`,
@@ -491,12 +492,32 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 ## Testing
 
 - Keep unit tests lightweight and focused, targeting under one second per case.
-  Put executable CLI contracts and nonvisual production-view workflows in the separately labelled integration tier.
+  Put executable CLI contracts and driven production-view workflows in the separately labelled integration tier.
   Integration tests may take longer, but must have bounded waits and process timeouts.
   Use isolated application storage and copied fixtures,
   with no system trash, physical audio devices, or installed plugins.
-  Do not add screenshot comparisons, pixel assertions, or desktop automation.
+  Do not add screenshot comparisons, pixel assertions, or desktop automation outside the test process.
   GUI integration tests prove application composition and event delivery, not packaged-app or native OS behavior.
+- `tests/GuiDriver.*` drives GUI workflows.
+  It places the real view in a transparent, frontmost desktop window,
+  finds controls by the component ids shared with the Rust application in `../tests/gui_controls.json`
+  and `src/gui/GuiControlIds.h`, and reads their native accessibility role, title, value, and state.
+  Its clicks, drags, double clicks, wheel notches, key presses, and file drops go through the window peer,
+  so they pass through JUCE's hit testing, focus, and modal routing.
+  Each pointer action fails when the target is hidden, disabled, covered, or not under the routed pointer.
+  Drive workflows through it, and call view handlers directly only for observation or for setup that has no control.
+  Popup menus open in separate windows that macOS closes while the test process is in the background,
+  so tests check a menu through its builder and the handler its items reach, not through the menu window.
+  `StorageIsolation` and `CancelAndClearRejectStaleCallbacks` deliberately run without a window.
+  The driven cases share the desktop pointer and focus, so CTest runs the integration tier serially.
+  `./test.sh --visible [delay-ms]` shows the window on screen and pauses after each action, logging it as `[gui] click`,
+  so a developer can watch a workflow.
+  It sets `AUDIOBATCH_GUI_TESTS_VISIBLE=1` and optionally `AUDIOBATCH_GUI_TESTS_STEP_DELAY_MS`,
+  whose default and cap are named constants in `tests/GuiDriver.h`.
+  It is off by default and meant for local runs. Do not touch the mouse or keyboard while it runs.
+  Use named constants for shared control ids and titles, never repeated string literals.
+  Write each shared workflow with the same name and steps as its Rust counterpart,
+  and document a remaining difference between the applications beside both tests.
 - Build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
   or `ctest --test-dir cmake-build-windows-debug --build-config Debug --output-on-failure` on Windows.
   Run the `AudioBatchTests` executable directly for the full test log.

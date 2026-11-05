@@ -7,7 +7,9 @@
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiControlIds.h"
 #include "gui/GuiLayout.h"
+#include "utils/StringFormat.h"
 
 #include <functional>
 #include <memory>
@@ -19,6 +21,35 @@ namespace
 {
 constexpr auto CONTROLS_WIDTH_KEY {"previewControlsWidthScale"};
 constexpr auto INFORMATION_WIDTH_KEY {"previewInformationWidthScale"};
+
+/// Reports a preview panel width as read-only text, in the same form as the Rust divider's accessibility value.
+class PanelWidthValue final : public juce::AccessibilityTextValueInterface
+{
+public:
+    /// Copies the width query, which reads the workspace that outlives the divider and its handler.
+    explicit PanelWidthValue(std::function<int()> currentWidth) : getWidth(std::move(currentWidth)) {}
+
+    /// The width changes through dragging and keys, not through accessibility clients.
+    [[nodiscard]] bool isReadOnly() const override
+    {
+        return true;
+    }
+
+    /// Formats the width as "<pixels> pixels".
+    [[nodiscard]] juce::String getCurrentValueAsString() const override
+    {
+        return utils::format("{} pixels", getWidth());
+    }
+
+    /// Ignores writes, since the value is read-only.
+    void setValueAsString(const juce::String& newValue) override
+    {
+        juce::ignoreUnused(newValue);
+    }
+
+private:
+    std::function<int()> getWidth;
+};
 }  // namespace
 
 /// A native JUCE edge resizer whose constrainer updates a responsive width preference, not a fixed component size.
@@ -29,6 +60,7 @@ public:
     /// Observes an existing panel and adapts JUCE's right-edge dragging to workspace column widths.
     PreviewWidthDivider(
         juce::Component& target,
+        const juce::String& componentId,
         const juce::String& name,
         std::function<int()> currentWidth,
         std::function<void(int)> resize,
@@ -42,6 +74,7 @@ public:
         onReset(std::move(reset)),
         onResize(std::move(resize))
     {
+        setComponentID(componentId);
         setName(name);
         setTitle(name);
         setDescription(
@@ -99,6 +132,20 @@ public:
         onCommit();
     }
 
+    /// Exposes the divider as a focusable group whose read-only value is the panel width,
+    /// because JUCE has no splitter role.
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+    {
+        return std::make_unique<juce::AccessibilityHandler>(
+            *this,
+            juce::AccessibilityRole::group,
+            juce::AccessibilityActions().addAction(
+                juce::AccessibilityActionType::focus, [this] { grabKeyboardFocus(); }
+            ),
+            juce::AccessibilityHandler::Interfaces {std::make_unique<PanelWidthValue>(getPanelWidth)}
+        );
+    }
+
 protected:
     /// Shows a quiet vertical grip only when the divider is hovered, focused, or being dragged.
     void paint(juce::Graphics& graphics) override
@@ -151,6 +198,20 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
     configurePreviewSectionButton();
     controlsContent.addAndMakeVisible(previewSectionButton);
 
+    previewSectionButton.setComponentID(control_ids::PREVIEW_SECTION);
+    startStopButton.setComponentID(control_ids::PLAY_STOP);
+    processButton.setComponentID(control_ids::PROCESS_SELECTED);
+    zoomSlider.setComponentID(control_ids::ZOOM_TRACK);
+    zoomSlider.setTitle(control_titles::ZOOM_TRACK);
+    gainSlider.setComponentID(control_ids::GAIN_TRACK);
+    gainSlider.setTitle(control_titles::GAIN_TRACK);
+    normalizeBeforePluginToggle.setComponentID(control_ids::PROCESS_NORMALIZE_FIRST);
+    forceOverwriteToggle.setComponentID(control_ids::NORMALIZE_OVERWRITE);
+    previewChainToggle.setComponentID(control_ids::PREVIEW_CHAIN);
+    pluginButton.setComponentID(control_ids::PLUGIN_CHAIN);
+    pluginButton.setTitle(control_titles::PLUGIN_CHAIN);
+    settingsButton.setComponentID(control_ids::AUDIO_SETTINGS);
+
     controlsViewport.setViewedComponent(&controlsContent, false);
     controlsViewport.setScrollBarsShown(true, false);
     controlsViewport.setScrollBarThickness(layout::scrollBarThickness);
@@ -173,7 +234,8 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
     configureSecondaryControls();
     controlsWidthDivider = std::make_unique<PreviewWidthDivider>(
         controlsViewport,
-        "Resize preview controls width",
+        control_ids::CONTROLS_WIDTH_DIVIDER,
+        control_titles::CONTROLS_WIDTH_DIVIDER,
         [this] {
             return layout::previewColumns(
                        getLocalBounds().reduced(layout::compactPreview::padding),
@@ -192,7 +254,8 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
     );
     informationWidthDivider = std::make_unique<PreviewWidthDivider>(
         audioInfo,
-        "Resize preview information width",
+        control_ids::INFORMATION_WIDTH_DIVIDER,
+        control_titles::INFORMATION_WIDTH_DIVIDER,
         [this] { return audioInfo.getWidth(); },
         [this](const int width) { setPanelWidth(true, width); },
         [this] { saveWidthSettings(); },
