@@ -96,11 +96,13 @@ jobs:
           ./test.sh --build-type "$BUILD_TYPE" --build-only
           ./test.sh --build-type "$BUILD_TYPE" --unit --no-build
 
-      - name: CLI contracts and nonvisual GUI integration
+      # The GUI workflows drive a transparent desktop window through its peer,
+      # which the macOS and Windows runners provide through their logged-in desktop sessions.
+      - name: CLI contracts and driven GUI integration
         timeout-minutes: 5
         run: ./test.sh --build-type "$BUILD_TYPE" --integration --no-build
 
-      # CTest's integration label includes the shared executable CLI contracts and the nonvisual GUI workflows.
+      # CTest's integration label includes the shared executable CLI contracts and the driven GUI workflows.
       - name: Upload integration failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v7

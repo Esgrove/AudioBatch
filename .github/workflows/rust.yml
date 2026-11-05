@@ -156,7 +156,7 @@ jobs:
       - name: Run unit and service tests
         run: ./test.sh --unit
 
-      - name: Nonvisual GUI integration workflows
+      - name: Driven GUI integration workflows
         timeout-minutes: 5
         run: ./test.sh --gui-integration
 
