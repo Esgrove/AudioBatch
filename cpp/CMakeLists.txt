@@ -1036,7 +1036,7 @@ if(BUILD_TESTING)
     juce_generate_juce_header(AudioBatchIntegrationTests)
     target_sources(
         AudioBatchIntegrationTests PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_GUI_SOURCES}
-                                           "tests/IntegrationMain.cpp"
+                                           "src/gui/MainWindow.cpp" "tests/IntegrationMain.cpp"
     )
     target_include_directories(
         AudioBatchIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}"

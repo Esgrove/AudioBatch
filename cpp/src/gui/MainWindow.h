@@ -13,6 +13,10 @@
 
 namespace audiobatch
 {
+#ifdef AUDIOBATCH_TESTING
+class AudioBatchIntegrationTest;
+#endif
+
 /// Top-level application window that hosts the main AudioBatch component.
 /// The menu items that have a keyboard shortcut are application commands,
 /// because the menu only displays shortcuts for items that are backed by a command manager.
@@ -35,6 +39,10 @@ public:
     void closeButtonPressed() override;
 
 private:
+#ifdef AUDIOBATCH_TESTING
+    friend class AudioBatchIntegrationTest;
+#endif
+
     AudioBatchComponent& getAudioBatch() const;
     [[nodiscard]] juce::String getNormalizeAllLabel() const;
 

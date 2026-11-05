@@ -14,6 +14,7 @@
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "gui/MainWindow.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
@@ -47,6 +48,7 @@ enum class IntegrationWorkflow : std::uint8_t {
     previewWidths,
     cancelAndClear,
     restore,
+    menuShortcuts,
 };
 
 /// Storage owned by one case, deleted only after its view and all synchronous workers are destroyed.
@@ -203,6 +205,7 @@ private:
     [[nodiscard]] juce::File copyFixture(const juce::String& name) const;
 
     void cancelAndClear();
+    void menuShortcuts();
     void normalizeSelection();
     void openAndSort();
     void previewModes();
@@ -828,6 +831,31 @@ void AudioBatchIntegrationTest::restorePreferencesAndGain()
     EXPECT_FALSE(recreated.previewPlayer.getOutputStatus().open);
 }
 
+/// Builds the real, never shown main window and checks that its command shortcuts reach the shared view actions.
+/// The key mappings come from MainWindow::getCommandInfo, so this pins the menu shortcuts both apps document.
+void AudioBatchIntegrationTest::menuShortcuts()
+{
+    MainWindow window("AudioBatch");
+    auto& mappings = *window.commandManager.getKeyMappings();
+    const auto command = [&](const juce::KeyPress& key) {
+        return window.commandManager.getNameOfCommand(mappings.findCommandForKeyPress(key));
+    };
+    const juce::ModifierKeys primary {juce::ModifierKeys::commandModifier};
+    EXPECT_EQ(command(juce::KeyPress('o', primary.withFlags(juce::ModifierKeys::shiftModifier), 0)), "Add Folder...");
+    EXPECT_EQ(command(juce::KeyPress('p', primary, 0)), "Audio Settings...");
+    EXPECT_EQ(command(juce::KeyPress('a', primary, 0)), "Select All Files");
+    EXPECT_EQ(command(juce::KeyPress(juce::KeyPress::escapeKey)), "Stop Playback");
+    EXPECT_EQ(command(juce::KeyPress('o', primary, 0)), "Choose Folder...");
+
+    const auto file = copyFixture("sine_mono_44100_16.wav");
+    auto& view = window.getAudioBatch();
+    view.openPaths({file.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(view, 1));
+    view.resultsTable.deselectAllRows();
+    EXPECT_TRUE(mappings.keyPressed(juce::KeyPress('a', primary, 0), &view));
+    EXPECT_TRUE(dispatchUntil([&] { return view.getSelectedRecordPaths().size() == 1; }));
+}
+
 /// Dispatches a workflow with no native window or installed plugins.
 void AudioBatchIntegrationTest::TestBody()
 {
@@ -853,6 +881,9 @@ void AudioBatchIntegrationTest::TestBody()
         case IntegrationWorkflow::restore:
             restorePreferencesAndGain();
             break;
+        case IntegrationWorkflow::menuShortcuts:
+            menuShortcuts();
+            break;
     }
 }
 
@@ -872,6 +903,7 @@ int main(int argumentCount, char* arguments[])
         std::pair {"PreviewWidthsResizeIndependentlyAndPersist", audiobatch::IntegrationWorkflow::previewWidths},
         std::pair {"CancelAndClearRejectStaleCallbacks", audiobatch::IntegrationWorkflow::cancelAndClear},
         std::pair {"RecreateRestoresGainAndPreference", audiobatch::IntegrationWorkflow::restore},
+        std::pair {"MenuShortcutsInvokeSharedCommands", audiobatch::IntegrationWorkflow::menuShortcuts},
     };
     for (const auto& [name, workflow] : cases) {
         testing::RegisterTest("AudioBatchIntegration", name, nullptr, nullptr, __FILE__, __LINE__, [workflow] {
