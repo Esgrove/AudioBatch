@@ -328,6 +328,17 @@ class TestNormalizationMode(unittest.TestCase):
                         with self.subTest(bits=bits, steps=steps, mode=mode):
                             assert bool(outputs.compare_outputs(cpp, rust, -72.0, mode)) == rejected
 
+    def test_aac_startup_residuals_are_not_hidden_by_lossy_tolerance(self) -> None:
+        """The strict -72 dBFS contract rejects the observed 12- and 95-step AAC startup differences."""
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()):
+            cpp, rust = Path(temporary) / "cpp.aif", Path(temporary) / "rust.aif"
+            write_aiff(cpp, samples=bytes(4))
+            for steps, rejected in ((8, False), (9, True), (12, True), (95, True)):
+                write_aiff(rust, samples=steps.to_bytes(2, "big", signed=True) + bytes(2))
+                for mode in ("peak", "lufs"):
+                    with self.subTest(steps=steps, mode=mode):
+                        assert bool(outputs.compare_outputs(cpp, rust, -72.0, mode)) == rejected
+
     def test_loudness_tolerance_does_not_relax_structure_or_tags(self) -> None:
         """The one-step allowance cannot mask malformed samples, changed metadata, or SSND alignment bytes."""
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()):
