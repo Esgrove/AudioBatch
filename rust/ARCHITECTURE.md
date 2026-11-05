@@ -349,6 +349,16 @@ Lossy decoder samples can still differ between applications and platforms.
 Symphonia trims MP3 files with a LAME header itself,
 and for other MP3 files the decoder leaves out the 529 samples of synthesis delay.
 `decode/gapless.rs` reads the MP4 edit list or `iTunSMPB` atom, which symphonia parses but never applies.
+On macOS, `decode/native_aac.rs` selects Core Audio for single-track mono/stereo AAC-LC MP4 streams.
+AAC perceptual noise substitution synthesizes random spectral bands before inverse MDCT and overlap-add.
+Symphonia's private fixed FFmpeg-compatible generator cannot be configured to reproduce Core Audio's bands,
+and correcting final PCM would require decoding and reconstructing those bands again.
+The narrow native backend instead shares the C++ decoder, including native edit-list trimming and seek pre-roll.
+Read-only callbacks use a clone of the original open file handle, never a reopened path,
+and native PCM is converted to the same bounded planar interface at the source rate.
+All other codecs, multi-track files, AAC configurations, and platforms retain Symphonia.
+C++ does not support AAC on Windows, whose Rust decoding is unchanged.
+No parity tolerance is widened and no audio is trimmed to hide reconstruction residuals.
 `DecodeFailureTracker` turns an isolated failed packet into silence and a notice,
 while three failures in a row stop the pass, so no pass works on truncated audio.
 
@@ -701,7 +711,8 @@ The Rust version differs from it on purpose in these points:
 - It shares measurements and compatible Serato outcomes with the C++ application in `AudioBatch/analysis.db`.
   Logs, settings, plugin list, chain, and presets remain in its own `AudioBatch-rs` folders,
   with plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
-- It decodes audio with symphonia rather than JUCE and the platform decoders.
+- It decodes audio with Symphonia rather than JUCE,
+  except for the narrow native AAC-LC MP4 reconstruction shared with C++ on macOS.
   It supports Ogg Vorbis but not the Opus decoder enabled in the C++ build.
   Lossy PCM can differ, so parity checks use a separate -72 dBFS sample-difference tolerance for lossy sources,
   not the exact peak-mode or one-step loudness-mode contract for lossless sources.

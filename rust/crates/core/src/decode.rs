@@ -1,7 +1,11 @@
 //! Audio file decoding on top of symphonia, shared by analysis and the preview player.
 //!
 //! `AudioFileDecoder` probes a file, picks its default audio track,
-//! and decodes it packet by packet into planar `f32` samples, with encoder delay and padding trimmed.
+//! and decodes it into planar `f32` samples, with encoder delay and padding trimmed.
+//! On macOS,
+//! single-track mono/stereo AAC-LC MP4 files use Core Audio to reconcile
+//! perceptual noise substitution with the C++ application's native decoder.
+//! All other streams and platforms use Symphonia.
 //! Symphonia trims MP3 files with a LAME tag itself.
 //! The decoder trims MP4 files from their edit list, which symphonia leaves alone,
 //! and leaves the synthesis delay out of other MP3 files.
@@ -34,6 +38,8 @@ use symphonia_common::apple::audio::alac::MagicCookie;
 use crate::record::AnalysisError;
 
 mod gapless;
+#[cfg(target_os = "macos")]
+mod native_aac;
 
 /// Bit depth assumed for lossy files, whose formats store no source bit depth.
 /// It is also the depth their normalized output is written in.
@@ -93,6 +99,15 @@ pub enum DecodeError {
     /// Decoded source PCM contains NaN or infinity and cannot be measured or rendered.
     #[error("Non-finite decoded sample")]
     NonFinitePcm,
+    /// The native AAC decoder rejected the stream or a read.
+    #[cfg(target_os = "macos")]
+    #[error("Audio decoding failed at sample {position}: Core Audio status {status}")]
+    NativeAac {
+        /// Frame position where decoding failed.
+        position: u64,
+        /// Native `OSStatus` without losing the original failure code.
+        status: i32,
+    },
     /// The requested seek time cannot be represented.
     #[error("Invalid seek time {0}")]
     InvalidSeek(f64),
@@ -138,6 +153,8 @@ pub struct AudioFileDecoder {
     log_span: tracing::Span,
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
+    #[cfg(target_os = "macos")]
+    native_aac: Option<native_aac::NativeAacDecoder>,
     track_id: u32,
     info: StreamInfo,
     /// Samples of the most recent packet, one vector per channel.
@@ -168,6 +185,8 @@ impl DecodeError {
                 AnalysisError::Unsupported
             }
             Self::PacketLimit { .. } => AnalysisError::DecodeFailed,
+            #[cfg(target_os = "macos")]
+            Self::NativeAac { .. } => AnalysisError::DecodeFailed,
             Self::Decode { .. } | Self::InvalidSeek(_) | Self::Seek(_) => AnalysisError::MeasurementFailed,
         }
     }
@@ -283,6 +302,8 @@ impl AudioFileDecoder {
         let log_span = tracing::info_span!("decode", file = %path.display());
         let _span = log_span.clone().entered();
         let file = File::open(path).map_err(DecodeError::Open)?;
+        #[cfg(target_os = "macos")]
+        let native_file = file.try_clone().map_err(DecodeError::Open)?;
         let source = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
         let mut hint = Hint::new();
         if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
@@ -335,6 +356,18 @@ impl AudioFileDecoder {
             expected_frames = expected_frames.map(|frames| frames.saturating_sub(leading_frames));
         }
 
+        #[cfg(target_os = "macos")]
+        let native_aac =
+            if format.tracks().len() == 1 && native_aac::supports(&parameters, format.format_info().short_name) {
+                let native = native_aac::NativeAacDecoder::open(native_file, sample_rate, channels)?;
+                expected_frames = Some(native.frames());
+                leading_frames = 0;
+                frame_limit = expected_frames;
+                Some(native)
+            } else {
+                None
+            };
+
         let info = StreamInfo {
             sample_rate,
             channels,
@@ -347,6 +380,8 @@ impl AudioFileDecoder {
             log_span,
             format,
             decoder,
+            #[cfg(target_os = "macos")]
+            native_aac,
             track_id,
             info,
             planar: vec![Vec::new(); channels as usize],
@@ -391,6 +426,21 @@ impl AudioFileDecoder {
     /// or when too many packets in a row fail to decode.
     pub fn next_chunk(&mut self) -> Result<Option<&[Vec<f32>]>, DecodeError> {
         let _span = self.log_span.clone().entered();
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &mut self.native_aac {
+            let frames = native.read(&mut self.planar, self.position)?;
+            if frames == 0 {
+                self.record_end_of_stream();
+                return Ok(None);
+            }
+            self.position += frames;
+            return Ok(Some(&self.planar));
+        }
+        self.next_symphonia_chunk()
+    }
+
+    /// Decodes packets through Symphonia, retaining its bounded error concealment and timeline trimming.
+    fn next_symphonia_chunk(&mut self) -> Result<Option<&[Vec<f32>]>, DecodeError> {
         loop {
             if self.frame_limit.is_some_and(|limit| self.position >= limit) {
                 return Ok(None);
@@ -501,6 +551,17 @@ impl AudioFileDecoder {
     /// Returns an error when the container cannot seek.
     pub fn seek(&mut self, seconds: f64) -> Result<u64, DecodeError> {
         let _span = self.log_span.clone().entered();
+        #[cfg(target_os = "macos")]
+        if let Some(native) = &mut self.native_aac {
+            if !seconds.is_finite() {
+                return Err(DecodeError::InvalidSeek(seconds));
+            }
+            let position = (seconds.max(0.0) * f64::from(self.info.sample_rate)).floor() as u64;
+            native.seek(position)?;
+            self.position = position.min(native.frames());
+            self.failures = DecodeFailureTracker::new(self.info.expected_frames);
+            return Ok(self.position);
+        }
         let stream_seconds = seconds.max(0.0) + self.leading_frames as f64 / f64::from(self.info.sample_rate);
         let time = Time::try_from_secs_f64(stream_seconds).ok_or(DecodeError::InvalidSeek(seconds))?;
         let seeked = self

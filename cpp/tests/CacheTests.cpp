@@ -902,7 +902,25 @@ void CacheTests::runSpectrogramTests()
     );
     expectSqlScalar(*this, databaseFile, "SELECT updated_at_ms FROM file_analysis;", 123);
     expectSqlScalar(*this, databaseFile, "SELECT analysis_version FROM file_analysis;", 15);
-
+    beginTest("Obsolete Rust AAC previews refill without losing gains or tags");
+    expect(executeSql(*this, databaseFile, R"SQL(
+        UPDATE file_analysis SET analysis_version = 14, format_name = 'M4A file', bits_per_sample = 16;
+        UPDATE spectrogram_cache SET producer = 'rust';
+        INSERT INTO rust_waveform_cache
+            SELECT file_path, file_size, modified_time_ms, sample_rate, channels, duration_seconds, 1, x'010203'
+            FROM file_analysis;
+    )SQL"));
+    {
+        AnalysisCache reopened(databaseFile);
+        expect(reopened.open());
+        expect(!reopened.getAnalysis(file));
+        expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM rust_waveform_cache;", 0);
+        expectSqlScalar(*this, databaseFile, "SELECT COUNT(*) FROM spectrogram_cache;", 0);
+        expect(reopened.storeAnalysis(record));
+        const auto refilled = reopened.getAnalysis(file);
+        expect(refilled && refilled->customGain && juce::approximatelyEqual(refilled->customGain->value, -2.5f));
+        expect(reopened.storeSpectrogramData(identity, artifact));
+    }
     beginTest("An identical Rust-produced spectrogram is adopted without native producer provenance");
     expect(executeSql(*this, databaseFile, "UPDATE spectrogram_cache SET producer = 'rust';"));
     const auto adopted = second.getSpectrogramData(file);

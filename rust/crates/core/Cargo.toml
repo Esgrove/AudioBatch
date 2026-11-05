@@ -29,6 +29,10 @@ tracing-subscriber.workspace = true
 trash.workspace = true
 walkdir.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-audio-toolbox.workspace = true
+objc2-core-audio-types.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 winapi-util.workspace = true
 

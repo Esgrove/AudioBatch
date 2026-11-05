@@ -5,6 +5,8 @@
 //! as `f32::to_bits` or `f64::to_bits` hex next to the decimal value for reading,
 //! and fail when any value differs, printing the old and the new line.
 //! Windows x86-64 uses overrides in `tests/golden/windows-x86_64/` only where platform math differs.
+//! macOS AAC measurement snapshots use the native reconstruction independently verified against Core Audio and C++.
+//! These are measurement regressions, not implementation-specific expected PCM or a relaxed parity oracle.
 //! All other outputs use the shared snapshots, and input identities remain shared on every platform.
 //! Running the tests with `UPDATE_GOLDEN=1` updates snapshots.
 //! On Windows it writes only differing overrides, preserves shared snapshots, and removes redundant overrides.
@@ -130,11 +132,19 @@ impl GoldenText {
     /// Returns a description of the differences, or `None` when the file matches.
     pub fn check(&self, name: &str) -> Option<String> {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+        let platform = if cfg!(target_os = "macos")
+            && (name == "fixtures/sine_stereo_44100_aac.m4a"
+                || name == "normalization/m4a_stereo_44100_aac_256k_tagged_20s.m4a")
+        {
+            Some("macos-native-aac")
+        } else {
+            PLATFORM_DIRECTORY
+        };
         if std::env::var_os(UPDATE_VARIABLE).is_some() {
-            write_golden(&directory, name, PLATFORM_DIRECTORY, &self.text);
+            write_golden(&directory, name, platform, &self.text);
             return None;
         }
-        let path = golden_path(&directory, name, PLATFORM_DIRECTORY);
+        let path = golden_path(&directory, name, platform);
         let Some(expected) = read_golden(&path) else {
             return Some(format!(
                 "{name}: no golden file at {}, run with {UPDATE_VARIABLE}=1 to create it",

@@ -642,6 +642,8 @@ dependencies = [
  "jiff",
  "lofty",
  "log",
+ "objc2-audio-toolbox",
+ "objc2-core-audio-types",
  "rayon",
  "realfft",
  "rusqlite",
