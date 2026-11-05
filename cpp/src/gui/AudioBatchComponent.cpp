@@ -170,10 +170,7 @@ void AudioBatchComponent::configureProcessingControls()
     previewWorkspace.pluginButton.onClick = [this] { liveChain->showMenu(previewWorkspace.pluginButton); };
 
     previewWorkspace.gainSlider.onValueChange = [this] {
-        const auto value = static_cast<float>(previewWorkspace.gainSlider.getValue());
-        applyCustomGainToSelection(
-            juce::approximatelyEqual(value, 0.0f) ? std::nullopt : std::optional(Decibels {value})
-        );
+        applyCustomGainToSelection(customGainFromDecibels(static_cast<float>(previewWorkspace.gainSlider.getValue())));
     };
 
     auto& normalizationTargetControl = previewWorkspace.normalizationTargetControl;

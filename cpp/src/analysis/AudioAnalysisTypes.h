@@ -11,6 +11,7 @@
 #include <JuceHeader.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -343,6 +344,17 @@ struct AudioAnalysisRecord {
 [[nodiscard]] constexpr bool isRepeatable(const AnalysisError error) noexcept
 {
     return error == AnalysisError::unsupported;
+}
+
+/// Smallest custom gain magnitude that counts as a gain, in decibels, shared with the Rust application.
+/// The gain slider's 0.1 dB steps snap zero to a tiny floating-point residue, which must still mean no gain.
+constexpr float CUSTOM_GAIN_EPSILON_DB {1.0e-4f};
+
+/// Returns the custom gain to store for a slider value, or none for about 0 dB or a value that is not finite.
+[[nodiscard]] inline std::optional<Decibels> customGainFromDecibels(const float decibels)
+{
+    return std::isfinite(decibels) && std::abs(decibels) >= CUSTOM_GAIN_EPSILON_DB ? std::optional(Decibels {decibels})
+                                                                                   : std::nullopt;
 }
 
 /// Returns true when neither gain is set, or both are set to approximately the same value.

@@ -40,6 +40,12 @@ juce::String adjustedPeak(const double amplitude, const std::optional<Decibels> 
     return utils::format("({:+.1f})", juce::approximatelyEqual(rounded, 0.0) ? 0.0 : rounded);
 }
 
+/// Returns the record's custom gain when it changes the signal, ignoring an about 0 dB slider residue.
+std::optional<Decibels> effectiveCustomGain(const AudioAnalysisRecord& record)
+{
+    return record.customGain ? customGainFromDecibels(record.customGain->value) : std::nullopt;
+}
+
 /// Formats a completed hard-clip measurement or empirical limiter estimate, preserving the approximation marker.
 juce::String formatAdjustedLoudness(const double loudness)
 {
@@ -592,7 +598,7 @@ void AudioInfoPanel::showRecord(
     }
 
     if (record.isReady()) {
-        const auto gain = showGainAdjustedMetrics ? record.customGain : std::nullopt;
+        const auto gain = showGainAdjustedMetrics ? effectiveCustomGain(record) : std::nullopt;
         metrics[0].setValue(
             formatPeakCompact(static_cast<double>(record.overallPeak)),
             adjustedPeak(static_cast<double>(record.overallPeak), gain)
@@ -611,11 +617,10 @@ void AudioInfoPanel::showRecord(
 /// No linear loudness estimate is displayed while waiting, since clipping and absolute gating can change it.
 void AudioInfoPanel::updateLoudnessPreview(const AudioAnalysisRecord& record, const bool enabled)
 {
-    const bool eligible = enabled && record.isReady() && record.customGain && std::isfinite(record.customGain->value)
-        && record.file.existsAsFile();
+    const auto gain = effectiveCustomGain(record);
+    const bool eligible = enabled && record.isReady() && gain && record.file.existsAsFile();
     if (eligible && loudnessIdentity && loudnessGain && loudnessIdentity->path == record.file.getFullPathName()
-        && loudnessIdentity->matches(record.file)
-        && juce::approximatelyEqual(loudnessGain->value, record.customGain->value))
+        && loudnessIdentity->matches(record.file) && juce::approximatelyEqual(loudnessGain->value, gain->value))
     {
         showLoudnessPreview();
         return;
@@ -627,7 +632,7 @@ void AudioInfoPanel::updateLoudnessPreview(const AudioAnalysisRecord& record, co
     loudnessGain.reset();
     if (eligible) {
         loudnessIdentity.emplace(record.file);
-        loudnessGain = record.customGain;
+        loudnessGain = gain;
         constexpr int debounceMilliseconds {200};
         startTimer(debounceMilliseconds);
     }
