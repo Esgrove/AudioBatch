@@ -940,7 +940,7 @@ void PreviewPlayerTests::testOverloadPreferences()
     const auto& content = *dynamic_cast<juce::Viewport&>(*panel.getChildComponent(0)).getViewedComponent();
     for (auto* child : content.getChildren()) {
         if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) {
-            const auto* label = std::ranges::find(labels, toggle->getButtonText(), [](const auto* optionText) {
+            const auto label = std::ranges::find(labels, toggle->getButtonText(), [](const auto* optionText) {
                 return juce::String(optionText);
             });
             if (label != labels.end()) {
@@ -952,7 +952,7 @@ void PreviewPlayerTests::testOverloadPreferences()
         }
     }
     expect(selector != nullptr);
-    const auto* missingToggle = std::ranges::find(toggles, nullptr);
+    const auto missingToggle = std::ranges::find(toggles, nullptr);
     expect(missingToggle == toggles.end());
     if (selector == nullptr || missingToggle != toggles.end()) {
         return;
@@ -1466,10 +1466,10 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
         return;
     }
     auto& content = *viewport->getViewedComponent();
-    const auto cellNamed = [&](const juce::String& name) -> const juce::Label* {
+    const auto cellNamed = [&](const juce::String& labelName) -> const juce::Label* {
         for (const auto* child : content.getChildren()) {
             if (const auto* label = dynamic_cast<const juce::Label*>(child);
-                label != nullptr && label->getName() == name)
+                label != nullptr && label->getName() == labelName)
             {
                 return label;
             }

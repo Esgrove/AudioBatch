@@ -34,7 +34,10 @@ fn replace_with_matching_stats(path: &Path) {
         .as_file()
         .set_times(FileTimes::new().set_modified(modified))
         .expect("preserves source mtime");
-    replacement.persist(path).expect("atomic source replacement");
+    // Unlike `persist`, `fs::rename` also replaces a file that the analysis still holds open on Windows.
+    let (file, temporary_path) = replacement.keep().expect("keeps replacement");
+    drop(file);
+    std::fs::rename(&temporary_path, path).expect("atomic source replacement");
     assert_eq!(
         file_identity(path),
         Some(before),

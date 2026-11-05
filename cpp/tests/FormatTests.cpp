@@ -34,15 +34,19 @@ public:
                 const auto fields = juce::StringArray::fromTokens(line, "\t", "");
                 expectEquals(fields.size(), 3);
                 if (fields.size() == 3) {
-                    expectEquals(formatFolderText(fields[1], fields[0] == "macos"), fields[2]);
+                    // Only macOS shortens home folders, so the other platforms keep the path as it is.
+                    expectEquals(fields[0] == "macos" ? formatFolderText(fields[1]) : fields[1], fields[2]);
                     ++count;
                 }
             }
             expect(count >= 10);
             const auto source = fixtureFile("sine_stereo_44100_16.wav");
-            expectEquals(
-                formatFolder(source), formatFolderText(source.getParentDirectory().getFullPathName(), JUCE_MAC != 0)
-            );
+            const auto folder = source.getParentDirectory().getFullPathName();
+#if JUCE_MAC
+            expectEquals(formatFolder(source), formatFolderText(folder));
+#else
+            expectEquals(formatFolder(source), folder);
+#endif
         }
 
         beginTest("Source statistics keep undefined values distinct from zero and name every channel");

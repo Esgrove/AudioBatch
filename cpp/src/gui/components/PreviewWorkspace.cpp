@@ -161,9 +161,9 @@ protected:
 
 private:
     /// Leaves the component geometry to the workspace so a divider never moves or resizes its sibling panel.
-    void applyBoundsToComponent(juce::Component& component, const juce::Rectangle<int> bounds) override
+    void applyBoundsToComponent(juce::Component& target, const juce::Rectangle<int> bounds) override
     {
-        juce::ignoreUnused(component);
+        juce::ignoreUnused(target);
         onResize(bounds.getWidth() + columnInset);
     }
 
