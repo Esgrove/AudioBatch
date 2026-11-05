@@ -29,6 +29,10 @@ OPTIONS: All options are optional
     --seconds <count>
         Fuzz each target for this many seconds. Defaults to 60.
 
+    --targets <all|parsers|decoder>
+        Select all targets (default), the Serato/CLI/cache targets, or only decode_audio.
+        Applies to building, replay, and mutation fuzzing. Failures always remain nonzero.
+
     -v | --verbose
         Display commands being executed.
 "
@@ -37,8 +41,8 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
 
-# The targets, in the order they run.
-TARGETS=(serato_tags cli_arguments cache_blobs decode_audio)
+# The selected target group. The default preserves complete local runs, including decoder findings.
+TARGET_GROUP=all
 
 BUILD_ONLY=false
 NO_BUILD=false
@@ -68,6 +72,13 @@ while [ $# -gt 0 ]; do
             SECONDS_PER_TARGET="$2"
             shift
             ;;
+        --targets)
+            if [ $# -lt 2 ]; then
+                print_error_and_exit "Missing value for $1."
+            fi
+            TARGET_GROUP="$2"
+            shift
+            ;;
         -v | --verbose)
             set -x
             ;;
@@ -78,6 +89,13 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+case "$TARGET_GROUP" in
+    all) TARGETS=(serato_tags cli_arguments cache_blobs decode_audio) ;;
+    parsers) TARGETS=(serato_tags cli_arguments cache_blobs) ;;
+    decoder) TARGETS=(decode_audio) ;;
+    *) print_error_and_exit "--targets must be all, parsers, or decoder." ;;
+esac
 
 if [ "$BUILD_ONLY" = true ] && [ "$NO_BUILD" = true ]; then
     print_error_and_exit "--build-only and --no-build cannot be used together."
@@ -116,8 +134,14 @@ set_corpus_directories() {
 }
 
 if [ "$NO_BUILD" != true ]; then
-    print_magenta "Building fuzz targets..."
-    cargo +nightly fuzz build
+    print_magenta "Building $TARGET_GROUP fuzz targets..."
+    if [ "$TARGET_GROUP" = all ]; then
+        cargo +nightly fuzz build
+    else
+        for target in "${TARGETS[@]}"; do
+            cargo +nightly fuzz build "$target"
+        done
+    fi
 fi
 if [ "$BUILD_ONLY" = true ]; then
     exit 0

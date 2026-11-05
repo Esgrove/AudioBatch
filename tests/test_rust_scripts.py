@@ -1,8 +1,8 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["pyyaml==6.0.3"]
 # ///
-"""Check Rust test selection, diagnostic pipelines, and coverage reporting without compiling Rust."""
+"""Check Rust test and fuzz selection, diagnostic pipelines, and coverage reporting without compiling Rust."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,14 +28,16 @@ class RustScriptContracts(unittest.TestCase):
         self.root = Path(temporary.name).resolve() / "repository with spaces"
         self.project = self.root / "rust"
         self.project.mkdir(parents=True)
-        for relative in ["common.sh", "rust/common.sh", "rust/test.sh", "rust/coverage.sh"]:
+        for relative in ["common.sh", "rust/common.sh", "rust/test.sh", "rust/coverage.sh", "rust/fuzz.sh"]:
             destination = self.root / relative
             shutil.copyfile(ROOT / relative, destination)
             destination.chmod(0o755)
         self.tools = self.root / "bin"
         self.tools.mkdir()
         self.log = self.root / "commands.log"
-        for name in ["cargo", "cargo-llvm-cov", "cargo-nextest", "uv"]:
+        self.fuzz = self.project / "fuzz"
+        self.fuzz.mkdir()
+        for name in ["cargo", "cargo-llvm-cov", "cargo-nextest", "cargo-fuzz", "rustup", "uv"]:
             tool = self.tools / name
             tool.write_text(
                 """#!/bin/bash
@@ -62,6 +66,27 @@ fi
         uname = self.tools / "uname"
         uname.write_text("#!/bin/bash\nprintf '%s\\n' \"${TEST_PLATFORM:-Darwin}\"\n", encoding="utf-8")
         uname.chmod(0o755)
+        rustc = self.tools / "rustc"
+        rustc.write_text("#!/bin/bash\nprintf 'host: test-host\\n'\n", encoding="utf-8")
+        rustc.chmod(0o755)
+        for target in ["serato_tags", "cli_arguments", "cache_blobs", "decode_audio"]:
+            binary = self.fuzz / "target/test-host/release" / target
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_text(
+                """#!/bin/bash
+set -eo pipefail
+target=${0##*/}
+printf '%s\\0' "$target" "$PWD" unset "${RUSTFLAGS-unset}" unset "$@" >> "$COMMAND_LOG"
+printf '\\n' >> "$COMMAND_LOG"
+if [ "${FAIL_MATCH:-}" = "$target" ]; then
+    printf 'decoder or parser finding\\n' >&2
+    printf 'reproducer\\n' > "artifacts/$target-test-finding"
+    exit 77
+fi
+""",
+                encoding="utf-8",
+            )
+            binary.chmod(0o755)
 
     def invoke(self, script: str, *arguments: str, **overrides: str) -> subprocess.CompletedProcess[str]:
         """Run from outside the Rust directory to verify script-relative workspace resolution."""
@@ -90,6 +115,146 @@ fi
         if not self.log.exists():
             return []
         return [record.removesuffix("\0").split("\0") for record in self.log.read_text().splitlines()]
+
+    def test_fuzz_default_build_and_replay_include_every_target(self) -> None:
+        """Required replay retains the decoder seeds and both shared C++ corpora."""
+        result = self.invoke("fuzz.sh", "--replay")
+        assert result.returncode == 0, result.stdout + result.stderr
+        commands = self.commands()
+        assert commands[0][5:] == ["+nightly", "fuzz", "build"]
+        assert [command[0] for command in commands[1:]] == [
+            "serato_tags",
+            "cli_arguments",
+            "cache_blobs",
+            "decode_audio",
+        ]
+        for command in commands[1:]:
+            assert command[1] == str(self.fuzz)
+            assert command[3] == ""
+            assert command[5:10] == [
+                "-timeout=5",
+                "-malloc_limit_mb=128",
+                "-rss_limit_mb=512",
+                "-max_len=262145",
+                "-runs=0",
+            ]
+        assert commands[1][-2:] == ["corpus/serato_tags", "../../cpp/tests/fuzz/corpus/SeratoTagFuzzer"]
+        assert commands[2][-2:] == ["corpus/cli_arguments", "../../cpp/tests/fuzz/corpus/CliArgumentsFuzzer"]
+        assert not (self.fuzz / "scratch").exists()
+
+    def test_fuzz_selectors_limit_builds_and_runs(self) -> None:
+        """Every mode uses exactly the selected group, with no decoder in parser mutations."""
+        for group, targets in [
+            ("parsers", ["serato_tags", "cli_arguments", "cache_blobs"]),
+            ("decoder", ["decode_audio"]),
+        ]:
+            for mode in ["--build-only", "--replay", "--fuzz"]:
+                with self.subTest(group=group, mode=mode):
+                    self.log.unlink(missing_ok=True)
+                    result = self.invoke("fuzz.sh", mode, "--targets", group, "--seconds", "3")
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    commands = self.commands()
+                    assert [command[5:] for command in commands[: len(targets)]] == [
+                        ["+nightly", "fuzz", "build", target] for target in targets
+                    ]
+                    runs = commands[len(targets) :]
+                    assert [command[0] for command in runs] == ([] if mode == "--build-only" else targets)
+                    for command in runs:
+                        assert command[9] == ("-runs=0" if mode == "--replay" else "-max_total_time=3")
+                        if mode == "--fuzz":
+                            assert command[11] == f"scratch/{command[0]}"
+                            assert command[12] == f"corpus/{command[0]}"
+
+    def test_fuzz_no_build_does_not_require_unselected_binaries(self) -> None:
+        """Decoder-only runs do not depend on cached parser executables."""
+        for target in ["serato_tags", "cli_arguments", "cache_blobs"]:
+            (self.fuzz / "target/test-host/release" / target).unlink()
+        result = self.invoke("fuzz.sh", "--no-build", "--replay", "--targets", "decoder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [command[0] for command in self.commands()] == ["decode_audio"]
+
+    def test_fuzz_failures_and_artifacts_remain_visible(self) -> None:
+        """Non-blocking is a CI job policy, never success conversion inside the script."""
+        for group, target in [("decoder", "decode_audio"), ("parsers", "serato_tags")]:
+            for mode in ["--fuzz", "--replay"]:
+                with self.subTest(group=group, mode=mode):
+                    self.log.unlink(missing_ok=True)
+                    result = self.invoke("fuzz.sh", "--no-build", mode, "--targets", group, FAIL_MATCH=target)
+                    assert result.returncode == 77, result.stdout + result.stderr
+                    assert "decoder or parser finding" in result.stderr
+                    assert [command[0] for command in self.commands()] == [target]
+                    assert (self.fuzz / f"artifacts/{target}-test-finding").read_text() == "reproducer\n"
+
+    def test_fuzz_rejects_invalid_selectors_before_running_tools(self) -> None:
+        """Typos must not quietly expand diagnostics or drop required targets."""
+        for arguments in [["--targets"], ["--targets", "unknown"], ["--targets", "--replay"]]:
+            with self.subTest(arguments=arguments):
+                result = self.invoke("fuzz.sh", *arguments)
+                assert result.returncode != 0
+                assert self.commands() == []
+
+    def workflow_jobs(self) -> dict:
+        """Read the actual CI policy so routing contracts cannot pass against a separate test-only job."""
+        return yaml.safe_load((ROOT / ".github/workflows/rust.yml").read_text())["jobs"]
+
+    def test_workflow_only_decoder_diagnostics_are_nonblocking(self) -> None:
+        """Miri, checked decoder regressions, every replay, and parser/cache mutations remain gating."""
+        jobs = self.workflow_jobs()
+        assert {name for name, job in jobs.items() if job.get("continue-on-error")} == {"decoder-fuzz-diagnostics"}
+        assert not any(step.get("continue-on-error") for job in jobs.values() for step in job["steps"])
+        assert any(step.get("run") == "./miri.sh" for step in jobs["miri"]["steps"])
+        required = [step["run"] for step in jobs["fuzz"]["steps"] if "run" in step]
+        assert required == [
+            "cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions",
+            "./fuzz.sh --build-only",
+            "./fuzz.sh --no-build --replay",
+            "./fuzz.sh --no-build --fuzz --targets parsers --seconds 60",
+        ]
+        diagnostics = jobs["decoder-fuzz-diagnostics"]
+        assert "non-blocking diagnostics" in diagnostics["name"]
+        assert not diagnostics.get("needs"), "Required check failures must not hide decoder diagnostics"
+        artifacts = next(
+            step for step in diagnostics["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+        )
+        assert artifacts["if"] == "always()"
+        assert artifacts["with"]["path"] == "rust/fuzz/artifacts"
+        assert artifacts["with"]["name"] == "rust-decoder-fuzz-diagnostics"
+        assert artifacts["with"]["if-no-files-found"] == "warn"
+
+    def test_workflow_decoder_pipeline_retains_failed_status_log_and_input(self) -> None:
+        """Execute the real CI pipeline with an injected finding, including Bash pipefail and tee."""
+        steps = self.workflow_jobs()["decoder-fuzz-diagnostics"]["steps"]
+        mutation = next(step for step in steps if step.get("id") == "decoder-mutations")
+        script = self.project / "diagnostic-pipeline.sh"
+        script.write_text('#!/bin/bash\nset -eo pipefail\ncd "$PIPELINE_DIRECTORY"\n' + mutation["run"])
+        result = self.invoke(script.name, PIPELINE_DIRECTORY=str(self.project), FAIL_MATCH="decode_audio")
+        assert result.returncode == 77, result.stdout + result.stderr
+        assert "decoder or parser finding" in (self.fuzz / "artifacts/decoder-mutations.log").read_text()
+        assert (self.fuzz / "artifacts/decode_audio-test-finding").is_file()
+        assert [command[0] for command in self.commands()] == ["decode_audio"]
+
+    def test_workflow_summary_reports_failure_success_and_incomplete_runs(self) -> None:
+        """The always-run report must state the raw outcome rather than turn findings into a clean result."""
+        steps = self.workflow_jobs()["decoder-fuzz-diagnostics"]["steps"]
+        report = next(step for step in steps if step["name"] == "Report decoder diagnostic outcome")
+        assert report["if"] == "always()"
+        assert report["env"]["MUTATION_OUTCOME"] == "${{ steps.decoder-mutations.outcome }}"
+        script = self.project / "diagnostic-summary.sh"
+        script.write_text("#!/bin/bash\nset -eo pipefail\n" + report["run"])
+        for status, outcome in [("failure", "failure"), ("success", "success"), ("failure", "skipped")]:
+            with self.subTest(status=status, outcome=outcome):
+                summary = self.root / f"summary-{outcome}.md"
+                result = self.invoke(
+                    script.name,
+                    GITHUB_STEP_SUMMARY=str(summary),
+                    DIAGNOSTIC_STATUS=status,
+                    MUTATION_OUTCOME=outcome,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                text = summary.read_text()
+                assert f"Job status before reporting: {status}. Mutation step outcome: {outcome}." in text
+                assert "remain unfixed" in text
+                assert ("::warning::" in result.stdout) == (outcome != "success")
 
     def test_unit_selection_matches_ci(self) -> None:
         """Keep GUI workflows out of the default unit and service tier."""

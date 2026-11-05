@@ -174,8 +174,9 @@ jobs:
           if-no-files-found: ignore
 
   miri:
-    # Checks the unsafe VST3 hosting code, the test plugin, the Serato parsers, and the cache blob readers
-    # for undefined behaviour. Needs no JUCE or test plugin bundle, since Miri cannot load native libraries.
+    # Checks the unsafe VST3 hosting code, the test plugin, the Serato parsers,
+    # and the cache blob readers for undefined behaviour.
+    # Needs no JUCE or test plugin bundle, since Miri cannot load native libraries.
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -200,7 +201,7 @@ jobs:
         run: ./miri.sh
 
   fuzz:
-    # Replays the committed corpus, including the corpus of the matching C++ harnesses, then fuzzes each target.
+    # Required checks include every corpus and checked decoder regression, but only parser/cache mutations.
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -226,12 +227,12 @@ jobs:
       - name: Build fuzz targets
         run: ./fuzz.sh --build-only
 
-      - name: Replay corpus
+      - name: Replay every corpus including decoder regressions
         run: ./fuzz.sh --no-build --replay
 
       # New inputs go to a scratch corpus, so the committed corpus stays as it is.
-      - name: Fuzz
-        run: ./fuzz.sh --no-build --fuzz --seconds 60
+      - name: Fuzz Serato, CLI arguments, and cache blobs (required)
+        run: ./fuzz.sh --no-build --fuzz --targets parsers --seconds 60
 
       - name: Upload crashing inputs
         if: failure()
@@ -240,6 +241,66 @@ jobs:
           name: rust-fuzz-artifacts
           path: rust/fuzz/artifacts
           if-no-files-found: ignore
+
+  decoder-fuzz-diagnostics:
+    name: Decoder mutation fuzz (non-blocking diagnostics)
+    # Known Symphonia arithmetic defects remain visible without blocking the required fuzz and Miri jobs.
+    continue-on-error: true
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/fuzz
+          key: decoder-diagnostics
+
+      - name: Build decoder diagnostic target
+        run: ./fuzz.sh --build-only --targets decoder
+
+      # Bash pipefail preserves the fuzzer's real failure through tee. Do not continue at step level.
+      - name: Mutate decoder inputs (diagnostic, failures remain visible)
+        id: decoder-mutations
+        run: |
+          mkdir -p fuzz/artifacts
+          ./fuzz.sh --no-build --fuzz --targets decoder --seconds 60 2>&1 | tee fuzz/artifacts/decoder-mutations.log
+
+      - name: Report decoder diagnostic outcome
+        if: always()
+        working-directory: .
+        env:
+          MUTATION_OUTCOME: ${{ steps.decoder-mutations.outcome }}
+          DIAGNOSTIC_STATUS: ${{ job.status }}
+        run: |
+          {
+            printf '## Decoder mutation fuzz, non-blocking diagnostics\n\n'
+            printf 'Job status before reporting: %s. Mutation step outcome: %s.\n\n' "$DIAGNOSTIC_STATUS" "$MUTATION_OUTCOME"
+            printf 'Known Symphonia 0.6.1 WAV/CAF arithmetic defects remain unfixed.\n'
+            printf 'A failed or incomplete campaign is not a clean fuzz result. See the failed step and diagnostic artifacts.\n'
+            printf 'Checked decoder regressions, every corpus replay, parser/cache mutations, and Miri remain required.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DIAGNOSTIC_STATUS" != success ] || [ "$MUTATION_OUTCOME" != success ]; then
+            printf '::warning::Decoder diagnostics failed or did not complete. Review logs and artifacts, not a clean fuzz result.\n'
+          fi
+
+      - name: Upload decoder diagnostic logs and crashing inputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-decoder-fuzz-diagnostics
+          path: rust/fuzz/artifacts
+          if-no-files-found: warn
 
   coverage:
     runs-on: macos-latest

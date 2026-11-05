@@ -670,7 +670,11 @@ It is its own workspace, excluded from the main one, because the targets build o
   Ordinary open, decode, and seek errors are accepted outcomes, not fuzz failures.
 
 The seed corpus of each target is in `fuzz/corpus/<target>/`.
-`fuzz.sh` takes the same options as `cpp/fuzz.sh`.
+`fuzz.sh` takes the options of `cpp/fuzz.sh` and adds `--targets all|parsers|decoder`.
+The default is `all`, `parsers` selects Serato tags, CLI arguments, and cache blobs,
+and `decoder` selects only `decode_audio`.
+The selector applies to building, corpus replay, and mutation fuzzing.
+It never converts a failing command to success.
 New inputs go to `fuzz/scratch/` and crashing inputs to `fuzz/artifacts/`, so the committed corpus never changes.
 Replay uses `-runs=0` and fuzzing puts the scratch directory first, the only corpus directory libFuzzer writes.
 
@@ -771,29 +775,51 @@ and malformed zero-channel WAV and inconsistent-width CAF inputs return structur
 The original findings still panic, so this is a documented blocker, not a production decoding fix.
 
 Until a verified upstream release or a separately reviewed complete boundary fix is available,
-the non-masking operational recommendation is a separate non-blocking decoder diagnostic job with retained artifacts,
-while Serato, CLI argument, and cache fuzz jobs remain gating.
-That policy needs coordinator approval and is not enacted here.
-The current gating job, arithmetic checks, exact-input allowances, and unexpected-panic behavior remain unchanged.
+decoder mutation fuzzing runs as non-blocking diagnostics in CI.
+The required `fuzz` job still checks the decoder regressions, builds every target,
+replays every committed corpus including the decoder seeds, and mutates the `parsers` group for 60 seconds per target.
+The `miri` job also remains required.
+There is no `continue-on-error` on either required job or any of their steps.
+
+The separate `Decoder mutation fuzz (non-blocking diagnostics)` job builds only the decoder target
+and requests 60 seconds of mutations, with `continue-on-error` only at job level.
+The mutation step retains its real failed outcome, and Bash `pipefail` preserves its exit status through `tee`.
+An always-run summary reports the job status and mutation step outcome,
+and emits a warning if the diagnostic failed or did not complete.
+The `rust-decoder-fuzz-diagnostics` artifact retains the mutation log and any saved crashing inputs,
+with upload attempted regardless of success or failure.
+A build or setup failure can prevent mutation output from being created, which the summary reports as incomplete.
+Runner termination or cancellation can prevent reporting or uploading.
+Repository branch protection is configured separately, the diagnostic job must not be selected as a required check.
+
+Arithmetic checks, exact-input allowances, resource watchdogs, and unexpected-panic behavior remain unchanged.
 A decoder campaign requested with a 60-second limit can stop immediately on these findings,
-so successful committed-corpus replay does not establish a usable or clean decoder campaign.
+so a successful workflow or committed-corpus replay does not establish a usable or clean decoder campaign.
+Local decoder commands still exit nonzero on findings, including rediscoveries of known upstream defects.
 
 ```shell
 # Build the targets, replay the corpus, and fuzz each target for 60 seconds
 ./fuzz.sh
 
-# Only replay the committed corpus, or only fuzz, for a chosen time
-./fuzz.sh --replay
-./fuzz.sh --fuzz --seconds 300
-
-# Build without running, or run what was built before
+# Required CI sequence, every replay plus only parser/cache mutations
+cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions
 ./fuzz.sh --build-only
 ./fuzz.sh --no-build --replay
+./fuzz.sh --no-build --fuzz --targets parsers --seconds 60
+
+# Decoder diagnostics, a known mutation can stop this with exit 77 before 60 seconds
+./fuzz.sh --build-only --targets decoder
+./fuzz.sh --no-build --fuzz --targets decoder --seconds 60
+
+# Other selections, with the same nonzero failure behavior
+./fuzz.sh --replay --targets decoder
+./fuzz.sh --fuzz --targets parsers --seconds 300
 ```
 
 Add an input that found a bug to the corpus of its target, so the replay keeps checking it.
-The `fuzz` job in CI replays the corpus, fuzzes each target for 60 seconds,
-and uploads crashing inputs as the `rust-fuzz-artifacts` artifact.
+The required `fuzz` job uploads its crashing inputs as `rust-fuzz-artifacts` on failure.
+Decoder mutation logs and findings belong to the separate `rust-decoder-fuzz-diagnostics` artifact,
+not to a passing parser/cache campaign.
 
 ## Required Tools
 
