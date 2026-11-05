@@ -154,6 +154,42 @@ bool writeId3Frames(TagLib::ID3v2::Tag& tag, const std::vector<juce::MemoryBlock
         }
         frames.push_back(std::move(frame));
     }
+    TagLib::ID3v2::Tag originalTag;
+    for (const auto& data : bytes) {
+        auto frame = restoreId3Frame(data);
+        if (frame == nullptr) {
+            return false;
+        }
+        originalTag.addFrame(frame.release());
+    }
+    const auto originalProperties = originalTag.properties();
+    // Several physical text frames can map to one property, such as TKEY and TXXX:INITIALKEY.
+    // Remove their combined generated form before restoring the separate original payloads.
+    const std::vector<TagLib::ID3v2::Frame*> generated(tag.frameList().begin(), tag.frameList().end());
+    for (auto* candidate : generated) {
+        if (!isTextFrame(*candidate)) {
+            continue;
+        }
+        TagLib::ID3v2::Tag candidateTag;
+        const auto rendered = candidate->render();
+        auto restored = restoreId3Frame(juce::MemoryBlock(rendered.data(), rendered.size()));
+        if (restored == nullptr) {
+            return false;
+        }
+        candidateTag.addFrame(restored.release());
+        const auto properties = candidateTag.properties();
+        if (!properties.isEmpty()
+            && std::ranges::all_of(
+                properties,
+                [&originalProperties](const auto& property) {
+                    const auto original = originalProperties.find(property.first);
+                    return original != originalProperties.end() && original->second == property.second;
+                }
+            ))
+        {
+            tag.removeFrame(candidate);
+        }
+    }
     for (const auto& frame : frames) {
         // A copy of the tag's own frame list would share its ownership and delete the frames when destroyed,
         // so the candidates are collected as plain pointers.

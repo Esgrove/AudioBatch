@@ -214,6 +214,13 @@ void MetadataTests::checkMappedTextFrames()
         mood->setDescription("MOOD");
         mood->setText("Energetic");
         tagged.tag()->addFrame(mood.release());
+        auto key = std::make_unique<TagLib::ID3v2::TextIdentificationFrame>("TKEY", TagLib::String::UTF8);
+        key->setText("F#m");
+        tagged.tag()->addFrame(key.release());
+        auto customKey = std::make_unique<TagLib::ID3v2::UserTextIdentificationFrame>();
+        customKey->setDescription("INITIALKEY");
+        customKey->setText("F#m");
+        tagged.tag()->addFrame(customKey.release());
         tagged.tag()->setTitle("Mood Test");
         expect(tagged.save(TagLib::ID3v2::v4));
     }
@@ -222,8 +229,14 @@ void MetadataTests::checkMappedTextFrames()
     const TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
     const auto& tag = *tagged.tag();
     expect(tag.frameList("TMOO").isEmpty());
-    expectEquals(static_cast<int>(tag.frameList("TXXX").size()), 1);
+    expectEquals(static_cast<int>(tag.frameList("TXXX").size()), 2);
+    expectEquals(onlyFrameText(tag, "TKEY"), juce::String("F#m"));
     expectEquals(onlyFrameText(tag, "TIT2"), juce::String("Mood Test"));
+    AudioMetadata original;
+    AudioMetadata copied;
+    expect(readMetadata(source, original));
+    expect(readMetadata(output, copied));
+    expect(original.id3v2Frames == copied.id3v2Frames, "Every physical text frame retains its original payload");
 }
 
 /// Checks unknown custom frame IDs survive and encrypted known frames stop processing before source replacement.
