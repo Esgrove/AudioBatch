@@ -2612,6 +2612,25 @@ mod test_column_visibility_and_sort {
     }
 
     #[test]
+    fn same_folder_sort_defers_to_secondary_loudness_in_both_directions() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(vec![
+            ResultRow::from_record(record("a.wav", 0.5, -10.0)),
+            ResultRow::from_record(record("b.wav", 0.5, -20.0)),
+        ]);
+        delegate.sort = Some((ColumnKey::Folder, ColumnSort::Ascending));
+        let integrated = delegate
+            .order
+            .iter()
+            .position(|&key| key == ColumnKey::Integrated)
+            .expect("LUFS");
+        delegate.toggle_secondary_sort(integrated);
+        assert_eq!(names(&delegate), ["b.wav", "a.wav"]);
+        delegate.toggle_secondary_sort(integrated);
+        assert_eq!(names(&delegate), ["a.wav", "b.wav"]);
+    }
+
+    #[test]
     fn peak_l_peak_r_and_gain_start_hidden_and_come_back_in_their_place() {
         let mut delegate = ResultsDelegate::new(1600.0);
         assert!(!column_keys(&delegate).contains(&String::from("peak_left")));

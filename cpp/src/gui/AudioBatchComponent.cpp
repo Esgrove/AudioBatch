@@ -350,24 +350,12 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     auto& header = resultsTable.getHeader();
 
     // Compact columns keep their width, so only visible ones take space from the flexible text columns.
-    constexpr std::array fixedWidthColumns {
-        AudioFileTableColumn::type,
-        AudioFileTableColumn::bitDepth,
-        AudioFileTableColumn::bitrate,
-        AudioFileTableColumn::sampleRate,
-        AudioFileTableColumn::length,
-        AudioFileTableColumn::overallPeak,
-        AudioFileTableColumn::peakLeft,
-        AudioFileTableColumn::peakRight,
-        AudioFileTableColumn::overallTruePeak,
-        AudioFileTableColumn::maxShortTermLufs,
-        AudioFileTableColumn::integratedLufs,
-        AudioFileTableColumn::customGain,
-        AudioFileTableColumn::status,
-    };
     int fixedColumnWidth = 0;
-    for (const auto column : fixedWidthColumns) {
-        if (const auto columnId = std::to_underlying(column); header.isColumnVisible(columnId)) {
+    for (int index = 0; index < header.getNumColumns(true); ++index) {
+        const auto columnId = header.getColumnIdOfIndex(index, true);
+        if (columnId != toColumnId(AudioFileTableColumn::name) && columnId != toColumnId(AudioFileTableColumn::folder)
+            && columnId != toColumnId(AudioFileTableColumn::path))
+        {
             fixedColumnWidth += header.getColumnWidth(columnId);
         }
     }

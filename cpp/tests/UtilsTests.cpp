@@ -89,6 +89,7 @@ private:
         juce::AudioFormatWriterOptions::SampleFormat sampleFormat
     );
 
+    void runPickerFilterTests();
     void runDisposalTests();
     void runFolderGroupingTests(const juce::File& root);
     void runMessageLoopTest();
@@ -161,6 +162,8 @@ void UtilsTests::runTest()
     }
 
     runFolderGroupingTests(root);
+
+    runPickerFilterTests();
 
     beginTest("Audio file types are recognised by extension");
     {
@@ -554,6 +557,28 @@ bool UtilsTests::writeWavCopy(
             .withSampleFormat(sampleFormat)
     );
     return writer != nullptr && writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples);
+}
+
+/// Checks the file chooser's registered-format filter without opening a native picker.
+void UtilsTests::runPickerFilterTests()
+{
+    beginTest("File picker uses every registered analysis format extension");
+    const auto& manager = utils::threadLocalFormatManager();
+    const auto patterns = manager.getWildcardForAllFormats();
+    for (int index = 0; index < manager.getNumKnownFormats(); ++index) {
+        for (const auto& extension : manager.getKnownFormat(index)->getFileExtensions()) {
+            expect(patterns.containsIgnoreCase("*" + extension), extension);
+        }
+    }
+    expect(patterns.containsIgnoreCase("*.ogg"));
+#if JUCE_USE_OPUS
+    expect(patterns.containsIgnoreCase("*.opus"));
+#endif
+#if JUCE_MAC
+    for (const auto* extension : {"*.m4a", "*.aac", "*.caf"}) {
+        expect(patterns.containsIgnoreCase(extension), extension);
+    }
+#endif
 }
 
 /// Checks how files are grouped by parent folder for revealing and opening them.

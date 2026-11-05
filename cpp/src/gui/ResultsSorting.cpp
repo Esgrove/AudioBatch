@@ -131,10 +131,9 @@ int compareRecordsByColumn(
             return compareNatural(lhs.fullPath, rhs.fullPath);
 
         case AudioFileTableColumn::folder: {
-            const auto comparison = compareNatural(
+            return compareNatural(
                 lhs.file.getParentDirectory().getFullPathName(), rhs.file.getParentDirectory().getFullPathName()
             );
-            return comparison != 0 ? comparison : compareNatural(lhs.fileName, rhs.fileName);
         }
 
         case AudioFileTableColumn::type:
