@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -46,8 +47,9 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// While every gain is at unity, the output is the input delayed by the latency, bit for bit.
 ///
 /// prepare, release, and the destructor run on the message thread.
-/// setGains, setCrossovers, and process run on the audio thread and never allocate,
-/// except that setCrossovers designs kernels synchronously during non-real-time rendering.
+/// setGains, setCrossovers, and process run on the audio thread and never allocate during real-time playback.
+/// During non-real-time rendering the audio thread designs kernels itself and the design thread stands by,
+/// so the output never depends on thread timing.
 class MultibandImager
 {
 public:
@@ -67,13 +69,15 @@ public:
     void prepare(double newSampleRate, int newChannelCount, const Crossovers& crossovers);
     void process(juce::AudioBuffer<float>& buffer);
     void release();
-    void setCrossovers(const Crossovers& crossovers, bool designNow);
+    void setCrossovers(const Crossovers& crossovers, bool offline);
     void setGains(const BandGains& midGains, const BandGains& sideGains, float outputGain);
 
 private:
+    [[nodiscard]] Crossovers readRequestedCrossovers() const;
+
     [[nodiscard]] bool isNeutral() const;
 
-    void designRequestedKernels();
+    void designRequestedKernels(bool fromDesignThread);
     void lowpassSignal(PartitionedConvolver& convolver, std::span<std::vector<float>> outputs, bool crossfade);
     void mixPartition(int channels);
     void processPartition();
@@ -99,7 +103,7 @@ private:
     std::array<KernelSpectra, 2> kernelSlots;
     /// Crossovers each kernel slot was designed for.
     std::array<Crossovers, 2> slotCrossovers {};
-    /// Crossovers last requested by the host, ordered.
+    /// Crossovers last requested by the host, ordered, read as one snapshot through requestSequence.
     std::array<std::atomic<float>, CROSSOVER_COUNT> requestedCrossovers {};
 
     /// Glides of the mid gain of each band.
@@ -125,6 +129,10 @@ private:
 
     /// Kernel slot the audio thread uses, published for the design thread.
     std::atomic<int> publishedActiveSlot {0};
+    /// Even while requestedCrossovers holds a complete request, and odd while the audio thread writes one.
+    std::atomic<std::uint32_t> requestSequence {0};
+    /// Whether the host renders offline, so the design thread leaves kernel design to the audio thread.
+    std::atomic<bool> offlineRendering {false};
     /// Set by a designer when the spare slot holds new kernels, and cleared by the audio thread after switching.
     std::atomic<bool> switchPending {false};
 

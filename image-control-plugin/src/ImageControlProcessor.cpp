@@ -237,7 +237,8 @@ void ImageControlProcessor::releaseResources()
 void ImageControlProcessor::setCurrentProgram(int /*index*/) {}
 
 /// Restores state saved by getStateInformation, and ignores any other data.
-/// The editor settings are copied into the existing tree, so the editor's bindings to it stay valid.
+/// The saved editor settings are set one by one on the existing tree, so the editor's bindings to it stay valid,
+/// and settings the saved state does not have, such as ones added in later versions, keep their defaults.
 void ImageControlProcessor::setStateInformation(const void* data, const int sizeInBytes)
 {
     const auto xml = getXmlFromBinary(data, sizeInBytes);
@@ -245,7 +246,11 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
         return;
     }
     if (auto* savedEditorState = xml->getChildByName(EDITOR_STATE_TAG)) {
-        editorState.copyPropertiesFrom(juce::ValueTree::fromXml(*savedEditorState), nullptr);
+        const auto saved = juce::ValueTree::fromXml(*savedEditorState);
+        for (int property = 0; property < saved.getNumProperties(); ++property) {
+            const auto name = saved.getPropertyName(property);
+            editorState.setProperty(name, saved.getProperty(name), nullptr);
+        }
         xml->removeChildElement(savedEditorState, true);
     }
     parameters.replaceState(juce::ValueTree::fromXml(*xml));

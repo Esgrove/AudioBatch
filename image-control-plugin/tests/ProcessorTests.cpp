@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
@@ -102,19 +104,86 @@ TEST(Processor, BypassPassesAudioThroughWithTheSameLatency)
     }
 }
 
-TEST(Processor, OfflineCrossoverChangeAppliesWithoutWaiting)
+TEST(Processor, OfflineCrossoverMovesApplyDeterministically)
 {
-    ImageControlProcessor processor;
-    processor.setNonRealtime(true);
-    processor.prepareToPlay(TEST_SAMPLE_RATE, 512);
-    setParameter(processor, crossoverParameterId(1), 2000.0F);
-    EXPECT_NEAR(processor.getCrossovers()[1], 2000.0F, 1.0F);
+    // A hard-left 700 Hz tone starts in the High Mid band, whose side is on,
+    // and the mid crossover then moves above it in two steps within one partition,
+    // putting it in the Low Mid band, whose side is off, so the output turns mono.
+    constexpr int samples = 48'000;
+    constexpr int blockSize = 64;
+    constexpr int moveBlock = 200;
+    const auto tone = makeSine(700.0, 0.5F, samples);
 
-    juce::AudioBuffer<float> buffer(2, 512);
-    buffer.clear();
-    juce::MidiBuffer midi;
-    processor.processBlock(buffer, midi);
-    processor.releaseResources();
+    const auto render = [&tone] {
+        ImageControlProcessor processor;
+        processor.setNonRealtime(true);
+        setParameter(processor, sideGainParameterId(1), BAND_GAIN_MIN_DB);
+        processor.prepareToPlay(TEST_SAMPLE_RATE, blockSize);
+        auto buffer = makeBuffer({tone, std::vector<float>(tone.size(), 0.0F)});
+        juce::MidiBuffer midi;
+        for (int block = 0; block * blockSize < samples; ++block) {
+            if (block == moveBlock) {
+                setParameter(processor, crossoverParameterId(1), 1500.0F);
+            } else if (block == moveBlock + 1) {
+                setParameter(processor, crossoverParameterId(1), 2000.0F);
+            }
+            juce::AudioBuffer<float> view(buffer.getArrayOfWritePointers(), 2, block * blockSize, blockSize);
+            processor.processBlock(view, midi);
+        }
+        processor.releaseResources();
+        return buffer;
+    };
+
+    const auto first = render();
+    const auto second = render();
+    for (int sample = 0; sample < samples; ++sample) {
+        ASSERT_EQ(first.getSample(0, sample), second.getSample(0, sample)) << "sample " << sample;
+        ASSERT_EQ(first.getSample(1, sample), second.getSample(1, sample)) << "sample " << sample;
+    }
+
+    const int latency = 4096 + PARTITION_SIZE;
+    const int beforeMove = moveBlock * blockSize;
+    double sideBefore = 0.0;
+    double sideAfter = 0.0;
+    for (int sample = latency; sample < beforeMove; ++sample) {
+        sideBefore = std::max(
+            sideBefore, std::abs(static_cast<double>(first.getSample(0, sample) - first.getSample(1, sample)))
+        );
+    }
+    for (int sample = samples - 8000; sample < samples; ++sample) {
+        sideAfter = std::max(
+            sideAfter, std::abs(static_cast<double>(first.getSample(0, sample) - first.getSample(1, sample)))
+        );
+    }
+    EXPECT_GT(sideBefore, 0.4);
+    EXPECT_LT(sideAfter, 1.0e-3);
+}
+
+TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
+{
+    ImageControlProcessor source;
+    source.getEditorState().setProperty(linkPropertyName(0), false, nullptr);
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    ASSERT_NE(xml, nullptr);
+    auto* editorSettings = xml->getChildByName("EditorState");
+    ASSERT_NE(editorSettings, nullptr);
+    // A state saved before these settings existed has none of them.
+    for (const char* property : {ANALYZE_OUTPUT_PROPERTY, PERSISTENCE_PROPERTY, FOCUS_PROPERTY, SHOW_FPS_PROPERTY}) {
+        editorSettings->removeAttribute(property);
+    }
+    juce::MemoryBlock olderState;
+    juce::AudioProcessor::copyXmlToBinary(*xml, olderState);
+
+    ImageControlProcessor restored;
+    restored.setStateInformation(olderState.getData(), static_cast<int>(olderState.getSize()));
+    const auto& settings = restored.getEditorState();
+    EXPECT_FALSE(static_cast<bool>(settings.getProperty(linkPropertyName(0))));
+    EXPECT_TRUE(static_cast<bool>(settings.getProperty(ANALYZE_OUTPUT_PROPERTY)));
+    EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PERSISTENCE_PROPERTY)), DEFAULT_PERSISTENCE_SECONDS);
+    EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(FOCUS_PROPERTY)), DEFAULT_FOCUS_DB);
+    EXPECT_FALSE(static_cast<bool>(settings.getProperty(SHOW_FPS_PROPERTY)));
 }
 
 TEST(Processor, AnalyzerTapReceivesTheBlock)
