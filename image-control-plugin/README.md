@@ -95,6 +95,12 @@ new particles add to the image, and older ones fade and blur, so new content sta
 - **Refresh:** the editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
   at the native refresh rate, such as 120 or 144 Hz.
   The fade and the blur advance by the time that passed, so they look the same at any refresh rate.
+- **Rendering:** the analysis, the particles, the fade, the blur, and the tone curve run on the CPU
+  and fill a 768 × 192 image, which JUCE's renderer scales into the plot with the overlays on top.
+  On macOS that renderer is Core Graphics presented through JUCE's Metal layer renderer,
+  which the build turns on with `JUCE_COREGRAPHICS_RENDER_WITH_MULTIPLE_PAINT_CALLS`,
+  so each refresh repaints only the regions that changed.
+  On Windows it is Direct2D, JUCE's default there, which scales and composites the image on the GPU.
 
 The three crossovers are vertical lines with their frequencies.
 Drag a line to move its crossover, and double-click it to reset it.
@@ -152,6 +158,18 @@ and `--check` makes any warning fail the run.
 `../cpp/format.sh` formats the sources, the CMake file, and the scripts, and the root `../format.sh` runs it too.
 The `ImageControl` workflow in `../.github/workflows/image-control.yml` builds, tests, and lints the plugin on macOS
 and Windows.
+
+## Future Work
+
+- Investigate rendering the spatial spectrogram with native GPU views:
+  a Metal view on macOS and a Direct3D view on Windows, embedded in the editor.
+  The fade, the blur, and the tone curve would run as shaders on a particle texture,
+  which would allow much larger particle buffers and effects such as bloom.
+  It means two rendering backends to write and keep in step,
+  so first measure how long the CPU rendering takes per refresh,
+  and consider moving the analysis and the particle work to a background thread.
+- Compare the macOS Metal layer renderer with plain Core Graphics.
+  JUCE notes that the Metal layer renderer can be slower for some content.
 
 ## Layout
 
