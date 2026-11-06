@@ -79,6 +79,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/PartitionedConvolver.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/BandStrip.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/BandStrip.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ImageControlLookAndFeel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ImageControlLookAndFeel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
 )
@@ -129,9 +131,18 @@ set_source_files_properties(
     PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
 )
 
+# The editor uses the same Roboto fonts as AudioBatch, from the shared assets.
+juce_add_binary_data(
+    ImageControlAssets
+    HEADER_NAME ImageControlBinaryData.h
+    NAMESPACE ImageControlBinaryData
+    SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-Regular.ttf"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-Regular.ttf"
+)
+
 target_link_libraries(
     ImageControl
-    PRIVATE juce::juce_audio_processors juce::juce_audio_utils juce::juce_dsp
+    PRIVATE juce::juce_audio_processors juce::juce_audio_utils juce::juce_dsp ImageControlAssets
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
 )
 

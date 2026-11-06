@@ -40,7 +40,7 @@ public:
 
 private:
     void applyWidth();
-    void configureGainSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
+    void configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
     void updateWidthFromGains();
 
     juce::Label nameLabel;

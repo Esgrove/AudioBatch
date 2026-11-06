@@ -7,6 +7,7 @@
 #include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 #include "ui/BandStrip.h"
+#include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -48,7 +49,7 @@ private:
 
     ImageControlProcessor& imageControlProcessor;
 
-    juce::LookAndFeel_V4 lookAndFeel;
+    ImageControlLookAndFeel lookAndFeel;
     SpatialAnalyzer analyzer;
     SpatialSpectrogramView spectrogram;
 

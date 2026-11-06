@@ -23,6 +23,8 @@ constexpr std::array<const char*, CROSSOVER_COUNT> CROSSOVER_IDS {"crossover_low
 constexpr int PARAMETER_VERSION {1};
 /// Frequencies in kHz below this are shown with two decimals, and higher ones with one.
 constexpr float TWO_DECIMALS_BELOW_KILOHERTZ {10.0F};
+/// Tenths of a dB in one dB, for showing gains with one decimal.
+constexpr float TENTHS_PER_DECIBEL {10.0F};
 /// Step of the gain parameters in dB.
 constexpr float GAIN_STEP_DB {0.01F};
 
@@ -46,7 +48,10 @@ juce::String formatBandGain(const float decibels, const int /*maximumLength*/)
     if (decibels <= BAND_GAIN_MIN_DB) {
         return "-inf dB";
     }
-    return juce::String(decibels, 1) + " dB";
+    // Rounding to the shown tenth and adding zero turns a negative zero into a positive one,
+    // so a gain a hair below 0 dB on the parameter grid shows as 0.0 dB, not -0.0 dB.
+    const float shown = std::round(decibels * TENTHS_PER_DECIBEL) / TENTHS_PER_DECIBEL + 0.0F;
+    return juce::String(shown, 1) + " dB";
 }
 
 /// Converts a gain in dB to linear, treating values within half a parameter step of 0 dB as exactly unity.
@@ -154,7 +159,8 @@ Crossovers orderCrossovers(const Crossovers& requested)
 /// Formats a frequency in Hz below 1 kHz and in kHz above, with two decimals below 10 kHz and one above.
 juce::String formatFrequency(const float frequency)
 {
-    if (frequency < HERTZ_PER_KILOHERTZ) {
+    // Comparing the rounded value keeps a frequency just below 1 kHz from showing as 1000 Hz.
+    if (static_cast<float>(juce::roundToInt(frequency)) < HERTZ_PER_KILOHERTZ) {
         return juce::String(juce::roundToInt(frequency)) + " Hz";
     }
     const float kilohertz = frequency / HERTZ_PER_KILOHERTZ;

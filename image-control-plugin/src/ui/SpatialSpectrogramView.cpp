@@ -139,7 +139,13 @@ SpatialSpectrogramView::SpatialSpectrogramView(
 /// Returns the area of the spectrogram inside the axis labels.
 juce::Rectangle<float> SpatialSpectrogramView::getPlotBounds() const
 {
-    return getLocalBounds().toFloat().withTrimmedLeft(POSITION_GUTTER).withTrimmedBottom(FREQUENCY_GUTTER);
+    // Half a label of room above and to the right keeps the top position label and the last frequency label whole.
+    return getLocalBounds()
+        .toFloat()
+        .withTrimmedLeft(POSITION_GUTTER)
+        .withTrimmedBottom(FREQUENCY_GUTTER)
+        .withTrimmedTop(LABEL_FONT_HEIGHT * 0.5F)
+        .withTrimmedRight(FREQUENCY_LABEL_WIDTH * 0.5F);
 }
 
 /// Starts dragging the crossover line under the pointer, if any, as one host gesture.
