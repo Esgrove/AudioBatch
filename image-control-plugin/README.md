@@ -104,8 +104,14 @@ new particles add to the image, and older ones fade and blur, so new content sta
 
 The three crossovers are vertical lines with their frequencies.
 Drag a line to move its crossover, and double-click it to reset it.
-Hovering a band highlights it and shows its width,
-and the mouse wheel over a band changes its width, finely with Shift.
+Hovering a band highlights it and shows its width.
+Dragging a band left or right moves it:
+a middle band moves both its crossovers and keeps its width in octaves,
+and the Low and High bands move only their inner crossover.
+The move stops where a crossover would come closer than a third of an octave to one that stays.
+Dragging a band up or down with Ctrl, or Cmd on macOS, changes its width,
+and so does the mouse wheel over it, both finely with Shift.
+The cursor shows what a drag will do, and every drag is one host gesture.
 
 ### Settings
 

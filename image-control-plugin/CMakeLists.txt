@@ -210,6 +210,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CrossoverTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ImagerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProcessorTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramViewTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/TestMain.cpp"
     )
     add_executable(ImageControlTests ${IMAGE_CONTROL_TEST_SOURCES})
