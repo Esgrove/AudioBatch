@@ -511,7 +511,7 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
         case CommandId::toggleContinuePlayback:
             result.setInfo(
                 "Continue Playback When Changing Files",
-                "Continue active playback on a newly selected file",
+                "Continue active playback on a newly selected file, and play the next file when one ends",
                 "Options",
                 0
             );

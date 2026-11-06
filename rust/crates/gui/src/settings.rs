@@ -99,7 +99,8 @@ pub struct GuiSettings {
     pub preview_plugin_chain: bool,
     /// Holds the playhead while the preview chain fills its latency, so what is heard lines up with the waveform.
     pub compensate_preview_latency: bool,
-    /// Starts a newly selected file only if the previous one was playing.
+    /// Starts a newly selected file only if the previous one was playing,
+    /// and starts the next listed file when the playing one reaches its end.
     pub continue_playback: bool,
     /// Starts a loaded file at its first cue point when it is in the first half of the file.
     pub play_from_first_cue_point: bool,

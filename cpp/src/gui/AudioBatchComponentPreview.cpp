@@ -12,6 +12,7 @@
 #include "gui/FileActivity.h"
 #include "gui/PreviewController.h"
 #include "gui/PreviewEnrichmentScheduler.h"
+#include "gui/ResultsModel.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagTypes.h"
 #include "utils/FileUtils.h"
@@ -194,6 +195,31 @@ void AudioBatchComponent::adoptArtwork(
     artwork.image = std::move(image);
     artwork.completed = true;
     previewWorkspace.audioInfo.setArtwork(artwork.image);
+}
+
+/// Selects and plays the next listed file when the previewed one played to its end and continuation is on.
+/// Rows whose analysis failed are skipped, and playback stops after the last row.
+void AudioBatchComponent::continuePreviewAfterEnd()
+{
+    if (!previewPreferences.continuePlayback) {
+        return;
+    }
+    const auto current = analysisResults.findRow(preview.getFile().getFullPathName());
+    if (!current.has_value()) {
+        return;
+    }
+    const auto next = findNextPlayableRow(analysisResults, *current);
+    if (!next.has_value()) {
+        return;
+    }
+    {
+        // The finished file is no longer playing, so the selection itself must not decide to continue.
+        const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
+        resultsTable.selectRow(*next);
+    }
+    if (preview.getFile() == analysisResults[*next].file && previewPlayer.hasLoadedSource()) {
+        previewPlayer.start();
+    }
 }
 
 /// Reports whether active playback should continue after a user selects a different file.

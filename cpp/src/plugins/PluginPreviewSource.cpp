@@ -115,6 +115,7 @@ void PluginPreviewSource::setPosition(const double seconds)
 /// Clears latency and tail accounting without restoring plugin parameters.
 void PluginPreviewSource::resetPlayback()
 {
+    ended = false;
     startSample = static_cast<juce::int64>(std::llround(position * processingRate));
     processedSamples = 0;
     emittedSamples = 0;
@@ -140,6 +141,7 @@ void PluginPreviewSource::start()
 void PluginPreviewSource::stop()
 {
     playing = false;
+    ended = false;
     stopRequested = false;
     fadeOutRemaining = 0;
 }
@@ -166,6 +168,13 @@ bool PluginPreviewSource::isPlaying() const noexcept
 bool PluginPreviewSource::isStopping() const noexcept
 {
     return playing && stopRequested;
+}
+
+/// Reports once that playback reached the end of the file and its tail, rather than being stopped or failing,
+/// so the host can react to a natural end exactly once.
+bool PluginPreviewSource::takeEnded() noexcept
+{
+    return std::exchange(ended, false);
 }
 
 /// Reports non-finite plugin output for the host to surface outside the audio callback.
@@ -283,6 +292,7 @@ void PluginPreviewSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& 
         const auto remaining = renderLength - processedSamples;
         if (remaining <= 0) {
             playing = false;
+            ended = true;
             break;
         }
         auto samples = static_cast<int>(juce::jmin<juce::int64>(blockSize, info.numSamples - offset, remaining));
@@ -306,6 +316,7 @@ void PluginPreviewSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& 
         offset += samples;
         if (processedSamples == renderLength) {
             playing = false;
+            ended = true;
             position = duration;
         }
     }

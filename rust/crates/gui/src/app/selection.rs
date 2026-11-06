@@ -117,6 +117,32 @@ impl AppView {
         self.select_path(&path, false, cx);
     }
 
+    /// Starts the next listed file when the selected one has played to its end and playback continuation is on.
+    /// Rows whose analysis failed are skipped, and playback stops after the last row.
+    pub(super) fn continue_after_end(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.continue_playback {
+            return;
+        }
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        // An end from a file other than the selected one belongs to a playback the selection already replaced.
+        if self.player.as_ref().and_then(Player::loaded_path) != Some(selected.as_path()) {
+            return;
+        }
+        let next = {
+            let delegate = self.table.read(cx).delegate();
+            next_playable_row(delegate, &selected)
+        };
+        if let Some((index, path)) = next {
+            self.table.update(cx, |state, cx| {
+                state.delegate_mut().select_only(Some(path.clone()));
+                state.set_selected_row(index, cx);
+            });
+            self.select_path(&path, true, cx);
+        }
+    }
+
     /// Returns the selected files, the file the preview plays first.
     pub(super) fn selected_paths(&self, cx: &App) -> Vec<PathBuf> {
         self.table.read(cx).delegate().selected_paths()
@@ -291,6 +317,17 @@ impl AppView {
             }
         });
     }
+}
+
+/// Returns the display index and path of the first row after a file that did not fail analysis.
+fn next_playable_row(delegate: &ResultsDelegate, current: &Path) -> Option<(usize, PathBuf)> {
+    let start = delegate.index_of(current)? + 1;
+    (start..delegate.len()).find_map(|index| {
+        delegate
+            .row(index)
+            .filter(|row| !row.has_error())
+            .map(|row| (index, row.path.clone()))
+    })
 }
 
 /// Resolves a current table event into a source selection and its playback request.
@@ -587,5 +624,51 @@ mod test_preview_presentation_authority {
         assert!(!source.accepts(&version, generation));
         let (current_version, current_generation) = source.token().expect("second load");
         assert!(source.accepts(&current_version, current_generation));
+    }
+}
+
+#[cfg(test)]
+mod test_continue_after_end {
+    use audiobatch_core::AnalysisStatus;
+
+    use super::*;
+
+    /// Lists four files in display order, with the analysis of the third one failed.
+    fn delegate() -> ResultsDelegate {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_files(&[
+            PathBuf::from("/a.wav"),
+            PathBuf::from("/b.wav"),
+            PathBuf::from("/c.wav"),
+            PathBuf::from("/d.wav"),
+        ]);
+        delegate.set_record(AnalysisRecord {
+            path: PathBuf::from("/c.wav"),
+            status: AnalysisStatus::Failed,
+            ..AnalysisRecord::default()
+        });
+        delegate
+    }
+
+    #[test]
+    fn next_row_follows_display_order_including_pending_rows() {
+        assert_eq!(
+            next_playable_row(&delegate(), Path::new("/a.wav")),
+            Some((1, PathBuf::from("/b.wav")))
+        );
+    }
+
+    #[test]
+    fn failed_rows_are_skipped() {
+        assert_eq!(
+            next_playable_row(&delegate(), Path::new("/b.wav")),
+            Some((3, PathBuf::from("/d.wav")))
+        );
+    }
+
+    #[test]
+    fn last_or_unlisted_file_has_no_next_row() {
+        assert_eq!(next_playable_row(&delegate(), Path::new("/d.wav")), None);
+        assert_eq!(next_playable_row(&delegate(), Path::new("/missing.wav")), None);
     }
 }

@@ -299,6 +299,7 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForIniti
           ));
     const juce::ScopedLock lock(renderingLock);
     release();
+    endedPending.store(false);
     if (reader == nullptr) {
         reportError("Could not decode the selected audio file");
         return false;
@@ -590,6 +591,9 @@ void AudioPreviewPlayer::publishState()
     publishedPlaying.store(previewSource.isPlaying());
     publishedStopping.store(previewSource.isStopping());
     publishedFailed.store(previewSource.hasFailed());
+    if (previewSource.takeEnded()) {
+        endedPending.store(true);
+    }
 }
 
 /// Returns the source duration independently of plugin latency and tail.
@@ -753,9 +757,18 @@ void AudioPreviewPlayer::updatePlaybackStatus()
         lastReportedPlaying = isPlaying();
         sendChangeMessage();
     }
+    if (endedPending.exchange(false) && onEnded) {
+        onEnded();
+    }
     if ((!applicationActive || !deviceSettingsActive) && !isPlaying() && !publishedStopping.load()) {
         closeAudioDevice();
     }
+}
+
+/// Installs the end-of-playback callback on the message thread, or clears it when the owner disconnects.
+void AudioPreviewPlayer::setEndedCallback(std::function<void()> callback)
+{
+    onEnded = std::move(callback);
 }
 
 /// Installs the error notification callback on the message thread, or clears it when the owner disconnects.
