@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "ui/ControlSlider.h"
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -40,7 +42,7 @@ public:
 
 private:
     void applyWidth();
-    void configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
+    void configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text);
     void updateWidthFromGains();
 
     juce::Label nameLabel;
@@ -49,9 +51,9 @@ private:
     juce::Label sideLabel;
     juce::Label widthLabel;
 
-    juce::Slider midSlider;
-    juce::Slider sideSlider;
-    juce::Slider widthSlider;
+    ControlSlider midSlider;
+    ControlSlider sideSlider;
+    ControlSlider widthSlider;
     juce::ToggleButton linkButton {"Link"};
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> midAttachment;
@@ -66,5 +68,7 @@ private:
     double linkedMidStart {0.0};
     /// Whether the user is dragging Mid, so only their own drags move Side through Link, not automation.
     bool draggingMid {false};
+    /// Whether a Width gesture is open, so its changes join that gesture instead of opening their own.
+    bool draggingWidth {false};
 };
 }  // namespace esgrove::image_control

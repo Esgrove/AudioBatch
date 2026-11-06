@@ -101,6 +101,9 @@ Each band has a strip with its own controls:
   It cannot be set while Mid is off.
 - **Link** makes dragging Mid move Side by the same amount, which keeps the width while changing the level of the band.
 
+Sliders drag relative to where they are grabbed, drag finely with Shift, and reset on double-click.
+Once clicked, the arrow keys nudge them, finely with Shift.
+
 The Link toggles, the display settings, and the editor size are saved with the plugin state.
 
 ## Building
