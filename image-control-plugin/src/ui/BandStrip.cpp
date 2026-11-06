@@ -97,8 +97,14 @@ BandStrip::BandStrip(
     configureSlider(widthSlider, widthLabel, "Width");
     widthSlider.setRange(0.0, MAX_WIDTH, WIDTH_STEP);
     widthSlider.setDoubleClickReturnValue(true, 1.0);
-    widthSlider.onDragStart = [this] { sideParameter.beginChangeGesture(); };
-    widthSlider.onDragEnd = [this] { sideParameter.endChangeGesture(); };
+    widthSlider.onDragStart = [this] {
+        draggingWidth = true;
+        sideParameter.beginChangeGesture();
+    };
+    widthSlider.onDragEnd = [this] {
+        sideParameter.endChangeGesture();
+        draggingWidth = false;
+    };
     widthSlider.onValueChange = [this] { applyWidth(); };
     addAndMakeVisible(widthSlider);
 
@@ -182,7 +188,8 @@ void BandStrip::setRangeText(const juce::String& text)
 }
 
 /// Sets Side from the Width macro: Mid plus 20 · log10(width) dB, or off at width 0.
-/// A drag of the Width slider is one host gesture, and any other change, such as a double-click reset, is its own.
+/// A drag or key nudge of the Width slider is one host gesture, and any other change, such as a double-click reset,
+/// is its own.
 void BandStrip::applyWidth()
 {
     const double width = widthSlider.getValue();
@@ -192,13 +199,12 @@ void BandStrip::applyWidth()
                                                  static_cast<double>(BAND_GAIN_MIN_DB),
                                                  static_cast<double>(BAND_GAIN_MAX_DB)
                                              );
-    setParameterValue(sideParameter, static_cast<float>(side), widthSlider.isMouseButtonDown());
+    setParameterValue(sideParameter, static_cast<float>(side), draggingWidth);
 }
 
 /// Sets up a full-width horizontal slider with its value box on the right and its label above it.
-void BandStrip::configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
+void BandStrip::configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text)
 {
-    slider.setSliderStyle(juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, TEXT_BOX_WIDTH, TEXT_BOX_HEIGHT);
     addAndMakeVisible(slider);
     label.setText(text, juce::dontSendNotification);

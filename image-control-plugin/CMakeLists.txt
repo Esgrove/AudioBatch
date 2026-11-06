@@ -79,6 +79,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/PartitionedConvolver.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/BandStrip.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/BandStrip.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ControlSlider.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ControlSlider.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ImageControlLookAndFeel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ImageControlLookAndFeel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
