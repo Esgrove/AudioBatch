@@ -53,7 +53,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
 
       # The folder is emptied first, so a file the script no longer writes shows up as deleted.
       - name: Regenerate the expected outputs

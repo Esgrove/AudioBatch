@@ -64,7 +64,7 @@ jobs:
         run: git lfs pull
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Test parity oracles and benchmark tooling
         working-directory: rust

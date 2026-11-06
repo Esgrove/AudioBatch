@@ -117,7 +117,7 @@ jobs:
           workspaces: rust
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Check Rust shell entry points
         if: runner.os == 'macOS'
@@ -349,7 +349,7 @@ jobs:
           workspaces: rust
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Run tests and CLI subprocesses with coverage
         timeout-minutes: 30
