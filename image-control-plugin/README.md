@@ -18,6 +18,7 @@ but it is a standalone plugin that works in any VST3 host on macOS and Windows.
 | `band1_mid` to `band4_mid`   | Low: Mid to High: Mid    | -60 dB (off) to +12 dB       | 0 dB    |
 | `band1_side` to `band4_side` | Low: Side to High: Side  | -60 dB (off) to +12 dB       | 0 dB    |
 | `output_gain`                | Output Gain              | -24 dB to +12 dB             | 0 dB    |
+| `bypass`                     | Bypass                   | off or on                    | off     |
 
 The bands are named Low, Low Mid, High Mid, and High,
 so the parameters are named Low: Mid, Low Mid: Side, and so on.
@@ -44,6 +45,10 @@ A mono input is processed as mid only.
 At the default settings, every gain is exactly unity,
 and the output is the input delayed by the latency, bit for bit.
 A plugin left at its defaults in an AudioBatch chain leaves the audio unchanged.
+
+Bypass glides every gain to unity instead of skipping the processing,
+so the latency stays the same and the output becomes the delayed input bit for bit, without a click.
+Hosts use the bypass parameter as the plugin's own bypass.
 
 ### Latency
 

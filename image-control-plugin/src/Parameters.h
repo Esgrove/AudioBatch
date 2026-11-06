@@ -41,6 +41,8 @@ constexpr float HERTZ_PER_KILOHERTZ {1000.0F};
 
 /// Id of the output gain parameter.
 constexpr auto OUTPUT_GAIN_ID {"output_gain"};
+/// Id of the bypass parameter, which hosts also use as the plugin's own bypass.
+constexpr auto BYPASS_ID {"bypass"};
 
 /// Name of the editor setting that selects the analyzer tap: true for the output, false for the input.
 constexpr auto ANALYZE_OUTPUT_PROPERTY {"analyzeOutput"};

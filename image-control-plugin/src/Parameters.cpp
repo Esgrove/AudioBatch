@@ -83,7 +83,7 @@ std::unique_ptr<juce::AudioParameterFloat> makeGainParameter(
 }
 }  // namespace
 
-/// Creates the crossover, band gain, and output gain parameters.
+/// Creates the crossover, band gain, output gain, and bypass parameters.
 /// The band gains are in dB, and their lowest value turns the signal off.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
@@ -106,6 +106,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         );
     }
     layout.add(makeGainParameter(OUTPUT_GAIN_ID, "Output Gain", OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB));
+    layout.add(
+        std::make_unique<juce::AudioParameterBool>(juce::ParameterID {BYPASS_ID, PARAMETER_VERSION}, "Bypass", false)
+    );
     return layout;
 }
 
