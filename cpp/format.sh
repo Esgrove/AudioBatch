@@ -71,7 +71,7 @@ while IFS= read -r file; do
         CPP_FILES+=("$file")
     fi
 done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" "$REPO/../image-control-plugin/src" \
-    "$REPO/../image-control-plugin/tests" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+    "$REPO/../image-control-plugin/tests" "$REPO/../image-control-plugin/benchmarks" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."

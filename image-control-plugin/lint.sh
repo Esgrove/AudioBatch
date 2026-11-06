@@ -69,7 +69,7 @@ trap 'rm -f "$OUTPUT" "$ERRORS"' EXIT
 JOBS=$(getconf _NPROCESSORS_ONLN 2> /dev/null || echo 4)
 print_magenta "Running clang-tidy on the ImageControl sources and tests..."
 TIDY_STATUS=0
-find "$DIR/src" -name "*.cpp" -print0 |
+find "$DIR/src" "$DIR/benchmarks" -name "*.cpp" -print0 |
     xargs -0 -P "$JOBS" -n 1 "$CLANG_TIDY" -p "$BUILD_DIR" --quiet --config-file="$ROOT/cpp/.clang-tidy" \
         >> "$OUTPUT" 2>> "$ERRORS" || TIDY_STATUS=1
 find "$DIR/tests" -name "*.cpp" -print0 |

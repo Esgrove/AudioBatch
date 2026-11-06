@@ -126,14 +126,21 @@ void PartitionedConvolver::convolve(const KernelSpectra& kernels, const std::siz
     for (std::size_t partition = 0; partition < partitionCount; ++partition) {
         const std::size_t slot = (newestPartition + partitionCount - partition) % partitionCount;
         const auto input = std::span<const float>(history).subspan(slot * binValues, binValues);
-        const auto taps = kernels.getPartition(kernel, partition);
-        for (std::size_t value = 0; value < binValues; value += 2) {
-            const float inputReal = input[value];
-            const float inputImaginary = input[value + 1];
+        // In the hottest loop of the plugin,
+        // every span has the same length and the loop condition keeps both indices below it,
+        // so the compiler can prove each access in range, drop the hardening checks, and vectorize the loop.
+        // Cutting the spans to the length checks their sizes once per partition.
+        const std::size_t count = binValues;
+        const auto inputs = input.first(count);
+        const auto taps = kernels.getPartition(kernel, partition).first(count);
+        const auto sums = std::span<float>(accumulator).first(count);
+        for (std::size_t value = 0; value + 1 < count; value += 2) {
+            const float inputReal = inputs[value];
+            const float inputImaginary = inputs[value + 1];
             const float tapReal = taps[value];
             const float tapImaginary = taps[value + 1];
-            accumulator[value] += inputReal * tapReal - inputImaginary * tapImaginary;
-            accumulator[value + 1] += inputReal * tapImaginary + inputImaginary * tapReal;
+            sums[value] += inputReal * tapReal - inputImaginary * tapImaginary;
+            sums[value + 1] += inputReal * tapImaginary + inputImaginary * tapReal;
         }
     }
 

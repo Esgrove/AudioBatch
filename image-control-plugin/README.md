@@ -155,6 +155,18 @@ The script builds the Release bundle into `build/` and prints its path, which `-
 The sources compile with strict warnings as errors.
 `./lint.sh` checks them with clang-tidy using the AudioBatch C++ configuration,
 and `--check` makes any warning fail the run.
+
+Like AudioBatch, the build enables standard library hardening:
+the fast libc++ mode in Release and the extensive one in Debug on macOS, and `_MSVC_STL_HARDENING` on Windows.
+An out-of-range container access then stops the host at the bug instead of silently corrupting its memory.
+`-DIMAGE_CONTROL_HARDENING=OFF` turns it off.
+
+`ImageControlBenchmark`, built with the tests, times the audio processing per second of stereo audio
+and one spectrogram refresh with its analysis, rendering, and paint.
+Build it in Release, once with and once without hardening, to see what the checks cost.
+On an Apple Silicon Mac, hardening adds about 3% to the audio processing and about 6% to a spectrogram refresh.
+The convolver's inner loop keeps its spans the same length and its indices provably in range,
+so the compiler drops the checks there and still vectorizes it.
 `../cpp/format.sh` formats the sources, the CMake file, and the scripts, and the root `../format.sh` runs it too.
 The `ImageControl` workflow in `../.github/workflows/image-control.yml` builds, tests, and lints the plugin on macOS
 and Windows.

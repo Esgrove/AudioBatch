@@ -19,7 +19,8 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
 endif()
 
-option(IMAGE_CONTROL_BUILD_TESTS "Build the ImageControl unit tests" ${PROJECT_IS_TOP_LEVEL})
+option(IMAGE_CONTROL_BUILD_TESTS "Build the ImageControl unit tests and benchmark" ${PROJECT_IS_TOP_LEVEL})
+option(IMAGE_CONTROL_HARDENING "Enable standard library hardening, as the AudioBatch build does" ON)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE" JUCE)
 
@@ -101,6 +102,23 @@ target_compile_definitions(
 # so repainting the spectrogram every display refresh leaves the rest of the editor alone.
 if(APPLE)
     target_compile_definitions(ImageControl PUBLIC JUCE_COREGRAPHICS_RENDER_WITH_MULTIPLE_PAINT_CALLS=1)
+endif()
+
+# Standard library hardening, as in the AudioBatch build:
+# an out-of-range container access or an empty optional stops the host at the bug
+# instead of silently corrupting its memory.
+# Release builds use the fast mode, whose checks cost little, and Debug builds the extensive one.
+# The benchmark measures its cost on the hot paths, built once with and once without IMAGE_CONTROL_HARDENING.
+if(IMAGE_CONTROL_HARDENING)
+    if(APPLE)
+        target_compile_definitions(
+            ImageControl
+            PUBLIC
+                _LIBCPP_HARDENING_MODE=$<IF:$<CONFIG:Debug>,_LIBCPP_HARDENING_MODE_EXTENSIVE,_LIBCPP_HARDENING_MODE_FAST>
+        )
+    elseif(MSVC)
+        target_compile_definitions(ImageControl PUBLIC _MSVC_STL_HARDENING=1)
+    endif()
 endif()
 
 # The plugin's own sources get strict warnings as errors, like the AudioBatch sources.
@@ -189,4 +207,12 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     )
     include(GoogleTest)
     gtest_discover_tests(ImageControlTests DISCOVERY_TIMEOUT 60)
+
+    # Times the audio processing and the spectrogram rendering. It is not a test, so CTest does not run it.
+    add_executable(ImageControlBenchmark "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp")
+    target_link_libraries(ImageControlBenchmark PRIVATE ImageControl)
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp" TARGET_DIRECTORY ImageControlBenchmark
+        PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
+    )
 endif()
