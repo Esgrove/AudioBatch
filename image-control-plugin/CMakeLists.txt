@@ -1,5 +1,6 @@
 # ImageControl
-# A multiband mid/side stereo imaging VST3 effect by esgrove, with a spatial spectrogram editor.
+# A multiband mid/side stereo imaging effect by esgrove, as a VST3 and, on macOS, an Audio Unit,
+# with a spatial spectrogram editor.
 # Builds on its own with the JUCE submodule of the AudioBatch C++ project.
 
 cmake_minimum_required(VERSION 4.2)
@@ -7,7 +8,7 @@ cmake_minimum_required(VERSION 4.2)
 project(
     "ImageControl"
     VERSION 0.1.0
-    DESCRIPTION "Multiband mid/side stereo imaging VST3 effect"
+    DESCRIPTION "Multiband mid/side stereo imaging effect"
     LANGUAGES CXX C
 )
 
@@ -29,7 +30,13 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/Optimizations.cmake")
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE" JUCE)
 
-# build.sh --install copies the bundle to the user's VST3 folder, so the build itself never does.
+# VST3 everywhere, and an Audio Unit on macOS from the same code.
+set(IMAGE_CONTROL_FORMATS VST3)
+if(APPLE)
+    list(APPEND IMAGE_CONTROL_FORMATS AU)
+endif()
+
+# build.sh --install copies the bundles to the user's plugin folders, so the build itself never does.
 juce_add_plugin(
     ImageControl
     COMPANY_NAME
@@ -41,7 +48,9 @@ juce_add_plugin(
     PLUGIN_CODE
     Egic
     FORMATS
-    VST3
+    ${IMAGE_CONTROL_FORMATS}
+    AU_MAIN_TYPE
+    kAudioUnitType_Effect
     PRODUCT_NAME
     "ImageControl"
     VERSION
@@ -218,6 +227,27 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     target_link_libraries(ImageControlBenchmark PRIVATE ImageControl)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp" TARGET_DIRECTORY ImageControlBenchmark
+        PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
+    )
+
+    # Writes AudioBatch chain presets for the installed VST3 and Audio Unit,
+    # which benchmarks/compare_formats.py renders and times through the AudioBatch CLI.
+    juce_add_console_app(ImageControlPresetWriter PRODUCT_NAME "ImageControlPresetWriter")
+    target_sources(
+        ImageControlPresetWriter PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/PresetWriter.cpp"
+                                         "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
+    )
+    target_include_directories(ImageControlPresetWriter PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(
+        ImageControlPresetWriter PRIVATE JUCE_PLUGINHOST_AU=1 JUCE_PLUGINHOST_VST3=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0
+    )
+    target_link_libraries(
+        ImageControlPresetWriter
+        PRIVATE juce::juce_audio_processors juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
+    )
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/PresetWriter.cpp" TARGET_DIRECTORY ImageControlPresetWriter
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
 endif()

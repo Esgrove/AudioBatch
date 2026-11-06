@@ -42,8 +42,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `uv run fixtures/plugin_expected.py` computes its expected outputs with numpy into `fixtures/plugin_expected/`.
   When its processing changes, update the script, regenerate the files,
   and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
-- `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging VST3 effect by esgrove,
-  described in `image-control-plugin/README.md`.
+- `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging effect by esgrove,
+  as a VST3 and, on macOS, an Audio Unit, described in `image-control-plugin/README.md`.
   It is a real plugin for processing audio, mainly from AudioBatch's plugin chain, and not part of either application.
   It is C++ only, so the feature scope and behavioral parity rules below do not apply to it,
   and its names and ids never carry AudioBatch branding.
@@ -51,6 +51,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and runs its GoogleTest unit tests with `--test`.
   `cpp/format.sh` formats it, and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
   It includes `cpp/cmake/Optimizations.cmake`, so it targets the same CPUs and optimizations as AudioBatch.
+  `image-control-plugin/benchmarks/compare_formats.py` renders files through its VST3
+  and Audio Unit with the AudioBatch CLI, and compares their speed and output.
 - `fixtures/spectrogram_expected/` holds short PCM16 inputs and sparse NumPy power expectations for the spectrogram,
  which both test suites read in place.
  `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
@@ -92,7 +94,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and assert application results, never screenshots or pixels.
   The C++ tier drives a transparent desktop window through `cpp/tests/GuiDriver.*`,
   and the Rust tier uses gpui-kit's test window helpers.
-- `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, and `rust/scripts/`,
+- `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, `rust/scripts/`,
+  and `image-control-plugin/benchmarks/`,
   and pins it in `uv.lock`.
   Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.
   Each script declares its Python version and packages in an inline `# /// script` block
@@ -113,7 +116,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
-  `image-control.yml` builds, tests, and lints ImageControl on macOS and Windows,
+  `image-control.yml` builds, tests, and lints ImageControl on macOS and Windows, and validates its Audio Unit,
   only when the plugin, the JUCE submodule, or the shared C++ style or optimization configuration changes.
 
 ## Isolated Application Storage

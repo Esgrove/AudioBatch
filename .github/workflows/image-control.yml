@@ -65,13 +65,22 @@ jobs:
         run: brew install ninja ccache
 
       - name: Build and test
+        if: runner.os != 'macOS'
         run: ./build.sh --test
+
+      # On macOS the build also makes the Audio Unit, which is installed into the runner's Components folder
+      # so auval can validate it.
+      - name: Build, test, and validate the Audio Unit
+        if: runner.os == 'macOS'
+        run: ./build.sh --test --validate
 
       - name: Upload plugin
         uses: actions/upload-artifact@v7
         with:
           name: ImageControl-${{ runner.os }}
-          path: image-control-plugin/build/ImageControl_artefacts/Release/VST3
+          path: |
+            image-control-plugin/build/ImageControl_artefacts/Release/VST3
+            image-control-plugin/build/ImageControl_artefacts/Release/AU
           if-no-files-found: error
 
   lint:

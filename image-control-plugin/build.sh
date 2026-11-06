@@ -1,13 +1,14 @@
 #!/bin/bash
 set -eo pipefail
 
-# Builds the ImageControl VST3 plugin, defaulting to Release mode in image-control-plugin/build.
-# Optionally runs its unit tests and installs the bundle into the user's VST3 folder.
+# Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/build.
+# Optionally runs its unit tests, installs the bundles into the user's plugin folders,
+# and validates the installed Audio Unit with auval.
 # Needs the JUCE submodule in cpp/JUCE: git submodule update --init cpp/JUCE
 
 USAGE="Usage: $0 [OPTIONS]
 
-Build the ImageControl VST3 plugin.
+Build the ImageControl VST3 plugin, and on macOS its Audio Unit.
 
 OPTIONS: All options are optional
     -h | --help
@@ -23,7 +24,10 @@ OPTIONS: All options are optional
         Also build and run the unit tests.
 
     -i | --install
-        Copy the built bundle into the user's VST3 folder."
+        Copy the built bundles into the user's VST3 folder, and on macOS the Audio Unit into the Components folder.
+
+    -v | --validate
+        On macOS, install and validate the Audio Unit with auval."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../common.sh
@@ -32,6 +36,7 @@ source "$DIR/../common.sh"
 PRINT_ONLY=false
 RUN_TESTS=false
 INSTALL=false
+VALIDATE=false
 BUILD_TYPE="Release"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -50,6 +55,10 @@ while [ $# -gt 0 ]; do
         -i | --install)
             INSTALL=true
             ;;
+        -v | --validate)
+            INSTALL=true
+            VALIDATE=true
+            ;;
         *)
             print_error_and_exit "Unknown option: $1"
             ;;
@@ -62,6 +71,7 @@ if [ "$BUILD_TYPE" = "Debug" ]; then
     BUILD_DIR="$DIR/build-debug"
 fi
 BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/VST3/ImageControl.vst3"
+AU_BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/AU/ImageControl.component"
 
 if [ "$PRINT_ONLY" = true ]; then
     echo "$BUNDLE"
@@ -84,6 +94,9 @@ if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ccache)" ]; then
 fi
 
 TARGETS=(--target ImageControl_VST3)
+if [ "$BASH_PLATFORM" = "mac" ]; then
+    TARGETS+=(ImageControl_AU)
+fi
 if [ "$RUN_TESTS" = true ]; then
     TARGETS+=(ImageControlTests)
 fi
@@ -97,6 +110,12 @@ if [ ! -d "$BUNDLE" ]; then
     print_error_and_exit "Bundle not found after the build: $BUNDLE"
 fi
 print_green "Built: $BUNDLE"
+if [ "$BASH_PLATFORM" = "mac" ]; then
+    if [ ! -d "$AU_BUNDLE" ]; then
+        print_error_and_exit "Audio Unit not found after the build: $AU_BUNDLE"
+    fi
+    print_green "Built: $AU_BUNDLE"
+fi
 
 if [ "$RUN_TESTS" = true ]; then
     print_magenta "Running the unit tests"
@@ -113,6 +132,32 @@ if [ "$INSTALL" = true ]; then
     rm -rf "${VST3_DIR:?}/ImageControl.vst3"
     cp -R "$BUNDLE" "$VST3_DIR/"
     print_green "Installed: $VST3_DIR/ImageControl.vst3"
+
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        COMPONENTS_DIR="$HOME/Library/Audio/Plug-Ins/Components"
+        mkdir -p "$COMPONENTS_DIR"
+        rm -rf "${COMPONENTS_DIR:?}/ImageControl.component"
+        cp -R "$AU_BUNDLE" "$COMPONENTS_DIR/"
+        # The Audio Unit registry caches components, so it is restarted to pick up the new build.
+        killall -q AudioComponentRegistrar || true
+        print_green "Installed: $COMPONENTS_DIR/ImageControl.component"
+    fi
+fi
+
+if [ "$VALIDATE" = true ] && [ "$BASH_PLATFORM" = "mac" ]; then
+    require_command auval
+    # The restarted registry takes a moment to list the new component, and auval fails until it does.
+    for attempt in $(seq 1 30); do
+        if auval -a 2> /dev/null | grep -q "aufx Egic Esgr"; then
+            break
+        fi
+        if [ "$attempt" -eq 30 ]; then
+            print_error_and_exit "The Audio Unit did not register: aufx Egic Esgr"
+        fi
+        sleep 1
+    done
+    print_magenta "Validating the Audio Unit with auval"
+    auval -strict -v aufx Egic Esgr
 fi
 
 echo "$BUNDLE"

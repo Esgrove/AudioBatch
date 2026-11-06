@@ -46,6 +46,7 @@
 /test-plugin/build-debug
 /image-control-plugin/build
 /image-control-plugin/build-debug
+/image-control-plugin/build-benchmark
 
 # Test audio files
 /cpp/files/
