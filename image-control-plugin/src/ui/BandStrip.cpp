@@ -4,45 +4,44 @@
 #include "ui/BandStrip.h"
 
 #include "Parameters.h"
+#include "ui/ImageControlLookAndFeel.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <memory>
+#include <utility>
 
 namespace esgrove::image_control
 {
 namespace
 {
 /// Height of the name and range rows, in pixels.
-constexpr int HEADER_ROW_HEIGHT {18};
-/// Height of the Width and Link row, in pixels.
-constexpr int WIDTH_ROW_HEIGHT {24};
-/// Height of the labels above the gain sliders, in pixels.
-constexpr int SLIDER_LABEL_HEIGHT {16};
-/// Size of the value boxes of the sliders, in pixels.
-constexpr int TEXT_BOX_WIDTH {64};
+constexpr int HEADER_ROW_HEIGHT {20};
+/// Height of the labels above the sliders, in pixels.
+constexpr int SLIDER_LABEL_HEIGHT {18};
+/// Height of the sliders, in pixels.
+constexpr int SLIDER_HEIGHT {26};
+/// Width of the value boxes of the sliders, in pixels.
+constexpr int TEXT_BOX_WIDTH {78};
 /// Height of the value boxes of the sliders, in pixels.
-constexpr int TEXT_BOX_HEIGHT {18};
+constexpr int TEXT_BOX_HEIGHT {22};
 /// Width of the Link toggle, in pixels.
-constexpr int LINK_WIDTH {56};
-/// Width of the Width label, in pixels.
-constexpr int WIDTH_LABEL_WIDTH {44};
+constexpr int LINK_WIDTH {60};
 /// Inner margin of the strip, in pixels.
-constexpr int MARGIN {6};
+constexpr int MARGIN {10};
 /// Corner radius of the strip background, in pixels.
 constexpr float CORNER_RADIUS {6.0F};
+/// Number of slider rows: Mid, Side, and Width.
+constexpr int SLIDER_ROWS {3};
 /// Width below which Side is turned off rather than set to a very low gain.
 constexpr double MONO_WIDTH {0.001};
-/// Width of the value box of the Width slider, in pixels.
-constexpr int WIDTH_TEXT_BOX_WIDTH {48};
 /// Font height of the band name.
-constexpr float NAME_FONT_HEIGHT {15.0F};
-/// Opacity of the secondary text, such as the band range.
-constexpr float SECONDARY_TEXT_ALPHA {0.6F};
+constexpr float NAME_FONT_HEIGHT {16.0F};
+/// Font height of the band range and the slider labels.
+constexpr float LABEL_FONT_HEIGHT {14.0F};
 /// Step of the Width slider.
 constexpr double WIDTH_STEP {0.01};
-/// Background of the strip, as ARGB.
-constexpr juce::uint32 STRIP_BACKGROUND {0xff1a1e27};
 
 /// Returns the linear Width ratio of a band from its Mid and Side gains in dB: 0 when Side is off.
 double widthFromGains(const double midDecibels, const double sideDecibels)
@@ -75,15 +74,19 @@ BandStrip::BandStrip(
     sideParameter(*parameters.getParameter(sideGainParameterId(band)))
 {
     nameLabel.setText(bandName(band), juce::dontSendNotification);
-    nameLabel.setFont(juce::FontOptions(NAME_FONT_HEIGHT, juce::Font::bold));
+    nameLabel.setFont(ImageControlLookAndFeel::getTextFont(NAME_FONT_HEIGHT).boldened());
+    nameLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     nameLabel.setJustificationType(juce::Justification::centredLeft);
+    rangeLabel.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
     rangeLabel.setJustificationType(juce::Justification::centredLeft);
-    rangeLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(SECONDARY_TEXT_ALPHA));
+    rangeLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     addAndMakeVisible(nameLabel);
     addAndMakeVisible(rangeLabel);
 
-    configureGainSlider(midSlider, midLabel, "Mid");
-    configureGainSlider(sideSlider, sideLabel, "Side");
+    configureSlider(midSlider, midLabel, "Mid");
+    configureSlider(sideSlider, sideLabel, "Side");
+    midSlider.setDoubleClickReturnValue(true, 0.0);
+    sideSlider.setDoubleClickReturnValue(true, 0.0);
     midAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         parameters, midGainParameterId(band), midSlider
     );
@@ -91,10 +94,7 @@ BandStrip::BandStrip(
         parameters, sideGainParameterId(band), sideSlider
     );
 
-    widthLabel.setText("Width", juce::dontSendNotification);
-    addAndMakeVisible(widthLabel);
-    widthSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    widthSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, WIDTH_TEXT_BOX_WIDTH, TEXT_BOX_HEIGHT);
+    configureSlider(widthSlider, widthLabel, "Width");
     widthSlider.setRange(0.0, MAX_WIDTH, WIDTH_STEP);
     widthSlider.setDoubleClickReturnValue(true, 1.0);
     widthSlider.onDragStart = [this] { sideParameter.beginChangeGesture(); };
@@ -146,29 +146,33 @@ BandStrip::~BandStrip()
 /// Paints the rounded background of the strip.
 void BandStrip::paint(juce::Graphics& graphics)
 {
-    graphics.setColour(juce::Colour(STRIP_BACKGROUND));
+    graphics.setColour(juce::Colour(palette::GREY_SEMI_DARK));
     graphics.fillRoundedRectangle(getLocalBounds().toFloat(), CORNER_RADIUS);
 }
 
-/// Lays out the name and range at the top, the Mid and Side sliders side by side, and Width and Link at the bottom.
+/// Lays out the name and Link in the header row, the range below them,
+/// and the Mid, Side, and Width sliders below it at full width, each with its label above it.
+/// The slider rows share the remaining height evenly.
 void BandStrip::resized()
 {
     auto area = getLocalBounds().reduced(MARGIN);
-    nameLabel.setBounds(area.removeFromTop(HEADER_ROW_HEIGHT));
+    auto header = area.removeFromTop(HEADER_ROW_HEIGHT);
+    linkButton.setBounds(header.removeFromRight(LINK_WIDTH));
+    nameLabel.setBounds(header);
     rangeLabel.setBounds(area.removeFromTop(HEADER_ROW_HEIGHT));
 
-    auto widthRow = area.removeFromBottom(WIDTH_ROW_HEIGHT);
-    linkButton.setBounds(widthRow.removeFromRight(LINK_WIDTH));
-    widthLabel.setBounds(widthRow.removeFromLeft(WIDTH_LABEL_WIDTH));
-    widthSlider.setBounds(widthRow);
-
-    area.removeFromBottom(MARGIN);
-    auto midArea = area.removeFromLeft(area.getWidth() / 2);
-    auto sideArea = area;
-    midLabel.setBounds(midArea.removeFromTop(SLIDER_LABEL_HEIGHT));
-    sideLabel.setBounds(sideArea.removeFromTop(SLIDER_LABEL_HEIGHT));
-    midSlider.setBounds(midArea);
-    sideSlider.setBounds(sideArea);
+    const int rowHeight = area.getHeight() / SLIDER_ROWS;
+    const std::array rows {
+        std::pair {&midLabel, &midSlider},
+        std::pair {&sideLabel, &sideSlider},
+        std::pair {&widthLabel, &widthSlider},
+    };
+    static_assert(rows.size() == SLIDER_ROWS);
+    for (const auto& [label, slider] : rows) {
+        auto row = area.removeFromTop(rowHeight);
+        label->setBounds(row.removeFromTop(SLIDER_LABEL_HEIGHT));
+        slider->setBounds(row.removeFromTop(SLIDER_HEIGHT));
+    }
 }
 
 /// Shows the frequency range of the band under its name.
@@ -191,15 +195,16 @@ void BandStrip::applyWidth()
     setParameterValue(sideParameter, static_cast<float>(side), widthSlider.isMouseButtonDown());
 }
 
-/// Sets up a vertical gain slider in dB with its label above it.
-void BandStrip::configureGainSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
+/// Sets up a full-width horizontal slider with its value box on the right and its label above it.
+void BandStrip::configureSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
 {
-    slider.setSliderStyle(juce::Slider::LinearVertical);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, TEXT_BOX_WIDTH, TEXT_BOX_HEIGHT);
-    slider.setDoubleClickReturnValue(true, 0.0);
+    slider.setSliderStyle(juce::Slider::LinearHorizontal);
+    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, TEXT_BOX_WIDTH, TEXT_BOX_HEIGHT);
     addAndMakeVisible(slider);
     label.setText(text, juce::dontSendNotification);
-    label.setJustificationType(juce::Justification::centred);
+    label.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
+    label.setJustificationType(juce::Justification::bottomLeft);
+    label.setBorderSize({});
     addAndMakeVisible(label);
 }
 

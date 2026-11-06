@@ -84,9 +84,10 @@ so it follows the native refresh rate, such as 120 or 144 Hz.
 It renders the spectrogram image again only when a new analysis frame arrives,
 about 47 times a second at 48 kHz, and repaints the crossover lines only when they move.
 
+The controls use AudioBatch's palette and its Roboto and Roboto Mono fonts from the shared `../assets/`.
 Each band has a strip with its own controls:
 
-- **Mid** and **Side** set the gain of the band's mid and side signals.
+- **Mid** and **Side** are full-width sliders that set the gain of the band's mid and side signals.
   These are the parameters the host automates and saves.
 - **Width** is the side gain relative to the mid gain as a linear ratio.
   0 makes the band mono, 1 leaves the stereo image as it is, and 2 doubles the side relative to the mid.

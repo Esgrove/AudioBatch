@@ -7,6 +7,7 @@
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/BandStrip.h"
+#include "ui/ImageControlLookAndFeel.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -61,8 +62,6 @@ constexpr int OUTPUT_SLIDER_WIDTH {200};
 constexpr int OUTPUT_TEXT_BOX_WIDTH {64};
 /// Height of the value boxes in the header, in pixels.
 constexpr int HEADER_TEXT_BOX_HEIGHT {18};
-/// Editor background, as ARGB.
-constexpr juce::uint32 EDITOR_BACKGROUND {0xff12151c};
 
 /// Returns the text of the analyzer tap button for a tap.
 juce::String tapButtonText(const bool analyzeOutput)
@@ -86,10 +85,13 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     auto& parameters = owner.getParameters();
 
     titleLabel.setText("ImageControl", juce::dontSendNotification);
-    titleLabel.setFont(juce::FontOptions(TITLE_FONT_HEIGHT, juce::Font::bold));
+    titleLabel.setFont(ImageControlLookAndFeel::getTextFont(TITLE_FONT_HEIGHT).boldened());
+    titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
 
     tapButton.setClickingTogglesState(true);
+    // The tap is a choice between two views, not an alert, so the button keeps its normal colour when on.
+    tapButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::GREY_MEDIUM));
     tapButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(ANALYZE_OUTPUT_PROPERTY, nullptr));
     tapButton.setButtonText(tapButtonText(tapButton.getToggleState()));
     tapButton.setTooltip("Switch the spectrogram between the input and the output of the plugin");
@@ -153,7 +155,7 @@ ImageControlEditor::~ImageControlEditor()
 /// Fills the background.
 void ImageControlEditor::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(juce::Colour(EDITOR_BACKGROUND));
+    graphics.fillAll(juce::Colour(palette::GREY_DARK));
 }
 
 /// Lays out the header, the spectrogram, and the band strips, and remembers the size in the editor settings.
