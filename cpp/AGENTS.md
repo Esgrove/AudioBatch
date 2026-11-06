@@ -547,7 +547,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   cmake-format runs through `uvx` when it is not installed.
   The fallback uses Python 3.14 because cmakelang's token scanner is incompatible with Python 3.15.
   After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
-- `./format.sh` covers this `cpp/` directory, the sources, CMake file, and scripts of `../test-plugin/`,
+- `./format.sh` covers this `cpp/` directory,
+  the sources, CMake files, and scripts of `../test-plugin/` and `../image-control-plugin/`,
   and `../fixtures/generate.sh`,
   and also checks the prose under `cpp/` with `slb` when it is installed.
   Check the prose in `../test-plugin/` and `../.agents/rules/` separately.
