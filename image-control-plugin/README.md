@@ -112,6 +112,14 @@ The move stops where a crossover would come closer than a third of an octave to 
 Dragging a band up or down with Ctrl, or Cmd on macOS, changes its width,
 and so does the mouse wheel over it, both finely with Shift.
 The cursor shows what a drag will do, and every drag is one host gesture.
+Hovering a band also draws the response of every band as a curve in the band's colour,
+the hovered band bright with a soft fill and the others faint, so their overlap at the crossovers shows.
+The crossover lines are faint at rest, and glow brighter and thicker while hovered or dragged.
+
+Every control has a tooltip, which fades and slides in once the pointer rests on it for about half a second,
+and fades out when the pointer moves on.
+The editor draws the tooltips itself, inside its window, instead of JUCE's tooltip window.
+Over the spectrogram, the tooltip explains what a drag at the pointer does.
 
 ### Settings
 

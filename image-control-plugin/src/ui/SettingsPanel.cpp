@@ -60,6 +60,14 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
         std::pair<juce::ToggleButton*, const char*> {&melScaleButton, MEL_SCALE_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&showFpsButton, SHOW_FPS_PROPERTY},
     };
+    analyzeOutputButton.setTooltip("Show the processed output, or the input before the bands are changed");
+    phaseColoursButton.setTooltip(
+        "Colour particles by phase, blue for in-phase and red for anti-phase sound, instead of red bass to blue highs"
+    );
+    melScaleButton.setTooltip(
+        "Space the frequencies like the mel scale of AudioBatch's spectrogram, with less room for the bass"
+    );
+    showFpsButton.setTooltip("Show how often the display refreshes, in the top-left corner of the spectrogram");
     for (const auto& [button, property] : toggles) {
         button->getToggleStateValue().referTo(editorState.getPropertyAsValue(property, nullptr));
         addAndMakeVisible(*button);
@@ -73,7 +81,9 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     persistenceSlider.setTextValueSuffix(" s");
     persistenceSlider.setDoubleClickReturnValue(true, DEFAULT_PERSISTENCE_SECONDS);
     persistenceSlider.getValueObject().referTo(editorState.getPropertyAsValue(PERSISTENCE_PROPERTY, nullptr));
-    persistenceSlider.setTooltip("How long particles take to fade");
+    persistenceSlider.setTooltip(
+        "How long particles take to fade. Short values follow the music closely, long values build a calmer picture"
+    );
     addAndMakeVisible(persistenceSlider);
 
     configureLabel(focusLabel, "Focus");
@@ -83,7 +93,11 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     focusSlider.setTextValueSuffix(" dB");
     focusSlider.setDoubleClickReturnValue(true, DEFAULT_FOCUS_DB);
     focusSlider.getValueObject().referTo(editorState.getPropertyAsValue(FOCUS_PROPERTY, nullptr));
-    focusSlider.setTooltip("Level difference between the channels that reaches the left and right edges");
+    focusSlider.setTooltip(
+        "How large a level difference between the left and right channels reaches the edges of the display. "
+        "At 18 dB, a sound 18 dB louder on the left is drawn at the left edge, and one 9 dB louder halfway there. "
+        "Lower values spread small differences wider, and higher values keep room for hard-panned sounds"
+    );
     addAndMakeVisible(focusSlider);
 
     setSize(PANEL_WIDTH, PANEL_HEIGHT);

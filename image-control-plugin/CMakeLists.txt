@@ -102,6 +102,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.h"
 )
 target_sources(ImageControl PRIVATE ${IMAGE_CONTROL_SOURCES})
 target_include_directories(ImageControl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

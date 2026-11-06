@@ -76,6 +76,8 @@ BandStrip::BandStrip(
     configureSlider(sideSlider, sideLabel, "Side");
     midSlider.setDoubleClickReturnValue(true, 0.0);
     sideSlider.setDoubleClickReturnValue(true, 0.0);
+    midSlider.setTooltip("Level of the band's mid, what both channels share. Double-click to reset");
+    sideSlider.setTooltip("Level of the band's side, what differs between the channels. Off makes the band mono");
     midAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         parameters, midGainParameterId(band), midSlider
     );
@@ -85,6 +87,9 @@ BandStrip::BandStrip(
 
     configureSlider(widthSlider, widthLabel, "Width");
     widthSlider.setRange(0.0, MAX_STEREO_WIDTH, WIDTH_STEP);
+    widthSlider.setTooltip(
+        "Side relative to mid: 0 is mono, 1 leaves the stereo image as it is, and 2 doubles the side"
+    );
     widthSlider.setDoubleClickReturnValue(true, 1.0);
     widthSlider.onDragStart = [this] {
         draggingWidth = true;
