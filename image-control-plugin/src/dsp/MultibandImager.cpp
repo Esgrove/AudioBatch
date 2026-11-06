@@ -14,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -195,7 +196,7 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     blockPosition = 0;
     delayPosition = 0;
 
-    designThread = std::make_unique<KernelDesignThread>([this] { designRequestedKernels(); });
+    designThread = std::make_unique<KernelDesignThread>([this] { designRequestedKernels(true); });
     designThread->startThread();
 }
 
@@ -209,17 +210,24 @@ void MultibandImager::release()
 }
 
 /// Requests new crossover frequencies, which are ordered with orderCrossovers first.
-/// The design thread picks the request up, and the audio thread crossfades to the new kernels when they are ready.
-/// With designNow, the kernels are designed synchronously on the calling thread instead,
-/// which offline rendering uses so its output does not depend on thread timing.
-void MultibandImager::setCrossovers(const Crossovers& crossovers, const bool designNow)
+/// During real-time playback the design thread picks the request up,
+/// and the audio thread crossfades to the new kernels when they are ready.
+/// During offline rendering the calling audio thread designs the kernels itself and the design thread stands by,
+/// so the output does not depend on thread timing.
+/// The three values are published as one snapshot, so the design thread never mixes two requests.
+void MultibandImager::setCrossovers(const Crossovers& crossovers, const bool offline)
 {
+    offlineRendering.store(offline, std::memory_order_release);
     const Crossovers ordered = orderCrossovers(crossovers);
+    const std::uint32_t sequence = requestSequence.load(std::memory_order_relaxed);
+    requestSequence.store(sequence + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        requestedCrossovers.at(crossover).store(ordered.at(crossover), std::memory_order_relaxed);
+        requestedCrossovers[crossover].store(ordered[crossover], std::memory_order_relaxed);
     }
-    if (designNow) {
-        designRequestedKernels();
+    requestSequence.store(sequence + 2, std::memory_order_release);
+    if (offline) {
+        designRequestedKernels(false);
     }
 }
 
@@ -261,6 +269,27 @@ void MultibandImager::process(juce::AudioBuffer<float>& buffer)
     }
 }
 
+/// Returns the requested crossovers as one consistent snapshot.
+/// The audio thread is the only writer and marks a write in progress with an odd sequence,
+/// so a reader retries until it read all three values between the same two even sequence values.
+Crossovers MultibandImager::readRequestedCrossovers() const
+{
+    Crossovers requested {};
+    while (true) {
+        const std::uint32_t before = requestSequence.load(std::memory_order_acquire);
+        if ((before & 1U) != 0) {
+            continue;
+        }
+        for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+            requested[crossover] = requestedCrossovers[crossover].load(std::memory_order_relaxed);
+        }
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (requestSequence.load(std::memory_order_relaxed) == before) {
+            return requested;
+        }
+    }
+}
+
 /// Returns whether every gain has settled at unity, so the output can be the delayed input itself.
 bool MultibandImager::isNeutral() const
 {
@@ -270,18 +299,19 @@ bool MultibandImager::isNeutral() const
 
 /// Designs kernels for the requested crossovers into the spare slot when they differ from the active ones
 /// and no designed slot is waiting to be switched to.
-/// Runs on the design thread, or on the audio thread during non-real-time rendering.
-void MultibandImager::designRequestedKernels()
+/// Runs on the design thread during real-time playback, and on the audio thread during offline rendering,
+/// when the design thread leaves it alone.
+void MultibandImager::designRequestedKernels(const bool fromDesignThread)
 {
     const std::scoped_lock lock(designMutex);
+    if (fromDesignThread && offlineRendering.load(std::memory_order_acquire)) {
+        return;
+    }
     if (switchPending.load(std::memory_order_acquire)) {
         return;
     }
 
-    Crossovers requested {};
-    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        requested.at(crossover) = requestedCrossovers.at(crossover).load(std::memory_order_relaxed);
-    }
+    const Crossovers requested = readRequestedCrossovers();
     const auto active = static_cast<std::size_t>(publishedActiveSlot.load(std::memory_order_acquire));
     if (sameCrossovers(requested, slotCrossovers.at(active))) {
         return;
@@ -395,6 +425,11 @@ void MultibandImager::processPartition()
         activeSlot = 1 - activeSlot;
         publishedActiveSlot.store(activeSlot, std::memory_order_release);
         switchPending.store(false, std::memory_order_release);
+        // Offline, a request that arrived while this switch was pending is designed right away,
+        // so it takes effect at the next partition no matter how the host splits its blocks.
+        if (offlineRendering.load(std::memory_order_relaxed)) {
+            designRequestedKernels(false);
+        }
     }
 
     if (!crossfade && isNeutral()) {
