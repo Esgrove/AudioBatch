@@ -20,6 +20,8 @@ constexpr juce::uint32 GREY_MIDDLE {0xff686F79};
 constexpr juce::uint32 GREY_MIDDLE_LIGHT {0xffAAB0B9};
 constexpr juce::uint32 GREY_SEMI_DARK {0xff1A1C20};
 constexpr juce::uint32 GREY_SUPER_LIGHT {0xffF3F5F7};
+constexpr juce::uint32 ORANGE {0xffDD8B65};
+constexpr juce::uint32 YELLOW {0xffCEAF6C};
 }  // namespace palette
 
 /// The editor's look and feel: AudioBatch's dark colour scheme and control colours,

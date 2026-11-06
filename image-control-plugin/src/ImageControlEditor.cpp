@@ -1,5 +1,6 @@
-/// Implements the ImageControl editor: the header controls bound to the editor settings and the output gain,
-/// the layout and saved size, and the timer that feeds the analyzer and refreshes the spectrogram and band ranges.
+/// Implements the ImageControl editor: the header with the bypass, the settings button, and the output gain,
+/// the layout and saved size, the display refresh that feeds the analyzer and advances the spectrogram,
+/// applying the display settings, and measuring the refresh rate.
 
 #include "ImageControlEditor.h"
 
@@ -8,10 +9,13 @@
 #include "Parameters.h"
 #include "ui/BandStrip.h"
 #include "ui/ImageControlLookAndFeel.h"
+#include "ui/SettingsPanel.h"
+#include "ui/SpatialSpectrogramView.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace esgrove::image_control
@@ -21,11 +25,11 @@ namespace
 /// Default editor width, in pixels.
 constexpr int DEFAULT_WIDTH {1000};
 /// Default editor height, in pixels.
-constexpr int DEFAULT_HEIGHT {660};
+constexpr int DEFAULT_HEIGHT {680};
 /// Smallest editor width, in pixels.
 constexpr int MIN_WIDTH {760};
 /// Smallest editor height, in pixels.
-constexpr int MIN_HEIGHT {540};
+constexpr int MIN_HEIGHT {560};
 /// Largest editor width, in pixels.
 constexpr int MAX_WIDTH_PIXELS {2800};
 /// Largest editor height, in pixels.
@@ -35,50 +39,49 @@ constexpr int HEADER_HEIGHT {36};
 /// Gap between sections, in pixels.
 constexpr int GAP {8};
 /// Share of the height below the header that the spectrogram takes.
-constexpr float SPECTROGRAM_SHARE {0.58F};
+constexpr float SPECTROGRAM_SHARE {0.6F};
 /// Frames drained from the analyzer ring per pop.
 constexpr std::size_t DRAIN_CHUNK {4096};
+/// Longest time one display refresh advances the spectrogram, in seconds,
+/// so a pause in refreshes, such as a hidden window, does not fade everything at once.
+constexpr double MAX_REFRESH_STEP_SECONDS {0.1};
+/// Time over which the refresh rate is averaged, in seconds.
+constexpr double FRAME_RATE_WINDOW_SECONDS {0.5};
 /// Font height of the title.
 constexpr float TITLE_FONT_HEIGHT {18.0F};
 /// Width of the title, in pixels.
 constexpr int TITLE_WIDTH {140};
-/// Width of the analyzer tap button, in pixels.
-constexpr int TAP_BUTTON_WIDTH {140};
-/// Vertical inset of the analyzer tap button in the header, in pixels.
-constexpr int TAP_BUTTON_INSET {2};
-/// Width of the persistence label, in pixels.
-constexpr int PERSISTENCE_LABEL_WIDTH {78};
-/// Width of the persistence slider, in pixels.
-constexpr int PERSISTENCE_SLIDER_WIDTH {220};
-/// Width of the persistence value box, in pixels.
-constexpr int PERSISTENCE_TEXT_BOX_WIDTH {56};
-/// Step of the persistence slider, in seconds.
-constexpr double PERSISTENCE_STEP {0.01};
+/// Width of the header buttons, in pixels.
+constexpr int HEADER_BUTTON_WIDTH {90};
+/// Vertical inset of the buttons in the header, in pixels.
+constexpr int BUTTON_INSET {2};
 /// Width of the output label, in pixels.
 constexpr int OUTPUT_LABEL_WIDTH {52};
 /// Width of the output gain slider, in pixels.
-constexpr int OUTPUT_SLIDER_WIDTH {200};
+constexpr int OUTPUT_SLIDER_WIDTH {220};
 /// Width of the output gain value box, in pixels.
-constexpr int OUTPUT_TEXT_BOX_WIDTH {64};
-/// Height of the value boxes in the header, in pixels.
-constexpr int HEADER_TEXT_BOX_HEIGHT {18};
+constexpr int VALUE_BOX_WIDTH {70};
+/// Height of the output gain value box, in pixels.
+constexpr int VALUE_BOX_HEIGHT {20};
+/// Opacity of the band strips while the plugin is bypassed.
+constexpr float BYPASSED_STRIP_ALPHA {0.45F};
 
-/// Returns the text of the analyzer tap button for a tap.
-juce::String tapButtonText(const bool analyzeOutput)
+/// Returns a boolean editor setting.
+bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 {
-    return analyzeOutput ? "Showing: Output" : "Showing: Input";
+    return static_cast<bool>(editorState.getProperty(property));
 }
 }  // namespace
 
-/// Creates the editor, binds its controls to the processor's parameters and editor settings,
-/// and discards audio that queued while no editor was open.
+/// Creates the editor, binds its controls to the processor's parameters,
+/// connects the analyzer to the spectrogram, and discards audio that queued while no editor was open.
 ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     AudioProcessorEditor(owner),
     imageControlProcessor(owner),
-    spectrogram(analyzer, owner.getParameters()),
+    spectrogram(owner.getParameters()),
     leftScratch(DRAIN_CHUNK, 0.0F),
     rightScratch(DRAIN_CHUNK, 0.0F),
-    vblankAttachment(this, [this] { refreshDisplay(); })
+    vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
 {
     setLookAndFeel(&lookAndFeel);
     auto& editorState = owner.getEditorState();
@@ -89,51 +92,36 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
 
-    tapButton.setClickingTogglesState(true);
-    // The tap is a choice between two views, not an alert, so the button keeps its normal colour when on.
-    tapButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::GREY_MEDIUM));
-    tapButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(ANALYZE_OUTPUT_PROPERTY, nullptr));
-    tapButton.setButtonText(tapButtonText(tapButton.getToggleState()));
-    tapButton.setTooltip("Switch the spectrogram between the input and the output of the plugin");
-    tapButton.onStateChange = [this] {
-        const auto text = tapButtonText(tapButton.getToggleState());
-        if (tapButton.getButtonText() != text) {
-            tapButton.setButtonText(text);
-            analyzer.clear();
-        }
-    };
-    addAndMakeVisible(tapButton);
+    bypassButton.setClickingTogglesState(true);
+    bypassButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::ORANGE));
+    bypassButton.setTooltip("Pass the input through unprocessed, keeping the same latency");
+    bypassAttachment
+        = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, BYPASS_ID, bypassButton);
+    addAndMakeVisible(bypassButton);
 
-    persistenceLabel.setText("Persistence", juce::dontSendNotification);
-    addAndMakeVisible(persistenceLabel);
-    persistenceSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    persistenceSlider.setTextBoxStyle(
-        juce::Slider::TextBoxRight, false, PERSISTENCE_TEXT_BOX_WIDTH, HEADER_TEXT_BOX_HEIGHT
-    );
-    persistenceSlider.setRange(MIN_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS, PERSISTENCE_STEP);
-    persistenceSlider.setSkewFactorFromMidPoint(DEFAULT_PERSISTENCE_SECONDS);
-    persistenceSlider.setTextValueSuffix(" s");
-    persistenceSlider.setDoubleClickReturnValue(true, DEFAULT_PERSISTENCE_SECONDS);
-    persistenceSlider.getValueObject().referTo(editorState.getPropertyAsValue(PERSISTENCE_PROPERTY, nullptr));
-    persistenceSlider.onValueChange = [this] { analyzer.setPersistence(persistenceSlider.getValue()); };
-    addAndMakeVisible(persistenceSlider);
-    analyzer.setPersistence(persistenceSlider.getValue());
+    settingsButton.setTooltip("Display settings");
+    settingsButton.onClick = [this] { openSettings(); };
+    addAndMakeVisible(settingsButton);
 
     outputLabel.setText("Output", juce::dontSendNotification);
     addAndMakeVisible(outputLabel);
-    outputSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    outputSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, OUTPUT_TEXT_BOX_WIDTH, HEADER_TEXT_BOX_HEIGHT);
+    outputSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
     outputSlider.setDoubleClickReturnValue(true, 0.0);
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         parameters, OUTPUT_GAIN_ID, outputSlider
     );
     addAndMakeVisible(outputSlider);
 
+    analyzer.setFrameCallback([this](const std::span<const SpectralPoint> points, const double frameSeconds) {
+        spectrogram.addFrame(points, frameSeconds);
+    });
+
     addAndMakeVisible(spectrogram);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band);
         addAndMakeVisible(*bandStrips.at(band));
     }
+    applyViewSettings();
     updateBandRanges();
     drainAnalyzerFifo(false);
 
@@ -145,9 +133,11 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     );
 }
 
-/// Detaches the output slider and the look and feel before the components go away.
+/// Disconnects the analyzer and detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    analyzer.setFrameCallback({});
+    bypassAttachment.reset();
     outputAttachment.reset();
     setLookAndFeel(nullptr);
 }
@@ -165,13 +155,11 @@ void ImageControlEditor::resized()
 
     auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
     titleLabel.setBounds(header.removeFromLeft(TITLE_WIDTH));
-    tapButton.setBounds(header.removeFromLeft(TAP_BUTTON_WIDTH).reduced(0, TAP_BUTTON_INSET));
-    header.removeFromLeft(GAP * 2);
+    bypassButton.setBounds(header.removeFromLeft(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    header.removeFromLeft(GAP);
+    settingsButton.setBounds(header.removeFromLeft(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     outputSlider.setBounds(header.removeFromRight(OUTPUT_SLIDER_WIDTH));
     outputLabel.setBounds(header.removeFromRight(OUTPUT_LABEL_WIDTH));
-    header.removeFromRight(GAP * 2);
-    persistenceLabel.setBounds(header.removeFromLeft(PERSISTENCE_LABEL_WIDTH));
-    persistenceSlider.setBounds(header.removeFromLeft(PERSISTENCE_SLIDER_WIDTH));
     area.removeFromTop(GAP);
 
     spectrogram.setBounds(
@@ -188,6 +176,38 @@ void ImageControlEditor::resized()
     auto& editorState = imageControlProcessor.getEditorState();
     editorState.setProperty(EDITOR_WIDTH_PROPERTY, getWidth(), nullptr);
     editorState.setProperty(EDITOR_HEIGHT_PROPERTY, getHeight(), nullptr);
+}
+
+/// Applies the display settings and the bypass to the analyzer, the spectrogram, and the band strips.
+/// The settings change through the settings panel or a restored state, so this runs on every refresh.
+/// Changing the tap or the colours clears the particles, so the old view does not linger.
+void ImageControlEditor::applyViewSettings()
+{
+    const auto& editorState = imageControlProcessor.getEditorState();
+    const bool tapOutput = booleanSetting(editorState, ANALYZE_OUTPUT_PROPERTY);
+    const bool phaseColours = booleanSetting(editorState, PHASE_COLOURS_PROPERTY);
+    if (shownTapOutput != tapOutput || shownPhaseColours != phaseColours) {
+        spectrogram.setColours(phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency);
+        spectrogram.clear();
+        shownTapOutput = tapOutput;
+        shownPhaseColours = phaseColours;
+    }
+    spectrogram.setFrequencyScale(
+        booleanSetting(editorState, MEL_SCALE_PROPERTY) ? FrequencyScale::mel : FrequencyScale::logarithmic
+    );
+    spectrogram.setPersistence(static_cast<double>(editorState.getProperty(PERSISTENCE_PROPERTY)));
+    analyzer.setFocus(static_cast<double>(editorState.getProperty(FOCUS_PROPERTY)));
+    spectrogram.setFramesPerSecond(
+        booleanSetting(editorState, SHOW_FPS_PROPERTY) ? std::optional<double>(measuredFramesPerSecond) : std::nullopt
+    );
+
+    const bool bypassed = bypassButton.getToggleState();
+    if (shownBypassed != bypassed) {
+        for (auto& strip : bandStrips) {
+            strip->setAlpha(bypassed ? BYPASSED_STRIP_ALPHA : 1.0F);
+        }
+        shownBypassed = bypassed;
+    }
 }
 
 /// Empties the processor's analyzer ring, passing the audio to the analyzer when analyze is set.
@@ -210,25 +230,46 @@ void ImageControlEditor::drainAnalyzerFifo(const bool analyze)
     }
 }
 
-/// Feeds the analyzer with the audio queued since the last display refresh.
-/// Renders the spectrogram image again only when the analyzer analyzed new frames,
-/// and repaints the crossover lines and band ranges only when the crossovers moved,
-/// so refreshes without changes cost almost nothing at high refresh rates.
-/// Prepares the analyzer again when the host changed the sample rate.
-void ImageControlEditor::refreshDisplay()
+/// Counts display refreshes and updates the measured refresh rate twice a second.
+void ImageControlEditor::measureFramesPerSecond(const double elapsed)
 {
+    ++frameRateCount;
+    frameRateClock += elapsed;
+    if (frameRateClock >= FRAME_RATE_WINDOW_SECONDS) {
+        measuredFramesPerSecond = static_cast<double>(frameRateCount) / frameRateClock;
+        frameRateCount = 0;
+        frameRateClock = 0.0;
+    }
+}
+
+/// Opens the display settings in a call-out box pointing at the settings button.
+/// The box owns the panel and closes when it loses focus.
+void ImageControlEditor::openSettings()
+{
+    juce::CallOutBox::launchAsynchronously(
+        std::make_unique<SettingsPanel>(imageControlProcessor.getEditorState()), settingsButton.getBounds(), this
+    );
+}
+
+/// Runs on every display refresh:
+/// applies the settings, feeds the analyzer with the audio queued since the last refresh,
+/// which adds its frames to the spectrogram, and advances the spectrogram by the time that passed.
+/// Also follows the crossovers, and prepares the analyzer again when the host changed the sample rate.
+void ImageControlEditor::refreshDisplay(const double timestamp)
+{
+    const double elapsed = lastRefreshTimestamp > 0.0 ? timestamp - lastRefreshTimestamp : 0.0;
+    lastRefreshTimestamp = timestamp;
+    measureFramesPerSecond(elapsed);
+
     const double sampleRate = imageControlProcessor.getSampleRate() > 0.0 ? imageControlProcessor.getSampleRate()
                                                                           : ANALYZER_DEFAULT_SAMPLE_RATE;
     if (!juce::approximatelyEqual(sampleRate, analyzedSampleRate)) {
         analyzedSampleRate = sampleRate;
         analyzer.prepare(sampleRate);
     }
+    applyViewSettings();
     drainAnalyzerFifo(true);
-
-    if (analyzer.getFrameCount() != renderedFrameCount) {
-        renderedFrameCount = analyzer.getFrameCount();
-        spectrogram.refresh();
-    }
+    spectrogram.advance(std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS));
 
     const Crossovers crossovers = imageControlProcessor.getCrossovers();
     const bool crossoversMoved
@@ -238,7 +279,6 @@ void ImageControlEditor::refreshDisplay()
     if (crossoversMoved) {
         displayedCrossovers = crossovers;
         updateBandRanges();
-        spectrogram.repaint();
     }
 }
 
