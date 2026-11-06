@@ -1,0 +1,92 @@
+name: ImageControl
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/image-control.yml"
+      - "common.sh"
+      - "cpp/.clang-format"
+      - "cpp/.clang-tidy"
+      - "cpp/JUCE"
+      - "cpp/tests/.clang-tidy"
+      - "image-control-plugin/**"
+      - "!**/*.md"
+  pull_request:
+    paths:
+      - ".github/workflows/image-control.yml"
+      - "common.sh"
+      - "cpp/.clang-format"
+      - "cpp/.clang-tidy"
+      - "cpp/JUCE"
+      - "cpp/tests/.clang-tidy"
+      - "image-control-plugin/**"
+      - "!**/*.md"
+
+# Cancel previous runs for PRs but not pushes to main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CLICOLOR_FORCE: "1"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: image-control-plugin
+
+jobs:
+  build:
+    # The Windows image is the one the C++ workflow uses,
+    # since the plugin needs CMake 4.2 and the Visual Studio generator that comes with it.
+    strategy:
+      matrix:
+        os: [macos-latest, windows-2025-vs2026]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      # The JUCE submodule is the only one, and checkout fetches it at depth 1.
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install build tools
+        if: runner.os == 'macOS'
+        run: brew install ninja ccache
+
+      - name: Build and test
+        run: ./build.sh --test
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v7
+        with:
+          name: ImageControl-${{ runner.os }}
+          path: image-control-plugin/build/ImageControl_artefacts/Release/VST3
+          if-no-files-found: error
+
+  lint:
+    # Use macOS with the latest LLVM from Homebrew, like the C++ lint job.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install LLVM and Ninja
+        run: brew install llvm ninja
+
+      # clang-tidy needs the generated JUCE headers, so the Debug build compiles before linting.
+      - name: Build Debug
+        run: |
+          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DIMAGE_CONTROL_BUILD_TESTS=ON
+          cmake --build build-debug --target ImageControlTests
+
+      - name: Run clang-tidy
+        run: ./lint.sh --check

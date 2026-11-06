@@ -60,16 +60,18 @@ if [ "$BASH_PLATFORM" = windows ]; then
 fi
 
 # Collect the C++ sources and headers under src/ and tests/, including subdirectories,
-# and those of the test plugin that the tests load.
+# those of the test plugin that the tests load, and those of the ImageControl plugin.
+# The plugins format with the explicit style file instead of relying on their configuration symlinks.
 CPP_FILES=()
 PLUGIN_CPP_FILES=()
 while IFS= read -r file; do
-    if [[ "$file" == "$REPO/../test-plugin/"* ]]; then
+    if [[ "$file" == "$REPO/../test-plugin/"* || "$file" == "$REPO/../image-control-plugin/"* ]]; then
         PLUGIN_CPP_FILES+=("$file")
     else
         CPP_FILES+=("$file")
     fi
-done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" "$REPO/../image-control-plugin/src" \
+    "$REPO/../image-control-plugin/tests" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
@@ -97,21 +99,21 @@ if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking CMake formatting..."
         "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --check \
-            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
+            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt ../image-control-plugin/CMakeLists.txt
     else
         print_magenta "Formatting CMake files..."
         "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --in-place \
-            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
+            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt ../image-control-plugin/CMakeLists.txt
     fi
 fi
 
 if [ -n "$(command -v shfmt)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh
+        shfmt --diff ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh ../image-control-plugin/*.sh
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh
+        shfmt --list --write ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh ../image-control-plugin/*.sh
     fi
 fi
 

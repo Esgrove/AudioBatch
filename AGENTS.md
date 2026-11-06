@@ -42,6 +42,14 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `uv run fixtures/plugin_expected.py` computes its expected outputs with numpy into `fixtures/plugin_expected/`.
   When its processing changes, update the script, regenerate the files,
   and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
+- `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging VST3 effect by esgrove,
+  described in `image-control-plugin/README.md`.
+  It is a real plugin for processing audio, mainly from AudioBatch's plugin chain, and not part of either application.
+  It is C++ only, so the feature scope and behavioral parity rules below do not apply to it,
+  and its names and ids never carry AudioBatch branding.
+  `image-control-plugin/build.sh` builds it with the JUCE submodule in `cpp/JUCE`,
+  and runs its GoogleTest unit tests with `--test`.
+  `cpp/format.sh` formats it, and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
 - `fixtures/spectrogram_expected/` holds short PCM16 inputs and sparse NumPy power expectations for the spectrogram,
  which both test suites read in place.
  `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
@@ -89,8 +97,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Each script declares its Python version and packages in an inline `# /// script` block
   and runs in its own environment with `uv run --script`, so add a script's packages there, not to `pyproject.toml`.
   Check the scripts with `uv run ruff format` and `uv run ruff check --fix` from the repository root.
-- `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/` and `test-plugin/`, cargo fmt on `rust/`,
-  ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
+- `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, `test-plugin/`, and `image-control-plugin/`,
+  cargo fmt on `rust/`, ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
 - `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
   Their path filters include their own project, fixtures, the test plugin, assets, and shared shell helpers.
   They also include their workflow files, and exclude Markdown-only changes.
@@ -104,6 +112,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
+  `image-control.yml` builds, tests, and lints ImageControl on macOS and Windows,
+  only when the plugin, the JUCE submodule, or the shared C++ style configuration changes.
 
 ## Isolated Application Storage
 
