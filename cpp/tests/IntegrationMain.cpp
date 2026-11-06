@@ -55,6 +55,7 @@ enum class IntegrationWorkflow : std::uint8_t {
     dropFiles,
     normalizeOptions,
     disabledControls,
+    wheelGain,
 };
 
 /// Horizontal offset of row clicks from the left edge of a row, inside its first visible cell.
@@ -253,6 +254,7 @@ private:
     void previewWidths();
     void restorePreferencesAndGain();
     void storageIsolation();
+    void wheelGainSteps();
 
     void TestBody() override;
 
@@ -1027,6 +1029,47 @@ void AudioBatchIntegrationTest::disabledControlsRejectInput()
     EXPECT_FALSE(driver.find(control_ids::PROCESS_SELECTED).enabled) << "Process without plugins";
 }
 
+/// Changes the custom gain with Ctrl/Cmd and the wheel over the waveform,
+/// in coarse steps, in fine slider steps with Shift also held, and not at all without the modifier.
+void AudioBatchIntegrationTest::wheelGainSteps()
+{
+    const auto file = copyFixture("sine_stereo_44100_16.wav");
+    AudioBatchComponent view(configuration());
+    tests::GuiDriver driver(view);
+    view.openPaths({file.getFullPathName()}, false);
+    ASSERT_TRUE(waitForRows(view, 1));
+    ASSERT_TRUE(clickRow(driver, view, file));
+    ASSERT_TRUE(waitForWaveform(view, file));
+    auto& thumbnail = view.previewWorkspace.thumbnail;
+    const auto& gainSlider = view.previewWorkspace.gainSlider;
+    const auto centre = thumbnail.getLocalBounds().getCentre();
+    const juce::ModifierKeys command {juce::ModifierKeys::commandModifier};
+    const juce::ModifierKeys commandShift {juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier};
+    driver.scrollAt(thumbnail, centre, {0.0f, 0.5f}, command);
+    driver.scrollAt(thumbnail, centre, {0.0f, 0.5f}, command);
+    EXPECT_NEAR(gainSlider.getValue(), 1.0, 0.0001);
+    driver.scrollAt(thumbnail, centre, {0.0f, -0.5f}, commandShift);
+    EXPECT_NEAR(gainSlider.getValue(), 0.9, 0.0001);
+    // macOS delivers a vertical mouse wheel as a horizontal one while Shift is held.
+    driver.scrollAt(thumbnail, centre, {-0.5f, 0.0f}, commandShift);
+    EXPECT_NEAR(gainSlider.getValue(), 0.8, 0.0001);
+    const auto zoom = view.previewWorkspace.zoomSlider.getValue();
+    driver.scrollAt(thumbnail, centre, {0.0f, 0.5f});
+    EXPECT_NEAR(gainSlider.getValue(), 0.8, 0.0001);
+    EXPECT_GT(view.previewWorkspace.zoomSlider.getValue(), zoom);
+    const auto row = view.analysisResults.findRow(file.getFullPathName());
+    ASSERT_TRUE(row.has_value());
+    if (!row) {
+        return;
+    }
+    const auto& gain = view.analysisResults[*row].customGain;
+    ASSERT_TRUE(gain.has_value());
+    if (!gain) {
+        return;
+    }
+    EXPECT_NEAR(gain->value, 0.8f, 0.0001f);
+}
+
 /// Dispatches one workflow, with no installed plugins or audio hardware.
 void AudioBatchIntegrationTest::TestBody()
 {
@@ -1067,6 +1110,9 @@ void AudioBatchIntegrationTest::TestBody()
         case IntegrationWorkflow::disabledControls:
             disabledControlsRejectInput();
             break;
+        case IntegrationWorkflow::wheelGain:
+            wheelGainSteps();
+            break;
     }
 }
 
@@ -1091,6 +1137,7 @@ int main(int argumentCount, char* arguments[])
         std::pair {"DropFilesAndFolders", audiobatch::IntegrationWorkflow::dropFiles},
         std::pair {"NormalizeOptionsFollowControls", audiobatch::IntegrationWorkflow::normalizeOptions},
         std::pair {"DisabledControlsRejectInput", audiobatch::IntegrationWorkflow::disabledControls},
+        std::pair {"WheelGainStepsCoarseAndFine", audiobatch::IntegrationWorkflow::wheelGain},
     };
     for (const auto& [name, workflow] : cases) {
         testing::RegisterTest("AudioBatchIntegration", name, nullptr, nullptr, __FILE__, __LINE__, [workflow] {

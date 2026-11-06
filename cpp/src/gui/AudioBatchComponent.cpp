@@ -128,10 +128,9 @@ void AudioBatchComponent::configurePreviewControls()
         if (!gainSlider.isEnabled() || juce::approximatelyEqual(deltaDb, 0.0f)) {
             return;
         }
-        const auto interval = gainSlider.getInterval() > 0.0 ? gainSlider.getInterval() : gain_range::stepDecibels;
-        const auto step = (deltaDb > 0.0f ? 1.0 : -1.0) * interval;
-        const auto newValue
-            = juce::jlimit(gainSlider.getMinimum(), gainSlider.getMaximum(), gainSlider.getValue() + step);
+        const auto newValue = juce::jlimit(
+            gainSlider.getMinimum(), gainSlider.getMaximum(), gainSlider.getValue() + static_cast<double>(deltaDb)
+        );
         gainSlider.setValue(newValue, juce::sendNotificationSync);
     });
 

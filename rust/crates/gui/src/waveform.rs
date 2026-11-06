@@ -10,7 +10,8 @@
 //! and it scales the envelope by the input gain.
 //! Pressing and dragging show a pending target without changing playback, releasing seeks and plays once,
 //! and a double-click plays from the start.
-//! The mouse wheel zooms, and Command or Control with the wheel changes the gain.
+//! The mouse wheel zooms, Command or Control with the wheel changes the gain,
+//! and adding Shift changes it in finer steps.
 //! While audio plays the view requests a new frame on every render, so the playhead moves smoothly.
 
 use std::cell::Cell;
@@ -82,8 +83,14 @@ const PENDING_PLAYHEAD_ALPHA: f32 = 0.45;
 const SOURCE_OVERS_TOOLTIP: &str =
     "Source overs: yellow = sample > 0 dBFS, orange = true peak > 0 dBTP. Orange takes precedence.";
 
-/// Wheel distance in pixels for one zoom step or one decibel of gain.
+/// Wheel distance in pixels for one zoom step.
 const WHEEL_STEP_PIXELS: f32 = 20.0;
+
+/// Gain change of one Command or Control wheel event over the waveform in decibels.
+const GAIN_WHEEL_STEP_DB: f32 = 0.5;
+
+/// Gain change of one Command or Control and Shift wheel event in decibels, the step of the gain slider.
+const FINE_GAIN_WHEEL_STEP_DB: f32 = 0.1;
 
 /// Zoom factor of one wheel step.
 const WHEEL_ZOOM_FACTOR: f64 = 1.2;
@@ -97,7 +104,7 @@ pub enum WaveformEvent {
     RestartRequested,
     /// The user zoomed with the wheel by a factor.
     ZoomBy(f64),
-    /// The user changed the gain with the wheel by an amount in decibels.
+    /// The user changed the gain with the wheel by one step, an amount in decibels.
     GainBy(f32),
 }
 
@@ -652,8 +659,8 @@ impl WaveformView {
         }
     }
 
-    /// Zooms with the vertical wheel, changes the gain with Command or Control held,
-    /// and scrolls the visible range with the horizontal wheel.
+    /// Zooms with the vertical wheel, changes the gain by one step per event with Command or Control held,
+    /// in finer steps with Shift also held, and scrolls the visible range with the horizontal wheel.
     fn on_scroll(&mut self, event: &ScrollEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if self.duration_seconds() <= 0.0 {
             return;
@@ -661,8 +668,23 @@ impl WaveformView {
         let delta = event.delta.pixel_delta(px(WHEEL_STEP_PIXELS));
         let vertical = f32::from(delta.y) / WHEEL_STEP_PIXELS;
         let horizontal = f32::from(delta.x);
-        if vertical.abs() > f32::EPSILON && event.modifiers.secondary(cx) {
-            cx.emit(WaveformEvent::GainBy(vertical));
+        let fine = event.modifiers.shift;
+        // macOS turns a vertical mouse wheel into a horizontal one while Shift is held,
+        // so the fine gesture also reads the horizontal delta.
+        let gain_delta = if vertical.abs() > f32::EPSILON {
+            vertical
+        } else if fine {
+            horizontal
+        } else {
+            0.0
+        };
+        if gain_delta.abs() > f32::EPSILON && event.modifiers.secondary(cx) {
+            let step = if fine {
+                FINE_GAIN_WHEEL_STEP_DB
+            } else {
+                GAIN_WHEEL_STEP_DB
+            };
+            cx.emit(WaveformEvent::GainBy(step.copysign(gain_delta)));
         } else if vertical.abs() > horizontal.abs() / WHEEL_STEP_PIXELS {
             cx.emit(WaveformEvent::ZoomBy(WHEEL_ZOOM_FACTOR.powf(f64::from(vertical))));
         } else if horizontal.abs() > f32::EPSILON {

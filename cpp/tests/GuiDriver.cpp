@@ -417,19 +417,32 @@ void GuiDriver::rightClickAt(juce::Component& target, const juce::Point<int> loc
 void GuiDriver::scroll(const juce::String& controlId, const float deltaY)
 {
     const auto control = find(controlId);
-    const auto position = pointInPeer(*control.component, control.component->getLocalBounds().getCentre());
-    requireReachable(control, position);
-    sendMove(position, {});
-    requireUnderMouse(*control.component);
+    scrollAt(*control.component, control.component->getLocalBounds().getCentre(), {0.0f, deltaY});
+}
+
+/// Sends one wheel notch at a component-local point through the peer, with keyboard modifiers held.
+/// The modifiers are released again afterwards, so they never reach a later action.
+void GuiDriver::scrollAt(
+    juce::Component& target,
+    const juce::Point<int> local,
+    const juce::Point<float> delta,
+    const juce::ModifierKeys modifiers
+)
+{
+    const auto position = pointInPeer(target, local);
+    requireReachable(snapshot(target), position);
+    sendMove(position, modifiers);
+    requireUnderMouse(target);
     const juce::MouseWheelDetails wheel {
-        .deltaX = 0.0f,
-        .deltaY = deltaY,
+        .deltaX = delta.getX(),
+        .deltaY = delta.getY(),
         .isReversed = false,
         .isSmooth = false,
         .isInertial = false,
     };
     eventTime += EVENT_STEP_MILLISECONDS;
     peer().handleMouseWheel(juce::MouseInputSource::InputSourceType::mouse, position, eventTime, wheel);
+    juce::ModifierKeys::currentModifiers = {};
     settle();
     pauseForViewer("wheel notch");
 }

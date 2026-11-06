@@ -14,7 +14,7 @@ use audiobatch_core::file_selection::MAXIMUM_REVEAL_FOLDERS;
 use audiobatch_playback::{Player, PlayerEvent};
 use gpui_kit::{Context, Entity, PathPromptOptions, PromptLevel, SharedString, Task, Window};
 
-use super::gain::{GAIN_WHEEL_STEP_DB, MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB, take_pending_gains};
+use super::gain::{MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB, take_pending_gains};
 use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
 use crate::build_info::about_message;
 use crate::controls::{ControlsEvent, SliderControl};
@@ -305,9 +305,9 @@ impl AppView {
                 self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
             }
             WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
-                // Each wheel event moves the gain by one slider step.
+                // Rounding to the slider step keeps repeated steps from accumulating float error.
                 let current = self.gain_slider.read(cx).value().start();
-                let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
+                let gain = ((current + decibels) * 10.0).round() / 10.0;
                 let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
                 self.gain_slider
                     .update(cx, |slider, cx| slider.set_value(gain, window, cx));

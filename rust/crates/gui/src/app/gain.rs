@@ -26,9 +26,6 @@ pub(super) const DEFAULT_GAIN_DB: f32 = 0.0;
 /// Difference between the gain slider and the selected file's gain that moves the slider, in decibels.
 const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
 
-/// Gain change of one wheel event over the waveform in decibels, the step of the gain slider.
-pub(super) const GAIN_WHEEL_STEP_DB: f32 = 0.1;
-
 /// How long the mouse wheel has to rest before a gain it changed is written to the cache.
 const GAIN_STORE_DELAY: Duration = Duration::from_millis(500);
 

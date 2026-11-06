@@ -86,6 +86,12 @@ public:
     void rightClick(const juce::String& controlId);
     void rightClickAt(juce::Component& target, juce::Point<int> local);
     void scroll(const juce::String& controlId, float deltaY);
+    void scrollAt(
+        juce::Component& target,
+        juce::Point<int> local,
+        juce::Point<float> delta,
+        juce::ModifierKeys modifiers = {}
+    );
 
 private:
     [[nodiscard]] ControlSnapshot snapshot(juce::Component& target) const;
