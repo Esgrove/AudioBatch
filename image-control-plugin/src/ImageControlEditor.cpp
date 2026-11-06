@@ -81,6 +81,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     spectrogram(owner.getParameters()),
     leftScratch(DRAIN_CHUNK, 0.0F),
     rightScratch(DRAIN_CHUNK, 0.0F),
+    tooltips(*this),
     vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
 {
     setLookAndFeel(&lookAndFeel);
@@ -99,7 +100,9 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, BYPASS_ID, bypassButton);
     addAndMakeVisible(bypassButton);
 
-    settingsButton.setTooltip("Display settings");
+    settingsButton.setTooltip(
+        "Display settings: the analyzed signal, the colours, the frequency scale, and how particles fade"
+    );
     settingsButton.onClick = [this] { openSettings(); };
     addAndMakeVisible(settingsButton);
 
@@ -107,6 +110,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addAndMakeVisible(outputLabel);
     outputSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
     outputSlider.setDoubleClickReturnValue(true, 0.0);
+    outputSlider.setTooltip("Level of the output after the bands are joined. Double-click to reset");
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         parameters, OUTPUT_GAIN_ID, outputSlider
     );
@@ -121,6 +125,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band);
         addAndMakeVisible(*bandStrips.at(band));
     }
+    addChildComponent(tooltips);
     applyViewSettings();
     updateBandRanges();
     drainAnalyzerFifo(false);
@@ -269,7 +274,9 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     }
     applyViewSettings();
     drainAnalyzerFifo(true);
-    spectrogram.advance(std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS));
+    const double step = std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS);
+    spectrogram.advance(step);
+    tooltips.advance(step);
 
     const Crossovers crossovers = imageControlProcessor.getCrossovers();
     if (!sameCrossovers(crossovers, displayedCrossovers)) {

@@ -5,6 +5,7 @@
 #include "ui/SpatialSpectrogramView.h"
 
 #include "analysis/SpatialAnalyzer.h"
+#include "dsp/CrossoverDesign.h"
 #include "Parameters.h"
 #include "ui/ImageControlLookAndFeel.h"
 
@@ -108,16 +109,38 @@ constexpr float CENTRE_LINE_ALPHA {0.22F};
 constexpr float AXIS_LABEL_ALPHA {0.55F};
 /// Opacity of the band names.
 constexpr float BAND_LABEL_ALPHA {0.7F};
-/// Opacity of the fill of a hovered band.
-constexpr float BAND_HOVER_ALPHA {0.05F};
+/// Opacity at the top of the colour gradient over a hovered band.
+constexpr float BAND_HOVER_ALPHA {0.14F};
 /// Opacity of a crossover line at rest.
-constexpr float CROSSOVER_ALPHA {0.75F};
-/// Thickness of a crossover line, in pixels.
-constexpr float CROSSOVER_THICKNESS {1.5F};
-/// Thickness of the glow around a hovered crossover line, in pixels.
-constexpr float CROSSOVER_GLOW_THICKNESS {7.0F};
-/// Opacity of the glow around a fully hovered crossover line.
-constexpr float CROSSOVER_GLOW_ALPHA {0.25F};
+constexpr float CROSSOVER_ALPHA {0.4F};
+/// Thickness of a crossover line at rest, in pixels.
+constexpr float CROSSOVER_THICKNESS {1.0F};
+/// Thickness of a fully hovered crossover line, in pixels.
+constexpr float CROSSOVER_ACTIVE_THICKNESS {2.2F};
+/// Thickness of the widest glow layer around a fully hovered crossover line, in pixels.
+constexpr float CROSSOVER_GLOW_THICKNESS {16.0F};
+/// Opacity of the innermost glow layer around a fully hovered crossover line.
+constexpr float CROSSOVER_GLOW_ALPHA {0.3F};
+/// Number of glow layers around a hovered crossover line.
+constexpr int CROSSOVER_GLOW_LAYERS {4};
+/// Opacity of a crossover frequency label at rest.
+constexpr float CROSSOVER_LABEL_ALPHA {0.55F};
+/// Height of a full band response curve, as a share of the plot height.
+constexpr float RESPONSE_HEIGHT_SHARE {0.8F};
+/// Horizontal distance between the points of a band response curve, in pixels.
+constexpr float RESPONSE_STEP_PIXELS {2.0F};
+/// Opacity at the top of the fill under the hovered band's response curve.
+constexpr float RESPONSE_FILL_ALPHA {0.18F};
+/// Opacity of the hovered band's response curve.
+constexpr float RESPONSE_LINE_ALPHA {0.85F};
+/// Opacity of the other bands' response curves while a band is hovered.
+constexpr float NEIGHBOUR_RESPONSE_ALPHA {0.22F};
+/// Thickness of a band response curve, in pixels.
+constexpr float RESPONSE_LINE_THICKNESS {1.5F};
+/// Space around the text of a label pill, in pixels.
+constexpr float PILL_PADDING {4.0F};
+/// Opacity of the background of a label pill.
+constexpr float PILL_BACKGROUND_ALPHA {0.7F};
 
 /// Background of the plot, as ARGB.
 constexpr juce::uint32 BACKGROUND {0xff050608};
@@ -175,6 +198,49 @@ std::vector<juce::uint8> buildToneCurve()
 float gaussian(const float offset, const float sigma)
 {
     return std::exp(-0.5F * (offset * offset) / (sigma * sigma));
+}
+
+/// Returns the target magnitude of a band at a frequency, from 0 to 1, given the ordered crossovers.
+/// The bands are differences of the crossover lowpasses, so their magnitudes sum to one at every frequency.
+float bandResponse(const std::size_t band, const double frequency, const Crossovers& crossovers)
+{
+    const auto lowpass = [frequency, &crossovers](const std::size_t crossover) {
+        return crossoverLowpassMagnitude(frequency, static_cast<double>(crossovers.at(crossover)));
+    };
+    const double below = band == 0 ? 0.0 : lowpass(band - 1);
+    const double above = band == CROSSOVER_COUNT ? 1.0 : lowpass(band);
+    return static_cast<float>(above - below);
+}
+
+/// Returns the colour of a band: the frequency colour at its centre on the logarithmic axis.
+juce::Colour bandColour(const std::size_t band, const Crossovers& crossovers)
+{
+    const double low = band == 0 ? static_cast<double>(MIN_FREQUENCY) : static_cast<double>(crossovers.at(band - 1));
+    const double high
+        = band == CROSSOVER_COUNT ? static_cast<double>(MAX_FREQUENCY) : static_cast<double>(crossovers.at(band));
+    const double share = frequencyToShare(std::sqrt(low * high), FrequencyScale::logarithmic);
+    const LinearColour colour = frequencyColour(static_cast<float>(share));
+    return juce::Colour::fromFloatRGBA(colour.red, colour.green, colour.blue, 1.0F);
+}
+
+/// Paints a short text in a rounded pill centred on a point, faded by an opacity.
+void paintLabelPill(
+    juce::Graphics& graphics,
+    const juce::String& text,
+    const juce::Point<float> centre,
+    const float opacity,
+    const juce::Colour textColour = juce::Colour(palette::GREY_LIGHT)
+)
+{
+    const auto font = textFont(LABEL_FONT_HEIGHT);
+    const float width = juce::GlyphArrangement::getStringWidth(font, text) + PILL_PADDING * 2.0F;
+    const float height = LABEL_FONT_HEIGHT + PILL_PADDING;
+    const auto pill = juce::Rectangle<float>(width, height).withCentre(centre);
+    graphics.setColour(juce::Colour(palette::GREY_DARK).withAlpha(PILL_BACKGROUND_ALPHA * opacity));
+    graphics.fillRoundedRectangle(pill, height * 0.5F);
+    graphics.setColour(textColour.withAlpha(opacity));
+    graphics.setFont(font);
+    graphics.drawText(text, pill, juce::Justification::centred);
 }
 
 /// Formats a grid frequency, such as 50 or 2k.
@@ -548,10 +614,31 @@ void SpatialSpectrogramView::paint(juce::Graphics& graphics)
         graphics.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
         graphics.drawImage(image, plot, juce::RectanglePlacement::stretchToFit);
         paintGrid(graphics);
-        paintBands(graphics, currentCrossovers());
+        const Crossovers crossovers = currentCrossovers();
+        paintBands(graphics, crossovers);
+        paintBandResponses(graphics, crossovers);
+        paintCrossovers(graphics, crossovers);
     }
     paintAxisLabels(graphics);
     paintFramesPerSecond(graphics);
+}
+
+/// Explains what a drag does where the pointer is: on a crossover line, on a band, or nowhere.
+juce::String SpatialSpectrogramView::getTooltip()
+{
+#if JUCE_MAC
+    const juce::String widthModifier = "Cmd";
+#else
+    const juce::String widthModifier = "Ctrl";
+#endif
+    if (hoveredCrossover.has_value()) {
+        return "Drag to move the crossover between two bands. Double-click to reset it";
+    }
+    if (hoveredBand.has_value()) {
+        return "Drag sideways to move the band. " + widthModifier
+            + "-drag up or down, or scroll, to change its width. Hold Shift for finer steps";
+    }
+    return {};
 }
 
 /// Returns the band whose region contains an x coordinate, if it is inside the plot.
@@ -678,8 +765,8 @@ void SpatialSpectrogramView::blurBuffer()
     }
 }
 
-/// Paints a light fill over the hovered band, the band names with the width of the hovered band,
-/// and the crossover lines with their frequencies and a glow that follows the hover.
+/// Paints the band regions: a soft gradient in the band's colour over the hovered band,
+/// the band names, and the width of the hovered band in a label pill.
 void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossovers& crossovers) const
 {
     const auto plot = getPlotBounds();
@@ -690,41 +777,119 @@ void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossove
         const float right
             = band < CROSSOVER_COUNT ? frequencyToX(static_cast<double>(crossovers.at(band))) : plot.getRight();
         const float highlight = bandHighlights.at(band);
+        const juce::Rectangle<float> region(left, plot.getY(), right - left, plot.getHeight());
         if (highlight > 0.0F) {
-            graphics.setColour(juce::Colours::white.withAlpha(BAND_HOVER_ALPHA * highlight));
-            graphics.fillRect(juce::Rectangle<float>(left, plot.getY(), right - left, plot.getHeight()));
+            const auto colour = bandColour(band, crossovers);
+            graphics.setGradientFill(
+                juce::ColourGradient(
+                    colour.withAlpha(BAND_HOVER_ALPHA * highlight),
+                    region.getTopLeft(),
+                    colour.withAlpha(0.0F),
+                    region.getBottomLeft(),
+                    false
+                )
+            );
+            graphics.fillRect(region);
         }
+
         const juce::Rectangle<float> nameArea(left, plot.getY() + LABEL_INSET, right - left, LABEL_FONT_HEIGHT);
-        graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(BAND_LABEL_ALPHA));
+        graphics.setColour(
+            juce::Colour(palette::GREY_LIGHT).withAlpha(BAND_LABEL_ALPHA + (1.0F - BAND_LABEL_ALPHA) * highlight)
+        );
         graphics.drawText(bandName(band), nameArea, juce::Justification::centred);
         if (highlight > 0.0F) {
-            graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(BAND_LABEL_ALPHA * highlight));
-            graphics.drawText(
-                "Width " + juce::String(bandWidth(band), 2),
-                nameArea.translated(0.0F, LABEL_FONT_HEIGHT + LABEL_INSET),
-                juce::Justification::centred
-            );
+            const auto widthText = "Width " + juce::String(bandWidth(band), 2);
+            const auto widthArea = nameArea.translated(0.0F, LABEL_FONT_HEIGHT + LABEL_INSET * 2.0F);
+            paintLabelPill(graphics, widthText, widthArea.getCentre(), highlight);
         }
         left = right;
     }
+}
 
+/// Paints the response of every band as a curve while a band is hovered, so their overlaps at the crossovers show:
+/// the hovered band brightest with a soft fill under its curve, and the other bands as faint lines.
+/// A band's response is the target magnitude of its crossover filters, one at full height.
+void SpatialSpectrogramView::paintBandResponses(juce::Graphics& graphics, const Crossovers& crossovers) const
+{
+    const float strongest = *std::ranges::max_element(bandHighlights);
+    if (strongest <= 0.0F) {
+        return;
+    }
+    const auto plot = getPlotBounds();
+    const float baseline = plot.getBottom();
+    const float height = plot.getHeight() * RESPONSE_HEIGHT_SHARE;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        juce::Path curve;
+        const auto levelAt = [&](const float pixel) {
+            return baseline - bandResponse(band, xToFrequency(pixel), crossovers) * height;
+        };
+        // A path counts as empty until it has a line, so the first point starts it explicitly.
+        curve.startNewSubPath(plot.getX(), levelAt(plot.getX()));
+        const int steps = static_cast<int>(plot.getWidth() / RESPONSE_STEP_PIXELS);
+        for (int step = 1; step <= steps; ++step) {
+            const float pixel = plot.getX() + static_cast<float>(step) * RESPONSE_STEP_PIXELS;
+            curve.lineTo(pixel, levelAt(pixel));
+        }
+        const auto colour = bandColour(band, crossovers);
+        const float highlight = bandHighlights.at(band);
+        if (highlight > 0.0F) {
+            juce::Path fill(curve);
+            fill.lineTo(plot.getRight(), baseline);
+            fill.lineTo(plot.getX(), baseline);
+            fill.closeSubPath();
+            graphics.setGradientFill(
+                juce::ColourGradient(
+                    colour.withAlpha(RESPONSE_FILL_ALPHA * highlight),
+                    {plot.getX(), baseline - height},
+                    colour.withAlpha(0.0F),
+                    {plot.getX(), baseline},
+                    false
+                )
+            );
+            graphics.fillPath(fill);
+        }
+        const float alpha
+            = NEIGHBOUR_RESPONSE_ALPHA * strongest + (RESPONSE_LINE_ALPHA - NEIGHBOUR_RESPONSE_ALPHA) * highlight;
+        graphics.setColour(colour.withAlpha(alpha));
+        graphics.strokePath(curve, juce::PathStrokeType(RESPONSE_LINE_THICKNESS, juce::PathStrokeType::curved));
+    }
+}
+
+/// Paints the crossover lines, faint at rest, with a layered glow and a brighter line while hovered or dragged,
+/// and their frequencies in label pills that brighten with them.
+void SpatialSpectrogramView::paintCrossovers(juce::Graphics& graphics, const Crossovers& crossovers) const
+{
+    const auto plot = getPlotBounds();
+    const auto lineColour = juce::Colour(palette::YELLOW);
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         const float x = frequencyToX(static_cast<double>(crossovers.at(crossover)));
         const float highlight = crossoverHighlights.at(crossover);
-        const auto lineColour = juce::Colour(palette::YELLOW);
         if (highlight > 0.0F) {
-            graphics.setColour(lineColour.withAlpha(CROSSOVER_GLOW_ALPHA * highlight));
-            graphics.drawLine(x, plot.getY(), x, plot.getBottom(), CROSSOVER_GLOW_THICKNESS * highlight);
+            // Wide faint strokes under narrower stronger ones give the line a soft glow.
+            for (int layer = 1; layer <= CROSSOVER_GLOW_LAYERS; ++layer) {
+                const float spread = static_cast<float>(layer) / static_cast<float>(CROSSOVER_GLOW_LAYERS);
+                graphics.setColour(lineColour.withAlpha(CROSSOVER_GLOW_ALPHA * highlight * (1.0F - spread)));
+                graphics.drawLine(x, plot.getY(), x, plot.getBottom(), CROSSOVER_GLOW_THICKNESS * spread * highlight);
+            }
         }
         graphics.setColour(lineColour.withAlpha(CROSSOVER_ALPHA + (1.0F - CROSSOVER_ALPHA) * highlight));
-        graphics.drawLine(x, plot.getY(), x, plot.getBottom(), CROSSOVER_THICKNESS);
-        const juce::Rectangle<float> label(
-            x + LABEL_INSET,
-            plot.getBottom() - LABEL_FONT_HEIGHT - LABEL_INSET,
-            CROSSOVER_LABEL_WIDTH,
-            LABEL_FONT_HEIGHT
+        graphics.drawLine(
+            x,
+            plot.getY(),
+            x,
+            plot.getBottom(),
+            CROSSOVER_THICKNESS + (CROSSOVER_ACTIVE_THICKNESS - CROSSOVER_THICKNESS) * highlight
         );
-        graphics.drawText(formatFrequency(crossovers.at(crossover)), label, juce::Justification::centredLeft);
+        const juce::Point<float> labelCentre(
+            x + LABEL_INSET + CROSSOVER_LABEL_WIDTH * 0.5F, plot.getBottom() - LABEL_FONT_HEIGHT - LABEL_INSET
+        );
+        paintLabelPill(
+            graphics,
+            formatFrequency(crossovers.at(crossover)),
+            labelCentre,
+            CROSSOVER_LABEL_ALPHA + (1.0F - CROSSOVER_LABEL_ALPHA) * highlight,
+            lineColour
+        );
     }
 }
 

@@ -67,7 +67,7 @@ struct LinearColour {
 
 /// The spatial spectrogram with the band regions and the crossover lines.
 /// The editor feeds it analyzed frames and advances it once per display refresh.
-class SpatialSpectrogramView final : public juce::Component
+class SpatialSpectrogramView final : public juce::Component, public juce::TooltipClient
 {
 public:
     explicit SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters);
@@ -92,6 +92,8 @@ public:
     void modifierKeysChanged(const juce::ModifierKeys& modifiers) override;
     void paint(juce::Graphics& graphics) override;
 
+    [[nodiscard]] juce::String getTooltip() override;
+
 private:
     [[nodiscard]] static std::vector<std::size_t> bandEdges(std::size_t band);
     [[nodiscard]] static bool isWidthModifier(const juce::ModifierKeys& modifiers);
@@ -112,7 +114,9 @@ private:
     void moveBand(const juce::MouseEvent& event);
     void moveCrossover(const juce::MouseEvent& event);
     void paintAxisLabels(juce::Graphics& graphics) const;
+    void paintBandResponses(juce::Graphics& graphics, const Crossovers& crossovers) const;
     void paintBands(juce::Graphics& graphics, const Crossovers& crossovers) const;
+    void paintCrossovers(juce::Graphics& graphics, const Crossovers& crossovers) const;
     void paintFramesPerSecond(juce::Graphics& graphics) const;
     void paintGrid(juce::Graphics& graphics) const;
     void renderImage();

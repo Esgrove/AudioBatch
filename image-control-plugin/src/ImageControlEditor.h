@@ -10,6 +10,7 @@
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/TooltipOverlay.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -105,6 +106,9 @@ private:
     double measuredFramesPerSecond {0.0};
     /// Display refreshes since the frame rate was last measured.
     int frameRateCount {0};
+
+    /// The tooltip bubble, kept above the other components.
+    TooltipOverlay tooltips;
 
     /// Calls refreshDisplay on every display refresh while the editor is on screen.
     /// Declared last, so it is created after and destroyed before everything its callback uses.
