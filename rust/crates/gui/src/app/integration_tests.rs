@@ -17,8 +17,8 @@ use audiobatch_core::AnalysisStatus;
 use audiobatch_core::storage::StoragePaths;
 use gpui_kit::test::{TestAppContextExt as _, TestEventExt as _, TestWindowExt as _};
 use gpui_kit::{
-    Action, App, AppContext as _, Bounds, Entity, InputEvent as _, MouseButton, OwnedMenuItem, Pixels, Point,
-    ScrollDelta, Subscription, TestAppContext, Window, WindowBounds, WindowOptions, point, px, size,
+    Action, App, AppContext as _, Bounds, Entity, InputEvent as _, Modifiers, MouseButton, OwnedMenuItem, Pixels,
+    Point, ScrollDelta, Subscription, TestAppContext, Window, WindowBounds, WindowOptions, point, px, size,
 };
 use tempfile::TempDir;
 
@@ -185,8 +185,9 @@ impl Workflow {
         .expect("resolve production preview plots")
     }
 
-    /// Sends a native wheel event over a real pane, using layout only to target the existing renderer.
-    fn scroll_preview(&self, delta: Point<Pixels>, cx: &mut TestAppContext) {
+    /// Sends a native wheel event with keyboard modifiers over a real pane,
+    /// using layout only to target the existing renderer.
+    fn scroll_preview(&self, delta: Point<Pixels>, modifiers: Modifiers, cx: &mut TestAppContext) {
         let plot = self
             .plots(cx)
             .into_iter()
@@ -197,7 +198,7 @@ impl Workflow {
                 gpui_kit::ScrollEvent {
                     position: plot.center(),
                     delta: ScrollDelta::Pixels(delta),
-                    modifiers: window.modifiers(),
+                    modifiers,
                     touch_phase: gpui_kit::TouchPhase::Moved,
                     source: gpui_kit::ScrollSource::default(),
                 }
@@ -841,8 +842,8 @@ async fn integration_preview_modes_retain_source_gain_viewport_and_cues(cx: &mut
     })
     .expect("edit source gain");
     cx.run_until_parked();
-    workflow.scroll_preview(point(px(0.0), px(80.0)), cx);
-    workflow.scroll_preview(point(px(-40.0), px(0.0)), cx);
+    workflow.scroll_preview(point(px(0.0), px(80.0)), Modifiers::none(), cx);
+    workflow.scroll_preview(point(px(-40.0), px(0.0)), Modifiers::none(), cx);
     let (gain, zoom) = cx.read(|cx| {
         let view = workflow.view.read(cx);
         (
@@ -1402,6 +1403,47 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
         assert!(record.from_cache);
         assert!((record.custom_gain_db.expect("persisted gain") - gain).abs() < 0.001);
     });
+}
+
+/// Changes the custom gain with the secondary key and the wheel over the waveform,
+/// in coarse steps, in fine slider steps with Shift also held, and not at all without the modifier.
+#[gpui_kit::test]
+async fn integration_wheel_gain_steps_coarse_and_fine(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "wheel-gain.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    workflow.preview(&source, cx).await;
+    let secondary = cx.read(Modifiers::secondary_key);
+    let secondary_shift = Modifiers {
+        shift: true,
+        ..secondary
+    };
+    let gain = |cx: &mut TestAppContext| cx.read(|cx| workflow.view.read(cx).gain_slider.read(cx).value().start());
+    let notch = point(px(0.0), px(20.0));
+    workflow.scroll_preview(notch, secondary, cx);
+    workflow.scroll_preview(notch, secondary, cx);
+    assert!((gain(cx) - 1.0).abs() < 1e-4);
+    workflow.scroll_preview(-notch, secondary_shift, cx);
+    assert!((gain(cx) - 0.9).abs() < 1e-4);
+    // macOS delivers a vertical mouse wheel as a horizontal one while Shift is held.
+    workflow.scroll_preview(point(px(-20.0), px(0.0)), secondary_shift, cx);
+    assert!((gain(cx) - 0.8).abs() < 1e-4);
+    let zoom = cx.read(|cx| workflow.view.read(cx).zoom_slider.read(cx).value().start());
+    workflow.scroll_preview(notch, Modifiers::none(), cx);
+    assert!((gain(cx) - 0.8).abs() < 1e-4);
+    assert!(cx.read(|cx| workflow.view.read(cx).zoom_slider.read(cx).value().start()) > zoom);
+    let stored = cx.read(|cx| {
+        workflow
+            .view
+            .read(cx)
+            .selected_record(cx)
+            .expect("record")
+            .custom_gain_db
+            .expect("wheel gain edit")
+    });
+    assert!((stored - 0.8).abs() < 1e-4);
 }
 
 /// Sends real native divider drags and proves that only release persists an independent preference.

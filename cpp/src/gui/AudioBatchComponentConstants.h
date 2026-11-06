@@ -92,8 +92,12 @@ namespace gain_range
 {
 /// Largest boost or cut in dB the gain slider allows in either direction.
 constexpr double maximumDecibels {12.0};
-/// Step size in dB for the slider and for mouse wheel adjustments over the waveform.
+/// Step size in dB for the slider and for its mouse wheel.
 constexpr double stepDecibels {0.1};
+/// Gain change in dB of one Ctrl/Cmd mouse wheel event over the waveform.
+constexpr float wheelStepDecibels {0.5f};
+/// Gain change in dB of one Ctrl/Cmd and Shift mouse wheel event over the waveform, for fine adjustment.
+constexpr float fineWheelStepDecibels {0.1f};
 }  // namespace gain_range
 
 }  // namespace audiobatch

@@ -9,6 +9,7 @@
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/NativeWaveformBuilder.h"
 #include "analysis/NativeWaveformData.h"
+#include "gui/AudioBatchComponentConstants.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/components/PreviewPlotGeometry.h"
@@ -321,7 +322,8 @@ void ThumbnailComponent::setMouseWheelZoomCallback(std::function<void(double)> c
     mouseWheelZoomCallback = std::move(callback);
 }
 
-/// Sets the callback used for Ctrl/Cmd + mouse-wheel gain gestures. Argument is the delta in dB.
+/// Sets the callback used for Ctrl/Cmd + mouse-wheel gain gestures.
+/// Its argument is the gain change in dB of one wheel event, already chosen by the held modifiers.
 void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> callback)
 {
     mouseWheelGainCallback = std::move(callback);
@@ -588,8 +590,8 @@ void ThumbnailComponent::mouseMagnify(const juce::MouseEvent& event, const float
 }
 
 /// Handles wheel gestures over the waveform.
-/// Plain vertical wheel zooms, Ctrl/Cmd plus wheel adjusts gain in dB steps,
-/// and horizontal wheel scrolls the visible range.
+/// Plain vertical wheel zooms, Ctrl/Cmd plus wheel adjusts gain by one step per event,
+/// with a finer step when Shift is also held, and horizontal wheel scrolls the visible range.
 void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
     if (sourceDuration() <= 0.0 || popupGesture || event.mods.isPopupMenu()) {
@@ -597,10 +599,19 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
     }
 
     // Ctrl on Windows, Cmd on macOS. Both map to commandModifier in JUCE.
-    if (event.mods.isCommandDown() && std::abs(wheel.deltaY) > 0.0f && mouseWheelGainCallback) {
-        constexpr float dbPerWheelNotch = 6.0f;
-        mouseWheelGainCallback(wheel.deltaY * dbPerWheelNotch);
-        return;
+    if (event.mods.isCommandDown() && mouseWheelGainCallback) {
+        const auto fine = event.mods.isShiftDown();
+        // macOS turns a vertical mouse wheel into a horizontal one while Shift is held,
+        // so the fine gesture also reads the horizontal delta.
+        auto delta = wheel.deltaY;
+        if (fine && std::abs(delta) <= 0.0f) {
+            delta = wheel.deltaX;
+        }
+        if (std::abs(delta) > 0.0f) {
+            const auto step = fine ? gain_range::fineWheelStepDecibels : gain_range::wheelStepDecibels;
+            mouseWheelGainCallback(std::copysign(step, delta));
+            return;
+        }
     }
 
     if (std::abs(wheel.deltaY) > 0.0f && mouseWheelZoomCallback) {
