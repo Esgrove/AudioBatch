@@ -1,16 +1,19 @@
 ---
 description: Declaration order and file organization of the C++ sources
-globs: cpp/src/**,cpp/tests/**,test-plugin/src/**
+globs: cpp/src/**,cpp/tests/**,test-plugin/src/**,image-control-plugin/src/**,image-control-plugin/tests/**
 paths:
   - "cpp/src/**"
   - "cpp/tests/**"
   - "test-plugin/src/**"
+  - "image-control-plugin/src/**"
+  - "image-control-plugin/tests/**"
 alwaysApply: false
 ---
 
 # Code organization
 
-These rules apply to every C++ source and header under `cpp/src/`, `cpp/tests/`, and `test-plugin/src/`.
+These rules apply to every C++ source and header under `cpp/src/`, `cpp/tests/`, and `test-plugin/src/`,
+and under `image-control-plugin/src/` and `image-control-plugin/tests/` for the ImageControl plugin.
 Paths below are relative to `cpp/`, and `AGENTS.md` means `cpp/AGENTS.md`.
 
 ## Declaration order
@@ -70,6 +73,7 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
   Convert the integer ids JUCE passes for menu items, commands, and table columns back with `utils::enumFromId`,
   and switch over every enumerator without a `default` label.
 - Put all project code in `namespace audiobatch`, so classes and their member definitions share it.
+  The ImageControl plugin is not part of AudioBatch, so its code uses `namespace esgrove::image_control` instead.
   Keep `main`, the JUCE application macro, and forward declarations of third-party types outside it.
 - Follow [C.4](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rc-member)
   and [C.5](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rc-helper):

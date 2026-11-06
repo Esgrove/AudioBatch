@@ -15,7 +15,7 @@
 namespace esgrove::image_control
 {
 /// Highest value of the Width macro, where the side is twice as loud relative to the mid as in the input.
-constexpr double MAX_WIDTH {2.0};
+constexpr double MAX_STEREO_WIDTH {2.0};
 
 /// The controls of one band.
 ///
@@ -45,27 +45,38 @@ private:
     void configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text);
     void updateWidthFromGains();
 
+    /// The band name.
     juce::Label nameLabel;
+    /// The band's frequency range.
     juce::Label rangeLabel;
+    /// Label above the Mid slider.
     juce::Label midLabel;
+    /// Label above the Side slider.
     juce::Label sideLabel;
+    /// Label above the Width slider.
     juce::Label widthLabel;
 
+    /// The band's mid gain in dB.
     ControlSlider midSlider;
+    /// The band's side gain in dB.
     ControlSlider sideSlider;
+    /// The Width macro, which writes the side gain.
     ControlSlider widthSlider;
+    /// Keeps Side moving with Mid while Mid is dragged.
     juce::ToggleButton linkButton {"Link"};
 
+    /// Binds the Mid slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> midAttachment;
+    /// Binds the Side slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sideAttachment;
 
     /// Side gain parameter, owned by the parameter tree, which the Width and Link gestures change.
     juce::RangedAudioParameter& sideParameter;
 
-    /// Side gain in dB when the current Mid drag started, for Link.
-    double linkedSideStart {0.0};
     /// Mid gain in dB when the current Mid drag started, for Link.
     double linkedMidStart {0.0};
+    /// Side gain in dB when the current Mid drag started, for Link.
+    double linkedSideStart {0.0};
     /// Whether the user is dragging Mid, so only their own drags move Side through Link, not automation.
     bool draggingMid {false};
     /// Whether a Width gesture is open, so its changes join that gesture instead of opening their own.

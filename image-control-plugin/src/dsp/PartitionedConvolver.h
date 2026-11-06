@@ -33,8 +33,11 @@ private:
     /// Interleaved complex bins of every partition of every kernel, kernel by kernel.
     std::vector<float> spectra;
 
+    /// Floats in one partition spectrum: twice the number of non-negative frequency bins.
     std::size_t binValues {0};
+    /// Number of kernels.
     std::size_t kernelCount {0};
+    /// Number of partitions of each kernel.
     std::size_t partitionCount {0};
 };
 
@@ -50,6 +53,7 @@ public:
     void reset();
 
 private:
+    /// Transform of twice the partition size, created in prepare.
     std::unique_ptr<juce::dsp::FFT> fft;
 
     /// Accumulates the spectrum of one kernel's output.
@@ -61,9 +65,13 @@ private:
     /// FFT input and output, twice the FFT size as JUCE requires.
     std::vector<float> workspace;
 
+    /// Floats in one partition spectrum: twice the number of non-negative frequency bins.
     std::size_t binValues {0};
+    /// Ring index of the newest input partition spectrum.
     std::size_t newestPartition {0};
+    /// Number of partitions of the kernels, and of input spectra kept.
     std::size_t partitionCount {0};
+    /// Samples per partition.
     std::size_t partitionSize {0};
 };
 }  // namespace esgrove::image_control

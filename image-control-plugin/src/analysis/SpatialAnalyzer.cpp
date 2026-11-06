@@ -44,12 +44,6 @@ constexpr std::size_t PUSH_CHUNK {256};
 /// Bins whose normalized level is below this, about −120 dB, are not reported.
 constexpr float SILENCE_LEVEL {1.0e-12F};
 
-/// Returns how many times the sample rate doubles above the reference rate.
-int rateDoublings(const double sampleRate)
-{
-    return std::max(0, static_cast<int>(std::ceil(std::log2(sampleRate / TIER_REFERENCE_SAMPLE_RATE))));
-}
-
 /// Builds a tier for a layout at a sample rate: its FFT, window, spectra, and level scale.
 AnalysisTier makeTier(const TierLayout& layout, const int doublings)
 {
@@ -89,11 +83,7 @@ SpatialAnalyzer::SpatialAnalyzer()
 /// Returns the stereo position of a bin from its channel magnitudes:
 /// the level difference in dB divided by the focus, clamped to ±1.
 /// Content in only one channel sits at that channel's edge, and silence in the centre.
-float SpatialAnalyzer::positionFromMagnitudes(
-    const float leftMagnitude,
-    const float rightMagnitude,
-    const float focusDecibels
-)
+float positionFromMagnitudes(const float leftMagnitude, const float rightMagnitude, const float focusDecibels)
 {
     if (rightMagnitude <= 0.0F) {
         return leftMagnitude > 0.0F ? 1.0F : 0.0F;
@@ -121,7 +111,7 @@ void SpatialAnalyzer::clear()
 void SpatialAnalyzer::prepare(const double newSampleRate)
 {
     sampleRate = newSampleRate;
-    const int doublings = rateDoublings(sampleRate);
+    const int doublings = sampleRateDoublings(sampleRate, TIER_REFERENCE_SAMPLE_RATE);
     tiers.clear();
     std::size_t longestWindow = 0;
     std::size_t mostPoints = 0;

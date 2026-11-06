@@ -24,15 +24,15 @@ constexpr juce::uint32 ORANGE {0xffDD8B65};
 constexpr juce::uint32 YELLOW {0xffCEAF6C};
 }  // namespace palette
 
+[[nodiscard]] juce::Font monoFont(float height);
+[[nodiscard]] juce::Font textFont(float height);
+
 /// The editor's look and feel: AudioBatch's dark colour scheme and control colours,
 /// Roboto for text, and Roboto Mono for the value boxes of sliders so numbers line up.
 class ImageControlLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
     ImageControlLookAndFeel();
-
-    [[nodiscard]] static juce::Font getMonoFont(float height);
-    [[nodiscard]] static juce::Font getTextFont(float height);
 
     [[nodiscard]] juce::Font getLabelFont(juce::Label& label) override;
     [[nodiscard]] juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;

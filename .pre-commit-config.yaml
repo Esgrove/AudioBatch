@@ -31,7 +31,7 @@ repos:
         entry: clang-format -i --style=file
         types_or: [c, c++]
         language: system
-        files: ^(cpp/(src|tests)|test-plugin/src|image-control-plugin/(src|tests))/
+        files: ^(cpp/(src|tests)|test-plugin/src|image-control-plugin/(src|tests|benchmarks))/
         priority: 1
 
       - id: cmake-format

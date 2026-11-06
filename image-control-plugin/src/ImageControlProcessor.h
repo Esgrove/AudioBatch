@@ -77,11 +77,16 @@ private:
     /// Editor-only settings, kept in one tree so the editor's bindings survive state restores.
     juce::ValueTree editorState;
 
+    /// The audio processing.
     MultibandImager imager;
+    /// Carries audio from the audio thread to the editor's analyzer.
     StereoSampleFifo analyzerFifo;
 
+    /// Raw values of the crossover parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, CROSSOVER_COUNT> crossoverValues {};
+    /// Raw values of the mid gain parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> midGainValues {};
+    /// Raw values of the side gain parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> sideGainValues {};
     /// Raw value of the output gain parameter, owned by the parameter tree.
     std::atomic<float>* outputGainValue {nullptr};

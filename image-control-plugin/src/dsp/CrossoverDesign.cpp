@@ -4,9 +4,10 @@
 
 #include "dsp/CrossoverDesign.h"
 
+#include "Parameters.h"
+
 #include <juce_dsp/juce_dsp.h>
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -98,7 +99,7 @@ double crossoverLowpassMagnitude(const double frequency, const double crossover)
 /// so the frequency resolution stays the same, and it is always a power of two.
 int kernelHalfLength(const double sampleRate)
 {
-    const int doublings = std::max(0, static_cast<int>(std::ceil(std::log2(sampleRate / REFERENCE_SAMPLE_RATE))));
+    const int doublings = sampleRateDoublings(sampleRate, REFERENCE_SAMPLE_RATE);
     int halfLength = REFERENCE_HALF_LENGTH;
     for (int doubling = 0; doubling < doublings; ++doubling) {
         halfLength *= 2;

@@ -52,24 +52,37 @@ private:
     void refreshDisplay(double timestamp);
     void updateBandRanges();
 
+    /// The processor that owns this editor and outlives it.
     ImageControlProcessor& imageControlProcessor;
 
+    /// The look and feel of every control, set on the editor and cleared before it is destroyed.
     ImageControlLookAndFeel lookAndFeel;
+    /// Analyzes the audio the processor queues and feeds the spectrogram.
     SpatialAnalyzer analyzer;
+    /// The spatial spectrogram.
     SpatialSpectrogramView spectrogram;
 
+    /// The plugin name in the header.
     juce::Label titleLabel;
+    /// Toggles the bypass parameter.
     juce::TextButton bypassButton {"Bypass"};
+    /// Opens the display settings.
     juce::TextButton settingsButton {"Settings"};
+    /// Label of the output gain.
     juce::Label outputLabel;
+    /// The output gain.
     ControlSlider outputSlider;
 
+    /// Binds the bypass button to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
+    /// Binds the output gain slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+    /// The controls of each band.
     std::array<std::unique_ptr<BandStrip>, BAND_COUNT> bandStrips;
 
-    /// Scratch buffers the analyzer ring is drained into.
+    /// Scratch buffer the left channel of the analyzer ring is drained into.
     std::vector<float> leftScratch;
+    /// Scratch buffer the right channel of the analyzer ring is drained into.
     std::vector<float> rightScratch;
 
     /// Crossovers the band ranges were last shown with.
@@ -88,10 +101,10 @@ private:
     double lastRefreshTimestamp {0.0};
     /// Time since the frame rate was last measured, in seconds.
     double frameRateClock {0.0};
-    /// Display refreshes since the frame rate was last measured.
-    int frameRateCount {0};
     /// The most recently measured display refresh rate.
     double measuredFramesPerSecond {0.0};
+    /// Display refreshes since the frame rate was last measured.
+    int frameRateCount {0};
 
     /// Calls refreshDisplay on every display refresh while the editor is on screen.
     /// Declared last, so it is created after and destroyed before everything its callback uses.

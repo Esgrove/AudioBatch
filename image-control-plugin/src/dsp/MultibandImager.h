@@ -15,7 +15,6 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -29,18 +28,9 @@ constexpr int PARTITION_SIZE {256};
 /// Time the band and output gains take to glide to a new value, in seconds.
 constexpr double GAIN_SMOOTHING_SECONDS {0.02};
 
-/// A background thread that calls its work function at a fixed interval until it is stopped.
-/// The imager uses it to design new crossover kernels when the crossovers move during real-time playback.
-class KernelDesignThread final : public juce::Thread
-{
-public:
-    explicit KernelDesignThread(std::function<void()> task);
-
-    void run() override;
-
-private:
-    std::function<void()> work;
-};
+/// The background thread that designs kernels while the crossovers move during real-time playback.
+/// Defined in MultibandImager.cpp, its only user.
+class KernelDesignThread;
 
 /// Linear gain that glides to its target over GAIN_SMOOTHING_SECONDS.
 using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>;
@@ -88,33 +78,46 @@ private:
     void mixPartition(int channels);
     void processPartition();
 
+    /// Ring buffer per channel that delays the raw input by the kernel half length.
     juce::AudioBuffer<float> delayLine;
+    /// The delayed input of the current partition.
     juce::AudioBuffer<float> delayedBlock;
+    /// The input partition being filled by process.
     juce::AudioBuffer<float> inputBlock;
+    /// The output partition being read by process.
     juce::AudioBuffer<float> outputBlock;
 
+    /// Convolver of the mid signal.
     PartitionedConvolver midConvolver;
+    /// Convolver of the side signal.
     PartitionedConvolver sideConvolver;
 
+    /// Designs kernels during real-time playback. Created in prepare and stopped in release.
     std::unique_ptr<KernelDesignThread> designThread;
 
+    /// The active kernels and the spare slot new kernels are designed into.
     std::array<KernelSpectra, 2> kernelSlots;
     /// Crossovers each kernel slot was designed for.
     std::array<Crossovers, 2> slotCrossovers {};
     /// Crossovers last requested by the host, ordered.
     std::array<std::atomic<float>, CROSSOVER_COUNT> requestedCrossovers {};
 
+    /// Glides of the mid gain of each band.
     std::array<SmoothedGain, BAND_COUNT> midGainSmoothers;
+    /// Glides of the side gain of each band.
     std::array<SmoothedGain, BAND_COUNT> sideGainSmoothers;
+    /// Glide of the output gain.
     SmoothedGain outputGainSmoother;
 
     /// Outputs of the three lowpass kernels for the mid signal of the current partition.
     std::array<std::vector<float>, CROSSOVER_COUNT> midLowpassed;
     /// Outputs of the three lowpass kernels for the side signal of the current partition.
     std::array<std::vector<float>, CROSSOVER_COUNT> sideLowpassed;
-    /// The mid and side of the current input partition, and the new kernel output during a crossfade.
+    /// The mid signal of the current input partition.
     std::vector<float> midInput;
+    /// The side signal of the current input partition.
     std::vector<float> sideInput;
+    /// The output of the new kernels during a crossfade.
     std::vector<float> fadeScratch;
 
     /// Serializes kernel design between the design thread and non-real-time rendering.
@@ -125,11 +128,17 @@ private:
     /// Set by a designer when the spare slot holds new kernels, and cleared by the audio thread after switching.
     std::atomic<bool> switchPending {false};
 
+    /// Sample rate the imager was prepared for.
     double sampleRate {REFERENCE_SAMPLE_RATE};
+    /// Kernel slot the audio thread uses.
     int activeSlot {0};
+    /// Position in the current input and output partitions.
     int blockPosition {0};
+    /// Number of channels the imager was prepared for, one or two.
     int channelCount {2};
+    /// Position of the next sample in the delay line.
     int delayPosition {0};
+    /// Kernel half length, which is also the delay of the kernels, in samples.
     int halfLength {REFERENCE_HALF_LENGTH};
 };
 }  // namespace esgrove::image_control

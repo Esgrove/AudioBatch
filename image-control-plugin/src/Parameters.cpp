@@ -181,4 +181,42 @@ float outputGainFromDecibels(const float decibels)
 {
     return gainFromDecibels(decibels, OUTPUT_GAIN_MIN_DB - 1.0F);
 }
+/// Returns whether two sets of crossovers are the same.
+bool sameCrossovers(const Crossovers& first, const Crossovers& second)
+{
+    return std::ranges::equal(first, second, [](const float left, const float right) {
+        return juce::approximatelyEqual(left, right);
+    });
+}
+
+/// Returns the Width of a band, its side gain relative to its mid gain as a linear ratio,
+/// from the two gains in dB, or 0 when the side is off.
+double bandWidthFromGains(const double midDecibels, const double sideDecibels)
+{
+    if (sideDecibels <= static_cast<double>(BAND_GAIN_MIN_DB)) {
+        return 0.0;
+    }
+    return juce::Decibels::decibelsToGain(sideDecibels - midDecibels);
+}
+
+/// Returns the plain value of a parameter, such as a frequency in Hz or a gain in dB.
+float plainValue(const juce::RangedAudioParameter& parameter)
+{
+    return parameter.convertFrom0to1(parameter.getValue());
+}
+
+/// Returns how many times a sample rate doubles above a reference rate, or 0 at or below it.
+/// Processing and analysis lengths double with each doubling, so their frequency resolution stays the same.
+int sampleRateDoublings(const double sampleRate, const double referenceSampleRate)
+{
+    return std::max(0, static_cast<int>(std::ceil(std::log2(sampleRate / referenceSampleRate))));
+}
+
+/// Sets a parameter to a plain value in a host change gesture of its own.
+void setParameterInGesture(juce::RangedAudioParameter& parameter, const float value)
+{
+    parameter.beginChangeGesture();
+    parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
+    parameter.endChangeGesture();
+}
 }  // namespace esgrove::image_control
