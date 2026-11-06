@@ -158,6 +158,7 @@ void AudioBatchComponent::configureProcessingControls()
     };
     liveChain->setChainChangedCallback(refreshLiveChain);
     liveChain->setLatencyChangedCallback(refreshLiveChain);
+    previewPlayer.setEndedCallback([this] { continuePreviewAfterEnd(); });
     previewPlayer.setErrorCallback([this](const juce::String& message) {
         previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
         synchronizePreviewPreferences();
@@ -316,6 +317,7 @@ AudioBatchComponent::~AudioBatchComponent()
     utils::logDebug("Application shutdown: releasing preview and dialogs");
     previewPlayer.getDeviceManager().removeChangeListener(this);
     previewPlayer.removeChangeListener(this);
+    previewPlayer.setEndedCallback({});
     previewPlayer.setErrorCallback({});
     liveChain->setChainChangedCallback({});
     liveChain->setLatencyChangedCallback({});

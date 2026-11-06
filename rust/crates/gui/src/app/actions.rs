@@ -368,9 +368,13 @@ impl AppView {
                         if crate::debug_enabled() {
                             tracing::info!("player: {event:?}");
                         }
-                        if let PlayerEvent::Error { message, .. } = event {
-                            view.start_after_cues = None;
-                            view.status = message.into();
+                        match event {
+                            PlayerEvent::Error { message, .. } => {
+                                view.start_after_cues = None;
+                                view.status = message.into();
+                            }
+                            PlayerEvent::Ended => view.continue_after_end(cx),
+                            PlayerEvent::Loaded { .. } => {}
                         }
                         cx.notify();
                     }

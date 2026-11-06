@@ -194,6 +194,18 @@ void ResultsModel::rebuildIndex()
     }
 }
 
+/// Returns the first row after the given one whose analysis did not fail, for continuing playback at the end of a file.
+/// Returns nothing after the last row, so playback stops at the end of the list instead of wrapping around.
+std::optional<int> findNextPlayableRow(const ResultsModel& results, const int row)
+{
+    for (auto next = row + 1; next < results.size(); ++next) {
+        if (!results[next].hasError()) {
+            return next;
+        }
+    }
+    return std::nullopt;
+}
+
 /// Maps a selection captured before row mutations to the committed outputs, keeping each destination once.
 /// Unchanged selected paths stay selected even when another source replaces their existing row.
 juce::StringArray remapSelectedPaths(

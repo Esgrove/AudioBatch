@@ -78,6 +78,8 @@ private:
     std::unordered_map<juce::String, std::size_t> rowsByPath;
 };
 
+[[nodiscard]] std::optional<int> findNextPlayableRow(const ResultsModel& results, int row);
+
 juce::StringArray remapSelectedPaths(
     const juce::StringArray& selectedPaths,
     const std::unordered_map<juce::String, juce::String>& movedPaths

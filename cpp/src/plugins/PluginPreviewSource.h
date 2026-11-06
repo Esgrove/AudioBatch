@@ -25,6 +25,7 @@ public:
     [[nodiscard]] bool hasFailed() const noexcept;
     [[nodiscard]] bool isPlaying() const noexcept;
     [[nodiscard]] bool isStopping() const noexcept;
+    [[nodiscard]] bool takeEnded() noexcept;
     [[nodiscard]] double getCurrentPosition() const noexcept;
 
     void requestStop();
@@ -75,6 +76,8 @@ private:
 
     /// True to render the latency pre-roll, so the audio lines up with the position.
     bool compensation {true};
+    /// True after rendering reached the end of the file and its tail, until the host takes it with takeEnded.
+    bool ended {false};
     /// True after a plugin failed or produced non-finite audio, until the next start or seek.
     bool failed {false};
     /// True while rendering, including the pre-roll, the tail, and a stop fade.

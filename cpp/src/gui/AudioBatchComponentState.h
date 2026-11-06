@@ -50,7 +50,7 @@ struct AudioPreviewPreferences {
     bool pluginChainEnabled {false};
     /// True to discard the chain's latency pre-roll, so audible audio lines up with the waveform position.
     bool latencyCompensated {true};
-    /// True to keep playing when another file is selected during playback.
+    /// True to keep playing when another file is selected during playback, and to play the next file when one ends.
     bool continuePlayback {false};
     /// True to start a newly selected file at its first Serato cue point.
     bool playFromFirstCuePoint {false};

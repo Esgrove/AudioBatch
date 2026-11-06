@@ -146,6 +146,21 @@ public:
             expectEquals(namesOf(results), juce::String("b.aif, a.aif"));
         }
 
+        beginTest("The next playable row follows display order and skips failed analysis");
+        {
+            ResultsModel results;
+            for (const auto* fileName : {"a.wav", "b.wav", "c.wav", "d.wav"}) {
+                results.merge(makeRecord(fileName));
+            }
+            auto failed = makeRecord("c.wav");
+            failed.status = AudioAnalysisStatus::failed;
+            results.merge(failed);
+
+            expect(findNextPlayableRow(results, 0) == 1);
+            expect(findNextPlayableRow(results, 1) == 3);
+            expect(!findNextPlayableRow(results, 3).has_value());
+        }
+
         beginTest("Rows are found by path after removing and sorting");
         {
             ResultsModel results;

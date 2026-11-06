@@ -94,6 +94,7 @@ public:
     void release();
     void setApplicationActive(bool active);
     void setDeviceSettingsActive(bool active);
+    void setEndedCallback(std::function<void()> callback);
     void setErrorCallback(std::function<void(const juce::String&)> callback);
     void setInputGain(LinearGain gain, bool immediately = false);
     void setLatencyCompensated(bool enabled);
@@ -140,6 +141,8 @@ private:
     // Sources borrow the rendering lock and failure flags.
     /// Delivers errors on the message thread, never from audio or read-ahead callbacks.
     std::function<void(const juce::String&)> onError;
+    /// Delivers the natural end of playback on the message thread, after the file and any effect tail finished.
+    std::function<void()> onEnded;
 
     /// Serializes the message thread's changes to the sources and the chain with the audio callback,
     /// which only try-locks it.
@@ -168,6 +171,8 @@ private:
 
     /// Set by the audio callback when the buffered input ran out.
     std::atomic<bool> bufferUnderrun {false};
+    /// Set when playback reached the end of the file and its tail, until the message thread delivers it.
+    std::atomic<bool> endedPending {false};
     /// True once the input and the chain are prepared for the open device, so the callback may render.
     std::atomic<bool> deviceReady {false};
     /// Set by the read-ahead thread when decoding the file fails.

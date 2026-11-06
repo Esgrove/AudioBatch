@@ -320,7 +320,9 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
         "Align processed audio with the file position. High-latency chains need a preparation pause after starts or "
         "seeks."
     );
-    continuationToggle.setTooltip("Start a newly selected file only if the previous preview was playing.");
+    continuationToggle.setTooltip(
+        "Start a newly selected file only if the previous preview was playing, and play the next file when one ends."
+    );
     playFromFirstCuePointToggle.setTooltip(
         "When loading a file, start at its first cue point only if it is at or before halfway through the file. "
         "Otherwise, or if there is no cue point, start at zero."

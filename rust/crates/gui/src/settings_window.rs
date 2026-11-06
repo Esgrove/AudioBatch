@@ -100,7 +100,8 @@ const COMPENSATION_TOOLTIP: &str = "Align processed audio with the file position
      High-latency chains need a preparation pause after starts or seeks.";
 
 /// Tooltip of the playback continuation option.
-const CONTINUE_TOOLTIP: &str = "Start a newly selected file only if the previous preview was playing.";
+const CONTINUE_TOOLTIP: &str =
+    "Start a newly selected file only if the previous preview was playing, and play the next file when one ends.";
 
 /// Tooltip of the first cue point option.
 const FIRST_CUE_TOOLTIP: &str = "When loading a file, start at its first cue point only if it is at or before \

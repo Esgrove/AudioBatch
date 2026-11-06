@@ -218,6 +218,7 @@ private:
     void configureResultsTable();
 
     // Selection and input routing.
+    void continuePreviewAfterEnd();
     void handleDroppedPaths(const juce::StringArray& paths);
     void handleFileContextMenuRequested(int row, const juce::MouseEvent& event);
     void handleSecondarySortRequested(AudioFileTableColumn column);
