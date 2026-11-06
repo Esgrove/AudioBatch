@@ -608,8 +608,21 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
             delta = wheel.deltaX;
         }
         if (std::abs(delta) > 0.0f) {
-            const auto step = fine ? gain_range::fineWheelStepDecibels : gain_range::wheelStepDecibels;
-            mouseWheelGainCallback(std::copysign(step, delta));
+            const auto direction = delta > 0.0f ? 1 : -1;
+            if (!fine) {
+                fineGainWheelEvents = 0;
+                mouseWheelGainCallback(static_cast<float>(direction) * gain_range::wheelStepDecibels);
+                return;
+            }
+            // Reversing the wheel starts the count again, so the gain never moves against the wheel.
+            if (fineGainWheelEvents * direction < 0) {
+                fineGainWheelEvents = 0;
+            }
+            fineGainWheelEvents += direction;
+            if (std::abs(fineGainWheelEvents) >= gain_range::fineWheelEventsPerStep) {
+                fineGainWheelEvents = 0;
+                mouseWheelGainCallback(static_cast<float>(direction) * gain_range::wheelStepDecibels);
+            }
             return;
         }
     }

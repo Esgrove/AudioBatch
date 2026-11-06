@@ -1406,7 +1406,7 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
 }
 
 /// Changes the custom gain with the secondary key and the wheel over the waveform,
-/// in coarse steps, in fine slider steps with Shift also held, and not at all without the modifier.
+/// one slider step per event, one step per ten events with Shift also held, and not at all without the modifier.
 #[gpui_kit::test]
 async fn integration_wheel_gain_steps_coarse_and_fine(cx: &mut TestAppContext) {
     let workflow = Workflow::new(cx);
@@ -1422,17 +1422,30 @@ async fn integration_wheel_gain_steps_coarse_and_fine(cx: &mut TestAppContext) {
     };
     let gain = |cx: &mut TestAppContext| cx.read(|cx| workflow.view.read(cx).gain_slider.read(cx).value().start());
     let notch = point(px(0.0), px(20.0));
-    workflow.scroll_preview(notch, secondary, cx);
-    workflow.scroll_preview(notch, secondary, cx);
-    assert!((gain(cx) - 1.0).abs() < 1e-4);
-    workflow.scroll_preview(-notch, secondary_shift, cx);
-    assert!((gain(cx) - 0.9).abs() < 1e-4);
+    for _ in 0..3 {
+        workflow.scroll_preview(notch, secondary, cx);
+    }
+    assert!((gain(cx) - 0.3).abs() < 1e-4);
+    for _ in 0..9 {
+        workflow.scroll_preview(-notch, secondary_shift, cx);
+    }
+    assert!((gain(cx) - 0.3).abs() < 1e-4);
     // macOS delivers a vertical mouse wheel as a horizontal one while Shift is held.
     workflow.scroll_preview(point(px(-20.0), px(0.0)), secondary_shift, cx);
-    assert!((gain(cx) - 0.8).abs() < 1e-4);
+    assert!((gain(cx) - 0.2).abs() < 1e-4);
+    // Reversing the wheel starts the count of fine events again.
+    for _ in 0..5 {
+        workflow.scroll_preview(notch, secondary_shift, cx);
+    }
+    for _ in 0..9 {
+        workflow.scroll_preview(-notch, secondary_shift, cx);
+    }
+    assert!((gain(cx) - 0.2).abs() < 1e-4);
+    workflow.scroll_preview(-notch, secondary_shift, cx);
+    assert!((gain(cx) - 0.1).abs() < 1e-4);
     let zoom = cx.read(|cx| workflow.view.read(cx).zoom_slider.read(cx).value().start());
     workflow.scroll_preview(notch, Modifiers::none(), cx);
-    assert!((gain(cx) - 0.8).abs() < 1e-4);
+    assert!((gain(cx) - 0.1).abs() < 1e-4);
     assert!(cx.read(|cx| workflow.view.read(cx).zoom_slider.read(cx).value().start()) > zoom);
     let stored = cx.read(|cx| {
         workflow
@@ -1443,7 +1456,7 @@ async fn integration_wheel_gain_steps_coarse_and_fine(cx: &mut TestAppContext) {
             .custom_gain_db
             .expect("wheel gain edit")
     });
-    assert!((stored - 0.8).abs() < 1e-4);
+    assert!((stored - 0.1).abs() < 1e-4);
 }
 
 /// Sends real native divider drags and proves that only release persists an independent preference.
