@@ -23,7 +23,7 @@ constexpr float MIN_FREQUENCY {20.0F};
 /// Highest frequency a crossover can be set to, and the right edge of the spectrogram, in Hz.
 constexpr float MAX_FREQUENCY {20'000.0F};
 /// Default crossover frequencies from the lowest to the highest, in Hz.
-constexpr std::array<float, CROSSOVER_COUNT> DEFAULT_CROSSOVERS {120.0F, 1000.0F, 10'000.0F};
+constexpr std::array<float, CROSSOVER_COUNT> DEFAULT_CROSSOVERS {100.0F, 500.0F, 5000.0F};
 /// Smallest ratio between neighbouring crossovers, one third of an octave.
 constexpr float MIN_CROSSOVER_RATIO {1.259'921'05F};
 
