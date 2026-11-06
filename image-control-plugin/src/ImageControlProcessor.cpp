@@ -8,6 +8,7 @@
 #include "analysis/StereoSampleFifo.h"
 #include "ImageControlEditor.h"
 #include "Parameters.h"
+#include "ui/SpatialSpectrogramView.h"
 
 #include <atomic>
 #include <cstddef>
@@ -53,6 +54,10 @@ ImageControlProcessor::ImageControlProcessor() :
     bypassValue = getRawValue(parameters, BYPASS_ID);
     editorState.setProperty(ANALYZE_OUTPUT_PROPERTY, true, nullptr);
     editorState.setProperty(PERSISTENCE_PROPERTY, DEFAULT_PERSISTENCE_SECONDS, nullptr);
+    editorState.setProperty(FOCUS_PROPERTY, DEFAULT_FOCUS_DB, nullptr);
+    editorState.setProperty(PHASE_COLOURS_PROPERTY, false, nullptr);
+    editorState.setProperty(MEL_SCALE_PROPERTY, false, nullptr);
+    editorState.setProperty(SHOW_FPS_PROPERTY, false, nullptr);
     editorState.addListener(this);
 }
 

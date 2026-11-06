@@ -69,25 +69,50 @@ so the output never depends on thread timing.
 
 ## Editor
 
-The spatial spectrogram fills the top of the editor.
-Frequency runs from 20 Hz to 20 kHz left to right on a logarithmic axis,
-and the stereo position runs from full left (L, +1) at the top through the centre (C, 0) to full right (R, −1) at the bottom.
-The position of each frequency bin is p = (4 / π) · atan2(|L|, |R|) − 1.
-Brightness shows energy over a 60 dB range.
-Colour shows the phase coherence between the channels:
-blue to white for in-phase content, and red to pink for anti-phase content.
-Anti-phase content has equal levels in both channels, so it sits in the centre like mono content,
-and the colour is what tells the two apart.
+The header holds the Bypass button, the Settings button, and the output gain.
+The spatial spectrogram fills the middle, and the band strips sit below it.
 
-The three crossovers are vertical lines on the spectrogram with their frequencies.
-Drag a line to move its crossover.
-The header switches the display between the input and the output of the plugin,
-sets how long the trace persists, and sets the output gain.
+### Spatial spectrogram
 
-The editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
-so it follows the native refresh rate, such as 120 or 144 Hz.
-It renders the spectrogram image again only when a new analysis frame arrives,
-about 47 times a second at 48 kHz, and repaints the crossover lines only when they move.
+Frequency runs from 20 Hz to 20 kHz left to right,
+and the stereo position from full left (L) at the top through the centre (C) to full right (R) at the bottom.
+The display follows the approach of particle-based spatial analyzers:
+every analyzed frequency bin is drawn as a soft particle,
+new particles add to the image, and older ones fade and blur, so new content stays legible.
+
+- **Position:** the level difference between the channels in dB divided by the focus, clamped to the edges.
+  The default focus of 18 dB is about where a source sounds fully to one side.
+- **Colour:** frequency colours run from red in the bass through orange, yellow, and green to blue in the highs.
+  Phase colours instead run from blue for in-phase content to red for anti-phase content.
+  Anti-phase content has equal levels in both channels, so it sits in the centre like mono content,
+  and the phase colours tell the two apart.
+- **Brightness:** the level in dB over a 78 dB range, so quiet content stays visible next to the peaks.
+  Overlapping bright particles saturate smoothly towards white instead of clipping.
+- **Resolution:** the analysis runs four transform lengths side by side.
+  32768 samples cover 20 to 80 Hz with bins about 0.7 Hz apart after zero padding,
+  8192 samples cover up to 500 Hz, 2048 samples up to 4 kHz, and 1024 samples the rest,
+  so the bass is finely resolved and the highs stay sharp in time.
+- **Refresh:** the editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
+  at the native refresh rate, such as 120 or 144 Hz.
+  The fade and the blur advance by the time that passed, so they look the same at any refresh rate.
+
+The three crossovers are vertical lines with their frequencies.
+Drag a line to move its crossover, and double-click it to reset it.
+Hovering a band highlights it and shows its width,
+and the mouse wheel over a band changes its width, finely with Shift.
+
+### Settings
+
+The Settings button opens the display settings:
+
+- whether the spectrogram shows the output or the input of the plugin,
+- frequency or phase colours,
+- a logarithmic or mel frequency scale, with the same HTK mel definition as AudioBatch's spectrogram,
+- the persistence, how long particles take to fade,
+- the focus, the level difference that reaches the edges,
+- and a frame rate readout in the top-left corner of the spectrogram.
+
+### Band strips
 
 The controls use AudioBatch's palette and its Roboto and Roboto Mono fonts from the shared `../assets/`.
 Each band has a strip with its own controls:
@@ -137,7 +162,11 @@ and Windows.
   `CrossoverDesign.*` designs the lowpass filters,
   `PartitionedConvolver.*` applies them,
   and `MultibandImager.*` splits, scales, and joins the bands.
-- `src/analysis/` holds the spatial spectrogram analysis in `SpatialAnalyzer.*`,
+- `src/analysis/` holds the multi-resolution spatial analysis in `SpatialAnalyzer.*`,
   and `StereoSampleFifo.h`, which carries audio from the audio thread to the editor.
-- `src/ui/` holds the spectrogram view and the band strips.
+- `src/ui/` holds the editor parts:
+  `SpatialSpectrogramView.*` renders the particles, the overlays, and the frequency scales,
+  `BandStrip.*` the controls of one band, `SettingsPanel.*` the display settings,
+  `ControlSlider.*` the slider with fine dragging and key nudges,
+  and `ImageControlLookAndFeel.*` the AudioBatch palette and fonts.
 - `tests/` holds the GoogleTest unit tests.

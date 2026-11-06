@@ -83,6 +83,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ControlSlider.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ImageControlLookAndFeel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/ImageControlLookAndFeel.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
 )

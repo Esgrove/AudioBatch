@@ -48,6 +48,14 @@ constexpr auto BYPASS_ID {"bypass"};
 constexpr auto ANALYZE_OUTPUT_PROPERTY {"analyzeOutput"};
 /// Name of the editor setting that holds the spectrogram persistence in seconds.
 constexpr auto PERSISTENCE_PROPERTY {"persistence"};
+/// Name of the editor setting that holds the spectrogram focus, the level difference at the edges, in dB.
+constexpr auto FOCUS_PROPERTY {"focus"};
+/// Name of the editor setting that selects phase colours instead of frequency colours.
+constexpr auto PHASE_COLOURS_PROPERTY {"phaseColours"};
+/// Name of the editor setting that selects the mel frequency scale instead of the logarithmic one.
+constexpr auto MEL_SCALE_PROPERTY {"melScale"};
+/// Name of the editor setting that shows the display refresh rate.
+constexpr auto SHOW_FPS_PROPERTY {"showFps"};
 /// Name of the editor setting that holds the editor width in pixels.
 constexpr auto EDITOR_WIDTH_PROPERTY {"editorWidth"};
 /// Name of the editor setting that holds the editor height in pixels.
