@@ -67,6 +67,41 @@ TEST(Processor, ReportsLatencyAndPassesAudioThroughAtDefaults)
     processor.releaseResources();
 }
 
+TEST(Processor, BypassPassesAudioThroughWithTheSameLatency)
+{
+    for (const bool hostBypass : {false, true}) {
+        SCOPED_TRACE(hostBypass);
+        ImageControlProcessor processor;
+        processor.setNonRealtime(true);
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            setParameter(processor, midGainParameterId(band), -6.0F);
+            setParameter(processor, sideGainParameterId(band), BAND_GAIN_MIN_DB);
+        }
+        setParameter(processor, BYPASS_ID, hostBypass ? 0.0F : 1.0F);
+        EXPECT_EQ(processor.getBypassParameter(), processor.getParameters().getParameter(BYPASS_ID));
+        processor.prepareToPlay(TEST_SAMPLE_RATE, 512);
+        const int latency = processor.getLatencySamples();
+
+        const auto left = makeNoise(0.5F, 8192, 24);
+        const auto right = makeNoise(0.5F, 8192, 25);
+        auto buffer = makeBuffer({left, right});
+        juce::MidiBuffer midi;
+        for (int start = 0; start < buffer.getNumSamples(); start += 512) {
+            juce::AudioBuffer<float> block(buffer.getArrayOfWritePointers(), 2, start, 512);
+            if (hostBypass) {
+                processor.processBlockBypassed(block, midi);
+            } else {
+                processor.processBlock(block, midi);
+            }
+        }
+        for (int sample = latency; sample < buffer.getNumSamples(); ++sample) {
+            ASSERT_EQ(buffer.getSample(0, sample), left[static_cast<std::size_t>(sample - latency)]);
+            ASSERT_EQ(buffer.getSample(1, sample), right[static_cast<std::size_t>(sample - latency)]);
+        }
+        processor.releaseResources();
+    }
+}
+
 TEST(Processor, OfflineCrossoverChangeAppliesWithoutWaiting)
 {
     ImageControlProcessor processor;

@@ -40,6 +40,7 @@ public:
 
     [[nodiscard]] const juce::String getName() const override;
     [[nodiscard]] const juce::String getProgramName(int index) override;
+    [[nodiscard]] juce::AudioProcessorParameter* getBypassParameter() const override;
 
     [[nodiscard]] bool acceptsMidi() const override;
     [[nodiscard]] bool hasEditor() const override;
@@ -55,6 +56,7 @@ public:
     void getStateInformation(juce::MemoryBlock& destinationData) override;
     void prepareToPlay(double sampleRate, int maximumBlockSize) override;
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) override;
+    void processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) override;
     void releaseResources() override;
     void setCurrentProgram(int index) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
@@ -67,6 +69,7 @@ private:
 
     void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;
 
+    void processWithBypass(juce::AudioBuffer<float>& buffer, bool bypassed);
     void pushToAnalyzer(const juce::AudioBuffer<float>& buffer);
 
     /// Owns the parameters that the raw value pointers below point into.
@@ -82,6 +85,8 @@ private:
     std::array<std::atomic<float>*, BAND_COUNT> sideGainValues {};
     /// Raw value of the output gain parameter, owned by the parameter tree.
     std::atomic<float>* outputGainValue {nullptr};
+    /// Raw value of the bypass parameter, owned by the parameter tree.
+    std::atomic<float>* bypassValue {nullptr};
 
     /// Whether the analyzer tap is the output rather than the input, mirrored from the editor state.
     std::atomic<bool> analyzeOutput {true};

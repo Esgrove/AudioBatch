@@ -50,6 +50,7 @@ ImageControlProcessor::ImageControlProcessor() :
         editorState.setProperty(linkPropertyName(band), true, nullptr);
     }
     outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
+    bypassValue = getRawValue(parameters, BYPASS_ID);
     editorState.setProperty(ANALYZE_OUTPUT_PROPERTY, true, nullptr);
     editorState.setProperty(PERSISTENCE_PROPERTY, DEFAULT_PERSISTENCE_SECONDS, nullptr);
     editorState.addListener(this);
@@ -172,19 +173,45 @@ void ImageControlProcessor::prepareToPlay(const double sampleRate, int /*maximum
     setLatencySamples(imager.getLatencySamples());
 }
 
-/// Hands the current parameters to the imager, processes the block, and pushes the analyzer tap.
-/// Offline rendering designs moved crossovers synchronously, so its output does not depend on thread timing.
+/// Processes a block with the current parameters, bypassed when the bypass parameter is on.
 void ImageControlProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
+{
+    processWithBypass(buffer, bypassValue->load() >= 0.5F);
+}
+
+/// Processes a block bypassed when a host bypasses the plugin without the bypass parameter.
+void ImageControlProcessor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
+{
+    processWithBypass(buffer, true);
+}
+
+/// Returns the bypass parameter, which hosts use as the plugin's own bypass.
+juce::AudioProcessorParameter* ImageControlProcessor::getBypassParameter() const
+{
+    return parameters.getParameter(BYPASS_ID);
+}
+
+/// Hands the current parameters to the imager, processes the block, and pushes the analyzer tap.
+/// Bypassing glides every gain to unity instead of skipping the imager,
+/// so the latency stays the same and the output becomes the delayed input bit for bit without a click.
+/// Offline rendering designs moved crossovers synchronously, so its output does not depend on thread timing.
+void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, const bool bypassed)
 {
     const juce::ScopedNoDenormals noDenormals;
 
     BandGains midGains {};
     BandGains sideGains {};
-    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
-        sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
+    midGains.fill(1.0F);
+    sideGains.fill(1.0F);
+    float outputGain = 1.0F;
+    if (!bypassed) {
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
+            sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
+        }
+        outputGain = outputGainFromDecibels(outputGainValue->load());
     }
-    imager.setGains(midGains, sideGains, outputGainFromDecibels(outputGainValue->load()));
+    imager.setGains(midGains, sideGains, outputGain);
     imager.setCrossovers(getCrossovers(), isNonRealtime());
 
     const bool tapOutput = analyzeOutput.load(std::memory_order_relaxed);
