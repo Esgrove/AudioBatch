@@ -96,6 +96,13 @@ target_compile_definitions(
                         JUCE_WEB_BROWSER=0
 )
 
+# On macOS the editor presents through JUCE's Metal layer renderer:
+# Core Graphics paints each changed region into a Metal texture instead of one merged region,
+# so repainting the spectrogram every display refresh leaves the rest of the editor alone.
+if(APPLE)
+    target_compile_definitions(ImageControl PUBLIC JUCE_COREGRAPHICS_RENDER_WITH_MULTIPLE_PAINT_CALLS=1)
+endif()
+
 # The plugin's own sources get strict warnings as errors, like the AudioBatch sources.
 # JUCE headers are written to JUCE's own rules, so they are treated as system or external headers.
 # The JUCE module sources compiled into the target keep JUCE's recommended warnings only.
