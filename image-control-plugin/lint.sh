@@ -60,16 +60,27 @@ fi
 
 # The configuration files are passed explicitly, so linting does not depend on the configuration symlinks.
 # The test configuration inherits the project configuration and relaxes it for test code.
+# clang-tidy prints its diagnostics to stdout and fails with an error, such as a compile error,
+# which fails the run even without --check.
+# A source missing from the compile database is linted with flags inferred from its neighbours.
 OUTPUT=$(mktemp)
-trap 'rm -f "$OUTPUT"' EXIT
+ERRORS=$(mktemp)
+trap 'rm -f "$OUTPUT" "$ERRORS"' EXIT
 JOBS=$(getconf _NPROCESSORS_ONLN 2> /dev/null || echo 4)
 print_magenta "Running clang-tidy on the ImageControl sources and tests..."
+TIDY_STATUS=0
 find "$DIR/src" -name "*.cpp" -print0 |
     xargs -0 -P "$JOBS" -n 1 "$CLANG_TIDY" -p "$BUILD_DIR" --quiet --config-file="$ROOT/cpp/.clang-tidy" \
-        >> "$OUTPUT" 2> /dev/null || true
+        >> "$OUTPUT" 2>> "$ERRORS" || TIDY_STATUS=1
 find "$DIR/tests" -name "*.cpp" -print0 |
     xargs -0 -P "$JOBS" -n 1 "$CLANG_TIDY" -p "$BUILD_DIR" --quiet --config-file="$ROOT/cpp/tests/.clang-tidy" \
-        >> "$OUTPUT" 2> /dev/null || true
+        >> "$OUTPUT" 2>> "$ERRORS" || TIDY_STATUS=1
+
+if [ "$TIDY_STATUS" -ne 0 ]; then
+    cat "$OUTPUT"
+    grep -vE "^[0-9]+ warnings? generated\.$" "$ERRORS" || true
+    print_error_and_exit "clang-tidy failed on at least one source"
+fi
 
 WARNINGS=$(grep -cE "(warning|error):" "$OUTPUT" || true)
 if [ "$WARNINGS" -gt 0 ]; then

@@ -192,46 +192,7 @@ float approach(const float value, const float target, const double seconds)
     return value + (target - value) * share;
 }
 
-/// Sets a parameter from a plain value in its own host change gesture.
-void setInGesture(juce::RangedAudioParameter& parameter, const float value)
-{
-    parameter.beginChangeGesture();
-    parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
-    parameter.endChangeGesture();
-}
-
-/// Returns the plain value of a parameter.
-float plainValue(const juce::RangedAudioParameter& parameter)
-{
-    return parameter.convertFrom0to1(parameter.getValue());
-}
 }  // namespace
-
-/// Creates the view with an empty particle buffer, looking up the parameters it reads and changes.
-SpatialSpectrogramView::SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters) :
-    image(juce::Image::ARGB, SPECTROGRAM_COLUMNS, SPECTROGRAM_ROWS, true),
-    blurScratch(CELL_COUNT, 0.0F),
-    columnColours(COLUMNS),
-    toneCurve(buildToneCurve())
-{
-    for (auto& plane : buffer) {
-        plane.assign(CELL_COUNT, 0.0F);
-    }
-    for (std::size_t column = 0; column < COLUMNS; ++column) {
-        columnColours[column] = frequencyColour(static_cast<float>(column) / static_cast<float>(COLUMNS - 1));
-    }
-    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        crossoverParameters.at(crossover) = parameters.getParameter(crossoverParameterId(crossover));
-        jassert(crossoverParameters.at(crossover) != nullptr);
-    }
-    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        midParameters.at(band) = parameters.getParameter(midGainParameterId(band));
-        sideParameters.at(band) = parameters.getParameter(sideGainParameterId(band));
-        jassert(midParameters.at(band) != nullptr && sideParameters.at(band) != nullptr);
-    }
-    // The rounded corners show the editor background, so the view does not fill its whole bounds.
-    setOpaque(false);
-}
 
 /// Returns where a frequency lies on the frequency axis, from 0 at MIN_FREQUENCY to 1 at MAX_FREQUENCY.
 double frequencyToShare(const double frequency, const FrequencyScale scale)
@@ -277,6 +238,32 @@ double frequencyToMel(const double frequency)
 double melToFrequency(const double mel)
 {
     return MEL_CORNER_FREQUENCY * (std::pow(MEL_LOGARITHM_BASE, mel / MEL_SCALE) - 1.0);
+}
+
+/// Creates the view with an empty particle buffer, looking up the parameters it reads and changes.
+SpatialSpectrogramView::SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters) :
+    image(juce::Image::ARGB, SPECTROGRAM_COLUMNS, SPECTROGRAM_ROWS, true),
+    blurScratch(CELL_COUNT, 0.0F),
+    columnColours(COLUMNS),
+    toneCurve(buildToneCurve())
+{
+    for (auto& plane : buffer) {
+        plane.assign(CELL_COUNT, 0.0F);
+    }
+    for (std::size_t column = 0; column < COLUMNS; ++column) {
+        columnColours[column] = frequencyColour(static_cast<float>(column) / static_cast<float>(COLUMNS - 1));
+    }
+    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+        crossoverParameters.at(crossover) = parameters.getParameter(crossoverParameterId(crossover));
+        jassert(crossoverParameters.at(crossover) != nullptr);
+    }
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        midParameters.at(band) = parameters.getParameter(midGainParameterId(band));
+        sideParameters.at(band) = parameters.getParameter(sideGainParameterId(band));
+        jassert(midParameters.at(band) != nullptr && sideParameters.at(band) != nullptr);
+    }
+    // The rounded corners show the editor background, so the view does not fill its whole bounds.
+    setOpaque(false);
 }
 
 /// Returns the area of the spectrogram inside the axis labels.
@@ -336,20 +323,19 @@ void SpatialSpectrogramView::addFrame(const std::span<const SpectralPoint> point
         const int firstRow = std::max(0, centreRow - rowRadius);
         const int lastRow = std::min(SPECTROGRAM_ROWS - 1, centreRow + rowRadius);
         for (int cell = firstColumn; cell <= lastColumn; ++cell) {
-            columnWeights.at(static_cast<std::size_t>(cell - firstColumn))
+            columnWeights[static_cast<std::size_t>(cell - firstColumn)]
                 = gaussian(static_cast<float>(cell) - column, sigmaColumns);
         }
         for (int cell = firstRow; cell <= lastRow; ++cell) {
-            rowWeights.at(static_cast<std::size_t>(cell - firstRow))
+            rowWeights[static_cast<std::size_t>(cell - firstRow)]
                 = gaussian(static_cast<float>(cell) - row, PARTICLE_SIGMA_ROWS) * weight;
         }
 
         const LinearColour colour = pointColour(point);
         for (int rowCell = firstRow; rowCell <= lastRow; ++rowCell) {
-            const float rowWeight = rowWeights.at(static_cast<std::size_t>(rowCell - firstRow));
+            const float rowWeight = rowWeights[static_cast<std::size_t>(rowCell - firstRow)];
             for (int columnCell = firstColumn; columnCell <= lastColumn; ++columnCell) {
-                const float cellWeight
-                    = rowWeight * columnWeights.at(static_cast<std::size_t>(columnCell - firstColumn));
+                const float cellWeight = rowWeight * columnWeights[static_cast<std::size_t>(columnCell - firstColumn)];
                 const std::size_t index = cellIndex(columnCell, rowCell);
                 buffer[0][index] += colour.red * cellWeight;
                 buffer[1][index] += colour.green * cellWeight;
@@ -494,7 +480,7 @@ void SpatialSpectrogramView::mouseWheelMove(const juce::MouseEvent& event, const
     const float step = WHEEL_DECIBELS_PER_UNIT * (event.mods.isShiftDown() ? FINE_WHEEL_SHARE : 1.0F);
     auto& side = *sideParameters.at(*band);
     const float current = std::max(plainValue(side), BAND_GAIN_MIN_DB);
-    setInGesture(side, std::clamp(current + delta * step, BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB));
+    setParameterInGesture(side, std::clamp(current + delta * step, BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB));
 }
 
 /// Paints the particle image, the grid, the band regions, and the crossover lines.
@@ -581,11 +567,10 @@ LinearColour SpatialSpectrogramView::pointColour(const SpectralPoint& point) con
 /// Returns a band's width, its side gain relative to its mid gain as a linear ratio, or 0 when its side is off.
 double SpatialSpectrogramView::bandWidth(const std::size_t band) const
 {
-    const auto side = static_cast<double>(plainValue(*sideParameters.at(band)));
-    if (side <= static_cast<double>(BAND_GAIN_MIN_DB)) {
-        return 0.0;
-    }
-    return juce::Decibels::decibelsToGain(side - static_cast<double>(plainValue(*midParameters.at(band))));
+    return bandWidthFromGains(
+        static_cast<double>(plainValue(*midParameters.at(band))),
+        static_cast<double>(plainValue(*sideParameters.at(band)))
+    );
 }
 
 /// Returns the x coordinate of a frequency in the plot.
@@ -640,7 +625,7 @@ void SpatialSpectrogramView::blurBuffer()
 void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossovers& crossovers) const
 {
     const auto plot = getPlotBounds();
-    graphics.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
+    graphics.setFont(textFont(LABEL_FONT_HEIGHT));
 
     float left = plot.getX();
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
@@ -689,7 +674,7 @@ void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossove
 void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
 {
     const auto plot = getPlotBounds();
-    graphics.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
+    graphics.setFont(textFont(LABEL_FONT_HEIGHT));
     graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(AXIS_LABEL_ALPHA));
     for (const double frequency : GRID_FREQUENCIES) {
         const float x = frequencyToX(frequency);
@@ -715,7 +700,7 @@ void SpatialSpectrogramView::paintFramesPerSecond(juce::Graphics& graphics) cons
         return;
     }
     const auto plot = getPlotBounds();
-    graphics.setFont(ImageControlLookAndFeel::getMonoFont(LABEL_FONT_HEIGHT));
+    graphics.setFont(monoFont(LABEL_FONT_HEIGHT));
     graphics.setColour(juce::Colour(FPS_COLOUR));
     const juce::Rectangle<float> area(
         plot.getX() + LABEL_INSET, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT

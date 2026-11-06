@@ -25,12 +25,6 @@ namespace esgrove::image_control
 constexpr int SPECTROGRAM_COLUMNS {768};
 /// Number of stereo position rows of the particle buffer.
 constexpr int SPECTROGRAM_ROWS {192};
-/// Shortest time constant of the fade of the particles, in seconds.
-constexpr double MIN_PERSISTENCE_SECONDS {0.05};
-/// Longest time constant of the fade of the particles, in seconds.
-constexpr double MAX_PERSISTENCE_SECONDS {3.0};
-/// Default time constant of the fade of the particles, in seconds.
-constexpr double DEFAULT_PERSISTENCE_SECONDS {0.3};
 
 /// How the particles are coloured.
 /// Frequency colours run from red in the bass to blue in the highs,
@@ -48,17 +42,17 @@ enum class FrequencyScale : std::uint8_t {
     mel,
 };
 
-[[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
-[[nodiscard]] double shareToFrequency(double share, FrequencyScale scale);
-[[nodiscard]] double frequencyToMel(double frequency);
-[[nodiscard]] double melToFrequency(double mel);
-
 /// A colour with float channels from 0 to 1, for the additive particle buffer.
 struct LinearColour {
     float red {0.0F};
     float green {0.0F};
     float blue {0.0F};
 };
+
+[[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
+[[nodiscard]] double shareToFrequency(double share, FrequencyScale scale);
+[[nodiscard]] double frequencyToMel(double frequency);
+[[nodiscard]] double melToFrequency(double mel);
 
 /// The spatial spectrogram with the band regions and the crossover lines.
 /// The editor feeds it analyzed frames and advances it once per display refresh.
@@ -87,11 +81,11 @@ public:
     void paint(juce::Graphics& graphics) override;
 
 private:
-    [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
-    [[nodiscard]] std::optional<std::size_t> crossoverNear(float x) const;
-
     [[nodiscard]] Crossovers currentCrossovers() const;
     [[nodiscard]] LinearColour pointColour(const SpectralPoint& point) const;
+
+    [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
+    [[nodiscard]] std::optional<std::size_t> crossoverNear(float x) const;
 
     [[nodiscard]] double bandWidth(std::size_t band) const;
     [[nodiscard]] float frequencyToX(double frequency) const;
@@ -106,6 +100,7 @@ private:
     void renderImage();
     void updateHover(juce::Point<float> position);
 
+    /// The rendered particles, scaled into the plot when painting.
     juce::Image image;
 
     /// The additive particle buffer, one plane per colour channel, row by row.
@@ -117,11 +112,11 @@ private:
     /// Display value for every step of exposed buffer energy, which saturates smoothly towards white.
     std::vector<juce::uint8> toneCurve;
 
-    /// Crossover parameters, owned by the parameter tree, which outlives the editor.
+    /// Crossover parameters, owned by the parameter tree, which outlives the editor. Never null.
     std::array<juce::RangedAudioParameter*, CROSSOVER_COUNT> crossoverParameters {};
-    /// Mid gain parameters, owned by the parameter tree.
+    /// Mid gain parameters, owned by the parameter tree. Never null.
     std::array<juce::RangedAudioParameter*, BAND_COUNT> midParameters {};
-    /// Side gain parameters, owned by the parameter tree.
+    /// Side gain parameters, owned by the parameter tree. Never null.
     std::array<juce::RangedAudioParameter*, BAND_COUNT> sideParameters {};
     /// Animated hover highlight of each band, from 0 to 1.
     std::array<float, BAND_COUNT> bandHighlights {};
@@ -137,8 +132,11 @@ private:
     /// Display refresh rate shown in the top-left corner, or empty when the readout is off.
     std::optional<double> framesPerSecond;
 
+    /// How new particles are coloured.
     SpectrogramColours colours {SpectrogramColours::frequency};
+    /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
+    /// Time constant of the particle fade, in seconds.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
     /// Time since the last blur step, in seconds.
     double blurClock {0.0};

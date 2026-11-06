@@ -27,13 +27,13 @@ constexpr int DEFAULT_WIDTH {1000};
 /// Default editor height, in pixels.
 constexpr int DEFAULT_HEIGHT {680};
 /// Smallest editor width, in pixels.
-constexpr int MIN_WIDTH {760};
+constexpr int MIN_EDITOR_WIDTH {760};
 /// Smallest editor height, in pixels.
-constexpr int MIN_HEIGHT {560};
+constexpr int MIN_EDITOR_HEIGHT {560};
 /// Largest editor width, in pixels.
-constexpr int MAX_WIDTH_PIXELS {2800};
+constexpr int MAX_EDITOR_WIDTH {2800};
 /// Largest editor height, in pixels.
-constexpr int MAX_HEIGHT_PIXELS {1800};
+constexpr int MAX_EDITOR_HEIGHT {1800};
 /// Height of the header row, in pixels.
 constexpr int HEADER_HEIGHT {36};
 /// Gap between sections, in pixels.
@@ -88,7 +88,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     auto& parameters = owner.getParameters();
 
     titleLabel.setText("ImageControl", juce::dontSendNotification);
-    titleLabel.setFont(ImageControlLookAndFeel::getTextFont(TITLE_FONT_HEIGHT).boldened());
+    titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
 
@@ -126,7 +126,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     drainAnalyzerFifo(false);
 
     setResizable(true, true);
-    setResizeLimits(MIN_WIDTH, MIN_HEIGHT, MAX_WIDTH_PIXELS, MAX_HEIGHT_PIXELS);
+    setResizeLimits(MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT, MAX_EDITOR_WIDTH, MAX_EDITOR_HEIGHT);
     setSize(
         static_cast<int>(editorState.getProperty(EDITOR_WIDTH_PROPERTY, DEFAULT_WIDTH)),
         static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY, DEFAULT_HEIGHT))
@@ -272,11 +272,7 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     spectrogram.advance(std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS));
 
     const Crossovers crossovers = imageControlProcessor.getCrossovers();
-    const bool crossoversMoved
-        = !std::ranges::equal(crossovers, displayedCrossovers, [](const float first, const float second) {
-              return juce::approximatelyEqual(first, second);
-          });
-    if (crossoversMoved) {
+    if (!sameCrossovers(crossovers, displayedCrossovers)) {
         displayedCrossovers = crossovers;
         updateBandRanges();
     }

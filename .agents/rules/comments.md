@@ -1,9 +1,10 @@
 ---
 description: Commenting conventions for the C++ sources, the test plugin, and the documentation next to them
-globs: cpp/**,test-plugin/**
+globs: cpp/**,test-plugin/**,image-control-plugin/**
 paths:
   - "cpp/**"
   - "test-plugin/**"
+  - "image-control-plugin/**"
 alwaysApply: false
 ---
 

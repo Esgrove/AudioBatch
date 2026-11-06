@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "Parameters.h"
+
 #include <juce_dsp/juce_dsp.h>
 
 #include <cstddef>
@@ -17,12 +19,6 @@ namespace esgrove::image_control
 {
 /// Sample rate the analyzer assumes until it is prepared for another.
 constexpr double ANALYZER_DEFAULT_SAMPLE_RATE {48'000.0};
-/// Default level difference between the channels that reaches the edge of the display, in dB.
-constexpr double DEFAULT_FOCUS_DB {18.0};
-/// Smallest focus, in dB.
-constexpr double MIN_FOCUS_DB {6.0};
-/// Largest focus, in dB.
-constexpr double MAX_FOCUS_DB {40.0};
 
 /// One analyzed frequency bin of one channel pair.
 struct SpectralPoint {
@@ -43,10 +39,13 @@ using SpectralFrameCallback = std::function<void(std::span<const SpectralPoint> 
 
 /// One resolution of the analysis: a window length, the frequency range it reports, and how often it runs.
 struct AnalysisTier {
+    /// Transform of twice the window length.
     std::unique_ptr<juce::dsp::FFT> fft;
     /// Hann window of the tier's length.
     std::vector<float> window;
+    /// Windowed left samples, zero padded, and then their spectrum.
     std::vector<float> leftSpectrum;
+    /// Windowed right samples, zero padded, and then their spectrum.
     std::vector<float> rightSpectrum;
     /// Lowest frequency the tier reports, in Hz.
     double minFrequency {0.0};
@@ -59,6 +58,8 @@ struct AnalysisTier {
     /// Samples pushed since the tier's last frame.
     std::size_t samplesSinceFrame {0};
 };
+
+[[nodiscard]] float positionFromMagnitudes(float leftMagnitude, float rightMagnitude, float focusDecibels);
 
 /// Multi-resolution spatial analysis of stereo audio.
 ///
@@ -78,8 +79,6 @@ class SpatialAnalyzer
 public:
     SpatialAnalyzer();
 
-    [[nodiscard]] static float positionFromMagnitudes(float leftMagnitude, float rightMagnitude, float focusDecibels);
-
     void clear();
     void prepare(double newSampleRate);
     void pushSamples(std::span<const float> left, std::span<const float> right);
@@ -90,14 +89,20 @@ private:
     void analyzeTier(AnalysisTier& tier);
     void copyNewest(std::span<const float> ring, std::span<float> destination) const;
 
+    /// The tiers from the lowest frequencies to the highest.
     std::vector<AnalysisTier> tiers;
-    /// Rings of the newest samples of each channel, as long as the longest window.
+    /// Ring of the newest left samples, as long as the longest window.
     std::vector<float> leftHistory;
+    /// Ring of the newest right samples, as long as the longest window.
     std::vector<float> rightHistory;
+    /// The points of the frame being reported, reused between frames.
     std::vector<SpectralPoint> points;
+    /// Receives every analyzed frame.
     SpectralFrameCallback frameCallback;
 
+    /// Sample rate the tiers were built for.
     double sampleRate {ANALYZER_DEFAULT_SAMPLE_RATE};
+    /// Level difference in dB that reaches the edges.
     float focusDecibels {static_cast<float>(DEFAULT_FOCUS_DB)};
     /// Position in the rings where the next sample goes.
     std::size_t writePosition {0};

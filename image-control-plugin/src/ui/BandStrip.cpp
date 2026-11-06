@@ -43,24 +43,13 @@ constexpr float LABEL_FONT_HEIGHT {14.0F};
 /// Step of the Width slider.
 constexpr double WIDTH_STEP {0.01};
 
-/// Returns the linear Width ratio of a band from its Mid and Side gains in dB: 0 when Side is off.
-double widthFromGains(const double midDecibels, const double sideDecibels)
+/// Sets a parameter to a plain value, inside the gesture already open, or in a gesture of its own.
+void setSideValue(juce::RangedAudioParameter& parameter, const float value, const bool inGesture)
 {
-    if (sideDecibels <= static_cast<double>(BAND_GAIN_MIN_DB)) {
-        return 0.0;
-    }
-    return juce::Decibels::decibelsToGain(sideDecibels - midDecibels);
-}
-
-/// Sets a parameter from a plain value in one host change gesture, unless a gesture is already open.
-void setParameterValue(juce::RangedAudioParameter& parameter, const float value, const bool inGesture)
-{
-    if (!inGesture) {
-        parameter.beginChangeGesture();
-    }
-    parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
-    if (!inGesture) {
-        parameter.endChangeGesture();
+    if (inGesture) {
+        parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
+    } else {
+        setParameterInGesture(parameter, value);
     }
 }
 }  // namespace
@@ -74,10 +63,10 @@ BandStrip::BandStrip(
     sideParameter(*parameters.getParameter(sideGainParameterId(band)))
 {
     nameLabel.setText(bandName(band), juce::dontSendNotification);
-    nameLabel.setFont(ImageControlLookAndFeel::getTextFont(NAME_FONT_HEIGHT).boldened());
+    nameLabel.setFont(textFont(NAME_FONT_HEIGHT).boldened());
     nameLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     nameLabel.setJustificationType(juce::Justification::centredLeft);
-    rangeLabel.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
+    rangeLabel.setFont(textFont(LABEL_FONT_HEIGHT));
     rangeLabel.setJustificationType(juce::Justification::centredLeft);
     rangeLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     addAndMakeVisible(nameLabel);
@@ -95,7 +84,7 @@ BandStrip::BandStrip(
     );
 
     configureSlider(widthSlider, widthLabel, "Width");
-    widthSlider.setRange(0.0, MAX_WIDTH, WIDTH_STEP);
+    widthSlider.setRange(0.0, MAX_STEREO_WIDTH, WIDTH_STEP);
     widthSlider.setDoubleClickReturnValue(true, 1.0);
     widthSlider.onDragStart = [this] {
         draggingWidth = true;
@@ -133,7 +122,7 @@ BandStrip::BandStrip(
                 static_cast<double>(BAND_GAIN_MIN_DB),
                 static_cast<double>(BAND_GAIN_MAX_DB)
             );
-            setParameterValue(sideParameter, static_cast<float>(side), true);
+            setSideValue(sideParameter, static_cast<float>(side), true);
         }
         updateWidthFromGains();
     };
@@ -199,7 +188,7 @@ void BandStrip::applyWidth()
                                                  static_cast<double>(BAND_GAIN_MIN_DB),
                                                  static_cast<double>(BAND_GAIN_MAX_DB)
                                              );
-    setParameterValue(sideParameter, static_cast<float>(side), draggingWidth);
+    setSideValue(sideParameter, static_cast<float>(side), draggingWidth);
 }
 
 /// Sets up a full-width horizontal slider with its value box on the right and its label above it.
@@ -208,7 +197,7 @@ void BandStrip::configureSlider(ControlSlider& slider, juce::Label& label, const
     slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, TEXT_BOX_WIDTH, TEXT_BOX_HEIGHT);
     addAndMakeVisible(slider);
     label.setText(text, juce::dontSendNotification);
-    label.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
+    label.setFont(textFont(LABEL_FONT_HEIGHT));
     label.setJustificationType(juce::Justification::bottomLeft);
     label.setBorderSize({});
     addAndMakeVisible(label);
@@ -221,7 +210,7 @@ void BandStrip::updateWidthFromGains()
     const double mid = midSlider.getValue();
     const bool midOff = mid <= static_cast<double>(BAND_GAIN_MIN_DB);
     widthSlider.setEnabled(!midOff);
-    const double width = midOff ? 0.0 : widthFromGains(mid, sideSlider.getValue());
-    widthSlider.setValue(std::min(width, MAX_WIDTH), juce::dontSendNotification);
+    const double width = midOff ? 0.0 : bandWidthFromGains(mid, sideSlider.getValue());
+    widthSlider.setValue(std::min(width, MAX_STEREO_WIDTH), juce::dontSendNotification);
 }
 }  // namespace esgrove::image_control

@@ -2,10 +2,8 @@
 
 #include "ui/SettingsPanel.h"
 
-#include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 #include "ui/ImageControlLookAndFeel.h"
-#include "ui/SpatialSpectrogramView.h"
 
 #include <array>
 #include <utility>
@@ -14,7 +12,7 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Size of the panel, in pixels.
+/// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
 constexpr int PANEL_HEIGHT {250};
@@ -41,7 +39,7 @@ constexpr double FOCUS_STEP {0.5};
 void configureLabel(juce::Label& label, const juce::String& text)
 {
     label.setText(text, juce::dontSendNotification);
-    label.setFont(ImageControlLookAndFeel::getTextFont(LABEL_FONT_HEIGHT));
+    label.setFont(textFont(LABEL_FONT_HEIGHT));
     label.setBorderSize({});
     label.setJustificationType(juce::Justification::bottomLeft);
 }
@@ -51,7 +49,7 @@ void configureLabel(juce::Label& label, const juce::String& text)
 SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
 {
     titleLabel.setText("Display settings", juce::dontSendNotification);
-    titleLabel.setFont(ImageControlLookAndFeel::getTextFont(TITLE_FONT_HEIGHT).boldened());
+    titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     titleLabel.setBorderSize({});
     addAndMakeVisible(titleLabel);

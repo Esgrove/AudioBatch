@@ -104,8 +104,8 @@ TEST(Analyzer, PositionFollowsTheLevelDifferenceOverTheFocus)
     std::ranges::transform(sine, quieter.begin(), [gain](const float value) { return value * gain; });
     const auto peak = loudest(analyze(sine, quieter));
     EXPECT_NEAR(peak.position, 0.5F, 0.01F);
-    EXPECT_FLOAT_EQ(SpatialAnalyzer::positionFromMagnitudes(1.0F, 0.0F, 18.0F), 1.0F);
-    EXPECT_FLOAT_EQ(SpatialAnalyzer::positionFromMagnitudes(0.0F, 0.0F, 18.0F), 0.0F);
+    EXPECT_FLOAT_EQ(positionFromMagnitudes(1.0F, 0.0F, 18.0F), 1.0F);
+    EXPECT_FLOAT_EQ(positionFromMagnitudes(0.0F, 0.0F, 18.0F), 0.0F);
 }
 
 TEST(Analyzer, ResolvesNeighbouringBassTones)

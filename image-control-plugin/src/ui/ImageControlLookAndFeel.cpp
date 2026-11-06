@@ -100,13 +100,13 @@ ImageControlLookAndFeel::ImageControlLookAndFeel()
 }
 
 /// Returns Roboto Mono at a height.
-juce::Font ImageControlLookAndFeel::getMonoFont(const float height)
+juce::Font monoFont(const float height)
 {
     return juce::Font(juce::FontOptions(monoTypeface())).withHeight(height);
 }
 
 /// Returns Roboto at a height.
-juce::Font ImageControlLookAndFeel::getTextFont(const float height)
+juce::Font textFont(const float height)
 {
     return juce::Font(juce::FontOptions(textTypeface())).withHeight(height);
 }
@@ -116,7 +116,7 @@ juce::Font ImageControlLookAndFeel::getLabelFont(juce::Label& label)
 {
     const float height = label.getFont().getHeight();
     if (dynamic_cast<juce::Slider*>(label.getParentComponent()) != nullptr) {
-        return getMonoFont(height);
+        return monoFont(height);
     }
     return label.getFont();
 }
@@ -124,6 +124,6 @@ juce::Font ImageControlLookAndFeel::getLabelFont(juce::Label& label)
 /// Uses Roboto for text buttons, scaled to the button like AudioBatch's buttons.
 juce::Font ImageControlLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/, const int buttonHeight)
 {
-    return getTextFont(std::min(MAX_BUTTON_FONT_HEIGHT, static_cast<float>(buttonHeight) * BUTTON_FONT_HEIGHT_RATIO));
+    return textFont(std::min(MAX_BUTTON_FONT_HEIGHT, static_cast<float>(buttonHeight) * BUTTON_FONT_HEIGHT_RATIO));
 }
 }  // namespace esgrove::image_control

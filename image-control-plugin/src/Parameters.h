@@ -56,6 +56,18 @@ constexpr auto PHASE_COLOURS_PROPERTY {"phaseColours"};
 constexpr auto MEL_SCALE_PROPERTY {"melScale"};
 /// Name of the editor setting that shows the display refresh rate.
 constexpr auto SHOW_FPS_PROPERTY {"showFps"};
+/// Shortest time constant of the fade of the spectrogram particles, in seconds.
+constexpr double MIN_PERSISTENCE_SECONDS {0.05};
+/// Longest time constant of the fade of the spectrogram particles, in seconds.
+constexpr double MAX_PERSISTENCE_SECONDS {3.0};
+/// Default time constant of the fade of the spectrogram particles, in seconds.
+constexpr double DEFAULT_PERSISTENCE_SECONDS {0.3};
+/// Default level difference between the channels that reaches the edges of the spectrogram, in dB.
+constexpr double DEFAULT_FOCUS_DB {18.0};
+/// Smallest spectrogram focus, in dB.
+constexpr double MIN_FOCUS_DB {6.0};
+/// Largest spectrogram focus, in dB.
+constexpr double MAX_FOCUS_DB {40.0};
 /// Name of the editor setting that holds the editor width in pixels.
 constexpr auto EDITOR_WIDTH_PROPERTY {"editorWidth"};
 /// Name of the editor setting that holds the editor height in pixels.
@@ -75,6 +87,13 @@ using BandGains = std::array<float, BAND_COUNT>;
 [[nodiscard]] juce::String formatFrequency(float frequency);
 
 [[nodiscard]] Crossovers orderCrossovers(const Crossovers& requested);
+[[nodiscard]] bool sameCrossovers(const Crossovers& first, const Crossovers& second);
+
+[[nodiscard]] double bandWidthFromGains(double midDecibels, double sideDecibels);
+[[nodiscard]] float plainValue(const juce::RangedAudioParameter& parameter);
+[[nodiscard]] int sampleRateDoublings(double sampleRate, double referenceSampleRate);
+
+void setParameterInGesture(juce::RangedAudioParameter& parameter, float value);
 
 [[nodiscard]] float bandGainFromDecibels(float decibels);
 [[nodiscard]] float outputGainFromDecibels(float decibels);

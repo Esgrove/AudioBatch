@@ -41,15 +41,10 @@ KernelSpectra designKernelSpectra(const Crossovers& crossovers, const double sam
     return {kernels, PARTITION_SIZE};
 }
 
-/// Returns whether two sets of crossovers are the same.
-bool sameCrossovers(const Crossovers& first, const Crossovers& second)
-{
-    return std::ranges::equal(first, second, [](const float left, const float right) {
-        return juce::approximatelyEqual(left, right);
-    });
-}
-
 /// Returns whether a smoothed gain has settled at unity.
+/// The bit-exact pass-through only needs the gain to have stopped gliding at its target:
+/// the gain parameters snap targets near 0 dB to exactly 1, and the neutral path copies the delayed input
+/// instead of multiplying by the gain, so this tolerance never reaches the output.
 bool isSettledAtUnity(const SmoothedGain& gain)
 {
     return !gain.isSmoothing() && juce::approximatelyEqual(gain.getCurrentValue(), 1.0F);
@@ -77,6 +72,20 @@ std::span<float> channelSamples(juce::AudioBuffer<float>& buffer, const int chan
     return {buffer.getWritePointer(channel), static_cast<std::size_t>(buffer.getNumSamples())};
 }
 }  // namespace
+
+/// A background thread that calls its work function at a fixed interval until it is stopped.
+/// The imager uses it to design new crossover kernels when the crossovers move during real-time playback.
+class KernelDesignThread final : public juce::Thread
+{
+public:
+    explicit KernelDesignThread(std::function<void()> task);
+
+    void run() override;
+
+private:
+    /// The function called at every poll.
+    std::function<void()> work;
+};
 
 /// Creates a design thread that calls the work function every DESIGN_POLL_MILLISECONDS once started.
 KernelDesignThread::KernelDesignThread(std::function<void()> task) :
@@ -219,8 +228,8 @@ void MultibandImager::setCrossovers(const Crossovers& crossovers, const bool des
 void MultibandImager::setGains(const BandGains& midGains, const BandGains& sideGains, const float outputGain)
 {
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        midGainSmoothers.at(band).setTargetValue(midGains.at(band));
-        sideGainSmoothers.at(band).setTargetValue(sideGains.at(band));
+        midGainSmoothers[band].setTargetValue(midGains[band]);
+        sideGainSmoothers[band].setTargetValue(sideGains[band]);
     }
     outputGainSmoother.setTargetValue(outputGain);
 }
@@ -293,8 +302,8 @@ void MultibandImager::lowpassSignal(
     const bool crossfade
 )
 {
-    const auto& active = kernelSlots.at(static_cast<std::size_t>(activeSlot));
-    const auto& spare = kernelSlots.at(static_cast<std::size_t>(1 - activeSlot));
+    const auto& active = kernelSlots[static_cast<std::size_t>(activeSlot)];
+    const auto& spare = kernelSlots[static_cast<std::size_t>(1 - activeSlot)];
     constexpr float fadeStep = 1.0F / static_cast<float>(PARTITION_SIZE);
     for (std::size_t kernel = 0; kernel < CROSSOVER_COUNT; ++kernel) {
         auto& output = outputs[kernel];
@@ -323,8 +332,8 @@ void MultibandImager::mixPartition(const int channels)
     BandGains sideGains {};
     for (std::size_t sample = 0; sample < outputLeft.size(); ++sample) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            midGains.at(band) = midGainSmoothers.at(band).getNextValue();
-            sideGains.at(band) = sideGainSmoothers.at(band).getNextValue();
+            midGains[band] = midGainSmoothers[band].getNextValue();
+            sideGains[band] = sideGainSmoothers[band].getNextValue();
         }
         const float outputGain = outputGainSmoother.getNextValue();
         if (stereo) {

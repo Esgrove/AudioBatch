@@ -4,11 +4,9 @@
 
 #include "ImageControlProcessor.h"
 
-#include "analysis/SpatialAnalyzer.h"
 #include "analysis/StereoSampleFifo.h"
 #include "ImageControlEditor.h"
 #include "Parameters.h"
-#include "ui/SpatialSpectrogramView.h"
 
 #include <atomic>
 #include <cstddef>
