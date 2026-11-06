@@ -3,6 +3,9 @@
 /// each input partition is transformed together with the previous one,
 /// the spectra of the recent partitions are multiplied with the matching kernel partitions and summed,
 /// and the second half of the inverse transform is the exact linear convolution of the partition.
+/// Spectra are stored split, with the real parts of all bins followed by the imaginary parts,
+/// so the multiply-add over the bins is plain lane-by-lane arithmetic
+/// that NEON and AVX2 vectorize with fused multiply-adds.
 
 #include "dsp/PartitionedConvolver.h"
 
@@ -21,6 +24,27 @@ namespace
 int fftOrderForPartition(const int partitionSize)
 {
     return juce::roundToInt(std::log2(static_cast<double>(partitionSize) * 2.0));
+}
+
+/// Copies JUCE's interleaved spectrum, real and imaginary part per bin, into the split layout:
+/// the real parts of all bins, then the imaginary parts.
+void splitComplex(const std::span<const float> interleaved, const std::span<float> split)
+{
+    const std::size_t bins = split.size() / 2;
+    for (std::size_t bin = 0; bin < bins; ++bin) {
+        split[bin] = interleaved[bin * 2];
+        split[bins + bin] = interleaved[bin * 2 + 1];
+    }
+}
+
+/// Copies a split spectrum back into JUCE's interleaved layout.
+void interleaveComplex(const std::span<const float> split, const std::span<float> interleaved)
+{
+    const std::size_t bins = split.size() / 2;
+    for (std::size_t bin = 0; bin < bins; ++bin) {
+        interleaved[bin * 2] = split[bin];
+        interleaved[bin * 2 + 1] = split[bins + bin];
+    }
 }
 }  // namespace
 
@@ -50,12 +74,15 @@ KernelSpectra::KernelSpectra(const std::span<const std::vector<float>> kernels, 
             std::copy_n(taps.begin() + static_cast<std::ptrdiff_t>(first), count, workspace.begin());
             fft.performRealOnlyForwardTransform(workspace.data(), true);
             const auto destination = (kernel * partitionCount + partition) * binValues;
-            std::copy_n(workspace.begin(), binValues, spectra.begin() + static_cast<std::ptrdiff_t>(destination));
+            splitComplex(
+                std::span<const float>(workspace).first(binValues),
+                std::span<float>(spectra).subspan(destination, binValues)
+            );
         }
     }
 }
 
-/// Returns the interleaved complex spectrum of one partition of one kernel.
+/// Returns the split complex spectrum of one partition of one kernel: the real parts, then the imaginary parts.
 std::span<const float> KernelSpectra::getPartition(const std::size_t kernel, const std::size_t partition) const
 {
     return std::span<const float>(spectra).subspan((kernel * partitionCount + partition) * binValues, binValues);
@@ -110,8 +137,9 @@ void PartitionedConvolver::pushInput(const std::span<const float> input)
     fft->performRealOnlyForwardTransform(workspace.data(), true);
 
     newestPartition = (newestPartition + 1) % partitionCount;
-    std::copy_n(
-        workspace.begin(), binValues, history.begin() + static_cast<std::ptrdiff_t>(newestPartition * binValues)
+    splitComplex(
+        std::span<const float>(workspace).first(binValues),
+        std::span<float>(history).subspan(newestPartition * binValues, binValues)
     );
 }
 
@@ -123,28 +151,28 @@ void PartitionedConvolver::convolve(const KernelSpectra& kernels, const std::siz
     jassert(output.size() == partitionSize);
 
     std::ranges::fill(accumulator, 0.0F);
+    // In the hottest loop of the plugin, every span has the same length and the loop stays below it,
+    // so the compiler can prove each access in range, drop the hardening checks,
+    // and turn the split complex multiply-add into vector fused multiply-adds.
+    // Cutting the spans to the length checks their sizes once per partition.
+    const std::size_t bins = binValues / 2;
+    const auto sumReal = std::span<float>(accumulator).first(bins);
+    const auto sumImaginary = std::span<float>(accumulator).subspan(bins).first(bins);
     for (std::size_t partition = 0; partition < partitionCount; ++partition) {
         const std::size_t slot = (newestPartition + partitionCount - partition) % partitionCount;
         const auto input = std::span<const float>(history).subspan(slot * binValues, binValues);
-        // In the hottest loop of the plugin,
-        // every span has the same length and the loop condition keeps both indices below it,
-        // so the compiler can prove each access in range, drop the hardening checks, and vectorize the loop.
-        // Cutting the spans to the length checks their sizes once per partition.
-        const std::size_t count = binValues;
-        const auto inputs = input.first(count);
-        const auto taps = kernels.getPartition(kernel, partition).first(count);
-        const auto sums = std::span<float>(accumulator).first(count);
-        for (std::size_t value = 0; value + 1 < count; value += 2) {
-            const float inputReal = inputs[value];
-            const float inputImaginary = inputs[value + 1];
-            const float tapReal = taps[value];
-            const float tapImaginary = taps[value + 1];
-            sums[value] += inputReal * tapReal - inputImaginary * tapImaginary;
-            sums[value + 1] += inputReal * tapImaginary + inputImaginary * tapReal;
+        const auto taps = kernels.getPartition(kernel, partition);
+        const auto inputReal = input.first(bins);
+        const auto inputImaginary = input.subspan(bins).first(bins);
+        const auto tapReal = taps.first(bins);
+        const auto tapImaginary = taps.subspan(bins).first(bins);
+        for (std::size_t bin = 0; bin < bins; ++bin) {
+            sumReal[bin] += inputReal[bin] * tapReal[bin] - inputImaginary[bin] * tapImaginary[bin];
+            sumImaginary[bin] += inputReal[bin] * tapImaginary[bin] + inputImaginary[bin] * tapReal[bin];
         }
     }
 
-    std::ranges::copy(accumulator, workspace.begin());
+    interleaveComplex(accumulator, std::span<float>(workspace).first(binValues));
     std::fill(workspace.begin() + static_cast<std::ptrdiff_t>(binValues), workspace.end(), 0.0F);
     fft->performRealOnlyInverseTransform(workspace.data());
     std::copy_n(workspace.begin() + static_cast<std::ptrdiff_t>(partitionSize), partitionSize, output.begin());

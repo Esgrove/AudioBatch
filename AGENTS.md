@@ -50,6 +50,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `image-control-plugin/build.sh` builds it with the JUCE submodule in `cpp/JUCE`,
   and runs its GoogleTest unit tests with `--test`.
   `cpp/format.sh` formats it, and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
+  It includes `cpp/cmake/Optimizations.cmake`, so it targets the same CPUs and optimizations as AudioBatch.
 - `fixtures/spectrogram_expected/` holds short PCM16 inputs and sparse NumPy power expectations for the spectrogram,
  which both test suites read in place.
  `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
@@ -113,7 +114,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
   `image-control.yml` builds, tests, and lints ImageControl on macOS and Windows,
-  only when the plugin, the JUCE submodule, or the shared C++ style configuration changes.
+  only when the plugin, the JUCE submodule, or the shared C++ style or optimization configuration changes.
 
 ## Isolated Application Storage
 

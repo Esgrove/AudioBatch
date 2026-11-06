@@ -22,6 +22,11 @@ endif()
 option(IMAGE_CONTROL_BUILD_TESTS "Build the ImageControl unit tests and benchmark" ${PROJECT_IS_TOP_LEVEL})
 option(IMAGE_CONTROL_HARDENING "Enable standard library hardening, as the AudioBatch build does" ON)
 
+# The same CPU targets and optimizations as AudioBatch:
+# Release link-time optimization, fused multiply-adds, the local CPU in local Release builds but never in CI,
+# and an AVX2 baseline on Windows. macOS builds for the host architecture, which is arm64 with NEON on Apple Silicon.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/Optimizations.cmake")
+
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE" JUCE)
 
 # build.sh --install copies the bundle to the user's VST3 folder, so the build itself never does.
