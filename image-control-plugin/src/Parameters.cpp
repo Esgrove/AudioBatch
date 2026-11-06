@@ -28,14 +28,6 @@ constexpr float TENTHS_PER_DECIBEL {10.0F};
 /// Step of the gain parameters in dB.
 constexpr float GAIN_STEP_DB {0.01F};
 
-/// Returns a logarithmically skewed frequency range from MIN_FREQUENCY to MAX_FREQUENCY.
-juce::NormalisableRange<float> frequencyRange()
-{
-    juce::NormalisableRange<float> range(MIN_FREQUENCY, MAX_FREQUENCY);
-    range.setSkewForCentre(std::sqrt(MIN_FREQUENCY * MAX_FREQUENCY));
-    return range;
-}
-
 /// Formats a crossover parameter value for the host.
 juce::String formatCrossoverValue(const float frequency, const int /*maximumLength*/)
 {
@@ -76,7 +68,7 @@ std::unique_ptr<juce::AudioParameterFloat> makeGainParameter(
     return std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID {parameterId, PARAMETER_VERSION},
         name,
-        juce::NormalisableRange<float>(minDecibels, maxDecibels, GAIN_STEP_DB),
+        gainRange(minDecibels, maxDecibels),
         0.0F,
         juce::AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction(formatBandGain)
     );
@@ -93,7 +85,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
             std::make_unique<juce::AudioParameterFloat>(
                 juce::ParameterID {crossoverParameterId(crossover), PARAMETER_VERSION},
                 CROSSOVER_NAMES.at(crossover),
-                frequencyRange(),
+                crossoverRange(),
                 DEFAULT_CROSSOVERS.at(crossover),
                 juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(formatCrossoverValue)
             )
@@ -110,6 +102,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         std::make_unique<juce::AudioParameterBool>(juce::ParameterID {BYPASS_ID, PARAMETER_VERSION}, "Bypass", false)
     );
     return layout;
+}
+
+/// Returns the range of the crossover parameters: a logarithmically skewed range from MIN_FREQUENCY to MAX_FREQUENCY.
+juce::NormalisableRange<float> crossoverRange()
+{
+    juce::NormalisableRange<float> range(MIN_FREQUENCY, MAX_FREQUENCY);
+    range.setSkewForCentre(std::sqrt(MIN_FREQUENCY * MAX_FREQUENCY));
+    return range;
+}
+
+/// Returns the range of a gain parameter in dB, in steps of a hundredth of a dB.
+juce::NormalisableRange<float> gainRange(const float minDecibels, const float maxDecibels)
+{
+    return {minDecibels, maxDecibels, GAIN_STEP_DB};
 }
 
 /// Returns the id of the crossover with the given index, counted from the lowest.

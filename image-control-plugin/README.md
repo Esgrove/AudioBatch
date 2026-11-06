@@ -1,12 +1,12 @@
 # ImageControl
 
-A multiband stereo imaging VST3 effect by esgrove, built with JUCE.
+A multiband stereo imaging effect by esgrove, built with JUCE as a VST3 and, on macOS, an Audio Unit.
 It splits the signal into four frequency bands and sets the mid and side level of each band separately,
 so the stereo image can be narrowed, widened, or rebalanced in one frequency range without touching the others.
 A spatial spectrogram shows where the energy of each frequency sits in the stereo field.
 
 The plugin lives in the AudioBatch repository for now and is mainly used from AudioBatch's plugin chain,
-but it is a standalone plugin that works in any VST3 host on macOS and Windows.
+but it is a standalone plugin that works in any VST3 host on macOS and Windows, and in any Audio Unit host on macOS.
 
 ## Parameters
 
@@ -146,11 +146,15 @@ with a minimum deployment target of macOS 15.
 ./build.sh
 ```
 
-The script builds the Release bundle into `build/` and prints its path, which `--print` prints without building.
+The script builds the Release VST3 into `build/`, and on macOS the Audio Unit next to it,
+and prints the VST3 path, which `--print` prints without building.
 `--debug` builds Debug into `build-debug/` instead.
 `--test` also builds and runs the unit tests.
-`--install` copies the bundle into the user's VST3 folder,
-`~/Library/Audio/Plug-Ins/VST3` on macOS and `%LOCALAPPDATA%\Programs\Common\VST3` on Windows.
+`--install` copies the VST3 into the user's VST3 folder,
+`~/Library/Audio/Plug-Ins/VST3` on macOS and `%LOCALAPPDATA%\Programs\Common\VST3` on Windows,
+and on macOS the Audio Unit into `~/Library/Audio/Plug-Ins/Components`, restarting the Audio Unit registry.
+`--validate` installs and then validates the Audio Unit with `auval`.
+The Audio Unit is built from the same code as the VST3, with no format-specific code in the plugin.
 
 The build includes `../cpp/cmake/Optimizations.cmake`, so it targets the same CPUs as AudioBatch:
 the host architecture on macOS, which is arm64 with NEON on Apple Silicon, and an AVX2 baseline on Windows.
@@ -178,7 +182,26 @@ The convolver's inner loop keeps its spans the same length and its indices prova
 so the compiler drops the checks there and still vectorizes it.
 `../cpp/format.sh` formats the sources, the CMake file, and the scripts, and the root `../format.sh` runs it too.
 The `ImageControl` workflow in `../.github/workflows/image-control.yml` builds, tests, and lints the plugin on macOS
-and Windows.
+and Windows, and validates the Audio Unit on macOS.
+
+### Comparing the VST3 and the Audio Unit
+
+`benchmarks/compare_formats.py` renders the same files through both formats with the AudioBatch CLI on macOS:
+
+```shell
+uv run fixtures/benchmark/generate.py
+image-control-plugin/build.sh --validate
+uv run --script image-control-plugin/benchmarks/compare_formats.py
+```
+
+It builds `ImageControlPresetWriter`, which hosts the installed VST3 and Audio Unit through JUCE as AudioBatch does,
+sets the same non-neutral settings on both, and writes an AudioBatch chain preset for each.
+It then renders three 60-second stereo files from `../fixtures/benchmark/output` through each preset.
+Each run uses `audiobatch process` with isolated application storage, and the formats alternate over several runs.
+Last, it compares the 16-bit PCM the two formats wrote, sample by sample.
+`--cli` picks the AudioBatch CLI, `--runs` the number of runs, and `--jobs` how many files render at once.
+On an Apple Silicon Mac both formats rendered at about 58 times real time,
+with bit-identical output.
 
 ## Future Work
 
@@ -209,3 +232,6 @@ and Windows.
   `ControlSlider.*` the slider with fine dragging and key nudges,
   and `ImageControlLookAndFeel.*` the AudioBatch palette and fonts.
 - `tests/` holds the GoogleTest unit tests.
+- `benchmarks/` holds `Benchmark.cpp`, which times the processing and the spectrogram,
+  `PresetWriter.cpp`, which writes AudioBatch presets for both formats,
+  and `compare_formats.py`, which renders and compares the formats through AudioBatch.

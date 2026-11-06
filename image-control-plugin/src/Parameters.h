@@ -79,6 +79,8 @@ using Crossovers = std::array<float, CROSSOVER_COUNT>;
 using BandGains = std::array<float, BAND_COUNT>;
 
 [[nodiscard]] juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+[[nodiscard]] juce::NormalisableRange<float> crossoverRange();
+[[nodiscard]] juce::NormalisableRange<float> gainRange(float minDecibels, float maxDecibels);
 [[nodiscard]] juce::String crossoverParameterId(std::size_t crossover);
 [[nodiscard]] juce::String midGainParameterId(std::size_t band);
 [[nodiscard]] juce::String sideGainParameterId(std::size_t band);
