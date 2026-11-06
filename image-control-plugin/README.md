@@ -152,6 +152,15 @@ The script builds the Release bundle into `build/` and prints its path, which `-
 `--install` copies the bundle into the user's VST3 folder,
 `~/Library/Audio/Plug-Ins/VST3` on macOS and `%LOCALAPPDATA%\Programs\Common\VST3` on Windows.
 
+The build includes `../cpp/cmake/Optimizations.cmake`, so it targets the same CPUs as AudioBatch:
+the host architecture on macOS, which is arm64 with NEON on Apple Silicon, and an AVX2 baseline on Windows.
+Release builds use link-time optimization and fuse multiply-adds,
+and local Release builds also target the local CPU, which CI never does.
+The hot loops are written for that SIMD width:
+the convolver keeps its spectra split into real and imaginary parts, so its multiply-add is lane by lane,
+and the spectrogram blur runs along whole rows without index clamping.
+On an Apple Silicon Mac these took the audio processing from about 4.2 to 3.5 ms per second of stereo audio.
+
 The sources compile with strict warnings as errors.
 `./lint.sh` checks them with clang-tidy using the AudioBatch C++ configuration,
 and `--check` makes any warning fail the run.

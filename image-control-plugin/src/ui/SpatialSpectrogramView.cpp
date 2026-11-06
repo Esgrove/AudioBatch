@@ -596,25 +596,35 @@ double SpatialSpectrogramView::xToFrequency(const float x) const
 }
 
 /// Spreads every cell a little into its four neighbours, so older particles smear while new ones stay sharp.
+/// Edge cells use themselves as their missing neighbour.
+/// Both passes run along whole rows of the same length without index clamping,
+/// so the compiler vectorizes them for NEON and AVX2.
 void SpatialSpectrogramView::blurBuffer()
 {
     constexpr float centreWeight = 1.0F - 2.0F * BLUR_NEIGHBOUR_WEIGHT;
+    const auto rowOf = [](std::span<float> plane, const int row) {
+        return plane.subspan(static_cast<std::size_t>(row) * COLUMNS).first(COLUMNS);
+    };
     for (auto& plane : buffer) {
         for (int row = 0; row < SPECTROGRAM_ROWS; ++row) {
-            for (int column = 0; column < SPECTROGRAM_COLUMNS; ++column) {
-                const float left = plane[cellIndex(std::max(0, column - 1), row)];
-                const float right = plane[cellIndex(std::min(SPECTROGRAM_COLUMNS - 1, column + 1), row)];
-                blurScratch[cellIndex(column, row)]
-                    = plane[cellIndex(column, row)] * centreWeight + (left + right) * BLUR_NEIGHBOUR_WEIGHT;
+            const auto source = rowOf(plane, row);
+            const auto blurred = rowOf(blurScratch, row);
+            blurred.front() = source.front() * centreWeight + (source.front() + source[1]) * BLUR_NEIGHBOUR_WEIGHT;
+            for (std::size_t column = 1; column + 1 < COLUMNS; ++column) {
+                blurred[column]
+                    = source[column] * centreWeight + (source[column - 1] + source[column + 1]) * BLUR_NEIGHBOUR_WEIGHT;
             }
+            blurred.back()
+                = source.back() * centreWeight + (source[COLUMNS - 2] + source.back()) * BLUR_NEIGHBOUR_WEIGHT;
         }
         for (int row = 0; row < SPECTROGRAM_ROWS; ++row) {
-            const int above = std::max(0, row - 1);
-            const int below = std::min(SPECTROGRAM_ROWS - 1, row + 1);
-            for (int column = 0; column < SPECTROGRAM_COLUMNS; ++column) {
-                plane[cellIndex(column, row)] = blurScratch[cellIndex(column, row)] * centreWeight
-                    + (blurScratch[cellIndex(column, above)] + blurScratch[cellIndex(column, below)])
-                        * BLUR_NEIGHBOUR_WEIGHT;
+            const auto above = rowOf(blurScratch, std::max(0, row - 1));
+            const auto middle = rowOf(blurScratch, row);
+            const auto below = rowOf(blurScratch, std::min(SPECTROGRAM_ROWS - 1, row + 1));
+            const auto destination = rowOf(plane, row);
+            for (std::size_t column = 0; column < COLUMNS; ++column) {
+                destination[column]
+                    = middle[column] * centreWeight + (above[column] + below[column]) * BLUR_NEIGHBOUR_WEIGHT;
             }
         }
     }

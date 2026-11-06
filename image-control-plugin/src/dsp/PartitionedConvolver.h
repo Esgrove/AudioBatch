@@ -30,7 +30,8 @@ public:
     [[nodiscard]] std::size_t getPartitionCount() const;
 
 private:
-    /// Interleaved complex bins of every partition of every kernel, kernel by kernel.
+    /// Split complex spectrum of every partition of every kernel, kernel by kernel:
+    /// the real parts of a partition's bins followed by their imaginary parts.
     std::vector<float> spectra;
 
     /// Floats in one partition spectrum: twice the number of non-negative frequency bins.
@@ -56,9 +57,9 @@ private:
     /// Transform of twice the partition size, created in prepare.
     std::unique_ptr<juce::dsp::FFT> fft;
 
-    /// Accumulates the spectrum of one kernel's output.
+    /// Accumulates the split complex spectrum of one kernel's output.
     std::vector<float> accumulator;
-    /// Spectra of the most recent input partitions, as a ring with the newest at newestPartition.
+    /// Split complex spectra of the most recent input partitions, as a ring with the newest at newestPartition.
     std::vector<float> history;
     /// The previous and the current input partition, which overlap-save transforms together.
     std::vector<float> inputWindow;
