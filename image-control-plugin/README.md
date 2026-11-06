@@ -12,9 +12,9 @@ but it is a standalone plugin that works in any VST3 host on macOS and Windows.
 
 | Id                           | Name                     | Range                        | Default |
 | ---------------------------- | ------------------------ | ---------------------------- | ------- |
-| `crossover_low`              | Low Crossover            | 20 Hz to 20 kHz, logarithmic | 120 Hz  |
-| `crossover_mid`              | Mid Crossover            | 20 Hz to 20 kHz, logarithmic | 1 kHz   |
-| `crossover_high`             | High Crossover           | 20 Hz to 20 kHz, logarithmic | 10 kHz  |
+| `crossover_low`              | Low Crossover            | 20 Hz to 20 kHz, logarithmic | 100 Hz  |
+| `crossover_mid`              | Mid Crossover            | 20 Hz to 20 kHz, logarithmic | 500 Hz  |
+| `crossover_high`             | High Crossover           | 20 Hz to 20 kHz, logarithmic | 5 kHz   |
 | `band1_mid` to `band4_mid`   | Low: Mid to High: Mid    | -60 dB (off) to +12 dB       | 0 dB    |
 | `band1_side` to `band4_side` | Low: Side to High: Side  | -60 dB (off) to +12 dB       | 0 dB    |
 | `output_gain`                | Output Gain              | -24 dB to +12 dB             | 0 dB    |

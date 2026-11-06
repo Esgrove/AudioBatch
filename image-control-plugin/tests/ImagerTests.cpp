@@ -126,7 +126,7 @@ TEST(Imager, SideGainActsOnlyInsideItsBand)
 {
     BandGains sideGains = uniformGains(1.0F);
     sideGains[1] = 2.0F;
-    for (const double frequency : {40.0, 400.0, 18'000.0}) {
+    for (const double frequency : {40.0, 250.0, 18'000.0}) {
         SCOPED_TRACE(frequency);
         auto buffer = makeBuffer({makeSine(frequency, 0.5F, 24'000), std::vector<float>(24'000, 0.0F)});
         const double inputSide = sideRms(buffer, 8000);
@@ -136,7 +136,7 @@ TEST(Imager, SideGainActsOnlyInsideItsBand)
         imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
         processInBlocks(imager, buffer);
 
-        const double expectedSideRatio = frequency > 150.0 && frequency < 800.0 ? 2.0 : 1.0;
+        const double expectedSideRatio = frequency > 150.0 && frequency < 350.0 ? 2.0 : 1.0;
         EXPECT_NEAR(sideRms(buffer, 8000) / inputSide, expectedSideRatio, 0.01);
         EXPECT_NEAR(midRms(buffer, 8000) / inputMid, 1.0, 0.01);
     }
@@ -175,7 +175,7 @@ TEST(Imager, CrossoverMoveSwitchesKernelsWithoutAClick)
     imager.setGains(uniformGains(1.0F), sideGains, 1.0F);
     imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
 
-    const Crossovers moved {120.0F, 500.0F, 10'000.0F};
+    const Crossovers moved {100.0F, 1500.0F, 5000.0F};
     juce::AudioBuffer<float> first(buffer.getArrayOfWritePointers(), 2, 0, samples / 2);
     juce::AudioBuffer<float> second(buffer.getArrayOfWritePointers(), 2, samples / 2, samples / 2);
     processInBlocks(imager, first);
@@ -198,7 +198,8 @@ TEST(Imager, CrossoverMoveSwitchesKernelsWithoutAClick)
                 << "channel " << channel << " sample " << sample;
         }
     }
-    EXPECT_GT(sideRms(buffer, samples - 8000), sideRms(buffer, samples / 2 - 8000, samples / 2) * 4.0);
+    // The tone moves from the High Mid band, with twice the side, to the Low Mid band, with a quarter of it.
+    EXPECT_GT(sideRms(buffer, samples / 2 - 8000, samples / 2), sideRms(buffer, samples - 8000) * 4.0);
 }
 
 TEST(Imager, RealTimeCrossoverMoveIsDesignedInTheBackground)
