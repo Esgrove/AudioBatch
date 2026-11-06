@@ -86,11 +86,12 @@ const SOURCE_OVERS_TOOLTIP: &str =
 /// Wheel distance in pixels for one zoom step.
 const WHEEL_STEP_PIXELS: f32 = 20.0;
 
-/// Gain change of one Command or Control wheel event over the waveform in decibels.
-const GAIN_WHEEL_STEP_DB: f32 = 0.5;
+/// Gain change of one Command or Control wheel event over the waveform in decibels, the step of the gain slider.
+const GAIN_WHEEL_STEP_DB: f32 = 0.1;
 
-/// Gain change of one Command or Control and Shift wheel event in decibels, the step of the gain slider.
-const FINE_GAIN_WHEEL_STEP_DB: f32 = 0.1;
+/// Command or Control and Shift wheel events per gain step, for fine adjustment of 0.01 dB per event.
+/// The gain keeps the resolution of the slider, so the events add up before the gain changes.
+const FINE_GAIN_WHEEL_EVENTS_PER_STEP: i32 = 10;
 
 /// Zoom factor of one wheel step.
 const WHEEL_ZOOM_FACTOR: f64 = 1.2;
@@ -104,7 +105,7 @@ pub enum WaveformEvent {
     RestartRequested,
     /// The user zoomed with the wheel by a factor.
     ZoomBy(f64),
-    /// The user changed the gain with the wheel by one step, an amount in decibels.
+    /// The user changed the gain with the wheel by an amount in decibels.
     GainBy(f32),
 }
 
@@ -159,6 +160,8 @@ pub struct WaveformView {
     visible_start: f64,
     /// Linear gain applied to the drawn envelope.
     display_gain: f32,
+    /// Signed count of Command or Control and Shift wheel events toward the next fine gain step.
+    fine_gain_wheel_events: i32,
     /// Pending display-only target and the pressed pane's latched source-time mapping.
     pending_seek: Option<PendingSeek>,
     /// Created once for this retained view, preserving root action bubbling and hot-cue shortcuts.
@@ -261,6 +264,7 @@ impl WaveformView {
             zoom: MINIMUM_ZOOM,
             visible_start: 0.0,
             display_gain: 1.0,
+            fine_gain_wheel_events: 0,
             pending_seek: None,
             focus_handle: None,
             serato_colours: true,
@@ -660,7 +664,7 @@ impl WaveformView {
     }
 
     /// Zooms with the vertical wheel, changes the gain by one step per event with Command or Control held,
-    /// in finer steps with Shift also held, and scrolls the visible range with the horizontal wheel.
+    /// by one step per ten events with Shift also held, and scrolls the visible range with the horizontal wheel.
     fn on_scroll(&mut self, event: &ScrollEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if self.duration_seconds() <= 0.0 {
             return;
@@ -679,12 +683,21 @@ impl WaveformView {
             0.0
         };
         if gain_delta.abs() > f32::EPSILON && event.modifiers.secondary(cx) {
-            let step = if fine {
-                FINE_GAIN_WHEEL_STEP_DB
+            let direction: i32 = if gain_delta > 0.0 { 1 } else { -1 };
+            if fine {
+                // Reversing the wheel starts the count again, so the gain never moves against the wheel.
+                if self.fine_gain_wheel_events * direction < 0 {
+                    self.fine_gain_wheel_events = 0;
+                }
+                self.fine_gain_wheel_events += direction;
+                if self.fine_gain_wheel_events.abs() >= FINE_GAIN_WHEEL_EVENTS_PER_STEP {
+                    self.fine_gain_wheel_events = 0;
+                    cx.emit(WaveformEvent::GainBy(GAIN_WHEEL_STEP_DB.copysign(gain_delta)));
+                }
             } else {
-                GAIN_WHEEL_STEP_DB
-            };
-            cx.emit(WaveformEvent::GainBy(step.copysign(gain_delta)));
+                self.fine_gain_wheel_events = 0;
+                cx.emit(WaveformEvent::GainBy(GAIN_WHEEL_STEP_DB.copysign(gain_delta)));
+            }
         } else if vertical.abs() > horizontal.abs() / WHEEL_STEP_PIXELS {
             cx.emit(WaveformEvent::ZoomBy(WHEEL_ZOOM_FACTOR.powf(f64::from(vertical))));
         } else if horizontal.abs() > f32::EPSILON {

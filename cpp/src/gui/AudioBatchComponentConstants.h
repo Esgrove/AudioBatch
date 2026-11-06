@@ -94,10 +94,11 @@ namespace gain_range
 constexpr double maximumDecibels {12.0};
 /// Step size in dB for the slider and for its mouse wheel.
 constexpr double stepDecibels {0.1};
-/// Gain change in dB of one Ctrl/Cmd mouse wheel event over the waveform.
-constexpr float wheelStepDecibels {0.5f};
-/// Gain change in dB of one Ctrl/Cmd and Shift mouse wheel event over the waveform, for fine adjustment.
-constexpr float fineWheelStepDecibels {0.1f};
+/// Gain change in dB of one Ctrl/Cmd mouse wheel event over the waveform, one slider step.
+constexpr float wheelStepDecibels {0.1f};
+/// Ctrl/Cmd and Shift mouse wheel events over the waveform per gain step, for fine adjustment of 0.01 dB per event.
+/// The gain keeps the resolution of the slider, so the events add up before the gain changes.
+constexpr int fineWheelEventsPerStep {10};
 }  // namespace gain_range
 
 }  // namespace audiobatch

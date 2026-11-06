@@ -265,6 +265,8 @@ private:
     double pendingSampleRate {0.0};
     /// Exact source length from pending metadata or validated native peaks.
     juce::int64 sourceLengthInSamples {0};
+    /// Signed count of Ctrl/Cmd and Shift wheel events toward the next fine gain step.
+    int fineGainWheelEvents {0};
     /// Native source channels, zero until peaks establish the actual count.
     int sourceChannels {0};
 
