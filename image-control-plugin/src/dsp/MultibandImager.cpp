@@ -1,6 +1,6 @@
 /// Implements MultibandImager and its KernelDesignThread.
 /// The audio callback buffers the input into partitions, delays it by the kernel half length,
-/// runs the lowpass kernels on the mid and side of each partition, and mixes the bands with smoothed gains.
+/// runs the lowpass kernels on the mid and side of each partition, and mixes the bands with smoothed gains and pans.
 /// New crossovers are designed into a spare kernel slot off the audio thread,
 /// and the audio thread switches to that slot with a crossfade over one partition.
 
@@ -49,6 +49,29 @@ KernelSpectra designKernelSpectra(const Crossovers& crossovers, const double sam
 bool isSettledAtUnity(const SmoothedGain& gain)
 {
     return !gain.isSmoothing() && juce::approximatelyEqual(gain.getCurrentValue(), 1.0F);
+}
+
+/// Returns whether a smoothed pan has settled exactly at the centre.
+/// The pan parameters snap targets near the centre to exactly 0,
+/// so a settled pan is either exactly centred or deliberately off-centre.
+bool isSettledAtCentre(const SmoothedGain& pan)
+{
+    return !pan.isSmoothing() && juce::exactlyEqual(pan.getCurrentValue(), 0.0F);
+}
+
+/// Returns one band of one sample of a signal.
+/// The bands are the lowest lowpass, the differences between neighbouring lowpasses,
+/// and the delayed signal minus the highest lowpass.
+float bandSample(
+    const std::array<std::vector<float>, CROSSOVER_COUNT>& lowpassed,
+    const std::size_t band,
+    const std::size_t sample,
+    const float delayed
+)
+{
+    const float upper = band < CROSSOVER_COUNT ? lowpassed[band][sample] : delayed;
+    const float lower = band > 0 ? lowpassed[band - 1][sample] : 0.0F;
+    return upper - lower;
 }
 
 /// Sums the bands of one sample of a signal with their gains.
@@ -103,7 +126,7 @@ void KernelDesignThread::run()
     }
 }
 
-/// Creates an imager with every gain at unity. It must be prepared before processing.
+/// Creates an imager with every gain at unity and every pan at the centre. It must be prepared before processing.
 MultibandImager::MultibandImager()
 {
     for (auto& gain : midGainSmoothers) {
@@ -111,6 +134,9 @@ MultibandImager::MultibandImager()
     }
     for (auto& gain : sideGainSmoothers) {
         gain.setCurrentAndTargetValue(1.0F);
+    }
+    for (auto& pan : panSmoothers) {
+        pan.setCurrentAndTargetValue(0.0F);
     }
     outputGainSmoother.setCurrentAndTargetValue(1.0F);
 }
@@ -137,7 +163,7 @@ int MultibandImager::getLatencySamples() const
 /// Allocates every buffer for a sample rate and a mono or stereo channel count,
 /// designs the kernels of the crossovers synchronously, clears the signal history,
 /// and starts the design thread.
-/// Gains jump to their current targets, so processing starts without a glide.
+/// Gains and pans jump to their current targets, so processing starts without a glide.
 void MultibandImager::prepare(const double newSampleRate, const int newChannelCount, const Crossovers& crossovers)
 {
     release();
@@ -189,6 +215,10 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     for (auto& gain : sideGainSmoothers) {
         gain.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
         gain.setCurrentAndTargetValue(gain.getTargetValue());
+    }
+    for (auto& pan : panSmoothers) {
+        pan.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
+        pan.setCurrentAndTargetValue(pan.getTargetValue());
     }
     outputGainSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
     outputGainSmoother.setCurrentAndTargetValue(outputGainSmoother.getTargetValue());
@@ -242,6 +272,15 @@ void MultibandImager::setGains(const BandGains& midGains, const BandGains& sideG
     outputGainSmoother.setTargetValue(outputGain);
 }
 
+/// Sets the target pan of each band, from -1 for fully left through 0 for the centre to 1 for fully right.
+/// The pans glide to their targets over GAIN_SMOOTHING_SECONDS.
+void MultibandImager::setPans(const BandPans& pans)
+{
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        panSmoothers[band].setTargetValue(pans[band]);
+    }
+}
+
 /// Processes a block in place.
 /// The input goes into the current partition and the output comes from the previous one,
 /// so any block size works, and a whole partition is processed whenever one fills up.
@@ -290,11 +329,19 @@ Crossovers MultibandImager::readRequestedCrossovers() const
     }
 }
 
-/// Returns whether every gain has settled at unity, so the output can be the delayed input itself.
+/// Returns whether every pan has settled exactly at the centre, so the bands need no panning.
+bool MultibandImager::isCentred() const
+{
+    return std::ranges::all_of(panSmoothers, isSettledAtCentre);
+}
+
+/// Returns whether every gain has settled at unity and every pan at the centre,
+/// so the output can be the delayed input itself.
 bool MultibandImager::isNeutral() const
 {
     return std::ranges::all_of(midGainSmoothers, isSettledAtUnity)
-        && std::ranges::all_of(sideGainSmoothers, isSettledAtUnity) && isSettledAtUnity(outputGainSmoother);
+        && std::ranges::all_of(sideGainSmoothers, isSettledAtUnity) && isSettledAtUnity(outputGainSmoother)
+        && isCentred();
 }
 
 /// Designs kernels for the requested crossovers into the spare slot when they differ from the active ones
@@ -348,8 +395,10 @@ void MultibandImager::lowpassSignal(
     }
 }
 
-/// Mixes the bands of the current partition with the smoothed gains into the output partition.
-/// A stereo signal is joined back from its mid and side, and a mono signal is its mid.
+/// Mixes the bands of the current partition with the smoothed gains and pans into the output partition.
+/// A stereo signal is joined back from its mid and side, and a mono signal is its mid, which has no pan.
+/// While every pan is centred, the mid and side bands are summed first and joined once,
+/// and otherwise each band is joined into its own left and right and panned before the bands are summed.
 void MultibandImager::mixPartition(const int channels)
 {
     const auto delayedLeft = channelSamples(delayedBlock, 0);
@@ -357,22 +406,44 @@ void MultibandImager::mixPartition(const int channels)
     const bool stereo = channels == 2;
     const auto delayedRight = channelSamples(delayedBlock, stereo ? 1 : 0);
     const auto outputRight = channelSamples(outputBlock, stereo ? 1 : 0);
+    const bool centred = isCentred();
 
     BandGains midGains {};
     BandGains sideGains {};
+    BandPans pans {};
     for (std::size_t sample = 0; sample < outputLeft.size(); ++sample) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
             midGains[band] = midGainSmoothers[band].getNextValue();
             sideGains[band] = sideGainSmoothers[band].getNextValue();
+            pans[band] = panSmoothers[band].getNextValue();
         }
         const float outputGain = outputGainSmoother.getNextValue();
-        if (stereo) {
+        if (stereo && centred) {
             const float delayedMid = (delayedLeft[sample] + delayedRight[sample]) * 0.5F;
             const float delayedSide = (delayedLeft[sample] - delayedRight[sample]) * 0.5F;
             const float mid = sumBands(midGains, midLowpassed, sample, delayedMid);
             const float side = sumBands(sideGains, sideLowpassed, sample, delayedSide);
             outputLeft[sample] = (mid + side) * outputGain;
             outputRight[sample] = (mid - side) * outputGain;
+        } else if (stereo) {
+            const float delayedMid = (delayedLeft[sample] + delayedRight[sample]) * 0.5F;
+            const float delayedSide = (delayedLeft[sample] - delayedRight[sample]) * 0.5F;
+            float left = 0.0F;
+            float right = 0.0F;
+            for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+                const float mid = midGains[band] * bandSample(midLowpassed, band, sample, delayedMid);
+                const float side = sideGains[band] * bandSample(sideLowpassed, band, sample, delayedSide);
+                const float bandLeft = mid + side;
+                const float bandRight = mid - side;
+                // Panning right by p keeps 1 - p of the left in the left and moves p of it to the right,
+                // and panning left mirrors that, so only one of the two amounts is ever nonzero.
+                const float toRight = std::max(pans[band], 0.0F);
+                const float toLeft = std::max(-pans[band], 0.0F);
+                left += bandLeft * (1.0F - toRight) + bandRight * toLeft;
+                right += bandRight * (1.0F - toLeft) + bandLeft * toRight;
+            }
+            outputLeft[sample] = left * outputGain;
+            outputRight[sample] = right * outputGain;
         } else {
             outputLeft[sample] = sumBands(midGains, midLowpassed, sample, delayedLeft[sample]) * outputGain;
         }

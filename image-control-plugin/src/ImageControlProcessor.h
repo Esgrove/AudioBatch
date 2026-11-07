@@ -86,6 +86,8 @@ private:
     std::array<std::atomic<float>*, CROSSOVER_COUNT> crossoverValues {};
     /// Raw values of the mid gain parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> midGainValues {};
+    /// Raw values of the pan parameters, owned by the parameter tree and never null after construction.
+    std::array<std::atomic<float>*, BAND_COUNT> panValues {};
     /// Raw values of the side gain parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> sideGainValues {};
     /// Raw value of the output gain parameter, owned by the parameter tree.

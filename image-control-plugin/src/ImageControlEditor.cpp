@@ -38,7 +38,8 @@ constexpr int MAX_EDITOR_HEIGHT {1800};
 constexpr int HEADER_HEIGHT {36};
 /// Gap between sections, in pixels.
 constexpr int GAP {8};
-/// Share of the height below the header that the spectrogram takes.
+/// Share of the height below the header that the spectrogram takes,
+/// as long as the band strips keep their minimum height.
 constexpr float SPECTROGRAM_SHARE {0.6F};
 /// Frames drained from the analyzer ring per pop.
 constexpr std::size_t DRAIN_CHUNK {4096};
@@ -167,9 +168,11 @@ void ImageControlEditor::resized()
     outputLabel.setBounds(header.removeFromRight(OUTPUT_LABEL_WIDTH));
     area.removeFromTop(GAP);
 
-    spectrogram.setBounds(
-        area.removeFromTop(juce::roundToInt(static_cast<float>(area.getHeight()) * SPECTROGRAM_SHARE))
+    const int spectrogramHeight = std::min(
+        juce::roundToInt(static_cast<float>(area.getHeight()) * SPECTROGRAM_SHARE),
+        area.getHeight() - GAP - BAND_STRIP_MIN_HEIGHT
     );
+    spectrogram.setBounds(area.removeFromTop(spectrogramHeight));
     area.removeFromTop(GAP);
 
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
