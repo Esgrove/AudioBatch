@@ -11,6 +11,7 @@
 #include <juce_events/juce_events.h>
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <print>
@@ -29,36 +30,50 @@ constexpr int PRESET_FORMAT_VERSION {1};
 /// Characters of a parameter name to read, more than any ImageControl parameter name has.
 constexpr int PARAMETER_NAME_LENGTH {100};
 
+/// The kind of value a setting holds, which selects the range that normalizes it.
+enum class SettingKind : std::uint8_t {
+    gain,
+    crossover,
+    pan,
+};
+
 /// A parameter of ImageControl set by its name, with its plain value and the range that normalizes it.
 struct Setting {
     /// The parameter name the plugin reports.
     const char* name {""};
-    /// The plain value, a frequency in Hz or a gain in dB.
+    /// The plain value, a gain in dB, a frequency in Hz, or a pan in percent.
     float value {0.0F};
-    /// Whether the value is a crossover frequency rather than a band gain.
-    bool crossover {false};
+    /// The kind of value.
+    SettingKind kind {SettingKind::gain};
 };
 
 /// Settings that keep every part of the processing busy: moved crossovers, a mono bass,
-/// and different mid and side gains in the other bands.
+/// different mid and side gains in the other bands, and panned bands.
 constexpr std::array SETTINGS {
-    Setting {.name = "Low Crossover", .value = 150.0F, .crossover = true},
-    Setting {.name = "Mid Crossover", .value = 800.0F, .crossover = true},
-    Setting {.name = "High Crossover", .value = 6000.0F, .crossover = true},
+    Setting {.name = "Low Crossover", .value = 150.0F, .kind = SettingKind::crossover},
+    Setting {.name = "Mid Crossover", .value = 800.0F, .kind = SettingKind::crossover},
+    Setting {.name = "High Crossover", .value = 6000.0F, .kind = SettingKind::crossover},
     Setting {.name = "Low: Side", .value = -60.0F},
     Setting {.name = "Low Mid: Side", .value = 3.0F},
     Setting {.name = "High Mid: Mid", .value = 1.0F},
     Setting {.name = "High Mid: Side", .value = -3.0F},
     Setting {.name = "High: Side", .value = 4.0F},
+    Setting {.name = "Low Mid: Pan", .value = -30.0F, .kind = SettingKind::pan},
+    Setting {.name = "High: Pan", .value = 20.0F, .kind = SettingKind::pan},
 };
 
 /// Returns the normalized value of a setting.
 float normalizedValue(const Setting& setting)
 {
-    if (setting.crossover) {
-        return crossoverRange().convertTo0to1(setting.value);
+    switch (setting.kind) {
+        case SettingKind::gain:
+            return gainRange(BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB).convertTo0to1(setting.value);
+        case SettingKind::crossover:
+            return crossoverRange().convertTo0to1(setting.value);
+        case SettingKind::pan:
+            return panRange().convertTo0to1(setting.value);
     }
-    return gainRange(BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB).convertTo0to1(setting.value);
+    return 0.0F;
 }
 
 /// Returns whether a plugin identifier or path from a format's search belongs to ImageControl.

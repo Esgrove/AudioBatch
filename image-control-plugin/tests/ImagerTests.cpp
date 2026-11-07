@@ -1,7 +1,8 @@
 /// Tests MultibandImager end to end:
 /// the latency, the bit-exact pass-through at neutral settings in any block size,
 /// mono and anti-phase output with the side or mid off, gains acting only inside their band,
-/// mono processing, and crossover moves that switch kernels without a click.
+/// mono processing, band pans that move a band toward one channel after its gains,
+/// and crossover moves that switch kernels without a click.
 
 #include "dsp/MultibandImager.h"
 #include "Parameters.h"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <span>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -30,6 +32,14 @@ BandGains uniformGains(const float gain)
     BandGains gains {};
     gains.fill(gain);
     return gains;
+}
+
+/// Returns pans of the same value for every band.
+BandPans uniformPans(const float pan)
+{
+    BandPans pans {};
+    pans.fill(pan);
+    return pans;
 }
 
 /// Processes a buffer through the imager in place, in blocks of varying sizes.
@@ -159,6 +169,103 @@ TEST(Imager, MonoInputIsProcessedAsMid)
     processInBlocks(imager, halved);
     for (int sample = LATENCY; sample < halved.getNumSamples(); ++sample) {
         ASSERT_NEAR(halved.getSample(0, sample), input[static_cast<std::size_t>(sample - LATENCY)] * 0.5F, 1.0e-5F);
+    }
+}
+
+TEST(Imager, HardRightPanMovesEveryBandIntoTheRightChannel)
+{
+    const auto left = makeNoise(0.4F, 16'384, 30);
+    const auto right = makeNoise(0.4F, 16'384, 31);
+    auto buffer = makeBuffer({left, right});
+    MultibandImager imager;
+    imager.setPans(uniformPans(1.0F));
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    processInBlocks(imager, buffer);
+    for (int sample = LATENCY; sample < buffer.getNumSamples(); ++sample) {
+        const auto source = static_cast<std::size_t>(sample - LATENCY);
+        ASSERT_EQ(buffer.getSample(0, sample), 0.0F) << "sample " << sample;
+        ASSERT_NEAR(buffer.getSample(1, sample), left[source] + right[source], 1.0e-5F) << "sample " << sample;
+    }
+}
+
+TEST(Imager, PanComesAfterTheMidAndSideGains)
+{
+    // With the side off, every band is mono.
+    // Panning it right by half leaves half the mid in the left channel
+    // and puts one and a half times the mid in the right.
+    const auto left = makeNoise(0.4F, 16'384, 32);
+    const auto right = makeNoise(0.4F, 16'384, 33);
+    auto buffer = makeBuffer({left, right});
+    MultibandImager imager;
+    imager.setGains(uniformGains(1.0F), uniformGains(0.0F), 1.0F);
+    imager.setPans(uniformPans(0.5F));
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    processInBlocks(imager, buffer);
+    for (int sample = LATENCY; sample < buffer.getNumSamples(); ++sample) {
+        const auto source = static_cast<std::size_t>(sample - LATENCY);
+        const float mid = (left[source] + right[source]) * 0.5F;
+        ASSERT_NEAR(buffer.getSample(0, sample), mid * 0.5F, 1.0e-5F) << "sample " << sample;
+        ASSERT_NEAR(buffer.getSample(1, sample), mid * 1.5F, 1.0e-5F) << "sample " << sample;
+    }
+}
+
+TEST(Imager, PanActsOnlyInsideItsBand)
+{
+    BandPans pans = uniformPans(0.0F);
+    pans[1] = -0.5F;
+    for (const double frequency : {40.0, 250.0, 18'000.0}) {
+        SCOPED_TRACE(frequency);
+        const auto tone = makeSine(frequency, 0.5F, 24'000);
+        auto buffer = makeBuffer({tone, tone});
+        const double input = rms(std::span(tone).subspan(8000));
+        MultibandImager imager;
+        imager.setPans(pans);
+        imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        processInBlocks(imager, buffer);
+
+        const bool inBand = frequency > 150.0 && frequency < 350.0;
+        EXPECT_NEAR(rms(channelOf(buffer, 0).subspan(8000)) / input, inBand ? 1.5 : 1.0, 0.01);
+        EXPECT_NEAR(rms(channelOf(buffer, 1).subspan(8000)) / input, inBand ? 0.5 : 1.0, 0.01);
+    }
+}
+
+TEST(Imager, CentringThePansAgainRestoresTheBitExactPassThrough)
+{
+    constexpr int samples = 20'000;
+    constexpr int panned = 8000;
+    const auto left = makeNoise(0.8F, samples, 34);
+    const auto right = makeNoise(0.8F, samples, 35);
+    auto buffer = makeBuffer({left, right});
+    MultibandImager imager;
+    imager.setPans(uniformPans(0.5F));
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    juce::AudioBuffer<float> first(buffer.getArrayOfWritePointers(), 2, 0, panned);
+    juce::AudioBuffer<float> second(buffer.getArrayOfWritePointers(), 2, panned, samples - panned);
+    processInBlocks(imager, first);
+    imager.setPans(uniformPans(0.0F));
+    processInBlocks(imager, second);
+
+    // The pans glide back over GAIN_SMOOTHING_SECONDS, and the imager mixes whole partitions,
+    // so the pass-through starts at most a glide and two partitions after the change.
+    const int settled = panned + static_cast<int>(GAIN_SMOOTHING_SECONDS * TEST_SAMPLE_RATE) + 2 * PARTITION_SIZE;
+    EXPECT_NEAR(rms(channelOf(buffer, 0).subspan(LATENCY, 2000)) / rms(std::span(left).first(2000)), 0.5, 0.01);
+    for (int sample = settled; sample < samples; ++sample) {
+        const auto source = static_cast<std::size_t>(sample - LATENCY);
+        ASSERT_EQ(buffer.getSample(0, sample), left[source]) << "sample " << sample;
+        ASSERT_EQ(buffer.getSample(1, sample), right[source]) << "sample " << sample;
+    }
+}
+
+TEST(Imager, MonoInputIgnoresPan)
+{
+    const auto input = makeNoise(0.8F, 12'000, 36);
+    auto buffer = makeBuffer({input});
+    MultibandImager imager;
+    imager.setPans(uniformPans(1.0F));
+    imager.prepare(TEST_SAMPLE_RATE, 1, DEFAULT_CROSSOVERS);
+    processInBlocks(imager, buffer);
+    for (int sample = LATENCY; sample < buffer.getNumSamples(); ++sample) {
+        ASSERT_NEAR(buffer.getSample(0, sample), input[static_cast<std::size_t>(sample - LATENCY)], 1.0e-5F);
     }
 }
 

@@ -1,5 +1,5 @@
 /// Tests ImageControlProcessor: the supported bus layouts, the reported latency,
-/// neutral offline processing, the analyzer tap, and the saved state with its editor settings.
+/// neutral offline processing, the analyzer tap, the pan text, and the saved state with its editor settings.
 
 #include "dsp/MultibandImager.h"
 #include "ImageControlProcessor.h"
@@ -78,6 +78,7 @@ TEST(Processor, BypassPassesAudioThroughWithTheSameLatency)
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
             setParameter(processor, midGainParameterId(band), -6.0F);
             setParameter(processor, sideGainParameterId(band), BAND_GAIN_MIN_DB);
+            setParameter(processor, panParameterId(band), 60.0F);
         }
         setParameter(processor, BYPASS_ID, hostBypass ? 0.0F : 1.0F);
         EXPECT_EQ(processor.getBypassParameter(), processor.getParameters().getParameter(BYPASS_ID));
@@ -186,6 +187,58 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(SHOW_FPS_PROPERTY)));
 }
 
+TEST(Processor, RestoringAStateWithoutPansCentresThem)
+{
+    ImageControlProcessor source;
+    setParameter(source, midGainParameterId(0), -3.0F);
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    ASSERT_NE(xml, nullptr);
+    // A state saved before the pan parameters existed has none of them.
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        auto* pan = xml->getChildByAttribute("id", panParameterId(band));
+        ASSERT_NE(pan, nullptr);
+        xml->removeChildElement(pan, true);
+    }
+    juce::MemoryBlock olderState;
+    juce::AudioProcessor::copyXmlToBinary(*xml, olderState);
+
+    ImageControlProcessor restored;
+    restored.setStateInformation(olderState.getData(), static_cast<int>(olderState.getSize()));
+    EXPECT_NEAR(getParameter(restored, midGainParameterId(0)), -3.0F, 0.01F);
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        EXPECT_FLOAT_EQ(getParameter(restored, panParameterId(band)), 0.0F);
+    }
+}
+
+TEST(Processor, PansShowAndParseAsCentreOrSide)
+{
+    EXPECT_EQ(formatPan(0.0F), "C");
+    EXPECT_EQ(formatPan(-35.0F), "35L");
+    EXPECT_EQ(formatPan(100.0F), "100R");
+    EXPECT_FLOAT_EQ(panPercentFromText("C"), 0.0F);
+    EXPECT_FLOAT_EQ(panPercentFromText("35L"), -35.0F);
+    EXPECT_FLOAT_EQ(panPercentFromText(" 100 r "), 100.0F);
+    EXPECT_FLOAT_EQ(panPercentFromText("-20"), -20.0F);
+    EXPECT_FLOAT_EQ(panPercentFromText("150R"), PAN_MAX_PERCENT);
+
+    ImageControlProcessor processor;
+    auto* parameter = processor.getParameters().getParameter(panParameterId(2));
+    ASSERT_NE(parameter, nullptr);
+    EXPECT_EQ(parameter->getCurrentValueAsText(), "C");
+    parameter->setValueNotifyingHost(parameter->getValueForText("40L"));
+    EXPECT_EQ(parameter->getCurrentValueAsText(), "40L");
+}
+
+TEST(Processor, PanCentreIsExactlyZero)
+{
+    EXPECT_EQ(panFromPercent(0.0F), 0.0F);
+    EXPECT_EQ(panFromPercent(0.4F), 0.0F);
+    EXPECT_FLOAT_EQ(panFromPercent(50.0F), 0.5F);
+    EXPECT_FLOAT_EQ(panFromPercent(-PAN_MAX_PERCENT), -1.0F);
+}
+
 TEST(Processor, AnalyzerTapReceivesTheBlock)
 {
     ImageControlProcessor processor;
@@ -209,6 +262,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     setParameter(source, crossoverParameterId(0), 200.0F);
     setParameter(source, midGainParameterId(2), -3.0F);
     setParameter(source, sideGainParameterId(0), BAND_GAIN_MIN_DB);
+    setParameter(source, panParameterId(1), -35.0F);
     setParameter(source, OUTPUT_GAIN_ID, 1.5F);
     source.getEditorState().setProperty(linkPropertyName(1), false, nullptr);
     source.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.5, nullptr);
@@ -220,6 +274,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     EXPECT_NEAR(getParameter(restored, crossoverParameterId(0)), 200.0F, 0.5F);
     EXPECT_NEAR(getParameter(restored, midGainParameterId(2)), -3.0F, 0.01F);
     EXPECT_NEAR(getParameter(restored, sideGainParameterId(0)), BAND_GAIN_MIN_DB, 0.01F);
+    EXPECT_NEAR(getParameter(restored, panParameterId(1)), -35.0F, 0.01F);
     EXPECT_NEAR(getParameter(restored, OUTPUT_GAIN_ID), 1.5F, 0.01F);
     EXPECT_FALSE(static_cast<bool>(restored.getEditorState().getProperty(linkPropertyName(1))));
     EXPECT_TRUE(static_cast<bool>(restored.getEditorState().getProperty(linkPropertyName(0))));

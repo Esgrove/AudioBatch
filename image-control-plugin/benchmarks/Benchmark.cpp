@@ -45,6 +45,10 @@ constexpr float NOISE_AMPLITUDE {0.3F};
 constexpr BandGains MID_GAINS {0.9F, 1.0F, 1.1F, 0.8F};
 /// Side gains of the bands.
 constexpr BandGains SIDE_GAINS {0.5F, 1.2F, 1.4F, 0.7F};
+/// Pans of the bands, off centre so the imager pans each band separately.
+constexpr BandPans PANS {0.0F, -0.3F, 0.2F, 0.5F};
+/// Pans of the bands at the centre, where the imager joins the summed mid and side once.
+constexpr BandPans CENTRED_PANS {};
 /// Output gain.
 constexpr float OUTPUT_GAIN {0.9F};
 
@@ -63,12 +67,13 @@ std::vector<float> makeNoise(const std::size_t samples, const unsigned seed)
     return noise;
 }
 
-/// Returns the milliseconds the imager takes per second of stereo audio,
+/// Returns the milliseconds the imager takes per second of stereo audio with the given band pans,
 /// with gains that keep it off its neutral pass-through path.
-double timeImager()
+double timeImager(const BandPans& pans)
 {
     MultibandImager imager;
     imager.setGains(MID_GAINS, SIDE_GAINS, OUTPUT_GAIN);
+    imager.setPans(pans);
     imager.prepare(SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
     const auto left = makeNoise(static_cast<std::size_t>(BLOCK_SIZE), 1);
     const auto right = makeNoise(static_cast<std::size_t>(BLOCK_SIZE), 2);
@@ -115,14 +120,18 @@ double timeSpectrogram(ImageControlProcessor& processor)
 }  // namespace
 }  // namespace esgrove::image_control::benchmark
 
-/// Runs both timings and prints them.
+/// Runs the imager with centred and panned bands and the spectrogram, and prints their timings.
 int main()
 {
     const juce::ScopedJuceInitialiser_GUI juce;
     esgrove::image_control::ImageControlProcessor processor;
-    const double imagerMilliseconds = esgrove::image_control::benchmark::timeImager();
+    const double imagerMilliseconds
+        = esgrove::image_control::benchmark::timeImager(esgrove::image_control::benchmark::CENTRED_PANS);
+    const double pannedMilliseconds
+        = esgrove::image_control::benchmark::timeImager(esgrove::image_control::benchmark::PANS);
     const double spectrogramMilliseconds = esgrove::image_control::benchmark::timeSpectrogram(processor);
     std::println("Imager: {:.3f} ms per second of stereo audio", imagerMilliseconds);
+    std::println("Imager with panned bands: {:.3f} ms per second of stereo audio", pannedMilliseconds);
     std::println("Spectrogram: {:.3f} ms per refresh", spectrogramMilliseconds);
     return 0;
 }

@@ -1,8 +1,9 @@
 # ImageControl
 
 A multiband stereo imaging effect by esgrove, built with JUCE as a VST3 and, on macOS, an Audio Unit.
-It splits the signal into four frequency bands and sets the mid and side level of each band separately,
-so the stereo image can be narrowed, widened, or rebalanced in one frequency range without touching the others.
+It splits the signal into four frequency bands and sets the mid and side level and the pan of each band separately,
+so the stereo image can be narrowed, widened, rebalanced, or moved to one side in one frequency range
+without touching the others.
 A spatial spectrogram shows where the energy of each frequency sits in the stereo field.
 
 The plugin lives in the AudioBatch repository for now and is mainly used from AudioBatch's plugin chain,
@@ -17,11 +18,13 @@ but it is a standalone plugin that works in any VST3 host on macOS and Windows, 
 | `crossover_high`             | High Crossover           | 20 Hz to 20 kHz, logarithmic | 5 kHz   |
 | `band1_mid` to `band4_mid`   | Low: Mid to High: Mid    | -60 dB (off) to +12 dB       | 0 dB    |
 | `band1_side` to `band4_side` | Low: Side to High: Side  | -60 dB (off) to +12 dB       | 0 dB    |
+| `band1_pan` to `band4_pan`   | Low: Pan to High: Pan    | 100L to 100R                 | C       |
 | `output_gain`                | Output Gain              | -24 dB to +12 dB             | 0 dB    |
 | `bypass`                     | Bypass                   | off or on                    | off     |
 
 The bands are named Low, Low Mid, High Mid, and High,
-so the parameters are named Low: Mid, Low Mid: Side, and so on.
+so the parameters are named Low: Mid, Low Mid: Side, High: Pan, and so on.
+The pans step in whole percent, and hosts can type them as `C`, `35L`, `35R`, or a signed percent.
 
 The bands are below the low crossover, between the low and mid crossovers,
 between the mid and high crossovers, and above the high crossover.
@@ -38,15 +41,23 @@ the lowest lowpass, the differences between neighbouring lowpasses,
 and the delayed signal minus the highest lowpass.
 So the four bands always add back up to the delayed input, whatever the crossover frequencies are.
 
-Each band's mid and side are scaled by their gains, summed, and joined back into L = M + S and R = M − S.
-Gain changes glide over 20 ms to avoid zipper noise.
-A mono input is processed as mid only.
+Each band's mid and side are scaled by their gains and joined back into L = M + S and R = M − S.
+Each band is then panned, after its gains,
+so Width shapes the band's image first and Pan places the result, and a band made mono can still sit to one side.
+The pan moves the band toward one channel without discarding the other.
+Panning right by p, from 0 to 1, gives L' = (1 − p) · L and R' = R + p · L,
+and panning left mirrors that, so at 100L or 100R the whole band is in one channel.
+For mono content this is the linear pan law, which keeps L' + R' constant,
+so content the channels share peaks up to 6 dB higher in the one channel when panned fully to it.
+The panned bands are summed, and the output gain scales the result.
+Gain and pan changes glide over 20 ms to avoid zipper noise.
+A mono input is processed as mid only, and its pans have no effect.
 
-At the default settings, every gain is exactly unity,
+At the default settings, every gain is exactly unity and every pan exactly centred,
 and the output is the input delayed by the latency, bit for bit.
 A plugin left at its defaults in an AudioBatch chain leaves the audio unchanged.
 
-Bypass glides every gain to unity instead of skipping the processing,
+Bypass glides every gain to unity and every pan to the centre instead of skipping the processing,
 so the latency stays the same and the output becomes the delayed input bit for bit, without a click.
 Hosts use the bypass parameter as the plugin's own bypass.
 
@@ -145,6 +156,8 @@ Each band has a strip with its own controls:
   Width is an editor control, not a parameter, so automation never has two values fighting over the side gain.
   It cannot be set while Mid is off.
 - **Link** makes dragging Mid move Side by the same amount, which keeps the width while changing the level of the band.
+- **Pan** moves the band toward the left or right channel after its gains, as described under Processing.
+  It is a parameter, and double-clicking it centres the band.
 
 Sliders drag relative to where they are grabbed, drag finely with Shift, and reset on double-click.
 Once clicked, the arrow keys nudge them, finely with Shift.

@@ -1,6 +1,6 @@
 /// Declares MultibandImager, the audio processing of ImageControl, and the KernelDesignThread it owns.
 /// The imager splits a stereo signal into mid and side, splits both into four linear-phase bands,
-/// scales the mid and side of each band, and joins them back into left and right.
+/// scales the mid and side of each band, joins them back into left and right, and pans each band.
 /// The bands sum exactly to the delayed input, so neutral settings pass the input through, only delayed.
 
 #pragma once
@@ -26,14 +26,14 @@ namespace esgrove::image_control
 /// Samples per convolution partition.
 /// The imager processes whole partitions, so this adds to the latency.
 constexpr int PARTITION_SIZE {256};
-/// Time the band and output gains take to glide to a new value, in seconds.
+/// Time the band gains, the band pans, and the output gain take to glide to a new value, in seconds.
 constexpr double GAIN_SMOOTHING_SECONDS {0.02};
 
 /// The background thread that designs kernels while the crossovers move during real-time playback.
 /// Defined in MultibandImager.cpp, its only user.
 class KernelDesignThread;
 
-/// Linear gain that glides to its target over GAIN_SMOOTHING_SECONDS.
+/// Linear gain or pan that glides to its target over GAIN_SMOOTHING_SECONDS.
 using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>;
 
 /// Multiband mid/side processing with linear-phase crossovers.
@@ -41,13 +41,18 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// Mid and side each go through three lowpass kernels.
 /// The bands are the lowest lowpass, the differences between neighbouring lowpasses,
 /// and the delayed signal minus the highest lowpass, so they sum to the delayed signal whatever the kernels are.
-/// Each band is scaled by its gain and the bands are summed back.
+/// The mid and side of each band are scaled by their gains and joined into the band's left and right.
+/// Each band is then panned, after its gains, so a band narrowed to mono can still be moved to one side.
+/// The pan moves the band toward one channel without discarding the other:
+/// panning right by p scales left by 1 - p and adds p times left to right, and panning left mirrors that.
+/// The bands are summed back and scaled by the output gain.
 ///
 /// The latency is the kernel half length plus one partition.
-/// While every gain is at unity, the output is the input delayed by the latency, bit for bit.
+/// While every gain is at unity and every pan at the centre,
+/// the output is the input delayed by the latency, bit for bit.
 ///
 /// prepare, release, and the destructor run on the message thread.
-/// setGains, setCrossovers, and process run on the audio thread and never allocate during real-time playback.
+/// setGains, setPans, setCrossovers, and process run on the audio thread and never allocate during real-time playback.
 /// During non-real-time rendering the audio thread designs kernels itself and the design thread stands by,
 /// so the output never depends on thread timing.
 class MultibandImager
@@ -71,10 +76,12 @@ public:
     void release();
     void setCrossovers(const Crossovers& crossovers, bool offline);
     void setGains(const BandGains& midGains, const BandGains& sideGains, float outputGain);
+    void setPans(const BandPans& pans);
 
 private:
     [[nodiscard]] Crossovers readRequestedCrossovers() const;
 
+    [[nodiscard]] bool isCentred() const;
     [[nodiscard]] bool isNeutral() const;
 
     void designRequestedKernels(bool fromDesignThread);
@@ -110,6 +117,8 @@ private:
     std::array<SmoothedGain, BAND_COUNT> midGainSmoothers;
     /// Glides of the side gain of each band.
     std::array<SmoothedGain, BAND_COUNT> sideGainSmoothers;
+    /// Glides of the pan of each band, from -1 for fully left to 1 for fully right.
+    std::array<SmoothedGain, BAND_COUNT> panSmoothers;
     /// Glide of the output gain.
     SmoothedGain outputGainSmoother;
 

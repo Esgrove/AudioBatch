@@ -46,6 +46,7 @@ ImageControlProcessor::ImageControlProcessor() :
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         midGainValues.at(band) = getRawValue(parameters, midGainParameterId(band));
         sideGainValues.at(band) = getRawValue(parameters, sideGainParameterId(band));
+        panValues.at(band) = getRawValue(parameters, panParameterId(band));
         editorState.setProperty(linkPropertyName(band), true, nullptr);
     }
     outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
@@ -195,7 +196,7 @@ juce::AudioProcessorParameter* ImageControlProcessor::getBypassParameter() const
 }
 
 /// Hands the current parameters to the imager, processes the block, and pushes the analyzer tap.
-/// Bypassing glides every gain to unity instead of skipping the imager,
+/// Bypassing glides every gain to unity and every pan to the centre instead of skipping the imager,
 /// so the latency stays the same and the output becomes the delayed input bit for bit without a click.
 /// Offline rendering designs moved crossovers synchronously, so its output does not depend on thread timing.
 void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, const bool bypassed)
@@ -206,15 +207,18 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     BandGains sideGains {};
     midGains.fill(1.0F);
     sideGains.fill(1.0F);
+    BandPans pans {};
     float outputGain = 1.0F;
     if (!bypassed) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
             midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
             sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
+            pans.at(band) = panFromPercent(panValues.at(band)->load());
         }
         outputGain = outputGainFromDecibels(outputGainValue->load());
     }
     imager.setGains(midGains, sideGains, outputGain);
+    imager.setPans(pans);
     imager.setCrossovers(getCrossovers(), isNonRealtime());
 
     const bool tapOutput = analyzeOutput.load(std::memory_order_relaxed);

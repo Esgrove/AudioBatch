@@ -32,8 +32,8 @@ constexpr int LINK_WIDTH {60};
 constexpr int MARGIN {10};
 /// Corner radius of the strip background, in pixels.
 constexpr float CORNER_RADIUS {6.0F};
-/// Number of slider rows: Mid, Side, and Width.
-constexpr int SLIDER_ROWS {3};
+/// Number of slider rows: Mid, Side, Width, and Pan.
+constexpr int SLIDER_ROWS {4};
 /// Width below which Side is turned off rather than set to a very low gain.
 constexpr double MONO_WIDTH {0.001};
 /// Font height of the band name.
@@ -42,6 +42,11 @@ constexpr float NAME_FONT_HEIGHT {16.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
 /// Step of the Width slider.
 constexpr double WIDTH_STEP {0.01};
+
+static_assert(
+    BAND_STRIP_MIN_HEIGHT == MARGIN * 2 + HEADER_ROW_HEIGHT * 2 + SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT),
+    "The minimum strip height must fit the margins, the header rows, and the slider rows"
+);
 
 /// Sets a parameter to a plain value, inside the gesture already open, or in a gesture of its own.
 void setSideValue(juce::RangedAudioParameter& parameter, const float value, const bool inGesture)
@@ -54,7 +59,8 @@ void setSideValue(juce::RangedAudioParameter& parameter, const float value, cons
 }
 }  // namespace
 
-/// Creates the controls of a band, attaches Mid and Side to their parameters, and binds Link to the editor settings.
+/// Creates the controls of a band, attaches Mid, Side, and Pan to their parameters,
+/// and binds Link to the editor settings.
 BandStrip::BandStrip(
     juce::AudioProcessorValueTreeState& parameters,
     juce::ValueTree& editorState,
@@ -102,6 +108,13 @@ BandStrip::BandStrip(
     widthSlider.onValueChange = [this] { applyWidth(); };
     addAndMakeVisible(widthSlider);
 
+    configureSlider(panSlider, panLabel, "Pan");
+    panSlider.setDoubleClickReturnValue(true, 0.0);
+    panSlider.setTooltip("Moves the band toward the left or right channel after its width. Double-click to centre");
+    panAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters, panParameterId(band), panSlider
+    );
+
     linkButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(linkPropertyName(band), nullptr));
     linkButton.setTooltip("Dragging Mid moves Side by the same amount, keeping the width");
     addAndMakeVisible(linkButton);
@@ -141,6 +154,7 @@ BandStrip::~BandStrip()
 {
     midAttachment.reset();
     sideAttachment.reset();
+    panAttachment.reset();
 }
 
 /// Paints the rounded background of the strip.
@@ -151,7 +165,7 @@ void BandStrip::paint(juce::Graphics& graphics)
 }
 
 /// Lays out the name and Link in the header row, the range below them,
-/// and the Mid, Side, and Width sliders below it at full width, each with its label above it.
+/// and the Mid, Side, Width, and Pan sliders below it at full width, each with its label above it.
 /// The slider rows share the remaining height evenly.
 void BandStrip::resized()
 {
@@ -166,6 +180,7 @@ void BandStrip::resized()
         std::pair {&midLabel, &midSlider},
         std::pair {&sideLabel, &sideSlider},
         std::pair {&widthLabel, &widthSlider},
+        std::pair {&panLabel, &panSlider},
     };
     static_assert(rows.size() == SLIDER_ROWS);
     for (const auto& [label, slider] : rows) {
