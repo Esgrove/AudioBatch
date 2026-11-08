@@ -24,7 +24,7 @@ OPTIONS: All options are optional
         Also build and run the unit tests.
 
     -i | --install
-        Copy the built bundles into the user's VST3 folder, and on macOS the Audio Unit into the Components folder.
+        Copy the built bundles into the standard VST3 folder, and on macOS the Audio Unit into the Components folder.
 
     -v | --validate
         On macOS, install and validate the Audio Unit with auval."
@@ -124,13 +124,25 @@ fi
 
 if [ "$INSTALL" = true ]; then
     if [ "$BASH_PLATFORM" = "windows" ]; then
-        VST3_DIR="$(cygpath -u "$LOCALAPPDATA")/Programs/Common/VST3"
+        # The system-wide VST3 folder, which needs an elevated shell to write to.
+        VST3_DIR="$(cygpath -u "$COMMONPROGRAMFILES")/VST3"
     else
         VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3"
     fi
-    mkdir -p "$VST3_DIR"
-    rm -rf "${VST3_DIR:?}/ImageControl.vst3"
-    cp -R "$BUNDLE" "$VST3_DIR/"
+    if ! (mkdir -p "$VST3_DIR" && rm -rf "${VST3_DIR:?}/ImageControl.vst3" && cp -R "$BUNDLE" "$VST3_DIR/") 2> /dev/null; then
+        if [ "$BASH_PLATFORM" != "windows" ]; then
+            print_error_and_exit "Failed to install to $VST3_DIR"
+        fi
+        # There is no sudo on Windows, so the copy is repeated in an elevated PowerShell that triggers a UAC prompt.
+        print_yellow "Administrator rights are needed for $VST3_DIR, requesting elevation"
+        WIN_DIR=$(cygpath -w "$VST3_DIR")
+        WIN_BUNDLE=$(cygpath -w "$BUNDLE")
+        PS_COMMAND="\$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path '$WIN_DIR' | Out-Null; Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$WIN_DIR\\ImageControl.vst3'; Copy-Item -Recurse -Force '$WIN_BUNDLE' '$WIN_DIR\\'"
+        PS_ENCODED=$(printf '%s' "$PS_COMMAND" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
+        if ! powershell.exe -NoProfile -Command "\$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList '-NoProfile','-EncodedCommand','$PS_ENCODED'; exit \$p.ExitCode"; then
+            print_error_and_exit "Elevated install to $VST3_DIR failed or was cancelled"
+        fi
+    fi
     print_green "Installed: $VST3_DIR/ImageControl.vst3"
 
     if [ "$BASH_PLATFORM" = "mac" ]; then
