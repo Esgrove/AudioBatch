@@ -37,7 +37,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   described in `test-plugin/README.md`,
   with a gain, a mid/side width, and a latency parameter that the hosts must compensate.
   The C++ build adds it with its tests,
-  and `test-plugin/build.sh` builds it into `test-plugin/build` for the Rust tests.
+  and `test-plugin/build.sh` builds it into `test-plugin/cmake-build-release` for the Rust tests.
   It builds with the JUCE submodule in `cpp/JUCE`, and `cpp/format.sh` formats it.
   `uv run fixtures/plugin_expected.py` computes its expected outputs with numpy into `fixtures/plugin_expected/`.
   When its processing changes, update the script, regenerate the files,
@@ -49,6 +49,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and its names and ids never carry AudioBatch branding.
   `image-control-plugin/build.sh` builds it with the JUCE submodule in `cpp/JUCE`,
   and runs its GoogleTest unit tests with `--test`.
+  `image-control-plugin/install.sh` builds it with `build.sh` and installs it into the plugin folders.
   `cpp/format.sh` formats it, and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
   It includes `cpp/cmake/Optimizations.cmake`, so it targets the same CPUs and optimizations as AudioBatch.
   `image-control-plugin/benchmarks/compare_formats.py` renders files through its VST3
@@ -188,6 +189,8 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 ### Repository work
 
 - Run each project's build, format, lint, and test commands from its own directory.
+  The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
+  and `lint.sh --check` reports warnings without applying fixes.
 - Stage with explicit paths, such as `git add cpp` or `git add rust`.
 - Commit messages and all prose follow the semantic line break style described in both project files.
 - **NEVER run destructive git commands**, such as `git checkout -- <file>`, `git restore`, `git reset --hard`,

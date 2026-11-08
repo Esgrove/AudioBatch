@@ -494,7 +494,7 @@ git submodule update --init ../cpp/JUCE
 ../test-plugin/build.sh
 ```
 
-The tests find the bundle in `../test-plugin/build`, or at the path in `AUDIOBATCH_TEST_VST3`.
+The tests find the bundle in `../test-plugin/cmake-build-release`, or at the path in `AUDIOBATCH_TEST_VST3`.
 Without it they are skipped, except when the `CI` variable is set, where they fail.
 
 `scripts/parity.sh` runs both CLIs on the same files, compares their JSON measurements, and reports their wall times.

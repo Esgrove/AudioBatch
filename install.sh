@@ -4,7 +4,7 @@ set -eo pipefail
 USAGE="Usage: $0 [cpp|rust|image-control] [OPTIONS]
 
 Install the CLIs, GUI apps, and shell completions of the C++ and Rust projects with their own install.sh scripts.
-The ImageControl plugin is installed with image-control-plugin/build.sh --install, after the other projects.
+The ImageControl plugin is installed with image-control-plugin/install.sh, after the other projects.
 Name a project to install only that one.
 
 The options are passed to the install script of each project.
@@ -28,7 +28,7 @@ source "$DIR/common.sh"
 if [ "$1" = "image-control" ]; then
     shift
     if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        "$REPO_ROOT/image-control-plugin/build.sh" --help
+        "$REPO_ROOT/image-control-plugin/install.sh" --help
         exit 0
     fi
 else
@@ -38,5 +38,5 @@ else
     fi
 fi
 
-print_magenta "Running image-control-plugin/build.sh --install"
-"$REPO_ROOT/image-control-plugin/build.sh" --install
+print_magenta "Running image-control-plugin/install.sh"
+"$REPO_ROOT/image-control-plugin/install.sh"

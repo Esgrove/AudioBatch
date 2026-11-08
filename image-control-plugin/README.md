@@ -195,15 +195,23 @@ with a minimum deployment target of macOS 15.
 ./build.sh
 ```
 
-The script builds the Release VST3 into `build/`, and on macOS the Audio Unit next to it,
+The script builds the Release VST3 into `cmake-build-release/`, and on macOS the Audio Unit next to it,
 and prints the VST3 path, which `--print` prints without building.
-`--debug` builds Debug into `build-debug/` instead.
+On Windows the default generator is Visual Studio, and `--ninja` builds with Ninja into `cmake-build-ninja-release/` instead.
+`--debug` builds Debug into `cmake-build-debug/` instead, and `--build-type` selects any other CMake build type.
+`--reuse` skips the CMake generation, and `--clean` deletes the build directory first.
 `--test` also builds and runs the unit tests.
-`--install` copies the VST3 into the standard VST3 folder,
+
+```shell
+./install.sh
+```
+
+`install.sh` builds with `build.sh`, then copies the VST3 into the standard VST3 folder,
 `~/Library/Audio/Plug-Ins/VST3` on macOS and `C:\Program Files\Common Files\VST3` on Windows,
 which triggers a UAC prompt when the folder is not writable,
 and on macOS the Audio Unit into `~/Library/Audio/Plug-Ins/Components`, restarting the Audio Unit registry.
-`--validate` installs and then validates the Audio Unit with `auval`.
+It takes `--reuse`, `--clean`, and `--debug` like `build.sh`.
+`--validate` then validates the VST3 with `pluginval` when it is in the path, and on macOS the Audio Unit with `auval`.
 The Audio Unit is built from the same code as the VST3, with no format-specific code in the plugin.
 
 The build includes `../cpp/cmake/Optimizations.cmake`, so it targets the same CPUs as AudioBatch:
@@ -217,6 +225,11 @@ On an Apple Silicon Mac these took the audio processing from about 4.2 to 3.5 ms
 The sources compile with strict warnings as errors.
 `./lint.sh` checks them with clang-tidy using the AudioBatch C++ configuration,
 and `--check` makes any warning fail the run.
+`--changed` and `--staged` lint only the changed sources, `--build-dir` selects the compile database,
+`--jobs` sets the number of parallel clang-tidy processes, and arguments after `--` go to clang-tidy.
+The script first builds the Debug tests and benchmark, which configures the build directory when it is missing,
+regenerates the compile database when the CMake files changed, and generates the JUCE headers.
+On Windows it uses the Ninja workspace in `cmake-build-ninja-debug/`, since Visual Studio writes no compile database.
 
 Like AudioBatch, the build enables standard library hardening:
 the fast libc++ mode in Release and the extensive one in Debug on macOS, and `_MSVC_STL_HARDENING` on Windows.
@@ -241,7 +254,7 @@ and Windows, and validates the Audio Unit on macOS.
 
 ```shell
 uv run fixtures/benchmark/generate.py
-image-control-plugin/build.sh --validate
+image-control-plugin/install.sh --validate
 uv run --script image-control-plugin/benchmarks/compare_formats.py
 ```
 

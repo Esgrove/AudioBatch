@@ -72,15 +72,17 @@ jobs:
       # so auval can validate it.
       - name: Build, test, and validate the Audio Unit
         if: runner.os == 'macOS'
-        run: ./build.sh --test --validate
+        run: |
+          ./build.sh --test
+          ./install.sh --reuse --validate
 
       - name: Upload plugin
         uses: actions/upload-artifact@v7
         with:
           name: ImageControl-${{ runner.os }}
           path: |
-            image-control-plugin/build/ImageControl_artefacts/Release/VST3
-            image-control-plugin/build/ImageControl_artefacts/Release/AU
+            image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3
+            image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/AU
           if-no-files-found: error
 
   lint:
@@ -95,11 +97,6 @@ jobs:
       - name: Install LLVM and Ninja
         run: brew install llvm ninja
 
-      # clang-tidy needs the generated JUCE headers, so the Debug build compiles before linting.
-      - name: Build Debug
-        run: |
-          cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DIMAGE_CONTROL_BUILD_TESTS=ON
-          cmake --build build-debug --target ImageControlTests
-
+      # The script builds the Debug tests first, which generates the JUCE headers clang-tidy needs.
       - name: Run clang-tidy
         run: ./lint.sh --check

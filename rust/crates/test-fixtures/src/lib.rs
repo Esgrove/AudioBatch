@@ -300,14 +300,14 @@ fn is_lfs_pointer(path: &Path) -> bool {
 
 /// Returns the `AudioBatch Test MS` VST3 bundle that `test-plugin/build.sh` builds, or `None` when it is missing.
 ///
-/// The `AUDIOBATCH_TEST_VST3` variable overrides the default location in `test-plugin/build`.
+/// The `AUDIOBATCH_TEST_VST3` variable overrides the default location in `test-plugin/cmake-build-release`.
 /// The bundle is built with `CMake` from the JUCE submodule, so a plain `cargo test` may not have it.
 #[must_use]
 pub fn test_plugin_bundle() -> Option<PathBuf> {
     let bundle = std::env::var_os(TEST_PLUGIN_VARIABLE).map_or_else(
         || {
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../test-plugin/build/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3")
+                .join("../../../test-plugin/cmake-build-release/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3")
         },
         PathBuf::from,
     );

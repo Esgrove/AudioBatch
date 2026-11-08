@@ -95,11 +95,11 @@ jobs:
       - name: Cache test plugin build
         uses: actions/cache@v6
         with:
-          path: test-plugin/build
+          path: test-plugin/cmake-build-release
           key: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-${{ hashFiles('test-plugin/CMakeLists.txt', 'test-plugin/src/**') }}
           restore-keys: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-
 
-      # The tests find the bundle in test-plugin/build, and fail instead of skipping when CI is set and it is missing.
+      # The tests find the bundle in test-plugin/cmake-build-release, and fail instead of skipping when CI is set and it is missing.
       - name: Build test plugin
         run: ../test-plugin/build.sh
 
@@ -325,11 +325,11 @@ jobs:
       - name: Cache test plugin build
         uses: actions/cache@v6
         with:
-          path: test-plugin/build
+          path: test-plugin/cmake-build-release
           key: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-${{ hashFiles('test-plugin/CMakeLists.txt', 'test-plugin/src/**') }}
           restore-keys: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-
 
-      # The tests find the bundle in test-plugin/build, and fail instead of skipping when CI is set and it is missing.
+      # The tests find the bundle in test-plugin/cmake-build-release, and fail instead of skipping when CI is set and it is missing.
       - name: Build test plugin
         run: ../test-plugin/build.sh
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-# Builds the AudioBatch Test MS VST3 plugin, defaulting to Release mode in test-plugin/build,
+# Builds the AudioBatch Test MS VST3 plugin, defaulting to Release mode in test-plugin/cmake-build-release,
 # and prints the path of the bundle for the AUDIOBATCH_TEST_VST3 variable that the Rust tests read.
 # The C++ tests build their own copy as part of the C++ project.
 # Needs the JUCE submodule in cpp/JUCE: git submodule update --init cpp/JUCE
@@ -18,7 +18,7 @@ OPTIONS: All options are optional
         Only print the path of the bundle without building.
 
     -d | --debug
-        Build Debug into build-debug/ instead of Release into build/."
+        Build Debug into cmake-build-debug/ instead of Release into cmake-build-release/."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../common.sh
@@ -44,9 +44,9 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-BUILD_DIR="$DIR/build"
+BUILD_DIR="$DIR/cmake-build-release"
 if [ "$BUILD_TYPE" = "Debug" ]; then
-    BUILD_DIR="$DIR/build-debug"
+    BUILD_DIR="$DIR/cmake-build-debug"
 fi
 BUNDLE="$BUILD_DIR/AudioBatchTestPlugin_artefacts/$BUILD_TYPE/VST3/AudioBatch Test MS.vst3"
 
