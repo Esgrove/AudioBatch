@@ -36,7 +36,7 @@ if(APPLE)
     list(APPEND IMAGE_CONTROL_FORMATS AU)
 endif()
 
-# build.sh --install copies the bundles to the user's plugin folders, so the build itself never does.
+# install.sh copies the bundles to the user's plugin folders, so the build itself never does.
 juce_add_plugin(
     ImageControl
     COMPANY_NAME

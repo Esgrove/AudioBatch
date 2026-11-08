@@ -12,7 +12,7 @@ It then renders the 60-second stereo files of fixtures/benchmark/output through 
 timing every run on fresh copies with isolated application storage,
 and compares the 16-bit PCM the two formats wrote, sample by sample.
 
-Install the current build first with `./build.sh --validate`,
+Install the current build first with `./install.sh --validate`,
 and generate the inputs once with `uv run fixtures/benchmark/generate.py`.
 
 Usage: uv run --script image-control-plugin/benchmarks/compare_formats.py [--cli PATH] [--runs N] [--jobs N]
@@ -32,7 +32,7 @@ from pathlib import Path
 
 PLUGIN_DIRECTORY = Path(__file__).resolve().parent.parent
 REPOSITORY = PLUGIN_DIRECTORY.parent
-BUILD_DIRECTORY = PLUGIN_DIRECTORY / "build-benchmark"
+BUILD_DIRECTORY = PLUGIN_DIRECTORY / "cmake-build-benchmark"
 WRITER = BUILD_DIRECTORY / "ImageControlPresetWriter_artefacts" / "Release" / "ImageControlPresetWriter"
 INPUT_DIRECTORY = REPOSITORY / "fixtures" / "benchmark" / "output"
 INPUTS = ["music_stereo_44100_24.wav", "music_stereo_48000_24.wav", "noise_stereo_44100_24.wav"]
@@ -142,7 +142,7 @@ def main() -> None:
         sys.exit("AudioBatch CLI not found. Pass --cli or install it with cpp/install.sh")
     for name, path in INSTALLED.items():
         if not path.exists():
-            sys.exit(f"The {name} is not installed at {path}. Run image-control-plugin/build.sh --validate")
+            sys.exit(f"The {name} is not installed at {path}. Run image-control-plugin/install.sh --validate")
     missing_inputs = [name for name in INPUTS if not (INPUT_DIRECTORY / name).is_file()]
     if missing_inputs:
         sys.exit(f"Missing inputs {missing_inputs}. Run uv run fixtures/benchmark/generate.py")

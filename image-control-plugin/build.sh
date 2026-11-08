@@ -1,78 +1,118 @@
 #!/bin/bash
 set -eo pipefail
 
-# Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/build.
-# Optionally runs its unit tests, installs the bundles into the user's plugin folders,
-# and validates the installed plugins with pluginval and, on macOS, auval.
+# Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/cmake-build-release.
+# Optionally runs its unit tests. install.sh installs the bundles and validates them.
 # Needs the JUCE submodule in cpp/JUCE: git submodule update --init cpp/JUCE
 
 USAGE="Usage: $0 [OPTIONS]
 
 Build the ImageControl VST3 plugin, and on macOS its Audio Unit.
+On Windows, Visual Studio is used by default. Pass --ninja to use Ninja instead.
+Release builds go into cmake-build-release/, Debug into cmake-build-debug/,
+and other build types into cmake-build-<type>/. The Windows Ninja workspace uses cmake-build-ninja-<type>/.
+Use install.sh to install the bundles into the plugin folders.
 
 OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
     -p | --print
-        Only print the path of the bundle without building.
+        Only print the path of the VST3 bundle without building.
+
+    -n | --ninja
+        Use Ninja as the build system (Windows only, macOS uses Ninja by default).
+
+    -r | --reuse
+        Skip CMake generation and reuse the existing build directory.
+
+    -c | --clean
+        Delete the selected build directory before configuring.
+        Cannot be used with --reuse.
+
+    -b | --build-type <type>
+        Specify build type for CMake. Default is 'Release'.
 
     -d | --debug
-        Build Debug into build-debug/ instead of Release into build/.
+        Select Debug, equivalent to --build-type Debug.
+        When combined with --build-type, the last selection wins.
 
     -t | --test
         Also build and run the unit tests.
 
-    -i | --install
-        Copy the built bundles into the standard VST3 folder, and on macOS the Audio Unit into the Components folder.
-
-    -v | --validate
-        Install, then validate the VST3 with pluginval if it is in PATH,
-        and on macOS also the Audio Unit with auval."
+    -v | --verbose
+        Display commands being executed."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=../common.sh
-source "$DIR/../common.sh"
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
 
-PRINT_ONLY=false
-RUN_TESTS=false
-INSTALL=false
-VALIDATE=false
-BUILD_TYPE="Release"
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -p | --print)
-            PRINT_ONLY=true
-            ;;
-        -d | --debug)
-            BUILD_TYPE="Debug"
-            ;;
-        -t | --test)
-            RUN_TESTS=true
-            ;;
-        -i | --install)
-            INSTALL=true
-            ;;
-        -v | --validate)
-            INSTALL=true
-            VALIDATE=true
-            ;;
-        *)
-            print_error_and_exit "Unknown option: $1"
+init_options() {
+    PRINT_ONLY=false
+    USE_NINJA=false
+    REUSE_BUILD_DIR=false
+    CLEAN_BUILD_DIR=false
+    RUN_TESTS=false
+    BUILD_TYPE="Release"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -p | --print)
+                PRINT_ONLY=true
+                ;;
+            -n | --ninja)
+                if [ "$BASH_PLATFORM" = "windows" ]; then
+                    USE_NINJA=true
+                fi
+                ;;
+            -r | --reuse)
+                REUSE_BUILD_DIR=true
+                ;;
+            -c | --clean)
+                CLEAN_BUILD_DIR=true
+                ;;
+            -b | --build-type)
+                if [ $# -lt 2 ]; then
+                    print_error_and_exit "Missing value for $1."
+                fi
+                BUILD_TYPE="$2"
+                shift
+                ;;
+            -d | --debug)
+                BUILD_TYPE="Debug"
+                ;;
+            -t | --test)
+                RUN_TESTS=true
+                ;;
+            -v | --verbose)
+                set -x
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage_and_exit
+                ;;
+        esac
+        shift
+    done
+
+    if [ "$CLEAN_BUILD_DIR" = true ] && [ "$REUSE_BUILD_DIR" = true ]; then
+        print_error_and_exit "--clean and --reuse cannot be used together."
+    fi
+    case "$BUILD_TYPE" in
+        "" | *[!a-zA-Z0-9_-]*)
+            print_error_and_exit "Build type must contain only letters, numbers, underscores, or hyphens."
             ;;
     esac
-    shift
-done
 
-BUILD_DIR="$DIR/build"
-if [ "$BUILD_TYPE" = "Debug" ]; then
-    BUILD_DIR="$DIR/build-debug"
-fi
-BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/VST3/ImageControl.vst3"
-AU_BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/AU/ImageControl.component"
+    BUILD_DIR=$(plugin_build_dir "$BUILD_TYPE" "$USE_NINJA")
+    BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/VST3/ImageControl.vst3"
+    AU_BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/AU/ImageControl.component"
+}
+
+init_options "$@"
 
 if [ "$PRINT_ONLY" = true ]; then
     echo "$BUNDLE"
@@ -84,16 +124,6 @@ if [ ! -f "$DIR/../cpp/JUCE/CMakeLists.txt" ]; then
     print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
 fi
 
-GENERATOR_ARGS=()
-if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ninja)" ]; then
-    GENERATOR_ARGS=(-G Ninja)
-fi
-
-LAUNCHER_ARGS=()
-if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ccache)" ]; then
-    LAUNCHER_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
-fi
-
 TARGETS=(--target ImageControl_VST3)
 if [ "$BASH_PLATFORM" = "mac" ]; then
     TARGETS+=(ImageControl_AU)
@@ -102,9 +132,26 @@ if [ "$RUN_TESTS" = true ]; then
     TARGETS+=(ImageControlTests)
 fi
 
+if [ "$CLEAN_BUILD_DIR" = true ]; then
+    print_yellow "Deleting $BUILD_DIR"
+    rm -rf "${BUILD_DIR:?}"
+fi
+
 print_magenta "Building ImageControl into $BUILD_DIR"
-cmake -S "$DIR" -B "$BUILD_DIR" "${GENERATOR_ARGS[@]}" "${LAUNCHER_ARGS[@]}" \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DIMAGE_CONTROL_BUILD_TESTS="$RUN_TESTS"
+if [ "$REUSE_BUILD_DIR" = true ]; then
+    if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+        print_error_and_exit "No CMake build directory to reuse at $BUILD_DIR"
+    fi
+else
+    BUILD_TESTS=OFF
+    if [ "$RUN_TESTS" = true ]; then
+        BUILD_TESTS=ON
+    fi
+    plugin_configure "$BUILD_DIR" "$BUILD_TYPE" "$USE_NINJA" "$BUILD_TESTS"
+fi
+if [ "$USE_NINJA" = true ]; then
+    load_msvc_environment
+fi
 cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" "${TARGETS[@]}"
 
 if [ ! -d "$BUNDLE" ]; then
@@ -121,73 +168,6 @@ fi
 if [ "$RUN_TESTS" = true ]; then
     print_magenta "Running the unit tests"
     ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure
-fi
-
-if [ "$INSTALL" = true ]; then
-    if [ "$BASH_PLATFORM" = "windows" ]; then
-        # The system-wide VST3 folder, which needs an elevated shell to write to.
-        VST3_DIR="$(cygpath -u "$COMMONPROGRAMFILES")/VST3"
-        # Windows hosts expect a plain .vst3 file, so the DLL inside the bundle is installed instead of the bundle folder.
-        INSTALL_SOURCE="$BUNDLE/Contents/x86_64-win/ImageControl.vst3"
-    else
-        VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3"
-        INSTALL_SOURCE="$BUNDLE"
-    fi
-    if ! (mkdir -p "$VST3_DIR" && rm -rf "${VST3_DIR:?}/ImageControl.vst3" && cp -R "$INSTALL_SOURCE" "$VST3_DIR/ImageControl.vst3") 2> /dev/null; then
-        if [ "$BASH_PLATFORM" != "windows" ]; then
-            print_error_and_exit "Failed to install to $VST3_DIR"
-        fi
-        # There is no sudo on Windows, so the copy is repeated in an elevated PowerShell that triggers a UAC prompt.
-        print_yellow "Administrator rights are needed for $VST3_DIR, requesting elevation"
-        WIN_DIR=$(cygpath -w "$VST3_DIR")
-        WIN_SOURCE=$(cygpath -w "$INSTALL_SOURCE")
-        PS_COMMAND="\$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path '$WIN_DIR' | Out-Null; Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$WIN_DIR\\ImageControl.vst3'; Copy-Item -Force '$WIN_SOURCE' '$WIN_DIR\\ImageControl.vst3'"
-        PS_ENCODED=$(printf '%s' "$PS_COMMAND" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
-        if ! powershell.exe -NoProfile -Command "\$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList '-NoProfile','-EncodedCommand','$PS_ENCODED'; exit \$p.ExitCode"; then
-            print_error_and_exit "Elevated install to $VST3_DIR failed or was cancelled"
-        fi
-    fi
-    print_green "Installed: $VST3_DIR/ImageControl.vst3"
-
-    if [ "$BASH_PLATFORM" = "mac" ]; then
-        COMPONENTS_DIR="$HOME/Library/Audio/Plug-Ins/Components"
-        mkdir -p "$COMPONENTS_DIR"
-        rm -rf "${COMPONENTS_DIR:?}/ImageControl.component"
-        cp -R "$AU_BUNDLE" "$COMPONENTS_DIR/"
-        # The Audio Unit registry caches components, so it is restarted to pick up the new build.
-        killall -q AudioComponentRegistrar || true
-        print_green "Installed: $COMPONENTS_DIR/ImageControl.component"
-    fi
-fi
-
-if [ "$VALIDATE" = true ] && [ "$BASH_PLATFORM" = "mac" ]; then
-    require_command auval
-    # The restarted registry takes a moment to list the new component, and auval fails until it does.
-    for attempt in $(seq 1 30); do
-        if auval -a 2> /dev/null | grep -q "aufx Egic Esgr"; then
-            break
-        fi
-        if [ "$attempt" -eq 30 ]; then
-            print_error_and_exit "The Audio Unit did not register: aufx Egic Esgr"
-        fi
-        sleep 1
-    done
-    print_magenta "Validating the Audio Unit with auval"
-    auval -strict -v aufx Egic Esgr
-fi
-
-if [ "$VALIDATE" = true ]; then
-    # pluginval is optional: https://github.com/Tracktion/pluginval
-    if [ -n "$(command -v pluginval)" ]; then
-        INSTALLED_VST3="$VST3_DIR/ImageControl.vst3"
-        if [ "$BASH_PLATFORM" = "windows" ]; then
-            INSTALLED_VST3=$(cygpath -w "$INSTALLED_VST3")
-        fi
-        print_magenta "Validating the VST3 with pluginval"
-        pluginval --strictness-level 5 --validate "$INSTALLED_VST3"
-    else
-        print_yellow "pluginval not found in PATH, skipping VST3 validation"
-    fi
 fi
 
 echo "$BUNDLE"

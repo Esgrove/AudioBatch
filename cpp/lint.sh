@@ -228,6 +228,29 @@ in_compile_database() {
     grep -Fiq "\"file\": \"$mixed\"" "$database" || grep -Fiq "\"file\": \"$escaped\"" "$database"
 }
 
+# Returns success when the compile database is older than the CMake files that generate it.
+database_is_older_than_cmake_files() {
+    local newer
+    newer=$(find "$REPO/CMakeLists.txt" "$REPO/cmake" "$ROOT/test-plugin/CMakeLists.txt" \
+        -newer "$BUILD_DIR/compile_commands.json" -print -quit 2> /dev/null || true)
+    [ -n "$newer" ]
+}
+
+# Returns success when a source to lint, other than a fuzz harness outside the fuzz build,
+# has no entry in the compile database, such as a file added since the last CMake configuration.
+database_lacks_sources() {
+    local source
+    while IFS= read -r source; do
+        if [[ "$source" == "$REPO/tests/fuzz/"* ]] && [ "$FUZZ" != true ]; then
+            continue
+        fi
+        if ! in_compile_database "$source"; then
+            return 0
+        fi
+    done < <(collect_sources)
+    return 1
+}
+
 init_options "$@"
 
 cd "$REPO"
@@ -370,6 +393,12 @@ fi
 
 NEEDS_BUILD=false
 if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+    NEEDS_BUILD=true
+elif database_is_older_than_cmake_files; then
+    print_yellow "The compile database is older than the CMake files, rebuilding it"
+    NEEDS_BUILD=true
+elif database_lacks_sources; then
+    print_yellow "The compile database is missing sources to lint, rebuilding it"
     NEEDS_BUILD=true
 fi
 if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then

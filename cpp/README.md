@@ -591,7 +591,8 @@ The lint script prefers the Clang Debug database when available.
 Use `--build-dir cmake-build-windows-ninja-debug` to select the MSVC database explicitly.
 `./lint.sh --clang --build-type Release --check` selects the Clang Release workspace.
 Other build types, including `RelWithDebInfo` and `MinSizeRel`, use their own directories.
-If the selected compilation database is missing, linting first configures and builds that workspace,
+If the selected compilation database is missing, older than the CMake files, or lacks a source to lint,
+linting first configures and builds that workspace,
 including explicit `--build-dir` selections and the macOS `--fuzz` configuration.
 Existing explicit directories retain their cached toolchain and build type unless `--build-type` is supplied.
 Visual Studio and Xcode generators cannot export compilation databases. Use a separate Ninja directory for linting.

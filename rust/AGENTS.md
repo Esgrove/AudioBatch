@@ -328,6 +328,8 @@ cargo nextest run
 ```
 
 `cargo test` works too.
+`./lint.sh` runs the same clippy command with `-D warnings`, also on the fuzz crate,
+and `./lint.sh --check` reports the warnings without applying fixes.
 CI runs `cargo clippy --all-targets -- -D warnings` and the tests on macOS and Windows,
 and `cargo fmt --check` and a coverage run on macOS.
 
