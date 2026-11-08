@@ -121,12 +121,14 @@ void SettingsPanel::resized()
     auto area = getLocalBounds().reduced(MARGIN);
     titleLabel.setBounds(area.removeFromTop(ROW_HEIGHT));
     for (auto* button :
-         {&analyzeOutputButton,
-          &phaseColoursButton,
-          &melScaleButton,
-          &showFpsButton,
-          &bypassRenderingButton,
-          &hideSpectrogramButton})
+         {
+             &analyzeOutputButton,
+             &phaseColoursButton,
+             &melScaleButton,
+             &showFpsButton,
+             &bypassRenderingButton,
+             &hideSpectrogramButton,
+         })
     {
         button->setBounds(area.removeFromTop(ROW_HEIGHT));
     }

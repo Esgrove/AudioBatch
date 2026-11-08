@@ -8,6 +8,7 @@
 #include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>

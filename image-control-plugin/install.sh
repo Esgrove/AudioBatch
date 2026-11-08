@@ -98,14 +98,23 @@ install_vst3() {
         fi
         # There is no sudo on Windows, so the copy is repeated in an elevated PowerShell that triggers a UAC prompt.
         print_yellow "Administrator rights are needed for $VST3_DIR, requesting elevation"
-        local win_dir win_source ps_command ps_encoded
+        local win_dir win_source win_log log_file ps_command ps_encoded
         win_dir=$(cygpath -w "$VST3_DIR")
         win_source=$(cygpath -w "$INSTALL_SOURCE")
-        ps_command="\$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path '$win_dir' | Out-Null; Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$win_dir\\ImageControl.vst3'; Copy-Item -Force '$win_source' '$win_dir\\ImageControl.vst3'"
+        # The elevated window closes on its own, so its error is written to a log file and shown here.
+        log_file=$(mktemp)
+        win_log=$(cygpath -w "$log_file")
+        ps_command="\$ErrorActionPreference = 'Stop'; try { New-Item -ItemType Directory -Force -Path '$win_dir' | Out-Null; Remove-Item -Recurse -Force '$win_dir\\ImageControl.vst3' -ErrorAction SilentlyContinue; Copy-Item -Force '$win_source' '$win_dir\\ImageControl.vst3' } catch { \$_.Exception.Message | Out-File -Encoding utf8 '$win_log'; exit 1 }"
         ps_encoded=$(printf '%s' "$ps_command" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
         if ! powershell.exe -NoProfile -Command "\$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList '-NoProfile','-EncodedCommand','$ps_encoded'; exit \$p.ExitCode"; then
+            if [ -s "$log_file" ]; then
+                print_error "$(cat "$log_file")"
+                print_yellow "Close any DAW that has ImageControl loaded, such as Ableton Live, and try again"
+            fi
+            rm -f "$log_file"
             print_error_and_exit "Elevated install to $VST3_DIR failed or was cancelled"
         fi
+        rm -f "$log_file"
     fi
     print_green "Installed: $VST3_DIR/ImageControl.vst3"
 }

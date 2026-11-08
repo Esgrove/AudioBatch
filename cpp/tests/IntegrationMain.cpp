@@ -1044,7 +1044,7 @@ void AudioBatchIntegrationTest::wheelGainSteps()
     const auto& gainSlider = view.previewWorkspace.gainSlider;
     const auto centre = thumbnail.getLocalBounds().getCentre();
     const juce::ModifierKeys command {juce::ModifierKeys::commandModifier};
-    const juce::ModifierKeys commandShift {juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier};
+    const juce::ModifierKeys commandShift {command.withFlags(juce::ModifierKeys::shiftModifier)};
     for (int notch = 0; notch < 3; ++notch) {
         driver.scrollAt(thumbnail, centre, {0.0f, 0.5f}, command);
     }

@@ -2,6 +2,7 @@
 /// queued audio becomes particles for the renderer, the audio is discarded unanalyzed while analysis is off,
 /// and a producer much faster than real time cannot keep the worker from finishing its passes.
 
+#include "analysis/SpatialAnalyzer.h"
 #include "analysis/StereoSampleFifo.h"
 #include "ui/SpectrogramRenderer.h"
 #include "ui/SpectrogramWorker.h"

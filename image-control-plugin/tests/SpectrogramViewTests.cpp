@@ -17,7 +17,6 @@
 
 #include <array>
 #include <cmath>
-#include <cstddef>
 
 namespace esgrove::image_control::test
 {
