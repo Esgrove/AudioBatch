@@ -10,7 +10,7 @@
 namespace esgrove::image_control
 {
 /// The display settings: the analyzer tap, the colours, the frequency scale, the frame rate readout,
-/// bypassing or hiding the spectrogram, the persistence, and the focus.
+/// bypassing or hiding the spectrogram, the persistence, and the stereo position curve.
 /// Every control is bound to an editor setting, so the editor picks changes up on its next display refresh
 /// and the settings are saved with the plugin state.
 class SettingsPanel final : public juce::Component
@@ -31,7 +31,9 @@ private:
     juce::ToggleButton hideSpectrogramButton {"Hide the spectrogram"};
     juce::Label persistenceLabel;
     ControlSlider persistenceSlider;
-    juce::Label focusLabel;
-    ControlSlider focusSlider;
+    juce::Label panMidpointLabel;
+    ControlSlider panMidpointSlider;
+    juce::Label panEdgeLabel;
+    ControlSlider panEdgeSlider;
 };
 }  // namespace esgrove::image_control

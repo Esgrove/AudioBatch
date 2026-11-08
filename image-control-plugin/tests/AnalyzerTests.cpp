@@ -1,6 +1,6 @@
 /// Tests SpatialAnalyzer and the spectrogram's frequency axis:
-/// where hard-panned, centred, partly panned, and anti-phase sines land, with their level and coherence,
-/// how evenly wide a sine draws across the bass,
+/// the stereo position curve, where hard-panned, centred, partly panned, and anti-phase sines land,
+/// with their level and coherence, how evenly wide a sine draws across the bass,
 /// how finely the lowest octaves are resolved, and the logarithmic and mel axis mappings.
 
 #include "analysis/SpatialAnalyzer.h"
@@ -95,17 +95,56 @@ TEST(Analyzer, AntiPhaseSineIsAtTheCentreWithNegativeCoherence)
     EXPECT_NEAR(peak.coherence, -1.0F, 1.0e-3F);
 }
 
-TEST(Analyzer, PositionFollowsTheLevelDifferenceOverTheFocus)
+TEST(Analyzer, PositionCurveDrawsTheMidpointHalfWayAndTheEdgeNearlyAtTheEdge)
 {
-    const auto sine = makeSine(2000.0, 0.5F, 48'000);
-    std::vector<float> quieter(sine.size());
-    // 9 dB quieter on the right is half way to the left edge at the default 18 dB focus.
-    const auto gain = static_cast<float>(std::pow(10.0, -9.0 / 20.0));
-    std::ranges::transform(sine, quieter.begin(), [gain](const float value) { return value * gain; });
-    const auto peak = loudest(analyze(sine, quieter));
-    EXPECT_NEAR(peak.position, 0.5F, 0.01F);
-    EXPECT_FLOAT_EQ(positionFromMagnitudes(1.0F, 0.0F, 18.0F), 1.0F);
-    EXPECT_FLOAT_EQ(positionFromMagnitudes(0.0F, 0.0F, 18.0F), 0.0F);
+    const StereoPositionCurve curve(12.0, 32.0);
+    EXPECT_FLOAT_EQ(curve.position(0.0F), 0.0F);
+    EXPECT_NEAR(curve.position(12.0F), 0.5F, 1.0e-5F);
+    EXPECT_NEAR(curve.position(32.0F), 0.99F, 1.0e-5F);
+    EXPECT_FLOAT_EQ(curve.position(-12.0F), curve.position(12.0F));
+    // Rising everywhere, gently below the midpoint and flattening towards the edge.
+    float previous = 0.0F;
+    for (int step = 1; step <= 80; ++step) {
+        const float share = curve.position(static_cast<float>(step) * 0.5F);
+        EXPECT_GT(share, previous) << step;
+        previous = share;
+    }
+    EXPECT_LT(curve.position(6.0F), 0.25F);
+    EXPECT_GT(curve.position(20.0F), 0.75F);
+
+    EXPECT_FLOAT_EQ(positionFromMagnitudes(1.0F, 0.0F, curve), 1.0F);
+    EXPECT_FLOAT_EQ(positionFromMagnitudes(0.0F, 1.0F, curve), -1.0F);
+    EXPECT_FLOAT_EQ(positionFromMagnitudes(0.0F, 0.0F, curve), 0.0F);
+    // 12 dB louder on the right is half way to the right edge.
+    EXPECT_NEAR(positionFromMagnitudes(std::pow(10.0F, -12.0F / 20.0F), 1.0F, curve), -0.5F, 1.0e-5F);
+}
+
+TEST(Analyzer, PositionCurveKeepsItsSettingsInRangeAndInOrder)
+{
+    const StereoPositionCurve crossed(20.0, 15.0);
+    EXPECT_FLOAT_EQ(crossed.midpoint(), 20.0F);
+    EXPECT_FLOAT_EQ(crossed.edge(), 20.0F + static_cast<float>(MIN_PAN_CURVE_GAP_DB));
+    EXPECT_NEAR(crossed.position(crossed.edge()), 0.99F, 1.0e-5F);
+
+    const StereoPositionCurve outside(1.0, 100.0);
+    EXPECT_FLOAT_EQ(outside.midpoint(), static_cast<float>(MIN_PAN_MIDPOINT_DB));
+    EXPECT_FLOAT_EQ(outside.edge(), static_cast<float>(MAX_PAN_EDGE_DB));
+
+    const StereoPositionCurve defaults;
+    EXPECT_FLOAT_EQ(defaults.midpoint(), static_cast<float>(DEFAULT_PAN_MIDPOINT_DB));
+    EXPECT_FLOAT_EQ(defaults.edge(), static_cast<float>(DEFAULT_PAN_EDGE_DB));
+}
+
+TEST(Analyzer, PannedSinesLandOnTheCurve)
+{
+    const StereoPositionCurve curve;
+    const auto sine = makeSine(1000.0, 0.5F, 48'000);
+    for (const double difference : {0.0, 6.0, 12.0, 20.0, 32.0}) {
+        const auto quieter = withLevelDifference(sine, difference);
+        const float expected = curve.position(static_cast<float>(difference));
+        EXPECT_NEAR(loudest(analyze(sine, quieter)).position, expected, 0.01F) << difference;
+        EXPECT_NEAR(loudest(analyze(quieter, sine)).position, -expected, 0.01F) << difference;
+    }
 }
 
 TEST(Analyzer, SineWidthIsEvenAcrossTheBass)

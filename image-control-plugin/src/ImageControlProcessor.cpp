@@ -53,7 +53,8 @@ ImageControlProcessor::ImageControlProcessor() :
     bypassValue = getRawValue(parameters, BYPASS_ID);
     editorState.setProperty(ANALYZE_OUTPUT_PROPERTY, true, nullptr);
     editorState.setProperty(PERSISTENCE_PROPERTY, DEFAULT_PERSISTENCE_SECONDS, nullptr);
-    editorState.setProperty(FOCUS_PROPERTY, DEFAULT_FOCUS_DB, nullptr);
+    editorState.setProperty(PAN_MIDPOINT_PROPERTY, DEFAULT_PAN_MIDPOINT_DB, nullptr);
+    editorState.setProperty(PAN_EDGE_PROPERTY, DEFAULT_PAN_EDGE_DB, nullptr);
     editorState.setProperty(PHASE_COLOURS_PROPERTY, false, nullptr);
     editorState.setProperty(MEL_SCALE_PROPERTY, false, nullptr);
     editorState.setProperty(SHOW_FPS_PROPERTY, false, nullptr);
@@ -257,6 +258,8 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
             const auto name = saved.getPropertyName(property);
             editorState.setProperty(name, saved.getProperty(name), nullptr);
         }
+        // The linear focus of older states has no equivalent on the pan curve, so its default curve applies.
+        editorState.removeProperty(LEGACY_FOCUS_PROPERTY, nullptr);
         xml->removeChildElement(savedEditorState, true);
     }
     parameters.replaceState(juce::ValueTree::fromXml(*xml));

@@ -51,8 +51,14 @@ constexpr auto BYPASS_ID {"bypass"};
 constexpr auto ANALYZE_OUTPUT_PROPERTY {"analyzeOutput"};
 /// Name of the editor setting that holds the spectrogram persistence in seconds.
 constexpr auto PERSISTENCE_PROPERTY {"persistence"};
-/// Name of the editor setting that holds the spectrogram focus, the level difference at the edges, in dB.
-constexpr auto FOCUS_PROPERTY {"focus"};
+/// Name of the editor setting that holds the pan midpoint in dB:
+/// the level difference between the channels drawn half way from the centre to the edge.
+constexpr auto PAN_MIDPOINT_PROPERTY {"panMidpoint"};
+/// Name of the editor setting that holds the pan edge in dB:
+/// the level difference between the channels drawn nearly at the edge.
+constexpr auto PAN_EDGE_PROPERTY {"panEdge"};
+/// Name of the linear focus setting of older saved states, which the pan midpoint and edge replace.
+constexpr auto LEGACY_FOCUS_PROPERTY {"focus"};
 /// Name of the editor setting that selects phase colours instead of frequency colours.
 constexpr auto PHASE_COLOURS_PROPERTY {"phaseColours"};
 /// Name of the editor setting that selects the mel frequency scale instead of the logarithmic one.
@@ -69,12 +75,22 @@ constexpr double MIN_PERSISTENCE_SECONDS {0.05};
 constexpr double MAX_PERSISTENCE_SECONDS {3.0};
 /// Default time constant of the fade of the spectrogram particles, in seconds.
 constexpr double DEFAULT_PERSISTENCE_SECONDS {0.3};
-/// Default level difference between the channels that reaches the edges of the spectrogram, in dB.
-constexpr double DEFAULT_FOCUS_DB {18.0};
-/// Smallest spectrogram focus, in dB.
-constexpr double MIN_FOCUS_DB {6.0};
-/// Largest spectrogram focus, in dB.
-constexpr double MAX_FOCUS_DB {40.0};
+/// Default level difference drawn half way from the centre to the edge of the spectrogram, in dB.
+constexpr double DEFAULT_PAN_MIDPOINT_DB {12.0};
+/// Smallest pan midpoint, in dB.
+constexpr double MIN_PAN_MIDPOINT_DB {3.0};
+/// Largest pan midpoint, in dB.
+constexpr double MAX_PAN_MIDPOINT_DB {24.0};
+/// Default level difference from which content is drawn at the edge of the spectrogram, in dB.
+constexpr double DEFAULT_PAN_EDGE_DB {32.0};
+/// Smallest pan edge, in dB.
+constexpr double MIN_PAN_EDGE_DB {12.0};
+/// Largest pan edge, in dB.
+constexpr double MAX_PAN_EDGE_DB {60.0};
+/// Smallest distance between the pan midpoint and the pan edge, in dB, which keeps the curve rising.
+constexpr double MIN_PAN_CURVE_GAP_DB {3.0};
+/// Step of the pan midpoint and edge settings, in dB.
+constexpr double PAN_CURVE_STEP_DB {1.0};
 /// Name of the editor setting that holds the editor width in pixels.
 constexpr auto EDITOR_WIDTH_PROPERTY {"editorWidth"};
 /// Name of the editor setting that holds the editor height in pixels.

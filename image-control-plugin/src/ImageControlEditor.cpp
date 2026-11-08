@@ -304,10 +304,16 @@ void ImageControlEditor::applyViewSettings()
         shownScale = scale;
     }
 
+    const StereoPositionCurve positionCurve(
+        static_cast<double>(editorState.getProperty(PAN_MIDPOINT_PROPERTY)),
+        static_cast<double>(editorState.getProperty(PAN_EDGE_PROPERTY))
+    );
+    spectrogram.setPositionCurve(positionCurve);
+
     const double sampleRate = imageControlProcessor.getSampleRate();
     spectrogramWorker.setSettings({
+        .positionCurve = positionCurve,
         .sampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE,
-        .focusDecibels = static_cast<double>(editorState.getProperty(FOCUS_PROPERTY)),
         .persistenceSeconds = persistenceSeconds(),
         .scale = scale,
         .colours = phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency,

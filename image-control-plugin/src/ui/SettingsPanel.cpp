@@ -15,7 +15,7 @@ namespace
 /// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
-constexpr int PANEL_HEIGHT {302};
+constexpr int PANEL_HEIGHT {346};
 /// Inner margin of the panel, in pixels.
 constexpr int MARGIN {12};
 /// Height of each row, in pixels.
@@ -32,8 +32,6 @@ constexpr float TITLE_FONT_HEIGHT {15.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
 /// Step of the persistence slider, in seconds.
 constexpr double PERSISTENCE_STEP {0.01};
-/// Step of the focus slider, in dB.
-constexpr double FOCUS_STEP {0.5};
 
 /// Sets up a label above a slider.
 void configureLabel(juce::Label& label, const juce::String& text)
@@ -42,6 +40,22 @@ void configureLabel(juce::Label& label, const juce::String& text)
     label.setFont(textFont(LABEL_FONT_HEIGHT));
     label.setBorderSize({});
     label.setJustificationType(juce::Justification::bottomLeft);
+}
+
+/// Sets up a slider of a pan curve setting in whole dB, bound to its editor setting.
+void configureDecibelSlider(
+    juce::Slider& slider,
+    const juce::Value& value,
+    const double minimum,
+    const double maximum,
+    const double defaultValue
+)
+{
+    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
+    slider.setRange(minimum, maximum, PAN_CURVE_STEP_DB);
+    slider.setTextValueSuffix(" dB");
+    slider.setDoubleClickReturnValue(true, defaultValue);
+    slider.getValueObject().referTo(value);
 }
 }  // namespace
 
@@ -92,19 +106,49 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     );
     addAndMakeVisible(persistenceSlider);
 
-    configureLabel(focusLabel, "Focus");
-    addAndMakeVisible(focusLabel);
-    focusSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
-    focusSlider.setRange(MIN_FOCUS_DB, MAX_FOCUS_DB, FOCUS_STEP);
-    focusSlider.setTextValueSuffix(" dB");
-    focusSlider.setDoubleClickReturnValue(true, DEFAULT_FOCUS_DB);
-    focusSlider.getValueObject().referTo(editorState.getPropertyAsValue(FOCUS_PROPERTY, nullptr));
-    focusSlider.setTooltip(
-        "How large a level difference between the left and right channels reaches the edges of the display. "
-        "At 18 dB, a sound 18 dB louder on the left is drawn at the left edge, and one 9 dB louder halfway there. "
-        "Lower values spread small differences wider, and higher values keep room for hard-panned sounds"
+    configureLabel(panMidpointLabel, "Pan midpoint");
+    addAndMakeVisible(panMidpointLabel);
+    configureDecibelSlider(
+        panMidpointSlider,
+        editorState.getPropertyAsValue(PAN_MIDPOINT_PROPERTY, nullptr),
+        MIN_PAN_MIDPOINT_DB,
+        MAX_PAN_MIDPOINT_DB,
+        DEFAULT_PAN_MIDPOINT_DB
     );
-    addAndMakeVisible(focusSlider);
+    panMidpointSlider.setTooltip(
+        "The level difference between the left and right channels that is drawn half way from the centre to the edge. "
+        "Lower values spread small differences wider"
+    );
+    addAndMakeVisible(panMidpointSlider);
+
+    configureLabel(panEdgeLabel, "Pan edge");
+    addAndMakeVisible(panEdgeLabel);
+    configureDecibelSlider(
+        panEdgeSlider,
+        editorState.getPropertyAsValue(PAN_EDGE_PROPERTY, nullptr),
+        MIN_PAN_EDGE_DB,
+        MAX_PAN_EDGE_DB,
+        DEFAULT_PAN_EDGE_DB
+    );
+    panEdgeSlider.setTooltip(
+        "The level difference between the channels from which sound is drawn at the edge. "
+        "Between the midpoint and this, the curve flattens, so only nearly fully panned sound reaches the edge"
+    );
+    addAndMakeVisible(panEdgeSlider);
+
+    // The edge stays above the midpoint, so moving one into the other pushes the other along.
+    panMidpointSlider.onValueChange = [this] {
+        const double lowestEdge = panMidpointSlider.getValue() + MIN_PAN_CURVE_GAP_DB;
+        if (panEdgeSlider.getValue() < lowestEdge) {
+            panEdgeSlider.setValue(lowestEdge);
+        }
+    };
+    panEdgeSlider.onValueChange = [this] {
+        const double highestMidpoint = panEdgeSlider.getValue() - MIN_PAN_CURVE_GAP_DB;
+        if (panMidpointSlider.getValue() > highestMidpoint) {
+            panMidpointSlider.setValue(highestMidpoint);
+        }
+    };
 
     setSize(PANEL_WIDTH, PANEL_HEIGHT);
 }
@@ -134,7 +178,9 @@ void SettingsPanel::resized()
     }
     persistenceLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
     persistenceSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
-    focusLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    focusSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
+    panMidpointLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
+    panMidpointSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
+    panEdgeLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
+    panEdgeSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
 }
 }  // namespace esgrove::image_control
