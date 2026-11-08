@@ -46,7 +46,7 @@ fn main() -> Result<()> {
     instance.setup(&ui, ProcessMode::Realtime, 48_000.0, 1024)?;
     instance.activate(&ui)?;
 
-    let editor = EditorWindow::open(&ui, &instance, &class.name, None)?;
+    let editor = EditorWindow::open(&ui, &instance, &class.name, None, None)?;
     while !editor.is_closed() {
         handle_events(EVENT_WAIT);
     }

@@ -3,6 +3,8 @@
 //! The editor attaches its own `NSView` to the window's content view.
 //! A window delegate hides the window when the user closes it,
 //! checks the user's resizes with the view, and reports the new size to the view.
+//! A window reopened at a remembered position keeps its title bar on a screen,
+//! and opens in the middle of the main screen when that position is on no screen at all.
 
 #![expect(unsafe_code, reason = "creates an AppKit window and a delegate class for it")]
 
@@ -17,7 +19,7 @@ use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRe
 use raw_window_handle::RawWindowHandle;
 use vst3::Steinberg::{FIDString, kPlatformTypeNSView};
 
-use super::{EditorError, EditorShared, ViewSize};
+use super::{EditorError, EditorShared, ViewSize, WindowPosition};
 use crate::thread::UiThread;
 
 /// Objective-C class name of the editor window delegate.
@@ -165,6 +167,34 @@ impl NativeWindow {
     pub fn show(&self) {
         self.window.makeKeyAndOrderFront(None);
     }
+
+    /// Returns the top-left corner of the window frame in screen points,
+    /// or none while the window is minimized into the Dock.
+    pub fn position(&self) -> Option<WindowPosition> {
+        if self.window.isMiniaturized() {
+            return None;
+        }
+        let frame = self.window.frame();
+        Some(WindowPosition {
+            x: whole_points(frame.origin.x),
+            y: whole_points(frame.origin.y + frame.size.height),
+        })
+    }
+
+    /// Moves the window frame's top-left corner to `position`, keeping its title bar on the screen it lands on.
+    /// A position on no connected screen centres the window on the main screen instead.
+    pub fn move_to(&self, position: WindowPosition) {
+        self.window
+            .setFrameTopLeftPoint(NSPoint::new(f64::from(position.x), f64::from(position.y)));
+        if let Some(screen) = self.window.screen() {
+            let constrained = self
+                .window
+                .constrainFrameRect_toScreen(self.window.frame(), Some(&screen));
+            self.window.setFrame_display(constrained, false);
+        } else {
+            self.window.center();
+        }
+    }
 }
 
 impl Drop for NativeWindow {
@@ -178,6 +208,15 @@ impl Drop for NativeWindow {
 /// Returns a size in points as an `AppKit` size.
 fn points(size: ViewSize) -> NSSize {
     NSSize::new(f64::from(size.width), f64::from(size.height))
+}
+
+/// Returns a screen coordinate in whole points.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "screen coordinates in points are far inside the range of i32"
+)]
+const fn whole_points(value: f64) -> i32 {
+    value.round() as i32
 }
 
 /// Returns an `AppKit` size as a view size in whole points.

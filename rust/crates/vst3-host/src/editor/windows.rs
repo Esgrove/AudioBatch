@@ -6,6 +6,7 @@
 //! The window procedure hides the window when the user closes it,
 //! checks the user's resizes with the view, reports the new size to the view,
 //! and passes a new display scale on when the window moves to another display.
+//! A window reopened at a remembered position is moved into the work area of the nearest monitor.
 
 #![expect(unsafe_code, reason = "creates a Win32 window and handles its messages")]
 
@@ -15,20 +16,22 @@ use std::sync::OnceLock;
 
 use raw_window_handle::RawWindowHandle;
 use vst3::Steinberg::{FIDString, kPlatformTypeHWND};
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{BLACK_BRUSH, GetStockObject};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{
+    BLACK_BRUSH, GetMonitorInfoW, GetStockObject, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWL_STYLE,
-    GWLP_USERDATA, GetWindowLongPtrW, GetWindowLongW, IDC_ARROW, LoadCursorW, RegisterClassExW, SIZE_MINIMIZED,
-    SW_HIDE, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WM_CLOSE, WM_DPICHANGED, WM_NCDESTROY, WM_SIZE, WM_SIZING, WMSZ_BOTTOMLEFT, WMSZ_LEFT,
-    WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-    WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
+    GWLP_USERDATA, GetWindowLongPtrW, GetWindowLongW, GetWindowRect, IDC_ARROW, IsIconic, LoadCursorW,
+    RegisterClassExW, SIZE_MINIMIZED, SW_HIDE, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_CLOSE, WM_DPICHANGED, WM_NCDESTROY, WM_SIZE,
+    WM_SIZING, WMSZ_BOTTOMLEFT, WMSZ_LEFT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CAPTION,
+    WS_CLIPCHILDREN, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
 };
 
-use super::{EditorError, EditorShared, ViewSize};
+use super::{EditorError, EditorShared, ViewSize, WindowPosition};
 use crate::thread::UiThread;
 
 /// Name of the window class of editor windows.
@@ -117,6 +120,62 @@ impl NativeWindow {
                 size.width.saturating_add(extra_width),
                 size.height.saturating_add(extra_height),
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    /// Returns the top-left corner of the window frame on the virtual screen, in physical pixels,
+    /// or none while the window is minimized, when the system reports a placeholder position.
+    pub fn position(&self) -> Option<WindowPosition> {
+        // SAFETY: the window is valid.
+        if unsafe { IsIconic(self.hwnd) } != 0 {
+            return None;
+        }
+        let rect = window_rect(self.hwnd)?;
+        Some(WindowPosition {
+            x: rect.left,
+            y: rect.top,
+        })
+    }
+
+    /// Moves the window frame's top-left corner to `position`,
+    /// then into the work area of the monitor nearest it, so the whole window stays reachable.
+    pub fn move_to(&self, position: WindowPosition) {
+        let Some(rect) = window_rect(self.hwnd) else {
+            return;
+        };
+        let placed = RECT {
+            left: position.x,
+            top: position.y,
+            right: position.x + (rect.right - rect.left),
+            bottom: position.y + (rect.bottom - rect.top),
+        };
+        let corner = POINT {
+            x: position.x,
+            y: position.y,
+        };
+        // SAFETY: the monitor handle comes from the system, and the information struct lives for the call.
+        let work_area = unsafe {
+            let monitor = MonitorFromPoint(corner, MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO {
+                cbSize: u32::try_from(size_of::<MONITORINFO>()).unwrap_or(u32::MAX),
+                rcMonitor: placed,
+                rcWork: placed,
+                dwFlags: 0,
+            };
+            (GetMonitorInfoW(monitor, &raw mut info) != 0).then_some(info.rcWork)
+        };
+        let target = work_area.map_or(position, |area| keep_inside(&placed, &area));
+        // SAFETY: the window is valid.
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                std::ptr::null_mut(),
+                target.x,
+                target.y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
     }
@@ -289,6 +348,40 @@ fn constrain_drag(hwnd: HWND, shared: &EditorShared, edge: u32, rect: &mut RECT)
     }
 }
 
+/// Returns the window's frame rectangle on the virtual screen, or none when the system cannot tell.
+fn window_rect(hwnd: HWND) -> Option<RECT> {
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: the window is valid, and the rectangle lives for the call.
+    (unsafe { GetWindowRect(hwnd, &raw mut rect) } != 0).then_some(rect)
+}
+
+/// Returns the top-left corner that moves a window rectangle the least to put it inside a work area.
+/// A window larger than the area keeps its top-left corner in the area, so its title bar stays reachable.
+const fn keep_inside(window: &RECT, area: &RECT) -> WindowPosition {
+    WindowPosition {
+        x: keep_span_inside(window.left, window.right - window.left, area.left, area.right),
+        y: keep_span_inside(window.top, window.bottom - window.top, area.top, area.bottom),
+    }
+}
+
+/// Returns the start that moves a span of a length the least to fit between two edges,
+/// or the lower edge when the span is longer than the room between them.
+const fn keep_span_inside(start: i32, length: i32, lower: i32, upper: i32) -> i32 {
+    let highest = upper - length;
+    if start > highest {
+        if highest > lower { highest } else { lower }
+    } else if start < lower {
+        lower
+    } else {
+        start
+    }
+}
+
 /// Returns how much wider and taller the window is than its client area, at the window's display scale.
 fn frame_extent(hwnd: HWND) -> (i32, i32) {
     let mut rect = RECT {
@@ -322,4 +415,59 @@ fn low_word(value: usize) -> i32 {
 /// Returns text as a null-terminated UTF-16 string.
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod test_window_placement {
+    use super::*;
+
+    /// Returns a rectangle from its top-left corner and its size.
+    const fn rect(left: i32, top: i32, width: i32, height: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        }
+    }
+
+    #[test]
+    fn a_window_inside_the_work_area_stays_where_it_is() {
+        let area = rect(0, 0, 1920, 1040);
+        assert_eq!(
+            keep_inside(&rect(200, 100, 800, 600), &area),
+            WindowPosition { x: 200, y: 100 }
+        );
+    }
+
+    #[test]
+    fn a_window_past_an_edge_moves_back_just_inside() {
+        let area = rect(0, 0, 1920, 1040);
+        assert_eq!(
+            keep_inside(&rect(1500, 900, 800, 600), &area),
+            WindowPosition { x: 1120, y: 440 }
+        );
+        assert_eq!(
+            keep_inside(&rect(-300, -50, 800, 600), &area),
+            WindowPosition { x: 0, y: 0 }
+        );
+    }
+
+    #[test]
+    fn a_window_on_a_second_monitor_keeps_its_offset_coordinates() {
+        let area = rect(-2560, 0, 2560, 1400);
+        assert_eq!(
+            keep_inside(&rect(-2000, 300, 800, 600), &area),
+            WindowPosition { x: -2000, y: 300 }
+        );
+    }
+
+    #[test]
+    fn a_window_larger_than_the_work_area_keeps_its_title_bar_reachable() {
+        let area = rect(0, 0, 1280, 680);
+        assert_eq!(
+            keep_inside(&rect(400, 300, 1600, 900), &area),
+            WindowPosition { x: 0, y: 0 }
+        );
+    }
 }
