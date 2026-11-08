@@ -82,8 +82,8 @@ so the output never depends on thread timing.
 
 The header holds the Bypass button, the Settings button, and the output gain.
 The spatial spectrogram fills the middle, and the band strips sit below it.
-A divider between them appears when the pointer is over the gap, and dragging it makes the band section
-taller or shorter.
+A divider between them appears when the pointer is over the gap,
+and dragging it makes the band section taller or shorter.
 The band section height is saved with the plugin state.
 
 ### Spatial spectrogram
