@@ -4,7 +4,8 @@
 //! and none while the preview is off or no plugin is enabled.
 //! Before instances are prepared again, the chain is taken out of the player,
 //! and the view waits until the audio callback has let go of it, so no processor runs during the reconfiguration.
-//! Saving the settings of a closed editor leaves the chain in the player, see `app/plugins.rs`.
+//! Saving the settings of a closed editor or a preset leaves the chain in the player,
+//! once its processors have received every edit.
 //! The housekeeping tick passes changed tails on to the player
 //! and turns the preview off when a plugin failed, reporting the plugin and its error.
 
@@ -16,7 +17,7 @@ use audiobatch_core::AnalysisRecord;
 use audiobatch_core::record::file_identity;
 use audiobatch_playback::Player;
 use gpui_kit::Context;
-use vst3_host::UiThread;
+use vst3_host::{InstanceError, UiThread};
 
 use super::AppView;
 use crate::plugins::preview::ChainInsert;
@@ -25,8 +26,12 @@ use crate::plugins::preview::ChainInsert;
 /// A running stream takes it within one callback, so only a stopped stream takes this long.
 const DETACH_TIMEOUT: Duration = Duration::from_millis(250);
 
-/// How often the wait checks whether the audio callback let go of the chain.
+/// How often the waits check whether the audio callback let go of the chain or delivered the edits.
 const DETACH_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+/// Longest wait for the preview's processors to receive every edit before a capture takes the chain out instead.
+/// A running stream delivers them within one callback, so only a stopped stream takes this long.
+const LIVE_CAPTURE_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// A source version shared by decoding, tags and analysis presentation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +214,26 @@ impl AppView {
             self.refresh_plugin_preview(cx);
         }
         result
+    }
+
+    /// Captures the settings of the live instances into the chain while the preview keeps playing.
+    /// It waits up to `LIVE_CAPTURE_TIMEOUT` for the preview's processors to receive every edit,
+    /// which a running stream does within one audio block,
+    /// and otherwise captures with the chain taken out of the player, like `capture_plugin_states`.
+    pub(super) fn capture_plugin_states_live(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let ui = UiThread::current().ok_or_else(|| anyhow::anyhow!("Plugin settings require the UI thread"))?;
+        let deadline = Instant::now() + LIVE_CAPTURE_TIMEOUT;
+        loop {
+            match self.plugins.chain.capture_states_live(&ui) {
+                Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) => {
+                    if Instant::now() >= deadline {
+                        return self.capture_plugin_states(cx);
+                    }
+                    thread::sleep(DETACH_POLL_INTERVAL);
+                }
+                result => return result,
+            }
+        }
     }
 
     /// Prepares the live instances again for a new output rate or after their restart requests,
