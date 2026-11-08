@@ -3,7 +3,8 @@
 /// a band move stops at the minimum ratio to the crossover that stays,
 /// and Ctrl or Cmd with a vertical drag changes the band's side gain.
 /// Also tests the particles SpectrogramParticleBuilder prepares for the GPU renderer:
-/// which points become particles, how bright they are, and where they are placed.
+/// which points become particles, how bright and large they are under the spectral tilt and the auto-scale,
+/// where they are placed, and the frequency palette.
 
 #include "analysis/SpatialAnalyzer.h"
 #include "ImageControlProcessor.h"
@@ -15,8 +16,11 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
 namespace esgrove::image_control::test
 {
@@ -97,6 +101,12 @@ SpectralPoint point(const float frequency, const float position, const float lev
     return {.frequency = frequency, .spacing = 10.0F, .position = position, .level = level, .coherence = 1.0F};
 }
 
+/// Returns the level in power of a point that is a number of dB below full scale.
+float levelFromDecibels(const float decibels)
+{
+    return std::pow(10.0F, decibels / 10.0F);
+}
+
 /// Returns the summed colour channels of a particle, which follow its weight.
 float brightness(const SpectrogramParticle& particle)
 {
@@ -168,7 +178,8 @@ TEST(SpectrogramView, CommandDragChangesTheBandWidth)
 TEST(SpectrogramParticles, QuietPointsAreDroppedAndLouderPointsAreBrighter)
 {
     SpectrogramParticleBuilder builder;
-    // -90 dB is below the display floor, -20 dB and 0 dB are inside the display range.
+    // The loudest point sets the auto-scale reference to 0 dB.
+    // -90 dB is below the display range under it, and -20 dB and 0 dB are inside it.
     const std::array points {point(1000.0F, 0.0F, 1.0e-9F), point(1000.0F, 0.0F, 1.0e-2F), point(1000.0F, 0.0F, 1.0F)};
     builder.addFrame(points, FRAME_SECONDS);
 
@@ -223,5 +234,114 @@ TEST(SpectrogramParticles, ClearDropsTheParticles)
     builder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
     builder.clear();
     EXPECT_TRUE(builder.particles().empty());
+}
+
+TEST(SpectrogramParticles, TiltShowsContentFallingThreeDecibelsPerOctaveEvenly)
+{
+    // Music falls by about 3 dB per octave, which the tilt evens out, so the highs are as bright as the bass.
+    SpectrogramParticleBuilder builder;
+    std::vector<SpectralPoint> points;
+    for (const float frequency : {50.0F, 200.0F, 1000.0F, 4000.0F, 10'000.0F}) {
+        const float decibels = -20.0F - 3.0F * std::log2(frequency / 1000.0F);
+        points.push_back(point(frequency, 0.0F, levelFromDecibels(decibels)));
+    }
+    // A louder point sets the reference, so the evened out points sit inside the display range.
+    points.push_back(point(1000.0F, 0.0F, levelFromDecibels(-5.0F)));
+    builder.addFrame(points, FRAME_SECONDS);
+
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), points.size());
+    std::vector<float> weights;
+    for (std::size_t index = 0; index + 1 < particles.size(); ++index) {
+        // The colours differ along the axis, so compare the sizes, which follow the same share of the range.
+        weights.push_back(particles[index].size);
+    }
+    const auto [smallest, largest] = std::ranges::minmax(weights);
+    EXPECT_NEAR(largest / smallest, 1.0F, 1.0e-3F);
+}
+
+TEST(SpectrogramParticles, AutoScaleDrawsQuietAndLoudMaterialAlike)
+{
+    SpectrogramParticleBuilder quietBuilder;
+    quietBuilder.addFrame(
+        std::array {point(1000.0F, 0.0F, levelFromDecibels(-40.0F)), point(1000.0F, 0.0F, levelFromDecibels(-50.0F))},
+        FRAME_SECONDS
+    );
+    SpectrogramParticleBuilder loudBuilder;
+    loudBuilder.addFrame(
+        std::array {point(1000.0F, 0.0F, levelFromDecibels(-10.0F)), point(1000.0F, 0.0F, levelFromDecibels(-20.0F))},
+        FRAME_SECONDS
+    );
+
+    ASSERT_EQ(quietBuilder.particles().size(), 2U);
+    ASSERT_EQ(loudBuilder.particles().size(), 2U);
+    for (std::size_t index = 0; index < 2; ++index) {
+        EXPECT_NEAR(brightness(quietBuilder.particles()[index]), brightness(loudBuilder.particles()[index]), 1.0e-5F);
+    }
+}
+
+TEST(SpectrogramParticles, AutoScaleRisesAtOnceAndFallsSlowly)
+{
+    SpectrogramParticleBuilder builder;
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+    builder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    EXPECT_NEAR(builder.referenceLevel(), 0.0F, 1.0e-4F);
+
+    // After the signal drops by 30 dB, the reference falls gradually instead of jumping down.
+    const std::array quiet {point(1000.0F, 0.0F, levelFromDecibels(-30.0F))};
+    builder.addFrame(quiet, FRAME_SECONDS);
+    EXPECT_LT(builder.referenceLevel(), 0.0F);
+    EXPECT_GT(builder.referenceLevel(), -1.0F);
+    // Five seconds later it has reached the quieter level and stays there.
+    for (int frame = 0; frame < static_cast<int>(5.0 / FRAME_SECONDS); ++frame) {
+        builder.addFrame(quiet, FRAME_SECONDS);
+    }
+    EXPECT_NEAR(builder.referenceLevel(), -30.0F, 1.0e-3F);
+
+    builder.resetLevel();
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+}
+
+TEST(SpectrogramParticles, LouderParticlesAreLarger)
+{
+    SpectrogramParticleBuilder builder;
+    const std::array points {
+        point(1000.0F, 0.0F, levelFromDecibels(-30.0F)),
+        point(1000.0F, 0.0F, levelFromDecibels(-15.0F)),
+        point(1000.0F, 0.0F, 1.0F),
+    };
+    builder.addFrame(points, FRAME_SECONDS);
+
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), 3U);
+    EXPECT_LT(particles[0].size, particles[1].size);
+    EXPECT_LT(particles[1].size, particles[2].size);
+    EXPECT_FLOAT_EQ(particles[2].size, 1.0F);
+    EXPECT_GE(particles[0].size, 0.5F);
+}
+
+TEST(SpectrogramParticles, FrequencyColoursRunFromRedThroughGreenToBlueAndViolet)
+{
+    const auto colourAt = [](const double frequency) {
+        return frequencyColour(static_cast<float>(frequencyToShare(frequency, FrequencyScale::logarithmic)));
+    };
+    const LinearColour bass = colourAt(40.0);
+    EXPECT_GT(bass.red, bass.green);
+    EXPECT_GT(bass.red, bass.blue);
+    const LinearColour mids = colourAt(1000.0);
+    EXPECT_GT(mids.green, mids.red);
+    EXPECT_GT(mids.green, mids.blue);
+    const LinearColour highs = colourAt(8000.0);
+    EXPECT_GT(highs.blue, highs.red);
+    EXPECT_GT(highs.blue, highs.green);
+    const LinearColour air = colourAt(16'000.0);
+    EXPECT_GT(air.red, air.green);
+    EXPECT_GT(air.blue, air.green);
+
+    // The sRGB encoding for drawing with JUCE brightens the linear values and keeps the ends fixed.
+    const LinearColour encoded = toSrgb({.red = 0.0F, .green = 0.2F, .blue = 1.0F});
+    EXPECT_FLOAT_EQ(encoded.red, 0.0F);
+    EXPECT_GT(encoded.green, 0.2F);
+    EXPECT_NEAR(encoded.blue, 1.0F, 1.0e-5F);
 }
 }  // namespace esgrove::image_control::test

@@ -125,7 +125,7 @@ juce::Colour bandColour(const std::size_t band, const Crossovers& crossovers)
     const double high
         = band == CROSSOVER_COUNT ? static_cast<double>(MAX_FREQUENCY) : static_cast<double>(crossovers.at(band));
     const double share = frequencyToShare(std::sqrt(low * high), FrequencyScale::logarithmic);
-    const LinearColour colour = frequencyColour(static_cast<float>(share));
+    const LinearColour colour = toSrgb(frequencyColour(static_cast<float>(share)));
     return juce::Colour::fromFloatRGBA(colour.red, colour.green, colour.blue, 1.0F);
 }
 

@@ -105,12 +105,14 @@ void SpectrogramWorker::processQueuedAudio()
     if (!juce::approximatelyEqual(current.sampleRate, preparedSampleRate)) {
         preparedSampleRate = current.sampleRate;
         analyzer.prepare(current.sampleRate);
+        particleBuilder.resetLevel();
         clear = true;
     }
     const std::uint32_t clears = requestedClears.load(std::memory_order_relaxed);
     if (clears != appliedClears) {
         appliedClears = clears;
         analyzer.clear();
+        particleBuilder.resetLevel();
         clear = true;
     }
     analyzer.setFocus(current.focusDecibels);

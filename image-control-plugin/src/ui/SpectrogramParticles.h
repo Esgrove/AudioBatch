@@ -16,7 +16,7 @@
 namespace esgrove::image_control
 {
 /// How the particles are coloured.
-/// Frequency colours run from red in the bass to blue in the highs,
+/// Frequency colours run from red in the bass through yellow, green, cyan, and blue to violet in the highs,
 /// and phase colours from blue for in-phase content to red for anti-phase content.
 enum class SpectrogramColours : std::uint8_t {
     frequency,
@@ -31,7 +31,11 @@ enum class FrequencyScale : std::uint8_t {
     mel,
 };
 
-/// A colour with float channels from 0 to 1, for the additive particle buffer.
+/// Lowest auto-scale reference of the particle brightness, in tilted dB,
+/// so silence and noise floors are not scaled up to full brightness.
+constexpr float MIN_REFERENCE_DB {-90.0F};
+
+/// A colour with float channels from 0 to 1 in linear light, for the additive particle buffer.
 struct LinearColour {
     float red {0.0F};
     float green {0.0F};
@@ -50,10 +54,14 @@ struct SpectrogramParticle {
     /// Horizontal spread that the distance to the neighbouring bins asks for, as a share of the plot width.
     /// The renderer never draws a particle narrower than its sharp core.
     float spread {0.0F};
-    /// Colour multiplied by the particle's weight.
+    /// Red channel of the colour, in linear light, multiplied by the particle's weight.
     float red {0.0F};
+    /// Green channel of the colour, in linear light, multiplied by the particle's weight.
     float green {0.0F};
+    /// Blue channel of the colour, in linear light, multiplied by the particle's weight.
     float blue {0.0F};
+    /// Size of the particle relative to the loudest, which the renderer scales its core and halo by.
+    float size {1.0F};
 };
 
 [[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
@@ -61,6 +69,7 @@ struct SpectrogramParticle {
 [[nodiscard]] double frequencyToMel(double frequency);
 [[nodiscard]] double melToFrequency(double mel);
 [[nodiscard]] LinearColour frequencyColour(float share);
+[[nodiscard]] LinearColour toSrgb(const LinearColour& colour);
 
 /// Turns analyzed frames into particles and collects them until they are taken.
 /// Not thread safe. The analysis worker owns it.
@@ -70,9 +79,11 @@ public:
     SpectrogramParticleBuilder();
 
     [[nodiscard]] std::span<const SpectrogramParticle> particles() const noexcept;
+    [[nodiscard]] float referenceLevel() const noexcept;
 
     void addFrame(std::span<const SpectralPoint> points, double frameSeconds);
     void clear() noexcept;
+    void resetLevel() noexcept;
     void setColours(SpectrogramColours newColours) noexcept;
     void setFrequencyScale(FrequencyScale newScale) noexcept;
     void setPersistence(double seconds) noexcept;
@@ -84,11 +95,15 @@ private:
     std::vector<SpectrogramParticle> collected;
     /// Frequency colour of evenly spaced shares of the logarithmic frequency axis.
     std::vector<LinearColour> frequencyColours;
+    /// Tilted level of each point of the frame being added, in dB, kept to reuse its memory.
+    std::vector<float> tiltedDecibels;
     /// How new particles are coloured.
     SpectrogramColours colours {SpectrogramColours::frequency};
     /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
     /// Time constant of the particle fade, in seconds, which scales the particle weight.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
+    /// Auto-scale reference: the tilted level in dB that draws the brightest particles.
+    float referenceDecibels {MIN_REFERENCE_DB};
 };
 }  // namespace esgrove::image_control

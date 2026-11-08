@@ -1,16 +1,17 @@
-/// Implements the frequency axis scales, the frequency and phase colours,
-/// and SpectrogramParticleBuilder: the brightness, spread, and colour of the particle of each analyzed bin.
+/// Implements the frequency axis scales, the frequency and phase colours with their sRGB conversion,
+/// and SpectrogramParticleBuilder:
+/// the auto-scaled brightness, size, spread, and colour of the particle of each analyzed bin.
 
 #include "ui/SpectrogramParticles.h"
 
 #include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 
-#include <juce_graphics/juce_graphics.h>
-
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <span>
 #include <vector>
 
@@ -18,13 +19,23 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Level shown as the faintest particle, in dB relative to a full-scale sine.
-constexpr float DISPLAY_FLOOR_DB {-72.0F};
-/// Level range from the faintest to the brightest particle, in dB.
-constexpr float DISPLAY_RANGE_DB {72.0F};
+/// Level range below the auto-scale reference from the faintest to the brightest particle, in dB.
+constexpr float DISPLAY_RANGE_DB {36.0F};
 /// Exponent from the level's share of the display range to the particle brightness.
 /// Above 1 it keeps the noise floor dark, so quiet bins show as faint dots instead of a haze over the plot.
-constexpr float LEVEL_GAMMA {2.2F};
+constexpr float LEVEL_GAMMA {1.6F};
+/// Tilt added to the displayed level per octave above the pivot, in dB.
+/// Music falls by about this much per octave, so the tilt shows the bass, the mids,
+/// and the highs about equally bright instead of leaving the highs faint.
+/// It changes only the brightness and size of the particles, not their positions or colours.
+constexpr float TILT_DB_PER_OCTAVE {3.0F};
+/// Frequency where the tilt is 0 dB, in Hz.
+constexpr float TILT_PIVOT_FREQUENCY {1000.0F};
+/// Rate at which the auto-scale reference falls after the loudest bin gets quieter, in dB per second.
+/// It rises at once, so a loud onset never saturates the picture.
+constexpr double AUTO_SCALE_RELEASE_DB_PER_SECOND {12.0};
+/// Size of the faintest particle relative to the loudest, so louder content draws larger dots.
+constexpr float MIN_PARTICLE_SIZE {0.5F};
 /// Weakest particle weight that is still drawn. Fainter particles would not show.
 constexpr float MIN_PARTICLE_WEIGHT {1.0e-4F};
 /// Time constant over which a new particle reaches its brightness, in seconds.
@@ -37,20 +48,24 @@ constexpr float PARTICLE_SIGMA_PER_SPACING {0.6F};
 constexpr std::size_t FREQUENCY_COLOUR_STEPS {1024};
 /// Quietest level the brightness is computed for, which keeps the logarithm finite.
 constexpr float SILENT_LEVEL {1.0e-12F};
+/// Decibels per decade of a power level.
+constexpr float DECIBELS_PER_POWER_DECADE {10.0F};
 
-/// Hue of the lowest frequency: red.
-constexpr float LOW_FREQUENCY_HUE {0.0F};
-/// Hue of the highest frequency: blue towards violet.
-constexpr float HIGH_FREQUENCY_HUE {0.7F};
-/// Exponent that bends the hue along the frequency axis, so the bass octaves stay red
-/// and the hue moves through orange, yellow, and green in the mids before reaching blue in the highs.
-constexpr float HUE_CURVE {1.5F};
-/// Saturation of the frequency colours.
-constexpr float FREQUENCY_SATURATION {0.85F};
-/// Colour of in-phase content in the phase colours.
-constexpr LinearColour IN_PHASE_COLOUR {.red = 0.35F, .green = 0.7F, .blue = 1.0F};
-/// Colour of anti-phase content in the phase colours.
-constexpr LinearColour ANTI_PHASE_COLOUR {.red = 1.0F, .green = 0.3F, .blue = 0.35F};
+/// Colour of in-phase content in the phase colours, in linear light: a light blue.
+constexpr LinearColour IN_PHASE_COLOUR {.red = 0.1F, .green = 0.45F, .blue = 1.0F};
+/// Colour of anti-phase content in the phase colours, in linear light: a warm red.
+constexpr LinearColour ANTI_PHASE_COLOUR {.red = 1.0F, .green = 0.07F, .blue = 0.1F};
+
+/// Channel value up to which the sRGB transfer curve is linear, in encoded sRGB.
+constexpr float SRGB_LINEAR_LIMIT {0.04045F};
+/// Channel value up to which the sRGB transfer curve is linear, in linear light.
+constexpr float LINEAR_SRGB_LIMIT {0.0031308F};
+/// Slope of the linear part of the sRGB transfer curve.
+constexpr float SRGB_LINEAR_SLOPE {12.92F};
+/// Offset of the power part of the sRGB transfer curve.
+constexpr float SRGB_OFFSET {0.055F};
+/// Exponent of the power part of the sRGB transfer curve.
+constexpr float SRGB_EXPONENT {2.4F};
 
 /// HTK mel scale factor, as in AudioBatch's spectrogram.
 constexpr double MEL_SCALE {2595.0};
@@ -58,6 +73,51 @@ constexpr double MEL_SCALE {2595.0};
 constexpr double MEL_CORNER_FREQUENCY {700.0};
 /// Base of the logarithm in the HTK mel definition.
 constexpr double MEL_LOGARITHM_BASE {10.0};
+
+/// A colour of the frequency palette at a frequency, as sRGB channels from 0 to 1.
+struct FrequencyColourStop {
+    float frequency {0.0F};
+    float red {0.0F};
+    float green {0.0F};
+    float blue {0.0F};
+};
+
+/// The frequency palette from the bass to the highs, interpolated in linear light on the logarithmic axis.
+/// The bass is red, the low mids yellow, 1 kHz green, the presence range cyan, the highs blue,
+/// and the air band violet towards magenta.
+constexpr std::array FREQUENCY_COLOUR_STOPS {
+    FrequencyColourStop {.frequency = 20.0F, .red = 1.0F, .green = 0.06F, .blue = 0.04F},
+    FrequencyColourStop {.frequency = 50.0F, .red = 1.0F, .green = 0.1F, .blue = 0.04F},
+    FrequencyColourStop {.frequency = 75.0F, .red = 1.0F, .green = 0.6F, .blue = 0.05F},
+    FrequencyColourStop {.frequency = 150.0F, .red = 1.0F, .green = 0.92F, .blue = 0.1F},
+    FrequencyColourStop {.frequency = 400.0F, .red = 0.92F, .green = 1.0F, .blue = 0.1F},
+    FrequencyColourStop {.frequency = 1000.0F, .red = 0.2F, .green = 1.0F, .blue = 0.15F},
+    FrequencyColourStop {.frequency = 2500.0F, .red = 0.1F, .green = 1.0F, .blue = 0.7F},
+    FrequencyColourStop {.frequency = 4000.0F, .red = 0.1F, .green = 0.9F, .blue = 1.0F},
+    FrequencyColourStop {.frequency = 8000.0F, .red = 0.2F, .green = 0.45F, .blue = 1.0F},
+    FrequencyColourStop {.frequency = 13'000.0F, .red = 0.6F, .green = 0.3F, .blue = 1.0F},
+    FrequencyColourStop {.frequency = 20'000.0F, .red = 0.95F, .green = 0.3F, .blue = 1.0F},
+};
+
+/// Returns an sRGB channel value from 0 to 1 in linear light.
+float srgbToLinear(const float value)
+{
+    return value <= SRGB_LINEAR_LIMIT ? value / SRGB_LINEAR_SLOPE
+                                      : std::pow((value + SRGB_OFFSET) / (1.0F + SRGB_OFFSET), SRGB_EXPONENT);
+}
+
+/// Returns a linear channel value from 0 to 1 encoded with the sRGB transfer curve.
+float linearToSrgb(const float value)
+{
+    return value <= LINEAR_SRGB_LIMIT ? value * SRGB_LINEAR_SLOPE
+                                      : (1.0F + SRGB_OFFSET) * std::pow(value, 1.0F / SRGB_EXPONENT) - SRGB_OFFSET;
+}
+
+/// Returns the colour of a palette stop in linear light.
+LinearColour linearStopColour(const FrequencyColourStop& stop)
+{
+    return {.red = srgbToLinear(stop.red), .green = srgbToLinear(stop.green), .blue = srgbToLinear(stop.blue)};
+}
 
 /// Builds the frequency colour of evenly spaced shares of the frequency axis.
 std::vector<LinearColour> buildFrequencyColours()
@@ -116,16 +176,40 @@ double melToFrequency(const double mel)
     return MEL_CORNER_FREQUENCY * (std::pow(MEL_LOGARITHM_BASE, mel / MEL_SCALE) - 1.0);
 }
 
-/// Returns the frequency colour of a share of the frequency axis: red at the left edge through to blue at the right.
+/// Returns the frequency colour, in linear light, of a share of the logarithmic frequency axis:
+/// red in the bass through yellow, green, cyan, and blue to violet in the highs.
 LinearColour frequencyColour(const float share)
 {
-    const auto colour = juce::Colour::fromHSV(
-        LOW_FREQUENCY_HUE + (HIGH_FREQUENCY_HUE - LOW_FREQUENCY_HUE) * std::pow(share, HUE_CURVE),
-        FREQUENCY_SATURATION,
-        1.0F,
-        1.0F
+    const double frequency
+        = shareToFrequency(std::clamp(static_cast<double>(share), 0.0, 1.0), FrequencyScale::logarithmic);
+    const auto upper = std::ranges::find_if(FREQUENCY_COLOUR_STOPS, [frequency](const FrequencyColourStop& stop) {
+        return static_cast<double>(stop.frequency) >= frequency;
+    });
+    if (upper == FREQUENCY_COLOUR_STOPS.begin()) {
+        return linearStopColour(FREQUENCY_COLOUR_STOPS.front());
+    }
+    if (upper == FREQUENCY_COLOUR_STOPS.end()) {
+        return linearStopColour(FREQUENCY_COLOUR_STOPS.back());
+    }
+    const auto& lower = *std::prev(upper);
+    const auto position = static_cast<float>(
+        std::log(frequency / static_cast<double>(lower.frequency))
+        / std::log(static_cast<double>(upper->frequency) / static_cast<double>(lower.frequency))
     );
-    return {.red = colour.getFloatRed(), .green = colour.getFloatGreen(), .blue = colour.getFloatBlue()};
+    const LinearColour low = linearStopColour(lower);
+    const LinearColour high = linearStopColour(*upper);
+    return {
+        .red = low.red + (high.red - low.red) * position,
+        .green = low.green + (high.green - low.green) * position,
+        .blue = low.blue + (high.blue - low.blue) * position,
+    };
+}
+
+/// Returns a colour in linear light encoded with the sRGB transfer curve,
+/// for drawing it with JUCE outside the renderer, which works in sRGB.
+LinearColour toSrgb(const LinearColour& colour)
+{
+    return {.red = linearToSrgb(colour.red), .green = linearToSrgb(colour.green), .blue = linearToSrgb(colour.blue)};
 }
 
 /// Creates a builder with no particles and the frequency colour table.
@@ -138,8 +222,12 @@ std::span<const SpectrogramParticle> SpectrogramParticleBuilder::particles() con
 }
 
 /// Turns the points of one analyzed frame into particles.
-/// A particle's brightness follows its level in dB through a power curve, which keeps the noise floor dark.
-/// Its weight is the share of a short flash its frame stands for,
+/// A particle's level in dB gets the spectral tilt,
+/// and its share of the display range below the auto-scale reference sets its size,
+/// and its brightness through a power curve, which keeps the noise floor dark.
+/// The reference follows the loudest tilted bin of every tier, rising at once and falling slowly,
+/// so the picture keeps its brightness for quiet and loud material alike.
+/// A particle's weight is the share of a short flash its frame stands for,
 /// so a single frame draws a bright dot and the brightness does not depend on the analyzer's frame rate.
 /// Long persistence lets steady content build up for longer,
 /// so the weight shrinks with the square root of the persistence to keep the picture from saturating.
@@ -148,10 +236,24 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
     const auto flash = static_cast<float>(
         (1.0 - std::exp(-frameSeconds / FLASH_SECONDS)) * std::sqrt(DEFAULT_PERSISTENCE_SECONDS / persistenceSeconds)
     );
+
+    tiltedDecibels.resize(points.size());
+    float loudest = MIN_REFERENCE_DB;
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        const auto& point = points[index];
+        const float tilt
+            = TILT_DB_PER_OCTAVE * std::log2(std::max(point.frequency, MIN_FREQUENCY) / TILT_PIVOT_FREQUENCY);
+        tiltedDecibels[index] = DECIBELS_PER_POWER_DECADE * std::log10(std::max(point.level, SILENT_LEVEL)) + tilt;
+        loudest = std::max(loudest, tiltedDecibels[index]);
+    }
+    const double released = static_cast<double>(referenceDecibels) - AUTO_SCALE_RELEASE_DB_PER_SECOND * frameSeconds;
+    referenceDecibels = std::max(static_cast<float>(released), loudest);
+    const float floorDecibels = referenceDecibels - DISPLAY_RANGE_DB;
+
     collected.reserve(collected.size() + points.size());
-    for (const auto& point : points) {
-        const float decibels = 10.0F * std::log10(std::max(point.level, SILENT_LEVEL));
-        const float share = std::clamp((decibels - DISPLAY_FLOOR_DB) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        const auto& point = points[index];
+        const float share = std::clamp((tiltedDecibels[index] - floorDecibels) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
         const float weight = std::pow(share, LEVEL_GAMMA) * flash;
         if (weight < MIN_PARTICLE_WEIGHT) {
             continue;
@@ -170,6 +272,7 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
             .red = colour.red * weight,
             .green = colour.green * weight,
             .blue = colour.blue * weight,
+            .size = MIN_PARTICLE_SIZE + (1.0F - MIN_PARTICLE_SIZE) * share,
         });
     }
 }
@@ -178,6 +281,19 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
 void SpectrogramParticleBuilder::clear() noexcept
 {
     collected.clear();
+}
+
+/// Returns the auto-scale reference, the tilted level in dB that draws the brightest particles.
+float SpectrogramParticleBuilder::referenceLevel() const noexcept
+{
+    return referenceDecibels;
+}
+
+/// Drops the auto-scale reference to its lowest level, so it starts over from the next frame,
+/// such as after the analysis is cleared.
+void SpectrogramParticleBuilder::resetLevel() noexcept
+{
+    referenceDecibels = MIN_REFERENCE_DB;
 }
 
 /// Selects frequency or phase colours for new particles.
