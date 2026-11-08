@@ -166,7 +166,7 @@ int main(const int argc, char* argv[])
             continue;
         }
         juce::String error;
-        auto plugin = formats.createPluginInstance(
+        const auto plugin = formats.createPluginInstance(
             *description,
             esgrove::image_control::benchmark::SAMPLE_RATE,
             esgrove::image_control::benchmark::BLOCK_SIZE,

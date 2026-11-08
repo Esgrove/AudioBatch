@@ -207,7 +207,7 @@ void ImageControlEditor::resized()
     }
 
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
-    for (auto& strip : bandStrips) {
+    for (const auto& strip : bandStrips) {
         strip->setBounds(area.removeFromLeft(stripWidth));
         area.removeFromLeft(GAP);
     }
@@ -314,7 +314,7 @@ void ImageControlEditor::applyViewSettings()
 
     const bool bypassed = bypassButton.getToggleState();
     if (shownBypassed != bypassed) {
-        for (auto& strip : bandStrips) {
+        for (const auto& strip : bandStrips) {
             strip->setAlpha(bypassed ? BYPASSED_STRIP_ALPHA : 1.0F);
         }
         shownBypassed = bypassed;

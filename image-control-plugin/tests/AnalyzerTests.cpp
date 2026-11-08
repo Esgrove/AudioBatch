@@ -5,13 +5,12 @@
 #include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 #include "tests/TestSignals.h"
-#include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <functional>
 #include <iterator>
 #include <span>

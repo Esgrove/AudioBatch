@@ -166,18 +166,20 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     source.getEditorState().setProperty(linkPropertyName(0), false, nullptr);
     juce::MemoryBlock state;
     source.getStateInformation(state);
-    auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
     ASSERT_NE(xml, nullptr);
     auto* editorSettings = xml->getChildByName("EditorState");
     ASSERT_NE(editorSettings, nullptr);
     // A state saved before these settings existed has none of them.
     for (const char* property :
-         {ANALYZE_OUTPUT_PROPERTY,
-          PERSISTENCE_PROPERTY,
-          FOCUS_PROPERTY,
-          SHOW_FPS_PROPERTY,
-          BYPASS_RENDERING_PROPERTY,
-          HIDE_SPECTROGRAM_PROPERTY})
+         {
+             ANALYZE_OUTPUT_PROPERTY,
+             PERSISTENCE_PROPERTY,
+             FOCUS_PROPERTY,
+             SHOW_FPS_PROPERTY,
+             BYPASS_RENDERING_PROPERTY,
+             HIDE_SPECTROGRAM_PROPERTY,
+         })
     {
         editorSettings->removeAttribute(property);
     }
@@ -202,7 +204,7 @@ TEST(Processor, RestoringAStateWithoutPansCentresThem)
     setParameter(source, midGainParameterId(0), -3.0F);
     juce::MemoryBlock state;
     source.getStateInformation(state);
-    auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
     ASSERT_NE(xml, nullptr);
     // A state saved before the pan parameters existed has none of them.
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {

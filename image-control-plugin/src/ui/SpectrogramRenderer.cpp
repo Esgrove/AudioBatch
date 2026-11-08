@@ -4,13 +4,17 @@
 
 #include "ui/SpectrogramRenderer.h"
 
+#include "Parameters.h"
 #include "ui/ImageControlLookAndFeel.h"
+#include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
