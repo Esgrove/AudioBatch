@@ -3,7 +3,7 @@ set -eo pipefail
 
 # Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/build.
 # Optionally runs its unit tests, installs the bundles into the user's plugin folders,
-# and validates the installed Audio Unit with auval.
+# and validates the installed plugins with pluginval and, on macOS, auval.
 # Needs the JUCE submodule in cpp/JUCE: git submodule update --init cpp/JUCE
 
 USAGE="Usage: $0 [OPTIONS]
@@ -27,7 +27,8 @@ OPTIONS: All options are optional
         Copy the built bundles into the standard VST3 folder, and on macOS the Audio Unit into the Components folder.
 
     -v | --validate
-        On macOS, install and validate the Audio Unit with auval."
+        Install, then validate the VST3 with pluginval if it is in PATH,
+        and on macOS also the Audio Unit with auval."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../common.sh
@@ -126,18 +127,21 @@ if [ "$INSTALL" = true ]; then
     if [ "$BASH_PLATFORM" = "windows" ]; then
         # The system-wide VST3 folder, which needs an elevated shell to write to.
         VST3_DIR="$(cygpath -u "$COMMONPROGRAMFILES")/VST3"
+        # Windows hosts expect a plain .vst3 file, so the DLL inside the bundle is installed instead of the bundle folder.
+        INSTALL_SOURCE="$BUNDLE/Contents/x86_64-win/ImageControl.vst3"
     else
         VST3_DIR="$HOME/Library/Audio/Plug-Ins/VST3"
+        INSTALL_SOURCE="$BUNDLE"
     fi
-    if ! (mkdir -p "$VST3_DIR" && rm -rf "${VST3_DIR:?}/ImageControl.vst3" && cp -R "$BUNDLE" "$VST3_DIR/") 2> /dev/null; then
+    if ! (mkdir -p "$VST3_DIR" && rm -rf "${VST3_DIR:?}/ImageControl.vst3" && cp -R "$INSTALL_SOURCE" "$VST3_DIR/ImageControl.vst3") 2> /dev/null; then
         if [ "$BASH_PLATFORM" != "windows" ]; then
             print_error_and_exit "Failed to install to $VST3_DIR"
         fi
         # There is no sudo on Windows, so the copy is repeated in an elevated PowerShell that triggers a UAC prompt.
         print_yellow "Administrator rights are needed for $VST3_DIR, requesting elevation"
         WIN_DIR=$(cygpath -w "$VST3_DIR")
-        WIN_BUNDLE=$(cygpath -w "$BUNDLE")
-        PS_COMMAND="\$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path '$WIN_DIR' | Out-Null; Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$WIN_DIR\\ImageControl.vst3'; Copy-Item -Recurse -Force '$WIN_BUNDLE' '$WIN_DIR\\'"
+        WIN_SOURCE=$(cygpath -w "$INSTALL_SOURCE")
+        PS_COMMAND="\$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path '$WIN_DIR' | Out-Null; Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$WIN_DIR\\ImageControl.vst3'; Copy-Item -Force '$WIN_SOURCE' '$WIN_DIR\\ImageControl.vst3'"
         PS_ENCODED=$(printf '%s' "$PS_COMMAND" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
         if ! powershell.exe -NoProfile -Command "\$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList '-NoProfile','-EncodedCommand','$PS_ENCODED'; exit \$p.ExitCode"; then
             print_error_and_exit "Elevated install to $VST3_DIR failed or was cancelled"
@@ -170,6 +174,20 @@ if [ "$VALIDATE" = true ] && [ "$BASH_PLATFORM" = "mac" ]; then
     done
     print_magenta "Validating the Audio Unit with auval"
     auval -strict -v aufx Egic Esgr
+fi
+
+if [ "$VALIDATE" = true ]; then
+    # pluginval is optional: https://github.com/Tracktion/pluginval
+    if [ -n "$(command -v pluginval)" ]; then
+        INSTALLED_VST3="$VST3_DIR/ImageControl.vst3"
+        if [ "$BASH_PLATFORM" = "windows" ]; then
+            INSTALLED_VST3=$(cygpath -w "$INSTALLED_VST3")
+        fi
+        print_magenta "Validating the VST3 with pluginval"
+        pluginval --strictness-level 5 --validate "$INSTALLED_VST3"
+    else
+        print_yellow "pluginval not found in PATH, skipping VST3 validation"
+    fi
 fi
 
 echo "$BUNDLE"
