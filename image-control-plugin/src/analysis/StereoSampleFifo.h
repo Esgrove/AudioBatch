@@ -1,6 +1,6 @@
 /// Declares and implements StereoSampleFifo,
 /// the lock-free single-producer single-consumer ring that carries audio from the audio thread to the analyzer.
-/// The audio thread pushes every block, the editor pops on the message thread,
+/// The audio thread pushes every block, the editor's analysis worker thread pops,
 /// and samples that do not fit while no editor drains the ring are dropped.
 
 #pragma once

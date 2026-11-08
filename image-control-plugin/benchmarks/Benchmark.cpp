@@ -1,5 +1,7 @@
 /// Times ImageControl's hot paths: the audio processing of the multiband imager,
-/// and the CPU side of one display refresh of the spatial spectrogram: its analysis, particles, and overlay paint.
+/// and the CPU side of one display refresh of the spatial spectrogram:
+/// the analysis and the particles, which run on the analysis worker thread,
+/// and the overlay paint, which runs on the message thread.
 /// The particles are drawn on the GPU, which needs an OpenGL context and does not run here.
 /// Build it in Release with the tests, and run it once with and once
 /// without IMAGE_CONTROL_HARDENING to measure what the standard library hardening costs.
@@ -9,6 +11,7 @@
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -92,29 +95,41 @@ double timeImager(const BandPans& pans)
     return elapsed.count() / AUDIO_SECONDS;
 }
 
-/// Returns the milliseconds the CPU side of one spectrogram refresh takes: analyzing a refresh's worth of audio,
-/// turning its bins into particles, taking the render batch, and painting the overlays.
-double timeSpectrogram(ImageControlProcessor& processor)
+/// Returns the milliseconds the analysis worker spends per spectrogram refresh:
+/// analyzing a refresh's worth of audio and turning its bins into particles.
+double timeSpectrogramAnalysis()
 {
     SpatialAnalyzer analyzer;
     analyzer.prepare(SAMPLE_RATE);
-    SpatialSpectrogramView view(processor.getParameters());
-    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
-    analyzer.setFrameCallback([&view](const std::span<const SpectralPoint> points, const double frameSeconds) {
-        view.addFrame(points, frameSeconds);
+    SpectrogramParticleBuilder particles;
+    analyzer.setFrameCallback([&particles](const std::span<const SpectralPoint> points, const double frameSeconds) {
+        particles.addFrame(points, frameSeconds);
     });
     const auto samplesPerRefresh = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
     const auto left = makeNoise(samplesPerRefresh, 3);
     const auto right = makeNoise(samplesPerRefresh, 4);
+
+    const auto start = std::chrono::steady_clock::now();
+    for (int refresh = 0; refresh < REFRESHES; ++refresh) {
+        particles.clear();
+        analyzer.pushSamples(left, right);
+    }
+    const Milliseconds elapsed = std::chrono::steady_clock::now() - start;
+    return elapsed.count() / REFRESHES;
+}
+
+/// Returns the milliseconds the message thread spends per spectrogram refresh painting the overlays,
+/// as when every refresh repaints them, such as during a hover animation.
+double timeSpectrogramOverlays(ImageControlProcessor& processor)
+{
+    SpatialSpectrogramView view(processor.getParameters());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const juce::Image canvas(juce::Image::ARGB, VIEW_WIDTH, VIEW_HEIGHT, true);
     juce::Graphics graphics(canvas);
 
     const auto start = std::chrono::steady_clock::now();
     for (int refresh = 0; refresh < REFRESHES; ++refresh) {
-        analyzer.pushSamples(left, right);
         view.advance(1.0 / REFRESH_RATE);
-        const auto batch = view.takeRenderBatch();
-        juce::ignoreUnused(batch);
         view.paintEntireComponent(graphics, false);
     }
     const Milliseconds elapsed = std::chrono::steady_clock::now() - start;
@@ -132,9 +147,11 @@ int main()
         = esgrove::image_control::benchmark::timeImager(esgrove::image_control::benchmark::CENTRED_PANS);
     const double pannedMilliseconds
         = esgrove::image_control::benchmark::timeImager(esgrove::image_control::benchmark::PANS);
-    const double spectrogramMilliseconds = esgrove::image_control::benchmark::timeSpectrogram(processor);
+    const double analysisMilliseconds = esgrove::image_control::benchmark::timeSpectrogramAnalysis();
+    const double overlayMilliseconds = esgrove::image_control::benchmark::timeSpectrogramOverlays(processor);
     std::println("Imager: {:.3f} ms per second of stereo audio", imagerMilliseconds);
     std::println("Imager with panned bands: {:.3f} ms per second of stereo audio", pannedMilliseconds);
-    std::println("Spectrogram CPU side: {:.3f} ms per refresh", spectrogramMilliseconds);
+    std::println("Spectrogram analysis and particles (worker thread): {:.3f} ms per refresh", analysisMilliseconds);
+    std::println("Spectrogram overlay paint (message thread): {:.3f} ms per refresh", overlayMilliseconds);
     return 0;
 }

@@ -5,13 +5,13 @@
 
 #pragma once
 
-#include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramRenderer.h"
+#include "ui/SpectrogramWorker.h"
 #include "ui/SplitDivider.h"
 #include "ui/TooltipOverlay.h"
 
@@ -22,15 +22,15 @@
 #include <array>
 #include <memory>
 #include <optional>
-#include <vector>
 
 namespace esgrove::image_control
 {
 class ImageControlProcessor;
 
 /// The ImageControl editor.
-/// A VBlankAttachment drains the processor's analyzer ring into the analyzer on every display refresh,
-/// advances the spectrogram by the time that passed, and asks the OpenGL context for a frame,
+/// A VBlankAttachment wakes the analysis worker on every display refresh,
+/// which drains the processor's analyzer ring and builds the particles on its own thread,
+/// advances the spectrogram's overlays and the fade by the time that passed, and asks the OpenGL context for a frame,
 /// so the particles fade smoothly at the native refresh rate of the display, such as 120 or 144 Hz.
 /// The context is attached to the whole editor: the renderer draws the particles,
 /// and JUCE paints the components over them, repainting only the regions that changed.
@@ -53,11 +53,11 @@ public:
 
 private:
     [[nodiscard]] int compactHeight() const;
+    [[nodiscard]] double persistenceSeconds() const;
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
 
     void applySpectrogramHidden(bool hidden);
     void applyViewSettings();
-    void drainAnalyzerFifo(bool analyze);
     void measureFramesPerSecond(double elapsed);
     void openSettings();
     void refreshDisplay(double timestamp);
@@ -68,14 +68,15 @@ private:
 
     /// The look and feel of every control, set on the editor and cleared before it is destroyed.
     ImageControlLookAndFeel lookAndFeel;
-    /// Analyzes the audio the processor queues and feeds the spectrogram.
-    SpatialAnalyzer analyzer;
-    /// The spatial spectrogram.
+    /// The spatial spectrogram's box, axes, and overlays.
     SpatialSpectrogramView spectrogram;
-    /// The OpenGL context attached to the editor, detached first when the editor goes away.
+    /// The OpenGL context attached to the editor, detached when the editor goes away.
     juce::OpenGLContext openGLContext;
     /// Draws the spectrogram's particles in the OpenGL context.
     SpectrogramRenderer spectrogramRenderer {openGLContext};
+    /// Analyzes the audio the processor queues and builds the particles on its own thread.
+    /// Stopped first when the editor goes away.
+    SpectrogramWorker spectrogramWorker;
     /// The draggable divider between the spectrogram and the band strips.
     SplitDivider divider;
     /// Height of the band strip section, in pixels, which the divider changes.
@@ -99,11 +100,6 @@ private:
     /// The controls of each band.
     std::array<std::unique_ptr<BandStrip>, BAND_COUNT> bandStrips;
 
-    /// Scratch buffer the left channel of the analyzer ring is drained into.
-    std::vector<float> leftScratch;
-    /// Scratch buffer the right channel of the analyzer ring is drained into.
-    std::vector<float> rightScratch;
-
     /// Crossovers the band ranges were last shown with.
     Crossovers displayedCrossovers {};
 
@@ -113,6 +109,8 @@ private:
     std::optional<bool> shownPhaseColours;
     /// Analyzer tap the spectrogram last showed, empty before the first update.
     std::optional<bool> shownTapOutput;
+    /// Frequency scale the spectrogram was last set to, empty before the first update.
+    std::optional<FrequencyScale> shownScale;
     /// Rendering bypass the spectrogram was last set to, empty before the first update.
     std::optional<bool> shownRenderingBypassed;
     /// Whether the spectrogram was last hidden, empty before the first update.
@@ -123,8 +121,6 @@ private:
     /// Whether the particles are not analyzed or drawn, while the audio is still processed.
     bool renderingBypassed {false};
 
-    /// Sample rate the analyzer was last prepared for.
-    double analyzedSampleRate {0.0};
     /// Time of the previous display refresh, in seconds, or 0 before the first.
     double lastRefreshTimestamp {0.0};
     /// Time since the frame rate was last measured, in seconds.

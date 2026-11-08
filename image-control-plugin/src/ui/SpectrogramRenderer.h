@@ -1,11 +1,14 @@
 /// Declares SpectrogramRenderer, which draws the spatial spectrogram's particles on the GPU with OpenGL.
-/// The view prepares the particles on the message thread and the renderer draws them on JUCE's OpenGL thread,
+/// The analysis worker builds the particles on its own thread, the editor sets the fade and the plot
+/// on the message thread, and the renderer draws on JUCE's OpenGL thread,
 /// under the editor's components, which JUCE paints over the GL picture.
-/// Only this class knows OpenGL, so another GPU backend can replace it without touching the view.
+/// Only this class knows OpenGL, so another GPU backend can replace it without touching the view or the worker.
 
 #pragma once
 
+#include "Parameters.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_opengl/juce_opengl.h>
@@ -17,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace esgrove::image_control
@@ -47,8 +51,9 @@ struct SpectrogramRenderTarget {
 /// builds a soft glow from a chain of downsampled copies,
 /// and tone maps the picture into the plot with rounded corners.
 ///
-/// submit runs on the message thread and the OpenGLRenderer callbacks on JUCE's OpenGL thread.
-/// They share only the pending batch behind a mutex and a few atomics.
+/// submitParticles runs on the analysis worker thread, submitFrame on the message thread,
+/// and the OpenGLRenderer callbacks on JUCE's OpenGL thread.
+/// They share only the pending work behind a mutex and a few atomics.
 class SpectrogramRenderer final : public juce::OpenGLRenderer
 {
 public:
@@ -63,9 +68,16 @@ public:
 
     [[nodiscard]] std::optional<double> gpuFrameMilliseconds() const;
     [[nodiscard]] bool isUnavailable() const noexcept;
+    [[nodiscard]] std::size_t pendingParticleCount();
     [[nodiscard]] int renderedFrameCount() const noexcept;
 
-    void submit(SpectrogramRenderBatch batch, juce::Rectangle<float> plotInEditor, SpectrogramRenderMode mode);
+    void submitFrame(
+        double fadeSeconds,
+        double persistenceSeconds,
+        juce::Rectangle<float> plotInEditor,
+        SpectrogramRenderMode mode
+    );
+    void submitParticles(std::span<const SpectrogramParticle> particles, bool clear);
 
     void newOpenGLContextCreated() override;
     void openGLContextClosing() override;
