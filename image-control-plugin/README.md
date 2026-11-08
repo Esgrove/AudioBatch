@@ -184,7 +184,9 @@ Each band has a strip with its own controls:
 Sliders drag relative to where they are grabbed, drag finely with Shift, and reset on double-click.
 Once clicked, the arrow keys nudge them, finely with Shift.
 
-The Link toggles, the display settings, and the editor size are saved with the plugin state.
+The Link toggles, the display settings, and the editor size are saved with the plugin state,
+and a reopened editor comes back at its saved size.
+The position of the window belongs to the host, and AudioBatch reopens each plugin window where it was.
 
 ## Building
 
