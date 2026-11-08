@@ -2,6 +2,7 @@
 /// moving a middle band moves both its crossovers, moving the Low band moves only its upper crossover,
 /// a band move stops at the minimum ratio to the crossover that stays,
 /// and Ctrl or Cmd with a vertical drag changes the band's side gain.
+/// Also tests that the stereo position curve overlay shows after a curve change and fades out.
 /// Also tests the particles SpectrogramParticleBuilder prepares for the GPU renderer:
 /// which points become particles, how bright and large they are under the spectral tilt and the auto-scale,
 /// where they are placed, and the frequency palette.
@@ -173,6 +174,38 @@ TEST(SpectrogramView, CommandDragChangesTheBandWidth)
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 0.0F, 0.01F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F, 1.0F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 1.0F);
+}
+
+TEST(SpectrogramView, PositionCurveOverlayShowsAfterAChangeAndFades)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    // Opening the editor sets the saved curve, which does not show the overlay.
+    view.setPositionCurve(StereoPositionCurve());
+    view.advance(0.1);
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 0.0F);
+    view.setPositionCurve(StereoPositionCurve());
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 0.0F);
+
+    view.setPositionCurve(StereoPositionCurve(10.0, 32.0));
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 1.0F);
+    for (int refresh = 0; refresh < 24; ++refresh) {
+        view.advance(0.1);
+    }
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 1.0F);
+    view.advance(0.35);
+    EXPECT_GT(view.positionCurveOpacity(), 0.0F);
+    EXPECT_LT(view.positionCurveOpacity(), 1.0F);
+    view.advance(0.5);
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 0.0F);
+
+    // Another change shows it again in full, and painting it works at any opacity.
+    view.setPositionCurve(StereoPositionCurve(10.0, 40.0));
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 1.0F);
+    const juce::Image canvas(juce::Image::ARGB, VIEW_WIDTH, VIEW_HEIGHT, true);
+    juce::Graphics graphics(canvas);
+    view.paintEntireComponent(graphics, false);
 }
 
 TEST(SpectrogramParticles, QuietPointsAreDroppedAndLouderPointsAreBrighter)

@@ -3,6 +3,7 @@
 
 #include "ui/SpatialSpectrogramView.h"
 
+#include "analysis/SpatialAnalyzer.h"
 #include "dsp/CrossoverDesign.h"
 #include "Parameters.h"
 #include "ui/ImageControlLookAndFeel.h"
@@ -101,6 +102,31 @@ constexpr float FPS_LABEL_WIDTH {150.0F};
 constexpr float STATUS_ALPHA {0.45F};
 /// Font height of the rendering status text.
 constexpr float STATUS_FONT_HEIGHT {14.0F};
+/// Seconds the position curve overlay stays fully visible after the curve changes.
+constexpr double CURVE_HOLD_SECONDS {2.5};
+/// Seconds the position curve overlay takes to fade out after it was shown.
+constexpr double CURVE_FADE_SECONDS {0.5};
+/// Level differences with a guide line in the position curve overlay, in dB.
+constexpr std::array<float, 7> CURVE_GUIDE_DIFFERENCES {3.0F, 6.0F, 12.0F, 18.0F, 24.0F, 36.0F, 48.0F};
+/// Level difference at the right edge of the drawn curve, as a multiple of the pan edge setting.
+constexpr float CURVE_RANGE_PER_EDGE {1.5F};
+/// Distance between the dB ticks along the centre line of the drawn curve, in dB.
+constexpr float CURVE_TICK_DECIBELS {6.0F};
+/// Most dB ticks along the centre line. Wider curves tick at multiples of CURVE_TICK_DECIBELS.
+constexpr int CURVE_MAX_TICKS {10};
+/// Opacity of the guide lines of the position curve overlay.
+constexpr float CURVE_GUIDE_ALPHA {0.3F};
+/// Opacity of the guide lines at the pan midpoint and edge.
+constexpr float CURVE_SETTING_ALPHA {0.8F};
+/// Opacity of the drawn curve.
+constexpr float CURVE_LINE_ALPHA {0.9F};
+/// Thickness of the drawn curve, in pixels.
+constexpr float CURVE_LINE_THICKNESS {2.0F};
+/// Horizontal distance between the points of the drawn curve, in pixels.
+constexpr float CURVE_STEP_PIXELS {2.0F};
+/// Width of the dB labels of the guide lines at the right of the plot, in pixels.
+constexpr float CURVE_LABEL_WIDTH {56.0F};
+
 /// Corner radius of the spectrogram box, matching the band strips, in pixels.
 constexpr float BOX_CORNER_RADIUS {6.0F};
 /// Space around the plot inside the box, in pixels.
@@ -215,6 +241,7 @@ void SpatialSpectrogramView::advance(const double seconds)
         const bool active = hoveredCrossover == crossover || draggedCrossover == crossover || movedWithBand;
         crossoverHighlights.at(crossover) = approach(crossoverHighlights.at(crossover), active ? 1.0F : 0.0F, seconds);
     }
+    positionCurveAge += seconds;
 
     const SpectrogramOverlayState overlay = currentOverlayState();
     if (overlay != shownOverlay) {
@@ -230,6 +257,21 @@ void SpatialSpectrogramView::setFrequencyScale(const FrequencyScale newScale)
         scale = newScale;
         repaint();
     }
+}
+
+/// Sets the stereo position curve the particles are placed with.
+/// A change after the first call shows the curve overlay, which fades out after a few seconds,
+/// so adjusting the curve settings shows where each level difference lands.
+void SpatialSpectrogramView::setPositionCurve(const StereoPositionCurve& curve)
+{
+    if (positionCurveSet && curve == positionCurve) {
+        return;
+    }
+    if (positionCurveSet) {
+        positionCurveAge = 0.0;
+    }
+    positionCurve = curve;
+    positionCurveSet = true;
 }
 
 /// Sets the display refresh rate and the GPU time per frame to show in the top-left corner, or hides them.
@@ -406,6 +448,7 @@ void SpatialSpectrogramView::paint(juce::Graphics& graphics)
         paintBands(graphics, crossovers);
         paintBandResponses(graphics, crossovers);
         paintCrossovers(graphics, crossovers);
+        paintPositionCurve(graphics);
         paintRenderingStatus(graphics);
     }
     paintAxisLabels(graphics);
@@ -473,13 +516,15 @@ Crossovers SpatialSpectrogramView::currentCrossovers() const
 }
 
 /// Returns what the overlays show now: the hover highlights, the crossovers, the band widths,
-/// and the rendering status.
+/// the position curve overlay, and the rendering status.
 SpectrogramOverlayState SpatialSpectrogramView::currentOverlayState() const
 {
     SpectrogramOverlayState state {
+        .positionCurve = positionCurve,
         .bandHighlights = bandHighlights,
         .crossoverHighlights = crossoverHighlights,
         .crossovers = currentCrossovers(),
+        .positionCurveOpacity = positionCurveOpacity(),
         .renderingBypassed = renderingBypassed,
         .renderingUnavailable = renderingUnavailable,
     };
@@ -503,6 +548,16 @@ double SpatialSpectrogramView::bandWidth(const std::size_t band) const
         static_cast<double>(plainValue(*midParameters.at(band))),
         static_cast<double>(plainValue(*sideParameters.at(band)))
     );
+}
+
+/// Returns the opacity of the position curve overlay:
+/// full for CURVE_HOLD_SECONDS after the curve changes, then fading out over CURVE_FADE_SECONDS.
+float SpatialSpectrogramView::positionCurveOpacity() const
+{
+    if (positionCurveAge <= CURVE_HOLD_SECONDS) {
+        return 1.0F;
+    }
+    return static_cast<float>(std::max(0.0, 1.0 - (positionCurveAge - CURVE_HOLD_SECONDS) / CURVE_FADE_SECONDS));
 }
 
 /// Returns the x coordinate of a frequency in the plot.
@@ -718,6 +773,86 @@ void SpatialSpectrogramView::paintGrid(juce::Graphics& graphics) const
         graphics.setColour(lineColour.withAlpha(index == CENTRE_POSITION_INDEX ? CENTRE_LINE_ALPHA : GRID_ALPHA));
         const float y = positionToY(GRID_POSITIONS.at(index));
         graphics.drawHorizontalLine(juce::roundToInt(y), plot.getX(), plot.getRight());
+    }
+}
+
+/// Paints the position curve overlay while it shows after a curve change.
+/// Guide lines on both halves mark where common level differences land, labelled in dB at the right,
+/// with the pan midpoint and edge brighter.
+/// The curve itself runs from the centre line towards both edges,
+/// with the level difference along the centre line, from 0 dB at the left to 1.5 times the pan edge at the right.
+void SpatialSpectrogramView::paintPositionCurve(juce::Graphics& graphics) const
+{
+    const float opacity = positionCurveOpacity();
+    if (opacity <= 0.0F) {
+        return;
+    }
+    const auto plot = getPlotBounds();
+    const auto guideColour = juce::Colour(palette::GREY_LIGHT);
+    const auto settingColour = juce::Colour(palette::YELLOW);
+    const float labelX = plot.getRight() - LABEL_INSET - CURVE_LABEL_WIDTH * 0.5F;
+    const float labelHeight = LABEL_FONT_HEIGHT + PILL_PADDING;
+
+    // The settings are labelled first, so the other guides skip labels that would overlap them.
+    const std::array labelledDifferences {positionCurve.midpoint(), positionCurve.edge()};
+    std::vector<float> labelledYs;
+    const auto paintGuide = [&](const float difference, const bool setting, const bool labelled) {
+        const auto colour = setting ? settingColour : guideColour;
+        const float alpha = (setting ? CURVE_SETTING_ALPHA : CURVE_GUIDE_ALPHA) * opacity;
+        const float share = positionCurve.position(difference);
+        for (const float sign : {1.0F, -1.0F}) {
+            const float y = positionToY(static_cast<double>(sign * share));
+            graphics.setColour(colour.withAlpha(alpha));
+            graphics.drawHorizontalLine(juce::roundToInt(y), plot.getX(), plot.getRight());
+            if (!labelled) {
+                continue;
+            }
+            const bool overlaps = std::ranges::any_of(labelledYs, [y, labelHeight](const float other) {
+                return std::abs(other - y) < labelHeight;
+            });
+            if (setting || !overlaps) {
+                labelledYs.push_back(y);
+                paintLabelPill(
+                    graphics, juce::String(juce::roundToInt(difference)) + " dB", {labelX, y}, opacity, colour
+                );
+            }
+        }
+    };
+    for (const float difference : labelledDifferences) {
+        paintGuide(difference, true, true);
+    }
+    for (const float difference : CURVE_GUIDE_DIFFERENCES) {
+        if (!std::ranges::contains(labelledDifferences, difference)) {
+            paintGuide(difference, false, true);
+        }
+    }
+
+    const float range = positionCurve.edge() * CURVE_RANGE_PER_EDGE;
+    const auto differenceAt = [&plot, range](const float x) { return (x - plot.getX()) / plot.getWidth() * range; };
+    for (const float sign : {1.0F, -1.0F}) {
+        juce::Path curve;
+        curve.startNewSubPath(plot.getX(), positionToY(0.0));
+        const int steps = static_cast<int>(std::ceil(plot.getWidth() / CURVE_STEP_PIXELS));
+        for (int step = 1; step <= steps; ++step) {
+            const float clamped = std::min(plot.getX() + static_cast<float>(step) * CURVE_STEP_PIXELS, plot.getRight());
+            curve.lineTo(
+                clamped, positionToY(static_cast<double>(sign * positionCurve.position(differenceAt(clamped))))
+            );
+        }
+        graphics.setColour(settingColour.withAlpha(CURVE_LINE_ALPHA * opacity));
+        graphics.strokePath(curve, juce::PathStrokeType(CURVE_LINE_THICKNESS));
+    }
+
+    // The dB ticks along the centre line, the level difference axis of the curve.
+    float tick = CURVE_TICK_DECIBELS;
+    while (range / tick > static_cast<float>(CURVE_MAX_TICKS)) {
+        tick += CURVE_TICK_DECIBELS;
+    }
+    const float centreY = positionToY(0.0);
+    for (int index = 1; static_cast<float>(index) * tick < range; ++index) {
+        const float difference = static_cast<float>(index) * tick;
+        const float x = plot.getX() + difference / range * plot.getWidth();
+        paintLabelPill(graphics, juce::String(juce::roundToInt(difference)), {x, centreY}, opacity, guideColour);
     }
 }
 

@@ -49,6 +49,13 @@ constexpr double TIER_REFERENCE_SAMPLE_RATE {48'000.0};
 constexpr std::size_t PUSH_CHUNK {256};
 /// Bins whose normalized level is below this, about −120 dB, are not reported.
 constexpr float SILENCE_LEVEL {1.0e-12F};
+/// Share of the way to the edge where the stereo position curve draws its midpoint.
+constexpr double CURVE_MIDPOINT_POSITION {0.5};
+/// Share of the way to the edge where the stereo position curve draws its edge setting.
+/// Just below 1, so the curve can reach it with a finite level difference.
+constexpr double CURVE_EDGE_POSITION {0.99};
+/// Decibels per decade of an amplitude ratio.
+constexpr float DECIBELS_PER_AMPLITUDE_DECADE {20.0F};
 
 /// Builds a tier for a layout at a sample rate: its FFT, window, spectra, and level scale.
 AnalysisTier makeTier(const TierLayout& layout, const int doublings)
@@ -80,16 +87,56 @@ AnalysisTier makeTier(const TierLayout& layout, const int doublings)
 }
 }  // namespace
 
-/// Creates an analyzer for 48 kHz audio with the default focus.
+/// Creates an analyzer for 48 kHz audio with the default stereo position curve.
 SpatialAnalyzer::SpatialAnalyzer()
 {
     prepare(ANALYZER_DEFAULT_SAMPLE_RATE);
 }
 
+/// Creates the curve of the default pan midpoint and edge.
+StereoPositionCurve::StereoPositionCurve() : StereoPositionCurve(DEFAULT_PAN_MIDPOINT_DB, DEFAULT_PAN_EDGE_DB) {}
+
+/// Creates the curve that draws the midpoint setting half way to the edge, and the edge setting 99% of the way there.
+/// Both are clamped to their setting ranges, and the edge to at least MIN_PAN_CURVE_GAP_DB above the midpoint.
+/// From tanh((m / s)^p) = 1/2 and tanh((e / s)^p) = 0.99 follow
+/// p = ln(atanh(0.99) / atanh(1/2)) / ln(e / m) and s = m / atanh(1/2)^(1/p).
+StereoPositionCurve::StereoPositionCurve(const double midpointSetting, const double edgeSetting)
+{
+    const double midpoint = std::clamp(midpointSetting, MIN_PAN_MIDPOINT_DB, MAX_PAN_MIDPOINT_DB);
+    const double edge
+        = std::clamp(edgeSetting, std::max(MIN_PAN_EDGE_DB, midpoint + MIN_PAN_CURVE_GAP_DB), MAX_PAN_EDGE_DB);
+    const double midpointArgument = std::atanh(CURVE_MIDPOINT_POSITION);
+    const double curveExponent
+        = std::log(std::atanh(CURVE_EDGE_POSITION) / midpointArgument) / std::log(edge / midpoint);
+    midpointDecibels = static_cast<float>(midpoint);
+    edgeDecibels = static_cast<float>(edge);
+    exponent = static_cast<float>(curveExponent);
+    scaleDecibels = static_cast<float>(midpoint / std::pow(midpointArgument, 1.0 / curveExponent));
+}
+
+/// Returns the level difference drawn 99% of the way to the edge, in dB.
+float StereoPositionCurve::edge() const noexcept
+{
+    return edgeDecibels;
+}
+
+/// Returns the level difference drawn half way to the edge, in dB.
+float StereoPositionCurve::midpoint() const noexcept
+{
+    return midpointDecibels;
+}
+
+/// Returns the share of the way from the centre to the edge, from 0 to 1,
+/// where a level difference between the channels in dB is drawn. The sign of the difference is ignored.
+float StereoPositionCurve::position(const float differenceDecibels) const
+{
+    return std::tanh(std::pow(std::abs(differenceDecibels) / scaleDecibels, exponent));
+}
+
 /// Returns the stereo position of a bin from its channel magnitudes:
-/// the level difference in dB divided by the focus, clamped to ±1.
+/// the level difference in dB through the curve, towards the louder channel.
 /// Content in only one channel sits at that channel's edge, and silence in the centre.
-float positionFromMagnitudes(const float leftMagnitude, const float rightMagnitude, const float focusDecibels)
+float positionFromMagnitudes(const float leftMagnitude, const float rightMagnitude, const StereoPositionCurve& curve)
 {
     if (rightMagnitude <= 0.0F) {
         return leftMagnitude > 0.0F ? 1.0F : 0.0F;
@@ -97,8 +144,9 @@ float positionFromMagnitudes(const float leftMagnitude, const float rightMagnitu
     if (leftMagnitude <= 0.0F) {
         return -1.0F;
     }
-    const float difference = 20.0F * std::log10(leftMagnitude / rightMagnitude);
-    return std::clamp(difference / focusDecibels, -1.0F, 1.0F);
+    const float difference = DECIBELS_PER_AMPLITUDE_DECADE * std::log10(leftMagnitude / rightMagnitude);
+    const float share = curve.position(difference);
+    return difference < 0.0F ? -share : share;
 }
 
 /// Forgets the recent samples, as if the input had been silent.
@@ -157,16 +205,16 @@ void SpatialAnalyzer::pushSamples(const std::span<const float> left, const std::
     }
 }
 
-/// Sets the level difference in dB that reaches the edges of the display, clamped to the focus range.
-void SpatialAnalyzer::setFocus(const double decibels)
-{
-    focusDecibels = static_cast<float>(std::clamp(decibels, MIN_FOCUS_DB, MAX_FOCUS_DB));
-}
-
 /// Sets the function that receives every analyzed frame.
 void SpatialAnalyzer::setFrameCallback(SpectralFrameCallback callback)
 {
     frameCallback = std::move(callback);
+}
+
+/// Sets the curve that maps the level difference between the channels to the stereo position.
+void SpatialAnalyzer::setPositionCurve(const StereoPositionCurve& curve)
+{
+    positionCurve = curve;
 }
 
 /// Transforms the newest window of both channels for a tier,
@@ -214,7 +262,7 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
         points.push_back({
             .frequency = static_cast<float>(static_cast<double>(bin) * binWidth),
             .spacing = static_cast<float>(binWidth),
-            .position = positionFromMagnitudes(leftMagnitude, rightMagnitude, focusDecibels),
+            .position = positionFromMagnitudes(leftMagnitude, rightMagnitude, positionCurve),
             .level = level,
             .coherence = magnitudeProduct > 0.0F
                 ? (leftReal * rightReal + leftImaginary * rightImaginary) / magnitudeProduct
@@ -225,4 +273,5 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
         frameCallback(points, static_cast<double>(tier.hop) / sampleRate);
     }
 }
+
 }  // namespace esgrove::image_control

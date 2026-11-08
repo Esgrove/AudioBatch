@@ -95,8 +95,18 @@ The display follows the approach of particle-based spatial analyzers:
 every analyzed frequency bin is drawn as a sharp particle with a faint halo,
 new particles add to the picture, older ones fade, and dense areas merge into bright clusters with a soft glow.
 
-- **Position:** the level difference between the channels in dB divided by the focus, clamped to the edges.
-  The default focus of 18 dB is about where a source sounds fully to one side.
+- **Position:** the level difference between the channels in dB through an S-curve set by two display settings.
+  The pan midpoint, 12 dB by default, is drawn half way from the centre to the edge,
+  and the pan edge, 32 dB by default, 99% of the way there,
+  so only nearly fully panned sound reaches the top or the bottom.
+  A difference of d dB is drawn at tanh((d / s)^p) of the way, towards the louder channel,
+  where p = ln(atanh(0.99) / atanh(0.5)) / ln(edge / midpoint) and s = midpoint / atanh(0.5)^(1/p).
+  The curve rises gently below the midpoint and flattens towards the edge,
+  the more sharply the closer the two settings are.
+  Sound in one channel only sits at that channel's edge.
+  Changing either setting draws the curve over the spectrogram for about three seconds before it fades:
+  guide lines where 3, 6, 12, 18, 24, 36, and 48 dB land, the midpoint and edge highlighted,
+  and the curve itself, with the level difference along the centre line.
 - **Colour:** frequency colours run from red in the bass through yellow in the low mids, green around 1 kHz,
   and cyan in the presence range to blue in the highs and violet towards magenta in the air band.
   Phase colours instead run from blue for in-phase content to red for anti-phase content.
@@ -171,7 +181,8 @@ The Settings button opens the display settings:
 - frequency or phase colours,
 - a logarithmic or mel frequency scale, with the same HTK mel definition as AudioBatch's spectrogram,
 - the persistence, how long particles take to fade,
-- the focus, the level difference that reaches the edges,
+- the pan midpoint and the pan edge in whole dB, which shape the stereo position curve,
+  and push each other along to stay at least 3 dB apart,
 - a frame rate readout in the top-left corner of the spectrogram,
 - **Bypass rendering**, which stops analyzing and drawing the spectrogram while the audio is still processed,
 - and **Hide the spectrogram**, which shrinks the window to the header and the band strips.

@@ -61,7 +61,41 @@ struct AnalysisTier {
     std::size_t samplesSinceFrame {0};
 };
 
-[[nodiscard]] float positionFromMagnitudes(float leftMagnitude, float rightMagnitude, float focusDecibels);
+/// The S-curve from the level difference between the channels to the stereo position.
+///
+/// A difference of d dB draws at tanh((d / scale)^exponent) of the way from the centre to the edge,
+/// towards the louder channel.
+/// The scale and exponent follow in closed form from two settings:
+/// the midpoint, the difference drawn half way to the edge,
+/// and the edge, the difference drawn 99% of the way there,
+/// so only nearly fully panned content reaches the edge.
+/// Below the midpoint the curve rises gently, and above it it flattens towards the edge,
+/// the steeper the closer the two settings are.
+/// The edge always stays at least MIN_PAN_CURVE_GAP_DB above the midpoint.
+class StereoPositionCurve
+{
+public:
+    StereoPositionCurve();
+    StereoPositionCurve(double midpointSetting, double edgeSetting);
+
+    [[nodiscard]] float edge() const noexcept;
+    [[nodiscard]] float midpoint() const noexcept;
+    [[nodiscard]] float position(float differenceDecibels) const;
+
+    [[nodiscard]] bool operator==(const StereoPositionCurve&) const = default;
+
+private:
+    /// Level difference drawn 99% of the way to the edge, in dB.
+    float edgeDecibels {0.0F};
+    /// Exponent of the curve, which sets how sharply it turns at the midpoint.
+    float exponent {1.0F};
+    /// Level difference drawn half way to the edge, in dB.
+    float midpointDecibels {0.0F};
+    /// Level difference the exponent applies to, in dB.
+    float scaleDecibels {1.0F};
+};
+
+[[nodiscard]] float positionFromMagnitudes(float leftMagnitude, float rightMagnitude, const StereoPositionCurve& curve);
 
 /// Multi-resolution spatial analysis of stereo audio.
 ///
@@ -71,7 +105,7 @@ struct AnalysisTier {
 /// and the shortest keeps the high frequencies sharp in time.
 ///
 /// A bin's position follows the level difference between the channels, as in common spatial analyzers:
-/// the difference in dB divided by the focus, clamped to the edges.
+/// the difference in dB through the stereo position curve, so the edges hold only nearly fully panned content.
 /// Its coherence is Re(L · conj(R)) / (|L| · |R|), which tells anti-phase content from mono content,
 /// since both sit in the centre by level alone.
 ///
@@ -84,12 +118,14 @@ public:
     void clear();
     void prepare(double newSampleRate);
     void pushSamples(std::span<const float> left, std::span<const float> right);
-    void setFocus(double decibels);
     void setFrameCallback(SpectralFrameCallback callback);
+    void setPositionCurve(const StereoPositionCurve& curve);
 
 private:
     void analyzeTier(AnalysisTier& tier);
 
+    /// Maps the level difference between the channels to the stereo position.
+    StereoPositionCurve positionCurve;
     /// The tiers from the lowest frequencies to the highest.
     std::vector<AnalysisTier> tiers;
     /// Ring of the newest left samples, as long as the longest window.
@@ -103,8 +139,6 @@ private:
 
     /// Sample rate the tiers were built for.
     double sampleRate {ANALYZER_DEFAULT_SAMPLE_RATE};
-    /// Level difference in dB that reaches the edges.
-    float focusDecibels {static_cast<float>(DEFAULT_FOCUS_DB)};
     /// Position in the rings where the next sample goes.
     std::size_t writePosition {0};
 };

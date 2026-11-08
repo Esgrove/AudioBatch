@@ -1,5 +1,5 @@
 /// Declares and implements the signal helpers the ImageControl tests share:
-/// sines, deterministic noise, and RMS measurement over a range of samples.
+/// sines, deterministic noise, level differences between channels, and RMS measurement over a range of samples.
 
 #pragma once
 
@@ -38,6 +38,18 @@ inline std::vector<float> makeNoise(const float amplitude, const std::size_t sam
         value = distribution(generator);
     }
     return signal;
+}
+
+/// Returns a signal made quieter by a level difference in dB,
+/// for the quieter channel of a sound panned by that difference.
+inline std::vector<float> withLevelDifference(const std::vector<float>& signal, const double decibels)
+{
+    const auto gain = static_cast<float>(std::pow(10.0, -decibels / 20.0));
+    std::vector<float> quieter(signal.size());
+    for (std::size_t sample = 0; sample < signal.size(); ++sample) {
+        quieter[sample] = signal[sample] * gain;
+    }
+    return quieter;
 }
 
 /// Returns the RMS of a span of samples.

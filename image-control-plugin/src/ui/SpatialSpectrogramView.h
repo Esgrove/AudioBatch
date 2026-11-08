@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 #include "ui/SpectrogramParticles.h"
 
@@ -17,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -38,10 +40,12 @@ enum class SpectrogramDrag : std::uint8_t {
 
 /// What the overlays show, compared on every display refresh, so the view repaints only when it changes.
 struct SpectrogramOverlayState {
+    StereoPositionCurve positionCurve;
     std::array<float, BAND_COUNT> bandHighlights {};
     std::array<float, CROSSOVER_COUNT> crossoverHighlights {};
     Crossovers crossovers {};
     std::array<double, BAND_COUNT> bandWidths {};
+    float positionCurveOpacity {0.0F};
     bool renderingBypassed {false};
     bool renderingUnavailable {false};
 
@@ -57,10 +61,12 @@ public:
     explicit SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters);
 
     [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
+    [[nodiscard]] float positionCurveOpacity() const;
 
     void advance(double seconds);
     void setFrameStatistics(std::optional<double> rate, std::optional<double> gpuMilliseconds);
     void setFrequencyScale(FrequencyScale newScale);
+    void setPositionCurve(const StereoPositionCurve& curve);
     void setRenderingBypassed(bool bypassed);
     void setRenderingUnavailable(bool unavailable);
 
@@ -101,12 +107,15 @@ private:
     void paintCrossovers(juce::Graphics& graphics, const Crossovers& crossovers) const;
     void paintFramesPerSecond(juce::Graphics& graphics) const;
     void paintGrid(juce::Graphics& graphics) const;
+    void paintPositionCurve(juce::Graphics& graphics) const;
     void paintRenderingStatus(juce::Graphics& graphics) const;
     void updateCursor(const juce::ModifierKeys& modifiers);
     void updateHover(juce::Point<float> position);
 
     /// What the overlays showed when the view last repainted.
     SpectrogramOverlayState shownOverlay;
+    /// The stereo position curve the particles are placed with, which the curve overlay draws.
+    StereoPositionCurve positionCurve;
 
     /// Crossover parameters, owned by the parameter tree, which outlives the editor. Never null.
     std::array<juce::RangedAudioParameter*, CROSSOVER_COUNT> crossoverParameters {};
@@ -134,6 +143,12 @@ private:
     std::optional<double> framesPerSecond;
     /// GPU time of one frame shown next to the refresh rate, in milliseconds, or empty when it is not measured.
     std::optional<double> gpuFrameMilliseconds;
+
+    /// Seconds since the position curve last changed, which time the curve overlay.
+    /// Infinite until the curve changes after it was first set, so opening the editor does not show the overlay.
+    double positionCurveAge {std::numeric_limits<double>::infinity()};
+    /// Whether the position curve was set at least once.
+    bool positionCurveSet {false};
 
     /// What the current drag changes.
     SpectrogramDrag drag {SpectrogramDrag::none};

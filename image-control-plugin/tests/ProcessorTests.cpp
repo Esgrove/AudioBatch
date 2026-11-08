@@ -177,7 +177,8 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
          {
              ANALYZE_OUTPUT_PROPERTY,
              PERSISTENCE_PROPERTY,
-             FOCUS_PROPERTY,
+             PAN_MIDPOINT_PROPERTY,
+             PAN_EDGE_PROPERTY,
              SHOW_FPS_PROPERTY,
              BYPASS_RENDERING_PROPERTY,
              HIDE_SPECTROGRAM_PROPERTY,
@@ -185,6 +186,8 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     {
         editorSettings->removeAttribute(property);
     }
+    // A state from before the pan curve has the linear focus setting instead.
+    editorSettings->setAttribute(LEGACY_FOCUS_PROPERTY, 24.0);
     juce::MemoryBlock olderState;
     juce::AudioProcessor::copyXmlToBinary(*xml, olderState);
 
@@ -194,7 +197,9 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(linkPropertyName(0))));
     EXPECT_TRUE(static_cast<bool>(settings.getProperty(ANALYZE_OUTPUT_PROPERTY)));
     EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PERSISTENCE_PROPERTY)), DEFAULT_PERSISTENCE_SECONDS);
-    EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(FOCUS_PROPERTY)), DEFAULT_FOCUS_DB);
+    EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PAN_MIDPOINT_PROPERTY)), DEFAULT_PAN_MIDPOINT_DB);
+    EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PAN_EDGE_PROPERTY)), DEFAULT_PAN_EDGE_DB);
+    EXPECT_FALSE(settings.hasProperty(LEGACY_FOCUS_PROPERTY));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(SHOW_FPS_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(BYPASS_RENDERING_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(HIDE_SPECTROGRAM_PROPERTY)));

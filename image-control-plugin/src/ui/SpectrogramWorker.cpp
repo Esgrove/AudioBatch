@@ -115,7 +115,7 @@ void SpectrogramWorker::processQueuedAudio()
         particleBuilder.resetLevel();
         clear = true;
     }
-    analyzer.setFocus(current.focusDecibels);
+    analyzer.setPositionCurve(current.positionCurve);
     particleBuilder.setFrequencyScale(current.scale);
     particleBuilder.setColours(current.colours);
     particleBuilder.setPersistence(current.persistenceSeconds);
