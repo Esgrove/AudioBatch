@@ -54,6 +54,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   It includes `cpp/cmake/Optimizations.cmake`, so it targets the same CPUs and optimizations as AudioBatch.
   `image-control-plugin/benchmarks/compare_formats.py` renders files through its VST3
   and Audio Unit with the AudioBatch CLI, and compares their speed and output.
+  `image-control-plugin/test-signals/generate.py` writes stereo sines, sine combs,
+  and noise at set level differences into its ignored `output/` directory, for checking the spatial spectrogram by eye.
 - `fixtures/spectrogram_expected/` holds short PCM16 inputs and sparse NumPy power expectations for the spectrogram,
  which both test suites read in place.
  `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
@@ -96,7 +98,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   The C++ tier drives a transparent desktop window through `cpp/tests/GuiDriver.*`,
   and the Rust tier uses gpui-kit's test window helpers.
 - `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, `rust/scripts/`,
-  and `image-control-plugin/benchmarks/`,
+  `image-control-plugin/benchmarks/`, and `image-control-plugin/test-signals/`,
   and pins it in `uv.lock`.
   Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.
   Each script declares its Python version and packages in an inline `# /// script` block

@@ -53,6 +53,7 @@
 /cpp/screenshots/
 /cpp/fuzz-artifacts/
 /cpp/fuzz-scratch/
+/image-control-plugin/test-signals/output/
 
 # Allow checked-in workspace settings for shared CMake/IntelliSense config.
 !/.vscode/
