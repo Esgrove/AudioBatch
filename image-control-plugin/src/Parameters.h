@@ -75,6 +75,8 @@ constexpr double MAX_FOCUS_DB {40.0};
 constexpr auto EDITOR_WIDTH_PROPERTY {"editorWidth"};
 /// Name of the editor setting that holds the editor height in pixels.
 constexpr auto EDITOR_HEIGHT_PROPERTY {"editorHeight"};
+/// Name of the editor setting that holds the height of the band strip section in pixels.
+constexpr auto BAND_SECTION_HEIGHT_PROPERTY {"bandSectionHeight"};
 
 /// Crossover frequencies ordered from the lowest to the highest, in Hz.
 using Crossovers = std::array<float, CROSSOVER_COUNT>;

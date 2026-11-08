@@ -1,6 +1,7 @@
 /// Declares ImageControlEditor, the editor of the ImageControl plugin.
 /// A header holds the bypass, the settings button, and the output gain.
-/// The spatial spectrogram fills the middle, with the four band strips below it.
+/// The spatial spectrogram fills the middle, with the four band strips below it,
+/// and a divider between them resizes the two.
 
 #pragma once
 
@@ -10,6 +11,7 @@
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SplitDivider.h"
 #include "ui/TooltipOverlay.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -62,6 +64,10 @@ private:
     SpatialAnalyzer analyzer;
     /// The spatial spectrogram.
     SpatialSpectrogramView spectrogram;
+    /// The draggable divider between the spectrogram and the band strips.
+    SplitDivider divider;
+    /// Height of the band strip section, in pixels, which the divider changes.
+    int bandSectionHeight {0};
 
     /// The plugin name in the header.
     juce::Label titleLabel;
