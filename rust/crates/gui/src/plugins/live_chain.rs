@@ -24,7 +24,7 @@ use audiobatch_plugins::{
     ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames, prepare_for_preview, reload_for_preview,
 };
 use raw_window_handle::RawWindowHandle;
-use vst3_host::{EditorWindow, Module, PluginInstance, RestartAction, UiDispatcher, UiThread};
+use vst3_host::{EditorWindow, Module, PluginInstance, RestartAction, UiDispatcher, UiThread, WindowPosition};
 
 /// Most frames the preview passes to the live instances in one call.
 pub const PREVIEW_BLOCK_FRAMES: usize = 1024;
@@ -51,6 +51,9 @@ pub struct LiveSlot {
     /// The window showing the plugin's editor.
     /// It comes before the instance, so it is destroyed first when the slot is dropped.
     editor: Option<EditorWindow>,
+    /// Where the editor window was when it last closed, so it reopens there.
+    /// Kept only while the application runs.
+    editor_position: Option<WindowPosition>,
     /// The live instance, missing when the plugin could not be loaded.
     instance: Option<PluginInstance>,
     /// Latency of the prepared instance, in samples.
@@ -90,6 +93,13 @@ pub struct LiveChain {
 }
 
 impl LiveSlot {
+    /// Destroys the editor window, remembering where it was so the next editor of this slot opens there.
+    fn close_editor(&mut self) {
+        if let Some(editor) = self.editor.take() {
+            self.editor_position = editor.position().or(self.editor_position);
+        }
+    }
+
     /// Returns the slot's id.
     #[must_use]
     pub const fn id(&self) -> SlotId {
@@ -464,7 +474,7 @@ impl LiveChain {
             if action == Some(RestartAction::Reload) {
                 let reopen = slot.editor.as_ref().is_some_and(|editor| !editor.is_closed());
                 // Destroy the view before state capture and component/controller teardown.
-                slot.editor = None;
+                slot.close_editor();
                 let result = slot.capture_state(ui).and_then(|()| {
                     if let Some(instance) = slot.instance.take() {
                         let instance = reload_for_preview(
@@ -496,7 +506,7 @@ impl LiveChain {
                     continue;
                 }
                 if reopen && let Some(instance) = &slot.instance {
-                    match EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner) {
+                    match EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner, slot.editor_position) {
                         Ok(editor) => slot.editor = Some(editor),
                         Err(error) => {
                             first_error.get_or_insert_with(|| anyhow::Error::from(error));
@@ -608,7 +618,13 @@ impl LiveChain {
         let Some(instance) = slot.instance.as_ref() else {
             anyhow::bail!("{}", slot.error.as_deref().unwrap_or("The plugin is not loaded"));
         };
-        slot.editor = Some(EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner)?);
+        slot.editor = Some(EditorWindow::open(
+            ui,
+            instance,
+            &slot.slot.plugin.name,
+            owner,
+            slot.editor_position,
+        )?);
         // The user sees and edits the settings the plugin has, so they are captured from now on.
         slot.keep_saved_state = false;
         Ok(())
@@ -620,7 +636,7 @@ impl LiveChain {
         let mut reaped = false;
         for slot in &mut self.slots {
             if slot.editor.as_ref().is_some_and(EditorWindow::is_closed) {
-                slot.editor = None;
+                slot.close_editor();
                 reaped = true;
             }
         }
@@ -680,6 +696,7 @@ impl LiveChain {
             id,
             slot,
             editor: None,
+            editor_position: None,
             instance: None,
             latency_samples: 0,
             error: None,
@@ -736,6 +753,7 @@ mod test_slots {
             id,
             slot: ChainSlot::new(effect("Acme", name)),
             editor: None,
+            editor_position: None,
             instance: None,
             latency_samples: 100,
             error: Some(String::from("Missing")),

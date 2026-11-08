@@ -8,7 +8,7 @@ use std::rc::Rc;
 use raw_window_handle::RawWindowHandle;
 use vst3::Steinberg::{FIDString, kPlatformTypeX11EmbedWindowID};
 
-use super::{EditorError, EditorShared, ViewSize};
+use super::{EditorError, EditorShared, ViewSize, WindowPosition};
 use crate::thread::UiThread;
 
 /// A window that cannot be created.
@@ -47,6 +47,16 @@ impl NativeWindow {
 
     /// Never called, because the window cannot exist.
     pub const fn show(&self) {
+        match *self {}
+    }
+
+    /// Never called, because the window cannot exist.
+    pub const fn position(&self) -> Option<WindowPosition> {
+        match *self {}
+    }
+
+    /// Never called, because the window cannot exist.
+    pub const fn move_to(&self, _position: WindowPosition) {
         match *self {}
     }
 }

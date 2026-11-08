@@ -8,7 +8,8 @@
 //! The plugin asks for a new size through `IPlugFrame::resizeView`,
 //! and a resize by the user is checked with `checkSizeConstraint` and reported with `onSize`.
 //! Closing the window only hides it and marks it closed,
-//! so the owner can capture the plugin's settings before it drops the editor.
+//! so the owner can capture the plugin's settings and the window's position before it drops the editor.
+//! A window opened at a remembered position is kept on a connected display.
 //! An editor keeps the parts of its plugin instance alive, so the view never outlives its controller.
 
 #![expect(unsafe_code, reason = "calls the IPlugView COM interface of plugin editors")]
@@ -105,6 +106,19 @@ pub struct EditorWindow {
     _core: Arc<InstanceCore>,
 }
 
+/// Where an editor window was on screen, so a new window for the same editor can open there.
+///
+/// It is the top-left corner of the window's frame, in the screen units and coordinates of the platform:
+/// physical pixels from the top left of the virtual screen on Windows,
+/// and points from the bottom left of the main screen on macOS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowPosition {
+    /// Horizontal coordinate of the top-left corner.
+    pub x: i32,
+    /// Vertical coordinate of the top-left corner.
+    pub y: i32,
+}
+
 /// The width and height of an editor view, in the units of the platform.
 /// These are points on macOS and physical pixels on Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +144,8 @@ impl EditorWindow {
     /// Opens the editor of a plugin instance in a new window and shows it.
     /// On Windows, the window is owned by `owner`, so it stays above it and minimizes with it.
     /// On macOS, the window is independent, because a child window would move together with the main window.
+    /// With a `position`, the window opens there, moved onto a display when that place is no longer on one.
+    /// Without one, the platform places it.
     ///
     /// # Errors
     ///
@@ -140,6 +156,7 @@ impl EditorWindow {
         instance: &PluginInstance,
         title: &str,
         owner: Option<RawWindowHandle>,
+        position: Option<WindowPosition>,
     ) -> Result<Self, EditorError> {
         let core = Arc::clone(instance.core());
         let controller = core.controller().ok_or(EditorError::MissingEditor)?;
@@ -172,7 +189,7 @@ impl EditorWindow {
             shared,
             _core: core,
         };
-        editor.attach()?;
+        editor.attach(position)?;
         Ok(editor)
     }
 
@@ -182,14 +199,23 @@ impl EditorWindow {
         self.shared.closed.get()
     }
 
+    /// Returns where the window is on screen, also after the user closed it,
+    /// or none when the platform cannot tell, such as while the window is minimized.
+    #[must_use]
+    pub fn position(&self) -> Option<WindowPosition> {
+        self.window.position()
+    }
+
     /// Shows the window again after it was closed, and brings it to the front.
     pub fn show(&self, _ui: &UiThread) {
         self.shared.closed.set(false);
         self.window.show();
     }
 
-    /// Gives the view its frame and window, sizes the window to the view, and shows it.
-    fn attach(&self) -> Result<(), EditorError> {
+    /// Gives the view its frame and window, sizes the window to the view,
+    /// moves it to `position` when there is one, and shows it.
+    /// The move comes after the final size, so keeping the window on a display accounts for its whole frame.
+    fn attach(&self, position: Option<WindowPosition>) -> Result<(), EditorError> {
         let frame = self
             .frame
             .to_com_ptr::<IPlugFrame>()
@@ -214,6 +240,9 @@ impl EditorWindow {
             self.shared.resizing_for_plugin.set(true);
             self.window.set_content_size(size);
             self.shared.resizing_for_plugin.set(false);
+        }
+        if let Some(position) = position {
+            self.window.move_to(position);
         }
         self.window.show();
         Ok(())
@@ -361,7 +390,7 @@ mod test_editor {
     fn a_plugin_without_a_view_has_no_editor() {
         let error = on_ui(|ui| {
             let instance = active_instance(ui, Kind::Gain, 2).map_err(|error| error.to_string())?;
-            EditorWindow::open(ui, &instance, "Gain", None)
+            EditorWindow::open(ui, &instance, "Gain", None, None)
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         });
