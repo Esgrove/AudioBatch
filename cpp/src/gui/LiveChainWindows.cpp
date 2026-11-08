@@ -156,6 +156,16 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
     entry.editorWindow = launchOptions.create();
 
     if (entry.editorWindow != nullptr) {
+        // A slot whose editor was open before reopens it where it was, kept on a connected display.
+        if (entry.editorPosition.has_value()) {
+            const auto* peer = entry.editorWindow->getPeer();
+            const auto frameSize
+                = peer != nullptr ? peer->getFrameSizeIfPresent() : juce::ComponentPeer::OptionalBorderSize {};
+            const auto frame = frameSize ? *frameSize : juce::BorderSize<int> {};
+            entry.editorWindow->setBounds(
+                utils::boundsOnScreen(entry.editorWindow->getBounds().withPosition(*entry.editorPosition), frame)
+            );
+        }
         entry.editorWindow->setVisible(true);
         entry.editorWindow->toFront(true);
         entry.wasEditorOpen = true;

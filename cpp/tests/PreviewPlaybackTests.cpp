@@ -1,6 +1,7 @@
 /// Device-free regression tests for the live preview renderer and the plugin chain it plays through.
 /// Synthetic processors expose latency, gain edits, ordering, EOF tails, and invalid output,
 /// and chains of plugins that are not installed check the slot latency totals and the slot ids.
+/// Slots also keep the position of their editor window, which reopens on a connected display.
 /// The preview player, its output device, and its preferences have their own suite in PreviewPlayerTests.cpp.
 
 #include "analysis/AudioAnalysisTypes.h"
@@ -11,7 +12,9 @@
 #include "plugins/PluginPreviewSource.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/GuiUtils.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -257,6 +260,7 @@ public:
 
 private:
     void testCursor();
+    void testEditorPositions();
     void testGainAndEdits();
     void testInvalidOutput();
     void testLatency();
@@ -282,6 +286,7 @@ void PreviewPlaybackTests::runTest()
     testLatencyFormattingAndTailLimit();
     testUnavailableSlotLatency();
     testSlotIds();
+    testEditorPositions();
 }
 
 /// Holds the audible clock during non-block-aligned priming, unlike uncompensated input time.
@@ -500,6 +505,42 @@ void PreviewPlaybackTests::testSlotIds()
     chain.moveSlot(slotIds[2], 0);
     chain.removeSlot(slotIds[2]);
     expect(chain.getSlotIds() == std::vector {slotIds[1], slotIds[0]});
+}
+
+/// Checks that a slot's remembered editor position moves with the slot,
+/// and that a window restored at a position off every display comes back on screen with its frame.
+void PreviewPlaybackTests::testEditorPositions()
+{
+    beginTest("Editor window positions follow their slots and reopen on screen");
+    LiveSlot slot;
+    slot.editorPosition = juce::Point<int> {120, 80};
+    LiveSlot moved(std::move(slot));
+    expect(moved.editorPosition == juce::Point<int> {120, 80});
+    LiveSlot assigned;
+    assigned = std::move(moved);
+    expect(assigned.editorPosition == juce::Point<int> {120, 80});
+
+    const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    if (display == nullptr) {
+        return;
+    }
+    const juce::BorderSize<int> frame {30, 8, 8, 8};
+    const juce::Rectangle<int> offscreen {
+        static_cast<int>(display->userBounds.getRight()) + 5000,
+        static_cast<int>(display->userBounds.getY()) - 5000,
+        400,
+        300
+    };
+    const auto restored = utils::boundsOnScreen(offscreen, frame);
+    expect(std::ranges::any_of(juce::Desktop::getInstance().getDisplays().displays, [&](const auto& candidate) {
+        return candidate.userBounds.contains(frame.addedTo(restored).toFloat());
+    }));
+    expectEquals(restored.getWidth(), 400);
+    expectEquals(restored.getHeight(), 300);
+
+    const auto inside = display->userBounds.getCentre().roundToInt().translated(-200, -150);
+    const juce::Rectangle<int> visible {inside.x, inside.y, 400, 300};
+    expect(utils::boundsOnScreen(visible, frame) == visible);
 }
 
 /// Allows live tail changes without a restart, while an explicit stop immediately cancels continuation intent.
