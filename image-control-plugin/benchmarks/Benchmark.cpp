@@ -1,5 +1,6 @@
 /// Times ImageControl's hot paths: the audio processing of the multiband imager,
-/// and one display refresh of the spatial spectrogram with its analysis, particles, rendering, and paint.
+/// and the CPU side of one display refresh of the spatial spectrogram: its analysis, particles, and overlay paint.
+/// The particles are drawn on the GPU, which needs an OpenGL context and does not run here.
 /// Build it in Release with the tests, and run it once with and once
 /// without IMAGE_CONTROL_HARDENING to measure what the standard library hardening costs.
 
@@ -91,8 +92,8 @@ double timeImager(const BandPans& pans)
     return elapsed.count() / AUDIO_SECONDS;
 }
 
-/// Returns the milliseconds one spectrogram refresh takes: analyzing a refresh's worth of audio,
-/// drawing its particles, fading, blurring, and rendering the buffer, and painting the view.
+/// Returns the milliseconds the CPU side of one spectrogram refresh takes: analyzing a refresh's worth of audio,
+/// turning its bins into particles, taking the render batch, and painting the overlays.
 double timeSpectrogram(ImageControlProcessor& processor)
 {
     SpatialAnalyzer analyzer;
@@ -112,6 +113,8 @@ double timeSpectrogram(ImageControlProcessor& processor)
     for (int refresh = 0; refresh < REFRESHES; ++refresh) {
         analyzer.pushSamples(left, right);
         view.advance(1.0 / REFRESH_RATE);
+        const auto batch = view.takeRenderBatch();
+        juce::ignoreUnused(batch);
         view.paintEntireComponent(graphics, false);
     }
     const Milliseconds elapsed = std::chrono::steady_clock::now() - start;
@@ -132,6 +135,6 @@ int main()
     const double spectrogramMilliseconds = esgrove::image_control::benchmark::timeSpectrogram(processor);
     std::println("Imager: {:.3f} ms per second of stereo audio", imagerMilliseconds);
     std::println("Imager with panned bands: {:.3f} ms per second of stereo audio", pannedMilliseconds);
-    std::println("Spectrogram: {:.3f} ms per refresh", spectrogramMilliseconds);
+    std::println("Spectrogram CPU side: {:.3f} ms per refresh", spectrogramMilliseconds);
     return 0;
 }

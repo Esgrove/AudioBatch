@@ -59,6 +59,10 @@ constexpr auto PHASE_COLOURS_PROPERTY {"phaseColours"};
 constexpr auto MEL_SCALE_PROPERTY {"melScale"};
 /// Name of the editor setting that shows the display refresh rate.
 constexpr auto SHOW_FPS_PROPERTY {"showFps"};
+/// Name of the editor setting that stops analyzing and drawing the spectrogram, while the audio is still processed.
+constexpr auto BYPASS_RENDERING_PROPERTY {"bypassRendering"};
+/// Name of the editor setting that hides the spectrogram, leaving only the controls.
+constexpr auto HIDE_SPECTROGRAM_PROPERTY {"hideSpectrogram"};
 /// Shortest time constant of the fade of the spectrogram particles, in seconds.
 constexpr double MIN_PERSISTENCE_SECONDS {0.05};
 /// Longest time constant of the fade of the spectrogram particles, in seconds.

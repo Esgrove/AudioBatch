@@ -2,7 +2,10 @@
 /// moving a middle band moves both its crossovers, moving the Low band moves only its upper crossover,
 /// a band move stops at the minimum ratio to the crossover that stays,
 /// and Ctrl or Cmd with a vertical drag changes the band's side gain.
+/// Also tests the particles the view prepares for the GPU renderer:
+/// which points become particles, how bright and where they are, and what a render batch carries.
 
+#include "analysis/SpatialAnalyzer.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/SpatialSpectrogramView.h"
@@ -11,6 +14,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 
@@ -83,6 +87,21 @@ double octavesAbove(const double frequency, const double octaves)
 {
     return frequency * std::exp2(octaves);
 }
+
+/// Time one analyzed frame stands for in the tests, in seconds: a hop of 512 samples at 48 kHz.
+constexpr double FRAME_SECONDS {512.0 / 48'000.0};
+
+/// Returns an analyzed point at a frequency, a stereo position, and a level.
+SpectralPoint point(const float frequency, const float position, const float level)
+{
+    return {.frequency = frequency, .spacing = 10.0F, .position = position, .level = level, .coherence = 1.0F};
+}
+
+/// Returns the summed colour channels of a particle, which follow its weight.
+float brightness(const SpectrogramParticle& particle)
+{
+    return particle.red + particle.green + particle.blue;
+}
 }  // namespace
 
 TEST(SpectrogramView, DraggingAMiddleBandMovesBothItsCrossovers)
@@ -144,5 +163,74 @@ TEST(SpectrogramView, CommandDragChangesTheBandWidth)
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 0.0F, 0.01F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F, 1.0F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 1.0F);
+}
+
+TEST(SpectrogramView, QuietPointsAreDroppedAndLouderPointsAreBrighter)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters());
+    // -90 dB is below the display floor, -20 dB and 0 dB are inside the display range.
+    const std::array points {point(1000.0F, 0.0F, 1.0e-9F), point(1000.0F, 0.0F, 1.0e-2F), point(1000.0F, 0.0F, 1.0F)};
+    view.addFrame(points, FRAME_SECONDS);
+
+    const auto batch = view.takeRenderBatch();
+    ASSERT_EQ(batch.particles.size(), 2U);
+    EXPECT_GT(brightness(batch.particles[0]), 0.0F);
+    EXPECT_GT(brightness(batch.particles[1]), brightness(batch.particles[0]));
+}
+
+TEST(SpectrogramView, ParticlesArePlacedInSharesOfThePlot)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters());
+    // Full left is at the top of the plot, and full right at the bottom.
+    const std::array points {point(1000.0F, 1.0F, 1.0F), point(100.0F, -1.0F, 1.0F), point(5000.0F, 0.0F, 1.0F)};
+    view.addFrame(points, FRAME_SECONDS);
+
+    const auto batch = view.takeRenderBatch();
+    ASSERT_EQ(batch.particles.size(), 3U);
+    EXPECT_NEAR(batch.particles[0].x, frequencyToShare(1000.0, FrequencyScale::logarithmic), 1.0e-6);
+    EXPECT_FLOAT_EQ(batch.particles[0].y, 0.0F);
+    EXPECT_NEAR(batch.particles[1].x, frequencyToShare(100.0, FrequencyScale::logarithmic), 1.0e-6);
+    EXPECT_FLOAT_EQ(batch.particles[1].y, 1.0F);
+    EXPECT_FLOAT_EQ(batch.particles[2].y, 0.5F);
+    // A bin is wider on the axis at low frequencies, where the same spacing covers more of an octave.
+    EXPECT_GT(batch.particles[1].spread, batch.particles[2].spread);
+}
+
+TEST(SpectrogramView, RenderBatchCarriesTheFadeAndStartsOver)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters());
+    view.setPersistence(1.0);
+    view.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    view.advance(0.01);
+    view.advance(0.02);
+
+    const auto batch = view.takeRenderBatch();
+    EXPECT_EQ(batch.particles.size(), 1U);
+    EXPECT_NEAR(batch.fadeSeconds, 0.03, 1.0e-12);
+    EXPECT_DOUBLE_EQ(batch.persistenceSeconds, 1.0);
+    EXPECT_FALSE(batch.clear);
+
+    const auto next = view.takeRenderBatch();
+    EXPECT_TRUE(next.particles.empty());
+    EXPECT_DOUBLE_EQ(next.fadeSeconds, 0.0);
+}
+
+TEST(SpectrogramView, ClearingAndChangingTheScaleClearThePicture)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters());
+    view.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    view.clear();
+    const auto cleared = view.takeRenderBatch();
+    EXPECT_TRUE(cleared.clear);
+    EXPECT_TRUE(cleared.particles.empty());
+
+    view.setFrequencyScale(FrequencyScale::mel);
+    EXPECT_TRUE(view.takeRenderBatch().clear);
+    view.setFrequencyScale(FrequencyScale::mel);
+    EXPECT_FALSE(view.takeRenderBatch().clear);
 }
 }  // namespace esgrove::image_control::test

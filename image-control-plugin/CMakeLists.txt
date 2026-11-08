@@ -102,6 +102,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.cpp"
@@ -120,9 +122,10 @@ target_compile_definitions(
         JUCE_WIN_PER_MONITOR_DPI_AWARE=1
 )
 
-# On macOS the editor presents through JUCE's Metal layer renderer:
-# Core Graphics paints each changed region into a Metal texture instead of one merged region,
-# so repainting the spectrogram every display refresh leaves the rest of the editor alone.
+# The spectrogram draws its particles with OpenGL through a context attached to the editor,
+# which also paints the editor's components over the GL picture.
+# On macOS, the editor also presents through JUCE's Metal layer renderer while no GL context is attached,
+# with Core Graphics painting each changed region into a Metal texture instead of one merged region.
 if(APPLE)
     target_compile_definitions(ImageControl PUBLIC JUCE_COREGRAPHICS_RENDER_WITH_MULTIPLE_PAINT_CALLS=1)
 endif()
@@ -194,7 +197,7 @@ juce_add_binary_data(
 
 target_link_libraries(
     ImageControl
-    PRIVATE juce::juce_audio_processors juce::juce_audio_utils juce::juce_dsp ImageControlAssets
+    PRIVATE juce::juce_audio_processors juce::juce_audio_utils juce::juce_dsp juce::juce_opengl ImageControlAssets
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
 )
 

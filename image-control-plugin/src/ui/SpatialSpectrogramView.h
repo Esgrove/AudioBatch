@@ -1,7 +1,8 @@
 /// Declares SpatialSpectrogramView, the horizontal spatial spectrogram of the ImageControl editor.
 /// Frequency runs left to right on a logarithmic axis
 /// and stereo position from full left at the top to full right at the bottom.
-/// Every analyzed bin is drawn as a soft particle into a colour buffer that fades and blurs over time.
+/// Every analyzed bin becomes a particle that the SpectrogramRenderer draws on the GPU,
+/// and the view paints the grid, the bands, and the crossovers over it.
 /// The crossovers are vertical lines that can be dragged, a band can be dragged sideways to move it,
 /// and a vertical drag with Ctrl or Cmd, or the mouse wheel, over a band changes its width.
 
@@ -22,17 +23,9 @@
 
 namespace esgrove::image_control
 {
-/// Reference number of frequency columns of the particle buffer.
-/// The particle sizes and the blur are tuned for this grid and scaled to the actual one.
-constexpr int BASE_SPECTROGRAM_COLUMNS {768};
-/// Reference number of stereo position rows of the particle buffer.
-constexpr int BASE_SPECTROGRAM_ROWS {192};
-/// Smallest particle buffer, as a multiple of the reference grid in both directions.
-constexpr int MIN_SPECTROGRAM_GRID_SCALE {2};
-/// Largest number of frequency columns, which bounds the memory and the work per display refresh.
-constexpr int MAX_SPECTROGRAM_COLUMNS {3072};
-/// Largest number of stereo position rows.
-constexpr int MAX_SPECTROGRAM_ROWS {768};
+/// Corner radius of the plot inside the spectrogram box, in logical pixels.
+/// The view cuts it out of the box and the renderer rounds the picture to it.
+constexpr float SPECTROGRAM_PLOT_CORNER_RADIUS {4.0F};
 
 /// How the particles are coloured.
 /// Frequency colours run from red in the bass to blue in the highs,
@@ -67,27 +60,75 @@ struct LinearColour {
     float blue {0.0F};
 };
 
+/// One analyzed bin, ready for the GPU.
+/// The position is in shares of the plot, so it does not depend on the plot size or the display scale,
+/// and the renderer turns it into physical pixels.
+/// The layout is the instance layout of the renderer's particle shader.
+struct SpectrogramParticle {
+    /// Centre on the frequency axis, from 0 at the left edge to 1 at the right edge.
+    float x {0.0F};
+    /// Centre on the position axis, from 0 at the top (full left) to 1 at the bottom (full right).
+    float y {0.0F};
+    /// Horizontal spread that the distance to the neighbouring bins asks for, as a share of the plot width.
+    /// The renderer never draws a particle narrower than its sharp core.
+    float spread {0.0F};
+    /// Colour multiplied by the particle's weight.
+    float red {0.0F};
+    float green {0.0F};
+    float blue {0.0F};
+};
+
+/// What the renderer needs from the view since its last batch:
+/// the new particles, how much time the old ones fade by, and whether to clear the picture first.
+struct SpectrogramRenderBatch {
+    /// Particles of the frames analyzed since the last batch.
+    std::vector<SpectrogramParticle> particles;
+    /// Time the existing particles fade by, in seconds.
+    double fadeSeconds {0.0};
+    /// Time constant of the fade, in seconds.
+    double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
+    /// Whether to clear the picture before drawing the new particles.
+    bool clear {false};
+};
+
 [[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
 [[nodiscard]] double shareToFrequency(double share, FrequencyScale scale);
 [[nodiscard]] double frequencyToMel(double frequency);
 [[nodiscard]] double melToFrequency(double mel);
 
+/// What the overlays show, compared on every display refresh, so the view repaints only when it changes.
+struct SpectrogramOverlayState {
+    std::array<float, BAND_COUNT> bandHighlights {};
+    std::array<float, CROSSOVER_COUNT> crossoverHighlights {};
+    Crossovers crossovers {};
+    std::array<double, BAND_COUNT> bandWidths {};
+    bool renderingBypassed {false};
+    bool renderingUnavailable {false};
+
+    [[nodiscard]] bool operator==(const SpectrogramOverlayState&) const = default;
+};
+
 /// The spatial spectrogram with the band regions and the crossover lines.
-/// The editor feeds it analyzed frames and advances it once per display refresh.
+/// The editor feeds it analyzed frames, advances it once per display refresh,
+/// and hands its render batches to the SpectrogramRenderer, which draws the particles under the view's overlays.
+/// The plot inside the box is left unpainted, so the GPU picture shows through.
 class SpatialSpectrogramView final : public juce::Component, public juce::TooltipClient
 {
 public:
     explicit SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters);
 
     [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
+    [[nodiscard]] SpectrogramRenderBatch takeRenderBatch();
 
     void addFrame(std::span<const SpectralPoint> points, double frameSeconds);
     void advance(double seconds);
     void clear();
     void setColours(SpectrogramColours newColours);
-    void setFramesPerSecond(std::optional<double> rate);
+    void setFrameStatistics(std::optional<double> rate, std::optional<double> gpuMilliseconds);
     void setFrequencyScale(FrequencyScale newScale);
     void setPersistence(double seconds);
+    void setRenderingBypassed(bool bypassed);
+    void setRenderingUnavailable(bool unavailable);
 
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
@@ -98,8 +139,6 @@ public:
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void modifierKeysChanged(const juce::ModifierKeys& modifiers) override;
     void paint(juce::Graphics& graphics) override;
-    void parentHierarchyChanged() override;
-    void resized() override;
 
     [[nodiscard]] juce::String getTooltip() override;
 
@@ -108,6 +147,8 @@ private:
     [[nodiscard]] static bool isWidthModifier(const juce::ModifierKeys& modifiers);
 
     [[nodiscard]] Crossovers currentCrossovers() const;
+    [[nodiscard]] SpectrogramOverlayState currentOverlayState() const;
+    [[nodiscard]] juce::Rectangle<float> framesPerSecondArea() const;
     [[nodiscard]] LinearColour pointColour(const SpectralPoint& point) const;
 
     [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
@@ -118,7 +159,6 @@ private:
     [[nodiscard]] float positionToY(double position) const;
     [[nodiscard]] double xToFrequency(float x) const;
 
-    void blurBuffer();
     void changeBandWidth(const juce::MouseEvent& event);
     void moveBand(const juce::MouseEvent& event);
     void moveCrossover(const juce::MouseEvent& event);
@@ -128,36 +168,16 @@ private:
     void paintCrossovers(juce::Graphics& graphics, const Crossovers& crossovers) const;
     void paintFramesPerSecond(juce::Graphics& graphics) const;
     void paintGrid(juce::Graphics& graphics) const;
-    void renderImage();
+    void paintRenderingStatus(juce::Graphics& graphics) const;
     void updateCursor(const juce::ModifierKeys& modifiers);
-    void updateGrid();
     void updateHover(juce::Point<float> position);
-    void allocateGrid(int newColumns, int newRows);
 
-    /// The rendered particles, scaled into the plot when painting.
-    juce::Image image;
-
-    /// Number of frequency columns of the particle buffer, which follows the plot size in physical pixels.
-    int columns {0};
-    /// Number of stereo position rows of the particle buffer.
-    int rows {0};
-    /// Grid size relative to the reference grid, which scales the particle sizes and the blur.
-    float columnScale {1.0F};
-    float rowScale {1.0F};
-    /// Largest particle radius in columns, which sizes the weight tables.
-    int maxColumnRadius {0};
-    /// Scratch weights of the particle being drawn, one per cell it covers.
-    std::vector<float> columnWeights;
-    std::vector<float> rowWeights;
-
-    /// The additive particle buffer, one plane per colour channel, row by row.
-    std::array<std::vector<float>, 3> buffer;
-    /// Scratch plane for the blur.
-    std::vector<float> blurScratch;
-    /// Frequency colour of every column.
-    std::vector<LinearColour> columnColours;
-    /// Display value for every step of exposed buffer energy, which saturates smoothly towards white.
-    std::vector<juce::uint8> toneCurve;
+    /// The particles and the fade since the renderer last took a batch.
+    SpectrogramRenderBatch pendingBatch;
+    /// Frequency colour of evenly spaced shares of the logarithmic frequency axis.
+    std::vector<LinearColour> frequencyColours;
+    /// What the overlays showed when the view last repainted.
+    SpectrogramOverlayState shownOverlay;
 
     /// Crossover parameters, owned by the parameter tree, which outlives the editor. Never null.
     std::array<juce::RangedAudioParameter*, CROSSOVER_COUNT> crossoverParameters {};
@@ -183,18 +203,22 @@ private:
     std::optional<std::size_t> hoveredCrossover;
     /// Display refresh rate shown in the top-left corner, or empty when the readout is off.
     std::optional<double> framesPerSecond;
+    /// GPU time of one frame shown next to the refresh rate, in milliseconds, or empty when it is not measured.
+    std::optional<double> gpuFrameMilliseconds;
 
-    /// How new particles are coloured.
     /// What the current drag changes.
     SpectrogramDrag drag {SpectrogramDrag::none};
+    /// How new particles are coloured.
     SpectrogramColours colours {SpectrogramColours::frequency};
     /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
     /// Time constant of the particle fade, in seconds.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
-    /// Time since the last blur step, in seconds.
-    double blurClock {0.0};
     /// Side gain in dB of the dragged band when its width drag started.
     float dragStartSide {0.0F};
+    /// Whether the particles are not drawn, while the audio keeps being processed.
+    bool renderingBypassed {false};
+    /// Whether the GPU renderer could not start, such as without OpenGL 3.3.
+    bool renderingUnavailable {false};
 };
 }  // namespace esgrove::image_control
