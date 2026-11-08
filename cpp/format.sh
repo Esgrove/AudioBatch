@@ -97,24 +97,28 @@ else
 fi
 
 if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
+    CMAKE_FILES=(CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt ../image-control-plugin/CMakeLists.txt)
     if [ "$CHECK" = true ]; then
         print_magenta "Checking CMake formatting..."
-        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --check \
-            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt ../image-control-plugin/CMakeLists.txt
+        print_file_list Checking "${CMAKE_FILES[@]}"
+        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --check "${CMAKE_FILES[@]}"
     else
         print_magenta "Formatting CMake files..."
-        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --in-place \
-            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt ../image-control-plugin/CMakeLists.txt
+        print_file_list Formatting "${CMAKE_FILES[@]}"
+        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --in-place "${CMAKE_FILES[@]}"
     fi
 fi
 
 if [ -n "$(command -v shfmt)" ]; then
+    SHELL_FILES=(./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh ../image-control-plugin/*.sh)
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh ../image-control-plugin/*.sh
+        print_file_list Checking "${SHELL_FILES[@]}"
+        shfmt --diff "${SHELL_FILES[@]}"
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh ../image-control-plugin/*.sh
+        print_file_list Formatting "${SHELL_FILES[@]}"
+        shfmt --list --write "${SHELL_FILES[@]}"
     fi
 fi
 

@@ -60,6 +60,11 @@ git ls-files -z --cached --others --exclude-standard -- '*.json' |
             print_error "Failed to parse JSON: $file"
             exit 1
         fi
+        if [ "$CHECK" = true ]; then
+            printf 'Checking %s\n' "$file"
+        else
+            printf 'Formatting %s\n' "$file"
+        fi
         if ! cmp -s "$temporary" "$file"; then
             if [ "$CHECK" = true ]; then
                 rm -- "$temporary"
@@ -71,18 +76,21 @@ git ls-files -z --cached --others --exclude-standard -- '*.json' |
                 print_error "Failed to write formatted JSON: $file"
                 exit 1
             fi
-            printf 'Formatted %s\n' "$file"
+            printf '  changed %s\n' "$file"
         fi
         rm -- "$temporary"
     done
 
 if [ -n "$(command -v shfmt)" ]; then
+    SHELL_FILES=(./*.sh)
     if [ "$CHECK" = true ]; then
         print_magenta "Checking root shell script formatting..."
-        shfmt --diff ./*.sh
+        print_file_list Checking "${SHELL_FILES[@]}"
+        shfmt --diff "${SHELL_FILES[@]}"
     else
         print_magenta "Formatting root shell scripts..."
-        shfmt --list --write ./*.sh
+        print_file_list Formatting "${SHELL_FILES[@]}"
+        shfmt --list --write "${SHELL_FILES[@]}"
     fi
 fi
 
