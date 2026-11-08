@@ -100,7 +100,11 @@ if(MSVC)
         )
         # Do not cache a host result or compile the probe with the ISA it is trying to detect.
         try_run(
-            cpu_run_result cpu_compile_result SOURCES "${CMAKE_CURRENT_LIST_DIR}/DetectNativeCpu.cpp" NO_CACHE
+            cpu_run_result
+            cpu_compile_result
+            SOURCES
+            "${CMAKE_CURRENT_LIST_DIR}/DetectNativeCpu.cpp"
+            NO_CACHE
             COMPILE_DEFINITIONS /arch:SSE2
             COMPILE_OUTPUT_VARIABLE cpu_compile_output
             RUN_OUTPUT_VARIABLE cpu_output

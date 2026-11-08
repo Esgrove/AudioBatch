@@ -65,8 +65,13 @@ target_sources(
 )
 
 target_compile_definitions(
-    AudioBatchTestPlugin PUBLIC JUCE_DISABLE_JUCE_VERSION_PRINTING=1 JUCE_FORCE_USE_LEGACY_PARAM_IDS=1 JUCE_USE_CURL=0
-                                JUCE_VST3_CAN_REPLACE_VST2=0 JUCE_WEB_BROWSER=0
+    AudioBatchTestPlugin
+    PUBLIC
+        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_WEB_BROWSER=0
 )
 
 # The expected outputs in the fixtures are computed with separate float multiplies and adds,

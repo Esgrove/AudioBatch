@@ -799,8 +799,8 @@ double SpatialSpectrogramView::xToFrequency(const float x) const
 /// so the compiler vectorizes them for NEON and AVX2.
 void SpatialSpectrogramView::blurBuffer()
 {
-    // A cell is smaller on a finer grid, so the neighbour weight shrinks with the square of the grid scale
-    // to keep the blur the same size on screen.
+    // A cell is smaller on a finer grid,
+    // so the neighbour weight shrinks with the square of the grid scale to keep the blur the same size on screen.
     const float columnWeight = BLUR_NEIGHBOUR_WEIGHT / (columnScale * columnScale);
     const float rowWeight = BLUR_NEIGHBOUR_WEIGHT / (rowScale * rowScale);
     const float columnCentre = 1.0F - 2.0F * columnWeight;

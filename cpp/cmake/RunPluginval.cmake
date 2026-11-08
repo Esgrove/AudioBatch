@@ -1,8 +1,16 @@
 # Checks out and builds pluginval in the shared .deps directory, then validates a plugin with it.
-# Run by the <plugin target>_pluginval targets of Pluginval.cmake, as
+# Run by the <plugin target>_pluginval targets of Pluginval.cmake:
 #   cmake -DDEPS_DIR=... -DREPOSITORY=... -DCOMMIT=... -DSTRICTNESS=... -DGENERATOR=... -DPLUGIN=... -P RunPluginval.cmake
 
-foreach(variable DEPS_DIR REPOSITORY COMMIT STRICTNESS GENERATOR PLUGIN)
+foreach(
+    variable
+    DEPS_DIR
+    REPOSITORY
+    COMMIT
+    STRICTNESS
+    GENERATOR
+    PLUGIN
+)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "RunPluginval.cmake: ${variable} is not set")
     endif()

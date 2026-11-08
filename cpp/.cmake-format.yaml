@@ -7,7 +7,7 @@ format:
   use_tabchars: false
   # Keep calls compact: wrap only when a call does not fit on one line.
   max_subgroups_hwrap: 2
-  max_pargs_hwrap: 6
+  max_pargs_hwrap: 4
   # Wrap keyword arguments as a nested block instead of aligning them under the keyword.
   max_prefix_chars: 2
   # Put the closing parenthesis of a wrapped call on its own line.
@@ -26,6 +26,12 @@ parse:
       flags: [PARENT_SCOPE, FORCE]
       kwargs:
         CACHE: 3
+    # Treat the list(FILTER ...) mode words as flags so the call stays on one line.
+    list:
+      pargs: 1+
+      flags: [FILTER, INCLUDE, EXCLUDE]
+      kwargs:
+        REGEX: 1
     FetchContent_Declare:
       pargs: 1
       flags: [SYSTEM, EXCLUDE_FROM_ALL]

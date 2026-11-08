@@ -1,3 +1,6 @@
+# Normalize text files to LF in the repository and in working directories.
+* text=auto eol=lf
+
 # The normalization collection is too large for regular git objects, so it is stored with Git LFS.
 # Only the audio is tracked, so generate.py stays a regular file.
 fixtures/normalization/*.aif filter=lfs diff=lfs merge=lfs -text

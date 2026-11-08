@@ -611,8 +611,13 @@ set(AUDIOBATCH_GUI_SOURCES
 )
 
 target_sources(
-    AudioBatch PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_GUI_SOURCES} "src/gui/Main.cpp" "src/gui/MainWindow.cpp"
-                       "src/gui/MainWindow.h"
+    AudioBatch
+    PRIVATE
+        ${AUDIOBATCH_CORE_SOURCES}
+        ${AUDIOBATCH_GUI_SOURCES}
+        "src/gui/Main.cpp"
+        "src/gui/MainWindow.cpp"
+        "src/gui/MainWindow.h"
 )
 
 target_sources(AudioBatchCli PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_CLI_SOURCES} "src/cli/CliMain.cpp")
@@ -1034,8 +1039,13 @@ if(BUILD_TESTING)
     )
     juce_generate_juce_header(AudioBatchIntegrationTests)
     target_sources(
-        AudioBatchIntegrationTests PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_GUI_SOURCES}
-                                           "src/gui/MainWindow.cpp" "tests/GuiDriver.cpp" "tests/IntegrationMain.cpp"
+        AudioBatchIntegrationTests
+        PRIVATE
+            ${AUDIOBATCH_CORE_SOURCES}
+            ${AUDIOBATCH_GUI_SOURCES}
+            "src/gui/MainWindow.cpp"
+            "tests/GuiDriver.cpp"
+            "tests/IntegrationMain.cpp"
     )
     target_include_directories(
         AudioBatchIntegrationTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}"

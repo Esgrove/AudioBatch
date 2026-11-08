@@ -35,8 +35,8 @@ The processing and the display both apply that rule, so dragging one crossover i
 
 The left and right channels are split into mid, (L + R) / 2, and side, (L − R) / 2.
 Both go through three linear-phase lowpass filters, one per crossover.
-Each crossover fades from one band to the next over one octave, with a raised-cosine step on a logarithmic frequency
-axis.
+Each crossover fades from one band to the next over one octave,
+with a raised-cosine step on a logarithmic frequency axis.
 The bands are built as differences:
 the lowest lowpass, the differences between neighbouring lowpasses,
 and the delayed signal minus the highest lowpass.
