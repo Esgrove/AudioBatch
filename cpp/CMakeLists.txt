@@ -376,8 +376,8 @@ endif()
 FetchContent_Declare(
     fmt
     GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-    # 12.2.0
-    GIT_TAG 1be298e1bd68957e4cd352e1f676f00e07dcfb57
+    # 12.2.1
+    GIT_TAG 208219daff58f2a7438f6931cc2ddc358acf33ef
     SYSTEM
 )
 
@@ -387,7 +387,6 @@ set(FMT_DOC OFF CACHE BOOL "" FORCE)
 set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
 set(FMT_TEST OFF CACHE BOOL "" FORCE)
 set(FMT_FUZZ OFF CACHE BOOL "" FORCE)
-# fmt enables its C++ module library by default with Ninja and upstream Clang, and the project only uses the headers.
 set(FMT_MODULE OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(fmt)
