@@ -5,6 +5,10 @@ set -eo pipefail
 # Each project sources this through its own common.sh, which sets REPO to the project directory
 # and adds the helpers specific to that project.
 
+# The repository root, which is the directory of this script.
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export REPO_ROOT
+
 # Set Bash platform script is running on (mac/windows/linux).
 # BSD (Mac) and GNU (Linux & Git for Windows) core-utils implementations have some differences
 # for example in the available command line options.
@@ -77,9 +81,6 @@ require_command() {
 run_project_scripts() {
     local script="$1"
     shift
-    local root
-    root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-
     local projects=(cpp rust)
     case "$1" in
         cpp | rust)
@@ -99,7 +100,7 @@ run_project_scripts() {
     local project
     for project in "${projects[@]}"; do
         print_magenta "Running $project/$script $*"
-        "$root/$project/$script" "$@"
+        "$REPO_ROOT/$project/$script" "$@"
     done
 }
 

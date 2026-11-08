@@ -62,25 +62,26 @@ fi
 # Collect the C++ sources and headers under src/ and tests/, including subdirectories,
 # those of the test plugin that the tests load, and those of the ImageControl plugin.
 # The plugins format with the explicit style file instead of relying on their configuration symlinks.
+# Paths are relative to the repository root, so that the clang-format output is short and free of "..".
 CPP_FILES=()
 PLUGIN_CPP_FILES=()
 while IFS= read -r file; do
-    if [[ "$file" == "$REPO/../test-plugin/"* || "$file" == "$REPO/../image-control-plugin/"* ]]; then
+    if [[ "$file" == test-plugin/* || "$file" == image-control-plugin/* ]]; then
         PLUGIN_CPP_FILES+=("$file")
     else
         CPP_FILES+=("$file")
     fi
-done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" "$REPO/../image-control-plugin/src" \
-    "$REPO/../image-control-plugin/tests" "$REPO/../image-control-plugin/benchmarks" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+done < <(cd "$REPO_ROOT" && find cpp/src cpp/tests test-plugin/src image-control-plugin/src \
+    image-control-plugin/tests image-control-plugin/benchmarks -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
-    clang-format --verbose --style=file --dry-run --Werror "${CPP_FILES[@]}"
-    clang-format --verbose --style="file:$PLUGIN_STYLE_FILE" --dry-run --Werror "${PLUGIN_CPP_FILES[@]}"
+    (cd "$REPO_ROOT" && clang-format --verbose --style=file --dry-run --Werror "${CPP_FILES[@]}")
+    (cd "$REPO_ROOT" && clang-format --verbose --style="file:$PLUGIN_STYLE_FILE" --dry-run --Werror "${PLUGIN_CPP_FILES[@]}")
 else
     print_magenta "Formatting C++ files..."
-    clang-format -i --verbose --style=file "${CPP_FILES[@]}"
-    clang-format -i --verbose --style="file:$PLUGIN_STYLE_FILE" "${PLUGIN_CPP_FILES[@]}"
+    (cd "$REPO_ROOT" && clang-format -i --verbose --style=file "${CPP_FILES[@]}")
+    (cd "$REPO_ROOT" && clang-format -i --verbose --style="file:$PLUGIN_STYLE_FILE" "${PLUGIN_CPP_FILES[@]}")
 fi
 
 # Use an installed cmake-format, or fetch it on demand with uvx.
