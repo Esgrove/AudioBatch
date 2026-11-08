@@ -119,6 +119,7 @@ void SpectrogramWorker::processQueuedAudio()
     particleBuilder.setFrequencyScale(current.scale);
     particleBuilder.setColours(current.colours);
     particleBuilder.setPersistence(current.persistenceSeconds);
+    particleBuilder.setContrast(current.contrast);
 
     particleBuilder.clear();
     drainQueuedAudio(current.analyze);

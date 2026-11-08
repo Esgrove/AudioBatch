@@ -65,6 +65,14 @@ constexpr auto LEGACY_FOCUS_PROPERTY {"focus"};
 constexpr auto PHASE_COLOURS_PROPERTY {"phaseColours"};
 /// Name of the editor setting that selects the mel frequency scale instead of the logarithmic one.
 constexpr auto MEL_SCALE_PROPERTY {"melScale"};
+/// Name of the editor setting that holds the spectrogram contrast in percent:
+/// how strongly loud content is emphasised over quiet content.
+constexpr auto CONTRAST_PROPERTY {"contrast"};
+/// Default spectrogram contrast, in percent.
+constexpr double DEFAULT_CONTRAST_PERCENT {60.0};
+/// Highest spectrogram contrast, in percent.
+/// The lowest is 0, which maps levels to brightness linearly in dB below the extra contrast of the highs.
+constexpr double MAX_CONTRAST_PERCENT {100.0};
 /// Name of the editor setting that shows the display refresh rate.
 constexpr auto SHOW_FPS_PROPERTY {"showFps"};
 /// Name of the editor setting that stops analyzing and drawing the spectrogram, while the audio is still processed.

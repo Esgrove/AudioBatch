@@ -27,6 +27,8 @@ struct SpectrogramAnalysisSettings {
     double sampleRate {ANALYZER_DEFAULT_SAMPLE_RATE};
     /// Time constant of the particle fade, in seconds, which scales the particle weight.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
+    /// Contrast of the level curve, from 0 for linear in dB to 1 for the steepest S-curve.
+    double contrast {DEFAULT_CONTRAST_PERCENT / MAX_CONTRAST_PERCENT};
     /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
     /// How the particles are coloured.
