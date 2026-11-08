@@ -2,7 +2,8 @@
 //!
 //! Every change to the chain, from the Plugin Chain window, the Plugin Manager, or the Plugins menu,
 //! captures the settings of the instances, saves the chain, and refreshes the menus and the open windows.
-//! Saving a preset captures the settings first, and loading one replaces every slot with the preset's slots.
+//! Saving a preset captures the settings first while the preview keeps playing,
+//! and loading one replaces every slot with the preset's slots.
 //! Changes to the scan folders and the blacklist take the scan lock and reload `plugins.json` first,
 //! so they do not undo what a scan in the CLI wrote in the meantime.
 //! A housekeeping tick prepares instances again after a change of the output rate
@@ -414,6 +415,11 @@ impl AppView {
             self.report_status(format!("Could not save plugin settings: {error:#}"), cx);
             return;
         }
+        self.save_captured_chain(cx);
+    }
+
+    /// Saves the chain with the settings captured last, and shows it in the menus and the windows.
+    fn save_captured_chain(&mut self, cx: &mut Context<Self>) {
         if let Err(error) = self.plugins.chain.save() {
             self.status = format!("{error:#}").into();
         }
@@ -431,10 +437,7 @@ impl AppView {
         match self.plugins.chain.capture_states_live(ui) {
             Ok(()) => {
                 self.plugins.pending_editor_capture = None;
-                if let Err(error) = self.plugins.chain.save() {
-                    self.status = format!("{error:#}").into();
-                }
-                self.refresh_plugin_views(cx);
+                self.save_captured_chain(cx);
             }
             Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) && attempts > 1 => {
                 self.plugins.pending_editor_capture = Some(attempts - 1);
@@ -455,7 +458,7 @@ impl AppView {
         if self.plugins.chain.len() == 0 {
             return self.report_status(String::from("Add a plugin before saving the chain as a preset"), cx);
         }
-        if let Err(error) = self.capture_plugin_states(cx) {
+        if let Err(error) = self.capture_plugin_states_live(cx) {
             return self.report_status(format!("Could not save the preset: {error:#}"), cx);
         }
         match self.plugins.presets.save(name, &self.plugins.chain.chain()) {
@@ -468,7 +471,7 @@ impl AppView {
             }
             Err(error) => self.status = format!("{:#}", anyhow::Error::from(error)).into(),
         }
-        self.save_chain_settings(cx);
+        self.save_captured_chain(cx);
     }
 
     /// Deletes the named preset. The chain itself is not changed.
