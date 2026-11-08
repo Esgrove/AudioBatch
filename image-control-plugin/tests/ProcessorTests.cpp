@@ -1,5 +1,5 @@
 /// Tests ImageControlProcessor: the supported bus layouts, the reported latency,
-/// neutral offline processing, delta mode and its bypass, the analyzer tap, the pan text,
+/// neutral offline processing, delta mode and its bypass, the analyzer tap, the pan text, the solos,
 /// the saved state with its editor settings, and the editor restoring its saved size.
 
 #include "dsp/MultibandImager.h"
@@ -84,6 +84,8 @@ TEST(Processor, BypassPassesAudioThroughWithTheSameLatency)
             setParameter(processor, panParameterId(band), 60.0F);
         }
         setParameter(processor, BYPASS_ID, hostBypass ? 0.0F : 1.0F);
+        // Bypass passes every band through even while some are soloed.
+        setParameter(processor, soloParameterId(1), 1.0F);
         // Bypass passes the input through even in delta mode.
         setParameter(processor, DELTA_ID, 1.0F);
         EXPECT_EQ(processor.getBypassParameter(), processor.getParameters().getParameter(BYPASS_ID));
@@ -330,6 +332,44 @@ TEST(Processor, RestoringAStateWithoutPansCentresThem)
     }
 }
 
+TEST(Processor, RestoringAStateWithoutSolosLeavesThemOff)
+{
+    ImageControlProcessor source;
+    setParameter(source, soloParameterId(2), 1.0F);
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    ASSERT_NE(xml, nullptr);
+    // A state saved before the solo parameters existed has none of them.
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        auto* solo = xml->getChildByAttribute("id", soloParameterId(band));
+        ASSERT_NE(solo, nullptr);
+        xml->removeChildElement(solo, true);
+    }
+    juce::MemoryBlock olderState;
+    juce::AudioProcessor::copyXmlToBinary(*xml, olderState);
+
+    ImageControlProcessor restored;
+    setParameter(restored, soloParameterId(2), 1.0F);
+    restored.setStateInformation(olderState.getData(), static_cast<int>(olderState.getSize()));
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        EXPECT_FLOAT_EQ(getParameter(restored, soloParameterId(band)), 0.0F);
+    }
+}
+
+TEST(Processor, SolosAreNamedPerBandAndCombine)
+{
+    ImageControlProcessor processor;
+    EXPECT_EQ(processor.getParameters().getParameter(soloParameterId(0))->getName(64), "Low: Solo");
+    EXPECT_EQ(processor.getParameters().getParameter(soloParameterId(3))->getName(64), "High: Solo");
+
+    EXPECT_EQ(soloGains({false, false, false, false}), (BandGains {1.0F, 1.0F, 1.0F, 1.0F}));
+    EXPECT_EQ(soloGains({false, true, false, false}), (BandGains {0.0F, 1.0F, 0.0F, 0.0F}));
+    EXPECT_EQ(soloGains({true, false, true, false}), (BandGains {1.0F, 0.0F, 1.0F, 0.0F}));
+    // Soloing every band is the same as soloing none.
+    EXPECT_EQ(soloGains({true, true, true, true}), (BandGains {1.0F, 1.0F, 1.0F, 1.0F}));
+}
+
 TEST(Processor, PansShowAndParseAsCentreOrSide)
 {
     EXPECT_EQ(formatPan(0.0F), "C");
@@ -381,6 +421,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     setParameter(source, midGainParameterId(2), -3.0F);
     setParameter(source, sideGainParameterId(0), BAND_GAIN_MIN_DB);
     setParameter(source, panParameterId(1), -35.0F);
+    setParameter(source, soloParameterId(3), 1.0F);
     setParameter(source, OUTPUT_GAIN_ID, 1.5F);
     source.getEditorState().setProperty(linkPropertyName(1), false, nullptr);
     source.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.5, nullptr);
@@ -393,6 +434,8 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     EXPECT_NEAR(getParameter(restored, midGainParameterId(2)), -3.0F, 0.01F);
     EXPECT_NEAR(getParameter(restored, sideGainParameterId(0)), BAND_GAIN_MIN_DB, 0.01F);
     EXPECT_NEAR(getParameter(restored, panParameterId(1)), -35.0F, 0.01F);
+    EXPECT_FLOAT_EQ(getParameter(restored, soloParameterId(3)), 1.0F);
+    EXPECT_FLOAT_EQ(getParameter(restored, soloParameterId(0)), 0.0F);
     EXPECT_NEAR(getParameter(restored, OUTPUT_GAIN_ID), 1.5F, 0.01F);
     EXPECT_FALSE(static_cast<bool>(restored.getEditorState().getProperty(linkPropertyName(1))));
     EXPECT_TRUE(static_cast<bool>(restored.getEditorState().getProperty(linkPropertyName(0))));

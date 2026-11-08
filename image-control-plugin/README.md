@@ -19,6 +19,7 @@ but it is a standalone plugin that works in any VST3 host on macOS and Windows, 
 | `band1_mid` to `band4_mid`   | Low: Mid to High: Mid   | -60 dB (off) to +12 dB       | 0 dB    |
 | `band1_side` to `band4_side` | Low: Side to High: Side | -60 dB (off) to +12 dB       | 0 dB    |
 | `band1_pan` to `band4_pan`   | Low: Pan to High: Pan   | 100L to 100R                 | C       |
+| `band1_solo` to `band4_solo` | Low: Solo to High: Solo | off or on                    | off     |
 | `output_gain`                | Output Gain             | -24 dB to +12 dB             | 0 dB    |
 | `bypass`                     | Bypass                  | off or on                    | off     |
 | `delta`                      | Delta                   | off or on                    | off     |
@@ -59,7 +60,8 @@ At the default settings, every gain is exactly unity and every pan exactly centr
 and the output is the input delayed by the latency, bit for bit.
 A plugin left at its defaults in an AudioBatch chain leaves the audio unchanged.
 
-Bypass glides every gain to unity and every pan to the centre instead of skipping the processing,
+Bypass glides every gain to unity, every pan to the centre, and every band muted by a solo back in,
+instead of skipping the processing,
 so the latency stays the same and the output becomes the delayed input bit for bit, without a click.
 Hosts use the bypass parameter as the plugin's own bypass.
 
@@ -70,6 +72,19 @@ At the default settings it is exact silence, and narrowing one band leaves only 
 It includes the output gain, so a raised output gain shows as the input scaled by the difference.
 Turning it on or off glides over the same 20 ms as the gains, so it does not click.
 Bypass turns Delta off, so a bypassed plugin always passes the input through.
+While some bands are soloed, Delta subtracts only those bands of the input,
+so it carries only what the processing changes in the soloed bands.
+
+### Solo
+
+Soloing a band mutes the bands that are not soloed, so only the soloed bands are heard.
+Solos combine, so two or more bands can be heard together.
+Soloing every band is the same as soloing none, but each band keeps its own solo,
+so unsoloing some of them afterwards leaves the others soloed.
+Soloing and unsoloing glide over the same 20 ms as the gains, so they do not click.
+The solos are parameters, so hosts save and can automate them.
+Bypass ignores them and passes every band through.
+Without any band muted, the output is still the delayed input bit for bit at the default settings.
 
 ### Latency
 

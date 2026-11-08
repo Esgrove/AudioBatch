@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <memory>
 
 namespace esgrove::image_control
@@ -27,6 +28,8 @@ constexpr int PARAMETER_VERSION {1};
 constexpr int PAN_PARAMETER_VERSION {2};
 /// Version hint of the delta parameter, which came after the pan parameters.
 constexpr int DELTA_PARAMETER_VERSION {3};
+/// Version hint of the solo parameters, which came after the delta parameter.
+constexpr int SOLO_PARAMETER_VERSION {4};
 /// Step of the pan parameters, in percent.
 constexpr float PAN_STEP_PERCENT {1.0F};
 /// Frequencies in kHz below this are shown with two decimals, and higher ones with one.
@@ -89,7 +92,7 @@ std::unique_ptr<juce::AudioParameterFloat> makeGainParameter(
 }
 }  // namespace
 
-/// Creates the crossover, band gain, band pan, output gain, bypass, and delta parameters.
+/// Creates the crossover, band gain, band pan, band solo, output gain, bypass, and delta parameters.
 /// The band gains are in dB, and their lowest value turns the signal off.
 /// The band pans are in percent, from fully left at -100 through the centre at 0 to fully right at 100.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -118,6 +121,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
                 juce::AudioParameterFloatAttributes()
                     .withStringFromValueFunction(formatPanValue)
                     .withValueFromStringFunction(panPercentFromText)
+            )
+        );
+        layout.add(
+            std::make_unique<juce::AudioParameterBool>(
+                juce::ParameterID {soloParameterId(band), SOLO_PARAMETER_VERSION}, bandName(band) + ": Solo", false
             )
         );
     }
@@ -175,6 +183,12 @@ juce::String sideGainParameterId(const std::size_t band)
 juce::String panParameterId(const std::size_t band)
 {
     return "band" + juce::String(band + 1) + "_pan";
+}
+
+/// Returns the id of the solo parameter of a band, counted from the lowest band, such as `band1_solo`.
+juce::String soloParameterId(const std::size_t band)
+{
+    return "band" + juce::String(band + 1) + "_solo";
 }
 
 /// Returns the display name of a band, counted from the lowest.
@@ -265,6 +279,20 @@ float outputGainFromDecibels(const float decibels)
 {
     return gainFromDecibels(decibels, OUTPUT_GAIN_MIN_DB - 1.0F);
 }
+/// Returns how much of each band is heard from the solo states:
+/// every band when no band or every band is soloed, and otherwise only the soloed bands.
+/// Soloing every band is the same as soloing none, while each band keeps its own solo state,
+/// so unsoloing some of them afterwards leaves the others soloed.
+BandGains soloGains(const BandSolos& soloed)
+{
+    BandGains gains {};
+    const bool anySoloed = std::ranges::any_of(soloed, std::identity {});
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        gains.at(band) = !anySoloed || soloed.at(band) ? 1.0F : 0.0F;
+    }
+    return gains;
+}
+
 /// Returns whether two sets of crossovers are the same.
 bool sameCrossovers(const Crossovers& first, const Crossovers& second)
 {

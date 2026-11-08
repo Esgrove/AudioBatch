@@ -90,6 +90,8 @@ private:
     std::array<std::atomic<float>*, BAND_COUNT> panValues {};
     /// Raw values of the side gain parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> sideGainValues {};
+    /// Raw values of the solo parameters, owned by the parameter tree and never null after construction.
+    std::array<std::atomic<float>*, BAND_COUNT> soloValues {};
     /// Raw value of the output gain parameter, owned by the parameter tree.
     std::atomic<float>* outputGainValue {nullptr};
     /// Raw value of the bypass parameter, owned by the parameter tree.

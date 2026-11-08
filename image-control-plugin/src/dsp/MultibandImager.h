@@ -46,17 +46,20 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// The pan moves the band toward one channel without discarding the other:
 /// panning right by p scales left by 1 - p and adds p times left to right, and panning left mirrors that.
 /// The bands are summed back and scaled by the output gain.
+/// Solos mute the bands that are not soloed, unless no band or every band is soloed.
 ///
 /// The latency is the kernel half length plus one partition.
-/// While every gain is at unity and every pan at the centre,
+/// While every gain is at unity, every pan at the centre, and no band muted by a solo,
 /// the output is the input delayed by the latency, bit for bit.
 /// In delta mode the delayed input is subtracted from the output, so it carries only what the processing changed,
 /// and neutral settings give exact silence.
+/// With solos, delta subtracts only the soloed bands of the delayed input.
 ///
 /// prepare, release, and the destructor run on the message thread.
-/// setGains, setPans, setDelta, setCrossovers, and process run on the audio thread and never allocate during real-time
-/// playback. During non-real-time rendering the audio thread designs kernels itself and the design thread stands by, so
-/// the output never depends on thread timing.
+/// setGains, setPans, setSolos, setDelta, setCrossovers, and process run on the audio thread
+/// and never allocate during real-time playback.
+/// During non-real-time rendering the audio thread designs kernels itself and the design thread stands by,
+/// so the output never depends on thread timing.
 class MultibandImager
 {
 public:
@@ -80,6 +83,7 @@ public:
     void setDelta(bool delta);
     void setGains(const BandGains& midGains, const BandGains& sideGains, float outputGain);
     void setPans(const BandPans& pans);
+    void setSolos(const BandGains& audible);
 
 private:
     [[nodiscard]] Crossovers readRequestedCrossovers() const;
@@ -87,6 +91,7 @@ private:
     [[nodiscard]] bool isCentred() const;
     [[nodiscard]] bool isDeltaSettled(float target) const;
     [[nodiscard]] bool isNeutral() const;
+    [[nodiscard]] bool isUnsoloed() const;
 
     void designRequestedKernels(bool fromDesignThread);
     void lowpassSignal(PartitionedConvolver& convolver, std::span<std::vector<float>> outputs, bool crossfade);
@@ -123,6 +128,8 @@ private:
     std::array<SmoothedGain, BAND_COUNT> sideGainSmoothers;
     /// Glides of the pan of each band, from -1 for fully left to 1 for fully right.
     std::array<SmoothedGain, BAND_COUNT> panSmoothers;
+    /// Glides of how much of each band is heard, 1 unless the solos of other bands mute it.
+    std::array<SmoothedGain, BAND_COUNT> soloSmoothers;
     /// Glide of the output gain.
     SmoothedGain outputGainSmoother;
     /// Glide of the delta mix, from 0 for the processed output to 1 for the output minus the delayed input.

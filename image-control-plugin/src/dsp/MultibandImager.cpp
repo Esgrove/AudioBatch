@@ -126,7 +126,8 @@ void KernelDesignThread::run()
     }
 }
 
-/// Creates an imager with every gain at unity and every pan at the centre. It must be prepared before processing.
+/// Creates an imager with every gain at unity, every pan at the centre, and every band heard. It must be prepared
+/// before processing.
 MultibandImager::MultibandImager()
 {
     for (auto& gain : midGainSmoothers) {
@@ -137,6 +138,9 @@ MultibandImager::MultibandImager()
     }
     for (auto& pan : panSmoothers) {
         pan.setCurrentAndTargetValue(0.0F);
+    }
+    for (auto& solo : soloSmoothers) {
+        solo.setCurrentAndTargetValue(1.0F);
     }
     outputGainSmoother.setCurrentAndTargetValue(1.0F);
     deltaSmoother.setCurrentAndTargetValue(0.0F);
@@ -164,7 +168,7 @@ int MultibandImager::getLatencySamples() const
 /// Allocates every buffer for a sample rate and a mono or stereo channel count,
 /// designs the kernels of the crossovers synchronously, clears the signal history,
 /// and starts the design thread.
-/// Gains and pans jump to their current targets, so processing starts without a glide.
+/// Gains, pans, and solos jump to their current targets, so processing starts without a glide.
 void MultibandImager::prepare(const double newSampleRate, const int newChannelCount, const Crossovers& crossovers)
 {
     release();
@@ -220,6 +224,10 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     for (auto& pan : panSmoothers) {
         pan.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
         pan.setCurrentAndTargetValue(pan.getTargetValue());
+    }
+    for (auto& solo : soloSmoothers) {
+        solo.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
+        solo.setCurrentAndTargetValue(solo.getTargetValue());
     }
     outputGainSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
     outputGainSmoother.setCurrentAndTargetValue(outputGainSmoother.getTargetValue());
@@ -292,6 +300,15 @@ void MultibandImager::setPans(const BandPans& pans)
     }
 }
 
+/// Sets how much of each band is heard, from 0 for a band muted by the solos of other bands to 1 for a heard band,
+/// as soloGains returns them. The changes glide over GAIN_SMOOTHING_SECONDS, so soloing a band does not click.
+void MultibandImager::setSolos(const BandGains& audible)
+{
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        soloSmoothers[band].setTargetValue(audible[band]);
+    }
+}
+
 /// Processes a block in place.
 /// The input goes into the current partition and the output comes from the previous one,
 /// so any block size works, and a whole partition is processed whenever one fills up.
@@ -346,19 +363,25 @@ bool MultibandImager::isCentred() const
     return std::ranges::all_of(panSmoothers, isSettledAtCentre);
 }
 
+/// Returns whether every band is heard in full, so no solo mutes or fades any band.
+bool MultibandImager::isUnsoloed() const
+{
+    return std::ranges::all_of(soloSmoothers, isSettledAtUnity);
+}
+
 /// Returns whether the delta mix has settled exactly at a target, 0 for off or 1 for on.
 bool MultibandImager::isDeltaSettled(const float target) const
 {
     return !deltaSmoother.isSmoothing() && juce::exactlyEqual(deltaSmoother.getCurrentValue(), target);
 }
 
-/// Returns whether every gain has settled at unity and every pan at the centre,
+/// Returns whether every gain has settled at unity, every pan at the centre, and no solo mutes a band,
 /// so the output can be the delayed input itself.
 bool MultibandImager::isNeutral() const
 {
     return std::ranges::all_of(midGainSmoothers, isSettledAtUnity)
         && std::ranges::all_of(sideGainSmoothers, isSettledAtUnity) && isSettledAtUnity(outputGainSmoother)
-        && isCentred();
+        && isCentred() && isUnsoloed();
 }
 
 /// Designs kernels for the requested crossovers into the spare slot when they differ from the active ones
@@ -412,10 +435,14 @@ void MultibandImager::lowpassSignal(
     }
 }
 
-/// Mixes the bands of the current partition with the smoothed gains and pans into the output partition.
+/// Mixes the bands of the current partition with the smoothed gains, pans, and solos into the output partition.
 /// A stereo signal is joined back from its mid and side, and a mono signal is its mid, which has no pan.
 /// While every pan is centred, the mid and side bands are summed first and joined once,
 /// and otherwise each band is joined into its own left and right and panned before the bands are summed.
+/// While solos mute some bands, the gains of each band are scaled by how much of it is heard,
+/// and delta subtracts only the heard bands of the delayed input,
+/// so it carries what the processing changed in the soloed bands.
+/// Without solos the delayed input itself is subtracted, which keeps delta at neutral settings exactly silent.
 void MultibandImager::mixPartition(const int channels)
 {
     const auto delayedLeft = channelSamples(delayedBlock, 0);
@@ -424,28 +451,46 @@ void MultibandImager::mixPartition(const int channels)
     const auto delayedRight = channelSamples(delayedBlock, stereo ? 1 : 0);
     const auto outputRight = channelSamples(outputBlock, stereo ? 1 : 0);
     const bool centred = isCentred();
+    const bool unsoloed = isUnsoloed();
 
     BandGains midGains {};
     BandGains sideGains {};
+    BandGains solos {};
     BandPans pans {};
     for (std::size_t sample = 0; sample < outputLeft.size(); ++sample) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
             midGains[band] = midGainSmoothers[band].getNextValue();
             sideGains[band] = sideGainSmoothers[band].getNextValue();
             pans[band] = panSmoothers[band].getNextValue();
+            solos[band] = soloSmoothers[band].getNextValue();
+        }
+        if (!unsoloed) {
+            for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+                midGains[band] *= solos[band];
+                sideGains[band] *= solos[band];
+            }
         }
         const float outputGain = outputGainSmoother.getNextValue();
         const float delta = deltaSmoother.getNextValue();
-        if (stereo && centred) {
+        if (stereo) {
             const float delayedMid = (delayedLeft[sample] + delayedRight[sample]) * 0.5F;
             const float delayedSide = (delayedLeft[sample] - delayedRight[sample]) * 0.5F;
-            const float mid = sumBands(midGains, midLowpassed, sample, delayedMid);
-            const float side = sumBands(sideGains, sideLowpassed, sample, delayedSide);
-            outputLeft[sample] = (mid + side) * outputGain - delta * delayedLeft[sample];
-            outputRight[sample] = (mid - side) * outputGain - delta * delayedRight[sample];
-        } else if (stereo) {
-            const float delayedMid = (delayedLeft[sample] + delayedRight[sample]) * 0.5F;
-            const float delayedSide = (delayedLeft[sample] - delayedRight[sample]) * 0.5F;
+            // What delta subtracts: the delayed input, or with solos only its heard bands.
+            float dryLeft = delayedLeft[sample];
+            float dryRight = delayedRight[sample];
+            if (!unsoloed) {
+                const float dryMid = sumBands(solos, midLowpassed, sample, delayedMid);
+                const float drySide = sumBands(solos, sideLowpassed, sample, delayedSide);
+                dryLeft = dryMid + drySide;
+                dryRight = dryMid - drySide;
+            }
+            if (centred) {
+                const float mid = sumBands(midGains, midLowpassed, sample, delayedMid);
+                const float side = sumBands(sideGains, sideLowpassed, sample, delayedSide);
+                outputLeft[sample] = (mid + side) * outputGain - delta * dryLeft;
+                outputRight[sample] = (mid - side) * outputGain - delta * dryRight;
+                continue;
+            }
             float left = 0.0F;
             float right = 0.0F;
             for (std::size_t band = 0; band < BAND_COUNT; ++band) {
@@ -460,11 +505,13 @@ void MultibandImager::mixPartition(const int channels)
                 left += bandLeft * (1.0F - toRight) + bandRight * toLeft;
                 right += bandRight * (1.0F - toLeft) + bandLeft * toRight;
             }
-            outputLeft[sample] = left * outputGain - delta * delayedLeft[sample];
-            outputRight[sample] = right * outputGain - delta * delayedRight[sample];
+            outputLeft[sample] = left * outputGain - delta * dryLeft;
+            outputRight[sample] = right * outputGain - delta * dryRight;
         } else {
-            outputLeft[sample] = sumBands(midGains, midLowpassed, sample, delayedLeft[sample]) * outputGain
-                - delta * delayedLeft[sample];
+            const float dry
+                = unsoloed ? delayedLeft[sample] : sumBands(solos, midLowpassed, sample, delayedLeft[sample]);
+            outputLeft[sample]
+                = sumBands(midGains, midLowpassed, sample, delayedLeft[sample]) * outputGain - delta * dry;
         }
     }
 }
