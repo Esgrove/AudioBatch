@@ -1,5 +1,6 @@
 /// Declares ImageControlEditor, the editor of the ImageControl plugin.
-/// A header holds the bypass, the settings button, and the output gain.
+/// A header holds the settings button and the analyzer tap on the left,
+/// and the delta, the bypass, and the output gain on the right.
 /// The spatial spectrogram fills the middle, with the four band strips below it,
 /// and a divider between them resizes the two.
 
@@ -60,6 +61,7 @@ private:
     void applyViewSettings();
     void measureFramesPerSecond(double elapsed);
     void openSettings();
+    void setAnalyzeOutput(bool output);
     void refreshDisplay(double timestamp);
     void updateBandRanges();
 
@@ -86,8 +88,14 @@ private:
     juce::Label titleLabel;
     /// Toggles the bypass parameter.
     juce::TextButton bypassButton {"Bypass"};
+    /// Toggles the delta parameter, which outputs only what the processing changes.
+    juce::TextButton deltaButton {"Delta"};
     /// Opens the display settings.
     juce::TextButton settingsButton {"Settings"};
+    /// Shows the input of the plugin in the spectrogram, the left half of the analyzer tap switch.
+    juce::TextButton preButton {"Pre"};
+    /// Shows the output of the plugin in the spectrogram, the right half of the analyzer tap switch.
+    juce::TextButton postButton {"Post"};
     /// Label of the output gain.
     juce::Label outputLabel;
     /// The output gain.
@@ -95,6 +103,8 @@ private:
 
     /// Binds the bypass button to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
+    /// Binds the delta button to its parameter.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> deltaAttachment;
     /// Binds the output gain slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     /// The controls of each band.

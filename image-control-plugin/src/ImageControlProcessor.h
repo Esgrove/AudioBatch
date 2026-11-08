@@ -94,6 +94,8 @@ private:
     std::atomic<float>* outputGainValue {nullptr};
     /// Raw value of the bypass parameter, owned by the parameter tree.
     std::atomic<float>* bypassValue {nullptr};
+    /// Raw value of the delta parameter, owned by the parameter tree.
+    std::atomic<float>* deltaValue {nullptr};
 
     /// Whether the analyzer tap is the output rather than the input, mirrored from the editor state.
     std::atomic<bool> analyzeOutput {true};

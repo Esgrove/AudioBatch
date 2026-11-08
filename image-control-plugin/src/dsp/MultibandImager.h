@@ -50,11 +50,13 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// The latency is the kernel half length plus one partition.
 /// While every gain is at unity and every pan at the centre,
 /// the output is the input delayed by the latency, bit for bit.
+/// In delta mode the delayed input is subtracted from the output, so it carries only what the processing changed,
+/// and neutral settings give exact silence.
 ///
 /// prepare, release, and the destructor run on the message thread.
-/// setGains, setPans, setCrossovers, and process run on the audio thread and never allocate during real-time playback.
-/// During non-real-time rendering the audio thread designs kernels itself and the design thread stands by,
-/// so the output never depends on thread timing.
+/// setGains, setPans, setDelta, setCrossovers, and process run on the audio thread and never allocate during real-time
+/// playback. During non-real-time rendering the audio thread designs kernels itself and the design thread stands by, so
+/// the output never depends on thread timing.
 class MultibandImager
 {
 public:
@@ -75,6 +77,7 @@ public:
     void process(juce::AudioBuffer<float>& buffer);
     void release();
     void setCrossovers(const Crossovers& crossovers, bool offline);
+    void setDelta(bool delta);
     void setGains(const BandGains& midGains, const BandGains& sideGains, float outputGain);
     void setPans(const BandPans& pans);
 
@@ -82,6 +85,7 @@ private:
     [[nodiscard]] Crossovers readRequestedCrossovers() const;
 
     [[nodiscard]] bool isCentred() const;
+    [[nodiscard]] bool isDeltaSettled(float target) const;
     [[nodiscard]] bool isNeutral() const;
 
     void designRequestedKernels(bool fromDesignThread);
@@ -121,6 +125,8 @@ private:
     std::array<SmoothedGain, BAND_COUNT> panSmoothers;
     /// Glide of the output gain.
     SmoothedGain outputGainSmoother;
+    /// Glide of the delta mix, from 0 for the processed output to 1 for the output minus the delayed input.
+    SmoothedGain deltaSmoother;
 
     /// Outputs of the three lowpass kernels for the mid signal of the current partition.
     std::array<std::vector<float>, CROSSOVER_COUNT> midLowpassed;

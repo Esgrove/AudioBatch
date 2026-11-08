@@ -25,6 +25,8 @@ constexpr int PARAMETER_VERSION {1};
 /// Version hint of the pan parameters, which came after the first version,
 /// so hosts such as Audio Unit hosts tell them apart from the parameters they already know.
 constexpr int PAN_PARAMETER_VERSION {2};
+/// Version hint of the delta parameter, which came after the pan parameters.
+constexpr int DELTA_PARAMETER_VERSION {3};
 /// Step of the pan parameters, in percent.
 constexpr float PAN_STEP_PERCENT {1.0F};
 /// Frequencies in kHz below this are shown with two decimals, and higher ones with one.
@@ -87,7 +89,7 @@ std::unique_ptr<juce::AudioParameterFloat> makeGainParameter(
 }
 }  // namespace
 
-/// Creates the crossover, band gain, band pan, output gain, and bypass parameters.
+/// Creates the crossover, band gain, band pan, output gain, bypass, and delta parameters.
 /// The band gains are in dB, and their lowest value turns the signal off.
 /// The band pans are in percent, from fully left at -100 through the centre at 0 to fully right at 100.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -122,6 +124,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add(makeGainParameter(OUTPUT_GAIN_ID, "Output Gain", OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB));
     layout.add(
         std::make_unique<juce::AudioParameterBool>(juce::ParameterID {BYPASS_ID, PARAMETER_VERSION}, "Bypass", false)
+    );
+    layout.add(
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID {DELTA_ID, DELTA_PARAMETER_VERSION}, "Delta", false
+        )
     );
     return layout;
 }

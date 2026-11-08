@@ -1,4 +1,5 @@
-/// Implements the ImageControl editor: the header with the bypass, the settings button, and the output gain,
+/// Implements the ImageControl editor: the header with the settings button, the Pre and Post analyzer tap switch,
+/// the delta, the bypass, and the output gain,
 /// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
 /// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
 /// applying the display settings with bypassing and hiding the spectrogram, and measuring the frame rate.
@@ -55,15 +56,17 @@ constexpr double FRAME_RATE_WINDOW_SECONDS {0.5};
 /// Font height of the title.
 constexpr float TITLE_FONT_HEIGHT {18.0F};
 /// Width of the title, in pixels.
-constexpr int TITLE_WIDTH {140};
+constexpr int TITLE_WIDTH {124};
 /// Width of the header buttons, in pixels.
-constexpr int HEADER_BUTTON_WIDTH {90};
+constexpr int HEADER_BUTTON_WIDTH {76};
 /// Vertical inset of the buttons in the header, in pixels.
 constexpr int BUTTON_INSET {2};
+/// Width of each half of the Pre and Post analyzer tap switch, in pixels.
+constexpr int TAP_BUTTON_WIDTH {56};
 /// Width of the output label, in pixels.
 constexpr int OUTPUT_LABEL_WIDTH {52};
 /// Width of the output gain slider, in pixels.
-constexpr int OUTPUT_SLIDER_WIDTH {220};
+constexpr int OUTPUT_SLIDER_WIDTH {190};
 /// Width of the output gain value box, in pixels.
 constexpr int VALUE_BOX_WIDTH {70};
 /// Height of the output gain value box, in pixels.
@@ -104,11 +107,28 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, BYPASS_ID, bypassButton);
     addAndMakeVisible(bypassButton);
 
-    settingsButton.setTooltip(
-        "Display settings: the analyzed signal, the colours, the frequency scale, and how particles fade"
-    );
+    deltaButton.setClickingTogglesState(true);
+    deltaButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::YELLOW));
+    deltaButton.setColour(juce::TextButton::textColourOnId, juce::Colour(palette::GREY_DARK));
+    deltaButton.setTooltip("Output only what the processing changes: the output minus the input. Bypass turns it off");
+    deltaAttachment
+        = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, DELTA_ID, deltaButton);
+    addAndMakeVisible(deltaButton);
+
+    settingsButton.setTooltip("Display settings: the colours, the frequency scale, and how particles fade");
     settingsButton.onClick = [this] { openSettings(); };
     addAndMakeVisible(settingsButton);
+
+    // The two halves of the analyzer tap switch follow the editor setting in applyViewSettings,
+    // so a restored state shows the right half.
+    preButton.setConnectedEdges(juce::Button::ConnectedOnRight);
+    postButton.setConnectedEdges(juce::Button::ConnectedOnLeft);
+    preButton.setTooltip("Show the input of the plugin in the spectrogram, before the bands are changed");
+    postButton.setTooltip("Show the output of the plugin in the spectrogram, or the difference while Delta is on");
+    preButton.onClick = [this] { setAnalyzeOutput(false); };
+    postButton.onClick = [this] { setAnalyzeOutput(true); };
+    addAndMakeVisible(preButton);
+    addAndMakeVisible(postButton);
 
     outputLabel.setText("Output", juce::dontSendNotification);
     addAndMakeVisible(outputLabel);
@@ -170,6 +190,7 @@ ImageControlEditor::~ImageControlEditor()
     spectrogramWorker.stop();
     openGLContext.detach();
     bypassAttachment.reset();
+    deltaAttachment.reset();
     outputAttachment.reset();
     setLookAndFeel(nullptr);
 }
@@ -194,11 +215,16 @@ void ImageControlEditor::resized()
 
     auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
     titleLabel.setBounds(header.removeFromLeft(TITLE_WIDTH));
-    bypassButton.setBounds(header.removeFromLeft(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    header.removeFromLeft(GAP);
     settingsButton.setBounds(header.removeFromLeft(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    header.removeFromLeft(GAP);
+    preButton.setBounds(header.removeFromLeft(TAP_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    postButton.setBounds(header.removeFromLeft(TAP_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     outputSlider.setBounds(header.removeFromRight(OUTPUT_SLIDER_WIDTH));
     outputLabel.setBounds(header.removeFromRight(OUTPUT_LABEL_WIDTH));
+    header.removeFromRight(GAP);
+    bypassButton.setBounds(header.removeFromRight(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    header.removeFromRight(GAP);
+    deltaButton.setBounds(header.removeFromRight(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     area.removeFromTop(GAP);
 
     if (!spectrogramHidden) {
@@ -297,6 +323,8 @@ void ImageControlEditor::applyViewSettings()
     const auto scale
         = booleanSetting(editorState, MEL_SCALE_PROPERTY) ? FrequencyScale::mel : FrequencyScale::logarithmic;
     if (shownTapOutput != tapOutput || shownPhaseColours != phaseColours || shownScale != scale) {
+        preButton.setToggleState(!tapOutput, juce::dontSendNotification);
+        postButton.setToggleState(tapOutput, juce::dontSendNotification);
         spectrogram.setFrequencyScale(scale);
         spectrogramWorker.requestClear();
         shownTapOutput = tapOutput;
@@ -355,6 +383,14 @@ void ImageControlEditor::openSettings()
     juce::CallOutBox::launchAsynchronously(
         std::make_unique<SettingsPanel>(imageControlProcessor.getEditorState()), settingsButton.getBounds(), this
     );
+}
+
+/// Selects the analyzer tap from the Pre and Post switch: the output of the plugin, or its input.
+/// The switch shows the setting on the next refresh.
+void ImageControlEditor::setAnalyzeOutput(const bool output)
+{
+    imageControlProcessor.getEditorState().setProperty(ANALYZE_OUTPUT_PROPERTY, output, nullptr);
+    applyViewSettings();
 }
 
 /// Runs on every display refresh:

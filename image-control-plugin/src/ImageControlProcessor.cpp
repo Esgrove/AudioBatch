@@ -51,6 +51,7 @@ ImageControlProcessor::ImageControlProcessor() :
     }
     outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
     bypassValue = getRawValue(parameters, BYPASS_ID);
+    deltaValue = getRawValue(parameters, DELTA_ID);
     editorState.setProperty(ANALYZE_OUTPUT_PROPERTY, true, nullptr);
     editorState.setProperty(PERSISTENCE_PROPERTY, DEFAULT_PERSISTENCE_SECONDS, nullptr);
     editorState.setProperty(PAN_MIDPOINT_PROPERTY, DEFAULT_PAN_MIDPOINT_DB, nullptr);
@@ -201,6 +202,8 @@ juce::AudioProcessorParameter* ImageControlProcessor::getBypassParameter() const
 /// Hands the current parameters to the imager, processes the block, and pushes the analyzer tap.
 /// Bypassing glides every gain to unity and every pan to the centre instead of skipping the imager,
 /// so the latency stays the same and the output becomes the delayed input bit for bit without a click.
+/// Delta mode subtracts the delayed input from the output, and bypassing turns it off,
+/// so a bypassed plugin always passes the input through.
 /// Offline rendering designs moved crossovers synchronously, so its output does not depend on thread timing.
 void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, const bool bypassed)
 {
@@ -222,6 +225,7 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     }
     imager.setGains(midGains, sideGains, outputGain);
     imager.setPans(pans);
+    imager.setDelta(!bypassed && deltaValue->load() >= 0.5F);
     imager.setCrossovers(getCrossovers(), isNonRealtime());
 
     const bool tapOutput = analyzeOutput.load(std::memory_order_relaxed);
