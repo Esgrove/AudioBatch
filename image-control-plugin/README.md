@@ -180,8 +180,9 @@ The script builds the Release VST3 into `build/`, and on macOS the Audio Unit ne
 and prints the VST3 path, which `--print` prints without building.
 `--debug` builds Debug into `build-debug/` instead.
 `--test` also builds and runs the unit tests.
-`--install` copies the VST3 into the user's VST3 folder,
-`~/Library/Audio/Plug-Ins/VST3` on macOS and `%LOCALAPPDATA%\Programs\Common\VST3` on Windows,
+`--install` copies the VST3 into the standard VST3 folder,
+`~/Library/Audio/Plug-Ins/VST3` on macOS and `C:\Program Files\Common Files\VST3` on Windows,
+which triggers a UAC prompt when the folder is not writable,
 and on macOS the Audio Unit into `~/Library/Audio/Plug-Ins/Components`, restarting the Audio Unit registry.
 `--validate` installs and then validates the Audio Unit with `auval`.
 The Audio Unit is built from the same code as the VST3, with no format-specific code in the plugin.
