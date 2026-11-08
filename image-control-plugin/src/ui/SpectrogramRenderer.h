@@ -29,6 +29,8 @@ namespace esgrove::image_control
 enum class SpectrogramRenderMode : std::uint8_t {
     /// The particles over the plot background.
     particles,
+    /// The particles as stacked translucent layers with outlines, with the strongest content as bright traces on top.
+    solid,
     /// Only the plot background, while rendering is bypassed.
     background,
     /// Nothing, while the spectrogram is hidden.
@@ -51,6 +53,8 @@ struct SpectrogramRenderTarget {
 /// which keeps them sharp on any display.
 /// It then builds a soft glow from a chain of downsampled copies,
 /// and tone maps the picture into the plot with rounded corners.
+/// In the solid mode, the composite instead draws a smooth level of the glow chain as stacked translucent layers
+/// with outlines, and keeps only the strongest particles as bright traces on top.
 ///
 /// submitParticles runs on the analysis worker thread, submitFrame on the message thread,
 /// and the OpenGLRenderer callbacks on JUCE's OpenGL thread.
@@ -99,7 +103,7 @@ private:
     [[nodiscard]] bool resizeTargets(int width, int height);
 
     void drawBloom();
-    void drawComposite(juce::Rectangle<int> plotViewport, float exposure);
+    void drawComposite(juce::Rectangle<int> plotViewport, float exposure, bool solid);
     void drawParticles(float scale);
     void fade(double seconds, double persistenceSeconds);
     void measureGpuTimeBegin();

@@ -57,6 +57,7 @@ ImageControlProcessor::ImageControlProcessor() :
     editorState.setProperty(PAN_MIDPOINT_PROPERTY, DEFAULT_PAN_MIDPOINT_DB, nullptr);
     editorState.setProperty(PAN_EDGE_PROPERTY, DEFAULT_PAN_EDGE_DB, nullptr);
     editorState.setProperty(CONTRAST_PROPERTY, DEFAULT_CONTRAST_PERCENT, nullptr);
+    editorState.setProperty(SOLID_RENDERING_PROPERTY, false, nullptr);
     editorState.setProperty(PHASE_COLOURS_PROPERTY, false, nullptr);
     editorState.setProperty(MEL_SCALE_PROPERTY, false, nullptr);
     editorState.setProperty(SHOW_FPS_PROPERTY, false, nullptr);
