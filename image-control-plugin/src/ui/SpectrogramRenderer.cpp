@@ -62,6 +62,28 @@ constexpr std::size_t MAX_PENDING_PARTICLES {1'000'000};
 constexpr double MAX_PENDING_FADE_SECONDS {10.0};
 /// Floats per particle instance, matching SpectrogramParticle.
 constexpr int PARTICLE_FLOATS {8};
+/// Glow chain level the solid mode draws its layers from: a quarter of the plot size,
+/// smooth enough for calm outlines while still following the shapes of the particles.
+constexpr std::size_t SOLID_FIELD_LEVEL {1};
+/// Scale from the glow chain level to the exposed density of the solid layers.
+/// The blur spreads the particles' energy, so the field needs more gain than the sharp picture.
+constexpr float SOLID_FIELD_GAIN {1.5F};
+/// Tone-mapped density from 0 to 1 at which each solid layer starts, from the outermost to the innermost.
+constexpr std::array<float, 4> SOLID_LAYER_LEVELS {0.06F, 0.18F, 0.38F, 0.62F};
+/// Opacity of each solid layer, from the outermost to the innermost,
+/// so weak content draws faint shapes and strong content dense stacked solids.
+constexpr std::array<float, 4> SOLID_LAYER_ALPHAS {0.16F, 0.26F, 0.38F, 0.52F};
+/// Brightness of the outline of each solid layer, from the outermost to the innermost.
+constexpr std::array<float, 4> SOLID_OUTLINE_STRENGTHS {0.25F, 0.4F, 0.6F, 0.85F};
+/// Width of the solid layer outlines, in logical pixels.
+constexpr float SOLID_OUTLINE_PIXELS {1.25F};
+/// Tone-mapped brightness of the sharp particles where they start and finish showing over the solid layers,
+/// so only the strongest content draws as bright traces on top.
+constexpr float SOLID_HIGHLIGHT_START {0.35F};
+/// Tone-mapped brightness of the sharp particles where they show fully over the solid layers.
+constexpr float SOLID_HIGHLIGHT_END {0.75F};
+/// Strength of the glow in the solid mode relative to the particle mode.
+constexpr float SOLID_GLOW_SHARE {0.5F};
 /// Nanoseconds in a millisecond, for the GPU timer.
 constexpr double NANOSECONDS_PER_MILLISECOND {1.0e6};
 /// Background of the plot, as ARGB.
@@ -189,9 +211,17 @@ void main()
 /// so faint particles get their full perceived brightness instead of sinking into the background.
 /// It is drawn inside rounded corners with an antialiased edge,
 /// and a little noise keeps the dark gradients from banding.
+///
+/// The solid mode reads a smooth level of the glow chain as a density field, with a bicubic B-spline sample,
+/// so its contours have no bilinear kinks.
+/// Each layer fills where the tone-mapped density passes its level, tinted by the field's colour,
+/// and is outlined with an antialiased line one to two pixels wide.
+/// The sharp particles show over the layers only where they are bright, so the strongest content draws as traces.
 constexpr auto COMPOSITE_FRAGMENT_SHADER = R"(#version 330 core
 uniform sampler2D accumulation;
 uniform sampler2D bloom;
+uniform sampler2D field;
+uniform vec2 fieldSize;
 uniform vec2 plotOrigin;
 uniform vec2 plotSize;
 uniform float cornerRadius;
@@ -199,7 +229,67 @@ uniform float exposure;
 uniform float glowStrength;
 uniform vec3 highlight;
 uniform vec3 background;
+uniform float solid;
+uniform float fieldGain;
+uniform vec4 layerLevels;
+uniform vec4 layerAlphas;
+uniform vec4 outlineStrengths;
+uniform float outlineWidth;
+uniform vec2 solidHighlight;
 out vec4 colour;
+vec3 bicubic(sampler2D source, vec2 uv, vec2 size)
+{
+    vec2 position = uv * size - 0.5;
+    vec2 cell = floor(position);
+    vec2 f = position - cell;
+    vec2 f2 = f * f;
+    vec2 f3 = f2 * f;
+    vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    vec2 w3 = f3 / 6.0;
+    vec2 g0 = w0 + w1;
+    vec2 g1 = w2 + w3;
+    vec2 h0 = (cell - 0.5 + w1 / g0) / size;
+    vec2 h1 = (cell + 1.5 + w3 / g1) / size;
+    return g0.y * (g0.x * texture(source, vec2(h0.x, h0.y)).rgb + g1.x * texture(source, vec2(h1.x, h0.y)).rgb)
+         + g1.y * (g0.x * texture(source, vec2(h0.x, h1.y)).rgb + g1.x * texture(source, vec2(h1.x, h1.y)).rgb);
+}
+vec3 toneMap(vec3 energy)
+{
+    float peak = max(max(energy.r, energy.g), energy.b);
+    if (peak <= 1.0e-6)
+    {
+        return vec3(0.0);
+    }
+    float toned = 1.0 - exp(-peak);
+    vec3 mapped = energy * (toned / peak);
+    return mix(mapped, vec3(toned), smoothstep(highlight.x, highlight.y, peak) * highlight.z);
+}
+vec3 solidLayers(vec2 uv)
+{
+    vec3 fieldEnergy = exposure * fieldGain * max(bicubic(field, uv, fieldSize), vec3(0.0));
+    float fieldPeak = max(max(fieldEnergy.r, fieldEnergy.g), fieldEnergy.b);
+    if (fieldPeak <= 1.0e-6)
+    {
+        return vec3(0.0);
+    }
+    vec3 hue = fieldEnergy / fieldPeak;
+    float density = 1.0 - exp(-fieldPeak);
+    float fieldStep = max(fwidth(density), 1.0e-5);
+    vec3 result = vec3(0.0);
+    for (int layer = 0; layer < 4; ++layer)
+    {
+        float level = layerLevels[layer];
+        float inside = smoothstep(level - fieldStep, level + fieldStep, density);
+        float shade = 0.35 + 0.65 * float(layer) / 3.0;
+        result = mix(result, hue * shade, inside * layerAlphas[layer]);
+        float lineDistance = abs(density - level) / fieldStep;
+        float line = 1.0 - smoothstep(outlineWidth * 0.5 - 0.5, outlineWidth * 0.5 + 0.5, lineDistance);
+        result += hue * line * outlineStrengths[layer];
+    }
+    return result;
+}
 float roundedBoxDistance(vec2 position, vec2 halfSize, float radius)
 {
     vec2 outside = abs(position) - halfSize + radius;
@@ -221,14 +311,19 @@ void main()
 {
     vec2 local = gl_FragCoord.xy - plotOrigin;
     vec2 uv = local / plotSize;
-    vec3 energy = exposure * (texture(accumulation, uv).rgb + glowStrength * texture(bloom, uv).rgb);
-    float peak = max(max(energy.r, energy.g), energy.b);
-    vec3 mapped = vec3(0.0);
-    if (peak > 1.0e-6)
+    vec3 mapped;
+    if (solid > 0.5)
     {
-        float toned = 1.0 - exp(-peak);
-        mapped = energy * (toned / peak);
-        mapped = mix(mapped, vec3(toned), smoothstep(highlight.x, highlight.y, peak) * highlight.z);
+        vec3 sharp = toneMap(exposure * texture(accumulation, uv).rgb);
+        float sharpPeak = max(max(sharp.r, sharp.g), sharp.b);
+        vec3 glow = toneMap(exposure * glowStrength * texture(bloom, uv).rgb);
+        vec3 layers = solidLayers(uv);
+        mapped = layers + glow + sharp * smoothstep(solidHighlight.x, solidHighlight.y, sharpPeak);
+        mapped = min(mapped, vec3(1.0));
+    }
+    else
+    {
+        mapped = toneMap(exposure * (texture(accumulation, uv).rgb + glowStrength * texture(bloom, uv).rgb));
     }
     vec3 linearBackground = srgbToLinear(background);
     vec3 result = linearToSrgb(clamp(linearBackground + mapped * (1.0 - linearBackground), 0.0, 1.0));
@@ -484,7 +579,8 @@ void SpectrogramRenderer::renderOpenGL()
         glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
         glClear(GL_COLOR_BUFFER_BIT);
     }
-    const bool drawingParticles = work.mode == SpectrogramRenderMode::particles;
+    const bool solid = work.mode == SpectrogramRenderMode::solid;
+    const bool drawingParticles = work.mode == SpectrogramRenderMode::particles || solid;
     glEnable(GL_BLEND);
     if (drawingParticles) {
         fade(work.fadeSeconds, work.persistenceSeconds);
@@ -497,12 +593,14 @@ void SpectrogramRenderer::renderOpenGL()
     const juce::Rectangle<int> plotViewport(
         plot.getX(), viewport[3] - plot.getBottom(), plot.getWidth(), plot.getHeight()
     );
-    drawComposite(plotViewport, drawingParticles ? EXPOSURE : 0.0F);
+    drawComposite(plotViewport, drawingParticles ? EXPOSURE : 0.0F, solid);
     measureGpuTimeEnd();
 
     glDisable(GL_BLEND);
     glBindVertexArray(0);
     glUseProgram(0);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
@@ -592,16 +690,19 @@ void SpectrogramRenderer::drawBloom()
     }
 }
 
-/// Tone maps the accumulated picture and its glow into the plot, over the plot background.
+/// Tone maps the accumulated picture and its glow into the plot, over the plot background,
+/// as particles or, when solid, as stacked layers with outlines under the strongest particles.
 /// An exposure of 0 draws only the background.
-void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport, const float exposure)
+void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport, const float exposure, const bool solid)
 {
     glViewport(plotViewport.getX(), plotViewport.getY(), plotViewport.getWidth(), plotViewport.getHeight());
     glBindVertexArray(screenVertexArray);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    const auto& field = bloomLevels.at(SOLID_FIELD_LEVEL);
     bindTexture(accumulation, GL_TEXTURE0);
     bindTexture(bloomLevels.front(), GL_TEXTURE1);
+    bindTexture(field, GL_TEXTURE2);
 
     const auto background = juce::Colour(BACKGROUND);
     const auto scale = static_cast<float>(openGLContext.getRenderingScale());
@@ -617,8 +718,28 @@ void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport,
     compositeProgram->setUniform("cornerRadius", SPECTROGRAM_PLOT_CORNER_RADIUS * scale);
     compositeProgram->setUniform("exposure", exposure);
     // The glow chain adds up one blurred copy per level, so its strength is shared between them.
-    compositeProgram->setUniform("glowStrength", GLOW_STRENGTH / static_cast<float>(bloomLevels.size()));
+    const float glowStrength = GLOW_STRENGTH / static_cast<float>(bloomLevels.size());
+    compositeProgram->setUniform("glowStrength", solid ? glowStrength * SOLID_GLOW_SHARE : glowStrength);
     compositeProgram->setUniform("highlight", HIGHLIGHT_START, HIGHLIGHT_END, HIGHLIGHT_MIX);
+    compositeProgram->setUniform("solid", solid ? 1.0F : 0.0F);
+    compositeProgram->setUniform("field", 2);
+    compositeProgram->setUniform("fieldSize", static_cast<float>(field.width), static_cast<float>(field.height));
+    compositeProgram->setUniform("fieldGain", SOLID_FIELD_GAIN);
+    compositeProgram->setUniform(
+        "layerLevels", SOLID_LAYER_LEVELS[0], SOLID_LAYER_LEVELS[1], SOLID_LAYER_LEVELS[2], SOLID_LAYER_LEVELS[3]
+    );
+    compositeProgram->setUniform(
+        "layerAlphas", SOLID_LAYER_ALPHAS[0], SOLID_LAYER_ALPHAS[1], SOLID_LAYER_ALPHAS[2], SOLID_LAYER_ALPHAS[3]
+    );
+    compositeProgram->setUniform(
+        "outlineStrengths",
+        SOLID_OUTLINE_STRENGTHS[0],
+        SOLID_OUTLINE_STRENGTHS[1],
+        SOLID_OUTLINE_STRENGTHS[2],
+        SOLID_OUTLINE_STRENGTHS[3]
+    );
+    compositeProgram->setUniform("outlineWidth", SOLID_OUTLINE_PIXELS * scale);
+    compositeProgram->setUniform("solidHighlight", SOLID_HIGHLIGHT_START, SOLID_HIGHLIGHT_END);
     compositeProgram->setUniform(
         "background", background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue()
     );

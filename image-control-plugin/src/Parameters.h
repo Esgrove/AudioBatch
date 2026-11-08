@@ -68,6 +68,9 @@ constexpr auto MEL_SCALE_PROPERTY {"melScale"};
 /// Name of the editor setting that holds the spectrogram contrast in percent:
 /// how strongly loud content is emphasised over quiet content.
 constexpr auto CONTRAST_PROPERTY {"contrast"};
+/// Name of the editor setting that draws the spectrogram as stacked translucent layers with outlines
+/// instead of individual particles.
+constexpr auto SOLID_RENDERING_PROPERTY {"solidRendering"};
 /// Default spectrogram contrast, in percent.
 constexpr double DEFAULT_CONTRAST_PERCENT {60.0};
 /// Highest spectrogram contrast, in percent.

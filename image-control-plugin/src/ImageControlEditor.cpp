@@ -116,7 +116,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addAndMakeVisible(deltaButton);
 
     settingsButton.setTooltip(
-        "Display settings: the colours, the frequency scale, the contrast, and how particles fade"
+        "Display settings: the colours, the frequency scale, the contrast, the rendering style, and how particles fade"
     );
     settingsButton.onClick = [this] { openSettings(); };
     addAndMakeVisible(settingsButton);
@@ -270,13 +270,18 @@ double ImageControlEditor::persistenceSeconds() const
 }
 
 /// Returns what the renderer draws: nothing while the spectrogram is hidden,
-/// the background while rendering is bypassed, and the particles otherwise.
+/// the background while rendering is bypassed, and otherwise the particles or their solid layers.
 SpectrogramRenderMode ImageControlEditor::renderMode() const
 {
     if (spectrogramHidden) {
         return SpectrogramRenderMode::hidden;
     }
-    return renderingBypassed ? SpectrogramRenderMode::background : SpectrogramRenderMode::particles;
+    if (renderingBypassed) {
+        return SpectrogramRenderMode::background;
+    }
+    return booleanSetting(imageControlProcessor.getEditorState(), SOLID_RENDERING_PROPERTY)
+        ? SpectrogramRenderMode::solid
+        : SpectrogramRenderMode::particles;
 }
 
 /// Hides the spectrogram and shrinks the editor to the header and the band strips, with only the width resizable,

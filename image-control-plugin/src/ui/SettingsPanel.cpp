@@ -15,7 +15,7 @@ namespace
 /// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
-constexpr int PANEL_HEIGHT {364};
+constexpr int PANEL_HEIGHT {390};
 /// Inner margin of the panel, in pixels.
 constexpr int MARGIN {12};
 /// Height of each row, in pixels.
@@ -73,6 +73,7 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     const std::array toggles {
         std::pair<juce::ToggleButton*, const char*> {&phaseColoursButton, PHASE_COLOURS_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&melScaleButton, MEL_SCALE_PROPERTY},
+        std::pair<juce::ToggleButton*, const char*> {&solidRenderingButton, SOLID_RENDERING_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&showFpsButton, SHOW_FPS_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&bypassRenderingButton, BYPASS_RENDERING_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&hideSpectrogramButton, HIDE_SPECTROGRAM_PROPERTY},
@@ -82,6 +83,10 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     );
     melScaleButton.setTooltip(
         "Space the frequencies like the mel scale of AudioBatch's spectrogram, with less room for the bass"
+    );
+    solidRenderingButton.setTooltip(
+        "Draw the spectrogram as stacked translucent layers with outlines, "
+        "with only the strongest sound as bright traces on top"
     );
     showFpsButton.setTooltip("Show how often the display refreshes, in the top-left corner of the spectrogram");
     bypassRenderingButton.setTooltip(
@@ -181,6 +186,7 @@ void SettingsPanel::resized()
          {
              &phaseColoursButton,
              &melScaleButton,
+             &solidRenderingButton,
              &showFpsButton,
              &bypassRenderingButton,
              &hideSpectrogramButton,
