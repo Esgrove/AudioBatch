@@ -7,6 +7,8 @@
 //! so they do not undo what a scan in the CLI wrote in the meantime.
 //! A housekeeping tick prepares instances again after a change of the output rate
 //! or a plugin's restart request, keeps the live preview in step, and shows the progress of a scan.
+//! It also saves the settings of closed editors without taking the chain out of the player,
+//! so closing an editor does not interrupt the preview.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +23,7 @@ use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, PathPromptOptions, Subscription, Task,
     TitlebarOptions, WeakEntity, WindowBounds, WindowOptions, px, size,
 };
-use vst3_host::UiThread;
+use vst3_host::{InstanceError, UiThread};
 
 use super::AppView;
 use crate::files::open_folder;
@@ -38,6 +40,10 @@ use crate::plugins::{FALLBACK_SAMPLE_RATE, RunningScan, SCANNING_STATUS, ScanSta
 
 /// How often the plugin housekeeping runs.
 const PLUGIN_TICK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Ticks the settings of closed editors wait for the preview's processors to receive every edit.
+/// A running stream delivers them within one audio block, far less than one tick.
+const LIVE_CAPTURE_ATTEMPTS: u8 = 5;
 
 /// Smallest size of the plugin windows.
 const PLUGIN_WINDOW_MINIMUM_SIZE: (f32, f32) = (480.0, 300.0);
@@ -272,7 +278,10 @@ impl AppView {
         let was_modified = self.plugins.chain.is_modified();
         let newly_modified = self.plugins.chain.take_settings_changes() && !was_modified;
         if self.plugins.chain.reap_closed_editors(&ui) {
-            self.save_chain_settings(cx);
+            self.plugins.pending_editor_capture = Some(LIVE_CAPTURE_ATTEMPTS);
+        }
+        if self.plugins.pending_editor_capture.is_some() {
+            self.save_closed_editor_settings(&ui, cx);
         } else if newly_modified {
             self.refresh_plugin_views(cx);
         } else if prepared {
@@ -409,6 +418,36 @@ impl AppView {
             self.status = format!("{error:#}").into();
         }
         self.refresh_plugin_views(cx);
+    }
+
+    /// Saves the settings of closed editors without taking the chain out of the player, so the preview keeps playing.
+    /// While the preview's processors have not yet received every edit, it tries again on the next tick.
+    /// After `LIVE_CAPTURE_ATTEMPTS` ticks, which happens only when the stream does not run the chain,
+    /// it captures with the chain taken out of the player instead.
+    fn save_closed_editor_settings(&mut self, ui: &UiThread, cx: &mut Context<Self>) {
+        let Some(attempts) = self.plugins.pending_editor_capture else {
+            return;
+        };
+        match self.plugins.chain.capture_states_live(ui) {
+            Ok(()) => {
+                self.plugins.pending_editor_capture = None;
+                if let Err(error) = self.plugins.chain.save() {
+                    self.status = format!("{error:#}").into();
+                }
+                self.refresh_plugin_views(cx);
+            }
+            Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) && attempts > 1 => {
+                self.plugins.pending_editor_capture = Some(attempts - 1);
+            }
+            Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) => {
+                self.plugins.pending_editor_capture = None;
+                self.save_chain_settings(cx);
+            }
+            Err(error) => {
+                self.plugins.pending_editor_capture = None;
+                self.report_status(format!("Could not save plugin settings: {error:#}"), cx);
+            }
+        }
     }
 
     /// Saves the chain, with the current settings of each plugin, as the named preset.

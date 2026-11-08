@@ -15,7 +15,9 @@
 //! The settings of the instances are captured when processing starts, an editor closes, and the app quits.
 //! Each slot can show its plugin's editor in a native window.
 //! The window only hides when the user closes it,
-//! and the next housekeeping tick captures the settings so they can be saved, then destroys the window.
+//! and the next housekeeping tick destroys the window and captures the settings so they can be saved.
+//! That capture runs while the preview keeps playing, once the processors have received every edit,
+//! so closing an editor does not interrupt the audio.
 
 use std::path::PathBuf;
 
@@ -24,7 +26,10 @@ use audiobatch_plugins::{
     ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames, prepare_for_preview, reload_for_preview,
 };
 use raw_window_handle::RawWindowHandle;
-use vst3_host::{EditorWindow, Module, PluginInstance, RestartAction, UiDispatcher, UiThread, WindowPosition};
+use vst3_host::{
+    EditorWindow, InstanceError, Module, PluginInstance, PluginState, RestartAction, UiDispatcher, UiThread,
+    WindowPosition,
+};
 
 /// Most frames the preview passes to the live instances in one call.
 pub const PREVIEW_BLOCK_FRAMES: usize = 1024;
@@ -568,31 +573,19 @@ impl LiveChain {
     ///
     /// Returns an error without changing saved slots when any instance cannot flush its queued edits.
     pub fn capture_states(&mut self, ui: &UiThread) -> Result<()> {
-        // Stage every blob before publishing any, so a failed slot cannot produce a mixed saved snapshot.
-        let states = self
-            .slots
-            .iter()
-            .map(|slot| {
-                if slot.keep_saved_state {
-                    Ok(None)
-                } else {
-                    slot.instance
-                        .as_ref()
-                        .map(|instance| {
-                            instance
-                                .state(ui)
-                                .with_context(|| format!("{}: Could not capture settings", slot.slot.plugin.name))
-                        })
-                        .transpose()
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
-        for (slot, state) in self.slots.iter_mut().zip(states) {
-            if let Some(state) = state {
-                slot.slot.set_state(state);
-            }
-        }
-        Ok(())
+        self.publish_states(|instance| instance.state(ui))
+    }
+
+    /// Captures the current settings of every instance into the saved slots atomically,
+    /// while the preview may keep processing, so the audio does not stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without changing saved slots when any instance cannot be captured.
+    /// The error wraps `InstanceError::EditsPending` while a live processor has not yet received every edit,
+    /// and the caller tries again after the next audio blocks.
+    pub fn capture_states_live(&mut self, ui: &UiThread) -> Result<()> {
+        self.publish_states(|instance| instance.live_state(ui))
     }
 
     /// Shows the editor of a slot, opening a window titled with the plugin's name when it has none.
@@ -674,6 +667,38 @@ impl LiveChain {
         self.chain()
             .save_to(&self.path)
             .with_context(|| format!("Could not save the plugin chain to {}", self.path.display()))
+    }
+
+    /// Captures every instance with `capture` and publishes the settings into the saved slots,
+    /// only once all of them succeeded, so a failed slot cannot produce a mixed saved snapshot.
+    /// Slots that keep their saved settings, or have no instance, are left as they are.
+    fn publish_states(
+        &mut self,
+        capture: impl Fn(&PluginInstance) -> Result<PluginState, InstanceError>,
+    ) -> Result<()> {
+        let states = self
+            .slots
+            .iter()
+            .map(|slot| {
+                if slot.keep_saved_state {
+                    Ok(None)
+                } else {
+                    slot.instance
+                        .as_ref()
+                        .map(|instance| {
+                            capture(instance)
+                                .with_context(|| format!("{}: Could not capture settings", slot.slot.plugin.name))
+                        })
+                        .transpose()
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (slot, state) in self.slots.iter_mut().zip(states) {
+            if let Some(state) = state {
+                slot.slot.set_state(state);
+            }
+        }
+        Ok(())
     }
 
     /// Returns the index of a slot.
@@ -1031,6 +1056,43 @@ mod test_restarts {
             }
             assert!(chain.capture_states(ui).is_err());
             assert_eq!(chain.chain(), previous);
+        });
+    }
+
+    #[test]
+    fn live_capture_keeps_processors_and_publishes_only_once_every_edit_arrived() {
+        on_ui(|ui, chain| {
+            fake_slot(ui, chain, Kind::Gain);
+            fake_slot(ui, chain, Kind::Gain);
+            let previous = chain.chain();
+            let mut processors: Vec<_> = chain
+                .slots
+                .iter()
+                .map(|slot| {
+                    let instance = slot.instance.as_ref().expect("instance");
+                    let processor = instance.processor(ui).expect("processor");
+                    instance.set_parameter(ui, 0, 0.25).expect("edit");
+                    processor
+                })
+                .collect();
+            processors
+                .first_mut()
+                .expect("first")
+                .process(1)
+                .expect("first delivers");
+            let error = chain.capture_states_live(ui).expect_err("second slot is pending");
+            assert!(matches!(error.downcast_ref(), Some(InstanceError::EditsPending)));
+            assert_eq!(chain.chain(), previous);
+            processors
+                .last_mut()
+                .expect("second")
+                .process(1)
+                .expect("second delivers");
+            chain.capture_states_live(ui).expect("live capture");
+            for slot in &chain.slots {
+                assert_eq!(slot.slot.state().component, 0.25_f64.to_le_bytes());
+            }
+            drop(processors);
         });
     }
 

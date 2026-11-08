@@ -286,6 +286,7 @@ impl ProcessorHandle {
             }
             self.carried_edits.push(edit);
         }
+        self.core.set_carried_edits(self.carried_edits.len());
         let mut data = ProcessData {
             processMode: process_mode_value(self.setup.mode),
             symbolicSampleSize: to_i32(SymbolicSampleSizes_::kSample32),
@@ -337,6 +338,7 @@ impl Drop for ProcessorHandle {
             for edit in self.carried_edits.drain(..).chain(newer) {
                 self.core.edits().force_push(edit);
             }
+            self.core.set_carried_edits(0);
         }
         self.core.processor_dropped();
     }

@@ -673,7 +673,9 @@ None of them lock or allocate in the calls a plugin makes from its processing th
 `EditorWindow` in `editor/` shows an editor in an `NSWindow` on macOS or a Win32 window on Windows,
 because gpui draws its Windows content on top of child windows, which would hide the plugin's window.
 `PlugFrame` receives the editor's resize requests.
-Closing the window only hides it, so `LiveChain` captures the settings on the next tick before destroying it.
+Closing the window only hides it, so the next tick destroys it and `LiveChain` captures the settings.
+`PluginInstance::live_state` captures them while the preview keeps processing,
+once the processor has received every queued edit, so closing an editor does not interrupt the audio.
 
 **Unsafe code.**
 Each module of `vst3-host` that needs unsafe code opts in with `#![expect(unsafe_code, reason = "...")]`,
