@@ -22,10 +22,17 @@
 
 namespace esgrove::image_control
 {
-/// Number of frequency columns of the particle buffer, which the view scales smoothly to its size.
-constexpr int SPECTROGRAM_COLUMNS {768};
-/// Number of stereo position rows of the particle buffer.
-constexpr int SPECTROGRAM_ROWS {192};
+/// Reference number of frequency columns of the particle buffer.
+/// The particle sizes and the blur are tuned for this grid and scaled to the actual one.
+constexpr int BASE_SPECTROGRAM_COLUMNS {768};
+/// Reference number of stereo position rows of the particle buffer.
+constexpr int BASE_SPECTROGRAM_ROWS {192};
+/// Smallest particle buffer, as a multiple of the reference grid in both directions.
+constexpr int MIN_SPECTROGRAM_GRID_SCALE {2};
+/// Largest number of frequency columns, which bounds the memory and the work per display refresh.
+constexpr int MAX_SPECTROGRAM_COLUMNS {3072};
+/// Largest number of stereo position rows.
+constexpr int MAX_SPECTROGRAM_ROWS {768};
 
 /// How the particles are coloured.
 /// Frequency colours run from red in the bass to blue in the highs,
@@ -91,6 +98,8 @@ public:
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void modifierKeysChanged(const juce::ModifierKeys& modifiers) override;
     void paint(juce::Graphics& graphics) override;
+    void parentHierarchyChanged() override;
+    void resized() override;
 
     [[nodiscard]] juce::String getTooltip() override;
 
@@ -121,10 +130,25 @@ private:
     void paintGrid(juce::Graphics& graphics) const;
     void renderImage();
     void updateCursor(const juce::ModifierKeys& modifiers);
+    void updateGrid();
     void updateHover(juce::Point<float> position);
+    void allocateGrid(int newColumns, int newRows);
 
     /// The rendered particles, scaled into the plot when painting.
     juce::Image image;
+
+    /// Number of frequency columns of the particle buffer, which follows the plot size in physical pixels.
+    int columns {0};
+    /// Number of stereo position rows of the particle buffer.
+    int rows {0};
+    /// Grid size relative to the reference grid, which scales the particle sizes and the blur.
+    float columnScale {1.0F};
+    float rowScale {1.0F};
+    /// Largest particle radius in columns, which sizes the weight tables.
+    int maxColumnRadius {0};
+    /// Scratch weights of the particle being drawn, one per cell it covers.
+    std::vector<float> columnWeights;
+    std::vector<float> rowWeights;
 
     /// The additive particle buffer, one plane per colour channel, row by row.
     std::array<std::vector<float>, 3> buffer;
