@@ -9,7 +9,7 @@
 
 namespace esgrove::image_control
 {
-/// The display settings: the analyzer tap, the colours, the frequency scale, the frame rate readout,
+/// The display settings: the colours, the frequency scale, the frame rate readout,
 /// bypassing or hiding the spectrogram, the persistence, and the stereo position curve.
 /// Every control is bound to an editor setting, so the editor picks changes up on its next display refresh
 /// and the settings are saved with the plugin state.
@@ -23,7 +23,6 @@ public:
 
 private:
     juce::Label titleLabel;
-    juce::ToggleButton analyzeOutputButton {"Show the output (off: the input)"};
     juce::ToggleButton phaseColoursButton {"Colour by phase instead of frequency"};
     juce::ToggleButton melScaleButton {"Mel frequency scale"};
     juce::ToggleButton showFpsButton {"Show the frame rate"};

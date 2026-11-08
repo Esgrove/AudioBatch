@@ -139,6 +139,7 @@ MultibandImager::MultibandImager()
         pan.setCurrentAndTargetValue(0.0F);
     }
     outputGainSmoother.setCurrentAndTargetValue(1.0F);
+    deltaSmoother.setCurrentAndTargetValue(0.0F);
 }
 
 /// Stops the design thread before the kernels it writes are destroyed.
@@ -222,6 +223,8 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     }
     outputGainSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
     outputGainSmoother.setCurrentAndTargetValue(outputGainSmoother.getTargetValue());
+    deltaSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
+    deltaSmoother.setCurrentAndTargetValue(deltaSmoother.getTargetValue());
 
     blockPosition = 0;
     delayPosition = 0;
@@ -259,6 +262,14 @@ void MultibandImager::setCrossovers(const Crossovers& crossovers, const bool off
     if (offline) {
         designRequestedKernels(false);
     }
+}
+
+/// Turns delta mode on or off: with it on, the output is the processed output minus the delayed input,
+/// so it carries only what the processing changed.
+/// The change glides over GAIN_SMOOTHING_SECONDS, so toggling it does not click.
+void MultibandImager::setDelta(const bool delta)
+{
+    deltaSmoother.setTargetValue(delta ? 1.0F : 0.0F);
 }
 
 /// Sets the linear target gains of the mid and side of each band and of the output.
@@ -333,6 +344,12 @@ Crossovers MultibandImager::readRequestedCrossovers() const
 bool MultibandImager::isCentred() const
 {
     return std::ranges::all_of(panSmoothers, isSettledAtCentre);
+}
+
+/// Returns whether the delta mix has settled exactly at a target, 0 for off or 1 for on.
+bool MultibandImager::isDeltaSettled(const float target) const
+{
+    return !deltaSmoother.isSmoothing() && juce::exactlyEqual(deltaSmoother.getCurrentValue(), target);
 }
 
 /// Returns whether every gain has settled at unity and every pan at the centre,
@@ -418,13 +435,14 @@ void MultibandImager::mixPartition(const int channels)
             pans[band] = panSmoothers[band].getNextValue();
         }
         const float outputGain = outputGainSmoother.getNextValue();
+        const float delta = deltaSmoother.getNextValue();
         if (stereo && centred) {
             const float delayedMid = (delayedLeft[sample] + delayedRight[sample]) * 0.5F;
             const float delayedSide = (delayedLeft[sample] - delayedRight[sample]) * 0.5F;
             const float mid = sumBands(midGains, midLowpassed, sample, delayedMid);
             const float side = sumBands(sideGains, sideLowpassed, sample, delayedSide);
-            outputLeft[sample] = (mid + side) * outputGain;
-            outputRight[sample] = (mid - side) * outputGain;
+            outputLeft[sample] = (mid + side) * outputGain - delta * delayedLeft[sample];
+            outputRight[sample] = (mid - side) * outputGain - delta * delayedRight[sample];
         } else if (stereo) {
             const float delayedMid = (delayedLeft[sample] + delayedRight[sample]) * 0.5F;
             const float delayedSide = (delayedLeft[sample] - delayedRight[sample]) * 0.5F;
@@ -442,10 +460,11 @@ void MultibandImager::mixPartition(const int channels)
                 left += bandLeft * (1.0F - toRight) + bandRight * toLeft;
                 right += bandRight * (1.0F - toLeft) + bandLeft * toRight;
             }
-            outputLeft[sample] = left * outputGain;
-            outputRight[sample] = right * outputGain;
+            outputLeft[sample] = left * outputGain - delta * delayedLeft[sample];
+            outputRight[sample] = right * outputGain - delta * delayedRight[sample];
         } else {
-            outputLeft[sample] = sumBands(midGains, midLowpassed, sample, delayedLeft[sample]) * outputGain;
+            outputLeft[sample] = sumBands(midGains, midLowpassed, sample, delayedLeft[sample]) * outputGain
+                - delta * delayedLeft[sample];
         }
     }
 }
@@ -503,11 +522,19 @@ void MultibandImager::processPartition()
         }
     }
 
+    // At neutral settings the processed output is the delayed input itself,
+    // so the output is that copy, or exact silence in delta mode.
     if (!crossfade && isNeutral()) {
-        for (int channel = 0; channel < channelCount; ++channel) {
-            outputBlock.copyFrom(channel, 0, delayedBlock, channel, 0, PARTITION_SIZE);
+        if (isDeltaSettled(0.0F)) {
+            for (int channel = 0; channel < channelCount; ++channel) {
+                outputBlock.copyFrom(channel, 0, delayedBlock, channel, 0, PARTITION_SIZE);
+            }
+            return;
         }
-        return;
+        if (isDeltaSettled(1.0F)) {
+            outputBlock.clear();
+            return;
+        }
     }
     mixPartition(channelCount);
 }

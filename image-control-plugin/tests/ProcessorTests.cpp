@@ -1,6 +1,6 @@
 /// Tests ImageControlProcessor: the supported bus layouts, the reported latency,
-/// neutral offline processing, the analyzer tap, the pan text, the saved state with its editor settings,
-/// and the editor restoring its saved size.
+/// neutral offline processing, delta mode and its bypass, the analyzer tap, the pan text,
+/// the saved state with its editor settings, and the editor restoring its saved size.
 
 #include "dsp/MultibandImager.h"
 #include "ImageControlProcessor.h"
@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -83,6 +84,8 @@ TEST(Processor, BypassPassesAudioThroughWithTheSameLatency)
             setParameter(processor, panParameterId(band), 60.0F);
         }
         setParameter(processor, BYPASS_ID, hostBypass ? 0.0F : 1.0F);
+        // Bypass passes the input through even in delta mode.
+        setParameter(processor, DELTA_ID, 1.0F);
         EXPECT_EQ(processor.getBypassParameter(), processor.getParameters().getParameter(BYPASS_ID));
         processor.prepareToPlay(TEST_SAMPLE_RATE, 512);
         const int latency = processor.getLatencySamples();
@@ -105,6 +108,103 @@ TEST(Processor, BypassPassesAudioThroughWithTheSameLatency)
         }
         processor.releaseResources();
     }
+}
+
+TEST(Processor, DeltaIsSilentAtNeutralSettings)
+{
+    ImageControlProcessor processor;
+    processor.setNonRealtime(true);
+    setParameter(processor, DELTA_ID, 1.0F);
+    processor.prepareToPlay(TEST_SAMPLE_RATE, 512);
+    auto buffer = makeBuffer({makeNoise(0.5F, 16'384, 30), makeNoise(0.5F, 16'384, 31)});
+    juce::MidiBuffer midi;
+    for (int start = 0; start < buffer.getNumSamples(); start += 512) {
+        juce::AudioBuffer<float> block(buffer.getArrayOfWritePointers(), 2, start, 512);
+        processor.processBlock(block, midi);
+    }
+    // While Delta glides in, the bands sum back to the delayed input up to rounding,
+    // and once it has settled, the output is exact silence.
+    const int settled = static_cast<int>(GAIN_SMOOTHING_SECONDS * TEST_SAMPLE_RATE) + 2 * PARTITION_SIZE;
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+        for (int channel = 0; channel < 2; ++channel) {
+            if (sample < settled) {
+                ASSERT_NEAR(buffer.getSample(channel, sample), 0.0F, 1.0e-6F) << sample;
+            } else {
+                ASSERT_EQ(buffer.getSample(channel, sample), 0.0F) << sample;
+            }
+        }
+    }
+    processor.releaseResources();
+}
+
+TEST(Processor, DeltaIsTheProcessedOutputMinusTheDelayedInput)
+{
+    const auto left = makeNoise(0.5F, 16'384, 32);
+    const auto right = makeNoise(0.5F, 16'384, 33);
+    const auto render = [&left, &right](const bool delta) {
+        ImageControlProcessor processor;
+        processor.setNonRealtime(true);
+        setParameter(processor, midGainParameterId(1), -6.0F);
+        setParameter(processor, sideGainParameterId(2), BAND_GAIN_MIN_DB);
+        setParameter(processor, panParameterId(3), 40.0F);
+        setParameter(processor, OUTPUT_GAIN_ID, 2.0F);
+        setParameter(processor, DELTA_ID, delta ? 1.0F : 0.0F);
+        processor.prepareToPlay(TEST_SAMPLE_RATE, 512);
+        auto buffer = makeBuffer({left, right});
+        juce::MidiBuffer midi;
+        for (int start = 0; start < buffer.getNumSamples(); start += 512) {
+            juce::AudioBuffer<float> block(buffer.getArrayOfWritePointers(), 2, start, 512);
+            processor.processBlock(block, midi);
+        }
+        processor.releaseResources();
+        return buffer;
+    };
+
+    const auto processed = render(false);
+    const auto difference = render(true);
+    const int latency = 4096 + PARTITION_SIZE;
+    double largest = 0.0;
+    for (int sample = latency; sample < processed.getNumSamples(); ++sample) {
+        const auto delayed = static_cast<std::size_t>(sample - latency);
+        for (const auto& [channel, input] : {std::pair {0, &left}, std::pair {1, &right}}) {
+            const float expected = processed.getSample(channel, sample) - (*input)[delayed];
+            ASSERT_NEAR(difference.getSample(channel, sample), expected, 1.0e-5F) << sample;
+            largest = std::max(largest, std::abs(static_cast<double>(expected)));
+        }
+    }
+    // The settings change the audio, so the difference is not silence.
+    EXPECT_GT(largest, 0.1);
+}
+
+TEST(Processor, DeltaGlidesInAndOutWithoutAJump)
+{
+    // A neutral sine turns into silence and back as Delta toggles, with no step larger than the sine's own.
+    constexpr int blockSize = 256;
+    const auto tone = makeSine(1000.0, 0.5F, static_cast<std::size_t>(blockSize) * 180);
+    ImageControlProcessor processor;
+    processor.setNonRealtime(true);
+    processor.prepareToPlay(TEST_SAMPLE_RATE, blockSize);
+    auto buffer = makeBuffer({tone, tone});
+    juce::MidiBuffer midi;
+    for (int block = 0; block * blockSize < buffer.getNumSamples(); ++block) {
+        if (block == 60) {
+            setParameter(processor, DELTA_ID, 1.0F);
+        } else if (block == 120) {
+            setParameter(processor, DELTA_ID, 0.0F);
+        }
+        juce::AudioBuffer<float> view(buffer.getArrayOfWritePointers(), 2, block * blockSize, blockSize);
+        processor.processBlock(view, midi);
+    }
+    const float sineStep = 0.5F * juce::MathConstants<float>::twoPi * 1000.0F / 48'000.0F;
+    for (int sample = 1; sample < buffer.getNumSamples(); ++sample) {
+        ASSERT_LT(std::abs(buffer.getSample(0, sample) - buffer.getSample(0, sample - 1)), sineStep * 1.1F) << sample;
+    }
+    // Between the toggles, once the glide is over, the output is silent.
+    const int latency = 4096 + PARTITION_SIZE;
+    for (int sample = 70 * blockSize + latency; sample < 120 * blockSize; ++sample) {
+        ASSERT_EQ(buffer.getSample(0, sample), 0.0F) << sample;
+    }
+    processor.releaseResources();
 }
 
 TEST(Processor, OfflineCrossoverMovesApplyDeterministically)

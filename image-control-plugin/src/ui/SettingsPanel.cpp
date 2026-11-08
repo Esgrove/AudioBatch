@@ -15,7 +15,7 @@ namespace
 /// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
-constexpr int PANEL_HEIGHT {346};
+constexpr int PANEL_HEIGHT {320};
 /// Inner margin of the panel, in pixels.
 constexpr int MARGIN {12};
 /// Height of each row, in pixels.
@@ -69,14 +69,12 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     addAndMakeVisible(titleLabel);
 
     const std::array toggles {
-        std::pair<juce::ToggleButton*, const char*> {&analyzeOutputButton, ANALYZE_OUTPUT_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&phaseColoursButton, PHASE_COLOURS_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&melScaleButton, MEL_SCALE_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&showFpsButton, SHOW_FPS_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&bypassRenderingButton, BYPASS_RENDERING_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&hideSpectrogramButton, HIDE_SPECTROGRAM_PROPERTY},
     };
-    analyzeOutputButton.setTooltip("Show the processed output, or the input before the bands are changed");
     phaseColoursButton.setTooltip(
         "Colour particles by phase, blue for in-phase and red for anti-phase sound, instead of red bass to blue highs"
     );
@@ -166,7 +164,6 @@ void SettingsPanel::resized()
     titleLabel.setBounds(area.removeFromTop(ROW_HEIGHT));
     for (auto* button :
          {
-             &analyzeOutputButton,
              &phaseColoursButton,
              &melScaleButton,
              &showFpsButton,

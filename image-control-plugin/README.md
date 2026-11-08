@@ -21,6 +21,7 @@ but it is a standalone plugin that works in any VST3 host on macOS and Windows, 
 | `band1_pan` to `band4_pan`   | Low: Pan to High: Pan   | 100L to 100R                 | C       |
 | `output_gain`                | Output Gain             | -24 dB to +12 dB             | 0 dB    |
 | `bypass`                     | Bypass                  | off or on                    | off     |
+| `delta`                      | Delta                   | off or on                    | off     |
 
 The bands are named Low, Low Mid, High Mid, and High,
 so the parameters are named Low: Mid, Low Mid: Side, High: Pan, and so on.
@@ -62,6 +63,14 @@ Bypass glides every gain to unity and every pan to the centre instead of skippin
 so the latency stays the same and the output becomes the delayed input bit for bit, without a click.
 Hosts use the bypass parameter as the plugin's own bypass.
 
+### Delta
+
+Delta outputs only what the processing changes: the output minus the input, delayed by the latency to line up.
+At the default settings it is exact silence, and narrowing one band leaves only that band's removed side.
+It includes the output gain, so a raised output gain shows as the input scaled by the difference.
+Turning it on or off glides over the same 20 ms as the gains, so it does not click.
+Bypass turns Delta off, so a bypassed plugin always passes the input through.
+
 ### Latency
 
 The filters are 8193 taps long at 44.1 and 48 kHz, and twice as long for each doubling of the sample rate above that.
@@ -81,7 +90,9 @@ so the output never depends on thread timing.
 
 ## Editor
 
-The header holds the Bypass button, the Settings button, and the output gain.
+The header holds the Settings button and the Pre and Post switch on the left,
+and the Delta and Bypass buttons and the output gain on the right.
+Pre shows the input of the plugin in the spectrogram, and Post its output, which is the difference while Delta is on.
 The spatial spectrogram fills the middle, and the band strips sit below it.
 A divider between them appears when the pointer is over the gap,
 and dragging it makes the band section taller or shorter.
@@ -177,7 +188,6 @@ Over the spectrogram, the tooltip explains what a drag at the pointer does.
 
 The Settings button opens the display settings:
 
-- whether the spectrogram shows the output or the input of the plugin,
 - frequency or phase colours,
 - a logarithmic or mel frequency scale, with the same HTK mel definition as AudioBatch's spectrogram,
 - the persistence, how long particles take to fade,
