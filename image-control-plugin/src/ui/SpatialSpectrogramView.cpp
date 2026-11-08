@@ -22,10 +22,11 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Number of cells in each plane of the particle buffer.
-constexpr auto CELL_COUNT {static_cast<std::size_t>(SPECTROGRAM_COLUMNS) * SPECTROGRAM_ROWS};
-/// Number of columns, as an index type.
-constexpr auto COLUMNS {static_cast<std::size_t>(SPECTROGRAM_COLUMNS)};
+/// Share by which the wanted grid size has to differ from the current one before the buffer is reallocated,
+/// so dragging the window edge does not reallocate on every pixel.
+constexpr int GRID_RESIZE_THRESHOLD_DIVISOR {8};
+/// Each physical pixel of the plot height holds this many stereo position rows. The rows cost more than they show.
+constexpr float ROWS_PER_PIXEL {0.5F};
 
 /// Level shown as the faintest particle, in dB relative to a full-scale sine.
 constexpr float DISPLAY_FLOOR_DB {-78.0F};
@@ -162,12 +163,6 @@ constexpr double MEL_LOGARITHM_BASE {10.0};
 constexpr double MAX_CHANNEL_VALUE {255.0};
 /// Space around the plot inside the box, in pixels.
 constexpr float BOX_PADDING {6.0F};
-
-/// Returns the plane index of a cell.
-std::size_t cellIndex(const int column, const int row)
-{
-    return static_cast<std::size_t>(row) * COLUMNS + static_cast<std::size_t>(column);
-}
 
 /// Returns the frequency colour of a share of the frequency axis: red at the left edge through to blue at the right.
 LinearColour frequencyColour(const float share)
@@ -310,17 +305,11 @@ double melToFrequency(const double mel)
 
 /// Creates the view with an empty particle buffer, looking up the parameters it reads and changes.
 SpatialSpectrogramView::SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters) :
-    image(juce::Image::ARGB, SPECTROGRAM_COLUMNS, SPECTROGRAM_ROWS, true),
-    blurScratch(CELL_COUNT, 0.0F),
-    columnColours(COLUMNS),
     toneCurve(buildToneCurve())
 {
-    for (auto& plane : buffer) {
-        plane.assign(CELL_COUNT, 0.0F);
-    }
-    for (std::size_t column = 0; column < COLUMNS; ++column) {
-        columnColours[column] = frequencyColour(static_cast<float>(column) / static_cast<float>(COLUMNS - 1));
-    }
+    allocateGrid(
+        BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE, BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE
+    );
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         crossoverParameters.at(crossover) = parameters.getParameter(crossoverParameterId(crossover));
         jassert(crossoverParameters.at(crossover) != nullptr);
@@ -332,6 +321,78 @@ SpatialSpectrogramView::SpatialSpectrogramView(juce::AudioProcessorValueTreeStat
     }
     // The rounded corners show the editor background, so the view does not fill its whole bounds.
     setOpaque(false);
+}
+
+/// Reallocates the particle buffer and the image for a grid size, which clears the particles.
+void SpatialSpectrogramView::allocateGrid(const int newColumns, const int newRows)
+{
+    columns = newColumns;
+    rows = newRows;
+    columnScale = static_cast<float>(columns) / static_cast<float>(BASE_SPECTROGRAM_COLUMNS);
+    rowScale = static_cast<float>(rows) / static_cast<float>(BASE_SPECTROGRAM_ROWS);
+
+    const auto cellCount = static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows);
+    image = juce::Image(juce::Image::ARGB, columns, rows, true);
+    for (auto& plane : buffer) {
+        plane.assign(cellCount, 0.0F);
+    }
+    blurScratch.assign(cellCount, 0.0F);
+
+    columnColours.resize(static_cast<std::size_t>(columns));
+    for (int column = 0; column < columns; ++column) {
+        columnColours[static_cast<std::size_t>(column)]
+            = frequencyColour(static_cast<float>(column) / static_cast<float>(columns - 1));
+    }
+
+    maxColumnRadius = static_cast<int>(std::ceil(static_cast<float>(MAX_PARTICLE_RADIUS) * columnScale));
+    const int rowRadius = static_cast<int>(std::ceil(PARTICLE_SIGMA_ROWS * rowScale * PARTICLE_RADIUS_SIGMAS));
+    columnWeights.assign(static_cast<std::size_t>(maxColumnRadius) * 2 + 1, 0.0F);
+    rowWeights.assign(static_cast<std::size_t>(rowRadius) * 2 + 1, 0.0F);
+}
+
+/// Sizes the particle buffer to the plot in physical pixels, so the particles stay sharp on large and HiDPI displays.
+/// The grid is never smaller than twice the reference grid and is capped to bound the work per display refresh.
+/// Small changes are ignored, so dragging the window edge does not reallocate on every pixel.
+void SpatialSpectrogramView::updateGrid()
+{
+    const auto plot = getPlotBounds();
+    if (plot.isEmpty()) {
+        return;
+    }
+    float displayScale = 1.0F;
+    if (const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect(getScreenBounds())) {
+        displayScale = static_cast<float>(display->scale);
+    }
+    const int wantedColumns = std::clamp(
+        juce::roundToInt(plot.getWidth() * displayScale),
+        BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE,
+        MAX_SPECTROGRAM_COLUMNS
+    );
+    const int wantedRows = std::clamp(
+        juce::roundToInt(plot.getHeight() * displayScale * ROWS_PER_PIXEL),
+        BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE,
+        MAX_SPECTROGRAM_ROWS
+    );
+    const auto differs = [](const int current, const int wanted, const int lowest, const int highest) {
+        const bool atLimit = (wanted == lowest || wanted == highest) && wanted != current;
+        return atLimit || std::abs(wanted - current) > current / GRID_RESIZE_THRESHOLD_DIVISOR;
+    };
+    if (differs(columns, wantedColumns, BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_COLUMNS)
+        || differs(rows, wantedRows, BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_ROWS)) {
+        allocateGrid(wantedColumns, wantedRows);
+    }
+}
+
+/// Resizes the particle buffer when the plot size changes.
+void SpatialSpectrogramView::resized()
+{
+    updateGrid();
+}
+
+/// Resizes the particle buffer when the view moves to a display with another scale.
+void SpatialSpectrogramView::parentHierarchyChanged()
+{
+    updateGrid();
 }
 
 /// Returns the area of the spectrogram inside the axis labels.
@@ -354,8 +415,10 @@ juce::Rectangle<float> SpatialSpectrogramView::getPlotBounds() const
 void SpatialSpectrogramView::addFrame(const std::span<const SpectralPoint> points, const double frameSeconds)
 {
     const auto fadeIn = static_cast<float>(1.0 - std::exp(-frameSeconds / persistenceSeconds));
-    std::array<float, static_cast<std::size_t>(MAX_PARTICLE_RADIUS) * 2 + 1> columnWeights {};
-    std::array<float, static_cast<std::size_t>(MAX_PARTICLE_RADIUS) * 2 + 1> rowWeights {};
+    const float sigmaRows = PARTICLE_SIGMA_ROWS * rowScale;
+    const float minSigmaColumns = MIN_PARTICLE_SIGMA_COLUMNS * columnScale;
+    const auto columnCount = static_cast<double>(columns);
+    const auto columnStride = static_cast<std::size_t>(columns);
 
     for (const auto& point : points) {
         const float decibels = 10.0F * std::log10(point.level);
@@ -367,36 +430,34 @@ void SpatialSpectrogramView::addFrame(const std::span<const SpectralPoint> point
         }
 
         const auto frequency = static_cast<double>(point.frequency);
-        const auto column
-            = static_cast<float>(frequencyToShare(frequency, scale) * static_cast<double>(SPECTROGRAM_COLUMNS));
-        const auto row = static_cast<float>(
-            (1.0 - static_cast<double>(point.position)) * 0.5 * static_cast<double>(SPECTROGRAM_ROWS - 1)
-        );
+        const auto column = static_cast<float>(frequencyToShare(frequency, scale) * columnCount);
+        const auto row
+            = static_cast<float>((1.0 - static_cast<double>(point.position)) * 0.5 * static_cast<double>(rows - 1));
         // The distance to the neighbouring bins in columns depends on the frequency and the scale.
         const double halfSpacing = static_cast<double>(point.spacing) * 0.5;
         const auto spacingColumns = static_cast<float>(
             (frequencyToShare(frequency + halfSpacing, scale)
              - frequencyToShare(std::max(static_cast<double>(MIN_FREQUENCY), frequency - halfSpacing), scale))
-            * static_cast<double>(SPECTROGRAM_COLUMNS)
+            * columnCount
         );
-        const float sigmaColumns = std::max(MIN_PARTICLE_SIGMA_COLUMNS, spacingColumns * PARTICLE_SIGMA_PER_SPACING);
+        const float sigmaColumns = std::max(minSigmaColumns, spacingColumns * PARTICLE_SIGMA_PER_SPACING);
         const int columnRadius
-            = std::min(MAX_PARTICLE_RADIUS, static_cast<int>(std::ceil(sigmaColumns * PARTICLE_RADIUS_SIGMAS)));
-        const int rowRadius = static_cast<int>(std::ceil(PARTICLE_SIGMA_ROWS * PARTICLE_RADIUS_SIGMAS));
+            = std::min(maxColumnRadius, static_cast<int>(std::ceil(sigmaColumns * PARTICLE_RADIUS_SIGMAS)));
+        const int rowRadius = static_cast<int>(std::ceil(sigmaRows * PARTICLE_RADIUS_SIGMAS));
 
         const int centreColumn = juce::roundToInt(column);
         const int centreRow = juce::roundToInt(row);
         const int firstColumn = std::max(0, centreColumn - columnRadius);
-        const int lastColumn = std::min(SPECTROGRAM_COLUMNS - 1, centreColumn + columnRadius);
+        const int lastColumn = std::min(columns - 1, centreColumn + columnRadius);
         const int firstRow = std::max(0, centreRow - rowRadius);
-        const int lastRow = std::min(SPECTROGRAM_ROWS - 1, centreRow + rowRadius);
+        const int lastRow = std::min(rows - 1, centreRow + rowRadius);
         for (int cell = firstColumn; cell <= lastColumn; ++cell) {
             columnWeights[static_cast<std::size_t>(cell - firstColumn)]
                 = gaussian(static_cast<float>(cell) - column, sigmaColumns);
         }
         for (int cell = firstRow; cell <= lastRow; ++cell) {
             rowWeights[static_cast<std::size_t>(cell - firstRow)]
-                = gaussian(static_cast<float>(cell) - row, PARTICLE_SIGMA_ROWS) * weight;
+                = gaussian(static_cast<float>(cell) - row, sigmaRows) * weight;
         }
 
         const LinearColour colour = pointColour(point);
@@ -404,7 +465,8 @@ void SpatialSpectrogramView::addFrame(const std::span<const SpectralPoint> point
             const float rowWeight = rowWeights[static_cast<std::size_t>(rowCell - firstRow)];
             for (int columnCell = firstColumn; columnCell <= lastColumn; ++columnCell) {
                 const float cellWeight = rowWeight * columnWeights[static_cast<std::size_t>(columnCell - firstColumn)];
-                const std::size_t index = cellIndex(columnCell, rowCell);
+                const std::size_t index
+                    = static_cast<std::size_t>(rowCell) * columnStride + static_cast<std::size_t>(columnCell);
                 buffer[0][index] += colour.red * cellWeight;
                 buffer[1][index] += colour.green * cellWeight;
                 buffer[2][index] += colour.blue * cellWeight;
@@ -689,7 +751,7 @@ LinearColour SpatialSpectrogramView::pointColour(const SpectralPoint& point) con
     if (colours == SpectrogramColours::frequency) {
         const double share
             = std::clamp(frequencyToShare(static_cast<double>(point.frequency), FrequencyScale::logarithmic), 0.0, 1.0);
-        return columnColours.at(static_cast<std::size_t>(share * static_cast<double>(COLUMNS - 1)));
+        return columnColours.at(static_cast<std::size_t>(share * static_cast<double>(columns - 1)));
     }
     const float antiPhaseShare = std::clamp((1.0F - point.coherence) * 0.5F, 0.0F, 1.0F);
     return {
@@ -736,30 +798,33 @@ double SpatialSpectrogramView::xToFrequency(const float x) const
 /// so the compiler vectorizes them for NEON and AVX2.
 void SpatialSpectrogramView::blurBuffer()
 {
-    constexpr float centreWeight = 1.0F - 2.0F * BLUR_NEIGHBOUR_WEIGHT;
-    const auto rowOf = [](std::span<float> plane, const int row) {
-        return plane.subspan(static_cast<std::size_t>(row) * COLUMNS).first(COLUMNS);
+    // A cell is smaller on a finer grid, so the neighbour weight shrinks with the square of the grid scale
+    // to keep the blur the same size on screen.
+    const float columnWeight = BLUR_NEIGHBOUR_WEIGHT / (columnScale * columnScale);
+    const float rowWeight = BLUR_NEIGHBOUR_WEIGHT / (rowScale * rowScale);
+    const float columnCentre = 1.0F - 2.0F * columnWeight;
+    const float rowCentre = 1.0F - 2.0F * rowWeight;
+    const auto columnCount = static_cast<std::size_t>(columns);
+    const auto rowOf = [columnCount](std::span<float> plane, const int row) {
+        return plane.subspan(static_cast<std::size_t>(row) * columnCount).first(columnCount);
     };
     for (auto& plane : buffer) {
-        for (int row = 0; row < SPECTROGRAM_ROWS; ++row) {
+        for (int row = 0; row < rows; ++row) {
             const auto source = rowOf(plane, row);
             const auto blurred = rowOf(blurScratch, row);
-            blurred.front() = source.front() * centreWeight + (source.front() + source[1]) * BLUR_NEIGHBOUR_WEIGHT;
-            for (std::size_t column = 1; column + 1 < COLUMNS; ++column) {
-                blurred[column]
-                    = source[column] * centreWeight + (source[column - 1] + source[column + 1]) * BLUR_NEIGHBOUR_WEIGHT;
+            blurred.front() = source.front() * columnCentre + (source.front() + source[1]) * columnWeight;
+            for (std::size_t column = 1; column + 1 < columnCount; ++column) {
+                blurred[column] = source[column] * columnCentre + (source[column - 1] + source[column + 1]) * columnWeight;
             }
-            blurred.back()
-                = source.back() * centreWeight + (source[COLUMNS - 2] + source.back()) * BLUR_NEIGHBOUR_WEIGHT;
+            blurred.back() = source.back() * columnCentre + (source[columnCount - 2] + source.back()) * columnWeight;
         }
-        for (int row = 0; row < SPECTROGRAM_ROWS; ++row) {
+        for (int row = 0; row < rows; ++row) {
             const auto above = rowOf(blurScratch, std::max(0, row - 1));
             const auto middle = rowOf(blurScratch, row);
-            const auto below = rowOf(blurScratch, std::min(SPECTROGRAM_ROWS - 1, row + 1));
+            const auto below = rowOf(blurScratch, std::min(rows - 1, row + 1));
             const auto destination = rowOf(plane, row);
-            for (std::size_t column = 0; column < COLUMNS; ++column) {
-                destination[column]
-                    = middle[column] * centreWeight + (above[column] + below[column]) * BLUR_NEIGHBOUR_WEIGHT;
+            for (std::size_t column = 0; column < columnCount; ++column) {
+                destination[column] = middle[column] * rowCentre + (above[column] + below[column]) * rowWeight;
             }
         }
     }
@@ -958,13 +1023,16 @@ void SpatialSpectrogramView::renderImage()
         return toneCurve[step];
     };
     const juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
-    for (int row = 0; row < SPECTROGRAM_ROWS; ++row) {
-        for (int column = 0; column < SPECTROGRAM_COLUMNS; ++column) {
-            const std::size_t index = cellIndex(column, row);
+    const auto columnStride = static_cast<std::size_t>(columns);
+    for (int row = 0; row < rows; ++row) {
+        auto* destination = pixels.getLinePointer(row);
+        const auto rowStart = static_cast<std::size_t>(row) * columnStride;
+        for (std::size_t column = 0; column < columnStride; ++column) {
+            const std::size_t index = rowStart + column;
             const juce::PixelARGB pixel(
                 255, toCurve(buffer[0][index]), toCurve(buffer[1][index]), toCurve(buffer[2][index])
             );
-            std::memcpy(pixels.getPixelPointer(column, row), &pixel, sizeof(pixel));
+            std::memcpy(destination + column * sizeof(pixel), &pixel, sizeof(pixel));
         }
     }
 }
