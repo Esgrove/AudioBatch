@@ -103,7 +103,7 @@ double MidSideTestProcessor::getTailLengthSeconds() const
     return 0.0;
 }
 
-/// The plugin has a single unnamed program.
+/// The plugin has a single program.
 int MidSideTestProcessor::getNumPrograms()
 {
     return 1;
@@ -118,10 +118,10 @@ int MidSideTestProcessor::getCurrentProgram()
 /// Ignores program changes, since there is only one program.
 void MidSideTestProcessor::setCurrentProgram(int /*index*/) {}
 
-/// The single program has no name.
+/// The single program is called Default, since the VST3 validator rejects a program without a name.
 const juce::String MidSideTestProcessor::getProgramName(int /*index*/)
 {
-    return {};
+    return "Default";
 }
 
 /// Ignores renames, since the single program has no name.

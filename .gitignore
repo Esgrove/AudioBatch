@@ -47,6 +47,8 @@
 /image-control-plugin/build
 /image-control-plugin/build-debug
 /image-control-plugin/build-benchmark
+# Dependencies shared by the plugin builds, such as pluginval
+/.deps
 
 # Test audio files
 /cpp/files/

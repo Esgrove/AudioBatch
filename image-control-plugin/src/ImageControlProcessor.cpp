@@ -100,10 +100,10 @@ const juce::String ImageControlProcessor::getName() const
     return JucePlugin_Name;
 }
 
-/// The single program has no name.
+/// The single program is called Default, since the VST3 validator rejects a program without a name.
 const juce::String ImageControlProcessor::getProgramName(int /*index*/)
 {
-    return {};
+    return "Default";
 }
 
 /// Creates the editor with the spatial spectrogram and the band controls. The host takes ownership.
@@ -150,7 +150,7 @@ int ImageControlProcessor::getCurrentProgram()
     return 0;
 }
 
-/// The plugin has a single unnamed program.
+/// The plugin has a single program.
 int ImageControlProcessor::getNumPrograms()
 {
     return 1;

@@ -117,6 +117,13 @@ target_link_libraries(
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
 )
 
+# The AudioBatchTestPlugin_pluginval target validates the VST3, when configured with -DAUDIOBATCH_PLUGINVAL=ON.
+# Only in the standalone build: as a subdirectory of the C++ project it would inherit that project's global flags.
+if(PROJECT_IS_TOP_LEVEL)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/Pluginval.cmake")
+    audiobatch_add_pluginval(AudioBatchTestPlugin)
+endif()
+
 # Path of the built VST3 bundle, for the C++ tests that load it.
 # JUCE stores the path as a generator expression itself, so it is evaluated once more for the plugin target.
 set(AUDIOBATCH_TEST_PLUGIN_BUNDLE

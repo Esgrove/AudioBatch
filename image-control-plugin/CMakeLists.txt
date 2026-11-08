@@ -197,6 +197,10 @@ target_link_libraries(
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
 )
 
+# The ImageControl_pluginval target validates the VST3, when configured with -DAUDIOBATCH_PLUGINVAL=ON.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/Pluginval.cmake")
+audiobatch_add_pluginval(ImageControl)
+
 if(IMAGE_CONTROL_BUILD_TESTS)
     include(CTest)
     include(FetchContent)
