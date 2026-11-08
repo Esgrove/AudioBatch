@@ -1,5 +1,6 @@
 /// Tests ImageControlProcessor: the supported bus layouts, the reported latency,
-/// neutral offline processing, the analyzer tap, the pan text, and the saved state with its editor settings.
+/// neutral offline processing, the analyzer tap, the pan text, the saved state with its editor settings,
+/// and the editor restoring its saved size.
 
 #include "dsp/MultibandImager.h"
 #include "ImageControlProcessor.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -301,5 +303,33 @@ TEST(Processor, IgnoresForeignState)
     juce::AudioProcessor::copyXmlToBinary(*juce::parseXML(foreign), state);
     processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     EXPECT_NEAR(getParameter(processor, OUTPUT_GAIN_ID), -6.0F, 0.01F);
+}
+
+TEST(Processor, EditorRestoresItsSavedSizeWhenReopened)
+{
+    ImageControlProcessor processor;
+    auto& editorState = processor.getEditorState();
+    editorState.setProperty(EDITOR_WIDTH_PROPERTY, 1500, nullptr);
+    editorState.setProperty(EDITOR_HEIGHT_PROPERTY, 1100, nullptr);
+    editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 300, nullptr);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditorAndMakeActive());
+    ASSERT_NE(editor, nullptr);
+    EXPECT_EQ(editor->getWidth(), 1500);
+    EXPECT_EQ(editor->getHeight(), 1100);
+    EXPECT_EQ(static_cast<int>(editorState.getProperty(EDITOR_WIDTH_PROPERTY)), 1500);
+    EXPECT_EQ(static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY)), 1100);
+    EXPECT_EQ(static_cast<int>(editorState.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), 300);
+    editor->setSize(1700, 1200);
+    // Hosts tell the processor before they delete its editor.
+    processor.editorBeingDeleted(editor.get());
+    editor.reset();
+
+    editor.reset(processor.createEditorAndMakeActive());
+    ASSERT_NE(editor, nullptr);
+    EXPECT_EQ(editor->getWidth(), 1700);
+    EXPECT_EQ(editor->getHeight(), 1200);
+    EXPECT_EQ(static_cast<int>(editorState.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), 300);
+    processor.editorBeingDeleted(editor.get());
 }
 }  // namespace esgrove::image_control::test

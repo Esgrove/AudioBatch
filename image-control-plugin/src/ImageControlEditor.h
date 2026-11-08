@@ -116,6 +116,9 @@ private:
     /// Whether the spectrogram was last hidden, empty before the first update.
     std::optional<bool> shownHidden;
 
+    /// Whether the saved layout has been restored, so layout changes are saved from now on.
+    /// Until then, sizes JUCE applies while the editor is built, such as the minimum size, are not saved.
+    bool layoutRestored {false};
     /// Whether the spectrogram is hidden, which shrinks the editor to the header and the band strips.
     bool spectrogramHidden {false};
     /// Whether the particles are not analyzed or drawn, while the audio is still processed.

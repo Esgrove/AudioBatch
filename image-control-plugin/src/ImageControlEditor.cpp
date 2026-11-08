@@ -133,15 +133,21 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addChildComponent(tooltips);
     updateBandRanges();
 
+    // The saved layout is read before the resize limits are set,
+    // because setting them constrains the still empty editor to the minimum size and lays it out.
+    // The layout is saved only once it is restored, so that minimum size never replaces the saved one.
     bandSectionHeight
         = static_cast<int>(editorState.getProperty(BAND_SECTION_HEIGHT_PROPERTY, DEFAULT_BAND_SECTION_HEIGHT));
+    const auto savedWidth = static_cast<int>(editorState.getProperty(EDITOR_WIDTH_PROPERTY, DEFAULT_WIDTH));
+    const auto savedHeight = static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY, DEFAULT_HEIGHT));
+    const int savedBandSectionHeight = bandSectionHeight;
 
     setResizable(true, true);
     setResizeLimits(MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT, MAX_EDITOR_WIDTH, MAX_EDITOR_HEIGHT);
-    setSize(
-        static_cast<int>(editorState.getProperty(EDITOR_WIDTH_PROPERTY, DEFAULT_WIDTH)),
-        static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY, DEFAULT_HEIGHT))
-    );
+    bandSectionHeight = savedBandSectionHeight;
+    setSize(savedWidth, savedHeight);
+    layoutRestored = true;
+    resized();
     // After the first size, so hiding the spectrogram can shrink the editor from it.
     // It also hands the worker its first settings before the worker starts.
     applyViewSettings();
@@ -179,7 +185,7 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
 }
 
 /// Lays out the header, the spectrogram, the divider, and the band strips,
-/// and remembers the size and the band section height in the editor settings.
+/// and remembers the size and the band section height in the editor settings once the saved layout is restored.
 /// While the spectrogram is hidden, the band strips fill the editor below the header,
 /// and the saved height stays the one to restore when the spectrogram is shown again.
 void ImageControlEditor::resized()
@@ -212,6 +218,9 @@ void ImageControlEditor::resized()
         area.removeFromLeft(GAP);
     }
 
+    if (!layoutRestored) {
+        return;
+    }
     auto& editorState = imageControlProcessor.getEditorState();
     editorState.setProperty(EDITOR_WIDTH_PROPERTY, getWidth(), nullptr);
     if (!spectrogramHidden) {
