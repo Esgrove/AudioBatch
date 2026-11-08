@@ -2,7 +2,7 @@
 /// the latency, the bit-exact pass-through at neutral settings in any block size,
 /// mono and anti-phase output with the side or mid off, gains acting only inside their band,
 /// mono processing, band pans that move a band toward one channel after its gains,
-/// and crossover moves that switch kernels without a click.
+/// solos that keep only the soloed bands and their delta, and crossover moves that switch kernels without a click.
 
 #include "dsp/MultibandImager.h"
 #include "Parameters.h"
@@ -330,5 +330,93 @@ TEST(Imager, RealTimeCrossoverMoveIsDesignedInTheBackground)
         EXPECT_FLOAT_EQ(active.at(crossover), moved.at(crossover));
     }
     imager.release();
+}
+TEST(Imager, SoloKeepsOnlyTheSoloedBand)
+{
+    BandSolos soloed {};
+    soloed[1] = true;
+    for (const double frequency : {40.0, 250.0, 2000.0, 18'000.0}) {
+        SCOPED_TRACE(frequency);
+        const auto sine = makeSine(frequency, 0.5F, 24'000);
+        auto buffer = makeBuffer({sine, sine});
+        MultibandImager imager;
+        imager.setSolos(soloGains(soloed));
+        imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        processInBlocks(imager, buffer);
+
+        const double ratio = midRms(buffer, 8000) / rms(std::span(sine).subspan(8000));
+        if (frequency > 150.0 && frequency < 350.0) {
+            EXPECT_NEAR(ratio, 1.0, 0.01);
+        } else {
+            EXPECT_LT(ratio, 0.01);
+        }
+    }
+}
+
+TEST(Imager, UnsoloingRestoresTheBitExactPassThrough)
+{
+    constexpr int samples = 20'000;
+    constexpr int soloed = 8000;
+    const auto left = makeNoise(0.8F, samples, 40);
+    const auto right = makeNoise(0.8F, samples, 41);
+    auto buffer = makeBuffer({left, right});
+    BandSolos solos {};
+    solos[2] = true;
+    MultibandImager imager;
+    imager.setSolos(soloGains(solos));
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    juce::AudioBuffer<float> first(buffer.getArrayOfWritePointers(), 2, 0, soloed);
+    juce::AudioBuffer<float> second(buffer.getArrayOfWritePointers(), 2, soloed, samples - soloed);
+    processInBlocks(imager, first);
+    // Soloing every band is the same as soloing none.
+    imager.setSolos(soloGains({true, true, true, true}));
+    processInBlocks(imager, second);
+
+    const int settled = soloed + static_cast<int>(GAIN_SMOOTHING_SECONDS * TEST_SAMPLE_RATE) + 2 * PARTITION_SIZE;
+    EXPECT_LT(rms(channelOf(buffer, 0).subspan(LATENCY, 2000)), rms(std::span(left).first(2000)) * 0.9);
+    for (int sample = settled; sample < samples; ++sample) {
+        const auto source = static_cast<std::size_t>(sample - LATENCY);
+        ASSERT_EQ(buffer.getSample(0, sample), left[source]) << "sample " << sample;
+        ASSERT_EQ(buffer.getSample(1, sample), right[source]) << "sample " << sample;
+    }
+}
+
+TEST(Imager, DeltaWithASoloedBandIsSilentAtNeutralGains)
+{
+    auto buffer = makeBuffer({makeNoise(0.8F, 16'384, 42), makeNoise(0.8F, 16'384, 43)});
+    BandSolos solos {};
+    solos[1] = true;
+    MultibandImager imager;
+    imager.setSolos(soloGains(solos));
+    imager.setDelta(true);
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    processInBlocks(imager, buffer);
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+        ASSERT_NEAR(buffer.getSample(0, sample), 0.0F, 1e-6F) << "sample " << sample;
+        ASSERT_NEAR(buffer.getSample(1, sample), 0.0F, 1e-6F) << "sample " << sample;
+    }
+}
+
+TEST(Imager, DeltaWithASoloedBandCarriesOnlyThatBandsChange)
+{
+    BandSolos solos {};
+    solos[1] = true;
+    for (const double frequency : {250.0, 2000.0}) {
+        SCOPED_TRACE(frequency);
+        // A side-only sine, which turning every band's side off removes in full.
+        const auto sine = makeSine(frequency, 0.5F, 24'000);
+        std::vector<float> inverted(sine.size());
+        std::ranges::transform(sine, inverted.begin(), [](const float value) { return -value; });
+        auto buffer = makeBuffer({sine, inverted});
+        MultibandImager imager;
+        imager.setGains(uniformGains(1.0F), uniformGains(0.0F), 1.0F);
+        imager.setSolos(soloGains(solos));
+        imager.setDelta(true);
+        imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        processInBlocks(imager, buffer);
+
+        const double ratio = sideRms(buffer, 8000) / rms(std::span(sine).subspan(8000));
+        EXPECT_NEAR(ratio, frequency < 500.0 ? 1.0 : 0.0, 0.01);
+    }
 }
 }  // namespace esgrove::image_control::test

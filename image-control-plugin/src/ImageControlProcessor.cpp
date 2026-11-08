@@ -47,6 +47,7 @@ ImageControlProcessor::ImageControlProcessor() :
         midGainValues.at(band) = getRawValue(parameters, midGainParameterId(band));
         sideGainValues.at(band) = getRawValue(parameters, sideGainParameterId(band));
         panValues.at(band) = getRawValue(parameters, panParameterId(band));
+        soloValues.at(band) = getRawValue(parameters, soloParameterId(band));
         editorState.setProperty(linkPropertyName(band), true, nullptr);
     }
     outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
@@ -202,7 +203,8 @@ juce::AudioProcessorParameter* ImageControlProcessor::getBypassParameter() const
 }
 
 /// Hands the current parameters to the imager, processes the block, and pushes the analyzer tap.
-/// Bypassing glides every gain to unity and every pan to the centre instead of skipping the imager,
+/// Bypassing glides every gain to unity, every pan to the centre, and every band muted by a solo back in,
+/// instead of skipping the imager,
 /// so the latency stays the same and the output becomes the delayed input bit for bit without a click.
 /// Delta mode subtracts the delayed input from the output, and bypassing turns it off,
 /// so a bypassed plugin always passes the input through.
@@ -216,9 +218,11 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     midGains.fill(1.0F);
     sideGains.fill(1.0F);
     BandPans pans {};
+    BandSolos solos {};
     float outputGain = 1.0F;
     if (!bypassed) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            solos.at(band) = soloValues.at(band)->load() >= 0.5F;
             midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
             sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
             pans.at(band) = panFromPercent(panValues.at(band)->load());
@@ -227,6 +231,7 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     }
     imager.setGains(midGains, sideGains, outputGain);
     imager.setPans(pans);
+    imager.setSolos(soloGains(solos));
     imager.setDelta(!bypassed && deltaValue->load() >= 0.5F);
     imager.setCrossovers(getCrossovers(), isNonRealtime());
 

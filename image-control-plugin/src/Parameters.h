@@ -1,5 +1,6 @@
 /// Declares the parameters of the ImageControl plugin:
-/// the three crossover frequencies, the mid and side gain and the pan of each of the four bands, and the output gain.
+/// the three crossover frequencies, the mid and side gain, the pan, and the solo of each of the four bands,
+/// and the output gain.
 /// The ids, ranges, and defaults live here so the processor, the editor, and the tests share one definition.
 /// Also declares the crossover ordering rule that both the DSP and the editor apply,
 /// and the names of the editor settings saved with the plugin state.
@@ -118,6 +119,8 @@ using BandGains = std::array<float, BAND_COUNT>;
 /// One pan per band, from the lowest band to the highest:
 /// -1 moves the band fully into the left channel, 0 leaves it in place, and 1 moves it fully into the right channel.
 using BandPans = std::array<float, BAND_COUNT>;
+/// Whether each band is soloed, from the lowest band to the highest.
+using BandSolos = std::array<bool, BAND_COUNT>;
 
 [[nodiscard]] juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 [[nodiscard]] juce::NormalisableRange<float> crossoverRange();
@@ -127,11 +130,13 @@ using BandPans = std::array<float, BAND_COUNT>;
 [[nodiscard]] juce::String midGainParameterId(std::size_t band);
 [[nodiscard]] juce::String sideGainParameterId(std::size_t band);
 [[nodiscard]] juce::String panParameterId(std::size_t band);
+[[nodiscard]] juce::String soloParameterId(std::size_t band);
 [[nodiscard]] juce::String bandName(std::size_t band);
 [[nodiscard]] juce::Identifier linkPropertyName(std::size_t band);
 [[nodiscard]] juce::String formatFrequency(float frequency);
 [[nodiscard]] juce::String formatPan(float percent);
 
+[[nodiscard]] BandGains soloGains(const BandSolos& soloed);
 [[nodiscard]] Crossovers orderCrossovers(const Crossovers& requested);
 [[nodiscard]] bool sameCrossovers(const Crossovers& first, const Crossovers& second);
 
