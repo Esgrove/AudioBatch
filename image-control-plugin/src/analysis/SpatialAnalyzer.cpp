@@ -1,4 +1,4 @@
-/// Implements SpatialAnalyzer: the tier layout, the ring of recent samples,
+/// Implements SpatialAnalyzer: the tier layout, the ring of recent samples, the packed transform of both channels,
 /// the zero-padded Hann-windowed transforms, and the per-bin position, level, and coherence.
 
 #include "analysis/SpatialAnalyzer.h"
@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -30,11 +31,16 @@ struct TierLayout {
 /// The tiers from the lowest frequencies to the highest.
 /// 32768 samples resolve the lowest octaves to about 0.7 Hz with zero padding,
 /// and 1024 samples keep the high frequencies within about 20 ms.
+/// Up to 640 Hz each tier covers one octave and starts where its window length times the frequency is the same,
+/// so a sine spreads over about the same share of an octave at every tier boundary
+/// instead of widening several times where a much shorter window takes over.
 /// The long windows run less often, since their content changes slowly anyway.
 constexpr std::array TIER_LAYOUTS {
     TierLayout {.windowOrder = 15, .minFrequency = 0.0, .maxFrequency = 80.0, .hop = 2048},
-    TierLayout {.windowOrder = 13, .minFrequency = 80.0, .maxFrequency = 500.0, .hop = 512},
-    TierLayout {.windowOrder = 11, .minFrequency = 500.0, .maxFrequency = 4000.0, .hop = 512},
+    TierLayout {.windowOrder = 14, .minFrequency = 80.0, .maxFrequency = 160.0, .hop = 1024},
+    TierLayout {.windowOrder = 13, .minFrequency = 160.0, .maxFrequency = 320.0, .hop = 512},
+    TierLayout {.windowOrder = 12, .minFrequency = 320.0, .maxFrequency = 640.0, .hop = 512},
+    TierLayout {.windowOrder = 11, .minFrequency = 640.0, .maxFrequency = 4000.0, .hop = 512},
     TierLayout {.windowOrder = 10, .minFrequency = 4000.0, .maxFrequency = 1.0e9, .hop = 512},
 };
 /// Sample rate up to which the tier layouts apply. Each doubling above it doubles the windows and hops.
@@ -57,8 +63,8 @@ AnalysisTier makeTier(const TierLayout& layout, const int doublings)
     juce::dsp::WindowingFunction<float>::fillWindowingTables(
         tier.window.data(), windowLength, juce::dsp::WindowingFunction<float>::hann, false
     );
-    tier.leftSpectrum.assign(fftSize * 2, 0.0F);
-    tier.rightSpectrum.assign(fftSize * 2, 0.0F);
+    tier.samples.assign(fftSize, {});
+    tier.spectrum.assign(fftSize, {});
     tier.minFrequency = layout.minFrequency;
     tier.maxFrequency = layout.maxFrequency;
     tier.hop = layout.hop << static_cast<unsigned>(doublings);
@@ -165,21 +171,22 @@ void SpatialAnalyzer::setFrameCallback(SpectralFrameCallback callback)
 
 /// Transforms the newest window of both channels for a tier,
 /// and reports the bins in the tier's frequency range that are not silent.
+/// Both channels go through one complex transform, the left as the real part and the right as the imaginary part,
+/// which costs about half of two real transforms with JUCE's fallback engine.
+/// Since both inputs are real, the spectrum X separates into
+/// L[k] = (X[k] + conj(X[N − k])) / 2 and R[k] = (X[k] − conj(X[N − k])) / 2i.
 void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
 {
     const std::size_t windowLength = tier.window.size();
-    std::ranges::fill(tier.leftSpectrum, 0.0F);
-    std::ranges::fill(tier.rightSpectrum, 0.0F);
-    const auto leftWindow = std::span<float>(tier.leftSpectrum).first(windowLength);
-    const auto rightWindow = std::span<float>(tier.rightSpectrum).first(windowLength);
-    copyNewest(leftHistory, leftWindow);
-    copyNewest(rightHistory, rightWindow);
+    const std::size_t ringMask = leftHistory.size() - 1;
+    const std::size_t start = (writePosition + leftHistory.size() - windowLength) & ringMask;
     for (std::size_t sample = 0; sample < windowLength; ++sample) {
-        leftWindow[sample] *= tier.window[sample];
-        rightWindow[sample] *= tier.window[sample];
+        const std::size_t index = (start + sample) & ringMask;
+        const float weight = tier.window[sample];
+        tier.samples[sample] = {leftHistory[index] * weight, rightHistory[index] * weight};
     }
-    tier.fft->performRealOnlyForwardTransform(tier.leftSpectrum.data(), true);
-    tier.fft->performRealOnlyForwardTransform(tier.rightSpectrum.data(), true);
+    // The zero padding after the window stays zero, since the transform does not write its input.
+    tier.fft->perform(tier.samples.data(), tier.spectrum.data(), false);
 
     const int fftSize = tier.fft->getSize();
     const double binWidth = sampleRate / static_cast<double>(fftSize);
@@ -190,11 +197,13 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
 
     points.clear();
     for (int bin = firstBin; bin <= lastBin; ++bin) {
-        const auto index = static_cast<std::size_t>(bin) * 2;
-        const float leftReal = tier.leftSpectrum[index];
-        const float leftImaginary = tier.leftSpectrum[index + 1];
-        const float rightReal = tier.rightSpectrum[index];
-        const float rightImaginary = tier.rightSpectrum[index + 1];
+        const std::complex<float> packed = tier.spectrum[static_cast<std::size_t>(bin)];
+        const std::complex<float> mirrored = std::conj(tier.spectrum[static_cast<std::size_t>(fftSize - bin)]);
+        const float leftReal = (packed.real() + mirrored.real()) * 0.5F;
+        const float leftImaginary = (packed.imag() + mirrored.imag()) * 0.5F;
+        // Dividing by 2i turns (a + bi) / 2 into (b − ai) / 2.
+        const float rightReal = (packed.imag() - mirrored.imag()) * 0.5F;
+        const float rightImaginary = (mirrored.real() - packed.real()) * 0.5F;
         const float leftMagnitude = std::hypot(leftReal, leftImaginary);
         const float rightMagnitude = std::hypot(rightReal, rightImaginary);
         const float level = (leftMagnitude * leftMagnitude + rightMagnitude * rightMagnitude) * tier.levelScale;
@@ -215,15 +224,5 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
     if (frameCallback) {
         frameCallback(points, static_cast<double>(tier.hop) / sampleRate);
     }
-}
-
-/// Copies the newest samples of a ring, oldest first, filling the destination.
-void SpatialAnalyzer::copyNewest(const std::span<const float> ring, const std::span<float> destination) const
-{
-    const std::size_t length = destination.size();
-    const std::size_t start = (writePosition + ring.size() - length) & (ring.size() - 1);
-    const std::size_t firstPart = std::min(length, ring.size() - start);
-    std::ranges::copy(ring.subspan(start, firstPart), destination.begin());
-    std::ranges::copy(ring.first(length - firstPart), destination.subspan(firstPart).begin());
 }
 }  // namespace esgrove::image_control
