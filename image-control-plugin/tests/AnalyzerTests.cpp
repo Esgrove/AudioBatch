@@ -1,7 +1,8 @@
 /// Tests SpatialAnalyzer and the spectrogram's frequency axis:
 /// the stereo position curve, where hard-panned, centred, partly panned, and anti-phase sines,
 /// sine combs, and noise land, with their level and coherence, how evenly wide a sine draws across the bass,
-/// how finely the lowest octaves are resolved, and the logarithmic and mel axis mappings.
+/// how finely the lowest octaves are resolved, the reassignment of a sine's bins to its frequency,
+/// the averaged position of uncorrelated highs, and the logarithmic and mel axis mappings.
 
 #include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
@@ -205,6 +206,44 @@ TEST(Analyzer, SineWidthIsEvenAcrossTheBass)
         widest = std::max(widest, width);
     }
     EXPECT_LT(widest, narrowest * 1.6F);
+}
+
+TEST(Analyzer, ReassignsTheBinsOfASineToItsFrequency)
+{
+    // Every bin of the main lobe, within 30 dB of the peak, moves to the sine frequency,
+    // so the display draws a thin line however wide the lobe spreads on the axis.
+    for (const double frequency : {31.7, 57.3, 133.3, 1003.7, 7777.7, 15'013.0}) {
+        SCOPED_TRACE(frequency);
+        const auto sine = makeSine(frequency, 0.5F, 48'000);
+        const auto points = analyze(sine, withLevelDifference(sine, 6.0));
+        const auto tone = static_cast<float>(frequency);
+        const float threshold = loudestBetween(points, tone / 1.5F, tone * 1.5F).level * 1.0e-3F;
+        int lobeBins = 0;
+        for (const auto& point : points) {
+            if (point.frequency > tone / 1.5F && point.frequency < tone * 1.5F && point.level >= threshold) {
+                EXPECT_NEAR(point.reassignedFrequency, tone, 0.2F + tone * 2.0e-3F) << point.frequency;
+                ++lobeBins;
+            }
+        }
+        EXPECT_GE(lobeBins, 3);
+    }
+}
+
+TEST(Analyzer, UncorrelatedHighsSitCloserToTheirAveragePosition)
+{
+    // Uncorrelated noise has a random level difference in every bin,
+    // and measuring the position over neighbouring bins draws the dense highs close to the centre,
+    // instead of spraying them over the whole height.
+    const auto points = analyze(makeNoise(0.5F, 48'000, 11), makeNoise(0.5F, 48'000, 12));
+    double spread = 0.0;
+    double totalLevel = 0.0;
+    for (const auto& point : points) {
+        if (point.frequency > 8000.0F) {
+            spread += static_cast<double>(std::abs(point.position) * point.level);
+            totalLevel += static_cast<double>(point.level);
+        }
+    }
+    EXPECT_LT(spread / totalLevel, 0.15);
 }
 
 TEST(Analyzer, CentredPinkNoiseSitsInTheCentreInPhase)

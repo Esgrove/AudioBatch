@@ -56,34 +56,56 @@ constexpr double CURVE_MIDPOINT_POSITION {0.5};
 constexpr double CURVE_EDGE_POSITION {0.99};
 /// Decibels per decade of an amplitude ratio.
 constexpr float DECIBELS_PER_AMPLITUDE_DECADE {20.0F};
+/// Weight of the spectrum two bins to each side of a bin in the periodic Hann window,
+/// applied to a transform zero padded to twice the window length: H[k] = X[k] / 2 − (X[k − 2] + X[k + 2]) / 4.
+constexpr float HANN_SIDE_WEIGHT {0.25F};
 
-/// Builds a tier for a layout at a sample rate: its FFT, window, spectra, and level scale.
+/// Builds a tier for a layout at a sample rate: its FFT, spectra, and level scale.
 AnalysisTier makeTier(const TierLayout& layout, const int doublings)
 {
     AnalysisTier tier;
     const int windowOrder = layout.windowOrder + doublings;
-    const std::size_t windowLength = std::size_t {1} << static_cast<unsigned>(windowOrder);
+    tier.windowLength = std::size_t {1} << static_cast<unsigned>(windowOrder);
     // The transform is twice the window, so the zero padding interpolates between the window's own bins.
     tier.fft = std::make_unique<juce::dsp::FFT>(windowOrder + 1);
     const auto fftSize = static_cast<std::size_t>(tier.fft->getSize());
-    tier.window.assign(windowLength, 0.0F);
-    juce::dsp::WindowingFunction<float>::fillWindowingTables(
-        tier.window.data(), windowLength, juce::dsp::WindowingFunction<float>::hann, false
-    );
     tier.samples.assign(fftSize, {});
     tier.spectrum.assign(fftSize, {});
     tier.minFrequency = layout.minFrequency;
     tier.maxFrequency = layout.maxFrequency;
     tier.hop = layout.hop << static_cast<unsigned>(doublings);
 
-    double windowSum = 0.0;
-    for (const float value : tier.window) {
-        windowSum += static_cast<double>(value);
-    }
-    // A sine of amplitude A peaks at A times half the window sum in its bin.
+    // The periodic Hann window sums to half its length,
+    // and a sine of amplitude A peaks at A times half the window sum in its bin.
+    const double windowSum = static_cast<double>(tier.windowLength) * 0.5;
     const double fullScaleMagnitude = windowSum * 0.5;
     tier.levelScale = static_cast<float>(1.0 / (fullScaleMagnitude * fullScaleMagnitude));
     return tier;
+}
+
+/// Separates the left and right spectra at a bin from the packed transform of both channels,
+/// wrapping bins below 0 and above the transform length, which the spectrum filters reach at its edges.
+/// Since both inputs are real, the packed spectrum X separates into
+/// L[k] = (X[k] + conj(X[N − k])) / 2 and R[k] = (X[k] − conj(X[N − k])) / 2i.
+std::pair<std::complex<float>, std::complex<float>> separateChannels(
+    const std::span<const std::complex<float>> spectrum,
+    const int bin
+)
+{
+    const auto size = static_cast<int>(spectrum.size());
+    const int wrapped = ((bin % size) + size) % size;
+    const std::complex<float> packed = spectrum[static_cast<std::size_t>(wrapped)];
+    const std::complex<float> mirrored = std::conj(spectrum[static_cast<std::size_t>((size - wrapped) % size)]);
+    const std::complex<float> left = (packed + mirrored) * 0.5F;
+    const std::complex<float> difference = (packed - mirrored) * 0.5F;
+    // Dividing by i turns a + bi into b − ai.
+    return {left, {difference.imag(), -difference.real()}};
+}
+
+/// Returns a spectrum value divided by 2i: (a + bi) / 2i = (b − ai) / 2.
+std::complex<float> divideByTwoI(const std::complex<float> value)
+{
+    return {value.imag() * 0.5F, -value.real() * 0.5F};
 }
 }  // namespace
 
@@ -171,12 +193,18 @@ void SpatialAnalyzer::prepare(const double newSampleRate)
     std::size_t mostPoints = 0;
     for (const auto& layout : TIER_LAYOUTS) {
         tiers.push_back(makeTier(layout, doublings));
-        longestWindow = std::max(longestWindow, tiers.back().window.size());
-        mostPoints += tiers.back().window.size();
+        longestWindow = std::max(longestWindow, tiers.back().windowLength);
+        mostPoints = std::max(mostPoints, tiers.back().windowLength);
     }
     leftHistory.assign(longestWindow, 0.0F);
     rightHistory.assign(longestWindow, 0.0F);
+    // A tier reports at most half its transform, its window length, and the spectrum filters reach two bins further.
     points.reserve(mostPoints);
+    rawLeft.reserve(mostPoints + 4);
+    rawRight.reserve(mostPoints + 4);
+    hannLeft.reserve(mostPoints);
+    hannRight.reserve(mostPoints);
+    reassignedFrequencies.reserve(mostPoints);
     clear();
 }
 
@@ -221,17 +249,24 @@ void SpatialAnalyzer::setPositionCurve(const StereoPositionCurve& curve)
 /// and reports the bins in the tier's frequency range that are not silent.
 /// Both channels go through one complex transform, the left as the real part and the right as the imaginary part,
 /// which costs about half of two real transforms with JUCE's fallback engine.
-/// Since both inputs are real, the spectrum X separates into
-/// L[k] = (X[k] + conj(X[N − k])) / 2 and R[k] = (X[k] − conj(X[N − k])) / 2i.
+///
+/// The frame is transformed unwindowed, and the periodic Hann window h(n) = 1/2 − cos(2πn/W)/2 is applied
+/// to the spectrum: with the transform twice the window length W, its cosine shifts the spectrum by two bins,
+/// so H[k] = X[k]/2 − (X[k − 2] + X[k + 2])/4.
+/// Its time derivative h'(n) = (π/W) sin(2πn/W) gives D[k] = (π/W) (X[k − 2] − X[k + 2]) / 2i the same way.
+/// Each bin is reassigned to the frequency its energy comes from, f − fs/2π · Im(D · conj(H)) / |H|²,
+/// summed over both channels, and keeps its own frequency when that lies outside the window's main lobe.
+///
+/// The stereo position and coherence are measured over the bins within POSITION_SMOOTHING_OCTAVES,
+/// which draws decorrelated content at its average position, while the level is the bin's own.
 void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
 {
-    const std::size_t windowLength = tier.window.size();
+    const std::size_t windowLength = tier.windowLength;
     const std::size_t ringMask = leftHistory.size() - 1;
     const std::size_t start = (writePosition + leftHistory.size() - windowLength) & ringMask;
     for (std::size_t sample = 0; sample < windowLength; ++sample) {
         const std::size_t index = (start + sample) & ringMask;
-        const float weight = tier.window[sample];
-        tier.samples[sample] = {leftHistory[index] * weight, rightHistory[index] * weight};
+        tier.samples[sample] = {leftHistory[index], rightHistory[index]};
     }
     // The zero padding after the window stays zero, since the transform does not write its input.
     tier.fft->perform(tier.samples.data(), tier.spectrum.data(), false);
@@ -244,30 +279,77 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
     const int lastBin = std::min(fftSize / 2 - 1, static_cast<int>(std::floor(highest / binWidth)));
 
     points.clear();
-    for (int bin = firstBin; bin <= lastBin; ++bin) {
-        const std::complex<float> packed = tier.spectrum[static_cast<std::size_t>(bin)];
-        const std::complex<float> mirrored = std::conj(tier.spectrum[static_cast<std::size_t>(fftSize - bin)]);
-        const float leftReal = (packed.real() + mirrored.real()) * 0.5F;
-        const float leftImaginary = (packed.imag() + mirrored.imag()) * 0.5F;
-        // Dividing by 2i turns (a + bi) / 2 into (b − ai) / 2.
-        const float rightReal = (packed.imag() - mirrored.imag()) * 0.5F;
-        const float rightImaginary = (mirrored.real() - packed.real()) * 0.5F;
-        const float leftMagnitude = std::hypot(leftReal, leftImaginary);
-        const float rightMagnitude = std::hypot(rightReal, rightImaginary);
-        const float level = (leftMagnitude * leftMagnitude + rightMagnitude * rightMagnitude) * tier.levelScale;
-        if (level < SILENCE_LEVEL) {
-            continue;
+    if (lastBin >= firstBin) {
+        const auto binCount = static_cast<std::size_t>(lastBin - firstBin) + 1;
+        rawLeft.resize(binCount + 4);
+        rawRight.resize(binCount + 4);
+        for (std::size_t offset = 0; offset < binCount + 4; ++offset) {
+            const auto [left, right] = separateChannels(tier.spectrum, firstBin - 2 + static_cast<int>(offset));
+            rawLeft[offset] = left;
+            rawRight[offset] = right;
         }
-        const float magnitudeProduct = leftMagnitude * rightMagnitude;
-        points.push_back({
-            .frequency = static_cast<float>(static_cast<double>(bin) * binWidth),
-            .spacing = static_cast<float>(binWidth),
-            .position = positionFromMagnitudes(leftMagnitude, rightMagnitude, positionCurve),
-            .level = level,
-            .coherence = magnitudeProduct > 0.0F
-                ? (leftReal * rightReal + leftImaginary * rightImaginary) / magnitudeProduct
-                : 1.0F,
-        });
+
+        hannLeft.resize(binCount);
+        hannRight.resize(binCount);
+        reassignedFrequencies.resize(binCount);
+        const auto derivativeScale
+            = static_cast<float>(juce::MathConstants<double>::pi / static_cast<double>(windowLength));
+        const double radiansToHertz = sampleRate / juce::MathConstants<double>::twoPi;
+        // The main lobe of the Hann window reaches two of its own bins, four transform bins, to each side.
+        const double lobeHalfWidth = 4.0 * binWidth;
+        for (std::size_t index = 0; index < binCount; ++index) {
+            const std::size_t centre = index + 2;
+            hannLeft[index] = rawLeft[centre] * 0.5F - (rawLeft[centre - 2] + rawLeft[centre + 2]) * HANN_SIDE_WEIGHT;
+            hannRight[index]
+                = rawRight[centre] * 0.5F - (rawRight[centre - 2] + rawRight[centre + 2]) * HANN_SIDE_WEIGHT;
+            const std::complex<float> derivativeLeft
+                = divideByTwoI(rawLeft[centre - 2] - rawLeft[centre + 2]) * derivativeScale;
+            const std::complex<float> derivativeRight
+                = divideByTwoI(rawRight[centre - 2] - rawRight[centre + 2]) * derivativeScale;
+            const float power = std::norm(hannLeft[index]) + std::norm(hannRight[index]);
+            const double frequency = static_cast<double>(firstBin + static_cast<int>(index)) * binWidth;
+            double reassigned = frequency;
+            if (power > 0.0F) {
+                const float shift = (derivativeLeft * std::conj(hannLeft[index])).imag()
+                    + (derivativeRight * std::conj(hannRight[index])).imag();
+                const double correction = radiansToHertz * static_cast<double>(shift / power);
+                if (std::abs(correction) <= lobeHalfWidth) {
+                    reassigned = frequency - correction;
+                }
+            }
+            reassignedFrequencies[index] = static_cast<float>(
+                std::clamp(reassigned, static_cast<double>(MIN_FREQUENCY), static_cast<double>(MAX_FREQUENCY))
+            );
+        }
+
+        const double smoothingRatio = std::exp2(POSITION_SMOOTHING_OCTAVES * 0.5) - 1.0;
+        for (std::size_t index = 0; index < binCount; ++index) {
+            const float level = (std::norm(hannLeft[index]) + std::norm(hannRight[index])) * tier.levelScale;
+            if (level < SILENCE_LEVEL) {
+                continue;
+            }
+            const double frequency = static_cast<double>(firstBin + static_cast<int>(index)) * binWidth;
+            const auto reach = static_cast<std::size_t>(std::floor(frequency * smoothingRatio / binWidth));
+            const std::size_t firstNeighbour = index - std::min(index, reach);
+            const std::size_t lastNeighbour = std::min(binCount - 1, index + reach);
+            float leftPower = 0.0F;
+            float rightPower = 0.0F;
+            float crossPower = 0.0F;
+            for (std::size_t neighbour = firstNeighbour; neighbour <= lastNeighbour; ++neighbour) {
+                leftPower += std::norm(hannLeft[neighbour]);
+                rightPower += std::norm(hannRight[neighbour]);
+                crossPower += (hannLeft[neighbour] * std::conj(hannRight[neighbour])).real();
+            }
+            const float powerProduct = leftPower * rightPower;
+            points.push_back({
+                .frequency = static_cast<float>(frequency),
+                .reassignedFrequency = reassignedFrequencies[index],
+                .spacing = static_cast<float>(binWidth),
+                .position = positionFromMagnitudes(std::sqrt(leftPower), std::sqrt(rightPower), positionCurve),
+                .level = level,
+                .coherence = powerProduct > 0.0F ? crossPower / std::sqrt(powerProduct) : 1.0F,
+            });
+        }
     }
     if (frameCallback) {
         frameCallback(points, static_cast<double>(tier.hop) / sampleRate);

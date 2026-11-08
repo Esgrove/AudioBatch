@@ -225,6 +225,7 @@ std::span<const SpectrogramParticle> SpectrogramParticleBuilder::particles() con
 /// A particle's level in dB gets the spectral tilt,
 /// and its share of the display range below the auto-scale reference sets its size,
 /// and its brightness through a power curve, which keeps the noise floor dark.
+/// A particle sits at its bin's reassigned frequency, so a sine draws as a thin line at any plot width.
 /// The reference follows the loudest tilted bin of every tier, rising at once and falling slowly,
 /// so the picture keeps its brightness for quiet and loud material alike.
 /// A particle's weight is the share of a short flash its frame stands for,
@@ -259,7 +260,7 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
             continue;
         }
 
-        const auto frequency = static_cast<double>(point.frequency);
+        const auto frequency = static_cast<double>(point.reassignedFrequency);
         // The distance to the neighbouring bins on the axis depends on the frequency and the scale.
         const double halfSpacing = static_cast<double>(point.spacing) * 0.5;
         const double spacingShare = frequencyToShare(frequency + halfSpacing, scale)

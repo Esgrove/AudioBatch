@@ -20,18 +20,28 @@ namespace esgrove::image_control
 {
 /// Sample rate the analyzer assumes until it is prepared for another.
 constexpr double ANALYZER_DEFAULT_SAMPLE_RATE {48'000.0};
+/// Width of the band of neighbouring bins a bin's stereo position and coherence are measured over, in octaves.
+/// Decorrelated content, such as reverb or wide cymbals, has a random level difference in each bin,
+/// and measuring it over neighbours draws it at its average position instead of spraying it over the whole height.
+/// A sine's main lobe has a single position, so tonal content keeps its position.
+constexpr double POSITION_SMOOTHING_OCTAVES {1.0 / 32.0};
 
 /// One analyzed frequency bin of one channel pair.
 struct SpectralPoint {
     /// Centre frequency of the bin, in Hz.
     float frequency {0.0F};
+    /// Frequency the energy of the bin comes from, in Hz, from the reassignment of the bin to its instantaneous
+    /// frequency. For a sine, every bin of its main lobe reassigns to the sine frequency, so the display draws it as a
+    /// thin line.
+    float reassignedFrequency {0.0F};
     /// Distance to the neighbouring bins, in Hz, which sets how wide the display draws the point.
     float spacing {0.0F};
-    /// Stereo position: +1 at full left, 0 in the centre, and −1 at full right.
+    /// Stereo position: +1 at full left, 0 in the centre, and −1 at full right,
+    /// from the channel levels summed over the neighbouring bins within POSITION_SMOOTHING_OCTAVES.
     float position {0.0F};
     /// Power of both channels, normalized so a full-scale sine in one channel reads 1.
     float level {0.0F};
-    /// Phase coherence: +1 for in-phase content and −1 for anti-phase content.
+    /// Phase coherence: +1 for in-phase content and −1 for anti-phase content, over the same neighbouring bins.
     float coherence {1.0F};
 };
 
@@ -42,10 +52,10 @@ using SpectralFrameCallback = std::function<void(std::span<const SpectralPoint> 
 struct AnalysisTier {
     /// Complex transform of twice the window length.
     std::unique_ptr<juce::dsp::FFT> fft;
-    /// Hann window of the tier's length.
-    std::vector<float> window;
-    /// Windowed samples, the left channel as the real part and the right channel as the imaginary part,
-    /// zero padded to the transform length.
+    /// Number of samples in a frame of the tier.
+    std::size_t windowLength {0};
+    /// The newest samples, the left channel as the real part and the right channel as the imaginary part,
+    /// zero padded to the transform length. The Hann window is applied to their spectrum.
     std::vector<std::complex<float>> samples;
     /// Spectrum of the packed samples, from which the spectra of both channels are separated.
     std::vector<std::complex<float>> spectrum;
@@ -99,15 +109,17 @@ private:
 
 /// Multi-resolution spatial analysis of stereo audio.
 ///
-/// Each tier transforms the newest samples with a Hann window, zero padded to twice its length
-/// so neighbouring bins interpolate the spectrum.
-/// The longest tier resolves the lowest octaves to under a hertz,
-/// and the shortest keeps the high frequencies sharp in time.
+/// Each tier transforms the newest samples, zero padded to twice its length so neighbouring bins interpolate the
+/// spectrum, and applies a periodic Hann window and its time derivative to the spectrum as three-tap filters, which
+/// costs one transform for both. The derivative reassigns every bin to the instantaneous frequency of its energy, so a
+/// sine draws as a thin line instead of across its main lobe. The longest tier resolves the lowest octaves to under a
+/// hertz, and the shortest keeps the high frequencies sharp in time.
 ///
 /// A bin's position follows the level difference between the channels, as in common spatial analyzers:
 /// the difference in dB through the stereo position curve, so the edges hold only nearly fully panned content.
 /// Its coherence is Re(L · conj(R)) / (|L| · |R|), which tells anti-phase content from mono content,
 /// since both sit in the centre by level alone.
+/// Both are measured over the neighbouring bins within POSITION_SMOOTHING_OCTAVES, while the level is the bin's own.
 ///
 /// Not thread safe. The editor's analysis worker owns it and uses it on the worker thread only.
 class SpatialAnalyzer
@@ -134,6 +146,16 @@ private:
     std::vector<float> rightHistory;
     /// The points of the frame being reported, reused between frames.
     std::vector<SpectralPoint> points;
+    /// Unwindowed left spectrum of the tier's reported bins and two more on each side, reused between frames.
+    std::vector<std::complex<float>> rawLeft;
+    /// Unwindowed right spectrum of the tier's reported bins and two more on each side, reused between frames.
+    std::vector<std::complex<float>> rawRight;
+    /// Hann-windowed left spectrum of the tier's reported bins, reused between frames.
+    std::vector<std::complex<float>> hannLeft;
+    /// Hann-windowed right spectrum of the tier's reported bins, reused between frames.
+    std::vector<std::complex<float>> hannRight;
+    /// Reassigned frequency of each of the tier's reported bins, in Hz, reused between frames.
+    std::vector<float> reassignedFrequencies;
     /// Receives every analyzed frame.
     SpectralFrameCallback frameCallback;
 
