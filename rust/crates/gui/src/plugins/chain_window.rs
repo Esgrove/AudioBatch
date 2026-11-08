@@ -14,7 +14,11 @@
 //! The main view owns the chain: this view sends every change as a `ChainEvent`,
 //! and the main view applies it and shows the window a new snapshot.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use audiobatch_plugins::{PluginDescription, sanitize_preset_name};
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -23,8 +27,8 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, IconName, Sizable as _};
 use gpui_kit::{
     AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, PromptLevel, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    WeakEntity, Window, div, px,
+    ParentElement as _, Pixels, PromptLevel, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, WeakEntity, Window, div, px,
 };
 
 use super::labels::VendorGroup;
@@ -57,6 +61,21 @@ const LATENCY_FONT_SIZE: f32 = 11.0;
 
 /// Width of the Add Plugin button, wide enough to read as the main action of the row.
 const ADD_PLUGIN_WIDTH: f32 = 200.0;
+
+/// Height of one popup menu row, the default item height of the gpui-kit popup menu.
+const MENU_ITEM_HEIGHT: f32 = 26.0;
+
+/// Padding around the rows of a popup menu in rems, on each side.
+const MENU_PADDING_REMS: f32 = 0.25;
+
+/// Gap between the rows of a popup menu in rems.
+const MENU_ROW_GAP_REMS: f32 = 0.125;
+
+/// Gap between the Add Plugin button and its menu in rems, the default offset of the gpui-kit popover.
+const MENU_OFFSET_REMS: f32 = 0.25;
+
+/// Space the plugin menus keep from the window edges, the margin gpui-kit snaps submenus to.
+const MENU_WINDOW_MARGIN: f32 = 4.0;
 
 /// Tooltip of the Add Plugin button.
 const ADD_PLUGIN_TOOLTIP: &str = "Add a known effect at the end of the chain.";
@@ -148,6 +167,9 @@ pub struct ChainView {
     snapshot: ChainSnapshot,
     preset_select: Entity<SelectState<Vec<SharedString>>>,
     preset_name: Entity<InputState>,
+    /// Bottom edge of the Add Plugin button from its last prepaint,
+    /// so its menu can grow down to the bottom of the window.
+    add_plugin_bottom: Rc<Cell<Option<Pixels>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -167,6 +189,7 @@ impl ChainView {
             snapshot: ChainSnapshot::default(),
             preset_select,
             preset_name,
+            add_plugin_bottom: Rc::new(Cell::new(None)),
             _subscriptions: subscriptions,
         };
         view.sync(snapshot, window, cx);
@@ -355,25 +378,42 @@ impl ChainView {
 
     /// Renders the Add Plugin button, whose menu has a submenu of effects for each vendor.
     /// Picking an effect adds it at the end of the chain.
+    /// The vendor menu may grow down to the bottom of the window and each submenu to the full window height,
+    /// and a menu scrolls only when its rows do not fit.
+    /// The label sits at the left of the button, with a spacer after it.
     fn render_add_plugin(&self, cx: &Context<Self>) -> impl IntoElement {
         let groups = self.snapshot.plugin_groups.clone();
         let view = cx.entity().downgrade();
-        Button::new("chain-add-plugin")
+        let button_bottom = Rc::clone(&self.add_plugin_bottom);
+        let measured_bottom = Rc::clone(&self.add_plugin_bottom);
+        let button = Button::new("chain-add-plugin")
             .label("Add Plugin")
             .icon(IconName::ChevronDown)
+            .child(div().flex_1())
             .small()
             .w(px(ADD_PLUGIN_WIDTH))
             .tooltip(ADD_PLUGIN_TOOLTIP)
             .disabled(groups.is_empty())
             .dropdown_menu(move |menu, window, cx| {
-                groups.iter().fold(menu.scrollable(true), |menu, group| {
+                let window_height = window.viewport_size().height;
+                let menu_top = button_bottom.get().map_or(px(MENU_WINDOW_MARGIN), |bottom| {
+                    bottom + window.rem_size() * MENU_OFFSET_REMS
+                });
+                let available = window_height - menu_top - px(MENU_WINDOW_MARGIN);
+                let menu = fit_menu(menu, groups.len(), available, window);
+                groups.iter().fold(menu, |menu, group| {
                     let plugins = group.plugins.clone();
                     let view = view.clone();
-                    menu.submenu(group.vendor.clone(), window, cx, move |submenu, _, _| {
+                    menu.submenu(group.vendor.clone(), window, cx, move |submenu, window, _| {
+                        let available = window.viewport_size().height - px(MENU_WINDOW_MARGIN) * 2.0;
+                        let submenu = fit_menu(submenu, plugins.len(), available, window);
                         vendor_submenu(submenu, &plugins, &view)
                     })
                 })
-            })
+            });
+        div()
+            .child(button)
+            .on_prepaint(move |bounds, _, _| measured_bottom.set(Some(bounds.bottom())))
     }
 
     /// Renders one slot row on a rounded background,
@@ -561,13 +601,39 @@ impl Render for ChainView {
 
 /// Fills the submenu of one vendor with its effects, each adding itself to the chain of the view when picked.
 fn vendor_submenu(submenu: PopupMenu, plugins: &[PluginDescription], view: &WeakEntity<ChainView>) -> PopupMenu {
-    plugins.iter().fold(submenu.scrollable(true), |submenu, plugin| {
+    plugins.iter().fold(submenu, |submenu, plugin| {
         let plugin = plugin.clone();
         let view = view.clone();
         submenu.item(PopupMenuItem::new(plugin.name.clone()).on_click(move |_, _, cx| {
             let _ = view.update(cx, |_, cx| cx.emit(ChainEvent::Add(plugin.clone())));
         }))
     })
+}
+
+/// Limits a popup menu of `rows` items to the `available` height,
+/// and makes it scrollable only when its rows are taller than that.
+/// A scrollable menu always shows a scrollbar and allows some scrolling,
+/// so short menus that fit must not be scrollable at all.
+fn fit_menu(menu: PopupMenu, rows: usize, available: Pixels, window: &Window) -> PopupMenu {
+    let available = available.max(px(MENU_ITEM_HEIGHT));
+    let menu = menu.max_h(available);
+    if menu_overflows(rows, available, window.rem_size()) {
+        menu.scrollable(true)
+    } else {
+        menu
+    }
+}
+
+/// Returns true when a popup menu of `rows` items is taller than the `available` height.
+fn menu_overflows(rows: usize, available: Pixels, rem_size: Pixels) -> bool {
+    menu_content_height(rows, rem_size) > available
+}
+
+/// Returns the height the rows of a popup menu take with its padding and the gaps between them.
+fn menu_content_height(rows: usize, rem_size: Pixels) -> Pixels {
+    let count = f32::from(u16::try_from(rows).unwrap_or(u16::MAX));
+    let gaps = (count - 1.0).max(0.0);
+    px(MENU_ITEM_HEIGHT) * count + rem_size * MENU_PADDING_REMS.mul_add(2.0, MENU_ROW_GAP_REMS * gaps)
 }
 
 #[cfg(test)]
@@ -621,5 +687,42 @@ mod integration_tests {
         .expect("disables duplicate scan requests");
         cx.run_until_parked();
         assert_eq!(events.borrow().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod test_menu_fit {
+    use super::*;
+
+    /// Root font size the tests measure menus with.
+    const REM: f32 = 16.0;
+
+    #[test]
+    fn content_height_counts_rows_gaps_and_padding() {
+        let one_row = menu_content_height(1, px(REM));
+        let five_rows = menu_content_height(5, px(REM));
+        assert!((f32::from(one_row) - 34.0).abs() < 1e-3);
+        assert!((f32::from(five_rows) - 146.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn short_listing_in_the_chain_window_does_not_scroll() {
+        let available = px(CHAIN_HEIGHT) - px(MENU_WINDOW_MARGIN) * 2.0;
+        for rows in 1..=5 {
+            assert!(!menu_overflows(rows, available, px(REM)), "{rows} rows");
+        }
+    }
+
+    #[test]
+    fn listing_taller_than_the_window_scrolls() {
+        let available = px(CHAIN_HEIGHT) - px(MENU_WINDOW_MARGIN) * 2.0;
+        assert!(menu_overflows(40, available, px(REM)));
+    }
+
+    #[test]
+    fn exact_fit_does_not_scroll() {
+        let available = menu_content_height(12, px(REM));
+        assert!(!menu_overflows(12, available, px(REM)));
+        assert!(menu_overflows(13, available, px(REM)));
     }
 }
