@@ -7,8 +7,8 @@ cmake_minimum_required(VERSION 4.2)
 
 project(
     "ImageControl"
-    VERSION 0.1.0
-    DESCRIPTION "Multiband mid/side stereo imaging effect"
+    VERSION 1.0.0
+    DESCRIPTION "Multiband stereo imaging plugin with mid/side and pan controls"
     LANGUAGES CXX C
 )
 
@@ -110,9 +110,13 @@ set(IMAGE_CONTROL_SOURCES
 target_sources(ImageControl PRIVATE ${IMAGE_CONTROL_SOURCES})
 target_include_directories(ImageControl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
-target_compile_definitions(
-    ImageControl PUBLIC JUCE_DISABLE_JUCE_VERSION_PRINTING=1 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
-                        JUCE_WEB_BROWSER=0
+target_compile_definitions(ImageControl
+    PUBLIC
+    JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+    JUCE_USE_CURL=0
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_WEB_BROWSER=0
+    JUCE_WIN_PER_MONITOR_DPI_AWARE=1
 )
 
 # On macOS the editor presents through JUCE's Metal layer renderer:

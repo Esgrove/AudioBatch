@@ -227,7 +227,7 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     delayPosition = 0;
 
     designThread = std::make_unique<KernelDesignThread>([this] { designRequestedKernels(true); });
-    designThread->startThread();
+    designThread->startThread(juce::Thread::Priority::low);
 }
 
 /// Stops the design thread. Processing must not run again before the next prepare.
