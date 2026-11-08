@@ -1,7 +1,9 @@
 /// Tests the mouse drags on SpatialSpectrogramView with synthesized mouse events through its real handlers:
 /// moving a middle band moves both its crossovers, moving the Low band moves only its upper crossover,
 /// a band move stops at the minimum ratio to the crossover that stays,
-/// and Ctrl or Cmd with a vertical drag changes the band's side gain.
+/// Ctrl or Cmd with a vertical drag changes the band's mid gain and, with Link, its side gain,
+/// Alt or Option with a vertical drag changes its side gain, and the wheel changes the gains by 0.1 dB a step.
+/// Also tests the wheel steps of ControlSlider.
 /// Also tests that the stereo position curve overlay shows after a curve change and fades out.
 /// Also tests the particles SpectrogramParticleBuilder prepares for the GPU renderer:
 /// which points become particles, how bright and large they are under the spectral tilt and the auto-scale,
@@ -10,6 +12,7 @@
 #include "analysis/SpatialAnalyzer.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ui/ControlSlider.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 
@@ -37,9 +40,9 @@ float parameterValue(ImageControlProcessor& processor, const juce::String& param
     return plainValue(*processor.getParameters().getParameter(parameterId));
 }
 
-/// Returns a mouse event on the view at a position, for a drag that started at another position.
+/// Returns a mouse event on a component at a position, for a drag that started at another position.
 juce::MouseEvent mouseEvent(
-    SpatialSpectrogramView& view,
+    juce::Component& view,
     const juce::Point<float> position,
     const juce::Point<float> downPosition,
     const juce::ModifierKeys modifiers
@@ -63,6 +66,14 @@ juce::MouseEvent mouseEvent(
         1,
         position != downPosition,
     };
+}
+
+/// Returns a notched mouse wheel event that turns the wheel by a number of Windows notches, positive for up.
+juce::MouseWheelDetails notch(const float notches)
+{
+    juce::MouseWheelDetails wheel {};
+    wheel.deltaY = notches * 60.0F / 256.0F;
+    return wheel;
 }
 
 /// Drags on the view from a start to an end position with modifier keys held, through its mouse handlers.
@@ -124,7 +135,7 @@ float brightness(const SpectrogramParticle& particle)
 TEST(SpectrogramView, DraggingAMiddleBandMovesBothItsCrossovers)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     // The Low Mid band spans 100 Hz to 500 Hz. Dragging from its middle up by one octave moves both edges.
     const float centreY = view.getPlotBounds().getCentreY();
@@ -140,7 +151,7 @@ TEST(SpectrogramView, DraggingAMiddleBandMovesBothItsCrossovers)
 TEST(SpectrogramView, DraggingTheLowBandMovesOnlyItsUpperCrossover)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const float centreY = view.getPlotBounds().getCentreY();
     dragOnView(view, {xOf(view, 50.0), centreY}, {xOf(view, octavesAbove(50.0, 0.5)), centreY});
@@ -152,7 +163,7 @@ TEST(SpectrogramView, DraggingTheLowBandMovesOnlyItsUpperCrossover)
 TEST(SpectrogramView, BandMoveStopsAtTheMinimumRatioToTheCrossoverThatStays)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     // The High Mid band spans 500 Hz to 5 kHz.
     // A drag far to the left stops when 500 Hz reaches a third of an octave above the low crossover at 100 Hz,
@@ -166,26 +177,102 @@ TEST(SpectrogramView, BandMoveStopsAtTheMinimumRatioToTheCrossoverThatStays)
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), lowest * 10.0F, 10.0F);
 }
 
-TEST(SpectrogramView, CommandDragChangesTheBandWidth)
+TEST(SpectrogramView, CommandDragChangesTheMidGainAndLinkedSide)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const float x = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
-    // 50 pixels up at 0.12 dB per pixel raises the High Mid side gain by 6 dB, leaving the crossovers alone.
+    // 50 pixels up at 0.12 dB per pixel raises the High Mid mid gain by 6 dB, and Link, on by default, the side too.
     dragOnView(view, {x, centreY}, {x, centreY - 50.0F}, juce::ModifierKeys::commandModifier);
+
+    EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 6.0F, 0.05F);
+    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 6.0F, 0.05F);
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F, 1.0F);
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 1.0F);
+}
+
+TEST(SpectrogramView, CommandDragLeavesTheSideAloneWithoutLink)
+{
+    ImageControlProcessor processor;
+    processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const float x = xOf(view, 2000.0);
+    const float centreY = view.getPlotBounds().getCentreY();
+    dragOnView(view, {x, centreY}, {x, centreY + 50.0F}, juce::ModifierKeys::commandModifier);
+
+    EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), -6.0F, 0.05F);
+    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 0.0F, 0.01F);
+}
+
+TEST(SpectrogramView, AltDragChangesTheSideGain)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const float x = xOf(view, 2000.0);
+    const float centreY = view.getPlotBounds().getCentreY();
+    dragOnView(view, {x, centreY}, {x, centreY - 50.0F}, juce::ModifierKeys::altModifier);
 
     EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 6.0F, 0.05F);
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 0.0F, 0.01F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F, 1.0F);
-    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 1.0F);
+}
+
+TEST(SpectrogramView, WheelStepsChangeTheGainsByATenthOfADecibel)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const juce::Point<float> position {xOf(view, 2000.0), view.getPlotBounds().getCentreY()};
+
+    view.mouseWheelMove(mouseEvent(view, position, position, {}), notch(1.0F));
+    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 0.1F, 0.001F);
+    EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 0.0F, 0.001F);
+
+    view.mouseWheelMove(mouseEvent(view, position, position, juce::ModifierKeys::shiftModifier), notch(1.0F));
+    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 0.11F, 0.001F);
+
+    view.mouseWheelMove(mouseEvent(view, position, position, juce::ModifierKeys::commandModifier), notch(-1.0F));
+    EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), -0.1F, 0.001F);
+    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 0.01F, 0.001F);
+}
+
+TEST(ControlSlider, WheelNotchMovesATenthOfADecibel)
+{
+    ControlSlider slider;
+    slider.setRange(static_cast<double>(BAND_GAIN_MIN_DB), static_cast<double>(BAND_GAIN_MAX_DB), 0.01);
+    slider.setValue(0.0);
+    const juce::Point<float> position {1.0F, 1.0F};
+
+    slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(1.0F));
+    EXPECT_NEAR(slider.getValue(), 0.1, 1e-9);
+    slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(-3.0F));
+    EXPECT_NEAR(slider.getValue(), -0.2, 1e-9);
+    slider.mouseWheelMove(mouseEvent(slider, position, position, juce::ModifierKeys::shiftModifier), notch(1.0F));
+    EXPECT_NEAR(slider.getValue(), -0.19, 1e-9);
+}
+
+TEST(ControlSlider, SmoothWheelMovementAddsUpToWholeSteps)
+{
+    juce::MouseWheelDetails wheel {};
+    wheel.deltaY = 0.03F;
+    wheel.isSmooth = true;
+    float remainder = 0.0F;
+    // A step takes 0.05 of smooth movement, so the first event takes none and the second one.
+    EXPECT_EQ(wheelSteps(wheel, remainder), 0);
+    EXPECT_EQ(wheelSteps(wheel, remainder), 1);
+    wheel.isReversed = true;
+    EXPECT_EQ(wheelSteps(wheel, remainder), 0);
+    EXPECT_EQ(wheelSteps(wheel, remainder), -1);
 }
 
 TEST(SpectrogramView, PositionCurveOverlayShowsAfterAChangeAndFades)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     // Opening the editor sets the saved curve, which does not show the overlay.
     view.setPositionCurve(StereoPositionCurve());

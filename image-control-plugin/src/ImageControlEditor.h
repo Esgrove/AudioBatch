@@ -21,6 +21,7 @@
 #include <juce_opengl/juce_opengl.h>
 
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -49,6 +50,7 @@ public:
     ImageControlEditor& operator=(const ImageControlEditor&) = delete;
     ImageControlEditor& operator=(ImageControlEditor&&) = delete;
 
+    bool keyPressed(const juce::KeyPress& key) override;
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
@@ -56,6 +58,7 @@ private:
     [[nodiscard]] int compactHeight() const;
     [[nodiscard]] double persistenceSeconds() const;
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
+    [[nodiscard]] std::optional<std::size_t> bandUnderPointer() const;
 
     void applySpectrogramHidden(bool hidden);
     void applyViewSettings();

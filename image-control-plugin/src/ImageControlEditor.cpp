@@ -2,7 +2,8 @@
 /// the delta, the bypass, and the output gain,
 /// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
 /// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
-/// applying the display settings with bypassing and hiding the spectrogram, and measuring the frame rate.
+/// applying the display settings with bypassing and hiding the spectrogram, measuring the frame rate,
+/// and the keyboard shortcuts for solo, delta, and bypass.
 
 #include "ImageControlEditor.h"
 
@@ -74,6 +75,14 @@ constexpr int VALUE_BOX_HEIGHT {20};
 /// Opacity of the band strips while the plugin is bypassed.
 constexpr float BYPASSED_STRIP_ALPHA {0.45F};
 
+/// Toggles a boolean parameter in a host change gesture of its own.
+void toggleParameter(juce::RangedAudioParameter& parameter)
+{
+    parameter.beginChangeGesture();
+    parameter.setValueNotifyingHost(parameter.getValue() >= 0.5F ? 0.0F : 1.0F);
+    parameter.endChangeGesture();
+}
+
 /// Returns a boolean editor setting.
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 {
@@ -86,12 +95,14 @@ bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     AudioProcessorEditor(owner),
     imageControlProcessor(owner),
-    spectrogram(owner.getParameters()),
+    spectrogram(owner.getParameters(), owner.getEditorState()),
     spectrogramWorker(owner.getAnalyzerFifo(), spectrogramRenderer),
     tooltips(*this),
     vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
 {
     setLookAndFeel(&lookAndFeel);
+    // Clicks on controls that take no keyboard focus focus the editor, so its shortcuts work.
+    setWantsKeyboardFocus(true);
     auto& editorState = owner.getEditorState();
     auto& parameters = owner.getParameters();
 
@@ -102,7 +113,14 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 
     bypassButton.setClickingTogglesState(true);
     bypassButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::ORANGE));
-    bypassButton.setTooltip("Pass the input through unprocessed, keeping the same latency");
+#if JUCE_MAC
+    const juce::String shortcutModifier = "Cmd";
+#else
+    const juce::String shortcutModifier = "Ctrl";
+#endif
+    bypassButton.setTooltip(
+        "Pass the input through unprocessed, keeping the same latency (" + shortcutModifier + "+B)"
+    );
     bypassAttachment
         = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, BYPASS_ID, bypassButton);
     addAndMakeVisible(bypassButton);
@@ -110,7 +128,10 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     deltaButton.setClickingTogglesState(true);
     deltaButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::YELLOW));
     deltaButton.setColour(juce::TextButton::textColourOnId, juce::Colour(palette::GREY_DARK));
-    deltaButton.setTooltip("Output only what the processing changes: the output minus the input. Bypass turns it off");
+    deltaButton.setTooltip(
+        "Output only what the processing changes: the output minus the input. Bypass turns it off (" + shortcutModifier
+        + "+D)"
+    );
     deltaAttachment
         = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, DELTA_ID, deltaButton);
     addAndMakeVisible(deltaButton);
@@ -207,6 +228,35 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(juce::Colour(palette::GREY_DARK));
 }
 
+/// Handles the editor's keyboard shortcuts, which also reach it from controls that do not use the key:
+/// S toggles the solo of the band under the pointer, in the spectrogram or a band strip,
+/// and Ctrl or Cmd with D toggles Delta and with B toggles Bypass.
+/// Each toggle is its own host gesture. Other keys go on to the host.
+bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
+{
+    const auto& parameters = imageControlProcessor.getParameters();
+    const auto modifiers = key.getModifiers();
+    const auto character = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
+    const bool commandOnly = modifiers.isCommandDown() && !modifiers.isAltDown() && !modifiers.isShiftDown();
+    if (commandOnly && character == 'd') {
+        toggleParameter(*parameters.getParameter(DELTA_ID));
+        return true;
+    }
+    if (commandOnly && character == 'b') {
+        toggleParameter(*parameters.getParameter(BYPASS_ID));
+        return true;
+    }
+    if (character == 's' && !modifiers.isCommandDown() && !modifiers.isCtrlDown() && !modifiers.isAltDown()) {
+        const auto band = bandUnderPointer();
+        if (!band.has_value()) {
+            return false;
+        }
+        toggleParameter(*parameters.getParameter(soloParameterId(*band)));
+        return true;
+    }
+    return false;
+}
+
 /// Lays out the header, the spectrogram, the divider, and the band strips,
 /// and remembers the size and the band section height in the editor settings once the saved layout is restored.
 /// While the spectrogram is hidden, the band strips fill the editor below the header,
@@ -255,6 +305,20 @@ void ImageControlEditor::resized()
         editorState.setProperty(EDITOR_HEIGHT_PROPERTY, getHeight(), nullptr);
     }
     editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandSectionHeight, nullptr);
+}
+
+/// Returns the band under the pointer: the band hovered in the spectrogram, or the band strip the pointer is over.
+std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
+{
+    if (const auto band = spectrogram.getHoveredBand()) {
+        return band;
+    }
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        if (bandStrips.at(band)->isMouseOver(true)) {
+            return band;
+        }
+    }
+    return std::nullopt;
 }
 
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
