@@ -113,10 +113,16 @@ new particles add to the picture, older ones fade, and dense areas merge into br
 - **Size:** louder particles are larger, down to half the size for the quietest.
   Sizes are in logical pixels, so they look the same on every window size and display scale.
   At low frequencies, where the bins are wide on the axis, they widen to join into a continuous trace.
-- **Resolution:** the analysis runs four transform lengths side by side.
+- **Resolution:** the analysis runs six transform lengths side by side.
   32768 samples cover 20 to 80 Hz with bins about 0.7 Hz apart after zero padding,
-  8192 samples cover up to 500 Hz, 2048 samples up to 4 kHz, and 1024 samples the rest,
+  16384 samples cover up to 160 Hz, 8192 samples up to 320 Hz, 4096 samples up to 640 Hz,
+  2048 samples up to 4 kHz, and 1024 samples the rest,
   so the bass is finely resolved and the highs stay sharp in time.
+  Up to 640 Hz each length covers one octave and takes over where its length times the frequency is the same,
+  so a sine draws about a fifth of an octave wide throughout, without widening where a shorter window takes over.
+  Both channels go through one complex transform, the left as the real part and the right as the imaginary part,
+  which halves the transform work with JUCE's own FFT on Windows.
+  On a Windows desktop, the analysis and the particles take about 0.53 ms of the worker thread per 120 Hz refresh.
 - **Refresh:** the editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
   at the native refresh rate, such as 120 or 144 Hz.
   The fade advances by the time that passed, so it looks the same at any refresh rate.

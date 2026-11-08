@@ -9,6 +9,7 @@
 
 #include <juce_dsp/juce_dsp.h>
 
+#include <complex>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -39,14 +40,15 @@ using SpectralFrameCallback = std::function<void(std::span<const SpectralPoint> 
 
 /// One resolution of the analysis: a window length, the frequency range it reports, and how often it runs.
 struct AnalysisTier {
-    /// Transform of twice the window length.
+    /// Complex transform of twice the window length.
     std::unique_ptr<juce::dsp::FFT> fft;
     /// Hann window of the tier's length.
     std::vector<float> window;
-    /// Windowed left samples, zero padded, and then their spectrum.
-    std::vector<float> leftSpectrum;
-    /// Windowed right samples, zero padded, and then their spectrum.
-    std::vector<float> rightSpectrum;
+    /// Windowed samples, the left channel as the real part and the right channel as the imaginary part,
+    /// zero padded to the transform length.
+    std::vector<std::complex<float>> samples;
+    /// Spectrum of the packed samples, from which the spectra of both channels are separated.
+    std::vector<std::complex<float>> spectrum;
     /// Lowest frequency the tier reports, in Hz.
     double minFrequency {0.0};
     /// Highest frequency the tier reports, in Hz.
@@ -87,7 +89,6 @@ public:
 
 private:
     void analyzeTier(AnalysisTier& tier);
-    void copyNewest(std::span<const float> ring, std::span<float> destination) const;
 
     /// The tiers from the lowest frequencies to the highest.
     std::vector<AnalysisTier> tiers;

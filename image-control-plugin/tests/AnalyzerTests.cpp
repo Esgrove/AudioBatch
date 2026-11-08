@@ -1,5 +1,6 @@
 /// Tests SpatialAnalyzer and the spectrogram's frequency axis:
 /// where hard-panned, centred, partly panned, and anti-phase sines land, with their level and coherence,
+/// how evenly wide a sine draws across the bass,
 /// how finely the lowest octaves are resolved, and the logarithmic and mel axis mappings.
 
 #include "analysis/SpatialAnalyzer.h"
@@ -105,6 +106,38 @@ TEST(Analyzer, PositionFollowsTheLevelDifferenceOverTheFocus)
     EXPECT_NEAR(peak.position, 0.5F, 0.01F);
     EXPECT_FLOAT_EQ(positionFromMagnitudes(1.0F, 0.0F, 18.0F), 1.0F);
     EXPECT_FLOAT_EQ(positionFromMagnitudes(0.0F, 0.0F, 18.0F), 0.0F);
+}
+
+TEST(Analyzer, SineWidthIsEvenAcrossTheBass)
+{
+    // A sine spreads over the bins within the 36 dB display range below its peak.
+    // The tiers start where the window length times the frequency is the same,
+    // so the spread stays between about a sixth and a quarter of an octave across the bass and the low mids.
+    // A tier that took over from a four times longer window would widen it to over 0.4 octave.
+    const auto displayedWidth = [](const double frequency) {
+        const auto sine = makeSine(frequency, 0.5F, 48'000);
+        const auto points = analyze(sine, sine);
+        const auto tone = static_cast<float>(frequency);
+        const float threshold = loudestBetween(points, tone / 2.0F, tone * 2.0F).level * std::pow(10.0F, -3.6F);
+        float lowest = tone;
+        float highest = tone;
+        for (const auto& point : points) {
+            if (point.frequency > tone / 2.0F && point.frequency < tone * 2.0F && point.level >= threshold) {
+                lowest = std::min(lowest, point.frequency);
+                highest = std::max(highest, point.frequency);
+            }
+        }
+        return std::log2(highest / lowest);
+    };
+    float narrowest = 1.0F;
+    float widest = 0.0F;
+    for (const double frequency : {60.0, 79.0, 81.0, 90.0, 100.0, 159.0, 161.0, 300.0, 330.0, 700.0}) {
+        const float width = displayedWidth(frequency);
+        EXPECT_LT(width, 0.28F) << frequency;
+        narrowest = std::min(narrowest, width);
+        widest = std::max(widest, width);
+    }
+    EXPECT_LT(widest, narrowest * 1.6F);
 }
 
 TEST(Analyzer, ResolvesNeighbouringBassTones)
