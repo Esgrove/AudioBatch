@@ -1,6 +1,7 @@
 /// Implements SpectrogramRenderer: the shaders, the float render targets and the glow chain,
 /// the hand-off of particles from the message thread, and the passes of one frame:
 /// fade, particles, glow, and the tone-mapped composite into the plot.
+/// The particles add up in linear light, and the composite encodes the result as sRGB for the display.
 
 #include "ui/SpectrogramRenderer.h"
 
@@ -27,27 +28,29 @@ namespace
 {
 using namespace juce::gl;
 
-/// Sharp core of a particle, in logical pixels, so dots look the same size on every display scale.
-constexpr float CORE_SIGMA_PIXELS {0.9F};
+/// Sharp core of the loudest particles, in logical pixels, so dots look the same size on every display scale.
+/// Quieter particles are smaller, down to the builder's smallest particle size.
+constexpr float CORE_SIGMA_PIXELS {1.8F};
 /// Widest horizontal spread of a particle, in logical pixels, which bounds the widest low-frequency bins.
 constexpr float MAX_SIGMA_PIXELS {24.0F};
-/// Spread of the faint halo around every particle, in logical pixels,
+/// Spread of the faint halo around the loudest particles, in logical pixels,
 /// so neighbouring dots join softly without losing their sharp cores.
-constexpr float HALO_SIGMA_PIXELS {3.0F};
+constexpr float HALO_SIGMA_PIXELS {5.0F};
 /// Brightness of the halo relative to the core.
-constexpr float HALO_WEIGHT {0.06F};
+constexpr float HALO_WEIGHT {0.15F};
 /// How many spreads a sprite reaches before it is cut off.
 constexpr float SPRITE_REACH_SIGMAS {3.0F};
 /// Scale from the accumulated particle energy to the tone curve.
-constexpr float EXPOSURE {1.6F};
-/// Strength of the glow relative to the sharp particles. Kept low for a clear picture with a soft bloom.
-constexpr float GLOW_STRENGTH {0.6F};
+constexpr float EXPOSURE {1.2F};
+/// Strength of the glow relative to the sharp particles, for a soft bloom around dense content.
+constexpr float GLOW_STRENGTH {0.8F};
 /// Exposed energy where the brightest colours start to lighten towards white.
-constexpr float HIGHLIGHT_START {1.5F};
+constexpr float HIGHLIGHT_START {2.0F};
 /// Exposed energy where the lightening towards white is complete.
-constexpr float HIGHLIGHT_END {6.0F};
-/// Share of white mixed into the brightest colours, so dense clusters get light cores and stay coloured.
-constexpr float HIGHLIGHT_MIX {0.55F};
+constexpr float HIGHLIGHT_END {8.0F};
+/// Share of white mixed into the brightest colours, so dense clusters get white-hot cores.
+/// Single dots stay coloured.
+constexpr float HIGHLIGHT_MIX {0.6F};
 /// Spread of the tent filter of the glow upsampling, in source texels.
 constexpr float UPSAMPLE_RADIUS {1.0F};
 /// Most particles kept waiting for the OpenGL thread.
@@ -56,7 +59,7 @@ constexpr std::size_t MAX_PENDING_PARTICLES {1'000'000};
 /// Longest pending fade, in seconds. A longer fade leaves nothing visible anyway.
 constexpr double MAX_PENDING_FADE_SECONDS {10.0};
 /// Floats per particle instance, matching SpectrogramParticle.
-constexpr int PARTICLE_FLOATS {6};
+constexpr int PARTICLE_FLOATS {7};
 /// Nanoseconds in a millisecond, for the GPU timer.
 constexpr double NANOSECONDS_PER_MILLISECOND {1.0e6};
 /// Background of the plot, as ARGB.
@@ -86,10 +89,12 @@ void main()
 
 /// Places a sprite around a particle: the centre from its plot shares, the spread from its bin spacing,
 /// never narrower than the sharp core, and the size from the wider of the core and the halo.
+/// The core and the halo scale with the particle's size, so louder content draws larger dots.
 constexpr auto PARTICLE_VERTEX_SHADER = R"(#version 330 core
 layout(location = 0) in vec2 corner;
 layout(location = 1) in vec3 placement;
 layout(location = 2) in vec3 tint;
+layout(location = 3) in float particleSize;
 uniform vec2 targetSize;
 uniform float coreSigma;
 uniform float maxSigma;
@@ -102,8 +107,10 @@ flat out vec3 particleColour;
 void main()
 {
     vec2 centre = vec2(placement.x, 1.0 - placement.y) * targetSize;
-    core = vec2(clamp(placement.z * targetSize.x, coreSigma, maxSigma), coreSigma);
-    halo = vec2(max(core.x, haloSigma), haloSigma);
+    float sizedCore = coreSigma * particleSize;
+    float sizedHalo = haloSigma * particleSize;
+    core = vec2(clamp(placement.z * targetSize.x, sizedCore, maxSigma), sizedCore);
+    halo = vec2(max(core.x, sizedHalo), sizedHalo);
     offset = corner * halo * reach;
     particleColour = tint;
     gl_Position = vec4((centre + offset) / targetSize * 2.0 - 1.0, 0.0, 1.0);
@@ -170,7 +177,10 @@ void main()
 /// The curve maps the brightest channel with 1 − exp(−energy) and scales the others with it,
 /// so colours keep their hue and saturation instead of washing out,
 /// and only the brightest clusters lighten towards white.
-/// The result goes over the plot background, inside rounded corners with an antialiased edge,
+/// The result goes over the plot background in linear light and is encoded as sRGB,
+/// since the framebuffer stores the encoded values the display shows,
+/// so faint particles get their full perceived brightness instead of sinking into the background.
+/// It is drawn inside rounded corners with an antialiased edge,
 /// and a little noise keeps the dark gradients from banding.
 constexpr auto COMPOSITE_FRAGMENT_SHADER = R"(#version 330 core
 uniform sampler2D accumulation;
@@ -192,6 +202,14 @@ float noise(vec2 position)
 {
     return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
 }
+vec3 srgbToLinear(vec3 value)
+{
+    return mix(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), value));
+}
+vec3 linearToSrgb(vec3 value)
+{
+    return mix(value * 12.92, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), value));
+}
 void main()
 {
     vec2 local = gl_FragCoord.xy - plotOrigin;
@@ -205,7 +223,8 @@ void main()
         mapped = energy * (toned / peak);
         mapped = mix(mapped, vec3(toned), smoothstep(highlight.x, highlight.y, peak) * highlight.z);
     }
-    vec3 result = background + mapped * (1.0 - background);
+    vec3 linearBackground = srgbToLinear(background);
+    vec3 result = linearToSrgb(clamp(linearBackground + mapped * (1.0 - linearBackground), 0.0, 1.0));
     result += (noise(gl_FragCoord.xy) - 0.5) / 255.0;
     float distance = roundedBoxDistance(local - plotSize * 0.5, plotSize * 0.5, cornerRadius);
     colour = vec4(result, clamp(0.5 - distance, 0.0, 1.0));
@@ -391,6 +410,9 @@ void SpectrogramRenderer::newOpenGLContextCreated()
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, red)));
     glVertexAttribDivisor(2, 1);
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, size)));
+    glVertexAttribDivisor(3, 1);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 

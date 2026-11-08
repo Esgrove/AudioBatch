@@ -97,15 +97,21 @@ new particles add to the picture, older ones fade, and dense areas merge into br
 
 - **Position:** the level difference between the channels in dB divided by the focus, clamped to the edges.
   The default focus of 18 dB is about where a source sounds fully to one side.
-- **Colour:** frequency colours run from red in the bass through orange, yellow, and green to blue in the highs.
+- **Colour:** frequency colours run from red in the bass through yellow in the low mids, green around 1 kHz,
+  and cyan in the presence range to blue in the highs and violet towards magenta in the air band.
   Phase colours instead run from blue for in-phase content to red for anti-phase content.
   Anti-phase content has equal levels in both channels, so it sits in the centre like mono content,
   and the phase colours tell the two apart.
-- **Brightness:** the level in dB over a 72 dB range through a power curve,
-  so quiet content shows as faint dots and the noise floor stays dark.
+- **Brightness:** the level in dB with a tilt of 3 dB per octave around 1 kHz,
+  which evens out the falling spectrum of music so the highs show as clearly as the bass.
+  An auto-scale reference follows the loudest tilted bin, rising at once and falling by 12 dB per second,
+  and the 36 dB below it map to the brightness through a power curve,
+  so quiet and loud material look alike, quiet content shows as faint dots, and the noise floor stays dark.
   A new particle is bright from its first frame, and steady content builds up over the persistence.
+  The particles add up in linear light, and the result is encoded as sRGB for the display.
   The tone curve keeps the hue of bright colours, and only the densest clusters lighten towards white.
-- **Size:** particles keep the same size in logical pixels on every window size and display scale.
+- **Size:** louder particles are larger, down to half the size for the quietest.
+  Sizes are in logical pixels, so they look the same on every window size and display scale.
   At low frequencies, where the bins are wide on the axis, they widen to join into a continuous trace.
 - **Resolution:** the analysis runs four transform lengths side by side.
   32768 samples cover 20 to 80 Hz with bins about 0.7 Hz apart after zero padding,
