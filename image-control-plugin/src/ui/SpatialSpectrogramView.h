@@ -4,7 +4,9 @@
 /// The SpectrogramRenderer draws the particles on the GPU,
 /// and the view paints the grid, the bands, and the crossovers over them.
 /// The crossovers are vertical lines that can be dragged, a band can be dragged sideways to move it,
-/// and a vertical drag with Ctrl or Cmd, or the mouse wheel, over a band changes its width.
+/// a vertical drag or the mouse wheel over a band with Ctrl or Cmd changes its mid gain,
+/// and with Alt or Option, or the plain mouse wheel, its side gain.
+/// Bands that the solos mute are veiled.
 
 #pragma once
 
@@ -30,12 +32,13 @@ constexpr float SPECTROGRAM_PLOT_CORNER_RADIUS {4.0F};
 
 /// What a mouse drag on the spectrogram changes, chosen when the button goes down.
 /// A drag on a crossover line moves that crossover, a drag on a band moves the band,
-/// and a drag on a band with Ctrl or Cmd held changes the band's width.
+/// and a vertical drag on a band changes its mid gain with Ctrl or Cmd held, and its side gain with Alt or Option.
 enum class SpectrogramDrag : std::uint8_t {
     none,
     crossover,
     band,
-    width,
+    midGain,
+    sideGain,
 };
 
 /// What the overlays show, compared on every display refresh, so the view repaints only when it changes.
@@ -45,6 +48,7 @@ struct SpectrogramOverlayState {
     std::array<float, CROSSOVER_COUNT> crossoverHighlights {};
     Crossovers crossovers {};
     std::array<double, BAND_COUNT> bandWidths {};
+    std::array<bool, BAND_COUNT> mutedBands {};
     float positionCurveOpacity {0.0F};
     bool renderingBypassed {false};
     bool renderingUnavailable {false};
@@ -58,9 +62,10 @@ struct SpectrogramOverlayState {
 class SpatialSpectrogramView final : public juce::Component, public juce::TooltipClient
 {
 public:
-    explicit SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters);
+    SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters, juce::ValueTree editorState);
 
     [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
+    [[nodiscard]] std::optional<std::size_t> getHoveredBand() const;
     [[nodiscard]] float positionCurveOpacity() const;
 
     void advance(double seconds);
@@ -84,11 +89,13 @@ public:
 
 private:
     [[nodiscard]] static std::vector<std::size_t> bandEdges(std::size_t band);
-    [[nodiscard]] static bool isWidthModifier(const juce::ModifierKeys& modifiers);
+    [[nodiscard]] static bool isMidModifier(const juce::ModifierKeys& modifiers);
+    [[nodiscard]] static bool isSideModifier(const juce::ModifierKeys& modifiers);
 
     [[nodiscard]] Crossovers currentCrossovers() const;
     [[nodiscard]] SpectrogramOverlayState currentOverlayState() const;
     [[nodiscard]] juce::Rectangle<float> framesPerSecondArea() const;
+    [[nodiscard]] std::array<bool, BAND_COUNT> mutedBands() const;
 
     [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
     [[nodiscard]] std::optional<std::size_t> crossoverNear(float x) const;
@@ -97,8 +104,10 @@ private:
     [[nodiscard]] float frequencyToX(double frequency) const;
     [[nodiscard]] float positionToY(double position) const;
     [[nodiscard]] double xToFrequency(float x) const;
+    [[nodiscard]] bool isLinked(std::size_t band) const;
 
-    void changeBandWidth(const juce::MouseEvent& event);
+    void applyGainChange(std::size_t band, bool mid, float change);
+    void changeBandGain(const juce::MouseEvent& event);
     void moveBand(const juce::MouseEvent& event);
     void moveCrossover(const juce::MouseEvent& event);
     void paintAxisLabels(juce::Graphics& graphics) const;
@@ -116,6 +125,8 @@ private:
     SpectrogramOverlayState shownOverlay;
     /// The stereo position curve the particles are placed with, which the curve overlay draws.
     StereoPositionCurve positionCurve;
+    /// The editor settings, which hold the Link toggle of each band.
+    juce::ValueTree editorSettings;
 
     /// Crossover parameters, owned by the parameter tree, which outlives the editor. Never null.
     std::array<juce::RangedAudioParameter*, CROSSOVER_COUNT> crossoverParameters {};
@@ -123,6 +134,8 @@ private:
     std::array<juce::RangedAudioParameter*, BAND_COUNT> midParameters {};
     /// Side gain parameters, owned by the parameter tree. Never null.
     std::array<juce::RangedAudioParameter*, BAND_COUNT> sideParameters {};
+    /// Solo parameters, owned by the parameter tree. Never null.
+    std::array<juce::RangedAudioParameter*, BAND_COUNT> soloParameters {};
     /// Animated hover highlight of each band, from 0 to 1.
     std::array<float, BAND_COUNT> bandHighlights {};
     /// Animated hover highlight of each crossover, from 0 to 1.
@@ -131,7 +144,7 @@ private:
     /// Crossovers when the current drag started.
     Crossovers dragStartCrossovers {};
 
-    /// Band being moved or having its width changed, if any.
+    /// Band being moved or having its gains changed, if any.
     std::optional<std::size_t> draggedBand;
     /// Crossover being dragged, if any.
     std::optional<std::size_t> draggedCrossover;
@@ -154,8 +167,14 @@ private:
     SpectrogramDrag drag {SpectrogramDrag::none};
     /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
-    /// Side gain in dB of the dragged band when its width drag started.
+    /// Mid gain in dB of the dragged band when its gain drag started.
+    float dragStartMid {0.0F};
+    /// Side gain in dB of the dragged band when its gain drag started.
     float dragStartSide {0.0F};
+    /// Smooth mouse wheel movement not yet turned into a whole step.
+    float wheelRemainder {0.0F};
+    /// Whether the current mid gain drag moves Side with Mid, as the band's Link asks.
+    bool dragLinked {false};
     /// Whether the particles are not drawn, while the audio keeps being processed.
     bool renderingBypassed {false};
     /// Whether the GPU renderer could not start, such as without OpenGL 3.3.

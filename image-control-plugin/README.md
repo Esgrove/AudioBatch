@@ -214,12 +214,16 @@ Dragging a band left or right moves it:
 a middle band moves both its crossovers and keeps its width in octaves,
 and the Low and High bands move only their inner crossover.
 The move stops where a crossover would come closer than a third of an octave to one that stays.
-Dragging a band up or down with Ctrl, or Cmd on macOS, changes its width,
-and so does the mouse wheel over it, both finely with Shift.
+Dragging a band up or down with Ctrl, or Cmd on macOS, changes its Mid gain,
+and with Alt, or Option on macOS, its Side gain, both finely with Shift.
+The mouse wheel over a band changes its Side gain, and its Mid gain with Ctrl or Cmd,
+by 0.1 dB a step, or 0.01 dB with Shift.
+Changing Mid this way follows the band's Link, moving Side by the same amount, like dragging the Mid slider.
 The cursor shows what a drag will do, and every drag is one host gesture.
 Hovering a band also draws the response of every band as a curve in the band's colour,
 the hovered band bright with a soft fill and the others faint, so their overlap at the crossovers shows.
 The crossover lines are faint at rest, and glow brighter and thicker while hovered or dragged.
+While some bands are soloed, a dark veil covers the muted bands.
 
 Every control has a tooltip, which fades and slides in once the pointer rests on it for about half a second,
 and fades out when the pointer moves on.
@@ -254,12 +258,27 @@ Each band has a strip with its own controls:
   Moving Width sets Side to Mid plus 20 · log10(width) dB, and width 0 turns Side off.
   Width is an editor control, not a parameter, so automation never has two values fighting over the side gain.
   It cannot be set while Mid is off.
+- **Solo**, the headphones left of Link, solos the band, as described under Processing.
+  It is a parameter, and several bands can be soloed at once.
 - **Link** makes dragging Mid move Side by the same amount, which keeps the width while changing the level of the band.
 - **Pan** moves the band toward the left or right channel after its gains, as described under Processing.
   It is a parameter, and double-clicking it centres the band.
 
 Sliders drag relative to where they are grabbed, drag finely with Shift, and reset on double-click.
 Once clicked, the arrow keys nudge them, finely with Shift.
+The mouse wheel moves the gain sliders by 0.1 dB a step, Pan by 1%, and Width by 0.01,
+and the gains by 0.01 dB with Shift.
+A notched wheel takes one step per notch, and a trackpad one step per short stretch of scrolling.
+
+### Keyboard shortcuts
+
+The shortcuts work while the editor has the keyboard focus, which a click in it gives:
+
+- **S** solos the band under the pointer, in the spectrogram or a band strip, and pressing it again unsolos it.
+- **Ctrl+D**, or **Cmd+D** on macOS, toggles Delta.
+- **Ctrl+B**, or **Cmd+B** on macOS, toggles Bypass.
+
+Each shortcut is one host gesture, and keys the editor does not use go on to the host.
 
 The Link toggles, the display settings, and the editor size are saved with the plugin state,
 and a reopened editor comes back at its saved size.
@@ -376,7 +395,7 @@ The unit tests check the same kinds of signals against the analyzer.
 - `src/analysis/` holds the multi-resolution spatial analysis in `SpatialAnalyzer.*`,
   and `StereoSampleFifo.h`, which carries audio from the audio thread to the editor.
 - `src/ui/` holds the editor parts:
-  `SpatialSpectrogramView.*` paints the overlays and handles the mouse,
+  `SpatialSpectrogramView.*` paints the overlays, and `SpatialSpectrogramViewInput.cpp` handles its mouse gestures,
   `SpectrogramParticles.*` turns analyzed bins into particles and holds the frequency scales and colours,
   `SpectrogramWorker.*` runs the analysis and builds the particles on a background thread,
   `SpectrogramRenderer.*` draws the particles with OpenGL,

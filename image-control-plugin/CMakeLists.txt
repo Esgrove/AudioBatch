@@ -101,6 +101,7 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramViewInput.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramParticles.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramParticles.h"

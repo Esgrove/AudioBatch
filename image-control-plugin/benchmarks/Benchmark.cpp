@@ -122,7 +122,7 @@ double timeSpectrogramAnalysis()
 /// as when every refresh repaints them, such as during a hover animation.
 double timeSpectrogramOverlays(ImageControlProcessor& processor)
 {
-    SpatialSpectrogramView view(processor.getParameters());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const juce::Image canvas(juce::Image::ARGB, VIEW_WIDTH, VIEW_HEIGHT, true);
     juce::Graphics graphics(canvas);

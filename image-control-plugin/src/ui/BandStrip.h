@@ -1,6 +1,7 @@
 /// Declares BandStrip, the controls of one band in the ImageControl editor:
 /// the Mid and Side gain sliders attached to their parameters,
-/// the Width macro that sets Side relative to Mid, the Link toggle, and the Pan slider attached to its parameter.
+/// the Width macro that sets Side relative to Mid, the Solo and Link toggles, and the Pan slider attached to its
+/// parameter.
 
 #pragma once
 
@@ -26,6 +27,7 @@ constexpr int BAND_STRIP_MIN_HEIGHT {236};
 /// Moving Width sets Side to Mid plus 20 · log10(width) dB, and width 0 turns Side off.
 /// With Link on, dragging Mid moves Side by the same amount, keeping the width.
 /// Pan moves the band toward the left or right channel after its mid and side gains.
+/// Solo is a parameter that mutes the bands that are not soloed, unless no band or every band is soloed.
 /// Width and Link are editor controls, not host parameters, so automation never has conflicting values.
 class BandStrip final : public juce::Component
 {
@@ -69,6 +71,8 @@ private:
     ControlSlider panSlider;
     /// The Width macro, which writes the side gain.
     ControlSlider widthSlider;
+    /// Solos the band: toggles its solo parameter, shown as headphones.
+    juce::DrawableButton soloButton {"Solo", juce::DrawableButton::ImageFitted};
     /// Keeps Side moving with Mid while Mid is dragged.
     juce::ToggleButton linkButton {"Link"};
 
@@ -78,6 +82,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
     /// Binds the Side slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sideAttachment;
+    /// Binds the Solo button to its parameter.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soloAttachment;
 
     /// Side gain parameter, owned by the parameter tree, which the Width and Link gestures change.
     juce::RangedAudioParameter& sideParameter;

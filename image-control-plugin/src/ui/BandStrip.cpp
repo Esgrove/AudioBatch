@@ -28,6 +28,10 @@ constexpr int TEXT_BOX_WIDTH {78};
 constexpr int TEXT_BOX_HEIGHT {22};
 /// Width of the Link toggle, in pixels.
 constexpr int LINK_WIDTH {60};
+/// Gap between the Solo button and the Link toggle, in pixels.
+constexpr int SOLO_GAP {6};
+/// How much brighter the headphone icon draws while the pointer is over the Solo button.
+constexpr float SOLO_HOVER_BRIGHTNESS {0.3F};
 /// Largest vertical gap between the range label and the first slider row, in pixels.
 /// The gap only takes height the slider rows do not need, so it is gone at the minimum strip height.
 constexpr int HEADER_SLIDER_GAP {16};
@@ -45,11 +49,57 @@ constexpr float NAME_FONT_HEIGHT {16.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
 /// Step of the Width slider.
 constexpr double WIDTH_STEP {0.01};
+/// Change of the Pan slider per mouse wheel step, in percent.
+constexpr double PAN_WHEEL_STEP {1.0};
+/// Side of the square box the headphone icon of the Solo button is drawn in, in icon units.
+constexpr float HEADPHONE_BOX {24.0F};
+/// Thickness of the headband of the headphone icon, in icon units.
+constexpr float HEADBAND_THICKNESS {2.0F};
+/// Corner radius of the ear cups of the headphone icon, in icon units.
+constexpr float EAR_CUP_CORNER {1.5F};
 
 static_assert(
     BAND_STRIP_MIN_HEIGHT == MARGIN * 2 + HEADER_ROW_HEIGHT * 2 + SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT),
     "The minimum strip height must fit the margins, the header rows, and the slider rows"
 );
+
+/// Returns a headphone icon in a HEADPHONE_BOX square: a headband arc over two ear cups.
+juce::Path headphonePath()
+{
+    constexpr float centreX {HEADPHONE_BOX * 0.5F};
+    constexpr float bandCentreY {13.0F};
+    constexpr float bandRadius {8.0F};
+    constexpr float cupTop {12.5F};
+    constexpr float cupWidth {5.0F};
+    constexpr float cupHeight {8.5F};
+    juce::Path headband;
+    headband.addCentredArc(
+        centreX,
+        bandCentreY,
+        bandRadius,
+        bandRadius,
+        0.0F,
+        -juce::MathConstants<float>::halfPi,
+        juce::MathConstants<float>::halfPi,
+        true
+    );
+    juce::Path icon;
+    juce::PathStrokeType(HEADBAND_THICKNESS, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)
+        .createStrokedPath(icon, headband);
+    icon.addRoundedRectangle(centreX - bandRadius - 1.0F, cupTop, cupWidth, cupHeight, EAR_CUP_CORNER);
+    icon.addRoundedRectangle(centreX + bandRadius + 1.0F - cupWidth, cupTop, cupWidth, cupHeight, EAR_CUP_CORNER);
+    return icon;
+}
+
+/// Returns the headphone icon filled with a colour.
+/// Every state of the Solo button uses the same path, so the icon does not move between them.
+std::unique_ptr<juce::Drawable> headphoneIcon(const juce::Colour colour)
+{
+    auto icon = std::make_unique<juce::DrawablePath>();
+    icon->setPath(headphonePath());
+    icon->setFill(colour);
+    return icon;
+}
 
 /// Sets a parameter to a plain value, inside the gesture already open, or in a gesture of its own.
 void setSideValue(juce::RangedAudioParameter& parameter, const float value, const bool inGesture)
@@ -62,7 +112,7 @@ void setSideValue(juce::RangedAudioParameter& parameter, const float value, cons
 }
 }  // namespace
 
-/// Creates the controls of a band, attaches Mid, Side, and Pan to their parameters,
+/// Creates the controls of a band, attaches Mid, Side, Pan, and Solo to their parameters,
 /// and binds Link to the editor settings.
 BandStrip::BandStrip(
     juce::AudioProcessorValueTreeState& parameters,
@@ -96,6 +146,7 @@ BandStrip::BandStrip(
 
     configureSlider(widthSlider, widthLabel, "Width");
     widthSlider.setRange(0.0, MAX_STEREO_WIDTH, WIDTH_STEP);
+    widthSlider.setWheelStep(WIDTH_STEP);
     widthSlider.setTooltip(
         "Side relative to mid: 0 is mono, 1 leaves the stereo image as it is, and 2 doubles the side"
     );
@@ -113,6 +164,7 @@ BandStrip::BandStrip(
 
     configureSlider(panSlider, panLabel, "Pan");
     panSlider.setDoubleClickReturnValue(true, 0.0);
+    panSlider.setWheelStep(PAN_WHEEL_STEP);
     panSlider.setTooltip("Moves the band toward the left or right channel after its width. Double-click to centre");
     panAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         parameters, panParameterId(band), panSlider
@@ -121,6 +173,25 @@ BandStrip::BandStrip(
     linkButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(linkPropertyName(band), nullptr));
     linkButton.setTooltip("Dragging Mid moves Side by the same amount, keeping the width");
     addAndMakeVisible(linkButton);
+
+    const auto offIcon = headphoneIcon(juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    const auto offHoverIcon = headphoneIcon(juce::Colour(palette::GREY_SUPER_LIGHT));
+    const auto onIcon = headphoneIcon(juce::Colour(palette::YELLOW));
+    const auto onHoverIcon = headphoneIcon(juce::Colour(palette::YELLOW).brighter(SOLO_HOVER_BRIGHTNESS));
+    soloButton.setImages(
+        offIcon.get(), offHoverIcon.get(), onIcon.get(), nullptr, onIcon.get(), onHoverIcon.get(), onHoverIcon.get()
+    );
+    soloButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
+    soloButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
+    soloButton.setEdgeIndent(0);
+    soloButton.setClickingTogglesState(true);
+    soloButton.setTooltip(
+        "Solo: listen to this band only. Solo several bands to hear them together. Press S over a band to toggle it"
+    );
+    soloAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        parameters, soloParameterId(band), soloButton
+    );
+    addAndMakeVisible(soloButton);
 
     midSlider.onDragStart = [this] {
         draggingMid = true;
@@ -158,6 +229,7 @@ BandStrip::~BandStrip()
     midAttachment.reset();
     sideAttachment.reset();
     panAttachment.reset();
+    soloAttachment.reset();
 }
 
 /// Paints the rounded background of the strip.
@@ -167,7 +239,7 @@ void BandStrip::paint(juce::Graphics& graphics)
     graphics.fillRoundedRectangle(getLocalBounds().toFloat(), CORNER_RADIUS);
 }
 
-/// Lays out the name and Link in the header row, the range below them,
+/// Lays out the name, Solo, and Link in the header row, the range below them,
 /// a gap that uses the spare height up to 16 pixels, and the Mid, Side, Width, and Pan sliders below it at full width,
 /// each with its label above it. The slider rows share the remaining height evenly.
 void BandStrip::resized()
@@ -175,6 +247,8 @@ void BandStrip::resized()
     auto area = getLocalBounds().reduced(MARGIN);
     auto header = area.removeFromTop(HEADER_ROW_HEIGHT);
     linkButton.setBounds(header.removeFromRight(LINK_WIDTH));
+    header.removeFromRight(SOLO_GAP);
+    soloButton.setBounds(header.removeFromRight(HEADER_ROW_HEIGHT));
     nameLabel.setBounds(header);
     rangeLabel.setBounds(area.removeFromTop(HEADER_ROW_HEIGHT));
     const int spareHeight = area.getHeight() - SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT);
