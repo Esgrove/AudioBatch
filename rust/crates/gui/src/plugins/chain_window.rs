@@ -9,7 +9,8 @@
 //! and buttons that open the editor, move the slot with two arrows, and remove it.
 //! A slot whose plugin could not be loaded shows its error instead of the latency.
 //! Below the rows the Add Plugin menu adds a known effect at the end, from one submenu per vendor,
-//! and the footer shows the total latency and the rate the live instances run at.
+//! and the buttons that rescan the plugins and clear the chain sit together at the right.
+//! The footer shows the total latency and the rate the live instances run at.
 //! The main view owns the chain: this view sends every change as a `ChainEvent`,
 //! and the main view applies it and shows the window a new snapshot.
 
@@ -53,6 +54,9 @@ const ARROW_SPACING: f32 = 4.0;
 
 /// Font size of the latency line under the slot label.
 const LATENCY_FONT_SIZE: f32 = 11.0;
+
+/// Width of the Add Plugin button, wide enough to read as the main action of the row.
+const ADD_PLUGIN_WIDTH: f32 = 200.0;
 
 /// Tooltip of the Add Plugin button.
 const ADD_PLUGIN_TOOLTIP: &str = "Add a known effect at the end of the chain.";
@@ -358,6 +362,7 @@ impl ChainView {
             .label("Add Plugin")
             .icon(IconName::ChevronDown)
             .small()
+            .w(px(ADD_PLUGIN_WIDTH))
             .tooltip(ADD_PLUGIN_TOOLTIP)
             .disabled(groups.is_empty())
             .dropdown_menu(move |menu, window, cx| {
@@ -487,9 +492,9 @@ impl Render for ChainView {
             .flex()
             .flex_row()
             .items_center()
-            .justify_between()
             .gap(px(ROW_SPACING))
             .child(self.render_add_plugin(cx))
+            .child(div().flex_1())
             .child(
                 Button::new("chain-rescan-plugins")
                     .label(if self.snapshot.scanning {
