@@ -119,6 +119,9 @@ pub enum InstanceError {
     /// Live processor handles prevent reconfiguration.
     #[error("The plugin is in use by an audio processor")]
     InUse,
+    /// A live processor has not yet received every queued parameter edit, so its state would miss them.
+    #[error("The plugin's audio processor has not yet received every parameter change")]
+    EditsPending,
     /// A zero-length parameter delivery failed, so no complete state can be saved.
     #[error("The plugin failed to flush parameter changes (result {result})")]
     ParameterFlush {
@@ -191,6 +194,9 @@ pub(crate) struct InstanceCore {
     live_processors: AtomicUsize,
     /// Whether a processor handle is inside a processing call.
     processing: AtomicBool,
+    /// Number of edits a processor handle took from the queue but could not deliver yet.
+    /// The handle stores it before its processing call ends, so `live_state` can tell that edits are in flight.
+    carried_edits: AtomicUsize,
 }
 
 /// The COM objects of an instance.
@@ -276,6 +282,21 @@ impl InstanceCore {
     /// Clears the mark of `try_begin_processing`.
     pub(crate) fn end_processing(&self) {
         self.processing.store(false, Ordering::Release);
+    }
+
+    /// Records how many edits a processor handle carries to its next block.
+    /// Lock-free, so it may run in an audio callback.
+    pub(crate) fn set_carried_edits(&self, count: usize) {
+        self.carried_edits.store(count, Ordering::SeqCst);
+    }
+
+    /// Returns true when no queued or carried edit waits for a processor, and no processing call is delivering one.
+    /// The queue is read first and the carried count last,
+    /// so an edit a processing call took from the queue is seen either as processing or as carried.
+    fn edits_delivered(&self) -> bool {
+        self.edits.is_empty()
+            && !self.processing.load(Ordering::SeqCst)
+            && self.carried_edits.load(Ordering::SeqCst) == 0
     }
 }
 
@@ -385,6 +406,7 @@ impl PluginInstance {
                 active: AtomicBool::new(false),
                 live_processors: AtomicUsize::new(0),
                 processing: AtomicBool::new(false),
+                carried_edits: AtomicUsize::new(0),
             }),
             class_id,
             layout: None,
@@ -643,20 +665,30 @@ impl PluginInstance {
     pub fn state(&self, ui: &UiThread) -> Result<PluginState, InstanceError> {
         self.ensure_no_processors()?;
         self.flush_parameter_edits(ui)?;
-        let component = self.component_state(ui);
-        let controller = self.core.parts.controller.as_ref().map_or_else(Vec::new, |controller| {
-            let stream = MemoryStream::create();
-            let pointer = stream
-                .to_com_ptr::<IBStream>()
-                .map_or(std::ptr::null_mut(), |stream| stream.as_ptr());
-            // SAFETY: the controller and the stream are valid for the call.
-            if unsafe { controller.getState(pointer) } == kResultOk {
-                stream.data()
-            } else {
-                Vec::new()
-            }
-        });
-        Ok(PluginState { component, controller })
+        Ok(self.captured_state(ui))
+    }
+
+    /// Captures the component and controller state while a processor handle may keep processing.
+    ///
+    /// Without processor handles it is `state`.
+    /// With them, VST3 allows `getState` on the UI thread while the processor runs,
+    /// but only edits the processor already received are in the component state.
+    /// So it captures only once every queued edit was delivered,
+    /// which a running processor does within one block,
+    /// and the snapshot then includes every edit queued before the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EditsPending` while a live processor has not yet received every queued edit, to be tried again later,
+    /// and the errors of `state` without processor handles.
+    pub fn live_state(&self, ui: &UiThread) -> Result<PluginState, InstanceError> {
+        if !self.has_processor_handles() {
+            return self.state(ui);
+        }
+        if !self.core.edits_delivered() {
+            return Err(InstanceError::EditsPending);
+        }
+        Ok(self.captured_state(ui))
     }
 
     /// Restores a captured state into the component and the controller,
@@ -857,6 +889,24 @@ impl PluginInstance {
             return Err(InstanceError::InUse);
         }
         Ok(())
+    }
+
+    /// Captures the component and controller state as they are, without delivering queued edits first.
+    fn captured_state(&self, ui: &UiThread) -> PluginState {
+        let component = self.component_state(ui);
+        let controller = self.core.parts.controller.as_ref().map_or_else(Vec::new, |controller| {
+            let stream = MemoryStream::create();
+            let pointer = stream
+                .to_com_ptr::<IBStream>()
+                .map_or(std::ptr::null_mut(), |stream| stream.as_ptr());
+            // SAFETY: the controller and the stream are valid for the call.
+            if unsafe { controller.getState(pointer) } == kResultOk {
+                stream.data()
+            } else {
+                Vec::new()
+            }
+        });
+        PluginState { component, controller }
     }
 
     /// Captures the component state, which is whatever the plugin wrote, even when it reported a failure.
@@ -1499,6 +1549,63 @@ mod test_parameter_snapshots {
             drop(processor);
             let captured = values(&instance.state(ui).expect("retired snapshot"));
             assert!((captured.get(256).expect("parameter 256") - 0.5).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn live_capture_waits_for_a_running_processor_to_receive_queued_edits() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("instance");
+            let mut processor = instance.processor(ui).expect("processor");
+            let before = instance.live_state(ui).expect("nothing pending");
+            instance
+                .set_parameter(ui, BULK_PARAMETER_START + 256, 0.5)
+                .expect("edit");
+            assert!(matches!(instance.live_state(ui), Err(InstanceError::EditsPending)));
+            processor.process(1).expect("delivers the edit");
+            let captured = instance.live_state(ui).expect("live snapshot");
+            assert_ne!(captured, before);
+            assert!((values(&captured).get(256).expect("parameter 256") - 0.5).abs() < f64::EPSILON);
+            drop(processor);
+            assert_eq!(instance.state(ui).expect("retired snapshot"), captured);
+        });
+    }
+
+    #[test]
+    fn live_capture_waits_for_edits_a_processor_carries_to_its_next_block() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("instance");
+            let mut processor = instance.processor(ui).expect("processor");
+            for index in 0..257 {
+                instance
+                    .set_parameter(ui, BULK_PARAMETER_START + index, 0.25)
+                    .expect("edit");
+            }
+            processor.process(1).expect("first batch");
+            assert!(instance.core.edits.is_empty());
+            assert!(matches!(instance.live_state(ui), Err(InstanceError::EditsPending)));
+            processor.process(1).expect("carried batch");
+            let captured = values(&instance.live_state(ui).expect("live snapshot"));
+            assert!(
+                captured
+                    .iter()
+                    .take(257)
+                    .all(|value| (value - 0.25).abs() < f64::EPSILON)
+            );
+        });
+    }
+
+    #[test]
+    fn live_capture_without_a_processor_flushes_like_state() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("instance");
+            instance
+                .set_parameter(ui, BULK_PARAMETER_START + 256, 0.5)
+                .expect("edit");
+            let captured = instance.live_state(ui).expect("flushed snapshot");
+            assert!(instance.core.edits.is_empty());
+            assert_eq!(instance.state(ui).expect("state"), captured);
+            assert!((values(&captured).get(256).expect("parameter 256") - 0.5).abs() < f64::EPSILON);
         });
     }
 

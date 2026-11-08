@@ -67,6 +67,9 @@ pub struct PluginHost {
     pub scan: Option<RunningScan>,
     /// What the last scan of this session found.
     pub last_report: Option<ScanReport>,
+    /// Live captures left for the settings of closed editors, while the preview's processors still receive edits.
+    /// `None` when no closed editor waits for its settings to be saved.
+    pub pending_editor_capture: Option<u8>,
 }
 
 /// The progress a running scan last reported.
@@ -126,6 +129,7 @@ impl PluginHost {
             editor_owner,
             scan: None,
             last_report: None,
+            pending_editor_capture: None,
         };
         (host, problems)
     }

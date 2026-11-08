@@ -4,6 +4,7 @@
 //! and none while the preview is off or no plugin is enabled.
 //! Before instances are prepared again, the chain is taken out of the player,
 //! and the view waits until the audio callback has let go of it, so no processor runs during the reconfiguration.
+//! Saving the settings of a closed editor leaves the chain in the player, see `app/plugins.rs`.
 //! The housekeeping tick passes changed tails on to the player
 //! and turns the preview off when a plugin failed, reporting the plugin and its error.
 
