@@ -1,26 +1,26 @@
 # ImageControl
 
-A multiband stereo imaging effect by Esgrove, built with JUCE as a VST3 and, on macOS, an Audio Unit.
+A multiband stereo imaging effect built with JUCE.
+VST3 for Windows and MacOS, and Audio Unit for macOS.
 It splits the signal into four frequency bands and sets the mid and side level and the pan of each band separately,
-so the stereo image can be narrowed, widened, rebalanced, or moved to one side in one frequency range
-without touching the others.
+so the stereo image can be narrowed, widened, rebalanced, or moved to one side in specific frequency ranges.
 A spatial spectrogram shows where the energy of each frequency sits in the stereo field.
 
-The plugin lives in the AudioBatch repository for now and is mainly used from AudioBatch's plugin chain,
+The plugin lives in the AudioBatch repository and is mainly used from AudioBatch's plugin chain,
 but it is a standalone plugin that works in any VST3 host on macOS and Windows, and in any Audio Unit host on macOS.
 
 ## Parameters
 
-| Id                           | Name                     | Range                        | Default |
-| ---------------------------- | ------------------------ | ---------------------------- | ------- |
-| `crossover_low`              | Low Crossover            | 20 Hz to 20 kHz, logarithmic | 100 Hz  |
-| `crossover_mid`              | Mid Crossover            | 20 Hz to 20 kHz, logarithmic | 500 Hz  |
-| `crossover_high`             | High Crossover           | 20 Hz to 20 kHz, logarithmic | 5 kHz   |
-| `band1_mid` to `band4_mid`   | Low: Mid to High: Mid    | -60 dB (off) to +12 dB       | 0 dB    |
-| `band1_side` to `band4_side` | Low: Side to High: Side  | -60 dB (off) to +12 dB       | 0 dB    |
-| `band1_pan` to `band4_pan`   | Low: Pan to High: Pan    | 100L to 100R                 | C       |
-| `output_gain`                | Output Gain              | -24 dB to +12 dB             | 0 dB    |
-| `bypass`                     | Bypass                   | off or on                    | off     |
+| Id                           | Name                    | Range                        | Default |
+|------------------------------|-------------------------|------------------------------|---------|
+| `crossover_low`              | Low Crossover           | 20 Hz to 20 kHz, logarithmic | 100 Hz  |
+| `crossover_mid`              | Mid Crossover           | 20 Hz to 20 kHz, logarithmic | 500 Hz  |
+| `crossover_high`             | High Crossover          | 20 Hz to 20 kHz, logarithmic | 5 kHz   |
+| `band1_mid` to `band4_mid`   | Low: Mid to High: Mid   | -60 dB (off) to +12 dB       | 0 dB    |
+| `band1_side` to `band4_side` | Low: Side to High: Side | -60 dB (off) to +12 dB       | 0 dB    |
+| `band1_pan` to `band4_pan`   | Low: Pan to High: Pan   | 100L to 100R                 | C       |
+| `output_gain`                | Output Gain             | -24 dB to +12 dB             | 0 dB    |
+| `bypass`                     | Bypass                  | off or on                    | off     |
 
 The bands are named Low, Low Mid, High Mid, and High,
 so the parameters are named Low: Mid, Low Mid: Side, High: Pan, and so on.
@@ -35,7 +35,8 @@ The processing and the display both apply that rule, so dragging one crossover i
 
 The left and right channels are split into mid, (L + R) / 2, and side, (L − R) / 2.
 Both go through three linear-phase lowpass filters, one per crossover.
-Each crossover fades from one band to the next over one octave, with a raised-cosine step on a logarithmic frequency axis.
+Each crossover fades from one band to the next over one octave, with a raised-cosine step on a logarithmic frequency
+axis.
 The bands are built as differences:
 the lowest lowpass, the differences between neighbouring lowpasses,
 and the delayed signal minus the highest lowpass.
@@ -234,18 +235,6 @@ Last, it compares the 16-bit PCM the two formats wrote, sample by sample.
 On an Apple Silicon Mac both formats rendered at about 58 times real time,
 with bit-identical output.
 
-## Future Work
-
-- Investigate rendering the spatial spectrogram with native GPU views:
-  a Metal view on macOS and a Direct3D view on Windows, embedded in the editor.
-  The fade, the blur, and the tone curve would run as shaders on a particle texture,
-  which would allow much larger particle buffers and effects such as bloom.
-  It means two rendering backends to write and keep in step,
-  so first measure how long the CPU rendering takes per refresh,
-  and consider moving the analysis and the particle work to a background thread.
-- Compare the macOS Metal layer renderer with plain Core Graphics.
-  JUCE notes that the Metal layer renderer can be slower for some content.
-
 ## Layout
 
 - `src/Parameters.*` holds the parameter ids, ranges, and defaults,
@@ -266,3 +255,16 @@ with bit-identical output.
 - `benchmarks/` holds `Benchmark.cpp`, which times the processing and the spectrogram,
   `PresetWriter.cpp`, which writes AudioBatch presets for both formats,
   and `compare_formats.py`, which renders and compares the formats through AudioBatch.
+
+## Future Work
+
+- Investigate rendering the spatial spectrogram with native GPU views:
+  a Metal view on macOS and a Direct3D view on Windows, embedded in the editor.
+  The fade, the blur, and the tone curve would run as shaders on a particle texture,
+  which would allow much larger particle buffers and effects such as bloom.
+  It means two rendering backends to write and keep in step,
+  so first measure how long the CPU rendering takes per refresh,
+  and consider moving the analysis and the particle work to a background thread.
+- Compare the macOS Metal layer renderer with plain Core Graphics.
+  JUCE notes that the Metal layer renderer can be slower for some content.
+- Enable / disable the spectrogram view. Disable the spectrogram only, or alternatively hide it completely.

@@ -378,7 +378,8 @@ void SpatialSpectrogramView::updateGrid()
         return atLimit || std::abs(wanted - current) > current / GRID_RESIZE_THRESHOLD_DIVISOR;
     };
     if (differs(columns, wantedColumns, BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_COLUMNS)
-        || differs(rows, wantedRows, BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_ROWS)) {
+        || differs(rows, wantedRows, BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_ROWS))
+    {
         allocateGrid(wantedColumns, wantedRows);
     }
 }
@@ -814,7 +815,8 @@ void SpatialSpectrogramView::blurBuffer()
             const auto blurred = rowOf(blurScratch, row);
             blurred.front() = source.front() * columnCentre + (source.front() + source[1]) * columnWeight;
             for (std::size_t column = 1; column + 1 < columnCount; ++column) {
-                blurred[column] = source[column] * columnCentre + (source[column - 1] + source[column + 1]) * columnWeight;
+                blurred[column]
+                    = source[column] * columnCentre + (source[column - 1] + source[column + 1]) * columnWeight;
             }
             blurred.back() = source.back() * columnCentre + (source[columnCount - 2] + source.back()) * columnWeight;
         }
