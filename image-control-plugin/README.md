@@ -177,13 +177,15 @@ new particles add to the picture, older ones fade, and dense areas merge into br
   builds the glow from a five-level downsample and upsample chain,
   and tone maps the result into the plot with rounded corners and a little dither against banding.
   With **Solid layers** on, the composite draws the particles as stacked translucent solids instead.
-  It reads the quarter-size level of the glow chain, a smooth field of the particles, with a bicubic sample,
-  and fills four layers where its tone-mapped density passes 6, 18, 38, and 62%,
+  It reads the quarter-size level of the glow chain, a smooth field of the particles, with a bicubic sample.
+  The field is copied before the smaller levels are added back into it,
+  since their wide blurs would draw wide layers around a narrow mono line.
+  The composite fills four layers where its tone-mapped density passes 6, 18, 38, and 62%,
   each more opaque and brighter than the one around it and tinted with the field's own colour,
   with a thin antialiased outline on each.
   Weak sound draws as faint, open shapes and strong sound as dense stacked solids,
   and the sharp particles show on top only where they are bright, so the main elements stay drawn as lines.
-  It adds no passes, so switching costs nothing and keeps the picture.
+  It adds only that quarter-size copy, so switching costs almost nothing and keeps the picture.
   JUCE paints the grid, the bands, and the controls over the GL picture, repainting only the regions that change,
   so the cost hardly grows with the window size.
   The frame rate readout counts the frames drawn, and Debug builds add the GPU time per frame.

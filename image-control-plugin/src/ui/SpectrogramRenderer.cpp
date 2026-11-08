@@ -64,6 +64,8 @@ constexpr double MAX_PENDING_FADE_SECONDS {10.0};
 constexpr int PARTICLE_FLOATS {8};
 /// Glow chain level the solid mode draws its layers from: a quarter of the plot size,
 /// smooth enough for calm outlines while still following the shapes of the particles.
+/// The field copies the level before the upsampling adds the smaller levels into it,
+/// since their wide blurs would spread a narrow mono line into wide layers.
 constexpr std::size_t SOLID_FIELD_LEVEL {1};
 /// Scale from the glow chain level to the exposed density of the solid layers.
 /// The blur spreads the particles' energy, so the field needs more gain than the sharp picture.
@@ -585,7 +587,7 @@ void SpectrogramRenderer::renderOpenGL()
     if (drawingParticles) {
         fade(work.fadeSeconds, work.persistenceSeconds);
         drawParticles(scale);
-        drawBloom();
+        drawBloom(solid);
     }
 
     // The default framebuffer has its origin at the bottom left.
@@ -652,12 +654,15 @@ bool SpectrogramRenderer::resizeTargets(const int width, const int height)
             return false;
         }
     }
-    return true;
+    const auto& fieldLevel = bloomLevels.at(SOLID_FIELD_LEVEL);
+    return createTarget(solidField, fieldLevel.width, fieldLevel.height, static_cast<GLint>(GL_RGBA16F));
 }
 
 /// Builds the glow: halves the picture through the chain, then adds each level back into the one above it,
 /// so the first level holds a wide, smooth blur of the particles.
-void SpectrogramRenderer::drawBloom()
+/// When solid, it copies the field level into the solid field between the two,
+/// so the layers have only that level's own blur.
+void SpectrogramRenderer::drawBloom(const bool solid)
 {
     glBindVertexArray(screenVertexArray);
     glDisable(GL_BLEND);
@@ -672,6 +677,23 @@ void SpectrogramRenderer::drawBloom()
         );
         glDrawArrays(GL_TRIANGLES, 0, 3);
         source = &level;
+    }
+    if (solid) {
+        const auto& fieldLevel = bloomLevels.at(SOLID_FIELD_LEVEL);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fieldLevel.framebuffer);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, solidField.framebuffer);
+        glBlitFramebuffer(
+            0,
+            0,
+            fieldLevel.width,
+            fieldLevel.height,
+            0,
+            0,
+            solidField.width,
+            solidField.height,
+            GL_COLOR_BUFFER_BIT,
+            GL_NEAREST
+        );
     }
 
     glEnable(GL_BLEND);
@@ -699,7 +721,7 @@ void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport,
     glBindVertexArray(screenVertexArray);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    const auto& field = bloomLevels.at(SOLID_FIELD_LEVEL);
+    const auto& field = solidField;
     bindTexture(accumulation, GL_TEXTURE0);
     bindTexture(bloomLevels.front(), GL_TEXTURE1);
     bindTexture(field, GL_TEXTURE2);
@@ -843,6 +865,7 @@ void SpectrogramRenderer::releaseResources()
     for (auto& level : bloomLevels) {
         releaseTarget(level);
     }
+    releaseTarget(solidField);
 #if JUCE_DEBUG
     if (timerQueries.front() != 0) {
         glDeleteQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
