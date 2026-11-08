@@ -99,7 +99,14 @@ constexpr double FRAME_SECONDS {512.0 / 48'000.0};
 /// Returns an analyzed point at a frequency, a stereo position, and a level.
 SpectralPoint point(const float frequency, const float position, const float level)
 {
-    return {.frequency = frequency, .spacing = 10.0F, .position = position, .level = level, .coherence = 1.0F};
+    return {
+        .frequency = frequency,
+        .reassignedFrequency = frequency,
+        .spacing = 10.0F,
+        .position = position,
+        .level = level,
+        .coherence = 1.0F,
+    };
 }
 
 /// Returns the level in power of a point that is a number of dB below full scale.
@@ -247,6 +254,16 @@ TEST(SpectrogramParticles, ParticlesFollowTheFrequencyScale)
     builder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
     ASSERT_EQ(builder.particles().size(), 1U);
     EXPECT_NEAR(builder.particles()[0].x, frequencyToShare(1000.0, FrequencyScale::mel), 1.0e-6);
+}
+
+TEST(SpectrogramParticles, ParticlesSitAtTheReassignedFrequency)
+{
+    SpectrogramParticleBuilder builder;
+    auto reassigned = point(1000.0F, 0.0F, 1.0F);
+    reassigned.reassignedFrequency = 1010.0F;
+    builder.addFrame(std::array {reassigned}, FRAME_SECONDS);
+    ASSERT_EQ(builder.particles().size(), 1U);
+    EXPECT_NEAR(builder.particles()[0].x, frequencyToShare(1010.0, FrequencyScale::logarithmic), 1.0e-6);
 }
 
 TEST(SpectrogramParticles, LongerPersistenceDrawsFainterParticles)

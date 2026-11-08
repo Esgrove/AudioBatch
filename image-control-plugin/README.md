@@ -115,6 +115,10 @@ new particles add to the picture, older ones fade, and dense areas merge into br
   The curve rises gently below the midpoint and flattens towards the edge,
   the more sharply the closer the two settings are.
   Sound in one channel only sits at that channel's edge.
+  The level difference of a bin is measured over its neighbours within 1/32 octave, while its level is its own.
+  Decorrelated sound, such as reverb or wide cymbals, has a random level difference in every bin,
+  so the dense highs draw at their average position instead of spraying over the whole height,
+  while a sine, whose bins share one position, stays where it is.
   Changing either setting draws the curve over the spectrogram for about three seconds before it fades:
   guide lines where 3, 6, 12, 18, 24, 36, and 48 dB land, the midpoint and edge highlighted,
   and the curve itself, with the level difference along the centre line.
@@ -140,10 +144,17 @@ new particles add to the picture, older ones fade, and dense areas merge into br
   2048 samples up to 4 kHz, and 1024 samples the rest,
   so the bass is finely resolved and the highs stay sharp in time.
   Up to 640 Hz each length covers one octave and takes over where its length times the frequency is the same,
-  so a sine draws about a fifth of an octave wide throughout, without widening where a shorter window takes over.
+  so a sine's main lobe covers about a fifth of an octave throughout, without widening where a shorter window takes over.
   Both channels go through one complex transform, the left as the real part and the right as the imaginary part,
   which halves the transform work with JUCE's own FFT on Windows.
-  On a Windows desktop, the analysis and the particles take about 0.53 ms of the worker thread per 120 Hz refresh.
+  The frames are transformed unwindowed, and the periodic Hann window and its time derivative are applied to the spectrum,
+  as three-tap filters two bins apart, so one transform gives both.
+  The derivative reassigns each bin to the instantaneous frequency of its energy,
+  and the particle is drawn there, so every bin of a sine's main lobe lands on the sine's frequency.
+  A sine then draws as a thin line at any window size, instead of a fifth of an octave wide,
+  while its bins still give it the brightness of the whole lobe.
+  A bin keeps its own frequency when the reassignment would move it outside the window's main lobe.
+  On a Windows desktop, the analysis and the particles take about 0.57 ms of the worker thread per 120 Hz refresh.
 - **Refresh:** the editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
   at the native refresh rate, such as 120 or 144 Hz.
   The fade advances by the time that passed, so it looks the same at any refresh rate.
