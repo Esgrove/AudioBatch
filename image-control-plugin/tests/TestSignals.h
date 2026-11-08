@@ -1,5 +1,6 @@
 /// Declares and implements the signal helpers the ImageControl tests share:
-/// sines, deterministic noise, level differences between channels, and RMS measurement over a range of samples.
+/// sines and sine combs, deterministic white and pink noise, level differences between channels,
+/// and RMS measurement over a range of samples.
 
 #pragma once
 
@@ -36,6 +37,53 @@ inline std::vector<float> makeNoise(const float amplitude, const std::size_t sam
     std::vector<float> signal(samples);
     for (auto& value : signal) {
         value = distribution(generator);
+    }
+    return signal;
+}
+
+/// Returns pink noise, falling 3 dB per octave, from a fixed seed, so runs repeat exactly.
+/// It filters the seeded white noise with Paul Kellet's refined pink filter, accurate to about 0.05 dB above 9 Hz,
+/// and peaks at about the given amplitude.
+inline std::vector<float> makePinkNoise(const float amplitude, const std::size_t samples, const unsigned seed)
+{
+    const auto white = makeNoise(1.0F, samples, seed);
+    std::vector<float> signal(samples);
+    double b0 = 0.0;
+    double b1 = 0.0;
+    double b2 = 0.0;
+    double b3 = 0.0;
+    double b4 = 0.0;
+    double b5 = 0.0;
+    double b6 = 0.0;
+    for (std::size_t sample = 0; sample < samples; ++sample) {
+        const auto input = static_cast<double>(white[sample]);
+        b0 = 0.99886 * b0 + input * 0.0555179;
+        b1 = 0.99332 * b1 + input * 0.0750759;
+        b2 = 0.96900 * b2 + input * 0.1538520;
+        b3 = 0.86650 * b3 + input * 0.3104856;
+        b4 = 0.55000 * b4 + input * 0.5329522;
+        b5 = -0.7616 * b5 - input * 0.0168980;
+        const double pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + input * 0.5362;
+        b6 = input * 0.115926;
+        // The filter gains about 9 at its peak, so this scale keeps the result near the amplitude.
+        signal[sample] = static_cast<float>(pink * 0.11) * amplitude;
+    }
+    return signal;
+}
+
+/// Returns the sum of sines of the given frequencies, each of the given amplitude.
+inline std::vector<float> makeComb(
+    const std::span<const double> frequencies,
+    const float amplitude,
+    const std::size_t samples
+)
+{
+    std::vector<float> signal(samples, 0.0F);
+    for (const double frequency : frequencies) {
+        const auto sine = makeSine(frequency, amplitude, samples);
+        for (std::size_t sample = 0; sample < samples; ++sample) {
+            signal[sample] += sine[sample];
+        }
     }
     return signal;
 }

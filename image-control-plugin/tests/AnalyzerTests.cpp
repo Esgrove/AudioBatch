@@ -1,6 +1,6 @@
 /// Tests SpatialAnalyzer and the spectrogram's frequency axis:
-/// the stereo position curve, where hard-panned, centred, partly panned, and anti-phase sines land,
-/// with their level and coherence, how evenly wide a sine draws across the bass,
+/// the stereo position curve, where hard-panned, centred, partly panned, and anti-phase sines,
+/// sine combs, and noise land, with their level and coherence, how evenly wide a sine draws across the bass,
 /// how finely the lowest octaves are resolved, and the logarithmic and mel axis mappings.
 
 #include "analysis/SpatialAnalyzer.h"
@@ -15,6 +15,7 @@
 #include <functional>
 #include <iterator>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -147,6 +148,33 @@ TEST(Analyzer, PannedSinesLandOnTheCurve)
     }
 }
 
+TEST(Analyzer, CombWithAlternatingHardPansPeaksAtEachToneAndEdge)
+{
+    // The odd tones are in the left channel only and the even tones in the right channel only.
+    const std::vector<double> leftTones {40.0, 160.0, 640.0, 2560.0, 10'240.0};
+    const std::vector<double> rightTones {80.0, 320.0, 1280.0, 5120.0};
+    const auto points = analyze(makeComb(leftTones, 0.1F, 48'000), makeComb(rightTones, 0.1F, 48'000));
+    for (const auto& [tones, edge] : {std::pair {leftTones, 1.0F}, std::pair {rightTones, -1.0F}}) {
+        for (const double tone : tones) {
+            const auto frequency = static_cast<float>(tone);
+            const auto peak = loudestBetween(points, frequency / 1.2F, frequency * 1.2F);
+            EXPECT_NEAR(peak.frequency, frequency, frequency * 0.02F) << tone;
+            EXPECT_NEAR(peak.position, edge, 1.0e-3F) << tone;
+        }
+    }
+}
+
+TEST(Analyzer, CombAtOnePanSitsAtOnePositionInEveryTier)
+{
+    const std::vector<double> tones {40.0, 80.0, 160.0, 320.0, 640.0, 1280.0, 2560.0, 5120.0, 10'240.0};
+    const auto left = makeComb(tones, 0.1F, 48'000);
+    const auto points = analyze(left, withLevelDifference(left, 12.0));
+    for (const double tone : tones) {
+        const auto frequency = static_cast<float>(tone);
+        EXPECT_NEAR(loudestBetween(points, frequency / 1.2F, frequency * 1.2F).position, 0.5F, 0.01F) << tone;
+    }
+}
+
 TEST(Analyzer, SineWidthIsEvenAcrossTheBass)
 {
     // A sine spreads over the bins within the 36 dB display range below its peak.
@@ -177,6 +205,38 @@ TEST(Analyzer, SineWidthIsEvenAcrossTheBass)
         widest = std::max(widest, width);
     }
     EXPECT_LT(widest, narrowest * 1.6F);
+}
+
+TEST(Analyzer, CentredPinkNoiseSitsInTheCentreInPhase)
+{
+    const auto noise = makePinkNoise(0.5F, 48'000, 7);
+    for (const auto& point : analyze(noise, noise)) {
+        EXPECT_NEAR(point.position, 0.0F, 1.0e-3F) << point.frequency;
+        EXPECT_NEAR(point.coherence, 1.0F, 1.0e-3F) << point.frequency;
+    }
+}
+
+TEST(Analyzer, LeftOnlyNoiseSitsAtTheLeftEdge)
+{
+    const auto noise = makeNoise(0.5F, 48'000, 8);
+    for (const auto& point : analyze(noise, std::vector<float>(noise.size(), 0.0F))) {
+        EXPECT_FLOAT_EQ(point.position, 1.0F) << point.frequency;
+    }
+}
+
+TEST(Analyzer, UncorrelatedNoiseSpreadsAroundTheCentre)
+{
+    const auto points = analyze(makePinkNoise(0.5F, 48'000, 9), makePinkNoise(0.5F, 48'000, 10));
+    double weightedPosition = 0.0;
+    double weightedSpread = 0.0;
+    double totalLevel = 0.0;
+    for (const auto& point : points) {
+        weightedPosition += static_cast<double>(point.position * point.level);
+        weightedSpread += static_cast<double>(std::abs(point.position) * point.level);
+        totalLevel += static_cast<double>(point.level);
+    }
+    EXPECT_NEAR(weightedPosition / totalLevel, 0.0, 0.1);
+    EXPECT_GT(weightedSpread / totalLevel, 0.1);
 }
 
 TEST(Analyzer, ResolvesNeighbouringBassTones)

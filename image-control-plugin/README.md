@@ -292,6 +292,24 @@ Last, it compares the 16-bit PCM the two formats wrote, sample by sample.
 On an Apple Silicon Mac both formats rendered at about 58 times real time,
 with bit-identical output.
 
+### Test signals
+
+`test-signals/generate.py` writes stereo test signals for checking the spectrogram by eye into `test-signals/output/`,
+which git ignores:
+
+```shell
+uv run --script image-control-plugin/test-signals/generate.py
+```
+
+They are 10-second 48 kHz float WAV files:
+1 kHz sines at the centre, at 6, 12, 20, and 32 dB to either side, and in one channel only,
+and one file stepping through all of those pans,
+90 Hz sines and a logarithmic sweep that show how wide a sine draws in the bass and across the range,
+octave combs of sines from 40 Hz to 10240 Hz in several pan patterns,
+and white and pink noise at the centre, uncorrelated, in one channel, 12 dB to one side, and in anti-phase.
+A pan in the file names is the level difference between the channels, so the files show the position curve directly.
+The unit tests check the same kinds of signals against the analyzer.
+
 ## Layout
 
 - `src/Parameters.*` holds the parameter ids, ranges, and defaults,
@@ -315,6 +333,7 @@ with bit-identical output.
 - `benchmarks/` holds `Benchmark.cpp`, which times the processing and the spectrogram,
   `PresetWriter.cpp`, which writes AudioBatch presets for both formats,
   and `compare_formats.py`, which renders and compares the formats through AudioBatch.
+- `test-signals/` holds `generate.py`, which writes the test signals for checking the spectrogram by eye.
 
 ## Future Work
 
