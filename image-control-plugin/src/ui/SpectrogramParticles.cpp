@@ -21,9 +21,17 @@ namespace
 {
 /// Level range below the auto-scale reference from the faintest to the brightest particle, in dB.
 constexpr float DISPLAY_RANGE_DB {36.0F};
-/// Exponent from the level's share of the display range to the particle brightness.
-/// Above 1 it keeps the noise floor dark, so quiet bins show as faint dots instead of a haze over the plot.
-constexpr float LEVEL_GAMMA {1.6F};
+/// How much steeper the contrast curve gets from no contrast to full contrast, as an addition to its exponent.
+constexpr float CONTRAST_EXPONENT_RANGE {3.0F};
+/// How far the pivot of the contrast curve moves up from the middle of the display range at full contrast,
+/// so more of the quieter range darkens and only the strongest content stays bright.
+constexpr float CONTRAST_PIVOT_SHIFT {0.2F};
+/// Extra contrast at and above HIGH_CONTRAST_FULL_FREQUENCY, where dense, noisy bins would otherwise blur together.
+constexpr float HIGH_CONTRAST_BOOST {0.25F};
+/// Frequency from which the extra contrast of the highs rises, in Hz.
+constexpr float HIGH_CONTRAST_START_FREQUENCY {1000.0F};
+/// Frequency where the extra contrast of the highs is complete, in Hz.
+constexpr float HIGH_CONTRAST_FULL_FREQUENCY {16'000.0F};
 /// Tilt added to the displayed level per octave above the pivot, in dB.
 /// Music falls by about this much per octave, so the tilt shows the bass, the mids,
 /// and the highs about equally bright instead of leaving the highs faint.
@@ -43,7 +51,7 @@ constexpr float MIN_PARTICLE_WEIGHT {1.0e-4F};
 constexpr double FLASH_SECONDS {0.04};
 /// Horizontal spread of a particle relative to the distance to its neighbours,
 /// so neighbouring bins blend into a continuous trace at the low frequencies.
-constexpr float PARTICLE_SIGMA_PER_SPACING {0.6F};
+constexpr float PARTICLE_SIGMA_PER_SPACING {0.35F};
 /// Number of steps in the frequency colour table.
 constexpr std::size_t FREQUENCY_COLOUR_STEPS {1024};
 /// Quietest level the brightness is computed for, which keeps the logarithm finite.
@@ -212,6 +220,33 @@ LinearColour toSrgb(const LinearColour& colour)
     return {.red = linearToSrgb(colour.red), .green = linearToSrgb(colour.green), .blue = linearToSrgb(colour.blue)};
 }
 
+/// Returns the brightness of a level from its share of the display range, both from 0 to 1,
+/// through an S-curve set by the contrast.
+/// The curve is s^g / (s^g + (p · (1 − s) / (1 − p))^g), which passes through 0, ½ at the pivot p, and 1.
+/// The contrast raises the exponent g from 1 and moves the pivot up from the middle of the range,
+/// so quiet content darkens, loud content brightens, and the steep part between them separates the two.
+/// No contrast leaves the share unchanged, linear in dB.
+float contrastCurve(const float share, const float contrast)
+{
+    const float clampedShare = std::clamp(share, 0.0F, 1.0F);
+    const float clampedContrast = std::clamp(contrast, 0.0F, 1.0F + HIGH_CONTRAST_BOOST);
+    const float exponent = 1.0F + CONTRAST_EXPONENT_RANGE * clampedContrast;
+    const float pivot = 0.5F + CONTRAST_PIVOT_SHIFT * clampedContrast;
+    const float rising = std::pow(clampedShare, exponent);
+    const float falling = std::pow(pivot * (1.0F - clampedShare) / (1.0F - pivot), exponent);
+    return rising / (rising + falling);
+}
+
+/// Returns the contrast at a frequency: the setting, plus extra contrast that rises on the logarithmic axis
+/// from HIGH_CONTRAST_START_FREQUENCY to HIGH_CONTRAST_BOOST at HIGH_CONTRAST_FULL_FREQUENCY,
+/// so the dense, noisy highs show their strongest content most clearly.
+float frequencyContrast(const float frequency, const float contrast)
+{
+    const float ramp = std::log2(std::max(frequency, MIN_FREQUENCY) / HIGH_CONTRAST_START_FREQUENCY)
+        / std::log2(HIGH_CONTRAST_FULL_FREQUENCY / HIGH_CONTRAST_START_FREQUENCY);
+    return contrast + HIGH_CONTRAST_BOOST * std::clamp(ramp, 0.0F, 1.0F);
+}
+
 /// Creates a builder with no particles and the frequency colour table.
 SpectrogramParticleBuilder::SpectrogramParticleBuilder() : frequencyColours(buildFrequencyColours()) {}
 
@@ -223,8 +258,8 @@ std::span<const SpectrogramParticle> SpectrogramParticleBuilder::particles() con
 
 /// Turns the points of one analyzed frame into particles.
 /// A particle's level in dB gets the spectral tilt,
-/// and its share of the display range below the auto-scale reference sets its size,
-/// and its brightness through a power curve, which keeps the noise floor dark.
+/// and its share of the display range below the auto-scale reference goes through the contrast curve,
+/// which keeps the noise floor dark and sets the particle's brightness, size, and halo.
 /// A particle sits at its bin's reassigned frequency, so a sine draws as a thin line at any plot width.
 /// The reference follows the loudest tilted bin of every tier, rising at once and falling slowly,
 /// so the picture keeps its brightness for quiet and loud material alike.
@@ -255,7 +290,8 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
     for (std::size_t index = 0; index < points.size(); ++index) {
         const auto& point = points[index];
         const float share = std::clamp((tiltedDecibels[index] - floorDecibels) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
-        const float weight = std::pow(share, LEVEL_GAMMA) * flash;
+        const float emphasis = contrastCurve(share, frequencyContrast(point.frequency, static_cast<float>(contrast)));
+        const float weight = emphasis * flash;
         if (weight < MIN_PARTICLE_WEIGHT) {
             continue;
         }
@@ -273,7 +309,8 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
             .red = colour.red * weight,
             .green = colour.green * weight,
             .blue = colour.blue * weight,
-            .size = MIN_PARTICLE_SIZE + (1.0F - MIN_PARTICLE_SIZE) * share,
+            .size = MIN_PARTICLE_SIZE + (1.0F - MIN_PARTICLE_SIZE) * emphasis,
+            .emphasis = emphasis,
         });
     }
 }
@@ -295,6 +332,12 @@ float SpectrogramParticleBuilder::referenceLevel() const noexcept
 void SpectrogramParticleBuilder::resetLevel() noexcept
 {
     referenceDecibels = MIN_REFERENCE_DB;
+}
+
+/// Sets the contrast of the level curve for new particles, from 0 for linear in dB to 1 for the steepest S-curve.
+void SpectrogramParticleBuilder::setContrast(const double newContrast) noexcept
+{
+    contrast = std::clamp(newContrast, 0.0, 1.0);
 }
 
 /// Selects frequency or phase colours for new particles.

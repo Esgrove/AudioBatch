@@ -130,14 +130,20 @@ new particles add to the picture, older ones fade, and dense areas merge into br
 - **Brightness:** the level in dB with a tilt of 3 dB per octave around 1 kHz,
   which evens out the falling spectrum of music so the highs show as clearly as the bass.
   An auto-scale reference follows the loudest tilted bin, rising at once and falling by 12 dB per second,
-  and the 36 dB below it map to the brightness through a power curve,
+  and the 36 dB below it map to the brightness through an S-curve set by the Contrast setting,
   so quiet and loud material look alike, quiet content shows as faint dots, and the noise floor stays dark.
+  A share s of the range draws at s^g / (s^g + (p · (1 − s) / (1 − p))^g),
+  where a contrast c from 0 to 1 sets the steepness g = 1 + 3c and the pivot p = 0.5 + 0.2c, which draws half bright.
+  At 0 the brightness follows the dB level linearly, and the default 60% darkens the quieter half and brightens the top.
+  Above 1 kHz the contrast rises further, by up to 0.25 at 16 kHz on the logarithmic axis,
+  so the strongest elements of the dense, noisy highs stand out from the rest.
   A new particle is bright from its first frame, and steady content builds up over the persistence.
   The particles add up in linear light, and the result is encoded as sRGB for the display.
   The tone curve keeps the hue of bright colours, and only the densest clusters lighten towards white.
-- **Size:** louder particles are larger, down to half the size for the quietest.
+- **Size:** brighter particles are larger, down to half the size for the faintest,
+  and only bright particles get a halo, so faint ones draw as sharp dots instead of a haze.
   Sizes are in logical pixels, so they look the same on every window size and display scale.
-  At low frequencies, where the bins are wide on the axis, they widen to join into a continuous trace.
+  At low frequencies, where the bins are wide on the axis, they widen by up to 6 logical pixels to join into a trace.
 - **Resolution:** the analysis runs six transform lengths side by side.
   32768 samples cover 20 to 80 Hz with bins about 0.7 Hz apart after zero padding,
   16384 samples cover up to 160 Hz, 8192 samples up to 320 Hz, 4096 samples up to 640 Hz,
@@ -202,6 +208,7 @@ The Settings button opens the display settings:
 - frequency or phase colours,
 - a logarithmic or mel frequency scale, with the same HTK mel definition as AudioBatch's spectrogram,
 - the persistence, how long particles take to fade,
+- the contrast, from 0 to 100% in whole percent, how strongly loud sound stands out from quiet sound,
 - the pan midpoint and the pan edge in whole dB, which shape the stereo position curve,
   and push each other along to stay at least 3 dB apart,
 - a frame rate readout in the top-left corner of the spectrogram,

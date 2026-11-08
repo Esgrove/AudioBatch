@@ -17,7 +17,6 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -256,16 +255,6 @@ TEST(SpectrogramParticles, ParticlesFollowTheFrequencyScale)
     EXPECT_NEAR(builder.particles()[0].x, frequencyToShare(1000.0, FrequencyScale::mel), 1.0e-6);
 }
 
-TEST(SpectrogramParticles, ParticlesSitAtTheReassignedFrequency)
-{
-    SpectrogramParticleBuilder builder;
-    auto reassigned = point(1000.0F, 0.0F, 1.0F);
-    reassigned.reassignedFrequency = 1010.0F;
-    builder.addFrame(std::array {reassigned}, FRAME_SECONDS);
-    ASSERT_EQ(builder.particles().size(), 1U);
-    EXPECT_NEAR(builder.particles()[0].x, frequencyToShare(1010.0, FrequencyScale::logarithmic), 1.0e-6);
-}
-
 TEST(SpectrogramParticles, LongerPersistenceDrawsFainterParticles)
 {
     // Long persistence lets steady content build up for longer, so each frame adds less.
@@ -301,13 +290,69 @@ TEST(SpectrogramParticles, TiltShowsContentFallingThreeDecibelsPerOctaveEvenly)
 
     const auto particles = builder.particles();
     ASSERT_EQ(particles.size(), points.size());
-    std::vector<float> weights;
+    // Every evened out point is 21 dB above the bottom of the 36 dB range under the -5 dB reference,
+    // so each one's emphasis is that share through the contrast curve at its frequency,
+    // which differs from the bass only by the extra contrast of the highs.
+    constexpr float share = 21.0F / 36.0F;
+    const auto contrast = static_cast<float>(DEFAULT_CONTRAST_PERCENT / MAX_CONTRAST_PERCENT);
     for (std::size_t index = 0; index + 1 < particles.size(); ++index) {
-        // The colours differ along the axis, so compare the sizes, which follow the same share of the range.
-        weights.push_back(particles[index].size);
+        const float frequency = points[index].frequency;
+        EXPECT_NEAR(particles[index].emphasis, contrastCurve(share, frequencyContrast(frequency, contrast)), 1.0e-4F)
+            << frequency;
     }
-    const auto [smallest, largest] = std::ranges::minmax(weights);
-    EXPECT_NEAR(largest / smallest, 1.0F, 1.0e-3F);
+    EXPECT_NEAR(particles[0].emphasis, particles[2].emphasis, 1.0e-5F);
+}
+
+TEST(SpectrogramParticles, ContrastCurvePassesThroughItsEndsAndPivot)
+{
+    for (const float contrast : {0.0F, 0.3F, 0.6F, 1.0F, 1.25F}) {
+        SCOPED_TRACE(contrast);
+        EXPECT_FLOAT_EQ(contrastCurve(0.0F, contrast), 0.0F);
+        EXPECT_FLOAT_EQ(contrastCurve(1.0F, contrast), 1.0F);
+        EXPECT_NEAR(contrastCurve(0.5F + 0.2F * contrast, contrast), 0.5F, 1.0e-5F);
+        float previous = 0.0F;
+        for (int step = 1; step <= 100; ++step) {
+            const float value = contrastCurve(static_cast<float>(step) / 100.0F, contrast);
+            EXPECT_GT(value, previous) << step;
+            previous = value;
+        }
+    }
+    // No contrast leaves the share as it is, and more contrast darkens quiet content and brightens loud content.
+    EXPECT_NEAR(contrastCurve(0.3F, 0.0F), 0.3F, 1.0e-6F);
+    EXPECT_LT(contrastCurve(0.4F, 1.0F), contrastCurve(0.4F, 0.3F));
+    EXPECT_GT(contrastCurve(0.85F, 1.0F), contrastCurve(0.85F, 0.3F));
+}
+
+TEST(SpectrogramParticles, HighsGetExtraContrast)
+{
+    EXPECT_FLOAT_EQ(frequencyContrast(100.0F, 0.6F), 0.6F);
+    EXPECT_FLOAT_EQ(frequencyContrast(1000.0F, 0.6F), 0.6F);
+    EXPECT_GT(frequencyContrast(4000.0F, 0.6F), 0.6F);
+    EXPECT_LT(frequencyContrast(4000.0F, 0.6F), frequencyContrast(16'000.0F, 0.6F));
+    EXPECT_FLOAT_EQ(frequencyContrast(16'000.0F, 0.6F), frequencyContrast(20'000.0F, 0.6F));
+
+    // A quiet point is fainter in the highs than in the mids, and the halo follows the emphasis.
+    SpectrogramParticleBuilder builder;
+    const std::array points {
+        point(1000.0F, 0.0F, levelFromDecibels(-20.0F)),
+        point(1000.0F, 0.0F, 1.0F),
+        point(1000.0F * 16.0F, 0.0F, levelFromDecibels(-20.0F - 12.0F)),
+    };
+    builder.addFrame(points, FRAME_SECONDS);
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), 3U);
+    EXPECT_LT(particles[2].emphasis, particles[0].emphasis);
+    EXPECT_FLOAT_EQ(particles[1].emphasis, 1.0F);
+}
+
+TEST(SpectrogramParticles, ParticlesSitAtTheReassignedFrequency)
+{
+    SpectrogramParticleBuilder builder;
+    auto reassigned = point(1000.0F, 0.0F, 1.0F);
+    reassigned.reassignedFrequency = 1010.0F;
+    builder.addFrame(std::array {reassigned}, FRAME_SECONDS);
+    ASSERT_EQ(builder.particles().size(), 1U);
+    EXPECT_NEAR(builder.particles()[0].x, frequencyToShare(1010.0, FrequencyScale::logarithmic), 1.0e-6);
 }
 
 TEST(SpectrogramParticles, AutoScaleDrawsQuietAndLoudMaterialAlike)

@@ -15,7 +15,7 @@ namespace
 /// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
-constexpr int PANEL_HEIGHT {320};
+constexpr int PANEL_HEIGHT {364};
 /// Inner margin of the panel, in pixels.
 constexpr int MARGIN {12};
 /// Height of each row, in pixels.
@@ -32,6 +32,8 @@ constexpr float TITLE_FONT_HEIGHT {15.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
 /// Step of the persistence slider, in seconds.
 constexpr double PERSISTENCE_STEP {0.01};
+/// Step of the contrast slider, in percent.
+constexpr double CONTRAST_STEP_PERCENT {1.0};
 
 /// Sets up a label above a slider.
 void configureLabel(juce::Label& label, const juce::String& text)
@@ -104,6 +106,19 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     );
     addAndMakeVisible(persistenceSlider);
 
+    configureLabel(contrastLabel, "Contrast");
+    addAndMakeVisible(contrastLabel);
+    contrastSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
+    contrastSlider.setRange(0.0, MAX_CONTRAST_PERCENT, CONTRAST_STEP_PERCENT);
+    contrastSlider.setTextValueSuffix(" %");
+    contrastSlider.setDoubleClickReturnValue(true, DEFAULT_CONTRAST_PERCENT);
+    contrastSlider.getValueObject().referTo(editorState.getPropertyAsValue(CONTRAST_PROPERTY, nullptr));
+    contrastSlider.setTooltip(
+        "How strongly loud sound stands out from quiet sound. "
+        "Higher values darken the background and noise, most in the highs, so the main elements stand out"
+    );
+    addAndMakeVisible(contrastSlider);
+
     configureLabel(panMidpointLabel, "Pan midpoint");
     addAndMakeVisible(panMidpointLabel);
     configureDecibelSlider(
@@ -175,6 +190,8 @@ void SettingsPanel::resized()
     }
     persistenceLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
     persistenceSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
+    contrastLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
+    contrastSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
     panMidpointLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
     panMidpointSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
     panEdgeLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));

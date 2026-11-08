@@ -62,6 +62,9 @@ struct SpectrogramParticle {
     float blue {0.0F};
     /// Size of the particle relative to the loudest, which the renderer scales its core and halo by.
     float size {1.0F};
+    /// How strongly the contrast curve emphasises the particle, from 0 for the faintest to 1 for the strongest,
+    /// which scales the brightness of its halo, so faint particles draw only their sharp cores.
+    float emphasis {1.0F};
 };
 
 [[nodiscard]] double frequencyToShare(double frequency, FrequencyScale scale);
@@ -70,6 +73,8 @@ struct SpectrogramParticle {
 [[nodiscard]] double melToFrequency(double mel);
 [[nodiscard]] LinearColour frequencyColour(float share);
 [[nodiscard]] LinearColour toSrgb(const LinearColour& colour);
+[[nodiscard]] float contrastCurve(float share, float contrast);
+[[nodiscard]] float frequencyContrast(float frequency, float contrast);
 
 /// Turns analyzed frames into particles and collects them until they are taken.
 /// Not thread safe. The analysis worker owns it.
@@ -84,6 +89,7 @@ public:
     void addFrame(std::span<const SpectralPoint> points, double frameSeconds);
     void clear() noexcept;
     void resetLevel() noexcept;
+    void setContrast(double newContrast) noexcept;
     void setColours(SpectrogramColours newColours) noexcept;
     void setFrequencyScale(FrequencyScale newScale) noexcept;
     void setPersistence(double seconds) noexcept;
@@ -101,6 +107,8 @@ private:
     SpectrogramColours colours {SpectrogramColours::frequency};
     /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
+    /// Contrast of the level curve, from 0 for linear in dB to 1 for the steepest S-curve.
+    double contrast {DEFAULT_CONTRAST_PERCENT / MAX_CONTRAST_PERCENT};
     /// Time constant of the particle fade, in seconds, which scales the particle weight.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
     /// Auto-scale reference: the tilted level in dB that draws the brightest particles.

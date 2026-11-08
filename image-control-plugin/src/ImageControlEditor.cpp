@@ -115,7 +115,9 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, DELTA_ID, deltaButton);
     addAndMakeVisible(deltaButton);
 
-    settingsButton.setTooltip("Display settings: the colours, the frequency scale, and how particles fade");
+    settingsButton.setTooltip(
+        "Display settings: the colours, the frequency scale, the contrast, and how particles fade"
+    );
     settingsButton.onClick = [this] { openSettings(); };
     addAndMakeVisible(settingsButton);
 
@@ -343,6 +345,8 @@ void ImageControlEditor::applyViewSettings()
         .positionCurve = positionCurve,
         .sampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE,
         .persistenceSeconds = persistenceSeconds(),
+        .contrast = static_cast<double>(editorState.getProperty(CONTRAST_PROPERTY, DEFAULT_CONTRAST_PERCENT))
+            / MAX_CONTRAST_PERCENT,
         .scale = scale,
         .colours = phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency,
         .analyze = !renderingBypassed && !spectrogramHidden,

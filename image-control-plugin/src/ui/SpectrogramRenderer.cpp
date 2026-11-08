@@ -30,14 +30,16 @@ using namespace juce::gl;
 
 /// Sharp core of the loudest particles, in logical pixels, so dots look the same size on every display scale.
 /// Quieter particles are smaller, down to the builder's smallest particle size.
-constexpr float CORE_SIGMA_PIXELS {1.8F};
-/// Widest horizontal spread of a particle, in logical pixels, which bounds the widest low-frequency bins.
-constexpr float MAX_SIGMA_PIXELS {24.0F};
+constexpr float CORE_SIGMA_PIXELS {1.3F};
+/// Widest horizontal spread of a particle, in logical pixels, which bounds the widest low-frequency bins,
+/// so a large window does not smear the bass into wide blurs.
+constexpr float MAX_SIGMA_PIXELS {6.0F};
 /// Spread of the faint halo around the loudest particles, in logical pixels,
 /// so neighbouring dots join softly without losing their sharp cores.
-constexpr float HALO_SIGMA_PIXELS {5.0F};
-/// Brightness of the halo relative to the core.
-constexpr float HALO_WEIGHT {0.15F};
+constexpr float HALO_SIGMA_PIXELS {4.0F};
+/// Brightness of the halo of the most emphasised particles relative to the core.
+/// The halo scales with the particle's emphasis, so faint particles draw only their cores instead of a haze.
+constexpr float HALO_WEIGHT {0.2F};
 /// How many spreads a sprite reaches before it is cut off.
 constexpr float SPRITE_REACH_SIGMAS {3.0F};
 /// Scale from the accumulated particle energy to the tone curve.
@@ -59,7 +61,7 @@ constexpr std::size_t MAX_PENDING_PARTICLES {1'000'000};
 /// Longest pending fade, in seconds. A longer fade leaves nothing visible anyway.
 constexpr double MAX_PENDING_FADE_SECONDS {10.0};
 /// Floats per particle instance, matching SpectrogramParticle.
-constexpr int PARTICLE_FLOATS {7};
+constexpr int PARTICLE_FLOATS {8};
 /// Nanoseconds in a millisecond, for the GPU timer.
 constexpr double NANOSECONDS_PER_MILLISECOND {1.0e6};
 /// Background of the plot, as ARGB.
@@ -89,12 +91,14 @@ void main()
 
 /// Places a sprite around a particle: the centre from its plot shares, the spread from its bin spacing,
 /// never narrower than the sharp core, and the size from the wider of the core and the halo.
-/// The core and the halo scale with the particle's size, so louder content draws larger dots.
+/// The core and the halo scale with the particle's size, so louder content draws larger dots,
+/// and the halo's brightness scales with the particle's emphasis.
 constexpr auto PARTICLE_VERTEX_SHADER = R"(#version 330 core
 layout(location = 0) in vec2 corner;
 layout(location = 1) in vec3 placement;
 layout(location = 2) in vec3 tint;
 layout(location = 3) in float particleSize;
+layout(location = 4) in float particleEmphasis;
 uniform vec2 targetSize;
 uniform float coreSigma;
 uniform float maxSigma;
@@ -104,9 +108,11 @@ out vec2 offset;
 flat out vec2 core;
 flat out vec2 halo;
 flat out vec3 particleColour;
+flat out float emphasis;
 void main()
 {
     vec2 centre = vec2(placement.x, 1.0 - placement.y) * targetSize;
+    emphasis = particleEmphasis;
     float sizedCore = coreSigma * particleSize;
     float sizedHalo = haloSigma * particleSize;
     core = vec2(clamp(placement.z * targetSize.x, sizedCore, maxSigma), sizedCore);
@@ -123,13 +129,14 @@ in vec2 offset;
 flat in vec2 core;
 flat in vec2 halo;
 flat in vec3 particleColour;
+flat in float emphasis;
 uniform float haloWeight;
 out vec4 colour;
 void main()
 {
     vec2 inCore = offset / core;
     vec2 inHalo = offset / halo;
-    float weight = exp(-0.5 * dot(inCore, inCore)) + haloWeight * exp(-0.5 * dot(inHalo, inHalo));
+    float weight = exp(-0.5 * dot(inCore, inCore)) + haloWeight * emphasis * exp(-0.5 * dot(inHalo, inHalo));
     colour = vec4(particleColour * weight, 0.0);
 }
 )";
@@ -413,6 +420,9 @@ void SpectrogramRenderer::newOpenGLContextCreated()
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, size)));
     glVertexAttribDivisor(3, 1);
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, emphasis)));
+    glVertexAttribDivisor(4, 1);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
