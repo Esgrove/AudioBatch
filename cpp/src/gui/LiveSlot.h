@@ -53,6 +53,9 @@ struct LiveSlot {
 
     /// Latency at the preview rate, empty while unprepared.
     std::optional<juce::int64> latencySamples;
+    /// Top-left of the editor window when it last closed, in logical screen coordinates, so it reopens there.
+    /// Empty until the editor has been open, and kept only while the application runs.
+    std::optional<juce::Point<int>> editorPosition;
     /// Shared editing and playback processor, created on first use.
     std::unique_ptr<juce::AudioPluginInstance> instance;
 

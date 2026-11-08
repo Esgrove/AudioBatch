@@ -1,5 +1,6 @@
 /// Reusable GUI operations shared by application windows and components.
-/// Declares foreground activation, read-only label styling, bounded failure-summary dialogs,
+/// Declares foreground activation, keeping restored window bounds on screen, read-only label styling,
+/// bounded failure-summary dialogs,
 /// and the conversion of JUCE integer menu, command, and column ids back to scoped enums.
 /// Native platform details remain in the implementation rather than application and component classes.
 
@@ -20,6 +21,8 @@ inline constexpr int DIALOG_RESULT_OK {1};
 inline constexpr int DIALOG_RESULT_CANCEL {0};
 /// Result code returned when a popup menu closes without a selection.
 inline constexpr int MENU_RESULT_DISMISSED {0};
+
+[[nodiscard]] juce::Rectangle<int> boundsOnScreen(juce::Rectangle<int> bounds, juce::BorderSize<int> frame = {});
 
 void allowExistingInstanceToActivate(const juce::String& applicationName);
 void bringWindowToFront(juce::TopLevelWindow& window);

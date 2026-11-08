@@ -23,7 +23,7 @@ LiveSlot::~LiveSlot()
     destroyProcessor();
 }
 
-/// Transfers the processor and editor window, leaving the source without either.
+/// Transfers the processor, the editor window, and its remembered position, leaving the source without them.
 LiveSlot::LiveSlot(LiveSlot&& other) noexcept :
     id(other.id),
     listener(std::exchange(other.listener, nullptr)),
@@ -32,6 +32,7 @@ LiveSlot::LiveSlot(LiveSlot&& other) noexcept :
     state(std::move(other.state)),
     preparationError(std::move(other.preparationError)),
     latencySamples(std::exchange(other.latencySamples, std::nullopt)),
+    editorPosition(std::exchange(other.editorPosition, std::nullopt)),
     instance(std::move(other.instance)),
     enabled(other.enabled),
     prepared(std::exchange(other.prepared, false)),
@@ -52,6 +53,7 @@ LiveSlot& LiveSlot::operator=(LiveSlot&& other) noexcept
         editorWindow = std::exchange(other.editorWindow, nullptr);
         preparationError = std::move(other.preparationError);
         latencySamples = std::exchange(other.latencySamples, std::nullopt);
+        editorPosition = std::exchange(other.editorPosition, std::nullopt);
         prepared = std::exchange(other.prepared, false);
         wasEditorOpen = std::exchange(other.wasEditorOpen, false);
     }
@@ -72,10 +74,11 @@ void LiveSlot::attachInstance(
     }
 }
 
-/// Deletes only the editor window, retaining the processor.
+/// Deletes only the editor window, retaining the processor, and remembers where the window was.
 void LiveSlot::closeEditor()
 {
     if (editorWindow != nullptr) {
+        editorPosition = editorWindow->getPosition();
         editorWindow.deleteAndZero();
     }
     wasEditorOpen = false;

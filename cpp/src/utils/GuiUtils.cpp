@@ -49,6 +49,23 @@ juce::String buildFailureListMessage(const juce::StringArray& failures)
 }
 }  // namespace
 
+/// Returns window bounds moved, and shrunk if needed, into the user area of the display nearest their centre,
+/// so a window reopened at a remembered position stays reachable after the displays change.
+/// The bounds are the window's content, and the frame is its native border and title bar,
+/// which must stay on screen too so the window can still be moved.
+juce::Rectangle<int> boundsOnScreen(const juce::Rectangle<int> bounds, const juce::BorderSize<int> frame)
+{
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* display = displays.getDisplayForPoint(bounds.getCentre().toFloat());
+    if (display == nullptr) {
+        display = displays.getPrimaryDisplay();
+    }
+    if (display == nullptr) {
+        return bounds;
+    }
+    return frame.subtractedFrom(frame.addedTo(bounds).constrainedWithin(display->userBounds.getLargestIntegerWithin()));
+}
+
 /// Transfers a user launch's foreground permission before JUCE forwards to an existing instance on Windows.
 /// Matches both the main-window title and executable path to exclude unrelated applications and scan workers.
 /// Other platforms retain their native activation behavior and need no permission transfer.
