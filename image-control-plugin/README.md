@@ -1,6 +1,6 @@
 # ImageControl
 
-A multiband stereo imaging effect by esgrove, built with JUCE as a VST3 and, on macOS, an Audio Unit.
+A multiband stereo imaging effect by Esgrove, built with JUCE as a VST3 and, on macOS, an Audio Unit.
 It splits the signal into four frequency bands and sets the mid and side level and the pan of each band separately,
 so the stereo image can be narrowed, widened, rebalanced, or moved to one side in one frequency range
 without touching the others.
@@ -82,6 +82,9 @@ so the output never depends on thread timing.
 
 The header holds the Bypass button, the Settings button, and the output gain.
 The spatial spectrogram fills the middle, and the band strips sit below it.
+A divider between them appears when the pointer is over the gap, and dragging it makes the band section
+taller or shorter.
+The band section height is saved with the plugin state.
 
 ### Spatial spectrogram
 

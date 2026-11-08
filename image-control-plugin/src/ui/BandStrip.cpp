@@ -28,6 +28,9 @@ constexpr int TEXT_BOX_WIDTH {78};
 constexpr int TEXT_BOX_HEIGHT {22};
 /// Width of the Link toggle, in pixels.
 constexpr int LINK_WIDTH {60};
+/// Largest vertical gap between the range label and the first slider row, in pixels.
+/// The gap only takes height the slider rows do not need, so it is gone at the minimum strip height.
+constexpr int HEADER_SLIDER_GAP {16};
 /// Inner margin of the strip, in pixels.
 constexpr int MARGIN {10};
 /// Corner radius of the strip background, in pixels.
@@ -165,8 +168,8 @@ void BandStrip::paint(juce::Graphics& graphics)
 }
 
 /// Lays out the name and Link in the header row, the range below them,
-/// and the Mid, Side, Width, and Pan sliders below it at full width, each with its label above it.
-/// The slider rows share the remaining height evenly.
+/// a gap that uses the spare height up to 16 pixels, and the Mid, Side, Width, and Pan sliders below it at full width,
+/// each with its label above it. The slider rows share the remaining height evenly.
 void BandStrip::resized()
 {
     auto area = getLocalBounds().reduced(MARGIN);
@@ -174,6 +177,8 @@ void BandStrip::resized()
     linkButton.setBounds(header.removeFromRight(LINK_WIDTH));
     nameLabel.setBounds(header);
     rangeLabel.setBounds(area.removeFromTop(HEADER_ROW_HEIGHT));
+    const int spareHeight = area.getHeight() - SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT);
+    area.removeFromTop(std::clamp(spareHeight, 0, HEADER_SLIDER_GAP));
 
     const int rowHeight = area.getHeight() / SLIDER_ROWS;
     const std::array rows {

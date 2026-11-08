@@ -1,5 +1,5 @@
 # ImageControl
-# A multiband mid/side stereo imaging effect by esgrove, as a VST3 and, on macOS, an Audio Unit,
+# A multiband mid/side stereo imaging effect by Esgrove, as a VST3 and, on macOS, an Audio Unit,
 # with a spatial spectrogram editor.
 # Builds on its own with the JUCE submodule of the AudioBatch C++ project.
 
@@ -40,7 +40,7 @@ endif()
 juce_add_plugin(
     ImageControl
     COMPANY_NAME
-    "esgrove"
+    "Esgrove"
     BUNDLE_ID
     com.esgrove.imagecontrol
     PLUGIN_MANUFACTURER_CODE
@@ -102,6 +102,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.h"
 )

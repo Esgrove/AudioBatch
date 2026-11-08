@@ -38,9 +38,12 @@ constexpr int MAX_EDITOR_HEIGHT {1800};
 constexpr int HEADER_HEIGHT {36};
 /// Gap between sections, in pixels.
 constexpr int GAP {8};
-/// Share of the height below the header that the spectrogram takes,
-/// as long as the band strips keep their minimum height.
-constexpr float SPECTROGRAM_SHARE {0.6F};
+/// Height of the band strip section until the divider is dragged, in pixels.
+constexpr int DEFAULT_BAND_SECTION_HEIGHT {260};
+/// Smallest height of the spectrogram, in pixels.
+constexpr int MIN_SPECTROGRAM_HEIGHT {160};
+/// How far the divider reaches beyond the gap on each side, so it is easy to hover and grab, in pixels.
+constexpr int DIVIDER_GRAB_PADDING {4};
 /// Frames drained from the analyzer ring per pop.
 constexpr std::size_t DRAIN_CHUNK {4096};
 /// Longest time one display refresh advances the spectrogram, in seconds,
@@ -122,14 +125,22 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     });
 
     addAndMakeVisible(spectrogram);
+    divider.setDragCallback([this](const int delta) {
+        bandSectionHeight -= delta;
+        resized();
+    });
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band);
         addAndMakeVisible(*bandStrips.at(band));
     }
+    addAndMakeVisible(divider);
     addChildComponent(tooltips);
     applyViewSettings();
     updateBandRanges();
     drainAnalyzerFifo(false);
+
+    bandSectionHeight
+        = static_cast<int>(editorState.getProperty(BAND_SECTION_HEIGHT_PROPERTY, DEFAULT_BAND_SECTION_HEIGHT));
 
     setResizable(true, true);
     setResizeLimits(MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT, MAX_EDITOR_WIDTH, MAX_EDITOR_HEIGHT);
@@ -154,7 +165,8 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(juce::Colour(palette::GREY_DARK));
 }
 
-/// Lays out the header, the spectrogram, and the band strips, and remembers the size in the editor settings.
+/// Lays out the header, the spectrogram, the divider, and the band strips,
+/// and remembers the size and the band section height in the editor settings.
 void ImageControlEditor::resized()
 {
     auto area = getLocalBounds().reduced(GAP);
@@ -168,12 +180,13 @@ void ImageControlEditor::resized()
     outputLabel.setBounds(header.removeFromRight(OUTPUT_LABEL_WIDTH));
     area.removeFromTop(GAP);
 
-    const int spectrogramHeight = std::min(
-        juce::roundToInt(static_cast<float>(area.getHeight()) * SPECTROGRAM_SHARE),
-        area.getHeight() - GAP - BAND_STRIP_MIN_HEIGHT
-    );
-    spectrogram.setBounds(area.removeFromTop(spectrogramHeight));
-    area.removeFromTop(GAP);
+    const int maxBandSectionHeight = std::max(BAND_STRIP_MIN_HEIGHT, area.getHeight() - GAP - MIN_SPECTROGRAM_HEIGHT);
+    bandSectionHeight = std::clamp(bandSectionHeight, BAND_STRIP_MIN_HEIGHT, maxBandSectionHeight);
+    const auto bandArea = area.removeFromBottom(bandSectionHeight);
+    const auto dividerArea = area.removeFromBottom(GAP);
+    divider.setBounds(dividerArea.expanded(0, DIVIDER_GRAB_PADDING));
+    spectrogram.setBounds(area);
+    area = bandArea;
 
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
     for (auto& strip : bandStrips) {
@@ -184,6 +197,7 @@ void ImageControlEditor::resized()
     auto& editorState = imageControlProcessor.getEditorState();
     editorState.setProperty(EDITOR_WIDTH_PROPERTY, getWidth(), nullptr);
     editorState.setProperty(EDITOR_HEIGHT_PROPERTY, getHeight(), nullptr);
+    editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandSectionHeight, nullptr);
 }
 
 /// Applies the display settings and the bypass to the analyzer, the spectrogram, and the band strips.
