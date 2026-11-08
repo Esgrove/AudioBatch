@@ -2,13 +2,14 @@
 /// moving a middle band moves both its crossovers, moving the Low band moves only its upper crossover,
 /// a band move stops at the minimum ratio to the crossover that stays,
 /// and Ctrl or Cmd with a vertical drag changes the band's side gain.
-/// Also tests the particles the view prepares for the GPU renderer:
-/// which points become particles, how bright and where they are, and what a render batch carries.
+/// Also tests the particles SpectrogramParticleBuilder prepares for the GPU renderer:
+/// which points become particles, how bright they are, and where they are placed.
 
 #include "analysis/SpatialAnalyzer.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 
 #include <gtest/gtest.h>
 
@@ -165,72 +166,63 @@ TEST(SpectrogramView, CommandDragChangesTheBandWidth)
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 1.0F);
 }
 
-TEST(SpectrogramView, QuietPointsAreDroppedAndLouderPointsAreBrighter)
+TEST(SpectrogramParticles, QuietPointsAreDroppedAndLouderPointsAreBrighter)
 {
-    ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpectrogramParticleBuilder builder;
     // -90 dB is below the display floor, -20 dB and 0 dB are inside the display range.
     const std::array points {point(1000.0F, 0.0F, 1.0e-9F), point(1000.0F, 0.0F, 1.0e-2F), point(1000.0F, 0.0F, 1.0F)};
-    view.addFrame(points, FRAME_SECONDS);
+    builder.addFrame(points, FRAME_SECONDS);
 
-    const auto batch = view.takeRenderBatch();
-    ASSERT_EQ(batch.particles.size(), 2U);
-    EXPECT_GT(brightness(batch.particles[0]), 0.0F);
-    EXPECT_GT(brightness(batch.particles[1]), brightness(batch.particles[0]));
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), 2U);
+    EXPECT_GT(brightness(particles[0]), 0.0F);
+    EXPECT_GT(brightness(particles[1]), brightness(particles[0]));
 }
 
-TEST(SpectrogramView, ParticlesArePlacedInSharesOfThePlot)
+TEST(SpectrogramParticles, ParticlesArePlacedInSharesOfThePlot)
 {
-    ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
+    SpectrogramParticleBuilder builder;
     // Full left is at the top of the plot, and full right at the bottom.
     const std::array points {point(1000.0F, 1.0F, 1.0F), point(100.0F, -1.0F, 1.0F), point(5000.0F, 0.0F, 1.0F)};
-    view.addFrame(points, FRAME_SECONDS);
+    builder.addFrame(points, FRAME_SECONDS);
 
-    const auto batch = view.takeRenderBatch();
-    ASSERT_EQ(batch.particles.size(), 3U);
-    EXPECT_NEAR(batch.particles[0].x, frequencyToShare(1000.0, FrequencyScale::logarithmic), 1.0e-6);
-    EXPECT_FLOAT_EQ(batch.particles[0].y, 0.0F);
-    EXPECT_NEAR(batch.particles[1].x, frequencyToShare(100.0, FrequencyScale::logarithmic), 1.0e-6);
-    EXPECT_FLOAT_EQ(batch.particles[1].y, 1.0F);
-    EXPECT_FLOAT_EQ(batch.particles[2].y, 0.5F);
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), 3U);
+    EXPECT_NEAR(particles[0].x, frequencyToShare(1000.0, FrequencyScale::logarithmic), 1.0e-6);
+    EXPECT_FLOAT_EQ(particles[0].y, 0.0F);
+    EXPECT_NEAR(particles[1].x, frequencyToShare(100.0, FrequencyScale::logarithmic), 1.0e-6);
+    EXPECT_FLOAT_EQ(particles[1].y, 1.0F);
+    EXPECT_FLOAT_EQ(particles[2].y, 0.5F);
     // A bin is wider on the axis at low frequencies, where the same spacing covers more of an octave.
-    EXPECT_GT(batch.particles[1].spread, batch.particles[2].spread);
+    EXPECT_GT(particles[1].spread, particles[2].spread);
 }
 
-TEST(SpectrogramView, RenderBatchCarriesTheFadeAndStartsOver)
+TEST(SpectrogramParticles, ParticlesFollowTheFrequencyScale)
 {
-    ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
-    view.setPersistence(1.0);
-    view.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
-    view.advance(0.01);
-    view.advance(0.02);
-
-    const auto batch = view.takeRenderBatch();
-    EXPECT_EQ(batch.particles.size(), 1U);
-    EXPECT_NEAR(batch.fadeSeconds, 0.03, 1.0e-12);
-    EXPECT_DOUBLE_EQ(batch.persistenceSeconds, 1.0);
-    EXPECT_FALSE(batch.clear);
-
-    const auto next = view.takeRenderBatch();
-    EXPECT_TRUE(next.particles.empty());
-    EXPECT_DOUBLE_EQ(next.fadeSeconds, 0.0);
+    SpectrogramParticleBuilder builder;
+    builder.setFrequencyScale(FrequencyScale::mel);
+    builder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    ASSERT_EQ(builder.particles().size(), 1U);
+    EXPECT_NEAR(builder.particles()[0].x, frequencyToShare(1000.0, FrequencyScale::mel), 1.0e-6);
 }
 
-TEST(SpectrogramView, ClearingAndChangingTheScaleClearThePicture)
+TEST(SpectrogramParticles, LongerPersistenceDrawsFainterParticles)
 {
-    ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters());
-    view.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
-    view.clear();
-    const auto cleared = view.takeRenderBatch();
-    EXPECT_TRUE(cleared.clear);
-    EXPECT_TRUE(cleared.particles.empty());
+    // Long persistence lets steady content build up for longer, so each frame adds less.
+    SpectrogramParticleBuilder shortBuilder;
+    shortBuilder.setPersistence(0.1);
+    shortBuilder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    SpectrogramParticleBuilder longBuilder;
+    longBuilder.setPersistence(2.0);
+    longBuilder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    EXPECT_GT(brightness(shortBuilder.particles()[0]), brightness(longBuilder.particles()[0]));
+}
 
-    view.setFrequencyScale(FrequencyScale::mel);
-    EXPECT_TRUE(view.takeRenderBatch().clear);
-    view.setFrequencyScale(FrequencyScale::mel);
-    EXPECT_FALSE(view.takeRenderBatch().clear);
+TEST(SpectrogramParticles, ClearDropsTheParticles)
+{
+    SpectrogramParticleBuilder builder;
+    builder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    builder.clear();
+    EXPECT_TRUE(builder.particles().empty());
 }
 }  // namespace esgrove::image_control::test

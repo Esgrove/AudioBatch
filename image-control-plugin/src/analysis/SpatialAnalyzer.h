@@ -73,7 +73,7 @@ struct AnalysisTier {
 /// Its coherence is Re(L · conj(R)) / (|L| · |R|), which tells anti-phase content from mono content,
 /// since both sit in the centre by level alone.
 ///
-/// Not thread safe. The editor owns it and uses it on the message thread.
+/// Not thread safe. The editor's analysis worker owns it and uses it on the worker thread only.
 class SpatialAnalyzer
 {
 public:

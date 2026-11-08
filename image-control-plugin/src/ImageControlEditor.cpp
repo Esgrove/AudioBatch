@@ -1,6 +1,6 @@
 /// Implements the ImageControl editor: the header with the bypass, the settings button, and the output gain,
-/// the layout and saved size, the OpenGL context that draws the spectrogram,
-/// the display refresh that feeds the analyzer, advances the spectrogram, and hands its particles to the renderer,
+/// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
+/// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
 /// applying the display settings with bypassing and hiding the spectrogram, and measuring the frame rate.
 
 #include "ImageControlEditor.h"
@@ -12,13 +12,14 @@
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
+#include "ui/SpectrogramWorker.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <span>
 
 namespace esgrove::image_control
 {
@@ -46,8 +47,6 @@ constexpr int DEFAULT_BAND_SECTION_HEIGHT {260};
 constexpr int MIN_SPECTROGRAM_HEIGHT {160};
 /// How far the divider reaches beyond the gap on each side, so it is easy to hover and grab, in pixels.
 constexpr int DIVIDER_GRAB_PADDING {4};
-/// Frames drained from the analyzer ring per pop.
-constexpr std::size_t DRAIN_CHUNK {4096};
 /// Longest time one display refresh advances the spectrogram, in seconds,
 /// so a pause in refreshes, such as a hidden window, does not fade everything at once.
 constexpr double MAX_REFRESH_STEP_SECONDS {0.1};
@@ -80,13 +79,12 @@ bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 }  // namespace
 
 /// Creates the editor, binds its controls to the processor's parameters,
-/// connects the analyzer to the spectrogram, and discards audio that queued while no editor was open.
+/// and starts the analysis worker, which first discards audio that queued while no editor was open.
 ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     AudioProcessorEditor(owner),
     imageControlProcessor(owner),
     spectrogram(owner.getParameters()),
-    leftScratch(DRAIN_CHUNK, 0.0F),
-    rightScratch(DRAIN_CHUNK, 0.0F),
+    spectrogramWorker(owner.getAnalyzerFifo(), spectrogramRenderer),
     tooltips(*this),
     vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
 {
@@ -122,10 +120,6 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     );
     addAndMakeVisible(outputSlider);
 
-    analyzer.setFrameCallback([this](const std::span<const SpectralPoint> points, const double frameSeconds) {
-        spectrogram.addFrame(points, frameSeconds);
-    });
-
     addAndMakeVisible(spectrogram);
     divider.setDragCallback([this](const int delta) {
         bandSectionHeight -= delta;
@@ -138,7 +132,6 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addAndMakeVisible(divider);
     addChildComponent(tooltips);
     updateBandRanges();
-    drainAnalyzerFifo(false);
 
     bandSectionHeight
         = static_cast<int>(editorState.getProperty(BAND_SECTION_HEIGHT_PROPERTY, DEFAULT_BAND_SECTION_HEIGHT));
@@ -150,7 +143,9 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY, DEFAULT_HEIGHT))
     );
     // After the first size, so hiding the spectrogram can shrink the editor from it.
+    // It also hands the worker its first settings before the worker starts.
     applyViewSettings();
+    spectrogramWorker.start();
 
     // OpenGL 4.1 core is the newest macOS offers, and the shaders need 3.3.
     // The frames follow the editor's VBlank callback instead of a free-running render loop.
@@ -161,12 +156,12 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     openGLContext.attachTo(*this);
 }
 
-/// Detaches the OpenGL context, which stops the render thread and releases the GL resources,
-/// then disconnects the analyzer and detaches the controls and the look and feel before the components go away.
+/// Stops the analysis worker, detaches the OpenGL context, which stops the render thread and releases the GL
+/// resources, then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    spectrogramWorker.stop();
     openGLContext.detach();
-    analyzer.setFrameCallback({});
     bypassAttachment.reset();
     outputAttachment.reset();
     setLookAndFeel(nullptr);
@@ -230,6 +225,12 @@ int ImageControlEditor::compactHeight() const
     return HEADER_HEIGHT + GAP * 2 + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT);
 }
 
+/// Returns the persistence setting, the time constant of the particle fade, in seconds.
+double ImageControlEditor::persistenceSeconds() const
+{
+    return static_cast<double>(imageControlProcessor.getEditorState().getProperty(PERSISTENCE_PROPERTY));
+}
+
 /// Returns what the renderer draws: nothing while the spectrogram is hidden,
 /// the background while rendering is bypassed, and the particles otherwise.
 SpectrogramRenderMode ImageControlEditor::renderMode() const
@@ -247,8 +248,7 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
     spectrogramHidden = hidden;
     spectrogram.setVisible(!hidden);
     divider.setVisible(!hidden);
-    spectrogram.clear();
-    analyzer.clear();
+    spectrogramWorker.requestClear();
     if (hidden) {
         const int height = compactHeight();
         setResizeLimits(MIN_EDITOR_WIDTH, height, MAX_EDITOR_WIDTH, height);
@@ -263,9 +263,9 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
     repaint();
 }
 
-/// Applies the display settings and the bypass to the analyzer, the spectrogram, and the band strips.
+/// Applies the display settings and the bypass to the analysis worker, the spectrogram, and the band strips.
 /// The settings change through the settings panel or a restored state, so this runs on every refresh.
-/// Changing the tap or the colours clears the particles, so the old view does not linger.
+/// Changing the tap, the colours, or the scale clears the particles, so the old view does not linger.
 void ImageControlEditor::applyViewSettings()
 {
     const auto& editorState = imageControlProcessor.getEditorState();
@@ -280,22 +280,30 @@ void ImageControlEditor::applyViewSettings()
         renderingBypassed = bypassRendering;
         spectrogram.setRenderingBypassed(bypassRendering);
         // Resuming starts from a clean picture and analysis instead of a frozen one.
-        spectrogram.clear();
-        analyzer.clear();
+        spectrogramWorker.requestClear();
     }
     const bool tapOutput = booleanSetting(editorState, ANALYZE_OUTPUT_PROPERTY);
     const bool phaseColours = booleanSetting(editorState, PHASE_COLOURS_PROPERTY);
-    if (shownTapOutput != tapOutput || shownPhaseColours != phaseColours) {
-        spectrogram.setColours(phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency);
-        spectrogram.clear();
+    const auto scale
+        = booleanSetting(editorState, MEL_SCALE_PROPERTY) ? FrequencyScale::mel : FrequencyScale::logarithmic;
+    if (shownTapOutput != tapOutput || shownPhaseColours != phaseColours || shownScale != scale) {
+        spectrogram.setFrequencyScale(scale);
+        spectrogramWorker.requestClear();
         shownTapOutput = tapOutput;
         shownPhaseColours = phaseColours;
+        shownScale = scale;
     }
-    spectrogram.setFrequencyScale(
-        booleanSetting(editorState, MEL_SCALE_PROPERTY) ? FrequencyScale::mel : FrequencyScale::logarithmic
-    );
-    spectrogram.setPersistence(static_cast<double>(editorState.getProperty(PERSISTENCE_PROPERTY)));
-    analyzer.setFocus(static_cast<double>(editorState.getProperty(FOCUS_PROPERTY)));
+
+    const double sampleRate = imageControlProcessor.getSampleRate();
+    spectrogramWorker.setSettings({
+        .sampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE,
+        .focusDecibels = static_cast<double>(editorState.getProperty(FOCUS_PROPERTY)),
+        .persistenceSeconds = persistenceSeconds(),
+        .scale = scale,
+        .colours = phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency,
+        .analyze = !renderingBypassed && !spectrogramHidden,
+    });
+
     if (booleanSetting(editorState, SHOW_FPS_PROPERTY)) {
         spectrogram.setFrameStatistics(measuredFramesPerSecond, spectrogramRenderer.gpuFrameMilliseconds());
     } else {
@@ -309,32 +317,6 @@ void ImageControlEditor::applyViewSettings()
             strip->setAlpha(bypassed ? BYPASSED_STRIP_ALPHA : 1.0F);
         }
         shownBypassed = bypassed;
-    }
-}
-
-/// Empties the processor's analyzer ring, passing the audio to the analyzer when analyze is set.
-/// One call takes at most a ring's worth of audio.
-/// A producer that runs faster than real time, such as an offline render or pluginval,
-/// would otherwise refill the ring as fast as it drains and keep the message thread here forever.
-/// What arrives during the drain waits for the next display refresh.
-void ImageControlEditor::drainAnalyzerFifo(const bool analyze)
-{
-    auto& fifo = imageControlProcessor.getAnalyzerFifo();
-    std::size_t drained {0};
-    while (drained < static_cast<std::size_t>(ANALYZER_FIFO_FRAMES)) {
-        const auto frames = static_cast<std::size_t>(fifo.pop(leftScratch, rightScratch));
-        if (frames == 0) {
-            return;
-        }
-        drained += frames;
-        if (analyze) {
-            analyzer.pushSamples(
-                std::span<const float>(leftScratch).first(frames), std::span<const float>(rightScratch).first(frames)
-            );
-        }
-        if (frames < DRAIN_CHUNK) {
-            return;
-        }
     }
 }
 
@@ -360,30 +342,24 @@ void ImageControlEditor::openSettings()
 }
 
 /// Runs on every display refresh:
-/// applies the settings, feeds the analyzer with the audio queued since the last refresh,
-/// which adds its frames to the spectrogram, advances the spectrogram by the time that passed,
-/// and hands its particles to the renderer for the next OpenGL frame.
-/// While rendering is bypassed or the spectrogram is hidden, the queued audio is discarded unanalyzed.
-/// Also follows the crossovers, and prepares the analyzer again when the host changed the sample rate.
+/// applies the settings, wakes the analysis worker to turn the audio queued since the last refresh into particles,
+/// advances the overlays by the time that passed, hands the fade and the plot to the renderer,
+/// and asks the OpenGL context for a frame.
+/// While rendering is bypassed or the spectrogram is hidden, the worker discards the queued audio unanalyzed.
+/// Also follows the crossovers.
 void ImageControlEditor::refreshDisplay(const double timestamp)
 {
     const double elapsed = lastRefreshTimestamp > 0.0 ? timestamp - lastRefreshTimestamp : 0.0;
     lastRefreshTimestamp = timestamp;
     measureFramesPerSecond(elapsed);
 
-    const double sampleRate = imageControlProcessor.getSampleRate() > 0.0 ? imageControlProcessor.getSampleRate()
-                                                                          : ANALYZER_DEFAULT_SAMPLE_RATE;
-    if (!juce::approximatelyEqual(sampleRate, analyzedSampleRate)) {
-        analyzedSampleRate = sampleRate;
-        analyzer.prepare(sampleRate);
-    }
     applyViewSettings();
-    drainAnalyzerFifo(!renderingBypassed && !spectrogramHidden);
+    spectrogramWorker.wake();
     const double step = std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS);
     spectrogram.advance(step);
     tooltips.advance(step);
-    spectrogramRenderer.submit(
-        spectrogram.takeRenderBatch(), spectrogram.getPlotBounds() + spectrogram.getPosition().toFloat(), renderMode()
+    spectrogramRenderer.submitFrame(
+        step, persistenceSeconds(), spectrogram.getPlotBounds() + spectrogram.getPosition().toFloat(), renderMode()
     );
     openGLContext.triggerRepaint();
 

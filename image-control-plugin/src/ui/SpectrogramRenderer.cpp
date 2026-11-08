@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -317,28 +318,44 @@ int SpectrogramRenderer::renderedFrameCount() const noexcept
     return renderedFrames.load(std::memory_order_relaxed);
 }
 
-/// Hands a render batch, the plot's place in the editor, and what to draw to the OpenGL thread.
-/// Batches add up until the next frame takes them, and a batch that clears drops the particles before it.
-void SpectrogramRenderer::submit(
-    SpectrogramRenderBatch batch,
+/// Returns how many particles wait for the next frame, for the tests of the analysis worker.
+std::size_t SpectrogramRenderer::pendingParticleCount()
+{
+    const std::scoped_lock lock(pendingMutex);
+    return pending.particles.size();
+}
+
+/// Hands the time that passed, the persistence, the plot's place in the editor, and what to draw
+/// to the OpenGL thread. Called on the message thread once per display refresh.
+/// Fade times add up until the next frame takes them.
+void SpectrogramRenderer::submitFrame(
+    const double fadeSeconds,
+    const double persistenceSeconds,
     const juce::Rectangle<float> plotInEditor,
     const SpectrogramRenderMode mode
 )
 {
     const std::scoped_lock lock(pendingMutex);
-    if (batch.clear) {
-        pending.particles.clear();
-        pending.fadeSeconds = 0.0;
-        pending.clear = true;
-    }
-    if (pending.particles.size() + batch.particles.size() > MAX_PENDING_PARTICLES) {
-        pending.particles.clear();
-    }
-    pending.particles.insert(pending.particles.end(), batch.particles.begin(), batch.particles.end());
-    pending.fadeSeconds = std::min(pending.fadeSeconds + batch.fadeSeconds, MAX_PENDING_FADE_SECONDS);
-    pending.persistenceSeconds = batch.persistenceSeconds;
+    pending.fadeSeconds = std::min(pending.fadeSeconds + fadeSeconds, MAX_PENDING_FADE_SECONDS);
+    pending.persistenceSeconds = std::clamp(persistenceSeconds, MIN_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS);
     pending.plotInEditor = plotInEditor;
     pending.mode = mode;
+}
+
+/// Hands new particles to the OpenGL thread. Called on the analysis worker thread.
+/// Particles add up until the next frame takes them, and clearing first drops the picture
+/// and the particles that were still waiting, which belong to what came before the clear.
+void SpectrogramRenderer::submitParticles(const std::span<const SpectrogramParticle> particles, const bool clear)
+{
+    const std::scoped_lock lock(pendingMutex);
+    if (clear) {
+        pending.particles.clear();
+        pending.clear = true;
+    }
+    if (pending.particles.size() + particles.size() > MAX_PENDING_PARTICLES) {
+        pending.particles.clear();
+    }
+    pending.particles.insert(pending.particles.end(), particles.begin(), particles.end());
 }
 
 /// Creates the shaders, the vertex arrays, and the timer queries when the context starts.

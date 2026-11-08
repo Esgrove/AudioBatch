@@ -102,8 +102,12 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SettingsPanel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpatialSpectrogramView.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramParticles.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramParticles.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramWorker.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramWorker.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.cpp"
@@ -197,7 +201,12 @@ juce_add_binary_data(
 
 target_link_libraries(
     ImageControl
-    PRIVATE juce::juce_audio_processors juce::juce_audio_utils juce::juce_dsp juce::juce_opengl ImageControlAssets
+    PRIVATE
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_opengl
+        ImageControlAssets
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
 )
 
@@ -227,6 +236,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ImagerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProcessorTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramViewTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramWorkerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/TestMain.cpp"
     )
     add_executable(ImageControlTests ${IMAGE_CONTROL_TEST_SOURCES})

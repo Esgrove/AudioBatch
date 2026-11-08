@@ -114,8 +114,13 @@ new particles add to the picture, older ones fade, and dense areas merge into br
 - **Refresh:** the editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
   at the native refresh rate, such as 120 or 144 Hz.
   The fade advances by the time that passed, so it looks the same at any refresh rate.
-- **Rendering:** the analysis and the particle list run on the message thread,
-  and the particles are drawn on the GPU with OpenGL on both macOS and Windows,
+- **Threads:** a background worker thread drains the audio queue, runs the analysis, and builds the particles,
+  woken by the editor on every display refresh and every 50 ms otherwise.
+  The message thread only animates and paints the overlays and handles the controls,
+  so a busy analysis never delays a drag or a hover.
+  One pass takes at most a queue's worth of audio,
+  so a host that processes faster than real time, such as an offline render, cannot keep the worker busy forever.
+- **Rendering:** the particles are drawn on the GPU with OpenGL on both macOS and Windows,
   through a `juce::OpenGLContext` attached to the editor.
   Each frame fades a float framebuffer at the plot's full physical resolution,
   adds the new particles as instanced Gaussian sprites with additive blending,
@@ -219,7 +224,8 @@ An out-of-range container access then stops the host at the bug instead of silen
 `-DIMAGE_CONTROL_HARDENING=OFF` turns it off.
 
 `ImageControlBenchmark`, built with the tests, times the audio processing per second of stereo audio
-and the CPU side of one spectrogram refresh: its analysis, particle list, and overlay paint.
+and the CPU side of one spectrogram refresh:
+the analysis and the particles on the worker thread, and the overlay paint on the message thread.
 The GPU drawing needs an OpenGL context, so the benchmark does not time it.
 Build it in Release, once with and once without hardening, to see what the checks cost.
 On an Apple Silicon Mac, hardening adds about 3% to the audio processing.
@@ -260,7 +266,9 @@ with bit-identical output.
 - `src/analysis/` holds the multi-resolution spatial analysis in `SpatialAnalyzer.*`,
   and `StereoSampleFifo.h`, which carries audio from the audio thread to the editor.
 - `src/ui/` holds the editor parts:
-  `SpatialSpectrogramView.*` prepares the particles and paints the overlays and the frequency scales,
+  `SpatialSpectrogramView.*` paints the overlays and handles the mouse,
+  `SpectrogramParticles.*` turns analyzed bins into particles and holds the frequency scales and colours,
+  `SpectrogramWorker.*` runs the analysis and builds the particles on a background thread,
   `SpectrogramRenderer.*` draws the particles with OpenGL,
   `BandStrip.*` the controls of one band, `SettingsPanel.*` the display settings,
   `ControlSlider.*` the slider with fine dragging and key nudges,
@@ -274,4 +282,3 @@ with bit-identical output.
 
 - Add a Metal backend for `SpectrogramRenderer` on macOS if Apple removes OpenGL.
   [JUCE Metal rendering on macOS](https://github.com/UVI-Dev/JUCE/tree/metal-renderer)
-- Consider moving the analysis and the particle work to a background thread.
