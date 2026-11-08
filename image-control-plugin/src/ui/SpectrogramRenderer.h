@@ -102,7 +102,7 @@ private:
     [[nodiscard]] bool createPrograms();
     [[nodiscard]] bool resizeTargets(int width, int height);
 
-    void drawBloom();
+    void drawBloom(bool solid);
     void drawComposite(juce::Rectangle<int> plotViewport, float exposure, bool solid);
     void drawParticles(float scale);
     void fade(double seconds, double persistenceSeconds);
@@ -144,6 +144,9 @@ private:
     SpectrogramRenderTarget accumulation;
     /// The glow chain, each level half the size of the one before.
     std::array<SpectrogramRenderTarget, 5> bloomLevels;
+    /// Density field of the solid layers: a copy of one glow chain level
+    /// taken before the smaller levels are added into it.
+    SpectrogramRenderTarget solidField;
 
     /// GPU timer queries in flight, read a few frames later so reading them never stalls the pipeline.
     std::array<GLuint, 4> timerQueries {};
