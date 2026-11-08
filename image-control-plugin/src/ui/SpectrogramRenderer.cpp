@@ -325,8 +325,8 @@ std::size_t SpectrogramRenderer::pendingParticleCount()
     return pending.particles.size();
 }
 
-/// Hands the time that passed, the persistence, the plot's place in the editor, and what to draw
-/// to the OpenGL thread. Called on the message thread once per display refresh.
+/// Hands the time that passed, the persistence, the plot's place in the editor, and what to draw to the OpenGL thread.
+/// Called on the message thread once per display refresh.
 /// Fade times add up until the next frame takes them.
 void SpectrogramRenderer::submitFrame(
     const double fadeSeconds,

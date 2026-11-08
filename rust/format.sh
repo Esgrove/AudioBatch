@@ -59,12 +59,15 @@ else
 fi
 
 if [ -n "$(command -v shfmt)" ]; then
+    SHELL_FILES=(./*.sh scripts/*.sh)
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh scripts/*.sh
+        print_file_list Checking "${SHELL_FILES[@]}"
+        shfmt --diff "${SHELL_FILES[@]}"
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh scripts/*.sh
+        print_file_list Formatting "${SHELL_FILES[@]}"
+        shfmt --list --write "${SHELL_FILES[@]}"
     fi
 fi
 

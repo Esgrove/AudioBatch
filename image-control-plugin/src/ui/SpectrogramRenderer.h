@@ -1,6 +1,6 @@
 /// Declares SpectrogramRenderer, which draws the spatial spectrogram's particles on the GPU with OpenGL.
-/// The analysis worker builds the particles on its own thread, the editor sets the fade and the plot
-/// on the message thread, and the renderer draws on JUCE's OpenGL thread,
+/// The analysis worker builds the particles on its own thread, the editor sets the fade
+/// and the plot on the message thread, and the renderer draws on JUCE's OpenGL thread,
 /// under the editor's components, which JUCE paints over the GL picture.
 /// Only this class knows OpenGL, so another GPU backend can replace it without touching the view or the worker.
 
@@ -45,10 +45,11 @@ struct SpectrogramRenderTarget {
 
 /// Draws the spectrogram particles with OpenGL.
 ///
-/// Every frame it fades the accumulated picture by the time that passed,
-/// adds the new particles as instanced Gaussian sprites with additive blending into a float framebuffer
-/// at the plot's full physical resolution, so they stay sharp on any display,
-/// builds a soft glow from a chain of downsampled copies,
+/// Every frame it fades the accumulated picture by the time that passed.
+/// It adds the new particles as instanced Gaussian sprites with additive blending.
+/// The sprites go into a float framebuffer at the plot's full physical resolution,
+/// which keeps them sharp on any display.
+/// It then builds a soft glow from a chain of downsampled copies,
 /// and tone maps the picture into the plot with rounded corners.
 ///
 /// submitParticles runs on the analysis worker thread, submitFrame on the message thread,

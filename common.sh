@@ -48,6 +48,21 @@ print_yellow() {
     printf "\e[1;49;33m%s\e[0m\n" "$1"
 }
 
+# Print each given file as "<action> [i/n] <file>", like clang-format --verbose does.
+# Paths are shown relative to the repository root.
+print_file_list() {
+    local action="$1"
+    shift
+    local total=$#
+    local index=0
+    local file relative
+    for file in "$@"; do
+        index=$((index + 1))
+        relative=$(realpath --relative-to="$REPO_ROOT" "$file")
+        printf '%s [%d/%d] %s\n' "$action" "$index" "$total" "${relative//\\//}"
+    done
+}
+
 # Print an error message to stderr without exiting
 print_error() {
     print_red "ERROR: $1" >&2

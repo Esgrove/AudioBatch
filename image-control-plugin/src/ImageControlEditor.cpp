@@ -156,8 +156,9 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     openGLContext.attachTo(*this);
 }
 
-/// Stops the analysis worker, detaches the OpenGL context, which stops the render thread and releases the GL
-/// resources, then detaches the controls and the look and feel before the components go away.
+/// Stops the analysis worker, detaches the OpenGL context,
+/// which stops the render thread and releases the GL resources,
+/// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
     spectrogramWorker.stop();
