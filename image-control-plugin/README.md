@@ -92,8 +92,8 @@ The band section height is saved with the plugin state.
 Frequency runs from 20 Hz to 20 kHz left to right,
 and the stereo position from full left (L) at the top through the centre (C) to full right (R) at the bottom.
 The display follows the approach of particle-based spatial analyzers:
-every analyzed frequency bin is drawn as a soft particle,
-new particles add to the image, and older ones fade and blur, so new content stays legible.
+every analyzed frequency bin is drawn as a sharp particle with a faint halo,
+new particles add to the picture, older ones fade, and dense areas merge into bright clusters with a soft glow.
 
 - **Position:** the level difference between the channels in dB divided by the focus, clamped to the edges.
   The default focus of 18 dB is about where a source sounds fully to one side.
@@ -101,21 +101,31 @@ new particles add to the image, and older ones fade and blur, so new content sta
   Phase colours instead run from blue for in-phase content to red for anti-phase content.
   Anti-phase content has equal levels in both channels, so it sits in the centre like mono content,
   and the phase colours tell the two apart.
-- **Brightness:** the level in dB over a 78 dB range, so quiet content stays visible next to the peaks.
-  Overlapping bright particles saturate smoothly towards white instead of clipping.
+- **Brightness:** the level in dB over a 72 dB range through a power curve,
+  so quiet content shows as faint dots and the noise floor stays dark.
+  A new particle is bright from its first frame, and steady content builds up over the persistence.
+  The tone curve keeps the hue of bright colours, and only the densest clusters lighten towards white.
+- **Size:** particles keep the same size in logical pixels on every window size and display scale.
+  At low frequencies, where the bins are wide on the axis, they widen to join into a continuous trace.
 - **Resolution:** the analysis runs four transform lengths side by side.
   32768 samples cover 20 to 80 Hz with bins about 0.7 Hz apart after zero padding,
   8192 samples cover up to 500 Hz, 2048 samples up to 4 kHz, and 1024 samples the rest,
   so the bass is finely resolved and the highs stay sharp in time.
 - **Refresh:** the editor refreshes on every vertical blank of the display through `juce::VBlankAttachment`,
   at the native refresh rate, such as 120 or 144 Hz.
-  The fade and the blur advance by the time that passed, so they look the same at any refresh rate.
-- **Rendering:** the analysis, the particles, the fade, the blur, and the tone curve run on the CPU
-  and fill a 768 × 192 image, which JUCE's renderer scales into the plot with the overlays on top.
-  On macOS that renderer is Core Graphics presented through JUCE's Metal layer renderer,
-  which the build turns on with `JUCE_COREGRAPHICS_RENDER_WITH_MULTIPLE_PAINT_CALLS`,
-  so each refresh repaints only the regions that changed.
-  On Windows it is Direct2D, JUCE's default there, which scales and composites the image on the GPU.
+  The fade advances by the time that passed, so it looks the same at any refresh rate.
+- **Rendering:** the analysis and the particle list run on the message thread,
+  and the particles are drawn on the GPU with OpenGL on both macOS and Windows,
+  through a `juce::OpenGLContext` attached to the editor.
+  Each frame fades a float framebuffer at the plot's full physical resolution,
+  adds the new particles as instanced Gaussian sprites with additive blending,
+  builds the glow from a five-level downsample and upsample chain,
+  and tone maps the result into the plot with rounded corners and a little dither against banding.
+  JUCE paints the grid, the bands, and the controls over the GL picture, repainting only the regions that change,
+  so the cost hardly grows with the window size.
+  The frame rate readout counts the frames drawn, and Debug builds add the GPU time per frame.
+  All the OpenGL code is in `SpectrogramRenderer`, so another backend, such as Metal, could replace it.
+  Without OpenGL 3.3 the plot says that GPU rendering is unavailable, and the controls keep working.
 
 The three crossovers are vertical lines with their frequencies.
 Drag a line to move its crossover, and double-click it to reset it.
@@ -145,7 +155,10 @@ The Settings button opens the display settings:
 - a logarithmic or mel frequency scale, with the same HTK mel definition as AudioBatch's spectrogram,
 - the persistence, how long particles take to fade,
 - the focus, the level difference that reaches the edges,
-- and a frame rate readout in the top-left corner of the spectrogram.
+- a frame rate readout in the top-left corner of the spectrogram,
+- **Bypass rendering**, which stops analyzing and drawing the spectrogram while the audio is still processed,
+- and **Hide the spectrogram**, which shrinks the window to the header and the band strips.
+  Showing it again restores the previous height.
 
 ### Band strips
 
@@ -193,8 +206,7 @@ the host architecture on macOS, which is arm64 with NEON on Apple Silicon, and a
 Release builds use link-time optimization and fuse multiply-adds,
 and local Release builds also target the local CPU, which CI never does.
 The hot loops are written for that SIMD width:
-the convolver keeps its spectra split into real and imaginary parts, so its multiply-add is lane by lane,
-and the spectrogram blur runs along whole rows without index clamping.
+the convolver keeps its spectra split into real and imaginary parts, so its multiply-add is lane by lane.
 On an Apple Silicon Mac these took the audio processing from about 4.2 to 3.5 ms per second of stereo audio.
 
 The sources compile with strict warnings as errors.
@@ -207,9 +219,10 @@ An out-of-range container access then stops the host at the bug instead of silen
 `-DIMAGE_CONTROL_HARDENING=OFF` turns it off.
 
 `ImageControlBenchmark`, built with the tests, times the audio processing per second of stereo audio
-and one spectrogram refresh with its analysis, rendering, and paint.
+and the CPU side of one spectrogram refresh: its analysis, particle list, and overlay paint.
+The GPU drawing needs an OpenGL context, so the benchmark does not time it.
 Build it in Release, once with and once without hardening, to see what the checks cost.
-On an Apple Silicon Mac, hardening adds about 3% to the audio processing and about 6% to a spectrogram refresh.
+On an Apple Silicon Mac, hardening adds about 3% to the audio processing.
 The convolver's inner loop keeps its spans the same length and its indices provably in range,
 so the compiler drops the checks there and still vectorizes it.
 `../cpp/format.sh` formats the sources, the CMake file, and the scripts, and the root `../format.sh` runs it too.
@@ -247,7 +260,8 @@ with bit-identical output.
 - `src/analysis/` holds the multi-resolution spatial analysis in `SpatialAnalyzer.*`,
   and `StereoSampleFifo.h`, which carries audio from the audio thread to the editor.
 - `src/ui/` holds the editor parts:
-  `SpatialSpectrogramView.*` renders the particles, the overlays, and the frequency scales,
+  `SpatialSpectrogramView.*` prepares the particles and paints the overlays and the frequency scales,
+  `SpectrogramRenderer.*` draws the particles with OpenGL,
   `BandStrip.*` the controls of one band, `SettingsPanel.*` the display settings,
   `ControlSlider.*` the slider with fine dragging and key nudges,
   and `ImageControlLookAndFeel.*` the AudioBatch palette and fonts.
@@ -258,13 +272,6 @@ with bit-identical output.
 
 ## Future Work
 
-- Investigate rendering the spatial spectrogram with native GPU views:
-  a Metal view on macOS and a Direct3D view on Windows, embedded in the editor.
-  The fade, the blur, and the tone curve would run as shaders on a particle texture,
-  which would allow much larger particle buffers and effects such as bloom.
-  It means two rendering backends to write and keep in step,
-  so first measure how long the CPU rendering takes per refresh,
-  and consider moving the analysis and the particle work to a background thread.
-- Compare the macOS Metal layer renderer with plain Core Graphics.
-  JUCE notes that the Metal layer renderer can be slower for some content.
-- Enable / disable the spectrogram view. Disable the spectrogram only, or alternatively hide it completely.
+- Add a Metal backend for `SpectrogramRenderer` on macOS if Apple removes OpenGL.
+  [JUCE Metal rendering on macOS](https://github.com/UVI-Dev/JUCE/tree/metal-renderer)
+- Consider moving the analysis and the particle work to a background thread.

@@ -15,7 +15,7 @@ namespace
 /// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
-constexpr int PANEL_HEIGHT {250};
+constexpr int PANEL_HEIGHT {302};
 /// Inner margin of the panel, in pixels.
 constexpr int MARGIN {12};
 /// Height of each row, in pixels.
@@ -59,6 +59,8 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
         std::pair<juce::ToggleButton*, const char*> {&phaseColoursButton, PHASE_COLOURS_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&melScaleButton, MEL_SCALE_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&showFpsButton, SHOW_FPS_PROPERTY},
+        std::pair<juce::ToggleButton*, const char*> {&bypassRenderingButton, BYPASS_RENDERING_PROPERTY},
+        std::pair<juce::ToggleButton*, const char*> {&hideSpectrogramButton, HIDE_SPECTROGRAM_PROPERTY},
     };
     analyzeOutputButton.setTooltip("Show the processed output, or the input before the bands are changed");
     phaseColoursButton.setTooltip(
@@ -68,6 +70,10 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
         "Space the frequencies like the mel scale of AudioBatch's spectrogram, with less room for the bass"
     );
     showFpsButton.setTooltip("Show how often the display refreshes, in the top-left corner of the spectrogram");
+    bypassRenderingButton.setTooltip(
+        "Stop analyzing and drawing the spectrogram to save CPU and GPU time. The audio is still processed"
+    );
+    hideSpectrogramButton.setTooltip("Hide the spectrogram and shrink the window to the band controls");
     for (const auto& [button, property] : toggles) {
         button->getToggleStateValue().referTo(editorState.getPropertyAsValue(property, nullptr));
         addAndMakeVisible(*button);
@@ -114,7 +120,14 @@ void SettingsPanel::resized()
 {
     auto area = getLocalBounds().reduced(MARGIN);
     titleLabel.setBounds(area.removeFromTop(ROW_HEIGHT));
-    for (auto* button : {&analyzeOutputButton, &phaseColoursButton, &melScaleButton, &showFpsButton}) {
+    for (auto* button :
+         {&analyzeOutputButton,
+          &phaseColoursButton,
+          &melScaleButton,
+          &showFpsButton,
+          &bypassRenderingButton,
+          &hideSpectrogramButton})
+    {
         button->setBounds(area.removeFromTop(ROW_HEIGHT));
     }
     persistenceLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));

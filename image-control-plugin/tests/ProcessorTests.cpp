@@ -171,7 +171,14 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     auto* editorSettings = xml->getChildByName("EditorState");
     ASSERT_NE(editorSettings, nullptr);
     // A state saved before these settings existed has none of them.
-    for (const char* property : {ANALYZE_OUTPUT_PROPERTY, PERSISTENCE_PROPERTY, FOCUS_PROPERTY, SHOW_FPS_PROPERTY}) {
+    for (const char* property :
+         {ANALYZE_OUTPUT_PROPERTY,
+          PERSISTENCE_PROPERTY,
+          FOCUS_PROPERTY,
+          SHOW_FPS_PROPERTY,
+          BYPASS_RENDERING_PROPERTY,
+          HIDE_SPECTROGRAM_PROPERTY})
+    {
         editorSettings->removeAttribute(property);
     }
     juce::MemoryBlock olderState;
@@ -185,6 +192,8 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PERSISTENCE_PROPERTY)), DEFAULT_PERSISTENCE_SECONDS);
     EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(FOCUS_PROPERTY)), DEFAULT_FOCUS_DB);
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(SHOW_FPS_PROPERTY)));
+    EXPECT_FALSE(static_cast<bool>(settings.getProperty(BYPASS_RENDERING_PROPERTY)));
+    EXPECT_FALSE(static_cast<bool>(settings.getProperty(HIDE_SPECTROGRAM_PROPERTY)));
 }
 
 TEST(Processor, RestoringAStateWithoutPansCentresThem)

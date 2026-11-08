@@ -11,11 +11,13 @@
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramRenderer.h"
 #include "ui/SplitDivider.h"
 #include "ui/TooltipOverlay.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_opengl/juce_opengl.h>
 
 #include <array>
 #include <memory>
@@ -28,8 +30,10 @@ class ImageControlProcessor;
 
 /// The ImageControl editor.
 /// A VBlankAttachment drains the processor's analyzer ring into the analyzer on every display refresh,
-/// and advances the spectrogram by the time that passed,
+/// advances the spectrogram by the time that passed, and asks the OpenGL context for a frame,
 /// so the particles fade smoothly at the native refresh rate of the display, such as 120 or 144 Hz.
+/// The context is attached to the whole editor: the renderer draws the particles,
+/// and JUCE paints the components over them, repainting only the regions that changed.
 /// The display settings live in a panel that the Settings button opens,
 /// and the editor applies them from the editor settings on every refresh.
 class ImageControlEditor final : public juce::AudioProcessorEditor
@@ -48,6 +52,10 @@ public:
     void resized() override;
 
 private:
+    [[nodiscard]] int compactHeight() const;
+    [[nodiscard]] SpectrogramRenderMode renderMode() const;
+
+    void applySpectrogramHidden(bool hidden);
     void applyViewSettings();
     void drainAnalyzerFifo(bool analyze);
     void measureFramesPerSecond(double elapsed);
@@ -64,6 +72,10 @@ private:
     SpatialAnalyzer analyzer;
     /// The spatial spectrogram.
     SpatialSpectrogramView spectrogram;
+    /// The OpenGL context attached to the editor, detached first when the editor goes away.
+    juce::OpenGLContext openGLContext;
+    /// Draws the spectrogram's particles in the OpenGL context.
+    SpectrogramRenderer spectrogramRenderer {openGLContext};
     /// The draggable divider between the spectrogram and the band strips.
     SplitDivider divider;
     /// Height of the band strip section, in pixels, which the divider changes.
@@ -101,6 +113,15 @@ private:
     std::optional<bool> shownPhaseColours;
     /// Analyzer tap the spectrogram last showed, empty before the first update.
     std::optional<bool> shownTapOutput;
+    /// Rendering bypass the spectrogram was last set to, empty before the first update.
+    std::optional<bool> shownRenderingBypassed;
+    /// Whether the spectrogram was last hidden, empty before the first update.
+    std::optional<bool> shownHidden;
+
+    /// Whether the spectrogram is hidden, which shrinks the editor to the header and the band strips.
+    bool spectrogramHidden {false};
+    /// Whether the particles are not analyzed or drawn, while the audio is still processed.
+    bool renderingBypassed {false};
 
     /// Sample rate the analyzer was last prepared for.
     double analyzedSampleRate {0.0};
@@ -108,10 +129,10 @@ private:
     double lastRefreshTimestamp {0.0};
     /// Time since the frame rate was last measured, in seconds.
     double frameRateClock {0.0};
-    /// The most recently measured display refresh rate.
+    /// The most recently measured rate of drawn frames.
     double measuredFramesPerSecond {0.0};
-    /// Display refreshes since the frame rate was last measured.
-    int frameRateCount {0};
+    /// The renderer's frame count when the frame rate was last measured.
+    int measuredFrameCount {0};
 
     /// The tooltip bubble, kept above the other components.
     TooltipOverlay tooltips;

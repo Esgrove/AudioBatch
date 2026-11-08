@@ -1,5 +1,5 @@
-/// Implements SpatialSpectrogramView: splatting analyzed bins into the particle buffer as Gaussian particles,
-/// the frequency and phase colours, the time-based fade and blur, the tone curve that renders the buffer,
+/// Implements SpatialSpectrogramView: turning analyzed bins into particles for the GPU renderer,
+/// with their brightness, spread, and frequency or phase colours,
 /// the grid and band overlays with their hover animation, and the mouse controls.
 
 #include "ui/SpatialSpectrogramView.h"
@@ -13,48 +13,34 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstring>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace esgrove::image_control
 {
 namespace
 {
-/// Share by which the wanted grid size has to differ from the current one before the buffer is reallocated,
-/// so dragging the window edge does not reallocate on every pixel.
-constexpr int GRID_RESIZE_THRESHOLD_DIVISOR {8};
-/// Each physical pixel of the plot height holds this many stereo position rows. The rows cost more than they show.
-constexpr float ROWS_PER_PIXEL {0.5F};
-
 /// Level shown as the faintest particle, in dB relative to a full-scale sine.
-constexpr float DISPLAY_FLOOR_DB {-78.0F};
+constexpr float DISPLAY_FLOOR_DB {-72.0F};
 /// Level range from the faintest to the brightest particle, in dB.
-constexpr float DISPLAY_RANGE_DB {78.0F};
-/// Scale from the settled particle energy to the tone curve input.
-constexpr float EXPOSURE {3.0F};
-/// Highest exposed energy the tone curve covers. Above it the display is fully saturated.
-constexpr float TONE_CURVE_MAX {6.0F};
-/// Number of steps in the tone curve.
-constexpr std::size_t TONE_CURVE_STEPS {2048};
-
-/// Vertical spread of a particle, in rows.
-constexpr float PARTICLE_SIGMA_ROWS {1.8F};
-/// Smallest horizontal spread of a particle, in columns.
-constexpr float MIN_PARTICLE_SIGMA_COLUMNS {1.2F};
+constexpr float DISPLAY_RANGE_DB {72.0F};
+/// Exponent from the level's share of the display range to the particle brightness.
+/// Above 1 it keeps the noise floor dark, so quiet bins show as faint dots instead of a haze over the plot.
+constexpr float LEVEL_GAMMA {2.2F};
+/// Weakest particle weight that is still drawn. Fainter particles would not show.
+constexpr float MIN_PARTICLE_WEIGHT {1.0e-4F};
+/// Time constant over which a new particle reaches its brightness, in seconds.
+/// It is short and independent of the persistence, so a single frame already draws a bright dot.
+constexpr double FLASH_SECONDS {0.04};
 /// Horizontal spread of a particle relative to the distance to its neighbours,
 /// so neighbouring bins blend into a continuous trace at the low frequencies.
 constexpr float PARTICLE_SIGMA_PER_SPACING {0.6F};
-/// How many spreads a particle reaches before it is cut off.
-constexpr float PARTICLE_RADIUS_SIGMAS {2.5F};
-/// Largest particle radius, in cells.
-constexpr int MAX_PARTICLE_RADIUS {48};
-
-/// Time between blur steps of the older particles, in seconds, independent of the display refresh rate.
-constexpr double BLUR_INTERVAL_SECONDS {1.0 / 60.0};
-/// Share of a cell each neighbour receives per blur step.
-constexpr float BLUR_NEIGHBOUR_WEIGHT {0.1F};
+/// Number of steps in the frequency colour table.
+constexpr std::size_t FREQUENCY_COLOUR_STEPS {1024};
+/// Smallest highlight change that still counts as animating. Closer to the target, the highlight snaps to it.
+constexpr float HIGHLIGHT_SNAP {0.002F};
 
 /// Hue of the lowest frequency: red.
 constexpr float LOW_FREQUENCY_HUE {0.0F};
@@ -143,24 +129,20 @@ constexpr float PILL_PADDING {4.0F};
 /// Opacity of the background of a label pill.
 constexpr float PILL_BACKGROUND_ALPHA {0.7F};
 
-/// Background of the plot, as ARGB.
-constexpr juce::uint32 BACKGROUND {0xff050608};
-/// Colour of the frame rate readout, as ARGB.
-constexpr juce::uint32 FPS_COLOUR {0xff9be37a};
 /// Width of the frame rate readout, in pixels.
-constexpr float FPS_LABEL_WIDTH {70.0F};
+constexpr float FPS_LABEL_WIDTH {150.0F};
+/// Opacity of the rendering status text in the middle of the plot.
+constexpr float STATUS_ALPHA {0.45F};
+/// Font height of the rendering status text.
+constexpr float STATUS_FONT_HEIGHT {14.0F};
 /// Corner radius of the spectrogram box, matching the band strips, in pixels.
 constexpr float BOX_CORNER_RADIUS {6.0F};
-/// Corner radius of the plot inside the box, in pixels.
-constexpr float PLOT_CORNER_RADIUS {4.0F};
 /// HTK mel scale factor, as in AudioBatch's spectrogram.
 constexpr double MEL_SCALE {2595.0};
 /// HTK mel corner frequency, in Hz.
 constexpr double MEL_CORNER_FREQUENCY {700.0};
 /// Base of the logarithm in the HTK mel definition.
 constexpr double MEL_LOGARITHM_BASE {10.0};
-/// Largest value of an 8-bit colour channel.
-constexpr double MAX_CHANNEL_VALUE {255.0};
 /// Space around the plot inside the box, in pixels.
 constexpr float BOX_PADDING {6.0F};
 
@@ -176,23 +158,14 @@ LinearColour frequencyColour(const float share)
     return {.red = colour.getFloatRed(), .green = colour.getFloatGreen(), .blue = colour.getFloatBlue()};
 }
 
-/// Builds the tone curve, 1 − exp(−energy), which keeps faint particles visible
-/// and lets overlapping bright particles saturate smoothly instead of clipping.
-std::vector<juce::uint8> buildToneCurve()
+/// Builds the frequency colour of evenly spaced shares of the frequency axis.
+std::vector<LinearColour> buildFrequencyColours()
 {
-    std::vector<juce::uint8> curve(TONE_CURVE_STEPS);
-    for (std::size_t step = 0; step < TONE_CURVE_STEPS; ++step) {
-        const double energy = static_cast<double>(step) / static_cast<double>(TONE_CURVE_STEPS - 1)
-            * static_cast<double>(TONE_CURVE_MAX);
-        curve[step] = static_cast<juce::uint8>(juce::roundToInt(MAX_CHANNEL_VALUE * (1.0 - std::exp(-energy))));
+    std::vector<LinearColour> table(FREQUENCY_COLOUR_STEPS);
+    for (std::size_t step = 0; step < FREQUENCY_COLOUR_STEPS; ++step) {
+        table[step] = frequencyColour(static_cast<float>(step) / static_cast<float>(FREQUENCY_COLOUR_STEPS - 1));
     }
-    return curve;
-}
-
-/// Returns the Gaussian weight of an offset for a spread.
-float gaussian(const float offset, const float sigma)
-{
-    return std::exp(-0.5F * (offset * offset) / (sigma * sigma));
+    return table;
 }
 
 /// Returns the target magnitude of a band at a frequency, from 0 to 1, given the ordered crossovers.
@@ -248,11 +221,13 @@ juce::String formatGridFrequency(const double frequency)
     return juce::String(juce::roundToInt(frequency));
 }
 
-/// Moves an animated value towards its target with a time constant.
+/// Moves an animated value towards its target with a time constant, and snaps it to the target when close,
+/// so a settled highlight stops asking for repaints.
 float approach(const float value, const float target, const double seconds)
 {
     const auto share = static_cast<float>(1.0 - std::exp(-seconds / HIGHLIGHT_SECONDS));
-    return value + (target - value) * share;
+    const float next = value + (target - value) * share;
+    return std::abs(target - next) < HIGHLIGHT_SNAP ? target : next;
 }
 
 }  // namespace
@@ -303,13 +278,10 @@ double melToFrequency(const double mel)
     return MEL_CORNER_FREQUENCY * (std::pow(MEL_LOGARITHM_BASE, mel / MEL_SCALE) - 1.0);
 }
 
-/// Creates the view with an empty particle buffer, looking up the parameters it reads and changes.
+/// Creates the view, looking up the parameters it reads and changes.
 SpatialSpectrogramView::SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters) :
-    toneCurve(buildToneCurve())
+    frequencyColours(buildFrequencyColours())
 {
-    allocateGrid(
-        BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE, BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE
-    );
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         crossoverParameters.at(crossover) = parameters.getParameter(crossoverParameterId(crossover));
         jassert(crossoverParameters.at(crossover) != nullptr);
@@ -319,81 +291,10 @@ SpatialSpectrogramView::SpatialSpectrogramView(juce::AudioProcessorValueTreeStat
         sideParameters.at(band) = parameters.getParameter(sideGainParameterId(band));
         jassert(midParameters.at(band) != nullptr && sideParameters.at(band) != nullptr);
     }
-    // The rounded corners show the editor background, so the view does not fill its whole bounds.
+    // The rounded corners show the editor background and the plot shows the GPU picture,
+    // so the view does not fill its whole bounds.
     setOpaque(false);
-}
-
-/// Reallocates the particle buffer and the image for a grid size, which clears the particles.
-void SpatialSpectrogramView::allocateGrid(const int newColumns, const int newRows)
-{
-    columns = newColumns;
-    rows = newRows;
-    columnScale = static_cast<float>(columns) / static_cast<float>(BASE_SPECTROGRAM_COLUMNS);
-    rowScale = static_cast<float>(rows) / static_cast<float>(BASE_SPECTROGRAM_ROWS);
-
-    const auto cellCount = static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows);
-    image = juce::Image(juce::Image::ARGB, columns, rows, true);
-    for (auto& plane : buffer) {
-        plane.assign(cellCount, 0.0F);
-    }
-    blurScratch.assign(cellCount, 0.0F);
-
-    columnColours.resize(static_cast<std::size_t>(columns));
-    for (int column = 0; column < columns; ++column) {
-        columnColours[static_cast<std::size_t>(column)]
-            = frequencyColour(static_cast<float>(column) / static_cast<float>(columns - 1));
-    }
-
-    maxColumnRadius = static_cast<int>(std::ceil(static_cast<float>(MAX_PARTICLE_RADIUS) * columnScale));
-    const int rowRadius = static_cast<int>(std::ceil(PARTICLE_SIGMA_ROWS * rowScale * PARTICLE_RADIUS_SIGMAS));
-    columnWeights.assign(static_cast<std::size_t>(maxColumnRadius) * 2 + 1, 0.0F);
-    rowWeights.assign(static_cast<std::size_t>(rowRadius) * 2 + 1, 0.0F);
-}
-
-/// Sizes the particle buffer to the plot in physical pixels, so the particles stay sharp on large and HiDPI displays.
-/// The grid is never smaller than twice the reference grid and is capped to bound the work per display refresh.
-/// Small changes are ignored, so dragging the window edge does not reallocate on every pixel.
-void SpatialSpectrogramView::updateGrid()
-{
-    const auto plot = getPlotBounds();
-    if (plot.isEmpty()) {
-        return;
-    }
-    float displayScale = 1.0F;
-    if (const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect(getScreenBounds())) {
-        displayScale = static_cast<float>(display->scale);
-    }
-    const int wantedColumns = std::clamp(
-        juce::roundToInt(plot.getWidth() * displayScale),
-        BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE,
-        MAX_SPECTROGRAM_COLUMNS
-    );
-    const int wantedRows = std::clamp(
-        juce::roundToInt(plot.getHeight() * displayScale * ROWS_PER_PIXEL),
-        BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE,
-        MAX_SPECTROGRAM_ROWS
-    );
-    const auto differs = [](const int current, const int wanted, const int lowest, const int highest) {
-        const bool atLimit = (wanted == lowest || wanted == highest) && wanted != current;
-        return atLimit || std::abs(wanted - current) > current / GRID_RESIZE_THRESHOLD_DIVISOR;
-    };
-    if (differs(columns, wantedColumns, BASE_SPECTROGRAM_COLUMNS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_COLUMNS)
-        || differs(rows, wantedRows, BASE_SPECTROGRAM_ROWS * MIN_SPECTROGRAM_GRID_SCALE, MAX_SPECTROGRAM_ROWS))
-    {
-        allocateGrid(wantedColumns, wantedRows);
-    }
-}
-
-/// Resizes the particle buffer when the plot size changes.
-void SpatialSpectrogramView::resized()
-{
-    updateGrid();
-}
-
-/// Resizes the particle buffer when the view moves to a display with another scale.
-void SpatialSpectrogramView::parentHierarchyChanged()
-{
-    updateGrid();
+    shownOverlay = currentOverlayState();
 }
 
 /// Returns the area of the spectrogram inside the axis labels.
@@ -409,87 +310,56 @@ juce::Rectangle<float> SpatialSpectrogramView::getPlotBounds() const
         .withTrimmedRight(FREQUENCY_LABEL_WIDTH * 0.5F - BOX_PADDING);
 }
 
-/// Draws the points of one analyzed frame into the particle buffer as Gaussian particles.
-/// A particle's brightness follows its level in dB,
-/// and its contribution is scaled by the share of the fade its frame stands for,
-/// so the settled brightness does not depend on the persistence or the frame rate.
+/// Turns the points of one analyzed frame into particles for the renderer.
+/// A particle's brightness follows its level in dB through a power curve, which keeps the noise floor dark.
+/// Its weight is the share of a short flash its frame stands for,
+/// so a single frame draws a bright dot and the brightness does not depend on the analyzer's frame rate.
+/// Long persistence lets steady content build up for longer,
+/// so the weight shrinks with the square root of the persistence to keep the picture from saturating.
 void SpatialSpectrogramView::addFrame(const std::span<const SpectralPoint> points, const double frameSeconds)
 {
-    const auto fadeIn = static_cast<float>(1.0 - std::exp(-frameSeconds / persistenceSeconds));
-    const float sigmaRows = PARTICLE_SIGMA_ROWS * rowScale;
-    const float minSigmaColumns = MIN_PARTICLE_SIGMA_COLUMNS * columnScale;
-    const auto columnCount = static_cast<double>(columns);
-    const auto columnStride = static_cast<std::size_t>(columns);
-
+    const auto flash = static_cast<float>(
+        (1.0 - std::exp(-frameSeconds / FLASH_SECONDS)) * std::sqrt(DEFAULT_PERSISTENCE_SECONDS / persistenceSeconds)
+    );
+    pendingBatch.particles.reserve(pendingBatch.particles.size() + points.size());
     for (const auto& point : points) {
-        const float decibels = 10.0F * std::log10(point.level);
-        const float brightness = std::clamp((decibels - DISPLAY_FLOOR_DB) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
-        // Brightness follows the level in dB linearly, so quiet content stays visible next to the peaks.
-        const float weight = brightness * fadeIn;
-        if (weight <= 0.0F) {
+        const float decibels = 10.0F * std::log10(std::max(point.level, 1.0e-12F));
+        const float share = std::clamp((decibels - DISPLAY_FLOOR_DB) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
+        const float weight = std::pow(share, LEVEL_GAMMA) * flash;
+        if (weight < MIN_PARTICLE_WEIGHT) {
             continue;
         }
 
         const auto frequency = static_cast<double>(point.frequency);
-        const auto column = static_cast<float>(frequencyToShare(frequency, scale) * columnCount);
-        const auto row
-            = static_cast<float>((1.0 - static_cast<double>(point.position)) * 0.5 * static_cast<double>(rows - 1));
-        // The distance to the neighbouring bins in columns depends on the frequency and the scale.
+        // The distance to the neighbouring bins on the axis depends on the frequency and the scale.
         const double halfSpacing = static_cast<double>(point.spacing) * 0.5;
-        const auto spacingColumns = static_cast<float>(
-            (frequencyToShare(frequency + halfSpacing, scale)
-             - frequencyToShare(std::max(static_cast<double>(MIN_FREQUENCY), frequency - halfSpacing), scale))
-            * columnCount
-        );
-        const float sigmaColumns = std::max(minSigmaColumns, spacingColumns * PARTICLE_SIGMA_PER_SPACING);
-        const int columnRadius
-            = std::min(maxColumnRadius, static_cast<int>(std::ceil(sigmaColumns * PARTICLE_RADIUS_SIGMAS)));
-        const int rowRadius = static_cast<int>(std::ceil(sigmaRows * PARTICLE_RADIUS_SIGMAS));
-
-        const int centreColumn = juce::roundToInt(column);
-        const int centreRow = juce::roundToInt(row);
-        const int firstColumn = std::max(0, centreColumn - columnRadius);
-        const int lastColumn = std::min(columns - 1, centreColumn + columnRadius);
-        const int firstRow = std::max(0, centreRow - rowRadius);
-        const int lastRow = std::min(rows - 1, centreRow + rowRadius);
-        for (int cell = firstColumn; cell <= lastColumn; ++cell) {
-            columnWeights[static_cast<std::size_t>(cell - firstColumn)]
-                = gaussian(static_cast<float>(cell) - column, sigmaColumns);
-        }
-        for (int cell = firstRow; cell <= lastRow; ++cell) {
-            rowWeights[static_cast<std::size_t>(cell - firstRow)]
-                = gaussian(static_cast<float>(cell) - row, sigmaRows) * weight;
-        }
-
+        const double spacingShare = frequencyToShare(frequency + halfSpacing, scale)
+            - frequencyToShare(std::max(static_cast<double>(MIN_FREQUENCY), frequency - halfSpacing), scale);
         const LinearColour colour = pointColour(point);
-        for (int rowCell = firstRow; rowCell <= lastRow; ++rowCell) {
-            const float rowWeight = rowWeights[static_cast<std::size_t>(rowCell - firstRow)];
-            for (int columnCell = firstColumn; columnCell <= lastColumn; ++columnCell) {
-                const float cellWeight = rowWeight * columnWeights[static_cast<std::size_t>(columnCell - firstColumn)];
-                const std::size_t index
-                    = static_cast<std::size_t>(rowCell) * columnStride + static_cast<std::size_t>(columnCell);
-                buffer[0][index] += colour.red * cellWeight;
-                buffer[1][index] += colour.green * cellWeight;
-                buffer[2][index] += colour.blue * cellWeight;
-            }
-        }
+        pendingBatch.particles.push_back({
+            .x = static_cast<float>(frequencyToShare(frequency, scale)),
+            .y = (1.0F - point.position) * 0.5F,
+            .spread = static_cast<float>(spacingShare) * PARTICLE_SIGMA_PER_SPACING,
+            .red = colour.red * weight,
+            .green = colour.green * weight,
+            .blue = colour.blue * weight,
+        });
     }
 }
 
+/// Returns the particles and the fade since the last call, and starts a new batch.
+SpectrogramRenderBatch SpatialSpectrogramView::takeRenderBatch()
+{
+    pendingBatch.persistenceSeconds = persistenceSeconds;
+    return std::exchange(pendingBatch, SpectrogramRenderBatch {.persistenceSeconds = persistenceSeconds});
+}
+
 /// Advances the display by the time since the last display refresh:
-/// fades the particles, blurs the older ones at a fixed rate, animates the hover highlights,
-/// renders the particle buffer, and repaints.
+/// adds the time to the fade of the next render batch, animates the hover highlights,
+/// and repaints the overlays when what they show changed.
 void SpatialSpectrogramView::advance(const double seconds)
 {
-    const auto fade = static_cast<float>(std::exp(-seconds / persistenceSeconds));
-    for (auto& plane : buffer) {
-        juce::FloatVectorOperations::multiply(plane.data(), fade, static_cast<int>(plane.size()));
-    }
-    blurClock += seconds;
-    while (blurClock >= BLUR_INTERVAL_SECONDS) {
-        blurClock -= BLUR_INTERVAL_SECONDS;
-        blurBuffer();
-    }
+    pendingBatch.fadeSeconds += seconds;
 
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         const float target = hoveredBand == band ? 1.0F : 0.0F;
@@ -502,16 +372,19 @@ void SpatialSpectrogramView::advance(const double seconds)
         crossoverHighlights.at(crossover) = approach(crossoverHighlights.at(crossover), active ? 1.0F : 0.0F, seconds);
     }
 
-    renderImage();
-    repaint();
+    const SpectrogramOverlayState overlay = currentOverlayState();
+    if (overlay != shownOverlay) {
+        shownOverlay = overlay;
+        repaint();
+    }
 }
 
 /// Clears the particles, such as after switching the analyzer tap.
+/// The pending particles are dropped and the renderer clears its picture with the next batch.
 void SpatialSpectrogramView::clear()
 {
-    for (auto& plane : buffer) {
-        std::ranges::fill(plane, 0.0F);
-    }
+    pendingBatch.particles.clear();
+    pendingBatch.clear = true;
 }
 
 /// Selects frequency or phase colours for new particles.
@@ -529,10 +402,35 @@ void SpatialSpectrogramView::setFrequencyScale(const FrequencyScale newScale)
     }
 }
 
-/// Sets the display refresh rate to show in the top-left corner, or hides it.
-void SpatialSpectrogramView::setFramesPerSecond(const std::optional<double> rate)
+/// Sets the display refresh rate and the GPU time per frame to show in the top-left corner, or hides them.
+/// Only the readout is repainted, and only when its text changes.
+void SpatialSpectrogramView::setFrameStatistics(
+    const std::optional<double> rate,
+    const std::optional<double> gpuMilliseconds
+)
 {
+    const auto rounded = [](const std::optional<double> value, const double steps) {
+        return value.has_value() ? std::optional<int>(juce::roundToInt(*value * steps)) : std::nullopt;
+    };
+    const bool changed = rounded(rate, 1.0) != rounded(framesPerSecond, 1.0)
+        || rounded(gpuMilliseconds, 10.0) != rounded(gpuFrameMilliseconds, 10.0);
     framesPerSecond = rate;
+    gpuFrameMilliseconds = gpuMilliseconds;
+    if (changed) {
+        repaint(framesPerSecondArea().getSmallestIntegerContainer());
+    }
+}
+
+/// Stops or resumes drawing the particles. The view shows that rendering is bypassed while it is.
+void SpatialSpectrogramView::setRenderingBypassed(const bool bypassed)
+{
+    renderingBypassed = bypassed;
+}
+
+/// Tells the view that the GPU renderer could not start, so it can say so in the plot.
+void SpatialSpectrogramView::setRenderingUnavailable(const bool unavailable)
+{
+    renderingUnavailable = unavailable;
 }
 
 /// Sets the time constant of the particle fade, clamped to the persistence range.
@@ -660,27 +558,31 @@ void SpatialSpectrogramView::mouseWheelMove(const juce::MouseEvent& event, const
     setParameterInGesture(side, std::clamp(current + delta * step, BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB));
 }
 
-/// Paints the particle image, the grid, the band regions, and the crossover lines.
+/// Paints the box around the plot, and the grid, the band regions, and the crossover lines over the plot.
+/// The plot itself is left transparent, so the particles the GPU renderer draws under the view show through.
 void SpatialSpectrogramView::paint(juce::Graphics& graphics)
 {
-    graphics.setColour(juce::Colour(palette::GREY_SEMI_DARK));
-    graphics.fillRoundedRectangle(getLocalBounds().toFloat(), BOX_CORNER_RADIUS);
     const auto plot = getPlotBounds();
-    graphics.setColour(juce::Colour(BACKGROUND));
-    graphics.fillRoundedRectangle(plot, PLOT_CORNER_RADIUS);
-
     juce::Path plotOutline;
-    plotOutline.addRoundedRectangle(plot, PLOT_CORNER_RADIUS);
+    plotOutline.addRoundedRectangle(plot, SPECTROGRAM_PLOT_CORNER_RADIUS);
+
+    // The box with the rounded plot cut out of it.
+    juce::Path box;
+    box.addRoundedRectangle(getLocalBounds().toFloat(), BOX_CORNER_RADIUS);
+    box.addPath(plotOutline);
+    box.setUsingNonZeroWinding(false);
+    graphics.setColour(juce::Colour(palette::GREY_SEMI_DARK));
+    graphics.fillPath(box);
+
     {
         const juce::Graphics::ScopedSaveState clip(graphics);
         graphics.reduceClipRegion(plotOutline);
-        graphics.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
-        graphics.drawImage(image, plot, juce::RectanglePlacement::stretchToFit);
         paintGrid(graphics);
         const Crossovers crossovers = currentCrossovers();
         paintBands(graphics, crossovers);
         paintBandResponses(graphics, crossovers);
         paintCrossovers(graphics, crossovers);
+        paintRenderingStatus(graphics);
     }
     paintAxisLabels(graphics);
     paintFramesPerSecond(graphics);
@@ -746,13 +648,37 @@ Crossovers SpatialSpectrogramView::currentCrossovers() const
     return orderCrossovers(crossovers);
 }
 
+/// Returns what the overlays show now: the hover highlights, the crossovers, the band widths,
+/// and the rendering status.
+SpectrogramOverlayState SpatialSpectrogramView::currentOverlayState() const
+{
+    SpectrogramOverlayState state {
+        .bandHighlights = bandHighlights,
+        .crossoverHighlights = crossoverHighlights,
+        .crossovers = currentCrossovers(),
+        .renderingBypassed = renderingBypassed,
+        .renderingUnavailable = renderingUnavailable,
+    };
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        state.bandWidths.at(band) = bandWidth(band);
+    }
+    return state;
+}
+
+/// Returns the area of the frame rate readout in the top-left corner of the plot.
+juce::Rectangle<float> SpatialSpectrogramView::framesPerSecondArea() const
+{
+    const auto plot = getPlotBounds();
+    return {plot.getX() + LABEL_INSET, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT};
+}
+
 /// Returns the colour of a particle: its frequency colour, or its phase colour from its coherence.
 LinearColour SpatialSpectrogramView::pointColour(const SpectralPoint& point) const
 {
     if (colours == SpectrogramColours::frequency) {
         const double share
             = std::clamp(frequencyToShare(static_cast<double>(point.frequency), FrequencyScale::logarithmic), 0.0, 1.0);
-        return columnColours.at(static_cast<std::size_t>(share * static_cast<double>(columns - 1)));
+        return frequencyColours[static_cast<std::size_t>(share * static_cast<double>(FREQUENCY_COLOUR_STEPS - 1))];
     }
     const float antiPhaseShare = std::clamp((1.0F - point.coherence) * 0.5F, 0.0F, 1.0F);
     return {
@@ -791,45 +717,6 @@ double SpatialSpectrogramView::xToFrequency(const float x) const
 {
     const auto plot = getPlotBounds();
     return shareToFrequency(static_cast<double>((x - plot.getX()) / plot.getWidth()), scale);
-}
-
-/// Spreads every cell a little into its four neighbours, so older particles smear while new ones stay sharp.
-/// Edge cells use themselves as their missing neighbour.
-/// Both passes run along whole rows of the same length without index clamping,
-/// so the compiler vectorizes them for NEON and AVX2.
-void SpatialSpectrogramView::blurBuffer()
-{
-    // A cell is smaller on a finer grid,
-    // so the neighbour weight shrinks with the square of the grid scale to keep the blur the same size on screen.
-    const float columnWeight = BLUR_NEIGHBOUR_WEIGHT / (columnScale * columnScale);
-    const float rowWeight = BLUR_NEIGHBOUR_WEIGHT / (rowScale * rowScale);
-    const float columnCentre = 1.0F - 2.0F * columnWeight;
-    const float rowCentre = 1.0F - 2.0F * rowWeight;
-    const auto columnCount = static_cast<std::size_t>(columns);
-    const auto rowOf = [columnCount](std::span<float> plane, const int row) {
-        return plane.subspan(static_cast<std::size_t>(row) * columnCount).first(columnCount);
-    };
-    for (auto& plane : buffer) {
-        for (int row = 0; row < rows; ++row) {
-            const auto source = rowOf(plane, row);
-            const auto blurred = rowOf(blurScratch, row);
-            blurred.front() = source.front() * columnCentre + (source.front() + source[1]) * columnWeight;
-            for (std::size_t column = 1; column + 1 < columnCount; ++column) {
-                blurred[column]
-                    = source[column] * columnCentre + (source[column - 1] + source[column + 1]) * columnWeight;
-            }
-            blurred.back() = source.back() * columnCentre + (source[columnCount - 2] + source.back()) * columnWeight;
-        }
-        for (int row = 0; row < rows; ++row) {
-            const auto above = rowOf(blurScratch, std::max(0, row - 1));
-            const auto middle = rowOf(blurScratch, row);
-            const auto below = rowOf(blurScratch, std::min(rows - 1, row + 1));
-            const auto destination = rowOf(plane, row);
-            for (std::size_t column = 0; column < columnCount; ++column) {
-                destination[column] = middle[column] * rowCentre + (above[column] + below[column]) * rowWeight;
-            }
-        }
-    }
 }
 
 /// Paints the band regions: a soft gradient in the band's colour over the hovered band,
@@ -983,21 +870,31 @@ void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
 }
 
 /// Paints the display refresh rate in the top-left corner of the plot when it is shown,
-/// small and monospaced like a game's frame rate overlay.
+/// small and monospaced like a game's frame rate overlay, with the GPU time per frame when it is measured.
 void SpatialSpectrogramView::paintFramesPerSecond(juce::Graphics& graphics) const
 {
     if (!framesPerSecond.has_value()) {
         return;
     }
-    const auto plot = getPlotBounds();
     graphics.setFont(monoFont(LABEL_FONT_HEIGHT));
-    graphics.setColour(juce::Colour(FPS_COLOUR));
-    const juce::Rectangle<float> area(
-        plot.getX() + LABEL_INSET, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT
-    );
-    graphics.drawText(
-        juce::String(juce::roundToInt(*framesPerSecond)) + " FPS", area, juce::Justification::centredLeft
-    );
+    graphics.setColour(juce::Colour(palette::GREY_LIGHT));
+    auto text = juce::String(juce::roundToInt(*framesPerSecond)) + " FPS";
+    if (gpuFrameMilliseconds.has_value()) {
+        text << " | " << juce::String(*gpuFrameMilliseconds, 1) << " ms GPU";
+    }
+    graphics.drawText(text, framesPerSecondArea(), juce::Justification::centredLeft);
+}
+
+/// Says in the middle of the plot why no particles are drawn: rendering is bypassed, or the GPU renderer failed.
+void SpatialSpectrogramView::paintRenderingStatus(juce::Graphics& graphics) const
+{
+    if (!renderingBypassed && !renderingUnavailable) {
+        return;
+    }
+    const auto* text = renderingUnavailable ? "GPU rendering unavailable" : "Rendering bypassed";
+    graphics.setFont(textFont(STATUS_FONT_HEIGHT));
+    graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(STATUS_ALPHA));
+    graphics.drawText(text, getPlotBounds(), juce::Justification::centred);
 }
 
 /// Paints the frequency and position grid lines inside the plot.
@@ -1013,29 +910,6 @@ void SpatialSpectrogramView::paintGrid(juce::Graphics& graphics) const
         graphics.setColour(lineColour.withAlpha(index == CENTRE_POSITION_INDEX ? CENTRE_LINE_ALPHA : GRID_ALPHA));
         const float y = positionToY(GRID_POSITIONS.at(index));
         graphics.drawHorizontalLine(juce::roundToInt(y), plot.getX(), plot.getRight());
-    }
-}
-
-/// Renders the particle buffer into the image through the tone curve, channel by channel.
-void SpatialSpectrogramView::renderImage()
-{
-    constexpr float curveScale = static_cast<float>(TONE_CURVE_STEPS - 1) / TONE_CURVE_MAX * EXPOSURE;
-    const auto toCurve = [this](const float energy) {
-        const auto step = std::min(static_cast<std::size_t>(energy * curveScale), TONE_CURVE_STEPS - 1);
-        return toneCurve[step];
-    };
-    const juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
-    const auto columnStride = static_cast<std::size_t>(columns);
-    for (int row = 0; row < rows; ++row) {
-        auto* destination = pixels.getLinePointer(row);
-        const auto rowStart = static_cast<std::size_t>(row) * columnStride;
-        for (std::size_t column = 0; column < columnStride; ++column) {
-            const std::size_t index = rowStart + column;
-            const juce::PixelARGB pixel(
-                255, toCurve(buffer[0][index]), toCurve(buffer[1][index]), toCurve(buffer[2][index])
-            );
-            std::memcpy(destination + column * sizeof(pixel), &pixel, sizeof(pixel));
-        }
     }
 }
 

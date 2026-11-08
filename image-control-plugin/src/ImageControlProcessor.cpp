@@ -57,6 +57,8 @@ ImageControlProcessor::ImageControlProcessor() :
     editorState.setProperty(PHASE_COLOURS_PROPERTY, false, nullptr);
     editorState.setProperty(MEL_SCALE_PROPERTY, false, nullptr);
     editorState.setProperty(SHOW_FPS_PROPERTY, false, nullptr);
+    editorState.setProperty(BYPASS_RENDERING_PROPERTY, false, nullptr);
+    editorState.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
     editorState.addListener(this);
 }
 
