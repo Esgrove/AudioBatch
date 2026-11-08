@@ -177,6 +177,10 @@ pub struct ScanReport {
 pub struct ScanProgress<'a> {
     /// Share of the bundles handled so far, between 0 and 1.
     pub fraction: f32,
+    /// Position of the bundle being scanned among all bundles, starting from zero.
+    pub index: usize,
+    /// Number of bundles the scan goes through.
+    pub total: usize,
     /// The bundle being scanned.
     pub bundle: &'a Path,
 }
@@ -257,7 +261,7 @@ impl ScanOptions {
 
 impl ScanReport {
     /// Returns a one-line summary of what changed and what could not be scanned,
-    /// for example "Scan finished: 3 added, 1 blacklisted after a crash".
+    /// for example "Plugin scan finished: 3 added, 1 blacklisted after a crash".
     #[must_use]
     pub fn summary(&self) -> String {
         let counts = [
@@ -275,9 +279,9 @@ impl ScanReport {
             .map(|(count, label)| format!("{count} {label}"))
             .collect();
         let outcome = if self.cancelled {
-            "Scan cancelled"
+            "Plugin scan cancelled"
         } else {
-            "Scan finished"
+            "Plugin scan finished"
         };
         if parts.is_empty() {
             format!("{outcome}: no changes")
@@ -416,7 +420,12 @@ pub fn scan_plugins(
             reason = "bundle counts are far below the f32 precision limit"
         )]
         let fraction = index as f32 / bundles.len() as f32;
-        progress(ScanProgress { fraction, bundle });
+        progress(ScanProgress {
+            fraction,
+            index,
+            total: bundles.len(),
+            bundle,
+        });
         let modified = bundle_modified_ms(bundle);
         if known.is_blacklisted(bundle) || is_up_to_date(known, bundle, modified) {
             continue;
@@ -840,8 +849,35 @@ exec cat > /dev/null"#,
     }
 
     #[test]
+    fn progress_counts_the_bundles_from_zero() {
+        let setup = Setup::new();
+        let second = create_bundle(&setup.folder, "Second").expect("second test plugin bundle");
+        let mut known = KnownPlugins::default();
+        known.blacklist.extend([setup.bundle.clone(), second]);
+        let lock = ScanLock::try_acquire(&setup.directory.path().join("scan.lock"))
+            .expect("lock file")
+            .expect("no other scan");
+        let options = ScanOptions {
+            folders: vec![setup.folder],
+            worker: WorkerCommand {
+                program: worker_path(),
+                arguments: vec![OsString::from(WORKER_FLAG)],
+                environment: Vec::new(),
+            },
+            worker_log: None,
+            timeout: Duration::from_secs(20),
+        };
+        let mut updates = Vec::new();
+        scan_plugins(&lock, &mut known, &options, &|| false, &mut |update| {
+            updates.push((update.index, update.total));
+        })
+        .expect("scan runs");
+        assert_eq!(updates, vec![(0, 2), (1, 2)]);
+    }
+
+    #[test]
     fn the_summary_lists_only_what_happened() {
-        assert_eq!(ScanReport::default().summary(), "Scan finished: no changes");
+        assert_eq!(ScanReport::default().summary(), "Plugin scan finished: no changes");
         let report = ScanReport {
             crashed: vec![PathBuf::from("/Crash.vst3")],
             timed_out: vec![PathBuf::from("/Slow.vst3"), PathBuf::from("/Slower.vst3")],
@@ -850,7 +886,7 @@ exec cat > /dev/null"#,
         };
         assert_eq!(
             report.summary(),
-            "Scan cancelled: 1 blacklisted after a crash, 2 timed out"
+            "Plugin scan cancelled: 1 blacklisted after a crash, 2 timed out"
         );
     }
 }

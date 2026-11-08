@@ -44,6 +44,9 @@ pub const SMALL_FONT_SIZE: f32 = 12.0;
 /// Sample rate the live instances are prepared at while no output device is open.
 pub const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 
+/// Status bar text of a scan that has not reported a bundle yet.
+pub const SCANNING_STATUS: &str = "Scanning for plugins...";
+
 /// The plugin state of the main view.
 pub struct PluginHost {
     /// Runs plugin calls from other threads on the UI thread.
@@ -66,12 +69,25 @@ pub struct PluginHost {
     pub last_report: Option<ScanReport>,
 }
 
+/// The progress a running scan last reported.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ScanStatus {
+    /// Share of the bundles handled so far, between 0 and 1.
+    pub fraction: f32,
+    /// Position of the bundle being scanned, starting from zero.
+    pub index: usize,
+    /// Number of bundles the scan goes through, zero before the first report.
+    pub total: usize,
+    /// The bundle being scanned.
+    pub bundle: PathBuf,
+}
+
 /// A scan running on a background thread.
 pub struct RunningScan {
     /// Set to stop the scan at the next bundle.
     pub cancel: Arc<AtomicBool>,
-    /// Share of the bundles handled so far, and the bundle being scanned.
-    pub progress: Arc<Mutex<(f32, PathBuf)>>,
+    /// The last progress the scan reported.
+    pub progress: Arc<Mutex<ScanStatus>>,
     /// Waits for the scan and applies its result. Dropping it stops listening to the scan.
     pub task: Task<()>,
 }
@@ -120,16 +136,22 @@ impl PluginHost {
         self.scan.is_some()
     }
 
-    /// Returns the progress of the scan in progress: the share of the bundles handled and the bundle's name.
+    /// Returns the progress the scan in progress last reported.
     #[must_use]
-    pub fn scan_progress(&self) -> Option<(f32, String)> {
+    pub fn scan_progress(&self) -> Option<ScanStatus> {
         let scan = self.scan.as_ref()?;
-        let (fraction, bundle) = scan.progress.lock().map(|progress| progress.clone()).ok()?;
-        let name = bundle
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        Some((fraction, name))
+        scan.progress.lock().map(|progress| progress.clone()).ok()
+    }
+
+    /// Returns the status bar text of the scan in progress, or none when no scan runs or it is being cancelled,
+    /// so the cancel message stays until the scan stops.
+    #[must_use]
+    pub fn scan_status_text(&self) -> Option<String> {
+        let scan = self.scan.as_ref()?;
+        if scan.cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.scan_progress().map(|status| status.status_text())
     }
 
     /// Returns the names of the saved presets in the order they are listed,
@@ -147,6 +169,32 @@ impl PluginHost {
         if let Some(scan) = &self.scan {
             scan.cancel.store(true, Ordering::Relaxed);
         }
+    }
+}
+
+impl ScanStatus {
+    /// Returns the bundle's name without the `.vst3` extension, for example "Soothe2".
+    #[must_use]
+    pub fn bundle_name(&self) -> String {
+        self.bundle
+            .file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Returns the status bar text, for example "Scanning for plugins (10/86): Soothe2",
+    /// or only "Scanning for plugins..." before the first bundle.
+    #[must_use]
+    pub fn status_text(&self) -> String {
+        if self.total == 0 {
+            return String::from(SCANNING_STATUS);
+        }
+        format!(
+            "Scanning for plugins ({}/{}): {}",
+            self.index + 1,
+            self.total,
+            self.bundle_name()
+        )
     }
 }
 
@@ -176,4 +224,25 @@ pub fn hint(text: impl Into<SharedString>) -> Div {
         .text_size(px(SMALL_FONT_SIZE))
         .text_color(color(palette::GREY_MIDDLE))
         .child(text.into())
+}
+
+#[cfg(test)]
+mod test_scan_status {
+    use super::*;
+
+    #[test]
+    fn status_text_counts_from_one_and_names_the_bundle() {
+        let status = ScanStatus {
+            fraction: 9.0 / 86.0,
+            index: 9,
+            total: 86,
+            bundle: PathBuf::from("plugins").join("Soothe2.vst3"),
+        };
+        assert_eq!(status.status_text(), "Scanning for plugins (10/86): Soothe2");
+    }
+
+    #[test]
+    fn status_text_before_the_first_bundle_has_no_count() {
+        assert_eq!(ScanStatus::default().status_text(), SCANNING_STATUS);
+    }
 }

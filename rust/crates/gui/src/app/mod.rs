@@ -457,8 +457,9 @@ impl AppView {
     }
 
     /// Returns the activity and the overall progress of the current run from 0 to 1,
-    /// or none when no analysis, normalization, or plugin processing run is in progress.
+    /// or none when no analysis, normalization, plugin processing run, or plugin scan is in progress.
     /// Files being worked on count with their fraction, so the line moves smoothly on long files.
+    /// A plugin scan shows only while no file run is in progress, since that run is what the table shows.
     fn overall_progress(&self, cx: &Context<Self>) -> Option<(&'static str, f32)> {
         let file_run = self
             .normalize_run
@@ -467,9 +468,11 @@ impl AppView {
             .or_else(|| self.process_run.as_ref().filter(|_| self.is_processing()));
         let (activity, finished, total) = if let Some(run) = file_run {
             (run.kind.activity(), run.finished, run.total)
-        } else {
-            let run = self.run.as_ref().filter(|_| self.is_analyzing())?;
+        } else if let Some(run) = self.run.as_ref().filter(|_| self.is_analyzing()) {
             ("Analyzing", run.finished, run.total)
+        } else {
+            let scan = self.plugins.scan_progress()?;
+            return Some(("Scanning plugins", scan.fraction));
         };
         if total == 0 {
             return Some((activity, 0.0));

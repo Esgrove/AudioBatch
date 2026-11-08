@@ -8,7 +8,7 @@
 //! A housekeeping tick prepares instances again after a change of the output rate
 //! or a plugin's restart request, keeps the live preview in step, and shows the progress of a scan.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -34,7 +34,7 @@ use crate::plugins::live_chain::{LiveSlot, SlotId};
 use crate::plugins::manager_window::{
     MANAGER_HEIGHT, MANAGER_TITLE, MANAGER_WIDTH, ManagerEvent, ManagerSnapshot, ManagerView,
 };
-use crate::plugins::{FALLBACK_SAMPLE_RATE, RunningScan};
+use crate::plugins::{FALLBACK_SAMPLE_RATE, RunningScan, SCANNING_STATUS, ScanStatus};
 
 /// How often the plugin housekeeping runs.
 const PLUGIN_TICK_INTERVAL: Duration = Duration::from_millis(100);
@@ -257,7 +257,7 @@ impl AppView {
     /// Prepares the live instances again after a change of the output rate or a restart request,
     /// keeps the preview in step, forgets closed windows, saves the settings of closed editors,
     /// marks the preset modified once a plugin reports a change to its settings,
-    /// and shows the progress of a scan.
+    /// and shows the progress of a scan in the Plugin Manager and the status bar.
     fn plugin_tick(&mut self, cx: &mut Context<Self>) {
         if self.chain_window.as_ref().is_some_and(PluginWindow::is_closed) {
             self.chain_window = None;
@@ -280,6 +280,12 @@ impl AppView {
         }
         if self.plugins.is_scanning() {
             self.sync_manager_window(cx);
+            if let Some(text) = self.plugins.scan_status_text()
+                && self.status.as_ref() != text.as_str()
+            {
+                self.status = text.into();
+                cx.notify();
+            }
         }
     }
 
@@ -507,7 +513,10 @@ impl AppView {
             custom_folders: !known.custom_folders.is_empty(),
             blacklist: known.blacklist.clone(),
             skipped,
-            scanning: self.plugins.scan_progress(),
+            scanning: self
+                .plugins
+                .scan_progress()
+                .map(|status| (status.fraction, status.bundle_name())),
             last_scan: self.plugins.last_report.as_ref().map(ScanReport::summary),
         }
     }
@@ -564,7 +573,7 @@ impl AppView {
             self.report_status(message, cx);
         }
         let cancel = Arc::new(AtomicBool::new(false));
-        let progress = Arc::new(Mutex::new((0.0, PathBuf::new())));
+        let progress = Arc::new(Mutex::new(ScanStatus::default()));
         let scan = {
             let cancel = Arc::clone(&cancel);
             let progress = Arc::clone(&progress);
@@ -576,7 +585,12 @@ impl AppView {
                     &|| cancel.load(Ordering::Relaxed),
                     &mut |update| {
                         if let Ok(mut shared) = progress.lock() {
-                            *shared = (update.fraction, update.bundle.to_path_buf());
+                            *shared = ScanStatus {
+                                fraction: update.fraction,
+                                index: update.index,
+                                total: update.total,
+                                bundle: update.bundle.to_path_buf(),
+                            };
                         }
                     },
                 )?;
@@ -592,7 +606,7 @@ impl AppView {
             let _ = this.update(cx, |view, cx| view.finish_plugin_scan(result, cx));
         });
         self.plugins.scan = Some(RunningScan { cancel, progress, task });
-        self.status = "Scanning for plugins...".into();
+        self.status = SCANNING_STATUS.into();
         self.refresh_plugin_views(cx);
     }
 
