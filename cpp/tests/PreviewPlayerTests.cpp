@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -940,11 +941,13 @@ void PreviewPlayerTests::testOverloadPreferences()
     const auto& content = *dynamic_cast<juce::Viewport&>(*panel.getChildComponent(0)).getViewedComponent();
     for (auto* child : content.getChildren()) {
         if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) {
-            const auto label = std::ranges::find(labels, toggle->getButtonText(), [](const auto* optionText) {
-                return juce::String(optionText);
-            });
-            if (label != labels.end()) {
-                toggles[static_cast<std::size_t>(label - labels.begin())] = toggle;
+            const auto labelIndex = static_cast<std::size_t>(std::ranges::distance(
+                labels.begin(), std::ranges::find(labels, toggle->getButtonText(), [](const auto* optionText) {
+                    return juce::String(optionText);
+                })
+            ));
+            if (labelIndex < labels.size()) {
+                toggles[labelIndex] = toggle;
             }
         }
         if (auto* combo = dynamic_cast<juce::ComboBox*>(child)) {
@@ -952,9 +955,9 @@ void PreviewPlayerTests::testOverloadPreferences()
         }
     }
     expect(selector != nullptr);
-    const auto missingToggle = std::ranges::find(toggles, nullptr);
-    expect(missingToggle == toggles.end());
-    if (selector == nullptr || missingToggle != toggles.end()) {
+    const bool hasMissingToggle = std::ranges::contains(toggles, nullptr);
+    expect(!hasMissingToggle);
+    if (selector == nullptr || hasMissingToggle) {
         return;
     }
     panel.setSize(layout::audioSettings::preferredWidth, layout::audioSettings::preferredHeight);

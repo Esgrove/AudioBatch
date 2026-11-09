@@ -122,6 +122,10 @@ GuiDriver::GuiDriver(juce::Component& root, const juce::Rectangle<int> bounds) :
         fail("GuiDriver could not create a window peer");
     }
     focusWindow();
+    const auto centre = component.getLocalBounds().getCentre();
+    if (!dispatchUntil([this, centre] { return peer().contains(centre, true); }, std::chrono::seconds(2))) {
+        fail("The test window did not become reachable through desktop hit testing");
+    }
     pauseForViewer("window opened");
 }
 
