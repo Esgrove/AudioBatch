@@ -372,6 +372,7 @@ macro_rules! primary {
 /// Registers the global actions and shortcuts and installs the menu bar.
 pub fn install(cx: &mut App) {
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+    crate::controls::install_slider_bindings(cx);
     let context = Some(KEY_CONTEXT);
     let outside_text = Some(OUTSIDE_TEXT_KEY_CONTEXT);
     cx.bind_keys([

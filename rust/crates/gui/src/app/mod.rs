@@ -114,6 +114,8 @@ pub struct AppView {
     waveform: Entity<WaveformView>,
     zoom_slider: Entity<SliderState>,
     gain_slider: Entity<SliderState>,
+    /// Stable semantic focus for zoom, gain, and the active normalization target.
+    slider_focus: [FocusHandle; 3],
     /// Target slider of peak normalization in dBFS.
     peak_target_slider: Entity<SliderState>,
     /// Target slider of loudness normalization in LUFS.
@@ -315,6 +317,7 @@ impl AppView {
             waveform,
             zoom_slider: sliders.zoom,
             gain_slider: sliders.gain,
+            slider_focus: [cx.focus_handle().tab_stop(true), cx.focus_handle(), cx.focus_handle()],
             peak_target_slider: sliders.peak_target,
             loudness_target_slider: sliders.loudness_target,
             coordinator: coordinators.analysis,

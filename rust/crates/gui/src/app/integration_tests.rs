@@ -773,6 +773,172 @@ async fn integration_primary_shortcuts_select_all_and_open_settings(cx: &mut Tes
     cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
 }
 
+/// Real key events adjust the semantic gain slider and persist without a pointer release.
+#[gpui_kit::test]
+async fn integration_keyboard_gain_slider_steps_clamps_resets_and_persists(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "keyboard-gain.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let press = press_slider(&workflow, control_ids::GAIN_TRACK, 0.5, cx);
+    release_slider(&workflow, press, cx);
+    cx.update_window(workflow.window, |_, window, _| {
+        assert_eq!(window.find_by_label(control_ids::GAIN_LABEL).focused(), Some(true));
+    })
+    .expect("gain semantic node has pointer focus");
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    workflow.menu_key(&format!("{primary}-a"), cx);
+    workflow.menu_key("right", cx);
+    workflow.menu_key("shift-up", cx);
+    cx.read(|cx| {
+        assert!(same_custom_gain(
+            workflow.view.read(cx).selected_record(cx).expect("gain").custom_gain_db,
+            Some(1.1)
+        ));
+    });
+    advance_slider_clock(Duration::from_millis(500), cx);
+    wait_for_gain(&workflow, &source, Some(1.1), cx).await;
+    workflow.menu_key("end", cx);
+    workflow.menu_key("right", cx);
+    cx.read(|cx| {
+        assert!(same_custom_gain(
+            workflow
+                .view
+                .read(cx)
+                .selected_record(cx)
+                .expect("maximum")
+                .custom_gain_db,
+            Some(12.0)
+        ));
+    });
+    workflow.menu_key("home", cx);
+    workflow.menu_key("left", cx);
+    cx.read(|cx| {
+        assert!(same_custom_gain(
+            workflow
+                .view
+                .read(cx)
+                .selected_record(cx)
+                .expect("minimum")
+                .custom_gain_db,
+            Some(-12.0)
+        ));
+    });
+    workflow.menu_key(&format!("{primary}-0"), cx);
+    wait_for_gain(&workflow, &source, None, cx).await;
+    workflow.menu_key("tab", cx);
+    cx.update_window(workflow.window, |_, window, _| {
+        assert_ne!(window.find_by_label(control_ids::GAIN_LABEL).focused(), Some(true));
+    })
+    .expect("Tab leaves slider");
+    workflow.menu_key("shift-tab", cx);
+    cx.update_window(workflow.window, |_, window, _| {
+        assert_eq!(window.find_by_label(control_ids::GAIN_LABEL).focused(), Some(true));
+    })
+    .expect("Shift-Tab returns to slider");
+    workflow.menu_key(&format!("{primary}-shift-space"), cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.preview_compact);
+        assert!(view.focus_handle.contains_focused(window, cx));
+    })
+    .expect("collapse restores surviving action focus");
+    workflow.menu_key(&format!("{primary}-a"), cx);
+    cx.read(|cx| assert_eq!(workflow.view.read(cx).selected_paths(cx), vec![source]));
+}
+
+/// A thumb press focuses the actual slider node, and disabling gain leaves a valid root command path.
+#[gpui_kit::test]
+async fn integration_keyboard_thumb_focus_disabled_gain_and_root_shortcuts(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "thumb-focus.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window
+            .within(control_ids::GAIN_TRACK)
+            .click(("slider-thumb", 0_u32), cx);
+        assert_eq!(window.find_by_label(control_ids::GAIN_LABEL).focused(), Some(true));
+    })
+    .expect("thumb capture focuses semantic slider without losing drag behavior");
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    workflow.menu_key(&format!("{primary}-e"), cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).chain_window.is_some()));
+    cx.update_window(workflow.window, |_, window, cx| {
+        window
+            .within(control_ids::GAIN_TRACK)
+            .click(("slider-thumb", 0_u32), cx);
+    })
+    .expect("refocus main slider after child window");
+    workflow.menu_key("right", cx);
+    workflow.menu_key("delete", cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.table.read(cx).delegate().len(), 0);
+        assert!(view.focus_handle.contains_focused(window, cx));
+        assert_eq!(window.find_by_label(control_ids::GAIN_LABEL).disabled(), Some(true));
+    })
+    .expect("removing selected source disables gain and restores root focus");
+    workflow.menu_key(&format!("{primary}-p"), cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
+}
+
+/// Zoom and both target modes share a keyboard contract while disabled targets stay out of Tab traversal.
+#[gpui_kit::test]
+fn integration_keyboard_zoom_and_targets_follow_focus_modes_and_disabled_state(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let press = press_slider(&workflow, control_ids::ZOOM_TRACK, 0.5, cx);
+    release_slider(&workflow, press, cx);
+    workflow.menu_key("home", cx);
+    workflow.menu_key("right", cx);
+    workflow.menu_key("pageup", cx);
+    cx.read(|cx| {
+        let actual = workflow.view.read(cx).zoom_slider.read(cx).value().start();
+        assert!((actual - 1.11).abs() < 0.0001, "keyboard zoom was {actual}");
+    });
+    workflow.menu_key("end", cx);
+    cx.read(|cx| assert!((workflow.view.read(cx).zoom_slider.read(cx).value().start() - 20.0).abs() < 0.0001));
+    workflow.menu_key("tab", cx);
+    cx.update_window(workflow.window, |_, window, _| {
+        assert_ne!(window.find_by_label(control_ids::GAIN_LABEL).focused(), Some(true));
+        assert_ne!(
+            window.find_by_label(control_ids::NORMALIZE_TARGET_LABEL).focused(),
+            Some(true)
+        );
+    })
+    .expect("disabled gain and target are not Tab stops");
+    for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
+        let slider = choose_target(&workflow, mode, cx);
+        let press = press_slider(&workflow, control_ids::NORMALIZE_TARGET, 0.5, cx);
+        release_slider(&workflow, press, cx);
+        workflow.menu_key("end", cx);
+        workflow.menu_key("down", cx);
+        let range = crate::normalization::target_range(mode);
+        let expected = range.maximum - range.step;
+        cx.read(|cx| assert!((slider.read(cx).value().start() - expected).abs() < 0.0001));
+        advance_slider_clock(Duration::from_millis(500), cx);
+        assert!((saved_target(&workflow, mode) - f64::from(expected)).abs() < 0.0001);
+        cx.update_window(workflow.window, |_, window, _| {
+            assert_eq!(
+                window.find_by_label(control_ids::NORMALIZE_TARGET_LABEL).focused(),
+                Some(true)
+            );
+        })
+        .expect("active target owns semantic focus");
+    }
+    cx.update_window(workflow.window, |_, window, cx| {
+        workflow.view.update(cx, |view, cx| view.set_normalize_first(false, cx));
+        window.render_frame(cx);
+        assert!(workflow.view.read(cx).focus_handle.contains_focused(window, cx));
+    })
+    .expect("disabling focused target restores root focus");
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    workflow.menu_key(&format!("{primary}-p"), cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
+}
+
 /// A retained pending edit survives a scan result captured before its debounced write.
 #[gpui_kit::test]
 async fn integration_slider_retained_scan_gain_overrides_earlier_cached_result(cx: &mut TestAppContext) {
@@ -1018,6 +1184,292 @@ fn assert_selected_row_accessibility(workflow: &Workflow, path: &Path, name: &st
         assert_eq!(row.label(), Some(label.as_str()));
     })
     .expect("selected row accessibility follows the source identity");
+}
+
+/// Reads the retained table's widths without changing automatic fitting, selection, or scrolling.
+fn result_column_widths(workflow: &Workflow, cx: &App) -> Vec<Pixels> {
+    let table = workflow.view.read(cx).table.read(cx);
+    (0..).map_while(|index| table.col_width(index)).collect()
+}
+
+/// Checks the native cell wrappers against their headers, including partially clipped columns.
+fn assert_result_columns_aligned(workflow: &Workflow, path: &Path, window: &mut Window, cx: &App) {
+    let table = workflow.view.read(cx).table.read(cx);
+    let row_index = table
+        .delegate()
+        .index_of(path)
+        .expect("display index of the observed row");
+    let widths = result_column_widths(workflow, cx);
+    let mut aligned = 0;
+    for (column_index, width) in widths.into_iter().enumerate() {
+        let Some(header) = window.try_find(("col-header", column_index)) else {
+            continue;
+        };
+        if !header.visible() {
+            continue;
+        }
+        let cell = window
+            .within(Arc::<Path>::from(path))
+            .find(format!("table-cell-{row_index}:{column_index}"));
+        assert!(cell.visible(), "a visible header has a visible cell below it");
+        assert!((header.bounds().left() - cell.bounds().left()).abs() < px(0.01));
+        assert!((header.bounds().right() - cell.bounds().right()).abs() < px(0.01));
+        assert!((header.bounds().size.width - width).abs() < px(0.01));
+        aligned += 1;
+    }
+    assert!(aligned > 1, "compare multiple live header and cell edges");
+}
+
+/// Returns source identities for real rows currently intersecting the production table viewport.
+fn visible_result_paths(workflow: &Workflow, window: &mut Window, cx: &App) -> Vec<PathBuf> {
+    let table = workflow.view.read(cx).table.read(cx);
+    let rows = window
+        .within(control_ids::RESULTS)
+        .find_all_by_role(gpui_kit::Role::Row);
+    (0..table.delegate().len())
+        .filter_map(|index| table.delegate().row(index))
+        .filter(|row| {
+            let id = gpui_kit::ElementId::from(Arc::<Path>::from(row.path.as_path()));
+            rows.iter()
+                .any(|snapshot| snapshot.visible() && snapshot.path().last() == Some(&id))
+        })
+        .map(|row| row.path.clone())
+        .collect()
+}
+
+/// A manual header drag creates overflow at the minimum width, and real wheel input moves headers and rows together.
+#[expect(
+    clippy::too_many_lines,
+    reason = "One native resize and wheel workflow verifies shared header, cell, and selection invariants"
+)]
+#[gpui_kit::test]
+async fn integration_results_horizontal_wheel_preserves_manual_widths_alignment_and_selection(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let selected = workflow.copy("spectrogram_expected/tone_44100.wav", "selected.wav");
+    let other = workflow.copy("spectrogram_expected/tone_44100.wav", "other.wav");
+    workflow.add(vec![selected.clone(), other], cx);
+    workflow.idle(cx).await;
+    cx.simulate_window_resize(workflow.window, size(px(800.0), px(800.0)));
+    workflow.select(&selected, cx);
+    let before = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let before = result_column_widths(&workflow, cx);
+            let header = window.find(("col-header", 0_usize)).bounds();
+            let start = point(header.right() - px(2.0), header.center().y);
+            window.pointer_down(start, MouseButton::Left, cx);
+            window.pointer_move(start + point(px(8.0), px(0.0)), Some(MouseButton::Left), cx);
+            window.pointer_move(start + point(px(220.0), px(0.0)), Some(MouseButton::Left), cx);
+            window.pointer_up(start + point(px(220.0), px(0.0)), MouseButton::Left, cx);
+            before
+        })
+        .expect("manually resize the Name column through its native header boundary");
+    cx.run_until_parked();
+    let (manual, origin, offset) = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let manual = result_column_widths(&workflow, cx);
+            assert_eq!(manual.len(), before.len());
+            assert!(
+                (*manual.first().expect("Name width") - *before.first().expect("original Name width")).abs()
+                    > px(150.0)
+            );
+            for (actual, original) in manual.iter().zip(&before).skip(1) {
+                assert!(
+                    (*actual - *original).abs() < px(0.01),
+                    "only the manually dragged column changes"
+                );
+            }
+            let viewport = window.within(control_ids::RESULTS).find("table").bounds();
+            assert!(manual.iter().copied().sum::<Pixels>() > viewport.size.width + px(150.0));
+            assert_result_columns_aligned(&workflow, &selected, window, cx);
+            let origin = window.find(("col-header", 0_usize)).bounds().left();
+            let offset = workflow
+                .view
+                .read(cx)
+                .table
+                .read(cx)
+                .horizontal_scroll_handle
+                .offset()
+                .x;
+            window
+                .within(control_ids::RESULTS)
+                .scroll("table", ScrollDelta::Pixels(point(px(-120.0), px(0.0))), cx);
+            (manual, origin, offset)
+        })
+        .expect("wheel horizontally over the overflowing production table");
+    cx.run_until_parked();
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        let current = workflow
+            .view
+            .read(cx)
+            .table
+            .read(cx)
+            .horizontal_scroll_handle
+            .offset()
+            .x;
+        assert!(
+            current < offset - px(50.0),
+            "wheel input changes the real horizontal owner"
+        );
+        assert!(window.find(("col-header", 0_usize)).bounds().left() < origin - px(50.0));
+        assert_result_columns_aligned(&workflow, &selected, window, cx);
+        window
+            .within(control_ids::RESULTS)
+            .scroll("table", ScrollDelta::Pixels(point(px(-10_000.0), px(0.0))), cx);
+    })
+    .expect("headers and cells travel together during horizontal wheel scrolling");
+    cx.run_until_parked();
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.find(("col-header", manual.len() - 1)).visible(),
+            "the final Status column becomes visible"
+        );
+        assert_result_columns_aligned(&workflow, &selected, window, cx);
+        window
+            .within(control_ids::RESULTS)
+            .scroll("table", ScrollDelta::Pixels(point(px(10_000.0), px(0.0))), cx);
+    })
+    .expect("reach the final column and reverse the wheel");
+    cx.run_until_parked();
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!((window.find(("col-header", 0_usize)).bounds().left() - origin).abs() < px(0.01));
+        for (actual, expected) in result_column_widths(&workflow, cx).iter().zip(&manual) {
+            assert!(
+                (*actual - *expected).abs() < px(0.01),
+                "scrolling never refits the manual widths"
+            );
+        }
+        let view = workflow.view.read(cx);
+        assert_eq!(view.selected_paths(cx), vec![selected.clone()]);
+        assert_eq!(
+            view.table.read(cx).selected_row(),
+            view.table.read(cx).delegate().index_of(&selected)
+        );
+        assert_eq!(
+            window.find(Arc::<Path>::from(selected.as_path())).selected(),
+            Some(true)
+        );
+        assert_result_columns_aligned(&workflow, &selected, window, cx);
+    })
+    .expect("reverse scrolling restores the original alignment without changing selection or widths");
+}
+
+/// Wheel scrolling replaces virtualized row identities without selecting them, and arrow navigation reveals its target.
+#[expect(
+    clippy::too_many_lines,
+    reason = "One virtualized table workflow follows row identities through wheel and keyboard input"
+)]
+#[gpui_kit::test]
+async fn integration_results_vertical_wheel_virtualizes_rows_and_keyboard_reveals_selection(cx: &mut TestAppContext) {
+    const ROW_COUNT: usize = 96;
+    let workflow = Workflow::new(cx);
+    let paths: Vec<_> = (0..ROW_COUNT)
+        .map(|index| workflow.copy("spectrogram_expected/tone_44100.wav", &format!("row-{index:03}.wav")))
+        .collect();
+    workflow.add(paths, cx);
+    workflow.idle(cx).await;
+    cx.simulate_window_resize(workflow.window, size(px(800.0), px(800.0)));
+    let initially_visible = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let visible = visible_result_paths(&workflow, window, cx);
+            assert!(visible.len() > 3 && visible.len() < ROW_COUNT / 2);
+            let observed = window
+                .within(control_ids::RESULTS)
+                .find_all_by_role(gpui_kit::Role::Row);
+            assert!(observed.len() < ROW_COUNT / 2, "offscreen rows are not all mounted");
+            visible
+        })
+        .expect("read the initial virtualized production row identities");
+    let selected = initially_visible.first().expect("initial visible row").clone();
+    workflow.select(&selected, cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window
+            .within(control_ids::RESULTS)
+            .scroll("table", ScrollDelta::Pixels(point(px(0.0), px(-960.0))), cx);
+    })
+    .expect("send a real vertical wheel event to the table");
+    cx.run_until_parked();
+    let revealed = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let visible = visible_result_paths(&workflow, window, cx);
+            assert!(visible.len() > 3 && visible.len() < ROW_COUNT / 2);
+            assert!(
+                visible.iter().all(|path| !initially_visible.contains(path)),
+                "the wheel reveals different source rows"
+            );
+            assert!(
+                window.try_find(Arc::<Path>::from(selected.as_path())).is_none(),
+                "the original row is virtualized away"
+            );
+            let view = workflow.view.read(cx);
+            assert_eq!(view.selected_paths(cx), vec![selected.clone()]);
+            assert_eq!(
+                view.table.read(cx).selected_row(),
+                view.table.read(cx).delegate().index_of(&selected)
+            );
+            let viewport = window.within(control_ids::RESULTS).find("table").bounds();
+            visible
+                .into_iter()
+                .rev()
+                .find(|path| {
+                    let row = window.find(Arc::<Path>::from(path.as_path())).bounds();
+                    row.bottom() <= viewport.bottom() && row.top() >= viewport.top()
+                })
+                .expect("last completely visible source row")
+        })
+        .expect("wheel changes visible identities but preserves the original selected source");
+    workflow.select(&revealed, cx);
+    let target = cx
+        .update_window(workflow.window, |_, window, cx| {
+            let table = workflow.view.read(cx).table.read(cx);
+            let index = table.delegate().index_of(&revealed).expect("newly selected row index");
+            let target = table
+                .delegate()
+                .row(index + 2)
+                .expect("two rows below the visible edge")
+                .path
+                .clone();
+            assert!(
+                window
+                    .try_find(Arc::<Path>::from(target.as_path()))
+                    .is_none_or(|row| !row.visible())
+            );
+            assert_eq!(workflow.view.read(cx).selected_paths(cx), vec![revealed.clone()]);
+            assert_eq!(
+                window.find(Arc::<Path>::from(revealed.as_path())).selected(),
+                Some(true)
+            );
+            assert_eq!(window.within(control_ids::RESULTS).find("table").focused(), Some(true));
+            target
+        })
+        .expect("select a row revealed by the wheel and identify the next offscreen keyboard target");
+    workflow.menu_key("down", cx);
+    workflow.menu_key("down", cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        let view = workflow.view.read(cx);
+        assert_eq!(view.selected_paths(cx), vec![target.clone()]);
+        assert_eq!(
+            view.table.read(cx).selected_row(),
+            view.table.read(cx).delegate().index_of(&target)
+        );
+        let row = window.find(Arc::<Path>::from(target.as_path()));
+        assert!(row.visible());
+        assert_eq!(row.selected(), Some(true));
+        let viewport = window.within(control_ids::RESULTS).find("table").bounds();
+        assert!(
+            row.bounds().bottom() <= viewport.bottom() + px(0.01),
+            "keyboard navigation scrolls the target fully into view"
+        );
+        assert!(visible_result_paths(&workflow, window, cx).contains(&target));
+    })
+    .expect("native arrow navigation selects and scrolls the offscreen source into view");
 }
 
 /// Normalizes only the selected source copy through its control and follows the committed output everywhere.
