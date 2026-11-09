@@ -137,6 +137,15 @@ TEST(Analyzer, PositionCurveKeepsItsSettingsInRangeAndInOrder)
     EXPECT_FLOAT_EQ(defaults.edge(), static_cast<float>(DEFAULT_PAN_EDGE_DB));
 }
 
+TEST(Analyzer, PositionCurveEqualityTracksBothClampedSettings)
+{
+    const StereoPositionCurve defaults;
+    EXPECT_EQ(defaults, StereoPositionCurve(DEFAULT_PAN_MIDPOINT_DB, DEFAULT_PAN_EDGE_DB));
+    EXPECT_NE(defaults, StereoPositionCurve(DEFAULT_PAN_MIDPOINT_DB + 1.0, DEFAULT_PAN_EDGE_DB));
+    EXPECT_NE(defaults, StereoPositionCurve(DEFAULT_PAN_MIDPOINT_DB, DEFAULT_PAN_EDGE_DB + 1.0));
+    EXPECT_EQ(StereoPositionCurve(20.0, 15.0), StereoPositionCurve(20.0, 23.0));
+}
+
 TEST(Analyzer, PannedSinesLandOnTheCurve)
 {
     const StereoPositionCurve curve;

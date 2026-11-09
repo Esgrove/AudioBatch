@@ -67,7 +67,7 @@ impl PluginPreview {
         self.attached = None;
     }
 
-    /// Returns the failure of the chain the player holds, as "<name>: <error>".
+    /// Returns the failure of the chain the player holds, as `<name>: <error>`.
     #[must_use]
     pub fn failure(&self) -> Option<String> {
         self.attached.as_ref().and_then(|failure| failure.message())

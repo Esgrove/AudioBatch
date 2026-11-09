@@ -30,9 +30,8 @@ constexpr double POSITION_SMOOTHING_OCTAVES {1.0 / 32.0};
 struct SpectralPoint {
     /// Centre frequency of the bin, in Hz.
     float frequency {0.0F};
-    /// Frequency the energy of the bin comes from, in Hz, from the reassignment of the bin to its instantaneous
-    /// frequency. For a sine, every bin of its main lobe reassigns to the sine frequency, so the display draws it as a
-    /// thin line.
+    /// Instantaneous frequency of the bin's energy, in Hz, determined by frequency reassignment.
+    /// A sine's main lobe reassigns to its frequency, so the display draws a thin line.
     float reassignedFrequency {0.0F};
     /// Distance to the neighbouring bins, in Hz, which sets how wide the display draws the point.
     float spacing {0.0F};
@@ -92,7 +91,7 @@ public:
     [[nodiscard]] float midpoint() const noexcept;
     [[nodiscard]] float position(float differenceDecibels) const;
 
-    [[nodiscard]] bool operator==(const StereoPositionCurve&) const = default;
+    [[nodiscard]] bool operator==(const StereoPositionCurve& other) const;
 
 private:
     /// Level difference drawn 99% of the way to the edge, in dB.
@@ -109,11 +108,11 @@ private:
 
 /// Multi-resolution spatial analysis of stereo audio.
 ///
-/// Each tier transforms the newest samples, zero padded to twice its length so neighbouring bins interpolate the
-/// spectrum, and applies a periodic Hann window and its time derivative to the spectrum as three-tap filters, which
-/// costs one transform for both. The derivative reassigns every bin to the instantaneous frequency of its energy, so a
-/// sine draws as a thin line instead of across its main lobe. The longest tier resolves the lowest octaves to under a
-/// hertz, and the shortest keeps the high frequencies sharp in time.
+/// Each tier transforms the newest samples, zero padded to twice its length for spectral interpolation.
+/// A periodic Hann window and its time derivative are applied as three-tap filters, sharing one transform.
+/// The derivative reassigns each bin to its instantaneous frequency, drawing a sine as a thin line.
+/// The longest tier resolves the lowest octaves to under a hertz.
+/// The shortest keeps the high frequencies sharp in time.
 ///
 /// A bin's position follows the level difference between the channels, as in common spatial analyzers:
 /// the difference in dB through the stereo position curve, so the edges hold only nearly fully panned content.

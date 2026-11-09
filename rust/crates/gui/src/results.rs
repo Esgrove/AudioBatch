@@ -1343,7 +1343,7 @@ impl TableDelegate for ResultsDelegate {
         self.reorder_column(column_index, target_index);
     }
 
-    /// Renders a header title, with the secondary sort marker "[2^]" or "[2v]",
+    /// Renders a header title, with the secondary sort marker `[2^]` or `[2v]`,
     /// and sets the secondary sort on a Command or Control click.
     fn render_th(
         &mut self,

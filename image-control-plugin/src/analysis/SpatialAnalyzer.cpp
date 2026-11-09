@@ -136,6 +136,15 @@ StereoPositionCurve::StereoPositionCurve(const double midpointSetting, const dou
     scaleDecibels = static_cast<float>(midpoint / std::pow(midpointArgument, 1.0 / curveExponent));
 }
 
+/// Compares the curve settings and their derived coefficients within floating-point rounding precision.
+bool StereoPositionCurve::operator==(const StereoPositionCurve& other) const
+{
+    return juce::approximatelyEqual(edgeDecibels, other.edgeDecibels)
+        && juce::approximatelyEqual(exponent, other.exponent)
+        && juce::approximatelyEqual(midpointDecibels, other.midpointDecibels)
+        && juce::approximatelyEqual(scaleDecibels, other.scaleDecibels);
+}
+
 /// Returns the level difference drawn 99% of the way to the edge, in dB.
 float StereoPositionCurve::edge() const noexcept
 {

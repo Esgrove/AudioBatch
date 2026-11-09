@@ -27,16 +27,15 @@ constexpr juce::int64 EVENT_STEP_MILLISECONDS {20};
 constexpr juce::int64 DOUBLE_CLICK_GAP_MILLISECONDS {50};
 /// Milliseconds after a click before the next one, outside JUCE's double-click interval.
 constexpr juce::int64 SEPARATE_CLICK_GAP_MILLISECONDS {1000};
-/// Opacity of the default hidden window.
-/// Windows hit testing skips the pixels of a layered window that are fully transparent,
-/// so `WindowFromPoint` would report the window behind it and JUCE would find no component under the pointer.
-/// The smallest step above zero keeps the window invisible to the eye and hit testable.
-/// Like the macOS window, it then also receives the developer's own pointer and wheel input over it,
-/// so leave the mouse alone while the integration tier runs.
+/// Opacity of the default nearly transparent window.
+/// Windows hit testing skips fully transparent layered windows, so use its smallest nonzero alpha step.
+/// macOS window-server hit testing also skips transparent windows, including alpha values below one percent.
+/// Keep both windows hit testable so JUCE routes peer events through the real desktop window.
+/// They also receive the developer's own pointer and wheel input, so leave the mouse alone during integration tests.
 #if JUCE_WINDOWS
 constexpr float HIDDEN_WINDOW_ALPHA {1.0f / 255.0f};
 #else
-constexpr float HIDDEN_WINDOW_ALPHA {0.0f};
+constexpr float HIDDEN_WINDOW_ALPHA {0.01f};
 #endif
 /// Pointer positions between the start and the end of a drag.
 constexpr int DRAG_STEPS {4};
@@ -94,8 +93,7 @@ int visibleStepDelay()
 /// then pumps the message loop until the peer has laid it out.
 /// On macOS, JUCE asks the window server which window is at each event position,
 /// so the window must be on screen, frontmost, and accept mouse events for its own peer events to reach it.
-/// By default the window is transparent: fully on macOS, where that does not change hit testing,
-/// and one step above zero on Windows, where a fully transparent window is not hit tested.
+/// By default the window is nearly transparent, at the smallest opacity that keeps platform hit testing enabled.
 /// With `AUDIOBATCH_GUI_TESTS_VISIBLE=1` it stays opaque and pauses after each action, so a developer can follow it.
 /// The requested size is clamped to the display's user area, which keeps the wide layout on common displays.
 GuiDriver::GuiDriver(juce::Component& root, const juce::Rectangle<int> bounds) :

@@ -17,9 +17,11 @@
 #include <string_view>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cstddef>
+#include <latch>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -89,6 +91,7 @@ private:
         juce::AudioFormatWriterOptions::SampleFormat sampleFormat
     );
 
+    void runConcurrentDirectoryTests();
     void runPickerFilterTests();
     void runDisposalTests();
     void runFolderGroupingTests(const juce::File& root);
@@ -102,10 +105,44 @@ private:
     void runWrittenAudioValidationTests(const juce::File& root);
 };
 
+/// Checks that simultaneous directory owners cannot select or remove each other's paths.
+void UtilsTests::runConcurrentDirectoryTests()
+{
+    beginTest("Concurrent test directories retain separate filesystem ownership");
+    constexpr std::size_t WORKER_COUNT {8};
+    constexpr int ROUND_COUNT {16};
+    for (int round = 0; round < ROUND_COUNT; ++round) {
+        std::latch start(static_cast<std::ptrdiff_t>(WORKER_COUNT));
+        std::array<std::unique_ptr<TemporaryDirectory>, WORKER_COUNT> directories;
+        std::atomic<bool> separateOwnership {true};
+        std::vector<std::jthread> workers;
+        workers.reserve(WORKER_COUNT);
+        for (std::size_t worker = 0; worker < WORKER_COUNT; ++worker) {
+            workers.emplace_back([&, worker] {
+                start.arrive_and_wait();
+                directories[worker] = std::make_unique<TemporaryDirectory>();
+                if (!directories[worker]->getChildFile("owner.txt").replaceWithText(juce::String(worker))) {
+                    separateOwnership = false;
+                }
+            });
+        }
+        workers.clear();
+        for (std::size_t worker = 0; worker < WORKER_COUNT; ++worker) {
+            const auto marker = directories[worker]->getChildFile("owner.txt");
+            expectEquals(marker.loadFileAsString(), juce::String(worker));
+            for (std::size_t other = 0; other < worker; ++other) {
+                expect(marker != directories[other]->getChildFile("owner.txt"));
+            }
+        }
+        expect(separateOwnership.load());
+    }
+}
+
 /// Runs the helper checks.
 void UtilsTests::runTest()
 {
     const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
+    runConcurrentDirectoryTests();
 
     beginTest("Startup flags recognize complete options and their short aliases");
     {

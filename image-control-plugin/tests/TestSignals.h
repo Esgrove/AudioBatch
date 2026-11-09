@@ -48,23 +48,23 @@ inline std::vector<float> makePinkNoise(const float amplitude, const std::size_t
 {
     const auto white = makeNoise(1.0F, samples, seed);
     std::vector<float> signal(samples);
-    double b0 = 0.0;
-    double b1 = 0.0;
-    double b2 = 0.0;
-    double b3 = 0.0;
-    double b4 = 0.0;
-    double b5 = 0.0;
-    double b6 = 0.0;
+    double stage0 = 0.0;
+    double stage1 = 0.0;
+    double stage2 = 0.0;
+    double stage3 = 0.0;
+    double stage4 = 0.0;
+    double stage5 = 0.0;
+    double stage6 = 0.0;
     for (std::size_t sample = 0; sample < samples; ++sample) {
         const auto input = static_cast<double>(white[sample]);
-        b0 = 0.99886 * b0 + input * 0.0555179;
-        b1 = 0.99332 * b1 + input * 0.0750759;
-        b2 = 0.96900 * b2 + input * 0.1538520;
-        b3 = 0.86650 * b3 + input * 0.3104856;
-        b4 = 0.55000 * b4 + input * 0.5329522;
-        b5 = -0.7616 * b5 - input * 0.0168980;
-        const double pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + input * 0.5362;
-        b6 = input * 0.115926;
+        stage0 = 0.99886 * stage0 + input * 0.0555179;
+        stage1 = 0.99332 * stage1 + input * 0.0750759;
+        stage2 = 0.96900 * stage2 + input * 0.1538520;
+        stage3 = 0.86650 * stage3 + input * 0.3104856;
+        stage4 = 0.55000 * stage4 + input * 0.5329522;
+        stage5 = -0.7616 * stage5 - input * 0.0168980;
+        const double pink = stage0 + stage1 + stage2 + stage3 + stage4 + stage5 + stage6 + input * 0.5362;
+        stage6 = input * 0.115926;
         // The filter gains about 9 at its peak, so this scale keeps the result near the amplitude.
         signal[sample] = static_cast<float>(pink * 0.11) * amplitude;
     }

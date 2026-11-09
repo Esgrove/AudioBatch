@@ -22,7 +22,7 @@ class SpectrogramRenderer;
 /// The analysis settings the editor hands to the worker on every display refresh.
 struct SpectrogramAnalysisSettings {
     /// Maps the level difference between the channels to the stereo position.
-    StereoPositionCurve positionCurve {};
+    StereoPositionCurve positionCurve;
     /// Sample rate of the queued audio, in Hz.
     double sampleRate {ANALYZER_DEFAULT_SAMPLE_RATE};
     /// Time constant of the particle fade, in seconds, which scales the particle weight.

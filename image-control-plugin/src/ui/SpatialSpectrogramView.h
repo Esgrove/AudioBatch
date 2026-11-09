@@ -43,6 +43,8 @@ enum class SpectrogramDrag : std::uint8_t {
 
 /// What the overlays show, compared on every display refresh, so the view repaints only when it changes.
 struct SpectrogramOverlayState {
+    [[nodiscard]] bool operator==(const SpectrogramOverlayState& other) const;
+
     StereoPositionCurve positionCurve;
     std::array<float, BAND_COUNT> bandHighlights {};
     std::array<float, CROSSOVER_COUNT> crossoverHighlights {};
@@ -52,8 +54,6 @@ struct SpectrogramOverlayState {
     float positionCurveOpacity {0.0F};
     bool renderingBypassed {false};
     bool renderingUnavailable {false};
-
-    [[nodiscard]] bool operator==(const SpectrogramOverlayState&) const = default;
 };
 
 /// The spatial spectrogram's box, axes, band regions, and crossover lines.
