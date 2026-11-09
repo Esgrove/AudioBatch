@@ -23,15 +23,28 @@
 #[cfg(all(test, audiobatch_rtsan))]
 mod realtime_tests;
 
+#[cfg(test)]
+mod callback_benchmark;
+#[cfg(test)]
+mod callback_benchmark_cpu;
+#[cfg(test)]
+mod callback_benchmark_native;
+#[cfg(test)]
+mod callback_lifecycle_tests;
+#[cfg(test)]
+mod callback_transport_tests;
+
+mod callback_access;
 mod device;
 mod engine;
 mod output;
 mod pipeline;
 mod preview_insert;
+mod stream_errors;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -45,11 +58,13 @@ pub use device::{DeviceCapabilities, DeviceError, OutputConfig, device_capabilit
 pub use engine::PlayerEvent;
 pub use preview_insert::{InsertError, PreviewInsert};
 
+use callback_access::CallbackAccess;
 use device::{device_display_name, find_device, output_devices, stream_config};
 use engine::{Command, run_decode_thread};
 use output::insert::DeviceFormat;
 use output::{OutputRenderer, SharedState};
 use preview_insert::{InsertControl, insert_channel};
+use stream_errors::StreamErrors;
 
 /// What the player reports when the preview insert produced output that is not finite.
 pub(crate) const NON_FINITE_INSERT_MESSAGE: &str = "A live plugin produced non-finite audio. Preview was stopped.";
@@ -64,6 +79,9 @@ const STREAM_ERROR_CAPACITY: usize = 8;
 /// How long playback stays stopped before `close_idle_stream` closes the output stream,
 /// long enough for the fade of a pause to finish playing.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// Control-side interval while native callback closures finish releasing their pinned captures.
+const CAPTURE_RETIRE_POLL_INTERVAL: Duration = Duration::from_micros(50);
 
 /// Failures while preparing a player on its owning thread.
 #[derive(Debug, Error)]
@@ -109,10 +127,10 @@ pub struct Player {
     stream_errors: Receiver<cpal::Error>,
     stream_error_sender: Sender<cpal::Error>,
     decode_thread: Option<JoinHandle<()>>,
-    /// The renderer every stream of this player calls.
-    /// The audio callback only tries the lock, and a stream that misses it outputs silence,
-    /// so the player can make insert changes itself while no stream runs.
-    renderer: Arc<Mutex<OutputRenderer>>,
+    /// Owner pin for renderer resources, explicitly retired on this thread before backend stream disposal.
+    renderer: Arc<RendererAccess>,
+    /// Owner pins for callback capture storage, reclaimed only after both backend closures acknowledge disposal.
+    captures: Vec<Arc<StreamCapture>>,
     /// The open output stream, only while playing and shortly after.
     stream: Option<Stream>,
     /// When playback was first seen stopped with the stream open.
@@ -129,12 +147,111 @@ pub struct Player {
     insert: InsertControl,
 }
 
-/// The state the stream error callback needs.
-/// The callback can run on the audio thread, so it only stores atomics.
-/// It sends the error unformatted through a bounded channel, which does not allocate.
-struct StreamErrors {
-    shared: Arc<SharedState>,
-    sender: Sender<cpal::Error>,
+/// Callback admission and the stream identity published only while control owns drained access.
+struct RendererAccess {
+    renderer: CallbackAccess<OutputRenderer>,
+    epoch: AtomicU64,
+}
+
+/// Pinned callback capture storage, retained by the owner until both native closures are destroyed.
+/// Closing the error gate drains any error publication before a replacement stream is admitted.
+struct StreamCapture {
+    renderer: Arc<RendererAccess>,
+    epoch: u64,
+    errors: CallbackAccess<StreamErrors>,
+    render_released: AtomicBool,
+    error_released: AtomicBool,
+}
+
+/// Backend closure ownership with an explicit release acknowledgement.
+struct CallbackCapture {
+    capture: Arc<StreamCapture>,
+    is_error: bool,
+}
+
+impl RendererAccess {
+    /// Keeps the renderer unavailable to any stream until an owner publishes its first epoch.
+    const fn new(renderer: OutputRenderer) -> Self {
+        Self {
+            renderer: CallbackAccess::new(renderer),
+            epoch: AtomicU64::new(0),
+        }
+    }
+
+    /// Advances the stream identity only after every earlier admitted render callback has returned.
+    /// A delayed callback checks its epoch after admission and cannot consume replacement-stream audio.
+    fn advance_epoch(&self) -> u64 {
+        self.renderer
+            .with_control(|_| {
+                let epoch = self
+                    .epoch
+                    .load(Ordering::Relaxed)
+                    .checked_add(1)
+                    .expect("stream epoch exhausted");
+                self.epoch.store(epoch, Ordering::Release);
+                epoch
+            })
+            .expect("live player renderer")
+    }
+}
+
+impl StreamCapture {
+    /// Pins all callback captures on the control thread before native stream construction can retain them.
+    const fn new(renderer: Arc<RendererAccess>, epoch: u64, errors: StreamErrors) -> Self {
+        Self {
+            renderer,
+            epoch,
+            errors: CallbackAccess::new(errors),
+            render_released: AtomicBool::new(false),
+            error_released: AtomicBool::new(false),
+        }
+    }
+
+    /// Closes error publication and destroys its owned transport state on the player's thread.
+    fn close(&self) {
+        drop(self.errors.retire());
+    }
+
+    /// Forwards native errors only while this stream remains current.
+    /// Owned-error destruction on rejection is part of the separately diagnosed error callback boundary.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
+    fn report(&self, error: cpal::Error) {
+        self.errors.try_with_if(
+            || self.renderer.epoch.load(Ordering::Acquire) == self.epoch,
+            |errors| errors.report(error),
+        );
+    }
+
+    /// Confirms backend ownership is completely gone before freeing the owner pin.
+    fn released(capture: &Arc<Self>) -> bool {
+        capture.render_released.load(Ordering::Acquire)
+            && capture.error_released.load(Ordering::Acquire)
+            && Arc::strong_count(capture) == 1
+    }
+}
+
+impl CallbackCapture {
+    /// Keeps the whole acknowledged capture in the backend closure rather than capturing only its Arc field.
+    fn render<T: SizedSample + FromSample<f32>>(&self, output: &mut [T]) {
+        render_typed_callback(&self.capture.renderer, self.capture.epoch, output);
+    }
+
+    /// Forwards through this stream's drained error-publication gate.
+    fn report(&self, error: cpal::Error) {
+        self.capture.report(error);
+    }
+}
+
+impl Drop for CallbackCapture {
+    fn drop(&mut self) {
+        let released = if self.is_error {
+            &self.capture.error_released
+        } else {
+            &self.capture.render_released
+        };
+        released.store(true, Ordering::Release);
+        // The owner also observes the strong count, so acknowledgement cannot race the field's Arc destruction.
+    }
 }
 
 impl PlayheadHandle {
@@ -205,9 +322,7 @@ impl Player {
         let (event_sender, events) = unbounded();
         let (stream_error_sender, stream_errors) = bounded(STREAM_ERROR_CAPACITY);
 
-        let renderer = Arc::new(Mutex::new(renderer));
-        // A lock may set itself up on first use, which must not happen in the first audio callback.
-        drop(renderer.lock());
+        let renderer = Arc::new(RendererAccess::new(renderer));
 
         let (commands, command_receiver) = unbounded();
         let thread_shared = Arc::clone(&shared);
@@ -228,6 +343,7 @@ impl Player {
             stream_error_sender,
             decode_thread: Some(decode_thread),
             renderer,
+            captures: Vec::new(),
             stream: None,
             idle_since: None,
             device_name: device_display_name(&device),
@@ -320,13 +436,14 @@ impl Player {
     /// so the device is free for other applications. Call it regularly from the owner's thread.
     /// A stream that stopped because its device went away is closed this way too, and the next play opens it again.
     pub fn close_idle_stream(&mut self) {
+        self.collect_captures();
         if self.stream.is_none() || self.is_playing() {
             self.idle_since = None;
             return;
         }
         let idle_since = *self.idle_since.get_or_insert_with(Instant::now);
         if idle_since.elapsed() >= STREAM_IDLE_TIMEOUT {
-            self.stream = None;
+            self.close_stream();
             self.idle_since = None;
             self.apply_insert_changes_without_stream();
         }
@@ -488,48 +605,83 @@ impl Player {
     /// A failure stops playback and is reported as an error event.
     fn ensure_stream(&mut self) {
         self.idle_since = None;
+        self.collect_captures();
         if self.shared.stream_lost.swap(false, Ordering::AcqRel) {
-            self.stream = None;
+            let playing = self.shared.playing.load(Ordering::Relaxed);
+            self.close_stream();
+            self.shared.playing.store(playing, Ordering::Relaxed);
             self.apply_insert_changes_without_stream();
         }
         if self.stream.is_some() {
             return;
         }
-        let errors = StreamErrors {
-            shared: Arc::clone(&self.shared),
-            sender: self.stream_error_sender.clone(),
-        };
-        let opened = build_stream(
-            &self.device,
-            &self.config,
-            self.sample_format,
+        let epoch = self.renderer.advance_epoch();
+        let capture = Arc::new(StreamCapture::new(
             Arc::clone(&self.renderer),
-            errors,
-        )
-        .and_then(|stream| {
-            stream.play().map_err(OutputStreamError::Start)?;
-            Ok(stream)
-        });
+            epoch,
+            StreamErrors {
+                shared: Arc::clone(&self.shared),
+                sender: self.stream_error_sender.clone(),
+            },
+        ));
+        self.captures.push(Arc::clone(&capture));
+        let opened = build_stream(&self.device, &self.config, self.sample_format, capture);
         match opened {
-            Ok(stream) => self.stream = Some(stream),
+            Ok(stream) => match stream.play() {
+                Ok(()) => self.stream = Some(stream),
+                Err(error) => {
+                    // Invalidate and drain before the failing stream's backend captures can be disposed.
+                    self.invalidate_stream();
+                    drop(stream);
+                    self.report_open_failure(&OutputStreamError::Start(error));
+                }
+            },
             Err(error) => {
-                self.shared.playing.store(false, Ordering::Relaxed);
-                let _ = self.event_sender.send(PlayerEvent::Error {
-                    path: None,
-                    message: error_message(&error),
-                });
+                self.invalidate_stream();
+                self.report_open_failure(&error);
             }
         }
+        self.collect_captures();
     }
 
     /// Makes the queued insert changes on this thread while no stream calls the renderer,
     /// so a detached insert comes back at once instead of waiting for a stream that is not running.
     fn apply_insert_changes_without_stream(&self) {
-        if self.stream.is_none()
-            && let Ok(mut renderer) = self.renderer.lock()
-        {
-            renderer.apply_insert_changes();
+        if self.stream.is_none() {
+            self.renderer
+                .renderer
+                .with_control(OutputRenderer::apply_insert_changes);
         }
+    }
+
+    /// Drains native error publication before changing identity under exclusive renderer access.
+    fn invalidate_stream(&self) {
+        for capture in &self.captures {
+            capture.close();
+        }
+        self.renderer.advance_epoch();
+        self.shared.stream_lost.store(false, Ordering::Release);
+    }
+
+    /// Invalidates callbacks before disposing the native stream and collecting acknowledged capture pins.
+    fn close_stream(&mut self) {
+        self.invalidate_stream();
+        self.stream = None;
+        self.collect_captures();
+    }
+
+    /// Reclaims capture storage only on the control thread once native closure ownership is gone.
+    fn collect_captures(&mut self) {
+        collect_stream_captures(&mut self.captures);
+    }
+
+    /// Stops playback and reports a failed open or start with its unchanged native source chain.
+    fn report_open_failure(&self, error: &OutputStreamError) {
+        self.shared.playing.store(false, Ordering::Relaxed);
+        let _ = self.event_sender.send(PlayerEvent::Error {
+            path: None,
+            message: error_message(error),
+        });
     }
 
     /// Makes a new generation current, so the callback drops every frame of the previous one.
@@ -540,10 +692,34 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
+        self.shared.playing.store(false, Ordering::Relaxed);
+        self.invalidate_stream();
+        // Permanently close access and destroy buffers and live inserts before backend stream teardown.
+        drop(self.renderer.renderer.retire());
+        self.stream = None;
+        self.collect_captures();
+        // Keep owner pins until backend closure disposal is acknowledged, including delayed Core Audio captures.
+        // Waiting is control-side only. Never release the final owning allocation on a backend callback thread.
+        wait_for_stream_captures(&mut self.captures);
         let _ = self.commands.send(Command::Shutdown);
         if let Some(thread) = self.decode_thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+/// Releases owner pins only after both backend closures have dropped their shared capture references.
+fn collect_stream_captures(captures: &mut Vec<Arc<StreamCapture>>) {
+    captures.retain(|capture| !StreamCapture::released(capture));
+}
+
+/// Waits only on the owner thread before its final pins can be released.
+/// A backend that never disposes its callbacks cannot be safely reclaimed by timing out.
+fn wait_for_stream_captures(captures: &mut Vec<Arc<StreamCapture>>) {
+    collect_stream_captures(captures);
+    while !captures.is_empty() {
+        std::thread::sleep(CAPTURE_RETIRE_POLL_INTERVAL);
+        collect_stream_captures(captures);
     }
 }
 
@@ -552,27 +728,33 @@ fn build_stream(
     device: &Device,
     config: &StreamConfig,
     sample_format: SampleFormat,
-    renderer: Arc<Mutex<OutputRenderer>>,
-    errors: StreamErrors,
+    capture: Arc<StreamCapture>,
 ) -> Result<Stream, OutputStreamError> {
     match sample_format {
-        SampleFormat::F32 => build_typed_stream::<f32>(device, config, renderer, errors),
-        SampleFormat::F64 => build_typed_stream::<f64>(device, config, renderer, errors),
-        SampleFormat::I16 => build_typed_stream::<i16>(device, config, renderer, errors),
-        SampleFormat::I24 => build_typed_stream::<cpal::I24>(device, config, renderer, errors),
-        SampleFormat::I32 => build_typed_stream::<i32>(device, config, renderer, errors),
-        SampleFormat::U16 => build_typed_stream::<u16>(device, config, renderer, errors),
-        other => Err(OutputStreamError::UnsupportedSampleFormat(other)),
+        SampleFormat::F32 => build_typed_stream::<f32>(device, config, capture),
+        SampleFormat::F64 => build_typed_stream::<f64>(device, config, capture),
+        SampleFormat::I16 => build_typed_stream::<i16>(device, config, capture),
+        SampleFormat::I24 => build_typed_stream::<cpal::I24>(device, config, capture),
+        SampleFormat::I32 => build_typed_stream::<i32>(device, config, capture),
+        SampleFormat::U16 => build_typed_stream::<u16>(device, config, capture),
+        other => {
+            // No backend closure was created, so both owner pins can be acknowledged here.
+            capture.render_released.store(true, Ordering::Release);
+            capture.error_released.store(true, Ordering::Release);
+            Err(OutputStreamError::UnsupportedSampleFormat(other))
+        }
     }
 }
 
-/// Runs the complete typed CPAL callback, including the renderer guard's destruction.
-/// The nonblocking lock avoids waiting, but its successful guard still unlocks a native mutex.
+/// Runs the complete typed CPAL callback with one non-retrying atomic admission attempt.
+/// The stream epoch is checked after admission, before accessing any renderer state.
 #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
-fn render_typed_callback<T: SizedSample + FromSample<f32>>(renderer: &Mutex<OutputRenderer>, output: &mut [T]) {
-    if let Ok(mut renderer) = renderer.try_lock() {
-        renderer.render(output, T::from_sample);
-    } else {
+fn render_typed_callback<T: SizedSample + FromSample<f32>>(access: &RendererAccess, epoch: u64, output: &mut [T]) {
+    let rendered = access.renderer.try_with_if(
+        || access.epoch.load(Ordering::Acquire) == epoch,
+        |renderer| renderer.render(output, T::from_sample),
+    );
+    if rendered.is_none() {
         output.fill(T::from_sample(0.0));
     }
 }
@@ -581,29 +763,24 @@ fn render_typed_callback<T: SizedSample + FromSample<f32>>(renderer: &Mutex<Outp
 fn build_typed_stream<T>(
     device: &Device,
     config: &StreamConfig,
-    renderer: Arc<Mutex<OutputRenderer>>,
-    errors: StreamErrors,
+    capture: Arc<StreamCapture>,
 ) -> Result<Stream, OutputStreamError>
 where
     T: SizedSample + FromSample<f32>,
 {
+    let render = CallbackCapture {
+        capture: Arc::clone(&capture),
+        is_error: false,
+    };
+    let errors = CallbackCapture {
+        capture,
+        is_error: true,
+    };
     device
         .build_output_stream(
             *config,
-            move |output: &mut [T], _| render_typed_callback(&renderer, output),
-            move |error: cpal::Error| {
-                if matches!(
-                    error.kind(),
-                    ErrorKind::Xrun | ErrorKind::DeviceChanged | ErrorKind::RealtimeDenied
-                ) {
-                    return;
-                }
-                if is_stream_lost(error.kind()) {
-                    errors.shared.stream_lost.store(true, Ordering::Release);
-                    errors.shared.playing.store(false, Ordering::Relaxed);
-                }
-                let _ = errors.sender.try_send(error);
-            },
+            move |output: &mut [T], _| render.render(output),
+            move |error: cpal::Error| errors.report(error),
             None,
         )
         .map_err(OutputStreamError::Open)

@@ -697,13 +697,16 @@ dependencies = [
  "anyhow",
  "audioadapter-buffers",
  "audiobatch-core",
+ "audiobatch-plugins",
  "cpal",
  "crossbeam-channel",
  "rtrb",
  "rubato",
+ "serde_json",
  "tempfile",
  "test-fixtures",
  "thiserror 2.0.21",
+ "vst3-host",
 ]
 
 [[package]]

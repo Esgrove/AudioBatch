@@ -617,7 +617,9 @@ The `miri` job in CI runs the same script on macOS.
 It uses native compiler annotations, a startup-linked runtime,
 and isolated `target/rtsan/` build and diagnostic storage.
 The ordinary stable toolchain and Windows builds do not enable this instrumentation.
-Use `./rtsan.sh --diagnostic` to verify known callback and native-plugin blockers alongside the clean regression cases.
+`./rtsan.sh --skip-native` requires clean first-party audio data callbacks, including admission and guard destruction.
+Use `./rtsan.sh --diagnostic` to verify native-plugin and owned stream-error disposal blockers alongside clean cases.
+Native callback captures are pinned until backend disposal, and renderer resources retire on the owning thread.
 A `BLOCKED` result is not a clean real-time callback.
 Unexpected findings, missing bundles, and detector failures fail the run.
 The runner records exact toolchain versions and requires compatible Rust/Clang runtime versions.
