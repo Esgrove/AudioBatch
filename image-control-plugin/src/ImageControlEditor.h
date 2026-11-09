@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -67,6 +68,7 @@ private:
     void refreshDisplay(double timestamp);
     void setAnalyzeOutput(bool output);
     void updateBandRanges();
+    void updateCorrelationMonitoring();
 
     void componentMovedOrResized(bool wasMoved, bool wasResized) override;
     void componentPeerChanged() override;
@@ -122,6 +124,9 @@ private:
     std::array<std::unique_ptr<BandStrip>, BAND_COUNT> bandStrips;
     /// Independent read-only meter row aligned with the four band strips.
     std::array<std::unique_ptr<BandCorrelationMeter>, BAND_COUNT> correlationMeters;
+
+    /// Processor lifecycle last accepted by the correlation display history.
+    std::optional<std::uint32_t> shownCorrelationGeneration;
 
     /// Crossovers the band ranges were last shown with.
     Crossovers displayedCrossovers {};

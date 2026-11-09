@@ -368,7 +368,7 @@ int ImageControlEditor::compactHeight() const
         + (correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0);
 }
 
-/// Returns the persistence setting, the time constant of the particle fade, in seconds.
+/// Returns the shared persistence of the particle fade and correlation trend/range, in seconds.
 double ImageControlEditor::persistenceSeconds() const
 {
     return static_cast<double>(imageControlProcessor.getEditorState().getProperty(PERSISTENCE_PROPERTY));
@@ -436,7 +436,7 @@ void ImageControlEditor::applyViewSettings()
             resized();
         }
     }
-    imageControlProcessor.setCorrelationEnabled(correlationShown && isShowing());
+    updateCorrelationMonitoring();
     const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
     if (shownHidden != hidden) {
         shownHidden = hidden;
@@ -504,13 +504,28 @@ void ImageControlEditor::componentMovedOrResized(bool /*wasMoved*/, bool /*wasRe
 /// Tracks host attachment and removal even when the editor's own visible flag does not change.
 void ImageControlEditor::componentPeerChanged()
 {
-    imageControlProcessor.setCorrelationEnabled(correlationShown && isShowing());
+    updateCorrelationMonitoring();
 }
 
 /// Stops optional metering when the host hides the editor or any ancestor, even without another VBlank callback.
 void ImageControlEditor::componentVisibilityChanged()
 {
-    imageControlProcessor.setCorrelationEnabled(correlationShown && isShowing());
+    updateCorrelationMonitoring();
+}
+
+/// Disables optional metering and clears presentation history synchronously when its view is hidden.
+void ImageControlEditor::updateCorrelationMonitoring()
+{
+    const bool enabled = correlationShown && isShowing();
+    imageControlProcessor.setCorrelationEnabled(enabled);
+    if (!enabled) {
+        shownCorrelationGeneration.reset();
+        for (const auto& meter : correlationMeters) {
+            if (meter != nullptr) {
+                meter->clearHistory();
+            }
+        }
+    }
 }
 
 /// Updates the measured rate of frames the renderer drew twice a second.
@@ -555,10 +570,16 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     measureFramesPerSecond(elapsed);
 
     applyViewSettings();
-    if (correlationShown) {
-        const auto correlations = imageControlProcessor.getBandCorrelations();
+    if (correlationShown && isShowing()) {
+        const auto snapshot = imageControlProcessor.getBandCorrelationSnapshot();
+        if (shownCorrelationGeneration != snapshot.generation) {
+            for (const auto& meter : correlationMeters) {
+                meter->clearHistory();
+            }
+            shownCorrelationGeneration = snapshot.generation;
+        }
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            correlationMeters.at(band)->setCorrelation(correlations.at(band));
+            correlationMeters.at(band)->setCorrelation(snapshot.readings.at(band), elapsed, persistenceSeconds());
         }
     }
     spectrogramWorker.wake();

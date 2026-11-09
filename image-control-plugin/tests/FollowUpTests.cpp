@@ -125,6 +125,45 @@ TEST(CorrelationLifecycle, StoppedAndHiddenViewsCannotShowAnOldReading)
     expectUnavailable(processor.getBandCorrelations());
 }
 
+TEST(CorrelationLifecycle, SnapshotsExposeTransitionsEvenWhenPublicationResumesBeforeTheNextRead)
+{
+    ImageControlProcessor processor;
+    processor.prepareToPlay(48'000.0, 256);
+    processor.setCorrelationEnabled(true);
+    publishCorrelation(processor);
+    auto snapshot = processor.getBandCorrelationSnapshot();
+    ASSERT_TRUE(std::isfinite(snapshot.readings.back()));
+    processor.setCorrelationEnabled(true);
+    EXPECT_EQ(processor.getBandCorrelationSnapshot().generation, snapshot.generation);
+
+    processor.reset();
+    publishCorrelation(processor);
+    auto next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    EXPECT_NEAR(next.readings.back(), 1.0F, 1.0e-6F);
+    snapshot = next;
+
+    processor.prepareToPlay(96'000.0, 256);
+    publishCorrelation(processor);
+    next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    EXPECT_NEAR(next.readings.back(), 1.0F, 1.0e-6F);
+    snapshot = next;
+
+    // No callback or display read observes the disabled interval.
+    processor.setCorrelationEnabled(false);
+    processor.setCorrelationEnabled(true);
+    publishCorrelation(processor);
+    next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    EXPECT_NEAR(next.readings.back(), 1.0F, 1.0e-6F);
+    snapshot = next;
+    processor.releaseResources();
+    next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    expectUnavailable(next.readings);
+}
+
 TEST(CorrelationLifecycle, MissingCallbacksExpireWithoutReadingOrMutatingAudioHistory)
 {
     ImageControlProcessor processor;

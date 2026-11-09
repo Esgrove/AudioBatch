@@ -255,6 +255,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     set(IMAGE_CONTROL_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/AnalyzerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ConvolverTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationMeterTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CrossoverTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/FollowUpTests.cpp"

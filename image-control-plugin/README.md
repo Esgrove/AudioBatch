@@ -72,6 +72,9 @@ It measures each processed band after its Mid/Side gains and Pan,
 before Delta and Mono, independently of Pre/Post.
 Silence or insufficient energy in either channel gives an unavailable reading.
 Readings also clear when processing stops, the meters are hidden, or no new callbacks arrive.
+The coloured marker and number show the live reading, a yellow notch shows its smoothed trend,
+and a translucent box spans the recently observed range.
+`Persistence` controls both trend smoothing and the range duration, as well as the spectrogram fade.
 `Show band correlation` in Display settings controls the row independently of spectrogram visibility.
 
 ## Build and install

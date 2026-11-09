@@ -1,11 +1,13 @@
-/// Measures callback tails, paced live crossovers, concurrent analysis, imager throughput, and software overlays.
-/// Uses no window or GL context. Observations are not pass/fail thresholds or improvement evidence without a baseline.
+/// Measures callback tails, paced crossovers, concurrent analysis, imager throughput, and software display rendering.
+/// Uses no window or GL context.
+/// Observations are not pass/fail thresholds or improvement evidence without a baseline.
 
 #include "analysis/SpatialAnalyzer.h"
 #include "analysis/StereoSampleFifo.h"
 #include "dsp/MultibandImager.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ui/BandStrip.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
@@ -782,6 +784,92 @@ void timeSpectrogramOverlays(const Options& options)
     );
 }
 
+/// Times four display-history updates and their software paint at a simulated, unpaced editor refresh cadence.
+/// Input generation, canvas clearing, setup/layout, and observable history/pixel checksums are outside the clock pair.
+void timeBandCorrelationMeters(const Options& options, const bool changing, const double persistenceSeconds)
+{
+    constexpr int METER_WIDTH {VIEW_WIDTH / static_cast<int>(BAND_COUNT)};
+    constexpr double REFRESH_SECONDS {1.0 / REFRESH_RATE};
+    constexpr std::array<float, BAND_COUNT> STEADY_VALUES {-0.8F, -0.2F, 0.3F, 0.9F};
+    const int warmupRefreshes = static_cast<int>(std::ceil(MAX_PERSISTENCE_SECONDS * REFRESH_RATE)) + 1;
+    std::array<std::array<float, BAND_COUNT>, REFRESH_RATE> readings {};
+    for (std::size_t refresh = 0; refresh < readings.size(); ++refresh) {
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            const double phase = static_cast<double>(refresh) / REFRESH_RATE
+                + static_cast<double>(band) / static_cast<double>(BAND_COUNT);
+            readings[refresh][band] = changing
+                ? static_cast<float>(std::sin(juce::MathConstants<double>::twoPi * phase))
+                : STEADY_VALUES[band];
+        }
+    }
+    juce::Component row;
+    row.setSize(VIEW_WIDTH, BAND_CORRELATION_HEIGHT);
+    std::array<std::unique_ptr<BandCorrelationMeter>, BAND_COUNT> meters;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        meters[band] = std::make_unique<BandCorrelationMeter>(bandName(band));
+        meters[band]->setBounds(static_cast<int>(band) * METER_WIDTH, 0, METER_WIDTH, BAND_CORRELATION_HEIGHT);
+        row.addAndMakeVisible(*meters[band]);
+    }
+    juce::Image canvas(juce::Image::ARGB, VIEW_WIDTH, BAND_CORRELATION_HEIGHT, true, juce::SoftwareImageType {});
+    juce::Graphics graphics(canvas);
+    const auto updateAndPaint = [&](const std::array<float, BAND_COUNT>& values) {
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            meters[band]->setCorrelation(values[band], REFRESH_SECONDS, persistenceSeconds);
+        }
+        row.paintEntireComponent(graphics, false);
+    };
+    std::vector<double> measurements;
+    measurements.reserve(static_cast<std::size_t>(options.refreshes) * static_cast<std::size_t>(options.repetitions));
+    double checksum = 0.0;
+    std::uint64_t pixelChecksum = 0;
+    for (int repetition = 0; repetition < options.repetitions; ++repetition) {
+        for (const auto& meter : meters) {
+            meter->clearHistory();
+        }
+        // Fill the maximum retained history even for the shortest selected Persistence and --quick runs.
+        for (int refresh = 0; refresh < warmupRefreshes; ++refresh) {
+            canvas.clear(canvas.getBounds());
+            updateAndPaint(readings[static_cast<std::size_t>(refresh) % readings.size()]);
+        }
+        for (int refresh = 0; refresh < options.refreshes; ++refresh) {
+            const auto& values = readings[static_cast<std::size_t>(warmupRefreshes + refresh) % readings.size()];
+            canvas.clear(canvas.getBounds());
+            const auto start = Clock::now();
+            updateAndPaint(values);
+            measurements.push_back(Microseconds(Clock::now() - start).count());
+            for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+                checksum += static_cast<double>(meters[band]->trendValue().value_or(0.0F));
+                if (const auto range = meters[band]->recentRange()) {
+                    checksum += static_cast<double>(range->getStart()) + static_cast<double>(range->getEnd());
+                }
+                const auto pixel = canvas.getPixelAt(
+                    static_cast<int>(band) * METER_WIDTH + refresh % METER_WIDTH, refresh % BAND_CORRELATION_HEIGHT
+                );
+                pixelChecksum += pixel.getARGB();
+            }
+        }
+    }
+    const auto result = distribution(measurements);
+    std::println(
+        "correlation update+paint meters={} readings={} persistence_s={:.3f} software={}x{} refresh_hz={} "
+        "warmup_s/rep={:.3f} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} check={:.6f} pixels={}",
+        BAND_COUNT,
+        changing ? "changing" : "steady",
+        persistenceSeconds,
+        VIEW_WIDTH,
+        BAND_CORRELATION_HEIGHT,
+        REFRESH_RATE,
+        static_cast<double>(warmupRefreshes) * REFRESH_SECONDS,
+        measurements.size(),
+        result.p50,
+        result.p95,
+        result.p99,
+        result.max,
+        checksum,
+        pixelChecksum
+    );
+}
+
 /// Prints reproducibility context without pretending runtime detection reveals all compiler/linker flags.
 void printIdentity(const Options& options)
 {
@@ -859,11 +947,14 @@ void printIdentity(const Options& options)
         R"(Warmup: callback latency + gain settling + one maximum block per repetition. Components: one second or more.
 Input: independent fixed-seed stereo noise, amplitude +/-.3. Irregular blocks: 1,31,97,255,17,509,64,257.
 Callback timing excludes copying, parameter setters, checksums, FIFO pop, worker wake, and sleep.
+Correlation rows include four live/trend/range history updates and full-row software painting at simulated 120 Hz.
+Correlation warmup fills maximum Persistence history per repetition, including --quick and shorter selected windows.
+Correlation timing excludes reading generation, canvas clearing, checksums, construction, and layout. No audio DSP is run.
 Clock overhead is not subtracted.
 deadline[x] is callback time / that block's audio duration, NOT an OS scheduling or dropout guarantee.
 Unpaced worker-flood is bounded-queue overload, not a faithful display cadence. Paced rows wake at 120 Hz.
 Post-request windows include possible design publication/crossfades. Public API exposes no completion count.
-No GPU drawing, desktop compositor, audio-device scheduling, or editor control/layout cost is measured.
+No GPU drawing, desktop compositor, audio-device scheduling, or full-editor refresh/layout cost is measured.
 Compare identical hardware, power/thermal state, background load, toolchain, flags, and hardening.
 Record source revision with --label. No baseline comparison or arbitrary performance pass/fail limit is applied.
 p99 needs more than --quick for stable tail evidence.)"
@@ -987,6 +1078,17 @@ int main(const int argc, char* argv[])
             esgrove::image_control::benchmark::timeImager(options, esgrove::image_control::benchmark::PANS, "panned");
             esgrove::image_control::benchmark::timeSpectrogramAnalysis(options);
             esgrove::image_control::benchmark::timeSpectrogramOverlays(options);
+            for (const bool changing : {false, true}) {
+                for (const double persistenceSeconds :
+                     {
+                         esgrove::image_control::MIN_PERSISTENCE_SECONDS,
+                         esgrove::image_control::DEFAULT_PERSISTENCE_SECONDS,
+                         esgrove::image_control::MAX_PERSISTENCE_SECONDS,
+                     })
+                {
+                    esgrove::image_control::benchmark::timeBandCorrelationMeters(options, changing, persistenceSeconds);
+                }
+            }
         }
         std::println(
             "Elapsed wall seconds: {:.3f}",
