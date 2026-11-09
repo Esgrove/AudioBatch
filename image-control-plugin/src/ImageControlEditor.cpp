@@ -30,7 +30,7 @@ namespace
 /// Default editor width, in pixels.
 constexpr int DEFAULT_WIDTH {1000};
 /// Default editor height, in pixels.
-constexpr int DEFAULT_HEIGHT {680};
+constexpr int DEFAULT_HEIGHT {724};
 /// Smallest editor width, in pixels.
 constexpr int MIN_EDITOR_WIDTH {760};
 /// Smallest editor height, in pixels.
@@ -44,7 +44,7 @@ constexpr int HEADER_HEIGHT {36};
 /// Gap between sections, in pixels.
 constexpr int GAP {8};
 /// Height of the band strip section until the divider is dragged, in pixels.
-constexpr int DEFAULT_BAND_SECTION_HEIGHT {260};
+constexpr int DEFAULT_BAND_SECTION_HEIGHT {304};
 /// Smallest height of the spectrogram, in pixels.
 constexpr int MIN_SPECTROGRAM_HEIGHT {160};
 /// How far the divider reaches beyond the gap on each side, so it is easy to hover and grab, in pixels.

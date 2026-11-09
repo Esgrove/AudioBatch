@@ -1,10 +1,11 @@
-/// Declares the design of the linear-phase lowpass kernels that split ImageControl's bands.
-/// Each kernel is a symmetric FIR filter whose magnitude falls from one to zero over a
-/// raised-cosine step one octave wide on a logarithmic frequency axis, centred on its crossover.
-/// The bands are differences between these kernels and a pure delay, so they always sum back to the delayed input.
+/// Declares the design of the linear-phase lowpass and quadrature kernels that split ImageControl's bands.
+/// Ordinary lowpasses are symmetric, and their quadrature partners are antisymmetric with the same centre and support.
+/// Their targets fall from one to zero over a raised-cosine step one octave wide on a logarithmic frequency axis.
+/// Differences of the lowpasses and a fullband kernel form complementary bands in either signal path.
 
 #pragma once
 
+#include <optional>
 #include <vector>
 
 namespace esgrove::image_control
@@ -18,6 +19,11 @@ constexpr int REFERENCE_HALF_LENGTH {4096};
 constexpr double REFERENCE_SAMPLE_RATE {48'000.0};
 
 [[nodiscard]] std::vector<float> designLowpassKernel(double crossover, double sampleRate, int halfLength);
+[[nodiscard]] std::vector<float> designQuadratureKernel(
+    double sampleRate,
+    int halfLength,
+    std::optional<double> crossover = std::nullopt
+);
 
 [[nodiscard]] double crossoverLowpassMagnitude(double frequency, double crossover);
 

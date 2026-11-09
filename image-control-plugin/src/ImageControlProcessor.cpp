@@ -120,6 +120,8 @@ ImageControlProcessor::ImageControlProcessor() :
         sideGainValues.at(band) = getRawValue(parameters, sideGainParameterId(band));
         panValues.at(band) = getRawValue(parameters, panParameterId(band));
         soloValues.at(band) = getRawValue(parameters, soloParameterId(band));
+        widthValues.at(band) = getRawValue(parameters, widthParameterId(band));
+        recoverValues.at(band) = getRawValue(parameters, recoverParameterId(band));
     }
     outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
     bypassValue = getRawValue(parameters, BYPASS_ID);
@@ -295,6 +297,7 @@ void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationDa
 /// and reports its latency to the host.
 void ImageControlProcessor::prepareToPlay(const double sampleRate, const int maximumBlockSize)
 {
+    updateProcessingTargets(bypassValue->load() >= 0.5F);
     imager.prepare(sampleRate, getTotalNumOutputChannels(), getCrossovers());
     analyzerFifo.setSampleRate(sampleRate);
     analyzerFifo.beginEpoch();
@@ -332,7 +335,7 @@ juce::AudioProcessorParameter* ImageControlProcessor::getBypassParameter() const
 }
 
 /// Hands the current parameters to the imager, processes the block, and pushes the analyzer tap.
-/// Bypassing glides every gain to unity, every pan to the centre, and every band muted by a solo back in,
+/// Bypassing glides every gain and Width to unity, Recover off, every pan to the centre, and solo-muted bands back in,
 /// instead of skipping the imager,
 /// so the latency stays the same and the output becomes the delayed input bit for bit without a click.
 /// Delta mode subtracts the delayed input from the output, and bypassing turns it off,
@@ -342,26 +345,7 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
 {
     const juce::ScopedNoDenormals noDenormals;
 
-    BandGains midGains {};
-    BandGains sideGains {};
-    midGains.fill(1.0F);
-    sideGains.fill(1.0F);
-    BandPans pans {};
-    BandSolos solos {};
-    float outputGain = 1.0F;
-    if (!bypassed) {
-        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            solos.at(band) = soloValues.at(band)->load() >= 0.5F;
-            midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
-            sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
-            pans.at(band) = panFromPercent(panValues.at(band)->load());
-        }
-        outputGain = outputGainFromDecibels(outputGainValue->load());
-    }
-    imager.setGains(midGains, sideGains, outputGain);
-    imager.setPans(pans);
-    imager.setSolos(soloGains(solos));
-    imager.setDelta(!bypassed && deltaValue->load() >= 0.5F);
+    updateProcessingTargets(bypassed);
     imager.setCrossovers(getCrossovers(), isNonRealtime());
     const auto meterGeneration = correlationGeneration.load(std::memory_order_acquire);
     const bool meterEnabled = correlationEnabled.load(std::memory_order_relaxed) && !isNonRealtime();
@@ -385,6 +369,39 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
         publishedCorrelationGeneration.store(meterGeneration, std::memory_order_release);
         correlationUpdateMilliseconds.store(juce::Time::getMillisecondCounter(), std::memory_order_release);
     }
+}
+
+/// Publishes current host control targets without touching filter history, kernels, or metering.
+/// Preparation and reset call this first so their settled controls include the earliest FIR pre-ring.
+void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
+{
+    BandGains midGains {};
+    BandGains sideGains {};
+    midGains.fill(1.0F);
+    sideGains.fill(1.0F);
+    BandPans pans {};
+    BandWidths widths {};
+    widths.fill(1.0F);
+    BandRecoveries recoveries {};
+    BandSolos solos {};
+    float outputGain = 1.0F;
+    if (!bypassed) {
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            solos.at(band) = soloValues.at(band)->load() >= 0.5F;
+            midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
+            sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
+            pans.at(band) = panFromPercent(panValues.at(band)->load());
+            widths.at(band) = widthValues.at(band)->load();
+            recoveries.at(band) = recoverValues.at(band)->load() / RECOVER_MAX_PERCENT;
+        }
+        outputGain = outputGainFromDecibels(outputGainValue->load());
+    }
+    imager.setGains(midGains, sideGains, outputGain);
+    imager.setPans(pans);
+    imager.setWidths(widths);
+    imager.setRecoveries(recoveries);
+    imager.setSolos(soloGains(solos));
+    imager.setDelta(!bypassed && deltaValue->load() >= 0.5F);
 }
 
 /// Folds the final processed output equally into both channels before Post analysis, with a click-free blend.
@@ -420,6 +437,7 @@ void ImageControlProcessor::reset()
 {
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
+    updateProcessingTargets(bypassValue->load() >= 0.5F);
     imager.reset();
     analyzerFifo.beginEpoch();
     monoSmoother.setCurrentAndTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);

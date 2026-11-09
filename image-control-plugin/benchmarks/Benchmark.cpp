@@ -79,12 +79,37 @@ constexpr BandGains MID_GAINS {0.9F, 1.0F, 1.1F, 0.8F};
 constexpr BandGains SIDE_GAINS {0.5F, 1.2F, 1.4F, 0.7F};
 constexpr BandPans PANS {0.0F, -0.3F, 0.2F, 0.5F};
 constexpr BandPans CENTRED_PANS {};
+constexpr BandWidths UNITY_WIDTHS {1.0F, 1.0F, 1.0F, 1.0F};
+constexpr BandWidths NARROW_WIDTHS {0.0F, 0.25F, 0.5F, 0.75F};
+constexpr BandRecoveries RECOVERY_OFF {};
+constexpr BandRecoveries PARTIAL_RECOVERY {0.0F, 0.75F, 0.0F, 0.5F};
+constexpr BandRecoveries ALL_RECOVERY {1.0F, 0.75F, 0.5F, 1.0F};
 constexpr float OUTPUT_GAIN {0.9F};
-
 /// The complete callback modes, including a host bypass independent of the bypass parameter.
-enum class Mode : std::uint8_t { neutral, centred, panned, delta, bypass, hostBypass, mono };
-constexpr std::array<Mode, 7>
-    MODES {Mode::neutral, Mode::centred, Mode::panned, Mode::delta, Mode::bypass, Mode::hostBypass, Mode::mono};
+enum class Mode : std::uint8_t {
+    neutral,
+    centred,
+    panned,
+    delta,
+    bypass,
+    hostBypass,
+    mono,
+    narrowed,
+    recoveryPartial,
+    recoveryAll,
+};
+constexpr std::array<Mode, 10> MODES {
+    Mode::neutral,
+    Mode::centred,
+    Mode::panned,
+    Mode::delta,
+    Mode::bypass,
+    Mode::hostBypass,
+    Mode::mono,
+    Mode::narrowed,
+    Mode::recoveryPartial,
+    Mode::recoveryAll,
+};
 
 /// Work limits can be reduced without removing any sample-rate, block-size, or processing-mode coverage.
 struct Options {
@@ -235,8 +260,32 @@ std::string_view modeName(const Mode mode)
             return "bypass-host";
         case Mode::mono:
             return "mono";
+        case Mode::narrowed:
+            return "narrow-recovery-off";
+        case Mode::recoveryPartial:
+            return "narrow-recovery-partial";
+        case Mode::recoveryAll:
+            return "narrow-recovery-all";
     }
     throw std::logic_error("Unknown processing mode");
+}
+
+/// Keeps every original workload at unity width, with narrowing only in the added recovery comparisons.
+const BandWidths& modeWidths(const Mode mode)
+{
+    if (mode == Mode::narrowed || mode == Mode::recoveryPartial || mode == Mode::recoveryAll) {
+        return NARROW_WIDTHS;
+    }
+    return UNITY_WIDTHS;
+}
+
+/// Disables recovery explicitly, including for neutral and the narrowed recovery-off reference.
+const BandRecoveries& modeRecoveries(const Mode mode)
+{
+    if (mode == Mode::recoveryPartial) {
+        return PARTIAL_RECOVERY;
+    }
+    return mode == Mode::recoveryAll ? ALL_RECOVERY : RECOVERY_OFF;
 }
 
 /// Uses the real parameter interface outside callback timing, not raw atomics or a DSP-only surrogate.
@@ -253,8 +302,12 @@ void setParameter(ImageControlProcessor& processor, const juce::String& paramete
 /// Applies one stable workload through host parameters and the editor's correlation control.
 void configureProcessor(ImageControlProcessor& processor, const Mode mode, const bool meters)
 {
+    const auto& widths = modeWidths(mode);
+    const auto& recoveries = modeRecoveries(mode);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         const bool neutral = mode == Mode::neutral;
+        setParameter(processor, widthParameterId(band), widths[band]);
+        setParameter(processor, recoverParameterId(band), recoveries[band] * RECOVER_MAX_PERCENT);
         setParameter(
             processor, midGainParameterId(band), neutral ? 0.0F : juce::Decibels::gainToDecibels(MID_GAINS[band])
         );
@@ -646,21 +699,33 @@ void timeProcessorMatrix(const Options& options)
             }
         }
     }
-    std::println("\nPaced real-time crossover requests (panned mode, shortest fixed and irregular blocks):");
+    std::println(
+        "\nPaced real-time crossover requests (original panned and recovery modes, shortest fixed/irregular):"
+    );
     for (const double sampleRate : SAMPLE_RATES) {
         for (const int blockSize : {FIXED_BLOCK_SIZES.front(), 0}) {
-            timeProcessorVariants(options, sampleRate, blockSize, Mode::panned, true);
+            for (const Mode mode : {Mode::panned, Mode::narrowed, Mode::recoveryPartial, Mode::recoveryAll}) {
+                timeProcessorVariants(options, sampleRate, blockSize, mode, true);
+            }
         }
     }
 }
 
-/// Retains the original direct imager throughput probe, including the two input copies per block.
-void timeImager(const Options& options, const BandPans& pans, const std::string_view name)
+/// Retains the original direct imager probe and adds recovery variants, including two input copies per block.
+void timeImager(
+    const Options& options,
+    const BandPans& pans,
+    const std::string_view name,
+    const BandWidths& widths = UNITY_WIDTHS,
+    const BandRecoveries& recoveries = RECOVERY_OFF
+)
 {
     constexpr double SAMPLE_RATE {48'000.0};
     MultibandImager imager;
     imager.setGains(MID_GAINS, SIDE_GAINS, OUTPUT_GAIN);
     imager.setPans(pans);
+    imager.setWidths(widths);
+    imager.setRecoveries(recoveries);
     imager.prepare(SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
     const auto left = makeNoise(MAXIMUM_BLOCK_SIZE, 1);
     const auto right = makeNoise(MAXIMUM_BLOCK_SIZE, 2);
@@ -700,6 +765,68 @@ void timeImager(const Options& options, const BandPans& pans, const std::string_
         result.max,
         checksum
     );
+}
+
+/// Isolates repeated and changing Width/Recover target setters from convolution and the host parameter interface.
+/// Each observation batches calls to reduce clock overhead. One untimed block advances ramps and observes output.
+void timeImagerSetters(const Options& options)
+{
+    constexpr int SETTER_BATCH_SIZE {1024};
+    constexpr double SAMPLE_RATE {48'000.0};
+    for (const bool changing : {false, true}) {
+        MultibandImager imager;
+        imager.setWidths(NARROW_WIDTHS);
+        imager.setRecoveries(ALL_RECOVERY);
+        imager.prepare(SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        const auto left = makeNoise(MAXIMUM_BLOCK_SIZE, 1);
+        const auto right = makeNoise(MAXIMUM_BLOCK_SIZE, 2);
+        juce::AudioBuffer<float> block(2, MAXIMUM_BLOCK_SIZE);
+        const auto observe = [&] {
+            block.copyFrom(0, 0, left.data(), MAXIMUM_BLOCK_SIZE);
+            block.copyFrom(1, 0, right.data(), MAXIMUM_BLOCK_SIZE);
+            imager.process(block);
+            return static_cast<double>(block.getSample(0, MAXIMUM_BLOCK_SIZE - 1));
+        };
+        const auto setTargets = [&] {
+            for (int call = 0; call < SETTER_BATCH_SIZE; ++call) {
+                const bool alternate = changing && call % 2 == 0;
+                imager.setWidths(alternate ? UNITY_WIDTHS : NARROW_WIDTHS);
+                imager.setRecoveries(alternate ? RECOVERY_OFF : ALL_RECOVERY);
+            }
+        };
+        const int warmupBlocks = imager.getLatencySamples() / MAXIMUM_BLOCK_SIZE + REFRESH_RATE;
+        for (int warmup = 0; warmup < warmupBlocks; ++warmup) {
+            setTargets();
+            static_cast<void>(observe());
+        }
+        std::vector<double> measurements;
+        measurements.reserve(
+            static_cast<std::size_t>(options.refreshes) * static_cast<std::size_t>(options.repetitions)
+        );
+        double checksum = 0.0;
+        for (int repetition = 0; repetition < options.repetitions; ++repetition) {
+            for (int batch = 0; batch < options.refreshes; ++batch) {
+                const auto start = Clock::now();
+                setTargets();
+                measurements.push_back(Microseconds(Clock::now() - start).count() / SETTER_BATCH_SIZE);
+                checksum += observe();
+            }
+        }
+        imager.release();
+        const auto result = distribution(measurements);
+        std::println(
+            "imager setters=width+recover targets={} pairs/batch={} n={} "
+            "us/pair[p50/p95/p99/max]={:.6f}/{:.6f}/{:.6f}/{:.6f} process=excluded check={:.6f}",
+            changing ? "changing" : "steady",
+            SETTER_BATCH_SIZE,
+            measurements.size(),
+            result.p50,
+            result.p95,
+            result.p99,
+            result.max,
+            checksum
+        );
+    }
 }
 
 /// Times analysis plus particle construction after priming the analyzer's longest history.
@@ -947,6 +1074,9 @@ void printIdentity(const Options& options)
         R"(Warmup: callback latency + gain settling + one maximum block per repetition. Components: one second or more.
 Input: independent fixed-seed stereo noise, amplitude +/-.3. Irregular blocks: 1,31,97,255,17,509,64,257.
 Callback timing excludes copying, parameter setters, checksums, FIFO pop, worker wake, and sleep.
+Original modes explicitly set Width 1 and Recover Off. Narrowed rows share Widths 0/.25/.5/.75.
+Recovery variants select Off, two bands, or all bands, each with meter/worker and moving-crossover coverage.
+Isolated setter rows time batched Width+Recover target pairs, excluding process, copies, and checksums.
 Correlation rows include four live/trend/range history updates and full-row software painting at simulated 120 Hz.
 Correlation warmup fills maximum Persistence history per repetition, including --quick and shorter selected windows.
 Correlation timing excludes reading generation, canvas clearing, checksums, construction, and layout. No audio DSP is run.
@@ -1076,6 +1206,22 @@ int main(const int argc, char* argv[])
                 options, esgrove::image_control::benchmark::CENTRED_PANS, "centred"
             );
             esgrove::image_control::benchmark::timeImager(options, esgrove::image_control::benchmark::PANS, "panned");
+            for (const auto mode :
+                 {
+                     esgrove::image_control::benchmark::Mode::narrowed,
+                     esgrove::image_control::benchmark::Mode::recoveryPartial,
+                     esgrove::image_control::benchmark::Mode::recoveryAll,
+                 })
+            {
+                esgrove::image_control::benchmark::timeImager(
+                    options,
+                    esgrove::image_control::benchmark::PANS,
+                    esgrove::image_control::benchmark::modeName(mode),
+                    esgrove::image_control::benchmark::modeWidths(mode),
+                    esgrove::image_control::benchmark::modeRecoveries(mode)
+                );
+            }
+            esgrove::image_control::benchmark::timeImagerSetters(options);
             esgrove::image_control::benchmark::timeSpectrogramAnalysis(options);
             esgrove::image_control::benchmark::timeSpectrogramOverlays(options);
             for (const bool changing : {false, true}) {

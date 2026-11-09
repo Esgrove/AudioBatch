@@ -3,7 +3,8 @@
 /// a band move stops at the minimum ratio to the crossover that stays,
 /// Ctrl or Cmd with a vertical drag changes the band's mid gain and, with Link, its side gain,
 /// Alt or Option with a vertical drag changes its side gain, and the wheel changes the gains by 0.1 dB a step.
-/// Also tests ControlSlider and BandStrip gesture balance, truthful Width readouts, and accessible meter values.
+/// Also tests ControlSlider and BandStrip gesture balance, independent Width and Recover attachments,
+/// accessible processing controls, and accessible meter values.
 /// The real editor composition verifies Mono actions, compact layout, and saved expanded sizing.
 /// Also tests that the stereo position curve overlay shows after a curve change and fades out.
 /// Also tests the particles SpectrogramParticleBuilder prepares for the GPU renderer:
@@ -284,6 +285,8 @@ TEST(SpectrogramView, CommandDragChangesTheMidGainAndLinkedSide)
 
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 6.0F, 0.05F);
     EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 6.0F, 0.05F);
+    EXPECT_FLOAT_EQ(parameterValue(processor, widthParameterId(2)), 1.0F);
+    EXPECT_FLOAT_EQ(parameterValue(processor, recoverParameterId(2)), 0.0F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F, 1.0F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 1.0F);
 }
@@ -514,6 +517,8 @@ TEST(BandStrip, EnablingLinkDuringAnUnlinkedDragDoesNotOpenOrEndSideGesture)
 TEST(BandStrip, WheelAndKeysMoveLinkedSideInBalancedGestures)
 {
     ImageControlProcessor processor;
+    setParameterInGesture(*processor.getParameters().getParameter(widthParameterId(1)), 0.4F);
+    setParameterInGesture(*processor.getParameters().getParameter(recoverParameterId(1)), 75.0F);
     auto& side = *processor.getParameters().getParameter(sideGainParameterId(1));
     GestureCounter gestures;
     side.addListener(&gestures);
@@ -526,78 +531,156 @@ TEST(BandStrip, WheelAndKeysMoveLinkedSideInBalancedGestures)
         EXPECT_NEAR(plainValue(side), 0.1F, 0.001F);
         EXPECT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
         EXPECT_NEAR(plainValue(side), 0.82F, 0.001F);
+        EXPECT_NEAR(parameterValue(processor, widthParameterId(1)), 0.4F, 0.001F);
+        EXPECT_NEAR(parameterValue(processor, recoverParameterId(1)), 75.0F, 0.001F);
         EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false}));
     }
     side.removeListener(&gestures);
 }
 
-TEST(BandStrip, InterruptedWidthDragClosesItsSideGesture)
+TEST(BandStrip, InterruptedWidthAndRecoverDragsCloseOnlyTheirOwnGestures)
 {
-    ImageControlProcessor processor;
-    auto& side = *processor.getParameters().getParameter(sideGainParameterId(0));
-    GestureCounter gestures;
-    side.addListener(&gestures);
-    {
-        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
-        strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
-        auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Width"));
-        ASSERT_NE(width, nullptr);
-        const juce::Point<float> position {40.0F, 13.0F};
-        width->mouseDown(mouseEvent(*width, position, position, juce::ModifierKeys::leftButtonModifier));
-        width->setValue(0.5, juce::sendNotificationSync);
-        EXPECT_NEAR(plainValue(side), -6.0206F, 0.02F);
+    for (const bool recovering : {false, true}) {
+        ImageControlProcessor processor;
+        auto& parameter
+            = *processor.getParameters().getParameter(recovering ? recoverParameterId(0) : widthParameterId(0));
+        auto& side = *processor.getParameters().getParameter(sideGainParameterId(0));
+        GestureCounter gestures;
+        GestureCounter sideGestures;
+        parameter.addListener(&gestures);
+        side.addListener(&sideGestures);
+        {
+            BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+            strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+            auto* slider
+                = dynamic_cast<ControlSlider*>(childWithTitle(strip, recovering ? "Low Recover" : "Low Width"));
+            ASSERT_NE(slider, nullptr);
+            const juce::Point<float> position {40.0F, 13.0F};
+            slider->mouseDown(mouseEvent(*slider, position, position, juce::ModifierKeys::leftButtonModifier));
+            slider->setValue(recovering ? 50.0 : 0.5, juce::sendNotificationSync);
+            EXPECT_NEAR(plainValue(parameter), recovering ? 50.0F : 0.5F, 0.001F);
+            EXPECT_NEAR(plainValue(side), 0.0F, 0.01F);
+        }
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+        EXPECT_TRUE(sideGestures.events.empty());
+        parameter.removeListener(&gestures);
+        side.removeListener(&sideGestures);
     }
-    EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
-    side.removeListener(&gestures);
 }
 
-TEST(BandStrip, WidthShowsTheActualOverrangeRatioAndTypingTwoChangesIt)
+TEST(BandStrip, WidthAndRecoverExposeIndependentAccessibleValuesAndTextAttachments)
 {
     ImageControlProcessor processor;
     setParameterInGesture(*processor.getParameters().getParameter(midGainParameterId(0)), -12.0F);
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
-    auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Width"));
-    ASSERT_NE(width, nullptr);
-    const double actual = bandWidthFromGains(-12.0, 0.0);
-    EXPECT_NEAR(width->getValue(), actual, 0.01);
-    EXPECT_DOUBLE_EQ(width->valueToProportionOfLength(actual), 1.0);
     strip.addToDesktop(0);
-    auto* handler = width->getAccessibilityHandler();
-    ASSERT_NE(handler, nullptr);
-    EXPECT_NEAR(handler->getValueInterface()->getCurrentValue(), actual, 0.01);
-    juce::Label* valueBox = nullptr;
-    for (auto* child : width->getChildren()) {
-        if (auto* label = dynamic_cast<juce::Label*>(child)) {
-            valueBox = label;
-            break;
+    for (const bool recovering : {false, true}) {
+        auto* slider = dynamic_cast<ControlSlider*>(childWithTitle(strip, recovering ? "Low Recover" : "Low Width"));
+        ASSERT_NE(slider, nullptr);
+        auto* handler = slider->getAccessibilityHandler();
+        ASSERT_NE(handler, nullptr);
+        EXPECT_EQ(handler->getRole(), juce::AccessibilityRole::slider);
+        EXPECT_EQ(handler->getTitle(), recovering ? "Low Recover" : "Low Width");
+        auto* value = handler->getValueInterface();
+        ASSERT_NE(value, nullptr);
+        EXPECT_FALSE(value->isReadOnly());
+        EXPECT_EQ(value->getCurrentValueAsString(), recovering ? "Off" : "1.00");
+        EXPECT_NEAR(value->getCurrentValue(), recovering ? 0.0 : 1.0, 0.001);
+        juce::Label* valueBox = nullptr;
+        for (auto* child : slider->getChildren()) {
+            if (auto* label = dynamic_cast<juce::Label*>(child)) {
+                valueBox = label;
+                break;
+            }
         }
+        ASSERT_NE(valueBox, nullptr);
+        EXPECT_EQ(valueBox->getText(), recovering ? "Off" : "1.00");
+        // Deliver text through the production value-box callback and its parameter attachment.
+        valueBox->setText(recovering ? "37.5 %" : "150 %", juce::sendNotificationSync);
+        EXPECT_NEAR(
+            parameterValue(processor, recovering ? recoverParameterId(0) : widthParameterId(0)),
+            recovering ? 37.5F : 1.5F,
+            0.001F
+        );
+        EXPECT_NEAR(value->getCurrentValue(), recovering ? 37.5 : 1.5, 0.001);
+        value->setValueAsString(recovering ? "Off" : "2");
+        EXPECT_NEAR(
+            parameterValue(processor, recovering ? recoverParameterId(0) : widthParameterId(0)),
+            recovering ? 0.0F : WIDTH_MAX,
+            0.001F
+        );
+        EXPECT_NEAR(parameterValue(processor, midGainParameterId(0)), -12.0F, 0.01F);
+        EXPECT_NEAR(parameterValue(processor, sideGainParameterId(0)), 0.0F, 0.01F);
     }
-    ASSERT_NE(valueBox, nullptr);
-    EXPECT_NEAR(valueBox->getText().getDoubleValue(), actual, 0.01);
-    // Deliver text through the production value-box callback, not directly to the Width macro.
-    valueBox->setText("2", juce::sendNotificationSync);
-    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(0)), -12.0F + 6.0206F, 0.02F);
-    EXPECT_NEAR(width->getValue(), 2.0, 0.01);
 }
 
-TEST(BandStrip, WidthIsDisabledWhileMidIsOffAndTracksIndependentAutomation)
+TEST(BandStrip, WidthAndRecoverStayEnabledWithMidOffAndFollowOnlyTheirOwnAutomation)
 {
     ImageControlProcessor processor;
     const BandStrip strip(processor.getParameters(), processor.getEditorState(), 2);
     auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "High Mid Width"));
+    auto* recover = dynamic_cast<ControlSlider*>(childWithTitle(strip, "High Mid Recover"));
     ASSERT_NE(width, nullptr);
+    ASSERT_NE(recover, nullptr);
     auto& mid = *processor.getParameters().getParameter(midGainParameterId(2));
     auto& side = *processor.getParameters().getParameter(sideGainParameterId(2));
     setParameterInGesture(mid, BAND_GAIN_MIN_DB);
-    EXPECT_FALSE(width->isEnabled());
-    EXPECT_FALSE(width->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_TRUE(width->isEnabled());
+    EXPECT_TRUE(recover->isEnabled());
+    EXPECT_TRUE(width->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_NEAR(width->getValue(), 1.02, 0.001);
+    setParameterInGesture(*processor.getParameters().getParameter(widthParameterId(2)), 0.4F);
+    setParameterInGesture(*processor.getParameters().getParameter(recoverParameterId(2)), 75.0F);
     setParameterInGesture(mid, -12.0F);
     setParameterInGesture(side, 6.0F);
-    EXPECT_TRUE(width->isEnabled());
-    EXPECT_NEAR(width->getValue(), bandWidthFromGains(-12.0, 6.0), 0.01);
+    EXPECT_NEAR(width->getValue(), 0.4, 0.001);
+    EXPECT_NEAR(recover->getValue(), 75.0, 0.001);
     EXPECT_NEAR(plainValue(mid), -12.0F, 0.001F);
     EXPECT_NEAR(plainValue(side), 6.0F, 0.001F);
+}
+
+TEST(BandStrip, WidthAndRecoverWheelKeysAndResetUseBalancedIndependentGestures)
+{
+    for (const bool recovering : {false, true}) {
+        ImageControlProcessor processor;
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+        auto* slider = dynamic_cast<ControlSlider*>(childWithTitle(strip, recovering ? "Low Recover" : "Low Width"));
+        ASSERT_NE(slider, nullptr);
+        auto& parameter
+            = *processor.getParameters().getParameter(recovering ? recoverParameterId(0) : widthParameterId(0));
+        GestureCounter gestures;
+        parameter.addListener(&gestures);
+        const juce::Point<float> position {40.0F, 13.0F};
+        slider->mouseWheelMove(mouseEvent(*slider, position, position, {}), notch(1.0F));
+        EXPECT_NEAR(plainValue(parameter), recovering ? 1.0F : 1.01F, 0.001F);
+        EXPECT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_NEAR(plainValue(parameter), recovering ? 2.0F : 1.03F, 0.001F);
+        const auto event = mouseEvent(*slider, position, position, juce::ModifierKeys::leftButtonModifier);
+        slider->mouseDown(event);
+        slider->mouseDoubleClick(event);
+        slider->mouseUp(event);
+        EXPECT_NEAR(plainValue(parameter), recovering ? 0.0F : 1.0F, 0.001F);
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false, true, false, true, false}));
+        parameter.removeListener(&gestures);
+    }
+}
+
+TEST(BandStrip, FiveRowsFitAtMinimumHeightWithRecoveryBelowWidth)
+{
+    ImageControlProcessor processor;
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+    strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+    int previousBottom = 0;
+    for (const char* title : {"Low Mid", "Low Side", "Low Width", "Low Recover", "Low Pan"}) {
+        auto* slider = dynamic_cast<ControlSlider*>(childWithTitle(strip, title));
+        ASSERT_NE(slider, nullptr);
+        EXPECT_GE(slider->getY(), previousBottom);
+        EXPECT_EQ(slider->getHeight(), 26);
+        EXPECT_TRUE(strip.getLocalBounds().contains(slider->getBounds()));
+        previousBottom = slider->getBottom();
+    }
 }
 
 TEST(BandCorrelationMeter, ExposesNamedReadOnlyValuesAndSilenceIsUnavailable)
@@ -710,6 +793,7 @@ TEST(ImageControlEditor, CompactCorrelationRowKeepsExpandedHeightAndAlignsWithSt
     ImageControlProcessor processor;
     auto& state = processor.getEditorState();
     state.setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
+    state.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 260, nullptr);
     state.setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
     const ImageControlEditor editor(processor);
     const int withCorrelation = editor.getHeight();
@@ -736,6 +820,16 @@ TEST(ImageControlEditor, CompactCorrelationRowKeepsExpandedHeightAndAlignsWithSt
     EXPECT_EQ(meter->getX(), strip->getX());
     EXPECT_EQ(meter->getWidth(), strip->getWidth());
     EXPECT_LE(meter->getBottom(), strip->getY());
+    EXPECT_GE(strip->getHeight(), BAND_STRIP_MIN_HEIGHT);
+    auto* width = childWithTitle(editor, "Low Width");
+    auto* recover = childWithTitle(editor, "Low Recover");
+    auto* pan = childWithTitle(editor, "Low Pan");
+    ASSERT_NE(width, nullptr);
+    ASSERT_NE(recover, nullptr);
+    ASSERT_NE(pan, nullptr);
+    EXPECT_LE(width->getBottom(), recover->getY());
+    EXPECT_LE(recover->getBottom(), pan->getY());
+    EXPECT_TRUE(strip->getLocalBounds().contains(pan->getBounds()));
     state.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
     post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
     EXPECT_EQ(editor.getHeight(), 900);

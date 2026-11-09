@@ -1,6 +1,6 @@
 /// Declares BandStrip, the controls of one band in the ImageControl editor:
 /// the Mid and Side gain sliders attached to their parameters,
-/// the Width macro that sets Side relative to Mid, the Solo and Link toggles, and the parameter-attached Pan slider.
+/// the independent Width and Recover sliders, the Solo and Link toggles, and the parameter-attached Pan slider.
 /// BandCorrelationMeter presents each band's live correlation, smoothed trend, and recent observed range.
 
 #pragma once
@@ -18,11 +18,8 @@
 
 namespace esgrove::image_control
 {
-/// Highest directly editable Width, where side is twice as loud relative to mid as in the input.
-/// Actual gain ratios above this remain visible in the numerical readout.
-constexpr double MAX_STEREO_WIDTH {2.0};
-/// Smallest height of a band strip that fits its margins, its name and range rows, and its four slider rows, in pixels.
-constexpr int BAND_STRIP_MIN_HEIGHT {236};
+/// Smallest height of a band strip that fits its margins, its name and range rows, and its five slider rows, in pixels.
+constexpr int BAND_STRIP_MIN_HEIGHT {280};
 
 /// Height of the independent band correlation row, in pixels.
 constexpr int BAND_CORRELATION_HEIGHT {48};
@@ -86,13 +83,12 @@ private:
 
 /// The controls of one band.
 ///
-/// Width is the side gain relative to the mid gain as a linear ratio:
-/// 0 is mono, 1 leaves the stereo image as it is, and 2 doubles the side relative to the mid.
-/// Moving Width sets Side to Mid plus 20 · log10(width) dB, and width 0 turns Side off.
-/// With Link on, dragging Mid moves Side by the same amount, keeping the width.
-/// Pan moves the band toward the left or right channel after its mid and side gains.
-/// Solo is a parameter that mutes the bands that are not soloed, unless no band or every band is soloed.
-/// Width and Link are editor controls, not host parameters, so automation never has conflicting values.
+/// Mid and Side trim the source first. Width independently scales the trimmed Side from mono at 0 to double at 2.
+/// Recover preserves removed Side energy in Mid while Width is below 1, even when the source Mid is off.
+/// With Link on, dragging Mid moves only the Side trim by the same amount.
+/// Pan moves the band toward the left or right channel after Width and Recover.
+/// Solo mutes the bands that are not soloed, unless no band or every band is soloed.
+/// All processing controls attach to host parameters. Link is an editor-only setting.
 class BandStrip final : public juce::Component
 {
 public:
@@ -110,9 +106,7 @@ public:
     void setRangeText(const juce::String& text);
 
 private:
-    void applyWidth();
     void configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text);
-    void updateWidthFromGains();
 
     /// The band name.
     juce::Label nameLabel;
@@ -126,6 +120,8 @@ private:
     juce::Label panLabel;
     /// Label above the Width slider.
     juce::Label widthLabel;
+    /// Label above the Recover slider.
+    juce::Label recoverLabel;
 
     /// The band's mid gain in dB.
     ControlSlider midSlider;
@@ -133,8 +129,10 @@ private:
     ControlSlider sideSlider;
     /// The band's pan, from fully left to fully right.
     ControlSlider panSlider;
-    /// The Width macro, which writes the side gain.
+    /// Independent side multiplier after the source trims.
     ControlSlider widthSlider;
+    /// Percentage of removed Side energy retained in Mid while narrowing.
+    ControlSlider recoverSlider;
     /// Solos the band: toggles its solo parameter, shown as headphones.
     juce::DrawableButton soloButton {"Solo", juce::DrawableButton::ImageFitted};
     /// Keeps Side moving with Mid while Mid is dragged.
@@ -146,10 +144,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
     /// Binds the Side slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sideAttachment;
+    /// Binds Width directly to its independent parameter.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> widthAttachment;
+    /// Binds Recover directly to its percentage parameter.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> recoverAttachment;
     /// Binds the Solo button to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soloAttachment;
 
-    /// Side gain parameter, owned by the parameter tree, which the Width and Link gestures change.
+    /// Side gain parameter, owned by the parameter tree, which linked Mid gestures change.
     juce::RangedAudioParameter& sideParameter;
 
     /// Mid gain in dB when the current Mid drag started, for Link.
@@ -160,7 +162,5 @@ private:
     bool draggingMid {false};
     /// Whether the current Mid gesture opened a matching Side gesture, captured before Link can change.
     bool linkedSideGesture {false};
-    /// Whether a Width gesture is open, so its changes join that gesture instead of opening their own.
-    bool draggingWidth {false};
 };
 }  // namespace esgrove::image_control

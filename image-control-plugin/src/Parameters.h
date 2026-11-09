@@ -1,6 +1,6 @@
 /// Declares the parameters of the ImageControl plugin:
 /// the three crossover frequencies, the mid and side gain, the pan, and the solo of each of the four bands,
-/// and the output gain, bypass, Delta, and Mono controls.
+/// the independent Width and Recover controls, and the output gain, bypass, Delta, and Mono controls.
 /// The ids, ranges, and defaults live here so the processor, the editor, and the tests share one definition.
 /// Also declares the crossover ordering rule that both the DSP and the editor apply,
 /// and the names of the editor settings saved with the plugin state.
@@ -39,6 +39,10 @@ constexpr float OUTPUT_GAIN_MAX_DB {12.0F};
 /// Pan parameter value that moves a band fully into the right channel, in percent.
 /// The negative of it moves the band fully into the left channel, and 0 is the centre.
 constexpr float PAN_MAX_PERCENT {100.0F};
+/// Highest independent side multiplier, which doubles the trimmed side at its maximum.
+constexpr float WIDTH_MAX {2.0F};
+/// Highest recovery amount in host-facing percent, scaling the full removed Side waveform into the quadrature path.
+constexpr float RECOVER_MAX_PERCENT {100.0F};
 
 /// Hz in one kHz, for formatting frequencies.
 constexpr float HERTZ_PER_KILOHERTZ {1000.0F};
@@ -123,6 +127,10 @@ using BandGains = std::array<float, BAND_COUNT>;
 /// One pan per band, from the lowest band to the highest:
 /// -1 moves the band fully into the left channel, 0 leaves it in place, and 1 moves it fully into the right channel.
 using BandPans = std::array<float, BAND_COUNT>;
+/// Independent side multipliers per band, from mono at 0 through unchanged at 1 to doubled at WIDTH_MAX.
+using BandWidths = std::array<float, BAND_COUNT>;
+/// Linear recovery amounts per band, from 0 to 1, applied to the Side waveform amplitude removed by narrowing.
+using BandRecoveries = std::array<float, BAND_COUNT>;
 /// Whether each band is soloed, from the lowest band to the highest.
 using BandSolos = std::array<bool, BAND_COUNT>;
 
@@ -135,6 +143,8 @@ using BandSolos = std::array<bool, BAND_COUNT>;
 [[nodiscard]] juce::String sideGainParameterId(std::size_t band);
 [[nodiscard]] juce::String panParameterId(std::size_t band);
 [[nodiscard]] juce::String soloParameterId(std::size_t band);
+[[nodiscard]] juce::String widthParameterId(std::size_t band);
+[[nodiscard]] juce::String recoverParameterId(std::size_t band);
 [[nodiscard]] juce::String bandName(std::size_t band);
 [[nodiscard]] juce::Identifier linkPropertyName(std::size_t band);
 [[nodiscard]] juce::String formatFrequency(float frequency);
@@ -144,7 +154,6 @@ using BandSolos = std::array<bool, BAND_COUNT>;
 [[nodiscard]] Crossovers orderCrossovers(const Crossovers& requested);
 [[nodiscard]] bool sameCrossovers(const Crossovers& first, const Crossovers& second);
 
-[[nodiscard]] double bandWidthFromGains(double midDecibels, double sideDecibels);
 [[nodiscard]] float plainValue(const juce::RangedAudioParameter& parameter);
 [[nodiscard]] int sampleRateDoublings(double sampleRate, double referenceSampleRate);
 

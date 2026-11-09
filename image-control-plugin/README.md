@@ -9,22 +9,27 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for code organization, DSP, rendering, an
 ## Key features
 
 - Four frequency bands: Low, Low Mid, High Mid, and High, with three adjustable crossovers.
-- Independent Mid and Side gains per band, with Width for narrowing or widening the stereo image.
-  Width 0 makes a band mono, 1 preserves its image, and 2 doubles Side relative to Mid.
-  Width adjusts Side gain rather than adding a separate automation parameter.
-- Per-band Pan, applied after the mid/side gains, so even a narrowed band can be placed to one side.
+- Independent Mid and Side source trims, Width, and Recover per band.
+  Width 0 removes Side, 1 leaves it unchanged, and 2 doubles it after the source trim.
+  Recover defaults to Off and adds a quadrature-rotated share of removed Side to Mid only below Width 1.
+- Per-band Pan, applied after Width/Recover, so even a narrowed band can be placed to one side.
 - Combinable band solos, output gain, Delta monitoring, click-free bypass, and automatable Mono output.
 - A spatial spectrogram for inspecting the input or processed output, with optional per-band correlation meters.
 
 Crossover frequencies stay ordered and at least a third of an octave apart.
-Hosts can save and automate the processing parameters.
+Hosts can save and automate the processing parameters in real-time and offline renders.
+Width and Recover have independent host parameters, separate from Mid and Side gains.
+Recover sits beneath Width, with 0% shown as Off.
+Side Off prevents recovery, while Mid Off leaves recovered content audible.
+Width remains editable with Mid Off, and Link affects only gain edits.
+Older states retain their existing gains with Width 1 and Recover Off, without a gain-derived migration.
 See [Parameters.h](src/Parameters.h) for parameter ids, ranges, and defaults.
 
 ## Processing and transparency
 
 Linear-phase crossovers split the signal into complementary bands that sum back to the delayed input.
 At neutral settings the output is the input delayed by the plugin latency, bit for bit.
-Gain, pan, solo, Delta, Mono, and bypass changes are smoothed to avoid clicks.
+Gain, Width, Recover, pan, solo, Delta, Mono, and bypass changes are smoothed to avoid clicks.
 Crossover filters are redesigned off the audio thread and crossfaded into place.
 
 Delta monitors only what the processing changes, with the dry reference aligned to the output.
@@ -36,14 +41,22 @@ Pre analysis and per-band correlation meters remain independent of the final Mon
 
 The FIR filters can ring beyond the latency-compensated input endpoint when bands have different settings.
 The plugin reports this finite tail to hosts so they can render it rather than truncate it.
+Recover uses finite quadrature FIRs without adding a second cascaded filter delay.
+It can retain the audibility of Side-derived detail, such as some reverb tails, when narrowing.
+Recover follows the amount of Side amplitude removed by Width, not a constant-power or automatic gain-compensation law.
+It does not turn on when pressing global Mono, and it cannot restore material already removed by the Side source trim.
+Arbitrary phase relationships can cause cancellation or higher peaks, and swapping L/R need not give the same result.
+Its quadrature response is zero at DC and Nyquist.
+[Filter tests](tests/CrossoverTests.cpp) bound the sampled fullband gain error across 20 Hz to 20 kHz at supported rates.
 
 The linear-phase filters introduce substantial latency: about 90 ms at 48 kHz.
 The plugin reports this to the host for compensation,
 making it better suited to mixing and offline processing than latency-sensitive live monitoring.
 Exact filter lengths and convolution details are in [CrossoverDesign.h](src/dsp/CrossoverDesign.h)
 and [PartitionedConvolver.h](src/dsp/PartitionedConvolver.h).
-[ImagerTests.cpp](tests/ImagerTests.cpp) and [ProcessorTests.cpp](tests/ProcessorTests.cpp) cover transparency
-and processing behavior.
+[ImagerTests.cpp](tests/ImagerTests.cpp), [RecoveryTests.cpp](tests/RecoveryTests.cpp),
+and [ProcessorTests.cpp](tests/ProcessorTests.cpp) cover transparency and processing behavior.
+The [recovery DSP section](ARCHITECTURE.md#finite-quadrature-recovery) explains the filter design and its limitations.
 
 ## Spatial spectrogram
 
@@ -68,7 +81,7 @@ and [AnalyzerTests.cpp](tests/AnalyzerTests.cpp) for the analysis contract,
 and [test-signals/generate.py](test-signals/generate.py) for reference signals.
 
 The optional correlation row has one horizontal meter per band, from -1 for anti-phase to +1 for in-phase.
-It measures each processed band after its Mid/Side gains and Pan,
+It measures each processed band after its source trims, Width/Recover, and Pan,
 before Delta and Mono, independently of Pre/Post.
 Silence or insufficient energy in either channel gives an unavailable reading.
 Readings also clear when processing stops, the meters are hidden, or no new callbacks arrive.
@@ -137,7 +150,8 @@ Use the matching build directory if using a Windows Ninja workspace.
 ### Benchmarks and reference signals
 
 The benchmark measures full-callback throughput and timing distributions across sample rates and block sizes,
-including crossover changes and optional metering/analysis load, plus CPU-side spectrogram work, not GPU drawing.
+including recovery off, selected/all bands, crossover changes, and optional metering/analysis load.
+It also measures isolated imager processing and Width/Recover setters, plus CPU-side spectrogram work, not GPU drawing.
 After configuring tests, build the benchmark explicitly.
 `--test` does not build it:
 
@@ -159,8 +173,12 @@ uv run --script ../fixtures/benchmark/generate.py
 uv run --script benchmarks/compare_formats.py --cli /absolute/path/to/audiobatch
 ```
 
-Generate signals for checking the spectrogram by ear and eye with `uv run --script test-signals/generate.py`.
+Generate reference signals with `uv run --script test-signals/generate.py`.
 Output goes to the ignored `test-signals/output/` directory.
+Use `--group listening` for manual Width/Recover comparisons.
+It selects synthetic decays, pure-Side signals, adversarial phase pairs, and hard-panned transients/bass.
+Use `--output /tmp/image-control-signals` to select scratch output.
+These inputs are not a record of listening evaluations.
 
 ## Future work
 

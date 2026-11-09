@@ -1,6 +1,6 @@
 /// Declares MultibandImager, the audio processing of ImageControl, and the KernelDesignThread it owns.
-/// The imager splits a stereo signal into mid and side, splits both into four linear-phase bands,
-/// scales the mid and side of each band, joins them back into left and right, and pans each band.
+/// The imager splits stereo into Mid/Side and four linear-phase bands, then applies source trims and Width/Recover.
+/// It reconstructs and pans each band before summing.
 /// The bands sum exactly to the delayed input, so neutral settings pass the input through, only delayed.
 
 #pragma once
@@ -27,7 +27,7 @@ namespace esgrove::image_control
 /// Samples per convolution partition.
 /// The imager processes whole partitions, so this adds to the latency.
 constexpr int PARTITION_SIZE {256};
-/// Time the band gains, the band pans, and the output gain take to glide to a new value, in seconds.
+/// Time gains, Width, Recover, Pan, Solo, and Delta take to glide to a new value, in seconds.
 constexpr double GAIN_SMOOTHING_SECONDS {0.02};
 
 /// The background thread that designs kernels while the crossovers move during real-time playback.
@@ -42,7 +42,9 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// Mid and side each go through three lowpass kernels.
 /// The bands are the lowest lowpass, the differences between neighbouring lowpasses,
 /// and the delayed signal minus the highest lowpass, so they sum to the delayed signal whatever the kernels are.
-/// The mid and side of each band are scaled by their gains and joined into the band's left and right.
+/// The mid and side of each band are scaled by source gains, then Width independently scales Side.
+/// Optional Recover mixes a quadrature version of the narrowed Side into Mid before reconstruction.
+/// Direct finite FIR recovery shares raw Side history and crossover delay, without changing normal Mid phase.
 /// Each band is then panned, after its gains, so a band narrowed to mono can still be moved to one side.
 /// The pan moves the band toward one channel without discarding the other:
 /// panning right by p scales left by 1 - p and adds p times left to right, and panning left mirrors that.
@@ -50,14 +52,14 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// Solos mute the bands that are not soloed, unless no band or every band is soloed.
 ///
 /// The latency is the kernel half length plus one partition.
-/// While every gain is at unity, every pan at the centre, and no band muted by a solo,
+/// While every gain and Width is at unity, every pan at the centre, and no band muted by a solo,
 /// the output is the input delayed by the latency, bit for bit.
 /// In delta mode the delayed input is subtracted from the output, so it carries only what the processing changed,
 /// and neutral settings give exact silence.
 /// With solos, delta subtracts only the soloed bands of the delayed input.
 ///
 /// prepare, release, and the destructor run on the message thread.
-/// setGains, setPans, setSolos, setDelta, setCrossovers, and process run on the audio thread
+/// Control setters and process run on the audio thread
 /// and never allocate during real-time playback.
 /// During non-real-time rendering the audio thread designs kernels itself and the design thread stands by,
 /// so the output never depends on thread timing.
@@ -88,7 +90,9 @@ public:
     void setDelta(bool delta);
     void setGains(const BandGains& midGains, const BandGains& sideGains, float outputGain);
     void setPans(const BandPans& pans);
+    void setRecoveries(const BandRecoveries& recoveries);
     void setSolos(const BandGains& audible);
+    void setWidths(const BandWidths& widths);
 
 private:
     [[nodiscard]] Crossovers readRequestedCrossovers() const;
@@ -96,10 +100,18 @@ private:
     [[nodiscard]] bool isCentred() const;
     [[nodiscard]] bool isDeltaSettled(float target) const;
     [[nodiscard]] bool isNeutral() const;
+    [[nodiscard]] bool isRecoveryActive() const;
     [[nodiscard]] bool isUnsoloed() const;
 
+    void convolvePartition(bool stereo, bool crossfade);
+    void convolveSignal(PartitionedConvolver& convolver, std::size_t kernel, std::span<float> output, bool crossfade);
     void designRequestedKernels(bool fromDesignThread);
-    void lowpassSignal(PartitionedConvolver& convolver, std::span<std::vector<float>> outputs, bool crossfade);
+    void lowpassSignal(
+        PartitionedConvolver& convolver,
+        std::span<std::vector<float>> outputs,
+        bool crossfade,
+        std::size_t firstKernel = 0
+    );
     void mixPartition(int channels);
     void processPartition();
     void updateCorrelationPartition();
@@ -139,6 +151,10 @@ private:
     std::array<SmoothedGain, BAND_COUNT> panSmoothers;
     /// Glides of how much of each band is heard, 1 unless the solos of other bands mute it.
     std::array<SmoothedGain, BAND_COUNT> soloSmoothers;
+    /// Independent Side multipliers, with unity retaining the gain-trimmed stereo image.
+    std::array<SmoothedGain, BAND_COUNT> widthSmoothers;
+    /// Amount of narrowed Side to phase-rotate into Mid, from zero to one.
+    std::array<SmoothedGain, BAND_COUNT> recoverySmoothers;
     /// Glide of the output gain.
     SmoothedGain outputGainSmoother;
     /// Glide of the delta mix, from 0 for the processed output to 1 for the output minus the delayed input.
@@ -148,6 +164,10 @@ private:
     std::array<std::vector<float>, CROSSOVER_COUNT> midLowpassed;
     /// Outputs of the three lowpass kernels for the side signal of the current partition.
     std::array<std::vector<float>, CROSSOVER_COUNT> sideLowpassed;
+    /// Quadrature Side lowpasses, sharing the ordinary crossover delay and raw Side history.
+    std::array<std::vector<float>, CROSSOVER_COUNT> quadratureLowpassed;
+    /// Full-band quadrature Side reference for the highest recovery band.
+    std::vector<float> quadratureFull;
     /// The mid signal of the current input partition.
     std::vector<float> midInput;
     /// The side signal of the current input partition.

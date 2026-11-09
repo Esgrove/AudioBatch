@@ -74,6 +74,12 @@ juce::MemoryBlock makeThreadingState(const int width, const bool output)
     source.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.5, nullptr);
     auto* gain = source.getParameters().getParameter(OUTPUT_GAIN_ID);
     gain->setValueNotifyingHost(gain->convertTo0to1(-6.0F));
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        auto& bandWidth = *source.getParameters().getParameter(widthParameterId(band));
+        auto& recovery = *source.getParameters().getParameter(recoverParameterId(band));
+        bandWidth.setValueNotifyingHost(bandWidth.convertTo0to1(output ? 0.75F : 0.25F));
+        recovery.setValueNotifyingHost(recovery.convertTo0to1(output ? 25.0F : 75.0F));
+    }
     juce::MemoryBlock state;
     source.getStateInformation(state);
     return state;
@@ -110,6 +116,14 @@ TEST(StateThreading, WorkerRestorePublishesSnapshotAndTapBeforeMessageDispatch)
         const auto* gain = saved->getChildByAttribute("id", OUTPUT_GAIN_ID);
         ASSERT_NE(gain, nullptr);
         EXPECT_NEAR(gain->getDoubleAttribute("value"), -6.0, 0.01);
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            const auto* width = saved->getChildByAttribute("id", widthParameterId(band));
+            const auto* recovery = saved->getChildByAttribute("id", recoverParameterId(band));
+            ASSERT_NE(width, nullptr);
+            ASSERT_NE(recovery, nullptr);
+            EXPECT_NEAR(width->getDoubleAttribute("value"), 0.25, 0.001);
+            EXPECT_NEAR(recovery->getDoubleAttribute("value"), 75.0, 0.001);
+        }
         EXPECT_FALSE(StereoSampleFifo::analyzesOutput(processor.getAnalyzerFifo().getEpoch()));
     });
     worker.join();
@@ -237,6 +251,14 @@ TEST(StateThreading, ConcurrentHostSavesAndRestoresDoNotTouchBoundEditorTree)
             EXPECT_TRUE(width == 1400 || width == 1600);
             EXPECT_EQ(editor->getIntAttribute(EDITOR_HEIGHT_PROPERTY), width - 300);
             EXPECT_EQ(editor->getBoolAttribute(ANALYZE_OUTPUT_PROPERTY), width == 1600);
+            for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+                const auto* bandWidth = saved->getChildByAttribute("id", widthParameterId(band));
+                const auto* recovery = saved->getChildByAttribute("id", recoverParameterId(band));
+                ASSERT_NE(bandWidth, nullptr);
+                ASSERT_NE(recovery, nullptr);
+                EXPECT_NEAR(bandWidth->getDoubleAttribute("value"), width == 1600 ? 0.75 : 0.25, 0.001);
+                EXPECT_NEAR(recovery->getDoubleAttribute("value"), width == 1600 ? 25.0 : 75.0, 0.001);
+            }
         }
     });
     start.arrive_and_wait();

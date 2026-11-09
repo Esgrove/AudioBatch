@@ -93,6 +93,7 @@ private:
     void applyMono(juce::AudioBuffer<float>& buffer);
     void processWithBypass(juce::AudioBuffer<float>& buffer, bool bypassed);
     void pushToAnalyzer(const juce::AudioBuffer<float>& buffer, AnalyzerEpoch epoch);
+    void updateProcessingTargets(bool bypassed);
 
     /// Owns the parameters that the raw value pointers below point into.
     juce::AudioProcessorValueTreeState parameters;
@@ -119,10 +120,14 @@ private:
     std::array<std::atomic<float>*, BAND_COUNT> midGainValues {};
     /// Raw values of the pan parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> panValues {};
+    /// Raw recovery percentages, owned by the parameter tree and never null after construction.
+    std::array<std::atomic<float>*, BAND_COUNT> recoverValues {};
     /// Raw values of the side gain parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> sideGainValues {};
     /// Raw values of the solo parameters, owned by the parameter tree and never null after construction.
     std::array<std::atomic<float>*, BAND_COUNT> soloValues {};
+    /// Raw values of the Width parameters, owned by the parameter tree and never null after construction.
+    std::array<std::atomic<float>*, BAND_COUNT> widthValues {};
     /// Raw value of the output gain parameter, owned by the parameter tree.
     std::atomic<float>* outputGainValue {nullptr};
     /// Raw value of the bypass parameter, owned by the parameter tree.
