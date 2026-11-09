@@ -19,6 +19,9 @@ on:
       - "cpp/tests/.clang-tidy"
       - "image-control-plugin/**"
       - "pyproject.toml"
+      - "tests/realtime_sanitizer.py"
+      - "tests/test_realtime_sanitizer.py"
+      - "tests/test_realtime_scripts.py"
       - "uv.lock"
       - "!**/*.md"
   pull_request:
@@ -37,6 +40,9 @@ on:
       - "cpp/tests/.clang-tidy"
       - "image-control-plugin/**"
       - "pyproject.toml"
+      - "tests/realtime_sanitizer.py"
+      - "tests/test_realtime_sanitizer.py"
+      - "tests/test_realtime_scripts.py"
       - "uv.lock"
       - "!**/*.md"
 
@@ -165,6 +171,50 @@ jobs:
           path: image-control-plugin/cmake-build-mac-*/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
 
+  realtime:
+    name: RealtimeSanitizer
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install Homebrew LLVM and Ninja
+        run: |
+          mkdir -p cmake-build-mac-rtsan/realtime-artifacts
+          brew install llvm ninja 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/dependencies.log
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Record native sanitizer toolchain
+        run: |
+          {
+            uname -sm
+            "$(brew --prefix llvm)/bin/clang++" --version
+            cmake --version
+            ninja --version
+            uv --version
+          } 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/toolchain.log
+
+      # Hosts the build-tree VST3 with startup-linked RTSan, without installation or physical audio devices.
+      # Expected baseline findings remain BLOCKED in result.json, not clean callback passes.
+      - name: Check callbacks and verify known blockers
+        run: ./sanitize.sh --realtime 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/run.log
+
+      - name: Upload realtime sanitizer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ImageControl-realtime-sanitizer
+          path: |
+            image-control-plugin/cmake-build-mac-rtsan/realtime-artifacts
+            image-control-plugin/cmake-build-mac-rtsan/Testing/Temporary/LastTest.log
+            image-control-plugin/cmake-build-mac-rtsan/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: error
+
   coverage:
     runs-on: macos-latest
     timeout-minutes: 30
@@ -205,3 +255,8 @@ jobs:
 
       - name: Test build and validation script contracts
         run: uv run --script tests/test_build_scripts.py
+
+      - name: Test shared realtime runner and script contracts
+        run: |
+          uv run --script ../tests/test_realtime_sanitizer.py
+          uv run --script ../tests/test_realtime_scripts.py

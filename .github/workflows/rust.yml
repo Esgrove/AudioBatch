@@ -119,9 +119,12 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
 
-      - name: Check Rust shell entry points
+      - name: Check Rust shell entry points and realtime contracts
         if: runner.os == 'macOS'
-        run: uv run --script ../tests/test_rust_scripts.py
+        run: |
+          uv run --script ../tests/test_rust_scripts.py
+          uv run --script ../tests/test_realtime_sanitizer.py
+          uv run --script ../tests/test_realtime_scripts.py
 
       # Runs the isolated packaging contracts of both applications' shared signing helper, without native signing.
       - name: Check local macOS signing contracts
@@ -179,6 +182,60 @@ jobs:
           name: rust-integration-${{ runner.os }}
           path: rust/target/integration-artifacts
           if-no-files-found: ignore
+
+  realtime:
+    name: RealtimeSanitizer
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      AUDIOBATCH_RTSAN_TOOLCHAIN: nightly
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install Homebrew LLVM and native build tools
+        run: |
+          mkdir -p target/rtsan/artifacts
+          brew install llvm ninja jq ripgrep 2>&1 | tee target/rtsan/artifacts/dependencies.log
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Set up nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      # Keep the resolved nightly identity even if its LLVM does not match Homebrew's runtime.
+      # rtsan.sh must fail on a version mismatch or an unusable startup runtime, never skip the check.
+      - name: Record native sanitizer toolchain
+        run: |
+          {
+            uname -sm
+            rustup show active-toolchain
+            rustc +nightly --version --verbose
+            cargo +nightly --version
+            "$(brew --prefix llvm)/bin/clang" --version
+            cmake --version
+            ninja --version
+            uv --version
+          } 2>&1 | tee target/rtsan/artifacts/toolchain.log
+
+      # Build only into the fixture tree, never install a plugin or open a physical audio device.
+      - name: Build native test plugin
+        run: ../test-plugin/build.sh 2>&1 | tee target/rtsan/artifacts/native-plugin-build.log
+
+      # --diagnostic verifies specific known reports as BLOCKED while every clean gate remains required.
+      - name: Check callbacks and verify known blockers
+        run: ./rtsan.sh --diagnostic 2>&1 | tee target/rtsan/artifacts/run.log
+
+      - name: Upload realtime sanitizer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-realtime-sanitizer
+          path: rust/target/rtsan/artifacts
+          if-no-files-found: error
 
   miri:
     # Checks the unsafe VST3 hosting code, the test plugin, the Serato parsers,
