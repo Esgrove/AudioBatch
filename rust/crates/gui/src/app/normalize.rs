@@ -10,6 +10,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use audiobatch_core::operation::{OperationOutcome, OperationResult};
 use audiobatch_core::{AnalysisRecord, NormalizeEvent};
@@ -32,6 +33,9 @@ pub(super) const CANCELLED_RUN_FINISHING: &str = "The cancelled run is finishing
 
 /// Status text when the list is changed while files are being processed with plugins.
 const PROCESSING_IN_PROGRESS: &str = "Plugin processing in progress";
+
+/// Quiet interval before target edits are saved without waiting for pointer release.
+const TARGET_STORE_DELAY: Duration = Duration::from_millis(500);
 
 impl AppView {
     /// Returns true while a normalization run is in progress.
@@ -126,8 +130,7 @@ impl AppView {
     pub(super) fn set_normalize_mode(&mut self, mode: NormalizeMode, cx: &mut Context<Self>) {
         if self.settings.normalize_mode != mode {
             self.settings.normalize_mode = mode;
-            self.save_settings();
-            self.refresh_normalize_menus(cx);
+            self.store_normalize_target(cx);
         }
         cx.notify();
     }
@@ -140,7 +143,7 @@ impl AppView {
         }
     }
 
-    /// Stores the target while a target slider moves, and saves it when the slider is released.
+    /// Updates targets immediately and saves after edits rest or the pointer is released.
     pub(super) fn on_target_slider_event(&mut self, mode: NormalizeMode, event: &SliderEvent, cx: &mut Context<Self>) {
         match event {
             SliderEvent::Change(value) => self.change_normalize_target(mode, value.start(), cx),
@@ -158,6 +161,13 @@ impl AppView {
         set_target(&mut self.settings, mode, default);
         self.store_normalize_target(cx);
         cx.notify();
+    }
+
+    /// Cancels pending target work and saves the latest settings, never a snapshot from an earlier edit.
+    pub(super) fn store_normalize_target(&mut self, cx: &mut Context<Self>) {
+        self.normalize_target_store_task = None;
+        self.save_settings();
+        self.refresh_normalize_menus(cx);
     }
 
     /// Cancels the normalization run from the Cancel action.
@@ -276,14 +286,13 @@ impl AppView {
     /// Stores the target of a mode while its slider moves.
     fn change_normalize_target(&mut self, mode: NormalizeMode, value: f32, cx: &mut Context<Self>) {
         if set_target(&mut self.settings, mode, value) {
+            self.refresh_normalize_menus(cx);
+            self.normalize_target_store_task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(TARGET_STORE_DELAY).await;
+                let _ = this.update(cx, Self::store_normalize_target);
+            }));
             cx.notify();
         }
-    }
-
-    /// Saves the target once the slider is released, and shows it in the menus.
-    fn store_normalize_target(&mut self, cx: &mut Context<Self>) {
-        self.save_settings();
-        self.refresh_normalize_menus(cx);
     }
 
     /// Returns why normalization cannot start now, or none when it can.

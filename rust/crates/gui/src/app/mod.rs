@@ -210,7 +210,7 @@ pub struct AppView {
     analysis_task: Option<Task<()>>,
     /// Drives the stress test, present only in demo mode.
     demo_task: Option<Task<()>>,
-    /// Files whose custom gain the mouse wheel changed, written to the cache once the wheel rests.
+    /// Files with pending explicit slider or wheel gain edits, retained until submitted to the writer.
     pending_gain_paths: Vec<PathBuf>,
     /// Deferred play or seek intent, resolved after matching cue metadata and source duration are ready.
     start_after_cues: Option<cue_start::CueStartIntent>,
@@ -218,6 +218,8 @@ pub struct AppView {
     zoom_reset_pending: bool,
     /// Writes the pending gain after the delay. Replacing it restarts the delay.
     gain_store_task: Option<Task<()>>,
+    /// Saves the latest normalization targets after edits rest, independent of pointer release.
+    normalize_target_store_task: Option<Task<()>>,
     /// Debounced transient loudness after custom gain and hard clipping.
     gain_prediction: gain_loudness::GainPrediction,
     /// Drains the sole prediction worker even after cooperative cancellation.
@@ -368,6 +370,7 @@ impl AppView {
             start_after_cues: None,
             zoom_reset_pending: false,
             gain_store_task: None,
+            normalize_target_store_task: None,
             gain_prediction: gain_loudness::GainPrediction::default(),
             gain_prediction_task: None,
             _subscriptions: subscriptions,
@@ -422,6 +425,9 @@ impl AppView {
             stop.store(true, Ordering::Release);
         }
         self.flush_gain_store(cx);
+        if self.normalize_target_store_task.is_some() {
+            self.store_normalize_target(cx);
+        }
         self.save_plugin_chain();
         self.invalidate_artwork(cx);
         self.enrichment.invalidate();
