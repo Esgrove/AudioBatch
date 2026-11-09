@@ -61,7 +61,8 @@ updating the cache with the results once the run completes.
 The `process --preset` subcommand renders through a saved chain with `PluginProcessingCoordinator`.
 Its main thread runs the JUCE event loop and performs every plugin lifecycle call,
 while a worker thread runs the analysis and processing workflow.
-`--jobs` sets both the worker pool and the number of chain instances.
+`--jobs` sets the worker pool, defaulting to the logical CPU count.
+The run creates `min(files, workers)` chain instances.
 The preview is GUI-only.
 
 The CLI's signal handler only sets a lock-free flag on the first interrupt and calls `std::_Exit` on the second.
@@ -173,7 +174,8 @@ Analysis results go through one `MessageThreadBatcher`, so a burst of cached res
 Each normalization or processing pass has its own batcher for the starts, progress reports, and results of its files,
 so a burst of results costs one sort and one table refresh, and a start never overtakes the result of its file.
 Every completion delivers what its batcher still holds first.
-A normalization or processing result is still passed on after its pass ended, because its file was already written.
+A normalization or processing result is still passed on after its pass ended, because its file was already written,
+unless Clear All Files discarded that run's presentation events.
 
 ## Threads
 
@@ -181,8 +183,10 @@ A normalization or processing result is still passed on after its pass ended, be
   Cache persistence runs on workers.
   The message thread also does every plugin lifecycle step: creating, preparing, releasing, and destroying instances.
 - **`BackgroundRunner` pools.** Each coordinator owns one `BackgroundRunner` with its own `juce::ThreadPool`.
-  Analysis and normalization use one worker per logical core,
-  and plugin processing one per physical core minus one, from `getPluginProcessingWorkerCount`.
+  GUI analysis and normalization use one worker per logical core.
+  GUI plugin processing defaults to `max(1, physical cores - 1)` from `getPluginProcessingWorkerCount`,
+  falling back to half the logical count before reserving one core when the physical count is unavailable.
+  CLI processing defaults to the logical CPU count, with `--jobs` overriding it.
   A job captures the current run id when it is queued, and polls `makeCancellationCheck` between blocks.
   `publish` only delivers a callback while the run id is still current.
 - **Cancel versus stop.** `cancel` increments the run id, drops the queued jobs,
@@ -191,7 +195,9 @@ A normalization or processing result is still passed on after its pass ended, be
   Its jobs stop at their next check, files not yet committed are published as cancelled,
   results of files committed just before still arrive, and so does the completion.
   The Cancel action cancels an analysis, and requests a stop of a normalization or processing pass.
-  Clear All Files cancels every coordinator through `stopAllWork`.
+  Clear All Files calls `stopAllWork`, cancelling analysis but requesting a stop of an active file operation.
+  That writer keeps its run and terminal callback until every file returns,
+  while all queued and later file events of the cleared run are discarded so they cannot repopulate the list.
   On shutdown, `cancelAndWait` waits up to 30 seconds for analysis and normalization jobs,
   and up to 60 seconds for plugin jobs.
   The analysis and normalization destructors then wait without a timeout to keep their state alive for remaining jobs.
@@ -213,6 +219,11 @@ A normalization or processing result is still passed on after its pass ended, be
   The waveform builder serializes JUCE thumbnails directly, without source-backed `AudioThumbnailCache` decoding.
   Coalesced explicit gain edits and committed output persistence share the worker, ahead of optional repair.
   Shutdown cancels artifact publication without joining a worker against UI delivery.
+- **Gain-adjusted loudness.** `AudioInfoPanel` owns a separate cancellable `BackgroundRunner` worker.
+  It debounces selection and custom-gain changes, measures hard-clipped loudness,
+  and derives an empirical integrated limiter estimate rather than rendering a plugin.
+  These metric previews are transient, never stored as source measurements or cached artifacts,
+  and independent of the scheduler's waveform and spectrogram worker.
 - **Other small workers.** `ArtworkLoader` reads and decodes bounded artwork thumbnails with one active
   and one replaceable pending request.
   `AudioBatchComponent` prunes cache rows of deleted files on another `std::jthread` after startup.
@@ -222,8 +233,9 @@ A normalization or processing result is still passed on after its pass ended, be
 Plugin instances belong to the message thread in every case.
 The live slots of `LiveChain` own the processors that the preview and the editors share,
 and their `processBlock` runs on the audio device thread.
-`PluginLibrary::instantiateChains` creates one chain per processing worker on the message thread,
-and `PluginRunChains` leases one chain at a time to a worker, which calls `processBlock` on its own thread.
+`PluginLibrary` caps the run's chain count at `min(files, workers)`.
+`instantiateChains` creates them on the message thread.
+`PluginRunChains` leases one chain at a time to a worker, which calls `processBlock` on its own thread.
 The destructor of `PluginRunChains` posts the instances back to the message thread when a worker releases them last.
 
 ## Analysis
@@ -437,7 +449,8 @@ A backup that cannot be disposed of after successful publication is retained wit
 These checks narrow stale-file races.
 Path-based replacement and disposal are not atomic compare-and-swap operations.
 Conversions require a filesystem that supports hard links.
-The `disposeFile` option moves files to the trash, and tests replace it with a delete.
+The `disposeFile` option defaults to trash.
+CLI normalization and `process` can select permanent deletion with `--delete`, and tests inject deletion.
 The outcome is `OperationSucceeded`, `CommittedButUnanalyzed`
 when the committed output cannot be opened or no longer matches the rendered file identity,
 or `OperationFailed` before a successful commit.
@@ -577,13 +590,13 @@ and they live in JUCE because the code they change is private to JUCE's hosting 
 
 The Rust version in [`../rust`](../rust/README.md) follows the same behaviour where the two are compared,
 and the root README lists the user facing differences under
-[Differences between the versions](../README.md#differences-between-the-versions).
+[Formats And Compatibility](../README.md#formats-and-compatibility).
 The deliberate differences are these:
 
 - Only the C++ version hosts Audio Unit plugins.
   The Rust version hosts VST3 only, through its own `vst3-host` crate.
-- Only the C++ GUI has the results context menu.
-  Its file chooser selects folders, but drops and launch arguments accept individual files too.
+- Both GUIs have a results context menu, but only C++ includes the Normalization Format Support dialog.
+  The C++ File menu has Add Files and folder choosers, and drops and launch arguments accept individual files too.
 - Both versions share measurements and compatible Serato outcomes in the main AudioBatch analysis database.
   Each keeps its own plugin list, chain, presets, settings, and logs,
   because the chain state JUCE saves and its plugin ids are specific to JUCE.

@@ -12,8 +12,13 @@ Regenerate them with:
 ./generate.sh
 ```
 
+Run this command from `fixtures/`.
 It needs ffmpeg with the libmp3lame encoder, and uv for the Python scripts.
-When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
+It regenerates the ordinary tones and special cases, synthetic Overview tags, and plugin expected outputs only.
+It does not regenerate the real metadata samples,
+metric or spectral expectations, normalization or benchmark collections,
+or checksum manifests.
+When a fixture changes, review its dependent expectations in both applications as described below.
 
 ## Musical Key Expectations
 
@@ -36,11 +41,13 @@ The metric definitions are in the project READMEs.
 
 Regenerate with `uv run --script fixtures/metrics_expected.py` from the root,
 or verify without writing with `--check`.
+Both modes require jq in the path to format the expected JSON.
 
 ## Input Identities
 
 `checksums.sha256` records the exact bytes and inventory of the ordinary fixtures,
 real metadata samples, and plugin expected outputs.
+Spectral inputs have their own generator byte check and are not included in this manifest.
 Check it from this directory with `sha256sum --check checksums.sha256`.
 The Rust `test-fixtures` tests also check it, and reject missing expectations or added, removed, or changed audio files.
 Downloaded normalization files are checked against their existing Git LFS SHA-256 object IDs by the decoder diagnostic test.
@@ -55,7 +62,10 @@ and every channel's ordered `f32` sample bits in little-endian, channel-major or
 It preserves signed zero and subnormals, rejects nonfinite samples and unequal planes,
 and does not depend on decoder packet boundaries.
 The initial manifest was captured on Windows.
-Matching macOS verification is still required.
+The historical cross-platform comparison in
+[Analysis performance](../docs/performance.md#windows-and-macos-numerical-differences)
+reports matching macOS identities for its tested revision and inventory.
+That report does not verify later fixture changes, so repeat identity checks on both platforms for a new capture.
 These hashes prove input identity, not measurement correctness.
 
 From `../rust/`, verify inputs and capture diagnostic reports without changing any expectations:
@@ -108,13 +118,23 @@ UPDATE_INPUT_IDENTITIES=1 cargo test -p audiobatch-core generated_inputs_have_sh
 Then rerun the verification commands with the capture variable unset, and verify both platforms.
 Do not enable capture for the whole helper suite, whose missing and changed manifest tests must fail closed.
 `UPDATE_INPUT_IDENTITIES` is separate from `UPDATE_GOLDEN` and never changes measured-output expectations.
+The committed-fixture capture rewrites the whole checksum inventory,
+so review every changed entry against the intended scope.
+Review and regenerate affected `metrics_expected.json` values, plugin outputs, and regression goldens separately,
+and update dependent expectations in the C++ tests and Rust `test-fixtures` crate.
+Do not accept changed measurements merely because recaptured input hashes now match.
 
 ## Spectrogram Expectations
 
 `spectrogram_expected/` holds short mono and stereo PCM16 inputs at 44.1, 48, and 96 kHz,
 with silence, calibrated tones, anti-phase stereo, DC, Nyquist, and broadband noise limited at 16 or 18 kHz.
 Its `expected.json` records sparse linear-frequency powers and Mel landmarks calculated independently with NumPy.
-The C++ spectral tests read these inputs and expectations directly.
+The C++ spectral tests and Rust `crates/core/tests/spectrogram.rs` read these inputs and expectations directly.
+Rust `crates/core/tests/shared_cache.rs` also uses them to check C++/Rust cache interoperability
+when `AUDIOBATCH_CPP_TESTS` points to the C++ test executable.
+Both applications share `spectrogram_cache` and its `SPEC` codec.
+The FFT libraries may produce a one-intensity-step difference in at most one cell per thousand,
+and the shared-cache tests measure that bound rather than assuming exact grids.
 
 Regenerate with `uv run --script fixtures/spectrogram_expected.py` from the repository root.
 It formats `expected.json` with jq, as the root `format.sh` does, so it needs jq in the path.
@@ -188,8 +208,6 @@ Any timestamp fallback belongs to presentation, not parsed metadata.
 ASCII Autotags numbers and final BPM retain binary64 precision.
 Beatgrid's stored binary32 values widen exactly for comparisons with the shared numeric expectations,
 which must never be narrowed to binary32.
-The Rust reader retains its timestamp-label fallback for those.
-
 Ordinary BPM and Serato BPM are separate expectations.
 The synth's dedicated terminal beatgrid BPM is about 96.81 even though its ordinary BPM is 126.97.
 RK6 uses `Abm` in ID3's standard key frame and the enharmonic spelling `G#m` in FLAC's native key field.
@@ -201,11 +219,10 @@ The real files exercise compact Autotags numbers and native FLAC zero padding
 that the synthetic rainbow fixture does not.
 Native wrapper repair must not relax malformed-base64 or partial-raster rejection in the raw parsers.
 Parser versions invalidate old cached failures so corrected Overview data can be read again.
-Rust Overview cache version 3 also invalidates every version-2 outcome,
+Both implementations use Overview parser revision 3, invalidating version-2 outcomes,
 including present data selected from a later duplicate and invalid states that valid duplicates can recover.
-This read/parser version gates the SQLite row independently of the unchanged version-2 `SOVR` raster layout.
+This read/parser revision gates the SQLite row independently of the unchanged version-2 `SOVR` raster layout.
 Both implementations retain byte-compatible raster serialization.
-C++ keeps its existing Overview cache version because its duplicate selection is unchanged.
 
 `metadata/inspect_metadata.py` repeats the independent container inspection with Python's standard library,
 using ffprobe only for ordinary text tags.

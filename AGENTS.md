@@ -25,14 +25,24 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `cpp/common.sh` and `rust/common.sh` source it and add their project specific parts.
 - `build.sh`, `install.sh`, and `format.sh` run the scripts of the same name in both projects,
   or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
+  Unqualified `install.sh` also installs ImageControl after both applications, even with `--cli-only`.
+  `install.sh image-control` installs only the plugin, and root installer options are not forwarded to it.
+  Run `image-control-plugin/install.sh` directly for plugin-specific options.
   `format.sh` also formats the root shell scripts and the prose outside the projects when shfmt and slb are installed,
   runs ruff on the Python scripts through uv,
   and formats tracked and non-ignored new JSON files with jq using two-space indentation.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place,
   and `fixtures/README.md` lists them with what each one tests.
-  `fixtures/generate.sh` regenerates them with ffmpeg,
-  and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
-  When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
+  `fixtures/generate.sh` regenerates the ordinary audio with ffmpeg and the plugin expected outputs,
+  not every fixture collection or independent expectation dataset.
+  It calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
+  When an input changes intentionally, review dependent plugin outputs, independent metric expectations,
+  C++ test values, Rust `test-fixtures` values, and affected golden snapshots.
+  Follow the [scoped capture procedure](fixtures/README.md#regeneration-provenance).
+  It covers input identities and `fixtures/checksums.sha256`.
+  Do not refresh unrelated expectations or identities to make a failure pass.
+  `fixtures/metrics_expected.py` generates independent source-metric expectations and requires jq.
+  The real recordings under `fixtures/metadata/` are immutable inputs, with independently inspected expectations.
 - `test-plugin/` holds `AudioBatch Test MS`, the JUCE VST3 effect that both test suites load,
   described in `test-plugin/README.md`,
   with a gain, a mid/side width, and a latency parameter that the hosts must compensate.
@@ -42,6 +52,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `uv run fixtures/plugin_expected.py` computes its expected outputs with numpy into `fixtures/plugin_expected/`.
   When its processing changes, update the script, regenerate the files,
   and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
+  Review and update only the affected checksum entries using the fixture identity-capture procedure.
 - `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging effect by esgrove,
   as a VST3 and, on macOS, an Audio Unit, described in `image-control-plugin/README.md`.
   It is a real plugin for processing audio, mainly from AudioBatch's plugin chain, and not part of either application.
@@ -111,7 +122,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   They also include their workflow files, and exclude Markdown-only changes.
   The C++ workflow excludes the normalization collection.
   `format.yml` runs the root `./format.sh --check` on every change,
-  and checks that `fixtures/plugin_expected/` matches what its script writes.
+  checks that `fixtures/plugin_expected/` matches what its script writes,
+  and verifies the independent spectrogram and source-metric expectations with their generators' `--check` modes.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
  Its macOS build job also runs `tests/test_mac_signing.py`, the packaging contracts of the shared signing helper.
  Its `miri` and `fuzz` jobs run `rust/miri.sh` and `rust/fuzz.sh` on macOS with nightly Rust,
@@ -119,8 +131,10 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
-  `image-control.yml` builds, tests, and lints ImageControl on macOS and Windows, and validates its Audio Unit,
-  only when the plugin, the JUCE submodule, or the shared C++ style or optimization configuration changes.
+  `image-control.yml` builds and tests ImageControl on macOS and Windows,
+  runs clang-tidy on macOS, and validates its Audio Unit on macOS.
+  Its path filters cover the plugin, JUCE submodule, shared C++ style and optimization configuration,
+  native CPU detection helper, root `common.sh`, and the workflow itself, excluding Markdown-only changes.
 
 ## Isolated Application Storage
 
@@ -194,6 +208,10 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
   and `lint.sh --check` reports warnings without applying fixes.
 - Stage with explicit paths, such as `git add cpp` or `git add rust`.
+- Keep READMEs concise, focused on purpose, key capabilities, essential setup and commands, and important caveats.
+  Link to architecture, agent instructions, or focused reference documentation instead of duplicating implementation details.
+  Do not turn READMEs into detailed UI walkthroughs.
+  Keep rolling requirements such as the Rust toolchain version in their authoritative configuration, not duplicated prose.
 - Commit messages and all prose follow the semantic line break style described in both project files.
 - **NEVER run destructive git commands**, such as `git checkout -- <file>`, `git restore`, `git reset --hard`,
   `git clean`, or `git stash drop`.
