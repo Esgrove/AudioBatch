@@ -91,6 +91,15 @@ public:
     /// Runs the CLI parsing checks.
     void runTest() override
     {
+        beginTest("A UTF-8 byte-order mark without text produces no arguments");
+        {
+            const std::vector<char> input {'\xef', '\xbb', '\xbf'};
+            const auto text = juce::String::createStringFromData(input.data(), static_cast<int>(input.size()));
+            expect(text.isEmpty());
+            const auto command = expectCommand<AnalyzeCommand>(juce::StringArray::fromLines(text));
+            expect(command.inputPaths.isEmpty());
+        }
+
         beginTest("Separate short options are parsed");
         {
             const auto command = expectCommand<AnalyzeCommand>({"-r", "-f", "music"});
