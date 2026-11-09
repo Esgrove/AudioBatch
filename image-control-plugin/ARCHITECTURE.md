@@ -110,6 +110,38 @@ Link is persisted editor behavior that moves Side with a user Mid gain gesture, 
 It does not link or rewrite Width and Recover.
 Gesture ownership is captured at pointer-down so Link changes or teardown cannot unbalance begin/end notifications.
 
+## Local editing, comparison, and presets
+
+`ProcessingState.*` represents detached plain-unit parameter snapshots using stable IDs.
+Its versioned XML codec validates sound settings before applying them.
+Sound recall includes crossovers, Mid, Side, Width, Recover, Pan, output gain, and Mono.
+Solo, Delta, and Bypass remain live audition controls. Editor settings, including Link, stay outside sound snapshots.
+
+`ParameterHistory.*` belongs to the processor, survives editor replacement, and is never serialized.
+Explicit local transactions capture only touched parameters before their writes.
+`ui/HistoryAttachments.*` separates user writes from parameter-to-control synchronization.
+Linked controls and two-crossover spectrogram drags nest their boundaries into one logical transaction.
+Host automation does not enter history, and host restore invalidates open transactions and recorded actions.
+Replay sends balanced host gestures without recording itself or resetting the DSP.
+
+The processor owns two comparison slots and the active selection.
+Live parameters are authoritative for the active slot, so headless automation is captured when saving or switching.
+Switching saves the outgoing sound and recalls the destination. Copy changes only the inactive slot.
+Comparison commands and preset recall share chronological history with ordinary parameter edits.
+Both slots and their selection are stored separately from editor preferences in host state.
+Legacy states initialize both slots from the restored sound and select A.
+Bulk recall retains ordinary parameter-by-parameter host update and smoothing semantics,
+not a sample-atomic audio transaction.
+
+`UserPresets.*` owns a separate per-user library, shared by plugin formats and instances.
+Each versioned file contains one sound snapshot and preset metadata, not a host-state blob.
+Library operations validate names and content, serialize cooperating writers,
+check stale selections, and replace files through temporary outputs.
+The directory is injectable for tests, and construction does not create it.
+`ui/ProcessingToolbar.*` schedules filesystem work outside audio and host-state callbacks,
+then applies completed user commands on the message thread through checked component lifetimes.
+Project recall never reads the preset library.
+
 ## Audio signal flow
 
 `processBlock` and `processBlockBypassed` reach the same `processWithBypass` path.
@@ -454,7 +486,8 @@ No production DSP depends on a successful graphics context.
 
 ## Saved state and host threading
 
-`getStateInformation` writes JUCE binary XML containing the APVTS parameter tree and an `EditorState` child.
+`getStateInformation` writes JUCE binary XML containing the APVTS parameter tree,
+comparison state, and an `EditorState` child.
 Editor properties include links, analysis mode, display preferences, correlation visibility, dimensions, and divider height.
 Live analysis, meter history, and GPU contents are not persisted.
 Mono is persisted with the other audio parameters.
@@ -465,7 +498,8 @@ There is no gain-derived Width migration, so unequal saved Mid/Side gains remain
 
 The live editor `ValueTree`, its retained copies, and bound `juce::Value` objects belong exclusively to the message thread.
 Host state callbacks use a detached binary editor snapshot under `editorStateMutex`.
-A separate recursive state mutex serializes host saves/restores and allows synchronous reentrant host save requests.
+A separate recursive state mutex serializes host saves/restores and local processing commands,
+and allows synchronous reentrant host save requests.
 These APIs allocate and lock and are not intended for real-time processing callbacks.
 
 An off-thread restore publishes its snapshot and analyzer tap immediately, restores APVTS parameters,

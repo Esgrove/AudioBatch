@@ -7,12 +7,14 @@
 
 #include "Parameters.h"
 #include "ui/ControlSlider.h"
+#include "ui/HistoryAttachments.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -95,7 +97,12 @@ private:
 class BandStrip final : public juce::Component
 {
 public:
-    BandStrip(juce::AudioProcessorValueTreeState& parameters, juce::ValueTree& editorState, std::size_t band);
+    BandStrip(
+        juce::AudioProcessorValueTreeState& parameters,
+        juce::ValueTree& editorState,
+        std::size_t band,
+        ParameterHistory* history = nullptr
+    );
 
     ~BandStrip() override;
 
@@ -145,20 +152,27 @@ private:
     juce::ToggleButton linkButton {"Link"};
 
     /// Binds the Mid slider to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> midAttachment;
+    std::unique_ptr<HistorySliderAttachment> midAttachment;
     /// Binds the Pan slider to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
+    std::unique_ptr<HistorySliderAttachment> panAttachment;
     /// Binds Recover directly to its percentage parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> recoverAttachment;
+    std::unique_ptr<HistorySliderAttachment> recoverAttachment;
     /// Binds the Side slider to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sideAttachment;
+    std::unique_ptr<HistorySliderAttachment> sideAttachment;
     /// Binds Width directly to its independent parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> widthAttachment;
+    std::unique_ptr<HistorySliderAttachment> widthAttachment;
     /// Binds the Solo button to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soloAttachment;
+    std::unique_ptr<HistoryButtonAttachment> soloAttachment;
 
     /// Side gain parameter, owned by the parameter tree, which linked Mid gestures change.
     juce::RangedAudioParameter& sideParameter;
+
+    /// Optional processor-owned local history, which outlives this strip.
+    ParameterHistory* history;
+    /// Stable Side identity for capture before a linked write.
+    juce::String sideId;
+    /// Host-state generation when the Mid gesture started.
+    std::uint64_t linkedGeneration {0};
 
     /// Mid gain in dB when the current Mid drag started, for Link.
     double linkedMidStart {0.0};
@@ -166,6 +180,8 @@ private:
     double linkedSideStart {0.0};
     /// Whether the user is dragging Mid, so only their own drags move Side through Link, not automation.
     bool draggingMid {false};
+    /// Whether Mid owns the extra frame that keeps linked Side edits in the same local command.
+    bool linkedHistoryEditing {false};
     /// Whether the current Mid gesture opened a matching Side gesture, captured before Link can change.
     bool linkedSideGesture {false};
 };
