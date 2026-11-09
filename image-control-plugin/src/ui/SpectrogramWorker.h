@@ -11,6 +11,7 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <vector>

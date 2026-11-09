@@ -44,8 +44,24 @@ struct SpectralPoint {
     float coherence {1.0F};
 };
 
-/// Receives the points of one analyzed frame, and the time in seconds the frame stands for.
-using SpectralFrameCallback = std::function<void(std::span<const SpectralPoint> points, double frameSeconds)>;
+/// Number of frequency tiers, ordered from the lowest frequencies to the highest.
+constexpr std::size_t ANALYSIS_TIER_COUNT {6};
+
+/// Audio-time identity of a frame. Simultaneous deadlines arrive in increasing tier order.
+struct SpectralFrameInfo {
+    /// Index of the frequency tier, from zero to ANALYSIS_TIER_COUNT - 1.
+    std::size_t tierIndex {0};
+    /// Duration of this tier's hop, used for its particle weight, in seconds.
+    double frameSeconds {0.0};
+    /// Exclusive end of the analyzed samples since the last clear, in seconds.
+    double endSeconds {0.0};
+    /// Whether all tiers due at this end time have been delivered, allowing common-reference colouring.
+    bool lastAtTime {true};
+};
+
+/// Receives a tier's points and audio-time metadata. The points remain valid only during the callback.
+using SpectralFrameCallback
+    = std::function<void(std::span<const SpectralPoint> points, const SpectralFrameInfo& frame)>;
 
 /// One resolution of the analysis: a window length, the frequency range it reports, and how often it runs.
 struct AnalysisTier {
@@ -111,7 +127,7 @@ private:
 /// Each tier transforms the newest samples, zero padded to twice its length for spectral interpolation.
 /// A periodic Hann window and its time derivative are applied as three-tap filters, sharing one transform.
 /// The derivative reassigns each bin to its instantaneous frequency, drawing a sine as a thin line.
-/// The longest tier resolves the lowest octaves to under a hertz.
+/// The longest tier's native bin width is about 1.46 Hz, interpolated every 0.73 Hz by zero padding.
 /// The shortest keeps the high frequencies sharp in time.
 ///
 /// A bin's position follows the level difference between the channels, as in common spatial analyzers:
@@ -133,16 +149,20 @@ public:
     void setPositionCurve(const StereoPositionCurve& curve);
 
 private:
-    void analyzeTier(AnalysisTier& tier);
+    void advanceTierDeadlines(std::size_t count);
+    void analyzeTier(AnalysisTier& tier, const SpectralFrameInfo& frame);
+    void appendSpectralPoints(int firstBin, std::size_t binCount, double binWidth, float levelScale);
 
     /// Maps the level difference between the channels to the stereo position.
     StereoPositionCurve positionCurve;
     /// The tiers from the lowest frequencies to the highest.
     std::vector<AnalysisTier> tiers;
+
     /// Ring of the newest left samples, as long as the longest window.
     std::vector<float> leftHistory;
     /// Ring of the newest right samples, as long as the longest window.
     std::vector<float> rightHistory;
+
     /// The points of the frame being reported, reused between frames.
     std::vector<SpectralPoint> points;
     /// Unwindowed left spectrum of the tier's reported bins and two more on each side, reused between frames.
@@ -153,13 +173,23 @@ private:
     std::vector<std::complex<float>> hannLeft;
     /// Hann-windowed right spectrum of the tier's reported bins, reused between frames.
     std::vector<std::complex<float>> hannRight;
+
+    /// Per-bin real cross power, reused by neighbourhood sums without changing their addition order.
+    std::vector<float> crossPowers;
+    /// Per-bin left power, reused by reassignment, levels, and neighbourhood sums.
+    std::vector<float> leftPowers;
     /// Reassigned frequency of each of the tier's reported bins, in Hz, reused between frames.
     std::vector<float> reassignedFrequencies;
+    /// Per-bin right power, reused by reassignment, levels, and neighbourhood sums.
+    std::vector<float> rightPowers;
+
     /// Receives every analyzed frame.
     SpectralFrameCallback frameCallback;
 
     /// Sample rate the tiers were built for.
     double sampleRate {ANALYZER_DEFAULT_SAMPLE_RATE};
+    /// Audio frames accepted since the last clear, shared by all tier deadlines.
+    std::size_t processedSamples {0};
     /// Position in the rings where the next sample goes.
     std::size_t writePosition {0};
 };

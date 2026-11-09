@@ -29,13 +29,14 @@ struct TierLayout {
 };
 
 /// The tiers from the lowest frequencies to the highest.
-/// 32768 samples resolve the lowest octaves to about 0.7 Hz with zero padding,
-/// and 1024 samples keep the high frequencies within about 20 ms.
+/// The 32768-sample window resolves the bass with a 1.46 Hz native bin width at 48 kHz.
+/// Zero padding samples its spectrum every 0.73 Hz without increasing the window's resolving power.
+/// The 1024-sample window keeps the high frequencies within about 20 ms.
 /// Up to 640 Hz each tier covers one octave and starts where its window length times the frequency is the same,
 /// so a sine spreads over about the same share of an octave at every tier boundary
 /// instead of widening several times where a much shorter window takes over.
 /// The long windows run less often, since their content changes slowly anyway.
-constexpr std::array TIER_LAYOUTS {
+constexpr std::array<TierLayout, ANALYSIS_TIER_COUNT> TIER_LAYOUTS {
     TierLayout {.windowOrder = 15, .minFrequency = 0.0, .maxFrequency = 80.0, .hop = 2048},
     TierLayout {.windowOrder = 14, .minFrequency = 80.0, .maxFrequency = 160.0, .hop = 1024},
     TierLayout {.windowOrder = 13, .minFrequency = 160.0, .maxFrequency = 320.0, .hop = 512},
@@ -45,8 +46,6 @@ constexpr std::array TIER_LAYOUTS {
 };
 /// Sample rate up to which the tier layouts apply. Each doubling above it doubles the windows and hops.
 constexpr double TIER_REFERENCE_SAMPLE_RATE {48'000.0};
-/// Samples pushed at a time, so every tier keeps its hop even when large blocks arrive.
-constexpr std::size_t PUSH_CHUNK {256};
 /// Bins whose normalized level is below this, about −120 dB, are not reported.
 constexpr float SILENCE_LEVEL {1.0e-12F};
 /// Share of the way to the edge where the stereo position curve draws its midpoint.
@@ -188,6 +187,7 @@ void SpatialAnalyzer::clear()
     for (auto& tier : tiers) {
         tier.samplesSinceFrame = 0;
     }
+    processedSamples = 0;
     writePosition = 0;
 }
 
@@ -213,31 +213,67 @@ void SpatialAnalyzer::prepare(const double newSampleRate)
     rawRight.reserve(mostPoints + 4);
     hannLeft.reserve(mostPoints);
     hannRight.reserve(mostPoints);
+    crossPowers.reserve(mostPoints);
+    leftPowers.reserve(mostPoints);
     reassignedFrequencies.reserve(mostPoints);
+    rightPowers.reserve(mostPoints);
     clear();
 }
 
-/// Adds samples of both channels, which must be the same length,
-/// and analyzes each tier whenever its hop has passed, reporting each frame to the callback.
+/// Adds equally sized channel spans and reports tiers exactly at their next audio-time deadline.
+/// Simultaneous deadlines arrive low-to-high with one group end, independently of caller chunk boundaries.
+/// Non-finite samples become silence only in this display history. The source audio is never modified.
 void SpatialAnalyzer::pushSamples(const std::span<const float> left, const std::span<const float> right)
 {
     jassert(left.size() == right.size());
+    if (left.size() != right.size()) {
+        return;
+    }
     const std::size_t ringMask = leftHistory.size() - 1;
     std::size_t consumed = 0;
     while (consumed < left.size()) {
-        const std::size_t count = std::min(PUSH_CHUNK, left.size() - consumed);
+        std::size_t count = left.size() - consumed;
+        for (const auto& tier : tiers) {
+            count = std::min(count, tier.hop - tier.samplesSinceFrame);
+        }
         for (std::size_t sample = 0; sample < count; ++sample) {
-            leftHistory[writePosition] = left[consumed + sample];
-            rightHistory[writePosition] = right[consumed + sample];
+            const float leftValue = left[consumed + sample];
+            const float rightValue = right[consumed + sample];
+            leftHistory[writePosition] = std::isfinite(leftValue) ? leftValue : 0.0F;
+            rightHistory[writePosition] = std::isfinite(rightValue) ? rightValue : 0.0F;
             writePosition = (writePosition + 1) & ringMask;
         }
         consumed += count;
-        for (auto& tier : tiers) {
-            tier.samplesSinceFrame += count;
-            if (tier.samplesSinceFrame >= tier.hop) {
-                tier.samplesSinceFrame %= tier.hop;
-                analyzeTier(tier);
-            }
+        processedSamples += count;
+        advanceTierDeadlines(count);
+    }
+}
+
+/// Advances all tier counters after a bounded history write and reports the due tiers in frequency order.
+/// The final due tier closes their shared audio-time group.
+void SpatialAnalyzer::advanceTierDeadlines(const std::size_t count)
+{
+    std::size_t lastDue = tiers.size();
+    for (std::size_t index = 0; index < tiers.size(); ++index) {
+        auto& tier = tiers[index];
+        tier.samplesSinceFrame += count;
+        if (tier.samplesSinceFrame == tier.hop) {
+            lastDue = index;
+        }
+    }
+    for (std::size_t index = 0; index < tiers.size(); ++index) {
+        auto& tier = tiers[index];
+        if (tier.samplesSinceFrame == tier.hop) {
+            tier.samplesSinceFrame = 0;
+            analyzeTier(
+                tier,
+                SpectralFrameInfo {
+                    .tierIndex = index,
+                    .frameSeconds = static_cast<double>(tier.hop) / sampleRate,
+                    .endSeconds = static_cast<double>(processedSamples) / sampleRate,
+                    .lastAtTime = index == lastDue,
+                }
+            );
         }
     }
 }
@@ -256,8 +292,7 @@ void SpatialAnalyzer::setPositionCurve(const StereoPositionCurve& curve)
 
 /// Transforms the newest window of both channels for a tier,
 /// and reports the bins in the tier's frequency range that are not silent.
-/// Both channels go through one complex transform, the left as the real part and the right as the imaginary part,
-/// which costs about half of two real transforms with JUCE's fallback engine.
+/// Both channels share one complex transform, the left as the real part and the right as the imaginary part.
 ///
 /// The frame is transformed unwindowed, and the periodic Hann window h(n) = 1/2 − cos(2πn/W)/2 is applied
 /// to the spectrum: with the transform twice the window length W, its cosine shifts the spectrum by two bins,
@@ -268,7 +303,7 @@ void SpatialAnalyzer::setPositionCurve(const StereoPositionCurve& curve)
 ///
 /// The stereo position and coherence are measured over the bins within POSITION_SMOOTHING_OCTAVES,
 /// which draws decorrelated content at its average position, while the level is the bin's own.
-void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
+void SpatialAnalyzer::analyzeTier(AnalysisTier& tier, const SpectralFrameInfo& frame)
 {
     const std::size_t windowLength = tier.windowLength;
     const std::size_t ringMask = leftHistory.size() - 1;
@@ -300,7 +335,10 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
 
         hannLeft.resize(binCount);
         hannRight.resize(binCount);
+        crossPowers.resize(binCount);
+        leftPowers.resize(binCount);
         reassignedFrequencies.resize(binCount);
+        rightPowers.resize(binCount);
         const auto derivativeScale
             = static_cast<float>(juce::MathConstants<double>::pi / static_cast<double>(windowLength));
         const double radiansToHertz = sampleRate / juce::MathConstants<double>::twoPi;
@@ -315,7 +353,10 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
                 = divideByTwoI(rawLeft[centre - 2] - rawLeft[centre + 2]) * derivativeScale;
             const std::complex<float> derivativeRight
                 = divideByTwoI(rawRight[centre - 2] - rawRight[centre + 2]) * derivativeScale;
-            const float power = std::norm(hannLeft[index]) + std::norm(hannRight[index]);
+            leftPowers[index] = std::norm(hannLeft[index]);
+            rightPowers[index] = std::norm(hannRight[index]);
+            crossPowers[index] = (hannLeft[index] * std::conj(hannRight[index])).real();
+            const float power = leftPowers[index] + rightPowers[index];
             const double frequency = static_cast<double>(firstBin + static_cast<int>(index)) * binWidth;
             double reassigned = frequency;
             if (power > 0.0F) {
@@ -331,37 +372,58 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier)
             );
         }
 
-        const double smoothingRatio = std::exp2(POSITION_SMOOTHING_OCTAVES * 0.5) - 1.0;
-        for (std::size_t index = 0; index < binCount; ++index) {
-            const float level = (std::norm(hannLeft[index]) + std::norm(hannRight[index])) * tier.levelScale;
-            if (level < SILENCE_LEVEL) {
-                continue;
-            }
-            const double frequency = static_cast<double>(firstBin + static_cast<int>(index)) * binWidth;
-            const auto reach = static_cast<std::size_t>(std::floor(frequency * smoothingRatio / binWidth));
-            const std::size_t firstNeighbour = index - std::min(index, reach);
-            const std::size_t lastNeighbour = std::min(binCount - 1, index + reach);
-            float leftPower = 0.0F;
-            float rightPower = 0.0F;
-            float crossPower = 0.0F;
-            for (std::size_t neighbour = firstNeighbour; neighbour <= lastNeighbour; ++neighbour) {
-                leftPower += std::norm(hannLeft[neighbour]);
-                rightPower += std::norm(hannRight[neighbour]);
-                crossPower += (hannLeft[neighbour] * std::conj(hannRight[neighbour])).real();
-            }
-            const float powerProduct = leftPower * rightPower;
-            points.push_back({
-                .frequency = static_cast<float>(frequency),
-                .reassignedFrequency = reassignedFrequencies[index],
-                .spacing = static_cast<float>(binWidth),
-                .position = positionFromMagnitudes(std::sqrt(leftPower), std::sqrt(rightPower), positionCurve),
-                .level = level,
-                .coherence = powerProduct > 0.0F ? crossPower / std::sqrt(powerProduct) : 1.0F,
-            });
-        }
+        appendSpectralPoints(firstBin, binCount, binWidth, tier.levelScale);
     }
     if (frameCallback) {
-        frameCallback(points, static_cast<double>(tier.hop) / sampleRate);
+        frameCallback(points, frame);
+    }
+}
+
+/// Builds finite display points from cached bin powers, preserving ascending neighbourhood summation order.
+void SpatialAnalyzer::appendSpectralPoints(
+    const int firstBin,
+    const std::size_t binCount,
+    const double binWidth,
+    const float levelScale
+)
+{
+    const double smoothingRatio = std::exp2(POSITION_SMOOTHING_OCTAVES * 0.5) - 1.0;
+    for (std::size_t index = 0; index < binCount; ++index) {
+        const float level = (leftPowers[index] + rightPowers[index]) * levelScale;
+        if (!std::isfinite(level) || level < SILENCE_LEVEL) {
+            continue;
+        }
+        const double frequency = static_cast<double>(firstBin + static_cast<int>(index)) * binWidth;
+        const auto reach = static_cast<std::size_t>(std::floor(frequency * smoothingRatio / binWidth));
+        const std::size_t firstNeighbour = index - std::min(index, reach);
+        const std::size_t lastNeighbour = std::min(binCount - 1, index + reach);
+        float leftPower = 0.0F;
+        float rightPower = 0.0F;
+        float crossPower = 0.0F;
+        for (std::size_t neighbour = firstNeighbour; neighbour <= lastNeighbour; ++neighbour) {
+            leftPower += leftPowers[neighbour];
+            rightPower += rightPowers[neighbour];
+            crossPower += crossPowers[neighbour];
+        }
+        const float powerProduct = leftPower * rightPower;
+        if (!std::isfinite(leftPower) || !std::isfinite(rightPower) || !std::isfinite(crossPower)
+            || !std::isfinite(powerProduct))
+        {
+            continue;
+        }
+        const float position = positionFromMagnitudes(std::sqrt(leftPower), std::sqrt(rightPower), positionCurve);
+        const float coherence = powerProduct > 0.0F ? crossPower / std::sqrt(powerProduct) : 1.0F;
+        if (!std::isfinite(position) || !std::isfinite(coherence)) {
+            continue;
+        }
+        points.push_back({
+            .frequency = static_cast<float>(frequency),
+            .reassignedFrequency = reassignedFrequencies[index],
+            .spacing = static_cast<float>(binWidth),
+            .position = position,
+            .level = level,
+            .coherence = std::clamp(coherence, -1.0F, 1.0F),
+        });
     }
 }
 

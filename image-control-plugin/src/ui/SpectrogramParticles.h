@@ -8,6 +8,7 @@
 #include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -76,6 +77,16 @@ struct SpectrogramParticle {
 [[nodiscard]] float contrastCurve(float share, float contrast);
 [[nodiscard]] float frequencyContrast(float frequency, float contrast);
 
+/// Reusable storage for one tier at a common analyzer deadline.
+struct PendingSpectralFrame {
+    /// Valid display points, retained until all tiers due at the deadline have arrived.
+    std::vector<SpectralPoint> points;
+    /// Tilted point levels, in dB, cached for reference selection and particle weighting.
+    std::vector<float> tiltedDecibels;
+    /// This tier's hop duration, retained independently of the common reference clock.
+    double frameSeconds {0.0};
+};
+
 /// Turns analyzed frames into particles and collects them until they are taken.
 /// Not thread safe. The analysis worker owns it.
 class SpectrogramParticleBuilder
@@ -86,29 +97,46 @@ public:
     [[nodiscard]] std::span<const SpectrogramParticle> particles() const noexcept;
     [[nodiscard]] float referenceLevel() const noexcept;
 
+    void addFrame(std::span<const SpectralPoint> points, const SpectralFrameInfo& frame);
     void addFrame(std::span<const SpectralPoint> points, double frameSeconds);
     void clear() noexcept;
     void resetLevel() noexcept;
-    void setContrast(double newContrast) noexcept;
+
     void setColours(SpectrogramColours newColours) noexcept;
+    void setContrast(double newContrast) noexcept;
     void setFrequencyScale(FrequencyScale newScale) noexcept;
     void setPersistence(double seconds) noexcept;
 
 private:
     [[nodiscard]] LinearColour pointColour(const SpectralPoint& point) const;
 
+    void appendParticles(const PendingSpectralFrame& frame);
+    void finishDeadline();
+
+    /// Pending tier frames, with reusable point storage.
+    std::array<PendingSpectralFrame, ANALYSIS_TIER_COUNT> pendingFrames;
+    /// Order in which tiers arrived at this deadline, preserved when their particles are emitted.
+    std::array<std::size_t, ANALYSIS_TIER_COUNT> pendingOrder {};
+    /// Latest tilted peak of each tier, retained until that tier reports again.
+    std::array<float, ANALYSIS_TIER_COUNT> tierPeaks {};
+
     /// The particles added since the last clear.
     std::vector<SpectrogramParticle> collected;
     /// Frequency colour of evenly spaced shares of the logarithmic frequency axis.
     std::vector<LinearColour> frequencyColours;
-    /// Tilted level of each point of the frame being added, in dB, kept to reuse its memory.
-    std::vector<float> tiltedDecibels;
     /// How new particles are coloured.
     SpectrogramColours colours {SpectrogramColours::frequency};
     /// How frequency maps onto the horizontal axis.
     FrequencyScale scale {FrequencyScale::logarithmic};
+
     /// Contrast of the level curve, from 0 for linear in dB to 1 for the steepest S-curve.
     double contrast {DEFAULT_CONTRAST_PERCENT / MAX_CONTRAST_PERCENT};
+    /// End time of the last complete deadline, used once for shared reference release.
+    double lastEndSeconds {0.0};
+    /// End time shared by the pending frames.
+    double pendingEndSeconds {0.0};
+    /// Number of pending tiers at this deadline.
+    std::size_t pendingCount {0};
     /// Time constant of the particle fade, in seconds, which scales the particle weight.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
     /// Auto-scale reference: the tilted level in dB that draws the brightest particles.

@@ -1198,6 +1198,152 @@ TEST(SpectrogramParticles, AutoScaleRisesAtOnceAndFallsSlowly)
     EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
 }
 
+TEST(SpectrogramParticles, SharedReleaseUsesAudioTimeOnceAcrossInterleavedTiers)
+{
+    SpectrogramParticleBuilder builder;
+    const std::array loud {point(1000.0F, 0.0F, 1.0F)};
+    const auto frame = [](const std::size_t tier, const double end, const bool last) {
+        return SpectralFrameInfo {.tierIndex = tier, .frameSeconds = 0.01, .endSeconds = end, .lastAtTime = last};
+    };
+    builder.addFrame(loud, frame(0, 0.0, true));
+    // A quieter replacement releases the retained loud tier. All other tiers also report silence.
+    for (std::size_t tier = 0; tier < ANALYSIS_TIER_COUNT; ++tier) {
+        builder.addFrame({}, frame(tier, 0.0, tier + 1 == ANALYSIS_TIER_COUNT));
+    }
+    for (int step = 1; step <= 100; ++step) {
+        const double end = static_cast<double>(step) * 0.01;
+        builder.addFrame({}, frame(4, end, false));
+        builder.addFrame({}, frame(5, end, true));
+    }
+    EXPECT_NEAR(builder.referenceLevel(), -12.0F, 1.0e-4F);
+}
+
+TEST(SpectrogramParticles, LoudTierPeakIsRetainedBetweenItsDeadlines)
+{
+    SpectrogramParticleBuilder builder;
+    const std::array loud {point(1000.0F, 0.0F, 1.0F)};
+    builder.addFrame(loud, SpectralFrameInfo {.tierIndex = 0, .frameSeconds = 0.04, .endSeconds = 0.04});
+    for (int step = 5; step <= 20; ++step) {
+        builder.addFrame({}, SpectralFrameInfo {.tierIndex = 5, .frameSeconds = 0.01, .endSeconds = step * 0.01});
+        EXPECT_FLOAT_EQ(builder.referenceLevel(), 0.0F);
+    }
+    builder.addFrame({}, SpectralFrameInfo {.tierIndex = 0, .frameSeconds = 0.04, .endSeconds = 0.24});
+    EXPECT_NEAR(builder.referenceLevel(), -0.48F, 1.0e-5F);
+}
+
+TEST(SpectrogramParticles, SimultaneousTierFramesShareOneReferenceRegardlessOfOrder)
+{
+    const std::array quiet {point(1000.0F, 0.0F, levelFromDecibels(-20.0F))};
+    const std::array loud {point(1000.0F, 0.0F, 1.0F)};
+    SpectrogramParticleBuilder quietFirst;
+    quietFirst.addFrame(
+        quiet, SpectralFrameInfo {.tierIndex = 0, .frameSeconds = 0.04, .endSeconds = 0.04, .lastAtTime = false}
+    );
+    EXPECT_TRUE(quietFirst.particles().empty());
+    quietFirst.addFrame(loud, SpectralFrameInfo {.tierIndex = 5, .frameSeconds = 0.01, .endSeconds = 0.04});
+    SpectrogramParticleBuilder loudFirst;
+    loudFirst.addFrame(
+        loud, SpectralFrameInfo {.tierIndex = 5, .frameSeconds = 0.01, .endSeconds = 0.04, .lastAtTime = false}
+    );
+    loudFirst.addFrame(quiet, SpectralFrameInfo {.tierIndex = 0, .frameSeconds = 0.04, .endSeconds = 0.04});
+    ASSERT_EQ(quietFirst.particles().size(), 2U);
+    ASSERT_EQ(loudFirst.particles().size(), 2U);
+    EXPECT_FLOAT_EQ(quietFirst.referenceLevel(), loudFirst.referenceLevel());
+    EXPECT_FLOAT_EQ(quietFirst.particles()[0].emphasis, loudFirst.particles()[1].emphasis);
+    EXPECT_FLOAT_EQ(brightness(quietFirst.particles()[0]), brightness(loudFirst.particles()[1]));
+    EXPECT_FLOAT_EQ(brightness(quietFirst.particles()[1]), brightness(loudFirst.particles()[0]));
+    // The same peak and emphasis still receive the weight of their own tier's hop.
+    SpectrogramParticleBuilder hopWeights;
+    hopWeights.addFrame(
+        loud, SpectralFrameInfo {.tierIndex = 0, .frameSeconds = 0.04, .endSeconds = 0.04, .lastAtTime = false}
+    );
+    hopWeights.addFrame(loud, SpectralFrameInfo {.tierIndex = 5, .frameSeconds = 0.01, .endSeconds = 0.04});
+    ASSERT_EQ(hopWeights.particles().size(), 2U);
+    EXPECT_NEAR(
+        brightness(hopWeights.particles()[0]) / brightness(hopWeights.particles()[1]),
+        (1.0 - std::exp(-0.04 / 0.04)) / (1.0 - std::exp(-0.01 / 0.04)),
+        1.0e-5
+    );
+}
+
+TEST(SpectrogramParticles, PhaseColoursCoverBothEndsTheMidpointAndClamp)
+{
+    SpectrogramParticleBuilder builder;
+    builder.setColours(SpectrogramColours::phase);
+    std::vector<SpectralPoint> points;
+    for (const float coherence : {-2.0F, -1.0F, 0.0F, 1.0F, 2.0F}) {
+        auto value = point(1000.0F, 0.0F, 1.0F);
+        value.coherence = coherence;
+        points.push_back(value);
+    }
+    builder.addFrame(points, FRAME_SECONDS);
+    const auto particles = builder.particles();
+    ASSERT_EQ(particles.size(), 5U);
+    const auto flash = static_cast<float>(1.0 - std::exp(-FRAME_SECONDS / 0.04));
+    constexpr std::array red {1.0F, 1.0F, 0.55F, 0.1F, 0.1F};
+    constexpr std::array green {0.07F, 0.07F, 0.26F, 0.45F, 0.45F};
+    constexpr std::array blue {0.1F, 0.1F, 0.55F, 1.0F, 1.0F};
+    for (std::size_t index = 0; index < particles.size(); ++index) {
+        EXPECT_NEAR(particles[index].red / flash, red[index], 1.0e-6F);
+        EXPECT_NEAR(particles[index].green / flash, green[index], 1.0e-6F);
+        EXPECT_NEAR(particles[index].blue / flash, blue[index], 1.0e-6F);
+    }
+}
+
+TEST(SpectrogramParticles, NonFiniteResultsAndInvalidGeometryAreDroppedWithoutPoisoningTheReference)
+{
+    SpectrogramParticleBuilder builder;
+    std::vector<SpectralPoint> invalid;
+    constexpr std::array members {
+        &SpectralPoint::frequency,
+        &SpectralPoint::reassignedFrequency,
+        &SpectralPoint::spacing,
+        &SpectralPoint::position,
+        &SpectralPoint::level,
+        &SpectralPoint::coherence,
+    };
+    for (const auto member : members) {
+        for (const float value : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+            auto result = point(1000.0F, 0.0F, 1.0F);
+            result.*member = value;
+            invalid.push_back(result);
+        }
+    }
+    invalid.push_back(point(0.0F, 0.0F, 1.0F));
+    invalid.push_back(point(1000.0F, 0.0F, -1.0F));
+    builder.addFrame(invalid, FRAME_SECONDS);
+    EXPECT_TRUE(builder.particles().empty());
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+    builder.addFrame(std::array {point(1000.0F, 0.0F, 1.0F)}, FRAME_SECONDS);
+    ASSERT_EQ(builder.particles().size(), 1U);
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), 0.0F);
+    EXPECT_TRUE(std::isfinite(brightness(builder.particles()[0])));
+}
+
+TEST(SpectrogramParticles, InvalidFrameTimesAndSettingsCannotPoisonLaterParticles)
+{
+    SpectrogramParticleBuilder builder;
+    const std::array points {point(1000.0F, 0.0F, 1.0F)};
+    for (const double invalid :
+         {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -1.0})
+    {
+        builder.addFrame(points, SpectralFrameInfo {.frameSeconds = invalid, .endSeconds = 0.1});
+        builder.addFrame(points, SpectralFrameInfo {.frameSeconds = 0.01, .endSeconds = invalid});
+    }
+    EXPECT_TRUE(builder.particles().empty());
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+    builder.setContrast(std::numeric_limits<double>::quiet_NaN());
+    builder.setPersistence(std::numeric_limits<double>::quiet_NaN());
+    builder.addFrame(points, FRAME_SECONDS);
+    ASSERT_EQ(builder.particles().size(), 1U);
+    EXPECT_TRUE(std::isfinite(brightness(builder.particles()[0])));
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), 0.0F);
+    builder.resetLevel();
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+    builder.addFrame({}, SpectralFrameInfo {.tierIndex = 5, .frameSeconds = 0.01, .endSeconds = 0.01});
+    EXPECT_FLOAT_EQ(builder.referenceLevel(), MIN_REFERENCE_DB);
+}
+
 TEST(SpectrogramParticles, LouderParticlesAreLarger)
 {
     SpectrogramParticleBuilder builder;
