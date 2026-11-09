@@ -42,6 +42,7 @@
 /cpp/build
 /cpp/Builds
 /cpp/cmake-build*
+/test-plugin/build/
 /test-plugin/cmake-build*
 /image-control-plugin/cmake-build*
 # Dependencies shared by the plugin builds, such as pluginval

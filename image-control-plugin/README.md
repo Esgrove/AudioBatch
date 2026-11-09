@@ -165,10 +165,12 @@ new particles add to the picture, older ones fade, and dense areas merge into br
   2048 samples up to 4 kHz, and 1024 samples the rest,
   so the bass is finely resolved and the highs stay sharp in time.
   Up to 640 Hz each length covers one octave and takes over where its length times the frequency is the same,
-  so a sine's main lobe covers about a fifth of an octave throughout, without widening where a shorter window takes over.
+  so a sine's main lobe covers about a fifth of an octave throughout,
+  without widening where a shorter window takes over.
   Both channels go through one complex transform, the left as the real part and the right as the imaginary part,
   which halves the transform work with JUCE's own FFT on Windows.
-  The frames are transformed unwindowed, and the periodic Hann window and its time derivative are applied to the spectrum,
+  The frames are transformed unwindowed,
+  and the periodic Hann window and its time derivative are applied to the spectrum,
   as three-tap filters two bins apart, so one transform gives both.
   The derivative reassigns each bin to the instantaneous frequency of its energy,
   and the particle is drawn there, so every bin of a sine's main lobe lands on the sine's frequency.

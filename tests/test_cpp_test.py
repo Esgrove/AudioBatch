@@ -268,5 +268,65 @@ exit "${TEST_CTEST_STATUS:-0}"
         assert len(self.commands()) == 3
 
 
+class SharedHelperReporting(unittest.TestCase):
+    """Keep progress paths portable across native macOS and Git Bash path tools."""
+
+    def test_file_list_does_not_require_gnu_realpath_options(self) -> None:
+        """Resolve spaced, parent-relative, external, and symlinked paths without GNU-only flags."""
+        temporary = tempfile.TemporaryDirectory(prefix="audiobatch-file-list-")
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name).resolve()
+        root = directory / "repository [with spaces]"
+        project = root / "cpp"
+        project.mkdir(parents=True)
+        shutil.copyfile(ROOT / "common.sh", root / "common.sh")
+        source = project / "Example.cpp"
+        source.touch()
+        external = directory / "external file.txt"
+        external.touch()
+        linked = directory / "linked repository"
+        linked.symlink_to(root, target_is_directory=True)
+        tools = directory / "tools"
+        tools.mkdir()
+        realpath = shutil.which("realpath")
+        bash = shutil.which("bash")
+        assert realpath is not None
+        assert bash is not None
+        wrapper = tools / "realpath"
+        wrapper.write_text(
+            '#!/bin/bash\ncase "$1" in -*) exit 97 ;; esac\nexec "$TEST_REALPATH" "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+        for working_directory, common, paths, expected in [
+            (root, root / "common.sh", [source], ["cpp/Example.cpp"]),
+            (project, root / "common.sh", [Path("../common.sh"), source], ["common.sh", "cpp/Example.cpp"]),
+            (root, root / "common.sh", [external], ["../external file.txt"]),
+            (linked, linked / "common.sh", [linked / "cpp/Example.cpp"], ["cpp/Example.cpp"]),
+        ]:
+            with self.subTest(working_directory=working_directory, paths=paths):
+                result = subprocess.run(  # noqa: S603
+                    [
+                        bash,
+                        "-c",
+                        'source "$1"; shift; print_file_list Checking "$@"',
+                        "test",
+                        str(common),
+                        *map(str, paths),
+                    ],
+                    cwd=working_directory,
+                    env=os.environ
+                    | {"PATH": os.pathsep.join([str(tools), os.environ["PATH"]]), "TEST_REALPATH": realpath},
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert result.stdout.splitlines() == [
+                    f"Checking [{index}/{len(expected)}] {path}" for index, path in enumerate(expected, start=1)
+                ]
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

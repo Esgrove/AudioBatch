@@ -55,10 +55,19 @@ print_file_list() {
     shift
     local total=$#
     local index=0
-    local file relative
+    local file relative directory prefix repository_root
+    repository_root=$(cd "$REPO_ROOT" && pwd -P)
     for file in "$@"; do
         index=$((index + 1))
-        relative=$(realpath --relative-to="$REPO_ROOT" "$file")
+        relative=$(realpath "$file")
+        directory=$repository_root
+        prefix=
+        while [[ "$relative" != "$directory/"* && "$directory" != / ]]; do
+            directory=${directory%/*}
+            directory=${directory:-/}
+            prefix="../$prefix"
+        done
+        relative="$prefix${relative#"${directory%/}/"}"
         printf '%s [%d/%d] %s\n' "$action" "$index" "$total" "${relative//\\//}"
     done
 }
