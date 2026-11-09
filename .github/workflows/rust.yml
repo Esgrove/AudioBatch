@@ -225,7 +225,11 @@ jobs:
       - name: Build native test plugin
         run: ../test-plugin/build.sh 2>&1 | tee target/rtsan/artifacts/native-plugin-build.log
 
-      # --diagnostic verifies specific known reports as BLOCKED while every clean gate remains required.
+      # First-party audio data callbacks must pass strictly, independently of native/error-ownership audits.
+      - name: Require clean first-party audio callbacks
+        run: ./rtsan.sh --skip-native --artifacts target/rtsan/artifacts/first-party 2>&1 | tee target/rtsan/artifacts/first-party.log
+
+      # --diagnostic verifies specific native dependency reports as BLOCKED, never clean callback passes.
       - name: Check callbacks and verify known blockers
         run: ./rtsan.sh --diagnostic 2>&1 | tee target/rtsan/artifacts/run.log
 

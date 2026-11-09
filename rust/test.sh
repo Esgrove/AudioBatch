@@ -114,5 +114,6 @@ case "$TIER" in
         require_command uv "uv not found in path, it runs the Python tooling tests"
         uv run --script scripts/test_parity.py
         uv run --script scripts/test_cli_benchmark.py
+        uv run --script ../tests/test_callback_benchmark.py
         ;;
 esac
