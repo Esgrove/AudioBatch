@@ -4,9 +4,10 @@
 # dependencies = ["numpy>=2.1", "soundfile>=0.12"]
 # ///
 """
-Generates stereo test signals for checking ImageControl's spatial spectrogram by eye, into test-signals/output.
+Generates deterministic stereo signals for ImageControl display checks and manual Width/Recover listening comparisons.
 
-Play them through the plugin in a host to see where each sound lands and how wide it draws.
+Play them through the plugin in a host to inspect stereo placement or compare processing settings.
+These are synthetic inputs, not listening-test results or evidence of lossless recovery.
 A pan here is the level difference between the channels in dB, with the louder channel at full level
 and the quieter one lowered by the difference, so the files show the stereo position curve directly.
 The 12 dB pans land half way to the edge at the default pan midpoint,
@@ -21,11 +22,19 @@ and the 32 dB pans nearly at the edge at the default pan edge.
   and fanned from left only at 40 Hz to right only at 10240 Hz.
 - white_<variant> and pink_<variant>: full spectrum noise with identical channels at the centre,
   independent channels, the left channel only, 12 dB left, and in anti-phase.
+- listening_reverb_like_<variant>: centred dry attacks with synthetic, decaying independent or pure-Side tails.
+- listening_pure_side_<variant>: anti-phase octave comb and logarithmic sweep, with no source Mid.
+- listening_phase_<variant>: quadrature channel pairs and Mid/Side quadrature mixtures of both signs,
+  including a Mid/Side equal-amplitude pair that stresses phase-dependent cancellation and peak addition.
+- listening_hard_<side>_transient_bass: decaying 55 Hz bursts and short broadband attacks in one channel only.
 
 The files are 48 kHz 32-bit float WAV, 10 seconds long, and every run writes the same samples.
 Files that already exist are kept, so run with --force to write them again.
+--group listening selects only the Width/Recover inputs, and --output chooses a different directory.
+Compare Recover Off/on below Width 1, then check Delta, Mono, and output peaks.
+Both signs of the adversarial pair and both hard-pan directions matter because recovery is not L/R-swap invariant.
 
-Usage: uv run --script image-control-plugin/test-signals/generate.py [--force]
+Usage: uv run --script image-control-plugin/test-signals/generate.py [--force] [--group listening] [--output PATH]
 """
 
 from __future__ import annotations
@@ -54,6 +63,15 @@ COMB_FREQUENCIES = [40.0 * 2.0**octave for octave in range(9)]
 # Gain changes between the pan steps ramp over this long, so the steps do not click.
 STEP_RAMP_SECONDS = 0.01
 SEED = 20_261_108
+LISTENING_PEAK_DB = -12.0
+LISTENING_TONE_GAIN_DB = -30.0
+PHASE_FREQUENCIES = (80.0, 380.0, 2400.0, 11_000.0)
+BURST_TIMES_SECONDS = (0.5, 3.0, 5.5, 8.0)
+REVERB_DECAY_SECONDS = 0.6
+BASS_DECAY_SECONDS = 0.22
+DRY_DECAY_SECONDS = 0.015
+TRANSIENT_DECAY_SECONDS = 0.008
+ATTACK_SECONDS = 0.003
 
 
 @dataclass(frozen=True)
@@ -160,8 +178,8 @@ def noise_variants(name: str, make: Callable[[np.random.Generator], np.ndarray],
     }
 
 
-def signals() -> dict[str, np.ndarray]:
-    """Returns every test signal by its file name without the extension."""
+def spatial_signals() -> dict[str, np.ndarray]:
+    """Returns the original spatial-display inputs, without changing their samples or names."""
     one_kilohertz = sine(1000.0, SINE_GAIN_DB)
     ninety = sine(90.0, SINE_GAIN_DB)
     hard_alternating = [level_difference(np.inf, "L" if index % 2 == 0 else "R") for index in range(9)]
@@ -184,25 +202,106 @@ def signals() -> dict[str, np.ndarray]:
     }
 
 
+def from_mid_side(mid: np.ndarray, side: np.ndarray) -> np.ndarray:
+    """Decodes source Mid and Side without a gain-compensating normalization."""
+    return np.stack([mid + side, mid - side], axis=1)
+
+
+def listening_level(audio: np.ndarray) -> np.ndarray:
+    """Sets input peak headroom only, preserving channel ratios and phase, not matching processed loudness."""
+    peak = float(np.max(np.abs(audio)))
+    return audio * gain(LISTENING_PEAK_DB) / peak if peak > 0.0 else audio
+
+
+def burst_envelope(decay_seconds: float) -> np.ndarray:
+    """Returns repeated exponential decays with short smooth onsets and a quiet final tail."""
+    time = time_axis()
+    envelope = np.zeros(SAMPLES)
+    for onset in BURST_TIMES_SECONDS:
+        elapsed = np.maximum(time - onset, 0.0)
+        attack = np.minimum(elapsed / ATTACK_SECONDS, 1.0)
+        envelope += attack**2 * np.exp(-elapsed / decay_seconds)
+    return envelope
+
+
+def reverb_like_signals() -> dict[str, np.ndarray]:
+    """Builds synthetic diffuse decays around centred attacks, without modeling a measured room."""
+    tail = burst_envelope(REVERB_DECAY_SECONDS)
+    attack = burst_envelope(DRY_DECAY_SECONDS)
+    dry = attack * (sine(220.0, SINE_GAIN_DB) + sine(1760.0, SINE_GAIN_DB))
+    left = pink_noise(np.random.default_rng(SEED + 10))
+    right = pink_noise(np.random.default_rng(SEED + 11))
+    side = pink_noise(np.random.default_rng(SEED + 12))
+    return {
+        "listening_reverb_like_stereo": listening_level(np.stack([dry + tail * left, dry + tail * right], axis=1)),
+        "listening_reverb_like_side_tail": listening_level(from_mid_side(dry, tail * side)),
+    }
+
+
+def phase_signals() -> dict[str, np.ndarray]:
+    """Builds quadrature mixtures of both signs and amplitudes to expose phase-dependent recovery limits."""
+    phase = 2.0 * np.pi * np.asarray(PHASE_FREQUENCIES)[:, np.newaxis] * time_axis()
+    in_phase = gain(LISTENING_TONE_GAIN_DB) * np.sum(np.sin(phase), axis=0)
+    quadrature = gain(LISTENING_TONE_GAIN_DB) * np.sum(np.cos(phase), axis=0)
+    return {
+        "listening_phase_channel_quadrature": listening_level(np.stack([in_phase, quadrature], axis=1)),
+        "listening_phase_channel_quadrature_swapped": listening_level(np.stack([quadrature, in_phase], axis=1)),
+        "listening_phase_mid_side_plus": listening_level(from_mid_side(quadrature, in_phase)),
+        "listening_phase_mid_side_minus": listening_level(from_mid_side(-quadrature, in_phase)),
+        "listening_phase_mid_side_half_plus": listening_level(from_mid_side(quadrature * 0.5, in_phase)),
+        "listening_phase_mid_side_half_minus": listening_level(from_mid_side(-quadrature * 0.5, in_phase)),
+    }
+
+
+def listening_signals() -> dict[str, np.ndarray]:
+    """Returns deterministic manual-comparison inputs, not a claim that any listening evaluation has been performed."""
+    bass = burst_envelope(BASS_DECAY_SECONDS) * sine(55.0, SINE_GAIN_DB)
+    transient = burst_envelope(TRANSIENT_DECAY_SECONDS) * white_noise(np.random.default_rng(SEED + 13))
+    hard = listening_level(bass + transient)
+    pure_side = Pan("side", 1.0, -1.0)
+    return {
+        **reverb_like_signals(),
+        "listening_pure_side_comb": listening_level(comb([pure_side] * len(COMB_FREQUENCIES))),
+        "listening_pure_side_sweep": place(log_sweep(LISTENING_PEAK_DB), pure_side),
+        **phase_signals(),
+        **{f"listening_hard_{side}_transient_bass": place(hard, level_difference(np.inf, side)) for side in ("L", "R")},
+    }
+
+
+def signals(group: str = "all") -> dict[str, np.ndarray]:
+    """Returns the selected collection, keeping the original spatial signals unchanged."""
+    result = spatial_signals() if group in ("all", "spatial") else {}
+    if group in ("all", "listening"):
+        result.update(listening_signals())
+    return result
+
+
 def main() -> None:
-    """Writes every test signal that does not exist yet, or all of them with --force."""
+    """Writes selected inputs that do not exist yet, or replaces them with --force."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--force", action="store_true", help="write the files again even when they exist")
+    parser.add_argument(
+        "--group", choices=("all", "spatial", "listening"), default="all", help="select the input collection"
+    )
+    parser.add_argument("--output", type=Path, default=OUTPUT_DIRECTORY, help="directory for generated WAV files")
     arguments = parser.parse_args()
 
-    OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    arguments.output.mkdir(parents=True, exist_ok=True)
     written = 0
-    for name, audio in signals().items():
-        path = OUTPUT_DIRECTORY / f"{name}.wav"
+    for name, audio in signals(arguments.group).items():
+        path = arguments.output / f"{name}.wav"
         if path.exists() and not arguments.force:
             continue
+        if audio.shape != (SAMPLES, 2) or not np.all(np.isfinite(audio)):
+            message = f"{name} has an invalid stereo shape or non-finite samples"
+            raise ValueError(message)
         peak = float(np.max(np.abs(audio)))
         if peak > 1.0:
             message = f"{name} peaks at {peak:.3f}, above full scale"
             raise ValueError(message)
         sf.write(path, audio.astype(np.float32), SAMPLE_RATE, subtype="FLOAT")
         written += 1
-    print(f"Wrote {written} test signals to {OUTPUT_DIRECTORY}")
+    print(f"Wrote {written} test signals to {arguments.output}")
 
 
 if __name__ == "__main__":

@@ -75,10 +75,19 @@ Neither worker uses timeout-based forcible termination.
 
 ## Host parameters and controls
 
-APVTS owns three crossover parameters and each band's Mid, Side, Pan, and Solo parameters,
+APVTS owns three crossover parameters and each band's Mid, Side, Width, Recover, Pan, and Solo parameters,
 plus output gain, Bypass, Delta, and Mono.
 Version hints distinguish parameter generations for hosts that use ordering hints, including Audio Unit hosts.
 Existing IDs and version hints are persistence and automation contracts, not refactoring details.
+The Width parameters append with version hint 6 after the existing Mono generation at hint 5,
+then the Recover parameters append with hint 7.
+Width ranges from 0 to 2 and defaults to 1. Recover ranges from 0% to 100% and defaults to 0% Off.
+`widthParameterId(band)` and `recoverParameterId(band)` name `band1_width` through `band4_width`
+and `band1_recover` through `band4_recover`.
+All four Width parameters follow Mono, then all four Recover parameters, preserving every existing host index.
+Width uses steps of 0.01 and Recover uses steps of 0.1 percentage points.
+The processor passes `BandWidths` to `setWidths` and converts host percentages to linear `BandRecoveries` for `setRecoveries`.
+Both controls use the same processing path for real-time and offline automation.
 
 The private `FiniteParameter` implementation preserves the declared ranges and host metadata.
 It rejects non-finite direct values and invalid text while retaining the previous value.
@@ -91,10 +100,11 @@ The processor, DSP, and editor use the same ordering helper.
 Host parameters are sampled by block, and DSP changes take effect at convolution partition boundaries with smoothing.
 The plugin does not implement a separate sample-accurate VST3 parameter-queue engine.
 
-Width is an editor macro, not a second parameter competing with Side automation.
-It expresses Side gain relative to Mid, and editing it writes the Side parameter.
-The normal track spans 0 to 2, but the numeric and accessible values retain larger ratios caused by independent gains.
-Link is persisted editor behavior that moves Side with a user Mid gesture, not with incoming host Mid automation.
+Width and Recover use their own APVTS slider attachments, not a gain-derived Width macro.
+Recover sits beneath Width, displays 0% as Off, and contributes audio only below Width 1.
+Width remains available with Mid Off. Side Off prevents recovery, while Mid Off mutes only source Mid.
+Link is persisted editor behavior that moves Side with a user Mid gain gesture, not incoming host automation.
+It does not link or rewrite Width and Recover.
 Gesture ownership is captured at pointer-down so Link changes or teardown cannot unbalance begin/end notifications.
 
 ## Audio signal flow
@@ -108,9 +118,24 @@ For stereo input, the imaging representation is
 M = (L + R) / 2, \qquad S = (L - R) / 2.
 \]
 Each signal is divided into four complementary bands.
-Band Mid and Side gains are applied independently, followed by reconstruction into left and right,
-then per-band Pan and Solo contribution, summation, and output gain.
-Mono input uses the Mid path and ignores Pan.
+Source Mid and Side gains are applied before Width/Recover, followed by reconstruction into left and right,
+then per-band Pan and Solo contribution, summation, output gain, Delta, the global Mono fold, and the Post tap.
+For a band with source trims \(g_M\) and \(g_S\), Width \(w\), and linear Recover \(r\),
+\[
+M' = g_M M + r\max(0, 1-w)g_S Q(S), \qquad S' = w g_S S.
+\]
+Here \(Q(S)\) is the band's finite quadrature-rotated Side signal aligned with its ordinary Mid and Side.
+The recovery coefficient follows removed waveform amplitude, not removed power.
+At Width 0.5 and Recover 100%, it adds half of the phase-rotated, source-trimmed Side into Mid.
+There is no square-root power-transfer law, signal-dependent gain compensation, or automatic center boost.
+Recovery is independently controlled and defaults to off, rather than being inferred from gain ratios.
+Side Off removes both ordinary and recovered Side. Mid Off removes source Mid but leaves recovered content.
+Width 0 eliminates ordinary Side before Pan, Width 1 preserves it, and Width 2 doubles it after the source trim.
+Recover has no effect at or above Width 1.
+The global Mono parameter does not activate recovery or change Width.
+It folds whatever the band processing produces, so recovery must be enabled on a narrowed band to preserve its contribution.
+A stereo source with identical channels has no Side to recover, and these controls do not synthesize new stereo content.
+Mono input uses the Mid path and ignores Width, Recover, and Pan.
 Only matching mono-to-mono and stereo-to-stereo main bus layouts are supported.
 
 Pan transfers signal rather than simply attenuating one channel.
@@ -122,7 +147,9 @@ Leftward pan mirrors this operation.
 A fully panned shared signal can therefore peak 6 dB higher in the receiving channel.
 The processor neither limits nor clips floating-point output to prevent that boost.
 
-Gain, Pan, Solo, output gain, Delta, and Mono transitions use linear 20 ms ramps.
+Gain, Width, Recover, Pan, Solo, output gain, Delta, and Mono transitions use linear 20 ms ramps.
+Preparation and reset read the current parameter targets before settling the imager smoothers,
+so saved recovery applies even to the first FIR pre-ring rather than starting a fresh callback ramp.
 When all Pans are centered, the mixer sums Mid and Side bands separately and reconstructs once.
 Otherwise it reconstructs and pans each band before summing.
 
@@ -145,13 +172,57 @@ Three lowpass outputs \(F_0\), \(F_1\), and \(F_2\), together with the input del
 Their algebraic sum is the delayed input, independent of crossover placement.
 A separate neutral shortcut preserves bit-exact output rather than relying on floating-point cancellation.
 
+### Finite quadrature recovery
+
+Recovery uses odd-length, Type III antisymmetric FIRs with the same half-length \(H\) as the ordinary crossover kernels.
+`designQuadratureKernel` samples an imaginary spectrum on the same four-times-half-length FFT grid.
+Positive-frequency bins contain minus the target magnitude, conjugate negative-frequency bins contain plus the magnitude,
+and the DC and Nyquist bins are zero.
+The lowpass target is the ordinary crossover magnitude, while the fullband target is unity between the endpoints.
+After inverse transformation and centering, the designer projects mirrored tap pairs onto exact antisymmetry,
+applies the shared Blackman-Harris window, and stores each float tap with its exact negative partner.
+The center tap stays zero. There is no DC normalization, because the quadrature impulse has zero sum.
+Relative to the common delay, the useful positive-frequency response is approximately minus 90 degrees:
+a cosine becomes a sine, and a sine becomes a negative cosine.
+
+The design produces three quadrature lowpass kernels and a fullband quadrature kernel.
+Its low band is the first quadrature lowpass.
+The middle bands are differences of neighboring quadrature lowpasses.
+The high band is the fullband quadrature output minus the highest quadrature lowpass.
+Their algebraic sum is the fullband quadrature output, not the delayed original Side.
+The ordinary and quadrature Side kernels read the same raw Side spectral history.
+The quadrature branch does not filter an already filtered or delayed band, so it is not a cascaded Hilbert stage.
+Its fixed finite support adds no extra convolution delay or tail beyond the existing \(H+P\) latency and \(H/f_s\) tail.
+
+Antisymmetry makes the quadrature response zero at DC and Nyquist.
+The fullband filter tests bound gain error to 0.00055 from unity on logarithmic 20 Hz to 20 kHz grids,
+with additional 20, 21, 25, and 30 Hz probes at 44.1, 48, 88.2, 96, 176.4, and 192 kHz.
+The centered response remains quadrature within a real-component tolerance of 1e-12 on those probes.
+These are sampled response bounds, not a continuous-frequency proof or a perceptual preservation guarantee.
+The lowest legal 20 Hz crossover retains its finite transition and is not normalized as an ordinary DC-passing lowpass.
+Finite-band quadrature is not lossless recovery, loudness matching, automatic gain compensation, or a peak limiter.
+For arbitrary source phases, recovered Side can cancel with source Mid or add to it and raise peaks.
+Quadrature reduces the channel bias of direct addition, where full \(M+S\) recovery would simply select the original Left.
+It does not make arbitrary Mid and Side signals orthogonal or preserve their combined power.
+The overlapping crossover bands are amplitude-complementary, not an orthogonal energy decomposition.
+Recovery is not invariant under swapping L/R, which reverses Side while leaving Mid unchanged.
+Global polarity inversion remains consistent with the linear signal law for fixed controls.
+
 ### Partitioned convolution and latency
 
 [`PartitionedConvolver.cpp`](src/dsp/PartitionedConvolver.cpp) implements uniform overlap-save convolution.
 The processing partition \(P\) is 256 samples and the transform size is \(2P=512\).
 Each kernel partition is zero-padded and transformed once during kernel design.
 Each Mid or Side input partition is transformed together with the previous partition and retained in a spectral ring.
-All three filters reuse that input transform and history.
+All three ordinary filters reuse that input transform and history.
+The three quadrature lowpasses and fullband quadrature kernel reuse the raw Side history as parallel filters.
+`isRecoveryActive` checks current and target Width/Recover ramps before deciding whether outputs are required.
+This includes fades into and out of recovery, rather than only the settled parameter values.
+If any stereo band can recover, `convolvePartition` computes all three quadrature lowpasses and the fullband reference.
+Selecting fewer bands changes their mix coefficients but does not currently prune individual recovery kernels.
+When recovery is inactive, all four extra output convolutions are skipped while raw Side history stays warm.
+Activation therefore needs no second filter warmup, and neither meter visibility nor an open editor enables this DSP.
+The exact-neutral shortcut still advances inactive Recover ramps, preserving later automation behavior.
 
 For each filter, the convolver multiplies kernel partitions by appropriately delayed input spectra and accumulates them.
 The inverse transform's second half is the next causal output partition.
@@ -171,12 +242,15 @@ Tail reporting remains conservative regardless of current gains or solos.
 
 Crossover requests are published as three atomic values protected by an even/odd sequence counter.
 The design thread retries until it reads one complete request rather than a mixture of requests.
-It builds new `KernelSpectra` in the inactive slot and publishes `switchPending` with release semantics.
+It builds the ordinary and quadrature `KernelSpectra` together in the inactive slot
+and publishes `switchPending` with release semantics.
 
 At a processing partition boundary, the audio thread acquires the publication,
 convolves the same input history with both kernel slots,
-and crossfades their outputs over one partition.
-After both Mid and Side finish, it publishes the active slot and releases the old slot for later redesign.
+and crossfades ordinary and quadrature outputs coherently over one partition.
+All ordinary and recovered band differences use the same active-slot publication and fade progression.
+After Mid, Side, and any active recovery outputs finish, it publishes the active slot
+and releases the old slot for later redesign.
 The callback swaps indices rather than moving or destroying allocated spectra.
 
 With `isNonRealtime()` set by the host, the calling processing thread designs moved crossovers synchronously.
@@ -188,16 +262,19 @@ It is not a real-time-safe mode switch policy for a host that mislabels its call
 ### Transparency, bypass, Delta, and Mono
 
 Once neutral controls settle, the imager copies delayed original channel samples directly.
+Neutrality includes unity Width and no effective recovery contribution, as well as unity gains and centered Pans.
+Recover alone at Width 1 or above does not make a contribution.
 It still advances convolution history, including during kernel replacements,
 so later processing changes have a warm filter history.
 Exact neutral Delta clears the output partition rather than reconstructing a nearly zero difference.
 These shortcuts also operate during crossover crossfades.
 
-Bypass supplies unity gains, centered Pans, all bands audible, and Delta off through the same ramps.
+Bypass supplies unity source gains, unity Width, Recover off, centered Pans, all bands audible,
+and Delta off through the same ramps.
 It does not skip processing or change latency.
 Both the exposed host bypass parameter and `processBlockBypassed` use this path.
 
-Delta subtracts an aligned dry reference from the gain-adjusted result.
+Delta subtracts an aligned ordinary dry reference from the processed result, including Width/Recover.
 With solos active, its dry reference contains only the selected bands.
 Mono runs last in `ImageControlProcessor`, before the Post analyzer tap.
 It smoothly folds the full processed output to \((L+R)/2\) in both channels, including after Delta or bypass.
@@ -208,9 +285,10 @@ Pre analysis remains the unprocessed input.
 
 ## Per-band correlation
 
-[`BandCorrelation`](src/dsp/BandCorrelation.h) measures each processed band's stereo signal after Mid/Side, Solo, and Pan,
+[`BandCorrelation`](src/dsp/BandCorrelation.h) measures each processed band's stereo signal
+after source trims, Width/Recover, Solo, and Pan,
 before global Delta and Mono processing.
-It reuses the existing lowpass outputs and copies control smoothers for observation,
+It reuses the existing ordinary and quadrature outputs and copies control smoothers for observation,
 without advancing the audio path's ramps or adding another filter bank.
 The measured values do not depend on the spectrogram's Pre/Post selection.
 
@@ -324,7 +402,8 @@ Large refresh gaps are capped for visual animation and fade progression.
 `SpatialSpectrogramView` paints axes, grids, band regions, response guides, crossover lines, and status text.
 Its separate `SpatialSpectrogramViewInput.cpp` owns hit testing and parameter gestures.
 The plot itself is left unpainted so the GPU image beneath the components remains visible.
-`BandStrip` owns APVTS slider/button attachments and Width/Link gesture behavior.
+`BandStrip` owns APVTS slider/button attachments, including independent Width and Recover sliders,
+and gain-only Link gesture behavior.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
 
@@ -361,6 +440,8 @@ Live analysis, meter history, and GPU contents are not persisted.
 Mono is persisted with the other audio parameters.
 Missing editor properties restore from deterministic defaults, independently of the instance's previous edits.
 Missing audio parameters use their declared defaults through APVTS.
+Older states without Width or Recover load unity Width and Recover Off, preserving their existing gain-driven sound.
+There is no gain-derived Width migration, so unequal saved Mid/Side gains remain independent source trims.
 
 The live editor `ValueTree`, its retained copies, and bound `juce::Value` objects belong exclusively to the message thread.
 Host state callbacks use a detached binary editor snapshot under `editorStateMutex`.
@@ -390,6 +471,14 @@ The suites cover arbitrary blocks and sample rates, endpoint tails, Mono/Delta/b
 correlation, FIFO wrap and generation changes, interrupted gestures,
 state migration, and concurrent host state callbacks.
 Accessibility checks use native component peers, without screenshot assertions.
+[CrossoverTests.cpp](tests/CrossoverTests.cpp) checks quadrature taps against independent analytical expectations.
+It uses sine sums and cotangent impulses.
+It also measures endpoint zeros, sampled response, and complementary recovery bands.
+[RecoveryTests.cpp](tests/RecoveryTests.cpp) checks analytical signal laws, source trims, arbitrary blocks, ramps,
+warm activation, crossover handoffs, reset, finite tails, polarity, and adversarial cancellation.
+Host and control tests cover parameter indices, old-state defaults, headless real-time/offline processing,
+Post analysis, independent gestures, and initialization from the first FIR pre-ring.
+These numerical contracts do not establish the subjective sound of recovered reverb or transient detail.
 
 `cmake/Verification.cmake` adds plugin-specific sanitizer or source-coverage instrumentation.
 CI runs Debug and Release on macOS and Windows, pinned pluginval validation,
@@ -399,6 +488,16 @@ The current unit environment exercises little of the renderer's actual GPU drawi
 
 `ImageControlBenchmark` separates full callback distributions from isolated imager, analysis, particle, and overlay costs.
 It varies rates, block sizes, processing modes, correlation, analysis load, and paced crossover requests.
+The original workloads explicitly set Width 1 and Recover Off.
+Matched narrowed workloads compare recovery Off, selected bands, and all bands,
+with correlation and analysis variants and paced moving-crossovers cases.
+Direct imager probes retain the original centered/panned workloads and add the same recovery comparisons.
+An isolated batched setter probe measures unchanged and changing `setWidths`/`setRecoveries` pairs,
+excluding the untimed processing used to advance ramps and observe results.
+These probes are observations, not performance improvement evidence without a matched baseline.
+`test-signals/generate.py --group listening` supplies deterministic synthetic decays, pure-Side sweeps/combs,
+phase/adversarial pairs of both signs, and left/right hard-panned transients with bass for manual comparisons.
+Those generated inputs do not establish that any listening evaluation has taken place.
 Reported p50/p95/p99/max values describe observed callback work, not an audio-device scheduling guarantee.
 GPU drawing, native compositor work, and physical device deadlines are outside those CPU measurements.
 The VST3/AU comparison benchmark instead measures end-to-end CLI rendering and validates every 16-bit PCM output.

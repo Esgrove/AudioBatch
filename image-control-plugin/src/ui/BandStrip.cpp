@@ -1,5 +1,5 @@
 /// Implements BandStrip: the slider setup and layout,
-/// and the Width and Link behaviour that writes the Side parameter inside host change gestures.
+/// its independent Width and Recover attachments, and Link's balanced Side-trim host gestures.
 /// Also implements live correlation readouts, bounded time-based history, and layered meter indicators.
 
 #include "ui/BandStrip.h"
@@ -76,16 +76,16 @@ constexpr int HEADER_SLIDER_GAP {16};
 constexpr int MARGIN {10};
 /// Corner radius of the strip background, in pixels.
 constexpr float CORNER_RADIUS {6.0F};
-/// Number of slider rows: Mid, Side, Width, and Pan.
-constexpr int SLIDER_ROWS {4};
-/// Width below which Side is turned off rather than set to a very low gain.
-constexpr double MONO_WIDTH {0.001};
+/// Number of slider rows: Mid, Side, Width, Recover, and Pan.
+constexpr int SLIDER_ROWS {5};
 /// Font height of the band name.
 constexpr float NAME_FONT_HEIGHT {16.0F};
 /// Font height of the band range and the slider labels.
 constexpr float LABEL_FONT_HEIGHT {14.0F};
-/// Step of the Width slider.
-constexpr double WIDTH_STEP {0.01};
+/// Width change per mouse wheel step.
+constexpr double WIDTH_WHEEL_STEP {0.01};
+/// Recovery change per mouse wheel step, in percent.
+constexpr double RECOVER_WHEEL_STEP_PERCENT {1.0};
 /// Change of the Pan slider per mouse wheel step, in percent.
 constexpr double PAN_WHEEL_STEP {1.0};
 /// Side of the square box the headphone icon of the Solo button is drawn in, in icon units.
@@ -382,7 +382,7 @@ std::unique_ptr<juce::AccessibilityHandler> BandCorrelationMeter::createAccessib
     );
 }
 
-/// Creates the controls of a band, attaches Mid, Side, Pan, and Solo to their parameters,
+/// Creates the controls of a band, attaches Mid, Side, Width, Recover, Pan, and Solo to their parameters,
 /// and binds Link to the editor settings.
 BandStrip::BandStrip(
     juce::AudioProcessorValueTreeState& parameters,
@@ -415,26 +415,26 @@ BandStrip::BandStrip(
     );
 
     configureSlider(widthSlider, widthLabel, "Width");
-    // The numerical range includes every gain ratio, while the track and user edits saturate at two.
-    const double largestWidth
-        = juce::Decibels::decibelsToGain(static_cast<double>(BAND_GAIN_MAX_DB - BAND_GAIN_MIN_DB));
-    widthSlider.setRange(0.0, largestWidth, WIDTH_STEP);
-    widthSlider.setInteractionMaximum(MAX_STEREO_WIDTH);
-    widthSlider.setWheelStep(WIDTH_STEP);
+    widthSlider.setWheelStep(WIDTH_WHEEL_STEP);
     widthSlider.setTooltip(
-        "Side relative to mid: 0 is mono, 1 leaves the stereo image as it is, and 2 doubles the side"
+        "Independent side multiplier after Mid and Side trims: 0 is mono, 1 is unchanged, and 2 doubles Side. "
+        "Double-click to reset"
     );
     widthSlider.setDoubleClickReturnValue(true, 1.0);
-    widthSlider.onDragStart = [this] {
-        draggingWidth = true;
-        sideParameter.beginChangeGesture();
-    };
-    widthSlider.onDragEnd = [this] {
-        sideParameter.endChangeGesture();
-        draggingWidth = false;
-    };
-    widthSlider.onValueChange = [this] { applyWidth(); };
-    addAndMakeVisible(widthSlider);
+    widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters, widthParameterId(band), widthSlider
+    );
+
+    configureSlider(recoverSlider, recoverLabel, "Recover");
+    recoverSlider.setWheelStep(RECOVER_WHEEL_STEP_PERCENT);
+    recoverSlider.setTooltip(
+        "Mix phase-rotated removed Side detail into Mid. Only works with Width below 1. "
+        "Side off disables the recovery source. Mid off can still retain recovered Side. Double-click to turn off"
+    );
+    recoverSlider.setDoubleClickReturnValue(true, 0.0);
+    recoverAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        parameters, recoverParameterId(band), recoverSlider
+    );
 
     configureSlider(panSlider, panLabel, "Pan");
     panSlider.setDoubleClickReturnValue(true, 0.0);
@@ -445,7 +445,9 @@ BandStrip::BandStrip(
     );
 
     linkButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(linkPropertyName(band), nullptr));
-    linkButton.setTooltip("Dragging Mid moves Side by the same amount, keeping the width");
+    linkButton.setTooltip(
+        "Dragging Mid moves only the Side trim by the same amount. Width and Recover stay independent"
+    );
     addAndMakeVisible(linkButton);
 
     const auto offIcon = headphoneIcon(juce::Colour(palette::GREY_MIDDLE_LIGHT));
@@ -492,22 +494,19 @@ BandStrip::BandStrip(
             );
             setSideValue(sideParameter, static_cast<float>(side), true);
         }
-        updateWidthFromGains();
     };
-    sideSlider.onValueChange = [this] { updateWidthFromGains(); };
 
-    for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider}) {
+    for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider, &recoverSlider}) {
         slider->setTitle(bandName(band) + " " + slider->getName());
     }
     soloButton.setTitle(bandName(band) + " Solo");
     linkButton.setTitle(bandName(band) + " Link");
-    updateWidthFromGains();
 }
 
 /// Closes active gestures and detaches the sliders before they are destroyed.
 BandStrip::~BandStrip()
 {
-    for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider}) {
+    for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider, &recoverSlider}) {
         slider->endDrag();
         slider->onDragStart = nullptr;
         slider->onDragEnd = nullptr;
@@ -516,6 +515,8 @@ BandStrip::~BandStrip()
     midAttachment.reset();
     sideAttachment.reset();
     panAttachment.reset();
+    widthAttachment.reset();
+    recoverAttachment.reset();
     soloAttachment.reset();
 }
 
@@ -527,7 +528,7 @@ void BandStrip::paint(juce::Graphics& graphics)
 }
 
 /// Lays out the name, Solo, and Link in the header row, the range below them,
-/// a gap that uses the spare height up to 16 pixels, and the Mid, Side, Width, and Pan sliders below it at full width,
+/// a gap that uses the spare height up to 16 pixels, and the Mid, Side, Width, Recover, and Pan sliders at full width,
 /// each with its label above it. The slider rows share the remaining height evenly.
 void BandStrip::resized()
 {
@@ -546,6 +547,7 @@ void BandStrip::resized()
         std::pair {&midLabel, &midSlider},
         std::pair {&sideLabel, &sideSlider},
         std::pair {&widthLabel, &widthSlider},
+        std::pair {&recoverLabel, &recoverSlider},
         std::pair {&panLabel, &panSlider},
     };
     static_assert(rows.size() == SLIDER_ROWS);
@@ -562,21 +564,6 @@ void BandStrip::setRangeText(const juce::String& text)
     rangeLabel.setText(text, juce::dontSendNotification);
 }
 
-/// Sets Side from the Width macro: Mid plus 20 · log10(width) dB, or off at width 0.
-/// A drag or key nudge of the Width slider is one host gesture, and any other change, such as a double-click reset,
-/// is its own.
-void BandStrip::applyWidth()
-{
-    const double width = widthSlider.getValue();
-    const double side = width < MONO_WIDTH ? static_cast<double>(BAND_GAIN_MIN_DB)
-                                           : std::clamp(
-                                                 midSlider.getValue() + juce::Decibels::gainToDecibels(width),
-                                                 static_cast<double>(BAND_GAIN_MIN_DB),
-                                                 static_cast<double>(BAND_GAIN_MAX_DB)
-                                             );
-    setSideValue(sideParameter, static_cast<float>(side), draggingWidth);
-}
-
 /// Sets up a full-width horizontal slider with its value box on the right and its label above it.
 void BandStrip::configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text)
 {
@@ -590,14 +577,4 @@ void BandStrip::configureSlider(ControlSlider& slider, juce::Label& label, const
     addAndMakeVisible(label);
 }
 
-/// Shows the actual width from Mid and Side without writing it back, even when it exceeds the track's range.
-/// Width cannot be set while Mid is off, so the slider is disabled then.
-void BandStrip::updateWidthFromGains()
-{
-    const double mid = midSlider.getValue();
-    const bool midOff = mid <= static_cast<double>(BAND_GAIN_MIN_DB);
-    widthSlider.setEnabled(!midOff);
-    const double width = midOff ? 0.0 : bandWidthFromGains(mid, sideSlider.getValue());
-    widthSlider.setValue(width, juce::dontSendNotification);
-}
 }  // namespace esgrove::image_control

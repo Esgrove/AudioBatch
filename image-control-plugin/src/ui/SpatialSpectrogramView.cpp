@@ -224,9 +224,10 @@ SpatialSpectrogramView::SpatialSpectrogramView(
         midParameters.at(band) = parameters.getParameter(midGainParameterId(band));
         sideParameters.at(band) = parameters.getParameter(sideGainParameterId(band));
         soloParameters.at(band) = parameters.getParameter(soloParameterId(band));
+        widthParameters.at(band) = parameters.getParameter(widthParameterId(band));
         jassert(
             midParameters.at(band) != nullptr && sideParameters.at(band) != nullptr
-            && soloParameters.at(band) != nullptr
+            && soloParameters.at(band) != nullptr && widthParameters.at(band) != nullptr
         );
     }
     // The rounded corners show the editor background and the plot shows the GPU picture,
@@ -451,13 +452,10 @@ juce::Rectangle<float> SpatialSpectrogramView::framesPerSecondArea() const
     return {plot.getX() + LABEL_INSET, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT};
 }
 
-/// Returns a band's width, its side gain relative to its mid gain as a linear ratio, or 0 when its side is off.
+/// Returns the band's independent Width target, regardless of its source trims.
 double SpatialSpectrogramView::bandWidth(const std::size_t band) const
 {
-    return bandWidthFromGains(
-        static_cast<double>(plainValue(*midParameters.at(band))),
-        static_cast<double>(plainValue(*sideParameters.at(band)))
-    );
+    return static_cast<double>(plainValue(*widthParameters.at(band)));
 }
 
 /// Returns the opacity of the position curve overlay:

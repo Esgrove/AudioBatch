@@ -142,6 +142,8 @@ private:
     std::array<juce::RangedAudioParameter*, BAND_COUNT> midParameters {};
     /// Side gain parameters, owned by the parameter tree. Never null.
     std::array<juce::RangedAudioParameter*, BAND_COUNT> sideParameters {};
+    /// Independent Width parameters, owned by the parameter tree. Never null.
+    std::array<juce::RangedAudioParameter*, BAND_COUNT> widthParameters {};
     /// Solo parameters, owned by the parameter tree. Never null.
     std::array<juce::RangedAudioParameter*, BAND_COUNT> soloParameters {};
     /// Animated hover highlight of each band, from 0 to 1.

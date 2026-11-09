@@ -262,6 +262,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/HostContractsTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ImagerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProcessorTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/RecoveryTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramViewTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramWorkerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/StateThreadingTests.cpp"

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -29,14 +30,22 @@ namespace
 {
 /// How often the design thread checks for moved crossovers, in milliseconds.
 constexpr int DESIGN_POLL_MILLISECONDS {20};
-/// Designs the lowpass kernels of the given crossovers and transforms them into partitions.
+/// First quadrature lowpass in the shared kernel slot, after the ordinary lowpasses.
+constexpr std::size_t QUADRATURE_FIRST_KERNEL {CROSSOVER_COUNT};
+/// Full-band quadrature reference, after the quadrature lowpasses.
+constexpr std::size_t QUADRATURE_FULL_KERNEL {CROSSOVER_COUNT * 2};
+/// Designs ordinary and quadrature kernels together for one coherent crossover publication.
 KernelSpectra designKernelSpectra(const Crossovers& crossovers, const double sampleRate, const int halfLength)
 {
     std::vector<std::vector<float>> kernels;
-    kernels.reserve(CROSSOVER_COUNT);
+    kernels.reserve(QUADRATURE_FULL_KERNEL + 1);
     for (const float crossover : crossovers) {
         kernels.push_back(designLowpassKernel(static_cast<double>(crossover), sampleRate, halfLength));
     }
+    for (const float crossover : crossovers) {
+        kernels.push_back(designQuadratureKernel(sampleRate, halfLength, static_cast<double>(crossover)));
+    }
+    kernels.push_back(designQuadratureKernel(sampleRate, halfLength));
     return {kernels, PARTITION_SIZE};
 }
 
@@ -86,6 +95,31 @@ float sumBands(
     const float lowMid = lowpassed[1][sample];
     const float highMid = lowpassed[2][sample];
     return gains[0] * low + gains[1] * (lowMid - low) + gains[2] * (highMid - lowMid) + gains[3] * (delayed - highMid);
+}
+
+/// Returns the recovered Mid sum only when the quadrature outputs were computed for this partition.
+float recoveredMidSum(
+    const bool active,
+    const BandGains& gains,
+    const std::array<std::vector<float>, CROSSOVER_COUNT>& lowpassed,
+    const std::span<const float> fullband,
+    const std::size_t sample
+)
+{
+    return active ? sumBands(gains, lowpassed, sample, fullband[sample]) : 0.0F;
+}
+
+/// Returns one recovered band's Mid contribution, without observing inactive scratch outputs.
+float recoveredBandSample(
+    const bool active,
+    const float gain,
+    const std::array<std::vector<float>, CROSSOVER_COUNT>& lowpassed,
+    const std::span<const float> fullband,
+    const std::size_t band,
+    const std::size_t sample
+)
+{
+    return active ? gain * bandSample(lowpassed, band, sample, fullband[sample]) : 0.0F;
 }
 
 /// Returns the samples of one channel of a buffer.
@@ -140,6 +174,12 @@ MultibandImager::MultibandImager()
     for (auto& solo : soloSmoothers) {
         solo.setCurrentAndTargetValue(1.0F);
     }
+    for (auto& width : widthSmoothers) {
+        width.setCurrentAndTargetValue(1.0F);
+    }
+    for (auto& recovery : recoverySmoothers) {
+        recovery.setCurrentAndTargetValue(0.0F);
+    }
     outputGainSmoother.setCurrentAndTargetValue(1.0F);
     deltaSmoother.setCurrentAndTargetValue(0.0F);
 }
@@ -178,7 +218,7 @@ int MultibandImager::getLatencySamples() const
 /// Allocates every buffer for a sample rate and a mono or stereo channel count,
 /// designs the kernels of the crossovers synchronously, clears the signal history,
 /// and starts the design thread.
-/// Gains, pans, and solos jump to their current targets, so processing starts without a glide.
+/// Gains, Width, Recover, pans, and solos jump to their current targets, so processing starts without a glide.
 void MultibandImager::prepare(const double newSampleRate, const int newChannelCount, const Crossovers& crossovers)
 {
     release();
@@ -219,6 +259,10 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     for (auto& lowpassed : sideLowpassed) {
         lowpassed.assign(partitionSamples, 0.0F);
     }
+    for (auto& lowpassed : quadratureLowpassed) {
+        lowpassed.assign(partitionSamples, 0.0F);
+    }
+    quadratureFull.assign(partitionSamples, 0.0F);
     midInput.assign(partitionSamples, 0.0F);
     sideInput.assign(partitionSamples, 0.0F);
     fadeScratch.assign(partitionSamples, 0.0F);
@@ -238,6 +282,14 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     for (auto& solo : soloSmoothers) {
         solo.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
         solo.setCurrentAndTargetValue(solo.getTargetValue());
+    }
+    for (auto& width : widthSmoothers) {
+        width.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
+        width.setCurrentAndTargetValue(width.getTargetValue());
+    }
+    for (auto& recovery : recoverySmoothers) {
+        recovery.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
+        recovery.setCurrentAndTargetValue(recovery.getTargetValue());
     }
     outputGainSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
     outputGainSmoother.setCurrentAndTargetValue(outputGainSmoother.getTargetValue());
@@ -270,6 +322,16 @@ void MultibandImager::reset() noexcept
     outputBlock.clear();
     midConvolver.reset();
     sideConvolver.reset();
+    for (auto& lowpassed : quadratureLowpassed) {
+        std::ranges::fill(lowpassed, 0.0F);
+    }
+    std::ranges::fill(quadratureFull, 0.0F);
+    for (auto& width : widthSmoothers) {
+        width.setCurrentAndTargetValue(width.getTargetValue());
+    }
+    for (auto& recovery : recoverySmoothers) {
+        recovery.setCurrentAndTargetValue(recovery.getTargetValue());
+    }
     blockPosition = 0;
     delayPosition = 0;
     correlation.reset();
@@ -348,6 +410,24 @@ void MultibandImager::setPans(const BandPans& pans)
     }
 }
 
+/// Sets independent Width targets without changing either source gain. Zero removes stereo Side.
+void MultibandImager::setWidths(const BandWidths& widths)
+{
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        const float width = std::isfinite(widths[band]) ? std::clamp(widths[band], 0.0F, WIDTH_MAX) : 1.0F;
+        widthSmoothers[band].setTargetValue(width);
+    }
+}
+
+/// Sets the fraction of removed Side waveform to recover into Mid, effective only below unity Width.
+void MultibandImager::setRecoveries(const BandRecoveries& recoveries)
+{
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        const float recovery = std::isfinite(recoveries[band]) ? std::clamp(recoveries[band], 0.0F, 1.0F) : 0.0F;
+        recoverySmoothers[band].setTargetValue(recovery);
+    }
+}
+
 /// Sets how much of each band is heard, from 0 for a band muted by the solos of other bands to 1 for a heard band,
 /// as soloGains returns them. The changes glide over GAIN_SMOOTHING_SECONDS, so soloing a band does not click.
 void MultibandImager::setSolos(const BandGains& audible)
@@ -423,13 +503,32 @@ bool MultibandImager::isDeltaSettled(const float target) const
     return !deltaSmoother.isSmoothing() && juce::exactlyEqual(deltaSmoother.getCurrentValue(), target);
 }
 
-/// Returns whether every gain has settled at unity, every pan at the centre, and no solo mutes a band,
-/// so the output can be the delayed input itself.
+/// Returns whether gains and stereo Width are neutral, every pan centred, and every band heard.
+/// Recover has no contribution at settled unity Width, so its amount does not prevent exact pass-through.
 bool MultibandImager::isNeutral() const
 {
     return std::ranges::all_of(midGainSmoothers, isSettledAtUnity)
         && std::ranges::all_of(sideGainSmoothers, isSettledAtUnity) && isSettledAtUnity(outputGainSmoother)
-        && isCentred() && isUnsoloed();
+        && (channelCount == 1 || std::ranges::all_of(widthSmoothers, isSettledAtUnity)) && isCentred() && isUnsoloed();
+}
+
+/// Reports whether any current or target ramp can inject recovered Side during this partition.
+/// Side input history is retained even while these extra convolution outputs are not needed.
+bool MultibandImager::isRecoveryActive() const
+{
+    if (channelCount != 2) {
+        return false;
+    }
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        const auto& width = widthSmoothers[band];
+        const auto& recovery = recoverySmoothers[band];
+        if (std::min(width.getCurrentValue(), width.getTargetValue()) < 1.0F
+            && std::max(recovery.getCurrentValue(), recovery.getTargetValue()) > 0.0F)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Designs kernels for the requested crossovers into the spare slot when they differ from the active ones
@@ -458,32 +557,40 @@ void MultibandImager::designRequestedKernels(const bool fromDesignThread)
     switchPending.store(true, std::memory_order_release);
 }
 
-/// Runs the newest pushed partition of a signal through the three lowpass kernels of the active slot.
-/// With crossfade, it also runs it through the kernels of the spare slot,
-/// and fades from the active to the spare output over the partition.
-void MultibandImager::lowpassSignal(
+/// Convolves one ordinary or quadrature output, crossfading both coherent slots before publication.
+void MultibandImager::convolveSignal(
     PartitionedConvolver& convolver,
-    const std::span<std::vector<float>> outputs,
+    const std::size_t kernel,
+    const std::span<float> output,
     const bool crossfade
 )
 {
-    const auto& active = kernelSlots[static_cast<std::size_t>(activeSlot)];
-    const auto& spare = kernelSlots[static_cast<std::size_t>(1 - activeSlot)];
-    constexpr float fadeStep = 1.0F / static_cast<float>(PARTITION_SIZE);
-    for (std::size_t kernel = 0; kernel < CROSSOVER_COUNT; ++kernel) {
-        auto& output = outputs[kernel];
-        convolver.convolve(active, kernel, output);
-        if (crossfade) {
-            convolver.convolve(spare, kernel, fadeScratch);
-            for (std::size_t sample = 0; sample < output.size(); ++sample) {
-                const float fade = static_cast<float>(sample + 1) * fadeStep;
-                output[sample] += (fadeScratch[sample] - output[sample]) * fade;
-            }
+    convolver.convolve(kernelSlots[static_cast<std::size_t>(activeSlot)], kernel, output);
+    if (crossfade) {
+        convolver.convolve(kernelSlots[static_cast<std::size_t>(1 - activeSlot)], kernel, fadeScratch);
+        constexpr float FADE_STEP {1.0F / static_cast<float>(PARTITION_SIZE)};
+        for (std::size_t sample = 0; sample < output.size(); ++sample) {
+            const float fade = static_cast<float>(sample + 1) * FADE_STEP;
+            output[sample] += (fadeScratch[sample] - output[sample]) * fade;
         }
     }
 }
 
-/// Mixes the bands of the current partition with the smoothed gains, pans, and solos into the output partition.
+/// Runs a set of ordinary or quadrature lowpasses from the same raw input history.
+void MultibandImager::lowpassSignal(
+    PartitionedConvolver& convolver,
+    const std::span<std::vector<float>> outputs,
+    const bool crossfade,
+    const std::size_t firstKernel
+)
+{
+    for (std::size_t kernel = 0; kernel < outputs.size(); ++kernel) {
+        convolveSignal(convolver, firstKernel + kernel, outputs[kernel], crossfade);
+    }
+}
+
+/// Mixes bands with source trims, independent Width, optional quadrature recovery, Pan, and Solo.
+/// Recovery uses the pre-Width Side source gain, so Side off also silences its recovered contribution.
 /// A stereo signal is joined back from its mid and side, and a mono signal is its mid, which has no pan.
 /// While every pan is centred, the mid and side bands are summed first and joined once,
 /// and otherwise each band is joined into its own left and right and panned before the bands are summed.
@@ -500,15 +607,21 @@ void MultibandImager::mixPartition(const int channels)
     const auto outputRight = channelSamples(outputBlock, stereo ? 1 : 0);
     const bool centred = isCentred();
     const bool unsoloed = isUnsoloed();
+    const bool recovering = isRecoveryActive();
 
     BandGains midGains {};
     BandGains sideGains {};
+    BandGains recoveryGains {};
     BandGains solos {};
     BandPans pans {};
     for (std::size_t sample = 0; sample < outputLeft.size(); ++sample) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
             midGains[band] = midGainSmoothers[band].getNextValue();
-            sideGains[band] = sideGainSmoothers[band].getNextValue();
+            const float sourceSideGain = sideGainSmoothers[band].getNextValue();
+            const float width = widthSmoothers[band].getNextValue();
+            const float recovery = recoverySmoothers[band].getNextValue();
+            sideGains[band] = sourceSideGain * width;
+            recoveryGains[band] = sourceSideGain * recovery * std::max(0.0F, 1.0F - width);
             pans[band] = panSmoothers[band].getNextValue();
             solos[band] = soloSmoothers[band].getNextValue();
         }
@@ -516,6 +629,7 @@ void MultibandImager::mixPartition(const int channels)
             for (std::size_t band = 0; band < BAND_COUNT; ++band) {
                 midGains[band] *= solos[band];
                 sideGains[band] *= solos[band];
+                recoveryGains[band] *= solos[band];
             }
         }
         const float outputGain = outputGainSmoother.getNextValue();
@@ -533,7 +647,9 @@ void MultibandImager::mixPartition(const int channels)
                 dryRight = dryMid - drySide;
             }
             if (centred) {
-                const float mid = sumBands(midGains, midLowpassed, sample, delayedMid);
+                const float recoveredMid
+                    = recoveredMidSum(recovering, recoveryGains, quadratureLowpassed, quadratureFull, sample);
+                const float mid = sumBands(midGains, midLowpassed, sample, delayedMid) + recoveredMid;
                 const float side = sumBands(sideGains, sideLowpassed, sample, delayedSide);
                 outputLeft[sample] = (mid + side) * outputGain - delta * dryLeft;
                 outputRight[sample] = (mid - side) * outputGain - delta * dryRight;
@@ -542,7 +658,10 @@ void MultibandImager::mixPartition(const int channels)
             float left = 0.0F;
             float right = 0.0F;
             for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-                const float mid = midGains[band] * bandSample(midLowpassed, band, sample, delayedMid);
+                const float recoveredMid = recoveredBandSample(
+                    recovering, recoveryGains[band], quadratureLowpassed, quadratureFull, band, sample
+                );
+                const float mid = midGains[band] * bandSample(midLowpassed, band, sample, delayedMid) + recoveredMid;
                 const float side = sideGains[band] * bandSample(sideLowpassed, band, sample, delayedSide);
                 const float bandLeft = mid + side;
                 const float bandRight = mid - side;
@@ -570,6 +689,9 @@ void MultibandImager::updateCorrelationPartition()
 {
     auto midGains = midGainSmoothers;
     auto sideGains = sideGainSmoothers;
+    auto widths = widthSmoothers;
+    auto recoveries = recoverySmoothers;
+    const bool recovering = isRecoveryActive();
     auto pans = panSmoothers;
     auto solos = soloSmoothers;
     const bool stereo = channelCount == 2;
@@ -580,12 +702,17 @@ void MultibandImager::updateCorrelationPartition()
         const float delayedSide = stereo ? (delayedLeft[sample] - delayedRight[sample]) * 0.5F : 0.0F;
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
             const float audible = solos[band].getNextValue();
-            const float mid
-                = midGains[band].getNextValue() * audible * bandSample(midLowpassed, band, sample, delayedMid);
+            float mid = midGains[band].getNextValue() * audible * bandSample(midLowpassed, band, sample, delayedMid);
             const float sideGain = sideGains[band].getNextValue();
+            const float width = widths[band].getNextValue();
+            const float recovery = recoveries[band].getNextValue();
+            if (recovering) {
+                mid += sideGain * audible * recovery * std::max(0.0F, 1.0F - width)
+                    * bandSample(quadratureLowpassed, band, sample, quadratureFull[sample]);
+            }
             const float pan = pans[band].getNextValue();
             const float side
-                = stereo ? sideGain * audible * bandSample(sideLowpassed, band, sample, delayedSide) : 0.0F;
+                = stereo ? sideGain * width * audible * bandSample(sideLowpassed, band, sample, delayedSide) : 0.0F;
             const float left = mid + side;
             const float right = mid - side;
             const float toRight = stereo ? std::max(pan, 0.0F) : 0.0F;
@@ -594,6 +721,19 @@ void MultibandImager::updateCorrelationPartition()
         }
     }
     correlation.publish();
+}
+
+/// Computes ordinary and active recovery outputs from the current raw signal histories.
+void MultibandImager::convolvePartition(const bool stereo, const bool crossfade)
+{
+    lowpassSignal(midConvolver, midLowpassed, crossfade);
+    if (stereo) {
+        lowpassSignal(sideConvolver, sideLowpassed, crossfade);
+        if (isRecoveryActive()) {
+            lowpassSignal(sideConvolver, quadratureLowpassed, crossfade, QUADRATURE_FIRST_KERNEL);
+            convolveSignal(sideConvolver, QUADRATURE_FULL_KERNEL, quadratureFull, crossfade);
+        }
+    }
 }
 
 /// Processes one full input partition into the output partition.
@@ -634,10 +774,7 @@ void MultibandImager::processPartition()
     }
 
     const bool crossfade = switchPending.load(std::memory_order_acquire);
-    lowpassSignal(midConvolver, midLowpassed, crossfade);
-    if (stereo) {
-        lowpassSignal(sideConvolver, sideLowpassed, crossfade);
-    }
+    convolvePartition(stereo, crossfade);
     if (crossfade) {
         activeSlot = 1 - activeSlot;
         publishedActiveSlot.store(activeSlot, std::memory_order_release);
@@ -654,17 +791,22 @@ void MultibandImager::processPartition()
     if (correlationEnabled) {
         updateCorrelationPartition();
     }
-    if (isNeutral()) {
+    if (isNeutral() && (isDeltaSettled(0.0F) || isDeltaSettled(1.0F))) {
+        // Inactive recovery still follows automation while the exact-copy path avoids arithmetic.
+        for (auto& recovery : recoverySmoothers) {
+            recovery.skip(PARTITION_SIZE);
+        }
+        for (auto& width : widthSmoothers) {
+            width.skip(PARTITION_SIZE);
+        }
         if (isDeltaSettled(0.0F)) {
             for (int channel = 0; channel < channelCount; ++channel) {
                 outputBlock.copyFrom(channel, 0, delayedBlock, channel, 0, PARTITION_SIZE);
             }
             return;
         }
-        if (isDeltaSettled(1.0F)) {
-            outputBlock.clear();
-            return;
-        }
+        outputBlock.clear();
+        return;
     }
     mixPartition(channelCount);
 }

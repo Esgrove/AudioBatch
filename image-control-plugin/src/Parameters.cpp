@@ -42,6 +42,16 @@ constexpr int DELTA_PARAMETER_VERSION {3};
 constexpr int SOLO_PARAMETER_VERSION {4};
 /// Version hint of the mono parameter, ordered after the existing host parameters.
 constexpr int MONO_PARAMETER_VERSION {5};
+/// Version hint of the independent Width parameters, appended after Mono.
+constexpr int WIDTH_PARAMETER_VERSION {6};
+/// Version hint of the Recover parameters, appended after every Width parameter.
+constexpr int RECOVER_PARAMETER_VERSION {7};
+/// Percent corresponding to a unit linear multiplier.
+constexpr float PERCENT_PER_UNIT {100.0F};
+/// Step of the independent linear side multiplier.
+constexpr float WIDTH_STEP {0.01F};
+/// Step of the host-facing recovery amount, in percent.
+constexpr float RECOVER_STEP_PERCENT {0.1F};
 /// Step of the pan parameters, in percent.
 constexpr float PAN_STEP_PERCENT {1.0F};
 /// Frequencies in kHz below this are shown with two decimals, and higher ones with one.
@@ -52,7 +62,7 @@ constexpr float TENTHS_PER_DECIBEL {10.0F};
 constexpr float GAIN_STEP_DB {0.01F};
 
 /// Text grammar and host metadata of a finite parameter.
-enum class ParameterKind : std::uint8_t { frequency, gain, pan, boolean };
+enum class ParameterKind : std::uint8_t { frequency, gain, pan, width, recovery, boolean };
 
 /// Parses a whole finite numeric token, rejecting empty input, trailing junk, and overflow.
 std::optional<float> finiteNumber(const juce::String& text)
@@ -92,6 +102,26 @@ std::optional<float> panValueFromText(juce::String token)
     return finiteNumber(token);
 }
 
+/// Parses independent Width and Recover amounts, with percent units and an explicit recovery Off value.
+std::optional<float> widthRecoveryValueFromText(juce::String token, const ParameterKind kind)
+{
+    if (kind == ParameterKind::recovery && token == "off") {
+        return 0.0F;
+    }
+    float multiplier = 1.0F;
+    if (token.endsWithChar('%')) {
+        token = token.dropLastCharacters(1);
+        if (kind == ParameterKind::width) {
+            multiplier = 1.0F / PERCENT_PER_UNIT;
+        }
+    }
+    const auto value = finiteNumber(token);
+    if (!value || !std::isfinite(*value * multiplier)) {
+        return std::nullopt;
+    }
+    return *value * multiplier;
+}
+
 /// Parses the supported units and pan notation without letting invalid text become a zero value.
 std::optional<float> parameterValueFromText(const juce::String& text, const ParameterKind kind)
 {
@@ -113,6 +143,8 @@ std::optional<float> parameterValueFromText(const juce::String& text, const Para
         }
     } else if (kind == ParameterKind::pan) {
         return panValueFromText(token);
+    } else if (kind == ParameterKind::width || kind == ParameterKind::recovery) {
+        return widthRecoveryValueFromText(token, kind);
     } else {
         if (token == "on" || token == "true") {
             return 1.0F;
@@ -249,6 +281,18 @@ juce::String formatPanValue(const float percent, const int /*maximumLength*/)
     return formatPan(percent);
 }
 
+/// Formats Width as the independent linear multiplier, preserving its hundredth-step precision.
+juce::String formatWidthValue(const float width, const int /*maximumLength*/)
+{
+    return {width, 2};
+}
+
+/// Formats recovery as an explicit Off at zero and otherwise a percentage.
+juce::String formatRecoveryValue(const float percent, const int /*maximumLength*/)
+{
+    return percent < RECOVER_STEP_PERCENT * 0.5F ? juce::String("Off") : juce::String(percent, 1) + " %";
+}
+
 /// Converts a gain in dB to linear, treating values within half a parameter step of 0 dB as exactly unity.
 /// The parameter grid starts at the bottom of the range, so its 0 dB step comes back with a rounding error,
 /// and an exact unity gain is what lets the imager pass the input through bit for bit.
@@ -279,7 +323,8 @@ std::unique_ptr<FiniteParameter> makeGainParameter(
 }
 }  // namespace
 
-/// Creates the crossover, band gain, band pan, band solo, output gain, bypass, delta, and mono parameters.
+/// Creates the crossover, band gain, pan, solo, output gain, bypass, Delta, Mono, Width, and Recover parameters.
+/// All Width parameters follow Mono, then all Recover parameters, preserving existing host indices.
 /// The band gains are in dB, and their lowest value turns the signal off.
 /// The band pans are in percent, from fully left at -100 through the centre at 0 to fully right at 100.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -352,6 +397,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
             ParameterKind::boolean
         )
     );
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        layout.add(
+            std::make_unique<FiniteParameter>(
+                juce::ParameterID {widthParameterId(band), WIDTH_PARAMETER_VERSION},
+                bandName(band) + ": Width",
+                juce::NormalisableRange<float>(0.0F, WIDTH_MAX, WIDTH_STEP),
+                1.0F,
+                juce::AudioParameterFloatAttributes().withStringFromValueFunction(formatWidthValue),
+                ParameterKind::width
+            )
+        );
+    }
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        layout.add(
+            std::make_unique<FiniteParameter>(
+                juce::ParameterID {recoverParameterId(band), RECOVER_PARAMETER_VERSION},
+                bandName(band) + ": Recover",
+                juce::NormalisableRange<float>(0.0F, RECOVER_MAX_PERCENT, RECOVER_STEP_PERCENT),
+                0.0F,
+                juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction(formatRecoveryValue),
+                ParameterKind::recovery
+            )
+        );
+    }
     return layout;
 }
 
@@ -403,6 +472,18 @@ juce::String panParameterId(const std::size_t band)
 juce::String soloParameterId(const std::size_t band)
 {
     return "band" + juce::String(band + 1) + "_solo";
+}
+
+/// Returns the stable id of the band's independent Width parameter, such as `band1_width`.
+juce::String widthParameterId(const std::size_t band)
+{
+    return "band" + juce::String(band + 1) + "_width";
+}
+
+/// Returns the stable id of the band's recovery amount, such as `band1_recover`.
+juce::String recoverParameterId(const std::size_t band)
+{
+    return "band" + juce::String(band + 1) + "_recover";
 }
 
 /// Returns the display name of a band, counted from the lowest.
@@ -510,16 +591,6 @@ bool sameCrossovers(const Crossovers& first, const Crossovers& second)
     return std::ranges::equal(first, second, [](const float left, const float right) {
         return juce::approximatelyEqual(left, right);
     });
-}
-
-/// Returns the Width of a band, its side gain relative to its mid gain as a linear ratio,
-/// from the two gains in dB, or 0 when the side is off.
-double bandWidthFromGains(const double midDecibels, const double sideDecibels)
-{
-    if (sideDecibels <= static_cast<double>(BAND_GAIN_MIN_DB)) {
-        return 0.0;
-    }
-    return juce::Decibels::decibelsToGain(sideDecibels - midDecibels);
 }
 
 /// Returns the plain value of a parameter, such as a frequency in Hz or a gain in dB.
