@@ -11,9 +11,11 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <latch>
 #include <memory>
 #include <thread>
+#include <utility>
 
 namespace esgrove::image_control::test
 {
@@ -64,6 +66,46 @@ private:
     }
 };
 
+/// Requests a host save from the synchronous APVTS notification sent while a restore still holds its locks.
+class ReentrantSaveListener final : public juce::AudioProcessorValueTreeState::Listener
+{
+public:
+    /// Runs the save once even if copying parameter state causes another parameter notification.
+    void parameterChanged(const juce::String& /*parameterId*/, float /*value*/) override
+    {
+        if (const auto action = std::exchange(save, {})) {
+            ++saves;
+            action();
+        }
+    }
+
+    /// Save request installed before the restore and invoked on the restoring thread.
+    std::function<void()> save;
+    /// Number of reentrant host saves actually requested.
+    int saves {0};
+};
+
+/// Requests another restore from a notification delivered to an existing editor-tree binding.
+class ReentrantRestoreListener final : public juce::ValueTree::Listener
+{
+public:
+    /// Restores once when the outer copy reaches the editor size, without depending on other property ordering.
+    void valueTreePropertyChanged(juce::ValueTree& /*tree*/, const juce::Identifier& property) override
+    {
+        if (property == juce::Identifier(EDITOR_WIDTH_PROPERTY)) {
+            if (const auto action = std::exchange(restore, {})) {
+                ++restores;
+                action();
+            }
+        }
+    }
+
+    /// Nested restore installed before the outer restore begins.
+    std::function<void()> restore;
+    /// Number of nested restores actually requested.
+    int restores {0};
+};
+
 /// Saves independent settings so test workers never access a live source tree.
 juce::MemoryBlock makeThreadingState(const int width, const bool output)
 {
@@ -91,6 +133,28 @@ std::unique_ptr<juce::XmlElement> savedThreadingState(ImageControlProcessor& pro
     juce::MemoryBlock state;
     processor.getStateInformation(state);
     return juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+}
+
+/// Checks detached editor settings and all restored imaging controls after a reentrant callback.
+void expectThreadingSnapshot(const juce::XmlElement& snapshot, const int width, const bool output)
+{
+    const auto* editor = snapshot.getChildByName("EditorState");
+    ASSERT_NE(editor, nullptr);
+    EXPECT_EQ(editor->getIntAttribute(EDITOR_WIDTH_PROPERTY), width);
+    EXPECT_EQ(editor->getIntAttribute(EDITOR_HEIGHT_PROPERTY), width - 300);
+    EXPECT_EQ(editor->getBoolAttribute(ANALYZE_OUTPUT_PROPERTY), output);
+    EXPECT_DOUBLE_EQ(editor->getDoubleAttribute(PERSISTENCE_PROPERTY), 2.5);
+    const auto* gain = snapshot.getChildByAttribute("id", OUTPUT_GAIN_ID);
+    ASSERT_NE(gain, nullptr);
+    EXPECT_NEAR(gain->getDoubleAttribute("value"), -6.0, 0.01);
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        const auto* bandWidth = snapshot.getChildByAttribute("id", widthParameterId(band));
+        const auto* recovery = snapshot.getChildByAttribute("id", recoverParameterId(band));
+        ASSERT_NE(bandWidth, nullptr);
+        ASSERT_NE(recovery, nullptr);
+        EXPECT_NEAR(bandWidth->getDoubleAttribute("value"), output ? 0.75 : 0.25, 0.001);
+        EXPECT_NEAR(recovery->getDoubleAttribute("value"), output ? 25.0 : 75.0, 0.001);
+    }
 }
 }  // namespace
 
@@ -219,6 +283,117 @@ TEST(StateThreading, MessageThreadRestoreAppliesSynchronouslyWithoutRebinding)
     EXPECT_EQ(static_cast<int>(bound.getProperty(EDITOR_WIDTH_PROPERTY)), 1400);
     EXPECT_FALSE(static_cast<bool>(bound.getProperty(ANALYZE_OUTPUT_PROPERTY)));
     EXPECT_EQ(processor.getEditorState(), bound);
+}
+
+TEST(StateThreading, ParameterListenerCanSaveReentrantlyDuringMessageOrWorkerRestore)
+{
+    const auto state = makeThreadingState(1400, false);
+    for (const bool fromWorker : {false, true}) {
+        SCOPED_TRACE(fromWorker);
+        ImageControlProcessor processor;
+        auto bound = processor.getEditorState();
+        ThreadingStateListener listener;
+        bound.addListener(&listener);
+        processor.addListener(&listener);
+        const auto previousEpoch = processor.getAnalyzerFifo().getEpoch();
+        std::unique_ptr<juce::XmlElement> reentrantSnapshot;
+        bool callbackOnMessageThread = false;
+        bool callbackTapOutput = true;
+        ReentrantSaveListener saveListener;
+        saveListener.save = [&] {
+            callbackOnMessageThread = juce::MessageManager::getInstance()->isThisTheMessageThread();
+            reentrantSnapshot = savedThreadingState(processor);
+            callbackTapOutput = StereoSampleFifo::analyzesOutput(processor.getAnalyzerFifo().getEpoch());
+        };
+        processor.getParameters().addParameterListener(OUTPUT_GAIN_ID, &saveListener);
+        if (fromWorker) {
+            // Joining without dispatch ensures the reentrant save does not need a message-thread round trip.
+            std::thread worker([&] {
+                processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+            });
+            worker.join();
+            EXPECT_EQ(listener.treeChanges.load(), 0);
+            EXPECT_FALSE(bound.hasProperty(EDITOR_WIDTH_PROPERTY));
+        } else {
+            processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        }
+        processor.getParameters().removeParameterListener(OUTPUT_GAIN_ID, &saveListener);
+        EXPECT_EQ(saveListener.saves, 1);
+        EXPECT_EQ(callbackOnMessageThread, !fromWorker);
+        EXPECT_FALSE(callbackTapOutput);
+        EXPECT_NE(processor.getAnalyzerFifo().getEpoch(), previousEpoch);
+        EXPECT_EQ(processor.getEditorState(), bound);
+        EXPECT_EQ(static_cast<int>(bound.getProperty(EDITOR_WIDTH_PROPERTY)), 1400);
+        EXPECT_FALSE(static_cast<bool>(bound.getProperty(ANALYZE_OUTPUT_PROPERTY)));
+        EXPECT_GT(listener.treeChanges.load(), 0);
+        EXPECT_EQ(listener.dirtyChanges.load(), 0);
+        EXPECT_FALSE(listener.workerNotification.load());
+        processor.removeListener(&listener);
+        bound.removeListener(&listener);
+
+        ASSERT_NE(reentrantSnapshot, nullptr);
+        expectThreadingSnapshot(*reentrantSnapshot, 1400, false);
+        const auto latest = savedThreadingState(processor);
+        ASSERT_NE(latest, nullptr);
+        expectThreadingSnapshot(*latest, 1400, false);
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            EXPECT_NEAR(processor.getParameters().getRawParameterValue(widthParameterId(band))->load(), 0.25F, 0.001F);
+            EXPECT_NEAR(
+                processor.getParameters().getRawParameterValue(recoverParameterId(band))->load(), 75.0F, 0.001F
+            );
+        }
+    }
+}
+
+TEST(StateThreading, EditorTreeListenerCanRestoreAgainWithoutOverwritingLatestSnapshotOrTap)
+{
+    const auto first = makeThreadingState(1400, false);
+    const auto second = makeThreadingState(1600, true);
+    ImageControlProcessor processor;
+    auto bound = processor.getEditorState();
+    ThreadingStateListener listener;
+    bound.addListener(&listener);
+    processor.addListener(&listener);
+    std::unique_ptr<juce::XmlElement> nestedSnapshot;
+    bool nestedIdentityPreserved = false;
+    bool nestedTapOutput = false;
+    ReentrantRestoreListener restoreListener;
+    restoreListener.restore = [&] {
+        processor.setStateInformation(second.getData(), static_cast<int>(second.getSize()));
+        nestedIdentityPreserved = processor.getEditorState() == bound;
+        nestedSnapshot = savedThreadingState(processor);
+        nestedTapOutput = StereoSampleFifo::analyzesOutput(processor.getAnalyzerFifo().getEpoch());
+    };
+    bound.addListener(&restoreListener);
+    processor.setStateInformation(first.getData(), static_cast<int>(first.getSize()));
+    bound.removeListener(&restoreListener);
+    EXPECT_EQ(restoreListener.restores, 1);
+    EXPECT_TRUE(nestedIdentityPreserved);
+    EXPECT_TRUE(nestedTapOutput);
+    // Finishing the outer tree copy must not republish its stale snapshot or analyzer tap.
+    const auto afterOuterCopy = savedThreadingState(processor);
+    EXPECT_TRUE(StereoSampleFifo::analyzesOutput(processor.getAnalyzerFifo().getEpoch()));
+    EXPECT_EQ(processor.getEditorState(), bound);
+    EXPECT_EQ(static_cast<int>(bound.getProperty(EDITOR_WIDTH_PROPERTY)), 1600);
+    EXPECT_EQ(static_cast<int>(bound.getProperty(EDITOR_HEIGHT_PROPERTY)), 1300);
+    EXPECT_TRUE(static_cast<bool>(bound.getProperty(ANALYZE_OUTPUT_PROPERTY)));
+    EXPECT_GT(listener.treeChanges.load(), 0);
+    EXPECT_EQ(listener.dirtyChanges.load(), 0);
+    EXPECT_FALSE(listener.workerNotification.load());
+    processor.removeListener(&listener);
+    bound.removeListener(&listener);
+
+    ASSERT_NE(nestedSnapshot, nullptr);
+    expectThreadingSnapshot(*nestedSnapshot, 1600, true);
+    ASSERT_NE(afterOuterCopy, nullptr);
+    expectThreadingSnapshot(*afterOuterCopy, 1600, true);
+    const auto latest = savedThreadingState(processor);
+    ASSERT_NE(latest, nullptr);
+    expectThreadingSnapshot(*latest, 1600, true);
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        EXPECT_NEAR(processor.getParameters().getRawParameterValue(widthParameterId(band))->load(), 0.75F, 0.001F);
+        EXPECT_NEAR(processor.getParameters().getRawParameterValue(recoverParameterId(band))->load(), 25.0F, 0.001F);
+    }
 }
 
 TEST(StateThreading, ConcurrentHostSavesAndRestoresDoNotTouchBoundEditorTree)

@@ -94,6 +94,18 @@ void sanitizeParameterState(const juce::ValueTree& state, const juce::AudioProce
     }
 }
 
+/// Converts an effective raw control only when its exact value changes, retaining audio-thread-owned targets.
+template<typename Convert>
+bool updateCachedControl(const float raw, float& previousRaw, float& target, const bool initialized, Convert convert)
+{
+    if (initialized && juce::exactlyEqual(raw, previousRaw)) {
+        return false;
+    }
+    previousRaw = raw;
+    target = convert(raw);
+    return true;
+}
+
 /// Returns the raw value of a parameter the layout is known to contain.
 std::atomic<float>* getRawValue(const juce::AudioProcessorValueTreeState& parameters, const juce::String& parameterId)
 {
@@ -272,7 +284,7 @@ int ImageControlProcessor::getNumPrograms()
     return 1;
 }
 
-/// Ignores renames, since the single program has no name.
+/// Ignores renames because the single program keeps its fixed Default name.
 void ImageControlProcessor::changeProgramName(int /*index*/, const juce::String& /*newName*/) {}
 
 /// Saves the thread-safe parameter copy and detached editor snapshot, including unapplied restores.
@@ -347,7 +359,11 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     const juce::ScopedNoDenormals noDenormals;
 
     updateProcessingTargets(bypassed);
-    imager.setCrossovers(getCrossovers(), isNonRealtime());
+    Crossovers rawCrossovers {};
+    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+        rawCrossovers[crossover] = crossoverValues[crossover]->load();
+    }
+    imager.setCrossovers(rawCrossovers, isNonRealtime());
     const auto meterGeneration = correlationGeneration.load(std::memory_order_acquire);
     const bool meterEnabled = correlationEnabled.load(std::memory_order_relaxed) && !isNonRealtime();
     if (activeCorrelationGeneration != meterGeneration) {
@@ -372,37 +388,96 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     }
 }
 
-/// Publishes current host control targets without touching filter history, kernels, or metering.
-/// Preparation and reset call this first so their settled controls include the earliest FIR pre-ring.
+/// Updates changed raw controls and converted targets without touching filter history, kernels, or metering.
+/// The cache belongs to the audio thread, or prepare/reset while callbacks are stopped, never parameter listeners.
+/// Preparation and reset call this before settling the imager, including after host bypass or stopped parameter edits.
 void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
 {
-    BandGains midGains {};
-    BandGains sideGains {};
-    midGains.fill(1.0F);
-    sideGains.fill(1.0F);
-    BandPans pans {};
-    BandWidths widths {};
-    widths.fill(1.0F);
-    BandRecoveries recoveries {};
-    BandSolos solos {};
-    float outputGain = 1.0F;
+    ProcessingControlValues raw;
+    raw.widths.fill(1.0F);
     if (!bypassed) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            solos.at(band) = soloValues.at(band)->load() >= 0.5F;
-            midGains.at(band) = bandGainFromDecibels(midGainValues.at(band)->load());
-            sideGains.at(band) = bandGainFromDecibels(sideGainValues.at(band)->load());
-            pans.at(band) = panFromPercent(panValues.at(band)->load());
-            widths.at(band) = widthValues.at(band)->load();
-            recoveries.at(band) = recoverValues.at(band)->load() / RECOVER_MAX_PERCENT;
+            raw.solos[band] = soloValues[band]->load() >= 0.5F;
+            raw.mid[band] = midGainValues[band]->load();
+            raw.side[band] = sideGainValues[band]->load();
+            raw.pans[band] = panValues[band]->load();
+            raw.widths[band] = widthValues[band]->load();
+            raw.recoveries[band] = recoverValues[band]->load();
         }
-        outputGain = outputGainFromDecibels(outputGainValue->load());
+        raw.output = outputGainValue->load();
+        raw.delta = deltaValue->load() >= 0.5F;
     }
-    imager.setGains(midGains, sideGains, outputGain);
-    imager.setPans(pans);
-    imager.setWidths(widths);
-    imager.setRecoveries(recoveries);
-    imager.setSolos(soloGains(solos));
-    imager.setDelta(!bypassed && deltaValue->load() >= 0.5F);
+    bool gainsChanged = false;
+    bool pansChanged = false;
+    bool widthsChanged = false;
+    bool recoveriesChanged = false;
+    const auto unchangedScale = [](const float value) { return value; };
+    const auto recoveryScale = [](const float percent) { return percent / RECOVER_MAX_PERCENT; };
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        gainsChanged |= updateCachedControl(
+            raw.mid[band],
+            cachedRawControls.mid[band],
+            cachedProcessingTargets.mid[band],
+            processingControlsValid,
+            bandGainFromDecibels
+        );
+        gainsChanged |= updateCachedControl(
+            raw.side[band],
+            cachedRawControls.side[band],
+            cachedProcessingTargets.side[band],
+            processingControlsValid,
+            bandGainFromDecibels
+        );
+        pansChanged |= updateCachedControl(
+            raw.pans[band],
+            cachedRawControls.pans[band],
+            cachedProcessingTargets.pans[band],
+            processingControlsValid,
+            panFromPercent
+        );
+        widthsChanged |= updateCachedControl(
+            raw.widths[band],
+            cachedRawControls.widths[band],
+            cachedProcessingTargets.widths[band],
+            processingControlsValid,
+            unchangedScale
+        );
+        recoveriesChanged |= updateCachedControl(
+            raw.recoveries[band],
+            cachedRawControls.recoveries[band],
+            cachedProcessingTargets.recoveries[band],
+            processingControlsValid,
+            recoveryScale
+        );
+    }
+    gainsChanged |= updateCachedControl(
+        raw.output,
+        cachedRawControls.output,
+        cachedProcessingTargets.output,
+        processingControlsValid,
+        outputGainFromDecibels
+    );
+    if (gainsChanged) {
+        imager.setGains(cachedProcessingTargets.mid, cachedProcessingTargets.side, cachedProcessingTargets.output);
+    }
+    if (pansChanged) {
+        imager.setPans(cachedProcessingTargets.pans);
+    }
+    if (widthsChanged) {
+        imager.setWidths(cachedProcessingTargets.widths);
+    }
+    if (recoveriesChanged) {
+        imager.setRecoveries(cachedProcessingTargets.recoveries);
+    }
+    if (!processingControlsValid || raw.solos != cachedRawControls.solos) {
+        cachedRawControls.solos = raw.solos;
+        imager.setSolos(soloGains(raw.solos));
+    }
+    if (!processingControlsValid || raw.delta != cachedRawControls.delta) {
+        cachedRawControls.delta = raw.delta;
+        imager.setDelta(raw.delta);
+    }
+    processingControlsValid = true;
 }
 
 /// Folds the final processed output equally into both channels before Post analysis, with a click-free blend.

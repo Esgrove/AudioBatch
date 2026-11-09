@@ -5,12 +5,14 @@
 #include "dsp/MultibandImager.h"
 #include "Parameters.h"
 #include "tests/TestSignals.h"
+#include <stop_token>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <numbers>
@@ -21,6 +23,19 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Reads independent published meters until stopped, recording invalid values without assertions on the worker.
+void monitorPublishedCorrelations(const MultibandImager& imager, std::atomic<bool>& valid, const std::stop_token& stop)
+{
+    while (!stop.stop_requested()) {
+        for (const float reading : imager.getBandCorrelations()) {
+            if (!std::isnan(reading) && (!std::isfinite(reading) || std::abs(reading) > 1.0F)) {
+                valid.store(false, std::memory_order_relaxed);
+            }
+        }
+        std::this_thread::yield();
+    }
+}
+
 /// Processes an arbitrary-sized buffer in the requested block size.
 void renderMetered(MultibandImager& imager, juce::AudioBuffer<float>& buffer, const int blockSize)
 {
@@ -87,6 +102,44 @@ TEST(Correlation, IndependentNoiseIsNearZeroAndSilenceOrOneChannelIsUnavailable)
     meter.reset();
     for (const float value : meter.readings()) {
         EXPECT_TRUE(std::isnan(value));
+    }
+}
+
+TEST(Correlation, UnequalDcOffsetsDoNotBiasSignedCenteredCorrelation)
+{
+    for (const float sign : {-1.0F, 1.0F}) {
+        SCOPED_TRACE(sign);
+        BandCorrelation meter;
+        meter.prepare(TEST_SAMPLE_RATE);
+        // Four seconds lets the initial zero-mean prior decay below the centered-power threshold.
+        constexpr int SETTLING_SAMPLES {192'000};
+        for (int sample = 0; sample < SETTLING_SAMPLES; ++sample) {
+            const float signal = sample % 2 == 0 ? 0.125F : -0.125F;
+            meter.push(0, 0.625F + signal, -0.25F + sign * 3.0F * signal);
+        }
+        meter.publish();
+        const float reading = meter.readings()[0];
+        ASSERT_TRUE(std::isfinite(reading));
+        EXPECT_NEAR(reading, sign, 1.0e-6F);
+    }
+}
+
+TEST(Correlation, SettledConstantChannelsAreUnavailableEvenWithNonzeroDcPower)
+{
+    BandCorrelation meter;
+    meter.prepare(TEST_SAMPLE_RATE);
+    constexpr int SETTLING_SAMPLES {192'000};
+    for (int sample = 0; sample < SETTLING_SAMPLES; ++sample) {
+        const float signal = sample % 2 == 0 ? 0.25F : -0.25F;
+        meter.push(0, 0.5F, 0.5F);
+        meter.push(1, 0.75F, -0.25F);
+        meter.push(2, 0.5F, signal);
+        meter.push(3, signal, -0.25F);
+    }
+    meter.publish();
+    // Correlation requires variance in both channels, not merely nonzero second moments.
+    for (const float reading : meter.readings()) {
+        EXPECT_TRUE(std::isnan(reading));
     }
 }
 
@@ -224,38 +277,80 @@ TEST(Correlation, VisibilityAndControlTransitionsNeverAdvanceAudioSmoothersOrFil
     }
 }
 
-TEST(Correlation, RealtimeKernelHandoffsRemainSafeUnderConcurrentRequests)
+TEST(Correlation, RealtimeRecoveryKernelHandoffsSwitchBothSlotsWithConcurrentMeterReads)
 {
     MultibandImager imager;
+    imager.setWidths({0.0F, 0.0F, 0.0F, 0.0F});
+    imager.setRecoveries({0.25F, 0.5F, 0.75F, 1.0F});
     imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
     imager.setCorrelationEnabled(true);
-    std::atomic<bool> finished {false};
-    std::atomic<bool> valid {true};
-    std::thread reader([&imager, &finished, &valid] {
-        while (!finished.load(std::memory_order_acquire)) {
-            for (const float reading : imager.getBandCorrelations()) {
-                if (!std::isnan(reading) && (!std::isfinite(reading) || std::abs(reading) > 1.0F)) {
-                    valid.store(false, std::memory_order_relaxed);
-                }
-            }
-            std::this_thread::yield();
-        }
-    });
-    const auto noise = makeNoise(0.5F, 256, 96);
-    auto buffer = makeBuffer({noise, noise});
-    for (int pass = 0; pass < 300; ++pass) {
-        const auto offset = static_cast<float>(pass % 20);
-        imager.setCrossovers({80.0F + offset, 500.0F + offset * 20.0F, 5000.0F + offset * 100.0F}, false);
-        buffer.copyFrom(0, 0, noise.data(), 256);
-        buffer.copyFrom(1, 0, noise.data(), 256);
+    constexpr int BLOCK_SAMPLES {1024};
+    // Every tone repeats exactly in this block and excites a different band at either requested crossover set.
+    constexpr std::array<double, BAND_COUNT> FREQUENCIES {46.875, 281.25, 1500.0, 12'000.0};
+    const auto side = makeComb(FREQUENCIES, 0.1F, BLOCK_SAMPLES);
+    std::vector<float> inverted(side.size());
+    std::ranges::transform(side, inverted.begin(), [](const float value) { return -value; });
+    auto buffer = makeBuffer({side, inverted});
+    bool finitePcm = true;
+    double outputPower = 0.0;
+    const auto processSide = [&] {
+        buffer.copyFrom(0, 0, side.data(), BLOCK_SAMPLES);
+        buffer.copyFrom(1, 0, inverted.data(), BLOCK_SAMPLES);
         imager.process(buffer);
-        if (pass % 20 == 0) {
-            std::this_thread::yield();
+        for (int channel = 0; channel < 2; ++channel) {
+            for (int sample = 0; sample < BLOCK_SAMPLES; ++sample) {
+                const float value = buffer.getSample(channel, sample);
+                finitePcm = finitePcm && std::isfinite(value);
+                outputPower += static_cast<double>(value) * static_cast<double>(value);
+            }
+        }
+    };
+    for (int block = 0; block < 16; ++block) {
+        processSide();
+    }
+
+    std::atomic<bool> valid {true};
+    // RAII joins the reader even if a future assertion adds an early return to this test.
+    std::jthread reader([&imager, &valid](const std::stop_token& stop) {
+        monitorPublishedCorrelations(imager, valid, stop);
+    });
+    constexpr std::array<Crossovers, 2> REQUESTS {
+        {
+            {80.0F, 1200.0F, 8000.0F},
+            {150.0F, 700.0F, 4000.0F},
+        },
+    };
+    for (const auto& requested : REQUESTS) {
+        SCOPED_TRACE(requested[1]);
+        const auto previous = imager.getActiveCrossovers();
+        imager.setCrossovers(requested, false);
+        constexpr auto HANDOFF_TIMEOUT = std::chrono::milliseconds(1500);
+        const auto deadline = std::chrono::steady_clock::now() + HANDOFF_TIMEOUT;
+        // Two distinct, observed transitions necessarily hand off from slot 0 to 1 and back to slot 0.
+        while (!juce::approximatelyEqual(imager.getActiveCrossovers()[1], requested[1])
+               && std::chrono::steady_clock::now() < deadline)
+        {
+            processSide();
+            juce::Thread::sleep(1);
+        }
+        const auto active = imager.getActiveCrossovers();
+        EXPECT_FALSE(juce::approximatelyEqual(active[1], previous[1]));
+        for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+            EXPECT_FLOAT_EQ(active[crossover], requested[crossover]);
+        }
+        // Drain the crossfaded partition and verify that recovery remains active in each newly published slot.
+        processSide();
+        for (const float reading : imager.getBandCorrelations()) {
+            EXPECT_TRUE(std::isfinite(reading));
+            EXPECT_NEAR(reading, 1.0F, 1.0e-6F);
         }
     }
-    finished.store(true, std::memory_order_release);
+    reader.request_stop();
     reader.join();
     EXPECT_TRUE(valid.load(std::memory_order_relaxed));
+    EXPECT_TRUE(finitePcm);
+    // Pure Side at zero Width would be silent without the quadrature recovery path.
+    EXPECT_GT(outputPower, 1.0);
     imager.release();
 }
 

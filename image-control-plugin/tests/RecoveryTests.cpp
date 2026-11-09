@@ -331,6 +331,52 @@ TEST(Recovery, UnityWidthIsBitExactNeutralEvenWithRecoveryAndMovingCrossovers)
     }
 }
 
+TEST(Recovery, NeutralCrossoverPublicationRetainsWarmHistoryForTheFirstRecoveryPartition)
+{
+    const Crossovers moved {80.0F, 1800.0F, 8000.0F};
+    const auto left = makeNoise(0.3F, PARTITION_SIZE, 180);
+    const auto right = makeNoise(0.3F, PARTITION_SIZE, 181);
+    for (const bool offline : {false, true}) {
+        SCOPED_TRACE(offline);
+        MultibandImager hidden;
+        MultibandImager metered;
+        hidden.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        metered.prepare(TEST_SAMPLE_RATE, 2, moved);
+        metered.setCorrelationEnabled(true);
+        const auto advance = [&] {
+            auto actual = makeBuffer({left, right});
+            auto reference = makeBuffer({left, right});
+            renderSlice(hidden, actual, 0, PARTITION_SIZE);
+            renderSlice(metered, reference, 0, PARTITION_SIZE);
+            for (int channel = 0; channel < 2; ++channel) {
+                for (int sample = 0; sample < PARTITION_SIZE; ++sample) {
+                    ASSERT_EQ(actual.getSample(channel, sample), reference.getSample(channel, sample)) << sample;
+                }
+            }
+        };
+        for (int partition = 0; partition < 40; ++partition) {
+            advance();
+        }
+        hidden.setCrossovers(moved, offline);
+        for (int attempt = 0; attempt < 400 && !sameCrossovers(hidden.getActiveCrossovers(), moved); ++attempt) {
+            advance();
+            if (!offline) {
+                juce::Thread::sleep(5);
+            }
+        }
+        ASSERT_TRUE(sameCrossovers(hidden.getActiveCrossovers(), moved));
+        for (auto* imager : {&hidden, &metered}) {
+            imager->setWidths({0.0F, 0.3F, 0.6F, 0.2F});
+            imager->setRecoveries({1.0F, 0.8F, 0.4F, 0.6F});
+            imager->setPans({-0.3F, 0.2F, 0.0F, 0.5F});
+        }
+        // This includes the first partition of simultaneous Width and Recover glides, not only settled output.
+        for (int partition = 0; partition < 6; ++partition) {
+            advance();
+        }
+    }
+}
+
 TEST(Recovery, RecoveryCannotAddSignalWhenWidthIsUnityOrWider)
 {
     const auto input = makeBuffer({makeNoise(0.4F, 12'009, 105), makeNoise(0.4F, 12'009, 106)});

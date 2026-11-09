@@ -59,6 +59,32 @@ TEST(Convolver, MatchesDirectConvolutionForEveryKernel)
     }
 }
 
+TEST(Convolver, PartitionBoundaryLengthsMatchEverySampleThroughTheTail)
+{
+    constexpr int PARTITION_SIZE {32};
+    const auto source = makeNoise(0.5F, PARTITION_SIZE * 5 + 7, 91);
+    for (const std::size_t length : {1U, 32U, 33U}) {
+        SCOPED_TRACE(length);
+        const std::vector<std::vector<float>> kernels {makeNoise(0.25F, length, 92)};
+        const KernelSpectra spectra(kernels, PARTITION_SIZE);
+        PartitionedConvolver convolver;
+        convolver.prepare(PARTITION_SIZE, spectra.getPartitionCount());
+        const std::size_t outputLength = source.size() + length - 1;
+        const std::size_t paddedLength = (outputLength + PARTITION_SIZE - 1) / PARTITION_SIZE * PARTITION_SIZE;
+        std::vector<float> input(paddedLength, 0.0F);
+        std::ranges::copy(source, input.begin());
+        std::vector<float> output(PARTITION_SIZE);
+        for (std::size_t start = 0; start < paddedLength; start += PARTITION_SIZE) {
+            convolver.pushInput(std::span<const float>(input).subspan(start, PARTITION_SIZE));
+            convolver.convolve(spectra, 0, output);
+            for (std::size_t sample = 0; sample < output.size(); ++sample) {
+                EXPECT_NEAR(output[sample], directConvolution(input, kernels.front(), start + sample), 1.0e-6)
+                    << start + sample;
+            }
+        }
+    }
+}
+
 TEST(Convolver, ResetClearsHistory)
 {
     constexpr int partitionSize = 32;

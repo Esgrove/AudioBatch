@@ -1,6 +1,6 @@
 /// Declares KernelSpectra and PartitionedConvolver, a uniformly partitioned overlap-save FIR convolution.
 /// KernelSpectra holds the partition spectra of several kernels of the same length,
-/// computed once off the audio thread.
+/// computed during preparation, background design, or explicitly non-real-time processing.
 /// PartitionedConvolver keeps the spectra of the recent input partitions of one signal,
 /// so the same input can be convolved with every kernel at the cost of one forward FFT per partition.
 
@@ -43,7 +43,8 @@ private:
 };
 
 /// Convolves one signal with the kernels of a KernelSpectra, partition by partition, without latency of its own.
-/// Push each input partition once, then convolve it with any number of kernels.
+/// Push every input partition once, even when no output is needed, then convolve it with any number of kernels.
+/// Output calls only read history, so resuming a skipped output immediately uses the retained raw input.
 /// Every buffer is allocated in prepare, so pushing and convolving are safe in the audio callback.
 class PartitionedConvolver
 {

@@ -72,6 +72,30 @@ void renderBuffer(ImageControlProcessor& processor, juce::AudioBuffer<float>& bu
         processor.processBlock(block, midi);
     }
 }
+/// Renders bypass blocks through either the host override or the processor's own bypass parameter.
+void renderBypassedBuffer(ImageControlProcessor& processor, juce::AudioBuffer<float>& buffer, const bool hostBypass)
+{
+    juce::MidiBuffer midi;
+    for (int start = 0; start < buffer.getNumSamples(); start += 32) {
+        juce::AudioBuffer<float> block(buffer.getArrayOfWritePointers(), 2, start, 32);
+        if (hostBypass) {
+            processor.processBlockBypassed(block, midi);
+        } else {
+            processor.processBlock(block, midi);
+        }
+    }
+}
+
+/// Requires lifecycle renders to match every sample, including initial FIR pre-ring and latency padding.
+void expectSameBuffer(const juce::AudioBuffer<float>& actual, const juce::AudioBuffer<float>& expected)
+{
+    for (int channel = 0; channel < 2; ++channel) {
+        for (int sample = 0; sample < expected.getNumSamples(); ++sample) {
+            ASSERT_EQ(actual.getSample(channel, sample), expected.getSample(channel, sample))
+                << "channel " << channel << " sample " << sample;
+        }
+    }
+}
 }  // namespace
 
 TEST(Processor, AcceptsMatchingMonoOrStereoLayouts)
@@ -297,6 +321,123 @@ TEST(Processor, RecoveryIsInactiveAtUnityOrWiderAndDoesNotChangeExactNeutralDelt
     }
 }
 
+TEST(Processor, RepeatedSmallBlocksPreserveWidthAndRecoveryGlides)
+{
+    constexpr int activation = 10'240;
+    constexpr int samples = activation + 2048;
+    const auto left = makeNoise(0.3F, samples, 190);
+    const auto right = makeNoise(0.3F, samples, 191);
+    for (const bool offline : {false, true}) {
+        ImageControlProcessor processor;
+        processor.setNonRealtime(offline);
+        processor.prepareToPlay(TEST_SAMPLE_RATE, 1);
+        MultibandImager reference;
+        // Host-normalized defaults can differ from the literal crossover constants by their last bits.
+        // Match preparation's actual APVTS frequencies, not only the later Width/Recover targets.
+        reference.prepare(TEST_SAMPLE_RATE, 2, processor.getCrossovers());
+        auto actual = makeBuffer({left, right});
+        auto expected = makeBuffer({left, right});
+        juce::AudioBuffer<float> actualWarmup(actual.getArrayOfWritePointers(), 2, 0, activation);
+        juce::AudioBuffer<float> expectedWarmup(expected.getArrayOfWritePointers(), 2, 0, activation);
+        renderBuffer(processor, actualWarmup, 37);
+        reference.process(expectedWarmup);
+        BandWidths widths {};
+        BandRecoveries recoveries {};
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            setParameter(processor, widthParameterId(band), 0.2F + static_cast<float>(band) * 0.1F);
+            setParameter(processor, recoverParameterId(band), 30.0F + static_cast<float>(band) * 20.0F);
+            // Use the same APVTS raw values as the callback, avoiding a second normalized-value round trip.
+            widths[band] = processor.getParameters().getRawParameterValue(widthParameterId(band))->load();
+            recoveries[band] = processor.getParameters().getRawParameterValue(recoverParameterId(band))->load()
+                / RECOVER_MAX_PERCENT;
+        }
+        reference.setWidths(widths);
+        reference.setRecoveries(recoveries);
+        juce::AudioBuffer<float> actualRamp(actual.getArrayOfWritePointers(), 2, activation, samples - activation);
+        juce::AudioBuffer<float> expectedRamp(expected.getArrayOfWritePointers(), 2, activation, samples - activation);
+        renderBuffer(processor, actualRamp, 1);
+        reference.process(expectedRamp);
+        for (int channel = 0; channel < 2; ++channel) {
+            for (int sample = activation; sample < samples; ++sample) {
+                ASSERT_EQ(actual.getSample(channel, sample), expected.getSample(channel, sample)) << sample;
+            }
+        }
+    }
+}
+
+TEST(Processor, CachedControlsFollowBypassEditsResetAndReprepare)
+{
+    const auto left = makeNoise(0.3F, 12'288, 192);
+    const auto right = makeNoise(0.3F, 12'288, 193);
+    for (const bool hostBypass : {false, true}) {
+        SCOPED_TRACE(hostBypass);
+        ImageControlProcessor processor;
+        processor.setNonRealtime(true);
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            setParameter(processor, midGainParameterId(band), -6.0F);
+            setParameter(processor, widthParameterId(band), 0.2F);
+            setParameter(processor, recoverParameterId(band), 30.0F);
+        }
+        processor.prepareToPlay(TEST_SAMPLE_RATE, 37);
+        auto warmup = makeBuffer({left, right});
+        renderBuffer(processor, warmup, 37);
+        if (!hostBypass) {
+            setParameter(processor, BYPASS_ID, 1.0F);
+        }
+        auto bypassed = makeBuffer({left, right});
+        renderBypassedBuffer(processor, bypassed, hostBypass);
+        // Every raw control group changes while bypassed, including controls with non-linear conversions.
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            setParameter(processor, midGainParameterId(band), -2.0F - static_cast<float>(band));
+            setParameter(processor, sideGainParameterId(band), 1.0F + static_cast<float>(band));
+            setParameter(processor, panParameterId(band), -30.0F + static_cast<float>(band) * 20.0F);
+            setParameter(processor, widthParameterId(band), 0.4F + static_cast<float>(band) * 0.2F);
+            setParameter(processor, recoverParameterId(band), 70.0F - static_cast<float>(band) * 15.0F);
+        }
+        setParameter(processor, soloParameterId(1), 1.0F);
+        setParameter(processor, OUTPUT_GAIN_ID, -3.0F);
+        setParameter(processor, DELTA_ID, 1.0F);
+        auto editedBypass = makeBuffer({left, right});
+        renderBypassedBuffer(processor, editedBypass, hostBypass);
+        for (int sample = 9000; sample < editedBypass.getNumSamples(); ++sample) {
+            const auto source = static_cast<std::size_t>(sample - processor.getLatencySamples());
+            ASSERT_EQ(editedBypass.getSample(0, sample), left[source]);
+            ASSERT_EQ(editedBypass.getSample(1, sample), right[source]);
+        }
+        setParameter(processor, BYPASS_ID, 0.0F);
+        juce::MemoryBlock state;
+        processor.getStateInformation(state);
+        ImageControlProcessor fresh;
+        fresh.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        fresh.setNonRealtime(true);
+        fresh.prepareToPlay(TEST_SAMPLE_RATE, 37);
+        auto expected = makeBuffer({left, right});
+        renderBuffer(fresh, expected, 37);
+        // Reset must apply current unbypassed targets even if the last callback was host-bypassed.
+        processor.reset();
+        auto restarted = makeBuffer({left, right});
+        renderBuffer(processor, restarted, 1);
+        expectSameBuffer(restarted, expected);
+        // A repeated reset with unchanged raw values must still clear history and settle the retained targets.
+        processor.reset();
+        restarted = makeBuffer({left, right});
+        renderBuffer(processor, restarted, 37);
+        expectSameBuffer(restarted, expected);
+        // Preparation after a stopped callback also observes edits and settles cached targets immediately.
+        setParameter(processor, OUTPUT_GAIN_ID, -9.0F);
+        setParameter(fresh, OUTPUT_GAIN_ID, -9.0F);
+        processor.releaseResources();
+        fresh.releaseResources();
+        processor.prepareToPlay(TEST_SAMPLE_RATE, 37);
+        fresh.prepareToPlay(TEST_SAMPLE_RATE, 37);
+        restarted = makeBuffer({left, right});
+        expected = makeBuffer({left, right});
+        renderBuffer(processor, restarted, 37);
+        renderBuffer(fresh, expected, 37);
+        expectSameBuffer(restarted, expected);
+    }
+}
+
 TEST(Processor, WidthAndRecoverSavedStateRendersTheSameHeadlessOutput)
 {
     ImageControlProcessor source;
@@ -374,16 +515,10 @@ TEST(Processor, DeltaIsSilentAtNeutralSettings)
         juce::AudioBuffer<float> block(buffer.getArrayOfWritePointers(), 2, start, 512);
         processor.processBlock(block, midi);
     }
-    // While Delta glides in, the bands sum back to the delayed input up to rounding,
-    // and once it has settled, the output is exact silence.
-    const int settled = static_cast<int>(GAIN_SMOOTHING_SECONDS * TEST_SAMPLE_RATE) + 2 * PARTITION_SIZE;
+    // Preparation settles the current Delta target before the first FIR partition.
     for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
         for (int channel = 0; channel < 2; ++channel) {
-            if (sample < settled) {
-                ASSERT_NEAR(buffer.getSample(channel, sample), 0.0F, 1.0e-6F) << sample;
-            } else {
-                ASSERT_EQ(buffer.getSample(channel, sample), 0.0F) << sample;
-            }
+            ASSERT_EQ(buffer.getSample(channel, sample), 0.0F) << sample;
         }
     }
     processor.releaseResources();
