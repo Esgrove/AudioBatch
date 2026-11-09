@@ -400,6 +400,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("space", TogglePlayback, outside_text),
         KeyBinding::new("escape", StopPlayback, outside_text),
         KeyBinding::new(primary!("p"), OpenAudioSettings, context),
+        KeyBinding::new(primary!("e"), OpenPluginChain, context),
         KeyBinding::new("escape", CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
         KeyBinding::new(primary!("w"), CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
         KeyBinding::new("escape", ClosePluginWindow, Some(PLUGIN_WINDOW_KEY_CONTEXT)),

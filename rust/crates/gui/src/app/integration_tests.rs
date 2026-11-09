@@ -616,6 +616,23 @@ async fn integration_primary_shortcuts_select_all_and_open_settings(cx: &mut Tes
     cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
 }
 
+/// Opens an empty plugin chain through the primary-E binding and reuses its window on repeated requests.
+#[gpui_kit::test]
+fn integration_primary_shortcut_opens_plugin_chain(cx: &mut TestAppContext) {
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    let workflow = Workflow::new(cx);
+    workflow.focus(cx);
+    workflow.menu_key(&format!("{primary}-e"), cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).chain_window.is_some()));
+    let window_count = cx.read(|cx| cx.windows().len());
+    workflow.focus(cx);
+    workflow.menu_key(&format!("{primary}-e"), cx);
+    cx.read(|cx| {
+        assert!(workflow.view.read(cx).chain_window.is_some());
+        assert_eq!(cx.windows().len(), window_count);
+    });
+}
+
 /// Hides Path once when saved column choices predate the Folder column, then keeps the migrated revision.
 #[gpui_kit::test]
 fn integration_old_column_choices_hide_path_once(cx: &mut TestAppContext) {

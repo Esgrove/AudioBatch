@@ -16,6 +16,7 @@ and clears per-file gain. The Plugins menu processes the selection through the l
 Options offers Output Device and Columns submenus, Continue Playback When Changing Files, and Play from First Cue Point.
 Chain Presets includes Show Presets Folder.
 Audio Settings uses Cmd/Ctrl+P only, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
+Cmd/Ctrl+E opens the plugin chain editor.
 Escape stops playback and returns to the start.
 
 The Folder column, shown beside Name, holds the parent directory.
