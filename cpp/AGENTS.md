@@ -293,6 +293,9 @@ Tests:
 
 - Prefer modern C++23 coding standards and idioms.
   Use references and smart pointers instead of raw pointers, as described in Ownership and Pointers.
+- Prefer C++20/23 concepts and `requires` clauses to constrain templates when they clarify meaningful type requirements.
+  Reuse standard concepts where suitable, and prefer them over SFINAE or `std::enable_if`.
+  Keep templates unconstrained when a constraint would add complexity without expressing a useful contract.
 - Fix JUCE bugs in the fork instead of working around them in project code.
   Commit the fix on the fork's `master` in `JUCE/`, in JUCE's own code style.
   Keep each patch small and upstreamable, so rebasing the fork onto a new JUCE release stays easy.
