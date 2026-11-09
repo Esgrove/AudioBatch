@@ -229,6 +229,20 @@ when a host stops calling without releasing resources.
 Expiry is at least 250 ms and allows two prepared host blocks when those are longer.
 Only the processing thread touches the accumulated moments.
 
+The message-thread meter keeps the live marker, numerical readout, and accessible value unchanged.
+A shape-distinct yellow notch adds an exponential trend, with Persistence as its time constant.
+A translucent box spans the minimum and maximum display-observed readings over the trailing Persistence duration.
+It does not promise audio-thread extrema between display refreshes.
+A fixed ring retains 1/120-second buckets of observed minima and maxima for the maximum Persistence window.
+An extreme can remain visible at most one bucket beyond its nominal expiry.
+Shortening or increasing Persistence immediately selects a new window from that retained history,
+without resetting the live value or trend.
+Elapsed seconds, rather than frame counts or capped animation steps, drive smoothing and expiry.
+Unavailable readings, hidden meters or editors, and processor lifecycle generation changes clear presentation history.
+A display gap longer than maximum Persistence also reseeds it from the next valid reading.
+The snapshot carries the existing lifecycle generation so resets between display refreshes cannot preserve old history.
+History is never saved, and display smoothing does not change DSP accumulation or audio output.
+
 ## Analyzer transport and stream boundaries
 
 [`StereoSampleFifo.h`](src/analysis/StereoSampleFifo.h) owns fixed stereo audio storage

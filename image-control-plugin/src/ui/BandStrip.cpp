@@ -1,5 +1,6 @@
 /// Implements BandStrip: the slider setup and layout,
 /// and the Width and Link behaviour that writes the Side parameter inside host change gestures.
+/// Also implements live correlation readouts, bounded time-based history, and layered meter indicators.
 
 #include "ui/BandStrip.h"
 
@@ -10,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -151,9 +153,14 @@ void setSideValue(juce::RangedAudioParameter& parameter, const float value, cons
 BandCorrelationMeter::BandCorrelationMeter(const juce::String& band)
 {
     setTitle(band + " correlation");
-    setDescription("Stereo correlation: -1 anti-phase, 0 uncorrelated, +1 in-phase. Silence is unavailable");
+    setDescription(
+        "Live stereo correlation: -1 anti-phase, 0 uncorrelated, +1 in-phase. "
+        "The notch shows the smoothed trend and the box shows the recent range. Silence is unavailable"
+    );
     setTooltip(
-        "Processed band correlation: -1 is anti-phase, 0 is uncorrelated, +1 is in-phase. Silence is unavailable"
+        "Processed band correlation: -1 is anti-phase, 0 is uncorrelated, +1 is in-phase. "
+        "The coloured line and number are live, the yellow notch is the trend, and the shaded box is the recent range. "
+        "Persistence controls trend smoothing and range duration. Silence is unavailable"
     );
 }
 
@@ -172,23 +179,122 @@ juce::String BandCorrelationMeter::valueText() const
     return (*correlation >= 0.0F ? "+" : "") + juce::String(*correlation, 2);
 }
 
-/// Updates the snapshot on the message thread, clearing unavailable measurements.
-void BandCorrelationMeter::setCorrelation(const float value)
+/// Returns the display-smoothed trend, without changing the live numerical readout.
+std::optional<float> BandCorrelationMeter::trendValue() const
 {
+    return trend;
+}
+
+/// Returns the recent display-observed extrema, not guaranteed audio-thread extrema.
+std::optional<juce::Range<float>> BandCorrelationMeter::recentRange() const
+{
+    return range;
+}
+
+/// Clears all presentation history through the same unavailable path as an invalid measurement.
+void BandCorrelationMeter::clearHistory()
+{
+    setCorrelation(std::numeric_limits<float>::quiet_NaN());
+}
+
+/// Advances message-thread history in real seconds, including when the live reading is unchanged.
+/// Buckets retain extrema at arbitrary refresh rates, with at most one bucket of late expiry.
+void BandCorrelationMeter::setCorrelation(
+    const float value,
+    const double elapsedSeconds,
+    const double persistenceSeconds
+)
+{
+    const auto previousTrend = trend;
+    const auto previousRange = range;
     const auto next = std::isfinite(value) ? std::optional<float>(std::clamp(value, -1.0F, 1.0F)) : std::nullopt;
-    if (correlation.has_value() == next.has_value()
-        && (!next.has_value() || juce::approximatelyEqual(*correlation, *next)))
+    const bool liveChanged = correlation.has_value() != next.has_value()
+        || (next.has_value() && !juce::approximatelyEqual(*correlation, *next));
+    const double persistence = std::isfinite(persistenceSeconds)
+        ? std::clamp(persistenceSeconds, MIN_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS)
+        : DEFAULT_PERSISTENCE_SECONDS;
+    if (!next.has_value() || !std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0
+        || elapsedSeconds > MAX_PERSISTENCE_SECONDS)
     {
-        return;
+        historyBegin = 0;
+        historyCount = 0;
+        historySeconds = 0.0;
+        trend.reset();
+        range.reset();
     }
     correlation = next;
-    repaint();
-    if (const auto* handler = getAccessibilityHandler()) {
-        handler->notifyAccessibilityEvent(juce::AccessibilityEvent::valueChanged);
+    if (next.has_value()) {
+        const double elapsed
+            = std::isfinite(elapsedSeconds) && elapsedSeconds >= 0.0 && elapsedSeconds <= MAX_PERSISTENCE_SECONDS
+            ? elapsedSeconds
+            : 0.0;
+        advanceHistory(*next, elapsed, persistence);
+    }
+    const bool trendChanged = previousTrend.has_value() != trend.has_value()
+        || (previousTrend.has_value() && trend.has_value() && !juce::approximatelyEqual(*previousTrend, *trend));
+    const bool rangeChanged = previousRange.has_value() != range.has_value()
+        || (previousRange.has_value() && range.has_value()
+            && (!juce::approximatelyEqual(previousRange->getStart(), range->getStart())
+                || !juce::approximatelyEqual(previousRange->getEnd(), range->getEnd())));
+    if (liveChanged || trendChanged || rangeChanged) {
+        repaint();
+    }
+    if (liveChanged) {
+        if (const auto* handler = getAccessibilityHandler()) {
+            handler->notifyAccessibilityEvent(juce::AccessibilityEvent::valueChanged);
+        }
     }
 }
 
-/// Draws a centred horizontal track, a signed marker, and the minus-one, zero, plus-one scale.
+/// Accumulates a valid observation and selects its trailing window from bounded maximum-duration history.
+void BandCorrelationMeter::advanceHistory(
+    const float value,
+    const double elapsedSeconds,
+    const double persistenceSeconds
+)
+{
+    historySeconds += elapsedSeconds;
+    if (trend.has_value()) {
+        const double weight = -std::expm1(-elapsedSeconds / persistenceSeconds);
+        trend = static_cast<float>(static_cast<double>(*trend) + weight * static_cast<double>(value - *trend));
+    } else {
+        trend = value;
+    }
+    // Keep maximum-duration history so increasing Persistence can reveal recent observations immediately.
+    const double oldestRetained = historySeconds - MAX_PERSISTENCE_SECONDS;
+    while (historyCount > 0 && history.at(historyBegin).startSeconds + HISTORY_BUCKET_SECONDS <= oldestRetained) {
+        historyBegin = (historyBegin + 1) % HISTORY_CAPACITY;
+        --historyCount;
+    }
+    const double bucketStart = std::floor(historySeconds / HISTORY_BUCKET_SECONDS) * HISTORY_BUCKET_SECONDS;
+    const std::size_t last = (historyBegin + historyCount + HISTORY_CAPACITY - 1) % HISTORY_CAPACITY;
+    if (historyCount > 0 && bucketStart <= history.at(last).startSeconds) {
+        auto& bucket = history.at(last);
+        bucket.minimum = std::min(bucket.minimum, value);
+        bucket.maximum = std::max(bucket.maximum, value);
+    } else {
+        if (historyCount == HISTORY_CAPACITY) {
+            historyBegin = (historyBegin + 1) % HISTORY_CAPACITY;
+            --historyCount;
+        }
+        history.at((historyBegin + historyCount) % HISTORY_CAPACITY)
+            = {.startSeconds = bucketStart, .minimum = value, .maximum = value};
+        ++historyCount;
+    }
+    float minimum = value;
+    float maximum = value;
+    const double oldestShown = historySeconds - persistenceSeconds;
+    for (std::size_t index = 0; index < historyCount; ++index) {
+        const auto& bucket = history.at((historyBegin + index) % HISTORY_CAPACITY);
+        if (bucket.startSeconds + HISTORY_BUCKET_SECONDS > oldestShown) {
+            minimum = std::min(minimum, bucket.minimum);
+            maximum = std::max(maximum, bucket.maximum);
+        }
+    }
+    range = juce::Range<float>(minimum, maximum);
+}
+
+/// Layers the observed range, zero tick, trend notch, and live marker above the correlation scale.
 void BandCorrelationMeter::paint(juce::Graphics& graphics)
 {
     constexpr int METER_MARGIN {10};
@@ -209,12 +315,45 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
     };
     graphics.setColour(juce::Colour(palette::GREY_MEDIUM));
     graphics.fillRoundedRectangle(track, TRACK_HEIGHT * 0.5F);
+    const auto positionFor
+        = [&track](const float value) { return track.getX() + (value + 1.0F) * 0.5F * track.getWidth(); };
+    if (range.has_value()) {
+        constexpr float MIN_RANGE_WIDTH {2.0F};
+        constexpr float RANGE_ALPHA {0.35F};
+        const float width = std::clamp(
+            positionFor(range->getEnd()) - positionFor(range->getStart()), MIN_RANGE_WIDTH, track.getWidth()
+        );
+        const float left = std::clamp(positionFor(range->getStart()), track.getX(), track.getRight() - width);
+        const juce::Rectangle<float> box {
+            left, track.getY() - MARKER_EXTENSION, width, TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
+        };
+        graphics.setColour(juce::Colour(palette::GREY_SUPER_LIGHT).withAlpha(RANGE_ALPHA));
+        graphics.fillRect(box);
+        graphics.drawRect(box, 1.0F);
+    }
     graphics.setColour(juce::Colour(palette::GREY_LIGHT));
     graphics.fillRect(
         track.getCentreX(), track.getY() - MARKER_EXTENSION, 1.0F, TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
     );
+    if (trend.has_value()) {
+        constexpr float TREND_HALF_WIDTH {3.0F};
+        constexpr float TREND_HEIGHT {3.0F};
+        const float position
+            = std::clamp(positionFor(*trend), track.getX() + TREND_HALF_WIDTH, track.getRight() - TREND_HALF_WIDTH);
+        juce::Path notch;
+        notch.addTriangle(
+            position - TREND_HALF_WIDTH,
+            track.getY() - MARKER_EXTENSION,
+            position + TREND_HALF_WIDTH,
+            track.getY() - MARKER_EXTENSION,
+            position,
+            track.getY() - MARKER_EXTENSION + TREND_HEIGHT
+        );
+        graphics.setColour(juce::Colour(palette::YELLOW));
+        graphics.fillPath(notch);
+    }
     if (correlation.has_value()) {
-        const float position = track.getX() + (*correlation + 1.0F) * 0.5F * track.getWidth();
+        const float position = positionFor(*correlation);
         graphics.setColour(juce::Colour(*correlation < 0.0F ? palette::ORANGE : palette::BLUE));
         graphics.fillRect(
             std::clamp(position - MARKER_WIDTH * 0.5F, track.getX(), track.getRight() - MARKER_WIDTH),

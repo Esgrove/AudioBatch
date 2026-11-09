@@ -769,14 +769,25 @@ TEST(ImageControlEditor, HiddenAndClosedMetersStopPublishingMeasurements)
         editor.setVisible(true);
         render();
         EXPECT_NEAR(processor.getBandCorrelations().back(), 1.0F, 1.0e-6F);
+        auto* meter = dynamic_cast<BandCorrelationMeter*>(childWithTitle(editor, "High correlation"));
+        ASSERT_NE(meter, nullptr);
+        meter->setCorrelation(-0.8F);
+        meter->setCorrelation(0.8F, 0.05, 0.3);
+        ASSERT_TRUE(meter->trendValue().has_value());
         editor.setVisible(false);
+        EXPECT_FALSE(meter->trendValue().has_value());
+        EXPECT_FALSE(meter->recentRange().has_value());
+        EXPECT_EQ(meter->valueText(), "Unavailable");
         render();
         expectUnavailable();
         editor.setVisible(true);
+        meter->setCorrelation(0.5F);
         processor.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
         auto* post = buttonWithText(editor, "Post");
         ASSERT_NE(post, nullptr);
         post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
+        EXPECT_FALSE(meter->trendValue().has_value());
+        EXPECT_FALSE(meter->recentRange().has_value());
         render();
         expectUnavailable();
     }

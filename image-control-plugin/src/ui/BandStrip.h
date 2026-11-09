@@ -1,14 +1,17 @@
 /// Declares BandStrip, the controls of one band in the ImageControl editor:
 /// the Mid and Side gain sliders attached to their parameters,
 /// the Width macro that sets Side relative to Mid, the Solo and Link toggles, and the parameter-attached Pan slider.
+/// BandCorrelationMeter presents each band's live correlation, smoothed trend, and recent observed range.
 
 #pragma once
 
+#include "Parameters.h"
 #include "ui/ControlSlider.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -24,8 +27,18 @@ constexpr int BAND_STRIP_MIN_HEIGHT {236};
 /// Height of the independent band correlation row, in pixels.
 constexpr int BAND_CORRELATION_HEIGHT {48};
 
-/// A read-only horizontal correlation meter with a named accessible value.
-/// Unavailable values leave the track empty instead of implying zero correlation.
+/// Observed extrema within one display-history bucket.
+struct CorrelationHistoryBucket final {
+    /// Start of the bucket on the meter's relative clock, in seconds.
+    double startSeconds {0.0};
+    /// Lowest live reading observed in this bucket.
+    float minimum {0.0F};
+    /// Highest live reading observed in this bucket.
+    float maximum {0.0F};
+};
+
+/// A read-only horizontal correlation meter with live, smoothed, and recent-range indicators.
+/// Message-thread history is bounded, never serialized, and clears when measurements are unavailable.
 class BandCorrelationMeter final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -33,14 +46,42 @@ public:
 
     [[nodiscard]] juce::String readoutText() const;
     [[nodiscard]] juce::String valueText() const;
-    void setCorrelation(float value);
+    [[nodiscard]] std::optional<float> trendValue() const;
+    [[nodiscard]] std::optional<juce::Range<float>> recentRange() const;
+    void clearHistory();
+    void setCorrelation(
+        float value,
+        double elapsedSeconds = 0.0,
+        double persistenceSeconds = DEFAULT_PERSISTENCE_SECONDS
+    );
 
     [[nodiscard]] std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
     void paint(juce::Graphics& graphics) override;
 
 private:
+    void advanceHistory(float value, double elapsedSeconds, double persistenceSeconds);
+
+    /// Bucket resolution bounds late expiry of an observed extreme to at most 1/120 second.
+    static constexpr double HISTORY_BUCKET_SECONDS {1.0 / 120.0};
+    /// One extra bucket retains the partial bucket at the maximum trailing-window boundary.
+    static constexpr std::size_t HISTORY_CAPACITY {
+        static_cast<std::size_t>(MAX_PERSISTENCE_SECONDS / HISTORY_BUCKET_SECONDS) + 2,
+    };
+
+    /// Observations covering maximum Persistence, regardless of the currently selected window.
+    std::array<CorrelationHistoryBucket, HISTORY_CAPACITY> history {};
     /// Last finite correlation, or empty for silence and other unavailable measurements.
     std::optional<float> correlation;
+    /// Display-only exponential average, initialized directly from the first valid measurement.
+    std::optional<float> trend;
+    /// Extrema of display-observed readings within the selected trailing window.
+    std::optional<juce::Range<float>> range;
+    /// Relative elapsed time since history was last cleared, in seconds.
+    double historySeconds {0.0};
+    /// Index of the oldest occupied history bucket.
+    std::size_t historyBegin {0};
+    /// Number of occupied history buckets.
+    std::size_t historyCount {0};
 };
 
 /// The controls of one band.

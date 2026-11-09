@@ -111,7 +111,8 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     persistenceSlider.setDoubleClickReturnValue(true, DEFAULT_PERSISTENCE_SECONDS);
     persistenceSlider.getValueObject().referTo(editorState.getPropertyAsValue(PERSISTENCE_PROPERTY, nullptr));
     persistenceSlider.setTooltip(
-        "How long particles take to fade. Short values follow the music closely, long values build a calmer picture"
+        "How long particles take to fade, and the smoothing time and recent-range duration of band correlation meters. "
+        "Short values follow the music closely, long values build a calmer picture"
     );
     addAndMakeVisible(persistenceSlider);
 

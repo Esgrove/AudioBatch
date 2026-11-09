@@ -165,6 +165,12 @@ StereoSampleFifo& ImageControlProcessor::getAnalyzerFifo()
 /// Returns the most recently published independent band correlation values.
 BandCorrelations ImageControlProcessor::getBandCorrelations() const noexcept
 {
+    return getBandCorrelationSnapshot().readings;
+}
+
+/// Associates readings with their lifecycle so the editor can reset history even if it missed invalidation.
+BandCorrelationSnapshot ImageControlProcessor::getBandCorrelationSnapshot() const noexcept
+{
     const auto generation = correlationGeneration.load(std::memory_order_acquire);
     const auto updated = correlationUpdateMilliseconds.load(std::memory_order_acquire);
     const auto age = juce::Time::getMillisecondCounter() - updated;
@@ -174,13 +180,13 @@ BandCorrelations ImageControlProcessor::getBandCorrelations() const noexcept
     {
         BandCorrelations unavailable {};
         unavailable.fill(std::numeric_limits<float>::quiet_NaN());
-        return unavailable;
+        return {.readings = unavailable, .generation = generation};
     }
     auto readings = imager.getBandCorrelations();
     if (correlationGeneration.load(std::memory_order_acquire) != generation) {
         readings.fill(std::numeric_limits<float>::quiet_NaN());
     }
-    return readings;
+    return {.readings = readings, .generation = generation};
 }
 
 /// Lets an open editor request band metering. Hidden meters and closed editors disable the extra work.

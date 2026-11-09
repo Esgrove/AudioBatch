@@ -54,7 +54,7 @@ constexpr auto MONO_ID {"mono"};
 
 /// Name of the editor setting that selects the analyzer tap: true for the output, false for the input.
 constexpr auto ANALYZE_OUTPUT_PROPERTY {"analyzeOutput"};
-/// Name of the editor setting that holds the spectrogram persistence in seconds.
+/// Name of the editor setting that holds particle-fade and correlation trend/range persistence in seconds.
 constexpr auto PERSISTENCE_PROPERTY {"persistence"};
 /// Name of the editor setting that holds the pan midpoint in dB:
 /// the level difference between the channels drawn half way from the centre to the edge.
@@ -87,11 +87,11 @@ constexpr auto SHOW_BAND_CORRELATION_PROPERTY {"showBandCorrelation"};
 constexpr auto BYPASS_RENDERING_PROPERTY {"bypassRendering"};
 /// Name of the editor setting that hides the spectrogram, leaving only the controls.
 constexpr auto HIDE_SPECTROGRAM_PROPERTY {"hideSpectrogram"};
-/// Shortest time constant of the fade of the spectrogram particles, in seconds.
+/// Shortest particle-fade and correlation-trend time constant, also the shortest correlation range window, in seconds.
 constexpr double MIN_PERSISTENCE_SECONDS {0.05};
-/// Longest time constant of the fade of the spectrogram particles, in seconds.
+/// Longest particle-fade and correlation-trend time constant, also the longest correlation range window, in seconds.
 constexpr double MAX_PERSISTENCE_SECONDS {3.0};
-/// Default time constant of the fade of the spectrogram particles, in seconds.
+/// Default particle-fade and correlation-trend time constant, also the default correlation range window, in seconds.
 constexpr double DEFAULT_PERSISTENCE_SECONDS {0.3};
 /// Default level difference drawn half way from the centre to the edge of the spectrogram, in dB.
 constexpr double DEFAULT_PAN_MIDPOINT_DB {12.0};

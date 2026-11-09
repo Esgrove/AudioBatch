@@ -18,6 +18,14 @@
 
 namespace esgrove::image_control
 {
+/// Independent correlation readings associated with one processor monitoring lifecycle.
+struct BandCorrelationSnapshot final {
+    /// Latest readings, with NaNs for unavailable bands.
+    BandCorrelations readings {};
+    /// Changes on monitoring visibility, prepare, reset, and release, even between display refreshes.
+    std::uint32_t generation {0};
+};
+
 /// The ImageControl audio processor.
 /// The audio thread reads the parameters each block and hands them to the MultibandImager.
 /// The analyzer tap pushes either the input or the output to the editor's ring.
@@ -41,6 +49,7 @@ public:
     [[nodiscard]] juce::ValueTree& getEditorState();
     [[nodiscard]] StereoSampleFifo& getAnalyzerFifo();
 
+    [[nodiscard]] BandCorrelationSnapshot getBandCorrelationSnapshot() const noexcept;
     [[nodiscard]] BandCorrelations getBandCorrelations() const noexcept;
     [[nodiscard]] Crossovers getCrossovers() const;
 
