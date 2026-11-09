@@ -86,6 +86,7 @@ public:
     bool setPluginPreviewEnabled(bool enabled);
 #ifdef AUDIOBATCH_TESTING
     [[nodiscard]] bool waitForReadAhead(int sourceSamples, juce::uint32 timeoutMilliseconds);
+    void renderTestCallback(float* const* outputChannels, int outputChannelCount, int sampleCount);
 #endif
 
     [[nodiscard]] double getCurrentPosition() const;

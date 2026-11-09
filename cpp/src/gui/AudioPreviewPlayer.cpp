@@ -547,6 +547,16 @@ bool AudioPreviewPlayer::waitForReadAhead(const int sourceSamples, const juce::u
     return bufferingSource != nullptr
         && bufferingSource->waitForNextAudioBlockReady({nullptr, 0, sourceSamples}, timeoutMilliseconds);
 }
+
+/// Forwards hardware-free sanitizer tests through the complete production callback, including lock destruction.
+void AudioPreviewPlayer::renderTestCallback(
+    float* const* outputChannels,
+    const int outputChannelCount,
+    const int sampleCount
+)
+{
+    audioDeviceIOCallbackWithContext(nullptr, 0, outputChannels, outputChannelCount, sampleCount, {});
+}
 #endif
 
 /// Reports whether a source file is open.

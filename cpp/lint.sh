@@ -244,6 +244,11 @@ database_lacks_sources() {
         if [[ "$source" == "$REPO/tests/fuzz/"* ]] && [ "$FUZZ" != true ]; then
             continue
         fi
+        # RTSan's attribute and runtime checks intentionally reject ordinary compiler flags.
+        # Its harness is linted only with an exact entry in the dedicated sanitizer database.
+        if [ "$source" = "$REPO/tests/RealtimeTests.cpp" ] && ! in_compile_database "$source"; then
+            continue
+        fi
         if ! in_compile_database "$source"; then
             return 0
         fi
@@ -504,6 +509,8 @@ for source in "${SOURCES[@]}"; do
         LINTED_SOURCES+=("$source")
     elif [[ "$source" == "$REPO/tests/fuzz/"* ]] && [ "$FUZZ" != true ]; then
         print_yellow "Skipping ${source#"$ROOT/"}, which only the macos-fuzz preset builds"
+    elif [ "$source" = "$REPO/tests/RealtimeTests.cpp" ]; then
+        print_yellow "Skipping ${source#"$ROOT/"}, which needs the macos-rtsan database (--build-dir cmake-build-mac-rtsan)"
     elif [[ "$source" == "$ROOT/test-plugin/"* ]]; then
         print_yellow "Skipping ${source#"$ROOT/"}, which only a build with the tests enabled has"
     else

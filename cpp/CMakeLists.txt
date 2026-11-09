@@ -168,6 +168,37 @@ endif()
 # Must be set before any targets are made. LeakSanitizer is not supported on Apple Silicon.
 set(AUDIOBATCH_SANITIZE "" CACHE STRING "Comma separated list of sanitizers to enable, for example address,undefined")
 
+if(AUDIOBATCH_SANITIZE MATCHES "realtime")
+    if(NOT AUDIOBATCH_SANITIZE STREQUAL "realtime")
+        message(FATAL_ERROR "RealtimeSanitizer cannot be combined with other sanitizers")
+    endif()
+    if(NOT APPLE
+       OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+       OR CMAKE_CROSSCOMPILING
+    )
+        message(FATAL_ERROR "RealtimeSanitizer needs a native macOS Homebrew LLVM build")
+    endif()
+    if(NOT BUILD_TESTING)
+        message(FATAL_ERROR "RealtimeSanitizer requires BUILD_TESTING=ON")
+    endif()
+    include(CheckCXXSourceRuns)
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=realtime -fno-omit-frame-pointer -Werror=unknown-attributes")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=realtime")
+    check_cxx_source_runs(
+        "#if !__has_feature(realtime_sanitizer) || !__has_cpp_attribute(clang::nonblocking)
+         #error RealtimeSanitizer instrumentation and nonblocking attribute are required
+         #endif
+         void callback() [[clang::nonblocking]] {}
+         int main() { callback(); return 0; }"
+        AUDIOBATCH_RTSAN_RUNTIME_WORKS
+    )
+    unset(CMAKE_REQUIRED_FLAGS)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    if(NOT AUDIOBATCH_RTSAN_RUNTIME_WORKS)
+        message(FATAL_ERROR "Clang cannot compile, link, and start the RealtimeSanitizer runtime")
+    endif()
+endif()
+
 if(AUDIOBATCH_SANITIZE)
     if(MSVC)
         if(NOT AUDIOBATCH_SANITIZE STREQUAL "address")
@@ -1103,6 +1134,207 @@ if(BUILD_TESTING)
     )
     set_tests_properties(AudioBatchCliIntegration PROPERTIES LABELS integration TIMEOUT 240)
     audiobatch_set_source_warnings(AudioBatchTests AudioBatchIntegrationTests)
+
+    if(AUDIOBATCH_SANITIZE STREQUAL "realtime")
+        # Reuse the production preview dependencies, not the unit runner or its unrelated suites.
+        get_target_property(realtime_sources AudioBatchTests SOURCES)
+        list(FILTER realtime_sources INCLUDE REGEX "^src/")
+        list(FILTER realtime_sources EXCLUDE REGEX "^src/cli/")
+        juce_add_console_app(AudioBatchRealtimeTests PRODUCT_NAME "AudioBatchRealtimeTests")
+        juce_generate_juce_header(AudioBatchRealtimeTests)
+        target_sources(
+            AudioBatchRealtimeTests PRIVATE ${realtime_sources} "tests/TestHelpers.cpp" "tests/TestPlugin.cpp"
+                                            "tests/RealtimeTests.cpp"
+        )
+        target_include_directories(
+            AudioBatchRealtimeTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}"
+        )
+        target_compile_definitions(
+            AudioBatchRealtimeTests
+            PRIVATE
+                ${AUDIOBATCH_CONSOLE_DEFINITIONS} AUDIOBATCH_TESTING=1
+                AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
+                AUDIOBATCH_TEST_VST3_PATH="${AUDIOBATCH_TEST_PLUGIN_BUNDLE}"
+        )
+        target_link_libraries(
+            AudioBatchRealtimeTests
+            PRIVATE
+                Assets
+                ${AUDIOBATCH_SQLITE_TARGET}
+                ebur128
+                fmt::fmt
+                tag
+                juce::juce_audio_utils
+                juce::juce_audio_processors
+                juce::juce_dsp
+                juce::juce_recommended_config_flags
+                juce::juce_recommended_warning_flags
+                "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>"
+                "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+        )
+        add_dependencies(AudioBatchRealtimeTests AudioBatchTestPlugin_VST3)
+        set_target_properties(AudioBatchRealtimeTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
+        audiobatch_set_source_warnings(AudioBatchRealtimeTests)
+
+        # The shared driver isolates each process and verifies the finding and its callback stack.
+        function(audiobatch_add_realtime_case name)
+            set(realtime_labels realtime)
+            if(name MATCHES "^control-")
+                list(APPEND realtime_labels realtime-control)
+            elseif("--expect" IN_LIST ARGN)
+                list(APPEND realtime_labels realtime-known-regression)
+            else()
+                list(APPEND realtime_labels realtime-clean)
+            endif()
+            if("--diagnostic" IN_LIST ARGN)
+                list(APPEND realtime_labels realtime-diagnostic)
+            endif()
+            set(completion_proof "")
+            if(NOT "--expect" IN_LIST ARGN)
+                set(completion_proof --require-output "^Realtime scenario ${name} completed$")
+            endif()
+            set(runtime_proof "")
+            if(name MATCHES "wet|^renderer-native$")
+                set(runtime_proof --require-output "Realtime runtime count: 1 after plugin preparation")
+            endif()
+            add_test(
+                NAME AudioBatchRealtime.${name}
+                COMMAND
+                    "${AUDIOBATCH_UV_EXECUTABLE}" run --script "${CMAKE_SOURCE_DIR}/../tests/realtime_sanitizer.py"
+                    --executable $<TARGET_FILE:AudioBatchRealtimeTests> --case "${name}" --artifacts
+                    "${CMAKE_BINARY_DIR}/realtime-artifacts/${name}" --timeout 30 --require-output
+                    "Realtime runtime count: 1 at startup" ${runtime_proof} ${completion_proof} ${ARGN}
+            )
+            set_tests_properties(
+                AudioBatchRealtime.${name}
+                PROPERTIES
+                    LABELS
+                    "${realtime_labels}"
+                    TIMEOUT
+                    45
+                    RUN_SERIAL
+                    TRUE
+            )
+        endfunction()
+        foreach(
+            scenario
+            renderer-dry
+            renderer-wet
+            renderer-latency-tail
+            renderer-mono-gain
+            renderer-gain-ramp
+            renderer-failure
+            renderer-eof
+            renderer-stop
+            player-contention
+        )
+            audiobatch_add_realtime_case(${scenario})
+        endforeach()
+        audiobatch_add_realtime_case(control-clean)
+        audiobatch_add_realtime_case(
+            control-allocation
+            --control
+            --expect
+            malloc
+            --stack
+            realtimeAllocation
+        )
+        audiobatch_add_realtime_case(
+            control-free
+            --control
+            --expect
+            free
+            --stack
+            realtimeFree
+        )
+        audiobatch_add_realtime_case(
+            control-mutex
+            --control
+            --expect
+            pthread_mutex_lock
+            --stack
+            realtimeMutex
+        )
+        audiobatch_add_realtime_case(
+            device-dry
+            --expect
+            pthread_mutex_lock
+            --stack
+            audioDeviceIOCallbackInt
+        )
+        audiobatch_add_realtime_case(
+            device-wet
+            --expect
+            pthread_mutex_lock
+            --stack
+            audioDeviceIOCallbackInt
+        )
+        audiobatch_add_realtime_case(
+            player-dry
+            --expect
+            pthread_mutex_lock
+            --stack
+            ResamplingAudioSource
+        )
+        audiobatch_add_realtime_case(
+            player-wet
+            --expect
+            pthread_mutex_lock
+            --stack
+            ResamplingAudioSource
+        )
+        audiobatch_add_realtime_case(
+            player-idle
+            --expect
+            pthread_mutex_unlock
+            --stack
+            AudioPreviewPlayer
+        )
+        # Each continuing report must map its unsafe call to a known owner, not just a player ancestor.
+        # Only unlock may belong to the player's try-lock destructor. Wet mode also reaches JUCE's VST3 owners.
+        set(realtime_input_owners
+            "ResamplingAudioSource::getNextAudioBlock|BufferingAudioSource::(getValidBufferRange|getNextAudioBlock)"
+        )
+        set(realtime_try_unlock_stack
+            "(?s:unsafe function .pthread_mutex_unlock. .*juce::GenericScopedTryLock<juce::CriticalSection>::~GenericScopedTryLock)"
+        )
+        foreach(mode dry wet)
+            set(realtime_owners "${realtime_input_owners}")
+            if(mode STREQUAL "wet")
+                string(APPEND realtime_owners "|MidiEventList::(clear|getEventCount)|JuceVST3Component::processAudio")
+            endif()
+            set(realtime_owner_stack
+                "(?s:unsafe function .pthread_mutex_(lock|unlock). .*juce::(${realtime_owners}))|${realtime_try_unlock_stack}"
+            )
+            audiobatch_add_realtime_case(
+                player-${mode}-diagnostic
+                --argument=--case
+                --argument=player-${mode}
+                --diagnostic
+                --expect
+                pthread_mutex_lock
+                --expect
+                pthread_mutex_unlock
+                --stack
+                "${realtime_owner_stack}"
+                --stack
+                AudioPreviewPlayer
+                --require-output
+                "^Realtime scenario player-${mode} completed$"
+                --require-output
+                BufferingAudioSource
+                --require-output
+                GenericScopedTryLock
+            )
+        endforeach()
+        audiobatch_add_realtime_case(
+            renderer-native
+            --expect
+            pthread_mutex_lock
+            --stack
+            VST3PluginInstance
+        )
+    endif()
 endif()
 
 # libFuzzer harnesses for the parsers that read untrusted input, built by the macos-fuzz preset.
