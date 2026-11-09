@@ -530,3 +530,14 @@ Real-time plugin code avoids application heap allocation and kernel destruction 
 but third-party wrappers and FFT implementations require separate inspection and validation.
 An additional real-time checker has observed first-use thread-local allocation in the JUCE VST3 automation wrapper.
 Passing throughput tests or wrapper validation must not be described as proof of allocation-free automation.
+
+`sanitize.sh --realtime` startup-links the selected Homebrew LLVM RTSan runtime into a dedicated test host.
+Direct processing and built VST3 probes check first callbacks on fresh threads, without unmarked processing warmup.
+Preparation, test coordination, assertions, and intentional offline kernel design stay outside marked regions.
+The host verifies one loaded RTSan runtime before checking the exact build-tree bundle.
+Clean callback cases reject every detected violation.
+Known host/wrapper findings are explicit `BLOCKED` audit contracts,
+matching unsafe call names and callback stacks rather than suppressing those calls.
+Per-case stdout, stderr, and outcome records remain under `cmake-build-mac-rtsan/realtime-artifacts/`.
+The checks detect exercised intercepted calls, not deadline compliance,
+arbitrary plugin safety, or every atomic spin loop.

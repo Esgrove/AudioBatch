@@ -118,7 +118,8 @@ On macOS it also installs the Audio Unit to `~/Library/Audio/Plug-Ins/Components
 `./install.sh --validate` validates the installed VST3 and, on macOS, the registered Audio Unit with auval.
 Both use pluginval from `PATH` when available.
 Otherwise they fetch and build the pinned version in the repository's `.deps/` directory and reuse it on later runs.
-This needs Git, the build toolchain, and network access for missing dependencies, with no global installation or PATH setup.
+This needs Git, the build toolchain, and network access for missing dependencies,
+with no global installation or PATH setup.
 Setup or validation failures fail the command instead of skipping VST3 validation.
 Both accept `--validation-level 5` through `--validation-level 10`, defaulting to 5.
 Specifying a level also enables validation, for example `./build.sh --validation-level 10`.
@@ -141,7 +142,14 @@ so the configuration symlinks are real links, not text placeholders.
 `../cpp/format.sh` formats this plugin along with the shared C++ sources.
 On macOS, `./sanitize.sh` runs the plugin tests with AddressSanitizer and UndefinedBehaviorSanitizer,
 `./sanitize.sh --thread` uses ThreadSanitizer, and `./coverage.sh --lcov` reports plugin source coverage.
-Each uses a separate build directory and does not build the AudioBatch applications.
+`./sanitize.sh --realtime` uses Homebrew LLVM to check cold real-time processing and the build-tree VST3 on macOS.
+Detector controls and clean direct-processing cases are separate from verified `BLOCKED` JUCE host/wrapper audits.
+Diagnostics are retained under `cmake-build-mac-rtsan/realtime-artifacts/`. No plugin is installed.
+Offline kernel design is intentionally outside the checked boundary,
+and passing checks do not establish audio deadlines.
+Each sanitizer uses a separate build directory and does not build the AudioBatch applications.
+Lint also checks RTSan-only sources when their instrumented compilation database exists,
+and otherwise reports that those probes need `./sanitize.sh --realtime` first.
 CI runs Debug and Release tests on both platforms, pinned VST3 validation, and macOS Audio Unit validation.
 
 ### Optional pluginval target
