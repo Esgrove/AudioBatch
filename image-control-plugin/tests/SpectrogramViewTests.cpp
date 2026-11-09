@@ -620,6 +620,47 @@ TEST(BandCorrelationMeter, ExposesNamedReadOnlyValuesAndSilenceIsUnavailable)
     EXPECT_EQ(value->getCurrentValueAsString(), "Unavailable");
 }
 
+TEST(BandCorrelationMeter, ReadoutUsesOneUnicodeDashForUnavailableMeasurements)
+{
+    BandCorrelationMeter meter("Low");
+    const auto unavailable = juce::String::charToString(0x2014);
+    EXPECT_EQ(meter.readoutText().length(), 1);
+    EXPECT_EQ(meter.readoutText(), unavailable);
+    EXPECT_EQ(meter.valueText(), "Unavailable");
+
+    meter.setCorrelation(-0.75F);
+    EXPECT_EQ(meter.readoutText(), "-0.75");
+    meter.setCorrelation(0.0F);
+    EXPECT_EQ(meter.readoutText(), "+0.00");
+    meter.setCorrelation(0.75F);
+    EXPECT_EQ(meter.readoutText(), "+0.75");
+
+    constexpr std::array unavailableValues {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+    };
+    for (const float value : unavailableValues) {
+        meter.setCorrelation(value);
+        EXPECT_EQ(meter.readoutText().length(), 1);
+        EXPECT_EQ(meter.readoutText(), unavailable);
+        EXPECT_EQ(meter.valueText(), "Unavailable");
+    }
+}
+
+TEST(ImageControlEditor, CoreProfileRequested)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    const auto* context = juce::OpenGLContext::getContextAttachedTo(editor);
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(context->getPreferredAPI(), juce::OpenGLAPI::openGL);
+    EXPECT_EQ(context->getPreferredVersion(), (juce::OpenGLVersion {4, 1}));
+    EXPECT_EQ(context->getPreferredProfile(), juce::OpenGLProfile::core);
+}
+
 TEST(ImageControlEditor, MonoIsComposedBeforeDeltaAndBypassAtMinimumWidthAndRetainedOnReopen)
 {
     ImageControlProcessor processor;
