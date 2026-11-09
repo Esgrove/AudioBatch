@@ -8,7 +8,10 @@
 
 namespace audiobatch::utils
 {
-/// A nullable reference whose owner must outlive every use of the engaged value.
+/// A nullable, non-owning reference whose owner must outlive every use of the engaged value.
+///
+/// std::optional cannot hold T& directly, so reference_wrapper stores a copyable, rebindable reference instead.
+/// std::nullopt represents absence. When engaged, use value->get() to access the original object without copying it.
 template<typename T>
 using OptionalRef = std::optional<std::reference_wrapper<T>>;
 }  // namespace audiobatch::utils
