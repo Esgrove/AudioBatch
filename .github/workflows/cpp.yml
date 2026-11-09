@@ -189,6 +189,7 @@ jobs:
           uv run --script ../tests/test_cpp_test.py
           uv run --script ../tests/test_realtime_sanitizer.py
           uv run --script ../tests/test_realtime_scripts.py
+          uv run --script ../tests/test_callback_benchmark.py
 
       # --prepare refreshes the compile database and generated headers without compiling the applications.
       # lint.sh selects Homebrew clang-tidy while CMake retains the build job's Apple toolchain.

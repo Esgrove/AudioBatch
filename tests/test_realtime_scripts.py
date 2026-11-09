@@ -190,6 +190,44 @@ class RealtimeScripts(unittest.TestCase):
         assert "only supported on Windows" in result.stderr
         assert self.commands() == []
 
+    def test_rust_workflow_requires_strict_first_party_checks(self) -> None:
+        """Require clean first-party callbacks separately from expected native dependency findings."""
+        workflow = (ROOT / ".github/workflows/rust.yml").read_text(encoding="utf-8")
+        strict = "./rtsan.sh --skip-native --artifacts target/rtsan/artifacts/first-party"
+        diagnostic = "./rtsan.sh --diagnostic"
+        assert strict in workflow
+        assert diagnostic in workflow
+        assert workflow.index(strict) < workflow.index(diagnostic)
+
+    def test_owned_error_disposal_audits_are_distinct_from_clean_audio(self) -> None:
+        """Preserve explicit free/owner matching for bounded incoming error ownership limitations."""
+        script = (ROOT / "rust/rtsan.sh").read_text(encoding="utf-8")
+        assert "rtsan_full_callback_mutex_baseline" not in script
+        assert "rtsan_full_callback_clean_all_formats" in script
+        for scenario in (
+            "rtsan_owned_ignored_is_blocked",
+            "rtsan_owned_full_is_blocked",
+            "rtsan_owned_disconnected_is_blocked",
+        ):
+            assert scenario in script
+        assert "--expect free --stack" in script
+        assert "StreamErrors.*report" in script
+
+    def test_miri_explicitly_checks_playback_callback_admission(self) -> None:
+        """The unsafe renderer access primitive must be selected, not merely assumed covered by host tests."""
+        script = (ROOT / "rust/miri.sh").read_text(encoding="utf-8")
+        assert "-p audiobatch-playback --lib" in script
+        assert "callback_access::" in script
+
+    def test_cpp_first_party_callback_no_longer_expects_native_unlock(self) -> None:
+        """Keep idle/full first-party probes clean without weakening dependency owner matching."""
+        configuration = (ROOT / "cpp/CMakeLists.txt").read_text(encoding="utf-8")
+        assert "realtime_try_unlock_stack" not in configuration
+        assert "GenericScopedTryLock" not in configuration
+        assert "player-idle" in configuration
+        assert "ResamplingAudioSource::getNextAudioBlock" in configuration
+        assert "VST3PluginInstance" in configuration
+
     def test_help_and_invalid_flags_do_not_invoke_tools(self) -> None:
         """Keep help and malformed options independent of native toolchain availability."""
         for project in PROJECTS:

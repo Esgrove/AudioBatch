@@ -348,6 +348,61 @@ Use `--no-build` only with existing Release executables and bundle.
 The runner retains reports, comparisons, and planar sample exports in `rust/target/vst3-benchmark/`.
 It checks independent float arithmetic and final 16-bit PCM outside timing, failing on missing bundles or differences.
 
+### Playback Callback Comparison
+
+`tests/callback_benchmark.py` compares hardware-free production callback runs from explicit Release executables.
+Capture a baseline before changing synchronization,
+then run baseline and candidate with the same workload and toolchain.
+Commands are JSON argument arrays, not shell expressions.
+Use `--native-schema cpp` for the C++ version-one seconds reports
+and `--native-schema rust` for Rust latency-mode nanosecond reports.
+Both preserve the original raw report.
+Rust paced/idle CPU reports remain separate evidence and are not converted into invented zero-duration callbacks.
+The runner alternates their order, isolates application storage, and retains raw output, binary hashes, and reports.
+Supply compiler flags, CPU targeting, hardening, fixture identities, queue sizes, JUCE revision,
+and native plugin identity in the metadata objects.
+For paired C++ native-wet runs, `AUDIOBATCH_CALLBACK_BENCHMARK_VST3` selects the same frozen repository build-tree bundle.
+Installed plugins are never benchmark inputs.
+Use identical baseline/candidate commands first to measure baseline-versus-baseline noise.
+
+Each callback report must include raw durations, thread and process CPU, actual audio work, and an output checksum.
+A semantic difference is a failure, not a speed improvement.
+Cold callbacks, warmed processing, paced idle, contention, and lifecycle transitions are separate workloads.
+Keep plugin preparation, buffer allocation, validation, serialization, and disposal outside callback timing.
+Do not run builds, sanitizers, or unrelated validation concurrently with performance measurements.
+
+Comparisons resample paired process runs, not individual autocorrelated callbacks.
+Positive confidence bounds identify regressions. Bounds overlapping zero are inconclusive, not proof of equivalence.
+There is no universal percentage allowance, and a faster average does not excuse worse tails or transition silence.
+Callback wall time is not CPU utilization, and software deadline misses are not physical-device underrun measurements.
+RTSan is a separate safety gate, not performance evidence or a guarantee for arbitrary hosted plugins.
+
+The first-party callback-admission comparison on Apple Silicon used frozen mutex baseline executables
+and alternating Release candidate runs, with the JUCE revision unchanged.
+Reports remain in `cpp/cmake-build-mac-release/callback-evidence/` and `rust/target/callback-evidence/`.
+The baseline binaries and initial captures remain in `cpp/cmake-build-mac-callback-baseline/`
+and `rust/target/callback-baseline/`.
+All paired audio-work, frame-count, silence, and checksum checks matched.
+Thirteen C++ latency/paced comparisons were inconclusive, with no detected timing regression.
+Three initially flagged Rust workloads were repeated with 32 pairs and were inconclusive on repetition.
+For 48 kHz, 64-frame dry callbacks, the candidate-minus-baseline p99 bounds were approximately -104 to +98 ns in C++
+and -38 to +24 ns in Rust.
+These bounds overlap zero. They do not establish equivalence or prove no performance degradation.
+The observed variation was accepted as measurement drift for this change.
+This engineering acceptance does not change the statistical outcome or the coverage limits below.
+Initial Rust regression reports remain retained evidence even though their larger repeats were inconclusive.
+Most matrix manifests lack complete compiler/fixture/plugin metadata, so binary hashes alone are not full provenance.
+The frozen C++ `idle` workload covers device-not-ready admission, not ready-but-paused rendering.
+Earlier Rust transition reports lack a complete per-transition behavioral oracle,
+and the initial native-wet fixture flushed parameters before its first measured audio callback.
+Treat these captures as historical, limited evidence. Benchmark validation changes require new labelled captures,
+not retroactive claims that the earlier runs covered ready-idle, failed transitions, or fully cold native automation.
+The revised harness adds separate ready-idle coverage, rejects contention runs without active measured rendering,
+verifies Rust transition output against an independent oracle, and leaves native parameter delivery cold.
+Its validation-contract identity prevents comparisons against incompatible legacy transition or pacing captures.
+Report extraction scans retained diagnostic streams incrementally and rejects JSON markers larger than 64 MiB.
+Native Windows execution and performance remain unverified by the macOS metadata-only cross-checks.
+
 ### Criterion And Profiling
 
 Generate file inputs first as above, otherwise the file cases skip missing audio.

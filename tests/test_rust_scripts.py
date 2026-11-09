@@ -375,6 +375,16 @@ fi
         assert self.commands()[0][5:] == ["run", "--script", "scripts/test_parity.py"]
         assert len(self.commands()) == 1
 
+    def test_tooling_includes_callback_benchmark_contracts(self) -> None:
+        """Require callback comparison safety checks alongside parity and CLI benchmark contracts."""
+        result = self.invoke("test.sh", "--tooling")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [command[5:] for command in self.commands()] == [
+            ["run", "--script", "scripts/test_parity.py"],
+            ["run", "--script", "scripts/test_cli_benchmark.py"],
+            ["run", "--script", "../tests/test_callback_benchmark.py"],
+        ]
+
     def test_rejects_invalid_options_before_running_tools(self) -> None:
         """Invalid or contradictory tier and diagnostic options must fail explicitly."""
         for arguments in [
