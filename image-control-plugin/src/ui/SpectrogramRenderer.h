@@ -48,6 +48,22 @@ struct SpectrogramRenderTarget {
     int height {0};
 };
 
+/// The work submitted since the last frame, guarded by the renderer's pending-work mutex.
+struct SpectrogramPendingWork {
+    /// Plot rectangle in logical editor coordinates.
+    juce::Rectangle<float> plotInEditor;
+    /// Particle or background rendering selected by the editor.
+    SpectrogramRenderMode mode {SpectrogramRenderMode::hidden};
+    /// Bounded particles accumulated since the previous render.
+    std::vector<SpectrogramParticle> particles;
+    /// Accumulated elapsed fade time in seconds.
+    double fadeSeconds {0.0};
+    /// Time constant of the particle fade in seconds.
+    double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
+    /// Whether accumulated graphics must be cleared before drawing.
+    bool clear {false};
+};
+
 /// Draws the spectrogram particles with OpenGL.
 ///
 /// Every frame it fades the accumulated picture by the time that passed.
@@ -92,16 +108,6 @@ public:
     void renderOpenGL() override;
 
 private:
-    /// The work submitted since the last frame.
-    struct PendingWork {
-        std::vector<SpectrogramParticle> particles;
-        double fadeSeconds {0.0};
-        double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
-        bool clear {false};
-        juce::Rectangle<float> plotInEditor;
-        SpectrogramRenderMode mode {SpectrogramRenderMode::hidden};
-    };
-
     [[nodiscard]] bool createPrograms();
     [[nodiscard]] bool resizeTargets(int width, int height);
 
@@ -118,8 +124,8 @@ private:
 
     /// Guards pending.
     std::mutex pendingMutex;
-    /// Work submitted on the message thread and not yet drawn.
-    PendingWork pending;
+    /// Frame settings and analysis-worker particles submitted but not yet drawn.
+    SpectrogramPendingWork pending;
     /// The particles being drawn this frame, swapped with the pending ones so their memory is reused.
     std::vector<SpectrogramParticle> drawing;
 

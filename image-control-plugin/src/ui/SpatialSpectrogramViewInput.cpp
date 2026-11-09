@@ -25,6 +25,10 @@ constexpr float FINE_DRAG_SHARE {0.2F};
 /// Resets a double-clicked crossover to its default frequency.
 void SpatialSpectrogramView::mouseDoubleClick(const juce::MouseEvent& event)
 {
+    if (!isEnabled() || !event.mods.isLeftButtonDown() || !getPlotBounds().contains(event.position)) {
+        return;
+    }
+    endDrag();
     if (const auto crossover = crossoverNear(event.position.x)) {
         auto& parameter = *crossoverParameters.at(*crossover);
         parameter.beginChangeGesture();
@@ -39,6 +43,10 @@ void SpatialSpectrogramView::mouseDoubleClick(const juce::MouseEvent& event)
 /// A mid gain drag also moves Side, in the same gesture, while the band's Link is on and its side is not off.
 void SpatialSpectrogramView::mouseDown(const juce::MouseEvent& event)
 {
+    endDrag();
+    if (!isEnabled() || !event.mods.isLeftButtonDown() || !getPlotBounds().contains(event.position)) {
+        return;
+    }
     dragStartCrossovers = currentCrossovers();
     if (const auto crossover = crossoverNear(event.position.x)) {
         drag = SpectrogramDrag::crossover;
@@ -106,6 +114,13 @@ void SpatialSpectrogramView::mouseMove(const juce::MouseEvent& event)
 /// Ends the drag and its host gesture.
 void SpatialSpectrogramView::mouseUp(const juce::MouseEvent& event)
 {
+    endDrag();
+    updateHover(event.position);
+}
+
+/// Closes the exact gestures opened at pointer-down, independently of later Link or modifier changes.
+void SpatialSpectrogramView::endDrag()
+{
     switch (drag) {
         case SpectrogramDrag::none:
             break;
@@ -139,7 +154,8 @@ void SpatialSpectrogramView::mouseUp(const juce::MouseEvent& event)
     dragLinked = false;
     draggedCrossover.reset();
     draggedBand.reset();
-    updateHover(event.position);
+    hoveredBand.reset();
+    hoveredCrossover.reset();
 }
 
 /// Changes a gain of the band under the pointer by 0.1 dB per wheel step, or 0.01 dB with Shift:
@@ -150,7 +166,8 @@ void SpatialSpectrogramView::mouseUp(const juce::MouseEvent& event)
 void SpatialSpectrogramView::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
     const auto band = bandAt(event.position.x);
-    if (!band.has_value() || drag != SpectrogramDrag::none) {
+    if (!isEnabled() || !getPlotBounds().contains(event.position) || !band.has_value() || drag != SpectrogramDrag::none)
+    {
         return;
     }
     const int steps = wheelSteps(wheel, wheelRemainder);
@@ -180,7 +197,6 @@ void SpatialSpectrogramView::mouseWheelMove(const juce::MouseEvent& event, const
     dragLinked = false;
 }
 
-/// Paints the box around the plot, and the grid, the band regions, and the crossover lines over the plot.
 /// Explains what a drag does where the pointer is: on a crossover line, on a band, or nowhere.
 juce::String SpatialSpectrogramView::getTooltip()
 {
@@ -202,7 +218,6 @@ juce::String SpatialSpectrogramView::getTooltip()
     return {};
 }
 
-/// Returns the band whose region contains an x coordinate, if it is inside the plot.
 /// Moves the dragged crossover to the pointer, kept the minimum ratio away from its neighbours.
 void SpatialSpectrogramView::moveCrossover(const juce::MouseEvent& event)
 {
@@ -360,8 +375,9 @@ void SpatialSpectrogramView::updateCursor(const juce::ModifierKeys& modifiers)
 void SpatialSpectrogramView::updateHover(const juce::Point<float> position)
 {
     if (drag == SpectrogramDrag::none) {
-        hoveredCrossover = crossoverNear(position.x);
-        hoveredBand = hoveredCrossover.has_value() ? std::nullopt : bandAt(position.x);
+        hoveredCrossover = getPlotBounds().contains(position) ? crossoverNear(position.x) : std::nullopt;
+        hoveredBand
+            = getPlotBounds().contains(position) && !hoveredCrossover.has_value() ? bandAt(position.x) : std::nullopt;
     } else {
         hoveredCrossover = draggedCrossover;
         hoveredBand = draggedBand;

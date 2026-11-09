@@ -8,6 +8,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <optional>
+
 namespace esgrove::image_control
 {
 /// Default change of a slider per mouse wheel step, which is 0.1 dB on the gain sliders.
@@ -23,12 +25,32 @@ class ControlSlider final : public juce::Slider
 public:
     ControlSlider();
 
+    ~ControlSlider() override;
+
+    ControlSlider(const ControlSlider&) = delete;
+    ControlSlider(ControlSlider&&) = delete;
+    ControlSlider& operator=(const ControlSlider&) = delete;
+    ControlSlider& operator=(ControlSlider&&) = delete;
+
+    void endDrag();
+    void setInteractionMaximum(double maximum);
     void setWheelStep(double step);
 
+    double proportionOfLengthToValue(double proportion) override;
+    double snapValue(double attemptedValue, DragMode dragMode) override;
+    double valueToProportionOfLength(double value) override;
     bool keyPressed(const juce::KeyPress& key) override;
+    void mouseDoubleClick(const juce::MouseEvent& event) override;
+    void mouseDown(const juce::MouseEvent& event) override;
+    void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
 
 private:
+    /// Last pointer-down event, retained only until the pointer gesture ends or the control is torn down.
+    std::optional<juce::MouseEvent> dragStartEvent;
+    /// Upper bound of direct manipulation, independent of the range needed to show an actual overrange value.
+    std::optional<double> interactionMaximum;
+
     /// Change of the value per mouse wheel step.
     double wheelStep {DEFAULT_WHEEL_STEP};
     /// Smooth wheel movement not yet turned into a whole step, carried to the next wheel event.

@@ -1,5 +1,5 @@
 /// Implements SpectrogramRenderer: the shaders, the float render targets and the glow chain,
-/// the hand-off of particles from the message thread, and the passes of one frame:
+/// the hand-off of particles from the analysis worker, and the passes of one frame:
 /// fade, particles, glow, and the tone-mapped composite into the plot.
 /// The particles add up in linear light, and the composite encodes the result as sRGB for the display.
 
@@ -26,8 +26,6 @@ namespace esgrove::image_control
 {
 namespace
 {
-using namespace juce::gl;
-
 /// Sharp core of the loudest particles, in logical pixels, so dots look the same size on every display scale.
 /// Quieter particles are smaller, down to the builder's smallest particle size.
 constexpr float CORE_SIGMA_PIXELS {1.3F};
@@ -364,9 +362,9 @@ std::unique_ptr<juce::OpenGLShaderProgram> buildProgram(
 GLint accumulationFormat()
 {
 #if JUCE_MAC
-    return static_cast<GLint>(GL_RGBA16F);
+    return static_cast<GLint>(juce::gl::GL_RGBA16F);
 #else
-    return static_cast<GLint>(GL_RGBA32F);
+    return static_cast<GLint>(juce::gl::GL_RGBA32F);
 #endif
 }
 
@@ -374,10 +372,10 @@ GLint accumulationFormat()
 void releaseTarget(SpectrogramRenderTarget& target)
 {
     if (target.framebuffer != 0) {
-        glDeleteFramebuffers(1, &target.framebuffer);
+        juce::gl::glDeleteFramebuffers(1, &target.framebuffer);
     }
     if (target.texture != 0) {
-        glDeleteTextures(1, &target.texture);
+        juce::gl::glDeleteTextures(1, &target.texture);
     }
     target = {};
 }
@@ -389,36 +387,49 @@ bool createTarget(SpectrogramRenderTarget& target, const int width, const int he
     releaseTarget(target);
     target.width = width;
     target.height = height;
-    glGenTextures(1, &target.texture);
-    glBindTexture(GL_TEXTURE_2D, target.texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, static_cast<GLint>(GL_LINEAR));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(GL_LINEAR));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, static_cast<GLint>(GL_CLAMP_TO_EDGE));
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, static_cast<GLint>(GL_CLAMP_TO_EDGE));
-    glBindTexture(GL_TEXTURE_2D, 0);
+    juce::gl::glGenTextures(1, &target.texture);
+    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, target.texture);
+    juce::gl::glTexImage2D(
+        juce::gl::GL_TEXTURE_2D, 0, format, width, height, 0, juce::gl::GL_RGBA, juce::gl::GL_FLOAT, nullptr
+    );
+    juce::gl::glTexParameteri(
+        juce::gl::GL_TEXTURE_2D, juce::gl::GL_TEXTURE_MIN_FILTER, static_cast<GLint>(juce::gl::GL_LINEAR)
+    );
+    juce::gl::glTexParameteri(
+        juce::gl::GL_TEXTURE_2D, juce::gl::GL_TEXTURE_MAG_FILTER, static_cast<GLint>(juce::gl::GL_LINEAR)
+    );
+    juce::gl::glTexParameteri(
+        juce::gl::GL_TEXTURE_2D, juce::gl::GL_TEXTURE_WRAP_S, static_cast<GLint>(juce::gl::GL_CLAMP_TO_EDGE)
+    );
+    juce::gl::glTexParameteri(
+        juce::gl::GL_TEXTURE_2D, juce::gl::GL_TEXTURE_WRAP_T, static_cast<GLint>(juce::gl::GL_CLAMP_TO_EDGE)
+    );
+    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
 
-    glGenFramebuffers(1, &target.framebuffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.texture, 0);
-    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-    glClear(GL_COLOR_BUFFER_BIT);
+    juce::gl::glGenFramebuffers(1, &target.framebuffer);
+    juce::gl::glBindFramebuffer(juce::gl::GL_FRAMEBUFFER, target.framebuffer);
+    juce::gl::glFramebufferTexture2D(
+        juce::gl::GL_FRAMEBUFFER, juce::gl::GL_COLOR_ATTACHMENT0, juce::gl::GL_TEXTURE_2D, target.texture, 0
+    );
+    const bool complete
+        = juce::gl::glCheckFramebufferStatus(juce::gl::GL_FRAMEBUFFER) == juce::gl::GL_FRAMEBUFFER_COMPLETE;
+    juce::gl::glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+    juce::gl::glClear(juce::gl::GL_COLOR_BUFFER_BIT);
     return complete;
 }
 
 /// Binds a render target for drawing, with a viewport over all of it.
 void bindTarget(const SpectrogramRenderTarget& target)
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-    glViewport(0, 0, target.width, target.height);
+    juce::gl::glBindFramebuffer(juce::gl::GL_FRAMEBUFFER, target.framebuffer);
+    juce::gl::glViewport(0, 0, target.width, target.height);
 }
 
 /// Binds a render target's texture to texture unit 0 for sampling.
-void bindTexture(const SpectrogramRenderTarget& target, const GLenum unit = GL_TEXTURE0)
+void bindTexture(const SpectrogramRenderTarget& target, const GLenum unit = juce::gl::GL_TEXTURE0)
 {
-    glActiveTexture(unit);
-    glBindTexture(GL_TEXTURE_2D, target.texture);
+    juce::gl::glActiveTexture(unit);
+    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, target.texture);
 }
 }  // namespace
 
@@ -497,36 +508,46 @@ void SpectrogramRenderer::newOpenGLContextCreated()
     }
 
     constexpr std::array<float, 8> corners {-1.0F, -1.0F, 1.0F, -1.0F, -1.0F, 1.0F, 1.0F, 1.0F};
-    glGenVertexArrays(1, &particleVertexArray);
-    glGenVertexArrays(1, &screenVertexArray);
-    glGenBuffers(1, &cornerBuffer);
-    glGenBuffers(1, &instanceBuffer);
+    juce::gl::glGenVertexArrays(1, &particleVertexArray);
+    juce::gl::glGenVertexArrays(1, &screenVertexArray);
+    juce::gl::glGenBuffers(1, &cornerBuffer);
+    juce::gl::glGenBuffers(1, &instanceBuffer);
 
-    glBindVertexArray(particleVertexArray);
-    glBindBuffer(GL_ARRAY_BUFFER, cornerBuffer);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(sizeof(corners)), corners.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    juce::gl::glBindVertexArray(particleVertexArray);
+    juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, cornerBuffer);
+    juce::gl::glBufferData(
+        juce::gl::GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(sizeof(corners)), corners.data(), juce::gl::GL_STATIC_DRAW
+    );
+    juce::gl::glEnableVertexAttribArray(0);
+    juce::gl::glVertexAttribPointer(0, 2, juce::gl::GL_FLOAT, juce::gl::GL_FALSE, 0, nullptr);
 
-    glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+    juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, instanceBuffer);
     constexpr auto stride = static_cast<GLsizei>(sizeof(SpectrogramParticle));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, x)));
-    glVertexAttribDivisor(1, 1);
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, red)));
-    glVertexAttribDivisor(2, 1);
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, size)));
-    glVertexAttribDivisor(3, 1);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, emphasis)));
-    glVertexAttribDivisor(4, 1);
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    juce::gl::glEnableVertexAttribArray(1);
+    juce::gl::glVertexAttribPointer(
+        1, 3, juce::gl::GL_FLOAT, juce::gl::GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, x))
+    );
+    juce::gl::glVertexAttribDivisor(1, 1);
+    juce::gl::glEnableVertexAttribArray(2);
+    juce::gl::glVertexAttribPointer(
+        2, 3, juce::gl::GL_FLOAT, juce::gl::GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, red))
+    );
+    juce::gl::glVertexAttribDivisor(2, 1);
+    juce::gl::glEnableVertexAttribArray(3);
+    juce::gl::glVertexAttribPointer(
+        3, 1, juce::gl::GL_FLOAT, juce::gl::GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, size))
+    );
+    juce::gl::glVertexAttribDivisor(3, 1);
+    juce::gl::glEnableVertexAttribArray(4);
+    juce::gl::glVertexAttribPointer(
+        4, 1, juce::gl::GL_FLOAT, juce::gl::GL_FALSE, stride, bufferOffset(offsetof(SpectrogramParticle, emphasis))
+    );
+    juce::gl::glVertexAttribDivisor(4, 1);
+    juce::gl::glBindVertexArray(0);
+    juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, 0);
 
 #if JUCE_DEBUG
-    glGenQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
+    juce::gl::glGenQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
 #endif
     ready = true;
 }
@@ -543,7 +564,7 @@ void SpectrogramRenderer::renderOpenGL()
 {
     renderedFrames.fetch_add(1, std::memory_order_relaxed);
 
-    PendingWork work;
+    SpectrogramPendingWork work;
     {
         const std::scoped_lock lock(pendingMutex);
         drawing.clear();
@@ -556,15 +577,15 @@ void SpectrogramRenderer::renderOpenGL()
     }
 
     GLint defaultFramebuffer {0};
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &defaultFramebuffer);
+    juce::gl::glGetIntegerv(juce::gl::GL_FRAMEBUFFER_BINDING, &defaultFramebuffer);
     std::array<GLint, 4> viewport {};
-    glGetIntegerv(GL_VIEWPORT, viewport.data());
+    juce::gl::glGetIntegerv(juce::gl::GL_VIEWPORT, viewport.data());
 
     const auto background = juce::Colour(palette::GREY_SEMI_DARK);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glClearColor(background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue(), 1.0F);
-    glClear(GL_COLOR_BUFFER_BIT);
+    juce::gl::glDisable(juce::gl::GL_SCISSOR_TEST);
+    juce::gl::glDisable(juce::gl::GL_DEPTH_TEST);
+    juce::gl::glClearColor(background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue(), 1.0F);
+    juce::gl::glClear(juce::gl::GL_COLOR_BUFFER_BIT);
 
     const auto scale = static_cast<float>(openGLContext.getRenderingScale());
     const auto plot = (work.plotInEditor * scale).getSmallestIntegerContainer();
@@ -580,12 +601,12 @@ void SpectrogramRenderer::renderOpenGL()
     measureGpuTimeBegin();
     if (work.clear) {
         bindTarget(accumulation);
-        glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-        glClear(GL_COLOR_BUFFER_BIT);
+        juce::gl::glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        juce::gl::glClear(juce::gl::GL_COLOR_BUFFER_BIT);
     }
     const bool solid = work.mode == SpectrogramRenderMode::solid;
     const bool drawingParticles = work.mode == SpectrogramRenderMode::particles || solid;
-    glEnable(GL_BLEND);
+    juce::gl::glEnable(juce::gl::GL_BLEND);
     if (drawingParticles) {
         fade(work.fadeSeconds, work.persistenceSeconds);
         drawParticles(scale);
@@ -593,23 +614,23 @@ void SpectrogramRenderer::renderOpenGL()
     }
 
     // The default framebuffer has its origin at the bottom left.
-    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(defaultFramebuffer));
+    juce::gl::glBindFramebuffer(juce::gl::GL_FRAMEBUFFER, static_cast<GLuint>(defaultFramebuffer));
     const juce::Rectangle<int> plotViewport(
         plot.getX(), viewport[3] - plot.getBottom(), plot.getWidth(), plot.getHeight()
     );
     drawComposite(plotViewport, drawingParticles ? EXPOSURE : 0.0F, solid);
     measureGpuTimeEnd();
 
-    glDisable(GL_BLEND);
-    glBindVertexArray(0);
-    glUseProgram(0);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    juce::gl::glDisable(juce::gl::GL_BLEND);
+    juce::gl::glBindVertexArray(0);
+    juce::gl::glUseProgram(0);
+    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE2);
+    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
+    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE1);
+    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
+    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE0);
+    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
+    juce::gl::glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
 /// Compiles every shader program. Returns false when one fails.
@@ -638,10 +659,19 @@ bool SpectrogramRenderer::resizeTargets(const int width, const int height)
         return false;
     }
     if (accumulation.framebuffer != 0) {
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, accumulation.framebuffer);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resized.framebuffer);
-        glBlitFramebuffer(
-            0, 0, accumulation.width, accumulation.height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR
+        juce::gl::glBindFramebuffer(juce::gl::GL_READ_FRAMEBUFFER, accumulation.framebuffer);
+        juce::gl::glBindFramebuffer(juce::gl::GL_DRAW_FRAMEBUFFER, resized.framebuffer);
+        juce::gl::glBlitFramebuffer(
+            0,
+            0,
+            accumulation.width,
+            accumulation.height,
+            0,
+            0,
+            width,
+            height,
+            juce::gl::GL_COLOR_BUFFER_BIT,
+            juce::gl::GL_LINEAR
         );
     }
     releaseTarget(accumulation);
@@ -652,12 +682,12 @@ bool SpectrogramRenderer::resizeTargets(const int width, const int height)
     for (auto& level : bloomLevels) {
         levelWidth = std::max(1, levelWidth / 2);
         levelHeight = std::max(1, levelHeight / 2);
-        if (!createTarget(level, levelWidth, levelHeight, static_cast<GLint>(GL_RGBA16F))) {
+        if (!createTarget(level, levelWidth, levelHeight, static_cast<GLint>(juce::gl::GL_RGBA16F))) {
             return false;
         }
     }
     const auto& fieldLevel = bloomLevels.at(SOLID_FIELD_LEVEL);
-    return createTarget(solidField, fieldLevel.width, fieldLevel.height, static_cast<GLint>(GL_RGBA16F));
+    return createTarget(solidField, fieldLevel.width, fieldLevel.height, static_cast<GLint>(juce::gl::GL_RGBA16F));
 }
 
 /// Builds the glow: halves the picture through the chain, then adds each level back into the one above it,
@@ -666,8 +696,8 @@ bool SpectrogramRenderer::resizeTargets(const int width, const int height)
 /// so the layers have only that level's own blur.
 void SpectrogramRenderer::drawBloom(const bool solid)
 {
-    glBindVertexArray(screenVertexArray);
-    glDisable(GL_BLEND);
+    juce::gl::glBindVertexArray(screenVertexArray);
+    juce::gl::glDisable(juce::gl::GL_BLEND);
     downsampleProgram->use();
     downsampleProgram->setUniform("source", 0);
     const SpectrogramRenderTarget* source = &accumulation;
@@ -677,14 +707,14 @@ void SpectrogramRenderer::drawBloom(const bool solid)
         downsampleProgram->setUniform(
             "sourceTexel", 1.0F / static_cast<float>(source->width), 1.0F / static_cast<float>(source->height)
         );
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
         source = &level;
     }
     if (solid) {
         const auto& fieldLevel = bloomLevels.at(SOLID_FIELD_LEVEL);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fieldLevel.framebuffer);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, solidField.framebuffer);
-        glBlitFramebuffer(
+        juce::gl::glBindFramebuffer(juce::gl::GL_READ_FRAMEBUFFER, fieldLevel.framebuffer);
+        juce::gl::glBindFramebuffer(juce::gl::GL_DRAW_FRAMEBUFFER, solidField.framebuffer);
+        juce::gl::glBlitFramebuffer(
             0,
             0,
             fieldLevel.width,
@@ -693,13 +723,13 @@ void SpectrogramRenderer::drawBloom(const bool solid)
             0,
             solidField.width,
             solidField.height,
-            GL_COLOR_BUFFER_BIT,
-            GL_NEAREST
+            juce::gl::GL_COLOR_BUFFER_BIT,
+            juce::gl::GL_NEAREST
         );
     }
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
+    juce::gl::glEnable(juce::gl::GL_BLEND);
+    juce::gl::glBlendFunc(juce::gl::GL_ONE, juce::gl::GL_ONE);
     upsampleProgram->use();
     upsampleProgram->setUniform("source", 0);
     upsampleProgram->setUniform("radius", UPSAMPLE_RADIUS);
@@ -710,7 +740,7 @@ void SpectrogramRenderer::drawBloom(const bool solid)
         upsampleProgram->setUniform(
             "sourceTexel", 1.0F / static_cast<float>(smaller.width), 1.0F / static_cast<float>(smaller.height)
         );
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
     }
 }
 
@@ -719,14 +749,14 @@ void SpectrogramRenderer::drawBloom(const bool solid)
 /// An exposure of 0 draws only the background.
 void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport, const float exposure, const bool solid)
 {
-    glViewport(plotViewport.getX(), plotViewport.getY(), plotViewport.getWidth(), plotViewport.getHeight());
-    glBindVertexArray(screenVertexArray);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    juce::gl::glViewport(plotViewport.getX(), plotViewport.getY(), plotViewport.getWidth(), plotViewport.getHeight());
+    juce::gl::glBindVertexArray(screenVertexArray);
+    juce::gl::glEnable(juce::gl::GL_BLEND);
+    juce::gl::glBlendFunc(juce::gl::GL_SRC_ALPHA, juce::gl::GL_ONE_MINUS_SRC_ALPHA);
     const auto& field = solidField;
-    bindTexture(accumulation, GL_TEXTURE0);
-    bindTexture(bloomLevels.front(), GL_TEXTURE1);
-    bindTexture(field, GL_TEXTURE2);
+    bindTexture(accumulation, juce::gl::GL_TEXTURE0);
+    bindTexture(bloomLevels.front(), juce::gl::GL_TEXTURE1);
+    bindTexture(field, juce::gl::GL_TEXTURE2);
 
     const auto background = juce::Colour(BACKGROUND);
     const auto scale = static_cast<float>(openGLContext.getRenderingScale());
@@ -767,7 +797,7 @@ void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport,
     compositeProgram->setUniform(
         "background", background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue()
     );
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
 }
 
 /// Adds this frame's particles to the accumulated picture as sprites with additive blending.
@@ -778,15 +808,15 @@ void SpectrogramRenderer::drawParticles(const float scale)
         return;
     }
     const auto bytes = static_cast<GLsizeiptr>(drawing.size() * sizeof(SpectrogramParticle));
-    glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+    juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, instanceBuffer);
     // Orphaning the buffer lets the driver hand out fresh memory instead of waiting for the previous frame.
-    glBufferData(GL_ARRAY_BUFFER, bytes, nullptr, GL_STREAM_DRAW);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, drawing.data());
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    juce::gl::glBufferData(juce::gl::GL_ARRAY_BUFFER, bytes, nullptr, juce::gl::GL_STREAM_DRAW);
+    juce::gl::glBufferSubData(juce::gl::GL_ARRAY_BUFFER, 0, bytes, drawing.data());
+    juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, 0);
 
     bindTarget(accumulation);
-    glBlendFunc(GL_ONE, GL_ONE);
-    glBindVertexArray(particleVertexArray);
+    juce::gl::glBlendFunc(juce::gl::GL_ONE, juce::gl::GL_ONE);
+    juce::gl::glBindVertexArray(particleVertexArray);
     particleProgram->use();
     particleProgram->setUniform(
         "targetSize", static_cast<float>(accumulation.width), static_cast<float>(accumulation.height)
@@ -796,7 +826,7 @@ void SpectrogramRenderer::drawParticles(const float scale)
     particleProgram->setUniform("haloSigma", HALO_SIGMA_PIXELS * scale);
     particleProgram->setUniform("reach", SPRITE_REACH_SIGMAS);
     particleProgram->setUniform("haloWeight", HALO_WEIGHT);
-    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(drawing.size()));
+    juce::gl::glDrawArraysInstanced(juce::gl::GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(drawing.size()));
 }
 
 /// Fades the accumulated picture by the time that passed, with the persistence as time constant.
@@ -807,11 +837,11 @@ void SpectrogramRenderer::fade(const double seconds, const double persistenceSec
     }
     const auto factor = static_cast<float>(std::exp(-seconds / persistenceSeconds));
     bindTarget(accumulation);
-    glBlendFunc(GL_ZERO, GL_CONSTANT_COLOR);
-    glBlendColor(factor, factor, factor, factor);
-    glBindVertexArray(screenVertexArray);
+    juce::gl::glBlendFunc(juce::gl::GL_ZERO, juce::gl::GL_CONSTANT_COLOR);
+    juce::gl::glBlendColor(factor, factor, factor, factor);
+    juce::gl::glBindVertexArray(screenVertexArray);
     fadeProgram->use();
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
 }
 
 /// Starts timing this frame's passes on the GPU, in Debug builds.
@@ -822,14 +852,14 @@ void SpectrogramRenderer::measureGpuTimeBegin()
     const GLuint query = timerQueries.at(nextTimerQuery);
     if (startedTimerQueries == timerQueries.size()) {
         GLint available {0};
-        glGetQueryObjectiv(query, GL_QUERY_RESULT_AVAILABLE, &available);
+        juce::gl::glGetQueryObjectiv(query, juce::gl::GL_QUERY_RESULT_AVAILABLE, &available);
         if (available != 0) {
             GLuint64 nanoseconds {0};
-            glGetQueryObjectui64v(query, GL_QUERY_RESULT, &nanoseconds);
+            juce::gl::glGetQueryObjectui64v(query, juce::gl::GL_QUERY_RESULT, &nanoseconds);
             gpuMilliseconds = static_cast<double>(nanoseconds) / NANOSECONDS_PER_MILLISECOND;
         }
     }
-    glBeginQuery(GL_TIME_ELAPSED, query);
+    juce::gl::glBeginQuery(juce::gl::GL_TIME_ELAPSED, query);
 #endif
 }
 
@@ -837,7 +867,7 @@ void SpectrogramRenderer::measureGpuTimeBegin()
 void SpectrogramRenderer::measureGpuTimeEnd()
 {
 #if JUCE_DEBUG
-    glEndQuery(GL_TIME_ELAPSED);
+    juce::gl::glEndQuery(juce::gl::GL_TIME_ELAPSED);
     nextTimerQuery = (nextTimerQuery + 1) % timerQueries.size();
     startedTimerQueries = std::min(startedTimerQueries + 1, timerQueries.size());
 #endif
@@ -853,13 +883,13 @@ void SpectrogramRenderer::releaseResources()
     compositeProgram.reset();
     for (auto* buffer : {&cornerBuffer, &instanceBuffer}) {
         if (*buffer != 0) {
-            glDeleteBuffers(1, buffer);
+            juce::gl::glDeleteBuffers(1, buffer);
             *buffer = 0;
         }
     }
     for (auto* vertexArray : {&particleVertexArray, &screenVertexArray}) {
         if (*vertexArray != 0) {
-            glDeleteVertexArrays(1, vertexArray);
+            juce::gl::glDeleteVertexArrays(1, vertexArray);
             *vertexArray = 0;
         }
     }
@@ -870,7 +900,7 @@ void SpectrogramRenderer::releaseResources()
     releaseTarget(solidField);
 #if JUCE_DEBUG
     if (timerQueries.front() != 0) {
-        glDeleteQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
+        juce::gl::glDeleteQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
         timerQueries = {};
     }
     nextTimerQuery = 0;

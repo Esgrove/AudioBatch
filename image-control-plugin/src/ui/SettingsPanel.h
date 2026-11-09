@@ -10,7 +10,7 @@
 namespace esgrove::image_control
 {
 /// The display settings: the colours, the frequency scale, the solid layers, the frame rate readout,
-/// bypassing or hiding the spectrogram, the persistence, the contrast, and the stereo position curve.
+/// bypassing or hiding the spectrogram, showing band correlation, persistence, contrast, and the stereo position curve.
 /// Every control is bound to an editor setting, so the editor picks changes up on its next display refresh
 /// and the settings are saved with the plugin state.
 class SettingsPanel final : public juce::Component
@@ -27,6 +27,7 @@ private:
     juce::ToggleButton melScaleButton {"Mel frequency scale"};
     juce::ToggleButton solidRenderingButton {"Solid layers instead of particles"};
     juce::ToggleButton showFpsButton {"Show the frame rate"};
+    juce::ToggleButton showBandCorrelationButton {"Show band correlation"};
     juce::ToggleButton bypassRenderingButton {"Bypass rendering"};
     juce::ToggleButton hideSpectrogramButton {"Hide the spectrogram"};
     juce::Label persistenceLabel;

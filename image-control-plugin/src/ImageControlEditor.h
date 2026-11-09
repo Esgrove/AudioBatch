@@ -1,7 +1,7 @@
 /// Declares ImageControlEditor, the editor of the ImageControl plugin.
 /// A header holds the settings button and the analyzer tap on the left,
-/// and the delta, the bypass, and the output gain on the right.
-/// The spatial spectrogram fills the middle, with the four band strips below it,
+/// and mono audition, delta, bypass, and output gain on the right.
+/// The spatial spectrogram fills the middle, with the correlation row and four band strips below it,
 /// and a divider between them resizes the two.
 
 #pragma once
@@ -38,7 +38,7 @@ class ImageControlProcessor;
 /// and JUCE paints the components over them, repainting only the regions that changed.
 /// The display settings live in a panel that the Settings button opens,
 /// and the editor applies them from the editor settings on every refresh.
-class ImageControlEditor final : public juce::AudioProcessorEditor
+class ImageControlEditor final : public juce::AudioProcessorEditor, private juce::ComponentMovementWatcher
 {
 public:
     explicit ImageControlEditor(ImageControlProcessor& owner);
@@ -55,18 +55,22 @@ public:
     void resized() override;
 
 private:
-    [[nodiscard]] int compactHeight() const;
-    [[nodiscard]] double persistenceSeconds() const;
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
     [[nodiscard]] std::optional<std::size_t> bandUnderPointer() const;
+    [[nodiscard]] int compactHeight() const;
+    [[nodiscard]] double persistenceSeconds() const;
 
     void applySpectrogramHidden(bool hidden);
     void applyViewSettings();
     void measureFramesPerSecond(double elapsed);
     void openSettings();
-    void setAnalyzeOutput(bool output);
     void refreshDisplay(double timestamp);
+    void setAnalyzeOutput(bool output);
     void updateBandRanges();
+
+    void componentMovedOrResized(bool wasMoved, bool wasResized) override;
+    void componentPeerChanged() override;
+    void componentVisibilityChanged() override;
 
     /// The processor that owns this editor and outlives it.
     ImageControlProcessor& imageControlProcessor;
@@ -93,6 +97,8 @@ private:
     juce::TextButton bypassButton {"Bypass"};
     /// Toggles the delta parameter, which outputs only what the processing changes.
     juce::TextButton deltaButton {"Delta"};
+    /// Auditions the current live instance in mono without changing its saved processing state.
+    juce::TextButton monoButton {"Mono"};
     /// Opens the display settings.
     juce::TextButton settingsButton {"Settings"};
     /// Shows the input of the plugin in the spectrogram, the left half of the analyzer tap switch.
@@ -112,6 +118,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     /// The controls of each band.
     std::array<std::unique_ptr<BandStrip>, BAND_COUNT> bandStrips;
+    /// Independent read-only meter row aligned with the four band strips.
+    std::array<std::unique_ptr<BandCorrelationMeter>, BAND_COUNT> correlationMeters;
 
     /// Crossovers the band ranges were last shown with.
     Crossovers displayedCrossovers {};
@@ -132,6 +140,10 @@ private:
     /// Whether the saved layout has been restored, so layout changes are saved from now on.
     /// Until then, sizes JUCE applies while the editor is built, such as the minimum size, are not saved.
     bool layoutRestored {false};
+    /// Suppresses intermediate layout writes while changing resize limits between compact and expanded layouts.
+    bool layoutTransition {false};
+    /// Whether the correlation row is shown, independently of the spectrogram settings.
+    bool correlationShown {true};
     /// Whether the spectrogram is hidden, which shrinks the editor to the header and the band strips.
     bool spectrogramHidden {false};
     /// Whether the particles are not analyzed or drawn, while the audio is still processed.

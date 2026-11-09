@@ -11,13 +11,36 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 
 namespace esgrove::image_control
 {
-/// Highest value of the Width macro, where the side is twice as loud relative to the mid as in the input.
+/// Highest directly editable Width, where side is twice as loud relative to mid as in the input.
+/// Actual gain ratios above this remain visible in the numerical readout.
 constexpr double MAX_STEREO_WIDTH {2.0};
 /// Smallest height of a band strip that fits its margins, its name and range rows, and its four slider rows, in pixels.
 constexpr int BAND_STRIP_MIN_HEIGHT {236};
+
+/// Height of the independent band correlation row, in pixels.
+constexpr int BAND_CORRELATION_HEIGHT {48};
+
+/// A read-only horizontal correlation meter with a named accessible value.
+/// Unavailable values leave the track empty instead of implying zero correlation.
+class BandCorrelationMeter final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit BandCorrelationMeter(const juce::String& band);
+
+    [[nodiscard]] juce::String valueText() const;
+    void setCorrelation(float value);
+
+    [[nodiscard]] std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+    void paint(juce::Graphics& graphics) override;
+
+private:
+    /// Last finite correlation, or empty for silence and other unavailable measurements.
+    std::optional<float> correlation;
+};
 
 /// The controls of one band.
 ///
@@ -93,6 +116,8 @@ private:
     double linkedSideStart {0.0};
     /// Whether the user is dragging Mid, so only their own drags move Side through Link, not automation.
     bool draggingMid {false};
+    /// Whether the current Mid gesture opened a matching Side gesture, captured before Link can change.
+    bool linkedSideGesture {false};
     /// Whether a Width gesture is open, so its changes join that gesture instead of opening their own.
     bool draggingWidth {false};
 };
