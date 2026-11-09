@@ -41,7 +41,8 @@ OPTIONS: All options are optional
         Also build and run the unit tests.
 
     -V | --validate
-        Validate the built VST3 with pluginval if it is in PATH, without installing it.
+        Validate the built VST3 with pluginval, without installing the plugin.
+        Use pluginval from PATH, or fetch and build the pinned version in ../.deps/ if missing.
         Audio Unit validation with auval requires install.sh --validate.
 
     --validation-level <5-10>
