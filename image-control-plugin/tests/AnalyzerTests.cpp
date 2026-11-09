@@ -12,9 +12,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <complex>
+#include <cstddef>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -23,25 +27,33 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Full callback observation, including its tier identity and shared audio time.
+struct CapturedFrame {
+    SpectralFrameInfo metadata;
+    std::vector<SpectralPoint> points;
+};
+
 /// Runs a second of stereo audio through a fresh analyzer and returns the points of its last frames.
 std::vector<SpectralPoint> analyze(const std::vector<float>& left, const std::vector<float>& right)
 {
     SpatialAnalyzer analyzer;
     analyzer.prepare(TEST_SAMPLE_RATE);
     std::vector<SpectralPoint> latest;
-    analyzer.setFrameCallback([&latest](const std::span<const SpectralPoint> points, double /*frameSeconds*/) {
-        // Each tier reports its own frame, so the latest point of each frequency is kept.
-        for (const auto& point : points) {
-            const auto existing = std::ranges::find_if(latest, [&point](const SpectralPoint& other) {
-                return juce::approximatelyEqual(other.frequency, point.frequency);
-            });
-            if (existing == latest.end()) {
-                latest.push_back(point);
-            } else {
-                *existing = point;
+    analyzer.setFrameCallback(
+        [&latest](const std::span<const SpectralPoint> points, const SpectralFrameInfo& /*frame*/) {
+            // Each tier reports its own frame, so the latest point of each frequency is kept.
+            for (const auto& point : points) {
+                const auto existing = std::ranges::find_if(latest, [&point](const SpectralPoint& other) {
+                    return juce::approximatelyEqual(other.frequency, point.frequency);
+                });
+                if (existing == latest.end()) {
+                    latest.push_back(point);
+                } else {
+                    *existing = point;
+                }
             }
         }
-    });
+    );
     analyzer.pushSamples(left, right);
     return latest;
 }
@@ -61,7 +73,228 @@ SpectralPoint loudestBetween(const std::vector<SpectralPoint>& points, const flo
     });
     return loudest(inRange);
 }
+
+/// Captures every frame, including empty frames, without combining or sorting their points.
+std::vector<CapturedFrame> analyzeFrames(
+    const std::span<const float> left,
+    const std::span<const float> right,
+    const double sampleRate,
+    const std::size_t chunkSize
+)
+{
+    SpatialAnalyzer analyzer;
+    analyzer.prepare(sampleRate);
+    std::vector<CapturedFrame> frames;
+    analyzer.setFrameCallback([&frames](const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame) {
+        frames.push_back({.metadata = frame, .points = {points.begin(), points.end()}});
+    });
+    for (std::size_t first = 0; first < left.size(); first += chunkSize) {
+        const auto count = std::min(chunkSize, left.size() - first);
+        analyzer.pushSamples(left.subspan(first, count), right.subspan(first, count));
+    }
+    return frames;
+}
+
+/// Compares every reported field in its original frame and bin order.
+void expectSameFrames(const std::vector<CapturedFrame>& expected, const std::vector<CapturedFrame>& actual)
+{
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t frame = 0; frame < expected.size(); ++frame) {
+        SCOPED_TRACE(frame);
+        EXPECT_EQ(actual[frame].metadata.tierIndex, expected[frame].metadata.tierIndex);
+        EXPECT_DOUBLE_EQ(actual[frame].metadata.frameSeconds, expected[frame].metadata.frameSeconds);
+        EXPECT_DOUBLE_EQ(actual[frame].metadata.endSeconds, expected[frame].metadata.endSeconds);
+        EXPECT_EQ(actual[frame].metadata.lastAtTime, expected[frame].metadata.lastAtTime);
+        ASSERT_EQ(actual[frame].points.size(), expected[frame].points.size());
+        for (std::size_t index = 0; index < expected[frame].points.size(); ++index) {
+            SCOPED_TRACE(index);
+            const auto& first = expected[frame].points[index];
+            const auto& second = actual[frame].points[index];
+            EXPECT_FLOAT_EQ(second.frequency, first.frequency);
+            EXPECT_FLOAT_EQ(second.reassignedFrequency, first.reassignedFrequency);
+            EXPECT_FLOAT_EQ(second.spacing, first.spacing);
+            EXPECT_FLOAT_EQ(second.position, first.position);
+            EXPECT_FLOAT_EQ(second.level, first.level);
+            EXPECT_FLOAT_EQ(second.coherence, first.coherence);
+        }
+    }
+}
 }  // namespace
+
+TEST(Analyzer, FrameSequenceIsIndependentOfInputChunkSize)
+{
+    for (const double sampleRate : {48'000.0, 96'000.0}) {
+        SCOPED_TRACE(sampleRate);
+        const auto count = static_cast<std::size_t>(8192.0 * sampleRate / 48'000.0);
+        const auto left = makeNoise(0.5F, count, 87);
+        const auto right = makeNoise(0.3F, count, 91);
+        const auto expected = analyzeFrames(left, right, sampleRate, count);
+        ASSERT_FALSE(expected.empty());
+        for (const std::size_t chunk : {1U, 37U, 255U, 256U, 257U, 511U, 777U, 4096U}) {
+            SCOPED_TRACE(chunk);
+            expectSameFrames(expected, analyzeFrames(left, right, sampleRate, chunk));
+        }
+    }
+}
+
+TEST(Analyzer, TierDeadlinesAreGroupedLowToHighOnOneAudioClockAndClearRestartsIt)
+{
+    for (const double sampleRate : {48'000.0, 96'000.0}) {
+        SCOPED_TRACE(sampleRate);
+        const auto multiplier = static_cast<std::size_t>(sampleRate / 48'000.0);
+        const std::vector<float> silence(4096 * multiplier, 0.0F);
+        const auto frames = analyzeFrames(silence, silence, sampleRate, 37);
+        constexpr std::array<std::size_t, ANALYSIS_TIER_COUNT> hops {2048, 1024, 512, 512, 512, 512};
+        std::size_t callback = 0;
+        for (std::size_t end = 512; end <= 4096; end += 512) {
+            for (std::size_t tier = 0; tier < hops.size(); ++tier) {
+                if (end % hops[tier] != 0) {
+                    continue;
+                }
+                ASSERT_LT(callback, frames.size());
+                const auto& frame = frames[callback++];
+                EXPECT_TRUE(frame.points.empty());
+                EXPECT_EQ(frame.metadata.tierIndex, tier);
+                EXPECT_DOUBLE_EQ(
+                    frame.metadata.frameSeconds, static_cast<double>(hops[tier] * multiplier) / sampleRate
+                );
+                EXPECT_DOUBLE_EQ(frame.metadata.endSeconds, static_cast<double>(end * multiplier) / sampleRate);
+                EXPECT_EQ(frame.metadata.lastAtTime, tier + 1 == ANALYSIS_TIER_COUNT);
+            }
+        }
+        EXPECT_EQ(callback, frames.size());
+
+        SpatialAnalyzer analyzer;
+        analyzer.prepare(sampleRate);
+        std::vector<SpectralFrameInfo> observed;
+        analyzer.setFrameCallback([&observed](
+                                      std::span<const SpectralPoint> /*points*/, const SpectralFrameInfo& frame
+                                  ) { observed.push_back(frame); });
+        analyzer.pushSamples(silence, silence);
+        analyzer.clear();
+        observed.clear();
+        const auto firstHop = std::span<const float>(silence).first(512 * multiplier);
+        analyzer.pushSamples(firstHop, firstHop);
+        ASSERT_EQ(observed.size(), 4U);
+        EXPECT_DOUBLE_EQ(observed.front().endSeconds, 512.0 / 48'000.0);
+        EXPECT_EQ(observed.front().tierIndex, 2U);
+        EXPECT_TRUE(observed.back().lastAtTime);
+    }
+}
+
+TEST(Analyzer, CachedPowersMatchDirectNeighbourhoodSummationInBinOrder)
+{
+    constexpr std::size_t WINDOW_LENGTH {1024};
+    constexpr std::size_t FFT_SIZE {WINDOW_LENGTH * 2};
+    constexpr double BIN_WIDTH {TEST_SAMPLE_RATE / static_cast<double>(FFT_SIZE)};
+    constexpr std::size_t FIRST_BIN {171};
+    constexpr std::size_t LAST_BIN {853};
+    const auto left = makeNoise(0.5F, WINDOW_LENGTH, 47);
+    const auto right = makeNoise(0.3F, WINDOW_LENGTH, 49);
+    const auto frames = analyzeFrames(left, right, TEST_SAMPLE_RATE, WINDOW_LENGTH);
+    ASSERT_FALSE(frames.empty());
+    ASSERT_EQ(frames.back().metadata.tierIndex, ANALYSIS_TIER_COUNT - 1);
+
+    const juce::dsp::FFT transform(11);
+    std::vector<std::complex<float>> samples(FFT_SIZE);
+    std::vector<std::complex<float>> spectrum(FFT_SIZE);
+    for (std::size_t index = 0; index < WINDOW_LENGTH; ++index) {
+        samples[index] = {left[index], right[index]};
+    }
+    transform.perform(samples.data(), spectrum.data(), false);
+    const auto channels = [&spectrum](const std::size_t bin) {
+        const auto packed = spectrum[bin];
+        const auto mirrored = std::conj(spectrum[(FFT_SIZE - bin) % FFT_SIZE]);
+        const auto difference = (packed - mirrored) * 0.5F;
+        return std::pair {(packed + mirrored) * 0.5F, std::complex<float>(difference.imag(), -difference.real())};
+    };
+    std::vector<std::complex<float>> hannLeft(LAST_BIN - FIRST_BIN + 1);
+    std::vector<std::complex<float>> hannRight(hannLeft.size());
+    for (std::size_t bin = FIRST_BIN; bin <= LAST_BIN; ++bin) {
+        const auto [centreLeft, centreRight] = channels(bin);
+        const auto [lowerLeft, lowerRight] = channels(bin - 2);
+        const auto [upperLeft, upperRight] = channels(bin + 2);
+        hannLeft[bin - FIRST_BIN] = centreLeft * 0.5F - (lowerLeft + upperLeft) * 0.25F;
+        hannRight[bin - FIRST_BIN] = centreRight * 0.5F - (lowerRight + upperRight) * 0.25F;
+    }
+    const double smoothingRatio = std::exp2(POSITION_SMOOTHING_OCTAVES * 0.5) - 1.0;
+    const StereoPositionCurve curve;
+    const auto& points = frames.back().points;
+    ASSERT_EQ(points.size(), hannLeft.size());
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        const double frequency = static_cast<double>(FIRST_BIN + index) * BIN_WIDTH;
+        const auto reach = static_cast<std::size_t>(std::floor(frequency * smoothingRatio / BIN_WIDTH));
+        const std::size_t first = index - std::min(index, reach);
+        const std::size_t last = std::min(points.size() - 1, index + reach);
+        float leftPower = 0.0F;
+        float rightPower = 0.0F;
+        float crossPower = 0.0F;
+        for (std::size_t neighbour = first; neighbour <= last; ++neighbour) {
+            // Production stores each bin's float powers before summing the neighbourhood.
+            // Volatile preserves that rounding boundary under -ffp-contract=fast,
+            // preventing fusion with the accumulators without changing the comparison tolerance.
+            const volatile float neighbourLeftPower = std::norm(hannLeft[neighbour]);
+            const volatile float neighbourRightPower = std::norm(hannRight[neighbour]);
+            const volatile float neighbourCrossPower = (hannLeft[neighbour] * std::conj(hannRight[neighbour])).real();
+            leftPower += neighbourLeftPower;
+            rightPower += neighbourRightPower;
+            crossPower += neighbourCrossPower;
+        }
+        const float level = (std::norm(hannLeft[index]) + std::norm(hannRight[index])) / (256.0F * 256.0F);
+        EXPECT_FLOAT_EQ(points[index].level, level);
+        EXPECT_FLOAT_EQ(
+            points[index].position, positionFromMagnitudes(std::sqrt(leftPower), std::sqrt(rightPower), curve)
+        );
+        EXPECT_FLOAT_EQ(
+            points[index].coherence, std::clamp(crossPower / std::sqrt(leftPower * rightPower), -1.0F, 1.0F)
+        );
+    }
+}
+
+TEST(Analyzer, NonFiniteAudioIsDisplaySilenceWithoutMutatingTheInputAndRecovers)
+{
+    auto left = makeNoise(0.5F, 4096, 18);
+    auto right = makeNoise(0.4F, 4096, 19);
+    left[17] = std::numeric_limits<float>::quiet_NaN();
+    left[1027] = std::numeric_limits<float>::infinity();
+    right[233] = -std::numeric_limits<float>::infinity();
+    auto cleanLeft = left;
+    auto cleanRight = right;
+    for (const auto channel : {std::ref(cleanLeft), std::ref(cleanRight)}) {
+        for (float& value : channel.get()) {
+            if (!std::isfinite(value)) {
+                value = 0.0F;
+            }
+        }
+    }
+    expectSameFrames(analyzeFrames(cleanLeft, cleanRight, 48'000.0, 37), analyzeFrames(left, right, 48'000.0, 37));
+    EXPECT_TRUE(std::isnan(left[17]));
+    EXPECT_TRUE(std::isinf(left[1027]));
+    EXPECT_TRUE(std::isinf(right[233]));
+
+    SpatialAnalyzer analyzer;
+    std::vector<SpectralPoint> latest;
+    analyzer.setFrameCallback([&latest](const std::span<const SpectralPoint> points, const auto& /*frame*/) {
+        latest.assign(points.begin(), points.end());
+        for (const auto& value : points) {
+            EXPECT_TRUE(std::isfinite(value.frequency));
+            EXPECT_TRUE(std::isfinite(value.reassignedFrequency));
+            EXPECT_TRUE(std::isfinite(value.spacing));
+            EXPECT_TRUE(std::isfinite(value.level));
+            EXPECT_TRUE(std::isfinite(value.position));
+            EXPECT_TRUE(std::isfinite(value.coherence));
+            EXPECT_GE(value.coherence, -1.0F);
+            EXPECT_LE(value.coherence, 1.0F);
+        }
+    });
+    const std::vector<float> excessive(2048, std::numeric_limits<float>::max());
+    analyzer.pushSamples(excessive, excessive);
+    const auto recovered = makeSine(8000.0, 0.5F, 32'768);
+    analyzer.pushSamples(recovered, recovered);
+    ASSERT_FALSE(latest.empty());
+    EXPECT_NEAR(loudest(latest).frequency, 8000.0F, 25.0F);
+    EXPECT_NEAR(loudest(latest).coherence, 1.0F, 1.0e-4F);
+}
 
 TEST(Analyzer, HardLeftSineIsAtTheLeftEdgeWithFullLevel)
 {

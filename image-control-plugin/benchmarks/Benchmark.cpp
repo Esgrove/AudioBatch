@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
+#include <optional>
 #include <print>
 #include <random>
 #include <ratio>
@@ -97,6 +98,8 @@ enum class Mode : std::uint8_t {
     narrowed,
     recoveryPartial,
     recoveryAll,
+    solo,
+    soloDelta,
 };
 constexpr std::array<Mode, 10> MODES {
     Mode::neutral,
@@ -111,7 +114,20 @@ constexpr std::array<Mode, 10> MODES {
     Mode::recoveryAll,
 };
 
-/// Work limits can be reduced without removing any sample-rate, block-size, or processing-mode coverage.
+/// The settled pointer state selects which software overlay paths are exercised without a desktop peer.
+enum class OverlayHover : std::uint8_t {
+    none,
+    band,
+    crossover,
+};
+
+/// An analyzer frame copied during untimed capture and replayed by the particle-only probe.
+struct CapturedSpectralFrame {
+    SpectralFrameInfo info;
+    std::vector<SpectralPoint> points;
+};
+
+/// Work limits and focused selection keep short investigations separate from the complete coverage matrix.
 struct Options {
     int callbacks {512};
     int repetitions {3};
@@ -121,6 +137,7 @@ struct Options {
     double pacedSeconds {0.32};
     std::string label {"unlabelled"};
     bool components {true};
+    bool focused {false};
     bool processor {true};
     bool worker {true};
 };
@@ -266,6 +283,10 @@ std::string_view modeName(const Mode mode)
             return "narrow-recovery-partial";
         case Mode::recoveryAll:
             return "narrow-recovery-all";
+        case Mode::solo:
+            return "solo";
+        case Mode::soloDelta:
+            return "solo-delta";
     }
     throw std::logic_error("Unknown processing mode");
 }
@@ -316,10 +337,12 @@ void configureProcessor(ImageControlProcessor& processor, const Mode mode, const
         );
         const bool pan = mode != Mode::neutral && mode != Mode::centred;
         setParameter(processor, panParameterId(band), pan ? PANS[band] * PAN_MAX_PERCENT : 0.0F);
+        const bool solo = (mode == Mode::solo || mode == Mode::soloDelta) && band == 1;
+        setParameter(processor, soloParameterId(band), solo ? 1.0F : 0.0F);
     }
     setParameter(processor, OUTPUT_GAIN_ID, mode == Mode::neutral ? 0.0F : juce::Decibels::gainToDecibels(OUTPUT_GAIN));
     setParameter(processor, BYPASS_ID, mode == Mode::bypass ? 1.0F : 0.0F);
-    setParameter(processor, DELTA_ID, mode == Mode::delta ? 1.0F : 0.0F);
+    setParameter(processor, DELTA_ID, mode == Mode::delta || mode == Mode::soloDelta ? 1.0F : 0.0F);
     setParameter(processor, MONO_ID, mode == Mode::mono ? 1.0F : 0.0F);
     processor.setCorrelationEnabled(meters);
 }
@@ -711,6 +734,18 @@ void timeProcessorMatrix(const Options& options)
     }
 }
 
+/// Isolates settled nonneutral gains/pans and solo/delta at small callbacks without another rate/meter/worker matrix.
+void timeFocusedProcessor(const Options& options)
+{
+    constexpr double SAMPLE_RATE {48'000.0};
+    std::println("\nFocused steady small callbacks (settled nonneutral gains/pans, meters off, drained FIFO):");
+    for (const int blockSize : {32, 64}) {
+        for (const Mode mode : {Mode::panned, Mode::solo, Mode::delta, Mode::soloDelta}) {
+            timeProcessor(options, SAMPLE_RATE, {.fixedSize = blockSize}, mode, false, false, false);
+        }
+    }
+}
+
 /// Retains the original direct imager probe and adds recovery variants, including two input copies per block.
 void timeImager(
     const Options& options,
@@ -836,9 +871,9 @@ void timeSpectrogramAnalysis(const Options& options)
     SpatialAnalyzer analyzer;
     analyzer.prepare(SAMPLE_RATE);
     SpectrogramParticleBuilder particles;
-    analyzer.setFrameCallback([&particles](const std::span<const SpectralPoint> points, const double frameSeconds) {
-        particles.addFrame(points, frameSeconds);
-    });
+    analyzer.setFrameCallback([&particles](
+                                  const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame
+                              ) { particles.addFrame(points, frame); });
     const auto samplesPerRefresh = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
     const auto left = makeNoise(samplesPerRefresh, 3);
     const auto right = makeNoise(samplesPerRefresh, 4);
@@ -873,12 +908,179 @@ void timeSpectrogramAnalysis(const Options& options)
     );
 }
 
-/// Times CPU software overlay painting without constructing an editor or attaching a window/GL context.
-void timeSpectrogramOverlays(const Options& options)
+/// Times the analyzer with a constant-time observing callback, excluding particle construction and frame copies.
+void timeSpectrogramAnalyzerOnly(const Options& options)
+{
+    constexpr double SAMPLE_RATE {48'000.0};
+    SpatialAnalyzer analyzer;
+    analyzer.prepare(SAMPLE_RATE);
+    std::size_t frameCount = 0;
+    std::size_t pointCount = 0;
+    double checksum = 0.0;
+    analyzer.setFrameCallback([&](const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame) {
+        ++frameCount;
+        pointCount += points.size();
+        checksum += frame.frameSeconds;
+        if (!points.empty()) {
+            checksum += static_cast<double>(points.front().level);
+        }
+    });
+    const auto samplesPerRefresh = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
+    const auto left = makeNoise(samplesPerRefresh, 3);
+    const auto right = makeNoise(samplesPerRefresh, 4);
+    for (int refresh = 0; refresh < REFRESH_RATE; ++refresh) {
+        analyzer.pushSamples(left, right);
+    }
+    frameCount = 0;
+    pointCount = 0;
+    checksum = 0.0;
+    std::vector<double> measurements;
+    measurements.reserve(static_cast<std::size_t>(options.refreshes) * static_cast<std::size_t>(options.repetitions));
+    for (int repetition = 0; repetition < options.repetitions; ++repetition) {
+        for (int refresh = 0; refresh < options.refreshes; ++refresh) {
+            const auto start = Clock::now();
+            analyzer.pushSamples(left, right);
+            measurements.push_back(Microseconds(Clock::now() - start).count());
+        }
+    }
+    const auto result = distribution(measurements);
+    std::println(
+        "analyzer-only rate=48000 refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} "
+        "frames={} points={} check={:.6f}",
+        REFRESH_RATE,
+        measurements.size(),
+        result.p50,
+        result.p95,
+        result.p99,
+        result.max,
+        frameCount,
+        pointCount,
+        checksum
+    );
+}
+
+/// Replays owned frames captured from the warmed real analyzer, preserving tier identity and simultaneous deadlines.
+/// Seed frames retain the analyzer's since-clear clock, and each replay cycle advances it by the capture duration.
+/// Analysis, frame copies, capture storage, and result checksums are outside the particle-only clock pair.
+void timeSpectrogramParticlesOnly(const Options& options)
+{
+    constexpr double SAMPLE_RATE {48'000.0};
+    constexpr auto SAMPLES_PER_REFRESH = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
+    // 128 refreshes contain 51,200 samples, a multiple of every analyzer hop at 48 kHz.
+    constexpr std::size_t CAPTURE_REFRESHES {128};
+    constexpr double CAPTURE_SECONDS = static_cast<double>(CAPTURE_REFRESHES * SAMPLES_PER_REFRESH) / SAMPLE_RATE;
+    std::array<std::vector<CapturedSpectralFrame>, CAPTURE_REFRESHES> captured;
+    SpectrogramParticleBuilder particles;
+    {
+        SpatialAnalyzer analyzer;
+        analyzer.prepare(SAMPLE_RATE);
+        analyzer.setFrameCallback([&particles](
+                                      const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame
+                                  ) { particles.addFrame(points, frame); });
+        const auto left = makeNoise(SAMPLES_PER_REFRESH, 3);
+        const auto right = makeNoise(SAMPLES_PER_REFRESH, 4);
+        // Seed all tier peaks and the reference clock through the actual warmup endpoints before replay begins.
+        for (int refresh = 0; refresh < REFRESH_RATE; ++refresh) {
+            particles.clear();
+            analyzer.pushSamples(left, right);
+        }
+        std::size_t captureIndex = 0;
+        analyzer.setFrameCallback([&](const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame) {
+            captured[captureIndex].push_back({
+                .info = frame,
+                .points = std::vector<SpectralPoint>(points.begin(), points.end()),
+            });
+        });
+        for (; captureIndex < captured.size(); ++captureIndex) {
+            analyzer.pushSamples(left, right);
+        }
+    }
+    const auto replay = [&](const std::size_t refresh) {
+        particles.clear();
+        const std::size_t cycle = refresh / captured.size();
+        const double cycleOffset = static_cast<double>(cycle) * CAPTURE_SECONDS;
+        for (const auto& frame : captured[refresh % captured.size()]) {
+            auto info = frame.info;
+            info.endSeconds += cycleOffset;
+            particles.addFrame(frame.points, info);
+        }
+    };
+    std::size_t refreshIndex = 0;
+    for (; refreshIndex < captured.size(); ++refreshIndex) {
+        replay(refreshIndex);
+    }
+    std::vector<double> measurements;
+    measurements.reserve(static_cast<std::size_t>(options.refreshes) * static_cast<std::size_t>(options.repetitions));
+    std::size_t particleCount = 0;
+    double checksum = 0.0;
+    for (int repetition = 0; repetition < options.repetitions; ++repetition) {
+        for (int refresh = 0; refresh < options.refreshes; ++refresh) {
+            const auto start = Clock::now();
+            replay(refreshIndex);
+            measurements.push_back(Microseconds(Clock::now() - start).count());
+            ++refreshIndex;
+            particleCount += particles.particles().size();
+            checksum += static_cast<double>(particles.referenceLevel());
+            if (!particles.particles().empty()) {
+                checksum += static_cast<double>(particles.particles().front().red);
+            }
+        }
+    }
+    const auto result = distribution(measurements);
+    std::println(
+        "particles-only rate=48000 refresh_hz={} captured_refreshes={} n={} "
+        "us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} particles={} check={:.6f}",
+        REFRESH_RATE,
+        captured.size(),
+        measurements.size(),
+        result.p50,
+        result.p95,
+        result.p99,
+        result.max,
+        particleCount,
+        checksum
+    );
+}
+
+/// Times CPU software overlay painting with a settled pointer state and no editor, desktop peer, or GL context.
+void timeSpectrogramOverlays(const Options& options, const OverlayHover hover = OverlayHover::none)
 {
     ImageControlProcessor processor;
     SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    if (hover != OverlayHover::none) {
+        const auto plot = view.getPlotBounds();
+        const double frequency = hover == OverlayHover::band
+            ? std::sqrt(static_cast<double>(DEFAULT_CROSSOVERS[0]) * static_cast<double>(DEFAULT_CROSSOVERS[1]))
+            : static_cast<double>(DEFAULT_CROSSOVERS[1]);
+        const juce::Point<float> position(
+            plot.getX()
+                + static_cast<float>(frequencyToShare(frequency, FrequencyScale::logarithmic)) * plot.getWidth(),
+            plot.getCentreY()
+        );
+        const auto now = juce::Time::getCurrentTime();
+        const juce::MouseEvent event(
+            juce::Desktop::getInstance().getMainMouseSource(),
+            position,
+            {},
+            1.0F,
+            0.0F,
+            0.0F,
+            0.0F,
+            0.0F,
+            &view,
+            &view,
+            now,
+            position,
+            now,
+            0,
+            false
+        );
+        view.mouseMove(event);
+        if (hover == OverlayHover::band && view.getHoveredBand() != std::optional<std::size_t> {1}) {
+            throw std::runtime_error("Benchmark band hover missed its target");
+        }
+    }
     const juce::Image canvas(juce::Image::ARGB, VIEW_WIDTH, VIEW_HEIGHT, true);
     juce::Graphics graphics(canvas);
     const auto paint = [&] {
@@ -898,8 +1100,14 @@ void timeSpectrogramOverlays(const Options& options)
         }
     }
     const auto result = distribution(measurements);
+    const char* hoverName = "none";
+    if (hover == OverlayHover::band) {
+        hoverName = "band-response";
+    } else if (hover == OverlayHover::crossover) {
+        hoverName = "crossover";
+    }
     std::println(
-        "overlay software={}x{} refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f}",
+        "overlay software={}x{} refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} hover={}",
         VIEW_WIDTH,
         VIEW_HEIGHT,
         REFRESH_RATE,
@@ -907,7 +1115,8 @@ void timeSpectrogramOverlays(const Options& options)
         result.p50,
         result.p95,
         result.p99,
-        result.max
+        result.max,
+        hoverName
     );
 }
 
@@ -1063,12 +1272,13 @@ void printIdentity(const Options& options)
         executable.getLastModificationTime().toISO8601(true).toStdString()
     );
     std::println(
-        "repetitions={} callbacks/steady_rep={} paced_s/rep={:.3f} refreshes/component_rep={} worker={}",
+        "repetitions={} callbacks/steady_rep={} paced_s/rep={:.3f} refreshes/component_rep={} worker={} focused={}",
         options.repetitions,
         options.callbacks,
         options.pacedSeconds,
         options.refreshes,
-        options.worker
+        options.worker,
+        options.focused
     );
     std::println(
         R"(Warmup: callback latency + gain settling + one maximum block per repetition. Components: one second or more.
@@ -1076,6 +1286,10 @@ Input: independent fixed-seed stereo noise, amplitude +/-.3. Irregular blocks: 1
 Callback timing excludes copying, parameter setters, checksums, FIFO pop, worker wake, and sleep.
 Original modes explicitly set Width 1 and Recover Off. Narrowed rows share Widths 0/.25/.5/.75.
 Recovery variants select Off, two bands, or all bands, each with meter/worker and moving-crossover coverage.
+Focused callback rows hold 48 kHz, meters off, drained FIFO, and settled nonneutral gains/pans at 32/64 samples.
+Solo rows select band 1 through host parameters, with separate solo, delta, and combined solo+delta observations.
+Analyzer-only observes frames with a constant-time callback. Particles-only replays warmed, owned analyzer frames.
+Overlay rows retain the unhovered reference and add settled band-response and crossover hover painting.
 Isolated setter rows time batched Width+Recover target pairs, excluding process, copies, and checksums.
 Correlation rows include four live/trend/range history updates and full-row software painting at simulated 120 Hz.
 Correlation warmup fills maximum Persistence history per repetition, including --quick and shorter selected windows.
@@ -1146,6 +1360,8 @@ Options parseOptions(const std::span<const std::string_view> arguments)
             options.repetitions = boundedInteger(value(), 1, MAXIMUM_REPETITIONS);
         } else if (argument == "--label") {
             options.label = value();
+        } else if (argument == "--focused") {
+            options.focused = true;
         } else if (argument == "--no-worker") {
             options.worker = false;
         } else if (argument == "--processor-only") {
@@ -1168,13 +1384,14 @@ Options parseOptions(const std::span<const std::string_view> arguments)
 void printHelp()
 {
     std::println(R"(Usage: ImageControlBenchmark [--quick] [--callbacks N] [--repetitions N] [--label TEXT]
-                             [--processor-only | --components-only] [--no-worker]
-  --quick            Shorter runs, retaining the complete coverage matrix (not stable tail evidence)
+                             [--processor-only | --components-only] [--no-worker] [--focused]
+  --quick            Shorter runs, retaining the selected coverage (not stable tail evidence)
+  --focused          Only small steady solo/delta callbacks and spectrogram component probes
   --callbacks N      Measured callbacks per steady repetition, 32..16384 (default 512, quick 128)
   --repetitions N    Warmed repetitions, 1..10 (default 3, quick 2)
   --label TEXT       Record revision/build/baseline identity in the output
   --processor-only  Skip isolated component probes
-  --components-only Skip callback matrix and paced automation
+  --components-only Skip callback probes and paced automation
   --no-worker       Skip concurrent analysis rows, retaining the always-drained FIFO reference
 Use Release. Keep hardware, background load, compiler flags, and hardening identical across comparisons.)");
 }
@@ -1198,9 +1415,12 @@ int main(const int argc, char* argv[])
         const auto start = esgrove::image_control::benchmark::Clock::now();
         esgrove::image_control::benchmark::printIdentity(options);
         if (options.processor) {
-            esgrove::image_control::benchmark::timeProcessorMatrix(options);
+            if (!options.focused) {
+                esgrove::image_control::benchmark::timeProcessorMatrix(options);
+            }
+            esgrove::image_control::benchmark::timeFocusedProcessor(options);
         }
-        if (options.components) {
+        if (options.components && !options.focused) {
             std::println("\nIsolated components (these are not complete callback costs):");
             esgrove::image_control::benchmark::timeImager(
                 options, esgrove::image_control::benchmark::CENTRED_PANS, "centred"
@@ -1235,6 +1455,21 @@ int main(const int argc, char* argv[])
                     esgrove::image_control::benchmark::timeBandCorrelationMeters(options, changing, persistenceSeconds);
                 }
             }
+        }
+        if (options.components) {
+            std::println("\nFocused spectrogram components (no GPU drawing or full-editor refresh):");
+            if (options.focused) {
+                esgrove::image_control::benchmark::timeSpectrogramAnalysis(options);
+                esgrove::image_control::benchmark::timeSpectrogramOverlays(options);
+            }
+            esgrove::image_control::benchmark::timeSpectrogramAnalyzerOnly(options);
+            esgrove::image_control::benchmark::timeSpectrogramParticlesOnly(options);
+            esgrove::image_control::benchmark::timeSpectrogramOverlays(
+                options, esgrove::image_control::benchmark::OverlayHover::band
+            );
+            esgrove::image_control::benchmark::timeSpectrogramOverlays(
+                options, esgrove::image_control::benchmark::OverlayHover::crossover
+            );
         }
         std::println(
             "Elapsed wall seconds: {:.3f}",

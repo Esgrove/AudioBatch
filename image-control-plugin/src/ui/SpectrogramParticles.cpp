@@ -46,8 +46,7 @@ constexpr double AUTO_SCALE_RELEASE_DB_PER_SECOND {12.0};
 constexpr float MIN_PARTICLE_SIZE {0.5F};
 /// Weakest particle weight that is still drawn. Fainter particles would not show.
 constexpr float MIN_PARTICLE_WEIGHT {1.0e-4F};
-/// Time constant over which a new particle reaches its brightness, in seconds.
-/// It is short and independent of the persistence, so a single frame already draws a bright dot.
+/// Time constant of the hop-weighting flash, in seconds, independent of particle persistence.
 constexpr double FLASH_SECONDS {0.04};
 /// Horizontal spread of a particle relative to the distance to its neighbours,
 /// so neighbouring bins blend into a continuous trace at the low frequencies.
@@ -135,6 +134,16 @@ std::vector<LinearColour> buildFrequencyColours()
         table[step] = frequencyColour(static_cast<float>(step) / static_cast<float>(FREQUENCY_COLOUR_STEPS - 1));
     }
     return table;
+}
+/// Rejects malformed display results before logarithms, axis transforms, or palette indexing can consume them.
+/// Finite positions and coherence are clamped later, but invalid geometry and power are discarded.
+bool validPoint(const SpectralPoint& point)
+{
+    return std::isfinite(point.frequency) && std::isfinite(point.reassignedFrequency) && std::isfinite(point.spacing)
+        && std::isfinite(point.position) && std::isfinite(point.level) && std::isfinite(point.coherence)
+        && point.frequency >= MIN_FREQUENCY && point.frequency <= MAX_FREQUENCY
+        && point.reassignedFrequency >= MIN_FREQUENCY && point.reassignedFrequency <= MAX_FREQUENCY
+        && point.spacing >= 0.0F && point.level > 0.0F;
 }
 }  // namespace
 
@@ -252,7 +261,10 @@ float frequencyContrast(const float frequency, const float contrast)
 }
 
 /// Creates a builder with no particles and the frequency colour table.
-SpectrogramParticleBuilder::SpectrogramParticleBuilder() : frequencyColours(buildFrequencyColours()) {}
+SpectrogramParticleBuilder::SpectrogramParticleBuilder() : frequencyColours(buildFrequencyColours())
+{
+    resetLevel();
+}
 
 /// Returns the particles added since the last clear.
 std::span<const SpectrogramParticle> SpectrogramParticleBuilder::particles() const noexcept
@@ -264,36 +276,87 @@ std::span<const SpectrogramParticle> SpectrogramParticleBuilder::particles() con
 /// A particle's level in dB gets the spectral tilt,
 /// and its share of the display range below the auto-scale reference goes through the contrast curve,
 /// which keeps the noise floor dark and sets the particle's brightness, size, and halo.
-/// A particle sits at its bin's reassigned frequency, so a sine draws as a thin line at any plot width.
-/// The reference follows the loudest tilted bin of every tier, rising at once and falling slowly,
-/// so the picture keeps its brightness for quiet and loud material alike.
-/// A particle's weight is the share of a short flash its frame stands for,
-/// so a single frame draws a bright dot and the brightness does not depend on the analyzer's frame rate.
+/// A particle sits at its bin's reassigned frequency, so a sine's main lobe shares one horizontal position.
+/// All tiers at one deadline use a common reference based on the latest peak retained for every tier.
+/// The reference rises at once and releases by 12 dB per second of shared audio time.
+/// A particle's weight is the share of a short flash its own tier's hop stands for.
+/// This reduces brightness differences from tier cadence, but the nonlinear flash is not exactly cadence invariant.
 /// Long persistence lets steady content build up for longer,
 /// so the weight shrinks with the square root of the persistence to keep the picture from saturating.
+void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame)
+{
+    if (frame.tierIndex >= ANALYSIS_TIER_COUNT || !std::isfinite(frame.frameSeconds) || frame.frameSeconds <= 0.0
+        || !std::isfinite(frame.endSeconds) || frame.endSeconds < lastEndSeconds)
+    {
+        return;
+    }
+    if (pendingCount > 0 && !juce::approximatelyEqual(frame.endSeconds, pendingEndSeconds)) {
+        if (frame.endSeconds < pendingEndSeconds) {
+            return;
+        }
+        finishDeadline();
+    }
+    auto& pending = pendingFrames[frame.tierIndex];
+    // A tier contributes only once per deadline. Repeated or malformed metadata cannot overrun the group.
+    for (std::size_t index = 0; index < pendingCount; ++index) {
+        if (pendingOrder[index] == frame.tierIndex) {
+            return;
+        }
+    }
+    pending.points.clear();
+    pending.tiltedDecibels.clear();
+    pending.frameSeconds = frame.frameSeconds;
+    float loudest = MIN_REFERENCE_DB;
+    for (const auto& point : points) {
+        if (!validPoint(point)) {
+            continue;
+        }
+        const float tilt = TILT_DB_PER_OCTAVE * std::log2(point.frequency / TILT_PIVOT_FREQUENCY);
+        const float decibels = DECIBELS_PER_POWER_DECADE * std::log10(std::max(point.level, SILENT_LEVEL)) + tilt;
+        pending.points.push_back(point);
+        pending.tiltedDecibels.push_back(decibels);
+        loudest = std::max(loudest, decibels);
+    }
+    tierPeaks[frame.tierIndex] = loudest;
+    pendingOrder[pendingCount++] = frame.tierIndex;
+    pendingEndSeconds = frame.endSeconds;
+    if (frame.lastAtTime) {
+        finishDeadline();
+    }
+}
+
+/// Accepts a sequential, single-tier stream whose hop also advances its audio clock.
+/// Multi-tier analyzer clients must use the metadata overload so simultaneous hops are not counted twice.
 void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> points, const double frameSeconds)
 {
-    const auto flash = static_cast<float>(
-        (1.0 - std::exp(-frameSeconds / FLASH_SECONDS)) * std::sqrt(DEFAULT_PERSISTENCE_SECONDS / persistenceSeconds)
-    );
+    addFrame(points, SpectralFrameInfo {.frameSeconds = frameSeconds, .endSeconds = lastEndSeconds + frameSeconds});
+}
 
-    tiltedDecibels.resize(points.size());
-    float loudest = MIN_REFERENCE_DB;
-    for (std::size_t index = 0; index < points.size(); ++index) {
-        const auto& point = points[index];
-        const float tilt
-            = TILT_DB_PER_OCTAVE * std::log2(std::max(point.frequency, MIN_FREQUENCY) / TILT_PIVOT_FREQUENCY);
-        tiltedDecibels[index] = DECIBELS_PER_POWER_DECADE * std::log10(std::max(point.level, SILENT_LEVEL)) + tilt;
-        loudest = std::max(loudest, tiltedDecibels[index]);
-    }
-    const double released = static_cast<double>(referenceDecibels) - AUTO_SCALE_RELEASE_DB_PER_SECOND * frameSeconds;
+/// Advances the shared reference once, after all retained tier peaks at this deadline have been updated.
+void SpectrogramParticleBuilder::finishDeadline()
+{
+    const double elapsed = pendingEndSeconds - lastEndSeconds;
+    const double released = static_cast<double>(referenceDecibels) - AUTO_SCALE_RELEASE_DB_PER_SECOND * elapsed;
+    const float loudest = *std::ranges::max_element(tierPeaks);
     referenceDecibels = std::max(static_cast<float>(released), loudest);
-    const float floorDecibels = referenceDecibels - DISPLAY_RANGE_DB;
+    lastEndSeconds = pendingEndSeconds;
+    for (std::size_t index = 0; index < pendingCount; ++index) {
+        appendParticles(pendingFrames[pendingOrder[index]]);
+    }
+    pendingCount = 0;
+}
 
-    collected.reserve(collected.size() + points.size());
-    for (std::size_t index = 0; index < points.size(); ++index) {
-        const auto& point = points[index];
-        const float share = std::clamp((tiltedDecibels[index] - floorDecibels) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
+/// Colours a pending tier with the common reference, retaining its own hop's flash weight.
+void SpectrogramParticleBuilder::appendParticles(const PendingSpectralFrame& frame)
+{
+    const auto flash = static_cast<float>(
+        (1.0 - std::exp(-frame.frameSeconds / FLASH_SECONDS))
+        * std::sqrt(DEFAULT_PERSISTENCE_SECONDS / persistenceSeconds)
+    );
+    const float floorDecibels = referenceDecibels - DISPLAY_RANGE_DB;
+    for (std::size_t index = 0; index < frame.points.size(); ++index) {
+        const auto& point = frame.points[index];
+        const float share = std::clamp((frame.tiltedDecibels[index] - floorDecibels) / DISPLAY_RANGE_DB, 0.0F, 1.0F);
         const float emphasis = contrastCurve(share, frequencyContrast(point.frequency, static_cast<float>(contrast)));
         const float weight = emphasis * flash;
         if (weight < MIN_PARTICLE_WEIGHT) {
@@ -308,7 +371,7 @@ void SpectrogramParticleBuilder::addFrame(const std::span<const SpectralPoint> p
         const LinearColour colour = pointColour(point);
         collected.push_back({
             .x = static_cast<float>(frequencyToShare(frequency, scale)),
-            .y = (1.0F - point.position) * 0.5F,
+            .y = (1.0F - std::clamp(point.position, -1.0F, 1.0F)) * 0.5F,
             .spread = static_cast<float>(spacingShare) * PARTICLE_SIGMA_PER_SPACING,
             .red = colour.red * weight,
             .green = colour.green * weight,
@@ -336,12 +399,22 @@ float SpectrogramParticleBuilder::referenceLevel() const noexcept
 void SpectrogramParticleBuilder::resetLevel() noexcept
 {
     referenceDecibels = MIN_REFERENCE_DB;
+    tierPeaks.fill(MIN_REFERENCE_DB);
+    lastEndSeconds = 0.0;
+    pendingEndSeconds = 0.0;
+    pendingCount = 0;
+    for (auto& frame : pendingFrames) {
+        frame.points.clear();
+        frame.tiltedDecibels.clear();
+    }
 }
 
 /// Sets the contrast of the level curve for new particles, from 0 for linear in dB to 1 for the steepest S-curve.
 void SpectrogramParticleBuilder::setContrast(const double newContrast) noexcept
 {
-    contrast = std::clamp(newContrast, 0.0, 1.0);
+    if (std::isfinite(newContrast)) {
+        contrast = std::clamp(newContrast, 0.0, 1.0);
+    }
 }
 
 /// Selects frequency or phase colours for new particles.
@@ -359,7 +432,9 @@ void SpectrogramParticleBuilder::setFrequencyScale(const FrequencyScale newScale
 /// Sets the time constant of the particle fade, clamped to the persistence range.
 void SpectrogramParticleBuilder::setPersistence(const double seconds) noexcept
 {
-    persistenceSeconds = std::clamp(seconds, MIN_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS);
+    if (std::isfinite(seconds)) {
+        persistenceSeconds = std::clamp(seconds, MIN_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS);
+    }
 }
 
 /// Returns the colour of a particle: its frequency colour, or its phase colour from its coherence.

@@ -34,8 +34,8 @@ SpectrogramWorker::SpectrogramWorker(StereoSampleFifo& fifo, SpectrogramRenderer
     rightScratch(DRAIN_CHUNK, 0.0F),
     epochScratch(DRAIN_CHUNK, 0)
 {
-    analyzer.setFrameCallback([this](const std::span<const SpectralPoint> points, const double frameSeconds) {
-        particleBuilder.addFrame(points, frameSeconds);
+    analyzer.setFrameCallback([this](const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame) {
+        particleBuilder.addFrame(points, frame);
     });
 }
 
