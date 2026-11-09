@@ -307,6 +307,23 @@ Tests:
   Component-specific presentation algorithms and private rendering details remain with their owning component.
 - Changes to shared services must keep both the GUI and CLI targets building and behaving correctly.
 
+### macOS And Windows Portability
+
+- Keep every shared source and test compatible with Apple Clang and libc++ on macOS and MSVC and its STL on Windows.
+  A macOS build or clang-tidy pass does not establish Windows compatibility.
+  Consider both Debug and Release, since checked iterators and optimizer diagnostics differ between them.
+- Treat standard-library iterators as iterators, never as implementation-specific raw pointers.
+  For example, `std::ranges::find` on `std::array` can return a raw pointer with libc++,
+  but a checked iterator object with the MSVC STL, particularly in Debug builds.
+  Do not declare its result with `auto*` or `const auto*`, even when macOS clang-tidy suggests that qualification.
+  Prefer a predicate such as `std::ranges::contains` when only membership matters.
+  When a position is needed, use `std::ranges::distance` or the container's iterator type without pointer qualification.
+- Review lint autofixes for assumptions about iterator representation, pointer constness, and platform APIs.
+  Resolve a platform-specific warning with portable code instead of breaking the other platform,
+  weakening iterator checking, or adding conditional compilation solely for a declaration's spelling.
+- Verify compiler or STL-sensitive changes with Windows MSVC Debug and Release builds when available.
+  If only macOS validation is possible, state that limit rather than claiming both platforms were verified.
+
 ## Code Style
 
 - Prefer direct brace initialization for data members and namespace-scope constants,

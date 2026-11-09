@@ -45,7 +45,7 @@ and `stereoCorrelation`, with the channel arrays as JSON arrays in CSV too.
 ## Audio formats
 
 Discovery accepts WAV and BWF, AIFF and AIFC, FLAC, MP3, and AAC and M4A files.
-Decoding uses Symphonia on every platform, including lossless ALAC in M4A containers.
+Decoding uses Symphonia, including lossless ALAC in M4A containers, except for the macOS AAC case below.
 On macOS, single-track mono or stereo AAC-LC MP4 files decode with Core Audio,
 so perceptual noise substitution matches the C++ application.
 `scripts/test_aac_reconstruction.py --cpp-cli <cli> --rust-cli <cli>` compares both applications on AAC.
@@ -76,15 +76,13 @@ Loudness stays within 0.001 LU of ebur128 and matches displayed integrated
 and maximum short-term values to two decimals.
 Normalization measures the exact quantized output while writing, without a second full decode.
 
-In the October 30, 2026 measurements on an M3 Max,
-the release CLI analyzed the 29-file benchmark corpus in 0.297 s with one worker,
-compared with 1.618 s for C++, about 5.44 times faster.
-Peak and loudness normalization took 0.885 s and 0.928 s, about 3.71 and 3.52 times faster than C++.
-See [Analysis performance](../docs/performance.md) for the full results, baseline comparisons, and validation limits.
+See [Analysis performance](../docs/performance.md) for the November 2, 2026 macOS measurements
+and November 1, 2026 Windows measurements, benchmark settings, and validation limits.
 
 ## Build
 
 Run the commands from this directory.
+The required Rust toolchain is declared by `rust-version` in [`Cargo.toml`](Cargo.toml).
 
 ```shell
 ./build.sh
@@ -98,8 +96,6 @@ On macOS, the GUI is packaged as `AudioBatchRs.app` with the bundle id `com.esgr
 and then installs the shell completions for it.
 On macOS, it installs the app bundle to `/Applications`.
 On Windows, it installs the GUI to `%LOCALAPPDATA%/Programs/AudioBatchRs` with a Start Menu shortcut.
-The installer packages the GUI only on macOS and Windows.
-On other platforms, use Cargo to build and install the GUI binary directly.
 Both scripts take `-l` or `--cli-only` to skip the slower GUI build.
 They also accept `-c` or `--clean` for the repository root scripts,
 but leave Cargo artifacts untouched because the option only cleans the C++ CMake build directory.
@@ -134,6 +130,7 @@ magick ../assets/icon_win.png -define icon:auto-resize=256,128,96,64,48,40,32,24
 
 `.cargo/config.toml` compiles for the native CPU, so binaries built here may not run on older machines.
 CI overrides it with an empty `RUSTFLAGS`.
+The meter still requires AVX2 on x86 or NEON on Apple Silicon, so clearing native tuning is not an older-CPU mode.
 
 ```shell
 cargo build --release
@@ -327,7 +324,8 @@ Options > Preview view, or Audio Settings. Both panes show the same time interva
 Serato Overview tags provide optional waveform colours.
 The short-term loudness graph overlays the waveform when present, or a full spectrogram otherwise.
 
-The spectrogram uses a Mel frequency axis from zero to the source Nyquist frequency and a fixed source-power palette.
+The spectrogram caches Mel bands up to source Nyquist, while the displayed frequency axis extends to at least 20 kHz.
+It uses a fixed source-power palette.
 A gentle S-shaped display curve darkens quiet content without changing cached numerical intensities.
 Preview gain, plugins, and output-device resampling do not alter the source spectrogram.
 Frequency cutoffs can reveal limited bandwidth, but do not prove a file's lossless encoding history.
@@ -352,6 +350,8 @@ Multichannel playback is not supported.
 Per-file input gain scales the waveform and feeds plugin preview and processing.
 Dry playback stays unchanged.
 The gain is cached until the source file changes.
+Optional gain-adjusted loudness and limiter estimates are predictions, not source measurements or live plugin metering.
+See [Architecture](ARCHITECTURE.md) for their scope and limitations.
 
 Audio Settings chooses the output device, sample rate, buffer size, and preview preferences,
 including plugin preview, latency compensation, continued playback when changing files, and starting at the first cue.
@@ -372,8 +372,11 @@ Analysis, normalization, and processing runs can be cancelled.
 Uncommitted files keep their originals and rows, while completed files show their new output.
 Removing a row does not delete its file, and moving files to the trash is a separate action.
 
-The analysis cache lives in the `AudioBatch-rs` folder of the user data directory,
-apart from the cache of the C++ application.
+Both applications share `~/Library/AudioBatch/analysis.db` on macOS
+or `%APPDATA%/AudioBatch/analysis.db` on Windows.
+Rust settings, logs, plugin data, and presets remain private to `AudioBatch-rs`.
+`AUDIOBATCH_DATA_ROOT` selects an absolute root for isolated application storage, not file replacements or trash.
+See [Isolated application storage](../AGENTS.md#isolated-application-storage) for the storage contract.
 
 ### Plugins
 
@@ -472,8 +475,9 @@ Use `--artifacts <directory>` with either integration tier to choose a different
 Set `RUSTFLAGS=""` to reproduce CI's portable CPU configuration.
 
 The core golden tests compare exact floating point bits, histories, waveforms, and normalized samples.
-Windows x86-64 uses snapshots in `crates/core/tests/golden/windows-x86_64/` for outputs affected by platform math,
-and falls back to the shared snapshots for all other outputs.
+Windows x86-64 uses snapshots in `crates/core/tests/golden/windows-x86_64/` for outputs affected by platform math.
+The two native AAC fixture cases on macOS use `crates/core/tests/golden/macos-native-aac/`.
+Both fall back to the shared snapshots for outputs without an override.
 Generated signal identities and source fixture checksums are shared across platforms.
 Only regenerate snapshots after validating an intentional numerical change:
 
@@ -481,7 +485,7 @@ Only regenerate snapshots after validating an intentional numerical change:
 RUSTFLAGS="" UPDATE_GOLDEN=1 cargo test -p audiobatch-core --lib golden_tests
 ```
 
-On Windows this writes only differing overrides, preserves the shared snapshots,
+For these platform cases this writes only differing overrides, preserves the shared snapshots,
 and removes an override when its output becomes identical to the shared snapshot.
 Both debug and release tests must pass without `UPDATE_GOLDEN`.
 
@@ -496,6 +500,10 @@ git submodule update --init ../cpp/JUCE
 
 The tests find the bundle in `../test-plugin/cmake-build-release`, or at the path in `AUDIOBATCH_TEST_VST3`.
 Without it they are skipped, except when the `CI` variable is set, where they fail.
+Normalization golden corpus tests skip missing Git LFS audio locally,
+unless `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1` requires the complete corpus.
+Cross-language cache checks need `AUDIOBATCH_CPP_TESTS` to name the built C++ test executable, otherwise they skip.
+See [Testing](AGENTS.md#testing) for the prerequisite and coverage details.
 
 `scripts/parity.sh` runs both CLIs on the same files, compares their JSON measurements, and reports their wall times.
 Build a C++ release CLI first, then pass `--release` for meaningful timing comparisons.
@@ -570,7 +578,7 @@ It also builds and runs the executable CLI contracts with the same instrumentati
 ```
 
 The HTML report is generated in `target/llvm-cov/html/` and the LCOV report in `target/llvm-cov/lcov.info`.
-The same can be run with cargo directly:
+Cargo can cover the Rust workspace tests directly, but these commands do not run the executable Python CLI contracts:
 
 ```shell
 # Run tests with coverage (text output)
@@ -588,6 +596,7 @@ and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
 [Miri](https://github.com/rust-lang/miri) interprets tests and reports undefined behaviour in unsafe code.
 `miri.sh` runs it with Stacked Borrows on the unsafe COM code of `vst3-host` and the test plugin,
 the Serato tag parsers, and the waveform, overload, and spectrogram blob readers of the cache.
+It does not exercise the native Core Audio AAC bridge, which needs native validation.
 
 ```shell
 # Install the nightly toolchain with Miri, then run the tests under it
