@@ -235,6 +235,12 @@ SpatialSpectrogramView::SpatialSpectrogramView(
     shownOverlay = currentOverlayState();
 }
 
+/// Ends any outstanding host gestures while the processor's parameters still exist.
+SpatialSpectrogramView::~SpatialSpectrogramView()
+{
+    endDrag();
+}
+
 /// Returns the area of the spectrogram inside the axis labels.
 juce::Rectangle<float> SpatialSpectrogramView::getPlotBounds() const
 {

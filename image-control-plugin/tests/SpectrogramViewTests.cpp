@@ -3,16 +3,20 @@
 /// a band move stops at the minimum ratio to the crossover that stays,
 /// Ctrl or Cmd with a vertical drag changes the band's mid gain and, with Link, its side gain,
 /// Alt or Option with a vertical drag changes its side gain, and the wheel changes the gains by 0.1 dB a step.
-/// Also tests the wheel steps of ControlSlider.
+/// Also tests ControlSlider and BandStrip gesture balance, truthful Width readouts, and accessible meter values.
+/// The real editor composition verifies Mono actions, compact layout, and saved expanded sizing.
 /// Also tests that the stereo position curve overlay shows after a curve change and fades out.
 /// Also tests the particles SpectrogramParticleBuilder prepares for the GPU renderer:
 /// which points become particles, how bright and large they are under the spectral tilt and the auto-scale,
 /// where they are placed, and the frequency palette.
 
 #include "analysis/SpatialAnalyzer.h"
+#include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
+#include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 
@@ -23,12 +27,60 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 namespace esgrove::image_control::test
 {
 namespace
 {
+/// Records the host gesture boundaries of one parameter without changing its values.
+class GestureCounter final : public juce::AudioProcessorParameter::Listener
+{
+public:
+    /// Accepts value notifications without using them for the gesture contract.
+    void parameterValueChanged(int /*parameterIndex*/, float /*value*/) override {}
+    /// Counts the exact start/end sequence, including overlapping starts.
+    void parameterGestureChanged(int /*parameterIndex*/, const bool starting) override
+    {
+        events.push_back(starting);
+    }
+
+    /// Ordered host gesture boundaries, true for begin and false for end.
+    std::vector<bool> events;
+};
+
+/// Finds a real child control by the accessible title its production composition assigns.
+juce::Component* childWithTitle(const juce::Component& parent, const juce::String& title)
+{
+    std::vector<juce::Component*> pending;
+    for (auto* child : parent.getChildren()) {
+        pending.push_back(child);
+    }
+    while (!pending.empty()) {
+        auto* child = pending.back();
+        pending.pop_back();
+        if (child->getTitle() == title) {
+            return child;
+        }
+        for (auto* descendant : child->getChildren()) {
+            pending.push_back(descendant);
+        }
+    }
+    return nullptr;
+}
+
+/// Finds a button by its visible text without relying on private editor fields.
+juce::Button* buttonWithText(const juce::Component& parent, const juce::String& text)
+{
+    for (auto* child : parent.getChildren()) {
+        if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == text) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
 /// Size of the view in the tests, in pixels.
 constexpr int VIEW_WIDTH {1000};
 /// Height of the view in the tests, in pixels.
@@ -310,6 +362,376 @@ TEST(ControlSlider, SmoothWheelMovementAddsUpToWholeSteps)
     wheel.isReversed = true;
     EXPECT_EQ(wheelSteps(wheel, remainder), 0);
     EXPECT_EQ(wheelSteps(wheel, remainder), -1);
+}
+
+TEST(ControlSlider, WheelAndKeysDoNotNestInsideAPointerGesture)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    {
+        ControlSlider slider;
+        slider.setSize(200, 26);
+        const juce::SliderParameterAttachment attachment(parameter, slider);
+        const juce::Point<float> position {80.0F, 13.0F};
+        slider.mouseDown(mouseEvent(slider, position, position, juce::ModifierKeys::leftButtonModifier));
+        slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(1.0F));
+        EXPECT_FALSE(slider.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true}));
+        slider.endDrag();
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+        slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(1.0F));
+        EXPECT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false, true, false}));
+    }
+    parameter.removeListener(&gestures);
+}
+
+TEST(ControlSlider, DoubleClickResetDoesNotNestInsideTheSecondPointerDown)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    {
+        ControlSlider slider;
+        slider.setSize(200, 26);
+        const juce::SliderParameterAttachment attachment(parameter, slider);
+        const juce::Point<float> position {80.0F, 13.0F};
+        const auto event = mouseEvent(slider, position, position, juce::ModifierKeys::leftButtonModifier);
+        slider.mouseDown(event);
+        slider.mouseDoubleClick(event);
+        slider.mouseUp(event);
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false}));
+    }
+    parameter.removeListener(&gestures);
+}
+
+TEST(SpectrogramView, TeardownClosesAnInterruptedLinkedGainGesture)
+{
+    ImageControlProcessor processor;
+    auto& mid = *processor.getParameters().getParameter(midGainParameterId(2));
+    auto& side = *processor.getParameters().getParameter(sideGainParameterId(2));
+    GestureCounter midGestures;
+    GestureCounter sideGestures;
+    mid.addListener(&midGestures);
+    side.addListener(&sideGestures);
+    {
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+        view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+        const juce::Point<float> position {xOf(view, 2000.0), view.getPlotBounds().getCentreY()};
+        view.mouseDown(mouseEvent(
+            view, position, position, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::commandModifier
+        ));
+        processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
+        EXPECT_EQ(midGestures.events, (std::vector<bool> {true}));
+        EXPECT_EQ(sideGestures.events, (std::vector<bool> {true}));
+    }
+    EXPECT_EQ(midGestures.events, (std::vector<bool> {true, false}));
+    EXPECT_EQ(sideGestures.events, (std::vector<bool> {true, false}));
+    mid.removeListener(&midGestures);
+    side.removeListener(&sideGestures);
+}
+
+TEST(SpectrogramView, DoubleClickResetDoesNotOverlapThePointerGesture)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(0));
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const juce::Point<float> position {xOf(view, 100.0), view.getPlotBounds().getCentreY()};
+    const auto event = mouseEvent(view, position, position, juce::ModifierKeys::leftButtonModifier);
+    view.mouseDown(event);
+    view.mouseDoubleClick(event);
+    view.mouseUp(event);
+    EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false}));
+    parameter.removeListener(&gestures);
+}
+
+TEST(SpectrogramView, AxisAndSecondaryClicksDoNotOpenGestures)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(0));
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const juce::Point<float> axis {xOf(view, 100.0), static_cast<float>(VIEW_HEIGHT - 1)};
+    view.mouseDown(mouseEvent(view, axis, axis, juce::ModifierKeys::leftButtonModifier));
+    const juce::Point<float> plot {axis.x, view.getPlotBounds().getCentreY()};
+    view.mouseDown(mouseEvent(view, plot, plot, juce::ModifierKeys::rightButtonModifier));
+    view.endDrag();
+    EXPECT_TRUE(gestures.events.empty());
+    parameter.removeListener(&gestures);
+}
+
+TEST(BandStrip, LinkChangesDuringDragKeepTheOriginalGestureBalanced)
+{
+    ImageControlProcessor processor;
+    auto& side = *processor.getParameters().getParameter(sideGainParameterId(0));
+    GestureCounter gestures;
+    side.addListener(&gestures);
+    {
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+        auto* mid = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Mid"));
+        ASSERT_NE(mid, nullptr);
+        const juce::Point<float> position {40.0F, 13.0F};
+        mid->mouseDown(mouseEvent(*mid, position, position, juce::ModifierKeys::leftButtonModifier));
+        processor.getEditorState().setProperty(linkPropertyName(0), false, nullptr);
+        mid->setValue(3.0, juce::sendNotificationSync);
+        EXPECT_NEAR(plainValue(side), 3.0F, 0.01F);
+    }
+    EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+    side.removeListener(&gestures);
+}
+
+TEST(BandStrip, EnablingLinkDuringAnUnlinkedDragDoesNotOpenOrEndSideGesture)
+{
+    ImageControlProcessor processor;
+    processor.getEditorState().setProperty(linkPropertyName(0), false, nullptr);
+    auto& side = *processor.getParameters().getParameter(sideGainParameterId(0));
+    GestureCounter gestures;
+    side.addListener(&gestures);
+    {
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+        auto* mid = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Mid"));
+        ASSERT_NE(mid, nullptr);
+        const juce::Point<float> position {40.0F, 13.0F};
+        mid->mouseDown(mouseEvent(*mid, position, position, juce::ModifierKeys::leftButtonModifier));
+        processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
+        mid->setValue(3.0, juce::sendNotificationSync);
+        EXPECT_NEAR(plainValue(side), 0.0F, 0.01F);
+    }
+    EXPECT_TRUE(gestures.events.empty());
+    side.removeListener(&gestures);
+}
+
+TEST(BandStrip, WheelAndKeysMoveLinkedSideInBalancedGestures)
+{
+    ImageControlProcessor processor;
+    auto& side = *processor.getParameters().getParameter(sideGainParameterId(1));
+    GestureCounter gestures;
+    side.addListener(&gestures);
+    {
+        const BandStrip strip(processor.getParameters(), processor.getEditorState(), 1);
+        auto* mid = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Mid Mid"));
+        ASSERT_NE(mid, nullptr);
+        const juce::Point<float> position {40.0F, 13.0F};
+        mid->mouseWheelMove(mouseEvent(*mid, position, position, {}), notch(1.0F));
+        EXPECT_NEAR(plainValue(side), 0.1F, 0.001F);
+        EXPECT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_NEAR(plainValue(side), 0.82F, 0.001F);
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false}));
+    }
+    side.removeListener(&gestures);
+}
+
+TEST(BandStrip, InterruptedWidthDragClosesItsSideGesture)
+{
+    ImageControlProcessor processor;
+    auto& side = *processor.getParameters().getParameter(sideGainParameterId(0));
+    GestureCounter gestures;
+    side.addListener(&gestures);
+    {
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+        auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Width"));
+        ASSERT_NE(width, nullptr);
+        const juce::Point<float> position {40.0F, 13.0F};
+        width->mouseDown(mouseEvent(*width, position, position, juce::ModifierKeys::leftButtonModifier));
+        width->setValue(0.5, juce::sendNotificationSync);
+        EXPECT_NEAR(plainValue(side), -6.0206F, 0.02F);
+    }
+    EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+    side.removeListener(&gestures);
+}
+
+TEST(BandStrip, WidthShowsTheActualOverrangeRatioAndTypingTwoChangesIt)
+{
+    ImageControlProcessor processor;
+    setParameterInGesture(*processor.getParameters().getParameter(midGainParameterId(0)), -12.0F);
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+    strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+    auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Width"));
+    ASSERT_NE(width, nullptr);
+    const double actual = bandWidthFromGains(-12.0, 0.0);
+    EXPECT_NEAR(width->getValue(), actual, 0.01);
+    EXPECT_DOUBLE_EQ(width->valueToProportionOfLength(actual), 1.0);
+    strip.addToDesktop(0);
+    auto* handler = width->getAccessibilityHandler();
+    ASSERT_NE(handler, nullptr);
+    EXPECT_NEAR(handler->getValueInterface()->getCurrentValue(), actual, 0.01);
+    juce::Label* valueBox = nullptr;
+    for (auto* child : width->getChildren()) {
+        if (auto* label = dynamic_cast<juce::Label*>(child)) {
+            valueBox = label;
+            break;
+        }
+    }
+    ASSERT_NE(valueBox, nullptr);
+    EXPECT_NEAR(valueBox->getText().getDoubleValue(), actual, 0.01);
+    // Deliver text through the production value-box callback, not directly to the Width macro.
+    valueBox->setText("2", juce::sendNotificationSync);
+    EXPECT_NEAR(parameterValue(processor, sideGainParameterId(0)), -12.0F + 6.0206F, 0.02F);
+    EXPECT_NEAR(width->getValue(), 2.0, 0.01);
+}
+
+TEST(BandStrip, WidthIsDisabledWhileMidIsOffAndTracksIndependentAutomation)
+{
+    ImageControlProcessor processor;
+    const BandStrip strip(processor.getParameters(), processor.getEditorState(), 2);
+    auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "High Mid Width"));
+    ASSERT_NE(width, nullptr);
+    auto& mid = *processor.getParameters().getParameter(midGainParameterId(2));
+    auto& side = *processor.getParameters().getParameter(sideGainParameterId(2));
+    setParameterInGesture(mid, BAND_GAIN_MIN_DB);
+    EXPECT_FALSE(width->isEnabled());
+    EXPECT_FALSE(width->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    setParameterInGesture(mid, -12.0F);
+    setParameterInGesture(side, 6.0F);
+    EXPECT_TRUE(width->isEnabled());
+    EXPECT_NEAR(width->getValue(), bandWidthFromGains(-12.0, 6.0), 0.01);
+    EXPECT_NEAR(plainValue(mid), -12.0F, 0.001F);
+    EXPECT_NEAR(plainValue(side), 6.0F, 0.001F);
+}
+
+TEST(BandCorrelationMeter, ExposesNamedReadOnlyValuesAndSilenceIsUnavailable)
+{
+    BandCorrelationMeter meter("High Mid");
+    meter.setSize(200, BAND_CORRELATION_HEIGHT);
+    meter.addToDesktop(0);
+    auto* handler = meter.getAccessibilityHandler();
+    ASSERT_NE(handler, nullptr);
+    EXPECT_EQ(handler->getTitle(), "High Mid correlation");
+    auto* value = handler->getValueInterface();
+    ASSERT_NE(value, nullptr);
+    EXPECT_TRUE(value->isReadOnly());
+    EXPECT_EQ(value->getCurrentValueAsString(), "Unavailable");
+    meter.setCorrelation(-0.75F);
+    EXPECT_EQ(value->getCurrentValueAsString(), "-0.75");
+    value->setValueAsString("0.5");
+    EXPECT_EQ(value->getCurrentValueAsString(), "-0.75");
+    meter.setCorrelation(std::numeric_limits<float>::quiet_NaN());
+    EXPECT_EQ(value->getCurrentValueAsString(), "Unavailable");
+}
+
+TEST(ImageControlEditor, MonoIsComposedBeforeDeltaAndBypassAtMinimumWidthAndRetainedOnReopen)
+{
+    ImageControlProcessor processor;
+    {
+        ImageControlEditor editor(processor);
+        editor.setSize(760, 560);
+        auto* mono = buttonWithText(editor, "Mono");
+        auto* delta = buttonWithText(editor, "Delta");
+        auto* bypass = buttonWithText(editor, "Bypass");
+        ASSERT_NE(mono, nullptr);
+        ASSERT_NE(delta, nullptr);
+        ASSERT_NE(bypass, nullptr);
+        EXPECT_LE(mono->getRight(), delta->getX());
+        EXPECT_LE(delta->getRight(), bypass->getX());
+        EXPECT_TRUE(editor.getLocalBounds().contains(mono->getBounds()));
+        for (auto* child : editor.getChildren()) {
+            if (child != mono && dynamic_cast<juce::Button*>(child) != nullptr) {
+                EXPECT_FALSE(mono->getBounds().intersects(child->getBounds()));
+            }
+        }
+        editor.addToDesktop(0);
+        auto* handler = mono->getAccessibilityHandler();
+        ASSERT_NE(handler, nullptr);
+        ASSERT_TRUE(handler->getActions().invoke(juce::AccessibilityActionType::toggle));
+        EXPECT_TRUE(processor.isMonoAuditionEnabled());
+        EXPECT_FALSE(delta->getToggleState());
+        EXPECT_FALSE(bypass->getToggleState());
+    }
+    const ImageControlEditor reopened(processor);
+    auto* mono = buttonWithText(reopened, "Mono");
+    ASSERT_NE(mono, nullptr);
+    EXPECT_TRUE(mono->getToggleState());
+}
+
+TEST(ImageControlEditor, CompactCorrelationRowKeepsExpandedHeightAndAlignsWithStrips)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    state.setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
+    state.setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+    const ImageControlEditor editor(processor);
+    const int withCorrelation = editor.getHeight();
+    EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+    const SettingsPanel settings(state);
+    auto* show = buttonWithText(settings, "Show band correlation");
+    ASSERT_NE(show, nullptr);
+    auto* post = buttonWithText(editor, "Post");
+    ASSERT_NE(post, nullptr);
+    show->setToggleState(false, juce::sendNotificationSync);
+    // Analyzer tap actions apply all display settings through the real editor composition.
+    post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
+    EXPECT_EQ(withCorrelation - editor.getHeight(), BAND_CORRELATION_HEIGHT + 8);
+    EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+    show->setToggleState(true, juce::sendNotificationSync);
+    post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
+    EXPECT_EQ(editor.getHeight(), withCorrelation);
+    auto* meter = childWithTitle(editor, "Low correlation");
+    ASSERT_NE(meter, nullptr);
+    auto* mid = childWithTitle(editor, "Low Mid");
+    ASSERT_NE(mid, nullptr);
+    auto* strip = mid->getParentComponent();
+    ASSERT_NE(strip, nullptr);
+    EXPECT_EQ(meter->getX(), strip->getX());
+    EXPECT_EQ(meter->getWidth(), strip->getWidth());
+    EXPECT_LE(meter->getBottom(), strip->getY());
+    state.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
+    post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
+    EXPECT_EQ(editor.getHeight(), 900);
+    EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+}
+
+TEST(ImageControlEditor, HiddenAndClosedMetersStopPublishingMeasurements)
+{
+    ImageControlProcessor processor;
+    processor.prepareToPlay(48'000.0, 256);
+    const auto render = [&processor] {
+        juce::AudioBuffer<float> block(2, 256);
+        juce::MidiBuffer midi;
+        for (int pass = 0; pass < 200; ++pass) {
+            for (int sample = 0; sample < 256; ++sample) {
+                const float value = sample % 2 == 0 ? 0.25F : -0.25F;
+                block.setSample(0, sample, value);
+                block.setSample(1, sample, value);
+            }
+            processor.processBlock(block, midi);
+        }
+    };
+    const auto expectUnavailable = [&processor] {
+        for (const float value : processor.getBandCorrelations()) {
+            EXPECT_TRUE(std::isnan(value));
+        }
+    };
+    {
+        ImageControlEditor editor(processor);
+        editor.addToDesktop(0);
+        editor.setVisible(true);
+        render();
+        EXPECT_NEAR(processor.getBandCorrelations().back(), 1.0F, 1.0e-6F);
+        editor.setVisible(false);
+        render();
+        expectUnavailable();
+        editor.setVisible(true);
+        processor.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
+        auto* post = buttonWithText(editor, "Post");
+        ASSERT_NE(post, nullptr);
+        post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
+        render();
+        expectUnavailable();
+    }
+    render();
+    expectUnavailable();
+    processor.releaseResources();
 }
 
 TEST(SpectrogramView, PositionCurveOverlayShowsAfterAChangeAndFades)

@@ -59,6 +59,78 @@ ControlSlider::ControlSlider()
     setMouseClickGrabsKeyboardFocus(true);
 }
 
+/// Closes a pointer gesture while its listeners and parameter attachments still exist.
+ControlSlider::~ControlSlider()
+{
+    endDrag();
+}
+
+/// Ends a pointer drag through JUCE, which balances both slider listeners and user callbacks.
+void ControlSlider::endDrag()
+{
+    if (dragStartEvent.has_value()) {
+        juce::Slider::mouseUp(*dragStartEvent);
+        dragStartEvent.reset();
+    }
+}
+
+/// Limits direct manipulation while preserving a truthful numerical readout outside that range.
+void ControlSlider::setInteractionMaximum(const double maximum)
+{
+    interactionMaximum = maximum;
+}
+
+/// Maps the track to the directly editable range, even when the actual value is above it.
+double ControlSlider::proportionOfLengthToValue(const double proportion)
+{
+    if (interactionMaximum.has_value()) {
+        return getMinimum() + std::clamp(proportion, 0.0, 1.0) * (*interactionMaximum - getMinimum());
+    }
+    return juce::Slider::proportionOfLengthToValue(proportion);
+}
+
+/// Keeps pointer and text edits inside the direct manipulation range.
+double ControlSlider::snapValue(const double attemptedValue, const DragMode dragMode)
+{
+    return juce::Slider::snapValue(
+        interactionMaximum.has_value() ? std::min(attemptedValue, *interactionMaximum) : attemptedValue, dragMode
+    );
+}
+
+/// Saturates the track without replacing the actual numerical or accessibility value.
+double ControlSlider::valueToProportionOfLength(const double value)
+{
+    if (interactionMaximum.has_value()) {
+        return std::clamp((value - getMinimum()) / (*interactionMaximum - getMinimum()), 0.0, 1.0);
+    }
+    return juce::Slider::valueToProportionOfLength(value);
+}
+
+/// Ends the pointer gesture before JUCE opens the separate double-click reset gesture.
+void ControlSlider::mouseDoubleClick(const juce::MouseEvent& event)
+{
+    endDrag();
+    juce::Slider::mouseDoubleClick(event);
+}
+
+/// Starts a pointer gesture, retaining its event so owners can close it before detaching listeners.
+void ControlSlider::mouseDown(const juce::MouseEvent& event)
+{
+    endDrag();
+    if (!isEnabled() || !event.mods.isLeftButtonDown()) {
+        return;
+    }
+    dragStartEvent.emplace(event);
+    juce::Slider::mouseDown(event);
+}
+
+/// Ends JUCE's pointer gesture and forgets the retained event.
+void ControlSlider::mouseUp(const juce::MouseEvent& event)
+{
+    juce::Slider::mouseUp(event);
+    dragStartEvent.reset();
+}
+
 /// Sets the change of the value per mouse wheel step, such as 0.1 dB for a gain or one percent for a pan.
 void ControlSlider::setWheelStep(const double step)
 {
@@ -70,6 +142,9 @@ void ControlSlider::setWheelStep(const double step)
 /// Each nudge is its own host gesture, which the slider's attachment passes on.
 bool ControlSlider::keyPressed(const juce::KeyPress& key)
 {
+    if (!isEnabled() || dragStartEvent.has_value()) {
+        return false;
+    }
     const int keyCode = key.getKeyCode();
     double direction = 0.0;
     if (keyCode == juce::KeyPress::rightKey || keyCode == juce::KeyPress::upKey) {
@@ -79,7 +154,7 @@ bool ControlSlider::keyPressed(const juce::KeyPress& key)
     } else {
         return juce::Slider::keyPressed(key);
     }
-    const auto range = getRange();
+    const juce::Range<double> range {getMinimum(), interactionMaximum.value_or(getMaximum())};
     const double nudge
         = range.getLength() / NUDGES_PER_RANGE * (key.getModifiers().isShiftDown() ? FINE_NUDGE_SHARE : 1.0);
     const ScopedDragNotification gesture(*this);
@@ -98,12 +173,15 @@ void ControlSlider::mouseWheelMove(const juce::MouseEvent& event, const juce::Mo
         juce::Slider::mouseWheelMove(event, wheel);
         return;
     }
+    if (dragStartEvent.has_value()) {
+        return;
+    }
     const int steps = wheelSteps(wheel, wheelRemainder);
     if (steps == 0) {
         return;
     }
     const double step = std::max(wheelStep * (event.mods.isShiftDown() ? FINE_WHEEL_SHARE : 1.0), getInterval());
-    const auto range = getRange();
+    const juce::Range<double> range {getMinimum(), interactionMaximum.value_or(getMaximum())};
     const ScopedDragNotification gesture(*this);
     setValue(
         std::clamp(getValue() + static_cast<double>(steps) * step, range.getStart(), range.getEnd()),

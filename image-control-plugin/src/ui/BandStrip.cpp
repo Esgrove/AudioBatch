@@ -8,14 +8,49 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace esgrove::image_control
 {
 namespace
 {
+/// Accessibility value of a correlation meter, with no editing action or misleading numeric silence value.
+class CorrelationAccessibleValue final : public juce::AccessibilityTextValueInterface
+{
+public:
+    /// Keeps a reference to the component, which owns and outlives its accessibility handler.
+    explicit CorrelationAccessibleValue(BandCorrelationMeter& owner) : meter(owner) {}
+
+    /// Leaves the component lifetime with its owner.
+    ~CorrelationAccessibleValue() override = default;
+
+    CorrelationAccessibleValue(const CorrelationAccessibleValue&) = delete;
+    CorrelationAccessibleValue(CorrelationAccessibleValue&&) = delete;
+    CorrelationAccessibleValue& operator=(const CorrelationAccessibleValue&) = delete;
+    CorrelationAccessibleValue& operator=(CorrelationAccessibleValue&&) = delete;
+
+    /// Reads the current measurement or its unavailable status.
+    [[nodiscard]] juce::String getCurrentValueAsString() const override
+    {
+        return meter.valueText();
+    }
+    /// Exposes measurements as read-only.
+    [[nodiscard]] bool isReadOnly() const override
+    {
+        return true;
+    }
+    /// Ignores editing because the value comes from the audio processor.
+    void setValueAsString(const juce::String& /*value*/) override {}
+
+private:
+    /// The component that owns this value interface through its handler.
+    BandCorrelationMeter& meter;
+};
+
 /// Height of the name and range rows, in pixels.
 constexpr int HEADER_ROW_HEIGHT {20};
 /// Height of the labels above the sliders, in pixels.
@@ -112,6 +147,96 @@ void setSideValue(juce::RangedAudioParameter& parameter, const float value, cons
 }
 }  // namespace
 
+/// Names the meter with its band so assistive technology can distinguish the four measurements.
+BandCorrelationMeter::BandCorrelationMeter(const juce::String& band)
+{
+    setTitle(band + " correlation");
+    setDescription("Stereo correlation: -1 anti-phase, 0 uncorrelated, +1 in-phase. Silence is unavailable");
+    setTooltip(
+        "Processed band correlation: -1 is anti-phase, 0 is uncorrelated, +1 is in-phase. Silence is unavailable"
+    );
+}
+
+/// Returns a signed measurement or an explicit unavailable status for silence.
+juce::String BandCorrelationMeter::valueText() const
+{
+    if (!correlation.has_value()) {
+        return "Unavailable";
+    }
+    return (*correlation >= 0.0F ? "+" : "") + juce::String(*correlation, 2);
+}
+
+/// Updates the snapshot on the message thread, clearing unavailable measurements.
+void BandCorrelationMeter::setCorrelation(const float value)
+{
+    const auto next = std::isfinite(value) ? std::optional<float>(std::clamp(value, -1.0F, 1.0F)) : std::nullopt;
+    if (correlation.has_value() == next.has_value()
+        && (!next.has_value() || juce::approximatelyEqual(*correlation, *next)))
+    {
+        return;
+    }
+    correlation = next;
+    repaint();
+    if (const auto* handler = getAccessibilityHandler()) {
+        handler->notifyAccessibilityEvent(juce::AccessibilityEvent::valueChanged);
+    }
+}
+
+/// Draws a centred horizontal track, a signed marker, and the minus-one, zero, plus-one scale.
+void BandCorrelationMeter::paint(juce::Graphics& graphics)
+{
+    constexpr int METER_MARGIN {10};
+    constexpr int METER_LABEL_HEIGHT {17};
+    constexpr float TRACK_HEIGHT {5.0F};
+    constexpr float MARKER_WIDTH {3.0F};
+    constexpr float METER_FONT_HEIGHT {11.0F};
+    constexpr float MARKER_EXTENSION {2.0F};
+    auto area = getLocalBounds().reduced(METER_MARGIN, 2);
+    graphics.setFont(textFont(METER_FONT_HEIGHT));
+    graphics.setColour(juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    graphics.drawText("Correlation", area.removeFromTop(METER_LABEL_HEIGHT), juce::Justification::centredLeft);
+    const juce::Rectangle<float> track {
+        static_cast<float>(area.getX()),
+        static_cast<float>(area.getY()),
+        static_cast<float>(area.getWidth()),
+        TRACK_HEIGHT
+    };
+    graphics.setColour(juce::Colour(palette::GREY_MEDIUM));
+    graphics.fillRoundedRectangle(track, TRACK_HEIGHT * 0.5F);
+    graphics.setColour(juce::Colour(palette::GREY_LIGHT));
+    graphics.fillRect(
+        track.getCentreX(), track.getY() - MARKER_EXTENSION, 1.0F, TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
+    );
+    if (correlation.has_value()) {
+        const float position = track.getX() + (*correlation + 1.0F) * 0.5F * track.getWidth();
+        graphics.setColour(juce::Colour(*correlation < 0.0F ? palette::ORANGE : palette::BLUE));
+        graphics.fillRect(
+            std::clamp(position - MARKER_WIDTH * 0.5F, track.getX(), track.getRight() - MARKER_WIDTH),
+            track.getY() - MARKER_EXTENSION,
+            MARKER_WIDTH,
+            TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
+        );
+    }
+    area.removeFromTop(static_cast<int>(TRACK_HEIGHT) + 2);
+    graphics.setColour(juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    graphics.drawText("-1", area, juce::Justification::centredLeft);
+    graphics.drawText("0", area, juce::Justification::centred);
+    graphics.drawText("+1", area, juce::Justification::centredRight);
+    const auto readout = getLocalBounds().reduced(METER_MARGIN, 2).removeFromTop(METER_LABEL_HEIGHT);
+    graphics.drawText(correlation.has_value() ? valueText() : "—", readout, juce::Justification::centredRight);
+}
+
+/// Exposes a named, read-only text value without slider actions.
+std::unique_ptr<juce::AccessibilityHandler> BandCorrelationMeter::createAccessibilityHandler()
+{
+    return std::make_unique<juce::AccessibilityHandler>(
+        *this,
+        juce::AccessibilityRole::progressBar,
+        juce::AccessibilityActions {},
+        juce::AccessibilityHandler::Interfaces {std::make_unique<CorrelationAccessibleValue>(*this)}
+    );
+}
+
 /// Creates the controls of a band, attaches Mid, Side, Pan, and Solo to their parameters,
 /// and binds Link to the editor settings.
 BandStrip::BandStrip(
@@ -145,7 +270,11 @@ BandStrip::BandStrip(
     );
 
     configureSlider(widthSlider, widthLabel, "Width");
-    widthSlider.setRange(0.0, MAX_STEREO_WIDTH, WIDTH_STEP);
+    // The numerical range includes every gain ratio, while the track and user edits saturate at two.
+    const double largestWidth
+        = juce::Decibels::decibelsToGain(static_cast<double>(BAND_GAIN_MAX_DB - BAND_GAIN_MIN_DB));
+    widthSlider.setRange(0.0, largestWidth, WIDTH_STEP);
+    widthSlider.setInteractionMaximum(MAX_STEREO_WIDTH);
     widthSlider.setWheelStep(WIDTH_STEP);
     widthSlider.setTooltip(
         "Side relative to mid: 0 is mono, 1 leaves the stereo image as it is, and 2 doubles the side"
@@ -197,18 +326,20 @@ BandStrip::BandStrip(
         draggingMid = true;
         linkedMidStart = midSlider.getValue();
         linkedSideStart = sideSlider.getValue();
-        if (linkButton.getToggleState()) {
+        linkedSideGesture = linkButton.getToggleState();
+        if (linkedSideGesture) {
             sideParameter.beginChangeGesture();
         }
     };
     midSlider.onDragEnd = [this] {
-        if (linkButton.getToggleState()) {
+        if (linkedSideGesture) {
             sideParameter.endChangeGesture();
+            linkedSideGesture = false;
         }
         draggingMid = false;
     };
     midSlider.onValueChange = [this] {
-        if (draggingMid && linkButton.getToggleState() && linkedSideStart > static_cast<double>(BAND_GAIN_MIN_DB)) {
+        if (draggingMid && linkedSideGesture && linkedSideStart > static_cast<double>(BAND_GAIN_MIN_DB)) {
             const double side = std::clamp(
                 linkedSideStart + midSlider.getValue() - linkedMidStart,
                 static_cast<double>(BAND_GAIN_MIN_DB),
@@ -220,12 +351,23 @@ BandStrip::BandStrip(
     };
     sideSlider.onValueChange = [this] { updateWidthFromGains(); };
 
+    for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider}) {
+        slider->setTitle(bandName(band) + " " + slider->getName());
+    }
+    soloButton.setTitle(bandName(band) + " Solo");
+    linkButton.setTitle(bandName(band) + " Link");
     updateWidthFromGains();
 }
 
-/// Detaches the sliders before they are destroyed.
+/// Closes active gestures and detaches the sliders before they are destroyed.
 BandStrip::~BandStrip()
 {
+    for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider}) {
+        slider->endDrag();
+        slider->onDragStart = nullptr;
+        slider->onDragEnd = nullptr;
+        slider->onValueChange = nullptr;
+    }
     midAttachment.reset();
     sideAttachment.reset();
     panAttachment.reset();
@@ -293,6 +435,7 @@ void BandStrip::applyWidth()
 /// Sets up a full-width horizontal slider with its value box on the right and its label above it.
 void BandStrip::configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text)
 {
+    slider.setName(text);
     slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, TEXT_BOX_WIDTH, TEXT_BOX_HEIGHT);
     addAndMakeVisible(slider);
     label.setText(text, juce::dontSendNotification);
@@ -302,7 +445,7 @@ void BandStrip::configureSlider(ControlSlider& slider, juce::Label& label, const
     addAndMakeVisible(label);
 }
 
-/// Shows the width that the Mid and Side gains give, without writing anything back.
+/// Shows the actual width from Mid and Side without writing it back, even when it exceeds the track's range.
 /// Width cannot be set while Mid is off, so the slider is disabled then.
 void BandStrip::updateWidthFromGains()
 {
@@ -310,6 +453,6 @@ void BandStrip::updateWidthFromGains()
     const bool midOff = mid <= static_cast<double>(BAND_GAIN_MIN_DB);
     widthSlider.setEnabled(!midOff);
     const double width = midOff ? 0.0 : bandWidthFromGains(mid, sideSlider.getValue());
-    widthSlider.setValue(std::min(width, MAX_STEREO_WIDTH), juce::dontSendNotification);
+    widthSlider.setValue(width, juce::dontSendNotification);
 }
 }  // namespace esgrove::image_control

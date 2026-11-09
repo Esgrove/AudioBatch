@@ -64,11 +64,19 @@ class SpatialSpectrogramView final : public juce::Component, public juce::Toolti
 public:
     SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters, juce::ValueTree editorState);
 
+    ~SpatialSpectrogramView() override;
+
+    SpatialSpectrogramView(const SpatialSpectrogramView&) = delete;
+    SpatialSpectrogramView(SpatialSpectrogramView&&) = delete;
+    SpatialSpectrogramView& operator=(const SpatialSpectrogramView&) = delete;
+    SpatialSpectrogramView& operator=(SpatialSpectrogramView&&) = delete;
+
     [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
     [[nodiscard]] std::optional<std::size_t> getHoveredBand() const;
     [[nodiscard]] float positionCurveOpacity() const;
 
     void advance(double seconds);
+    void endDrag();
     void setFrameStatistics(std::optional<double> rate, std::optional<double> gpuMilliseconds);
     void setFrequencyScale(FrequencyScale newScale);
     void setPositionCurve(const StereoPositionCurve& curve);

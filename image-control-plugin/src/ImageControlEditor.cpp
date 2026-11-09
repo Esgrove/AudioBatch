@@ -1,5 +1,5 @@
 /// Implements the ImageControl editor: the header with the settings button, the Pre and Post analyzer tap switch,
-/// the delta, the bypass, and the output gain,
+/// mono audition, delta, bypass, output gain, and the per-band correlation row,
 /// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
 /// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
 /// applying the display settings with bypassing and hiding the spectrogram, measuring the frame rate,
@@ -94,6 +94,7 @@ bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 /// and starts the analysis worker, which first discards audio that queued while no editor was open.
 ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     AudioProcessorEditor(owner),
+    ComponentMovementWatcher(this),
     imageControlProcessor(owner),
     spectrogram(owner.getParameters(), owner.getEditorState()),
     spectrogramWorker(owner.getAnalyzerFifo(), spectrogramRenderer),
@@ -136,6 +137,13 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, DELTA_ID, deltaButton);
     addAndMakeVisible(deltaButton);
 
+    monoButton.setClickingTogglesState(true);
+    monoButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::BLUE));
+    monoButton.setToggleState(owner.isMonoAuditionEnabled(), juce::dontSendNotification);
+    monoButton.setTooltip("Audition the live output in mono. Not saved, automated, or applied to offline renders");
+    monoButton.onClick = [this] { imageControlProcessor.setMonoAuditionEnabled(monoButton.getToggleState()); };
+    addAndMakeVisible(monoButton);
+
     settingsButton.setTooltip(
         "Display settings: the colours, the frequency scale, the contrast, the rendering style, and how particles fade"
     );
@@ -158,6 +166,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     outputSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
     outputSlider.setDoubleClickReturnValue(true, 0.0);
     outputSlider.setTooltip("Level of the output after the bands are joined. Double-click to reset");
+    outputSlider.setTitle("Output gain");
     outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         parameters, OUTPUT_GAIN_ID, outputSlider
     );
@@ -171,10 +180,17 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band);
         addAndMakeVisible(*bandStrips.at(band));
+        correlationMeters.at(band) = std::make_unique<BandCorrelationMeter>(bandName(band));
+        addAndMakeVisible(*correlationMeters.at(band));
     }
     addAndMakeVisible(divider);
     addChildComponent(tooltips);
     updateBandRanges();
+
+    correlationShown = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
+    for (const auto& meter : correlationMeters) {
+        meter->setVisible(correlationShown);
+    }
 
     // The saved layout is read before the resize limits are set,
     // because setting them constrains the still empty editor to the minimum size and lays it out.
@@ -210,6 +226,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 /// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    imageControlProcessor.setCorrelationEnabled(false);
+    outputSlider.endDrag();
     spectrogramWorker.stop();
     openGLContext.detach();
     bypassAttachment.reset();
@@ -266,37 +284,54 @@ void ImageControlEditor::resized()
     auto area = getLocalBounds().reduced(GAP);
 
     auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
-    titleLabel.setBounds(header.removeFromLeft(TITLE_WIDTH));
-    settingsButton.setBounds(header.removeFromLeft(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    // Compact widths keep all processing controls visible and separate at the minimum editor width.
+    constexpr int COMPACT_HEADER_THRESHOLD {940};
+    constexpr int COMPACT_TITLE_WIDTH {100};
+    constexpr int COMPACT_OUTPUT_WIDTH {126};
+    constexpr int COMPACT_OUTPUT_LABEL_WIDTH {46};
+    const bool compact = getWidth() < COMPACT_HEADER_THRESHOLD;
+    const int buttonWidth = compact ? 60 : HEADER_BUTTON_WIDTH;
+    const int tapWidth = compact ? 42 : TAP_BUTTON_WIDTH;
+    titleLabel.setBounds(header.removeFromLeft(compact ? COMPACT_TITLE_WIDTH : TITLE_WIDTH));
+    settingsButton.setBounds(header.removeFromLeft(compact ? 64 : HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     header.removeFromLeft(GAP);
-    preButton.setBounds(header.removeFromLeft(TAP_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    postButton.setBounds(header.removeFromLeft(TAP_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    outputSlider.setBounds(header.removeFromRight(OUTPUT_SLIDER_WIDTH));
-    outputLabel.setBounds(header.removeFromRight(OUTPUT_LABEL_WIDTH));
+    preButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
+    postButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
+    outputSlider.setBounds(header.removeFromRight(compact ? COMPACT_OUTPUT_WIDTH : OUTPUT_SLIDER_WIDTH));
+    outputLabel.setBounds(header.removeFromRight(compact ? COMPACT_OUTPUT_LABEL_WIDTH : OUTPUT_LABEL_WIDTH));
     header.removeFromRight(GAP);
-    bypassButton.setBounds(header.removeFromRight(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    bypassButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
     header.removeFromRight(GAP);
-    deltaButton.setBounds(header.removeFromRight(HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    deltaButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
+    header.removeFromRight(GAP);
+    monoButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
     area.removeFromTop(GAP);
 
+    const int correlationHeight = correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0;
     if (!spectrogramHidden) {
         const int maxBandSectionHeight
-            = std::max(BAND_STRIP_MIN_HEIGHT, area.getHeight() - GAP - MIN_SPECTROGRAM_HEIGHT);
+            = std::max(BAND_STRIP_MIN_HEIGHT, area.getHeight() - GAP - MIN_SPECTROGRAM_HEIGHT - correlationHeight);
         bandSectionHeight = std::clamp(bandSectionHeight, BAND_STRIP_MIN_HEIGHT, maxBandSectionHeight);
-        const auto bandArea = area.removeFromBottom(bandSectionHeight);
+        const auto bandArea = area.removeFromBottom(bandSectionHeight + correlationHeight);
         const auto dividerArea = area.removeFromBottom(GAP);
         divider.setBounds(dividerArea.expanded(0, DIVIDER_GRAB_PADDING));
         spectrogram.setBounds(area);
         area = bandArea;
     }
 
+    auto correlationArea = correlationShown ? area.removeFromTop(BAND_CORRELATION_HEIGHT) : juce::Rectangle<int> {};
+    if (correlationShown) {
+        area.removeFromTop(GAP);
+    }
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
-    for (const auto& strip : bandStrips) {
-        strip->setBounds(area.removeFromLeft(stripWidth));
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        bandStrips.at(band)->setBounds(area.removeFromLeft(stripWidth));
+        correlationMeters.at(band)->setBounds(correlationArea.removeFromLeft(stripWidth));
         area.removeFromLeft(GAP);
+        correlationArea.removeFromLeft(GAP);
     }
 
-    if (!layoutRestored) {
+    if (!layoutRestored || layoutTransition) {
         return;
     }
     auto& editorState = imageControlProcessor.getEditorState();
@@ -310,8 +345,10 @@ void ImageControlEditor::resized()
 /// Returns the band under the pointer: the band hovered in the spectrogram, or the band strip the pointer is over.
 std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
 {
-    if (const auto band = spectrogram.getHoveredBand()) {
-        return band;
+    if (spectrogram.isVisible()) {
+        if (const auto band = spectrogram.getHoveredBand()) {
+            return band;
+        }
     }
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         if (bandStrips.at(band)->isMouseOver(true)) {
@@ -324,7 +361,8 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
 int ImageControlEditor::compactHeight() const
 {
-    return HEADER_HEIGHT + GAP * 2 + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT);
+    return HEADER_HEIGHT + GAP * 2 + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT)
+        + (correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0);
 }
 
 /// Returns the persistence setting, the time constant of the particle fade, in seconds.
@@ -352,7 +390,14 @@ SpectrogramRenderMode ImageControlEditor::renderMode() const
 /// or shows it again at the saved height.
 void ImageControlEditor::applySpectrogramHidden(const bool hidden)
 {
+    const auto& editorState = imageControlProcessor.getEditorState();
+    const int expandedHeight = static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY, DEFAULT_HEIGHT));
+    const int savedBandHeight = bandSectionHeight;
+    const juce::ScopedValueSetter<bool> transition(layoutTransition, true);
     spectrogramHidden = hidden;
+    if (hidden) {
+        spectrogram.endDrag();
+    }
     spectrogram.setVisible(!hidden);
     divider.setVisible(!hidden);
     spectrogramWorker.requestClear();
@@ -362,8 +407,8 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
         setSize(getWidth(), height);
     } else {
         setResizeLimits(MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT, MAX_EDITOR_WIDTH, MAX_EDITOR_HEIGHT);
-        const auto& editorState = imageControlProcessor.getEditorState();
-        setSize(getWidth(), static_cast<int>(editorState.getProperty(EDITOR_HEIGHT_PROPERTY, DEFAULT_HEIGHT)));
+        bandSectionHeight = savedBandHeight;
+        setSize(getWidth(), expandedHeight);
     }
     // Same size or not, the layout and the background change.
     resized();
@@ -376,6 +421,20 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
 void ImageControlEditor::applyViewSettings()
 {
     const auto& editorState = imageControlProcessor.getEditorState();
+    monoButton.setToggleState(imageControlProcessor.isMonoAuditionEnabled(), juce::dontSendNotification);
+    const bool showCorrelation = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
+    if (correlationShown != showCorrelation) {
+        correlationShown = showCorrelation;
+        for (const auto& meter : correlationMeters) {
+            meter->setVisible(showCorrelation);
+        }
+        if (spectrogramHidden) {
+            applySpectrogramHidden(true);
+        } else {
+            resized();
+        }
+    }
+    imageControlProcessor.setCorrelationEnabled(correlationShown && isShowing());
     const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
     if (shownHidden != hidden) {
         shownHidden = hidden;
@@ -437,6 +496,21 @@ void ImageControlEditor::applyViewSettings()
     }
 }
 
+/// Leaves geometry to resized. The watcher is needed only for peer and ancestor visibility changes.
+void ImageControlEditor::componentMovedOrResized(bool /*wasMoved*/, bool /*wasResized*/) {}
+
+/// Tracks host attachment and removal even when the editor's own visible flag does not change.
+void ImageControlEditor::componentPeerChanged()
+{
+    imageControlProcessor.setCorrelationEnabled(correlationShown && isShowing());
+}
+
+/// Stops optional metering when the host hides the editor or any ancestor, even without another VBlank callback.
+void ImageControlEditor::componentVisibilityChanged()
+{
+    imageControlProcessor.setCorrelationEnabled(correlationShown && isShowing());
+}
+
 /// Updates the measured rate of frames the renderer drew twice a second.
 void ImageControlEditor::measureFramesPerSecond(const double elapsed)
 {
@@ -479,6 +553,12 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     measureFramesPerSecond(elapsed);
 
     applyViewSettings();
+    if (correlationShown) {
+        const auto correlations = imageControlProcessor.getBandCorrelations();
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            correlationMeters.at(band)->setCorrelation(correlations.at(band));
+        }
+    }
     spectrogramWorker.wake();
     const double step = std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS);
     spectrogram.advance(step);
