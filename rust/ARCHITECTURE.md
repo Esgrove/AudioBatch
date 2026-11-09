@@ -681,7 +681,19 @@ The callback, every `PreviewInsert`, and `PreviewChain` must not allocate, lock,
 Their blocks are allocated up front, and state crosses threads through atomics and the `rtrb` queues.
 The renderer sits behind a mutex only so the player can apply insert changes while no stream runs.
 The callback calls `try_lock` and outputs silence in the rare case it misses the lock.
+Successful acquisition still destroys a native mutex guard in the callback, which RTSan reports on macOS.
+This boundary is a known blocker, not a proven lock-free callback.
 Stream errors go unformatted through a bounded channel and are formatted on the UI thread.
+
+The opt-in `rtsan.sh` tier uses native nightly sanitizer annotations and a matching startup-linked Clang runtime.
+It checks prepared renderer/insert processing separately from the full typed callback, including guard destruction.
+Detector controls prove Rust/native allocation, deallocation, and mutex interception before clean results are trusted.
+Native preview tests load only build-tree bundles and keep plugin lifecycle work on the UI thread.
+Known callback and native-plugin findings are recorded as `BLOCKED` audits with constrained diagnostics,
+rather than suppressions.
+Cold-thread processing, automation, reset, and insert/tail retirement remain explicit test cases.
+The runtime and executable linkage are recorded under `target/rtsan/artifacts/`.
+These checks do not establish scheduling deadlines, safe arbitrary third-party plugins, or absence of spinning.
 
 ## VST3 hosting
 

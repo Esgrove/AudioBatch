@@ -150,6 +150,7 @@ impl OutputRenderer {
     /// Fills an interleaved device buffer, converting each sample with `convert`.
     /// Outputs silence while paused, before the first frame of the current generation arrives, and after the end.
     /// Stale frames are dropped while paused too, so a paused seek leaves room for the new position.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
     pub fn render<T: Copy>(&mut self, output: &mut [T], convert: impl Fn(f32) -> T) {
         let channels = self.device.channels.max(1);
         self.shared.callback_frames.store(
@@ -238,6 +239,9 @@ fn write_frame<T: Copy>(device_frame: &mut [T], left: f32, right: f32, convert: 
 mod test_output_renderer {
     use super::*;
 
+    #[cfg(audiobatch_rtsan)]
+    use std::thread;
+
     use rtrb::RingBuffer;
 
     use crate::preview_insert::insert_channel;
@@ -267,12 +271,25 @@ mod test_output_renderer {
         )
     }
 
+    /// Invokes the marked renderer with controller-owned output on a fresh callback thread in sanitizer builds.
+    fn render_output(renderer: &mut OutputRenderer, output: &mut [f32]) {
+        #[cfg(audiobatch_rtsan)]
+        thread::scope(|scope| {
+            scope
+                .spawn(|| renderer.render(output, |sample| sample))
+                .join()
+                .expect("cold callback completes");
+        });
+        #[cfg(not(audiobatch_rtsan))]
+        renderer.render(output, |sample| sample);
+    }
+
     #[test]
     fn paused_output_is_silent() {
         let (mut renderer, shared) = renderer(&[frame(1, 0, 0.5)], 2);
         shared.generation.store(1, Ordering::Relaxed);
         let mut output = [1.0_f32; 4];
-        renderer.render(&mut output, |sample| sample);
+        render_output(&mut renderer, &mut output);
         assert_eq!(output, [0.0; 4]);
     }
 
@@ -283,7 +300,7 @@ mod test_output_renderer {
         shared.playing.store(true, Ordering::Relaxed);
         shared.insert_gain_bits.store(0.5_f32.to_bits(), Ordering::Relaxed);
         let mut output = [0.0_f32; 4];
-        renderer.render(&mut output, |sample| sample);
+        render_output(&mut renderer, &mut output);
         assert_eq!(output, [0.5, -0.5, 0.25, -0.25]);
         assert_eq!(shared.position.load(Ordering::Relaxed), 102);
     }
@@ -295,7 +312,7 @@ mod test_output_renderer {
         shared.finished_generation.store(3, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
         let mut output = [0.0_f32; 4];
-        renderer.render(&mut output, |sample| sample);
+        render_output(&mut renderer, &mut output);
         assert!(!shared.playing.load(Ordering::Relaxed));
         assert!(shared.ended.load(Ordering::Relaxed));
         assert_eq!(shared.ended_generation.load(Ordering::Relaxed), 3);
@@ -306,11 +323,11 @@ mod test_output_renderer {
         let (mut renderer, shared) = renderer(&[frame(1, 0, 0.9), frame(1, 1, 0.9), frame(2, 50, 0.5)], 2);
         shared.generation.store(2, Ordering::Relaxed);
         let mut output = [0.0_f32; 2];
-        renderer.render(&mut output, |sample| sample);
+        render_output(&mut renderer, &mut output);
         assert_eq!(output, [0.0; 2]);
         assert_eq!(renderer.consumer.slots(), 1);
         shared.playing.store(true, Ordering::Relaxed);
-        renderer.render(&mut output, |sample| sample);
+        render_output(&mut renderer, &mut output);
         assert_eq!(output, [0.5, -0.5]);
     }
 
@@ -320,7 +337,7 @@ mod test_output_renderer {
         shared.generation.store(1, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
         let mut output = [0.0_f32; 4];
-        renderer.render(&mut output, |sample| sample);
+        render_output(&mut renderer, &mut output);
         assert!(shared.playing.load(Ordering::Relaxed));
         assert_eq!(shared.underruns.load(Ordering::Relaxed), 1);
     }

@@ -6,6 +6,8 @@
 //! Scan replies, saved-data recovery warnings, and operation results convert errors to text at their reporting boundary.
 //! The live audio callback only records the host's allocation-free process error for the UI thread to report.
 
+#![cfg_attr(audiobatch_rtsan, feature(sanitize))]
+
 #[doc(hidden)]
 pub mod benchmark;
 pub mod chain;

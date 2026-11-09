@@ -176,6 +176,7 @@ impl ProcessorHandle {
     /// # Errors
     ///
     /// Returns the result code when the plugin reports a failure.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
     pub fn process(&mut self, frames: usize) -> Result<(), ProcessError> {
         self.process_buffers(frames, None)
     }
@@ -191,6 +192,7 @@ impl ProcessorHandle {
     /// Returns `kInvalidArgument` for main buses wider than stereo,
     /// when there are too few channels or any used channel is too short,
     /// or the result code when the plugin reports a failure.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
     pub fn process_in_place(&mut self, channels: &mut [&mut [f32]], frames: usize) -> Result<(), ProcessError> {
         let frames = frames.min(self.setup.max_block_frames);
         let main_channels = self.input_channels().max(self.output_channels());
@@ -209,6 +211,7 @@ impl ProcessorHandle {
     /// Clears the plugin's internal buffers, such as delay lines, by stopping and restarting processing,
     /// and moves the reported position to `position` samples.
     /// Does nothing while another handle of the same instance is processing, since VST3 forbids overlapping calls.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
     pub fn reset(&mut self, position: u64) {
         {
             let Some(_processing) = ProcessingGuard::begin(&self.core) else {
@@ -468,11 +471,63 @@ mod test_in_place_processing {
         })
     }
 
+    #[cfg(audiobatch_rtsan)]
+    #[test]
+    fn rtsan_gain_owned_and_borrowed_automation_reset() {
+        let (instance, mut processor) = on_ui(|ui| {
+            let module = crate::test_helpers::test_module(ui);
+            let mut instance = PluginInstance::create(
+                ui,
+                &module,
+                crate::test_helpers::class_id(Kind::Gain),
+                Some(crate::test_helpers::dispatcher().clone()),
+            )
+            .expect("realtime test instance");
+            instance.configure_main_buses(ui, 2).expect("stereo buses");
+            instance
+                .setup(
+                    ui,
+                    crate::ProcessMode::Realtime,
+                    crate::test_helpers::SAMPLE_RATE,
+                    MAX_BLOCK,
+                )
+                .expect("explicit realtime setup");
+            instance.activate(ui).expect("active realtime plugin");
+            instance
+                .set_parameter(ui, GAIN_PARAMETER, 0.5)
+                .expect("first automation");
+            let processor = instance.processor(ui).expect("realtime processor");
+            (instance, processor)
+        });
+        assert_eq!(processor.setup.mode, crate::ProcessMode::Realtime);
+        let mut left = [0.5; MAX_BLOCK];
+        let mut right = [-0.25; MAX_BLOCK];
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    processor.reset(17);
+                    processor
+                        .process_in_place(&mut [&mut left, &mut right], MAX_BLOCK)
+                        .expect("borrowed");
+                    processor.input_channel_mut(0).expect("input").fill(0.5);
+                    processor.process(MAX_BLOCK).expect("owned");
+                })
+                .join()
+                .expect("callback thread");
+        });
+        assert!(left.iter().all(|sample| (*sample - 0.25).abs() < f32::EPSILON));
+        assert!(right.iter().all(|sample| (*sample + 0.125).abs() < f32::EPSILON));
+        drop(processor);
+        on_ui(move |_ui| drop(instance));
+    }
+
     #[test]
     fn in_place_matches_buffered_gain_delay_and_echo() {
         for kind in [Kind::Gain, Kind::Delay, Kind::Echo] {
             let (_buffered_instance, mut buffered) = processor(kind);
             let (_borrowed_instance, mut borrowed) = processor(kind);
+            buffered.reset(17);
+            borrowed.reset(17);
             for block in 0..3 {
                 let mut channels = [
                     vec![if block == 0 { 0.5 } else { 0.0 }; MAX_BLOCK],

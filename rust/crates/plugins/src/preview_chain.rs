@@ -163,6 +163,7 @@ impl PreviewChain {
 
     /// Clears the plugins' internal buffers, such as delay lines and reverb tails,
     /// and tells them that playback starts at `position_frames`, so tempo-synced plugins line up with the file.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
     pub fn reset(&mut self, position_frames: u64) {
         for processor in &mut self.processors {
             processor.reset(position_frames);
@@ -172,6 +173,7 @@ impl PreviewChain {
     /// Processes a stereo block in place, at most `max_block_frames` long.
     /// Returns false when the output is not finite.
     /// After a plugin failed, the block is silenced instead.
+    #[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) -> bool {
         let frames = left.len().min(right.len()).min(self.max_block_frames);
         let (Some(left), Some(right)) = (left.get_mut(..frames), right.get_mut(..frames)) else {
