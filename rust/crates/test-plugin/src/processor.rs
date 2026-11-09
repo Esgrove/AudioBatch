@@ -111,12 +111,12 @@ impl TestProcessor {
         }
     }
 
-    /// Fills the delay lines with silence for the current output channel count.
+    /// Fills the delay and echo storage with silence. Stateless processors have no delay history to reset.
     fn reset_delay_lines(&self) {
         let length = match self.kind {
             Kind::Delay => DELAY_LATENCY,
             Kind::Echo => ECHO_DELAY,
-            _ => 0,
+            _ => return,
         } as usize;
         let channels = self.output_arrangement.load(Ordering::Relaxed).count_ones() as usize;
         *self.delay_lines.lock().unwrap_or_else(PoisonError::into_inner) = (0..channels)
@@ -483,7 +483,8 @@ impl IAudioProcessorTrait for TestProcessor {
             None
         };
         let gain = f64::from_bits(self.gain.load(Ordering::Relaxed)) as f32;
-        let mut delay_lines = self.delay_lines.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut delay_lines = matches!(self.kind, Kind::Delay | Kind::Echo)
+            .then(|| self.delay_lines.lock().unwrap_or_else(PoisonError::into_inner));
         let output_channels = usize::try_from(output.numChannels).unwrap_or_default();
         let input_channels = input.map_or(0, |bus| usize::try_from(bus.numChannels).unwrap_or_default());
         for channel in 0..output_channels {
@@ -497,7 +498,12 @@ impl IAudioProcessorTrait for TestProcessor {
                 // SAFETY: the pointers cover `frames` samples.
                 // Read the input value before writing output, since the buffers may alias.
                 let sample = input_samples.map_or(0.0, |samples| unsafe { samples.add(index).read() });
-                let processed = self.process_sample(&mut delay_lines, channel, sample, gain);
+                let processed = self.process_sample(
+                    delay_lines.as_deref_mut().map_or(&mut [], Vec::as_mut_slice),
+                    channel,
+                    sample,
+                    gain,
+                );
                 // SAFETY: the output pointer covers `frames` writable samples.
                 unsafe { output_samples.add(index).write(processed) };
             }
