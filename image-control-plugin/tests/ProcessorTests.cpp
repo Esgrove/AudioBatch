@@ -12,7 +12,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -20,6 +22,27 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Records host dirty notifications independently of parameter automation.
+class StateChangeListener final : public juce::AudioProcessorListener
+{
+public:
+    /// Parameter edits are outside the non-parameter dirty contract.
+    void audioProcessorParameterChanged(
+        juce::AudioProcessor* /*processor*/,
+        int /*parameterIndex*/,
+        float /*value*/
+    ) override
+    {}
+    /// Counts notifications that ask the host to persist editor-only state.
+    void audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& details) override
+    {
+        if (details.nonParameterStateChanged) {
+            ++dirtyChanges;
+        }
+    }
+    int dirtyChanges {0};
+};
+
 /// Sets a parameter of a processor to a plain value.
 void setParameter(ImageControlProcessor& processor, const juce::String& parameterId, const float value)
 {
@@ -282,6 +305,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
              PAN_MIDPOINT_PROPERTY,
              PAN_EDGE_PROPERTY,
              SHOW_FPS_PROPERTY,
+             SHOW_BAND_CORRELATION_PROPERTY,
              BYPASS_RENDERING_PROPERTY,
              HIDE_SPECTROGRAM_PROPERTY,
          })
@@ -294,8 +318,25 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     juce::AudioProcessor::copyXmlToBinary(*xml, olderState);
 
     ImageControlProcessor restored;
+    restored.getEditorState().setProperty(ANALYZE_OUTPUT_PROPERTY, false, nullptr);
+    restored.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.0, nullptr);
+    restored.getEditorState().setProperty(PAN_MIDPOINT_PROPERTY, 20.0, nullptr);
+    restored.getEditorState().setProperty(PAN_EDGE_PROPERTY, 50.0, nullptr);
+    restored.getEditorState().setProperty(SHOW_FPS_PROPERTY, true, nullptr);
+    restored.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
+    restored.getEditorState().setProperty(BYPASS_RENDERING_PROPERTY, true, nullptr);
+    restored.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+    restored.getEditorState().setProperty(EDITOR_WIDTH_PROPERTY, 1700, nullptr);
+    restored.getEditorState().setProperty(EDITOR_HEIGHT_PROPERTY, 1200, nullptr);
+    restored.getEditorState().setProperty(BAND_SECTION_HEIGHT_PROPERTY, 300, nullptr);
+    const auto boundSettings = restored.getEditorState();
     restored.setStateInformation(olderState.getData(), static_cast<int>(olderState.getSize()));
     const auto& settings = restored.getEditorState();
+    EXPECT_EQ(settings, boundSettings);
+    EXPECT_FALSE(settings.hasProperty(EDITOR_WIDTH_PROPERTY));
+    EXPECT_FALSE(settings.hasProperty(EDITOR_HEIGHT_PROPERTY));
+    EXPECT_FALSE(settings.hasProperty(BAND_SECTION_HEIGHT_PROPERTY));
+    EXPECT_TRUE(static_cast<bool>(settings.getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(linkPropertyName(0))));
     EXPECT_TRUE(static_cast<bool>(settings.getProperty(ANALYZE_OUTPUT_PROPERTY)));
     EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PERSISTENCE_PROPERTY)), DEFAULT_PERSISTENCE_SECONDS);
@@ -305,6 +346,142 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(SHOW_FPS_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(BYPASS_RENDERING_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(HIDE_SPECTROGRAM_PROPERTY)));
+}
+
+TEST(Processor, EditorChangesNotifyTheHostButRestoresDoNot)
+{
+    ImageControlProcessor source;
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    ImageControlProcessor processor;
+    StateChangeListener listener;
+    processor.addListener(&listener);
+    for (const auto& property :
+         {
+             juce::Identifier(ANALYZE_OUTPUT_PROPERTY),
+             juce::Identifier(SHOW_BAND_CORRELATION_PROPERTY),
+             linkPropertyName(1),
+         })
+    {
+        processor.getEditorState().setProperty(property, false, nullptr);
+    }
+    EXPECT_EQ(listener.dirtyChanges, 3);
+    processor.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.0, nullptr);
+    EXPECT_EQ(listener.dirtyChanges, 4);
+    processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    EXPECT_EQ(listener.dirtyChanges, 4);
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(ANALYZE_OUTPUT_PROPERTY)));
+    processor.getEditorState().setProperty(SHOW_FPS_PROPERTY, true, nullptr);
+    EXPECT_EQ(listener.dirtyChanges, 5);
+    processor.removeListener(&listener);
+}
+
+TEST(Processor, StateWithoutEditorSettingsReplacesCurrentSettingsWithDefaults)
+{
+    ImageControlProcessor source;
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    ASSERT_NE(xml, nullptr);
+    xml->removeChildElement(xml->getChildByName("EditorState"), true);
+    juce::AudioProcessor::copyXmlToBinary(*xml, state);
+    ImageControlProcessor processor;
+    processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
+    processor.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
+    processor.getEditorState().setProperty(PHASE_COLOURS_PROPERTY, true, nullptr);
+    processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(linkPropertyName(2))));
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
+    EXPECT_FALSE(static_cast<bool>(processor.getEditorState().getProperty(PHASE_COLOURS_PROPERTY)));
+}
+
+TEST(Processor, InvalidNumericTextAndAutomationPreserveEveryParameter)
+{
+    ImageControlProcessor processor;
+    for (auto* base : static_cast<juce::AudioProcessor&>(processor).getParameters()) {
+        auto* parameter = dynamic_cast<juce::RangedAudioParameter*>(base);
+        ASSERT_NE(parameter, nullptr);
+        SCOPED_TRACE(parameter->getName(64).toStdString());
+        parameter->setValueNotifyingHost(0.75F);
+        const auto prior = plainValue(*parameter);
+        for (const char* text : {"", "garbage", "nan", "NaN Hz", "+inf", "infinity", "1e999", "12 nonsense"}) {
+            parameter->setValueNotifyingHost(parameter->getValueForText(text));
+            EXPECT_FLOAT_EQ(plainValue(*parameter), prior) << text;
+            EXPECT_TRUE(std::isfinite(plainValue(*parameter)));
+        }
+        for (const auto invalid :
+             {
+                 std::numeric_limits<float>::quiet_NaN(),
+                 std::numeric_limits<float>::infinity(),
+                 -std::numeric_limits<float>::infinity(),
+             })
+        {
+            parameter->setValueNotifyingHost(invalid);
+            EXPECT_FLOAT_EQ(plainValue(*parameter), prior);
+            EXPECT_FLOAT_EQ(processor.getParameters().getRawParameterValue(parameter->paramID)->load(), prior);
+        }
+    }
+}
+
+TEST(Processor, NumericValidationPreservesContinuousHostParameterMetadata)
+{
+    ImageControlProcessor processor;
+    for (const auto& parameterId :
+         {midGainParameterId(0), sideGainParameterId(0), panParameterId(0), juce::String(OUTPUT_GAIN_ID)})
+    {
+        const auto* parameter = processor.getParameters().getParameter(parameterId);
+        ASSERT_NE(parameter, nullptr);
+        EXPECT_EQ(parameter->getNumSteps(), juce::AudioProcessorParameter::getDefaultNumParameterSteps());
+        EXPECT_FALSE(parameter->isDiscrete());
+    }
+    const auto* solo = processor.getParameters().getParameter(soloParameterId(0));
+    EXPECT_EQ(solo->getNumSteps(), 2);
+    EXPECT_TRUE(solo->isBoolean());
+    EXPECT_TRUE(solo->isDiscrete());
+}
+
+TEST(Processor, FrequencyTextParsesHzAndKHzAndRoundTripsShownValues)
+{
+    ImageControlProcessor processor;
+    auto* parameter = processor.getParameters().getParameter(crossoverParameterId(2));
+    ASSERT_NE(parameter, nullptr);
+    for (const auto& [text, value] :
+         {std::pair {"500 Hz", 500.0F}, std::pair {"5 kHz", 5000.0F}, std::pair {" 1.25 KHZ ", 1250.0F}})
+    {
+        parameter->setValueNotifyingHost(parameter->getValueForText(text));
+        EXPECT_NEAR(plainValue(*parameter), value, 0.01F);
+    }
+    for (const float value : {20.0F, 500.0F, 1000.0F, 1250.0F, 5000.0F, 12'000.0F, 20'000.0F}) {
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+        const auto text = parameter->getCurrentValueAsText();
+        parameter->setValueNotifyingHost(parameter->getValueForText(text));
+        EXPECT_NEAR(plainValue(*parameter), value, 0.02F) << text;
+    }
+}
+
+TEST(Processor, NonFiniteSavedValuesPreservePriorValues)
+{
+    ImageControlProcessor processor;
+    setParameter(processor, OUTPUT_GAIN_ID, -6.0F);
+    juce::MemoryBlock state;
+    processor.getStateInformation(state);
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    ASSERT_NE(xml, nullptr);
+    for (const auto& parameterId :
+         {juce::String(OUTPUT_GAIN_ID), crossoverParameterId(0), panParameterId(0), soloParameterId(0)})
+    {
+        auto* child = xml->getChildByAttribute("id", parameterId);
+        ASSERT_NE(child, nullptr);
+        child->setAttribute("value", "nan");
+    }
+    juce::AudioProcessor::copyXmlToBinary(*xml, state);
+    processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    EXPECT_NEAR(getParameter(processor, OUTPUT_GAIN_ID), -6.0F, 0.01F);
+    for (auto* base : static_cast<juce::AudioProcessor&>(processor).getParameters()) {
+        const auto* parameter = dynamic_cast<juce::RangedAudioParameter*>(base);
+        ASSERT_NE(parameter, nullptr);
+        EXPECT_TRUE(std::isfinite(plainValue(*parameter)));
+    }
 }
 
 TEST(Processor, RestoringAStateWithoutPansCentresThem)
@@ -325,6 +502,7 @@ TEST(Processor, RestoringAStateWithoutPansCentresThem)
     juce::AudioProcessor::copyXmlToBinary(*xml, olderState);
 
     ImageControlProcessor restored;
+    setParameter(restored, panParameterId(0), 70.0F);
     restored.setStateInformation(olderState.getData(), static_cast<int>(olderState.getSize()));
     EXPECT_NEAR(getParameter(restored, midGainParameterId(0)), -3.0F, 0.01F);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
@@ -412,6 +590,23 @@ TEST(Processor, AnalyzerTapReceivesTheBlock)
     EXPECT_EQ(processor.getAnalyzerFifo().pop(left, right), 256);
     EXPECT_EQ(left[100], input.getSample(0, 100));
     processor.releaseResources();
+}
+
+TEST(Processor, AnalyzerTapChangesInvalidatePreviouslyCapturedBlocks)
+{
+    ImageControlProcessor processor;
+    auto& fifo = processor.getAnalyzerFifo();
+    const auto output = fifo.getEpoch();
+    processor.getEditorState().setProperty(ANALYZE_OUTPUT_PROPERTY, false, nullptr);
+    const auto input = fifo.getEpoch();
+    EXPECT_NE(input, output);
+    EXPECT_FALSE(StereoSampleFifo::analyzesOutput(input));
+    const std::vector<float> samples(32, 1.0F);
+    EXPECT_EQ(fifo.push(samples, samples, output), 0);
+    EXPECT_EQ(fifo.push(samples, samples, input), 32);
+    processor.getEditorState().setProperty(ANALYZE_OUTPUT_PROPERTY, true, nullptr);
+    EXPECT_NE(fifo.getEpoch(), input);
+    EXPECT_TRUE(StereoSampleFifo::analyzesOutput(fifo.getEpoch()));
 }
 
 TEST(Processor, StateRoundTripsParametersAndEditorSettings)

@@ -101,6 +101,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/SpatialAnalyzer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/SpatialAnalyzer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/StereoSampleFifo.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/BandCorrelation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/BandCorrelation.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/CrossoverDesign.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/CrossoverDesign.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/MultibandImager.cpp"
@@ -248,11 +250,16 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     set(IMAGE_CONTROL_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/AnalyzerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ConvolverTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CrossoverTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/FollowUpTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/HostContractsTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ImagerTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProcessorTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramViewTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramWorkerTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/StateThreadingTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/StereoSampleFifoTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/TestMain.cpp"
     )
     add_executable(ImageControlTests ${IMAGE_CONTROL_TEST_SOURCES})

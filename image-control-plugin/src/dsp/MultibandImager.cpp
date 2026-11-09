@@ -6,6 +6,7 @@
 
 #include "dsp/MultibandImager.h"
 
+#include "dsp/BandCorrelation.h"
 #include "dsp/CrossoverDesign.h"
 #include "dsp/PartitionedConvolver.h"
 #include "Parameters.h"
@@ -28,9 +29,6 @@ namespace
 {
 /// How often the design thread checks for moved crossovers, in milliseconds.
 constexpr int DESIGN_POLL_MILLISECONDS {20};
-/// How long stopping the design thread may wait for a design in progress, in milliseconds.
-constexpr int DESIGN_STOP_TIMEOUT_MILLISECONDS {2000};
-
 /// Designs the lowpass kernels of the given crossovers and transforms them into partitions.
 KernelSpectra designKernelSpectra(const Crossovers& crossovers, const double sampleRate, const int halfLength)
 {
@@ -152,6 +150,18 @@ MultibandImager::~MultibandImager()
     release();
 }
 
+/// Returns independent published meter readings, without reading the audio-thread accumulators.
+BandCorrelations MultibandImager::getBandCorrelations() const noexcept
+{
+    return correlation.readings();
+}
+
+/// Returns the maximum post-ringing after compensating for the plugin latency.
+double MultibandImager::getTailLengthSeconds() const noexcept
+{
+    return static_cast<double>(halfLength) / sampleRate;
+}
+
 /// Returns the crossovers of the kernels the audio thread currently uses.
 /// Reads audio thread state, so call it from the audio thread or while processing is stopped.
 Crossovers MultibandImager::getActiveCrossovers() const
@@ -234,8 +244,8 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     deltaSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
     deltaSmoother.setCurrentAndTargetValue(deltaSmoother.getTargetValue());
 
-    blockPosition = 0;
-    delayPosition = 0;
+    correlation.prepare(sampleRate);
+    reset();
 
     designThread = std::make_unique<KernelDesignThread>([this] { designRequestedKernels(true); });
     designThread->startThread(juce::Thread::Priority::low);
@@ -245,8 +255,46 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
 void MultibandImager::release()
 {
     if (designThread != nullptr) {
-        designThread->stopThread(DESIGN_STOP_TIMEOUT_MILLISECONDS);
+        designThread->stopThread();
         designThread.reset();
+    }
+}
+
+/// Clears delayed audio and convolution history without changing parameters, kernels, or allocating.
+/// Call on the processing thread or while callbacks are stopped. The design thread never accesses these buffers.
+void MultibandImager::reset() noexcept
+{
+    delayLine.clear();
+    delayedBlock.clear();
+    inputBlock.clear();
+    outputBlock.clear();
+    midConvolver.reset();
+    sideConvolver.reset();
+    blockPosition = 0;
+    delayPosition = 0;
+    correlation.reset();
+    for (auto& gain : midGainSmoothers) {
+        gain.setCurrentAndTargetValue(gain.getTargetValue());
+    }
+    for (auto& gain : sideGainSmoothers) {
+        gain.setCurrentAndTargetValue(gain.getTargetValue());
+    }
+    for (auto& pan : panSmoothers) {
+        pan.setCurrentAndTargetValue(pan.getTargetValue());
+    }
+    for (auto& solo : soloSmoothers) {
+        solo.setCurrentAndTargetValue(solo.getTargetValue());
+    }
+    outputGainSmoother.setCurrentAndTargetValue(outputGainSmoother.getTargetValue());
+    deltaSmoother.setCurrentAndTargetValue(deltaSmoother.getTargetValue());
+}
+
+/// Enables metering on the audio thread. Re-enabling starts with fresh moments rather than stale audio.
+void MultibandImager::setCorrelationEnabled(const bool enabled) noexcept
+{
+    if (enabled != correlationEnabled) {
+        correlation.reset();
+        correlationEnabled = enabled;
     }
 }
 
@@ -516,9 +564,41 @@ void MultibandImager::mixPartition(const int channels)
     }
 }
 
+/// Measures the existing band signals with copies of the control glides, leaving audio arithmetic unchanged.
+/// This runs only with visible meters and adds no filter bank, allocations, or cross-thread locks.
+void MultibandImager::updateCorrelationPartition()
+{
+    auto midGains = midGainSmoothers;
+    auto sideGains = sideGainSmoothers;
+    auto pans = panSmoothers;
+    auto solos = soloSmoothers;
+    const bool stereo = channelCount == 2;
+    const auto delayedLeft = channelSamples(delayedBlock, 0);
+    const auto delayedRight = channelSamples(delayedBlock, stereo ? 1 : 0);
+    for (std::size_t sample = 0; sample < delayedLeft.size(); ++sample) {
+        const float delayedMid = stereo ? (delayedLeft[sample] + delayedRight[sample]) * 0.5F : delayedLeft[sample];
+        const float delayedSide = stereo ? (delayedLeft[sample] - delayedRight[sample]) * 0.5F : 0.0F;
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            const float audible = solos[band].getNextValue();
+            const float mid
+                = midGains[band].getNextValue() * audible * bandSample(midLowpassed, band, sample, delayedMid);
+            const float sideGain = sideGains[band].getNextValue();
+            const float pan = pans[band].getNextValue();
+            const float side
+                = stereo ? sideGain * audible * bandSample(sideLowpassed, band, sample, delayedSide) : 0.0F;
+            const float left = mid + side;
+            const float right = mid - side;
+            const float toRight = stereo ? std::max(pan, 0.0F) : 0.0F;
+            const float toLeft = stereo ? std::max(-pan, 0.0F) : 0.0F;
+            correlation.push(band, left * (1.0F - toRight) + right * toLeft, right * (1.0F - toLeft) + left * toRight);
+        }
+    }
+    correlation.publish();
+}
+
 /// Processes one full input partition into the output partition.
 /// The raw input is delayed by the kernel half length to line up with the kernel outputs,
-/// and while every gain is at unity and no crossfade runs, that delayed input is the output.
+/// and while every gain is at unity, that delayed input is the output even during a kernel crossfade.
 void MultibandImager::processPartition()
 {
     const auto ringMask = static_cast<std::size_t>(halfLength - 1);
@@ -571,7 +651,10 @@ void MultibandImager::processPartition()
 
     // At neutral settings the processed output is the delayed input itself,
     // so the output is that copy, or exact silence in delta mode.
-    if (!crossfade && isNeutral()) {
+    if (correlationEnabled) {
+        updateCorrelationPartition();
+    }
+    if (isNeutral()) {
         if (isDeltaSettled(0.0F)) {
             for (int channel = 0; channel < channelCount; ++channel) {
                 outputBlock.copyFrom(channel, 0, delayedBlock, channel, 0, PARTITION_SIZE);
