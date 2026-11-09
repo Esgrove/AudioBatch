@@ -137,32 +137,32 @@ using BandRecoveries = std::array<float, BAND_COUNT>;
 using BandSolos = std::array<bool, BAND_COUNT>;
 
 [[nodiscard]] juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+[[nodiscard]] juce::Identifier linkPropertyName(std::size_t band);
 [[nodiscard]] juce::NormalisableRange<float> crossoverRange();
 [[nodiscard]] juce::NormalisableRange<float> gainRange(float minDecibels, float maxDecibels);
 [[nodiscard]] juce::NormalisableRange<float> panRange();
-[[nodiscard]] juce::String crossoverParameterId(std::size_t crossover);
-[[nodiscard]] juce::String midGainParameterId(std::size_t band);
-[[nodiscard]] juce::String sideGainParameterId(std::size_t band);
-[[nodiscard]] juce::String panParameterId(std::size_t band);
-[[nodiscard]] juce::String soloParameterId(std::size_t band);
-[[nodiscard]] juce::String widthParameterId(std::size_t band);
-[[nodiscard]] juce::String recoverParameterId(std::size_t band);
+
 [[nodiscard]] juce::String bandName(std::size_t band);
-[[nodiscard]] juce::Identifier linkPropertyName(std::size_t band);
+[[nodiscard]] juce::String crossoverParameterId(std::size_t crossover);
 [[nodiscard]] juce::String formatFrequency(float frequency);
 [[nodiscard]] juce::String formatPan(float percent);
+[[nodiscard]] juce::String midGainParameterId(std::size_t band);
+[[nodiscard]] juce::String panParameterId(std::size_t band);
+[[nodiscard]] juce::String recoverParameterId(std::size_t band);
+[[nodiscard]] juce::String sideGainParameterId(std::size_t band);
+[[nodiscard]] juce::String soloParameterId(std::size_t band);
+[[nodiscard]] juce::String widthParameterId(std::size_t band);
 
 [[nodiscard]] BandGains soloGains(const BandSolos& soloed);
 [[nodiscard]] Crossovers orderCrossovers(const Crossovers& requested);
 [[nodiscard]] bool sameCrossovers(const Crossovers& first, const Crossovers& second);
 
-[[nodiscard]] float plainValue(const juce::RangedAudioParameter& parameter);
-[[nodiscard]] int sampleRateDoublings(double sampleRate, double referenceSampleRate);
-
-void setParameterInGesture(juce::RangedAudioParameter& parameter, float value);
-
 [[nodiscard]] float bandGainFromDecibels(float decibels);
 [[nodiscard]] float outputGainFromDecibels(float decibels);
 [[nodiscard]] float panFromPercent(float percent);
 [[nodiscard]] float panPercentFromText(const juce::String& text);
+[[nodiscard]] float plainValue(const juce::RangedAudioParameter& parameter);
+[[nodiscard]] int sampleRateDoublings(double sampleRate, double referenceSampleRate);
+
+void setParameterInGesture(juce::RangedAudioParameter& parameter, float value);
 }  // namespace esgrove::image_control

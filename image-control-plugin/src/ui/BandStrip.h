@@ -87,7 +87,7 @@ private:
 /// The controls of one band.
 ///
 /// Mid and Side trim the source first. Width independently scales the trimmed Side from mono at 0 to double at 2.
-/// Recover preserves removed Side energy in Mid while Width is below 1, even when the source Mid is off.
+/// Recover adds a quadrature-rotated share of removed Side amplitude to Mid below Width 1, even with source Mid off.
 /// With Link on, dragging Mid moves only the Side trim by the same amount.
 /// Pan moves the band toward the left or right channel after Width and Recover.
 /// Solo mutes the bands that are not soloed, unless no band or every band is soloed.
@@ -104,38 +104,41 @@ public:
     BandStrip& operator=(const BandStrip&) = delete;
     BandStrip& operator=(BandStrip&&) = delete;
 
+    void setRangeText(const juce::String& text);
+
     void paint(juce::Graphics& graphics) override;
     void resized() override;
-    void setRangeText(const juce::String& text);
 
 private:
     void configureSlider(ControlSlider& slider, juce::Label& label, const juce::String& text);
 
-    /// The band name.
-    juce::Label nameLabel;
-    /// The band's frequency range.
-    juce::Label rangeLabel;
     /// Label above the Mid slider.
     juce::Label midLabel;
-    /// Label above the Side slider.
-    juce::Label sideLabel;
+    /// The band name.
+    juce::Label nameLabel;
     /// Label above the Pan slider.
     juce::Label panLabel;
-    /// Label above the Width slider.
-    juce::Label widthLabel;
+    /// The band's frequency range.
+    juce::Label rangeLabel;
     /// Label above the Recover slider.
     juce::Label recoverLabel;
 
+    /// Label above the Side slider.
+    juce::Label sideLabel;
+    /// Label above the Width slider.
+    juce::Label widthLabel;
+
     /// The band's mid gain in dB.
     ControlSlider midSlider;
-    /// The band's side gain in dB.
-    ControlSlider sideSlider;
     /// The band's pan, from fully left to fully right.
     ControlSlider panSlider;
+    /// Percentage of removed Side amplitude added to Mid through the quadrature path while narrowing.
+    ControlSlider recoverSlider;
+    /// The band's side gain in dB.
+    ControlSlider sideSlider;
     /// Independent side multiplier after the source trims.
     ControlSlider widthSlider;
-    /// Percentage of removed Side energy retained in Mid while narrowing.
-    ControlSlider recoverSlider;
+
     /// Solos the band: toggles its solo parameter, shown as headphones.
     juce::DrawableButton soloButton {"Solo", juce::DrawableButton::ImageFitted};
     /// Keeps Side moving with Mid while Mid is dragged.
@@ -145,12 +148,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> midAttachment;
     /// Binds the Pan slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
+    /// Binds Recover directly to its percentage parameter.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> recoverAttachment;
     /// Binds the Side slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sideAttachment;
     /// Binds Width directly to its independent parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> widthAttachment;
-    /// Binds Recover directly to its percentage parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> recoverAttachment;
     /// Binds the Solo button to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soloAttachment;
 

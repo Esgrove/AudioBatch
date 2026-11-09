@@ -22,10 +22,30 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
-#include <vector>
 
 namespace esgrove::image_control
 {
+namespace test
+{
+struct SpectrogramViewTestAccess;
+}
+
+/// Cached response geometry and colours, independent of hover opacity and the band's processing controls.
+struct SpectrogramBandResponses {
+    /// Plot bounds the response paths were built for.
+    juce::Rectangle<float> plot;
+    /// Closed shapes under each band's response curve.
+    std::array<juce::Path, BAND_COUNT> fills;
+    /// Filled outlines of the response strokes, including their fixed thickness.
+    std::array<juce::Path, BAND_COUNT> strokes;
+    /// Frequency-derived band colours shared by the regions and response paths.
+    std::array<juce::Colour, BAND_COUNT> colours;
+    /// Ordered crossover frequencies used to derive the four responses.
+    Crossovers crossovers {};
+    /// Frequency projection used to sample the response curves.
+    FrequencyScale scale {FrequencyScale::logarithmic};
+};
+
 /// Corner radius of the plot inside the spectrogram box, in logical pixels.
 /// The view cuts it out of the box and the renderer rounds the picture to it.
 constexpr float SPECTROGRAM_PLOT_CORNER_RADIUS {4.0F};
@@ -96,10 +116,9 @@ public:
     [[nodiscard]] juce::String getTooltip() override;
 
 private:
-    [[nodiscard]] static std::vector<std::size_t> bandEdges(std::size_t band);
-    [[nodiscard]] static bool isMidModifier(const juce::ModifierKeys& modifiers);
-    [[nodiscard]] static bool isSideModifier(const juce::ModifierKeys& modifiers);
+    friend struct test::SpectrogramViewTestAccess;
 
+    [[nodiscard]] const SpectrogramBandResponses& bandResponses(const Crossovers& crossovers);
     [[nodiscard]] Crossovers currentCrossovers() const;
     [[nodiscard]] SpectrogramOverlayState currentOverlayState() const;
     [[nodiscard]] juce::Rectangle<float> framesPerSecondArea() const;
@@ -119,8 +138,8 @@ private:
     void moveBand(const juce::MouseEvent& event);
     void moveCrossover(const juce::MouseEvent& event);
     void paintAxisLabels(juce::Graphics& graphics) const;
-    void paintBandResponses(juce::Graphics& graphics, const Crossovers& crossovers) const;
-    void paintBands(juce::Graphics& graphics, const Crossovers& crossovers) const;
+    void paintBandResponses(juce::Graphics& graphics, const Crossovers& crossovers);
+    void paintBands(juce::Graphics& graphics, const Crossovers& crossovers);
     void paintCrossovers(juce::Graphics& graphics, const Crossovers& crossovers) const;
     void paintFramesPerSecond(juce::Graphics& graphics) const;
     void paintGrid(juce::Graphics& graphics) const;
@@ -129,6 +148,10 @@ private:
     void updateCursor(const juce::ModifierKeys& modifiers);
     void updateHover(juce::Point<float> position);
 
+    /// Geometry cached by plot bounds, scale, and ordered crossovers, excluding animated opacity.
+    std::optional<SpectrogramBandResponses> cachedBandResponses;
+    /// Number of cache rebuilds, observable by CPU-only regression tests through the test access friend.
+    std::uint64_t bandResponseBuilds {0};
     /// What the overlays showed when the view last repainted.
     SpectrogramOverlayState shownOverlay;
     /// The stereo position curve the particles are placed with, which the curve overlay draws.

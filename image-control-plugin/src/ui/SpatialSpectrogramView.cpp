@@ -130,18 +130,6 @@ constexpr float BOX_CORNER_RADIUS {6.0F};
 /// Space around the plot inside the box, in pixels.
 constexpr float BOX_PADDING {6.0F};
 
-/// Returns the target magnitude of a band at a frequency, from 0 to 1, given the ordered crossovers.
-/// The bands are differences of the crossover lowpasses, so their magnitudes sum to one at every frequency.
-float bandResponse(const std::size_t band, const double frequency, const Crossovers& crossovers)
-{
-    const auto lowpass = [frequency, &crossovers](const std::size_t crossover) {
-        return crossoverLowpassMagnitude(frequency, static_cast<double>(crossovers.at(crossover)));
-    };
-    const double below = band == 0 ? 0.0 : lowpass(band - 1);
-    const double above = band == CROSSOVER_COUNT ? 1.0 : lowpass(band);
-    return static_cast<float>(above - below);
-}
-
 /// Returns the colour of a band: the frequency colour at its centre on the logarithmic axis.
 juce::Colour bandColour(const std::size_t band, const Crossovers& crossovers)
 {
@@ -271,7 +259,7 @@ void SpatialSpectrogramView::advance(const double seconds)
     }
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         const bool movedWithBand = drag == SpectrogramDrag::band && draggedBand.has_value()
-            && std::ranges::contains(bandEdges(*draggedBand), crossover);
+            && (*draggedBand == crossover || *draggedBand == crossover + 1);
         const bool active = hoveredCrossover == crossover || draggedCrossover == crossover || movedWithBand;
         crossoverHighlights.at(crossover) = approach(crossoverHighlights.at(crossover), active ? 1.0F : 0.0F, seconds);
     }
@@ -369,6 +357,7 @@ void SpatialSpectrogramView::paint(juce::Graphics& graphics)
     paintFramesPerSecond(graphics);
 }
 
+/// Returns the band containing a plot x coordinate, or no band outside the plot's horizontal bounds.
 std::optional<std::size_t> SpatialSpectrogramView::bandAt(const float x) const
 {
     const auto plot = getPlotBounds();
@@ -493,7 +482,8 @@ double SpatialSpectrogramView::xToFrequency(const float x) const
 /// Paints the band regions: a dark veil over the bands the solos mute,
 /// a soft gradient in the band's colour over the hovered band,
 /// the band names, and the width of the hovered band in a label pill.
-void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossovers& crossovers) const
+/// Only visible highlights request the response cache, so idle crossover automation builds no geometry.
+void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossovers& crossovers)
 {
     const auto plot = getPlotBounds();
     graphics.setFont(textFont(LABEL_FONT_HEIGHT));
@@ -510,7 +500,7 @@ void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossove
             graphics.fillRect(region);
         }
         if (highlight > 0.0F) {
-            const auto colour = bandColour(band, crossovers);
+            const auto colour = bandResponses(crossovers).colours.at(band);
             graphics.setGradientFill(
                 juce::ColourGradient(
                     colour.withAlpha(BAND_HOVER_ALPHA * highlight),
@@ -537,37 +527,85 @@ void SpatialSpectrogramView::paintBands(juce::Graphics& graphics, const Crossove
     }
 }
 
+/// Rebuilds fixed response fills, stroke outlines, and band colours only when their projection changes.
+/// Each sampled frequency evaluates the three lowpasses once and derives all four complementary responses.
+const SpectrogramBandResponses& SpatialSpectrogramView::bandResponses(const Crossovers& crossovers)
+{
+    const auto plot = getPlotBounds();
+    if (cachedBandResponses.has_value() && cachedBandResponses->plot == plot && cachedBandResponses->scale == scale
+        && sameCrossovers(cachedBandResponses->crossovers, crossovers))
+    {
+        return *cachedBandResponses;
+    }
+
+    auto& responses = cachedBandResponses.emplace();
+    responses.plot = plot;
+    responses.scale = scale;
+    responses.crossovers = crossovers;
+    ++bandResponseBuilds;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        responses.colours.at(band) = bandColour(band, crossovers);
+    }
+    if (plot.isEmpty()) {
+        return responses;
+    }
+
+    const float baseline = plot.getBottom();
+    const float height = plot.getHeight() * RESPONSE_HEIGHT_SHARE;
+    const auto appendPoint = [&](const float pixel, const bool first) {
+        const double frequency = xToFrequency(pixel);
+        std::array<double, BAND_COUNT + 1> lowpasses {};
+        for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+            lowpasses.at(crossover + 1)
+                = crossoverLowpassMagnitude(frequency, static_cast<double>(crossovers.at(crossover)));
+        }
+        lowpasses.back() = 1.0;
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            const auto response = static_cast<float>(lowpasses.at(band + 1) - lowpasses.at(band));
+            const float level = baseline - response * height;
+            auto& curve = responses.fills.at(band);
+            if (first) {
+                curve.startNewSubPath(pixel, level);
+            } else {
+                curve.lineTo(pixel, level);
+            }
+        }
+    };
+    appendPoint(plot.getX(), true);
+    const int steps = static_cast<int>(std::ceil(plot.getWidth() / RESPONSE_STEP_PIXELS));
+    for (int step = 1; step < steps; ++step) {
+        appendPoint(plot.getX() + static_cast<float>(step) * RESPONSE_STEP_PIXELS, false);
+    }
+    // Include the exact right endpoint even when the width is not a multiple of the sample spacing.
+    appendPoint(plot.getRight(), false);
+    const juce::PathStrokeType stroke(RESPONSE_LINE_THICKNESS, juce::PathStrokeType::curved);
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        auto& fill = responses.fills.at(band);
+        stroke.createStrokedPath(responses.strokes.at(band), fill);
+        fill.lineTo(plot.getRight(), baseline);
+        fill.lineTo(plot.getX(), baseline);
+        fill.closeSubPath();
+    }
+    return responses;
+}
+
 /// Paints the response of every band as a curve while a band is hovered, so their overlaps at the crossovers show:
 /// the hovered band brightest with a soft fill under its curve, and the other bands as faint lines.
 /// A band's response is the target magnitude of its crossover filters, one at full height.
-void SpatialSpectrogramView::paintBandResponses(juce::Graphics& graphics, const Crossovers& crossovers) const
+void SpatialSpectrogramView::paintBandResponses(juce::Graphics& graphics, const Crossovers& crossovers)
 {
     const float strongest = *std::ranges::max_element(bandHighlights);
     if (strongest <= 0.0F) {
         return;
     }
-    const auto plot = getPlotBounds();
+    const auto& responses = bandResponses(crossovers);
+    const auto plot = responses.plot;
     const float baseline = plot.getBottom();
     const float height = plot.getHeight() * RESPONSE_HEIGHT_SHARE;
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        juce::Path curve;
-        const auto levelAt = [&](const float pixel) {
-            return baseline - bandResponse(band, xToFrequency(pixel), crossovers) * height;
-        };
-        // A path counts as empty until it has a line, so the first point starts it explicitly.
-        curve.startNewSubPath(plot.getX(), levelAt(plot.getX()));
-        const int steps = static_cast<int>(plot.getWidth() / RESPONSE_STEP_PIXELS);
-        for (int step = 1; step <= steps; ++step) {
-            const float pixel = plot.getX() + static_cast<float>(step) * RESPONSE_STEP_PIXELS;
-            curve.lineTo(pixel, levelAt(pixel));
-        }
-        const auto colour = bandColour(band, crossovers);
+        const auto colour = responses.colours.at(band);
         const float highlight = bandHighlights.at(band);
         if (highlight > 0.0F) {
-            juce::Path fill(curve);
-            fill.lineTo(plot.getRight(), baseline);
-            fill.lineTo(plot.getX(), baseline);
-            fill.closeSubPath();
             graphics.setGradientFill(
                 juce::ColourGradient(
                     colour.withAlpha(RESPONSE_FILL_ALPHA * highlight),
@@ -577,12 +615,12 @@ void SpatialSpectrogramView::paintBandResponses(juce::Graphics& graphics, const 
                     false
                 )
             );
-            graphics.fillPath(fill);
+            graphics.fillPath(responses.fills.at(band));
         }
         const float alpha
             = NEIGHBOUR_RESPONSE_ALPHA * strongest + (RESPONSE_LINE_ALPHA - NEIGHBOUR_RESPONSE_ALPHA) * highlight;
         graphics.setColour(colour.withAlpha(alpha));
-        graphics.strokePath(curve, juce::PathStrokeType(RESPONSE_LINE_THICKNESS, juce::PathStrokeType::curved));
+        graphics.fillPath(responses.strokes.at(band));
     }
 }
 

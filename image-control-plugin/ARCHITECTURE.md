@@ -41,6 +41,9 @@ The DSP uses JUCE buffers, FFTs, smoothers, and threads, but does not access com
 `SpatialAnalyzer` knows neither the editor nor the renderer.
 `SpectrogramParticleBuilder` converts analysis into graphics data without a component or graphics context.
 Only `SpectrogramRenderer` implements the OpenGL backend.
+Shader uniform locations are cached for each linked program and rebuilt with the context.
+Band-response overlay geometry is cached by plot bounds, frequency scale, and ordered crossovers,
+so hover opacity changes reuse the paths.
 
 ## Ownership and execution threads
 
@@ -111,7 +114,11 @@ Gesture ownership is captured at pointer-down so Link changes or teardown cannot
 
 `processBlock` and `processBlockBypassed` reach the same `processWithBypass` path.
 `ScopedNoDenormals` protects the DSP callback from denormal slowdowns.
-The callback reads parameter atomics, converts dB and percentages, and supplies targets to the imager.
+The callback reads parameter atomics and supplies changed targets to the imager.
+Processing-thread caches reuse dB and percentage conversions while exact raw values are unchanged.
+Bypass supplies neutral effective controls without changing saved host values.
+Crossover requests are reordered and published only when needed,
+while an offline-mode transition still completes outstanding design work.
 
 For stereo input, the imaging representation is
 \[
@@ -266,6 +273,8 @@ Neutrality includes unity Width and no effective recovery contribution, as well 
 Recover alone at Width 1 or above does not make a contribution.
 It still advances convolution history, including during kernel replacements,
 so later processing changes have a warm filter history.
+When correlation is disabled, exact-neutral partitions skip the unused output convolutions,
+while retaining raw input spectra, delay history, control progression, and pending kernel publication.
 Exact neutral Delta clears the output partition rather than reconstructing a nearly zero difference.
 These shortcuts also operate during crossover crossfades.
 
@@ -358,6 +367,7 @@ At rates through 48 kHz, the window lengths and reported ranges are:
 - 1024 samples above 4 kHz, advancing by 512 samples.
 
 Windows and hops double with each sample-rate doubling above 48 kHz.
+Input writes stop at exact hop deadlines, so callback window endpoints do not depend on input span boundaries.
 The reported frequency range is limited to 20 Hz through 20 kHz and available FFT bins below Nyquist.
 These display windows do not add audio-processing latency, but long bass windows respond more slowly.
 
@@ -389,7 +399,11 @@ Position maps full left to the top, center to the middle, and full right to the 
 
 Displayed level receives a 3 dB-per-octave tilt around 1 kHz
 and is mapped into a 36 dB range below an automatic reference.
-The reference rises immediately and falls at 12 dB per second, with a -90 dB lower bound.
+The reference rises immediately and falls at 12 dB per audio second, with a -90 dB lower bound.
+Frames carry their tier identity and absolute audio endpoint.
+Simultaneous tier frames share a reference after all due peaks are observed,
+and each tier retains its latest peak between updates.
+The common release clock advances only once per endpoint, independently of tier count and input chunking.
 Contrast emphasizes stronger points and increases toward the highs.
 Frame-duration weighting and persistence compensation keep tiers with different hops from drawing at arbitrary brightness.
 Colors are either a frequency palette interpolated in linear light or a phase-coherence blend.
@@ -400,6 +414,9 @@ The resulting relative display is not an absolute output-level meter.
 `ImageControlEditor` uses `juce::VBlankAttachment` rather than an always-running GL repaint loop.
 Every refresh applies display settings, wakes analysis, advances hover/tooltip animations,
 updates correlation components, submits plot geometry and elapsed fade time, and requests a GL frame.
+Effective analysis enablement also follows host/ancestor visibility and renderer availability.
+Hidden or unavailable displays keep draining the audio queue without FFT or particle work.
+Unchanged position-curve settings reuse their derived coefficients.
 Large refresh gaps are capped for visual animation and fade progression.
 
 `SpatialSpectrogramView` paints axes, grids, band regions, response guides, crossover lines, and status text.
@@ -489,7 +506,7 @@ macOS AU validation, clang-tidy, macOS sanitizers, coverage, and comparator tool
 Source coverage does not establish GPU correctness or packaged-host integration.
 The current unit environment exercises little of the renderer's actual GPU drawing path.
 
-`ImageControlBenchmark` separates full callback distributions from isolated imager, analysis, particle, and overlay costs.
+`ImageControlBenchmark` measures full callbacks and isolated imager, analysis, particle, and overlay costs.
 It varies rates, block sizes, processing modes, correlation, analysis load, and paced crossover requests.
 The original workloads explicitly set Width 1 and Recover Off.
 Matched narrowed workloads compare recovery Off, selected bands, and all bands,
@@ -497,6 +514,9 @@ with correlation and analysis variants and paced moving-crossovers cases.
 Direct imager probes retain the original centered/panned workloads and add the same recovery comparisons.
 An isolated batched setter probe measures unchanged and changing `setWidths`/`setRecoveries` pairs,
 excluding the untimed processing used to advance ramps and observe results.
+Separate analyzer and captured-frame particle probes isolate worker-side costs.
+Hovered overlay probes exercise response geometry,
+while `--focused` selects those probes and small Solo/Delta callbacks.
 These probes are observations, not performance improvement evidence without a matched baseline.
 `test-signals/generate.py --group listening` supplies deterministic synthetic decays, pure-Side sweeps/combs,
 phase/adversarial pairs of both signs, and left/right hard-panned transients with bass for manual comparisons.

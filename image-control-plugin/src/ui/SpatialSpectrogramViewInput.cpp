@@ -20,6 +20,31 @@ namespace
 constexpr float GAIN_DECIBELS_PER_PIXEL {0.12F};
 /// Share of the gain drag used while Shift is held, for fine adjustment.
 constexpr float FINE_DRAG_SHARE {0.2F};
+
+/// Returns the crossovers bounding a band, omitting the outer edge of the Low and High bands.
+std::vector<std::size_t> bandEdges(const std::size_t band)
+{
+    std::vector<std::size_t> edges;
+    if (band > 0) {
+        edges.push_back(band - 1);
+    }
+    if (band < CROSSOVER_COUNT) {
+        edges.push_back(band);
+    }
+    return edges;
+}
+
+/// Returns whether Ctrl or Cmd selects mid gain for a band drag or wheel gesture.
+bool isMidModifier(const juce::ModifierKeys& modifiers)
+{
+    return modifiers.isCommandDown() || modifiers.isCtrlDown();
+}
+
+/// Returns whether Alt or Option selects side gain for a band drag. Ctrl or Cmd takes precedence.
+bool isSideModifier(const juce::ModifierKeys& modifiers)
+{
+    return modifiers.isAltDown() && !isMidModifier(modifiers);
+}
 }  // namespace
 
 /// Resets a double-clicked crossover to its default frequency.
@@ -316,34 +341,6 @@ void SpatialSpectrogramView::applyGainChange(const std::size_t band, const bool 
 bool SpatialSpectrogramView::isLinked(const std::size_t band) const
 {
     return static_cast<bool>(editorSettings.getProperty(linkPropertyName(band)));
-}
-
-/// Returns the crossovers that bound a band: the one below it unless it is the Low band,
-/// and the one above it unless it is the High band.
-std::vector<std::size_t> SpatialSpectrogramView::bandEdges(const std::size_t band)
-{
-    std::vector<std::size_t> edges;
-    if (band > 0) {
-        edges.push_back(band - 1);
-    }
-    if (band < CROSSOVER_COUNT) {
-        edges.push_back(band);
-    }
-    return edges;
-}
-
-/// Returns whether the modifier keys turn a band drag into a mid gain drag, and the wheel to the mid gain:
-/// Ctrl, or Cmd on macOS.
-bool SpatialSpectrogramView::isMidModifier(const juce::ModifierKeys& modifiers)
-{
-    return modifiers.isCommandDown() || modifiers.isCtrlDown();
-}
-
-/// Returns whether the modifier keys turn a band drag into a side gain drag: Alt, or Option on macOS.
-/// Ctrl or Cmd takes precedence when both are held.
-bool SpatialSpectrogramView::isSideModifier(const juce::ModifierKeys& modifiers)
-{
-    return modifiers.isAltDown() && !isMidModifier(modifiers);
 }
 
 /// Updates the cursor for the pointer position and the modifier keys when a modifier key is pressed or released.

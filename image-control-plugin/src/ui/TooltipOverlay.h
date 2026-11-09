@@ -17,6 +17,13 @@ class TooltipOverlay final : public juce::Component
 public:
     explicit TooltipOverlay(juce::Component& rootComponent);
 
+    ~TooltipOverlay() override;
+
+    TooltipOverlay(const TooltipOverlay&) = delete;
+    TooltipOverlay(TooltipOverlay&&) = delete;
+    TooltipOverlay& operator=(const TooltipOverlay&) = delete;
+    TooltipOverlay& operator=(TooltipOverlay&&) = delete;
+
     void advance(double seconds);
     void paint(juce::Graphics& graphics) override;
 
