@@ -803,6 +803,14 @@ It retains debug symbols and standard library hardening, without native targetin
 `./sanitize.sh --thread` runs them under ThreadSanitizer on macOS.
 Each sanitizer build has its own build directory, so the debug build is not affected.
 Sanitizers do not run the CLI or driven GUI integration tier.
+`./sanitize.sh --realtime` uses Homebrew LLVM in a separate macOS workspace to check hardware-free preview callbacks.
+It runs detector controls, clean prepared-renderer checks, and explicit blocked audits of application/JUCE callbacks.
+A verified `BLOCKED` report is not a clean callback result.
+Per-case logs are in `cmake-build-mac-rtsan/realtime-artifacts/`.
+Known locks in JUCE buffering, resampling, device dispatch, and native plugin hosting remain visible without suppressions.
+RTSan checks exercised unsafe calls, not audio deadlines or arbitrary third-party plugin safety.
+Lint the dedicated probes with `./lint.sh --build-dir cmake-build-mac-rtsan --changed --check` after preparing that workspace.
+Normal lint skips sanitizer-only sources absent from its compilation database.
 `./coverage.sh` builds and runs all CTest tiers on macOS, merging unit, GUI integration, and CLI profiles.
 Use `--lcov` for an LCOV report or `--open` for an HTML report.
 

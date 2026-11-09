@@ -208,6 +208,10 @@ unless Clear All Files discarded that run's presentation events.
   so `cancelAndWait` on the message thread never deadlocks against a worker that waits for it.
 - **The audio device callback** of `AudioPreviewPlayer` renders the preview.
   It only try-locks the rendering lock and outputs silence for any block in which the lock is busy.
+  This is not a lock-free guarantee.
+  Successful lock release and downstream JUCE buffering/resampling use native mutexes.
+  The isolated RTSan tier distinguishes the prepared renderer, application callback, and full device-manager boundary.
+  Expected dependency findings remain explicitly blocked audits, separate from clean callback regression cases.
 - **The read-ahead thread** is the `TimeSliceThread` of `AudioPreviewPlayer`,
   which fills the `BufferingAudioSource` from the file, so the audio callback never decodes.
 - **Preview enrichment.** `PreviewEnrichmentScheduler` owns one worker and a separate cache connection.

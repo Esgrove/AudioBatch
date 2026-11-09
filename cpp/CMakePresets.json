@@ -178,6 +178,22 @@
       }
     },
     {
+      "name": "macos-rtsan",
+      "displayName": "macOS RealtimeSanitizer",
+      "description": "Native Homebrew LLVM realtime callback checks in cmake-build-mac-rtsan, without LTO or native CPU flags.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-rtsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
+        "AUDIOBATCH_SANITIZE": "realtime",
+        "AUDIOBATCH_LTO": "OFF",
+        "AUDIOBATCH_NATIVE_CPU": "OFF",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
       "name": "macos-coverage",
       "displayName": "macOS Coverage",
       "description": "Debug build with source based code coverage instrumentation in cmake-build-mac-coverage.",
@@ -255,6 +271,13 @@
     {
       "name": "macos-tsan",
       "configurePreset": "macos-tsan"
+    },
+    {
+      "name": "macos-rtsan",
+      "configurePreset": "macos-rtsan",
+      "targets": [
+        "AudioBatchRealtimeTests"
+      ]
     },
     {
       "name": "macos-coverage",
