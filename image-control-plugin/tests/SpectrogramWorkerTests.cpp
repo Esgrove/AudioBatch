@@ -1,9 +1,11 @@
 /// Tests SpectrogramWorker on its own thread with a real analyzer ring and renderer, without an OpenGL context:
 /// queued audio becomes particles for the renderer, the audio is discarded unanalyzed while analysis is off,
 /// and a producer much faster than real time cannot keep the worker from finishing its passes.
+/// Also tests the renderer's bounded pending-particle hand-off entirely on the CPU.
 
 #include "analysis/SpatialAnalyzer.h"
 #include "analysis/StereoSampleFifo.h"
+#include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
 #include "ui/SpectrogramWorker.h"
 
@@ -12,17 +14,54 @@
 #include <juce_core/juce_core.h>
 #include <juce_opengl/juce_opengl.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <mutex>
 #include <numbers>
+#include <span>
 #include <thread>
 #include <vector>
 
 namespace esgrove::image_control::test
 {
+/// Asserts the CPU hand-off contract without attaching a context or calling any OpenGL entry points.
+struct SpectrogramRendererTestAccess {
+    /// Observes a renderer that outlives these CPU-only assertions.
+    explicit SpectrogramRendererTestAccess(SpectrogramRenderer& rendererToTest) : renderer(rendererToTest) {}
+
+    /// Leaves the test-owned renderer untouched when this non-owning accessor goes out of scope.
+    ~SpectrogramRendererTestAccess() = default;
+
+    SpectrogramRendererTestAccess(const SpectrogramRendererTestAccess&) = delete;
+    SpectrogramRendererTestAccess(SpectrogramRendererTestAccess&&) = delete;
+    SpectrogramRendererTestAccess& operator=(const SpectrogramRendererTestAccess&) = delete;
+    SpectrogramRendererTestAccess& operator=(SpectrogramRendererTestAccess&&) = delete;
+
+    /// Checks the entire retained sequence and clear flag while respecting the pending-work mutex.
+    void expectPending(const std::span<const SpectrogramParticle> expected, const bool clear) const
+    {
+        const std::scoped_lock lock(renderer.pendingMutex);
+        EXPECT_TRUE(
+            std::ranges::equal(
+                renderer.pending.particles,
+                expected,
+                [](const SpectrogramParticle& actual, const SpectrogramParticle& wanted) {
+                    return juce::approximatelyEqual(actual.x, wanted.x);
+                }
+            )
+        );
+        EXPECT_EQ(renderer.pending.clear, clear);
+    }
+
+    /// Renderer owned by the test, which outlives this accessor.
+    SpectrogramRenderer& renderer;
+};
+
 namespace
 {
 /// Frames of audio queued in the tests, a sixth of a second at 48 kHz.
@@ -33,6 +72,17 @@ constexpr double TONE_FREQUENCY {1000.0};
 constexpr float TONE_AMPLITUDE {0.5F};
 /// Longest wait for the worker in the tests.
 constexpr std::chrono::seconds WAIT_LIMIT {5};
+
+/// Builds distinct CPU-only markers so the assertions distinguish oldest from newest retained particles.
+std::vector<SpectrogramParticle> numberedParticles(const std::size_t count)
+{
+    std::vector<SpectrogramParticle> particles(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        particles.at(index).x = static_cast<float>(index);
+    }
+    return particles;
+}
+
 /// Returns a sine tone at the analyzer's default sample rate.
 std::vector<float> tone(const std::size_t frames)
 {
@@ -67,6 +117,91 @@ bool finishPass(SpectrogramWorker& worker)
     return wakeUntil(worker, [&worker, ticket] { return worker.completedPassCount() >= ticket; });
 }
 }  // namespace
+
+TEST(SpectrogramRendererCpu, EmptySubmissionsPreserveWaitingParticles)
+{
+    juce::OpenGLContext context;
+    SpectrogramRenderer renderer(context);
+    const SpectrogramRendererTestAccess access(renderer);
+    renderer.submitParticles({}, false);
+    EXPECT_EQ(renderer.pendingParticleCount(), 0U);
+    access.expectPending({}, false);
+
+    const auto particles = numberedParticles(3);
+    renderer.submitParticles(particles, false);
+    renderer.submitParticles({}, false);
+    EXPECT_EQ(renderer.pendingParticleCount(), particles.size());
+    access.expectPending(particles, false);
+    EXPECT_FALSE(renderer.isUnavailable());
+    EXPECT_FALSE(renderer.gpuFrameMilliseconds().has_value());
+}
+
+TEST(SpectrogramRendererCpu, ExactCapPreservesEveryWaitingParticle)
+{
+    juce::OpenGLContext context;
+    SpectrogramRenderer renderer(context);
+    const SpectrogramRendererTestAccess access(renderer);
+    const auto particles = numberedParticles(SPECTROGRAM_MAX_PENDING_PARTICLES);
+    const std::span<const SpectrogramParticle> batch(particles);
+    renderer.submitParticles(batch.first(batch.size() - 1), false);
+    renderer.submitParticles(batch.last(1), false);
+    renderer.submitParticles({}, false);
+    EXPECT_EQ(renderer.pendingParticleCount(), SPECTROGRAM_MAX_PENDING_PARTICLES);
+    access.expectPending(particles, false);
+}
+
+TEST(SpectrogramRendererCpu, RepeatedOverflowReplacesOlderWaitingBatches)
+{
+    juce::OpenGLContext context;
+    SpectrogramRenderer renderer(context);
+    const SpectrogramRendererTestAccess access(renderer);
+    const auto particles = numberedParticles(SPECTROGRAM_MAX_PENDING_PARTICLES);
+    const auto newest = std::span<const SpectrogramParticle>(particles).last(3);
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        SCOPED_TRACE(cycle);
+        renderer.submitParticles(particles, false);
+        EXPECT_EQ(renderer.pendingParticleCount(), SPECTROGRAM_MAX_PENDING_PARTICLES);
+        access.expectPending(particles, false);
+        renderer.submitParticles(newest, false);
+        EXPECT_EQ(renderer.pendingParticleCount(), newest.size());
+        access.expectPending(newest, false);
+    }
+}
+
+TEST(SpectrogramRendererCpu, OversizedSubmissionRetainsOnlyItsNewestCappedTail)
+{
+    juce::OpenGLContext context;
+    SpectrogramRenderer renderer(context);
+    const SpectrogramRendererTestAccess access(renderer);
+    const auto particles = numberedParticles(SPECTROGRAM_MAX_PENDING_PARTICLES + 17);
+    const std::span<const SpectrogramParticle> batch(particles);
+    renderer.submitParticles(batch.first(3), false);
+    renderer.submitParticles(batch, false);
+    EXPECT_EQ(renderer.pendingParticleCount(), SPECTROGRAM_MAX_PENDING_PARTICLES);
+    access.expectPending(batch.last(SPECTROGRAM_MAX_PENDING_PARTICLES), false);
+}
+
+TEST(SpectrogramRendererCpu, ClearDropsWaitingParticlesAndRemainsPending)
+{
+    juce::OpenGLContext context;
+    SpectrogramRenderer renderer(context);
+    const SpectrogramRendererTestAccess access(renderer);
+    const auto particles = numberedParticles(8);
+    const std::span<const SpectrogramParticle> batch(particles);
+    renderer.submitParticles(batch, false);
+    renderer.submitParticles(batch.last(2), true);
+    EXPECT_EQ(renderer.pendingParticleCount(), 2U);
+    access.expectPending(batch.last(2), true);
+
+    renderer.submitParticles(batch.last(1), false);
+    const std::array<SpectrogramParticle, 3> afterClear {particles[6], particles[7], particles[7]};
+    access.expectPending(afterClear, true);
+    renderer.submitParticles({}, true);
+    EXPECT_EQ(renderer.pendingParticleCount(), 0U);
+    access.expectPending({}, true);
+    renderer.submitParticles({}, false);
+    access.expectPending({}, true);
+}
 
 TEST(SpectrogramWorker, QueuedAudioBecomesParticles)
 {

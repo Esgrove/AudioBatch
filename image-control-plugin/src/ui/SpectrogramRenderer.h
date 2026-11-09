@@ -7,7 +7,6 @@
 #pragma once
 
 #include "Parameters.h"
-#include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -25,8 +24,102 @@
 
 namespace esgrove::image_control
 {
+namespace test
+{
+struct SpectrogramRendererTestAccess;
+}
+
 /// Number of downsampled textures in the spectrogram's glow chain.
 constexpr std::size_t SPECTROGRAM_BLOOM_LEVEL_COUNT {5};
+/// Most particles kept waiting for the OpenGL thread.
+/// Overflow drops the waiting batches, and an oversized batch retains only its newest particles.
+constexpr std::size_t SPECTROGRAM_MAX_PENDING_PARTICLES {1'000'000};
+
+/// Cached locations for the particle program, valid only for that linked program and its context.
+struct SpectrogramParticleUniforms {
+    explicit SpectrogramParticleUniforms(const juce::OpenGLShaderProgram& program);
+
+    /// Core spread in physical pixels, updated for the display scale.
+    juce::OpenGLShaderProgram::Uniform coreSigma;
+    /// Halo spread in physical pixels, updated for the display scale.
+    juce::OpenGLShaderProgram::Uniform haloSigma;
+    /// Constant halo brightness relative to the core.
+    juce::OpenGLShaderProgram::Uniform haloWeight;
+    /// Maximum horizontal spread in physical pixels, updated for the display scale.
+    juce::OpenGLShaderProgram::Uniform maxSigma;
+    /// Constant sprite reach in spreads.
+    juce::OpenGLShaderProgram::Uniform reach;
+    /// Current accumulation dimensions in physical pixels.
+    juce::OpenGLShaderProgram::Uniform targetSize;
+};
+
+/// Cached locations for a downsampling pass, valid only for its linked program and context.
+struct SpectrogramDownsampleUniforms {
+    explicit SpectrogramDownsampleUniforms(const juce::OpenGLShaderProgram& program);
+
+    /// Constant texture unit for the source image.
+    juce::OpenGLShaderProgram::Uniform source;
+    /// Inverse source dimensions, updated for each glow-chain level.
+    juce::OpenGLShaderProgram::Uniform sourceTexel;
+};
+
+/// Cached locations for an upsampling pass, valid only for its linked program and context.
+struct SpectrogramUpsampleUniforms {
+    explicit SpectrogramUpsampleUniforms(const juce::OpenGLShaderProgram& program);
+
+    /// Constant filter spread in source texels.
+    juce::OpenGLShaderProgram::Uniform radius;
+    /// Constant texture unit for the source image.
+    juce::OpenGLShaderProgram::Uniform source;
+    /// Inverse source dimensions, updated for each glow-chain level.
+    juce::OpenGLShaderProgram::Uniform sourceTexel;
+};
+
+/// Cached locations for the composite program, valid only for that linked program and context.
+struct SpectrogramCompositeUniforms {
+    explicit SpectrogramCompositeUniforms(const juce::OpenGLShaderProgram& program);
+
+    /// Constant texture unit for the accumulated particles.
+    juce::OpenGLShaderProgram::Uniform accumulation;
+    /// Constant texture unit for the glow.
+    juce::OpenGLShaderProgram::Uniform bloom;
+    /// Constant texture unit for the solid density field.
+    juce::OpenGLShaderProgram::Uniform field;
+
+    /// Plot corner radius in physical pixels, updated for the display scale.
+    juce::OpenGLShaderProgram::Uniform cornerRadius;
+    /// Current solid density field dimensions.
+    juce::OpenGLShaderProgram::Uniform fieldSize;
+    /// Outline width in physical pixels, updated for the display scale.
+    juce::OpenGLShaderProgram::Uniform outlineWidth;
+    /// Plot origin in the current framebuffer.
+    juce::OpenGLShaderProgram::Uniform plotOrigin;
+    /// Plot dimensions in physical pixels.
+    juce::OpenGLShaderProgram::Uniform plotSize;
+
+    /// Particle exposure, zero when rendering only the background.
+    juce::OpenGLShaderProgram::Uniform exposure;
+    /// Glow strength, updated for the render mode.
+    juce::OpenGLShaderProgram::Uniform glowStrength;
+    /// Whether solid layers are selected for this pass.
+    juce::OpenGLShaderProgram::Uniform solid;
+
+    /// Constant plot background colour.
+    juce::OpenGLShaderProgram::Uniform background;
+    /// Constant solid density gain.
+    juce::OpenGLShaderProgram::Uniform fieldGain;
+    /// Constant highlight colour curve.
+    juce::OpenGLShaderProgram::Uniform highlight;
+    /// Constant brightness thresholds for sharp traces over the solid layers.
+    juce::OpenGLShaderProgram::Uniform solidHighlight;
+
+    /// Constant layer opacities.
+    juce::OpenGLShaderProgram::Uniform layerAlphas;
+    /// Constant layer density thresholds.
+    juce::OpenGLShaderProgram::Uniform layerLevels;
+    /// Constant layer outline brightnesses.
+    juce::OpenGLShaderProgram::Uniform outlineStrengths;
+};
 
 /// What the renderer draws in the plot.
 enum class SpectrogramRenderMode : std::uint8_t {
@@ -108,6 +201,8 @@ public:
     void renderOpenGL() override;
 
 private:
+    friend struct test::SpectrogramRendererTestAccess;
+
     [[nodiscard]] bool createPrograms();
     [[nodiscard]] bool resizeTargets(int width, int height);
 
@@ -139,6 +234,17 @@ private:
     std::unique_ptr<juce::OpenGLShaderProgram> upsampleProgram;
     /// Tone maps the picture and its glow into the plot.
     std::unique_ptr<juce::OpenGLShaderProgram> compositeProgram;
+
+    // Cached uniforms follow their programs so they are destroyed first.
+    // releaseResources clears both groups while their context is current.
+    /// Linked locations for the particle shader.
+    std::unique_ptr<SpectrogramParticleUniforms> particleUniforms;
+    /// Linked locations for glow downsampling.
+    std::unique_ptr<SpectrogramDownsampleUniforms> downsampleUniforms;
+    /// Linked locations for glow upsampling.
+    std::unique_ptr<SpectrogramUpsampleUniforms> upsampleUniforms;
+    /// Linked locations for the tone-mapped composite.
+    std::unique_ptr<SpectrogramCompositeUniforms> compositeUniforms;
 
     /// Vertex array with the sprite corners and the particle instances.
     GLuint particleVertexArray {0};
