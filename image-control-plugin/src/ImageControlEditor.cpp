@@ -1,5 +1,5 @@
 /// Implements the ImageControl editor: the header with the settings button, the Pre and Post analyzer tap switch,
-/// mono audition, delta, bypass, output gain, and the per-band correlation row,
+/// mono, delta, bypass, output gain, and the per-band correlation row,
 /// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
 /// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
 /// applying the display settings with bypassing and hiding the spectrogram, measuring the frame rate,
@@ -139,9 +139,11 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 
     monoButton.setClickingTogglesState(true);
     monoButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::BLUE));
-    monoButton.setToggleState(owner.isMonoAuditionEnabled(), juce::dontSendNotification);
-    monoButton.setTooltip("Audition the live output in mono. Not saved, automated, or applied to offline renders");
-    monoButton.onClick = [this] { imageControlProcessor.setMonoAuditionEnabled(monoButton.getToggleState()); };
+    monoButton.setTooltip(
+        "Fold the final output to mono after Delta or bypass, including Post analysis and offline renders"
+    );
+    monoAttachment
+        = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, MONO_ID, monoButton);
     addAndMakeVisible(monoButton);
 
     settingsButton.setTooltip(
@@ -422,7 +424,6 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
 void ImageControlEditor::applyViewSettings()
 {
     const auto& editorState = imageControlProcessor.getEditorState();
-    monoButton.setToggleState(imageControlProcessor.isMonoAuditionEnabled(), juce::dontSendNotification);
     const bool showCorrelation = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
     if (correlationShown != showCorrelation) {
         correlationShown = showCorrelation;

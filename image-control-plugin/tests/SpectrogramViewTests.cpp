@@ -664,6 +664,8 @@ TEST(ImageControlEditor, CoreProfileRequested)
 TEST(ImageControlEditor, MonoIsComposedBeforeDeltaAndBypassAtMinimumWidthAndRetainedOnReopen)
 {
     ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(MONO_ID);
+    GestureCounter gestures;
     {
         ImageControlEditor editor(processor);
         editor.setSize(760, 560);
@@ -684,8 +686,16 @@ TEST(ImageControlEditor, MonoIsComposedBeforeDeltaAndBypassAtMinimumWidthAndReta
         editor.addToDesktop(0);
         auto* handler = mono->getAccessibilityHandler();
         ASSERT_NE(handler, nullptr);
-        ASSERT_TRUE(handler->getActions().invoke(juce::AccessibilityActionType::toggle));
-        EXPECT_TRUE(processor.isMonoAuditionEnabled());
+        parameter.addListener(&gestures);
+        const bool toggled = handler->getActions().invoke(juce::AccessibilityActionType::toggle);
+        parameter.removeListener(&gestures);
+        ASSERT_TRUE(toggled);
+        EXPECT_FLOAT_EQ(parameter.getValue(), 1.0F);
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+        parameter.setValueNotifyingHost(0.0F);
+        EXPECT_FALSE(mono->getToggleState());
+        parameter.setValueNotifyingHost(1.0F);
+        EXPECT_TRUE(mono->getToggleState());
         EXPECT_FALSE(delta->getToggleState());
         EXPECT_FALSE(bypass->getToggleState());
     }

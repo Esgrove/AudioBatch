@@ -1,6 +1,6 @@
 /// Declares ImageControlEditor, the editor of the ImageControl plugin.
 /// A header holds the settings button and the analyzer tap on the left,
-/// and mono audition, delta, bypass, and output gain on the right.
+/// and mono, delta, bypass, and output gain on the right.
 /// The spatial spectrogram fills the middle, with the correlation row and four band strips below it,
 /// and a divider between them resizes the two.
 
@@ -97,7 +97,7 @@ private:
     juce::TextButton bypassButton {"Bypass"};
     /// Toggles the delta parameter, which outputs only what the processing changes.
     juce::TextButton deltaButton {"Delta"};
-    /// Auditions the current live instance in mono without changing its saved processing state.
+    /// Toggles the mono parameter, which folds the final processed output equally into both channels.
     juce::TextButton monoButton {"Mono"};
     /// Opens the display settings.
     juce::TextButton settingsButton {"Settings"};
@@ -114,6 +114,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     /// Binds the delta button to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> deltaAttachment;
+    /// Binds the mono button to its parameter.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoAttachment;
     /// Binds the output gain slider to its parameter.
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     /// The controls of each band.
