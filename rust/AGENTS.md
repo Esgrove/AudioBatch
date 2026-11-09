@@ -1,7 +1,7 @@
 # AGENTS.md
 
 This file governs everything under `rust/`, the Rust version of AudioBatch.
-`cpp/AGENTS.md` describes the C++ application in `cpp/`, a sibling implementation that is still in progress.
+`../cpp/AGENTS.md` describes the C++ application in `../cpp/`, a sibling implementation that is still in progress.
 Its build, format, lint, and CMake instructions do not apply here.
 Its prose style, naming, and documentation rules do.
 When the two files disagree about code under `rust/`, this file wins.
@@ -12,9 +12,9 @@ When the two files disagree about code under `rust/`, this file wins.
   Differences in results for the same input are bugs unless a narrow, technically justified exception is documented.
 - Read the C++ sources freely to understand how a feature behaves,
   but question anything that looks wrong before carrying it over, because that application is not finished either.
-  `cpp/src/analysis/AudioAnalysis.cpp`, `cpp/src/analysis/AnalysisCache*.cpp`, and `cpp/src/cli/`
-  are the closest counterparts of `crates/core` and `crates/cli`,
-  and `cpp/src/plugins/` and `cpp/src/gui/LiveChain*.cpp` of `crates/plugins` and the GUI's `plugins/`.
+  `../cpp/src/analysis/AudioAnalysis.cpp`, `../cpp/src/analysis/AnalysisCache*.cpp`, and `../cpp/src/cli/`
+  are the closest counterparts of `crates/core` and `crates/cli`, and `../cpp/src/plugins/`
+  and `../cpp/src/gui/LiveChain*.cpp` of `crates/plugins` and the GUI's `plugins/`.
 - The tests read the shared fixtures in place from the root `fixtures` directory through the `test-fixtures` crate.
   Do not copy fixtures into `rust/`.
 - The GUI embeds the Roboto fonts from the root `assets` directory, the same files the C++ application bundles,
@@ -62,13 +62,16 @@ Audio Unit plugins are only hosted by the C++ application.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the parts work together, with charts.
 This section lists the files.
 
-`rust/Cargo.toml` is a virtual workspace.
+`Cargo.toml` is a virtual workspace, and its `rust-version` declares the required Rust toolchain.
 Shared package metadata, dependency versions, and lints are defined once there,
-and every crate inherits them with `.workspace = true`.
-The versions of all external dependencies are declared in its `[workspace.dependencies]` table,
+and the main workspace crates inherit them with `.workspace = true`.
+The versions of their external dependencies are declared in its `[workspace.dependencies]` table,
 including those that only one crate uses.
-Write them as full `major.minor.patch` versions, so updates are picked up.
-Possible breaking changes are not a reason to pin a dependency with `=`.
+The excluded `fuzz/` workspace declares its own dependencies.
+Write ordinary versions as full `major.minor.patch` versions, so compatible updates are picked up.
+Possible breaking changes are not a reason to add an exact pin.
+Preserve the existing exact pins for `gpui-pre` and `gpui-pre-platform` snapshot support,
+and the coordinated `vst3` SDK pin described below.
 
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
@@ -84,6 +87,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
     `benches/spectrogram.rs` isolates spectral setup, streaming, finalization, merging, and codec costs.
     The longer inputs come from `../fixtures/benchmark/generate.py` and are generated locally, not committed.
   - `decode.rs` wraps Symphonia: probing, the decode loop, and the read failure rules.
+    Isolated packet failures become silence with a notice, and three counted consecutive failures fail the pass.
+    Early EOF can instead produce a successful measurement of available audio with a truncation notice.
     On macOS, `decode/native_aac.rs` uses Core Audio for single-track mono/stereo AAC-LC MP4,
     reconciling perceptual noise substitution while keeping Symphonia for every other codec and platform.
     It trims the gapless padding the way the decoders of the C++ application do, keeping the source timeline aligned,
@@ -92,8 +97,11 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
     `overload.rs` builds and validates bounded per-channel source overload flags and their independent cache blob.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
-  - `spectrogram.rs` builds the bounded mel spectrogram from the measurement blocks with `realfft`,
+  - `spectrogram.rs` builds the optional mono/stereo mel spectrogram from measurement blocks with `realfft`,
     and holds `SpectrogramData` with its little-endian `SPEC` codec shared with the C++ application.
+    Cached bands extend to source Nyquist, while the GUI frequency axis extends to at least 20 kHz.
+  - `gain_loudness.rs` remeasures gain-and-hard-clip loudness and applies the empirical integrated limiter estimate.
+    Its results are presentation predictions, never source metrics, cache authority, or live plugin measurements.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
   - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`
     and the shared `spectrogram_cache` table in `cache/spectrogram.rs`,
@@ -108,6 +116,7 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
     and `output_file.rs` commits the output and disposes of the replaced files,
     with `output_file/windows_recycle_bin.rs` telling whether a folder's files go to the Windows recycle bin.
   - `operation.rs` holds the result of an operation that rewrites one file, and the cache update after it.
+  - `storage.rs` resolves shared database and private application paths into injectable `StoragePaths`.
   - `log_file.rs` sets up the `tracing` log file and the stderr output of both front ends,
     and `atomic_write.rs` replaces small data files, such as the settings, atomically.
   - `test_helpers.rs` holds the fixture builders that the unit tests of several modules share.
@@ -138,7 +147,8 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   `scanner.rs` scans out of process through `scan_worker.rs`, `library.rs` keeps the known plugins,
   `chain.rs` the saved chain, `presets.rs` the named chain presets,
   `processing.rs` renders one file through a chain,
-  `processing_coordinator.rs` runs batches on a worker pool, and `preview_chain.rs` runs the live chain in the preview.
+  `processing_coordinator.rs` runs batches on a worker pool with `min(files, workers)` reusable chains,
+  and `preview_chain.rs` runs the live chain in the preview.
   `chain_signal.rs` holds the channel handling that processing and the preview share,
   `processing_chain.rs` the instances one processing worker renders with,
   and `scan_protocol.rs` the messages between a scan and its worker process.
@@ -172,8 +182,10 @@ Possible breaking changes are not a reason to pin a dependency with `=`.
   `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
   `app/preferences.rs` holds the Audio Settings window and the preview options,
   and `app/tags.rs` the tags of the selected file with its Serato cue points and Overview.
-  `app/enrichment.rs` owns post-load waveform and Serato filling with one active cancellable reader,
+  `app/enrichment.rs` owns post-load waveform, spectrogram, and Serato filling with one active cancellable reader.
+  `app/gain_loudness.rs` debounces selected-file gain predictions and shares decoder admission with enrichment,
   and `app/gain_writer.rs` serializes coalesced explicit gain edits without blocking the GUI.
+  `app/panel_widths.rs` owns persisted panel-width scales and fits them with `resolve_widths`.
   `app/cue_start.rs` retains a play or seek intent until matching cue metadata and source duration are ready.
   `app/artwork.rs` reads the album artwork of the selected file, which `artwork.rs` decodes into a bounded thumbnail.
   `plugins/` holds the live chain in `live_chain.rs`,
@@ -221,9 +233,11 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 - Goldens are our own regression snapshots, not immutable reference output.
   A validated numerical change may regenerate the affected snapshots.
   Keep differential, displayed-value, chunk-invariance, normalization, and parity checks as independent validation.
-  Windows x86-64 selects exact-bit overrides in `crates/core/tests/golden/windows-x86_64/`,
-  falling back to shared snapshots for outputs without an override.
-  `UPDATE_GOLDEN=1` on Windows writes only differing overrides and never rewrites the shared snapshots.
+  Windows x86-64 selects exact-bit overrides in `crates/core/tests/golden/windows-x86_64/`.
+  The two native AAC fixture cases on macOS select `crates/core/tests/golden/macos-native-aac/`.
+  Both fall back to shared snapshots for outputs without an override.
+  For these platform cases, `UPDATE_GOLDEN=1` writes only differing overrides,
+  removes redundant overrides, and never rewrites the shared snapshots.
   Generated input identities and fixture checksums remain shared across platforms.
 - K weighting uses a combined fourth order `f64` filter with fixed state for 64 channels,
   ebur128's default channel map, and dual-mono weighting for mono sources.
@@ -256,10 +270,14 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   A worker that waits on the UI thread passes its cancellation check, so it never blocks a UI thread waiting on it.
 - **Unsafe code.** The workspace denies `unsafe_code`,
   and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`, kept as narrow as possible.
-  Mostly this is in `vst3-host` and the test plugin, plus the Windows file drag in `gui/src/file_drag/windows.rs`.
+  Mostly this is in `vst3-host` and the test plugin,
+  plus the Windows file drag in `crates/gui/src/file_drag/windows.rs`
+  and the Core Audio AAC bridge in `crates/core/src/decode/native_aac.rs`.
   Every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
   Keep COM pointers inside `vst3-host`, so the crates above it stay safe.
-  Run `./miri.sh` after changing unsafe code, and keep the new tests runnable under Miri where possible.
+  Run `./miri.sh` after changing unsafe code in its covered modules,
+  and keep new tests runnable under Miri where possible.
+  The script does not exercise the native Core Audio AAC bridge, which needs native validation.
 - **The SDK version.** The `vst3` crate is pinned to `=0.3.0`, whose bindings are generated from VST SDK 3.8.0,
   the SDK that JUCE bundles in the C++ application.
   Keep both applications on the same SDK version, and upgrade them together.
@@ -296,14 +314,20 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 - The Rust CLI is `audiobatch-rs`, and the Rust app is `AudioBatchRs` with the bundle id `com.esgrove.audiobatch-rs`.
   The C++ versions are `audiobatch` and `AudioBatch` with `com.esgrove.audiobatch`.
 - Both applications share `AudioBatch/analysis.db`, with a common versioned `file_analysis` measurement contract.
-  On macOS the database is `~/Library/AudioBatch/analysis.db`, not in Application Support.
+  The database is `~/Library/AudioBatch/analysis.db` on macOS, not in Application Support,
+  and `%APPDATA%/AudioBatch/analysis.db` on Windows.
   Settings, logs, plugin data, and presets remain in their separate application directories.
+  `AUDIOBATCH_DATA_ROOT` selects an absolute root with shared `AudioBatch/analysis.db`
+  and Rust-private `AudioBatch-rs/`, including its `logs/` subdirectory.
+  Invalid explicit roots must never fall back to production storage.
+  In-process tests inject `StoragePaths` rather than changing process-wide environment variables.
 - Measurement provenance names the application that measured the audio, not the last writer of gain or preview data.
   Successful measurements are reusable in either direction, while decoder failures are producer-specific.
   Rust waveforms use `rust_waveform_cache`, leaving JUCE waveform columns untouched for compatible unchanged sources.
   Both applications share `spectrogram_cache` and its `SPEC` codec.
   Grids may differ by one intensity step in at most one cell per thousand, because the FFT libraries differ.
-  `tests/shared_cache.rs` measures that documented bound when `AUDIOBATCH_CPP_TESTS` names the C++ test executable.
+  `crates/core/tests/shared_cache.rs` measures that documented bound
+  when `AUDIOBATCH_CPP_TESTS` names the C++ test executable.
   Missing or corrupt waveforms, spectrograms, and Serato cache payloads are artifact misses, not measurement misses.
 - The GUI fills missing native waveforms, spectrograms, and Serato outcomes after initial loading.
   A bounded background queue does it, decoding once for every missing audio artifact.
@@ -324,10 +348,21 @@ After making code changes, always run:
 ```shell
 cargo clippy --fix --allow-dirty --all-targets
 cargo fmt
-cargo nextest run
+./test.sh --unit
+./test.sh --gui-integration
+./test.sh --optimized
+./test.sh --cli-integration
+./test.sh --tooling
 ```
 
-`cargo test` works too.
+`test.sh` defaults to `--unit`, excluding GUI integration workflows.
+The GUI and CLI integration tiers retain diagnostics under `target/integration-artifacts/`,
+and accept `--artifacts <directory>`.
+The optimized tier runs release core tests and adds the CLI normalization subset on Windows.
+The CLI tier builds the executable and runs the shared Python contracts through uv,
+and the tooling tier runs the parity and benchmark regression suites through uv.
+Raw `cargo nextest run` includes the GUI integration workflows but not either Python suite.
+`cargo test` also runs the Rust workspace tests.
 `./lint.sh` runs the same clippy command with `-D warnings`, also on the fuzz crate,
 and `./lint.sh --check` reports the warnings without applying fixes.
 CI runs `cargo clippy --all-targets -- -D warnings` and the tests on macOS and Windows,
@@ -344,8 +379,10 @@ Other commands:
 # Format the Rust code, the shell scripts, and the prose, add --check to only verify them
 ./format.sh
 
-# Run the tests with coverage and print the summary, add --open for the HTML report
+# Cover workspace tests and executable CLI contracts, add --open for the HTML report
 ./coverage.sh
+
+# Cover only Rust workspace tests, without the Python CLI contracts
 cargo llvm-cov nextest --workspace
 
 # Run the unsafe VST3 code, the Serato parsers, and the cache blob readers under Miri on nightly
@@ -391,6 +428,11 @@ cargo build --release -p audiobatch-gui --features snapshot
 AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/AudioBatchRs --autoplay ../fixtures
 ```
 
+`scripts/snapshot.sh` checks exact CLI output stability, not isolated integration behavior.
+It uses normal application storage unless `AUDIOBATCH_DATA_ROOT` is supplied,
+and moves replaced normalization copies to the system trash.
+It does not use `--delete`, so an isolated data root does not eliminate trash side effects.
+
 The CLI benchmark defaults to `--corpus auto`, combining `../fixtures/normalization` with `../fixtures/benchmark/output`
 when the generated audio is present.
 An explicit `--corpus <directory>` uses only that directory.
@@ -403,12 +445,14 @@ The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,
 and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` with action names such as `audiobatch::ToggleLoudnessGraph`
 that are dispatched before the image is taken.
 The GUI shares its palette, fonts, and icons with the C++ application,
-so both versions look alike, and `cpp/src/gui/` is worth comparing when changing the layout.
+so both versions look alike, and `../cpp/src/gui/` is worth comparing when changing the layout.
 
 Dependencies are compiled with optimizations even in debug builds, because decoding is too slow otherwise.
-`.cargo/config.toml` compiles for the native CPU, and CI clears it with an empty `RUSTFLAGS`.
+`.cargo/config.toml` compiles for the native CPU, and CI clears that tuning with an empty `RUSTFLAGS`.
+The production meter still requires AVX2 on x86 or NEON on Apple Silicon.
+Clearing native tuning does not provide an older-CPU compatibility mode.
 The shell scripts in `rust/` source `common.sh`, which names the CLI and GUI binaries and the macOS app bundle,
-and sources `../common.sh` for the platform detection and print helpers shared with `cpp/`.
+and sources `../common.sh` for the platform detection and print helpers shared with `../cpp/`.
 Keep its binary names in step with the `[[bin]]` names in the crate manifests.
 
 ## Code Organization
@@ -511,12 +555,12 @@ Mention the C++ application only when it matters for the implementation:
   They prove application composition and event delivery, not packaged-app or native OS behavior.
 - Drive GUI workflows through gpui-kit's `TestWindowExt`, `TestEventExt`, and `TestQueryExt`,
   with clicks, keys, drags, wheel events, and platform file-drop events on the real window.
-  Find shared controls by the ids in `src/control_ids.rs`,
+  Find shared controls by the ids in `crates/gui/src/control_ids.rs`,
   which match `../tests/gui_controls.json` and the C++ component ids.
   Use those constants in production code and tests, never repeated string literals,
   and keep the shared accessible labels there too.
   The GPUI test platform renders no real window, so these tests cannot be watched on screen.
-  The C++ tier's `./test.sh --visible` shows the same shared workflows step by step.
+  The C++ tier's `../cpp/test.sh --visible` shows the same shared workflows step by step.
   Register a custom element for queries with `.test_support()` under `cfg(test)`,
   and give shared controls the accessible label and role the manifest lists.
   Dispatch root actions directly only for menu bar commands, which have no element in the window.
@@ -537,6 +581,11 @@ Mention the C++ application only when it matters for the implementation:
   Keep private-state GUI workflows in their `cfg(test)` module instead of exposing application internals for tests.
 - Test the core and the CLI against the shared fixtures through `test-fixtures`.
   Tests that modify files work on copies in a temporary directory.
+  Real JUCE plugin tests skip locally without the bundle and fail when it is missing under `CI`.
+  Normalization golden corpus tests skip absent or unmaterialized Git LFS audio locally,
+  unless `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1` requires the complete corpus.
+  Cross-language shared-cache checks need `AUDIOBATCH_CPP_TESTS` to name the built C++ test executable,
+  and otherwise skip that coverage.
 - **NEVER use nested modules inside test modules.**
   All test modules are separate root-level `#[cfg(test)]` modules, never wrapped in a single parent `mod tests`.
 - Group related tests into modules of about three to five tests or more, named by area, such as `test_peaks`.

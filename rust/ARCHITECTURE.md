@@ -8,7 +8,8 @@ processes them through a chain of VST3 effects, and previews them through the li
 
 ## Crates
 
-Solid arrows are normal dependencies, and dotted arrows are dependencies of the tests only.
+Solid arrows are normal dependencies, dotted arrows are test-only dependencies,
+and arrows labelled "build" are build-script dependencies.
 
 ```mermaid
 flowchart LR
@@ -21,15 +22,18 @@ flowchart LR
     serato["serato: serato-tags"]
     testplugin["test-plugin"]
     fixtures["test-fixtures"]
+    buildinfo["build-info"]
 
-    cli --> core & plugins
+    cli --> core & plugins & vst3host
+    cli -->|build| buildinfo
+    gui -->|build| buildinfo
     gui --> core & playback & plugins & vst3host
     plugins --> core & vst3host
     testplugin --> vst3host
     playback --> core
     core --> serato
 
-    cli -.-> vst3host & testplugin & fixtures
+    cli -.-> testplugin & fixtures
     plugins -.-> testplugin & fixtures
     vst3host -.-> testplugin
     core -.-> fixtures
@@ -51,11 +55,14 @@ They have no plugin code either.
 The preview engine knows plugins only through the `PreviewInsert` trait,
 which the GUI implements with `ChainInsert`, a wrapper of the `PreviewChain` from `plugins`.
 The workspace lints deny unsafe code, and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`.
-These are mostly modules of `vst3-host` and `test-plugin`, plus the Windows file drag in `gui/src/file_drag/windows.rs`.
+These are mostly modules of `vst3-host` and `test-plugin`,
+plus the Windows file drag in `crates/gui/src/file_drag/windows.rs`
+and the Core Audio AAC bridge in `crates/core/src/decode/native_aac.rs`.
 
 Two checks look past the tests for memory errors and untrusted input.
 `miri.sh` runs the tests of `vst3-host`, `test-plugin`, `serato`, and the cache blob readers of `core` under Miri,
 which reports undefined behaviour in the COM pointer handling and the byte parsers.
+It does not exercise the native Core Audio AAC bridge.
 The `fuzz` directory is a separate workspace of cargo-fuzz targets,
 which feed libFuzzer input to the Serato tag parsers, the CLI argument parser, the cache blob readers, and the decoder.
 They reach these only through the public interfaces that the CLI and the cache already use.
@@ -93,14 +100,14 @@ The GUI registers its main thread in `start_plugin_jobs` before the main window 
 and tests start a dedicated `vst3-ui` thread with `UiThread::spawn_dedicated`.
 
 **`UiDispatcher` and `UiJobs`.**
-`ui_channel` in `vst3-host/src/thread.rs` connects the two.
+`ui_channel` in `crates/vst3-host/src/thread.rs` connects the two.
 `UiDispatcher::post` queues a job, and `UiDispatcher::call` waits for its result.
 While it waits, `call` polls the caller's cancellation check and abandons a job that has not started,
 so the UI thread can cancel a run and wait for its workers without a deadlock.
 The GUI runs the jobs from a foreground task, one by one as `UiJobs::recv` returns them.
 The CLI's `process --preset` subcommand registers its main thread as the UI thread
 and alternates `UiJobs::drain_pending` with `pump_platform_events`, while a scoped worker runs the workflow.
-It creates at most one chain per worker and file, and renders with the GUI's `ProcessingCoordinator`.
+It creates `min(files, workers)` reusable chains and renders with the GUI's `ProcessingCoordinator`.
 The UI queue is dropped only after the worker has finished, so plugin teardown always runs on the main thread.
 `UiBound` holds a value that any thread may own but only the UI thread may reach or drop,
 which is how a processing worker owns its plugin instances.
@@ -115,7 +122,7 @@ The exception is a file whose output was already committed, which is still repor
 Each job catches a panic, so a decoder or plugin that panics fails only its file.
 
 **Playback and other threads.**
-`Player::with_config` starts the `preview-decode` thread, which runs `run_decode_thread` in `playback/src/engine.rs`.
+`Player::with_config` starts the `preview-decode` thread, which runs `run_decode_thread` in `crates/playback/src/engine.rs`.
 `cpal` calls the output callback on a thread of the audio host, see [Preview](#preview).
 A `single-instance` thread listens for later launches of the GUI.
 
@@ -128,7 +135,7 @@ because copy-protected plugins post licensing work to the main run loop.
 One worker serves a whole scan, and it is started again after a crash or a timeout.
 
 **Logging.**
-`log_file::install` in `core/src/log_file.rs` installs a `tracing` subscriber that writes the log file,
+`log_file::install` in `crates/core/src/log_file.rs` installs a `tracing` subscriber that writes the log file,
 prints to stderr up to a chosen level, and forwards the records of crates that use the `log` facade.
 `analyze_file`, `normalize_file`, and `process_file` each enter a span with the file path,
 so a message from a worker thread names its file.
@@ -175,7 +182,7 @@ GPUI then owns native resource teardown, so application shutdown does not destro
 Auxiliary windows use GPUI's normal close path.
 Any framework teardown errors remain visible in the log.
 
-`AppView` in `gui/src/app/` is the root view of the main window.
+`AppView` in `crates/gui/src/app/` is the root view of the main window.
 `mod.rs` holds its state, and each other module adds one concern in an `impl AppView` block:
 `startup.rs` opens the cache, the coordinators, the player, and the plugin host,
 `analysis.rs`, `normalize.rs`, and `process.rs` the runs, `selection.rs` the selection, `gain.rs` the per-file gain,
@@ -183,6 +190,10 @@ Any framework teardown errors remain visible in the log.
 `preferences.rs` the settings, `tags.rs` the tags of the selected file, `artwork.rs` its album artwork,
 `cue_start.rs` the deferred play or seek intent that waits for matching cue metadata and source duration,
 and `render.rs` the layout.
+`enrichment.rs` admits post-load artifact work, and `gain_writer.rs` coalesces explicit gain persistence.
+`gain_loudness.rs` owns the debounced, cancellable selected-file prediction worker,
+sharing decoder admission with enrichment and rejecting stale source, selection, or gain results.
+`panel_widths.rs` owns responsive panel widths and their persisted scales.
 
 ```mermaid
 flowchart TB
@@ -226,8 +237,9 @@ Below the fixed heading and metric cards, the information panel shows a two-row,
 followed by genre, wrapped album, and wrapped comment tags in one scrollable region.
 Independent vertical dividers resize the controls and information widths within bounded, persisted preferences.
 Key presentation preserves the original tag spelling and appends its Camelot equivalent when recognized.
-`preview_widths` switches both to their wide layouts once half of the preview is wide enough for them to share,
-and leaves the other half to the waveform.
+`app/panel_widths.rs` selects compact or wide baseline widths and applies the persisted panel scales.
+Its `resolve_widths` fits both panels into the available space while reserving waveform room,
+without writing temporarily constrained widths back to preferences.
 The preview collapses into one row through the chevron, the Options menu, or the `TogglePreviewSection` shortcut.
 `render_compact_preview` then shows the chevron, Play and Process, the four metrics, and the waveform,
 and the `ResizableState` keeps the divider where it was for when the preview expands again.
@@ -236,7 +248,7 @@ after startup geometry settles, including deferred platform maximization.
 The initial split is committed once and is not refitted on later window resizing or artwork arrival.
 The divider state survives selection changes and collapse/expand.
 
-`WaveformView` in `gui/src/waveform.rs` shows the Waveform, Spectrogram, side-by-side, or stacked preview mode,
+`WaveformView` in `crates/gui/src/waveform.rs` shows the Waveform, Spectrogram, side-by-side, or stacked preview mode,
 chosen from its context menu, the Options menu, or Audio Settings through one preference setter.
 `waveform/geometry.rs` divides the bounds into panes and axis gutters and projects time in each pane,
 `waveform/render.rs` paints the panes, cues, and cursors through one canvas,
@@ -252,9 +264,9 @@ The information panel shows the embedded album artwork of the selected file besi
 unless the Show Album Artwork option is off.
 `app/artwork.rs` reads it on a background task, separate from the tag read,
 so a slow picture never delays the cue points or the Serato colours.
-`read_artwork` in `core/src/tags.rs` uses Lofty without audio properties,
+`read_artwork` in `crates/core/src/tags.rs` uses Lofty without audio properties,
 then retains one picture of up to 16 MiB, preferring the front cover and otherwise the first available picture.
-`gui/src/artwork.rs` checks its header before decoding,
+`crates/gui/src/artwork.rs` checks its header before decoding,
 skipping anything that is not a PNG or a JPEG of at most 4096 pixels on either side.
 The selected picture becomes a BGRA thumbnail of at most 96 pixels, drawn at 48.
 A result is shown only while its generation and file identity still match the selection.
@@ -293,9 +305,9 @@ It resolves the dragged files from the table when the drag leaves the window:
 the selection when the pressed row is selected, otherwise only that row,
 filtered by `drag_out_paths` in `audiobatch-core` to existing files without duplicates.
 On macOS gpui's `external_drag_payload` starts an `NSDraggingSession` that offers only the Copy operation.
-gpui-pre 0.3.10 returns false from `can_start_external_drag` on Windows,
+The Windows backend does not support starting an external file drag through gpui,
 so there a `cfg(windows)` `on_drag_move` listener on the results frame stops the gpui drag
-and runs an OLE `DoDragDrop` of a `CF_HDROP` list with `DROPEFFECT_COPY`, in `gui/src/file_drag/windows.rs`.
+and runs an OLE `DoDragDrop` of a `CF_HDROP` list with `DROPEFFECT_COPY`, in `crates/gui/src/file_drag/windows.rs`.
 Delete that listener and module once gpui implements `start_external_drag` on Windows.
 
 ## Analysis
@@ -333,7 +345,7 @@ sequenceDiagram
 ```
 
 **Decoding.**
-`AudioFileDecoder` in `core/src/decode.rs` probes the file with symphonia
+`AudioFileDecoder` in `crates/core/src/decode.rs` probes the file with symphonia
 and returns planar `f32` chunks of the default audio track from `next_chunk`.
 It trims encoder delay and padding the way the decoders of the C++ application do,
 so both applications align their decoded audio with the source timeline.
@@ -348,7 +360,9 @@ so sharing the decoder of the C++ application is the only way to match its outpu
 Its callbacks read a clone of the already open file handle, never a reopened path.
 All other streams and platforms use Symphonia.
 `DecodeFailureTracker` turns an isolated failed packet into silence and a notice,
-while three failures in a row stop the pass, so no pass works on truncated audio.
+while three counted failures in a row fail the pass.
+Early EOF is different, the decoder can measure the available audio successfully
+and attach a truncation notice when it ends well short of the stated length.
 
 **Measurements.**
 `BlockMeter` regroups the chunks into blocks of a tenth of a second, one per short-term loudness point.
@@ -391,6 +405,8 @@ The two native coefficient banks and their x86 underflow bounds initialize once 
 Meters share this immutable data, while each meter retains its own channel histories and peaks.
 Ordered comparisons ignore NaNs without relying on backend-specific SIMD maximum semantics.
 Hardware dispatch detects NEON on Apple Silicon or AVX2 on x86 once per process.
+This is a production meter CPU requirement, even when an empty `RUSTFLAGS` disables native-CPU tuning.
+The scalar fallback is a differential-test path, not an older-CPU compatibility mode.
 AVX-512 capable AMD CPUs also use the AVX2 backend, with no SSE compatibility paths.
 Tests compare the selected hardware backend and a forced scalar fallback with the reference.
 The safe SIMD kernel leaves the caller's floating point environment unchanged.
@@ -440,18 +456,26 @@ Each column averages independent channel powers, calibrated so a full-scale inte
 and keeps the maximum power of the FFT cells overlapping each of 512 equal HTK mel intervals up to source Nyquist.
 Quantization to bytes on a fixed -120 to 24 dB scale is monotone, so keeping byte maxima is exact.
 At 4096 columns, adjacent columns merge in place, doubling the stride without skipping source regions.
+Only mono and stereo sources receive this optional artifact.
 Unsupported channel counts, nonfinite samples, or a float FFT overflow disable only the artifact.
+Cached bands end at source Nyquist, while the GUI axis extends to at least 20 kHz,
+leaving the region above a lower Nyquist empty.
 `SpectrogramData` validates its canonical geometry and owns the little-endian `SPEC` codec,
 whose 72-byte header pins every profile field before the payload is allocated.
 The C++ application uses `juce::dsp::FFT`, so grids may differ by one intensity step in at most one cell per thousand.
-`tests/shared_cache.rs` measures that bound against the C++ test executable when `AUDIOBATCH_CPP_TESTS` is set.
+`crates/core/tests/shared_cache.rs` measures that bound against the C++ test executable when `AUDIOBATCH_CPP_TESTS` is set.
 For the selected file, the coordinator publishes a throttled, latest-only waveform snapshot,
 rejecting stale runs, selections, and source identities, and never persisting it.
 
 **The shared cache.**
-`AnalysisCache` in `core/src/cache.rs` reads and writes the same `file_analysis` table as the C++ application.
-The database is `~/Library/AudioBatch/analysis.db` on macOS and `%APPDATA%\\AudioBatch\\analysis.db` on Windows.
+`AnalysisCache` in `crates/core/src/cache.rs` reads and writes the same `file_analysis` table as the C++ application.
+The database is `~/Library/AudioBatch/analysis.db` on macOS and `%APPDATA%/AudioBatch/analysis.db` on Windows.
 Settings, logs, and plugin data keep their separate application paths.
+`StoragePaths` in `crates/core/src/storage.rs` captures them at startup.
+An absolute `AUDIOBATCH_DATA_ROOT` overrides them with shared `AudioBatch/analysis.db`
+and Rust-private `AudioBatch-rs/`, including its `logs/` subdirectory.
+An invalid explicit override never falls back to production storage.
+In-process tests inject `StoragePaths` instead of changing process-wide environment variables.
 Shared measurement contract version 16 accepts either producer's successful levels, required histories,
 and source statistics.
 The nullable source scalars are plain columns,
@@ -492,7 +516,7 @@ Gain or preview edits never change that origin.
 
 ## Normalization and processing
 
-Normalization in `core/src/normalize.rs` and processing in `plugins/src/processing.rs` both write `<name>.aif`.
+Normalization in `crates/core/src/normalize.rs` and processing in `crates/plugins/src/processing.rs` both write `<name>.aif`.
 They write it next to the source and commit it after validation.
 Normalization measures its quantized output while rendering, while processing analyzes the committed result.
 Both require a finished analysis and reanalyze a source that changed on disk.
@@ -501,6 +525,14 @@ Explicit custom gain and unity plugin processing do not need native measurement 
 Native remeasurement of an unchanged source preserves its custom gain and establishes native measurement provenance.
 Lossless sources normalize to identical samples in peak mode and within one PCM step in loudness mode,
 which `scripts/compare_outputs.py` checks independently of the level comparison.
+
+**Gain estimates.**
+Options > Show custom gain estimates and Audio Settings toggle parenthesized predictions beside source levels.
+Peak predictions add custom gain, while `crates/core/src/gain_loudness.rs` remeasures loudness
+after gain and hard clipping.
+The integrated estimate adds an empirical limiter model, rather than simply adding gain to source LUFS.
+These approximate results remain transient presentation state, never source statistics or cached measurements,
+and do not measure the live plugin chain or predict arbitrary downstream limiters.
 
 **The gain.**
 In peak mode, `normalization_gain` brings the sample peak to the target.
@@ -540,12 +572,13 @@ and reports samples beyond full scale, which saturate.
 Both test suites check processing against the expected outputs of the JUCE test plugin.
 
 **Committing.**
-`AiffWriter` in `core/src/aiff.rs` writes 16 or 24-bit PCM and patches the header sizes in `finish`.
+`AiffWriter` in `crates/core/src/aiff.rs` writes 16 or 24-bit PCM and patches the header sizes in `finish`.
 Normalization raises source depths below 16 bits to 16-bit output.
 It converts floats the way JUCE does, so both applications write the same sample values.
 Both operations render into a hidden temporary file from `create_temporary_output` in the destination folder,
 copy the tags and Serato data onto it with `copy_metadata`, and check it with `validate_written_audio`.
-`commit_temporary_output_expected` in `core/src/output_file.rs` validates the source identity captured before rendering,
+`commit_temporary_output_expected` in `crates/core/src/output_file.rs` validates the source identity captured
+before rendering,
 including its native file identifier, and syncs the rendered data before touching an approved destination.
 For a converted source, an existing approved output is hard-linked to an exclusively claimed hidden backup,
 then removed, and the rendered file is published with a hard link that cannot replace a concurrent occupant.
@@ -563,8 +596,10 @@ Cancellation is checked once more before the original is touched.
 `NormalizeCoordinator` and `ProcessingCoordinator` run one pool job per file.
 `find_batch_output_conflicts` fails all but one of the sources that would write the same output,
 and `update_cache` removes a converted source from the cache and stores the analysis of its output.
-A processing run gets one `ProcessingChain` per worker, created on the UI thread before the run starts,
-and each job leases a free one, so a chain is only ever used by one worker at a time.
+A processing run gets `min(files, workers)` reusable `ProcessingChain` instances,
+created on the UI thread before the run starts.
+Each job leases a free chain and restores the file's setup,
+so a chain is only ever used by one worker at a time.
 
 **`ProcessorHandle`.**
 `PluginInstance::processor` returns a handle that owns a buffer for every channel of every bus,
@@ -603,9 +638,9 @@ flowchart LR
     renderer --- shared
 ```
 
-`Player` in `playback/src/lib.rs` stays on the thread that created it, the UI thread in the GUI,
+`Player` in `crates/playback/src/lib.rs` stays on the thread that created it, the UI thread in the GUI,
 because the cpal stream is not `Send` on every platform.
-Windows uses CPAL's ASIO host, and other platforms use their default host.
+Windows uses CPAL's ASIO host, and macOS uses its default host.
 ASIO device metadata is cached on the player thread before streaming,
 because enumerating another driver while a stream is open can interrupt discovery.
 The ASIO driver owns the callback thread and its scheduling, which CPAL's `realtime` feature does not change.
@@ -625,7 +660,7 @@ so other applications can use the device.
 The insert it replaces goes back over the retire queue,
 and the UI thread drops it after `take_retired_inserts` on its next plugin tick.
 The callback swaps only while the retire queue has room, so it never drops an insert itself.
-`InsertRenderer` in `playback/src/output/insert.rs` applies the file's custom gain only in front of the insert.
+`InsertRenderer` in `crates/playback/src/output/insert.rs` applies the file's custom gain only in front of the insert.
 It resets the insert after a stop, seek, or insert change,
 and pre-rolls its latency in silence when latency compensation is on.
 Pausing preserves buffered input and plugin state, so resuming does not skip unheard frames or repeat the pre-roll.
@@ -683,10 +718,13 @@ and every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsaf
 VST3 COM pointers never leave `vst3-host`, so `plugins` and the front ends stay safe.
 The one unsafe module of the GUI, the Windows file drag,
 holds its own OLE objects and depends on nothing in `vst3-host`.
+The separate unsafe Core Audio bridge owns native AAC callbacks and handles,
+in `crates/core/src/decode/native_aac.rs`.
+It is not exercised by `miri.sh`.
 The `vst3` crate is pinned to `=0.3.0`, whose bindings come from VST SDK 3.8.0, the SDK that JUCE bundles.
 
 **Scanning.**
-`scan_plugins` in `plugins/src/scanner.rs` runs while its caller holds the cross-process `ScanLock`.
+`scan_plugins` in `crates/plugins/src/scanner.rs` runs while its caller holds the cross-process `ScanLock`.
 It skips unchanged and blacklisted bundles, and describes a bundle from its `moduleinfo.json` when it has one.
 Other bundles go to the worker as JSON lines on stdin,
 and replies come back on stdout behind a marker, because plugins print to stdout too.
@@ -708,5 +746,4 @@ The Rust version differs from it on purpose in these points:
 - The GUI is built on gpui-kit, and plugin editors open in native windows that `vst3-host` creates.
 - The CLI generates its shell completions with clap, which adds elvish.
 
-The root README lists the differences users see under
-[Differences between the versions](../README.md#differences-between-the-versions).
+The root [compatibility overview](../README.md#formats-and-compatibility) summarizes user-facing differences.

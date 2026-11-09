@@ -274,7 +274,7 @@ It includes fixture setup, SQLite, Criterion, and all benchmark functions' setup
 The earlier 1,137,197,056-byte maximum from timing `cargo bench` included compilation,
 and must not be reported as cache or application process memory.
 
-### Reproduction
+### Shared-Cache Reproduction
 
 Run from `rust/` and use the executable path printed by the build, its hash can change.
 Build the C++ test helper separately before the interoperability command.
@@ -294,7 +294,89 @@ AUDIOBATCH_CPP_TESTS="$PWD/../cpp/cmake-build-mac-debug/AudioBatchTests_artefact
   "$bench" --bench cache/shared --sample-size 10 --measurement-time 0.5 --warm-up-time 0.5 --noplot
 ```
 
+## Reproducing the Measurements
+
+Keep the source revision, lockfiles, compiler versions, CPU targeting, corpus, and worker counts with each result.
+Use Release builds, avoid concurrent builds or validation, and distinguish warm filesystem caches from cold storage.
+The commands below run the current tools, they do not reproduce historical numbers on changed code or hardware.
+
+### CLI Comparison
+
+Install hyperfine and uv, and use the platform build prerequisites in the project READMEs.
+Initialize the JUCE submodule and build the C++ CLI separately from `cpp/`:
+
+```shell
+cmake --preset macos-release
+cmake --build --preset macos-release --target AudioBatchCli
+```
+
+On Windows, use `windows-release` instead of `macos-release` and run shell scripts from Git Bash with `cygpath`.
+Download the normalization collection with Git LFS before measuring it.
+Optionally generate the larger corpus from the repository root with `uv run fixtures/benchmark/generate.py`,
+which requires ffmpeg and uv.
+Then run from `rust/`:
+
+```shell
+./scripts/cli_benchmark.sh --corpus ../fixtures/normalization --jobs 14 --runs 3 --warmup 1
+```
+
+Use the measured machine's worker count, such as 32 for the historical Windows comparison.
+The default `--corpus auto` also includes generated benchmark audio when present.
+The runner builds the Rust Release CLI unless `--no-build` is supplied.
+`AUDIOBATCH_CPP_CLI` selects a different C++ executable,
+and an unrecognized custom build path also requires `AUDIOBATCH_CPP_BUILD_TYPE=Release`.
+Fresh temporary input copies and correctness checks are outside timing.
+Raw hyperfine JSON, combined statistics, Markdown, CLI logs,
+and machine/build metadata remain in a unique `rust/target/cli-benchmark/` run directory.
+HOME, CFFIXED_USER_HOME, and XDG configuration directories are isolated only on a best-effort basis.
+Native platform APIs may still use real user storage, which the runner never removes.
+Do not treat these environment overrides as guaranteed application-storage isolation.
+
+### In-Memory VST3 Comparison
+
+With CMake, Cargo, uv, the C++ toolchain, and the JUCE submodule available, run from `rust/`:
+
+```shell
+./scripts/vst3_benchmark.sh --iterations 30 --repeat 100
+```
+
+This builds the Release C++ test executable and Rust example and uses the same real test-plugin bundle in both hosts.
+`--iterations` selects measured renders, and `--repeat` repeats each one-second fixture in memory.
+Specify both options explicitly to match the historical workload rather than relying on script defaults.
+Use `--no-build` only with existing Release executables and bundle.
+`--cpp` and `--bundle` override their paths.
+The runner retains reports, comparisons, and planar sample exports in `rust/target/vst3-benchmark/`.
+It checks independent float arithmetic and final 16-bit PCM outside timing, failing on missing bundles or differences.
+
+### Criterion And Profiling
+
+Generate file inputs first as above, otherwise the file cases skip missing audio.
+In-memory cases still run.
+From `rust/`, run the component suites or save and compare a named baseline:
+
+```shell
+cargo bench -p audiobatch-core
+cargo bench -p audiobatch-core --bench analysis -- --save-baseline before
+cargo bench -p audiobatch-core --bench analysis -- --baseline before
+```
+
+The `analysis`, `decode`, `normalize`, `waveform`, `spectrogram`, and `misc`
+targets retain Criterion results under `rust/target/criterion/`.
+Use the shared-cache procedure above for its optional C++ helper and process-only memory measurement.
+Install samply with `cargo install --locked samply`, then capture from `rust/`:
+
+```shell
+cargo build --profile profiling --bin audiobatch-rs
+samply record --save-only -o target/profile.json.gz -- ./target/profiling/audiobatch-rs --refresh --jobs 1 ../fixtures/benchmark/output/music_stereo_44100_16.wav
+```
+
+The compressed profile is `rust/target/profile.json.gz`.
+For C++, point samply at the already-built Release CLI instead.
+Sampling is separate from benchmark timing and requires the platform's profiling permissions.
+
 ## Accuracy And Validation
+
+The following contracts describe the accuracy checks, not a fresh validation run for every source revision.
 
 - Integrated loudness, maximum short-term loudness, and every history value stay within 0.001 LU of ebur128.
   Integrated and maximum short-term values also match at two displayed decimal places.
@@ -304,16 +386,23 @@ AUDIOBATCH_CPP_TESTS="$PWD/../cpp/cmake-build-mac-debug/AudioBatchTests_artefact
 - Lossless C++/Rust normalization parity is sample-exact in peak mode and allows at most one PCM step in loudness mode.
   Lossy formats use their existing decoder tolerance.
 
-On Windows, MSVC and clang-cl each pass all 30 C++ suites in Debug, Release, and AddressSanitizer builds.
-Rust passes all 920 workspace tests in both Debug and Release, with three existing skips per run.
-Full clang-tidy, Clippy, and formatting checks pass.
+The historical Windows validation reported all 30 C++ suites passing with MSVC
+and clang-cl in Debug, Release, and AddressSanitizer builds.
+It reported all 920 Rust workspace tests passing in Debug and Release, with three existing skips per run,
+and passing clang-tidy, Clippy, and formatting checks.
+These counts describe that validation, not the current suite inventory or a result inferred from source inspection.
 
 ### Windows And macOS Numerical Differences
 
-The Windows x86-64 and macOS arm64 measurements use Rust 1.99.1 and identical source fixtures.
-All 88 generated input identities and 34 committed fixture checksums match.
-Native floating-point coefficients and eight lossy fixture decodes differ in their last bits.
-Within each platform, Debug and Release numerical stages agree exactly.
+The historical Windows x86-64 and macOS arm64 comparison used Rust 1.99.1 and identical source fixtures.
+It reported matching identities for all 88 generated inputs and the then-tested 34 committed fixture checksums.
+Native floating-point coefficients and eight lossy fixture decodes differed in their last bits.
+Within each platform, Debug and Release numerical stages agreed exactly.
+These are historical observations, not validation of the current checkout.
+The current inventory is defined by `fixtures/checksums.sha256`, including real metadata samples.
+Rust now selects `macos-native-aac` goldens on macOS for `fixtures/sine_stereo_44100_aac.m4a`
+and `normalization/m4a_stereo_44100_aac_256k_tagged_20s.m4a`.
+That decoder-specific snapshot selection means the older lossy-decode comparison cannot establish current AAC equality.
 
 The largest measured absolute differences across the 34 Windows snapshot overrides are:
 

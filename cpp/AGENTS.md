@@ -86,7 +86,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   which shares its field cursor with the parsers in `SeratoTagFields.h`,
   the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
   the tag results kept in the analysis cache database (`SeratoTagCache.*`),
-  and the background preview loading in `SeratoPreviewLoader.*`.
+  and the preview parsing and cache helpers in `SeratoPreviewLoader.*`, reused by the GUI enrichment scheduler.
 - `src/metadata/` holds `AudioMetadata.*`, which reads and writes tags and embedded art through TagLib.
   It rewrites Serato values as ID3 frames and drops the overview from processed copies, so it depends on `serato/`.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
@@ -143,9 +143,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Its first Ctrl-C sets a lock-free cancellation flag. A second exits immediately with status 130.
       Analysis drains its workers, while normalization requests a stop and retains committed output results.
     - `AudioAnalysisCli.{h,cpp}` declare the CLI commands and the `cli` functions that run the analysis workflow.
-      `AudioAnalysisCliParse.cpp` parses and validates the arguments into an `AnalyzeCommand`,
-      or the `ListPluginsCommand` or `CompletionCommand` of the `list` and `completion` subcommands,
-      which are only recognised as the first argument.
+      `AudioAnalysisCliParse.cpp` parses and validates the arguments into the `CliCommand` variant:
+      `AnalyzeCommand`, `ProcessCommand`, `ListPluginsCommand`, `CompletionCommand`, or `HelpCommand`.
+      Subcommands are only recognised as the first argument.
       It also builds the usage texts,
       and `AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
     - `CliOptions.h` holds the options, the subcommands, and the names each enum option accepts as constant tables.
@@ -214,6 +214,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   the preview audio output device, and the overall progress line along its top edge.
   `PreviewWorkspace.*` holds the waveform, the metrics, and the controls below the results table,
   and lays them out as an expanded section, a wide section, or a compact row.
+  `AudioInfoPanel` owns a separate cancellable worker for gain-adjusted loudness previews.
+  These transient hard-clip measurements and empirical limiter estimates are not cached or actual plugin renders.
+  This worker is distinct from the scheduler's optional waveform and spectrogram worker.
 
 The domains include each other in one direction only.
 `analysis/` uses only `utils/`, `serato/` adds `analysis/`, `metadata/` adds `serato/`,
@@ -453,13 +456,17 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 
 ## Build And Verification
 
-- Do not use `build.sh`, it is only for making final release builds.
-- When modifying code, use the CMake debug presets for validation
+- `./build.sh` defaults to Release, supports `--debug` and `--build-type`, and packages the built applications.
+  `./build.sh --test --debug` also invokes the test runner.
+  Prefer `./test.sh` for Debug validation without packaging, or the CMake debug presets
   so terminal builds reuse the same build directory as the editor or IDE.
+- Install uv before configuring with `BUILD_TESTING=ON`, including unit-only and sanitizer builds.
+  CMake requires it for the registered shared CLI integration suite even when that tier will not run.
 - On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
 - To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer, run `./sanitize.sh`.
-  It configures and builds the `macos-asan` preset in `cmake-build-mac-asan`, then runs ctest.
+  It configures the `macos-asan` preset in `cmake-build-mac-asan`, builds `AudioBatchTests`, and runs `ctest -L unit`.
+  Sanitizer scripts run only unit suites, not the CLI or driven GUI integration tier.
   `./sanitize.sh --thread` does the same under ThreadSanitizer with the `macos-tsan` preset in `cmake-build-mac-tsan`.
   On Windows, `./sanitize.sh` uses the MSVC AddressSanitizer with the `windows-asan` preset in `cmake-build-windows-asan`.
   `./sanitize.sh --clang` uses LLVM AddressSanitizer with the `windows-clang-asan` preset.
@@ -468,7 +475,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - To measure code coverage on macOS, run `./coverage.sh`.
   It configures and builds the `macos-coverage` preset in `cmake-build-mac-coverage`,
   which sets the `AUDIOBATCH_COVERAGE` CMake option for Clang source based coverage,
-  runs ctest, and prints a per-file summary of `src/` with `llvm-cov`.
+  builds the unit, GUI integration, and CLI targets, runs all CTest tiers,
+  and merges their profiles for a per-file summary of `src/` with `llvm-cov`.
   `--lcov` also writes an LCOV report, and `--open` writes and opens the HTML report.
   The reports are in `cmake-build-mac-coverage/coverage`.
 - Every build enables standard library hardening,
@@ -518,20 +526,32 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   Use named constants for shared control ids and titles, never repeated string literals.
   Write each shared workflow with the same name and steps as its Rust counterpart,
   and document a remaining difference between the applications beside both tests.
-- Build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
+- `./test.sh` configures, builds, and runs both tiers in Debug without packaging the applications.
+  `./test.sh --unit` selects unit suites, and `./test.sh --integration` selects CLI and driven GUI integration tests.
+  On a fresh workspace, first run `./test.sh --build-only`, then `./test.sh --integration --no-build`.
+  The CLI integration suite needs the test plugin, but only `AudioBatchTests` declares its CMake dependency,
+  so an integration-only build does not ensure that the plugin exists.
+  Use `./test.sh --unit --no-build` to run the already built unit tier.
+  `--build-type Release` selects Release, and `--build-dir <directory>` selects another workspace.
+  `--no-build` never configures or builds, and cannot be combined with `--build-only`.
+- Alternatively, build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
   or `ctest --test-dir cmake-build-windows-debug --build-config Debug --output-on-failure` on Windows.
   Run the `AudioBatchTests` executable directly for the full test log.
   CTest's `-R` filters suite names, and the executable accepts GoogleTest's `--gtest_filter`.
-  Build `AudioBatchIntegrationTests` and `AudioBatchCli` to run the separate integration tier with `ctest -L integration`.
-  Use `ctest -LE integration` for only the original suites.
+  Build all test targets first, including the unit target's plugin dependency, then use `ctest -L integration`.
+  Use `ctest -L unit` for only the unit suites.
   The CLI contracts require uv and the shared `../tests/cli_integration.py` suite.
   Only test targets define `AUDIOBATCH_TESTING`, the equivalent of Rust's `cfg(test)` for test-only setup and access.
   Their normal main-view constructor defaults to owned unique scratch storage, source deletion, and no audio hardware.
   Production targets retain native defaults, and the CLI suite supplies its storage override automatically.
 - Add tests for new behaviour in the shared core and the CLI parsing.
   Prefer the committed fixtures over generating audio in a test.
-- A successful conversion of a non-AIFF source moves the source to the system trash.
-  Tests that convert one set `disposeFile` to a function that deletes the file instead,
+  Use shared, independently computed expectations and cross-implementation checks where possible.
+  Do not treat either implementation's output as an oracle or widen tolerances to hide divergence.
+- Successful normalization and plugin processing dispose of replaced originals through `disposeFile`.
+  The GUI defaults to trash, while the CLI also offers `--delete` for both operations.
+  In-place `.aif` replacement disposes of a backup copy, not the live source before publication.
+  Tests set `disposeFile` to a function that deletes the file instead,
   as `testNormalizationOptions` does for normalization and `makeOptions` for plugin processing,
   and `utils::commitTemporaryOutput` takes the same kind of function.
 - `tests/.clang-tidy` disables `readability-magic-numbers`, since tests compare against literal expected values.
@@ -560,14 +580,23 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 
 - After any C++ code change, run `./lint.sh` to check the project with `clang-tidy`.
   Fix any issues it reports before finishing.
-  The script uses the active CMake debug build's `compile_commands.json`,
-  and configures and builds the debug preset itself when no build directory has one.
+  Select a compilation database with `--build-dir`, `--clang` on Windows, or `--build-type`.
+  Otherwise the script tries known Debug databases before Release, preferring Windows clang-cl over MSVC Ninja.
+  If none exists, it creates the platform's default Ninja Debug workspace.
+  A missing, CMake-stale, or incomplete database triggers configuration and a build of the selected workspace.
+  Explicit directories keep their cached toolchain and build type unless `--build-type` is supplied.
+  `./lint.sh --prepare --build-type Debug --check` refreshes a single-configuration Ninja workspace
+  and generates required headers without compiling the applications.
+  Test-enabled configuration requires uv.
+  Visual Studio and Xcode do not export compilation databases, so select a separate Ninja workspace.
 - Linting the whole project takes a while, so `./lint.sh --changed` lints only the sources changed since the last commit,
   including untracked ones, and `./lint.sh --staged` only the staged ones.
   A changed header also lints the source file of the same name next to it.
 - `./lint.sh --check` exits with code 1 when clang-tidy reports any warning.
 - `./lint.sh --fuzz` lints the fuzz harnesses in `tests/fuzz/`,
-  which only the `macos-fuzz` preset builds, so configure it first with `cmake --preset macos-fuzz`.
+  using the `macos-fuzz` workspace.
+  It configures and builds that workspace automatically when its database is missing, stale, or incomplete.
+  `--fuzz --prepare` also builds the harnesses, rather than only generating headers.
   CI runs it on macOS with the latest Homebrew LLVM, so the build must stay free of clang-tidy warnings.
 - If `clang-tidy` reports a check that is genuinely a poor fit for the project,
   disable it explicitly in `.clang-tidy` and add a short comment explaining why.

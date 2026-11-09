@@ -33,8 +33,9 @@ A host that compensates the latency renders the delayed tail and drops the delay
 so it writes the same samples as the plugin without latency.
 The latency case of the tests checks exactly that, and also that the plugin reports the latency.
 
-Each operation is a separate float multiply or add in the order `plugin_expected.py` repeats them,
-and the build turns off fused multiply-adds, so the expected outputs match to the last bit.
+Each operation is a float multiply or add in the order `plugin_expected.py` repeats them.
+The plugin target explicitly disables contraction with `-ffp-contract=off` for non-MSVC builds only.
+That setting does not establish an MSVC guarantee, so exact output still needs verification with each compiler.
 The plugin's state is the XML of its parameter tree.
 
 ## Building
@@ -54,14 +55,22 @@ and prints its path, which `--print` prints without building.
 Use `./build.sh --debug` or `./build.sh -d` for a Debug bundle in `cmake-build-debug/`,
 leaving the default Release bundle untouched.
 `./build.sh --debug --print` prints the Debug bundle path without building.
-The Rust `test-fixtures` crate finds the bundle there,
-or wherever the `AUDIOBATCH_TEST_VST3` variable points.
+The Rust `test-fixtures` crate automatically finds only the default Release bundle.
+To use Debug or another location, set `AUDIOBATCH_TEST_VST3` to the full bundle path,
+for example `export AUDIOBATCH_TEST_VST3="$(./build.sh --debug --print)"` from this directory.
 Without the bundle the Rust plugin tests skip, except in CI, where they fail.
 
-The plugin's source compiles with strict warnings as errors, and `../cpp/lint.sh` checks it with clang-tidy.
-`../cpp/format.sh` formats it using `../cpp/.clang-format`, and the root `../format.sh` runs that same formatter.
-On Windows the explicit style-file path is converted to native form for clang-format.
-CMake formatting also uses the C++ configuration explicitly, without relying on the plugin's configuration symlink.
+Use the C++ project's [lint and format commands](../cpp/AGENTS.md#formatting) for this plugin.
+
+### Optional VST3 Validation
+
+In a standalone CMake build, configure with `-DAUDIOBATCH_PLUGINVAL=ON`,
+then explicitly build `AudioBatchTestPlugin_pluginval` with the selected build directory and configuration.
+The target is absent when this plugin is added as a subdirectory of the C++ application.
+The shared helper in `../cpp/cmake/Pluginval.cmake` fetches and builds pinned pluginval in the repository's `.deps/`
+and validates the built VST3 at strictness level 5.
+It requires Git, a working build toolchain, and network access for missing dependencies.
+It is opt-in, not part of the normal plugin build or host tests.
 
 ## Changing the Processing
 
@@ -70,5 +79,8 @@ When the processing changes, keep the expected outputs in step:
 1. Update `../fixtures/plugin_expected.py` to repeat the new arithmetic.
 2. Regenerate the expected files with `uv run fixtures/plugin_expected.py` from the repository root.
 3. Update the expectation lists in `../cpp/tests/PluginPresetTests.cpp` and in the Rust `test-fixtures` crate.
+4. Review the changed plugin-output entries in `../fixtures/checksums.sha256`,
+   then use the scoped capture and verification procedure in [Test fixtures](../fixtures/README.md#regeneration-provenance).
+   Review any affected metric expectations and regression goldens independently.
 
 The format workflow in CI fails when `../fixtures/plugin_expected/` differs from what the script writes.
