@@ -29,7 +29,6 @@
 #include "utils/StringFormat.h"
 #include <stop_token>
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +47,55 @@ namespace
 {
 /// Polls only GUI-owned status state, independently of animation and audio callbacks.
 constexpr int STATUS_REFRESH_RATE_HZ {5};
+
+/// Text columns that share the remaining width after compact columns are accounted for.
+constexpr std::array FLEXIBLE_COLUMNS {
+    AudioFileTableColumn::name,
+    AudioFileTableColumn::folder,
+    AudioFileTableColumn::path,
+};
+
+/// Assigns surplus proportionally, redistributing capped shares and rounding cumulative shares to whole pixels.
+void distributeFlexibleColumnSurplus(
+    std::array<int, FLEXIBLE_COLUMNS.size()>& widths,
+    std::array<int, FLEXIBLE_COLUMNS.size()> capacities,
+    const std::array<int, FLEXIBLE_COLUMNS.size()>& weights,
+    int remaining
+)
+{
+    while (remaining > 0) {
+        int totalWeight = 0;
+        int activeCount = 0;
+        for (std::size_t index = 0; index < FLEXIBLE_COLUMNS.size(); ++index) {
+            if (capacities[index] > 0) {
+                totalWeight += weights[index];
+                ++activeCount;
+            }
+        }
+        if (activeCount == 0) {
+            break;
+        }
+        const bool equalShares = totalWeight == 0;
+        const int denominator = equalShares ? activeCount : totalWeight;
+        int cumulativeWeight = 0;
+        int previousShare = 0;
+        int assigned = 0;
+        for (std::size_t index = 0; index < FLEXIBLE_COLUMNS.size(); ++index) {
+            if (capacities[index] == 0) {
+                continue;
+            }
+            cumulativeWeight += equalShares ? 1 : weights[index];
+            const int cumulativeShare
+                = juce::roundToInt(static_cast<double>(remaining) * cumulativeWeight / denominator);
+            const int addition = juce::jmin(capacities[index], cumulativeShare - previousShare);
+            previousShare = cumulativeShare;
+            widths[index] += addition;
+            capacities[index] -= addition;
+            assigned += addition;
+        }
+        remaining -= assigned;
+    }
+}
 }  // namespace
 
 /// Chooses production defaults normally, or unique lifetime-owned storage and safe capabilities in test targets.
@@ -362,37 +410,33 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     }
 
     const auto availableFlexibleWidth = resultsTable.getVisibleContentWidth() - fixedColumnWidth;
-    constexpr std::array flexibleColumns {
-        AudioFileTableColumn::name,
-        AudioFileTableColumn::folder,
-        AudioFileTableColumn::path,
-    };
-    int currentWidth = 0;
+    std::array<int, FLEXIBLE_COLUMNS.size()> widths {};
+    std::array<int, FLEXIBLE_COLUMNS.size()> capacities {};
+    std::array<int, FLEXIBLE_COLUMNS.size()> weights {};
     int minimumWidth = 0;
-    for (const auto column : flexibleColumns) {
+    for (std::size_t index = 0; index < FLEXIBLE_COLUMNS.size(); ++index) {
+        const auto column = FLEXIBLE_COLUMNS[index];
         const auto columnId = std::to_underlying(column);
         if (header.isColumnVisible(columnId)) {
             const auto minimum = column == AudioFileTableColumn::name ? layout::table::nameColumnMinimumWidth
                                                                       : layout::table::pathColumnMinimumWidth;
-            currentWidth += juce::jmax(0, header.getColumnWidth(columnId) - minimum);
+            const auto maximum = column == AudioFileTableColumn::name ? layout::table::nameMaximumWidth
+                                                                      : layout::table::pathMaximumWidth;
+            widths[index] = minimum;
+            capacities[index] = maximum - minimum;
+            weights[index] = juce::jmax(0, header.getColumnWidth(columnId) - minimum);
             minimumWidth += minimum;
         }
     }
-    const auto surplus = juce::jmax(0, availableFlexibleWidth - minimumWidth);
-    const auto visibleCount = static_cast<int>(std::ranges::count_if(flexibleColumns, [&header](const auto column) {
-        return header.isColumnVisible(std::to_underlying(column));
-    }));
-    for (const auto column : flexibleColumns) {
-        const auto columnId = std::to_underlying(column);
-        if (!header.isColumnVisible(columnId)) {
-            continue;
+
+    // Redistribute shares clipped by a column's maximum instead of leaving unused table width.
+    // Cumulative rounding assigns every available pixel without accumulating per-column rounding errors.
+    distributeFlexibleColumnSurplus(widths, capacities, weights, juce::jmax(0, availableFlexibleWidth - minimumWidth));
+    for (std::size_t index = 0; index < FLEXIBLE_COLUMNS.size(); ++index) {
+        const auto columnId = std::to_underlying(FLEXIBLE_COLUMNS[index]);
+        if (header.isColumnVisible(columnId)) {
+            header.setColumnWidth(columnId, widths[index]);
         }
-        const auto minimum = column == AudioFileTableColumn::name ? layout::table::nameColumnMinimumWidth
-                                                                  : layout::table::pathColumnMinimumWidth;
-        const auto proportion = currentWidth > 0
-            ? static_cast<double>(juce::jmax(0, header.getColumnWidth(columnId) - minimum)) / currentWidth
-            : 1.0 / juce::jmax(1, visibleCount);
-        header.setColumnWidth(columnId, minimum + juce::roundToInt(surplus * proportion));
     }
 }
 
