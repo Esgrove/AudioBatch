@@ -15,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -101,7 +102,7 @@ public:
         juce::AudioProcessorValueTreeState& parameters,
         juce::ValueTree& editorState,
         std::size_t band,
-        ParameterHistory* history = nullptr
+        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
     );
 
     ~BandStrip() override;
@@ -168,7 +169,7 @@ private:
     juce::RangedAudioParameter& sideParameter;
 
     /// Optional processor-owned local history, which outlives this strip.
-    ParameterHistory* history;
+    std::optional<std::reference_wrapper<ParameterHistory>> history;
     /// Stable Side identity for capture before a linked write.
     juce::String sideId;
     /// Host-state generation when the Mid gesture started.

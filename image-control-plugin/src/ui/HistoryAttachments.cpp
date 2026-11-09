@@ -6,6 +6,8 @@
 #include "ParameterHistory.h"
 #include "ui/ControlSlider.h"
 
+#include <functional>
+#include <optional>
 #include <utility>
 
 namespace esgrove::image_control
@@ -57,7 +59,7 @@ HistorySliderAttachment::HistorySliderAttachment(
     juce::AudioProcessorValueTreeState& parameters,
     const juce::String& parameterId,
     ControlSlider& control,
-    ParameterHistory* localHistory
+    std::optional<std::reference_wrapper<ParameterHistory>> localHistory
 ) :
     parameter(*parameters.getParameter(parameterId)),
     slider(control),
@@ -94,9 +96,9 @@ void HistorySliderAttachment::sliderDragStarted(juce::Slider* /*changed*/)
         return;
     }
     gestureActive = true;
-    if (history != nullptr) {
-        gestureGeneration = history->generation();
-        history->beginEdit(parameter.getName(128));
+    if (history.has_value()) {
+        gestureGeneration = history->get().generation();
+        history->get().beginEdit(parameter.getName(128));
     }
     attachment.beginGesture();
 }
@@ -109,8 +111,8 @@ void HistorySliderAttachment::sliderDragEnded(juce::Slider* /*changed*/)
     }
     gestureActive = false;
     attachment.endGesture();
-    if (history != nullptr && gestureGeneration == history->generation()) {
-        history->endEdit();
+    if (history.has_value() && gestureGeneration == history->get().generation()) {
+        history->get().endEdit();
     }
 }
 
@@ -120,24 +122,24 @@ void HistorySliderAttachment::sliderValueChanged(juce::Slider* /*changed*/)
     if (ignoreCallbacks) {
         return;
     }
-    if (gestureActive && history != nullptr && gestureGeneration != history->generation()) {
+    if (gestureActive && history.has_value() && gestureGeneration != history->get().generation()) {
         setControlValue(parameter.convertFrom0to1(parameter.getValue()));
         return;
     }
     const bool complete = !gestureActive;
-    const auto generation = history != nullptr ? history->generation() : 0;
-    if (history != nullptr) {
+    const auto generation = history.has_value() ? history->get().generation() : 0;
+    if (history.has_value()) {
         if (complete) {
-            history->beginEdit(parameter.getName(128));
+            history->get().beginEdit(parameter.getName(128));
         }
-        history->touch(id);
+        history->get().touch(id);
     }
     const auto value = static_cast<float>(slider.getValue());
     if (complete) {
         attachment.beginGesture();
     }
     // A synchronous host listener may restore state from beginChangeGesture.
-    if (history == nullptr || generation == history->generation()) {
+    if (!history.has_value() || generation == history->get().generation()) {
         attachment.setValueAsPartOfGesture(value);
     } else {
         setControlValue(parameter.convertFrom0to1(parameter.getValue()));
@@ -145,8 +147,8 @@ void HistorySliderAttachment::sliderValueChanged(juce::Slider* /*changed*/)
     if (complete) {
         attachment.endGesture();
     }
-    if (complete && history != nullptr && generation == history->generation()) {
-        history->endEdit();
+    if (complete && history.has_value() && generation == history->get().generation()) {
+        history->get().endEdit();
     }
 }
 
@@ -155,7 +157,7 @@ HistoryButtonAttachment::HistoryButtonAttachment(
     juce::AudioProcessorValueTreeState& parameters,
     const juce::String& parameterId,
     juce::Button& control,
-    ParameterHistory* localHistory
+    std::optional<std::reference_wrapper<ParameterHistory>> localHistory
 ) :
     button(control),
     parameter(*parameters.getParameter(parameterId)),
@@ -186,21 +188,21 @@ void HistoryButtonAttachment::buttonClicked(juce::Button* /*changed*/)
     if (ignoreCallbacks) {
         return;
     }
-    const auto generation = history != nullptr ? history->generation() : 0;
-    if (history != nullptr) {
-        history->beginEdit(parameter.getName(128));
-        history->touch(id);
+    const auto generation = history.has_value() ? history->get().generation() : 0;
+    if (history.has_value()) {
+        history->get().beginEdit(parameter.getName(128));
+        history->get().touch(id);
     }
     const float value = button.getToggleState() ? 1.0F : 0.0F;
     attachment.beginGesture();
-    if (history == nullptr || generation == history->generation()) {
+    if (!history.has_value() || generation == history->get().generation()) {
         attachment.setValueAsPartOfGesture(value);
     } else {
         setControlValue(parameter.convertFrom0to1(parameter.getValue()));
     }
     attachment.endGesture();
-    if (history != nullptr && generation == history->generation()) {
-        history->endEdit();
+    if (history.has_value() && generation == history->get().generation()) {
+        history->get().endEdit();
     }
 }
 }  // namespace esgrove::image_control

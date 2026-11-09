@@ -20,6 +20,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -87,7 +88,7 @@ public:
     SpatialSpectrogramView(
         juce::AudioProcessorValueTreeState& parameters,
         juce::ValueTree editorState,
-        ParameterHistory* history = nullptr
+        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
     );
 
     ~SpatialSpectrogramView() override;
@@ -170,7 +171,7 @@ private:
     juce::ValueTree editorSettings;
 
     /// Optional processor-owned local history, which outlives this view.
-    ParameterHistory* history;
+    std::optional<std::reference_wrapper<ParameterHistory>> history;
     /// Generation of the host state when the explicit local gesture started.
     std::uint64_t historyGeneration {0};
     /// Whether this view owns a local history frame, independent of its parameter host gestures.

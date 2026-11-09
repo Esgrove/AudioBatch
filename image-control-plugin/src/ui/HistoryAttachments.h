@@ -9,6 +9,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 
 namespace esgrove::image_control
 {
@@ -23,7 +25,7 @@ public:
         juce::AudioProcessorValueTreeState& parameters,
         const juce::String& parameterId,
         ControlSlider& control,
-        ParameterHistory* history = nullptr
+        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
     );
 
     ~HistorySliderAttachment() override;
@@ -46,8 +48,8 @@ private:
     ControlSlider& slider;
     /// Stable parameter identity used for explicit pre-write capture.
     juce::String id;
-    /// Optional processor-owned history, null when local history is not requested.
-    ParameterHistory* history;
+    /// Optional reference to processor-owned history, which outlives this attachment.
+    std::optional<std::reference_wrapper<ParameterHistory>> history;
     /// JUCE handles only parameter delivery and balanced host notification, with no UndoManager.
     juce::ParameterAttachment attachment;
     /// Host-state generation when the current local gesture started.
@@ -67,7 +69,7 @@ public:
         juce::AudioProcessorValueTreeState& parameters,
         const juce::String& parameterId,
         juce::Button& control,
-        ParameterHistory* history = nullptr
+        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
     );
 
     ~HistoryButtonAttachment() override;
@@ -88,8 +90,8 @@ private:
     juce::RangedAudioParameter& parameter;
     /// Stable parameter identity used for explicit pre-write capture.
     juce::String id;
-    /// Optional processor-owned history, null when local history is not requested.
-    ParameterHistory* history;
+    /// Optional reference to processor-owned history, which outlives this attachment.
+    std::optional<std::reference_wrapper<ParameterHistory>> history;
     /// Message-thread delivery of host values without any history listener.
     juce::ParameterAttachment attachment;
     /// Rejects callbacks caused by synchronizing a host value to the control.

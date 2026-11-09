@@ -13,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -410,7 +411,7 @@ BandStrip::BandStrip(
     juce::AudioProcessorValueTreeState& parameters,
     juce::ValueTree& editorState,
     const std::size_t band,
-    ParameterHistory* localHistory
+    std::optional<std::reference_wrapper<ParameterHistory>> localHistory
 ) :
     sideParameter(*parameters.getParameter(sideGainParameterId(band))),
     history(localHistory),
@@ -486,13 +487,13 @@ BandStrip::BandStrip(
     addAndMakeVisible(soloButton);
 
     midSlider.onDragStart = [this] {
-        if (history != nullptr) {
-            linkedGeneration = history->generation();
-            linkedHistoryEditing = history->isEditing();
+        if (history.has_value()) {
+            linkedGeneration = history->get().generation();
+            linkedHistoryEditing = history->get().isEditing();
             // The slider listener ends before onDragEnd, so this nested frame keeps linked writes in one command.
             // A restore from beginChangeGesture cancels the listener's frame and must not open a replacement here.
             if (linkedHistoryEditing) {
-                history->beginEdit(midSlider.getTitle());
+                history->get().beginEdit(midSlider.getTitle());
             }
         }
         draggingMid = true;
@@ -509,13 +510,13 @@ BandStrip::BandStrip(
             linkedSideGesture = false;
         }
         draggingMid = false;
-        if (history != nullptr && linkedHistoryEditing && linkedGeneration == history->generation()) {
-            history->endEdit();
+        if (history.has_value() && linkedHistoryEditing && linkedGeneration == history->get().generation()) {
+            history->get().endEdit();
         }
         linkedHistoryEditing = false;
     };
     midSlider.onValueChange = [this] {
-        if (history != nullptr && (!linkedHistoryEditing || linkedGeneration != history->generation())) {
+        if (history.has_value() && (!linkedHistoryEditing || linkedGeneration != history->get().generation())) {
             return;
         }
         if (draggingMid && linkedSideGesture && linkedSideStart > static_cast<double>(BAND_GAIN_MIN_DB)) {
@@ -524,8 +525,8 @@ BandStrip::BandStrip(
                 static_cast<double>(BAND_GAIN_MIN_DB),
                 static_cast<double>(BAND_GAIN_MAX_DB)
             );
-            if (history != nullptr) {
-                history->touch(sideId);
+            if (history.has_value()) {
+                history->get().touch(sideId);
             }
             setSideValue(sideParameter, static_cast<float>(side), true);
         }

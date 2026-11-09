@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -201,7 +202,7 @@ bool SpectrogramOverlayState::operator==(const SpectrogramOverlayState& other) c
 SpatialSpectrogramView::SpatialSpectrogramView(
     juce::AudioProcessorValueTreeState& parameters,
     juce::ValueTree editorState,
-    ParameterHistory* localHistory
+    std::optional<std::reference_wrapper<ParameterHistory>> localHistory
 ) :
     editorSettings(std::move(editorState)),
     history(localHistory)
