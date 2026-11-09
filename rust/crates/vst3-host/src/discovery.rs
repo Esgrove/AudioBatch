@@ -19,13 +19,11 @@ const VST3_PATH_VARIABLE: &str = "VST3_PATH";
 /// Returns the folders searched for plugins by default: the `VST3_PATH` folders, then the platform folders.
 #[must_use]
 pub fn default_search_folders() -> Vec<PathBuf> {
-    let mut folders: Vec<PathBuf> = env::var_os(VST3_PATH_VARIABLE)
-        .map(|value| {
-            env::split_paths(&value)
-                .filter(|path| !path.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut folders: Vec<PathBuf> = env::var_os(VST3_PATH_VARIABLE).map_or_else(Vec::new, |value| {
+        env::split_paths(&value)
+            .filter(|path| !path.as_os_str().is_empty())
+            .collect()
+    });
     folders.extend(platform_folders());
     let mut seen = HashSet::new();
     folders.retain(|folder| seen.insert(folder.clone()));

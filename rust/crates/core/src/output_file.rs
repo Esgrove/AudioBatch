@@ -306,8 +306,7 @@ pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile, OutputErr
     let extension = output
         .extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| format!(".{extension}"))
-        .unwrap_or_default();
+        .map_or_else(String::new, |extension| format!(".{extension}"));
     let prefix = format!(".{stem}_temp");
     let mut builder = tempfile::Builder::new();
     builder.prefix(&prefix).suffix(&extension);
@@ -548,12 +547,10 @@ fn temporary_root() -> PathBuf {
 fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path, source: std::io::Error) -> OutputError {
     let stem = output
         .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
     let extension = output
         .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
-        .unwrap_or_default();
+        .map_or_else(String::new, |extension| format!(".{}", extension.to_string_lossy()));
     let mut temporary = temporary;
     for kept in std::iter::once(format!("{stem} (recovered){extension}"))
         .chain((2..=MAXIMUM_BACKUP_INDEX).map(|index| format!("{stem} (recovered){index}{extension}")))
