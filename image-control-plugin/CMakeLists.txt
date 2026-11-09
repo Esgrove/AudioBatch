@@ -101,6 +101,10 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ImageControlProcessor.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ProcessingState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ProcessingState.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/UserPresets.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/UserPresets.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/SpatialAnalyzer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/SpatialAnalyzer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/StereoSampleFifo.h"
@@ -411,6 +415,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
 
     set(IMAGE_CONTROL_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/AnalyzerTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/UserPresetsTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ControlLayoutTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ConvolverTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationMeterTests.cpp"
