@@ -34,8 +34,8 @@ OPTIONS: All options are optional
         Build and install the Debug build instead of Release.
 
     -V | --validate
-        Validate the installed VST3 with pluginval if it is in PATH,
-        and on macOS also the Audio Unit with auval.
+        Validate the installed VST3 with pluginval, and on macOS also the Audio Unit with auval.
+        Use pluginval from PATH, or fetch and build the pinned version in ../.deps/ if missing.
 
     --validation-level <5-10>
         Set pluginval strictness and enable validation. Default is 5.

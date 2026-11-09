@@ -1,16 +1,20 @@
 # Checks out and builds pluginval in the shared .deps directory, then validates a plugin with it.
-# Run by the <plugin target>_pluginval targets of Pluginval.cmake:
-#   cmake -DDEPS_DIR=... -DREPOSITORY=... -DCOMMIT=... -DSTRICTNESS=... -DGENERATOR=... -DPLUGIN=... -P RunPluginval.cmake
+# Used by the <plugin target>_pluginval targets and the ImageControl build and install scripts.
+# Direct invocation uses the same pinned defaults as the targets:
+#   cmake -DSTRICTNESS=5 -DPLUGIN=... -P RunPluginval.cmake
 
-foreach(
-    variable
-    DEPS_DIR
-    REPOSITORY
-    COMMIT
-    STRICTNESS
-    GENERATOR
-    PLUGIN
-)
+include("${CMAKE_CURRENT_LIST_DIR}/Pluginval.cmake")
+if(NOT DEFINED DEPS_DIR)
+    set(DEPS_DIR "${AUDIOBATCH_DEPS_DIR}")
+endif()
+if(NOT DEFINED REPOSITORY)
+    set(REPOSITORY "${AUDIOBATCH_PLUGINVAL_REPOSITORY}")
+endif()
+if(NOT DEFINED COMMIT)
+    set(COMMIT "${AUDIOBATCH_PLUGINVAL_COMMIT}")
+endif()
+
+foreach(variable STRICTNESS PLUGIN)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "RunPluginval.cmake: ${variable} is not set")
     endif()
@@ -65,8 +69,12 @@ if(EXISTS "${stamp}")
 endif()
 if(NOT built_commit STREQUAL COMMIT OR NOT EXISTS "${build_dir}/CMakeCache.txt")
     message(STATUS "Configuring pluginval in ${build_dir}")
+    set(generator_args)
+    if(DEFINED GENERATOR AND NOT GENERATOR STREQUAL "")
+        list(APPEND generator_args -G "${GENERATOR}")
+    endif()
     execute_process(
-        COMMAND "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}" -G "${GENERATOR}" -DCMAKE_BUILD_TYPE=Release
+        COMMAND "${CMAKE_COMMAND}" -S "${source_dir}" -B "${build_dir}" ${generator_args} -DCMAKE_BUILD_TYPE=Release
                 COMMAND_ERROR_IS_FATAL ANY
     )
     file(WRITE "${stamp}" "${COMMIT}")

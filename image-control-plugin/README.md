@@ -114,8 +114,12 @@ See `./build.sh --help` and `./install.sh --help` for other options.
 The installer builds and copies the VST3 to `~/Library/Audio/Plug-Ins/VST3` on macOS
 or `C:\Program Files\Common Files\VST3` on Windows, requesting elevation if needed.
 On macOS it also installs the Audio Unit to `~/Library/Audio/Plug-Ins/Components` and refreshes its registry.
-`./build.sh --validate` validates the built VST3 with pluginval if it is on the path, without installing it.
+`./build.sh --validate` validates the built VST3 with pluginval, without installing the plugin.
 `./install.sh --validate` validates the installed VST3 and, on macOS, the registered Audio Unit with auval.
+Both use pluginval from `PATH` when available.
+Otherwise they fetch and build the pinned version in the repository's `.deps/` directory and reuse it on later runs.
+This needs Git, the build toolchain, and network access for missing dependencies, with no global installation or PATH setup.
+Setup or validation failures fail the command instead of skipping VST3 validation.
 Both accept `--validation-level 5` through `--validation-level 10`, defaulting to 5.
 Specifying a level also enables validation, for example `./build.sh --validation-level 10`.
 The level controls pluginval strictness. Audio Unit validation always uses auval's strict mode.
@@ -150,7 +154,8 @@ cmake --build cmake-build-release --config Release --target ImageControl_pluginv
 ```
 
 This needs Git, the build toolchain, and network access for missing dependencies.
-The target validates at strictness level 5 and is separate from the scripts' path-based pluginval checks.
+The target always uses the pinned version and validates at strictness level 5.
+The scripts share its pinned build helper when pluginval is missing from `PATH`.
 Use the matching build directory if using a Windows Ninja workspace.
 
 ### Benchmarks and reference signals

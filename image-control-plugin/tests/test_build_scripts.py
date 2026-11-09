@@ -36,6 +36,8 @@ class BuildScriptContracts(unittest.TestCase):
             "image-control-plugin/common.sh",
             "image-control-plugin/build.sh",
             "image-control-plugin/install.sh",
+            "cpp/cmake/Pluginval.cmake",
+            "cpp/cmake/RunPluginval.cmake",
         ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +67,9 @@ class BuildScriptContracts(unittest.TestCase):
         self.write_tool("uname", 'printf "%s\\n" "$TEST_PLATFORM"\n', record=False)
         self.write_tool(
             "cmake",
-            """if [ "$1" = --build ]; then
+            """if [[ "$1" == -DSTRICTNESS=* ]]; then
+    exit "${PLUGINVAL_SETUP_STATUS:-0}"
+elif [ "$1" = --build ]; then
     build_dir="$2"
     shift 2
     config=Release
@@ -317,20 +321,49 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 assert marker.read_text() == "do not clean"
                 assert not (self.home / "Library").exists()
 
-    def test_missing_pluginval_is_an_optional_warning(self) -> None:
-        """An absent optional VST3 validator does not suppress macOS Audio Unit validation."""
+    def test_missing_pluginval_builds_and_validates_with_the_pinned_helper(self) -> None:
+        """Missing PATH tools delegate setup and validation with the selected level and exact artefact."""
+        (self.tools / "pluginval").unlink()
+        for script in SCRIPTS:
+            for arguments, level in ((["--validate"], 5), (["--validation-level", "10"], 10)):
+                with self.subTest(script=script, level=level):
+                    self.clear_log()
+                    result = self.invoke(script, *arguments)
+                    self.assert_success(result)
+                    expected = self.built_vst3() if script == "build.sh" else self.installed_vst3()
+                    assert self.commands("cmake")[-1] == [
+                        f"-DSTRICTNESS={level}",
+                        f"-DPLUGIN={expected}",
+                        "-P",
+                        str(self.plugin / "../cpp/cmake/RunPluginval.cmake"),
+                    ]
+                    assert "building the pinned version" in result.stdout
+                    assert "skipping" not in result.stdout
+                    assert not self.commands("pluginval")
+                    assert bool(self.commands("auval")) == (script == "install.sh")
+
+    def test_pinned_pluginval_setup_or_validation_failure_propagates(self) -> None:
+        """Never report success when automatic validator setup or its validation fails."""
         (self.tools / "pluginval").unlink()
         for script in SCRIPTS:
             with self.subTest(script=script):
                 self.clear_log()
-                result = self.invoke(script, "--validate")
-                self.assert_success(result)
-                output = (result.stdout + result.stderr).lower()
-                assert "pluginval" in output
-                assert "skipping" in output
-                assert "path" in output
-                assert not self.commands("pluginval")
-                assert bool(self.commands("auval")) == (script == "install.sh")
+                result = self.invoke(script, "--validate", PLUGINVAL_SETUP_STATUS="27")
+                assert result.returncode == 27, result.stdout + result.stderr
+                assert len(self.commands("cmake")) == 3
+                assert "Installation complete" not in result.stdout
+
+    def test_missing_pluginval_does_not_trigger_setup_without_validation(self) -> None:
+        """Automatic downloads remain opt-in, including path-only invocations."""
+        (self.tools / "pluginval").unlink()
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                self.clear_log()
+                self.assert_success(self.invoke(script))
+                assert len(self.commands("cmake")) == 2
+        self.clear_log()
+        self.assert_success(self.invoke("build.sh", "--print", "--validate"))
+        assert not self.commands()
 
     def test_validator_failure_propagates(self) -> None:
         """Never turn a failed VST3 validation into a successful build or installation."""
@@ -358,6 +391,30 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 result = self.invoke("build.sh", "--test", "--validate", **overrides)
                 assert result.returncode == status, result.stdout + result.stderr
                 assert not self.commands("pluginval")
+
+    def test_windows_missing_pluginval_passes_native_path_to_pinned_helper(self) -> None:
+        """The automatic setup path must preserve Windows paths and the requested strictness."""
+        (self.tools / "pluginval").unlink()
+        vst3 = str(self.root / "custom bundle path/ImageControl.vst3")
+        result = self.run_bash(
+            "-c",
+            'source "$1/common.sh"; plugin_validate_vst3 "$2" "$3"',
+            "validation-contract",
+            str(self.plugin),
+            vst3,
+            "9",
+            TEST_PLATFORM="MINGW64_NT",
+        )
+        self.assert_success(result)
+        assert self.commands("cygpath") == [["-w", vst3]]
+        assert self.commands("cmake") == [
+            [
+                "-DSTRICTNESS=9",
+                f"-DPLUGIN={self.environment['TEST_WINDOWS_PATH']}",
+                "-P",
+                str(self.plugin / "../cpp/cmake/RunPluginval.cmake"),
+            ]
+        ]
 
     def test_windows_helper_converts_the_supplied_vst3_path(self) -> None:
         """Exercise the shared Windows helper without a native compiler or elevated installer."""

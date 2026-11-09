@@ -64,19 +64,20 @@ plugin_check_validation_level() {
     esac
 }
 
-# Validates a built or installed VST3 with the optional pluginval executable on PATH.
+# Validates a built or installed VST3 with pluginval, building the pinned version if it is absent from PATH.
 # The arguments are the artifact path and strictness level. AU validation requires an installed, registered component.
 plugin_validate_vst3() {
     local vst3="$1"
     local level="$2"
     plugin_check_validation_level "$level"
-    # pluginval is optional: https://github.com/Tracktion/pluginval
-    if ! command -v pluginval > /dev/null 2>&1; then
-        print_yellow "pluginval not found in PATH, skipping VST3 validation"
-        return
-    fi
     if [ "$BASH_PLATFORM" = "windows" ]; then
         vst3=$(cygpath -w "$vst3")
+    fi
+    if ! command -v pluginval > /dev/null 2>&1; then
+        require_command cmake
+        print_magenta "pluginval not found in PATH, building the pinned version for VST3 validation"
+        cmake "-DSTRICTNESS=$level" "-DPLUGIN=$vst3" -P "$REPO/../cpp/cmake/RunPluginval.cmake"
+        return
     fi
     print_magenta "Validating the VST3 with pluginval at level $level"
     pluginval --strictness-level "$level" --validate "$vst3"
