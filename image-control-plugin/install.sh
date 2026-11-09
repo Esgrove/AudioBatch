@@ -37,6 +37,10 @@ OPTIONS: All options are optional
         Validate the installed VST3 with pluginval if it is in PATH,
         and on macOS also the Audio Unit with auval.
 
+    --validation-level <5-10>
+        Set pluginval strictness and enable validation. Default is 5.
+        This level does not change auval's strict validation.
+
     -v | --verbose
         Display commands being executed."
 
@@ -46,6 +50,7 @@ source "$DIR/common.sh"
 
 init_options() {
     VALIDATE=false
+    VALIDATION_LEVEL=5
     # Passed on to build.sh, which validates the combinations.
     BUILD_OPTIONS=()
 
@@ -69,6 +74,14 @@ init_options() {
             -V | --validate)
                 VALIDATE=true
                 ;;
+            --validation-level)
+                if [ $# -lt 2 ]; then
+                    print_error_and_exit "Missing value for $1."
+                fi
+                VALIDATION_LEVEL="$2"
+                VALIDATE=true
+                shift
+                ;;
             -v | --verbose)
                 set -x
                 BUILD_OPTIONS+=(--verbose)
@@ -80,6 +93,7 @@ init_options() {
         esac
         shift
     done
+    plugin_check_validation_level "$VALIDATION_LEVEL"
 }
 
 install_vst3() {
@@ -146,20 +160,6 @@ validate_audio_unit() {
     auval -strict -v aufx Egic Esgr
 }
 
-validate_vst3() {
-    # pluginval is optional: https://github.com/Tracktion/pluginval
-    if [ -z "$(command -v pluginval)" ]; then
-        print_yellow "pluginval not found in PATH, skipping VST3 validation"
-        return
-    fi
-    local installed_vst3="$VST3_DIR/ImageControl.vst3"
-    if [ "$BASH_PLATFORM" = "windows" ]; then
-        installed_vst3=$(cygpath -w "$installed_vst3")
-    fi
-    print_magenta "Validating the VST3 with pluginval"
-    pluginval --strictness-level 5 --validate "$installed_vst3"
-}
-
 init_options "$@"
 
 if [ "$BASH_PLATFORM" != "mac" ] && [ "$BASH_PLATFORM" != "windows" ]; then
@@ -183,7 +183,7 @@ if [ "$VALIDATE" = true ]; then
     if [ "$BASH_PLATFORM" = "mac" ]; then
         validate_audio_unit
     fi
-    validate_vst3
+    plugin_validate_vst3 "$VST3_DIR/ImageControl.vst3" "$VALIDATION_LEVEL"
 fi
 
 print_green "Installation complete"

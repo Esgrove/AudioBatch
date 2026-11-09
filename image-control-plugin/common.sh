@@ -56,6 +56,32 @@ plugin_configure() {
         -DIMAGE_CONTROL_BUILD_TESTS="$build_tests" "$@"
 }
 
+# Rejects malformed pluginval strictness levels before any build or install side effects.
+plugin_check_validation_level() {
+    case "$1" in
+        5 | 6 | 7 | 8 | 9 | 10) ;;
+        *) print_error_and_exit "--validation-level must be an integer from 5 to 10." ;;
+    esac
+}
+
+# Validates a built or installed VST3 with the optional pluginval executable on PATH.
+# The arguments are the artifact path and strictness level. AU validation requires an installed, registered component.
+plugin_validate_vst3() {
+    local vst3="$1"
+    local level="$2"
+    plugin_check_validation_level "$level"
+    # pluginval is optional: https://github.com/Tracktion/pluginval
+    if ! command -v pluginval > /dev/null 2>&1; then
+        print_yellow "pluginval not found in PATH, skipping VST3 validation"
+        return
+    fi
+    if [ "$BASH_PLATFORM" = "windows" ]; then
+        vst3=$(cygpath -w "$vst3")
+    fi
+    print_magenta "Validating the VST3 with pluginval at level $level"
+    pluginval --strictness-level "$level" --validate "$vst3"
+}
+
 # Runs the plugin's unit suites with bounded discovery and execution, failing when no test is registered.
 plugin_run_tests() {
     ctest --test-dir "$1" --build-config "$2" --output-on-failure --no-tests=error --timeout 180
