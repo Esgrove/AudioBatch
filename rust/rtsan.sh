@@ -120,15 +120,6 @@ run_case() {
         --executable "$executable" --case "rust-${name//::/.}" --artifacts "$ARTIFACTS" --timeout 30 \
         --argument=--exact --argument="$name" --argument=--nocapture --argument=--test-threads=1 ${completion[@]+"${completion[@]}"} "$@"
 }
-known_blocker() {
-    local executable="$1" name="$2" unsafe_name="$3" stack="$4"
-    if [ "$DIAGNOSTIC" = true ]; then
-        run_case "$executable" "$name" --diagnostic --expect "$unsafe_name" --stack "$stack"
-    else
-        run_case "$executable" "$name"
-    fi
-}
-
 run_case "$PLAYBACK" realtime_tests::clean_control
 run_case "$PLAYBACK" realtime_tests::rust_allocation_control --control --expect malloc --stack rust_allocation_region
 run_case "$PLAYBACK" realtime_tests::rust_free_control --control --expect free --stack rust_free_region
@@ -149,7 +140,18 @@ done
 run_case "$HOST_TESTS" processor::test_in_place_processing::rtsan_gain_owned_and_borrowed_automation_reset
 run_case "$PREVIEW" preview_gain_first_automation
 run_case "$PREVIEW" preview_gain_reset
-known_blocker "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_mutex_baseline pthread_mutex_unlock render_typed_callback
+run_case "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_clean_all_formats
+run_case "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_silence_all_formats
+run_case "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_idle_and_retired_silence
+run_case "$PLAYBACK" stream_errors::test_realtime::rtsan_owned_success_is_clean
+run_case "$PLAYBACK" stream_errors::test_realtime::rtsan_borrowed_ignored_is_clean
+if [ "$DIAGNOSTIC" = true ]; then
+    # These audit complete owned-error disposal, not the clean normal sample callback gate.
+    for name in rtsan_owned_ignored_is_blocked rtsan_owned_full_is_blocked rtsan_owned_disconnected_is_blocked; do
+        run_case "$PLAYBACK" "stream_errors::test_realtime::$name" --diagnostic \
+            --expect free --stack '(?s)function \x60free\x60.*(?:alloc::string::String|cpal::error::Error|cpal::Error).*StreamErrors.*report'
+    done
+fi
 
 if [ "$NATIVE" = true ]; then
     export AUDIOBATCH_TEST_VST3="${AUDIOBATCH_TEST_VST3:-$DIR/../test-plugin/cmake-build-release/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3}"

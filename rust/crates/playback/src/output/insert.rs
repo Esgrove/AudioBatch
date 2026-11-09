@@ -99,12 +99,16 @@ impl InsertRenderer {
         self.insert.as_ref().is_some_and(|change| change.insert.is_some())
     }
 
-    /// Makes the insert changes the player sent since the last callback.
+    /// Makes the insert changes pending at entry, leaving later commands for the next callback.
     /// A change is only made while the retire queue has room for the insert it replaces,
     /// so an insert is never dropped on the audio thread.
     pub fn apply_changes(&mut self, shared: &SharedState) {
         let mut changed = false;
-        while self.retired.slots() > 0 {
+        let pending = self.commands.slots();
+        for _ in 0..pending {
+            if self.retired.slots() == 0 {
+                break;
+            }
             let Ok(next) = self.commands.pop() else {
                 break;
             };
@@ -408,8 +412,8 @@ fn fold_to_mono(left: &mut [f32], right: &mut [f32]) {
 
 #[cfg(test)]
 mod test_insert_playback {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::{Arc, Barrier};
     use std::thread::{self, ThreadId};
 
     use rtrb::RingBuffer;
@@ -618,40 +622,130 @@ mod test_insert_playback {
         );
     }
 
-    #[cfg(audiobatch_rtsan)]
-    #[test]
-    fn rtsan_full_callback_mutex_baseline() {
+    /// Exercises the complete cold typed callback with each production sample conversion and fake insert.
+    fn full_callback<T>()
+    where
+        T: cpal::SizedSample + cpal::FromSample<f32> + Send,
+        f32: cpal::FromSample<T>,
+    {
         let (insert, _) = FakeInsert::new(0, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 64, |_| 0.5);
-        let renderer = std::sync::Mutex::new(harness.renderer);
-        // Player::new initializes native mutex storage before the first CPAL callback as well.
-        drop(renderer.lock().expect("player-side native mutex initialization"));
-        let mut output = [0.0_f32; 128];
+        let renderer = crate::RendererAccess::new(harness.renderer);
+        let epoch = renderer.advance_epoch();
+        let mut output = [T::from_sample(0.0); 128];
         thread::scope(|scope| {
             scope
-                .spawn(|| crate::render_typed_callback(&renderer, &mut output))
+                .spawn(|| crate::render_typed_callback(&renderer, epoch, &mut output))
                 .join()
                 .expect("callback completes");
         });
-        assert!(output.iter().any(|sample| sample.abs() > f32::EPSILON));
+        assert!(
+            output
+                .iter()
+                .any(|&sample| <f32 as cpal::Sample>::from_sample(sample).abs() > f32::EPSILON)
+        );
+        drop(renderer.renderer.retire());
     }
 
-    #[cfg(audiobatch_rtsan)]
+    #[test]
+    fn rtsan_full_callback_clean_all_formats() {
+        full_callback::<f32>();
+        full_callback::<f64>();
+        full_callback::<i16>();
+        full_callback::<cpal::I24>();
+        full_callback::<i32>();
+        full_callback::<u16>();
+    }
+
+    /// Checks cold contention and idle output without relying on one device sample representation.
+    fn callback_silence<T>(contended: bool)
+    where
+        T: cpal::SizedSample + cpal::FromSample<f32> + Send,
+        f32: cpal::FromSample<T>,
+    {
+        let (insert, _) = FakeInsert::new(0, 0);
+        let harness = Harness::with_insert(insert);
+        harness.shared.playing.store(false, Ordering::Relaxed);
+        let renderer = crate::RendererAccess::new(harness.renderer);
+        let epoch = renderer.advance_epoch();
+        let mut output = [T::from_sample(0.5); 126];
+        let mut callback = || {
+            thread::scope(|scope| {
+                scope
+                    .spawn(|| crate::render_typed_callback(&renderer, epoch, &mut output))
+                    .join()
+                    .expect("cold silent callback");
+            });
+        };
+        if contended {
+            renderer.renderer.with_control(|_| callback());
+        } else {
+            callback();
+        }
+        assert!(
+            output
+                .iter()
+                .all(|&sample| <f32 as cpal::Sample>::from_sample(sample).abs() < f32::EPSILON)
+        );
+        assert_eq!(harness.shared.position.load(Ordering::Relaxed), 0);
+        drop(renderer.renderer.retire());
+    }
+
+    #[test]
+    fn rtsan_full_callback_silence_all_formats() {
+        for contended in [false, true] {
+            callback_silence::<f32>(contended);
+            callback_silence::<f64>(contended);
+            callback_silence::<i16>(contended);
+            callback_silence::<cpal::I24>(contended);
+            callback_silence::<i32>(contended);
+            callback_silence::<u16>(contended);
+        }
+    }
+
     #[test]
     fn rtsan_full_callback_contended_silence() {
         let (insert, _) = FakeInsert::new(0, 0);
         let harness = Harness::with_insert(insert);
-        let renderer = std::sync::Mutex::new(harness.renderer);
-        let guard = renderer.lock().expect("control thread owns the renderer");
+        let renderer = crate::RendererAccess::new(harness.renderer);
+        let epoch = renderer.advance_epoch();
         let mut output = [1.0_f32; 128];
+        renderer.renderer.with_control(|_| {
+            thread::scope(|scope| {
+                scope
+                    .spawn(|| crate::render_typed_callback(&renderer, epoch, &mut output))
+                    .join()
+                    .expect("callback does not wait");
+            });
+        });
+        assert!(output.iter().all(|sample| sample.abs() < f32::EPSILON));
+        drop(renderer.renderer.retire());
+    }
+
+    #[test]
+    fn rtsan_full_callback_idle_and_retired_silence() {
+        let (insert, _) = FakeInsert::new(0, 0);
+        let harness = Harness::with_insert(insert);
+        harness.shared.playing.store(false, Ordering::Relaxed);
+        let renderer = crate::RendererAccess::new(harness.renderer);
+        let epoch = renderer.advance_epoch();
+        let mut output = [1.0_f32; 126];
         thread::scope(|scope| {
             scope
-                .spawn(|| crate::render_typed_callback(&renderer, &mut output))
+                .spawn(|| crate::render_typed_callback(&renderer, epoch, &mut output))
                 .join()
-                .expect("callback does not wait");
+                .expect("cold idle callback");
         });
-        drop(guard);
+        assert!(output.iter().all(|sample| sample.abs() < f32::EPSILON));
+        drop(renderer.renderer.retire());
+        output.fill(1.0);
+        thread::scope(|scope| {
+            scope
+                .spawn(|| crate::render_typed_callback(&renderer, epoch, &mut output))
+                .join()
+                .expect("retired callback");
+        });
         assert!(output.iter().all(|sample| sample.abs() < f32::EPSILON));
     }
 
@@ -1126,6 +1220,63 @@ mod test_insert_playback {
             assert_eq!(active_probe.processed.load(Ordering::Relaxed), 80);
             assert!(harness.shared.ended.load(Ordering::Relaxed));
         }
+    }
+
+    #[test]
+    fn concurrent_command_refills_wait_for_the_next_apply() {
+        let shared = SharedState::new();
+        let command_capacity = 8;
+        let (mut commands, pending) = RingBuffer::new(command_capacity);
+        let (retired, _retired_consumer) = RingBuffer::new(command_capacity * 2);
+        let tail = Arc::new(AtomicUsize::new(0));
+        for _ in 0..command_capacity {
+            commands
+                .push(InsertChange {
+                    insert: None,
+                    tail: Arc::clone(&tail),
+                })
+                .expect("initial command capacity");
+        }
+        let mut renderer = InsertRenderer::new(pending, retired);
+        let ready = Barrier::new(2);
+        let refilled = thread::scope(|scope| {
+            let producer = scope.spawn(|| {
+                let mut refilled = 0;
+                ready.wait();
+                for _ in 0..command_capacity * 8 {
+                    if commands
+                        .push(InsertChange {
+                            insert: None,
+                            tail: Arc::clone(&tail),
+                        })
+                        .is_ok()
+                    {
+                        refilled += 1;
+                    }
+                    thread::yield_now();
+                }
+                refilled
+            });
+            ready.wait();
+            renderer.apply_changes(&shared);
+            producer.join().expect("bounded command producer completes")
+        });
+        assert_eq!(
+            shared.insert_changes_applied.load(Ordering::Acquire),
+            command_capacity as u64,
+            "one apply must consume only its initial command snapshot"
+        );
+        assert_eq!(renderer.commands.slots(), refilled);
+        assert!(
+            renderer.retired.slots() > 0,
+            "retirement capacity must not be the bound"
+        );
+        renderer.apply_changes(&shared);
+        assert_eq!(renderer.commands.slots(), 0);
+        assert_eq!(
+            shared.insert_changes_applied.load(Ordering::Acquire),
+            (command_capacity + refilled) as u64
+        );
     }
 
     #[test]

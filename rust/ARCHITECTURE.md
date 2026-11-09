@@ -679,17 +679,35 @@ Before instances are prepared again, `detach_plugin_preview` removes the chain a
 **Realtime rules.**
 The callback, every `PreviewInsert`, and `PreviewChain` must not allocate, lock, block, or wait for I/O.
 Their blocks are allocated up front, and state crosses threads through atomics and the `rtrb` queues.
-The renderer sits behind a mutex only so the player can apply insert changes while no stream runs.
-The callback calls `try_lock` and outputs silence in the rare case it misses the lock.
-Successful acquisition still destroys a native mutex guard in the callback, which RTSan reports on macOS.
-This boundary is a known blocker, not a proven lock-free callback.
+Renderer access uses a single atomic callback admission attempt
+and a release operation that preserves control exclusion.
+Only control operations take the private serialization mutex or wait for an earlier callback to finish.
+Rejected callbacks clear the complete device output without consuming audio or advancing transport.
+Stream identities are checked after admission, before accessing the renderer,
+so delayed callbacks cannot consume a replacement stream's input or stop it through an obsolete error notification.
+The owning thread closes access and retires renderer resources before native stream disposal,
+and retains shared capture storage until both backend closures acknowledge destruction.
+Final owner teardown may wait for backend disposal, but no callback waits or signals a waiter.
+
 Stream errors go unformatted through a bounded channel and are formatted on the UI thread.
+Successful error delivery and borrowed ignored notifications have clean checked boundaries.
+An incoming CPAL error can own its message.
+Ignored, full-channel, or disconnected-channel errors may free that storage inside the error callback,
+which remains an explicit `BLOCKED` diagnostic rather than a realtime-safe transport claim.
+Bounded storage cannot retain unlimited owned errors without eventual disposal, allocation, waiting, or data loss.
+Native backend error construction and callback serialization are separate dependency boundaries.
+
+The applications retain a pre-existing source-starvation policy difference:
+C++ stops and reports a total buffered-source miss, while Rust counts an underrun and waits for more decoded frames.
+Callback admission exclusion, intentional transition silence,
+source starvation, EOF, and native device xruns remain distinct observations.
+Removing renderer mutex operations does not reconcile these policies.
 
 The opt-in `rtsan.sh` tier uses native nightly sanitizer annotations and a matching startup-linked Clang runtime.
 It checks prepared renderer/insert processing separately from the full typed callback, including guard destruction.
 Detector controls prove Rust/native allocation, deallocation, and mutex interception before clean results are trusted.
 Native preview tests load only build-tree bundles and keep plugin lifecycle work on the UI thread.
-Known callback and native-plugin findings are recorded as `BLOCKED` audits with constrained diagnostics,
+Owned stream-error disposal and native-plugin findings are recorded as `BLOCKED` audits with constrained diagnostics,
 rather than suppressions.
 Cold-thread processing, automation, reset, and insert/tail retirement remain explicit test cases.
 The runtime and executable linkage are recorded under `target/rtsan/artifacts/`.

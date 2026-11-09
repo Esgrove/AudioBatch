@@ -76,6 +76,10 @@ MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-ignore-leaks" \
 
 # Only the core modules that decode cache blobs run, because the rest of the core decodes audio files,
 # uses SQLite, or runs minutes of DSP, none of which Miri can interpret in reasonable time.
+print_magenta "Running bounded callback admission and retirement under Miri..."
+cargo +nightly miri nextest run --no-fail-fast -p audiobatch-playback --lib \
+    -E 'test(/^callback_access::/) | test(/^callback_lifecycle_tests::/) | test(/^callback_transport_tests::/)'
+
 print_magenta "Running the core cache blob readers under Miri..."
 cargo +nightly miri nextest run --no-fail-fast -p audiobatch-core --lib --test spectrogram \
     -E '(kind(lib) & (test(/^overload::/) | test(/^waveform::/))) | (binary(spectrogram) & test(/^test_codec::/))'
