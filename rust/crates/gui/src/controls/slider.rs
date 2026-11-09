@@ -126,7 +126,7 @@ impl RenderOnce for FocusSlider {
         let focused = enabled && focus.is_focused(window) && window.last_input_was_keyboard();
         let content = self
             .content
-            .unwrap_or_else(|| standard_slider(&self.state, enabled, focused, window, cx));
+            .unwrap_or_else(|| standard_slider(&self.state, &focus, enabled, focused, window, cx));
         let reset = Rc::clone(&self.on_event);
         let control = self.control;
         let wrapper = div()
@@ -221,6 +221,7 @@ fn set_pressed(interaction: &Entity<ThumbInteraction>, pressed: bool, cx: &mut A
 /// Composes the standard horizontal track and thumb from Base parts, preserving themed sizing and colors.
 fn standard_slider(
     state: &Entity<SliderState>,
+    focus: &FocusHandle,
     enabled: bool,
     focused: bool,
     window: &mut Window,
@@ -244,6 +245,7 @@ fn standard_slider(
     let pressed = interaction.clone();
     let released = interaction.clone();
     let released_out = interaction;
+    let thumb_focus = focus.clone();
     let thumb = SliderThumb::new(state).disabled(!enabled).when(enabled, |thumb| {
         thumb
             .absolute()
@@ -260,7 +262,13 @@ fn standard_slider(
                     cx.notify();
                 });
             })
-            .capture_any_mouse_down(move |_, _, cx| set_pressed(&pressed, true, cx))
+            // Endpoint thumbs overhang the track, so its wrapper cannot capture every valid thumb press.
+            .capture_any_mouse_down(move |event, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&thumb_focus, cx);
+                }
+                set_pressed(&pressed, true, cx);
+            })
             .capture_any_mouse_up(move |_, _, cx| set_pressed(&released, false, cx))
             .on_mouse_up_out(MouseButton::Left, move |_, _, cx| set_pressed(&released_out, false, cx))
             .child(

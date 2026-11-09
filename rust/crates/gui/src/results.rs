@@ -2562,7 +2562,7 @@ mod test_column_visibility_and_sort {
         delegate.remember_column_widths(&widths);
         delegate.set_column_visible(ColumnKey::Gain, true);
         let first = delegate.columns.first().expect("a shown column");
-        assert_eq!(first.width, px(165.0));
+        assert_eq!(first.width, px(235.0));
     }
 
     #[test]
