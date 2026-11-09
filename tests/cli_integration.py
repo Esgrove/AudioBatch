@@ -33,6 +33,7 @@ import wave
 from contextlib import closing
 from pathlib import Path
 from typing import ClassVar
+from unittest.mock import patch
 from xml.sax.saxutils import quoteattr
 
 import psutil
@@ -181,6 +182,10 @@ class CliIntegration(unittest.TestCase):
         candidates = [
             self.test_plugin,
             Path(os.environ["AUDIOBATCH_TEST_VST3"]) if "AUDIOBATCH_TEST_VST3" in os.environ else None,
+            repository
+            / "test-plugin/cmake-build-release/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3",
+            repository
+            / "test-plugin/cmake-build-debug/AudioBatchTestPlugin_artefacts/Debug/VST3/AudioBatch Test MS.vst3",
             repository / "test-plugin/build/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3",
             repository
             / "cpp/cmake-build-mac-debug/test-plugin/AudioBatchTestPlugin_artefacts/Debug/VST3/AudioBatch Test MS.vst3",
@@ -863,6 +868,36 @@ class CliIntegration(unittest.TestCase):
         assert reanalyzed["peakDbfs"] == -1.0, "Decode the committed PCM rather than trust the writer's cached result"
         assert self.database_row(output)["file_size"] == output.stat().st_size
         assert list(self.audio.iterdir()) == [output], "No unfinished output files may remain"
+
+
+class PluginDiscoveryContracts(unittest.TestCase):
+    """Find the test effect in the standalone build script's documented output directories."""
+
+    def test_standalone_build_directories_are_discovered(self) -> None:
+        """A clean checkout needs neither the legacy build directory nor an explicit bundle override."""
+        for profile in ["Release", "Debug"]:
+            with (
+                self.subTest(profile=profile),
+                tempfile.TemporaryDirectory(prefix="audiobatch-plugin-discovery-") as name,
+            ):
+                root = Path(name).resolve()
+                bundle = (
+                    root
+                    / f"test-plugin/cmake-build-{profile.lower()}/AudioBatchTestPlugin_artefacts"
+                    / profile
+                    / "VST3/AudioBatch Test MS.vst3"
+                )
+                bundle.mkdir(parents=True)
+                case = CliIntegration("test_process_matches_independent_plugin_outputs")
+                case.root = root
+                case.storage = root / "storage"
+                case.executable = root / "audiobatch-rs"
+                case.test_plugin = None
+                with patch(f"{__name__}.FIXTURES", root / "fixtures"), patch.dict(os.environ, {}, clear=True):
+                    preset = case.plugin_preset()
+                assert isinstance(preset, Path)
+                contents = json.loads(preset.read_text(encoding="utf-8"))
+                assert contents["slots"][0]["plugin"]["bundle"] == str(bundle)
 
 
 def main() -> int:
