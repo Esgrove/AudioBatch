@@ -49,6 +49,9 @@ TooltipOverlay::TooltipOverlay(juce::Component& rootComponent) : root(rootCompon
     setVisible(false);
 }
 
+/// Releases the overlay's value-owned text and layout while its root still exists.
+TooltipOverlay::~TooltipOverlay() = default;
+
 /// Advances the tooltip by the time since the last display refresh.
 /// A tooltip appears once the pointer has rested over its control for REST_SECONDS,
 /// and fades out when the pointer moves to a control with another tooltip or none, or a button goes down.

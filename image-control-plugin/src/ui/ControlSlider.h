@@ -33,12 +33,8 @@ public:
     ControlSlider& operator=(ControlSlider&&) = delete;
 
     void endDrag();
-    void setInteractionMaximum(double maximum);
     void setWheelStep(double step);
 
-    double proportionOfLengthToValue(double proportion) override;
-    double snapValue(double attemptedValue, DragMode dragMode) override;
-    double valueToProportionOfLength(double value) override;
     bool keyPressed(const juce::KeyPress& key) override;
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
@@ -48,9 +44,6 @@ public:
 private:
     /// Last pointer-down event, retained only until the pointer gesture ends or the control is torn down.
     std::optional<juce::MouseEvent> dragStartEvent;
-    /// Upper bound of direct manipulation, independent of the range needed to show an actual overrange value.
-    std::optional<double> interactionMaximum;
-
     /// Change of the value per mouse wheel step.
     double wheelStep {DEFAULT_WHEEL_STEP};
     /// Smooth wheel movement not yet turned into a whole step, carried to the next wheel event.

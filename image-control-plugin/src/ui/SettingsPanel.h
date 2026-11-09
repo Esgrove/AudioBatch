@@ -23,22 +23,25 @@ public:
     void resized() override;
 
 private:
+    juce::Label contrastLabel;
+    juce::Label panEdgeLabel;
+    juce::Label panMidpointLabel;
+    juce::Label persistenceLabel;
     juce::Label titleLabel;
-    juce::ToggleButton phaseColoursButton {"Colour by phase instead of frequency"};
-    juce::ToggleButton melScaleButton {"Mel frequency scale"};
-    juce::ToggleButton solidRenderingButton {"Solid layers instead of particles"};
-    juce::ToggleButton showFpsButton {"Show the frame rate"};
-    juce::ToggleButton showBandCorrelationButton {"Show band correlation"};
-    juce::ToggleButton smoothCorrelationReadoutButton {"Smooth correlation numbers"};
+
+    ControlSlider contrastSlider;
+    ControlSlider panEdgeSlider;
+    ControlSlider panMidpointSlider;
+    ControlSlider persistenceSlider;
+
     juce::ToggleButton bypassRenderingButton {"Bypass rendering"};
     juce::ToggleButton hideSpectrogramButton {"Hide the spectrogram"};
-    juce::Label persistenceLabel;
-    ControlSlider persistenceSlider;
-    juce::Label contrastLabel;
-    ControlSlider contrastSlider;
-    juce::Label panMidpointLabel;
-    ControlSlider panMidpointSlider;
-    juce::Label panEdgeLabel;
-    ControlSlider panEdgeSlider;
+    juce::ToggleButton melScaleButton {"Mel frequency scale"};
+    juce::ToggleButton phaseColoursButton {"Colour by phase instead of frequency"};
+
+    juce::ToggleButton showBandCorrelationButton {"Show band correlation"};
+    juce::ToggleButton showFpsButton {"Show the frame rate"};
+    juce::ToggleButton smoothCorrelationReadoutButton {"Smooth correlation numbers"};
+    juce::ToggleButton solidRenderingButton {"Solid layers instead of particles"};
 };
 }  // namespace esgrove::image_control

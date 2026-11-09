@@ -469,23 +469,31 @@ void ImageControlEditor::applyViewSettings()
         shownScale = scale;
     }
 
-    const StereoPositionCurve positionCurve(
+    const std::array positionSettings {
         static_cast<double>(editorState.getProperty(PAN_MIDPOINT_PROPERTY)),
-        static_cast<double>(editorState.getProperty(PAN_EDGE_PROPERTY))
-    );
-    spectrogram.setPositionCurve(positionCurve);
+        static_cast<double>(editorState.getProperty(PAN_EDGE_PROPERTY)),
+    };
+    if (!shownPositionSettings.has_value()
+        || !std::ranges::equal(
+            positionSettings,
+            *shownPositionSettings,
+            [](const double first, const double second) { return juce::approximatelyEqual(first, second); }
+        ))
+    {
+        analysisSettings.positionCurve = StereoPositionCurve(positionSettings.front(), positionSettings.back());
+        shownPositionSettings = positionSettings;
+        spectrogram.setPositionCurve(analysisSettings.positionCurve);
+    }
 
     const double sampleRate = imageControlProcessor.getSampleRate();
-    spectrogramWorker.setSettings({
-        .positionCurve = positionCurve,
-        .sampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE,
-        .persistenceSeconds = persistenceSeconds(),
-        .contrast = static_cast<double>(editorState.getProperty(CONTRAST_PROPERTY, DEFAULT_CONTRAST_PERCENT))
-            / MAX_CONTRAST_PERCENT,
-        .scale = scale,
-        .colours = phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency,
-        .analyze = !renderingBypassed && !spectrogramHidden,
-    });
+    analysisSettings.sampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE;
+    analysisSettings.persistenceSeconds = persistenceSeconds();
+    analysisSettings.contrast
+        = static_cast<double>(editorState.getProperty(CONTRAST_PROPERTY, DEFAULT_CONTRAST_PERCENT))
+        / MAX_CONTRAST_PERCENT;
+    analysisSettings.scale = scale;
+    analysisSettings.colours = phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency;
+    updateSpectrogramMonitoring();
 
     if (booleanSetting(editorState, SHOW_FPS_PROPERTY)) {
         spectrogram.setFrameStatistics(measuredFramesPerSecond, spectrogramRenderer.gpuFrameMilliseconds());
@@ -510,12 +518,29 @@ void ImageControlEditor::componentMovedOrResized(bool /*wasMoved*/, bool /*wasRe
 void ImageControlEditor::componentPeerChanged()
 {
     updateCorrelationMonitoring();
+    updateSpectrogramMonitoring();
 }
 
-/// Stops optional metering when the host hides the editor or any ancestor, even without another VBlank callback.
+/// Stops optional analysis when the host hides the editor or any ancestor, even without another VBlank callback.
 void ImageControlEditor::componentVisibilityChanged()
 {
     updateCorrelationMonitoring();
+    updateSpectrogramMonitoring();
+}
+
+/// Keeps the worker draining without FFT work unless a visible, usable spectrogram can display the result.
+/// Sending visibility transitions synchronously also advances the worker's source epoch before audio can resume.
+void ImageControlEditor::updateSpectrogramMonitoring()
+{
+    const auto& editorState = imageControlProcessor.getEditorState();
+    const bool analyze = isShowing() && !booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY)
+        && !booleanSetting(editorState, BYPASS_RENDERING_PROPERTY) && !spectrogramRenderer.isUnavailable();
+    const bool changed = analysisSettings.analyze != analyze;
+    analysisSettings.analyze = analyze;
+    spectrogramWorker.setSettings(analysisSettings);
+    if (changed) {
+        spectrogramWorker.wake();
+    }
 }
 
 /// Disables optional metering and clears presentation history synchronously when its view is hidden.
@@ -566,7 +591,8 @@ void ImageControlEditor::setAnalyzeOutput(const bool output)
 /// applies the settings, wakes the analysis worker to turn the audio queued since the last refresh into particles,
 /// advances the overlays by the time that passed, hands the fade and the plot to the renderer,
 /// and asks the OpenGL context for a frame.
-/// While rendering is bypassed or the spectrogram is hidden, the worker discards the queued audio unanalyzed.
+/// When the editor is not showing or the spectrogram is hidden, bypassed, or unavailable,
+/// the worker keeps discarding queued audio without FFT work.
 /// Also follows the crossovers.
 void ImageControlEditor::refreshDisplay(const double timestamp)
 {

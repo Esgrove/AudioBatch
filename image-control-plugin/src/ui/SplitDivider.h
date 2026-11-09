@@ -15,8 +15,6 @@ class SplitDivider final : public juce::Component
 public:
     SplitDivider();
 
-    /// Sets the callback that receives the vertical movement since the previous report while dragging,
-    /// in pixels, positive downwards.
     void setDragCallback(std::function<void(int)> callback);
 
     void paint(juce::Graphics& graphics) override;

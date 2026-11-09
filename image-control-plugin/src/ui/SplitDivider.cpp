@@ -23,7 +23,7 @@ SplitDivider::SplitDivider()
     setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
 }
 
-/// Sets the callback that receives the drag movement.
+/// Sets the callback that receives vertical movement since the previous drag report, in pixels, positive downwards.
 void SplitDivider::setDragCallback(std::function<void(int)> callback)
 {
     onDrag = std::move(callback);

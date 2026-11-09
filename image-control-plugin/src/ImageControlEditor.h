@@ -29,6 +29,10 @@
 namespace esgrove::image_control
 {
 class ImageControlProcessor;
+namespace test
+{
+struct ImageControlEditorTestAccess;
+}
 
 /// The ImageControl editor.
 /// A VBlankAttachment wakes the analysis worker on every display refresh,
@@ -56,6 +60,8 @@ public:
     void resized() override;
 
 private:
+    friend struct test::ImageControlEditorTestAccess;
+
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
     [[nodiscard]] std::optional<std::size_t> bandUnderPointer() const;
     [[nodiscard]] int compactHeight() const;
@@ -69,6 +75,7 @@ private:
     void setAnalyzeOutput(bool output);
     void updateBandRanges();
     void updateCorrelationMonitoring();
+    void updateSpectrogramMonitoring();
 
     void componentMovedOrResized(bool wasMoved, bool wasResized) override;
     void componentPeerChanged() override;
@@ -125,6 +132,10 @@ private:
     /// Independent read-only meter row aligned with the four band strips.
     std::array<std::unique_ptr<BandCorrelationMeter>, BAND_COUNT> correlationMeters;
 
+    /// Latest worker settings, reused when visibility changes without a display refresh.
+    SpectrogramAnalysisSettings analysisSettings;
+    /// Raw pan settings the cached worker position curve was derived from.
+    std::optional<std::array<double, 2>> shownPositionSettings;
     /// Processor lifecycle last accepted by the correlation display history.
     std::optional<std::uint32_t> shownCorrelationGeneration;
 
