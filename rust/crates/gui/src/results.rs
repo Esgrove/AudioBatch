@@ -116,12 +116,12 @@ const STATUS_MAXIMUM_WIDTH: f32 = 8192.0;
 /// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
 /// These are preferred widths, which automatic sizing adjusts to fit the visible columns in the window.
 const COLUMNS: [ColumnSpec; 22] = [
-    column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
+    column_spec(ColumnKey::Name, "Name", "File name", 210.0, false),
     column_spec(
         ColumnKey::Folder,
         "Folder",
         "Folder of the file, starting with ~ inside a macOS home folder",
-        160.0,
+        140.0,
         false,
     ),
     column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
@@ -2820,6 +2820,29 @@ mod test_column_sizing {
         assert_eq!(delegate.cell_string(0, folder), "/Music/Album 2");
     }
 
+    /// Keeps source identity wider than its folder while preserving the automatic table budget.
+    #[test]
+    fn default_name_width_prioritizes_file_identity_over_folder() {
+        let delegate = ResultsDelegate::new(1600.0);
+        let preferred = preferred(&delegate);
+        let name = delegate
+            .order
+            .iter()
+            .position(|key| *key == ColumnKey::Name)
+            .expect("Name");
+        let folder = delegate
+            .order
+            .iter()
+            .position(|key| *key == ColumnKey::Folder)
+            .expect("Folder");
+        assert!((preferred[name] - 210.0).abs() < 0.001);
+        assert!((preferred[folder] - 140.0).abs() < 0.001);
+        assert!(preferred[folder].mul_add(-1.5, preferred[name]).abs() < 0.001);
+        let fitted = delegate.fitted_widths(1600.0, 1.0);
+        assert!(fitted[name] > fitted[folder]);
+        assert_budget(&delegate, 1600.0, 1.0);
+    }
+
     #[test]
     fn initial_layout_allocates_only_visible_columns() {
         let delegate = ResultsDelegate::new(1600.0);
@@ -2929,7 +2952,7 @@ mod test_column_sizing {
             .iter()
             .position(|key| *key == ColumnKey::Name)
             .expect("name");
-        assert!((preferred(&delegate)[name] - 180.0).abs() < 0.001);
+        assert!((preferred(&delegate)[name] - 250.0).abs() < 0.001);
         assert!((column_weight(delegate.order[name]) - 10.0).abs() < f64::EPSILON);
         delegate.set_column_visible(ColumnKey::Path, true);
         delegate.set_column_visible(ColumnKey::Status, true);
@@ -2939,6 +2962,6 @@ mod test_column_sizing {
             .iter()
             .position(|key| *key == ColumnKey::Name)
             .expect("name");
-        assert!((preferred(&delegate)[name] - 180.0).abs() < 0.001);
+        assert!((preferred(&delegate)[name] - 250.0).abs() < 0.001);
     }
 }

@@ -4,6 +4,7 @@
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/GuiLayout.h"
 #include "gui/ResultsModel.h"
 #include "TestSuites.h"
 
@@ -54,6 +55,12 @@ public:
     /// Runs the results model checks.
     void runTest() override
     {
+        beginTest("Initial column widths prioritize the file name without shrinking the full path");
+        expectEquals(layout::table::initialColumnWidth(AudioFileTableColumn::name), 210);
+        expectEquals(layout::table::initialColumnWidth(AudioFileTableColumn::folder), 140);
+        expectEquals(layout::table::initialColumnWidth(AudioFileTableColumn::path), 160);
+        expect(layout::table::initiallyVisibleColumnWidth <= layout::table::initiallyVisibleColumnWidthBudget);
+
         beginTest("Merging appends new paths and replaces the row of a known path in place");
         {
             ResultsModel results;

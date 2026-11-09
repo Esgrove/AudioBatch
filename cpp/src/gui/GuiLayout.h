@@ -390,7 +390,8 @@ constexpr int bitrateColumnMinimumWidth {68};
 constexpr int sampleRateColumnMinimumWidth {72};
 constexpr int lengthColumnMinimumWidth {60};
 constexpr int metricColumnMinimumWidth {72};
-constexpr int nameColumnDefaultWidth {140};
+constexpr int nameColumnDefaultWidth {210};
+constexpr int folderColumnDefaultWidth {140};
 constexpr int pathColumnDefaultWidth {160};
 constexpr int typeColumnDefaultWidth {66};
 constexpr int bitDepthColumnDefaultWidth {70};
@@ -412,10 +413,10 @@ constexpr int metricMaximumWidth {160};
 constexpr int statusMaximumWidth {800};
 
 /// Width the initially visible columns may take together.
-/// It leaves the name and path columns room to grow in the default window.
+/// It leaves the name and folder columns room to grow in the default window.
 constexpr int initiallyVisibleColumnWidthBudget {1240};
 constexpr int initiallyVisibleColumnWidth {
-    nameColumnDefaultWidth + pathColumnDefaultWidth + typeColumnDefaultWidth + bitDepthColumnDefaultWidth
+    nameColumnDefaultWidth + folderColumnDefaultWidth + typeColumnDefaultWidth + bitDepthColumnDefaultWidth
         + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth + lengthColumnDefaultWidth
         + overallPeakColumnDefaultWidth + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth
         + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth,
@@ -433,6 +434,7 @@ consteval int initialColumnWidth(const AudioFileTableColumn column)
         case AudioFileTableColumn::name:
             return nameColumnDefaultWidth;
         case AudioFileTableColumn::folder:
+            return folderColumnDefaultWidth;
         case AudioFileTableColumn::path:
             return pathColumnDefaultWidth;
         case AudioFileTableColumn::type:
