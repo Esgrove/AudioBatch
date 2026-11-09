@@ -901,6 +901,7 @@ void AudioBatchIntegrationTest::menuShortcuts()
     const juce::ModifierKeys primary {juce::ModifierKeys::commandModifier};
     EXPECT_EQ(command(juce::KeyPress('o', primary.withFlags(juce::ModifierKeys::shiftModifier), 0)), "Add Folder...");
     EXPECT_EQ(command(juce::KeyPress('p', primary, 0)), "Audio Settings...");
+    EXPECT_EQ(command(juce::KeyPress('e', primary, 0)), "Edit Chain...");
     EXPECT_EQ(command(juce::KeyPress('a', primary, 0)), "Select All Files");
     EXPECT_EQ(command(juce::KeyPress(juce::KeyPress::escapeKey)), "Stop Playback");
     EXPECT_EQ(command(juce::KeyPress('o', primary, 0)), "Choose Folder...");
@@ -912,6 +913,22 @@ void AudioBatchIntegrationTest::menuShortcuts()
     view.resultsTable.deselectAllRows();
     EXPECT_TRUE(mappings.keyPressed(juce::KeyPress('a', primary, 0), &view));
     EXPECT_TRUE(dispatchUntil([&] { return view.getSelectedRecordPaths().size() == 1; }));
+
+    const auto chainWindow = [] -> juce::Component* {
+        const auto& desktop = juce::Desktop::getInstance();
+        for (int index = 0; index < desktop.getNumComponents(); ++index) {
+            auto* component = desktop.getComponent(index);
+            if (component->getName() == "Plugin Chain" && component->isVisible()) {
+                return component;
+            }
+        }
+        return nullptr;
+    };
+    EXPECT_TRUE(mappings.keyPressed(juce::KeyPress('e', primary, 0), &view));
+    ASSERT_TRUE(dispatchUntil([&] { return chainWindow() != nullptr; }));
+    const auto* openedChainWindow = chainWindow();
+    EXPECT_TRUE(mappings.keyPressed(juce::KeyPress('e', primary, 0), &view));
+    EXPECT_TRUE(dispatchUntil([&] { return chainWindow() == openedChainWindow; }));
 }
 
 /// Places the real view in a desktop window at the manifest size

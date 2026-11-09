@@ -36,7 +36,6 @@ enum class MenuItemId : std::uint8_t {
     clearFiles,
     reanalyzeSelected,
     supportedFormats,
-    editChain,
     clearChain,
     scanPlugins,
     normalizeAll,
@@ -69,6 +68,7 @@ enum class CommandId : std::uint8_t {
     toggleOverloadLines,
     chooseFolder,
     audioSettings,
+    editChain,
     cancelRun,
     addFolder,
     addFiles,
@@ -332,9 +332,6 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case MenuItemId::supportedFormats:
             getAudioBatch().showSupportedNormalizationFormats();
             break;
-        case MenuItemId::editChain:
-            getAudioBatch().getLiveChain().showChainEditor();
-            break;
         case MenuItemId::clearChain:
             getAudioBatch().getLiveChain().clearChain();
             break;
@@ -436,6 +433,11 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             result.setInfo("Choose Folder...", "Choose the root folder to analyze", fileCategory, 0);
             result.addDefaultKeypress('o', juce::ModifierKeys::commandModifier);
             result.setActive(!blockedByDialog && !audioBatch.isFileOperationInProgress());
+            break;
+        case CommandId::editChain:
+            result.setInfo("Edit Chain...", "Open the plugin chain editor", "Plugins", 0);
+            result.addDefaultKeypress('e', juce::ModifierKeys::commandModifier);
+            result.setActive(!blockedByDialog);
             break;
         case CommandId::audioSettings:
             result.setInfo("Audio Settings...", "Configure audio playback and preview preferences", "Options", 0);
@@ -658,6 +660,9 @@ bool MainWindow::perform(const InvocationInfo& info)
         case CommandId::chooseFolder:
             getAudioBatch().chooseRootFolder();
             return true;
+        case CommandId::editChain:
+            getAudioBatch().getLiveChain().showChainEditor();
+            return true;
         case CommandId::audioSettings:
             getAudioBatch().showAudioSettingsWindow();
             return true;
@@ -817,7 +822,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
     menu.addSectionHeader(
         summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
     );
-    addMenuItem(menu, MenuItemId::editChain, "Edit Chain...");
+    addCommandItem(menu, commandManager, CommandId::editChain);
     menu.addSubMenu("Chain Presets", chain.createPresetsMenu(presetsMenuFirstItemId));
     menu.addSeparator();
 

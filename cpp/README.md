@@ -21,6 +21,7 @@ The File menu adds files or folders, selects all files, normalizes the selection
 and clears per-file gain. The Plugins menu processes the selection through the live chain.
 Options offers Output Device and Columns submenus, plus the playback and preview preferences.
 Audio Settings uses Cmd/Ctrl+P, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
+Cmd/Ctrl+E opens the plugin chain editor.
 Add Files opens a multi-file chooser.
 Escape stops playback and returns to the start.
 
