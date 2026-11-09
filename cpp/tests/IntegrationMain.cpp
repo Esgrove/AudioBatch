@@ -371,8 +371,15 @@ void AudioBatchIntegrationTest::openAndSort()
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::clips)));
     toggleColumn(view, AudioFileTableColumn::path);
     EXPECT_TRUE(header.isColumnVisible(toColumnId(AudioFileTableColumn::path)));
-    for (const int width : {2200, 800}) {
+    for (const int width : {2200, 800, 2201, 5000}) {
+        SCOPED_TRACE(width);
         view.setSize(width, 800);
+        // Reproduce a dominant name-column share that reaches its maximum before the other columns.
+        // The remaining pixels must go to folder/path, including when both initially have zero surplus.
+        auto& mutableHeader = view.resultsTable.getHeader();
+        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::name), layout::table::nameMaximumWidth);
+        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::folder), layout::table::pathColumnMinimumWidth);
+        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::path), layout::table::pathColumnMinimumWidth);
         view.updateResultsTableColumnWidths();
         int total = 0;
         int fixed = 0;
@@ -387,7 +394,17 @@ void AudioBatchIntegrationTest::openAndSort()
             }
         }
         const int minimum = layout::table::nameColumnMinimumWidth + 2 * layout::table::pathColumnMinimumWidth;
-        EXPECT_NEAR(total, std::max(view.resultsTable.getVisibleContentWidth(), fixed + minimum), 3);
+        const int maximum = layout::table::nameMaximumWidth + 2 * layout::table::pathMaximumWidth;
+        EXPECT_EQ(total, std::clamp(view.resultsTable.getVisibleContentWidth(), fixed + minimum, fixed + maximum));
+        const std::array widths {
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::name)),
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)),
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::path)),
+        };
+        view.updateResultsTableColumnWidths();
+        EXPECT_EQ(header.getColumnWidth(toColumnId(AudioFileTableColumn::name)), widths[0]);
+        EXPECT_EQ(header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)), widths[1]);
+        EXPECT_EQ(header.getColumnWidth(toColumnId(AudioFileTableColumn::path)), widths[2]);
         EXPECT_GE(header.getColumnWidth(toColumnId(AudioFileTableColumn::name)), layout::table::nameColumnMinimumWidth);
         EXPECT_GE(
             header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)), layout::table::pathColumnMinimumWidth
