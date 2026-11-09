@@ -78,7 +78,7 @@ TEST(SpectrogramWorker, QueuedAudioBecomesParticles)
     juce::OpenGLContext context;
     SpectrogramRenderer renderer(context);
     SpectrogramWorker worker(fifo, renderer);
-    worker.setSettings({.analyze = true});
+    worker.setSettings({.positionCurve = StereoPositionCurve {}, .analyze = true});
     worker.start();
     std::this_thread::sleep_for(STARTUP_TIME);
 
@@ -94,7 +94,7 @@ TEST(SpectrogramWorker, AudioIsDiscardedWhileAnalysisIsOff)
     juce::OpenGLContext context;
     SpectrogramRenderer renderer(context);
     SpectrogramWorker worker(fifo, renderer);
-    worker.setSettings({.analyze = false});
+    worker.setSettings({.positionCurve = StereoPositionCurve {}, .analyze = false});
     worker.start();
     std::this_thread::sleep_for(STARTUP_TIME);
 
@@ -113,7 +113,7 @@ TEST(SpectrogramWorker, StopsWhileAProducerFloodsTheRing)
     juce::OpenGLContext context;
     SpectrogramRenderer renderer(context);
     SpectrogramWorker worker(fifo, renderer);
-    worker.setSettings({.analyze = true});
+    worker.setSettings({.positionCurve = StereoPositionCurve {}, .analyze = true});
     worker.start();
 
     std::atomic<bool> producing {true};

@@ -534,7 +534,7 @@ impl LiveChain {
     ///
     /// # Errors
     ///
-    /// Returns "<name>: <error>" for the first enabled slot whose plugin is not loaded or not prepared,
+    /// Returns `<name>: <error>` for the first enabled slot whose plugin is not loaded or not prepared,
     /// because previewing without it would not be what the chain sounds like.
     pub fn preview_chain(&self, ui: &UiThread) -> Result<Option<PreviewChain>> {
         let mut plugins = Vec::new();

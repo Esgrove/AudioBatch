@@ -25,6 +25,9 @@
 
 namespace esgrove::image_control
 {
+/// Number of downsampled textures in the spectrogram's glow chain.
+constexpr std::size_t SPECTROGRAM_BLOOM_LEVEL_COUNT {5};
+
 /// What the renderer draws in the plot.
 enum class SpectrogramRenderMode : std::uint8_t {
     /// The particles over the plot background.
@@ -53,8 +56,8 @@ struct SpectrogramRenderTarget {
 /// which keeps them sharp on any display.
 /// It then builds a soft glow from a chain of downsampled copies,
 /// and tone maps the picture into the plot with rounded corners.
-/// In the solid mode, the composite instead draws a smooth level of the glow chain as stacked translucent layers
-/// with outlines, and keeps only the strongest particles as bright traces on top.
+/// Solid mode draws a smooth glow-chain level as stacked translucent layers with outlines.
+/// Only the strongest particles remain as bright traces on top.
 ///
 /// submitParticles runs on the analysis worker thread, submitFrame on the message thread,
 /// and the OpenGLRenderer callbacks on JUCE's OpenGL thread.
@@ -143,17 +146,18 @@ private:
     /// The accumulated particles at the plot's physical size.
     SpectrogramRenderTarget accumulation;
     /// The glow chain, each level half the size of the one before.
-    std::array<SpectrogramRenderTarget, 5> bloomLevels;
-    /// Density field of the solid layers: a copy of one glow chain level
-    /// taken before the smaller levels are added into it.
+    std::array<SpectrogramRenderTarget, SPECTROGRAM_BLOOM_LEVEL_COUNT> bloomLevels;
+    /// Density field of the solid layers, copied from one glow-chain level before adding its smaller levels.
     SpectrogramRenderTarget solidField;
 
+#if JUCE_DEBUG
     /// GPU timer queries in flight, read a few frames later so reading them never stalls the pipeline.
     std::array<GLuint, 4> timerQueries {};
     /// Next timer query to start.
     std::size_t nextTimerQuery {0};
     /// Number of timer queries started, up to their count.
     std::size_t startedTimerQueries {0};
+#endif
 
     /// Number of frames drawn, for the frame rate readout.
     std::atomic<int> renderedFrames {0};

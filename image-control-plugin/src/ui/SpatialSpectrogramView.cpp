@@ -194,6 +194,20 @@ float approach(const float value, const float target, const double seconds)
 
 }  // namespace
 
+/// Compares the visible overlay values within floating-point rounding precision to avoid redundant repaints.
+bool SpectrogramOverlayState::operator==(const SpectrogramOverlayState& other) const
+{
+    const auto approximatelyEqual
+        = [](const auto first, const auto second) { return juce::approximatelyEqual(first, second); };
+    return positionCurve == other.positionCurve
+        && std::ranges::equal(bandHighlights, other.bandHighlights, approximatelyEqual)
+        && std::ranges::equal(crossoverHighlights, other.crossoverHighlights, approximatelyEqual)
+        && std::ranges::equal(crossovers, other.crossovers, approximatelyEqual)
+        && std::ranges::equal(bandWidths, other.bandWidths, approximatelyEqual) && mutedBands == other.mutedBands
+        && juce::approximatelyEqual(positionCurveOpacity, other.positionCurveOpacity)
+        && renderingBypassed == other.renderingBypassed && renderingUnavailable == other.renderingUnavailable;
+}
+
 /// Creates the view, looking up the parameters it reads and changes,
 /// and keeping the editor settings for the Link toggles that its mid gain gestures follow.
 SpatialSpectrogramView::SpatialSpectrogramView(

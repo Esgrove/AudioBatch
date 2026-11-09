@@ -132,6 +132,49 @@ float brightness(const SpectrogramParticle& particle)
 }
 }  // namespace
 
+TEST(SpectrogramView, OverlayEqualityTracksEveryVisibleValue)
+{
+    const SpectrogramOverlayState original;
+    EXPECT_EQ(original, SpectrogramOverlayState {});
+
+    const auto expectChanged = [&original](const SpectrogramOverlayState& changed) {
+        EXPECT_NE(original, changed);
+        EXPECT_NE(changed, original);
+        EXPECT_EQ(changed, changed);
+    };
+    auto changed = original;
+    changed.positionCurve = StereoPositionCurve(13.0, 32.0);
+    expectChanged(changed);
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        changed = original;
+        changed.bandHighlights.at(band) = 0.1F;
+        expectChanged(changed);
+        changed = original;
+        changed.bandWidths.at(band) = 0.1;
+        expectChanged(changed);
+        changed = original;
+        changed.mutedBands.at(band) = true;
+        expectChanged(changed);
+    }
+    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+        changed = original;
+        changed.crossoverHighlights.at(crossover) = 0.1F;
+        expectChanged(changed);
+        changed = original;
+        changed.crossovers.at(crossover) = 100.0F;
+        expectChanged(changed);
+    }
+    changed = original;
+    changed.positionCurveOpacity = 0.1F;
+    expectChanged(changed);
+    changed = original;
+    changed.renderingBypassed = true;
+    expectChanged(changed);
+    changed = original;
+    changed.renderingUnavailable = true;
+    expectChanged(changed);
+}
+
 TEST(SpectrogramView, DraggingAMiddleBandMovesBothItsCrossovers)
 {
     ImageControlProcessor processor;

@@ -73,7 +73,7 @@ impl PreviewFailure {
         }
     }
 
-    /// Returns the failure as "<name>: <error>", or `None` while every plugin processes.
+    /// Returns the failure as `<name>: <error>`, or `None` while every plugin processes.
     #[must_use]
     pub fn message(&self) -> Option<String> {
         let stage = self.stage.load(Ordering::Acquire);
@@ -106,7 +106,7 @@ impl PreviewChain {
     ///
     /// # Errors
     ///
-    /// Returns "<name>: <error>" for the first plugin that cannot process audio.
+    /// Returns `<name>: <error>` for the first plugin that cannot process audio.
     pub fn new(ui: &UiThread, plugins: &[(&str, &PluginInstance)]) -> Result<Self, PreviewChainError> {
         let mut processors = Vec::with_capacity(plugins.len());
         let mut latency_frames = 0;

@@ -1,7 +1,6 @@
 /// Declares BandStrip, the controls of one band in the ImageControl editor:
 /// the Mid and Side gain sliders attached to their parameters,
-/// the Width macro that sets Side relative to Mid, the Solo and Link toggles, and the Pan slider attached to its
-/// parameter.
+/// the Width macro that sets Side relative to Mid, the Solo and Link toggles, and the parameter-attached Pan slider.
 
 #pragma once
 

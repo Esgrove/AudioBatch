@@ -86,8 +86,10 @@ constexpr float SOLID_HIGHLIGHT_START {0.35F};
 constexpr float SOLID_HIGHLIGHT_END {0.75F};
 /// Strength of the glow in the solid mode relative to the particle mode.
 constexpr float SOLID_GLOW_SHARE {0.5F};
+#if JUCE_DEBUG
 /// Nanoseconds in a millisecond, for the GPU timer.
 constexpr double NANOSECONDS_PER_MILLISECOND {1.0e6};
+#endif
 /// Background of the plot, as ARGB.
 constexpr juce::uint32 BACKGROUND {0xff050608};
 

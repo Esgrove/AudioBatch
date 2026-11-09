@@ -559,15 +559,18 @@ void ScopedLogCapture::logMessage(const juce::String& message)
     messages.add(message);
 }
 
-/// Creates the folder.
+/// Creates a uniquely owned folder, including across test binaries running in different build configurations.
+/// A nonexistent-name lookup followed by creation can otherwise select the same path in two processes.
 TemporaryDirectory::TemporaryDirectory() :
     directory(
         juce::File::getSpecialLocation(juce::File::tempDirectory)
             .getChildFile("AudioBatchTests")
-            .getNonexistentChildFile("run", "", false)
+            .getChildFile(utils::format("run-{}", juce::Uuid().toString()))
     )
 {
-    directory.createDirectory();
+    if (directory.createDirectory().failed()) {
+        throw std::runtime_error("Could not create test temporary directory");
+    }
 }
 
 /// Deletes the folder and everything in it.

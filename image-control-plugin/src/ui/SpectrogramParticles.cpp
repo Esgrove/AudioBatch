@@ -190,22 +190,26 @@ LinearColour frequencyColour(const float share)
 {
     const double frequency
         = shareToFrequency(std::clamp(static_cast<double>(share), 0.0, 1.0), FrequencyScale::logarithmic);
-    const auto upper = std::ranges::find_if(FREQUENCY_COLOUR_STOPS, [frequency](const FrequencyColourStop& stop) {
-        return static_cast<double>(stop.frequency) >= frequency;
-    });
-    if (upper == FREQUENCY_COLOUR_STOPS.begin()) {
+    const auto upperIndex = static_cast<std::size_t>(std::ranges::distance(
+        FREQUENCY_COLOUR_STOPS.begin(),
+        std::ranges::find_if(FREQUENCY_COLOUR_STOPS, [frequency](const FrequencyColourStop& stop) {
+            return static_cast<double>(stop.frequency) >= frequency;
+        })
+    ));
+    if (upperIndex == 0) {
         return linearStopColour(FREQUENCY_COLOUR_STOPS.front());
     }
-    if (upper == FREQUENCY_COLOUR_STOPS.end()) {
+    if (upperIndex == FREQUENCY_COLOUR_STOPS.size()) {
         return linearStopColour(FREQUENCY_COLOUR_STOPS.back());
     }
-    const auto& lower = *std::prev(upper);
+    const auto& lower = FREQUENCY_COLOUR_STOPS.at(upperIndex - 1);
+    const auto& upper = FREQUENCY_COLOUR_STOPS.at(upperIndex);
     const auto position = static_cast<float>(
         std::log(frequency / static_cast<double>(lower.frequency))
-        / std::log(static_cast<double>(upper->frequency) / static_cast<double>(lower.frequency))
+        / std::log(static_cast<double>(upper.frequency) / static_cast<double>(lower.frequency))
     );
     const LinearColour low = linearStopColour(lower);
-    const LinearColour high = linearStopColour(*upper);
+    const LinearColour high = linearStopColour(upper);
     return {
         .red = low.red + (high.red - low.red) * position,
         .green = low.green + (high.green - low.green) * position,
@@ -237,9 +241,9 @@ float contrastCurve(const float share, const float contrast)
     return rising / (rising + falling);
 }
 
-/// Returns the contrast at a frequency: the setting, plus extra contrast that rises on the logarithmic axis
-/// from HIGH_CONTRAST_START_FREQUENCY to HIGH_CONTRAST_BOOST at HIGH_CONTRAST_FULL_FREQUENCY,
-/// so the dense, noisy highs show their strongest content most clearly.
+/// Returns the setting plus a high-frequency contrast boost, rising along the logarithmic frequency axis.
+/// The ramp starts at HIGH_CONTRAST_START_FREQUENCY and reaches HIGH_CONTRAST_BOOST at HIGH_CONTRAST_FULL_FREQUENCY.
+/// This makes the strongest content clearer in dense, noisy highs.
 float frequencyContrast(const float frequency, const float contrast)
 {
     const float ramp = std::log2(std::max(frequency, MIN_FREQUENCY) / HIGH_CONTRAST_START_FREQUENCY)
