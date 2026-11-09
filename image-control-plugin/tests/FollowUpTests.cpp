@@ -289,7 +289,7 @@ TEST(CorrelationLifecycle, MissingCallbacksExpireWithoutReadingOrMutatingAudioHi
 TEST(SpectrogramOverlayCache, OnlyPlotScaleAndOrderedCrossoversInvalidateGeometry)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(999, 401);
     SpectrogramViewTestAccess access(view);
     EXPECT_EQ(access.builds(), 0U);
@@ -359,7 +359,7 @@ TEST(SpectrogramOverlayCache, OnlyPlotScaleAndOrderedCrossoversInvalidateGeometr
 TEST(SpectrogramOverlayCache, UnhoveredPaintsDoNotBuildOrRefreshResponseGeometry)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(999, 401);
     SpectrogramViewTestAccess access(view);
     const juce::Image image(juce::Image::ARGB, 1024, 512, true);
@@ -402,7 +402,7 @@ TEST(SpectrogramOverlayCache, UnhoveredPaintsDoNotBuildOrRefreshResponseGeometry
 TEST(SpectrogramOverlayCache, ResponsesMatchTheLowpassesAndReachTheExactRightEndpoint)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(999, 401);
     SpectrogramViewTestAccess access(view);
     for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {

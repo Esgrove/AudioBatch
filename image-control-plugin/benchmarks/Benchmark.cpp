@@ -429,12 +429,12 @@ Clock::duration durationFromSeconds(const double seconds)
 }
 
 /// Warms history and gain settling, then primes the optional worker before measuring concurrent callbacks.
-/// The nullable worker observer is owned by timeProcessor and remains valid throughout this synchronous call.
+/// The optional worker is owned by timeProcessor and remains valid throughout this synchronous call.
 template<typename Prepare, typename Callback, typename Consume, typename Refresh>
 std::size_t warmProcessor(
     const int warmupFrames,
     const int repetition,
-    AnalysisLoad* load,
+    const OptionalRef<AnalysisLoad> load,
     const Prepare& prepare,
     const Callback& callback,
     const Consume& consume,
@@ -448,7 +448,7 @@ std::size_t warmProcessor(
         consume(false);
         refresh();
     }
-    if (load == nullptr) {
+    if (!load) {
         return 0;
     }
     const auto prime = [&] {
@@ -463,10 +463,10 @@ std::size_t warmProcessor(
     }
     if (repetition == 0) {
         const auto startupDeadline = Clock::now() + std::chrono::seconds(1);
-        while (load->pendingParticles() == 0 && Clock::now() < startupDeadline) {
+        while (load->get().pendingParticles() == 0 && Clock::now() < startupDeadline) {
             prime();
         }
-        return load->pendingParticles();
+        return load->get().pendingParticles();
     }
     return 0;
 }
@@ -589,6 +589,16 @@ void printProcessor(
     }
 }
 
+/// Creates the optional concurrent analyzer, whose lifetime is limited to one measured processor workload.
+std::unique_ptr<AnalysisLoad> createAnalysisLoad(
+    ImageControlProcessor& processor,
+    const double sampleRate,
+    const bool concurrentAnalysis
+)
+{
+    return concurrentAnalysis ? std::make_unique<AnalysisLoad>(processor, sampleRate) : nullptr;
+}
+
 /// Measures the public callback. A draining reference always leaves FIFO space. Worker runs may drop under overload.
 void timeProcessor(
     const Options& options,
@@ -605,7 +615,8 @@ void timeProcessor(
     processor.setNonRealtime(false);
     configureProcessor(processor, mode, meters);
     processor.prepareToPlay(sampleRate, MAXIMUM_BLOCK_SIZE);
-    auto load = concurrentAnalysis ? std::make_unique<AnalysisLoad>(processor, sampleRate) : nullptr;
+    auto load = createAnalysisLoad(processor, sampleRate, concurrentAnalysis);
+    const OptionalRef<AnalysisLoad> analysisLoad = load ? OptionalRef<AnalysisLoad>(*load) : std::nullopt;
     const auto left = makeNoise(MAXIMUM_BLOCK_SIZE, 1);
     const auto right = makeNoise(MAXIMUM_BLOCK_SIZE, 2);
     std::array<float, MAXIMUM_BLOCK_SIZE> discardedLeft {};
@@ -663,7 +674,7 @@ void timeProcessor(
         const int warmupFrames = processor.getLatencySamples()
             + static_cast<int>(std::ceil(sampleRate * GAIN_SMOOTHING_SECONDS)) + MAXIMUM_BLOCK_SIZE;
         particles = std::max(
-            particles, warmProcessor(warmupFrames, repetition, load.get(), prepareBlock, callback, consume, refresh)
+            particles, warmProcessor(warmupFrames, repetition, analysisLoad, prepareBlock, callback, consume, refresh)
         );
         measureProcessor(
             options,
@@ -1046,7 +1057,7 @@ void timeSpectrogramParticlesOnly(const Options& options)
 void timeSpectrogramOverlays(const Options& options, const OverlayHover hover = OverlayHover::none)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     if (hover != OverlayHover::none) {
         const auto plot = view.getPlotBounds();

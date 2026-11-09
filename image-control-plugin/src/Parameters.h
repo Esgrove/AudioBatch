@@ -11,9 +11,15 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
+#include <optional>
 
 namespace esgrove::image_control
 {
+/// A nullable, non-owning reference whose owner must outlive every use of the engaged value.
+template<typename T>
+using OptionalRef = std::optional<std::reference_wrapper<T>>;
+
 /// Number of frequency bands the signal is split into.
 constexpr std::size_t BAND_COUNT {4};
 /// Number of crossover frequencies between the bands.

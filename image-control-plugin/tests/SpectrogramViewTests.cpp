@@ -51,7 +51,8 @@ public:
     std::vector<bool> events;
 };
 
-/// Finds a real child control by the accessible title its production composition assigns.
+/// Finds a real child control by its accessible title, or null when absent.
+/// The component hierarchy owns the result, which must be checked and used only while that hierarchy retains it.
 juce::Component* childWithTitle(const juce::Component& parent, const juce::String& title)
 {
     std::vector<juce::Component*> pending;
@@ -71,7 +72,8 @@ juce::Component* childWithTitle(const juce::Component& parent, const juce::Strin
     return nullptr;
 }
 
-/// Finds a button by its visible text without relying on private editor fields.
+/// Finds a button by its visible text, or null when absent, without relying on private editor fields.
+/// The parent owns the result. Check it before use and use it only while the parent retains the button.
 juce::Button* buttonWithText(const juce::Component& parent, const juce::String& text)
 {
     for (auto* child : parent.getChildren()) {
@@ -231,7 +233,7 @@ TEST(SpectrogramView, OverlayEqualityTracksEveryVisibleValue)
 TEST(SpectrogramView, DraggingAMiddleBandMovesBothItsCrossovers)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     // The Low Mid band spans 100 Hz to 500 Hz. Dragging from its middle up by one octave moves both edges.
     const float centreY = view.getPlotBounds().getCentreY();
@@ -247,7 +249,7 @@ TEST(SpectrogramView, DraggingAMiddleBandMovesBothItsCrossovers)
 TEST(SpectrogramView, DraggingTheLowBandMovesOnlyItsUpperCrossover)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const float centreY = view.getPlotBounds().getCentreY();
     dragOnView(view, {xOf(view, 50.0), centreY}, {xOf(view, octavesAbove(50.0, 0.5)), centreY});
@@ -259,7 +261,7 @@ TEST(SpectrogramView, DraggingTheLowBandMovesOnlyItsUpperCrossover)
 TEST(SpectrogramView, BandMoveStopsAtTheMinimumRatioToTheCrossoverThatStays)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     // The High Mid band spans 500 Hz to 5 kHz.
     // A drag far to the left stops when 500 Hz reaches a third of an octave above the low crossover at 100 Hz,
@@ -276,7 +278,7 @@ TEST(SpectrogramView, BandMoveStopsAtTheMinimumRatioToTheCrossoverThatStays)
 TEST(SpectrogramView, CommandDragChangesTheMidGainAndLinkedSide)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const float x = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
@@ -295,7 +297,7 @@ TEST(SpectrogramView, CommandDragLeavesTheSideAloneWithoutLink)
 {
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const float x = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
@@ -308,7 +310,7 @@ TEST(SpectrogramView, CommandDragLeavesTheSideAloneWithoutLink)
 TEST(SpectrogramView, AltDragChangesTheSideGain)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const float x = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
@@ -322,7 +324,7 @@ TEST(SpectrogramView, AltDragChangesTheSideGain)
 TEST(SpectrogramView, WheelStepsChangeTheGainsByATenthOfADecibel)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const juce::Point<float> position {xOf(view, 2000.0), view.getPlotBounds().getCentreY()};
 
@@ -421,7 +423,7 @@ TEST(SpectrogramView, TeardownClosesAnInterruptedLinkedGainGesture)
     mid.addListener(&midGestures);
     side.addListener(&sideGestures);
     {
-        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
         view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
         const juce::Point<float> position {xOf(view, 2000.0), view.getPlotBounds().getCentreY()};
         view.mouseDown(mouseEvent(
@@ -443,7 +445,7 @@ TEST(SpectrogramView, DoubleClickResetDoesNotOverlapThePointerGesture)
     auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(0));
     GestureCounter gestures;
     parameter.addListener(&gestures);
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const juce::Point<float> position {xOf(view, 100.0), view.getPlotBounds().getCentreY()};
     const auto event = mouseEvent(view, position, position, juce::ModifierKeys::leftButtonModifier);
@@ -460,7 +462,7 @@ TEST(SpectrogramView, AxisAndSecondaryClicksDoNotOpenGestures)
     auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(0));
     GestureCounter gestures;
     parameter.addListener(&gestures);
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     const juce::Point<float> axis {xOf(view, 100.0), static_cast<float>(VIEW_HEIGHT - 1)};
     view.mouseDown(mouseEvent(view, axis, axis, juce::ModifierKeys::leftButtonModifier));
@@ -478,7 +480,7 @@ TEST(BandStrip, LinkChangesDuringDragKeepTheOriginalGestureBalanced)
     GestureCounter gestures;
     side.addListener(&gestures);
     {
-        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
         strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
         auto* mid = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Mid"));
         ASSERT_NE(mid, nullptr);
@@ -500,7 +502,7 @@ TEST(BandStrip, EnablingLinkDuringAnUnlinkedDragDoesNotOpenOrEndSideGesture)
     GestureCounter gestures;
     side.addListener(&gestures);
     {
-        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
         strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
         auto* mid = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Mid"));
         ASSERT_NE(mid, nullptr);
@@ -523,7 +525,7 @@ TEST(BandStrip, WheelAndKeysMoveLinkedSideInBalancedGestures)
     GestureCounter gestures;
     side.addListener(&gestures);
     {
-        const BandStrip strip(processor.getParameters(), processor.getEditorState(), 1);
+        const BandStrip strip(processor.getParameters(), processor.getEditorState(), 1, processor.getHistory());
         auto* mid = dynamic_cast<ControlSlider*>(childWithTitle(strip, "Low Mid Mid"));
         ASSERT_NE(mid, nullptr);
         const juce::Point<float> position {40.0F, 13.0F};
@@ -550,7 +552,7 @@ TEST(BandStrip, InterruptedWidthAndRecoverDragsCloseOnlyTheirOwnGestures)
         parameter.addListener(&gestures);
         side.addListener(&sideGestures);
         {
-            BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+            BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
             strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
             auto* slider
                 = dynamic_cast<ControlSlider*>(childWithTitle(strip, recovering ? "Low Recover" : "Low Width"));
@@ -572,7 +574,7 @@ TEST(BandStrip, WidthAndRecoverExposeIndependentAccessibleValuesAndTextAttachmen
 {
     ImageControlProcessor processor;
     setParameterInGesture(*processor.getParameters().getParameter(midGainParameterId(0)), -12.0F);
-    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
     strip.addToDesktop(0);
     for (const bool recovering : {false, true}) {
@@ -618,7 +620,7 @@ TEST(BandStrip, WidthAndRecoverExposeIndependentAccessibleValuesAndTextAttachmen
 TEST(BandStrip, WidthAndRecoverStayEnabledWithMidOffAndFollowOnlyTheirOwnAutomation)
 {
     ImageControlProcessor processor;
-    const BandStrip strip(processor.getParameters(), processor.getEditorState(), 2);
+    const BandStrip strip(processor.getParameters(), processor.getEditorState(), 2, processor.getHistory());
     auto* width = dynamic_cast<ControlSlider*>(childWithTitle(strip, "High Mid Width"));
     auto* recover = dynamic_cast<ControlSlider*>(childWithTitle(strip, "High Mid Recover"));
     ASSERT_NE(width, nullptr);
@@ -644,7 +646,7 @@ TEST(BandStrip, WidthAndRecoverWheelKeysAndResetUseBalancedIndependentGestures)
 {
     for (const bool recovering : {false, true}) {
         ImageControlProcessor processor;
-        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
         strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
         auto* slider = dynamic_cast<ControlSlider*>(childWithTitle(strip, recovering ? "Low Recover" : "Low Width"));
         ASSERT_NE(slider, nullptr);
@@ -670,7 +672,7 @@ TEST(BandStrip, WidthAndRecoverWheelKeysAndResetUseBalancedIndependentGestures)
 TEST(BandStrip, FiveRowsFitAtMinimumHeightWithRecoveryBelowWidth)
 {
     ImageControlProcessor processor;
-    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0);
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
     int previousBottom = 0;
     for (const char* title : {"Low Mid", "Low Side", "Low Width", "Low Recover", "Low Pan"}) {
@@ -986,7 +988,7 @@ TEST(ImageControlEditor, HiddenAndClosedMetersStopPublishingMeasurements)
 TEST(SpectrogramView, PositionCurveOverlayShowsAfterAChangeAndFades)
 {
     ImageControlProcessor processor;
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState());
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
     // Opening the editor sets the saved curve, which does not show the overlay.
     view.setPositionCurve(StereoPositionCurve());

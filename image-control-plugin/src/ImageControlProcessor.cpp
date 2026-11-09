@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -200,11 +201,23 @@ bool updateCachedControl(const float raw, float& previousRaw, float& target, con
 }
 
 /// Returns the raw value of a parameter the layout is known to contain.
-std::atomic<float>* getRawValue(const juce::AudioProcessorValueTreeState& parameters, const juce::String& parameterId)
+std::atomic<float>& getRawValue(const juce::AudioProcessorValueTreeState& parameters, const juce::String& parameterId)
 {
+    // JUCE owns the lookup result, which is required by the fixed layout and remains valid for the APVTS lifetime.
     auto* value = parameters.getRawParameterValue(parameterId);
     jassert(value != nullptr);
-    return value;
+    return *value;
+}
+
+/// Binds every indexed raw value during construction, preserving the parameter layout's index order.
+template<std::size_t... Indices>
+std::array<std::reference_wrapper<std::atomic<float>>, sizeof...(Indices)> getRawValues(
+    const juce::AudioProcessorValueTreeState& parameters,
+    juce::String (&parameterId)(std::size_t),
+    std::index_sequence<Indices...> /*indices*/
+)
+{
+    return {getRawValue(parameters, parameterId(Indices))...};
 }
 }  // namespace
 
@@ -217,23 +230,19 @@ ImageControlProcessor::ImageControlProcessor() :
     ),
     parameters(*this, nullptr, STATE_TAG, createParameterLayout()),
     editorState(defaultEditorState()),
-    history(parameters)
+    history(parameters),
+    crossoverValues(getRawValues(parameters, crossoverParameterId, std::make_index_sequence<CROSSOVER_COUNT> {})),
+    midGainValues(getRawValues(parameters, midGainParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    panValues(getRawValues(parameters, panParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    recoverValues(getRawValues(parameters, recoverParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    sideGainValues(getRawValues(parameters, sideGainParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    soloValues(getRawValues(parameters, soloParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    widthValues(getRawValues(parameters, widthParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    outputGainValue(getRawValue(parameters, OUTPUT_GAIN_ID)),
+    bypassValue(getRawValue(parameters, BYPASS_ID)),
+    deltaValue(getRawValue(parameters, DELTA_ID)),
+    monoValue(getRawValue(parameters, MONO_ID))
 {
-    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        crossoverValues.at(crossover) = getRawValue(parameters, crossoverParameterId(crossover));
-    }
-    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        midGainValues.at(band) = getRawValue(parameters, midGainParameterId(band));
-        sideGainValues.at(band) = getRawValue(parameters, sideGainParameterId(band));
-        panValues.at(band) = getRawValue(parameters, panParameterId(band));
-        soloValues.at(band) = getRawValue(parameters, soloParameterId(band));
-        widthValues.at(band) = getRawValue(parameters, widthParameterId(band));
-        recoverValues.at(band) = getRawValue(parameters, recoverParameterId(band));
-    }
-    outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
-    bypassValue = getRawValue(parameters, BYPASS_ID);
-    deltaValue = getRawValue(parameters, DELTA_ID);
-    monoValue = getRawValue(parameters, MONO_ID);
     editorStateSnapshot = serializeEditorState(editorState);
     history.setStateMutex(stateInformationMutex);
     history.setMetadataChangedCallback([this] { notifyComparisonChanged(); });
@@ -464,7 +473,7 @@ Crossovers ImageControlProcessor::getCrossovers() const
 {
     Crossovers crossovers {};
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        crossovers.at(crossover) = crossoverValues.at(crossover)->load();
+        crossovers.at(crossover) = crossoverValues.at(crossover).get().load();
     }
     return orderCrossovers(crossovers);
 }
@@ -567,7 +576,7 @@ void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationDa
 /// and reports its latency to the host.
 void ImageControlProcessor::prepareToPlay(const double sampleRate, const int maximumBlockSize)
 {
-    updateProcessingTargets(bypassValue->load() >= 0.5F);
+    updateProcessingTargets(bypassValue.load() >= 0.5F);
     imager.prepare(sampleRate, getTotalNumOutputChannels(), getCrossovers());
     analyzerFifo.setSampleRate(sampleRate);
     analyzerFifo.beginEpoch();
@@ -582,14 +591,14 @@ void ImageControlProcessor::prepareToPlay(const double sampleRate, const int max
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
     monoSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
-    monoSmoother.setCurrentAndTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);
+    monoSmoother.setCurrentAndTargetValue(monoValue.load() >= 0.5F ? 1.0F : 0.0F);
     setLatencySamples(imager.getLatencySamples());
 }
 
 /// Processes a block with the current parameters, bypassed when the bypass parameter is on.
 void ImageControlProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
 {
-    processWithBypass(buffer, bypassValue->load() >= 0.5F);
+    processWithBypass(buffer, bypassValue.load() >= 0.5F);
 }
 
 /// Processes a block bypassed when a host bypasses the plugin without the bypass parameter.
@@ -618,7 +627,7 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
     updateProcessingTargets(bypassed);
     Crossovers rawCrossovers {};
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        rawCrossovers[crossover] = crossoverValues[crossover]->load();
+        rawCrossovers[crossover] = crossoverValues[crossover].get().load();
     }
     imager.setCrossovers(rawCrossovers, isNonRealtime());
     const auto meterGeneration = correlationGeneration.load(std::memory_order_acquire);
@@ -654,15 +663,15 @@ void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
     raw.widths.fill(1.0F);
     if (!bypassed) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            raw.solos[band] = soloValues[band]->load() >= 0.5F;
-            raw.mid[band] = midGainValues[band]->load();
-            raw.side[band] = sideGainValues[band]->load();
-            raw.pans[band] = panValues[band]->load();
-            raw.widths[band] = widthValues[band]->load();
-            raw.recoveries[band] = recoverValues[band]->load();
+            raw.solos[band] = soloValues[band].get().load() >= 0.5F;
+            raw.mid[band] = midGainValues[band].get().load();
+            raw.side[band] = sideGainValues[band].get().load();
+            raw.pans[band] = panValues[band].get().load();
+            raw.widths[band] = widthValues[band].get().load();
+            raw.recoveries[band] = recoverValues[band].get().load();
         }
-        raw.output = outputGainValue->load();
-        raw.delta = deltaValue->load() >= 0.5F;
+        raw.output = outputGainValue.load();
+        raw.delta = deltaValue.load() >= 0.5F;
     }
     bool gainsChanged = false;
     bool pansChanged = false;
@@ -741,7 +750,7 @@ void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
 /// Mono follows Delta and bypass and applies identically to real-time and offline output.
 void ImageControlProcessor::applyMono(juce::AudioBuffer<float>& buffer)
 {
-    monoSmoother.setTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);
+    monoSmoother.setTargetValue(monoValue.load() >= 0.5F ? 1.0F : 0.0F);
     if (buffer.getNumChannels() < 2) {
         monoSmoother.skip(buffer.getNumSamples());
         return;
@@ -770,10 +779,10 @@ void ImageControlProcessor::reset()
 {
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
-    updateProcessingTargets(bypassValue->load() >= 0.5F);
+    updateProcessingTargets(bypassValue.load() >= 0.5F);
     imager.reset();
     analyzerFifo.beginEpoch();
-    monoSmoother.setCurrentAndTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);
+    monoSmoother.setCurrentAndTargetValue(monoValue.load() >= 0.5F ? 1.0F : 0.0F);
 }
 
 /// Stops the imager's design thread.
