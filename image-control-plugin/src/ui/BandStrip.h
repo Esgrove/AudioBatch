@@ -31,6 +31,7 @@ class BandCorrelationMeter final : public juce::Component, public juce::Settable
 public:
     explicit BandCorrelationMeter(const juce::String& band);
 
+    [[nodiscard]] juce::String readoutText() const;
     [[nodiscard]] juce::String valueText() const;
     void setCorrelation(float value);
 

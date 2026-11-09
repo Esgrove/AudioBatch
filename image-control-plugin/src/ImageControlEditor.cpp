@@ -215,6 +215,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     // OpenGL 4.1 core is the newest macOS offers, and the shaders need 3.3.
     // The frames follow the editor's VBlank callback instead of a free-running render loop.
     openGLContext.setPreferredVersion({4, 1});
+    openGLContext.setPreferredProfile(juce::OpenGLProfile::core);
     openGLContext.setRenderer(&spectrogramRenderer);
     openGLContext.setComponentPaintingEnabled(true);
     openGLContext.setContinuousRepainting(false);

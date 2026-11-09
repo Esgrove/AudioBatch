@@ -157,6 +157,12 @@ BandCorrelationMeter::BandCorrelationMeter(const juce::String& band)
     );
 }
 
+/// Returns a signed measurement or a single Unicode em dash when no valid measurement is available.
+juce::String BandCorrelationMeter::readoutText() const
+{
+    return correlation.has_value() ? valueText() : juce::String(u8"\u2014");
+}
+
 /// Returns a signed measurement or an explicit unavailable status for silence.
 juce::String BandCorrelationMeter::valueText() const
 {
@@ -223,7 +229,7 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
     graphics.drawText("0", area, juce::Justification::centred);
     graphics.drawText("+1", area, juce::Justification::centredRight);
     const auto readout = getLocalBounds().reduced(METER_MARGIN, 2).removeFromTop(METER_LABEL_HEIGHT);
-    graphics.drawText(correlation.has_value() ? valueText() : "—", readout, juce::Justification::centredRight);
+    graphics.drawText(readoutText(), readout, juce::Justification::centredRight);
 }
 
 /// Exposes a named, read-only text value without slider actions.
