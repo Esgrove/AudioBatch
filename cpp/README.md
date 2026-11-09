@@ -12,6 +12,7 @@ GUI and CLI tool (C++23 and JUCE) for analyzing and batch processing audio files
 Supports mono and stereo audio in WAV, AIFF, FLAC, and MP3.
 On macOS, Core Audio also reads AAC and ALAC.
 Windows Media decoding is disabled, so the Windows build does not provide those decoders or WMA support.
+The C++ build also enables JUCE's Ogg Vorbis reader, outside the shared C++/Rust supported-format contract.
 Multichannel audio is not currently supported.
 
 ## GUI commands
@@ -20,6 +21,7 @@ The File menu adds files or folders, selects all files, normalizes the selection
 and clears per-file gain. The Plugins menu processes the selection through the live chain.
 Options offers Output Device and Columns submenus, plus the playback and preview preferences.
 Audio Settings uses Cmd/Ctrl+P, Add Folder uses Cmd/Ctrl+Shift+O, and Select All Files uses Cmd/Ctrl+A.
+Add Files opens a multi-file chooser.
 Escape stops playback and returns to the start.
 
 The Folder column, shown beside Name, holds the parent directory.
@@ -154,6 +156,8 @@ High-frequency cutoffs can reveal limited bandwidth, but cannot prove whether a 
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
 Embedded album artwork appears beside the file name when available.
 Artwork can be hidden from the Options menu.
+Optional custom-gain loudness estimates use measured hard clipping or an empirical limiter model.
+They are transient predictions, not actual plugin renders or cached source measurements.
 
 An optional orange-red short-term loudness line overlays the waveform, or the spectrogram in spectrogram-only mode,
 with a separate compact numeric axis.
@@ -260,13 +264,13 @@ You can normalize before the chain or set a custom input gain for each file.
 Normalization and plugin processing always write `<name>.aif` next to the source,
 keeping its sample rate, tags and artwork.
 
-**These operations replace the original audio.**
+**These operations replace the original audio. Back up important files before processing.**
 By default, other formats are converted to AIFF and the source is moved to the system trash after a successful write.
-Existing `.aif` sources are rewritten in place, with the original moved to the trash first.
-CLI normalization can permanently delete replaced originals instead with `--delete`.
+Existing `.aif` sources are rewritten in place, disposing of a backup copy rather than the live source before publication.
+CLI normalization and plugin processing can permanently delete replaced originals instead with `--delete`.
 
 - An already existing output file is protected unless `Force overwrite` (GUI) or `--force` (CLI) is enabled.
-  Replaced files go to the trash unless CLI normalization uses `--delete`.
+  Replaced files go to the trash unless the CLI uses `--delete`.
 - If selected files share an output name, only one is processed. An existing `.aif` source takes priority.
 - If metadata cannot be preserved, the file fails and the original is kept.
 - On Windows, operations that require trashing a file fail on drives without a recycle bin, such as network shares.
@@ -490,6 +494,7 @@ flowchart TD
     MainWindow --> AudioBatchComponent
     AudioBatchComponent --> ResultsModel
     AudioBatchComponent --> PreviewController
+    AudioBatchComponent --> PreviewEnrichmentScheduler
     AudioBatchComponent --> BackgroundWorkController
     AudioBatchComponent --> PreviewWorkspace
     AudioBatchComponent --> LiveChain
@@ -501,7 +506,8 @@ flowchart TD
     PluginProcessingCoordinator --> BackgroundRunner
     AudioBatchComponent --> AudioPreviewPlayer
     PreviewController -.-> AudioPreviewPlayer
-    PreviewController --> SeratoPreviewLoader
+    PreviewController -.-> PreviewEnrichmentScheduler
+    PreviewEnrichmentScheduler --> SeratoPreviewLoader
     AudioPreviewPlayer -.-> LiveChain
     AudioBatchComponent --> PluginLibrary
     LiveChain -.-> PluginLibrary
@@ -512,7 +518,8 @@ flowchart TD
   Each coordinator does its work on a `BackgroundRunner` thread pool,
   and the controller hands the results of the current run back to the message thread.
 - `PreviewController` loads the selected file into `AudioPreviewPlayer`,
-  and reads its Serato tags, such as the overview waveform and cue points, in the background.
+  and requests optional artifacts from the GUI-owned `PreviewEnrichmentScheduler`.
+  The scheduler repairs missing waveform, spectrogram, and Serato artifacts on one background worker.
 - `PreviewWorkspace` is the bottom section with the file info, the waveform and the preview controls.
 - `LiveChain` holds the plugins the preview plays through, and their editors.
   The player only observes it, which the dashed line shows.
@@ -526,6 +533,9 @@ The Windows presets use Visual Studio 18 2026 with x64 output, or Ninja with MSV
 GCC is not a supported compiler.
 JUCE is included as a submodule.
 CMake fetches the other dependencies as needed: SQLite 3, libebur128, TagLib, {fmt} and GoogleTest (tests only).
+Install [uv](https://docs.astral.sh/uv/) before configuring with `BUILD_TESTING=ON`,
+including unit-only and sanitizer builds.
+CMake requires it for the registered shared CLI integration suite even when that tier will not run.
 
 Run these commands from the `cpp` directory in a terminal on macOS or Git Bash on Windows.
 
@@ -615,7 +625,8 @@ Wider SIMD is not a guarantee of better performance.
 CMake checks C and C++ IPO support before enabling link-time optimization for Release.
 The same settings cover the GUI, CLI, tests, and dependencies compiled by this build.
 Imported system libraries are unchanged.
-Existing Release optimization levels and floating-point semantics are retained.
+Fused multiply-add contraction is enabled in Release builds, and in all clang-cl configurations.
+It can change last-bit rounding without enabling broader fast-math transformations.
 Sanitizer builds do not enable native targeting or LTO.
 
 CI never uses native CPU targeting, even if `AUDIOBATCH_NATIVE_CPU=ON` is cached or explicitly requested.
@@ -756,9 +767,14 @@ Use the test script to configure, build, and run the Debug tests without packagi
 
 It shares the default platform build directory and compilation cache with `build.sh`.
 CTest runs each JUCE unit test suite as its own test, with a time limit per suite.
-The default run also builds and runs the executable CLI contracts and nonvisual GUI integration tier.
+The default run also builds and runs the executable CLI contracts and driven GUI integration tier.
 The CLI contracts require uv.
+GUI integration drives the production view in a transparent desktop window through real pointer, key, wheel, and drop events.
+These tests share the desktop pointer and focus, so do not use the mouse or keyboard while they run.
+Use `./test.sh --visible` to watch workflows locally.
 Use `--unit` or `--integration` to build and run only that tier.
+On a fresh workspace, build all test targets before selecting integration-only tests so that the test plugin is present.
+Only `AudioBatchTests` declares the plugin build dependency, so an integration-only build does not ensure it exists.
 
 CI compiles all test targets first, then runs each tier separately with its own timeout:
 
@@ -777,13 +793,17 @@ On Windows, add `--ninja` to `build.sh` for MSVC with Ninja, or `--clang` for LL
 The tests build the `AudioBatch Test MS` VST3 in `../test-plugin/` as part of the project,
 and check its output against the expected files in `../fixtures/plugin_expected/`.
 
-`./sanitize.sh` builds and runs the tests under AddressSanitizer and UndefinedBehaviorSanitizer with `macos-asan`,
-or under MSVC AddressSanitizer only with `windows-asan`.
+`./sanitize.sh` builds and runs only unit suites.
+It uses AddressSanitizer and UndefinedBehaviorSanitizer with `macos-asan`,
+or MSVC AddressSanitizer only with `windows-asan`.
 `./sanitize.sh --clang` uses LLVM AddressSanitizer with `windows-clang-asan` on Windows.
 That preset uses RelWithDebInfo because LLVM AddressSanitizer does not support the Debug CRT.
 It retains debug symbols and standard library hardening, without native targeting or LTO.
 `./sanitize.sh --thread` runs them under ThreadSanitizer on macOS.
 Each sanitizer build has its own build directory, so the debug build is not affected.
+Sanitizers do not run the CLI or driven GUI integration tier.
+`./coverage.sh` builds and runs all CTest tiers on macOS, merging unit, GUI integration, and CLI profiles.
+Use `--lcov` for an LCOV report or `--open` for an HTML report.
 
 The libFuzzer harnesses in `tests/fuzz/` need the Homebrew LLVM, since Apple Clang does not ship libFuzzer.
 `./lint.sh --fuzz` configures and builds the harnesses when their compilation database is missing,

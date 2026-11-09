@@ -208,7 +208,9 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
   and `lint.sh --check` reports warnings without applying fixes.
 - Stage with explicit paths, such as `git add cpp` or `git add rust`.
-- Keep READMEs concise, focused on purpose, key capabilities, essential setup and commands, and important caveats.
+- Keep README updates concise and targeted, preserving existing structure and useful content.
+  Do not fully rewrite or broadly condense an existing README unless explicitly requested.
+  Focus additions on purpose, key capabilities, essential setup and commands, and important caveats.
   Link to architecture, agent instructions, or focused reference documentation instead of duplicating implementation details.
   Do not turn READMEs into detailed UI walkthroughs.
   Keep rolling requirements such as the Rust toolchain version in their authoritative configuration, not duplicated prose.
