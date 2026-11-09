@@ -30,6 +30,7 @@ plugin_configure() {
     local build_type="$2"
     local use_ninja="$3"
     local build_tests="$4"
+    shift 4
 
     local generator_args=()
     local launcher_args=()
@@ -52,5 +53,10 @@ plugin_configure() {
 
     cmake -S "$REPO" -B "$build_dir" "${generator_args[@]}" "${launcher_args[@]}" \
         -DCMAKE_BUILD_TYPE="$build_type" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DIMAGE_CONTROL_BUILD_TESTS="$build_tests"
+        -DIMAGE_CONTROL_BUILD_TESTS="$build_tests" "$@"
+}
+
+# Runs the plugin's unit suites with bounded discovery and execution, failing when no test is registered.
+plugin_run_tests() {
+    ctest --test-dir "$1" --build-config "$2" --output-on-failure --no-tests=error --timeout 180
 }

@@ -167,7 +167,7 @@ fi
 
 if [ "$RUN_TESTS" = true ]; then
     print_magenta "Running the unit tests"
-    ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure
+    plugin_run_tests "$BUILD_DIR" "$BUILD_TYPE"
 fi
 
 echo "$BUNDLE"
