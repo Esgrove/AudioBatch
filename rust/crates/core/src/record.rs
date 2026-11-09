@@ -211,8 +211,7 @@ impl AnalysisRecord {
             path: path.to_path_buf(),
             file_name: path
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
             file_size,
             modified_time_ms,
             max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,

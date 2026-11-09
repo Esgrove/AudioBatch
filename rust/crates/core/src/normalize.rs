@@ -229,8 +229,7 @@ pub fn batch_output_conflict_message(source: &Path) -> String {
     let output = normalization_output_path(source);
     let name = output
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
     format!("Another selected file is also written to {name}")
 }
 

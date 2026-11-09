@@ -478,9 +478,7 @@ impl Player {
     /// Returns the names of the available output devices, using ASIO on Windows.
     #[must_use]
     pub fn output_device_names() -> Vec<String> {
-        output_devices()
-            .map(|devices| devices.iter().map(device_display_name).collect())
-            .unwrap_or_default()
+        output_devices().map_or_else(|_| Vec::new(), |devices| devices.iter().map(device_display_name).collect())
     }
 
     /// Opens and starts the output stream unless it is open.

@@ -77,7 +77,7 @@ pub enum DecodeError {
     #[error("Unsupported audio codec")]
     Codec(#[source] SymphoniaError),
     /// Too many consecutive packets failed to decode.
-    #[error("Audio decoding failed at sample {position}{}", total.map(|total| format!(" of {total}")).unwrap_or_default())]
+    #[error("Audio decoding failed at sample {position}{}", total.map_or_else(String::new, |total| format!(" of {total}")))]
     PacketLimit {
         /// Frame position where decoding stopped.
         position: u64,
@@ -720,8 +720,7 @@ fn format_display_name(short_name: &str, path: &Path) -> String {
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
+        .map_or_else(String::new, str::to_ascii_lowercase);
     let name = match (short_name, extension.as_str()) {
         ("wave" | "wav", _) | (_, "wav" | "wave" | "bwf") => "WAV",
         ("aiff", _) | (_, "aif" | "aiff" | "aifc") => "AIFF",
