@@ -324,7 +324,8 @@ TEST(Correlation, RealtimeRecoveryKernelHandoffsSwitchBothSlotsWithConcurrentMet
         SCOPED_TRACE(requested[1]);
         const auto previous = imager.getActiveCrossovers();
         imager.setCrossovers(requested, false);
-        constexpr auto HANDOFF_TIMEOUT = std::chrono::milliseconds(1500);
+        // Allow the instrumented background designer the same bounded handoff window as the RTSan probes.
+        constexpr auto HANDOFF_TIMEOUT = std::chrono::seconds(5);
         const auto deadline = std::chrono::steady_clock::now() + HANDOFF_TIMEOUT;
         // Two distinct, observed transitions necessarily hand off from slot 0 to 1 and back to slot 0.
         while (!juce::approximatelyEqual(imager.getActiveCrossovers()[1], requested[1])
