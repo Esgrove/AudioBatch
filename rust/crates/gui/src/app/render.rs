@@ -357,10 +357,13 @@ impl AppView {
         let controls = ControlsState {
             zoom: &self.zoom_slider,
             gain: &self.gain_slider,
+            zoom_focus: &self.slider_focus[0],
+            gain_focus: &self.slider_focus[1],
             can_adjust_gain: self.can_adjust_gain(cx),
             normalize: NormalizeControls {
                 mode: self.settings.normalize_mode,
                 target: self.normalize_target_slider(self.settings.normalize_mode),
+                target_focus: &self.slider_focus[2],
                 target_text: target_value_text(&self.settings),
                 overwrite: self.overwrite_existing,
                 normalize_first: self.normalize_first,
@@ -534,6 +537,20 @@ impl Focusable for AppView {
 impl AppView {
     /// Synchronizes table sizing and pending controls before composing the main frame.
     fn prepare_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> (Option<f32>, f32, f32) {
+        // A removed or disabled slider must not strand the window's contextual action path.
+        let slider_enabled = [
+            !self.preview_compact,
+            !self.preview_compact && self.can_adjust_gain(cx),
+            !self.preview_compact && self.normalize_first,
+        ];
+        for (focus, enabled) in self.slider_focus.iter_mut().zip(slider_enabled) {
+            if focus.tab_stop != enabled {
+                *focus = focus.clone().tab_stop(enabled);
+            }
+            if !enabled && focus.is_focused(window) {
+                window.focus(&self.focus_handle, cx);
+            }
+        }
         let progress = self.overall_progress(cx);
         self.update_window_title(progress, window);
         let (content_width, workspace_height) = content_size(window.viewport_size());

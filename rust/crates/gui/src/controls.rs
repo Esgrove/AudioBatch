@@ -19,6 +19,9 @@
 //! The modes and the target slider are disabled while the option that normalizes before the plugins is off.
 //! Everything above the playback row scrolls when the preview is short, so the buttons always stay visible.
 //! Double-clicking a slider resets it to its default value.
+//! Focused sliders support arrows, Shift or Page keys for larger steps, Home/End, and the primary modifier with 0 to reset.
+
+mod slider;
 
 use std::rc::Rc;
 
@@ -29,13 +32,14 @@ use gpui_kit::base::Selectable as _;
 use gpui_kit::base::slider::{Slider as BaseSlider, SliderIndicator, SliderTrack};
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::slider::{Slider, SliderState};
+use gpui_kit::component::slider::SliderState;
 use gpui_kit::component::{Disableable as _, IconName, Sizable as _};
 use gpui_kit::{
-    AnyElement, App, CursorStyle, Div, ElementId, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
-    MouseUpEvent, ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
-    relative,
+    AnyElement, App, CursorStyle, Div, ElementId, Entity, FocusHandle, InteractiveElement as _, IntoElement as _,
+    MouseButton, MouseUpEvent, ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
+    px, relative,
 };
+use slider::FocusSlider;
 
 use crate::control_ids;
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
@@ -103,16 +107,18 @@ const EXPAND_TOOLTIP: &str = if cfg!(target_os = "macos") {
 };
 
 /// Tooltip of the zoom slider.
-const ZOOM_TOOLTIP: &str =
-    "Adjust waveform zoom. You can also use the mouse wheel over the waveform. Double-click to reset.";
+const ZOOM_TOOLTIP: &str = "Adjust waveform zoom. Use arrows when focused, Shift for larger steps, Home/End for bounds. \
+     You can also use the mouse wheel over the waveform. Double-click to reset.";
 
 /// Tooltip of the input gain slider.
 const GAIN_TOOLTIP: &str = if cfg!(target_os = "macos") {
     "Per-file gain in dB, saved for the selected file and applied to the preview and the waveform. \
-     You can also use Cmd with the mouse wheel over the waveform. Double-click to reset."
+     Use arrows when focused, Shift for larger steps, Home/End for bounds. \
+     You can also use Cmd with the mouse wheel over the waveform. Double-click or Cmd+0 to reset."
 } else {
     "Per-file gain in dB, saved for the selected file and applied to the preview and the waveform. \
-     You can also use Ctrl with the mouse wheel over the waveform. Double-click to reset."
+     Use arrows when focused, Shift for larger steps, Home/End for bounds. \
+     You can also use Ctrl with the mouse wheel over the waveform. Double-click or Ctrl+0 to reset."
 };
 
 /// Tooltip of the normalization mode buttons.
@@ -120,7 +126,8 @@ const MODE_TOOLTIP: &str =
     "Normalize to a sample peak level, or to an integrated loudness limited to a -0.3 dBTP true peak.";
 
 /// Tooltip of the normalization target slider.
-const TARGET_TOOLTIP: &str = "Target level for normalization. Drag to adjust, double-click to reset.";
+const TARGET_TOOLTIP: &str = "Target level for normalization. Use arrows when focused, Shift for larger steps, Home/End for bounds. \
+     Drag to adjust, double-click to reset.";
 
 /// Opacity of the grey filled part of the target slider.
 /// The fill is neutral, so it does not compete with the blue of the chosen mode right above it.
@@ -217,6 +224,8 @@ pub struct NormalizeControls<'a> {
     pub mode: NormalizeMode,
     /// Target slider of the chosen mode.
     pub target: &'a Entity<SliderState>,
+    /// Stable semantic focus shared by the mutually exclusive target modes.
+    pub target_focus: &'a FocusHandle,
     /// Target text inside the slider, for example "-14.0 LUFS".
     pub target_text: String,
     /// True when an existing output is replaced.
@@ -233,6 +242,10 @@ pub struct ControlsState<'a> {
     pub zoom: &'a Entity<SliderState>,
     /// Custom gain slider of the selected file in decibels.
     pub gain: &'a Entity<SliderState>,
+    /// Retained semantic focus of the zoom slider.
+    pub zoom_focus: &'a FocusHandle,
+    /// Retained semantic focus of the gain slider.
+    pub gain_focus: &'a FocusHandle,
     /// True when the selected file has a usable result, so the gain has something to apply to.
     pub can_adjust_gain: bool,
     /// The normalization controls.
@@ -247,6 +260,11 @@ pub struct ControlsState<'a> {
 
 /// Callback that receives the events of the controls column.
 pub type EventCallback = Rc<dyn Fn(&ControlsEvent, &mut Window, &mut App)>;
+
+/// Registers the shared keyboard contract of the preview sliders.
+pub fn install_slider_bindings(cx: &mut App) {
+    slider::install(cx);
+}
 
 /// Returns the height of the controls column that shows all of its controls without scrolling,
 /// in the wide or the one-column layout.
@@ -469,7 +487,14 @@ fn gain_text(state: &ControlsState<'_>, cx: &App) -> String {
 /// Renders the zoom slider, which resets on a double click.
 fn zoom_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_kit::IntoElement {
     let track = slider_track(
-        Slider::new(state.zoom).accessibility_label(control_ids::ZOOM_LABEL),
+        FocusSlider::new(
+            state.zoom,
+            state.zoom_focus,
+            control_ids::ZOOM_LABEL,
+            true,
+            SliderControl::Zoom,
+            on_event,
+        ),
         true,
         send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Zoom)),
     )
@@ -482,7 +507,14 @@ fn zoom_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_
 /// Renders the input gain slider, which resets on a double click while the gain can be adjusted.
 fn gain_track(state: &ControlsState<'_>, on_event: &EventCallback) -> impl gpui_kit::IntoElement {
     let track = slider_track(
-        Slider::new(state.gain).accessibility_label(control_ids::GAIN_LABEL),
+        FocusSlider::new(
+            state.gain,
+            state.gain_focus,
+            control_ids::GAIN_LABEL,
+            state.can_adjust_gain,
+            SliderControl::Gain,
+            on_event,
+        ),
         state.can_adjust_gain,
         send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
     )
@@ -693,11 +725,16 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
             }
         })
         .child(
-            BaseSlider::new(state.target)
-                .accessibility_label(control_ids::NORMALIZE_TARGET_LABEL)
-                .disabled(!enabled)
-                .size_full()
-                .child(
+            FocusSlider::new(
+                state.target,
+                state.target_focus,
+                control_ids::NORMALIZE_TARGET_LABEL,
+                enabled,
+                SliderControl::NormalizeTarget,
+                on_event,
+            )
+            .content(
+                BaseSlider::new(state.target).size_full().child(
                     SliderTrack::new(state.target)
                         .disabled(!enabled)
                         .size_full()
@@ -708,6 +745,7 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
                         })
                         .child(bar),
                 ),
+            ),
         )
 }
 
@@ -774,7 +812,7 @@ fn slider_group(
 /// Renders a slider inset so its thumb is not clipped, with `on_mouse_up` listening to it.
 /// A disabled slider ignores dragging and double-clicks.
 fn slider_track(
-    slider: Slider,
+    slider: FocusSlider,
     enabled: bool,
     on_mouse_up: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
@@ -788,5 +826,5 @@ fn slider_track(
                 on_mouse_up(mouse_event, window, cx);
             }
         })
-        .child(slider.disabled(!enabled))
+        .child(slider)
 }
