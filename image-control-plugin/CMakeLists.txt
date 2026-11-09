@@ -76,6 +76,21 @@ juce_add_plugin(
     FALSE
 )
 
+# Ninja's linker signature seals only the Audio Unit executable, not its completed bundle.
+# Sign after resource generation, also when an incremental build changes only the bundle resources.
+if(APPLE)
+    set_target_properties(
+        ImageControl_AU PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED NO
+    )
+    add_custom_target(
+        ImageControl_AUSign ALL
+        COMMAND /usr/bin/codesign --force --sign - --timestamp=none "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
+        COMMAND /usr/bin/codesign --verify --deep --strict "$<TARGET_BUNDLE_DIR:ImageControl_AU>"
+        DEPENDS ImageControl_AU
+        VERBATIM
+    )
+endif()
+
 set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ImageControlEditor.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ImageControlEditor.h"
