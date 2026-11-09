@@ -87,6 +87,8 @@ constexpr double MAX_CONTRAST_PERCENT {100.0};
 constexpr auto SHOW_FPS_PROPERTY {"showFps"};
 /// Name of the editor setting that shows the correlation meter on each band.
 constexpr auto SHOW_BAND_CORRELATION_PROPERTY {"showBandCorrelation"};
+/// Name of the editor setting that shows smoothed trend numbers instead of live band correlation numbers.
+constexpr auto SMOOTH_CORRELATION_READOUT_PROPERTY {"smoothCorrelationReadout"};
 /// Name of the editor setting that stops analyzing and drawing the spectrogram, while the audio is still processed.
 constexpr auto BYPASS_RENDERING_PROPERTY {"bypassRendering"};
 /// Name of the editor setting that hides the spectrogram, leaving only the controls.

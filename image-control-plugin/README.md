@@ -85,8 +85,10 @@ It measures each processed band after its source trims, Width/Recover, and Pan,
 before Delta and Mono, independently of Pre/Post.
 Silence or insufficient energy in either channel gives an unavailable reading.
 Readings also clear when processing stops, the meters are hidden, or no new callbacks arrive.
-The coloured marker and number show the live reading, a yellow notch shows its smoothed trend,
+The coloured marker shows the live reading, a yellow notch shows its smoothed trend,
 and a translucent box spans the recently observed range.
+The number and accessible value follow the smoothed trend by default.
+Turn off `Smooth correlation numbers` in Display settings for live numbers without resetting meter history.
 `Persistence` controls both trend smoothing and the range duration, as well as the spectrogram fade.
 `Show band correlation` in Display settings controls the row independently of spectrogram visibility.
 

@@ -154,32 +154,51 @@ BandCorrelationMeter::BandCorrelationMeter(const juce::String& band)
 {
     setTitle(band + " correlation");
     setDescription(
-        "Live stereo correlation: -1 anti-phase, 0 uncorrelated, +1 in-phase. "
-        "The notch shows the smoothed trend and the box shows the recent range. Silence is unavailable"
+        "Stereo correlation: -1 anti-phase, 0 uncorrelated, +1 in-phase. "
+        "The number shows the trend by default, the notch shows the trend, the coloured line is live, "
+        "and the box shows the recent range. Silence is unavailable"
     );
     setTooltip(
         "Processed band correlation: -1 is anti-phase, 0 is uncorrelated, +1 is in-phase. "
-        "The coloured line and number are live, the yellow notch is the trend, and the shaded box is the recent range. "
+        "The coloured line is live, the yellow notch shows the trend, and the shaded box is the recent range. "
+        "Numbers show the trend by default. Turn off Smooth correlation numbers in Settings for live numbers. "
         "Persistence controls trend smoothing and range duration. Silence is unavailable"
     );
 }
 
-/// Returns a signed measurement or a single Unicode em dash when no valid measurement is available.
+/// Returns the selected signed reading or a single Unicode em dash when no valid measurement is available.
 juce::String BandCorrelationMeter::readoutText() const
 {
-    return correlation.has_value() ? valueText() : juce::String(u8"\u2014");
+    return trend.has_value() ? valueText() : juce::String(u8"\u2014");
 }
 
-/// Returns a signed measurement or an explicit unavailable status for silence.
+/// Returns the selected trend or live value for visual and accessible readouts, or an unavailable status.
 juce::String BandCorrelationMeter::valueText() const
 {
-    if (!correlation.has_value()) {
+    const auto reading = smoothedReadout ? trend : correlation;
+    if (!reading.has_value()) {
         return "Unavailable";
     }
-    return (*correlation >= 0.0F ? "+" : "") + juce::String(*correlation, 2);
+    return (*reading >= 0.0F ? "+" : "") + juce::String(*reading, 2);
 }
 
-/// Returns the display-smoothed trend, without changing the live numerical readout.
+/// Changes only the numerical presentation, preserving trend and range history across mode switches.
+void BandCorrelationMeter::setSmoothedReadout(const bool smoothed)
+{
+    if (smoothedReadout == smoothed) {
+        return;
+    }
+    const auto previousValueText = valueText();
+    smoothedReadout = smoothed;
+    repaint();
+    if (previousValueText != valueText()) {
+        if (const auto* handler = getAccessibilityHandler()) {
+            handler->notifyAccessibilityEvent(juce::AccessibilityEvent::valueChanged);
+        }
+    }
+}
+
+/// Returns the display-smoothed trend shared by the notch and numerical readout.
 std::optional<float> BandCorrelationMeter::trendValue() const
 {
     return trend;
@@ -205,6 +224,7 @@ void BandCorrelationMeter::setCorrelation(
     const double persistenceSeconds
 )
 {
+    const auto previousValueText = valueText();
     const auto previousTrend = trend;
     const auto previousRange = range;
     const auto next = std::isfinite(value) ? std::optional<float>(std::clamp(value, -1.0F, 1.0F)) : std::nullopt;
@@ -239,7 +259,7 @@ void BandCorrelationMeter::setCorrelation(
     if (liveChanged || trendChanged || rangeChanged) {
         repaint();
     }
-    if (liveChanged) {
+    if (previousValueText != valueText()) {
         if (const auto* handler = getAccessibilityHandler()) {
             handler->notifyAccessibilityEvent(juce::AccessibilityEvent::valueChanged);
         }

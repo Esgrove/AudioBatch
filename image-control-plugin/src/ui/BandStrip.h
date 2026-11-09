@@ -46,6 +46,7 @@ public:
     [[nodiscard]] std::optional<float> trendValue() const;
     [[nodiscard]] std::optional<juce::Range<float>> recentRange() const;
     void clearHistory();
+    void setSmoothedReadout(bool smoothed);
     void setCorrelation(
         float value,
         double elapsedSeconds = 0.0,
@@ -73,6 +74,8 @@ private:
     std::optional<float> trend;
     /// Extrema of display-observed readings within the selected trailing window.
     std::optional<juce::Range<float>> range;
+    /// Whether visual and accessible numbers follow the trend instead of the live marker.
+    bool smoothedReadout {true};
     /// Relative elapsed time since history was last cleared, in seconds.
     double historySeconds {0.0};
     /// Index of the oldest occupied history bucket.

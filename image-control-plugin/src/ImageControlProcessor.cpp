@@ -50,6 +50,7 @@ juce::ValueTree defaultEditorState()
     defaults.setProperty(MEL_SCALE_PROPERTY, false, nullptr);
     defaults.setProperty(SHOW_FPS_PROPERTY, false, nullptr);
     defaults.setProperty(SHOW_BAND_CORRELATION_PROPERTY, true, nullptr);
+    defaults.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true, nullptr);
     defaults.setProperty(BYPASS_RENDERING_PROPERTY, false, nullptr);
     defaults.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
     return defaults;

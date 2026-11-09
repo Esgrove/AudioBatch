@@ -307,8 +307,11 @@ when a host stops calling without releasing resources.
 Expiry is at least 250 ms and allows two prepared host blocks when those are longer.
 Only the processing thread touches the accumulated moments.
 
-The message-thread meter keeps the live marker, numerical readout, and accessible value unchanged.
+The message-thread meter keeps the live marker immediate.
 A shape-distinct yellow notch adds an exponential trend, with Persistence as its time constant.
+The numerical readout and accessible value follow that trend by default.
+`Smooth correlation numbers` binds the persisted `smoothCorrelationReadout` editor property, which defaults to true.
+Disabling it selects live numerical and accessible values immediately, without clearing or advancing history.
 A translucent box spans the minimum and maximum display-observed readings over the trailing Persistence duration.
 It does not promise audio-thread extrema between display refreshes.
 A fixed ring retains 1/120-second buckets of observed minima and maxima for the maximum Persistence window.

@@ -436,6 +436,11 @@ void ImageControlEditor::applyViewSettings()
             resized();
         }
     }
+    const bool smoothCorrelationReadout
+        = static_cast<bool>(editorState.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true));
+    for (const auto& meter : correlationMeters) {
+        meter->setSmoothedReadout(smoothCorrelationReadout);
+    }
     updateCorrelationMonitoring();
     const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
     if (shownHidden != hidden) {

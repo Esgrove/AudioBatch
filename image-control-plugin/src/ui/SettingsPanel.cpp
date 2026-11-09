@@ -15,7 +15,7 @@ namespace
 /// Width of the panel, in pixels.
 constexpr int PANEL_WIDTH {340};
 /// Height of the panel, in pixels.
-constexpr int PANEL_HEIGHT {416};
+constexpr int PANEL_HEIGHT {442};
 /// Inner margin of the panel, in pixels.
 constexpr int MARGIN {12};
 /// Height of each row, in pixels.
@@ -76,6 +76,9 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
         std::pair<juce::ToggleButton*, const char*> {&solidRenderingButton, SOLID_RENDERING_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&showFpsButton, SHOW_FPS_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&showBandCorrelationButton, SHOW_BAND_CORRELATION_PROPERTY},
+        std::pair<juce::ToggleButton*, const char*> {
+            &smoothCorrelationReadoutButton, SMOOTH_CORRELATION_READOUT_PROPERTY
+        },
         std::pair<juce::ToggleButton*, const char*> {&bypassRenderingButton, BYPASS_RENDERING_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&hideSpectrogramButton, HIDE_SPECTROGRAM_PROPERTY},
     };
@@ -92,6 +95,10 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     showFpsButton.setTooltip("Show how often the display refreshes, in the top-left corner of the spectrogram");
     showBandCorrelationButton.setTooltip(
         "Show the stereo correlation of each processed band, independently of the spectrogram"
+    );
+    smoothCorrelationReadoutButton.setTooltip(
+        "Show the smoothed trend in correlation numbers, using Persistence. "
+        "Turn off for live numbers. The live marker, trend notch, and recent range are unchanged"
     );
     bypassRenderingButton.setTooltip(
         "Stop analyzing and drawing the spectrogram to save CPU and GPU time. The audio is still processed"
@@ -194,6 +201,7 @@ void SettingsPanel::resized()
              &solidRenderingButton,
              &showFpsButton,
              &showBandCorrelationButton,
+             &smoothCorrelationReadoutButton,
              &bypassRenderingButton,
              &hideSpectrogramButton,
          })
