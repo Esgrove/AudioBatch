@@ -200,9 +200,11 @@ bool SpectrogramOverlayState::operator==(const SpectrogramOverlayState& other) c
 /// and keeping the editor settings for the Link toggles that its mid gain gestures follow.
 SpatialSpectrogramView::SpatialSpectrogramView(
     juce::AudioProcessorValueTreeState& parameters,
-    juce::ValueTree editorState
+    juce::ValueTree editorState,
+    ParameterHistory* localHistory
 ) :
-    editorSettings(std::move(editorState))
+    editorSettings(std::move(editorState)),
+    history(localHistory)
 {
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         crossoverParameters.at(crossover) = parameters.getParameter(crossoverParameterId(crossover));

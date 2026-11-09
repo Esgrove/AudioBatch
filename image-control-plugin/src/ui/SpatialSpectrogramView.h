@@ -25,6 +25,8 @@
 
 namespace esgrove::image_control
 {
+class ParameterHistory;
+
 namespace test
 {
 struct SpectrogramViewTestAccess;
@@ -82,7 +84,11 @@ struct SpectrogramOverlayState {
 class SpatialSpectrogramView final : public juce::Component, public juce::TooltipClient
 {
 public:
-    SpatialSpectrogramView(juce::AudioProcessorValueTreeState& parameters, juce::ValueTree editorState);
+    SpatialSpectrogramView(
+        juce::AudioProcessorValueTreeState& parameters,
+        juce::ValueTree editorState,
+        ParameterHistory* history = nullptr
+    );
 
     ~SpatialSpectrogramView() override;
 
@@ -133,6 +139,10 @@ private:
     [[nodiscard]] double xToFrequency(float x) const;
     [[nodiscard]] bool isLinked(std::size_t band) const;
 
+    void beginHistoryEdit(const juce::String& name);
+    void endHistoryEdit();
+    void setLocalValue(juce::RangedAudioParameter& parameter, const juce::String& parameterId, float value);
+
     void applyGainChange(std::size_t band, bool mid, float change);
     void changeBandGain(const juce::MouseEvent& event);
     void moveBand(const juce::MouseEvent& event);
@@ -158,6 +168,13 @@ private:
     StereoPositionCurve positionCurve;
     /// The editor settings, which hold the Link toggle of each band.
     juce::ValueTree editorSettings;
+
+    /// Optional processor-owned local history, which outlives this view.
+    ParameterHistory* history;
+    /// Generation of the host state when the explicit local gesture started.
+    std::uint64_t historyGeneration {0};
+    /// Whether this view owns a local history frame, independent of its parameter host gestures.
+    bool historyEditing {false};
 
     /// Crossover parameters, owned by the parameter tree, which outlives the editor. Never null.
     std::array<juce::RangedAudioParameter*, CROSSOVER_COUNT> crossoverParameters {};

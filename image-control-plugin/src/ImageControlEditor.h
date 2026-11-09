@@ -1,6 +1,7 @@
 /// Declares ImageControlEditor, the editor of the ImageControl plugin.
 /// A header holds the settings button and the analyzer tap on the left,
 /// and mono, delta, bypass, and output gain on the right.
+/// A second row holds local undo/redo, A/B comparisons, and user presets.
 /// The spatial spectrogram fills the middle, with the correlation row and four band strips below it,
 /// and a divider between them resizes the two.
 
@@ -9,7 +10,9 @@
 #include "Parameters.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
+#include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
+#include "ui/ProcessingToolbar.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramRenderer.h"
 #include "ui/SpectrogramWorker.h"
@@ -86,6 +89,8 @@ private:
 
     /// The look and feel of every control, set on the editor and cleared before it is destroyed.
     ImageControlLookAndFeel lookAndFeel;
+    /// Local editing commands and the plugin-owned preset library.
+    ProcessingToolbar processingToolbar;
     /// The spatial spectrogram's box, axes, and overlays.
     SpatialSpectrogramView spectrogram;
     /// The OpenGL context attached to the editor, detached when the editor goes away.
@@ -120,13 +125,13 @@ private:
     ControlSlider outputSlider;
 
     /// Binds the bypass button to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
+    std::unique_ptr<HistoryButtonAttachment> bypassAttachment;
     /// Binds the delta button to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> deltaAttachment;
+    std::unique_ptr<HistoryButtonAttachment> deltaAttachment;
     /// Binds the mono button to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoAttachment;
+    std::unique_ptr<HistoryButtonAttachment> monoAttachment;
     /// Binds the output gain slider to its parameter.
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+    std::unique_ptr<HistorySliderAttachment> outputAttachment;
     /// The controls of each band.
     std::array<std::unique_ptr<BandStrip>, BAND_COUNT> bandStrips;
     /// Independent read-only meter row aligned with the four band strips.

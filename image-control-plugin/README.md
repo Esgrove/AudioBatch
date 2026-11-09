@@ -15,6 +15,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for code organization, DSP, rendering, an
 - Per-band Pan, applied after Width/Recover, so even a narrowed band can be placed to one side.
 - Combinable band solos, output gain, Delta monitoring, click-free bypass, and automatable Mono output.
 - A spatial spectrogram for inspecting the input or processed output, with optional per-band correlation meters.
+- Plugin-local undo/redo, persistent A/B comparisons, and a portable user preset library.
 
 Crossover frequencies stay ordered and at least a third of an octave apart.
 Hosts can save and automate the processing parameters in real-time and offline renders.
@@ -24,6 +25,28 @@ Side Off prevents recovery, while Mid Off leaves recovered content audible.
 Width remains editable with Mid Off, and Link affects only gain edits.
 Older states retain their existing gains with Width 1 and Recover Off, without a gain-derived migration.
 See [Parameters.h](src/Parameters.h) for parameter ids, ranges, and defaults.
+
+## Editing and presets
+
+Undo and Redo track local parameter edits, including linked controls and spectrogram gestures.
+The history survives closing the editor but is not saved with a project, and a host state restore clears it.
+Incoming host automation and display-setting edits do not create undo entries.
+Use Cmd+Z and Cmd+Shift+Z on macOS, or Ctrl+Z and Ctrl+Y on Windows, while the editor has focus.
+Text fields keep their own editing shortcuts.
+
+A and B hold independently editable sound settings, with a copy action for the other slot.
+Both slots and the selected slot are saved with the host project.
+A/B and presets recall crossovers, Mid, Side, Width, Recover, Pan, output gain, and Mono.
+Solo, Delta, Bypass, Link, and display preferences stay unchanged.
+Switching A/B, copying a slot, and loading a preset each form one undo step.
+
+The preset menu saves, updates, renames, deletes, imports, and exports ImageControl sound presets.
+An asterisk marks settings that differ from the selected preset.
+Imports add to the library without changing the current sound.
+The library is shared by plugin instances and formats, separately from host presets and AudioBatch chain presets.
+It lives in `~/Library/Application Support/esgrove/ImageControl/Presets` on macOS
+and `%APPDATA%\\esgrove\\ImageControl\\Presets` on Windows.
+Projects save their sound independently of these files.
 
 ## Processing and transparency
 
@@ -203,8 +226,5 @@ These inputs are not a record of listening evaluations.
 
 ## Future work
 
-- Plugin-local undo/redo for parameter edits.
-- A/B snapshots for comparing two processed settings.
-- Plugin-owned preset management, separate from existing host state and preset support.
 - Add a Metal backend for `SpectrogramRenderer` on macOS.
   [JUCE Metal rendering on macOS](https://github.com/UVI-Dev/JUCE/tree/metal-renderer)

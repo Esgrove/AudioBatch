@@ -4,7 +4,9 @@
 
 #include "ui/BandStrip.h"
 
+#include "ParameterHistory.h"
 #include "Parameters.h"
+#include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
 
 #include <algorithm>
@@ -407,9 +409,12 @@ std::unique_ptr<juce::AccessibilityHandler> BandCorrelationMeter::createAccessib
 BandStrip::BandStrip(
     juce::AudioProcessorValueTreeState& parameters,
     juce::ValueTree& editorState,
-    const std::size_t band
+    const std::size_t band,
+    ParameterHistory* localHistory
 ) :
-    sideParameter(*parameters.getParameter(sideGainParameterId(band)))
+    sideParameter(*parameters.getParameter(sideGainParameterId(band))),
+    history(localHistory),
+    sideId(sideGainParameterId(band))
 {
     nameLabel.setText(bandName(band), juce::dontSendNotification);
     nameLabel.setFont(textFont(NAME_FONT_HEIGHT).boldened());
@@ -427,12 +432,9 @@ BandStrip::BandStrip(
     sideSlider.setDoubleClickReturnValue(true, 0.0);
     midSlider.setTooltip("Level of the band's mid, what both channels share. Double-click to reset");
     sideSlider.setTooltip("Level of the band's side, what differs between the channels. Off makes the band mono");
-    midAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        parameters, midGainParameterId(band), midSlider
-    );
-    sideAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        parameters, sideGainParameterId(band), sideSlider
-    );
+    midAttachment = std::make_unique<HistorySliderAttachment>(parameters, midGainParameterId(band), midSlider, history);
+    sideAttachment
+        = std::make_unique<HistorySliderAttachment>(parameters, sideGainParameterId(band), sideSlider, history);
 
     configureSlider(widthSlider, widthLabel, "Width");
     widthSlider.setWheelStep(WIDTH_WHEEL_STEP);
@@ -441,9 +443,8 @@ BandStrip::BandStrip(
         "Double-click to reset"
     );
     widthSlider.setDoubleClickReturnValue(true, 1.0);
-    widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        parameters, widthParameterId(band), widthSlider
-    );
+    widthAttachment
+        = std::make_unique<HistorySliderAttachment>(parameters, widthParameterId(band), widthSlider, history);
 
     configureSlider(recoverSlider, recoverLabel, "Recover");
     recoverSlider.setWheelStep(RECOVER_WHEEL_STEP_PERCENT);
@@ -452,17 +453,14 @@ BandStrip::BandStrip(
         "Side off disables the recovery source. Mid off can still retain recovered Side. Double-click to turn off"
     );
     recoverSlider.setDoubleClickReturnValue(true, 0.0);
-    recoverAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        parameters, recoverParameterId(band), recoverSlider
-    );
+    recoverAttachment
+        = std::make_unique<HistorySliderAttachment>(parameters, recoverParameterId(band), recoverSlider, history);
 
     configureSlider(panSlider, panLabel, "Pan");
     panSlider.setDoubleClickReturnValue(true, 0.0);
     panSlider.setWheelStep(PAN_WHEEL_STEP);
     panSlider.setTooltip("Moves the band toward the left or right channel after its width. Double-click to centre");
-    panAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        parameters, panParameterId(band), panSlider
-    );
+    panAttachment = std::make_unique<HistorySliderAttachment>(parameters, panParameterId(band), panSlider, history);
 
     linkButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(linkPropertyName(band), nullptr));
     linkButton.setTooltip(
@@ -484,12 +482,19 @@ BandStrip::BandStrip(
     soloButton.setTooltip(
         "Solo: listen to this band only. Solo several bands to hear them together. Press S over a band to toggle it"
     );
-    soloAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        parameters, soloParameterId(band), soloButton
-    );
+    soloAttachment = std::make_unique<HistoryButtonAttachment>(parameters, soloParameterId(band), soloButton, history);
     addAndMakeVisible(soloButton);
 
     midSlider.onDragStart = [this] {
+        if (history != nullptr) {
+            linkedGeneration = history->generation();
+            linkedHistoryEditing = history->isEditing();
+            // The slider listener ends before onDragEnd, so this nested frame keeps linked writes in one command.
+            // A restore from beginChangeGesture cancels the listener's frame and must not open a replacement here.
+            if (linkedHistoryEditing) {
+                history->beginEdit(midSlider.getTitle());
+            }
+        }
         draggingMid = true;
         linkedMidStart = midSlider.getValue();
         linkedSideStart = sideSlider.getValue();
@@ -504,14 +509,24 @@ BandStrip::BandStrip(
             linkedSideGesture = false;
         }
         draggingMid = false;
+        if (history != nullptr && linkedHistoryEditing && linkedGeneration == history->generation()) {
+            history->endEdit();
+        }
+        linkedHistoryEditing = false;
     };
     midSlider.onValueChange = [this] {
+        if (history != nullptr && (!linkedHistoryEditing || linkedGeneration != history->generation())) {
+            return;
+        }
         if (draggingMid && linkedSideGesture && linkedSideStart > static_cast<double>(BAND_GAIN_MIN_DB)) {
             const double side = std::clamp(
                 linkedSideStart + midSlider.getValue() - linkedMidStart,
                 static_cast<double>(BAND_GAIN_MIN_DB),
                 static_cast<double>(BAND_GAIN_MAX_DB)
             );
+            if (history != nullptr) {
+                history->touch(sideId);
+            }
             setSideValue(sideParameter, static_cast<float>(side), true);
         }
     };

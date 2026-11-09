@@ -3,7 +3,7 @@
 /// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
 /// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
 /// applying the display settings with bypassing and hiding the spectrogram, measuring the frame rate,
-/// and the keyboard shortcuts for solo, delta, and bypass.
+/// the local undo/A/B/preset toolbar, and the keyboard shortcuts for editing and monitoring.
 
 #include "ImageControlEditor.h"
 
@@ -11,7 +11,9 @@
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/BandStrip.h"
+#include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
+#include "ui/ProcessingToolbar.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
@@ -30,11 +32,11 @@ namespace
 /// Default editor width, in pixels.
 constexpr int DEFAULT_WIDTH {1000};
 /// Default editor height, in pixels.
-constexpr int DEFAULT_HEIGHT {724};
+constexpr int DEFAULT_HEIGHT {764};
 /// Smallest editor width, in pixels.
 constexpr int MIN_EDITOR_WIDTH {760};
 /// Smallest editor height, in pixels.
-constexpr int MIN_EDITOR_HEIGHT {560};
+constexpr int MIN_EDITOR_HEIGHT {600};
 /// Largest editor width, in pixels.
 constexpr int MAX_EDITOR_WIDTH {4096};
 /// Largest editor height, in pixels.
@@ -72,15 +74,25 @@ constexpr int OUTPUT_SLIDER_WIDTH {190};
 constexpr int VALUE_BOX_WIDTH {70};
 /// Height of the output gain value box, in pixels.
 constexpr int VALUE_BOX_HEIGHT {20};
+/// Maximum host parameter label length used for a local history action.
+constexpr int HISTORY_NAME_LENGTH {100};
 /// Opacity of the band strips while the plugin is bypassed.
 constexpr float BYPASSED_STRIP_ALPHA {0.45F};
 
 /// Toggles a boolean parameter in a host change gesture of its own.
-void toggleParameter(juce::RangedAudioParameter& parameter)
+void toggleParameter(juce::RangedAudioParameter& parameter, ParameterHistory& history)
 {
+    const auto generation = history.generation();
+    history.beginEdit(parameter.getName(HISTORY_NAME_LENGTH));
+    history.touch(parameter.paramID);
     parameter.beginChangeGesture();
-    parameter.setValueNotifyingHost(parameter.getValue() >= 0.5F ? 0.0F : 1.0F);
+    if (generation == history.generation()) {
+        parameter.setValueNotifyingHost(parameter.getValue() >= 0.5F ? 0.0F : 1.0F);
+    }
     parameter.endChangeGesture();
+    if (generation == history.generation()) {
+        history.endEdit();
+    }
 }
 
 /// Returns a boolean editor setting.
@@ -96,7 +108,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     AudioProcessorEditor(owner),
     ComponentMovementWatcher(this),
     imageControlProcessor(owner),
-    spectrogram(owner.getParameters(), owner.getEditorState()),
+    processingToolbar(owner),
+    spectrogram(owner.getParameters(), owner.getEditorState(), &owner.getHistory()),
     spectrogramWorker(owner.getAnalyzerFifo(), spectrogramRenderer),
     tooltips(*this),
     vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
@@ -123,7 +136,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         "Pass the input through unprocessed, keeping the same latency (" + shortcutModifier + "+B)"
     );
     bypassAttachment
-        = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, BYPASS_ID, bypassButton);
+        = std::make_unique<HistoryButtonAttachment>(parameters, BYPASS_ID, bypassButton, &owner.getHistory());
     addAndMakeVisible(bypassButton);
 
     deltaButton.setClickingTogglesState(true);
@@ -133,8 +146,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         "Output only what the processing changes: the output minus the input. Bypass turns it off (" + shortcutModifier
         + "+D)"
     );
-    deltaAttachment
-        = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, DELTA_ID, deltaButton);
+    deltaAttachment = std::make_unique<HistoryButtonAttachment>(parameters, DELTA_ID, deltaButton, &owner.getHistory());
     addAndMakeVisible(deltaButton);
 
     monoButton.setClickingTogglesState(true);
@@ -142,8 +154,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     monoButton.setTooltip(
         "Fold the final output to mono after Delta or bypass, including Post analysis and offline renders"
     );
-    monoAttachment
-        = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(parameters, MONO_ID, monoButton);
+    monoAttachment = std::make_unique<HistoryButtonAttachment>(parameters, MONO_ID, monoButton, &owner.getHistory());
     addAndMakeVisible(monoButton);
 
     settingsButton.setTooltip(
@@ -169,18 +180,18 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     outputSlider.setDoubleClickReturnValue(true, 0.0);
     outputSlider.setTooltip("Level of the output after the bands are joined. Double-click to reset");
     outputSlider.setTitle("Output gain");
-    outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        parameters, OUTPUT_GAIN_ID, outputSlider
-    );
+    outputAttachment
+        = std::make_unique<HistorySliderAttachment>(parameters, OUTPUT_GAIN_ID, outputSlider, &owner.getHistory());
     addAndMakeVisible(outputSlider);
 
+    addAndMakeVisible(processingToolbar);
     addAndMakeVisible(spectrogram);
     divider.setDragCallback([this](const int delta) {
         bandSectionHeight -= delta;
         resized();
     });
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band);
+        bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band, &owner.getHistory());
         addAndMakeVisible(*bandStrips.at(band));
         correlationMeters.at(band) = std::make_unique<BandCorrelationMeter>(bandName(band));
         addAndMakeVisible(*correlationMeters.at(band));
@@ -255,16 +266,41 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
 /// Each toggle is its own host gesture. Other keys go on to the host.
 bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
 {
+    auto& history = imageControlProcessor.getHistory();
     const auto& parameters = imageControlProcessor.getParameters();
     const auto modifiers = key.getModifiers();
+    const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    const bool textEditing = dynamic_cast<const juce::TextEditor*>(focused) != nullptr;
+    const auto letter = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
+    if (!textEditing && modifiers.isCommandDown() && !modifiers.isAltDown()) {
+#if JUCE_WINDOWS
+        const bool redoShortcut
+            = (letter == 'z' && modifiers.isShiftDown()) || (letter == 'y' && !modifiers.isShiftDown());
+#else
+        const bool redoShortcut = letter == 'z' && modifiers.isShiftDown();
+#endif
+        if (redoShortcut) {
+            static_cast<void>(history.redo());
+            processingToolbar.refresh();
+            return true;
+        }
+        if (letter == 'z') {
+            static_cast<void>(history.undo());
+            processingToolbar.refresh();
+            return true;
+        }
+    }
+    if (textEditing) {
+        return false;
+    }
     const auto character = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
     const bool commandOnly = modifiers.isCommandDown() && !modifiers.isAltDown() && !modifiers.isShiftDown();
     if (commandOnly && character == 'd') {
-        toggleParameter(*parameters.getParameter(DELTA_ID));
+        toggleParameter(*parameters.getParameter(DELTA_ID), history);
         return true;
     }
     if (commandOnly && character == 'b') {
-        toggleParameter(*parameters.getParameter(BYPASS_ID));
+        toggleParameter(*parameters.getParameter(BYPASS_ID), history);
         return true;
     }
     if (character == 's' && !modifiers.isCommandDown() && !modifiers.isCtrlDown() && !modifiers.isAltDown()) {
@@ -272,7 +308,7 @@ bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
         if (!band.has_value()) {
             return false;
         }
-        toggleParameter(*parameters.getParameter(soloParameterId(*band)));
+        toggleParameter(*parameters.getParameter(soloParameterId(*band)), history);
         return true;
     }
     return false;
@@ -308,6 +344,8 @@ void ImageControlEditor::resized()
     deltaButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
     header.removeFromRight(GAP);
     monoButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
+    area.removeFromTop(GAP);
+    processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
     area.removeFromTop(GAP);
 
     const int correlationHeight = correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0;
@@ -364,7 +402,7 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
 int ImageControlEditor::compactHeight() const
 {
-    return HEADER_HEIGHT + GAP * 2 + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT)
+    return HEADER_HEIGHT + PROCESSING_TOOLBAR_HEIGHT + GAP * 3 + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT)
         + (correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0);
 }
 
@@ -423,6 +461,7 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
 /// Changing the tap, the colours, or the scale clears the particles, so the old view does not linger.
 void ImageControlEditor::applyViewSettings()
 {
+    processingToolbar.refresh();
     const auto& editorState = imageControlProcessor.getEditorState();
     const bool showCorrelation = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
     if (correlationShown != showCorrelation) {
