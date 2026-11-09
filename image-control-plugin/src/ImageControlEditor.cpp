@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -109,7 +110,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     ComponentMovementWatcher(this),
     imageControlProcessor(owner),
     processingToolbar(owner),
-    spectrogram(owner.getParameters(), owner.getEditorState(), &owner.getHistory()),
+    spectrogram(owner.getParameters(), owner.getEditorState(), std::ref(owner.getHistory())),
     spectrogramWorker(owner.getAnalyzerFifo(), spectrogramRenderer),
     tooltips(*this),
     vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
@@ -136,7 +137,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         "Pass the input through unprocessed, keeping the same latency (" + shortcutModifier + "+B)"
     );
     bypassAttachment
-        = std::make_unique<HistoryButtonAttachment>(parameters, BYPASS_ID, bypassButton, &owner.getHistory());
+        = std::make_unique<HistoryButtonAttachment>(parameters, BYPASS_ID, bypassButton, std::ref(owner.getHistory()));
     addAndMakeVisible(bypassButton);
 
     deltaButton.setClickingTogglesState(true);
@@ -146,7 +147,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         "Output only what the processing changes: the output minus the input. Bypass turns it off (" + shortcutModifier
         + "+D)"
     );
-    deltaAttachment = std::make_unique<HistoryButtonAttachment>(parameters, DELTA_ID, deltaButton, &owner.getHistory());
+    deltaAttachment
+        = std::make_unique<HistoryButtonAttachment>(parameters, DELTA_ID, deltaButton, std::ref(owner.getHistory()));
     addAndMakeVisible(deltaButton);
 
     monoButton.setClickingTogglesState(true);
@@ -154,7 +156,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     monoButton.setTooltip(
         "Fold the final output to mono after Delta or bypass, including Post analysis and offline renders"
     );
-    monoAttachment = std::make_unique<HistoryButtonAttachment>(parameters, MONO_ID, monoButton, &owner.getHistory());
+    monoAttachment
+        = std::make_unique<HistoryButtonAttachment>(parameters, MONO_ID, monoButton, std::ref(owner.getHistory()));
     addAndMakeVisible(monoButton);
 
     settingsButton.setTooltip(
@@ -180,8 +183,9 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     outputSlider.setDoubleClickReturnValue(true, 0.0);
     outputSlider.setTooltip("Level of the output after the bands are joined. Double-click to reset");
     outputSlider.setTitle("Output gain");
-    outputAttachment
-        = std::make_unique<HistorySliderAttachment>(parameters, OUTPUT_GAIN_ID, outputSlider, &owner.getHistory());
+    outputAttachment = std::make_unique<HistorySliderAttachment>(
+        parameters, OUTPUT_GAIN_ID, outputSlider, std::ref(owner.getHistory())
+    );
     addAndMakeVisible(outputSlider);
 
     addAndMakeVisible(processingToolbar);
@@ -191,7 +195,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         resized();
     });
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band, &owner.getHistory());
+        bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band, std::ref(owner.getHistory()));
         addAndMakeVisible(*bandStrips.at(band));
         correlationMeters.at(band) = std::make_unique<BandCorrelationMeter>(bandName(band));
         addAndMakeVisible(*correlationMeters.at(band));

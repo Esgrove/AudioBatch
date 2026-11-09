@@ -53,7 +53,7 @@ public:
     /// Acquires the processor's host-state mutex, or the standalone history's own recursive mutex.
     [[nodiscard]] std::unique_lock<std::recursive_mutex> lock() const
     {
-        return std::unique_lock<std::recursive_mutex>(*stateMutex);
+        return std::unique_lock<std::recursive_mutex>(stateMutex.get());
     }
 
     /// Defers command destruction and gesture cancellation until local message-thread use.
@@ -130,8 +130,8 @@ public:
 
     /// Fallback synchronization when this history is used without a processor state mutex.
     mutable std::recursive_mutex standaloneMutex;
-    /// Non-owning optional processor mutex, installed before the history becomes externally accessible.
-    std::recursive_mutex* stateMutex {&standaloneMutex};
+    /// Active processor or fallback mutex reference, installed before history becomes externally accessible.
+    std::reference_wrapper<std::recursive_mutex> stateMutex {standaloneMutex};
     /// Host-restore token. Only this atomic is modified by invalidate on a foreign thread.
     std::atomic<std::uint64_t> invalidation {0};
     /// Generation represented by the message-thread-owned command containers.
@@ -293,7 +293,7 @@ void ParameterHistory::invalidate() noexcept
 /// Installs processor synchronization during construction, before local adapters or host state callbacks run.
 void ParameterHistory::setStateMutex(std::recursive_mutex& mutex)
 {
-    implementation->stateMutex = &mutex;
+    implementation->stateMutex = std::ref(mutex);
 }
 
 /// Adds a metadata patch to the outer transaction, chaining nested patches in reverse order for undo.

@@ -115,7 +115,7 @@ void SpatialSpectrogramView::mouseDown(const juce::MouseEvent& event)
 /// Follows the pointer with the drag that mouseDown started.
 void SpatialSpectrogramView::mouseDrag(const juce::MouseEvent& event)
 {
-    if (history != nullptr && historyEditing && historyGeneration != history->generation()) {
+    if (history.has_value() && historyEditing && historyGeneration != history->get().generation()) {
         endDrag();
         return;
     }
@@ -356,18 +356,19 @@ void SpatialSpectrogramView::applyGainChange(const std::size_t band, const bool 
 /// Opens a local command and remembers the host-state token so restored state cannot inherit a stale drag.
 void SpatialSpectrogramView::beginHistoryEdit(const juce::String& name)
 {
-    if (history != nullptr) {
-        historyGeneration = history->generation();
+    if (history.has_value()) {
+        ParameterHistory& localHistory = history->get();
+        historyGeneration = localHistory.generation();
         historyEditing = true;
-        history->beginEdit(name);
+        localHistory.beginEdit(name);
     }
 }
 
 /// Closes only a current-generation frame. Restore has already invalidated frames from an older drag.
 void SpatialSpectrogramView::endHistoryEdit()
 {
-    if (history != nullptr && historyEditing && historyGeneration == history->generation()) {
-        history->endEdit();
+    if (history.has_value() && historyEditing && historyGeneration == history->get().generation()) {
+        history->get().endEdit();
     }
     historyEditing = false;
 }
@@ -379,11 +380,11 @@ void SpatialSpectrogramView::setLocalValue(
     const float value
 )
 {
-    if (history != nullptr) {
-        if (!historyEditing || historyGeneration != history->generation()) {
+    if (history.has_value()) {
+        if (!historyEditing || historyGeneration != history->get().generation()) {
             return;
         }
-        history->touch(parameterId);
+        history->get().touch(parameterId);
     }
     parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
 }

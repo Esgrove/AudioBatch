@@ -23,6 +23,9 @@
 #endif
 
 #include <cmath>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -170,6 +173,39 @@ void startHistoryDrag(ControlSlider& slider)
 }
 }  // namespace
 
+/// Disengaged history references preserve parameter binding and host gestures without taking ownership.
+TEST(HistoryControls, OptionalHistoryCanBeOmittedOrExplicitlyDisengaged)
+{
+    for (const bool explicitNone : {false, true}) {
+        SCOPED_TRACE(explicitNone);
+        ImageControlProcessor processor;
+        auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
+        HistoryGestureCounter counter;
+        parameter.addListener(&counter);
+        {
+            ControlSlider slider;
+            juce::ToggleButton button;
+            const auto sliderAttachment = explicitNone
+                ? std::make_unique<HistorySliderAttachment>(
+                      processor.getParameters(), OUTPUT_GAIN_ID, slider, std::nullopt
+                  )
+                : std::make_unique<HistorySliderAttachment>(processor.getParameters(), OUTPUT_GAIN_ID, slider);
+            const auto buttonAttachment = explicitNone
+                ? std::make_unique<HistoryButtonAttachment>(processor.getParameters(), MONO_ID, button, std::nullopt)
+                : std::make_unique<HistoryButtonAttachment>(processor.getParameters(), MONO_ID, button);
+            slider.setValue(-6.0, juce::sendNotificationSync);
+            button.setToggleState(true, juce::sendNotificationSync);
+            EXPECT_NEAR(historyValue(processor, OUTPUT_GAIN_ID), -6.0F, 0.001F);
+            EXPECT_NEAR(historyValue(processor, MONO_ID), 1.0F, 0.001F);
+            EXPECT_EQ(counter.boundaries, (std::vector<bool> {true, false}));
+            EXPECT_FALSE(processor.getHistory().canUndo());
+            parameter.setValueNotifyingHost(parameter.convertTo0to1(-3.0F));
+            EXPECT_NEAR(slider.getValue(), -3.0, 0.001);
+        }
+        parameter.removeListener(&counter);
+    }
+}
+
 /// Multiple pointer updates become one command and replay restores both its endpoints.
 TEST(HistoryControls, SliderDragIsOneCommandWithBalancedHostGestures)
 {
@@ -182,7 +218,7 @@ TEST(HistoryControls, SliderDragIsOneCommandWithBalancedHostGestures)
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     slider.setSize(240, 26);
     {
-        const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, &history);
+        const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, std::ref(history));
         startHistoryDrag(slider);
         EXPECT_TRUE(history.isEditing());
         EXPECT_FALSE(history.canUndo());
@@ -211,7 +247,9 @@ TEST(HistoryControls, SliderDiscreteInputPathsAreCompleteCommands)
         ControlSlider slider;
         slider.setSize(240, 26);
         slider.addToDesktop(0);
-        const HistorySliderAttachment attachment(processor.getParameters(), recoverParameterId(0), slider, &history);
+        const HistorySliderAttachment attachment(
+            processor.getParameters(), recoverParameterId(0), slider, std::ref(history)
+        );
         if (input == 0) {
             EXPECT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
         } else if (input == 1) {
@@ -256,7 +294,9 @@ TEST(HistoryControls, SliderResetAndRangeMatchParameter)
     setParameterInGesture(parameter, 400.0F);
     ControlSlider slider;
     slider.setSize(240, 26);
-    const HistorySliderAttachment attachment(processor.getParameters(), crossoverParameterId(0), slider, &history);
+    const HistorySliderAttachment attachment(
+        processor.getParameters(), crossoverParameterId(0), slider, std::ref(history)
+    );
     for (const double share : {0.0, 0.1, 0.5, 0.9, 1.0}) {
         EXPECT_NEAR(
             slider.proportionOfLengthToValue(share), parameter.convertFrom0to1(static_cast<float>(share)), 0.01
@@ -279,8 +319,10 @@ TEST(HistoryControls, AutomationIsExcludedForSlidersAndButtons)
     auto& mono = *processor.getParameters().getParameter(MONO_ID);
     ControlSlider slider;
     juce::ToggleButton button;
-    const HistorySliderAttachment sliderAttachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, &history);
-    const HistoryButtonAttachment buttonAttachment(processor.getParameters(), MONO_ID, button, &history);
+    const HistorySliderAttachment sliderAttachment(
+        processor.getParameters(), OUTPUT_GAIN_ID, slider, std::ref(history)
+    );
+    const HistoryButtonAttachment buttonAttachment(processor.getParameters(), MONO_ID, button, std::ref(history));
     int sliderCallbacks = 0;
     int buttonCallbacks = 0;
     slider.onValueChange = [&sliderCallbacks] { ++sliderCallbacks; };
@@ -314,7 +356,7 @@ TEST(HistoryControls, ToggleClickAndAccessibilityAreUndoable)
     juce::ToggleButton button("Mono");
     button.setClickingTogglesState(true);
     button.addToDesktop(0);
-    const HistoryButtonAttachment attachment(processor.getParameters(), MONO_ID, button, &history);
+    const HistoryButtonAttachment attachment(processor.getParameters(), MONO_ID, button, std::ref(history));
     button.setToggleState(true, juce::sendNotificationSync);
     EXPECT_NEAR(historyValue(processor, MONO_ID), 1.0F, 0.001F);
     EXPECT_TRUE(history.undo());
@@ -336,7 +378,7 @@ TEST(HistoryControls, LinkedBandSliderInputsShareOneCommand)
         ImageControlProcessor processor;
         auto& history = processor.getHistory();
         processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
-        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, &history);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, std::ref(history));
         strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
         strip.addToDesktop(0);
         auto* mid = historyControl<ControlSlider>(strip, "Low Mid");
@@ -373,7 +415,7 @@ TEST(HistoryControls, LinkedAutomationDoesNotWriteSide)
     ImageControlProcessor processor;
     auto& history = processor.getHistory();
     processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
-    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, &history);
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, std::ref(history));
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
     auto* mid = historyControl<ControlSlider>(strip, "Low Mid");
     ASSERT_NE(mid, nullptr);
@@ -394,7 +436,7 @@ TEST(HistoryControls, TeardownClosesLinkedSliderAndSpectrogramGestures)
     auto& history = processor.getHistory();
     processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
     {
-        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, &history);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, std::ref(history));
         strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
         auto* mid = historyControl<ControlSlider>(strip, "Low Mid");
         ASSERT_NE(mid, nullptr);
@@ -406,7 +448,7 @@ TEST(HistoryControls, TeardownClosesLinkedSliderAndSpectrogramGestures)
     EXPECT_NEAR(historyValue(processor, midGainParameterId(0)), 0.0F, 0.001F);
     EXPECT_NEAR(historyValue(processor, sideGainParameterId(0)), 0.0F, 0.001F);
     {
-        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), &history);
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), std::ref(history));
         view.setSize(1000, 400);
         const juce::Point<float> start {historyX(view, 60.0), view.getPlotBounds().getCentreY()};
         const auto modifiers = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::ctrlModifier;
@@ -426,7 +468,7 @@ TEST(HistoryControls, SpectrogramBandDragGroupsBothCrossovers)
     ImageControlProcessor processor;
     auto& history = processor.getHistory();
     const auto before = processor.getCrossovers();
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), &history);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), std::ref(history));
     view.setSize(1000, 400);
     const juce::Point<float> start {historyX(view, 250.0), view.getPlotBounds().getCentreY()};
     view.mouseDown(historyMouse(view, start, start));
@@ -453,7 +495,7 @@ TEST(HistoryControls, SpectrogramLinkedWheelAndCrossoverResetAreUndoable)
     ImageControlProcessor processor;
     auto& history = processor.getHistory();
     processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
-    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), &history);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), std::ref(history));
     view.setSize(1000, 400);
     const juce::Point<float> band {historyX(view, 60.0), view.getPlotBounds().getCentreY()};
     view.mouseWheelMove(historyMouse(view, band, band, juce::ModifierKeys::ctrlModifier), historyNotch());
@@ -478,7 +520,7 @@ TEST(HistoryControls, BandIndependentControlsAndSoloShareHistoryButLinkDoesNot)
 {
     ImageControlProcessor processor;
     auto& history = processor.getHistory();
-    BandStrip const strip(processor.getParameters(), processor.getEditorState(), 0, &history);
+    BandStrip const strip(processor.getParameters(), processor.getEditorState(), 0, std::ref(history));
     for (const auto* title : {"Low Width", "Low Recover", "Low Pan"}) {
         auto* slider = historyControl<ControlSlider>(strip, title);
         ASSERT_NE(slider, nullptr);
@@ -505,7 +547,7 @@ TEST(HistoryControls, NoOpAndDisabledGesturesKeepRedo)
     ImageControlProcessor processor;
     auto& history = processor.getHistory();
     ControlSlider slider;
-    const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, &history);
+    const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, std::ref(history));
     slider.setValue(-6.0, juce::sendNotificationSync);
     EXPECT_TRUE(history.undo());
     slider.mouseDoubleClick(historyMouse(slider, {40.0F, 13.0F}, {40.0F, 13.0F}));
@@ -527,7 +569,7 @@ TEST(HistoryControls, LinkedSideOffIsNotCaptured)
     auto& side = *processor.getParameters().getParameter(sideGainParameterId(0));
     setParameterInGesture(side, BAND_GAIN_MIN_DB);
     processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
-    BandStrip const strip(processor.getParameters(), processor.getEditorState(), 0, &history);
+    BandStrip const strip(processor.getParameters(), processor.getEditorState(), 0, std::ref(history));
     auto* mid = historyControl<ControlSlider>(strip, "Low Mid");
     ASSERT_NE(mid, nullptr);
     EXPECT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
@@ -545,7 +587,7 @@ TEST(HistoryControls, SpectrogramSingleParameterDragsStayScoped)
         SCOPED_TRACE(crossoverDrag);
         ImageControlProcessor processor;
         auto& history = processor.getHistory();
-        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), &history);
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), std::ref(history));
         view.setSize(1000, 400);
         const auto parameterId = crossoverDrag ? crossoverParameterId(0) : sideGainParameterId(0);
         const float before = historyValue(processor, parameterId);
@@ -583,13 +625,15 @@ TEST(HistoryControls, ReentrantRestoreAtGestureStartRejectsDiscreteWrites)
         parameter.addListener(&restore);
         if (toggle) {
             juce::ToggleButton button;
-            const HistoryButtonAttachment attachment(processor.getParameters(), MONO_ID, button, &history);
+            const HistoryButtonAttachment attachment(processor.getParameters(), MONO_ID, button, std::ref(history));
             button.setToggleState(true, juce::sendNotificationSync);
             EXPECT_FALSE(button.getToggleState());
             EXPECT_NEAR(historyValue(processor, MONO_ID), 0.0F, 0.001F);
         } else {
             ControlSlider slider;
-            const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, &history);
+            const HistorySliderAttachment attachment(
+                processor.getParameters(), OUTPUT_GAIN_ID, slider, std::ref(history)
+            );
             slider.setValue(-6.0, juce::sendNotificationSync);
             EXPECT_NEAR(slider.getValue(), 0.0, 0.001);
             EXPECT_NEAR(historyValue(processor, OUTPUT_GAIN_ID), 0.0F, 0.001F);
@@ -608,7 +652,7 @@ TEST(HistoryControls, AttachmentTeardownCancelsQueuedAutomation)
     auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
     {
         ControlSlider slider;
-        const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, &history);
+        const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, slider, std::ref(history));
         std::thread automation([&parameter] { parameter.setValueNotifyingHost(parameter.convertTo0to1(-9.0F)); });
         automation.join();
     }
@@ -628,7 +672,7 @@ TEST(HistoryControls, HostRestoreCancelsStaleSliderAndSpectrogramFrames)
         juce::MemoryBlock state;
         processor.getStateInformation(state);
         if (spectrogram) {
-            SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), &history);
+            SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), std::ref(history));
             view.setSize(1000, 400);
             const juce::Point<float> start {historyX(view, 60.0), view.getPlotBounds().getCentreY()};
             const auto modifiers = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::ctrlModifier;
@@ -639,7 +683,7 @@ TEST(HistoryControls, HostRestoreCancelsStaleSliderAndSpectrogramFrames)
             view.endDrag();
             EXPECT_NEAR(historyValue(processor, midGainParameterId(0)), 0.0F, 0.001F);
         } else {
-            BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, &history);
+            BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, std::ref(history));
             strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
             auto* mid = historyControl<ControlSlider>(strip, "Low Mid");
             ASSERT_NE(mid, nullptr);
@@ -652,7 +696,7 @@ TEST(HistoryControls, HostRestoreCancelsStaleSliderAndSpectrogramFrames)
         EXPECT_FALSE(history.canUndo());
         EXPECT_FALSE(history.isEditing());
         ControlSlider fresh;
-        const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, fresh, &history);
+        const HistorySliderAttachment attachment(processor.getParameters(), OUTPUT_GAIN_ID, fresh, std::ref(history));
         fresh.setValue(-3.0, juce::sendNotificationSync);
         EXPECT_TRUE(history.undo());
         EXPECT_NEAR(historyValue(processor, OUTPUT_GAIN_ID), 0.0F, 0.001F);
