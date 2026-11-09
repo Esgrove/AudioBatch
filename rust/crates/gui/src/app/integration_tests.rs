@@ -13,12 +13,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use audiobatch_core::AnalysisStatus;
+use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::storage::StoragePaths;
-use gpui_kit::test::{TestAppContextExt as _, TestEventExt as _, TestWindowExt as _};
+use audiobatch_core::{AnalysisCache, AnalysisStatus};
+use gpui_kit::component::slider::{SliderEvent, SliderState};
+use gpui_kit::test::{TestAppContextExt as _, TestEventExt as _, TestQueryExt as _, TestWindowExt as _};
 use gpui_kit::{
-    Action, App, AppContext as _, Bounds, Entity, InputEvent as _, Modifiers, MouseButton, OwnedMenuItem, Pixels,
-    Point, ScrollDelta, Subscription, TestAppContext, Window, WindowBounds, WindowOptions, point, px, size,
+    Action, App, AppContext as _, Bounds, Entity, Focusable as _, InputEvent as _, Modifiers, MouseButton,
+    OwnedMenuItem, Pixels, Point, ScrollDelta, Subscription, TestAppContext, Window, WindowBounds, WindowOptions,
+    point, px, size,
 };
 use tempfile::TempDir;
 
@@ -26,12 +29,12 @@ use super::cue_start::CueStartIntent;
 use super::{AppOptions, AppView, LaunchOptions};
 use crate::control_ids;
 use crate::menus::{
-    AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, SetPreviewViewMode, ToggleColumn,
-    ToggleContinuePlayback, ToggleGainAdjustedMetrics, ToggleLoudnessGraph, ToggleOverloadLines,
-    TogglePlayFromFirstCuePoint, TogglePreviewSection, ToggleSampleOverloads, ToggleSeratoColours,
+    AddFiles, CancelRun, ClearList, OpenAudioSettings, ReanalyzeSelected, RemoveSelected, SelectAll,
+    SetPreviewViewMode, ToggleColumn, ToggleContinuePlayback, ToggleGainAdjustedMetrics, ToggleLoudnessGraph,
+    ToggleOverloadLines, TogglePlayFromFirstCuePoint, TogglePreviewSection, ToggleSampleOverloads, ToggleSeratoColours,
     ToggleTruePeakOverloads,
 };
-use crate::settings::{GuiSettings, PreviewViewMode};
+use crate::settings::{GuiSettings, NormalizeMode, PreviewViewMode};
 use crate::test_helpers::plugin_dispatcher;
 use crate::waveform::WaveformEvent;
 
@@ -288,6 +291,160 @@ impl Workflow {
         })
         .await;
     }
+}
+
+/// Sends the exact Change-only state operation used by native accessibility Increment and Decrement.
+/// GPUI Kit's test platform exposes accessibility snapshots but no native accessibility-action dispatcher.
+/// Calling the retained production slider's `step_thumb` therefore proves its real owner subscription and persistence,
+/// not OS accessibility routing, disabled-action suppression, or a keyboard binding.
+fn step_slider(workflow: &Workflow, slider: &Entity<SliderState>, delta: f32, cx: &mut TestAppContext) {
+    cx.update_window(workflow.window, |_, window, cx| {
+        slider.update(cx, |slider, cx| slider.step_thumb(false, delta, window, cx));
+    })
+    .expect("step the retained production slider");
+    cx.run_until_parked();
+}
+
+/// Advances only GPUI test time, then delivers ready timers and foreground subscription effects.
+fn advance_slider_clock(duration: Duration, cx: &TestAppContext) {
+    cx.executor().advance_clock(duration);
+    cx.run_until_parked();
+}
+
+/// Shares the production cache so checks exercise the ordered SQLite writer, not just table feedback.
+fn workflow_cache(workflow: &Workflow, cx: &TestAppContext) -> Arc<AnalysisCache> {
+    cx.read(|cx| {
+        Arc::clone(
+            workflow
+                .view
+                .read(cx)
+                .coordinator
+                .as_ref()
+                .expect("coordinator")
+                .cache(),
+        )
+    })
+}
+
+/// Waits for the real writer with a bounded executor-aware poll, yielding to its operating-system thread.
+async fn wait_for_gain(workflow: &Workflow, path: &Path, expected: Option<f32>, cx: &mut TestAppContext) {
+    let cache = workflow_cache(workflow, cx);
+    cx.wait_for(workflow.window, Duration::from_secs(30), |_, _| {
+        std::thread::yield_now();
+        cache
+            .get_analysis(path)
+            .is_some_and(|record| same_custom_gain(record.custom_gain_db, expected))
+    })
+    .await;
+}
+
+/// Enables and chooses a target through the production controls, leaving event delivery to their owner.
+fn choose_target(workflow: &Workflow, mode: NormalizeMode, cx: &mut TestAppContext) -> Entity<SliderState> {
+    cx.simulate_window_resize(workflow.window, size(px(1920.0), px(1080.0)));
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        if window.find(control_ids::PROCESS_NORMALIZE_FIRST).checked() != Some(true) {
+            window.click(control_ids::PROCESS_NORMALIZE_FIRST, cx);
+        }
+        window.click(
+            match mode {
+                NormalizeMode::Peak => control_ids::NORMALIZE_PEAK,
+                NormalizeMode::Loudness => control_ids::NORMALIZE_LOUDNESS,
+            },
+            cx,
+        );
+    })
+    .expect("choose the production normalization target");
+    cx.run_until_parked();
+    cx.read(|cx| workflow.view.read(cx).normalize_target_slider(mode).clone())
+}
+
+/// Reads the independently persisted value for one mode without changing modes or triggering quit-time saving.
+fn saved_target(workflow: &Workflow, mode: NormalizeMode) -> f64 {
+    let settings = GuiSettings::load_from(&workflow.paths.data().join(crate::settings::SETTINGS_FILE_NAME));
+    match mode {
+        NormalizeMode::Peak => settings.normalize_target_peak_dbfs,
+        NormalizeMode::Loudness => settings.normalize_target_lufs,
+    }
+}
+
+/// Resolves a slider's observed semantic child inside its shared control scope.
+/// The target's production wrapper deliberately has no independent observation registration.
+fn slider_snapshot(window: &mut Window, id: &'static str) -> gpui_kit::test::ElementSnapshot {
+    if let Some(snapshot) = window.try_find(id) {
+        return snapshot;
+    }
+    window.within(id).find_by_label(control_ids::NORMALIZE_TARGET_LABEL)
+}
+
+/// Sends each double-click transition separately so queued slider subscriptions drain before the reset handler.
+/// A single borrowed window update would artificially defer both presses' Change events until after the reset.
+fn double_click_slider(workflow: &Workflow, id: &'static str, cx: &mut TestAppContext) {
+    let position = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let snapshot = slider_snapshot(window, id);
+            let native_id = snapshot.path().last().expect("observed slider identity").clone();
+            let position = snapshot.bounds().center();
+            window.click(native_id, cx);
+            position
+        })
+        .expect("first slider click");
+    cx.run_until_parked();
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.dispatch_event(
+            gpui_kit::MouseDownEvent {
+                position,
+                button: MouseButton::Left,
+                click_count: 2,
+                modifiers: window.modifiers(),
+                first_mouse: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .expect("second slider press");
+    cx.run_until_parked();
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.dispatch_event(
+            gpui_kit::MouseUpEvent {
+                position,
+                button: MouseButton::Left,
+                click_count: 2,
+                modifiers: window.modifiers(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .expect("second slider release resets the control");
+    cx.run_until_parked();
+}
+
+/// Begins a real slider pointer gesture and leaves its release pending for the test's immediate-flush assertion.
+fn press_slider(workflow: &Workflow, id: &'static str, fraction: f32, cx: &mut TestAppContext) -> Point<Pixels> {
+    let position = cx
+        .update_window(workflow.window, |_, window, cx| {
+            window.render_frame(cx);
+            let bounds = slider_snapshot(window, id).bounds();
+            let position = point(bounds.left() + bounds.size.width * fraction, bounds.center().y);
+            window.pointer_down(position, MouseButton::Left, cx);
+            position
+        })
+        .expect("press the production slider");
+    cx.run_until_parked();
+    position
+}
+
+/// Releases an existing gesture through the real window, without advancing the debounce clock.
+fn release_slider(workflow: &Workflow, position: Point<Pixels>, cx: &mut TestAppContext) {
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.pointer_up(position, MouseButton::Left, cx);
+    })
+    .expect("release the production slider");
+    cx.run_until_parked();
 }
 
 /// Returns a source-pane point by fraction, without asserting any painted pixels.
@@ -616,6 +773,113 @@ async fn integration_primary_shortcuts_select_all_and_open_settings(cx: &mut Tes
     cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
 }
 
+/// A retained pending edit survives a scan result captured before its debounced write.
+#[gpui_kit::test]
+async fn integration_slider_retained_scan_gain_overrides_earlier_cached_result(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "retained-gain.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let cache = workflow_cache(&workflow, cx);
+    let captured = cache.get_analysis(&source).expect("earlier cached result");
+    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    step_slider(&workflow, &slider, 0.1, cx);
+    cx.update(|cx| {
+        workflow.view.update(cx, |view, cx| {
+            // Deliver the production scan-adoption seam deterministically, without racing a cache reader thread.
+            view.store_unlisted_gains(std::slice::from_ref(&source), cx);
+            view.table.update(cx, |table, cx| {
+                table.delegate_mut().set_files(std::slice::from_ref(&source));
+                table.delegate_mut().set_record(captured);
+                cx.notify();
+            });
+            assert!(same_custom_gain(
+                view.selected_record(cx).expect("retained edit").custom_gain_db,
+                Some(0.1)
+            ));
+            assert_eq!(view.pending_gain_paths.as_slice(), std::slice::from_ref(&source));
+            assert!(view.gain_store_task.is_some());
+        });
+    });
+    advance_slider_clock(Duration::from_millis(500), cx);
+    wait_for_gain(&workflow, &source, Some(0.1), cx).await;
+}
+
+/// Keeps overlapping batch edits on their latest deadline and submits paths dropped from the edited selection.
+#[gpui_kit::test]
+async fn integration_slider_overlapping_gain_selections_keep_latest_deadline(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let first = workflow.copy("sine_stereo_44100_16.wav", "overlap-first.wav");
+    let second = workflow.copy("sine_mono_44100_16.wav", "overlap-second.wav");
+    workflow.add(vec![first.clone(), second.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&first, cx);
+    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    let cache = workflow_cache(&workflow, cx);
+    step_slider(&workflow, &slider, 0.1, cx);
+    advance_slider_clock(Duration::from_millis(400), cx);
+    workflow.dispatch(SelectAll, cx);
+    step_slider(&workflow, &slider, 0.1, cx);
+    advance_slider_clock(Duration::from_millis(100), cx);
+    for path in [&first, &second] {
+        assert!(
+            cache
+                .get_analysis(path)
+                .expect("unsubmitted batch edit")
+                .custom_gain_db
+                .is_none()
+        );
+    }
+    cx.read(|cx| assert_eq!(workflow.view.read(cx).pending_gain_paths.len(), 2));
+    workflow.select(&second, cx);
+    step_slider(&workflow, &slider, -0.1, cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.pending_gain_paths.as_slice(), std::slice::from_ref(&second));
+        assert!(view.gain_store_task.is_some());
+    });
+    advance_slider_clock(Duration::from_millis(500), cx);
+    wait_for_gain(&workflow, &first, Some(0.2), cx).await;
+    wait_for_gain(&workflow, &second, Some(0.1), cx).await;
+}
+
+/// Leaves the results focus scope in both Tab directions without losing selection or root command routing.
+#[gpui_kit::test]
+async fn integration_results_tab_navigation_leaves_table_and_preserves_root_shortcuts(cx: &mut TestAppContext) {
+    let primary = if cfg!(target_os = "macos") { "cmd" } else { "ctrl" };
+    let workflow = Workflow::new(cx);
+    let first = workflow.copy("sine_stereo_44100_16.wav", "first.wav");
+    let second = workflow.copy("sine_mono_44100_16.wav", "second.wav");
+    workflow.add(vec![first.clone(), second.clone()], cx);
+    workflow.idle(cx).await;
+    for key in ["tab", "shift-tab"] {
+        workflow.select(&first, cx);
+        cx.update_window(workflow.window, |_, window, _| {
+            assert_eq!(window.within(control_ids::RESULTS).find("table").focused(), Some(true));
+        })
+        .expect("pointer selects and focuses the table");
+        workflow.menu_key(key, cx);
+        cx.update_window(workflow.window, |_, window, cx| {
+            let view = workflow.view.read(cx);
+            assert!(!view.table.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert!(view.focus_handle.contains_focused(window, cx));
+            assert_eq!(view.selected_paths(cx), vec![first.clone()]);
+        })
+        .expect("Tab leaves the table without changing selected files");
+        workflow.menu_key(&format!("{primary}-a"), cx);
+        cx.read(|cx| {
+            let mut selected = workflow.view.read(cx).selected_paths(cx);
+            selected.sort();
+            let mut expected = vec![first.clone(), second.clone()];
+            expected.sort();
+            assert_eq!(selected, expected);
+        });
+    }
+    workflow.menu_key(&format!("{primary}-p"), cx);
+    cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
+}
+
 /// Opens an empty plugin chain through the primary-E binding and reuses its window on repeated requests.
 #[gpui_kit::test]
 fn integration_primary_shortcut_opens_plugin_chain(cx: &mut TestAppContext) {
@@ -701,6 +965,7 @@ async fn integration_selection_sort_retains_identity_metadata_and_waveform(cx: &
     })
     .expect("choose filename ordering");
     cx.run_until_parked();
+    assert_selected_row_accessibility(&workflow, &selected, "z.aif", cx);
     let initial_index = cx.read(|cx| workflow.view.read(cx).table.read(cx).delegate().index_of(&selected));
     let tags = cx.read(|cx| Arc::clone(&workflow.view.read(cx).selected_tags.as_ref().expect("selected tags").1));
     assert_eq!(
@@ -730,6 +995,29 @@ async fn integration_selection_sort_retains_identity_metadata_and_waveform(cx: &
         ));
         assert_eq!(view.waveform.read(cx).waveform_source(), Some(selected.as_path()));
     });
+    assert_selected_row_accessibility(&workflow, &selected, "z.aif", cx);
+}
+
+/// Checks the selected path's semantic row and visible cells against their composed accessible name.
+fn assert_selected_row_accessibility(workflow: &Workflow, path: &Path, name: &str, cx: &mut TestAppContext) {
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        let row = window.find(Arc::<Path>::from(path));
+        assert_eq!(row.role(), Some(gpui_kit::Role::Row));
+        assert_eq!(row.selected(), Some(true));
+        let scope = window.within(Arc::<Path>::from(path));
+        let cells = scope.find_all_by_role(gpui_kit::Role::Cell);
+        assert!(cells.iter().any(|cell| cell.label() == Some(name)));
+        assert!(cells.iter().any(|cell| cell.label() == Some("44.1")));
+        let label = cells
+            .iter()
+            .filter_map(|cell| cell.label())
+            .filter(|label| !label.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert_eq!(row.label(), Some(label.as_str()));
+    })
+    .expect("selected row accessibility follows the source identity");
 }
 
 /// Normalizes only the selected source copy through its control and follows the committed output everywhere.
@@ -1419,6 +1707,403 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
         let record = view.selected_record(cx).expect("reloaded record");
         assert!(record.from_cache);
         assert!((record.custom_gain_db.expect("persisted gain") - gain).abs() < 0.001);
+    });
+}
+
+/// Persists Change-only gain through the real subscription, restarting its deadline without an initial write.
+#[gpui_kit::test]
+async fn integration_slider_gain_change_only_restarts_debounce_and_persists(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "change-only.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    let cache = workflow_cache(&workflow, cx);
+    let counts = Rc::new(Cell::new((0_usize, 0_usize)));
+    let recorded = Rc::clone(&counts);
+    let _subscription = cx
+        .update_window(workflow.window, |_, window, cx| {
+            workflow.view.update(cx, |_, cx| {
+                cx.subscribe_in(&slider, window, move |_, _, event: &SliderEvent, _, _| {
+                    let (changes, releases) = recorded.get();
+                    recorded.set(match event {
+                        SliderEvent::Change(_) => (changes + 1, releases),
+                        SliderEvent::Release(_) => (changes, releases + 1),
+                    });
+                })
+            })
+        })
+        .expect("observe slider events beside the production subscriber");
+    advance_slider_clock(Duration::from_millis(600), cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        assert!(view.gain_store_task.is_none(), "initial synchronization queues no edit");
+    });
+    assert!(
+        cache
+            .get_analysis(&source)
+            .expect("cached source")
+            .custom_gain_db
+            .is_none()
+    );
+    step_slider(&workflow, &slider, 0.1, cx);
+    advance_slider_clock(Duration::from_millis(400), cx);
+    step_slider(&workflow, &slider, 0.1, cx);
+    advance_slider_clock(Duration::from_millis(100), cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.pending_gain_paths.as_slice(), std::slice::from_ref(&source));
+        assert!(
+            view.gain_store_task.is_some(),
+            "the first deadline cannot flush the newer edit"
+        );
+        assert!(same_custom_gain(
+            view.selected_record(cx).expect("live source").custom_gain_db,
+            Some(0.2)
+        ));
+    });
+    assert!(
+        cache
+            .get_analysis(&source)
+            .expect("not yet persisted")
+            .custom_gain_db
+            .is_none()
+    );
+    advance_slider_clock(Duration::from_millis(399), cx);
+    assert!(
+        cache
+            .get_analysis(&source)
+            .expect("before restarted deadline")
+            .custom_gain_db
+            .is_none()
+    );
+    advance_slider_clock(Duration::from_millis(1), cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        assert!(view.gain_store_task.is_none());
+    });
+    wait_for_gain(&workflow, &source, Some(0.2), cx).await;
+    assert_eq!(counts.get(), (2, 0), "semantic steps emit no pointer Release");
+}
+
+/// Checks both Change-only targets before mode switches or quit can conceal a missing debounce save.
+#[gpui_kit::test]
+fn integration_slider_targets_change_only_restart_debounce_and_persist(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
+        let slider = choose_target(&workflow, mode, cx);
+        let before = saved_target(&workflow, mode);
+        let delta = -crate::normalization::target_range(mode).step;
+        let path = workflow.paths.data().join(crate::settings::SETTINGS_FILE_NAME);
+        let initial_file = fs::read(&path).ok();
+        step_slider(&workflow, &slider, 0.0, cx);
+        advance_slider_clock(Duration::from_millis(600), cx);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
+        assert_eq!(fs::read(&path).ok(), initial_file);
+        step_slider(&workflow, &slider, delta, cx);
+        advance_slider_clock(Duration::from_millis(400), cx);
+        step_slider(&workflow, &slider, delta, cx);
+        advance_slider_clock(Duration::from_millis(100), cx);
+        assert!((saved_target(&workflow, mode) - before).abs() < 1e-6);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_some()));
+        advance_slider_clock(Duration::from_millis(399), cx);
+        assert_eq!(fs::read(&path).ok(), initial_file);
+        advance_slider_clock(Duration::from_millis(1), cx);
+        assert!((saved_target(&workflow, mode) - f64::mul_add(f64::from(delta), 2.0, before)).abs() < 1e-6);
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            assert!(view.normalize_target_store_task.is_none());
+            assert_eq!(
+                view.menu_state.normalize_target,
+                crate::normalization::describe_target(&view.settings)
+            );
+            assert_eq!(
+                view.settings.normalize_mode, mode,
+                "no mode-switch save hides the regression"
+            );
+        });
+    }
+}
+
+/// Pointer Release saves gain and either target immediately, cancelling each pending fallback deadline.
+#[gpui_kit::test]
+async fn integration_slider_pointer_release_flushes_without_waiting_for_debounce(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "pointer-release.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let press = press_slider(&workflow, control_ids::GAIN_TRACK, 0.75, cx);
+    let gain = cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.gain_store_task.is_some());
+        view.selected_record(cx)
+            .expect("source feedback")
+            .custom_gain_db
+            .expect("pointer gain")
+    });
+    assert!(
+        workflow_cache(&workflow, cx)
+            .get_analysis(&source)
+            .expect("source")
+            .custom_gain_db
+            .is_none()
+    );
+    release_slider(&workflow, press, cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.gain_store_task.is_none());
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+    });
+    wait_for_gain(&workflow, &source, Some(gain), cx).await;
+    for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
+        let slider = choose_target(&workflow, mode, cx);
+        let before = saved_target(&workflow, mode);
+        let press = press_slider(&workflow, control_ids::NORMALIZE_TARGET, 0.25, cx);
+        let changed = cx.read(|cx| f64::from(slider.read(cx).value().start()));
+        assert!((changed - before).abs() > 0.01);
+        assert!((saved_target(&workflow, mode) - before).abs() < 1e-6);
+        release_slider(&workflow, press, cx);
+        assert!((saved_target(&workflow, mode) - changed).abs() < 1e-5);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
+    }
+}
+
+/// Disabled sliders expose disabled native semantics and ignore real pointer presses, drags, and resets.
+/// Native accessibility-action rejection cannot be dispatched by this test platform, as `step_slider` documents.
+#[gpui_kit::test]
+fn integration_slider_disabled_semantics_and_pointer_controls_reject_edits(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    cx.simulate_window_resize(workflow.window, size(px(1920.0), px(1080.0)));
+    let path = workflow.paths.data().join(crate::settings::SETTINGS_FILE_NAME);
+    let before = fs::read(&path).ok();
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.render_frame(cx);
+        for (id, label) in [
+            (control_ids::GAIN_TRACK, control_ids::GAIN_LABEL),
+            (control_ids::NORMALIZE_TARGET, control_ids::NORMALIZE_TARGET_LABEL),
+        ] {
+            assert_eq!(window.find_by_label(label).disabled(), Some(true));
+            let bounds = slider_snapshot(window, id).bounds();
+            let start = point(bounds.left() + bounds.size.width * 0.25, bounds.center().y);
+            let end = point(bounds.left() + bounds.size.width * 0.75, bounds.center().y);
+            window.pointer_down(start, MouseButton::Left, cx);
+            window.pointer_move(end, Some(MouseButton::Left), cx);
+            window.pointer_up(end, MouseButton::Left, cx);
+        }
+    })
+    .expect("drive disabled production sliders");
+    cx.run_until_parked();
+    for id in [control_ids::GAIN_TRACK, control_ids::NORMALIZE_TARGET] {
+        double_click_slider(&workflow, id, cx);
+    }
+    advance_slider_clock(Duration::from_millis(600), cx);
+    assert_eq!(fs::read(&path).ok(), before);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.gain_slider.read(cx).value().start().abs() < f32::EPSILON);
+        assert!(view.settings.normalize_target_peak_dbfs.abs() < f64::EPSILON);
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        assert!(view.gain_store_task.is_none());
+        assert!(view.normalize_target_store_task.is_none());
+    });
+}
+
+/// Selection changes never transfer a pending edit, while batch edits survive subsequent removal and clearing.
+#[gpui_kit::test]
+async fn integration_slider_pending_gain_tracks_selection_multiselection_remove_and_clear(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let first = workflow.copy("sine_stereo_44100_16.wav", "first-gain.wav");
+    let second = workflow.copy("sine_mono_44100_16.wav", "second-gain.wav");
+    workflow.add(vec![first.clone(), second.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&first, cx);
+    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    step_slider(&workflow, &slider, 0.1, cx);
+    workflow.select(&second, cx);
+    advance_slider_clock(Duration::from_millis(500), cx);
+    wait_for_gain(&workflow, &first, Some(0.1), cx).await;
+    assert!(
+        workflow_cache(&workflow, cx)
+            .get_analysis(&second)
+            .expect("other source")
+            .custom_gain_db
+            .is_none()
+    );
+    workflow.dispatch(SelectAll, cx);
+    cx.read(|cx| assert_eq!(workflow.view.read(cx).selected_paths(cx).len(), 2));
+    step_slider(&workflow, &slider, 0.2, cx);
+    workflow.select(&first, cx);
+    workflow.dispatch(RemoveSelected, cx);
+    wait_for_gain(&workflow, &first, Some(0.2), cx).await;
+    wait_for_gain(&workflow, &second, Some(0.2), cx).await;
+    cx.read(|cx| {
+        assert_eq!(
+            workflow.view.read(cx).selected_paths(cx).as_slice(),
+            std::slice::from_ref(&second)
+        );
+    });
+    step_slider(&workflow, &slider, 0.1, cx);
+    workflow.dispatch(ClearList, cx);
+    wait_for_gain(&workflow, &second, Some(0.3), cx).await;
+    advance_slider_clock(Duration::from_millis(600), cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.table.read(cx).delegate().len(), 0);
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        assert!(view.gain_store_task.is_none());
+        assert!(view.selected.is_none());
+    });
+}
+
+/// Reset clears a pending explicit gain immediately and an obsolete timer cannot restore its old value.
+#[gpui_kit::test]
+async fn integration_slider_gain_reset_cancels_pending_change_and_persists_clear(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "reset-gain.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    step_slider(&workflow, &slider, 0.2, cx);
+    advance_slider_clock(Duration::from_millis(500), cx);
+    wait_for_gain(&workflow, &source, Some(0.2), cx).await;
+    step_slider(&workflow, &slider, 0.1, cx);
+    cx.update_window(workflow.window, |_, window, cx| {
+        window.double_click(control_ids::GAIN_TRACK, cx);
+    })
+    .expect("reset pending gain through the production control");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.selected_record(cx).expect("reset source").custom_gain_db.is_none());
+        assert_eq!(view.pending_gain_paths, [] as [PathBuf; 0]);
+        assert!(view.gain_store_task.is_none());
+    });
+    wait_for_gain(&workflow, &source, None, cx).await;
+    advance_slider_clock(Duration::from_millis(600), cx);
+    assert!(
+        workflow_cache(&workflow, cx)
+            .get_analysis(&source)
+            .expect("stored clear")
+            .custom_gain_db
+            .is_none()
+    );
+}
+
+/// A folder replacement flushes the edited old row before the production scan plan discards it.
+#[gpui_kit::test]
+async fn integration_slider_pending_gain_survives_replacement_plan(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "replaced-list.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let slider = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    step_slider(&workflow, &slider, 0.1, cx);
+    let folder = workflow.directory.path().join("replacement");
+    fs::create_dir(&folder).expect("replacement folder");
+    fs::copy(test_fixtures::fixture("sine_mono_44100_16.wav"), folder.join("new.wav")).expect("replacement source");
+    let position = point(px(400.0), px(200.0));
+    cx.update_window(workflow.window, |_, window, cx| {
+        for event in [
+            gpui_kit::FileDropEvent::Entered {
+                position,
+                paths: gpui_kit::ExternalPaths(vec![folder].into_iter().collect()),
+            },
+            gpui_kit::FileDropEvent::Pending { position },
+            gpui_kit::FileDropEvent::Submit { position },
+        ] {
+            window.dispatch_event(event.to_platform_input(), cx);
+        }
+    })
+    .expect("replace roots through the native drop handler");
+    cx.run_until_parked();
+    workflow.idle(cx).await;
+    wait_for_gain(&workflow, &source, Some(0.1), cx).await;
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        let table = view.table.read(cx).delegate();
+        assert_eq!(table.len(), 1);
+        assert!(table.row_for(&source).is_none());
+        assert!(
+            table
+                .row(0)
+                .expect("replacement row")
+                .ready_record()
+                .expect("new source")
+                .custom_gain_db
+                .is_none()
+        );
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        assert!(view.gain_store_task.is_none());
+    });
+}
+
+/// Reset and mode-switch boundaries cancel obsolete target timers and keep each mode's independent target.
+#[gpui_kit::test]
+fn integration_slider_target_reset_and_mode_switch_flush_pending_changes(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    for mode in [NormalizeMode::Peak, NormalizeMode::Loudness] {
+        let slider = choose_target(&workflow, mode, cx);
+        let delta = -crate::normalization::target_range(mode).step;
+        step_slider(&workflow, &slider, delta, cx);
+        double_click_slider(&workflow, control_ids::NORMALIZE_TARGET, cx);
+        let default = f64::from(crate::normalization::target_range(mode).default);
+        assert!(
+            (saved_target(&workflow, mode) - default).abs() < 1e-6,
+            "{mode:?} reset saved {} instead of {default}",
+            saved_target(&workflow, mode)
+        );
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
+        step_slider(&workflow, &slider, delta, cx);
+        let other = match mode {
+            NormalizeMode::Peak => NormalizeMode::Loudness,
+            NormalizeMode::Loudness => NormalizeMode::Peak,
+        };
+        choose_target(&workflow, other, cx);
+        assert!((saved_target(&workflow, mode) - (default + f64::from(delta))).abs() < 1e-6);
+        cx.read(|cx| assert!(workflow.view.read(cx).normalize_target_store_task.is_none()));
+        advance_slider_clock(Duration::from_millis(600), cx);
+        assert!((saved_target(&workflow, mode) - (default + f64::from(delta))).abs() < 1e-6);
+    }
+}
+
+/// Graceful app shutdown invokes the real quit subscriptions and drains pending gain and both target values.
+#[gpui_kit::test]
+async fn integration_slider_quit_flushes_pending_gain_and_target(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "quit-gain.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    let gain = cx.read(|cx| workflow.view.read(cx).gain_slider.clone());
+    step_slider(&workflow, &gain, 0.1, cx);
+    let peak = choose_target(&workflow, NormalizeMode::Peak, cx);
+    step_slider(&workflow, &peak, -0.1, cx);
+    let loudness = choose_target(&workflow, NormalizeMode::Loudness, cx);
+    step_slider(&workflow, &loudness, -0.5, cx);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert!(view.gain_store_task.is_some());
+        assert!(view.normalize_target_store_task.is_some());
+    });
+    let cache = workflow_cache(&workflow, cx);
+    cx.quit();
+    assert!(same_custom_gain(
+        cache.get_analysis(&source).expect("quit drained writer").custom_gain_db,
+        Some(0.1)
+    ));
+    assert!((saved_target(&workflow, NormalizeMode::Peak) + 0.1).abs() < 1e-6);
+    assert!((saved_target(&workflow, NormalizeMode::Loudness) + 14.5).abs() < 1e-6);
+    cx.read(|cx| {
+        let view = workflow.view.read(cx);
+        assert_eq!(view.pending_gain_paths, [] as [std::path::PathBuf; 0]);
+        assert!(view.gain_store_task.is_none());
+        assert!(view.normalize_target_store_task.is_none());
     });
 }
 

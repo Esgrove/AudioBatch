@@ -1,6 +1,7 @@
 //! The per-file custom gain of the selected files: changing it from the slider or the mouse wheel,
 //! writing it to the analysis cache once the change is finished, and applying it to the preview and the waveform.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -26,12 +27,12 @@ pub(super) const DEFAULT_GAIN_DB: f32 = 0.0;
 /// Difference between the gain slider and the selected file's gain that moves the slider, in decibels.
 const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
 
-/// How long the mouse wheel has to rest before a gain it changed is written to the cache.
+/// How long gain edits must rest before their latest values are written to the cache.
 const GAIN_STORE_DELAY: Duration = Duration::from_millis(500);
 
 impl AppView {
     /// Clears the custom gain of the selected files, in the table and in the cache.
-    pub(super) fn clear_selected_gain(&self, cx: &mut Context<Self>) {
+    pub(super) fn clear_selected_gain(&mut self, cx: &mut Context<Self>) {
         self.change_selected_gain(DEFAULT_GAIN_DB, cx);
         self.store_selected_gain(cx);
         cx.notify();
@@ -76,22 +77,25 @@ impl AppView {
         }
     }
 
-    /// Stores the custom gain of the selected files in the cache.
-    pub(super) fn store_selected_gain(&self, cx: &mut Context<Self>) {
-        let selected = self.selected_paths(cx);
-        self.persist_gain_edits(&selected, cx);
+    /// Commits explicit selected and pending gain edits immediately, without a later timer submission.
+    pub(super) fn store_selected_gain(&mut self, cx: &mut Context<Self>) {
+        self.flush_gain_store(cx);
     }
 
-    /// Writes the custom gain of the selected file to the cache once the mouse wheel rests,
-    /// so a wheel gesture does not write to the database on the UI thread for every step.
-    /// A pending gain of another file is written right away.
+    /// Coalesces slider and wheel edits until they rest, retaining their original paths across selection changes.
+    /// Previously pending paths outside the new selection are submitted before starting its debounce.
     pub(super) fn schedule_gain_store(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_paths(cx);
         if selected.is_empty() {
             return;
         }
         if self.pending_gain_paths != selected {
-            self.flush_gain_store(cx);
+            // Overlapping paths already contain this event's latest value, so keep those on the new deadline.
+            let previous: Vec<_> = std::mem::take(&mut self.pending_gain_paths)
+                .into_iter()
+                .filter(|path| !selected.contains(path))
+                .collect();
+            self.persist_gain_edits(&previous, cx);
         }
         self.pending_gain_paths = selected;
         self.gain_store_task = Some(cx.spawn(async move |this, cx| {
@@ -100,8 +104,9 @@ impl AppView {
         }));
     }
 
-    /// Writes the current custom gain of the files the mouse wheel changed, if any, to the cache.
+    /// Cancels the debounce and submits pending and selected explicit edits before their rows can be discarded.
     pub(super) fn flush_gain_store(&mut self, cx: &mut Context<Self>) {
+        self.gain_store_task = None;
         let mut paths = std::mem::take(&mut self.pending_gain_paths);
         for path in self.selected_paths(cx) {
             if !paths.contains(&path) {
@@ -109,6 +114,25 @@ impl AppView {
             }
         }
         self.persist_gain_edits(&paths, cx);
+    }
+
+    /// Submits edits of rows a scan will discard, leaving retained rows on their original debounce.
+    /// Retained pending edits must still override analysis results captured before their writer submission.
+    pub(super) fn store_unlisted_gains(&mut self, files: &[PathBuf], cx: &mut Context<Self>) {
+        let listed: HashSet<_> = files.iter().filter(|path| !self.excluded.contains(*path)).collect();
+        let mut removed = Vec::new();
+        self.pending_gain_paths.retain(|path| {
+            if listed.contains(path) {
+                true
+            } else {
+                removed.push(path.clone());
+                false
+            }
+        });
+        self.persist_gain_edits(&removed, cx);
+        if self.pending_gain_paths.is_empty() {
+            self.gain_store_task = None;
+        }
     }
 
     /// Moves only new explicit edits to an ordered worker using their already captured source identity.

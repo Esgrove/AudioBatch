@@ -224,6 +224,14 @@ impl AppView {
         else {
             return;
         };
+        if matches!(kind, RunKind::Scan)
+            && let Some(files) = events.iter().find_map(|event| match event {
+                AnalysisEvent::Planned { files, .. } if event.run_id() == run_id => Some(files),
+                _ => None,
+            })
+        {
+            self.store_unlisted_gains(files, cx);
+        }
         let mut planned_total = None;
         let mut finished = 0;
         let mut selected_finished = false;

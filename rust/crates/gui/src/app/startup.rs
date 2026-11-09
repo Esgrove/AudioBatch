@@ -100,7 +100,10 @@ pub(super) fn new_sliders(
         }),
         cx.subscribe_in(&gain, window, |view, _, event: &SliderEvent, _, cx| {
             match event {
-                SliderEvent::Change(value) => view.change_selected_gain(value.start(), cx),
+                SliderEvent::Change(value) => {
+                    view.change_selected_gain(value.start(), cx);
+                    view.schedule_gain_store(cx);
+                }
                 SliderEvent::Release(_) => view.store_selected_gain(cx),
             }
             cx.notify();
