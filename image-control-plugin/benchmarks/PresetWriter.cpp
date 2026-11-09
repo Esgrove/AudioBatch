@@ -189,7 +189,7 @@ int main(const int argc, char* argv[])
         ++written;
     }
     if (written == 0) {
-        std::println(stderr, "ImageControl is not installed. Run build.sh --install first.");
+        std::println(stderr, "ImageControl is not installed. Run ./install.sh first.");
         return 1;
     }
     return 0;
