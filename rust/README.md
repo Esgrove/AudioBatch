@@ -611,6 +611,20 @@ The tests that start the process-lifetime test UI thread run with `-Zmiri-ignore
 which keeps the pointer and aliasing checks.
 The `miri` job in CI runs the same script on macOS.
 
+## RealtimeSanitizer
+
+`./rtsan.sh` checks hardware-free playback and preview processing on macOS with nightly Rust and matching Homebrew LLVM.
+It uses native compiler annotations, a startup-linked runtime,
+and isolated `target/rtsan/` build and diagnostic storage.
+The ordinary stable toolchain and Windows builds do not enable this instrumentation.
+Use `./rtsan.sh --diagnostic` to verify known callback and native-plugin blockers alongside the clean regression cases.
+A `BLOCKED` result is not a clean real-time callback.
+Unexpected findings, missing bundles, and detector failures fail the run.
+The runner records exact toolchain versions and requires compatible Rust/Clang runtime versions.
+Build the native fixture with `../test-plugin/build.sh`, or provide its build-tree path with `AUDIOBATCH_TEST_VST3`.
+No installed plugins or physical audio device are used.
+RTSan checks exercised unsafe calls, not audio deadlines, arbitrary plugin safety, or every spin loop.
+
 ## Fuzzing
 
 `fuzz/` holds [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets for libFuzzer,

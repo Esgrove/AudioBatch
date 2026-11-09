@@ -568,14 +568,26 @@ mod test_insert_playback {
         /// Renders a number of device frames and returns the left channel.
         fn render(&mut self, frames: usize) -> Vec<f32> {
             let mut output = vec![1.0_f32; frames * 2];
+            #[cfg(audiobatch_rtsan)]
+            thread::scope(|scope| {
+                scope
+                    .spawn(|| self.renderer.render(&mut output, |sample| sample))
+                    .join()
+                    .expect("cold callback completes");
+            });
+            #[cfg(not(audiobatch_rtsan))]
             self.renderer.render(&mut output, |sample| sample);
             output.chunks(2).filter_map(|frame| frame.first().copied()).collect()
         }
 
         /// Runs one callback on a thread distinct from the controlling test thread.
         fn render_on_callback_thread(&mut self) {
+            let mut output = [1.0_f32; 2];
             thread::scope(|scope| {
-                scope.spawn(|| self.render(1)).join().expect("callback completes");
+                scope
+                    .spawn(|| self.renderer.render(&mut output, |sample| sample))
+                    .join()
+                    .expect("callback completes");
             });
         }
 
@@ -604,6 +616,87 @@ mod test_insert_playback {
             (actual - expected).abs() < 1e-6,
             "{context}: {actual} is not {expected}"
         );
+    }
+
+    #[cfg(audiobatch_rtsan)]
+    #[test]
+    fn rtsan_full_callback_mutex_baseline() {
+        let (insert, _) = FakeInsert::new(0, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 64, |_| 0.5);
+        let renderer = std::sync::Mutex::new(harness.renderer);
+        // Player::new initializes native mutex storage before the first CPAL callback as well.
+        drop(renderer.lock().expect("player-side native mutex initialization"));
+        let mut output = [0.0_f32; 128];
+        thread::scope(|scope| {
+            scope
+                .spawn(|| crate::render_typed_callback(&renderer, &mut output))
+                .join()
+                .expect("callback completes");
+        });
+        assert!(output.iter().any(|sample| sample.abs() > f32::EPSILON));
+    }
+
+    #[cfg(audiobatch_rtsan)]
+    #[test]
+    fn rtsan_full_callback_contended_silence() {
+        let (insert, _) = FakeInsert::new(0, 0);
+        let harness = Harness::with_insert(insert);
+        let renderer = std::sync::Mutex::new(harness.renderer);
+        let guard = renderer.lock().expect("control thread owns the renderer");
+        let mut output = [1.0_f32; 128];
+        thread::scope(|scope| {
+            scope
+                .spawn(|| crate::render_typed_callback(&renderer, &mut output))
+                .join()
+                .expect("callback does not wait");
+        });
+        drop(guard);
+        assert!(output.iter().all(|sample| sample.abs() < f32::EPSILON));
+    }
+
+    #[cfg(audiobatch_rtsan)]
+    #[test]
+    fn rtsan_renderer_retirement_and_tail_storage() {
+        let (first, first_probe) = FakeInsert::new(5, 10);
+        let mut harness = Harness::with_insert(first);
+        harness.push(0, 128, |_| 0.5);
+        let mut output = [0.0_f32; 64];
+        thread::scope(|scope| {
+            scope
+                .spawn(|| harness.renderer.render(&mut output, |sample| sample))
+                .join()
+                .expect("callback");
+        });
+        let first_tail = Arc::downgrade(&harness.renderer.insert.insert.as_ref().expect("insert").tail);
+        let (second, second_probe) = FakeInsert::new(0, 20);
+        harness.control.set(Some(second)).expect("replacement");
+        harness.control.set_tail(30);
+        thread::scope(|scope| {
+            scope
+                .spawn(|| harness.renderer.render(&mut output, |sample| sample))
+                .join()
+                .expect("callback");
+        });
+        let second_tail = Arc::downgrade(&harness.renderer.insert.insert.as_ref().expect("insert").tail);
+        harness.control.set(None).expect("removal");
+        thread::scope(|scope| {
+            scope
+                .spawn(|| harness.renderer.render(&mut output, |sample| sample))
+                .join()
+                .expect("callback");
+        });
+        assert!(!first_probe.dropped.load(Ordering::Relaxed));
+        assert!(!second_probe.dropped.load(Ordering::Relaxed));
+        assert!(first_tail.upgrade().is_some());
+        assert!(second_tail.upgrade().is_some());
+        drop(harness.control.take_retired());
+        assert!(first_tail.upgrade().is_none());
+        assert!(second_tail.upgrade().is_none());
+        for probe in [first_probe, second_probe] {
+            assert_eq!(probe.drop_count.load(Ordering::Relaxed), 1);
+            assert!(!probe.dropped_off_control_thread.load(Ordering::Relaxed));
+        }
     }
 
     #[test]

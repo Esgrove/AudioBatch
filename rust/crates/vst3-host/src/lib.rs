@@ -12,6 +12,8 @@
 //! The `editor` feature adds native windows for plugin editors,
 //! and is a feature so that hosts without a GUI do not link the platform's window libraries.
 
+#![cfg_attr(audiobatch_rtsan, feature(sanitize))]
+
 pub mod discovery;
 #[cfg(feature = "editor")]
 pub mod editor;

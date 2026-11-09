@@ -18,6 +18,11 @@
 //! Native causes remain available through their source chains.
 //! Asynchronous failures become user-facing text only when constructing a `PlayerEvent`.
 
+#![cfg_attr(audiobatch_rtsan, feature(sanitize))]
+
+#[cfg(all(test, audiobatch_rtsan))]
+mod realtime_tests;
+
 mod device;
 mod engine;
 mod output;
@@ -560,6 +565,17 @@ fn build_stream(
     }
 }
 
+/// Runs the complete typed CPAL callback, including the renderer guard's destruction.
+/// The nonblocking lock avoids waiting, but its successful guard still unlocks a native mutex.
+#[cfg_attr(audiobatch_rtsan, sanitize(realtime = "nonblocking"))]
+fn render_typed_callback<T: SizedSample + FromSample<f32>>(renderer: &Mutex<OutputRenderer>, output: &mut [T]) {
+    if let Ok(mut renderer) = renderer.try_lock() {
+        renderer.render(output, T::from_sample);
+    } else {
+        output.fill(T::from_sample(0.0));
+    }
+}
+
 /// Builds an output stream that renders into samples of type `T`.
 fn build_typed_stream<T>(
     device: &Device,
@@ -573,14 +589,7 @@ where
     device
         .build_output_stream(
             *config,
-            move |output: &mut [T], _| {
-                // Only a closing stream or the player while no stream runs holds the lock, so it is never waited on.
-                if let Ok(mut renderer) = renderer.try_lock() {
-                    renderer.render(output, T::from_sample);
-                } else {
-                    output.fill(T::from_sample(0.0));
-                }
-            },
+            move |output: &mut [T], _| render_typed_callback(&renderer, output),
             move |error: cpal::Error| {
                 if matches!(
                     error.kind(),
