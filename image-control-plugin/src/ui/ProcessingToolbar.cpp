@@ -538,9 +538,8 @@ void ProcessingToolbarContent::queueRequest(PresetRequest request)
     }
     const auto sharedMailbox = mailbox;
     // The destructor joins the pool before destroying the library or its processor-owned parameter definitions.
-    const auto* presetLibrary = &library;
-    diskWorker.addJob([sharedMailbox, presetLibrary, request] mutable {
-        auto completion = performPresetRequest(*presetLibrary, std::move(request));
+    diskWorker.addJob([sharedMailbox, &presetLibrary = library, request] mutable {
+        auto completion = performPresetRequest(presetLibrary, std::move(request));
         const std::scoped_lock lock(sharedMailbox->mutex);
         sharedMailbox->completion = std::move(completion);
     });

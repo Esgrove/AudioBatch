@@ -26,6 +26,7 @@ namespace esgrove::image_control::test
 namespace
 {
 /// Returns an editor-owned direct child, or null while that component type is absent.
+/// Check the result before use. It remains valid only while the parent retains that child.
 template<typename Child>
 Child* editingChild(const juce::Component& parent)
 {
@@ -36,7 +37,8 @@ Child* editingChild(const juce::Component& parent)
     }
     return nullptr;
 }
-/// Finds stable control IDs through the toolbar's implementation component without exposing private classes.
+/// Finds a control by stable ID through the toolbar's implementation, or null when absent.
+/// The parent hierarchy owns the result. Check it before use and do not retain it after that control is removed.
 juce::Component* editingControl(juce::Component& parent, const juce::String& identifier)
 {
     std::vector<juce::Component*> pending {&parent};

@@ -88,7 +88,7 @@ public:
     SpatialSpectrogramView(
         juce::AudioProcessorValueTreeState& parameters,
         juce::ValueTree editorState,
-        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
+        ParameterHistory& history
     );
 
     ~SpatialSpectrogramView() override;
@@ -170,23 +170,23 @@ private:
     /// The editor settings, which hold the Link toggle of each band.
     juce::ValueTree editorSettings;
 
-    /// Optional processor-owned local history, which outlives this view.
-    std::optional<std::reference_wrapper<ParameterHistory>> history;
+    /// Processor-owned local history, which outlives this view.
+    ParameterHistory& history;
     /// Generation of the host state when the explicit local gesture started.
     std::uint64_t historyGeneration {0};
     /// Whether this view owns a local history frame, independent of its parameter host gestures.
     bool historyEditing {false};
 
-    /// Crossover parameters, owned by the parameter tree, which outlives the editor. Never null.
-    std::array<juce::RangedAudioParameter*, CROSSOVER_COUNT> crossoverParameters {};
-    /// Mid gain parameters, owned by the parameter tree. Never null.
-    std::array<juce::RangedAudioParameter*, BAND_COUNT> midParameters {};
-    /// Side gain parameters, owned by the parameter tree. Never null.
-    std::array<juce::RangedAudioParameter*, BAND_COUNT> sideParameters {};
-    /// Independent Width parameters, owned by the parameter tree. Never null.
-    std::array<juce::RangedAudioParameter*, BAND_COUNT> widthParameters {};
-    /// Solo parameters, owned by the parameter tree. Never null.
-    std::array<juce::RangedAudioParameter*, BAND_COUNT> soloParameters {};
+    /// Crossover parameters, owned by the parameter tree, which outlives this view.
+    std::array<std::reference_wrapper<juce::RangedAudioParameter>, CROSSOVER_COUNT> crossoverParameters;
+    /// Mid gain parameters, owned by the parameter tree, which outlives this view.
+    std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> midParameters;
+    /// Side gain parameters, owned by the parameter tree, which outlives this view.
+    std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> sideParameters;
+    /// Independent Width parameters, owned by the parameter tree, which outlives this view.
+    std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> widthParameters;
+    /// Solo parameters, owned by the parameter tree, which outlives this view.
+    std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> soloParameters;
     /// Animated hover highlight of each band, from 0 to 1.
     std::array<float, BAND_COUNT> bandHighlights {};
     /// Animated hover highlight of each crossover, from 0 to 1.

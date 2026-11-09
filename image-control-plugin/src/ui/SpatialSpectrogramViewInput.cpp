@@ -56,7 +56,7 @@ void SpatialSpectrogramView::mouseDoubleClick(const juce::MouseEvent& event)
     }
     endDrag();
     if (const auto crossover = crossoverNear(event.position.x)) {
-        auto& parameter = *crossoverParameters.at(*crossover);
+        auto& parameter = crossoverParameters.at(*crossover).get();
         beginHistoryEdit("Reset crossover");
         parameter.beginChangeGesture();
         setLocalValue(
@@ -82,7 +82,7 @@ void SpatialSpectrogramView::mouseDown(const juce::MouseEvent& event)
         drag = SpectrogramDrag::crossover;
         draggedCrossover = crossover;
         beginHistoryEdit("Move crossover");
-        crossoverParameters.at(*crossover)->beginChangeGesture();
+        crossoverParameters.at(*crossover).get().beginChangeGesture();
         return;
     }
     const auto band = bandAt(event.position.x);
@@ -93,29 +93,29 @@ void SpatialSpectrogramView::mouseDown(const juce::MouseEvent& event)
     if (isMidModifier(event.mods) || isSideModifier(event.mods)) {
         const bool mid = isMidModifier(event.mods);
         drag = mid ? SpectrogramDrag::midGain : SpectrogramDrag::sideGain;
-        dragStartMid = plainValue(*midParameters.at(*band));
-        dragStartSide = plainValue(*sideParameters.at(*band));
+        dragStartMid = plainValue(midParameters.at(*band).get());
+        dragStartSide = plainValue(sideParameters.at(*band).get());
         dragLinked = mid && isLinked(*band);
         beginHistoryEdit(bandName(*band) + (mid ? " Mid" : " Side"));
         if (mid) {
-            midParameters.at(*band)->beginChangeGesture();
+            midParameters.at(*band).get().beginChangeGesture();
         }
         if (!mid || dragLinked) {
-            sideParameters.at(*band)->beginChangeGesture();
+            sideParameters.at(*band).get().beginChangeGesture();
         }
         return;
     }
     drag = SpectrogramDrag::band;
     beginHistoryEdit("Move " + bandName(*band) + " band");
     for (const auto edge : bandEdges(*band)) {
-        crossoverParameters.at(edge)->beginChangeGesture();
+        crossoverParameters.at(edge).get().beginChangeGesture();
     }
 }
 
 /// Follows the pointer with the drag that mouseDown started.
 void SpatialSpectrogramView::mouseDrag(const juce::MouseEvent& event)
 {
-    if (history.has_value() && historyEditing && historyGeneration != history->get().generation()) {
+    if (historyEditing && historyGeneration != history.generation()) {
         endDrag();
         return;
     }
@@ -163,27 +163,27 @@ void SpatialSpectrogramView::endDrag()
             break;
         case SpectrogramDrag::crossover:
             if (draggedCrossover.has_value()) {
-                crossoverParameters.at(*draggedCrossover)->endChangeGesture();
+                crossoverParameters.at(*draggedCrossover).get().endChangeGesture();
             }
             break;
         case SpectrogramDrag::band:
             if (draggedBand.has_value()) {
                 for (const auto edge : bandEdges(*draggedBand)) {
-                    crossoverParameters.at(edge)->endChangeGesture();
+                    crossoverParameters.at(edge).get().endChangeGesture();
                 }
             }
             break;
         case SpectrogramDrag::midGain:
             if (draggedBand.has_value()) {
-                midParameters.at(*draggedBand)->endChangeGesture();
+                midParameters.at(*draggedBand).get().endChangeGesture();
                 if (dragLinked) {
-                    sideParameters.at(*draggedBand)->endChangeGesture();
+                    sideParameters.at(*draggedBand).get().endChangeGesture();
                 }
             }
             break;
         case SpectrogramDrag::sideGain:
             if (draggedBand.has_value()) {
-                sideParameters.at(*draggedBand)->endChangeGesture();
+                sideParameters.at(*draggedBand).get().endChangeGesture();
             }
             break;
     }
@@ -214,24 +214,24 @@ void SpatialSpectrogramView::mouseWheelMove(const juce::MouseEvent& event, const
     }
     const bool mid = isMidModifier(event.mods);
     const auto step = static_cast<float>(DEFAULT_WHEEL_STEP * (event.mods.isShiftDown() ? FINE_WHEEL_SHARE : 1.0));
-    dragStartMid = plainValue(*midParameters.at(*band));
-    dragStartSide = plainValue(*sideParameters.at(*band));
+    dragStartMid = plainValue(midParameters.at(*band).get());
+    dragStartSide = plainValue(sideParameters.at(*band).get());
     dragLinked = mid && isLinked(*band);
     beginHistoryEdit(bandName(*band) + (mid ? " Mid" : " Side"));
-    auto* const midParameter = midParameters.at(*band);
-    auto* const sideParameter = sideParameters.at(*band);
+    auto& midParameter = midParameters.at(*band).get();
+    auto& sideParameter = sideParameters.at(*band).get();
     if (mid) {
-        midParameter->beginChangeGesture();
+        midParameter.beginChangeGesture();
     }
     if (!mid || dragLinked) {
-        sideParameter->beginChangeGesture();
+        sideParameter.beginChangeGesture();
     }
     applyGainChange(*band, mid, static_cast<float>(steps) * step);
     if (mid) {
-        midParameter->endChangeGesture();
+        midParameter.endChangeGesture();
     }
     if (!mid || dragLinked) {
-        sideParameter->endChangeGesture();
+        sideParameter.endChangeGesture();
     }
     dragLinked = false;
     endHistoryEdit();
@@ -271,8 +271,8 @@ void SpatialSpectrogramView::moveCrossover(const juce::MouseEvent& event)
         = index + 1 == CROSSOVER_COUNT ? MAX_FREQUENCY : crossovers.at(index + 1) / MIN_CROSSOVER_RATIO;
     const auto frequency
         = std::clamp(static_cast<float>(xToFrequency(event.position.x)), lowerLimit, std::max(lowerLimit, upperLimit));
-    auto* parameter = crossoverParameters.at(index);
-    setLocalValue(*parameter, crossoverParameterId(index), frequency);
+    auto& parameter = crossoverParameters.at(index).get();
+    setLocalValue(parameter, crossoverParameterId(index), frequency);
 }
 
 /// Moves the dragged band with the pointer by moving its crossovers the same distance on the frequency axis,
@@ -313,8 +313,8 @@ void SpatialSpectrogramView::moveBand(const juce::MouseEvent& event)
     for (const auto edge : edges) {
         const auto frequency
             = static_cast<float>(shareToFrequency(shareOf(dragStartCrossovers.at(edge)) + offset, scale));
-        auto* parameter = crossoverParameters.at(edge);
-        setLocalValue(*parameter, crossoverParameterId(edge), frequency);
+        auto& parameter = crossoverParameters.at(edge).get();
+        setLocalValue(parameter, crossoverParameterId(edge), frequency);
     }
 }
 
@@ -342,33 +342,30 @@ void SpatialSpectrogramView::applyGainChange(const std::size_t band, const bool 
           };
     if (!mid) {
         setGain(
-            *sideParameters.at(band), sideGainParameterId(band), std::max(dragStartSide, BAND_GAIN_MIN_DB) + change
+            sideParameters.at(band).get(), sideGainParameterId(band), std::max(dragStartSide, BAND_GAIN_MIN_DB) + change
         );
         return;
     }
     const float midDecibels = std::clamp(dragStartMid + change, BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB);
-    setGain(*midParameters.at(band), midGainParameterId(band), midDecibels);
+    setGain(midParameters.at(band).get(), midGainParameterId(band), midDecibels);
     if (dragLinked && dragStartSide > BAND_GAIN_MIN_DB) {
-        setGain(*sideParameters.at(band), sideGainParameterId(band), dragStartSide + midDecibels - dragStartMid);
+        setGain(sideParameters.at(band).get(), sideGainParameterId(band), dragStartSide + midDecibels - dragStartMid);
     }
 }
 
 /// Opens a local command and remembers the host-state token so restored state cannot inherit a stale drag.
 void SpatialSpectrogramView::beginHistoryEdit(const juce::String& name)
 {
-    if (history.has_value()) {
-        ParameterHistory& localHistory = history->get();
-        historyGeneration = localHistory.generation();
-        historyEditing = true;
-        localHistory.beginEdit(name);
-    }
+    historyGeneration = history.generation();
+    historyEditing = true;
+    history.beginEdit(name);
 }
 
 /// Closes only a current-generation frame. Restore has already invalidated frames from an older drag.
 void SpatialSpectrogramView::endHistoryEdit()
 {
-    if (history.has_value() && historyEditing && historyGeneration == history->get().generation()) {
-        history->get().endEdit();
+    if (historyEditing && historyGeneration == history.generation()) {
+        history.endEdit();
     }
     historyEditing = false;
 }
@@ -380,12 +377,10 @@ void SpatialSpectrogramView::setLocalValue(
     const float value
 )
 {
-    if (history.has_value()) {
-        if (!historyEditing || historyGeneration != history->get().generation()) {
-            return;
-        }
-        history->get().touch(parameterId);
+    if (!historyEditing || historyGeneration != history.generation()) {
+        return;
     }
+    history.touch(parameterId);
     parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
 }
 

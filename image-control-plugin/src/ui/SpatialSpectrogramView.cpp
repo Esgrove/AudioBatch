@@ -23,6 +23,23 @@ namespace esgrove::image_control
 {
 namespace
 {
+/// Binds indexed parameters required by the fixed layout for the lifetime of the owning parameter tree.
+template<std::size_t... Indices>
+std::array<std::reference_wrapper<juce::RangedAudioParameter>, sizeof...(Indices)> getViewParameters(
+    const juce::AudioProcessorValueTreeState& parameters,
+    juce::String (&parameterId)(std::size_t),
+    std::index_sequence<Indices...> /*indices*/
+)
+{
+    const auto requiredParameter = [&parameters](const juce::String& identifier) -> juce::RangedAudioParameter& {
+        // JUCE owns this nullable lookup result. The fixed layout guarantees it exists and outlives the view.
+        auto* parameter = parameters.getParameter(identifier);
+        jassert(parameter != nullptr);
+        return *parameter;
+    };
+    return {requiredParameter(parameterId(Indices))...};
+}
+
 /// Smallest highlight change that still counts as animating. Closer to the target, the highlight snaps to it.
 constexpr float HIGHLIGHT_SNAP {0.002F};
 
@@ -202,25 +219,18 @@ bool SpectrogramOverlayState::operator==(const SpectrogramOverlayState& other) c
 SpatialSpectrogramView::SpatialSpectrogramView(
     juce::AudioProcessorValueTreeState& parameters,
     juce::ValueTree editorState,
-    std::optional<std::reference_wrapper<ParameterHistory>> localHistory
+    ParameterHistory& localHistory
 ) :
     editorSettings(std::move(editorState)),
-    history(localHistory)
+    history(localHistory),
+    crossoverParameters(
+        getViewParameters(parameters, crossoverParameterId, std::make_index_sequence<CROSSOVER_COUNT> {})
+    ),
+    midParameters(getViewParameters(parameters, midGainParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    sideParameters(getViewParameters(parameters, sideGainParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    widthParameters(getViewParameters(parameters, widthParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    soloParameters(getViewParameters(parameters, soloParameterId, std::make_index_sequence<BAND_COUNT> {}))
 {
-    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        crossoverParameters.at(crossover) = parameters.getParameter(crossoverParameterId(crossover));
-        jassert(crossoverParameters.at(crossover) != nullptr);
-    }
-    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        midParameters.at(band) = parameters.getParameter(midGainParameterId(band));
-        sideParameters.at(band) = parameters.getParameter(sideGainParameterId(band));
-        soloParameters.at(band) = parameters.getParameter(soloParameterId(band));
-        widthParameters.at(band) = parameters.getParameter(widthParameterId(band));
-        jassert(
-            midParameters.at(band) != nullptr && sideParameters.at(band) != nullptr
-            && soloParameters.at(band) != nullptr && widthParameters.at(band) != nullptr
-        );
-    }
     // The rounded corners show the editor background and the plot shows the GPU picture,
     // so the view does not fill its whole bounds.
     setOpaque(false);
@@ -397,7 +407,7 @@ Crossovers SpatialSpectrogramView::currentCrossovers() const
 {
     Crossovers crossovers {};
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        crossovers.at(crossover) = plainValue(*crossoverParameters.at(crossover));
+        crossovers.at(crossover) = plainValue(crossoverParameters.at(crossover).get());
     }
     return orderCrossovers(crossovers);
 }
@@ -427,7 +437,7 @@ std::array<bool, BAND_COUNT> SpatialSpectrogramView::mutedBands() const
 {
     BandSolos soloed {};
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        soloed.at(band) = soloParameters.at(band)->getValue() >= 0.5F;
+        soloed.at(band) = soloParameters.at(band).get().getValue() >= 0.5F;
     }
     const BandGains heard = soloGains(soloed);
     std::array<bool, BAND_COUNT> muted {};
@@ -447,7 +457,7 @@ juce::Rectangle<float> SpatialSpectrogramView::framesPerSecondArea() const
 /// Returns the band's independent Width target, regardless of its source trims.
 double SpatialSpectrogramView::bandWidth(const std::size_t band) const
 {
-    return static_cast<double>(plainValue(*widthParameters.at(band)));
+    return static_cast<double>(plainValue(widthParameters.at(band).get()));
 }
 
 /// Returns the opacity of the position curve overlay:

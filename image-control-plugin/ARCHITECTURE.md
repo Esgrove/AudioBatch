@@ -49,7 +49,8 @@ so hover opacity changes reuse the paths.
 
 The host owns `ImageControlProcessor` through JUCE's plugin wrapper.
 The processor owns APVTS, the message-thread editor-settings tree, `MultibandImager`, and `StereoSampleFifo`.
-Raw atomic parameter pointers refer into APVTS and remain valid for the processor lifetime.
+Non-owning atomic parameter references and reference-wrapper arrays refer into APVTS
+and remain valid for the processor lifetime.
 The host takes ownership of the editor returned by `createEditor`.
 The editor refers to its processor, which must outlive it.
 

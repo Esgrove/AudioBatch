@@ -13,7 +13,6 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -411,7 +410,7 @@ BandStrip::BandStrip(
     juce::AudioProcessorValueTreeState& parameters,
     juce::ValueTree& editorState,
     const std::size_t band,
-    std::optional<std::reference_wrapper<ParameterHistory>> localHistory
+    ParameterHistory& localHistory
 ) :
     sideParameter(*parameters.getParameter(sideGainParameterId(band))),
     history(localHistory),
@@ -487,14 +486,12 @@ BandStrip::BandStrip(
     addAndMakeVisible(soloButton);
 
     midSlider.onDragStart = [this] {
-        if (history.has_value()) {
-            linkedGeneration = history->get().generation();
-            linkedHistoryEditing = history->get().isEditing();
-            // The slider listener ends before onDragEnd, so this nested frame keeps linked writes in one command.
-            // A restore from beginChangeGesture cancels the listener's frame and must not open a replacement here.
-            if (linkedHistoryEditing) {
-                history->get().beginEdit(midSlider.getTitle());
-            }
+        linkedGeneration = history.generation();
+        linkedHistoryEditing = history.isEditing();
+        // The slider listener ends before onDragEnd, so this nested frame keeps linked writes in one command.
+        // A restore from beginChangeGesture cancels the listener's frame and must not open a replacement here.
+        if (linkedHistoryEditing) {
+            history.beginEdit(midSlider.getTitle());
         }
         draggingMid = true;
         linkedMidStart = midSlider.getValue();
@@ -510,13 +507,13 @@ BandStrip::BandStrip(
             linkedSideGesture = false;
         }
         draggingMid = false;
-        if (history.has_value() && linkedHistoryEditing && linkedGeneration == history->get().generation()) {
-            history->get().endEdit();
+        if (linkedHistoryEditing && linkedGeneration == history.generation()) {
+            history.endEdit();
         }
         linkedHistoryEditing = false;
     };
     midSlider.onValueChange = [this] {
-        if (history.has_value() && (!linkedHistoryEditing || linkedGeneration != history->get().generation())) {
+        if (!linkedHistoryEditing || linkedGeneration != history.generation()) {
             return;
         }
         if (draggingMid && linkedSideGesture && linkedSideStart > static_cast<double>(BAND_GAIN_MIN_DB)) {
@@ -525,9 +522,7 @@ BandStrip::BandStrip(
                 static_cast<double>(BAND_GAIN_MIN_DB),
                 static_cast<double>(BAND_GAIN_MAX_DB)
             );
-            if (history.has_value()) {
-                history->get().touch(sideId);
-            }
+            history.touch(sideId);
             setSideValue(sideParameter, static_cast<float>(side), true);
         }
     };

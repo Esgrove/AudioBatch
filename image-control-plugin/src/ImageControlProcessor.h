@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 
 namespace esgrove::image_control
@@ -131,7 +132,7 @@ private:
     void pushToAnalyzer(const juce::AudioBuffer<float>& buffer, AnalyzerEpoch epoch);
     void updateProcessingTargets(bool bypassed);
 
-    /// Owns the parameters that the raw value pointers below point into.
+    /// Owns the parameters that the raw value references below bind to.
     juce::AudioProcessorValueTreeState parameters;
     /// Message-thread-only settings, kept in one tree so the editor's bindings survive state restores.
     juce::ValueTree editorState;
@@ -162,29 +163,29 @@ private:
     /// Carries audio from the audio thread to the editor's analyzer.
     StereoSampleFifo analyzerFifo;
 
-    /// Raw values of the crossover parameters, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, CROSSOVER_COUNT> crossoverValues {};
-    /// Raw values of the mid gain parameters, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, BAND_COUNT> midGainValues {};
-    /// Raw values of the pan parameters, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, BAND_COUNT> panValues {};
-    /// Raw recovery percentages, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, BAND_COUNT> recoverValues {};
-    /// Raw values of the side gain parameters, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, BAND_COUNT> sideGainValues {};
-    /// Raw values of the solo parameters, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, BAND_COUNT> soloValues {};
-    /// Raw values of the Width parameters, owned by the parameter tree and never null after construction.
-    std::array<std::atomic<float>*, BAND_COUNT> widthValues {};
-    /// Raw value of the output gain parameter, owned by the parameter tree.
-    std::atomic<float>* outputGainValue {nullptr};
-    /// Raw value of the bypass parameter, owned by the parameter tree.
-    std::atomic<float>* bypassValue {nullptr};
-    /// Raw value of the delta parameter, owned by the parameter tree.
-    std::atomic<float>* deltaValue {nullptr};
+    /// Raw crossover values, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, CROSSOVER_COUNT> crossoverValues;
+    /// Raw Mid gain values, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, BAND_COUNT> midGainValues;
+    /// Raw pan values, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, BAND_COUNT> panValues;
+    /// Raw recovery percentages, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, BAND_COUNT> recoverValues;
+    /// Raw Side gain values, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, BAND_COUNT> sideGainValues;
+    /// Raw Solo values, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, BAND_COUNT> soloValues;
+    /// Raw Width values, owned by the parameter tree and valid for this processor's lifetime.
+    std::array<std::reference_wrapper<std::atomic<float>>, BAND_COUNT> widthValues;
+    /// Raw output gain, owned by the parameter tree and valid for this processor's lifetime.
+    std::atomic<float>& outputGainValue;
+    /// Raw bypass value, owned by the parameter tree and valid for this processor's lifetime.
+    std::atomic<float>& bypassValue;
+    /// Raw Delta value, owned by the parameter tree and valid for this processor's lifetime.
+    std::atomic<float>& deltaValue;
 
-    /// Raw value of the mono parameter, owned by the parameter tree.
-    std::atomic<float>* monoValue {nullptr};
+    /// Raw Mono value, owned by the parameter tree and valid for this processor's lifetime.
+    std::atomic<float>& monoValue;
 
     /// Effective raw values seen by the last callback, prepare, or reset. Never changed by parameter listeners.
     ProcessingControlValues cachedRawControls;

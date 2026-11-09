@@ -9,15 +9,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <cstdint>
-#include <functional>
-#include <optional>
 
 namespace esgrove::image_control
 {
 class ParameterHistory;
 
 /// Binds a slider to a parameter and records only local gestures, touching the parameter before each local write.
-/// The APVTS, slider, and optional processor-owned history must outlive this attachment.
+/// The APVTS, slider, and processor-owned history must outlive this attachment.
 class HistorySliderAttachment final : private juce::Slider::Listener
 {
 public:
@@ -25,7 +23,7 @@ public:
         juce::AudioProcessorValueTreeState& parameters,
         const juce::String& parameterId,
         ControlSlider& control,
-        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
+        ParameterHistory& history
     );
 
     ~HistorySliderAttachment() override;
@@ -48,8 +46,8 @@ private:
     ControlSlider& slider;
     /// Stable parameter identity used for explicit pre-write capture.
     juce::String id;
-    /// Optional reference to processor-owned history, which outlives this attachment.
-    std::optional<std::reference_wrapper<ParameterHistory>> history;
+    /// Processor-owned history, which outlives this attachment.
+    ParameterHistory& history;
     /// JUCE handles only parameter delivery and balanced host notification, with no UndoManager.
     juce::ParameterAttachment attachment;
     /// Host-state generation when the current local gesture started.
@@ -61,7 +59,7 @@ private:
 };
 
 /// Binds a processing toggle to its parameter, recording each local click as one complete transaction.
-/// The APVTS, button, and optional processor-owned history must outlive this attachment.
+/// The APVTS, button, and processor-owned history must outlive this attachment.
 class HistoryButtonAttachment final : private juce::Button::Listener
 {
 public:
@@ -69,7 +67,7 @@ public:
         juce::AudioProcessorValueTreeState& parameters,
         const juce::String& parameterId,
         juce::Button& control,
-        std::optional<std::reference_wrapper<ParameterHistory>> history = std::nullopt
+        ParameterHistory& history
     );
 
     ~HistoryButtonAttachment() override;
@@ -90,8 +88,8 @@ private:
     juce::RangedAudioParameter& parameter;
     /// Stable parameter identity used for explicit pre-write capture.
     juce::String id;
-    /// Optional reference to processor-owned history, which outlives this attachment.
-    std::optional<std::reference_wrapper<ParameterHistory>> history;
+    /// Processor-owned history, which outlives this attachment.
+    ParameterHistory& history;
     /// Message-thread delivery of host values without any history listener.
     juce::ParameterAttachment attachment;
     /// Rejects callbacks caused by synchronizing a host value to the control.
