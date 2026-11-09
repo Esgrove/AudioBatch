@@ -187,6 +187,8 @@ jobs:
         run: |
           uv run --script ../tests/test_cpp_lint.py
           uv run --script ../tests/test_cpp_test.py
+          uv run --script ../tests/test_realtime_sanitizer.py
+          uv run --script ../tests/test_realtime_scripts.py
 
       # --prepare refreshes the compile database and generated headers without compiling the applications.
       # lint.sh selects Homebrew clang-tidy while CMake retains the build job's Apple toolchain.
@@ -231,6 +233,50 @@ jobs:
           else
             ./sanitize.sh
           fi
+
+  realtime:
+    name: RealtimeSanitizer
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Homebrew LLVM and Ninja
+        run: |
+          mkdir -p cmake-build-mac-rtsan/realtime-artifacts
+          brew install llvm ninja 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/dependencies.log
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Record native sanitizer toolchain
+        run: |
+          {
+            uname -sm
+            "$(brew --prefix llvm)/bin/clang++" --version
+            cmake --version
+            ninja --version
+            uv --version
+          } 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/toolchain.log
+
+      # The isolated executable links RTSan at startup and never opens a physical audio device.
+      # Expected baseline findings remain BLOCKED in result.json, not clean callback passes.
+      - name: Check callbacks and verify known blockers
+        run: ./sanitize.sh --realtime 2>&1 | tee cmake-build-mac-rtsan/realtime-artifacts/run.log
+
+      - name: Upload realtime sanitizer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpp-realtime-sanitizer
+          path: |
+            cpp/cmake-build-mac-rtsan/realtime-artifacts
+            cpp/cmake-build-mac-rtsan/Testing/Temporary/LastTest.log
+            cpp/cmake-build-mac-rtsan/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: error
 
   fuzz:
     # Replays the committed corpus through each libFuzzer harness, then fuzzes each one briefly.
