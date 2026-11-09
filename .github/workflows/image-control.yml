@@ -202,3 +202,6 @@ jobs:
 
       - name: Test format comparison contracts
         run: uv run --script benchmarks/test_compare_formats.py
+
+      - name: Test build and validation script contracts
+        run: uv run --script tests/test_build_scripts.py

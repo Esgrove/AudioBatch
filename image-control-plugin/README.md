@@ -114,7 +114,11 @@ See `./build.sh --help` and `./install.sh --help` for other options.
 The installer builds and copies the VST3 to `~/Library/Audio/Plug-Ins/VST3` on macOS
 or `C:\Program Files\Common Files\VST3` on Windows, requesting elevation if needed.
 On macOS it also installs the Audio Unit to `~/Library/Audio/Plug-Ins/Components` and refreshes its registry.
-`./install.sh --validate` uses pluginval if available on the path and, on macOS, validates the Audio Unit with auval.
+`./build.sh --validate` validates the built VST3 with pluginval if it is on the path, without installing it.
+`./install.sh --validate` validates the installed VST3 and, on macOS, the registered Audio Unit with auval.
+Both accept `--validation-level 5` through `--validation-level 10`, defaulting to 5.
+Specifying a level also enables validation, for example `./build.sh --validation-level 10`.
+The level controls pluginval strictness. Audio Unit validation always uses auval's strict mode.
 
 ### Tests and lint
 
@@ -146,14 +150,16 @@ cmake --build cmake-build-release --config Release --target ImageControl_pluginv
 ```
 
 This needs Git, the build toolchain, and network access for missing dependencies.
-The target validates at strictness level 5 and is separate from the installer's path-based pluginval check.
+The target validates at strictness level 5 and is separate from the scripts' path-based pluginval checks.
 Use the matching build directory if using a Windows Ninja workspace.
 
 ### Benchmarks and reference signals
 
 The benchmark measures full-callback throughput and timing distributions across sample rates and block sizes,
 including recovery off, selected/all bands, crossover changes, and optional metering/analysis load.
-It also measures isolated imager processing and Width/Recover setters, plus CPU-side spectrogram work, not GPU drawing.
+It also measures isolated imager processing and Width/Recover setters, plus separate analyzer and particle workloads.
+CPU-side overlay probes include hovered response curves, and focused callback rows cover Solo/Delta and small blocks.
+These measurements exclude GPU drawing.
 After configuring tests, build the benchmark explicitly.
 `--test` does not build it:
 

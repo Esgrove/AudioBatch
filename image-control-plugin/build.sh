@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/cmake-build-release.
-# Optionally runs its unit tests. install.sh installs the bundles and validates them.
+# Optionally runs unit tests and validates the built VST3 with pluginval. install.sh installs and validates bundles.
 # Needs the JUCE submodule in cpp/JUCE: git submodule update --init cpp/JUCE
 
 USAGE="Usage: $0 [OPTIONS]
@@ -40,6 +40,13 @@ OPTIONS: All options are optional
     -t | --test
         Also build and run the unit tests.
 
+    -V | --validate
+        Validate the built VST3 with pluginval if it is in PATH, without installing it.
+        Audio Unit validation with auval requires install.sh --validate.
+
+    --validation-level <5-10>
+        Set pluginval strictness and enable validation. Default is 5.
+
     -v | --verbose
         Display commands being executed."
 
@@ -53,6 +60,8 @@ init_options() {
     REUSE_BUILD_DIR=false
     CLEAN_BUILD_DIR=false
     RUN_TESTS=false
+    VALIDATE=false
+    VALIDATION_LEVEL=5
     BUILD_TYPE="Release"
 
     while [ $# -gt 0 ]; do
@@ -87,6 +96,17 @@ init_options() {
             -t | --test)
                 RUN_TESTS=true
                 ;;
+            -V | --validate)
+                VALIDATE=true
+                ;;
+            --validation-level)
+                if [ $# -lt 2 ]; then
+                    print_error_and_exit "Missing value for $1."
+                fi
+                VALIDATION_LEVEL="$2"
+                VALIDATE=true
+                shift
+                ;;
             -v | --verbose)
                 set -x
                 ;;
@@ -98,6 +118,7 @@ init_options() {
         shift
     done
 
+    plugin_check_validation_level "$VALIDATION_LEVEL"
     if [ "$CLEAN_BUILD_DIR" = true ] && [ "$REUSE_BUILD_DIR" = true ]; then
         print_error_and_exit "--clean and --reuse cannot be used together."
     fi
@@ -168,6 +189,10 @@ fi
 if [ "$RUN_TESTS" = true ]; then
     print_magenta "Running the unit tests"
     plugin_run_tests "$BUILD_DIR" "$BUILD_TYPE"
+fi
+
+if [ "$VALIDATE" = true ]; then
+    plugin_validate_vst3 "$BUNDLE" "$VALIDATION_LEVEL"
 fi
 
 echo "$BUNDLE"
