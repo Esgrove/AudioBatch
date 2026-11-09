@@ -198,11 +198,16 @@ fi
 if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
     print_magenta "Configuring the Debug build in $BUILD_DIR"
     plugin_configure "$BUILD_DIR" Debug "$USE_NINJA" ON
+else
+    # Keep the cached generator, compiler, and configuration, but ensure every linted target exists.
+    # An ordinary plugin build configures IMAGE_CONTROL_BUILD_TESTS=OFF in this same workspace.
+    print_magenta "Enabling the tests and benchmark in $BUILD_DIR"
+    cmake -S "$DIR" -B "$BUILD_DIR" -DIMAGE_CONTROL_BUILD_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 fi
 # The build is incremental, so it does little when the database and headers are current.
 # Ninja reruns CMake first when a CMake file is newer than the generated build files.
 print_magenta "Updating the compile database and generated headers"
-cmake --build "$BUILD_DIR" --target ImageControlTests ImageControlBenchmark
+cmake --build "$BUILD_DIR" --target ImageControlTests ImageControlBenchmark ImageControlPresetWriter
 if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
     print_error_and_exit "$BUILD_DIR has no compile_commands.json, which needs a Ninja build directory."
 fi

@@ -23,6 +23,9 @@ endif()
 option(IMAGE_CONTROL_BUILD_TESTS "Build the ImageControl unit tests and benchmark" ${PROJECT_IS_TOP_LEVEL})
 option(IMAGE_CONTROL_HARDENING "Enable standard library hardening, as the AudioBatch build does" ON)
 
+# Plugin-only sanitizer and coverage flags must be set before JUCE or any other targets are added.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Verification.cmake")
+
 # The same CPU targets and optimizations as AudioBatch:
 # Release link-time optimization, fused multiply-adds, the local CPU in local Release builds but never in CI,
 # and an AVX2 baseline on Windows. macOS builds for the host architecture, which is arm64 with NEON on Apple Silicon.
@@ -234,6 +237,8 @@ audiobatch_add_pluginval(ImageControl)
 
 if(IMAGE_CONTROL_BUILD_TESTS)
     include(CTest)
+    # IMAGE_CONTROL_BUILD_TESTS owns this project's tests, even in a cache with BUILD_TESTING=OFF.
+    enable_testing()
     include(FetchContent)
     FetchContent_Declare(
         googletest
@@ -270,7 +275,15 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
     include(GoogleTest)
-    gtest_discover_tests(ImageControlTests DISCOVERY_TIMEOUT 60)
+    gtest_discover_tests(
+        ImageControlTests
+        DISCOVERY_MODE
+        PRE_TEST
+        DISCOVERY_TIMEOUT
+        60
+        PROPERTIES
+        TIMEOUT 180 LABELS unit
+    )
 
     # Times the audio processing and the spectrogram rendering. It is not a test, so CTest does not run it.
     add_executable(ImageControlBenchmark "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp")
