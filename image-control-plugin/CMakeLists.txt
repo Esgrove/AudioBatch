@@ -101,6 +101,8 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ImageControlProcessor.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterHistory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterHistory.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ProcessingState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ProcessingState.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/UserPresets.cpp"
@@ -415,6 +417,9 @@ if(IMAGE_CONTROL_BUILD_TESTS)
 
     set(IMAGE_CONTROL_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/AnalyzerTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProcessingStateTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/ParameterHistoryTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/ComparisonTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/UserPresetsTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ControlLayoutTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ConvolverTests.cpp"
