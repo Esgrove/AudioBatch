@@ -10,6 +10,7 @@
 #include "cli/PluginListCli.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginProcessing.h"
+#include "utils/OptionalRef.h"
 
 #include <cstdint>
 #include <expected>
@@ -169,7 +170,7 @@ juce::StringArray findSkippedInputs(
     const AnalyzeCommand& command,
     AnalysisCache& cache,
     const utils::CancellationCheck& isInterrupted = {},
-    const ProcessCommand* processing = nullptr
+    utils::OptionalRef<const ProcessCommand> processing = std::nullopt
 );
 }  // namespace cli
 }  // namespace audiobatch

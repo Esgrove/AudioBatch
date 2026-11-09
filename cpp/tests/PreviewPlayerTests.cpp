@@ -236,22 +236,22 @@ void PreviewPlayerTests::testCueStartPosition()
     serato::Markers markers;
 
     beginTest("Cue starts require an enabled preference and nonempty markers");
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, nullptr, 10.0), 0.0, 0.000001);
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, std::nullopt, 10.0), 0.0, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, 10.0), 0.0, 0.000001);
     markers.cues.push_back({.positionMilliseconds = 1250, .index = 7, .colour = {}, .name = {}});
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 1.25, 0.000001);
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(AudioPreviewPreferences(), &markers, 10.0), 0.0, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, 10.0), 1.25, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(AudioPreviewPreferences(), markers, 10.0), 0.0, 0.000001);
 
     beginTest("Unsorted cues use the earliest time even when another cue has index zero or is after halfway");
     markers.cues.insert(markers.cues.begin(), {.positionMilliseconds = 7000, .index = 0, .colour = {}, .name = {}});
     markers.cues.push_back({.positionMilliseconds = 2500, .index = 1, .colour = {}, .name = {}});
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 1.25, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, 10.0), 1.25, 0.000001);
 
     beginTest("A cue exactly halfway is accepted but one millisecond later falls back to zero");
     markers.cues = {{.positionMilliseconds = 5000, .index = 0, .colour = {}, .name = {}}};
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 5.0, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, 10.0), 5.0, 0.000001);
     markers.cues.front().positionMilliseconds = 5001;
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, 10.0), 0.0, 0.000001);
 
     beginTest("Nonpositive and nonfinite durations cannot select a cue start");
     markers.cues.front().positionMilliseconds = 1250;
@@ -264,12 +264,12 @@ void PreviewPlayerTests::testCueStartPosition()
              -std::numeric_limits<double>::infinity(),
          })
     {
-        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, duration), 0.0, 0.000001);
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, duration), 0.0, 0.000001);
     }
 
     beginTest("A zero-position cue remains at the beginning even with later cues");
     markers.cues.push_back({.positionMilliseconds = 0, .index = 7, .colour = {}, .name = {}});
-    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
+    expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, markers, 10.0), 0.0, 0.000001);
 }
 
 /// Exercises deferred cue resolution on one player with a simulated output driver.
@@ -1457,7 +1457,7 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
     data.trackInfo->genre = texts[0];
     data.trackInfo->album = texts[2];
     data.trackInfo->comment = texts[1];
-    panel.showRecord(record, {}, &data);
+    panel.showRecord(record, {}, data);
     const juce::Viewport* viewport = nullptr;
     for (const auto* child : panel.getChildren()) {
         if (const auto* candidate = dynamic_cast<const juce::Viewport*>(child)) {
@@ -1535,15 +1535,15 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
 
     beginTest("Pending, failed, cleared, and replacement selections never retain stale technical details or tags");
     record.status = AudioAnalysisStatus::pending;
-    panel.showRecord(record, "Analyzing", &data);
+    panel.showRecord(record, "Analyzing", data);
     expect(!format->isVisible() && !audio->isVisible());
     expect(track->isVisible() && album->isVisible() && comment->isVisible());
     const auto pendingHeight = panel.getPreferredHeight();
-    panel.showRecord(record, "Waiting", &data);
+    panel.showRecord(record, "Waiting", data);
     expectEquals(panel.getPreferredHeight(), pendingHeight);
     record.status = AudioAnalysisStatus::failed;
     record.errorMessage = texts[2];
-    panel.showRecord(record, {}, &data);
+    panel.showRecord(record, {}, data);
     expect(error->isVisible());
     expectEquals(error->getText(), record.errorMessage);
     expectEquals(error->getY(), 0);

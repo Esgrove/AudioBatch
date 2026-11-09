@@ -237,7 +237,7 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
         failures.size()
     );
 
-    utils::showFailureSummary(failures, "Normalize", "normalized", this);
+    utils::showFailureSummary(failures, "Normalize", "normalized", *this);
     requestArtwork(artwork.file);
 
     if ((!preview.getFile().existsAsFile() || preview.needsReload(preview.getFile()))
@@ -710,7 +710,7 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
 
     updateProcessButtonState();
 
-    utils::showFailureSummary(failures, "Plugin Processing", "processed", this);
+    utils::showFailureSummary(failures, "Plugin Processing", "processed", *this);
     requestArtwork(artwork.file);
 
     if ((!preview.getFile().existsAsFile() || preview.needsReload(preview.getFile()))

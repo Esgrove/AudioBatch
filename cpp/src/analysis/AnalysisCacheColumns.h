@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <sqlite3.h>
 
 namespace audiobatch
@@ -23,8 +24,7 @@ constexpr double MAXIMUM_CACHED_LOUDNESS {1000.0};
 
 [[nodiscard]] juce::MemoryBlock serializeLoudnessHistory(const AudioAnalysisRecord& record);
 [[nodiscard]] std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
-    const void* data,
-    std::size_t bytes,
+    std::span<const std::byte> data,
     const AudioAnalysisRecord& record
 );
 

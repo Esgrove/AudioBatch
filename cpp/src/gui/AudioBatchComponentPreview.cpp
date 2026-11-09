@@ -17,6 +17,7 @@
 #include "serato/SeratoTagTypes.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include "utils/OptionalRef.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -362,7 +363,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     previewWorkspace.audioInfo.showRecord(
         record,
         activity.isNotEmpty() ? activity : operation.text,
-        seratoData.get(),
+        seratoData ? utils::OptionalRef<const serato::SeratoData>(*seratoData) : std::nullopt,
         previewPreferences.showGainAdjustedMetrics
     );
     // Follows the displayed record rather than the loaded preview,
@@ -447,7 +448,8 @@ void AudioBatchComponent::adoptSeratoPreview(
     const auto seratoData = preview.getSeratoData();
     previewPlayer.completeInitialPosition(getPreviewStartPositionSeconds(
         previewPreferences,
-        seratoData && seratoData->markers ? &*seratoData->markers : nullptr,
+        seratoData && seratoData->markers ? utils::OptionalRef<const serato::Markers>(*seratoData->markers)
+                                          : std::nullopt,
         previewPlayer.getLoadedDurationSeconds().value_or(0.0)
     ));
     previewWorkspace.thumbnail.setSeratoOverview(

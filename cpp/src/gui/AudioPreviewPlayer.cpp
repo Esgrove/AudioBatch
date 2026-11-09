@@ -37,8 +37,8 @@ class PreviewReaderSource final : public juce::AudioFormatReaderSource
 {
 public:
     /// Transfers reader ownership to JUCE and retains the host's thread-safe error flag.
-    PreviewReaderSource(juce::AudioFormatReader* audioReader, std::atomic<bool>& failure) :
-        juce::AudioFormatReaderSource(audioReader, true),
+    PreviewReaderSource(std::unique_ptr<juce::AudioFormatReader> audioReader, std::atomic<bool>& failure) :
+        juce::AudioFormatReaderSource(audioReader.release(), true),
         readFailure(failure)
     {}
 
@@ -74,13 +74,14 @@ class PreviewBufferingSource final : public juce::BufferingAudioSource
 {
 public:
     /// Keeps all decoding on the existing time-slice thread and pre-fills before playback starts.
+    /// The player owns the input source and keeps it alive until this buffering source is destroyed.
     PreviewBufferingSource(
-        juce::PositionableAudioSource* source,
+        juce::PositionableAudioSource& source,
         juce::TimeSliceThread& thread,
         const int bufferSamples,
         std::atomic<bool>& underrun
     ) :
-        juce::BufferingAudioSource(source, thread, false, bufferSamples, 2, true),
+        juce::BufferingAudioSource(&source, thread, false, bufferSamples, 2, true),
         underrunFlag(underrun)
     {}
 
@@ -308,7 +309,7 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForIniti
         reportError("Audio preview requires a mono or stereo file with a valid sample rate");
         return false;
     }
-    readerSource = std::make_unique<PreviewReaderSource>(reader.release(), readFailed);
+    readerSource = std::make_unique<PreviewReaderSource>(std::move(reader), readFailed);
     prepareInput();
     previewSource.setInputGain(LinearGain {.value = 1.0f}, true);
     const auto refreshed = refreshPluginChain();
@@ -334,7 +335,7 @@ void AudioPreviewPlayer::prepareInput()
     const auto bufferSamples
         = juce::jmax(readAheadBufferSamples, static_cast<int>(std::ceil(blockSize * ratio * 8.0)) + 256);
     bufferingSource
-        = std::make_unique<PreviewBufferingSource>(readerSource.get(), readAheadThread, bufferSamples, bufferUnderrun);
+        = std::make_unique<PreviewBufferingSource>(*readerSource, readAheadThread, bufferSamples, bufferUnderrun);
     resamplingSource = std::make_unique<juce::ResamplingAudioSource>(bufferingSource.get(), false, 2);
     resamplingSource->setResamplingRatio(ratio);
     previewSource.setInput(
@@ -366,11 +367,20 @@ void AudioPreviewPlayer::release()
     sendChangeMessage();
 }
 
-/// Attaches or detaches the slot owner while retaining safe processor lifetimes.
-void AudioPreviewPlayer::setLiveChain(LiveChain* chain)
+/// Attaches the slot owner while retaining a weak observer and safe processor lifetimes.
+void AudioPreviewPlayer::setLiveChain(LiveChain& chain)
 {
     const juce::ScopedLock lock(renderingLock);
-    liveChain = chain;
+    liveChain = &chain;
+    const auto refreshed = refreshPluginChain();
+    juce::ignoreUnused(refreshed);
+}
+
+/// Releases the weak slot observer and clears its processors from the preview before owner teardown.
+void AudioPreviewPlayer::detachLiveChain()
+{
+    const juce::ScopedLock lock(renderingLock);
+    liveChain = nullptr;
     const auto refreshed = refreshPluginChain();
     juce::ignoreUnused(refreshed);
 }

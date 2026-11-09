@@ -12,6 +12,7 @@
 #include "serato/SeratoTagTypes.h"
 #include "utils/BackgroundRunner.h"
 #include "utils/FileUtils.h"
+#include "utils/OptionalRef.h"
 
 #include <JuceHeader.h>
 
@@ -61,8 +62,11 @@ struct AudioInfoDetails {
     juce::String comment;
 };
 
-// The optional Serato data is borrowed for this call only and may be null before metadata arrives.
-AudioInfoDetails formatInfoDetails(const AudioAnalysisRecord& record, const serato::SeratoData* data = nullptr);
+// The optional Serato data is borrowed for this call only and may be absent before metadata arrives.
+AudioInfoDetails formatInfoDetails(
+    const AudioAnalysisRecord& record,
+    utils::OptionalRef<const serato::SeratoData> data = std::nullopt
+);
 std::array<AudioInfoValue, AUDIO_INFO_CELL_COUNT> formatInfoGrid(const AudioInfoDetails& details);
 
 /// Read-only text rendered and measured with the same layout, including long-token wrapping.
@@ -151,7 +155,7 @@ public:
     void showRecord(
         const AudioAnalysisRecord& record,
         const juce::String& activeStatusLabel,
-        const serato::SeratoData* data = nullptr,
+        utils::OptionalRef<const serato::SeratoData> data = std::nullopt,
         bool showGainAdjustedMetrics = true
     );
 

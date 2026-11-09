@@ -10,6 +10,7 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
+#include <string_view>
 
 #include <algorithm>
 #include <array>
@@ -23,9 +24,9 @@ namespace
 /// A column that older databases lack, with the definition used to add it.
 struct ColumnMigration {
     /// Name of the column.
-    const char* name {nullptr};
+    std::string_view name;
     /// SQL type and constraints of the column, as ALTER TABLE ADD COLUMN takes them.
-    const char* definition {nullptr};
+    std::string_view definition;
 };
 }  // namespace
 
@@ -151,7 +152,8 @@ bool AnalysisCache::addMissingColumns() const
     };
 
     return std::ranges::all_of(migrations, [this](const ColumnMigration& migration) {
-        return columnExists("file_analysis", migration.name)
+        const auto name = juce::String::fromUTF8(migration.name.data(), static_cast<int>(migration.name.size()));
+        return columnExists("file_analysis", name)
             || sqlite::execute(
                    *database,
                    utils::format("ALTER TABLE file_analysis ADD COLUMN {} {};", migration.name, migration.definition)

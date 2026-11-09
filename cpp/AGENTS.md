@@ -417,9 +417,16 @@ Prefer, in this order, a value or a reference, then a smart pointer, and a raw p
   which `cppcoreguidelines-avoid-const-or-ref-data-members` in `.clang-tidy` requires.
 - Keep owning containers as `std::vector<std::unique_ptr<T>>`,
   and use `juce::OwnedArray` only where a JUCE API expects one, as the plugin scanner does.
-- Use a raw pointer only for a non-owning observer that can be null or has to be reseated,
-  or where a JUCE or C API requires one, such as channel pointer arrays and `juce::AudioSource*`.
-  Document on its declaration who owns the object, whether the pointer can be null, and how long it stays valid.
+- Use `utils::OptionalRef<T>` for non-owning observers, parameters, and lookup results that may be absent.
+  Include `utils/OptionalRef.h`. It aliases `std::optional<std::reference_wrapper<T>>`.
+  Use `T&` for required dependencies and `std::reference_wrapper<T>` for non-null references in assignable containers.
+  Neither wrapper extends the pointee's lifetime. Document who owns it and how long it stays valid.
+- Keep raw pointers at JUCE, C, TagLib, OpenGL, and platform API boundaries,
+  including ownership transfers, channel pointer arrays, plugin chain views, and `juce::AudioSource*`.
+  Documented exceptions also include reseated local observers, movable slots' nullable registration listeners,
+  null-terminated literal tables, and scoped test lookup helpers checked before use.
+  Document on each retained pointer declaration who owns the object, whether it can be null,
+  and how long it stays valid.
 
 ## Code Organization
 

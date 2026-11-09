@@ -110,8 +110,8 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport()
 
     // Normalization always writes AIFF output, so any readable format is normalizable
     // as long as an AIFF writer is available in this build.
-    auto* aiffWriterFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
-    const bool aiffWriterAvailable = aiffWriterFormat != nullptr && canCreateProbeWriter(*aiffWriterFormat);
+    const auto aiffWriterFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
+    const bool aiffWriterAvailable = aiffWriterFormat && canCreateProbeWriter(aiffWriterFormat->get());
 
     for (int index = 0; index < utils::threadLocalFormatManager().getNumKnownFormats(); ++index) {
         const auto* format = utils::threadLocalFormatManager().getKnownFormat(index);
@@ -168,7 +168,7 @@ bool canNormalizeFile(const juce::File& file)
         return false;
     }
 
-    return utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr;
+    return utils::findAiffFormat(utils::threadLocalFormatManager()).has_value();
 }
 
 /// True when the list is non-empty and every record's format can be normalized in this build.
@@ -218,7 +218,7 @@ juce::String getNormalizationSupportMessage(const juce::File& file)
         return "Unsupported audio format";
     }
 
-    if (utils::findAiffFormat(utils::threadLocalFormatManager()) == nullptr) {
+    if (!utils::findAiffFormat(utils::threadLocalFormatManager())) {
         return "AIFF writer is not available in this build";
     }
 

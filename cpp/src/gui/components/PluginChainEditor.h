@@ -9,6 +9,7 @@
 #include "gui/components/PluginChainSlotRow.h"
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
+#include "utils/OptionalRef.h"
 
 #include <JuceHeader.h>
 
@@ -46,7 +47,7 @@ private:
     [[nodiscard]] int rowIndexForPosition(int containerY) const;
 
     void deleteSelectedPreset();
-    void layoutRows(const PluginChainSlotRow* draggedRow = nullptr, int gapIndex = -1);
+    void layoutRows(utils::OptionalRef<const PluginChainSlotRow> draggedRow = std::nullopt, int gapIndex = -1);
     void loadSelectedPreset();
     void rebuildRows();
     void refreshPresets();

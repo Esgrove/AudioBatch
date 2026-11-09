@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "utils/OptionalRef.h"
 #include <unordered_map>
 
 #include <JuceHeader.h>
@@ -23,7 +24,7 @@ namespace audiobatch::utils
 {
 /// Fallback sample rate for preview and plugin preparation before an audio device is available.
 constexpr double defaultSampleRate {48'000.0};
-juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager);
+OptionalRef<juce::AudioFormat> findAiffFormat(const juce::AudioFormatManager& formatManager);
 [[nodiscard]] TagLib::FileName tagLibFileName(const juce::String& fullPath);
 juce::AudioFormatManager& threadLocalFormatManager();
 

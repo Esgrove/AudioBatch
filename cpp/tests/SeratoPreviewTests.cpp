@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -588,33 +589,33 @@ void SeratoPreviewTests::testTrackInfo()
     serato::SeratoData data;
     data.autotags = serato::Autotags {.bpm = 128.25};
     data.trackInfo = makeTrackInfo(130.0, "8A");
-    panel.showRecord(record, {}, &data);
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("128.25 BPM"));
-    expectEquals(trackValue(formatInfoDetails(record, &data), "Key"), juce::String("8A"));
+    panel.showRecord(record, {}, data);
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("128.25 BPM"));
+    expectEquals(trackValue(formatInfoDetails(record, data), "Key"), juce::String("8A"));
     expectEquals(panelValue(panel, "BPM"), juce::String("128.25 BPM"));
     expectEquals(panelValue(panel, "Key"), juce::String("8A"));
     data.autotags.reset();
-    panel.showRecord(record, {}, &data);
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("130.00 BPM"));
+    panel.showRecord(record, {}, data);
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("130.00 BPM"));
     expectEquals(panelValue(panel, "BPM"), juce::String("130.00 BPM"));
     expectEquals(panelValue(panel, "Key"), juce::String("8A"));
     data.trackInfo->bpm.reset();
-    panel.showRecord(record, {}, &data);
-    expect(trackValue(formatInfoDetails(record, &data), "BPM").isEmpty());
+    panel.showRecord(record, {}, data);
+    expect(trackValue(formatInfoDetails(record, data), "BPM").isEmpty());
     expectEquals(panelValue(panel, "Key"), juce::String("8A"));
     data.beatGrid = serato::BeatGrid {.markers = {{.bpm = 96.5}}};
     data.trackInfo->bpm = 0.0;
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("96.50 BPM"));
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("96.50 BPM"));
     data.trackInfo->bpm.reset();
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("96.50 BPM"));
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("96.50 BPM"));
     data.autotags = serato::Autotags {.bpm = -1.0};
     data.trackInfo->bpm = 130.0;
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("130.00 BPM"));
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("130.00 BPM"));
     data.autotags.reset();
     data.trackInfo.reset();
-    panel.showRecord(record, {}, &data);
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("96.50 BPM"));
-    expect(trackValue(formatInfoDetails(record, &data), "Key").isEmpty());
+    panel.showRecord(record, {}, data);
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("96.50 BPM"));
+    expect(trackValue(formatInfoDetails(record, data), "Key").isEmpty());
     expectEquals(panelValue(panel, "BPM"), juce::String("96.50 BPM"));
     panel.showRecord(record, {});
     expect(panelValue(panel, "BPM").isEmpty());
@@ -635,7 +636,7 @@ void SeratoPreviewTests::testTrackInfo()
         expect(panelValue(panel, "Max short-term after custom gain").isEmpty());
         expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
         expectEquals(panelValue(panel, "Integrated loudness"), juce::String("-12.50"));
-        panel.showRecord(record, {}, nullptr, false);
+        panel.showRecord(record, {}, std::nullopt, false);
         expect(panelValue(panel, "Peak after custom gain").isEmpty());
         expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
     }
@@ -674,19 +675,19 @@ void SeratoPreviewTests::testTrackInfo()
     data.beatGrid.reset();
     data.trackInfo = makeTrackInfo(92.0, "F minor");
     record.status = AudioAnalysisStatus::pending;
-    panel.showRecord(record, "Analyzing", &data);
-    expectEquals(trackValue(formatInfoDetails(record, &data), "BPM"), juce::String("92.00 BPM"));
-    expectEquals(trackValue(formatInfoDetails(record, &data), "Key"), juce::String("F minor / 4A"));
+    panel.showRecord(record, "Analyzing", data);
+    expectEquals(trackValue(formatInfoDetails(record, data), "BPM"), juce::String("92.00 BPM"));
+    expectEquals(trackValue(formatInfoDetails(record, data), "Key"), juce::String("F minor / 4A"));
     expectEquals(panelValue(panel, "BPM"), juce::String("92.00 BPM"));
     expectEquals(panelValue(panel, "Key"), juce::String("F minor / 4A"));
     record.status = AudioAnalysisStatus::failed;
-    panel.showRecord(record, {}, &data);
+    panel.showRecord(record, {}, data);
     expectEquals(panelValue(panel, "BPM"), juce::String("92.00 BPM"));
     expectEquals(panelValue(panel, "Key"), juce::String("F minor / 4A"));
     data.trackInfo.reset();
     data.analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5};
-    panel.showRecord(record, {}, &data);
-    expect(trackValue(formatInfoDetails(record, &data), "Key").isEmpty());
+    panel.showRecord(record, {}, data);
+    expect(trackValue(formatInfoDetails(record, data), "Key").isEmpty());
     expect(panelValue(panel, "BPM").isEmpty());
     expect(panelValue(panel, "Key").isEmpty());
     panel.clear();
@@ -800,7 +801,7 @@ void SeratoPreviewTests::testInfoDetails()
          {0.0, -2.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()})
     {
         tempoData.trackInfo->bpm = tempo;
-        expectEquals(trackValue(formatInfoDetails(record, &tempoData), "BPM"), juce::String("125.00 BPM"));
+        expectEquals(trackValue(formatInfoDetails(record, tempoData), "BPM"), juce::String("125.00 BPM"));
     }
 
     beginTest("Key display trims only the original spelling and never duplicates Camelot inputs");
@@ -826,18 +827,18 @@ void SeratoPreviewTests::testInfoDetails()
          })
     {
         data.trackInfo->key = original;
-        expectEquals(trackValue(formatInfoDetails(record, &data), "Key"), juce::String(expected));
+        expectEquals(trackValue(formatInfoDetails(record, data), "Key"), juce::String(expected));
     }
     data.trackInfo->key = "Gm";
     for (const auto status : {AudioAnalysisStatus::pending, AudioAnalysisStatus::failed}) {
         record.status = status;
-        const auto taggedDetails = formatInfoDetails(record, &data);
+        const auto taggedDetails = formatInfoDetails(record, data);
         expect(taggedDetails.format.empty());
         expect(taggedDetails.audio.empty());
         expectEquals(taggedDetails.genre, juce::String("Deep House"));
         expectEquals(taggedDetails.album, juce::String("Some Album"));
         expectEquals(taggedDetails.comment, juce::String("First line\nSecond line"));
-        panel.showRecord(record, {}, &data);
+        panel.showRecord(record, {}, data);
         expectEquals(panelValue(panel, "BPM"), juce::String("128.00 BPM"));
         expectEquals(panelValue(panel, "Key"), juce::String("Gm / 6A"));
         expectEquals(panelValue(panel, "Year"), juce::String("2019"));

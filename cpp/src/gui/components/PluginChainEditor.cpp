@@ -12,6 +12,7 @@
 #include "gui/LiveChain.h"
 #include "plugins/PluginChainPreparation.h"
 #include "utils/GuiUtils.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 
 #include <cstddef>
@@ -234,12 +235,13 @@ void PluginChainEditor::updateLatencyLabels()
 
 /// Positions all rows in the container.
 /// While a row is being dragged it is excluded and a gap is left at the given visual index.
-void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const int gapIndex)
+/// The optional dragged row is owned by this editor and borrowed only during layout.
+void PluginChainEditor::layoutRows(const utils::OptionalRef<const PluginChainSlotRow> draggedRow, const int gapIndex)
 {
     int visualIndex = 0;
 
     for (const auto& row : rows) {
-        if (row.get() == draggedRow) {
+        if (draggedRow && row.get() == &draggedRow->get()) {
             continue;
         }
 
@@ -269,7 +271,7 @@ void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const i
 /// Called by a row while it is being dragged to preview the drop position.
 void PluginChainEditor::rowDragged(const PluginChainSlotRow& row, const int targetIndex)
 {
-    layoutRows(&row, targetIndex);
+    layoutRows(row, targetIndex);
 }
 
 /// Called by a row when a drag ends to commit the reorder.

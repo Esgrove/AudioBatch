@@ -9,6 +9,7 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 
 #include <aifffile.h>
@@ -614,6 +615,33 @@ void SeratoTagReaderTests::testOverview()
     const auto payload = readerPayload();
     const auto expected = serato::Overview::parse(payload);
     const TemporaryDirectory directory;
+
+    beginTest("ID3 lookups borrow file-owned tags without creating absent tags during reads");
+    for (const auto* extension : {"mp3", "aif", "wav", "flac"}) {
+        const auto file = directory.getChildFile(utils::format("lookup.{}", extension));
+        expect(createSyntheticContainer(file));
+        const auto before = fileChecksum(file);
+        {
+            const TagLib::FileRef reference(utils::tagLibFileName(file.getFullPathName()), false);
+            expect(!reference.isNull());
+            if (reference.isNull()) {
+                continue;
+            }
+            // TagLib eagerly creates an in-memory empty ID3 tag when opening MPEG files, even without a disk tag.
+            // The lookup preserves that native behavior without saving or modifying the source file.
+            const auto existingTag = serato::findId3Tag(*reference.file());
+            expect(existingTag.has_value() == file.hasFileExtension("mp3"), extension);
+            const auto tag = serato::findId3Tag(*reference.file(), true);
+            expect(tag.has_value(), extension);
+            const utils::OptionalRef<const TagLib::ID3v2::Tag> borrowedTag
+                = serato::findId3Tag(*reference.file(), true);
+            expect(borrowedTag.has_value(), extension);
+            if (tag && borrowedTag) {
+                expect(&tag->get() == &borrowedTag->get(), extension);
+            }
+        }
+        expect(before.has_value() && before == fileChecksum(file), extension);
+    }
 
     beginTest(
         "GEOB extraction supports MP3, AIFF, WAV, ID3v2.3/v2.4 and text "

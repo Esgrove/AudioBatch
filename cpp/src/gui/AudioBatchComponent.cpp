@@ -264,7 +264,7 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
     liveChain = std::make_unique<LiveChain>(
         *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
     );
-    previewPlayer.setLiveChain(liveChain.get());
+    previewPlayer.setLiveChain(*liveChain);
     previewPlayer.setSavedDeviceState(pluginAppProperties.getUserSettings()->getXmlValue(audioDeviceStatePropertyKey));
 
     addAndMakeVisible(statusBar);
@@ -320,7 +320,7 @@ AudioBatchComponent::~AudioBatchComponent()
     previewPlayer.setErrorCallback({});
     liveChain->setChainChangedCallback({});
     liveChain->setLatencyChangedCallback({});
-    previewPlayer.setLiveChain(nullptr);
+    previewPlayer.detachLiveChain();
     previewWorkspace.thumbnail.removeChangeListener(this);
     previewWorkspace.thumbnail.setMouseWheelZoomCallback({});
     previewWorkspace.thumbnail.setMouseWheelGainCallback({});

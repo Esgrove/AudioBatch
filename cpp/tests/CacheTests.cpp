@@ -8,6 +8,7 @@
 /// The cached files are copies of the committed fixtures.
 
 #include "analysis/AnalysisCache.h"
+#include "analysis/AnalysisCacheColumns.h"
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
@@ -34,10 +35,12 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <sqlite3.h>
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace audiobatch::tests
 {
@@ -739,6 +742,26 @@ void CacheTests::runLoudnessHistoryTests()
     const auto databaseFile = directory.getChildFile("loudness.db");
     const auto file = directory.copyFixture("sine_stereo_44100_16.wav");
     const auto record = analyzeFile(file);
+
+    beginTest("Loudness history decoding respects an empty or bounded byte span");
+    expect(!deserializeLoudnessHistory({}, record));
+    const auto encoded = serializeLoudnessHistory(record);
+    const auto bytes = std::span(static_cast<const std::byte*>(encoded.getData()), encoded.getSize());
+    expect(!bytes.empty());
+    if (!bytes.empty()) {
+        // Prefix and suffix bytes must not be included when decoding a bounded view of a larger allocation.
+        std::vector<std::byte> framed {std::byte {0x7f}};
+        framed.insert(framed.end(), bytes.begin(), bytes.end());
+        framed.push_back(std::byte {0x7f});
+        const auto payload = std::span<const std::byte>(framed).subspan(1, bytes.size());
+        const auto decoded = deserializeLoudnessHistory(payload, record);
+        expect(decoded != nullptr);
+        if (decoded && record.shortTermLoudness) {
+            expect(decoded->values == record.shortTermLoudness->values);
+        }
+        expect(!deserializeLoudnessHistory(payload.first(payload.size() - 1), record));
+        expect(!deserializeLoudnessHistory(std::span<const std::byte>(framed).subspan(1), record));
+    }
     {
         AnalysisCache writer(databaseFile);
         expect(writer.storeAnalysis(record));

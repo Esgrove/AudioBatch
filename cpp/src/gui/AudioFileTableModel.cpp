@@ -12,6 +12,7 @@
 #include "gui/GuiLayout.h"
 #include "gui/ResultsModel.h"
 #include "utils/StringFormat.h"
+#include <string_view>
 
 #include <array>
 #include <functional>
@@ -56,9 +57,9 @@ struct ColumnDefinition {
     /// The column, whose value is also its JUCE column id.
     AudioFileTableColumn column;
     /// Short title shown in the header.
-    const char* title;
+    std::string_view title;
     /// What the column shows with its unit, for the header tooltip.
-    const char* description;
+    std::string_view description;
     /// Width of the column when the table is first shown.
     int initialWidth;
     /// Narrowest width the user can drag the column to.
@@ -72,8 +73,8 @@ struct ColumnDefinition {
 /// Builds the definition of a column with its initial and minimum widths from GuiLayout.h.
 consteval ColumnDefinition defineColumn(
     const AudioFileTableColumn column,
-    const char* title,
-    const char* description,
+    const std::string_view title,
+    const std::string_view description,
     const int maximumWidth,
     const bool initiallyVisible = true
 )
@@ -277,7 +278,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
     for (const auto& definition : columnDefinitions) {
         const auto columnId = std::to_underlying(definition.column);
         header.addColumn(
-            definition.title,
+            juce::String::fromUTF8(definition.title.data(), static_cast<int>(definition.title.size())),
             columnId,
             definition.initialWidth,
             definition.minimumWidth,
@@ -295,7 +296,9 @@ juce::String AudioFileTableModel::getColumnDescription(const AudioFileTableColum
 {
     for (const auto& definition : columnDefinitions) {
         if (definition.column == column) {
-            return definition.description;
+            return juce::String::fromUTF8(
+                definition.description.data(), static_cast<int>(definition.description.size())
+            );
         }
     }
 

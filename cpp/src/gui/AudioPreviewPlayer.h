@@ -92,6 +92,7 @@ public:
     [[nodiscard]] double getCurrentPosition() const;
 
     void completeInitialPosition(double seconds);
+    void detachLiveChain();
     void release();
     void setApplicationActive(bool active);
     void setDeviceSettingsActive(bool active);
@@ -99,7 +100,7 @@ public:
     void setErrorCallback(std::function<void(const juce::String&)> callback);
     void setInputGain(LinearGain gain, bool immediately = false);
     void setLatencyCompensated(bool enabled);
-    void setLiveChain(LiveChain* chain);
+    void setLiveChain(LiveChain& chain);
     void setPosition(double seconds);
 
     // Device persistence and transport commands.

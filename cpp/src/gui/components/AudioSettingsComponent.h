@@ -6,6 +6,7 @@
 
 #include "gui/AudioBatchComponentState.h"
 #include "serato/SeratoTagTypes.h"
+#include "utils/OptionalRef.h"
 
 #include <JuceHeader.h>
 
@@ -27,7 +28,7 @@ bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPrev
 
 [[nodiscard]] double getPreviewStartPositionSeconds(
     const AudioPreviewPreferences& preferences,
-    const serato::Markers* markers,
+    utils::OptionalRef<const serato::Markers> markers,
     double durationSeconds
 );
 

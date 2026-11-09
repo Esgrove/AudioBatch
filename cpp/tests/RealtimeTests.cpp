@@ -193,7 +193,7 @@ void runPlayer(const std::string_view name)
     installTestAudioDevice(player.getDeviceManager(), device);
     PluginLibrary library(properties);
     LiveChain chain(library, properties, player.getRenderingLock(), player.getDeviceManager());
-    player.setLiveChain(&chain);
+    player.setLiveChain(chain);
     if (wet) {
         require(player.setPluginPreviewEnabled(true), "live test VST3 preparation failed");
     }
@@ -237,7 +237,7 @@ void runPlayer(const std::string_view name)
         require(player.getCurrentPosition() > 0.0, "active callback did not advance playback");
     }
     player.suspend();
-    player.setLiveChain(nullptr);
+    player.detachLiveChain();
     player.release();
 }
 

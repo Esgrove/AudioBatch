@@ -531,6 +531,7 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/utils/Log.h"
     "src/utils/MessageThreadBatcher.cpp"
     "src/utils/MessageThreadBatcher.h"
+    "src/utils/OptionalRef.h"
     "src/utils/StringFormat.h"
     "src/utils/ThreadUtils.cpp"
     "src/utils/ThreadUtils.h"
