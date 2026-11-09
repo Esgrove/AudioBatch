@@ -13,8 +13,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -26,6 +28,61 @@ namespace esgrove::image_control
 {
 namespace
 {
+/// Restores the host framebuffer and viewport, then leaves the renderer's object bindings cleared for JUCE.
+/// It must be created and destroyed while the same OpenGL context is current.
+class ScopedSpectrogramBindings
+{
+public:
+    /// Captures only the framebuffers and viewport, avoiding per-frame queries for known cleanup bindings.
+    ScopedSpectrogramBindings()
+    {
+        juce::gl::glGetIntegerv(juce::gl::GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebufferBinding);
+        juce::gl::glGetIntegerv(juce::gl::GL_READ_FRAMEBUFFER_BINDING, &readFramebufferBinding);
+        juce::gl::glGetIntegerv(juce::gl::GL_VIEWPORT, savedViewport.data());
+    }
+
+    /// Restores the host target and clears renderer bindings even when resize fails before the normal draw path.
+    ~ScopedSpectrogramBindings()
+    {
+        juce::gl::glBindFramebuffer(juce::gl::GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(drawFramebufferBinding));
+        juce::gl::glBindFramebuffer(juce::gl::GL_READ_FRAMEBUFFER, static_cast<GLuint>(readFramebufferBinding));
+        juce::gl::glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
+        juce::gl::glDisable(juce::gl::GL_BLEND);
+        juce::gl::glUseProgram(0);
+        juce::gl::glBindVertexArray(0);
+        juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, 0);
+        for (const GLenum unit : {juce::gl::GL_TEXTURE2, juce::gl::GL_TEXTURE1, juce::gl::GL_TEXTURE0}) {
+            juce::gl::glActiveTexture(unit);
+            juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
+        }
+    }
+
+    ScopedSpectrogramBindings(const ScopedSpectrogramBindings&) = delete;
+    ScopedSpectrogramBindings(ScopedSpectrogramBindings&&) = delete;
+    ScopedSpectrogramBindings& operator=(const ScopedSpectrogramBindings&) = delete;
+    ScopedSpectrogramBindings& operator=(ScopedSpectrogramBindings&&) = delete;
+
+    /// Returns the caller's viewport for converting editor coordinates to the framebuffer's bottom-left origin.
+    [[nodiscard]] const std::array<GLint, 4>& viewport() const noexcept
+    {
+        return savedViewport;
+    }
+
+    /// Returns the framebuffer into which JUCE expects this renderer to composite.
+    [[nodiscard]] GLuint drawFramebuffer() const noexcept
+    {
+        return static_cast<GLuint>(drawFramebufferBinding);
+    }
+
+private:
+    /// Caller viewport, restored after offscreen passes.
+    std::array<GLint, 4> savedViewport {};
+    /// Caller draw framebuffer binding.
+    GLint drawFramebufferBinding {0};
+    /// Caller read framebuffer binding.
+    GLint readFramebufferBinding {0};
+};
+
 /// Sharp core of the loudest particles, in logical pixels, so dots look the same size on every display scale.
 /// Quieter particles are smaller, down to the builder's smallest particle size.
 constexpr float CORE_SIGMA_PIXELS {1.3F};
@@ -53,9 +110,6 @@ constexpr float HIGHLIGHT_END {8.0F};
 constexpr float HIGHLIGHT_MIX {0.6F};
 /// Spread of the tent filter of the glow upsampling, in source texels.
 constexpr float UPSAMPLE_RADIUS {1.0F};
-/// Most particles kept waiting for the OpenGL thread.
-/// When it stalls, such as while the window is hidden, older particles are dropped, since they would have faded.
-constexpr std::size_t MAX_PENDING_PARTICLES {1'000'000};
 /// Longest pending fade, in seconds. A longer fade leaves nothing visible anyway.
 constexpr double MAX_PENDING_FADE_SECONDS {10.0};
 /// Floats per particle instance, matching SpectrogramParticle.
@@ -338,8 +392,9 @@ void main()
 /// Returns a byte offset into a vertex buffer in the form glVertexAttribPointer takes.
 const void* bufferOffset(const std::size_t bytes)
 {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast, performance-no-int-to-ptr)
-    return reinterpret_cast<const void*>(bytes);
+    // OpenGL interprets this pointer representation as a buffer offset. It is never dereferenced by C++.
+    static_assert(sizeof(const void*) == sizeof(std::uintptr_t));
+    return std::bit_cast<const void*>(static_cast<std::uintptr_t>(bytes));
 }
 
 /// Compiles and links a shader program, or returns null and logs why it failed.
@@ -388,6 +443,7 @@ bool createTarget(SpectrogramRenderTarget& target, const int width, const int he
     target.width = width;
     target.height = height;
     juce::gl::glGenTextures(1, &target.texture);
+    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE0);
     juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, target.texture);
     juce::gl::glTexImage2D(
         juce::gl::GL_TEXTURE_2D, 0, format, width, height, 0, juce::gl::GL_RGBA, juce::gl::GL_FLOAT, nullptr
@@ -413,9 +469,12 @@ bool createTarget(SpectrogramRenderTarget& target, const int width, const int he
     );
     const bool complete
         = juce::gl::glCheckFramebufferStatus(juce::gl::GL_FRAMEBUFFER) == juce::gl::GL_FRAMEBUFFER_COMPLETE;
+    if (!complete) {
+        return false;
+    }
     juce::gl::glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
     juce::gl::glClear(juce::gl::GL_COLOR_BUFFER_BIT);
-    return complete;
+    return true;
 }
 
 /// Binds a render target for drawing, with a viewport over all of it.
@@ -432,6 +491,51 @@ void bindTexture(const SpectrogramRenderTarget& target, const GLenum unit = juce
     juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, target.texture);
 }
 }  // namespace
+
+/// Resolves particle uniform locations once, after its shader has linked successfully.
+SpectrogramParticleUniforms::SpectrogramParticleUniforms(const juce::OpenGLShaderProgram& program) :
+    coreSigma(program, "coreSigma"),
+    haloSigma(program, "haloSigma"),
+    haloWeight(program, "haloWeight"),
+    maxSigma(program, "maxSigma"),
+    reach(program, "reach"),
+    targetSize(program, "targetSize")
+{}
+
+/// Resolves downsampling uniform locations once, after its shader has linked successfully.
+SpectrogramDownsampleUniforms::SpectrogramDownsampleUniforms(const juce::OpenGLShaderProgram& program) :
+    source(program, "source"),
+    sourceTexel(program, "sourceTexel")
+{}
+
+/// Resolves upsampling uniform locations once, after its shader has linked successfully.
+SpectrogramUpsampleUniforms::SpectrogramUpsampleUniforms(const juce::OpenGLShaderProgram& program) :
+    radius(program, "radius"),
+    source(program, "source"),
+    sourceTexel(program, "sourceTexel")
+{}
+
+/// Resolves composite uniform locations once, after its shader has linked successfully.
+SpectrogramCompositeUniforms::SpectrogramCompositeUniforms(const juce::OpenGLShaderProgram& program) :
+    accumulation(program, "accumulation"),
+    bloom(program, "bloom"),
+    field(program, "field"),
+    cornerRadius(program, "cornerRadius"),
+    fieldSize(program, "fieldSize"),
+    outlineWidth(program, "outlineWidth"),
+    plotOrigin(program, "plotOrigin"),
+    plotSize(program, "plotSize"),
+    exposure(program, "exposure"),
+    glowStrength(program, "glowStrength"),
+    solid(program, "solid"),
+    background(program, "background"),
+    fieldGain(program, "fieldGain"),
+    highlight(program, "highlight"),
+    solidHighlight(program, "solidHighlight"),
+    layerAlphas(program, "layerAlphas"),
+    layerLevels(program, "layerLevels"),
+    outlineStrengths(program, "outlineStrengths")
+{}
 
 /// Creates the renderer for a context. The GL resources are created when the context starts.
 SpectrogramRenderer::SpectrogramRenderer(juce::OpenGLContext& context) : openGLContext(context) {}
@@ -485,6 +589,8 @@ void SpectrogramRenderer::submitFrame(
 /// Hands new particles to the OpenGL thread. Called on the analysis worker thread.
 /// Particles add up until the next frame takes them, and clearing first drops the picture
 /// and the particles that were still waiting, which belong to what came before the clear.
+/// Overflow drops the older waiting batches. A single oversized submission retains only its newest capped tail.
+/// The capacity check uses subtraction so even an oversized span cannot overflow the count calculation.
 void SpectrogramRenderer::submitParticles(const std::span<const SpectrogramParticle> particles, const bool clear)
 {
     const std::scoped_lock lock(pendingMutex);
@@ -492,18 +598,21 @@ void SpectrogramRenderer::submitParticles(const std::span<const SpectrogramParti
         pending.particles.clear();
         pending.clear = true;
     }
-    if (pending.particles.size() + particles.size() > MAX_PENDING_PARTICLES) {
+    const auto newest = particles.last(std::min(particles.size(), SPECTROGRAM_MAX_PENDING_PARTICLES));
+    if (newest.size() > SPECTROGRAM_MAX_PENDING_PARTICLES - pending.particles.size()) {
         pending.particles.clear();
     }
-    pending.particles.insert(pending.particles.end(), particles.begin(), particles.end());
+    pending.particles.insert(pending.particles.end(), newest.begin(), newest.end());
 }
 
 /// Creates the shaders, the vertex arrays, and the timer queries when the context starts.
 /// The render targets follow the plot size, so the first frame creates them.
 void SpectrogramRenderer::newOpenGLContextCreated()
 {
+    gpuMilliseconds = -1.0;
     if (!createPrograms()) {
         unavailable = true;
+        releaseResources();
         return;
     }
 
@@ -550,6 +659,7 @@ void SpectrogramRenderer::newOpenGLContextCreated()
     juce::gl::glGenQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
 #endif
     ready = true;
+    unavailable = false;
 }
 
 /// Frees every GL resource while the context is still current.
@@ -576,11 +686,6 @@ void SpectrogramRenderer::renderOpenGL()
         work.mode = pending.mode;
     }
 
-    GLint defaultFramebuffer {0};
-    juce::gl::glGetIntegerv(juce::gl::GL_FRAMEBUFFER_BINDING, &defaultFramebuffer);
-    std::array<GLint, 4> viewport {};
-    juce::gl::glGetIntegerv(juce::gl::GL_VIEWPORT, viewport.data());
-
     const auto background = juce::Colour(palette::GREY_SEMI_DARK);
     juce::gl::glDisable(juce::gl::GL_SCISSOR_TEST);
     juce::gl::glDisable(juce::gl::GL_DEPTH_TEST);
@@ -592,6 +697,8 @@ void SpectrogramRenderer::renderOpenGL()
     if (!ready || work.mode == SpectrogramRenderMode::hidden || plot.isEmpty()) {
         return;
     }
+    const ScopedSpectrogramBindings bindings;
+    const auto& viewport = bindings.viewport();
     if (!resizeTargets(plot.getWidth(), plot.getHeight())) {
         unavailable = true;
         releaseResources();
@@ -614,26 +721,16 @@ void SpectrogramRenderer::renderOpenGL()
     }
 
     // The default framebuffer has its origin at the bottom left.
-    juce::gl::glBindFramebuffer(juce::gl::GL_FRAMEBUFFER, static_cast<GLuint>(defaultFramebuffer));
+    juce::gl::glBindFramebuffer(juce::gl::GL_FRAMEBUFFER, bindings.drawFramebuffer());
     const juce::Rectangle<int> plotViewport(
         plot.getX(), viewport[3] - plot.getBottom(), plot.getWidth(), plot.getHeight()
     );
     drawComposite(plotViewport, drawingParticles ? EXPOSURE : 0.0F, solid);
     measureGpuTimeEnd();
-
-    juce::gl::glDisable(juce::gl::GL_BLEND);
-    juce::gl::glBindVertexArray(0);
-    juce::gl::glUseProgram(0);
-    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE2);
-    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
-    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE1);
-    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
-    juce::gl::glActiveTexture(juce::gl::GL_TEXTURE0);
-    juce::gl::glBindTexture(juce::gl::GL_TEXTURE_2D, 0);
-    juce::gl::glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
-/// Compiles every shader program. Returns false when one fails.
+/// Links the shaders and caches their locations, then initializes constants once for this context's programs.
+/// Returns false when a shader fails. No cached uniform survives a context's resource teardown.
 bool SpectrogramRenderer::createPrograms()
 {
     particleProgram = buildProgram(openGLContext, PARTICLE_VERTEX_SHADER, PARTICLE_FRAGMENT_SHADER);
@@ -641,8 +738,46 @@ bool SpectrogramRenderer::createPrograms()
     downsampleProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, DOWNSAMPLE_FRAGMENT_SHADER);
     upsampleProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, UPSAMPLE_FRAGMENT_SHADER);
     compositeProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, COMPOSITE_FRAGMENT_SHADER);
-    return particleProgram != nullptr && fadeProgram != nullptr && downsampleProgram != nullptr
-        && upsampleProgram != nullptr && compositeProgram != nullptr;
+    if (particleProgram == nullptr || fadeProgram == nullptr || downsampleProgram == nullptr
+        || upsampleProgram == nullptr || compositeProgram == nullptr)
+    {
+        return false;
+    }
+
+    particleUniforms = std::make_unique<SpectrogramParticleUniforms>(*particleProgram);
+    downsampleUniforms = std::make_unique<SpectrogramDownsampleUniforms>(*downsampleProgram);
+    upsampleUniforms = std::make_unique<SpectrogramUpsampleUniforms>(*upsampleProgram);
+    compositeUniforms = std::make_unique<SpectrogramCompositeUniforms>(*compositeProgram);
+
+    particleProgram->use();
+    particleUniforms->reach.set(SPRITE_REACH_SIGMAS);
+    particleUniforms->haloWeight.set(HALO_WEIGHT);
+    downsampleProgram->use();
+    downsampleUniforms->source.set(0);
+    upsampleProgram->use();
+    upsampleUniforms->source.set(0);
+    upsampleUniforms->radius.set(UPSAMPLE_RADIUS);
+
+    compositeProgram->use();
+    compositeUniforms->accumulation.set(0);
+    compositeUniforms->bloom.set(1);
+    compositeUniforms->field.set(2);
+    compositeUniforms->fieldGain.set(SOLID_FIELD_GAIN);
+    compositeUniforms->highlight.set(HIGHLIGHT_START, HIGHLIGHT_END, HIGHLIGHT_MIX);
+    compositeUniforms->layerLevels.set(
+        SOLID_LAYER_LEVELS[0], SOLID_LAYER_LEVELS[1], SOLID_LAYER_LEVELS[2], SOLID_LAYER_LEVELS[3]
+    );
+    compositeUniforms->layerAlphas.set(
+        SOLID_LAYER_ALPHAS[0], SOLID_LAYER_ALPHAS[1], SOLID_LAYER_ALPHAS[2], SOLID_LAYER_ALPHAS[3]
+    );
+    compositeUniforms->outlineStrengths.set(
+        SOLID_OUTLINE_STRENGTHS[0], SOLID_OUTLINE_STRENGTHS[1], SOLID_OUTLINE_STRENGTHS[2], SOLID_OUTLINE_STRENGTHS[3]
+    );
+    compositeUniforms->solidHighlight.set(SOLID_HIGHLIGHT_START, SOLID_HIGHLIGHT_END);
+    const auto background = juce::Colour(BACKGROUND);
+    compositeUniforms->background.set(background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue());
+    juce::gl::glUseProgram(0);
+    return true;
 }
 
 /// Sizes the accumulation target to the plot in physical pixels and the glow chain to fractions of it.
@@ -699,13 +834,12 @@ void SpectrogramRenderer::drawBloom(const bool solid)
     juce::gl::glBindVertexArray(screenVertexArray);
     juce::gl::glDisable(juce::gl::GL_BLEND);
     downsampleProgram->use();
-    downsampleProgram->setUniform("source", 0);
     const SpectrogramRenderTarget* source = &accumulation;
     for (const auto& level : bloomLevels) {
         bindTarget(level);
         bindTexture(*source);
-        downsampleProgram->setUniform(
-            "sourceTexel", 1.0F / static_cast<float>(source->width), 1.0F / static_cast<float>(source->height)
+        downsampleUniforms->sourceTexel.set(
+            1.0F / static_cast<float>(source->width), 1.0F / static_cast<float>(source->height)
         );
         juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
         source = &level;
@@ -731,14 +865,12 @@ void SpectrogramRenderer::drawBloom(const bool solid)
     juce::gl::glEnable(juce::gl::GL_BLEND);
     juce::gl::glBlendFunc(juce::gl::GL_ONE, juce::gl::GL_ONE);
     upsampleProgram->use();
-    upsampleProgram->setUniform("source", 0);
-    upsampleProgram->setUniform("radius", UPSAMPLE_RADIUS);
     for (std::size_t level = bloomLevels.size() - 1; level > 0; --level) {
         const auto& smaller = bloomLevels.at(level);
         bindTarget(bloomLevels.at(level - 1));
         bindTexture(smaller);
-        upsampleProgram->setUniform(
-            "sourceTexel", 1.0F / static_cast<float>(smaller.width), 1.0F / static_cast<float>(smaller.height)
+        upsampleUniforms->sourceTexel.set(
+            1.0F / static_cast<float>(smaller.width), 1.0F / static_cast<float>(smaller.height)
         );
         juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
     }
@@ -758,45 +890,20 @@ void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport,
     bindTexture(bloomLevels.front(), juce::gl::GL_TEXTURE1);
     bindTexture(field, juce::gl::GL_TEXTURE2);
 
-    const auto background = juce::Colour(BACKGROUND);
     const auto scale = static_cast<float>(openGLContext.getRenderingScale());
     compositeProgram->use();
-    compositeProgram->setUniform("accumulation", 0);
-    compositeProgram->setUniform("bloom", 1);
-    compositeProgram->setUniform(
-        "plotOrigin", static_cast<float>(plotViewport.getX()), static_cast<float>(plotViewport.getY())
+    compositeUniforms->plotOrigin.set(static_cast<float>(plotViewport.getX()), static_cast<float>(plotViewport.getY()));
+    compositeUniforms->plotSize.set(
+        static_cast<float>(plotViewport.getWidth()), static_cast<float>(plotViewport.getHeight())
     );
-    compositeProgram->setUniform(
-        "plotSize", static_cast<float>(plotViewport.getWidth()), static_cast<float>(plotViewport.getHeight())
-    );
-    compositeProgram->setUniform("cornerRadius", SPECTROGRAM_PLOT_CORNER_RADIUS * scale);
-    compositeProgram->setUniform("exposure", exposure);
+    compositeUniforms->cornerRadius.set(SPECTROGRAM_PLOT_CORNER_RADIUS * scale);
+    compositeUniforms->exposure.set(exposure);
     // The glow chain adds up one blurred copy per level, so its strength is shared between them.
-    const float glowStrength = GLOW_STRENGTH / static_cast<float>(bloomLevels.size());
-    compositeProgram->setUniform("glowStrength", solid ? glowStrength * SOLID_GLOW_SHARE : glowStrength);
-    compositeProgram->setUniform("highlight", HIGHLIGHT_START, HIGHLIGHT_END, HIGHLIGHT_MIX);
-    compositeProgram->setUniform("solid", solid ? 1.0F : 0.0F);
-    compositeProgram->setUniform("field", 2);
-    compositeProgram->setUniform("fieldSize", static_cast<float>(field.width), static_cast<float>(field.height));
-    compositeProgram->setUniform("fieldGain", SOLID_FIELD_GAIN);
-    compositeProgram->setUniform(
-        "layerLevels", SOLID_LAYER_LEVELS[0], SOLID_LAYER_LEVELS[1], SOLID_LAYER_LEVELS[2], SOLID_LAYER_LEVELS[3]
-    );
-    compositeProgram->setUniform(
-        "layerAlphas", SOLID_LAYER_ALPHAS[0], SOLID_LAYER_ALPHAS[1], SOLID_LAYER_ALPHAS[2], SOLID_LAYER_ALPHAS[3]
-    );
-    compositeProgram->setUniform(
-        "outlineStrengths",
-        SOLID_OUTLINE_STRENGTHS[0],
-        SOLID_OUTLINE_STRENGTHS[1],
-        SOLID_OUTLINE_STRENGTHS[2],
-        SOLID_OUTLINE_STRENGTHS[3]
-    );
-    compositeProgram->setUniform("outlineWidth", SOLID_OUTLINE_PIXELS * scale);
-    compositeProgram->setUniform("solidHighlight", SOLID_HIGHLIGHT_START, SOLID_HIGHLIGHT_END);
-    compositeProgram->setUniform(
-        "background", background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue()
-    );
+    constexpr float GLOW_PER_LEVEL {GLOW_STRENGTH / static_cast<float>(SPECTROGRAM_BLOOM_LEVEL_COUNT)};
+    compositeUniforms->glowStrength.set(solid ? GLOW_PER_LEVEL * SOLID_GLOW_SHARE : GLOW_PER_LEVEL);
+    compositeUniforms->solid.set(solid ? 1.0F : 0.0F);
+    compositeUniforms->fieldSize.set(static_cast<float>(field.width), static_cast<float>(field.height));
+    compositeUniforms->outlineWidth.set(SOLID_OUTLINE_PIXELS * scale);
     juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
 }
 
@@ -818,14 +925,10 @@ void SpectrogramRenderer::drawParticles(const float scale)
     juce::gl::glBlendFunc(juce::gl::GL_ONE, juce::gl::GL_ONE);
     juce::gl::glBindVertexArray(particleVertexArray);
     particleProgram->use();
-    particleProgram->setUniform(
-        "targetSize", static_cast<float>(accumulation.width), static_cast<float>(accumulation.height)
-    );
-    particleProgram->setUniform("coreSigma", CORE_SIGMA_PIXELS * scale);
-    particleProgram->setUniform("maxSigma", MAX_SIGMA_PIXELS * scale);
-    particleProgram->setUniform("haloSigma", HALO_SIGMA_PIXELS * scale);
-    particleProgram->setUniform("reach", SPRITE_REACH_SIGMAS);
-    particleProgram->setUniform("haloWeight", HALO_WEIGHT);
+    particleUniforms->targetSize.set(static_cast<float>(accumulation.width), static_cast<float>(accumulation.height));
+    particleUniforms->coreSigma.set(CORE_SIGMA_PIXELS * scale);
+    particleUniforms->maxSigma.set(MAX_SIGMA_PIXELS * scale);
+    particleUniforms->haloSigma.set(HALO_SIGMA_PIXELS * scale);
     juce::gl::glDrawArraysInstanced(juce::gl::GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(drawing.size()));
 }
 
@@ -873,9 +976,14 @@ void SpectrogramRenderer::measureGpuTimeEnd()
 #endif
 }
 
-/// Frees the programs, buffers, vertex arrays, render targets, and timer queries.
+/// Frees cached uniforms before their programs, then buffers, vertex arrays, render targets and timer queries.
+/// Only called on the OpenGL thread with the owning context current. Invalidates the reported GPU time as well.
 void SpectrogramRenderer::releaseResources()
 {
+    particleUniforms.reset();
+    downsampleUniforms.reset();
+    upsampleUniforms.reset();
+    compositeUniforms.reset();
     particleProgram.reset();
     fadeProgram.reset();
     downsampleProgram.reset();
@@ -906,6 +1014,7 @@ void SpectrogramRenderer::releaseResources()
     nextTimerQuery = 0;
     startedTimerQueries = 0;
 #endif
+    gpuMilliseconds = -1.0;
     ready = false;
 }
 }  // namespace esgrove::image_control
