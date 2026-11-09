@@ -70,13 +70,13 @@ public:
     /// Keeps preparation independent of physical device capabilities.
     juce::Array<double> getAvailableSampleRates() override
     {
-        return {48'000.0};
+        return {state.sampleRate};
     }
 
-    /// Uses a small fixed render quantum.
+    /// Offers the test-selected render quantum without querying hardware.
     juce::Array<int> getAvailableBufferSizes() override
     {
-        return {512};
+        return {state.blockSize};
     }
 
     /// Returns the recording channels actually requested by the application.
@@ -144,7 +144,7 @@ public:
     /// Reports the prepared playback rate.
     double getCurrentSampleRate() override
     {
-        return 48'000.0;
+        return state.sampleRate;
     }
 
     /// Reports the simulated interface resolution.
@@ -156,13 +156,13 @@ public:
     /// Reports the prepared callback size.
     int getCurrentBufferSizeSamples() override
     {
-        return 512;
+        return state.blockSize;
     }
 
     /// Matches the simulated callback size.
     int getDefaultBufferSize() override
     {
-        return 512;
+        return state.blockSize;
     }
 
     /// Adds no hardware input delay.

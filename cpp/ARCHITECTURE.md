@@ -207,9 +207,9 @@ unless Clear All Files discarded that run's presentation events.
   The wait gives up when the run is cancelled before the call started,
   so `cancelAndWait` on the message thread never deadlocks against a worker that waits for it.
 - **The audio device callback** of `AudioPreviewPlayer` renders the preview.
-  It only try-locks the rendering lock and outputs silence for any block in which the lock is busy.
-  This is not a lock-free guarantee.
-  Successful lock release and downstream JUCE buffering/resampling use native mutexes.
+  It makes one atomic admission attempt and outputs silence without advancing when control has closed admission.
+  Callback admission and release never enter a native mutex or wait.
+  Downstream JUCE buffering/resampling and device dispatch still use native mutexes.
   The isolated RTSan tier distinguishes the prepared renderer, application callback, and full device-manager boundary.
   Expected dependency findings remain explicitly blocked audits, separate from clean callback regression cases.
 - **The read-ahead thread** is the `TimeSliceThread` of `AudioPreviewPlayer`,
@@ -471,7 +471,7 @@ flowchart LR
     readAhead["Read-ahead TimeSliceThread"]
     resampler["ResamplingAudioSource to the device rate"]
     preview["PluginPreviewSource"]
-    callback["Device callback with a try-lock"]
+    callback["Device callback with atomic admission"]
     device["Output device"]
     chain["LiveChain slots"]
     messageThread["Message thread"]
@@ -479,18 +479,27 @@ flowchart LR
     readAhead -.-> buffering
     reader --> buffering --> resampler --> preview --> callback --> device
     chain -->|"prepared instances"| preview
-    messageThread -->|"load, seek, setChain under the rendering lock"| preview
+    messageThread -->|"load, seek, setChain under control admission"| preview
 ```
 
-- **The rendering lock** is a `CriticalSection` that the player shares with `LiveChain`.
-  The message thread holds it to load, release, seek, and replace the chain.
-  The device callback only try-locks it, and the player publishes position and state in atomics,
-  so the waveform and the buttons read them without the lock.
+- **Renderer admission** is `utils::CallbackAccess`, shared by the player and `LiveChain`.
+  Its combined active/closed atomic state admits at most one callback with one non-retrying compare-exchange.
+  A callback releases only its active bit, preserving a concurrent control close request.
+  Nestable control guards serialize control owners, close admission before waiting for an active callback,
+  and reopen only after the outermost mutation finishes.
+  Only control code uses the recursive native mutex or waits, with no timeout that could permit unsafe reclamation.
+  Device shutdown disconnects callbacks before the coordinator or protected resources are destroyed.
+  Position and state remain published in atomics, so waveform and button reads need no guard.
 - **Device preparation.** `audioDeviceAboutToStart` only records the new rate and block size.
   `handleAsyncUpdate` then prepares the input and the plugins on the message thread at that rate,
   and `deviceReady` keeps the callback silent until it has.
-- **The live chain.** `LiveChain::preparePreview` creates slot instances lazily on the message thread,
-  prepares them in real-time mode at the device rate, and prefers a stereo layout with a mono fallback.
+- **The live chain.** Unattached instances load on the message thread before callback exclusion.
+  Stable slot ids are revalidated after native creation, which can pump nested messages.
+  Exclusive preparation then configures existing instances in real-time mode at the device rate,
+  preferring a stereo layout with a mono fallback.
+  Removed slots stay owned until synchronous preview refresh detaches their processor view.
+  Editor teardown and detached processor destruction stay outside callback exclusion.
+  Independent chain destruction synchronously detaches its borrowing player before destroying any processor.
   The chain always runs in stereo.
   A mono file is copied into a stereo plugin, and its output is averaged back to mono, like the processed file.
   The custom gain of the file is applied in front of the chain with a 5 ms ramp,
@@ -503,6 +512,8 @@ flowchart LR
   A stop during the pre-roll is immediate.
 - **Failures.** `updatePlaybackStatus` runs on a 50 ms timer and on every display frame through the waveform.
   It stops playback and reports a read failure, a buffer underrun, a failed VST3 process call, or non-finite output.
+  A total buffering miss stops/reports in C++, while Rust counts an underrun and continues.
+  This existing starvation-policy discrepancy is separate from admission exclusion, which never advances either renderer.
 - **Device policy.** The output device opens on the first play with output channels only,
   restoring the device saved by the last session.
   `release` stops the source and closes the file but keeps the device open,

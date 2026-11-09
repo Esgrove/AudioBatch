@@ -521,6 +521,7 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/utils/AudioFormatUtils.h"
     "src/utils/BackgroundRunner.cpp"
     "src/utils/BackgroundRunner.h"
+    "src/utils/CallbackAccess.h"
     "src/utils/ConsolePrint.cpp"
     "src/utils/ConsolePrint.h"
     "src/utils/FileUtils.cpp"
@@ -965,6 +966,8 @@ if(BUILD_TESTING)
             "tests/NormalizeCoordinatorTests.cpp"
             "tests/OverloadHistoryTests.cpp"
             "tests/PluginCoordinatorTests.cpp"
+            "tests/CallbackBenchmark.cpp"
+            "tests/CallbackBenchmark.h"
             "tests/PluginBenchmark.cpp"
             "tests/PluginBenchmark.h"
             "tests/PluginPresetTests.cpp"
@@ -1228,6 +1231,9 @@ if(BUILD_TESTING)
             renderer-eof
             renderer-stop
             player-contention
+            player-idle
+            player-idle-ready
+            player-memory
         )
             audiobatch_add_realtime_case(${scenario})
         endforeach()
@@ -1284,29 +1290,17 @@ if(BUILD_TESTING)
             --stack
             ResamplingAudioSource
         )
-        audiobatch_add_realtime_case(
-            player-idle
-            --expect
-            pthread_mutex_unlock
-            --stack
-            AudioPreviewPlayer
-        )
         # Each continuing report must map its unsafe call to a known owner, not just a player ancestor.
-        # Only unlock may belong to the player's try-lock destructor. Wet mode also reaches JUCE's VST3 owners.
+        # Only dependency-owned buffering/resampling and VST3 locks are accepted by continuing diagnostics.
         set(realtime_input_owners
             "ResamplingAudioSource::getNextAudioBlock|BufferingAudioSource::(getValidBufferRange|getNextAudioBlock)"
-        )
-        set(realtime_try_unlock_stack
-            "(?s:unsafe function .pthread_mutex_unlock. .*juce::GenericScopedTryLock<juce::CriticalSection>::~GenericScopedTryLock)"
         )
         foreach(mode dry wet)
             set(realtime_owners "${realtime_input_owners}")
             if(mode STREQUAL "wet")
                 string(APPEND realtime_owners "|MidiEventList::(clear|getEventCount)|JuceVST3Component::processAudio")
             endif()
-            set(realtime_owner_stack
-                "(?s:unsafe function .pthread_mutex_(lock|unlock). .*juce::(${realtime_owners}))|${realtime_try_unlock_stack}"
-            )
+            set(realtime_owner_stack "(?s:unsafe function .pthread_mutex_(lock|unlock). .*juce::(${realtime_owners}))")
             audiobatch_add_realtime_case(
                 player-${mode}-diagnostic
                 --argument=--case
@@ -1324,8 +1318,6 @@ if(BUILD_TESTING)
                 "^Realtime scenario player-${mode} completed$"
                 --require-output
                 BufferingAudioSource
-                --require-output
-                GenericScopedTryLock
             )
         endforeach()
         audiobatch_add_realtime_case(

@@ -12,6 +12,7 @@
 #include "plugins/PluginPreviewSource.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/CallbackAccess.h"
 #include "utils/GuiUtils.h"
 
 #include <algorithm>
@@ -475,10 +476,10 @@ void PreviewPlaybackTests::testSlotIds()
     juce::ApplicationProperties properties;
     useTemporarySettings(properties, temporary);
     storeUnavailableChain(*properties.getUserSettings(), {"First", "Second", "Third"}, {});
-    juce::CriticalSection renderingLock;
+    utils::CallbackAccess renderingAccess;
     juce::AudioDeviceManager previewDeviceManager;
     PluginLibrary library(properties);
-    LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+    LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
 
     const auto slotIds = chain.getSlotIds();
     expectEquals(static_cast<int>(slotIds.size()), 3);
@@ -613,10 +614,10 @@ void PreviewPlaybackTests::testUnavailableSlotLatency()
     expect(settings->getFile().isAChildOf(temporary.getChildFile("properties")));
     const juce::MemoryBlock savedState("saved plugin state", 18);
     storeUnavailableChain(*settings, {"Unavailable test effect"}, savedState);
-    juce::CriticalSection renderingLock;
+    utils::CallbackAccess renderingAccess;
     juce::AudioDeviceManager previewDeviceManager;
     PluginLibrary library(properties);
-    LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+    LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
     expect(!chain.hasOpenPreviewDevice());
     expectEquals(chain.getNumSlots(), 1);
     const auto slotIds = chain.getSlotIds();

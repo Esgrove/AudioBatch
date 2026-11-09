@@ -1,6 +1,6 @@
 /// Focused startup-linked RealtimeSanitizer scenarios for preview callbacks and their renderer.
 /// Every marked entry executes on a fresh standard thread with buffers, decoding, and plugin preparation outside it.
-/// Known JUCE and player lock findings are explicit baselines, not suppressions or realtime-safety claims.
+/// First-party admission has strict clean cases. JUCE findings stay explicit dependency audits, never suppressions.
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
@@ -11,6 +11,7 @@
 #include "plugins/PluginPreviewSource.h"
 #include "TestHelpers.h"
 #include "TestPlugin.h"
+#include "utils/CallbackAccess.h"
 #include <fmt/base.h>
 #include <mach-o/dyld.h>
 #include <string_view>
@@ -93,7 +94,7 @@ void require(const bool condition, const char* message)
     callback.audioDeviceIOCallbackWithContext(nullptr, 0, output.getArrayOfWritePointers(), 2, BLOCK_SIZE, {});
 }
 
-/// Marks the actual application callback through its forwarding seam, including try-lock destruction.
+/// Marks the actual application callback through its forwarding seam, including admission and release.
 [[gnu::noinline]] void realtimePlayerCallback(AudioPreviewPlayer& player, juce::AudioBuffer<float>& output)
     [[clang::nonblocking]]
 {
@@ -171,7 +172,7 @@ juce::PluginDescription nativeDescription()
     return *descriptions[0];
 }
 
-/// Exercises active dry/wet dispatch or the uncontended idle try-lock destruction on a simulated driver.
+/// Exercises real decoded dry/wet dispatch, dependency-free idle admission, or simulated control contention.
 /// Contention is owned by another thread so recursive locks cannot produce a false test pass.
 void runPlayer(const std::string_view name)
 {
@@ -192,7 +193,7 @@ void runPlayer(const std::string_view name)
     AudioPreviewPlayer player;
     installTestAudioDevice(player.getDeviceManager(), device);
     PluginLibrary library(properties);
-    LiveChain chain(library, properties, player.getRenderingLock(), player.getDeviceManager());
+    LiveChain chain(library, properties, player.getRenderingAccess(), player.getDeviceManager());
     player.setLiveChain(chain);
     if (wet) {
         require(player.setPluginPreviewEnabled(true), "live test VST3 preparation failed");
@@ -217,7 +218,7 @@ void runPlayer(const std::string_view name)
         std::latch locked(1);
         std::latch release(1);
         std::thread owner([&] {
-            const juce::ScopedLock lock(player.getRenderingLock());
+            const utils::CallbackControlGuard control(player.getRenderingAccess());
             locked.count_down();
             release.wait();
         });
@@ -238,6 +239,36 @@ void runPlayer(const std::string_view name)
     }
     player.suspend();
     player.detachLiveChain();
+    player.release();
+}
+
+/// Exercises cold and repeated successful production callbacks without entering JUCE buffering or plugin wrappers.
+/// Ready-idle retains a prepared renderer with no playing input. Unready-idle exercises the early exit after admission.
+void runFirstPartyPlayer(const std::string_view name)
+{
+    juce::AudioBuffer<float> samples(2, SOURCE_SAMPLES);
+    for (int channel = 0; channel < samples.getNumChannels(); ++channel) {
+        juce::FloatVectorOperations::fill(samples.getWritePointer(channel), 0.25f, SOURCE_SAMPLES);
+    }
+    juce::MemoryAudioSource input(samples, false, false);
+    AudioPreviewPlayer player(false);
+    if (name != "player-idle") {
+        player.setTestCallbackInput(input, SOURCE_SAMPLES / SAMPLE_RATE, 2, SAMPLE_RATE, BLOCK_SIZE);
+    }
+    if (name == "player-idle-ready") {
+        player.release();
+    }
+    juce::AudioBuffer<float> output(2, BLOCK_SIZE);
+    output.clear();
+    onFreshThread([&] { realtimePlayerCallback(player, output); });
+    if (name == "player-memory") {
+        require(output.getMagnitude(0, BLOCK_SIZE) > 0.001f, "successful first-party callback produced no audio");
+        require(player.getCurrentPosition() > 0.0, "successful first-party callback did not advance");
+        onFreshThread([&] { realtimePlayerCallback(player, output); });
+        require(output.getMagnitude(0, BLOCK_SIZE) > 0.001f, "repeated first-party callback produced no audio");
+    } else {
+        require(output.getMagnitude(0, BLOCK_SIZE) < 1.0e-7f, "idle callback did not clear output");
+    }
     player.release();
 }
 
@@ -396,9 +427,11 @@ int runRealtimeScenario(const std::string_view name)
 {
     if (name == "control-clean" || name == "control-allocation" || name == "control-free" || name == "control-mutex") {
         runControl(name);
+    } else if (name == "player-idle" || name == "player-idle-ready" || name == "player-memory") {
+        runFirstPartyPlayer(name);
     } else if (
         name == "device-dry" || name == "device-wet" || name == "player-dry" || name == "player-wet"
-        || name == "player-idle" || name == "player-contention"
+        || name == "player-contention"
     )
     {
         runPlayer(name);

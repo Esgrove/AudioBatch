@@ -118,6 +118,8 @@ struct TestAudioDeviceState {
     juce::StringArray outputDeviceNames {"Test output"};
     juce::StringArray unavailableDeviceNames;
 
+    double sampleRate {48'000.0};
+    int blockSize {512};
     int closes {0};
     int inputChannels {0};
     int opens {0};

@@ -5,12 +5,15 @@
 #include "gui/LiveChain.h"
 #include "gui/LiveSlot.h"
 #include "plugins/PluginChainPreparation.h"
+#include "utils/CallbackAccess.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {
@@ -30,36 +33,79 @@ bool LiveChain::hasOpenPreviewDevice() const
 }
 
 /// Creates the processor of a slot that has none yet, and returns false when the plugin cannot be created.
-/// A new processor is not part of the live preview yet, so the caller does not need the rendering lock,
+/// A new processor is not part of live preview, so creation runs before callback exclusion,
 /// and loading a large plugin does not silence the preview.
-bool LiveChain::instantiateLiveEntry(LiveSlot& entry)
+bool LiveChain::instantiateLiveEntry(const PluginSlotId slotId, const double sampleRate, const int blockSize)
 {
-    if (entry.instance != nullptr) {
-        return true;
-    }
-    entry.preparationError.clear();
-    auto instance = library.getFormatManager().createPluginInstance(
-        entry.description, previewSampleRate, previewBlockSize, entry.preparationError
-    );
-    if (instance == nullptr) {
-        if (entry.preparationError.isEmpty()) {
-            entry.preparationError = "Plugin instantiation failed";
-        }
-        utils::logError("Live plugin {}: {}", entry.description.name.quoted(), entry.preparationError);
+    const auto index = getSlotIndex(slotId);
+    if (!index) {
         return false;
     }
+    if (chain[static_cast<std::size_t>(*index)].instance != nullptr) {
+        return true;
+    }
+    if (std::ranges::contains(instantiatingSlots, slotId)) {
+        return false;
+    }
+    // Native creation may pump a nested message loop. Never retain a slot reference across it.
+    const auto description = chain[static_cast<std::size_t>(*index)].description;
+    instantiatingSlots.push_back(slotId);
+    const juce::WeakReference safeThis(this);
+    juce::String error;
+    auto instance = library.getFormatManager().createPluginInstance(description, sampleRate, blockSize, error);
+    if (safeThis == nullptr) {
+        return false;
+    }
+    std::erase(instantiatingSlots, slotId);
+    const auto current = getSlotIndex(slotId);
+    if (!current) {
+        return false;
+    }
+    auto& entry = chain[static_cast<std::size_t>(*current)];
+    if (instance == nullptr) {
+        entry.preparationError = error.isEmpty() ? juce::String("Plugin instantiation failed") : error;
+        utils::logError("Live plugin {}: {}", description.name.quoted(), entry.preparationError);
+        return false;
+    }
+    entry.preparationError.clear();
     entry.attachInstance(std::move(instance), *this);
     return true;
 }
 
-/// Instantiates and prepares a slot once for the current real-time context.
-/// The caller holds the preview rendering lock, so editor and device access cannot race reconfiguration.
+/// Creates only unattached instances before callback exclusion, using stable ids across native nested event loops.
+void LiveChain::instantiatePreview(
+    const double sampleRate,
+    const int blockSize,
+    const bool inspectAll,
+    const bool loadEnabled
+)
+{
+    const auto ids = getSlotIds();
+    const juce::WeakReference safeThis(this);
+    for (const auto slotId : ids) {
+        const auto index = getSlotIndex(slotId);
+        if (!index) {
+            continue;
+        }
+        const bool visit = inspectAll || chain[static_cast<std::size_t>(*index)].instance != nullptr
+            || (chain[static_cast<std::size_t>(*index)].enabled && loadEnabled);
+        if (visit) {
+            static_cast<void>(instantiateLiveEntry(slotId, sampleRate, blockSize));
+            if (safeThis == nullptr) {
+                return;
+            }
+        }
+    }
+}
+
+/// Prepares an existing slot once for the current real-time context.
+/// The caller holds control admission, so callback access cannot race reconfiguration.
 bool LiveChain::prepareLiveEntry(LiveSlot& entry)
 {
     if (entry.prepared) {
         return true;
     }
-    if (!instantiateLiveEntry(entry)) {
+    if (entry.instance == nullptr) {
         return false;
     }
     entry.preparationError.clear();
@@ -95,18 +141,24 @@ PreviewChain LiveChain::preparePreview(
     const bool loadEnabled
 )
 {
-    const auto visits = [inspectAll, loadEnabled](const LiveSlot& entry) {
-        return inspectAll || entry.instance != nullptr || (entry.enabled && loadEnabled);
-    };
-    // Plugins load before the lock is taken, since new processors are not part of the preview yet.
-    // The preview then keeps playing while large plugins load, such as when the chain window opens during playback.
-    for (auto& entry : chain) {
-        if (visits(entry)) {
-            static_cast<void>(instantiateLiveEntry(entry));
-        }
+    const juce::WeakReference safeThis(this);
+    instantiatePreview(sampleRate, blockSize, inspectAll, loadEnabled);
+    if (safeThis == nullptr) {
+        return {};
     }
+    return prepareInstantiatedPreview(sampleRate, blockSize, inspectAll, loadEnabled);
+}
 
-    const juce::ScopedLock lock(renderingLock);
+/// Reconfigures only existing instances under callback exclusion, never entering native plugin creation.
+/// Callers perform instantiatePreview before any enclosing control guard, including nested player operations.
+PreviewChain LiveChain::prepareInstantiatedPreview(
+    const double sampleRate,
+    const int blockSize,
+    const bool inspectAll,
+    const bool loadEnabled
+)
+{
+    const utils::CallbackControlGuard control(renderingAccess);
     const bool contextChanged
         = !juce::approximatelyEqual(sampleRate, previewSampleRate) || blockSize != previewBlockSize;
     if (contextChanged) {
@@ -125,10 +177,10 @@ PreviewChain LiveChain::preparePreview(
     PreviewChain result;
     result.preparation.processChannelCount = 2;
     for (auto& entry : chain) {
-        if (!visits(entry)) {
+        if (!inspectAll && entry.instance == nullptr && !(entry.enabled && loadEnabled)) {
             continue;
         }
-        // A plugin that could not be loaded above is not tried again while the lock is held.
+        // Missing instances are not created while callback admission is closed.
         if (entry.instance == nullptr || !prepareLiveEntry(entry)) {
             if (entry.enabled && result.preparation.errorMessage.isEmpty()) {
                 result.preparation.errorMessage

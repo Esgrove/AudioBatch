@@ -8,6 +8,7 @@
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
 #include "gui/LiveSlot.h"
+#include "utils/CallbackAccess.h"
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -108,12 +109,21 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
 
     // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it.
     // Capture its state and destroy it now so a fresh editor can open below.
-    // Neither that nor creating the processor of the slot touches the live preview, so only preparing takes the lock.
+    // Neither that nor creating an unattached processor touches live preview, so only preparation excludes callbacks.
     const bool stateCaptured = entry.wasEditorOpen && reapClosedEditor(entry);
-    bool prepared = instantiateLiveEntry(entry);
+    const juce::WeakReference safeThis(this);
+    bool prepared = instantiateLiveEntry(slotId, previewSampleRate, previewBlockSize);
+    if (safeThis == nullptr) {
+        return;
+    }
+    const auto current = getSlotIndex(slotId);
+    if (!current) {
+        return;
+    }
+    auto& currentEntry = chain[static_cast<std::size_t>(*current)];
     if (prepared) {
-        const juce::ScopedLock lock(renderingLock);
-        prepared = prepareLiveEntry(entry);
+        const utils::CallbackControlGuard control(renderingAccess);
+        prepared = prepareLiveEntry(currentEntry);
     }
 
     if (stateCaptured) {
@@ -126,7 +136,7 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Error",
-                utils::format("Could not prepare plugin:\n\n{}", entry.preparationError),
+                utils::format("Could not prepare plugin:\n\n{}", currentEntry.preparationError),
                 "OK"
             ),
             nullptr
@@ -135,17 +145,17 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
     }
 
     // Creating the editor and its window can take a long time for a large plugin interface,
-    // so it runs without the rendering lock. The processor is only destroyed on the message thread.
-    std::unique_ptr<juce::AudioProcessorEditor> editor(entry.instance->createEditorAndMakeActive());
+    // so it runs without the callback exclusion. The processor is only destroyed on the message thread.
+    std::unique_ptr<juce::AudioProcessorEditor> editor(currentEntry.instance->createEditorAndMakeActive());
 
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
-        editor = std::make_unique<juce::GenericAudioProcessorEditor>(*entry.instance);
+        editor = std::make_unique<juce::GenericAudioProcessorEditor>(*currentEntry.instance);
         editor->setSize(layout::pluginEditor::genericEditorWidth, layout::pluginEditor::genericEditorHeight);
     }
 
     juce::DialogWindow::LaunchOptions launchOptions;
-    launchOptions.dialogTitle = entry.description.name;
+    launchOptions.dialogTitle = currentEntry.description.name;
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = editor->isResizable();
@@ -153,22 +163,24 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
     launchOptions.useBottomRightCornerResizer = false;
     launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
 
-    entry.editorWindow = launchOptions.create();
+    currentEntry.editorWindow = launchOptions.create();
 
-    if (entry.editorWindow != nullptr) {
+    if (currentEntry.editorWindow != nullptr) {
         // A slot whose editor was open before reopens it where it was, kept on a connected display.
-        if (entry.editorPosition.has_value()) {
-            const auto* peer = entry.editorWindow->getPeer();
+        if (currentEntry.editorPosition.has_value()) {
+            const auto* peer = currentEntry.editorWindow->getPeer();
             const auto frameSize
                 = peer != nullptr ? peer->getFrameSizeIfPresent() : juce::ComponentPeer::OptionalBorderSize {};
             const auto frame = frameSize ? *frameSize : juce::BorderSize<int> {};
-            entry.editorWindow->setBounds(
-                utils::boundsOnScreen(entry.editorWindow->getBounds().withPosition(*entry.editorPosition), frame)
+            currentEntry.editorWindow->setBounds(
+                utils::boundsOnScreen(
+                    currentEntry.editorWindow->getBounds().withPosition(*currentEntry.editorPosition), frame
+                )
             );
         }
-        entry.editorWindow->setVisible(true);
-        entry.editorWindow->toFront(true);
-        entry.wasEditorOpen = true;
+        currentEntry.editorWindow->setVisible(true);
+        currentEntry.editorWindow->toFront(true);
+        currentEntry.wasEditorOpen = true;
     }
     sendChangeMessage();
 }
@@ -176,7 +188,11 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
 /// Opens the chain editor window for adding, reordering, enabling, and removing plugins.
 void LiveChain::showChainEditor()
 {
+    const juce::WeakReference safeThis(this);
     const auto inspectedChain = preparePreview(previewSampleRate, previewBlockSize, true);
+    if (safeThis == nullptr) {
+        return;
+    }
     if (inspectedChain.preparation.errorMessage.isNotEmpty()) {
         utils::logWarn("Plugin latency inspection: {}", inspectedChain.preparation.errorMessage);
     }

@@ -6,6 +6,7 @@
 /// and must cancel to the last 16-bit step, the same files the Rust tests compare against.
 
 #include "analysis/AudioAnalysis.h"
+#include "gui/AudioPreviewPlayer.h"
 #include "gui/LiveChain.h"
 #include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
@@ -14,12 +15,15 @@
 #include "TestPlugin.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/CallbackAccess.h"
 #include "utils/StringFormat.h"
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -109,6 +113,9 @@ public:
 class PresetTestFormat final : public juce::AudioPluginFormat
 {
 public:
+    /// Optionally runs nested control activity while the format creates an unattached processor.
+    explicit PresetTestFormat(std::function<void()> onCreation = {}) : duringCreation(std::move(onCreation)) {}
+
     /// The format has no filesystem search paths.
     juce::FileSearchPath getDefaultLocationsToSearch() override
     {
@@ -191,8 +198,14 @@ protected:
         PluginCreationCallback callback
     ) override
     {
+        if (duringCreation) {
+            duringCreation();
+        }
         callback(std::make_unique<NotifyingStatePlugin>(), {});
     }
+
+private:
+    std::function<void()> duringCreation;
 };
 
 /// Points the application settings at a folder inside the temporary directory,
@@ -255,6 +268,7 @@ private:
     void testNullTest();
     void testPluginProcessing();
     void testPresetEditsAcrossPreparation();
+    void testReentrantPreviewCreation();
     void testPresetFiles();
 };
 
@@ -265,6 +279,7 @@ void PluginPresetTests::runTest()
     testPresetFiles();
     testLiveChainPresets();
     testPresetEditsAcrossPreparation();
+    testReentrantPreviewCreation();
     testNullTest();
     testPluginProcessing();
 }
@@ -345,9 +360,9 @@ juce::File PluginPresetTests::savePresetWithParameters(
 {
     storeChain(*properties.getUserSettings(), {{.description = description, .state = {}, .enabled = true}});
 
-    juce::CriticalSection renderingLock;
+    utils::CallbackAccess renderingAccess;
     juce::AudioDeviceManager previewDeviceManager;
-    LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+    LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
     const auto preview = chain.preparePreview(44'100.0, 512);
     expect(preview.preparation.errorMessage.isEmpty(), preview.preparation.errorMessage);
     expectEquals(static_cast<int>(preview.instances.size()), 1);
@@ -374,6 +389,45 @@ juce::File PluginPresetTests::savePresetWithParameters(
     return saved.value_or(juce::File {});
 }
 
+/// Simulates nested native creation:
+/// callbacks keep rendering, and a removed slot is never attached through a stale reference.
+void PluginPresetTests::testReentrantPreviewCreation()
+{
+    beginTest("New preview processors instantiate outside exclusion and revalidate stable slot ids after reentry");
+    const TemporaryDirectory temporary;
+    juce::ApplicationProperties properties;
+    useTemporarySettings(properties, temporary);
+    SavedChainSlot saved;
+    saved.description.name = "Preset test effect";
+    saved.description.pluginFormatName = "Preset test";
+    saved.description.fileOrIdentifier = "preset-test";
+    storeChain(*properties.getUserSettings(), {saved});
+    PluginLibrary library(properties);
+    juce::AudioBuffer<float> samples(2, 1024);
+    for (int channel = 0; channel < 2; ++channel) {
+        juce::FloatVectorOperations::fill(samples.getWritePointer(channel), 0.25f, samples.getNumSamples());
+    }
+    juce::MemoryAudioSource input(samples, false, false);
+    AudioPreviewPlayer player(false);
+    LiveChain chain(library, properties, player.getRenderingAccess(), player.getDeviceManager());
+    player.setLiveChain(chain);
+    player.setTestCallbackInput(input, 1.0, 2, 48'000.0, 127);
+    juce::AudioBuffer<float> output(2, 127);
+    int creations = 0;
+    library.getFormatManager().addFormat(std::make_unique<PresetTestFormat>([&] {
+        ++creations;
+        std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, 127); });
+        callback.join();
+        expect(output.getMagnitude(0, 127) > 0.001f);
+        chain.clearChain();
+    }));
+    expect(player.setPluginPreviewEnabled(true));
+    expectEquals(creations, 1);
+    expectEquals(chain.getNumSlots(), 0);
+    player.detachLiveChain();
+    player.release();
+}
+
 /// Distinguishes a user edit awaiting display delivery from notifications caused by host restoration.
 void PluginPresetTests::testPresetEditsAcrossPreparation()
 {
@@ -389,9 +443,9 @@ void PluginPresetTests::testPresetEditsAcrossPreparation()
     TestPlugin initial({.gain = 0.5f});
     initial.getStateInformation(saved.state);
     storeChain(*properties.getUserSettings(), {saved});
-    juce::CriticalSection renderingLock;
+    utils::CallbackAccess renderingAccess;
     juce::AudioDeviceManager previewDeviceManager;
-    LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+    LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
     expect(!chain.hasOpenPreviewDevice());
     const auto preset = chain.saveAsPreset("Preparation");
     expect(preset.has_value());
@@ -662,10 +716,10 @@ void PluginPresetTests::testLiveChainPresets()
     };
     storeChain(*settings, stored);
 
-    juce::CriticalSection renderingLock;
+    utils::CallbackAccess renderingAccess;
     juce::AudioDeviceManager previewDeviceManager;
     PluginLibrary library(properties);
-    LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+    LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
     expectEquals(chain.getNumSlots(), 2);
     expect(chain.getPresetDirectory().isAChildOf(temporary.getChildFile("properties")));
     expect(chain.getPresets().empty());
@@ -750,12 +804,36 @@ void PluginPresetTests::testPluginProcessing()
     const auto description = *types.getFirst();
     expectEquals(description.name, juce::String("AudioBatch Test MS"));
 
+    beginTest("Destroying an attached live chain synchronously detaches its processor view before teardown");
+    {
+        storeChain(*properties.getUserSettings(), {{.description = description, .state = {}, .enabled = true}});
+        TestAudioDeviceState device;
+        AudioPreviewPlayer player;
+        installTestAudioDevice(player.getDeviceManager(), device);
+        auto chain
+            = std::make_unique<LiveChain>(library, properties, player.getRenderingAccess(), player.getDeviceManager());
+        player.setLiveChain(*chain);
+        expect(player.setPluginPreviewEnabled(true));
+        expect(player.load(juce::URL(fixtureFile("sine_stereo_44100_16.wav"))));
+        player.start();
+        expect(player.waitForReadAhead(4096, 2000));
+        juce::AudioBuffer<float> output(2, 127);
+        player.renderTestCallback(output.getArrayOfWritePointers(), 2, 127);
+        const auto position = player.getCurrentPosition();
+        chain.reset();
+        expect(player.waitForReadAhead(4096, 2000));
+        player.renderTestCallback(output.getArrayOfWritePointers(), 2, 127);
+        expect(player.getCurrentPosition() > position);
+        expect(output.getMagnitude(0, 127) > 0.001f);
+        player.suspend();
+    }
+
     beginTest("The test VST3 leaves audio untouched at its default settings");
     {
         storeChain(*properties.getUserSettings(), {{.description = description, .state = {}, .enabled = true}});
-        juce::CriticalSection renderingLock;
+        utils::CallbackAccess renderingAccess;
         juce::AudioDeviceManager previewDeviceManager;
-        LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+        LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
         const auto source = temporary.copyFixture("stereo_split_44100_16.wav", "identity.wav");
         const auto output = processWithChain(library, chain.getEnabledPlugins(), source, 0);
         const auto result = nullTestFiles(fixtureFile("stereo_split_44100_16.wav"), output);
@@ -780,9 +858,9 @@ void PluginPresetTests::testPluginProcessing()
         );
         expect(presetFile.existsAsFile());
 
-        juce::CriticalSection renderingLock;
+        utils::CallbackAccess renderingAccess;
         juce::AudioDeviceManager previewDeviceManager;
-        LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+        LiveChain chain(library, properties, renderingAccess, previewDeviceManager);
         chain.clearChain();
         expect(chain.loadPreset(presetFile).has_value());
         expectEquals(chain.getNumSlots(), 1);

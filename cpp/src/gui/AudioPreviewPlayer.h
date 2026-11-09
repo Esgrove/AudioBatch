@@ -6,6 +6,7 @@
 
 #include "plugins/PluginPreviewSource.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/CallbackAccess.h"
 
 #include <JuceHeader.h>
 
@@ -13,10 +14,21 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace audiobatch
 {
 class LiveChain;
+
+#ifdef AUDIOBATCH_TESTING
+/// Source progress and failure flags observed outside callback timing, while callback execution is quiescent.
+struct TestCallbackProgress {
+    juce::int64 bufferedReadPosition {};
+    bool bufferUnderrun {};
+    bool readFailed {};
+    bool rendererFailed {};
+};
+#endif
 
 /// Name and configuration of the preview output device, shown in the status bar.
 /// A value that is not known yet is empty or zero.
@@ -66,10 +78,10 @@ public:
         return formatManager;
     }
 
-    /// Serializes message-thread plugin lifecycle work with the non-blocking device callback.
-    [[nodiscard]] juce::CriticalSection& getRenderingLock() noexcept
+    /// Coordinates nestable control-side lifecycle work with single-attempt callback admission.
+    [[nodiscard]] utils::CallbackAccess& getRenderingAccess() noexcept
     {
-        return renderingLock;
+        return renderingAccess;
     }
 
     [[nodiscard]] std::unique_ptr<juce::XmlElement> createDeviceState() const;
@@ -85,8 +97,11 @@ public:
     bool refreshPluginChain();
     bool setPluginPreviewEnabled(bool enabled);
 #ifdef AUDIOBATCH_TESTING
+    [[nodiscard]] TestCallbackProgress getTestCallbackProgress() const;
     [[nodiscard]] bool waitForReadAhead(int sourceSamples, juce::uint32 timeoutMilliseconds);
     void renderTestCallback(float* const* outputChannels, int outputChannelCount, int sampleCount);
+    void setTestCallbackChain(std::vector<juce::AudioPluginInstance*> processors);
+    void setTestCallbackInput(juce::AudioSource& input, double durationSeconds, int channels, double rate, int block);
 #endif
 
     [[nodiscard]] double getCurrentPosition() const;
@@ -113,9 +128,11 @@ public:
 
 private:
     bool openAudioDevice();
+    bool refreshPreparedPluginChain();
     bool reposition(double seconds, bool resume);
 
     void closeAudioDevice();
+    void instantiatePreviewChain(bool loadEnabled);
     void prepareInput();
     void publishState();
     void reportError(const juce::String& message) const;
@@ -140,16 +157,16 @@ private:
 
     // Preserve the renderer/device/source dependency order.
     // Shutdown stops device and read-ahead callbacks before releasing sources.
-    // Sources borrow the rendering lock and failure flags.
+    // Sources borrow the failure flags. Rendering access excludes control mutations until a callback finishes.
     /// Delivers errors on the message thread, never from audio or read-ahead callbacks.
     std::function<void(const juce::String&)> onError;
     /// Delivers the natural end of playback on the message thread, after the file and any effect tail finished.
     std::function<void()> onEnded;
 
-    /// Serializes the message thread's changes to the sources and the chain with the audio callback,
-    /// which only try-locks it.
-    /// The live chain shares it.
-    mutable juce::CriticalSection renderingLock;
+    /// Shared with the live chain. Control owners exclude new callbacks before waiting for in-flight rendering.
+    /// The callback makes one atomic attempt, and never enters the control-side mutex or waits.
+    /// Device callbacks are disconnected before this coordinator or its protected resources are destroyed.
+    mutable utils::CallbackAccess renderingAccess;
     /// False for isolated workflows that must never open an audio device.
     bool audioHardwareAllowed {true};
     /// The output device, opened only while something plays or the audio settings need it.
@@ -184,9 +201,8 @@ private:
     /// Block size of the device that is starting, until the message thread prepares for it.
     std::atomic<int> pendingBlockSize {512};
 
-    /// Playback state of the preview source, published under the rendering lock after every change
-    /// and after every rendered block, so the message thread reads it without taking the lock.
-    /// The audio callback only try-locks, and outputs silence for every block in which the lock is busy.
+    /// Playback state published under exclusive control or callback admission after each change and rendered block.
+    /// The message thread reads it without excluding callbacks. Excluded callbacks leave these values untouched.
     std::atomic<bool> publishedFailed {false};
     std::atomic<bool> publishedPlaying {false};
     std::atomic<bool> publishedStopping {false};

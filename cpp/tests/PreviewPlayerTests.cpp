@@ -5,6 +5,7 @@
 /// The committed silence fixture exercises playback without opening hardware or third-party plugins.
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "CallbackBenchmark.h"
 #include "gui/AudioBatchComponentState.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioInfoPanel.h"
@@ -13,22 +14,65 @@
 #include "gui/GuiLayout.h"
 #include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
+#include "TestPlugin.h"
 #include "TestSuites.h"
+#include "utils/CallbackAccess.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <functional>
 #include <iterator>
+#include <latch>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace audiobatch::tests
 {
+namespace
+{
+/// Holds a real callback inside input rendering until control-side admission has closed.
+/// All owning latches and samples outlive both the player and its callback thread.
+class PausedCallbackInput final : public juce::AudioSource
+{
+public:
+    /// Needs no allocation or native processing setup.
+    void prepareToPlay(int /*samplesPerBlockExpected*/, double /*sampleRate*/) override {}
+
+    /// Records any unsafe resource release that overlaps the held callback.
+    void releaseResources() override
+    {
+        overlappingRelease.store(overlappingRelease.load() || active.load());
+    }
+
+    /// Pauses one in-flight production callback and emits finite audio once the test releases it.
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+    {
+        active.store(true);
+        entered.count_down();
+        resume.wait();
+        for (int channel = 0; channel < info.buffer->getNumChannels(); ++channel) {
+            juce::FloatVectorOperations::fill(
+                info.buffer->getWritePointer(channel, info.startSample), 0.25f, info.numSamples
+            );
+        }
+        active.store(false);
+    }
+
+    std::latch entered {1};
+    std::latch resume {1};
+    std::atomic<bool> active {false};
+    std::atomic<bool> overlappingRelease {false};
+};
+}  // namespace
+
 /// Covers the preview player, its device and preference policy, and the waveform axis, not GUI rendering.
 class PreviewPlayerTests final : public juce::UnitTest
 {
@@ -40,6 +84,9 @@ public:
 
 private:
     void testAsioDeviceSelection();
+    void testCallbackLifecycleHandoffs();
+    void testExcludedCallback();
+    void testRepeatedDeviceAndInsertHandoffs();
     void testCueStartPosition();
     void testDeviceOwnership();
     void testInitialPosition();
@@ -66,6 +113,10 @@ private:
 /// Runs the device-independent player and persistence checks.
 void PreviewPlayerTests::runTest()
 {
+    runCallbackBenchmarkContractTests(*this);
+    testCallbackLifecycleHandoffs();
+    testExcludedCallback();
+    testRepeatedDeviceAndInsertHandoffs();
     testCueStartPosition();
     testInitialPosition();
     testDeviceOwnership();
@@ -81,6 +132,144 @@ void PreviewPlayerTests::runTest()
     testLoudnessAxisIntervals();
     testPreviewFitHeight();
     testPreviewWidths();
+}
+
+/// Overlaps real callback execution with every destructive player handoff, without physical audio or installed effects.
+/// A separate observer releases the input only after control has closed admission,
+/// proving control cannot skip quiescence.
+void PreviewPlayerTests::testCallbackLifecycleHandoffs()
+{
+    beginTest("Seek, release, load, chain replacement, device close, and destruction wait for an active callback");
+    constexpr double RATE {48'000.0};
+    constexpr int BLOCK {127};
+    for (int operation = 0; operation < 7; ++operation) {
+        PausedCallbackInput input;
+        auto player = std::make_unique<AudioPreviewPlayer>(false);
+        player->setTestCallbackInput(input, 1.0, 2, RATE, BLOCK);
+        juce::AudioBuffer<float> output(2, BLOCK);
+        std::thread callback([&] { player->renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        input.entered.wait();
+        auto& access = player->getRenderingAccess();
+        std::atomic<bool> observedClosure {false};
+        std::thread observer([&] {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!access.isControlPendingForTesting() && std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::yield();
+            }
+            observedClosure.store(access.isControlPendingForTesting());
+            input.resume.count_down();
+        });
+        bool loaded = true;
+        switch (operation) {
+            case 0:
+                player->setPosition(0.25);
+                break;
+            case 1:
+                player->release();
+                break;
+            case 2:
+                loaded = player->load(juce::URL(fixtureFile("sine_stereo_44100_16.wav")));
+                break;
+            case 3:
+                player->setTestCallbackChain({});
+                break;
+            case 4:
+                player->suspend();
+                break;
+            case 5:
+                player->setInputGain(LinearGain {.value = 0.5f});
+                break;
+            default:
+                player.reset();
+                break;
+        }
+        callback.join();
+        observer.join();
+        expect(observedClosure.load());
+        expect(!input.overlappingRelease.load());
+        expect(loaded);
+        expect(output.getMagnitude(0, BLOCK) > 0.001f);
+    }
+}
+
+/// Confirms exclusion clears every output without advancing the real renderer or its source cursor.
+void PreviewPlayerTests::testExcludedCallback()
+{
+    beginTest("Excluded callbacks preserve playback and clear all channels until control reopens admission");
+    constexpr double RATE {48'000.0};
+    constexpr int BLOCK {127};
+    juce::AudioBuffer<float> samples(2, 1024);
+    for (int channel = 0; channel < 2; ++channel) {
+        juce::FloatVectorOperations::fill(samples.getWritePointer(channel), 0.25f, samples.getNumSamples());
+    }
+    juce::MemoryAudioSource source(samples, false, false);
+    AudioPreviewPlayer player(false);
+    player.setTestCallbackInput(source, samples.getNumSamples() / RATE, 2, RATE, BLOCK);
+    juce::AudioBuffer<float> output(3, BLOCK);
+    for (int channel = 0; channel < output.getNumChannels(); ++channel) {
+        juce::FloatVectorOperations::fill(output.getWritePointer(channel), 1.0f, BLOCK);
+    }
+    {
+        const utils::CallbackControlGuard control(player.getRenderingAccess());
+        std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 3, BLOCK); });
+        callback.join();
+    }
+    expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 1.0e-12);
+    expectEquals(source.getNextReadPosition(), juce::int64 {0});
+    expectWithinAbsoluteError(output.getMagnitude(0, BLOCK), 0.0f, 1.0e-7f);
+    expect(player.isPlaying());
+    std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 3, BLOCK); });
+    callback.join();
+    expect(player.getCurrentPosition() > 0.0);
+    expectEquals(source.getNextReadPosition(), juce::int64 {BLOCK});
+    expect(output.getMagnitude(0, BLOCK) > 0.001f);
+    expectWithinAbsoluteError(output.getMagnitude(2, 0, BLOCK), 0.0f, 1.0e-7f);
+}
+
+/// Repeatedly detaches an idle insert, closes/reopens the simulated device, and recovers from a failed open.
+void PreviewPlayerTests::testRepeatedDeviceAndInsertHandoffs()
+{
+    beginTest("Idle insert handoffs and failed device reopen retain safe callback lifetimes");
+    constexpr double RATE {48'000.0};
+    constexpr int BLOCK {127};
+    TestPlugin effect({.gain = 0.5f});
+    effect.setRateAndBufferSizeDetails(RATE, BLOCK);
+    effect.prepareToPlay(RATE, BLOCK);
+    TestAudioDeviceState device;
+    device.blockSize = BLOCK;
+    AudioPreviewPlayer player;
+    installTestAudioDevice(player.getDeviceManager(), device);
+    juce::AudioBuffer<float> output(2, BLOCK);
+    for (int iteration = 0; iteration < 4; ++iteration) {
+        expect(player.load(juce::URL(fixtureFile("sine_stereo_44100_16.wav"))));
+        player.start();
+        player.setTestCallbackChain({&effect});
+        expect(player.waitForReadAhead(4096, 2000));
+        std::thread wet([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        wet.join();
+        expect(output.getMagnitude(0, BLOCK) > 0.001f);
+        player.suspend();
+        player.setTestCallbackChain({});
+        std::thread stopped([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        stopped.join();
+        expectWithinAbsoluteError(output.getMagnitude(0, BLOCK), 0.0f, 1.0e-7f);
+        device.openError = "Injected output-open failure";
+        player.start();
+        expect(!player.isPlaying());
+        expect(device.callback == nullptr);
+        device.openError.clear();
+        player.start();
+        expect(player.isPlaying());
+        expect(player.waitForReadAhead(4096, 2000));
+        std::thread reopened([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        reopened.join();
+        expect(output.getMagnitude(0, BLOCK) > 0.001f);
+        player.suspend();
+        player.release();
+    }
+    player.setTestCallbackChain({});
+    effect.releaseResources();
+    expectEquals(device.opens, device.closes);
 }
 
 /// Checks the status bar text of the output device for fractional rates and values that are not known yet.

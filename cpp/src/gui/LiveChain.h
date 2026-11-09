@@ -13,6 +13,7 @@
 #include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/CallbackAccess.h"
 
 #include <JuceHeader.h>
 
@@ -26,11 +27,11 @@
 
 namespace audiobatch
 {
-/// A prepared live chain. Its slot-owned instances remain protected by the preview rendering lock.
+/// A prepared live chain. Its slot-owned instances remain protected by the shared renderer admission.
 struct PreviewChain {
     // Preserve aggregate order used by preview preparation and callers.
     /// Non-owning, never null views of the enabled slot instances in chain order.
-    /// They stay valid only while the slots keep their instances, so use them under the preview rendering lock.
+    /// They stay valid only while the slots keep their instances, so use them under the shared renderer admission.
     std::vector<juce::AudioPluginInstance*> instances;
     /// The summed latency and tails and the widest channel count of the enabled instances,
     /// with the error of the first enabled slot that could not be prepared.
@@ -60,7 +61,7 @@ public:
     LiveChain(
         PluginLibrary& pluginLibrary,
         juce::ApplicationProperties& applicationProperties,
-        juce::CriticalSection& previewRenderingLock,
+        utils::CallbackAccess& previewRenderingAccess,
         juce::AudioDeviceManager& audioDeviceManager
     );
 
@@ -83,6 +84,13 @@ public:
     [[nodiscard]] juce::String getChainSummary() const;
     [[nodiscard]] juce::String getCurrentPresetName() const;
 
+    // Creation and preparation are split so player-owned outer control scopes never encompass native creation.
+    [[nodiscard]] PreviewChain prepareInstantiatedPreview(
+        double sampleRate,
+        int blockSize,
+        bool inspectAll = false,
+        bool loadEnabled = true
+    );
     [[nodiscard]] PreviewChain preparePreview(
         double sampleRate,
         int blockSize,
@@ -121,6 +129,7 @@ public:
     void addPlugin(const juce::PluginDescription& description);
     void clearChain();
     void confirmDeletePreset(const ChainPresetInfo& preset);
+    void instantiatePreview(double sampleRate, int blockSize, bool inspectAll = false, bool loadEnabled = true);
     void loadPresetAndReport(const juce::File& file);
     void moveSlot(PluginSlotId slotId, int toIndex);
     void openEditorForSlot(PluginSlotId slotId);
@@ -131,6 +140,7 @@ public:
     // View callbacks, windows and preview status.
     void setChainChangedCallback(ChainChangedCallback callback);
     void setLatencyChangedCallback(ChainChangedCallback callback);
+    void setPreviewDetachCallback(ChainChangedCallback callback);
     void setSlotEnabled(PluginSlotId slotId, bool enabled);
     void showChainEditor();
     void showMenu(juce::Component& anchor);
@@ -155,7 +165,7 @@ private:
 
     [[nodiscard]] std::vector<SavedChainSlot> captureSavedSlots();
 
-    bool instantiateLiveEntry(LiveSlot& entry);
+    bool instantiateLiveEntry(PluginSlotId slotId, double sampleRate, int blockSize);
     bool prepareLiveEntry(LiveSlot& entry);
 
     void captureOpenEditorStates();
@@ -173,6 +183,8 @@ private:
     ChainChangedCallback chainChangedCallback;
     /// Called on the message thread after prepared latency changes.
     ChainChangedCallback latencyChangedCallback;
+    /// Disconnects a borrowing player synchronously before any slot teardown, even for independent chain destruction.
+    ChainChangedCallback previewDetachCallback;
     /// Known plugins, owned by the view and outliving this chain.
     PluginLibrary& library;
 
@@ -184,8 +196,9 @@ private:
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
     /// Borrowed plugin manager window, null before opening.
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
-    /// Shared rendering lock held while processors are reconfigured.
-    juce::CriticalSection& renderingLock;
+    /// Shared admission coordinator, borrowed from the longer-lived preview player.
+    /// Callback exclusion protects reconfiguration. Plugin creation and detached teardown stay outside it.
+    utils::CallbackAccess& renderingAccess;
     /// Loaded preset name, empty without one.
     juce::String presetName;
 
@@ -212,6 +225,9 @@ private:
     std::uint64_t presetRevision {0};
     /// Structural revision used by editor rows.
     std::uint64_t revision {0};
+
+    /// Slot identities currently in plugin creation, preventing nested message loops from creating them twice.
+    std::vector<PluginSlotId> instantiatingSlots;
 
     /// Slots remain last so they unregister listeners before the callback and revision state is destroyed.
     std::vector<LiveSlot> chain;

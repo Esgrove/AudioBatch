@@ -8,6 +8,7 @@
 #include "gui/LiveSlot.h"
 #include "plugins/PluginChainPresets.h"
 #include "utils/AppInfo.h"
+#include "utils/CallbackAccess.h"
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -298,7 +299,7 @@ void LiveChain::showPresetFolder() const
 /// The new slots load their processors lazily, the same way a chain restored from the settings does,
 /// so a plugin that is not installed shows as unavailable instead of failing the load.
 /// The processors of the current slots are destroyed after the live preview has dropped them,
-/// without holding the rendering lock.
+/// without holding the callback exclusion.
 /// Returns the reason when the file cannot be read, and then leaves the chain unchanged.
 std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
 {
@@ -311,7 +312,7 @@ std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
     {
         std::vector<LiveSlot> replaced;
         {
-            const juce::ScopedLock lock(renderingLock);
+            const utils::CallbackControlGuard control(renderingAccess);
             replaced.swap(chain);
             for (auto& savedSlot : *slots) {
                 appendSlot(LiveSlot(std::move(savedSlot)));
