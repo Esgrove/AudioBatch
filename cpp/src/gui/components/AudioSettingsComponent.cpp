@@ -7,6 +7,7 @@
 #include "gui/GuiLayout.h"
 #include "serato/SeratoTagTypes.h"
 #include "utils/Log.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
@@ -265,18 +266,19 @@ bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPrev
 
 /// Uses the earliest cue in time only when enabled and at or before the track's halfway point.
 /// Missing cues and invalid durations fall back to the beginning, independent of playback continuation.
+/// The preview owner retains the optional markers throughout this call.
 double getPreviewStartPositionSeconds(
     const AudioPreviewPreferences& preferences,
-    const serato::Markers* markers,
+    const utils::OptionalRef<const serato::Markers> markers,
     const double durationSeconds
 )
 {
-    if (!preferences.playFromFirstCuePoint || markers == nullptr || markers->cues.empty()
-        || !std::isfinite(durationSeconds) || durationSeconds <= 0.0)
+    if (!preferences.playFromFirstCuePoint || !markers || markers->get().cues.empty() || !std::isfinite(durationSeconds)
+        || durationSeconds <= 0.0)
     {
         return 0.0;
     }
-    const auto firstCue = std::ranges::min_element(markers->cues, {}, &serato::CuePoint::positionMilliseconds);
+    const auto firstCue = std::ranges::min_element(markers->get().cues, {}, &serato::CuePoint::positionMilliseconds);
     const auto position = static_cast<double>(firstCue->positionMilliseconds) / utils::millisecondsPerSecond;
     return position <= durationSeconds * 0.5 ? position : 0.0;
 }

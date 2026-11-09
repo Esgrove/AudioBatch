@@ -30,7 +30,7 @@ void showFailureSummary(
     const juce::StringArray& failures,
     const juce::String& title,
     const juce::String& failedAction,
-    juce::Component* associatedComponent
+    juce::Component& associatedComponent
 );
 void styleLabel(juce::Label& label, const juce::Font& font, juce::Colour colour);
 

@@ -16,6 +16,7 @@
 #include "utils/ConsoleProgress.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 #include <fmt/base.h>
@@ -335,11 +336,12 @@ int cli::runAnalysis(const AnalyzeCommand& command, const utils::CancellationChe
 /// Executes the CLI analysis workflow with the given analysis cache, opening it first,
 /// and returns the process exit code: 0 when every input was analyzed, and normalized when requested,
 /// and 2 when any input was missing or skipped, or failed to analyze or normalize.
+/// The optional processing command is borrowed for the workflow and never retained.
 int cli::runAnalysis(
     const AnalyzeCommand& command,
     AnalysisCache& cache,
     const utils::CancellationCheck& isInterrupted,
-    const ProcessCommand* processing
+    const utils::OptionalRef<const ProcessCommand> processing
 )
 {
     auto inputPaths = command.inputPaths;
@@ -397,7 +399,7 @@ int cli::runAnalysis(
     juce::StringArray normalizationConflicts;
     std::map<juce::String, AudioNormalizationResult> normalizations;
 
-    const bool rewriting = command.normalization.has_value() || processing != nullptr;
+    const bool rewriting = command.normalization.has_value() || processing.has_value();
     if (rewriting) {
         normalizedResults.reserve(results.size());
         std::vector<AudioAnalysisRecord> normalizableResults;
@@ -405,8 +407,8 @@ int cli::runAnalysis(
             return !record.hasError();
         });
         normalizationConflicts = findBatchOutputConflicts(normalizableResults);
-        if (processing != nullptr) {
-            auto processed = cli::processWithProgress(normalizableResults, *processing, cache, isInterrupted);
+        if (processing.has_value()) {
+            auto processed = cli::processWithProgress(normalizableResults, processing->get(), cache, isInterrupted);
             if (!processed) {
                 reportError(processed.error());
                 return utils::isCancellationRequested(isInterrupted) ? EXIT_INTERRUPTED : 1;
@@ -426,7 +428,7 @@ int cli::runAnalysis(
             cache,
             normalizedResults,
             normalizationConflicts,
-            processing != nullptr,
+            processing.has_value(),
             isInterrupted
         );
         sortRecords(normalizedResults, command.sortMode, !command.reverse);
@@ -438,8 +440,8 @@ int cli::runAnalysis(
 
     if (utils::isCancellationRequested(isInterrupted)) {
         reportWarning(
-            processing != nullptr ? "Interrupted. Processing cancelled, committed outputs retained."
-                                  : "Interrupted. Normalization cancelled, committed outputs retained."
+            processing.has_value() ? "Interrupted. Processing cancelled, committed outputs retained."
+                                   : "Interrupted. Normalization cancelled, committed outputs retained."
         );
         return EXIT_INTERRUPTED;
     }

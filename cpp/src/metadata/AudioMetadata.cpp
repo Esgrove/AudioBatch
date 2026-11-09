@@ -10,6 +10,7 @@
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include "utils/OptionalRef.h"
 #include <initializer_list>
 #include <string_view>
 
@@ -71,19 +72,19 @@ std::unique_ptr<TagLib::ID3v2::Frame> restoreId3Frame(const juce::MemoryBlock& b
 /// Unsupported known frames fail safely if serialization would reinterpret an opaque payload as decoded fields.
 std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupportedFrames)
 {
-    const auto* tag = serato::findId3Tag(file);
-    if (tag == nullptr) {
+    const utils::OptionalRef<const TagLib::ID3v2::Tag> tag = serato::findId3Tag(file);
+    if (!tag) {
         return {};
     }
     const auto isObsolete = [tag](const TagLib::ID3v2::Frame& frame) {
-        return tag->header()->majorVersion() < 4
+        return tag->get().header()->majorVersion() < 4
             && std::ranges::any_of(
                    obsoleteId3v23Frames, [&frame](const char* frameId) { return frame.frameID() == frameId; }
             );
     };
     std::vector<juce::MemoryBlock> frames;
-    frames.reserve(tag->frameList().size());
-    for (const auto* frame : tag->frameList()) {
+    frames.reserve(tag->get().frameList().size());
+    for (const auto* frame : tag->get().frameList()) {
         if (isObsolete(*frame)) {
             continue;
         }
@@ -263,10 +264,14 @@ void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const
 }
 
 /// Finds a property by its case-insensitive key.
-std::vector<MetadataProperty>::iterator findProperty(std::vector<MetadataProperty>& properties, const char* key)
+std::vector<MetadataProperty>::iterator findProperty(
+    std::vector<MetadataProperty>& properties,
+    const std::string_view key
+)
 {
-    return std::ranges::find_if(properties, [key](const MetadataProperty& property) {
-        return property.key.equalsIgnoreCase(key);
+    const auto propertyKey = toJuce(key);
+    return std::ranges::find_if(properties, [&propertyKey](const MetadataProperty& property) {
+        return property.key.equalsIgnoreCase(propertyKey);
     });
 }
 
@@ -275,11 +280,11 @@ std::vector<MetadataProperty>::iterator findProperty(std::vector<MetadataPropert
 /// A total without a number stays as it is.
 void joinTotal(
     std::vector<MetadataProperty>& properties,
-    const char* numberKey,
-    const std::initializer_list<const char*> totalKeys
+    const std::string_view numberKey,
+    const std::initializer_list<std::string_view> totalKeys
 )
 {
-    for (const auto* totalKey : totalKeys) {
+    for (const auto totalKey : totalKeys) {
         const auto total = findProperty(properties, totalKey);
         const auto number = findProperty(properties, numberKey);
         if (total == properties.end() || number == properties.end() || total->values.isEmpty()
@@ -389,9 +394,9 @@ TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataProperty>& proper
 
 /// Returns an optional picture field without assuming every format supplies it.
 template<typename Value>
-Value pictureField(const TagLib::VariantMap& fields, const char* key)
+Value pictureField(const TagLib::VariantMap& fields, const std::string_view key)
 {
-    const auto field = fields.find(key);
+    const auto field = fields.find(TagLib::String(std::string(key), TagLib::String::UTF8));
     return field != fields.end() ? field->second.value<Value>() : Value {};
 }
 
@@ -490,8 +495,8 @@ bool applyMetadata(
     if (frames.empty()) {
         return true;
     }
-    auto* tag = serato::findId3Tag(file, true);
-    return tag != nullptr && writeId3Frames(*tag, frames);
+    const auto tag = serato::findId3Tag(file, true);
+    return tag && writeId3Frames(tag->get(), frames);
 }
 }  // namespace
 
@@ -562,7 +567,7 @@ bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
     outMetadata.properties = readProperties(taglibFile->properties());
     outMetadata.pictures = readPictures(*taglibFile);
     outMetadata.id3v2Frames = readId3Frames(*taglibFile, outMetadata.hasUnsupportedId3Frames);
-    outMetadata.hasId3Tag = serato::findId3Tag(*taglibFile) != nullptr;
+    outMetadata.hasId3Tag = serato::findId3Tag(*taglibFile).has_value();
     if (dynamic_cast<TagLib::FLAC::File*>(taglibFile) != nullptr) {
         appendSeratoFrames(outMetadata);
     }

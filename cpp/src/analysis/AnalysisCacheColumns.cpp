@@ -18,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sqlite3.h>
 #include <utility>
 
@@ -140,15 +141,14 @@ juce::MemoryBlock serializeLoudnessHistory(const AudioAnalysisRecord& record)
 
 /// Validates the complete payload against its analysis record before allocating its sample vector.
 std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
-    const void* data,
-    const std::size_t bytes,
+    const std::span<const std::byte> data,
     const AudioAnalysisRecord& record
 )
 {
-    if (data == nullptr || bytes < LOUDNESS_HISTORY_HEADER_BYTES || bytes > MAXIMUM_HISTORY_BYTES) {
+    if (data.size() < LOUDNESS_HISTORY_HEADER_BYTES || data.size() > MAXIMUM_HISTORY_BYTES) {
         return {};
     }
-    juce::MemoryInputStream input(data, bytes, false);
+    juce::MemoryInputStream input(data.data(), data.size(), false);
     if (input.readInt() != LOUDNESS_HISTORY_MAGIC || input.readInt() != LOUDNESS_HISTORY_VERSION) {
         return {};
     }
@@ -158,7 +158,7 @@ std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
     history.samplesPerPoint = input.readInt();
     const auto count = input.readInt();
     if (!validHistoryTiming(history, record, count)
-        || bytes != LOUDNESS_HISTORY_HEADER_BYTES + static_cast<std::size_t>(count) * sizeof(float))
+        || data.size() != LOUDNESS_HISTORY_HEADER_BYTES + static_cast<std::size_t>(count) * sizeof(float))
     {
         return {};
     }

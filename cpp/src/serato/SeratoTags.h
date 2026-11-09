@@ -2,11 +2,13 @@
 /// Also holds the helpers that the tag reader and the metadata copy share:
 /// the names of each tag in ID3 and FLAC files, the bounded Base64 decoding and the wrapper of a native FLAC value,
 /// and the lookup of the ID3 tag of a file TagLib has opened.
-/// These functions own their results and never open files or infer musical key from analysis versions.
+/// Parsers own their results, while the tag lookup borrows from the caller's open file.
+/// These functions never open files or infer musical key from analysis versions.
 
 #pragma once
 
 #include "serato/SeratoTagTypes.h"
+#include "utils/OptionalRef.h"
 #include <string_view>
 
 #include <array>
@@ -64,7 +66,7 @@ inline constexpr std::array allTagNames {
     std::span<const std::uint8_t> bytes,
     bool legacyMarkers = false
 );
-[[nodiscard]] TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, bool create = false);
+[[nodiscard]] utils::OptionalRef<TagLib::ID3v2::Tag> findId3Tag(TagLib::File& file, bool create = false);
 [[nodiscard]] juce::MemoryBlock serializeTag(const TagReadResult& result);
 
 [[nodiscard]] std::optional<Analysis> parseAnalysis(std::span<const std::uint8_t> bytes);

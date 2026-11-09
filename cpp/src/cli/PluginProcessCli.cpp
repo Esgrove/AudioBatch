@@ -60,7 +60,7 @@ int runProcess(const ProcessCommand& command, const utils::CancellationCheck& is
     std::jthread worker([&] {
         try {
             AnalysisCache cache;
-            exitCode = runAnalysis(command.analysis, cache, isInterrupted, &command);
+            exitCode = runAnalysis(command.analysis, cache, isInterrupted, command);
         } catch (...) {
             exception = std::current_exception();
         }

@@ -7,6 +7,7 @@
 #include "cli/CliOptions.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/FileUtils.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 #include "utils/version.h"
 #include <fmt/format.h>
@@ -114,8 +115,8 @@ std::expected<std::optional<Enum>, CliParseError> takeNamedOption(
     );
 }
 
-/// Returns the option whose short form is the given letter, among the options of every command.
-const CliOption* findShortOption(const juce::juce_wchar letter)
+/// Borrows the option whose short form is the given letter from the process-lifetime command tables.
+utils::OptionalRef<const CliOption> findShortOption(const juce::juce_wchar letter)
 {
     const auto matches = [letter](const CliOption& option) {
         return option.hasShortName() && juce::String(option.shortName).getLastCharacter() == letter;
@@ -123,7 +124,7 @@ const CliOption* findShortOption(const juce::juce_wchar letter)
 
     for (const CliOption& option : {std::cref(cli::helpOption), std::cref(cli::versionOption)}) {
         if (matches(option)) {
-            return &option;
+            return option;
         }
     }
 
@@ -137,12 +138,12 @@ const CliOption* findShortOption(const juce::juce_wchar letter)
     {
         for (const CliOption& option : options) {
             if (matches(option)) {
-                return &option;
+                return option;
             }
         }
     }
 
-    return nullptr;
+    return std::nullopt;
 }
 
 /// Splits one argument of combined short options, such as "-rf" or "-j4", into separate arguments,
@@ -155,15 +156,15 @@ juce::StringArray splitCombinedShortOptions(const juce::String& text)
     juce::StringArray split;
 
     for (int index = 1; index < text.length(); ++index) {
-        const auto* option = findShortOption(text[index]);
-        if (option == nullptr) {
+        const auto option = findShortOption(text[index]);
+        if (!option) {
             split.add(utils::format("-{}", text.substring(index, index + 1)));
             continue;
         }
 
-        split.add(option->shortName);
+        split.add(option->get().shortName);
 
-        if (option->takesValue()) {
+        if (option->get().takesValue()) {
             if (const auto value = text.substring(index + 1).trimCharactersAtStart("="); value.isNotEmpty()) {
                 split.add(value);
             }
@@ -486,10 +487,11 @@ std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(const juce
 
 /// Parses the arguments into an analysis run, with the remaining arguments as its input paths.
 /// The plugin listing options are rejected, and --force, --delete, --peak, and --lufs need --normalize.
+/// An optional caller-owned processing command receives the parsed settings during this call only.
 std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     juce::ArgumentList& arguments,
     const std::optional<juce::String>& deleteEnvironmentValue,
-    ProcessCommand* processing = nullptr
+    const utils::OptionalRef<ProcessCommand> processing = std::nullopt
 )
 {
     if (arguments.containsOption(cli::groupByOption.pattern()) || arguments.containsOption(cli::rescanOption.pattern()))
@@ -536,11 +538,11 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     const auto peakValue = takeOptionValue(arguments, cli::peakOption);
     const auto loudnessValue = takeOptionValue(arguments, cli::lufsOption);
 
-    if (force && !normalize && processing == nullptr) {
+    if (force && !normalize && !processing) {
         return parseError(CliParseErrorKind::missingRequiredOption, "--force can only be used with --normalize");
     }
 
-    if (*deleteOriginals && !normalize && processing == nullptr) {
+    if (*deleteOriginals && !normalize && !processing) {
         return parseError(CliParseErrorKind::missingRequiredOption, "--delete can only be used with --normalize");
     }
 
@@ -568,12 +570,13 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     }
     command.inputPaths = std::move(*paths);
 
-    if (processing != nullptr) {
-        processing->analysis = std::move(command);
-        processing->options.overwriteExisting = force;
-        processing->options.disposeFile = *deleteOriginals ? utils::deleteFile : utils::trashFile;
-        processing->options.normalizeBeforePlugin = processing->analysis.normalization;
-        return *processing;
+    if (processing) {
+        auto& processCommand = processing->get();
+        processCommand.analysis = std::move(command);
+        processCommand.options.overwriteExisting = force;
+        processCommand.options.disposeFile = *deleteOriginals ? utils::deleteFile : utils::trashFile;
+        processCommand.options.normalizeBeforePlugin = processCommand.analysis.normalization;
+        return processCommand;
     }
     return command;
 }
@@ -798,7 +801,7 @@ std::expected<CliCommand, CliParseError> cli::parseArguments(
                 );
             }
             processing.preset = *preset;
-            return parseAnalyzeCommand(arguments, deleteEnvironmentValue, &processing);
+            return parseAnalyzeCommand(arguments, deleteEnvironmentValue, processing);
         }
         case CliSubcommand::list:
             return parseListPluginsCommand(arguments);

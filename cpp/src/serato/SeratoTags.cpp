@@ -8,6 +8,7 @@
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagFields.h"
 #include "serato/SeratoTagTypes.h"
+#include "utils/OptionalRef.h"
 #include <string_view>
 
 #include <aifffile.h>
@@ -386,25 +387,24 @@ std::optional<TagNames> getTagNames(const TagKind kind, const bool legacyMarkers
     return std::nullopt;
 }
 
-/// Finds the ID3v2 tag of an MPEG, AIFF, WAV, or FLAC file that TagLib has opened.
-/// Without create, a file without an ID3v2 tag returns null instead of getting an empty tag,
-/// so reading a file never adds one.
+/// Borrows the ID3v2 tag of an MPEG, AIFF, WAV, or FLAC file that TagLib has opened.
+/// Without create, the lookup requests no new tag and never saves or modifies the file.
+/// TagLib eagerly creates an empty in-memory MPEG tag on open, so an engaged result need not imply a disk tag.
 /// The tag belongs to the file and stays valid while the file is open.
-TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, const bool create)
+utils::OptionalRef<TagLib::ID3v2::Tag> findId3Tag(TagLib::File& file, const bool create)
 {
+    // TagLib owns this nullable tag, which is borrowed only while the file remains open.
+    TagLib::ID3v2::Tag* tag {};
     if (auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(&file)) {
-        return mpeg->ID3v2Tag(create);
+        tag = mpeg->ID3v2Tag(create);
+    } else if (const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(&file)) {
+        tag = create || aiff->hasID3v2Tag() ? aiff->tag() : nullptr;
+    } else if (const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(&file)) {
+        tag = create || wav->hasID3v2Tag() ? wav->ID3v2Tag() : nullptr;
+    } else if (auto* flac = dynamic_cast<TagLib::FLAC::File*>(&file)) {
+        tag = flac->ID3v2Tag(create);
     }
-    if (const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(&file)) {
-        return create || aiff->hasID3v2Tag() ? aiff->tag() : nullptr;
-    }
-    if (const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(&file)) {
-        return create || wav->hasID3v2Tag() ? wav->ID3v2Tag() : nullptr;
-    }
-    if (auto* flac = dynamic_cast<TagLib::FLAC::File*>(&file)) {
-        return flac->ID3v2Tag(create);
-    }
-    return nullptr;
+    return tag != nullptr ? utils::OptionalRef<TagLib::ID3v2::Tag>(*tag) : std::nullopt;
 }
 
 /// Parses the two-byte Serato analysis version, rejecting truncated or extended payloads.

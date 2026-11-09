@@ -152,7 +152,7 @@ void showFailureSummary(
     const juce::StringArray& failures,
     const juce::String& title,
     const juce::String& failedAction,
-    juce::Component* associatedComponent
+    juce::Component& associatedComponent
 )
 {
     if (failures.isEmpty()) {
@@ -166,7 +166,7 @@ void showFailureSummary(
                 ? failures[0]
                 : format("Some files could not be {}:\n\n{}", failedAction, buildFailureListMessage(failures)),
             "OK",
-            associatedComponent
+            &associatedComponent
         ),
         nullptr
     );

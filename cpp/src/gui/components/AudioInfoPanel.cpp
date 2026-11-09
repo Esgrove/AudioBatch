@@ -12,6 +12,7 @@
 #include "serato/SeratoTagTypes.h"
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
@@ -110,7 +111,11 @@ bool isCamelotInput(const juce::String& key)
 
 /// Formats the three value lines and tags without any dependence on components or available width.
 /// Technical details require ready analysis, but musical metadata survives pending and failed records.
-AudioInfoDetails formatInfoDetails(const AudioAnalysisRecord& record, const serato::SeratoData* data)
+/// Optional metadata is borrowed only while the details are copied for display.
+AudioInfoDetails formatInfoDetails(
+    const AudioAnalysisRecord& record,
+    const utils::OptionalRef<const serato::SeratoData> data
+)
 {
     AudioInfoDetails details;
     if (record.isReady()) {
@@ -134,14 +139,14 @@ AudioInfoDetails formatInfoDetails(const AudioAnalysisRecord& record, const sera
         details.clips = utils::format("{} total, {}", metrics.totalClips(), formatClipCounts(metrics));
         details.correlation = formatMetric(metrics.stereoCorrelation, true);
     }
-    if (data == nullptr) {
+    if (!data) {
         return details;
     }
-    if (const auto bpm = trackBpm(*data)) {
+    if (const auto bpm = trackBpm(data->get())) {
         appendInfoValue(details.track, "BPM", utils::format("{:.2f} BPM", *bpm));
     }
-    if (data->trackInfo) {
-        const auto& info = *data->trackInfo;
+    if (data->get().trackInfo) {
+        const auto& info = *data->get().trackInfo;
         const auto original = info.key.trim();
         const auto camelot = camelotKey(original);
         appendInfoValue(
@@ -567,7 +572,7 @@ void AudioInfoPanel::setWide(const bool wide)
 void AudioInfoPanel::showRecord(
     const AudioAnalysisRecord& record,
     const juce::String& activeStatusLabel,
-    const serato::SeratoData* data,
+    const utils::OptionalRef<const serato::SeratoData> data,
     const bool showGainAdjustedMetrics
 )
 {

@@ -214,7 +214,14 @@ void UtilsTests::runTest()
 
     beginTest("The AIFF writer and metadata conversion are available");
     {
-        expect(utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr);
+        const juce::AudioFormatManager emptyManager;
+        expect(!utils::findAiffFormat(emptyManager));
+        const auto& formatManager = utils::threadLocalFormatManager();
+        const auto aiffFormat = utils::findAiffFormat(formatManager);
+        expect(aiffFormat.has_value());
+        if (aiffFormat) {
+            expect(&aiffFormat->get() == formatManager.findFormatForFileExtension("aif"));
+        }
 
         juce::StringPairArray metadata;
         metadata.set("MetaDataSource", "AIFF");

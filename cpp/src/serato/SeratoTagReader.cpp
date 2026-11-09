@@ -7,6 +7,7 @@
 #include "serato/SeratoTagTypes.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
+#include "utils/OptionalRef.h"
 #include "utils/ThreadUtils.h"
 #include <string_view>
 
@@ -101,17 +102,21 @@ TagReadResult readId3Frames(
 
 /// Prefers valid Markers2 over legacy fallback regardless of frame order,
 /// preserving earlier invalid outcomes.
-TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, const TagKind kind, const utils::CancellationCheck& isCancelled)
+TagReadResult readId3Tag(
+    const utils::OptionalRef<const TagLib::ID3v2::Tag> tag,
+    const TagKind kind,
+    const utils::CancellationCheck& isCancelled
+)
 {
-    if (tag == nullptr) {
+    if (!tag) {
         return TagReadResult::missing(kind, ReadStatus::absent);
     }
-    auto result = readId3Frames(*tag, kind, false, isCancelled);
+    auto result = readId3Frames(tag->get(), kind, false, isCancelled);
     if (kind != TagKind::markers || result.status() == ReadStatus::present || result.status() == ReadStatus::cancelled)
     {
         return result;
     }
-    const auto legacy = readId3Frames(*tag, kind, true, isCancelled);
+    const auto legacy = readId3Frames(tag->get(), kind, true, isCancelled);
     return legacy.status() == ReadStatus::absent ? result : legacy;
 }
 
@@ -264,7 +269,7 @@ TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::
 TagReadResult readOpenedTag(
     const TagKind kind,
     const TagLib::PropertyMap& properties,
-    const TagLib::ID3v2::Tag* id3,
+    const utils::OptionalRef<const TagLib::ID3v2::Tag> id3,
     const bool isFlac,
     const utils::CancellationCheck& isCancelled
 )
@@ -329,7 +334,7 @@ std::vector<TagReadResult> readTags(
     if (reference.isNull() || tagFile == nullptr || !tagFile->isOpen() || !tagFile->isValid()) {
         return failedReads(std::move(results), ReadStatus::ioError);
     }
-    const auto* id3 = findId3Tag(*tagFile);
+    const utils::OptionalRef<const TagLib::ID3v2::Tag> id3 = findId3Tag(*tagFile);
     const auto* flac = dynamic_cast<TagLib::FLAC::File*>(tagFile);
     TagLib::PropertyMap properties;
     if (flac != nullptr || std::ranges::find(kinds, TagKind::trackInfo) != kinds.end()) {

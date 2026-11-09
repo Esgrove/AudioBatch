@@ -700,8 +700,8 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, "Unsupported or unreadable audio file");
     }
 
-    auto* aiffFormat = utils::findAiffFormat(formatManager);
-    if (aiffFormat == nullptr) {
+    const auto aiffFormat = utils::findAiffFormat(formatManager);
+    if (!aiffFormat) {
         return fail(file, "AIFF writer not available in this build");
     }
 
@@ -743,7 +743,7 @@ PluginProcessingResult processFileWithPlugins(
     const auto finalLength = getFinalLength(*summary, reader->lengthInSamples);
 
     auto written = writeProcessedAiff(
-        *aiffFormat,
+        aiffFormat->get(),
         intermediateFile.getFile(),
         temporaryFile.getFile(),
         *reader,

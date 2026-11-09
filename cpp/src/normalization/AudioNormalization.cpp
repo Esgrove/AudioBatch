@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstddef>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -62,7 +63,7 @@ struct OutputCandidate {
     /// Destination the normalized file is written to.
     juce::File output;
     /// Non-owning record from the caller's vector, valid for the duration of conflict detection.
-    const AudioAnalysisRecord* record {};
+    std::reference_wrapper<const AudioAnalysisRecord> record;
     /// True when the destination is the source file itself.
     bool inPlace {};
 };
@@ -288,7 +289,7 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
     auto ordered = records | std::views::transform([](const AudioAnalysisRecord& record) {
                        auto output = getNormalizationOutputFile(record.file);
                        const auto inPlace = output == record.file;
-                       return OutputCandidate {.output = std::move(output), .record = &record, .inPlace = inPlace};
+                       return OutputCandidate {.output = std::move(output), .record = record, .inPlace = inPlace};
                    })
         | std::ranges::to<std::vector>();
 
@@ -298,7 +299,7 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
             return lhs.inPlace;
         }
 
-        return lhs.record->file.getFullPathName() < rhs.record->file.getFullPathName();
+        return lhs.record.get().file.getFullPathName() < rhs.record.get().file.getFullPathName();
     });
 
     std::unordered_set<juce::String> claimedOutputs;
@@ -306,7 +307,7 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
 
     std::unordered_set<juce::String> visitedSources;
     for (const auto& candidate : ordered) {
-        const auto& sourcePath = candidate.record->file.getFullPathName();
+        const auto& sourcePath = candidate.record.get().file.getFullPathName();
         if (!visitedSources.insert(sourcePath).second) {
             continue;
         }
@@ -373,9 +374,9 @@ std::expected<LinearGain, juce::String> getNormalizationGain(
 /// so for example 32-bit float sources are written as 24-bit.
 int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader)
 {
-    auto* writerFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
+    const auto writerFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
     const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, reader, record.file);
-    return writerFormat != nullptr ? resolveWriterBitDepth(*writerFormat, preferredBitDepth) : preferredBitDepth;
+    return writerFormat ? resolveWriterBitDepth(writerFormat->get(), preferredBitDepth) : preferredBitDepth;
 }
 
 /// Returns the user-facing error message for a record that lost a batch output conflict.
@@ -430,9 +431,9 @@ AudioNormalizationResult normalizeFile(
     }
 
     auto& formatManager = utils::threadLocalFormatManager();
-    auto* writerFormat = utils::findAiffFormat(formatManager);
+    const auto writerFormat = utils::findAiffFormat(formatManager);
 
-    if (writerFormat == nullptr) {
+    if (!writerFormat) {
         return failNormalization(file, "Unsupported audio format");
     }
 
@@ -492,7 +493,7 @@ AudioNormalizationResult normalizeFile(
                                    .withBitsPerSample(writerBitDepth)
                                    .withMetadataValues(utils::aiffWriterMetadata(reader->metadataValues));
 
-    auto writer = writerFormat->createWriterFor(outputStream, writerOptions);
+    auto writer = writerFormat->get().createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
         return failNormalization(file, getNormalizationSupportMessage(file));

@@ -176,11 +176,17 @@ bool readRequiredHistories(sqlite3_stmt& statement, AudioAnalysisRecord& record)
         && sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness)
             <= static_cast<int>(MAXIMUM_HISTORY_BYTES))
     {
-        record.shortTermLoudness = deserializeLoudnessHistory(
-            sqlite3_column_blob(&statement, analysis_column::shortTermLoudness),
-            static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness)),
-            record
-        );
+        // SQLite owns this nullable blob until the next step or reset. Reject null before forming a byte span.
+        if (const auto* data
+            = static_cast<const std::byte*>(sqlite3_column_blob(&statement, analysis_column::shortTermLoudness)))
+        {
+            record.shortTermLoudness = deserializeLoudnessHistory(
+                std::span(
+                    data, static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness))
+                ),
+                record
+            );
+        }
     }
     if (!record.shortTermLoudness) {
         utils::logWarn(

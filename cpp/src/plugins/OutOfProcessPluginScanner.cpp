@@ -31,13 +31,9 @@ struct PluginScanResponse {
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
 
 /// Adds the plugin descriptions in a worker reply to the scan results, skipping entries that do not parse.
-void addDescriptions(const juce::XmlElement* reply, juce::OwnedArray<juce::PluginDescription>& result)
+void addDescriptions(const juce::XmlElement& reply, juce::OwnedArray<juce::PluginDescription>& result)
 {
-    if (reply == nullptr) {
-        return;
-    }
-
-    for (const auto* element : reply->getChildIterator()) {
+    for (const auto* element : reply.getChildIterator()) {
         if (auto description = std::make_unique<juce::PluginDescription>(); description->loadFromXml(*element)) {
             result.add(std::move(description));
         }
@@ -246,7 +242,9 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
                 return false;
 
             case PluginScanResponseState::gotResult:
-                addDescriptions(xml.get(), result);
+                if (xml != nullptr) {
+                    addDescriptions(*xml, result);
+                }
                 // A worker that went away after replying is relaunched for the next plugin.
                 if (worker->hasLostConnection()) {
                     worker.reset();

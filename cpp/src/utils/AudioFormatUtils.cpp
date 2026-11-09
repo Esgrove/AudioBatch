@@ -3,6 +3,7 @@
 #include "utils/AudioFormatUtils.h"
 
 #include "utils/FileUtils.h"
+#include "utils/OptionalRef.h"
 #include "utils/StringFormat.h"
 #include <unordered_map>
 
@@ -13,6 +14,7 @@
 #include <memory>
 #include <mpegfile.h>
 #include <mpegheader.h>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <utility>
@@ -105,14 +107,17 @@ juce::AudioFormatManager& threadLocalFormatManager()
     return formatManager;
 }
 
-/// Returns the AIFF format registered in the manager, or nullptr when this build has none.
-juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager)
+/// Borrows the AIFF format owned by the manager, or returns nothing when this build has none.
+/// The reference stays valid until the manager removes its registered formats.
+OptionalRef<juce::AudioFormat> findAiffFormat(const juce::AudioFormatManager& formatManager)
 {
     if (auto* format = formatManager.findFormatForFileExtension("aif"); format != nullptr) {
-        return format;
+        return *format;
     }
-
-    return formatManager.findFormatForFileExtension("aiff");
+    if (auto* format = formatManager.findFormatForFileExtension("aiff"); format != nullptr) {
+        return *format;
+    }
+    return std::nullopt;
 }
 
 /// Opens an audio reader and corrects the estimated length of MPEG-1 Layer III files without a VBR header.
