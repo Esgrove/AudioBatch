@@ -885,6 +885,92 @@ async fn integration_keyboard_thumb_focus_disabled_gain_and_root_shortcuts(cx: &
     cx.read(|cx| assert!(workflow.view.read(cx).settings_window.is_some()));
 }
 
+/// The overhanging half of an endpoint thumb focuses its own slider before subsequent keyboard input.
+#[gpui_kit::test]
+async fn integration_keyboard_endpoint_thumb_press_focuses_its_slider(cx: &mut TestAppContext) {
+    let workflow = Workflow::new(cx);
+    let source = workflow.copy("sine_stereo_44100_16.wav", "endpoint-focus.wav");
+    workflow.add(vec![source.clone()], cx);
+    workflow.idle(cx).await;
+    workflow.select(&source, cx);
+    for (id, label, other, bound, next) in [
+        (
+            control_ids::ZOOM_TRACK,
+            control_ids::ZOOM_LABEL,
+            control_ids::GAIN_TRACK,
+            "home",
+            "right",
+        ),
+        (
+            control_ids::ZOOM_TRACK,
+            control_ids::ZOOM_LABEL,
+            control_ids::GAIN_TRACK,
+            "end",
+            "left",
+        ),
+        (
+            control_ids::GAIN_TRACK,
+            control_ids::GAIN_LABEL,
+            control_ids::ZOOM_TRACK,
+            "home",
+            "right",
+        ),
+        (
+            control_ids::GAIN_TRACK,
+            control_ids::GAIN_LABEL,
+            control_ids::ZOOM_TRACK,
+            "end",
+            "left",
+        ),
+    ] {
+        let press = press_slider(&workflow, id, 0.5, cx);
+        release_slider(&workflow, press, cx);
+        workflow.menu_key(bound, cx);
+        let press = press_slider(&workflow, other, 0.5, cx);
+        release_slider(&workflow, press, cx);
+        let before = cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            (
+                view.zoom_slider.read(cx).value().start(),
+                view.gain_slider.read(cx).value().start(),
+            )
+        });
+        cx.update_window(workflow.window, |_, window, cx| {
+            let thumb = window.within(id).find(("slider-thumb", 0_u32)).bounds();
+            let slider = window.find_by_label(label).bounds();
+            let x = if bound == "home" {
+                thumb.left() + thumb.size.width * 0.25
+            } else {
+                thumb.right() - thumb.size.width * 0.25
+            };
+            assert!(
+                x < slider.left() || x > slider.right(),
+                "press must be outside the semantic track"
+            );
+            let position = point(x, thumb.center().y);
+            window.pointer_down(position, MouseButton::Left, cx);
+            window.pointer_up(position, MouseButton::Left, cx);
+            assert_eq!(window.find_by_label(label).focused(), Some(true));
+        })
+        .expect("endpoint thumb owns focus even outside the track");
+        workflow.menu_key(next, cx);
+        cx.read(|cx| {
+            let view = workflow.view.read(cx);
+            let after = (
+                view.zoom_slider.read(cx).value().start(),
+                view.gain_slider.read(cx).value().start(),
+            );
+            if id == control_ids::ZOOM_TRACK {
+                assert!((after.0 - before.0).abs() > 0.001);
+                assert!((after.1 - before.1).abs() < 0.001);
+            } else {
+                assert!((after.1 - before.1).abs() > 0.001);
+                assert!((after.0 - before.0).abs() < 0.001);
+            }
+        });
+    }
+}
+
 /// Zoom and both target modes share a keyboard contract while disabled targets stay out of Tab traversal.
 #[gpui_kit::test]
 fn integration_keyboard_zoom_and_targets_follow_focus_modes_and_disabled_state(cx: &mut TestAppContext) {
