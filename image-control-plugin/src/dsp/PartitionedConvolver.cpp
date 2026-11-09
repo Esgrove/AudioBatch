@@ -50,7 +50,7 @@ void interleaveComplex(const std::span<const float> split, const std::span<float
 
 /// Transforms every partition of every kernel.
 /// All kernels must have the same length, and the partition size must be a power of two.
-/// Allocates, so it runs off the audio thread.
+/// Allocates during preparation or kernel design, never in a real-time processing callback.
 KernelSpectra::KernelSpectra(const std::span<const std::vector<float>> kernels, const int partitionSize) :
     kernelCount(kernels.size())
 {

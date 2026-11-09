@@ -23,8 +23,6 @@ constexpr std::size_t DRAIN_CHUNK {4096};
 /// Longest wait between two passes when no display refresh wakes the worker, in milliseconds,
 /// so the ring keeps draining while the editor's refreshes stall.
 constexpr int WAKE_TIMEOUT_MILLISECONDS {50};
-/// Longest wait for the thread to finish when the worker stops, in milliseconds.
-constexpr int STOP_TIMEOUT_MILLISECONDS {2000};
 }  // namespace
 
 /// Creates the worker for the processor's analyzer ring and the renderer. The thread starts with start.
@@ -33,7 +31,8 @@ SpectrogramWorker::SpectrogramWorker(StereoSampleFifo& fifo, SpectrogramRenderer
     analyzerFifo(fifo),
     spectrogramRenderer(renderer),
     leftScratch(DRAIN_CHUNK, 0.0F),
-    rightScratch(DRAIN_CHUNK, 0.0F)
+    rightScratch(DRAIN_CHUNK, 0.0F),
+    epochScratch(DRAIN_CHUNK, 0)
 {
     analyzer.setFrameCallback([this](const std::span<const SpectralPoint> points, const double frameSeconds) {
         particleBuilder.addFrame(points, frameSeconds);
@@ -46,17 +45,40 @@ SpectrogramWorker::~SpectrogramWorker()
     stop();
 }
 
+/// Returns the last completed synchronization ticket without touching the SPSC consumer index.
+std::uint64_t SpectrogramWorker::completedPassCount() const noexcept
+{
+    return completedPasses.load(std::memory_order_acquire);
+}
+
+/// Requests a pass and returns a ticket acknowledged only after the worker finishes that pass.
+std::uint64_t SpectrogramWorker::requestPass() noexcept
+{
+    const auto ticket = requestedPasses.fetch_add(1, std::memory_order_acq_rel) + 1;
+    notify();
+    return ticket;
+}
+
 /// Asks the worker to clear the analysis and the picture before its next particles,
 /// such as after switching the analyzer tap.
 void SpectrogramWorker::requestClear() noexcept
 {
-    requestedClears.fetch_add(1, std::memory_order_relaxed);
+    analyzerFifo.beginEpoch();
+    requestedClears.fetch_add(1, std::memory_order_release);
+    notify();
 }
 
 /// Hands the latest settings to the worker, which applies them on its next pass.
 void SpectrogramWorker::setSettings(const SpectrogramAnalysisSettings& newSettings)
 {
     const std::scoped_lock lock(settingsMutex);
+    if (!juce::approximatelyEqual(settings.sampleRate, newSettings.sampleRate)) {
+        // Source rate metadata is authoritative, but settings-only clients still need a queue boundary.
+        analyzerFifo.beginEpoch();
+    }
+    if (settings.analyze != newSettings.analyze) {
+        analyzerFifo.beginEpoch();
+    }
     settings = newSettings;
 }
 
@@ -71,7 +93,9 @@ void SpectrogramWorker::stop()
 {
     signalThreadShouldExit();
     notify();
-    stopThread(STOP_TIMEOUT_MILLISECONDS);
+    // Joining indefinitely is safe because each pass is bounded and checks the exit flag.
+    // A timed stopThread can forcibly kill a thread while it owns settings or renderer locks.
+    waitForThreadToExit(-1);
 }
 
 /// Wakes the worker for a pass, once per display refresh.
@@ -83,13 +107,14 @@ void SpectrogramWorker::wake()
 /// Discards the audio that queued while no editor was open, then runs a pass whenever it is woken.
 void SpectrogramWorker::run()
 {
-    drainQueuedAudio(false);
+    analyzerFifo.beginEpoch();
     while (!threadShouldExit()) {
-        wait(WAKE_TIMEOUT_MILLISECONDS);
-        if (threadShouldExit()) {
-            return;
-        }
+        const auto ticket = requestedPasses.load(std::memory_order_acquire);
         processQueuedAudio();
+        completedPasses.store(ticket, std::memory_order_release);
+        if (requestedPasses.load(std::memory_order_acquire) == ticket && !threadShouldExit()) {
+            wait(WAKE_TIMEOUT_MILLISECONDS);
+        }
     }
 }
 
@@ -97,20 +122,29 @@ void SpectrogramWorker::run()
 void SpectrogramWorker::processQueuedAudio()
 {
     SpectrogramAnalysisSettings current;
+    AnalyzerEpoch epoch = 0;
     {
         const std::scoped_lock lock(settingsMutex);
         current = settings;
+        epoch = analyzerFifo.getEpoch();
     }
-    bool clear = false;
-    if (!juce::approximatelyEqual(current.sampleRate, preparedSampleRate)) {
-        preparedSampleRate = current.sampleRate;
-        analyzer.prepare(current.sampleRate);
-        particleBuilder.resetLevel();
+    if (!StereoSampleFifo::isStable(epoch)) {
+        return;
+    }
+    const auto sourceRate = analyzerFifo.getSampleRate();
+    if (analyzerFifo.getEpoch() != epoch) {
+        return;
+    }
+    bool clear = epoch != appliedEpoch;
+    if (!juce::approximatelyEqual(sourceRate, preparedSampleRate)) {
+        preparedSampleRate = sourceRate;
+        analyzer.prepare(sourceRate);
         clear = true;
     }
-    const std::uint32_t clears = requestedClears.load(std::memory_order_relaxed);
-    if (clears != appliedClears) {
+    const std::uint32_t clears = requestedClears.load(std::memory_order_acquire);
+    if (clears != appliedClears || clear) {
         appliedClears = clears;
+        appliedEpoch = epoch;
         analyzer.clear();
         particleBuilder.resetLevel();
         clear = true;
@@ -122,9 +156,39 @@ void SpectrogramWorker::processQueuedAudio()
     particleBuilder.setContrast(current.contrast);
 
     particleBuilder.clear();
-    drainQueuedAudio(current.analyze);
+    drainQueuedAudio(current.analyze, epoch);
+    if (analyzerFifo.getEpoch() != epoch) {
+        // A source boundary crossed during analysis. Never publish this generation under the new settings.
+        analyzer.clear();
+        particleBuilder.clear();
+        particleBuilder.resetLevel();
+        spectrogramRenderer.submitParticles({}, true);
+        return;
+    }
     if (clear || !particleBuilder.particles().empty()) {
         spectrogramRenderer.submitParticles(particleBuilder.particles(), clear);
+    }
+}
+
+/// Feeds only contiguous spans captured under the current source configuration to the analyzer.
+void SpectrogramWorker::analyzeCurrentEpoch(const std::size_t frames, const AnalyzerEpoch epoch)
+{
+    std::size_t first = 0;
+    while (first < frames) {
+        while (first < frames && epochScratch[first] != epoch) {
+            ++first;
+        }
+        std::size_t last = first;
+        while (last < frames && epochScratch[last] == epoch) {
+            ++last;
+        }
+        if (last > first) {
+            analyzer.pushSamples(
+                std::span<const float>(leftScratch).subspan(first, last - first),
+                std::span<const float>(rightScratch).subspan(first, last - first)
+            );
+        }
+        first = last;
     }
 }
 
@@ -132,20 +196,21 @@ void SpectrogramWorker::processQueuedAudio()
 /// One pass takes at most a ring's worth of audio.
 /// A producer that runs faster than real time, such as an offline render or pluginval,
 /// would otherwise refill the ring as fast as it drains and keep the worker in this loop forever.
-/// What arrives during the drain waits for the next pass.
-void SpectrogramWorker::drainQueuedAudio(const bool analyze)
+/// At most a ring's capacity is examined per pass, even if the producer refills the freed slots.
+void SpectrogramWorker::drainQueuedAudio(const bool analyze, const AnalyzerEpoch epoch)
 {
     std::size_t drained {0};
-    while (drained < static_cast<std::size_t>(ANALYZER_FIFO_FRAMES)) {
-        const auto frames = static_cast<std::size_t>(analyzerFifo.pop(leftScratch, rightScratch));
+    while (drained < static_cast<std::size_t>(ANALYZER_FIFO_FRAMES) && !threadShouldExit()) {
+        if (analyzerFifo.getEpoch() != epoch) {
+            return;
+        }
+        const auto frames = static_cast<std::size_t>(analyzerFifo.pop(leftScratch, rightScratch, epochScratch));
         if (frames == 0) {
             return;
         }
         drained += frames;
         if (analyze) {
-            analyzer.pushSamples(
-                std::span<const float>(leftScratch).first(frames), std::span<const float>(rightScratch).first(frames)
-            );
+            analyzeCurrentEpoch(frames, epoch);
         }
         if (frames < DRAIN_CHUNK) {
             return;

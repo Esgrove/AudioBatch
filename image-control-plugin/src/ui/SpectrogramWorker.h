@@ -23,7 +23,8 @@ class SpectrogramRenderer;
 struct SpectrogramAnalysisSettings {
     /// Maps the level difference between the channels to the stereo position.
     StereoPositionCurve positionCurve;
-    /// Sample rate of the queued audio, in Hz.
+    /// Editor-observed sample rate in Hz, used to invalidate queued audio on settings changes.
+    /// The FIFO's source-rate metadata determines how the worker prepares its analyzer.
     double sampleRate {ANALYZER_DEFAULT_SAMPLE_RATE};
     /// Time constant of the particle fade, in seconds, which scales the particle weight.
     double persistenceSeconds {DEFAULT_PERSISTENCE_SECONDS};
@@ -40,7 +41,7 @@ struct SpectrogramAnalysisSettings {
 /// Drains the processor's analyzer ring, runs the spatial analysis, and builds the particles on its own thread,
 /// then hands them to the renderer.
 ///
-/// The editor wakes it once per display refresh, so it analyzes at the same pace as before, off the message thread.
+/// The editor wakes it once per display refresh, keeping analysis off the message thread.
 /// It also wakes on its own now and then, so the ring keeps draining if the display refreshes stall.
 /// The analyzer and the particle builder belong to the worker thread alone.
 /// The editor talks to it only through setSettings, requestClear, and wake, which are thread safe.
@@ -56,6 +57,9 @@ public:
     SpectrogramWorker& operator=(const SpectrogramWorker&) = delete;
     SpectrogramWorker& operator=(SpectrogramWorker&&) = delete;
 
+    [[nodiscard]] std::uint64_t completedPassCount() const noexcept;
+    [[nodiscard]] std::uint64_t requestPass() noexcept;
+
     void requestClear() noexcept;
     void setSettings(const SpectrogramAnalysisSettings& newSettings);
     void start();
@@ -63,7 +67,8 @@ public:
     void wake();
 
 private:
-    void drainQueuedAudio(bool analyze);
+    void analyzeCurrentEpoch(std::size_t frames, AnalyzerEpoch epoch);
+    void drainQueuedAudio(bool analyze, AnalyzerEpoch epoch);
     void processQueuedAudio();
     void run() override;
 
@@ -80,6 +85,8 @@ private:
     std::vector<float> leftScratch;
     /// Scratch buffer the right channel of the ring is drained into.
     std::vector<float> rightScratch;
+    /// Source generations copied under the same SPSC read scope as the samples.
+    std::vector<AnalyzerEpoch> epochScratch;
 
     /// Guards settings.
     std::mutex settingsMutex;
@@ -90,6 +97,12 @@ private:
 
     /// Number of clears the worker carried out. Used only on the worker thread.
     std::uint32_t appliedClears {0};
+    /// Latest requested synchronization ticket, captured before a worker pass.
+    std::atomic<std::uint64_t> requestedPasses {0};
+    /// Last completed ticket, published only after particles and clears reach the renderer.
+    std::atomic<std::uint64_t> completedPasses {0};
+    /// Source generation the analyzer history belongs to, used on the worker thread only.
+    AnalyzerEpoch appliedEpoch {0};
     /// Sample rate the analyzer was last prepared for, or 0 before the first preparation.
     double preparedSampleRate {0.0};
 };

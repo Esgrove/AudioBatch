@@ -195,11 +195,11 @@ TEST(Analyzer, SineWidthIsEvenAcrossTheBass)
         const auto sine = makeSine(frequency, 0.5F, 48'000);
         const auto points = analyze(sine, sine);
         const auto tone = static_cast<float>(frequency);
-        const float threshold = loudestBetween(points, tone / 2.0F, tone * 2.0F).level * std::pow(10.0F, -3.6F);
+        const float threshold = loudestBetween(points, tone * 0.5F, tone * 2.0F).level * std::pow(10.0F, -3.6F);
         float lowest = tone;
         float highest = tone;
         for (const auto& point : points) {
-            if (point.frequency > tone / 2.0F && point.frequency < tone * 2.0F && point.level >= threshold) {
+            if (point.frequency > tone * 0.5F && point.frequency < tone * 2.0F && point.level >= threshold) {
                 lowest = std::min(lowest, point.frequency);
                 highest = std::max(highest, point.frequency);
             }

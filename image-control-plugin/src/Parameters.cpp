@@ -3,12 +3,22 @@
 
 #include "Parameters.h"
 
+#include <system_error>
+
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
 
 namespace esgrove::image_control
 {
@@ -39,6 +49,180 @@ constexpr float TENTHS_PER_DECIBEL {10.0F};
 /// Step of the gain parameters in dB.
 constexpr float GAIN_STEP_DB {0.01F};
 
+/// Text grammar and host metadata of a finite parameter.
+enum class ParameterKind : std::uint8_t { frequency, gain, pan, boolean };
+
+/// Parses a whole finite numeric token, rejecting empty input, trailing junk, and overflow.
+std::optional<float> finiteNumber(const juce::String& text)
+{
+    const auto token = text.trim().toStdString();
+    if (token.empty()) {
+        return std::nullopt;
+    }
+    const std::span<const char> characters(token.data(), token.size());
+    const auto number = characters.front() == '+' ? characters.subspan(1) : characters;
+    const auto* last = std::to_address(number.end());
+    float result = 0.0F;
+    const auto parsed = std::from_chars(number.data(), last, result);
+    if (parsed.ec != std::errc {} || parsed.ptr != last || !std::isfinite(result)) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+/// Parses an optional pan side or percent suffix without accepting trailing junk.
+std::optional<float> panValueFromText(juce::String token)
+{
+    if (token == "c") {
+        return 0.0F;
+    }
+    if (token.endsWithChar('l') || token.endsWithChar('r')) {
+        const bool left = token.endsWithChar('l');
+        const auto value = finiteNumber(token.dropLastCharacters(1));
+        if (!value) {
+            return std::nullopt;
+        }
+        return left ? -std::abs(*value) : std::abs(*value);
+    }
+    if (token.endsWithChar('%')) {
+        token = token.dropLastCharacters(1);
+    }
+    return finiteNumber(token);
+}
+
+/// Parses the supported units and pan notation without letting invalid text become a zero value.
+std::optional<float> parameterValueFromText(const juce::String& text, const ParameterKind kind)
+{
+    auto token = text.trim().toLowerCase();
+    float multiplier = 1.0F;
+    if (kind == ParameterKind::frequency) {
+        if (token.endsWith("khz")) {
+            multiplier = HERTZ_PER_KILOHERTZ;
+            token = token.dropLastCharacters(3);
+        } else if (token.endsWith("hz")) {
+            token = token.dropLastCharacters(2);
+        }
+    } else if (kind == ParameterKind::gain) {
+        if (token.endsWith("db")) {
+            token = token.dropLastCharacters(2).trim();
+        }
+        if (token == "-inf" || token == "-infinity") {
+            return BAND_GAIN_MIN_DB;
+        }
+    } else if (kind == ParameterKind::pan) {
+        return panValueFromText(token);
+    } else {
+        if (token == "on" || token == "true") {
+            return 1.0F;
+        }
+        if (token == "off" || token == "false") {
+            return 0.0F;
+        }
+    }
+    const auto value = finiteNumber(token);
+    if (!value || !std::isfinite(*value * multiplier)) {
+        return std::nullopt;
+    }
+    return *value * multiplier;
+}
+
+/// Parameter boundary that rejects invalid host values and preserves the current value on invalid text.
+/// The raw value read by APVTS always comes from this finite atomic, including after a rejected notification.
+class FiniteParameter final : public juce::RangedAudioParameter
+{
+public:
+    /// Keeps the public ids, version hints, ranges, and display attributes of the host parameter.
+    FiniteParameter(
+        const juce::ParameterID& parameterId,
+        const juce::String& parameterName,
+        juce::NormalisableRange<float> range,
+        const float defaultValue,
+        const juce::AudioParameterFloatAttributes& attributes,
+        const ParameterKind parameterKind
+    ) :
+        juce::RangedAudioParameter(parameterId, parameterName, attributes.getAudioProcessorParameterWithIDAttributes()),
+        valueRange(std::move(range)),
+        formatter(attributes.getStringFromValueFunction()),
+        value(defaultValue),
+        kind(parameterKind),
+        initialValue(defaultValue)
+    {}
+
+    /// Exposes the original range for attachments and host normalization.
+    const juce::NormalisableRange<float>& getNormalisableRange() const override
+    {
+        return valueRange;
+    }
+
+    /// Reports boolean host metadata without exposing an unsafe bool conversion of NaN.
+    bool isBoolean() const override
+    {
+        return kind == ParameterKind::boolean;
+    }
+    /// Boolean parameters are discrete. Continuous controls preserve their original host metadata.
+    bool isDiscrete() const override
+    {
+        return isBoolean();
+    }
+    /// Boolean parameters have exactly two host steps.
+    int getNumSteps() const override
+    {
+        return isBoolean() ? 2 : getDefaultNumParameterSteps();
+    }
+
+    /// Returns the finite value normalized for the host and APVTS.
+    float getValue() const override
+    {
+        return convertTo0to1(value.load(std::memory_order_relaxed));
+    }
+    /// Non-finite automation is ignored before range conversion can assert or poison DSP state.
+    void setValue(const float normalized) override
+    {
+        if (!std::isfinite(normalized)) {
+            return;
+        }
+        const auto plain = convertFrom0to1(std::clamp(normalized, 0.0F, 1.0F));
+        if (isBoolean()) {
+            value.store(plain >= 0.5F ? 1.0F : 0.0F, std::memory_order_relaxed);
+        } else {
+            value.store(plain, std::memory_order_relaxed);
+        }
+    }
+    /// Keeps the default independent of the current parameter state.
+    float getDefaultValue() const override
+    {
+        return convertTo0to1(initialValue);
+    }
+    /// Formats a finite host value using the control's units.
+    juce::String getText(const float normalized, const int length) const override
+    {
+        const auto plain
+            = std::isfinite(normalized) ? convertFrom0to1(normalized) : value.load(std::memory_order_relaxed);
+        if (isBoolean()) {
+            return plain >= 0.5F ? "On" : "Off";
+        }
+        return formatter ? formatter(plain, length) : juce::String(plain, 2);
+    }
+    /// Returns the current normalized value on rejection, so text edits do not jump to zero.
+    float getValueForText(const juce::String& text) const override
+    {
+        const auto plain = parameterValueFromText(text, kind);
+        return plain ? convertTo0to1(*plain) : getValue();
+    }
+
+private:
+    /// Range shared by host normalization and attachments.
+    juce::NormalisableRange<float> valueRange;
+    /// Unit-specific formatting without a permissive default parser.
+    std::function<juce::String(float, int)> formatter;
+    /// Finite plain value read by the host and APVTS.
+    std::atomic<float> value;
+    /// Selects units and boolean metadata.
+    ParameterKind kind;
+    /// Declared default independent of current edits.
+    float initialValue;
+};
+
 /// Formats a crossover parameter value for the host.
 juce::String formatCrossoverValue(const float frequency, const int /*maximumLength*/)
 {
@@ -68,26 +252,27 @@ juce::String formatPanValue(const float percent, const int /*maximumLength*/)
 /// and an exact unity gain is what lets the imager pass the input through bit for bit.
 float gainFromDecibels(const float decibels, const float minusInfinityDecibels)
 {
-    if (std::abs(decibels) < GAIN_STEP_DB * 0.5F) {
+    if (!std::isfinite(decibels) || std::abs(decibels) < GAIN_STEP_DB * 0.5F) {
         return 1.0F;
     }
     return juce::Decibels::decibelsToGain(decibels, minusInfinityDecibels);
 }
 
 /// Creates a gain parameter in dB with a 0 dB default.
-std::unique_ptr<juce::AudioParameterFloat> makeGainParameter(
+std::unique_ptr<FiniteParameter> makeGainParameter(
     const juce::String& parameterId,
     const juce::String& name,
     const float minDecibels,
     const float maxDecibels
 )
 {
-    return std::make_unique<juce::AudioParameterFloat>(
+    return std::make_unique<FiniteParameter>(
         juce::ParameterID {parameterId, PARAMETER_VERSION},
         name,
         gainRange(minDecibels, maxDecibels),
         0.0F,
-        juce::AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction(formatBandGain)
+        juce::AudioParameterFloatAttributes().withLabel("dB").withStringFromValueFunction(formatBandGain),
+        ParameterKind::gain
     );
 }
 }  // namespace
@@ -100,12 +285,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         layout.add(
-            std::make_unique<juce::AudioParameterFloat>(
+            std::make_unique<FiniteParameter>(
                 juce::ParameterID {crossoverParameterId(crossover), PARAMETER_VERSION},
                 CROSSOVER_NAMES.at(crossover),
                 crossoverRange(),
                 DEFAULT_CROSSOVERS.at(crossover),
-                juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(formatCrossoverValue)
+                juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(formatCrossoverValue),
+                ParameterKind::frequency
             )
         );
     }
@@ -113,29 +299,45 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         layout.add(
             makeGainParameter(midGainParameterId(band), bandName(band) + ": Mid", BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB),
             makeGainParameter(sideGainParameterId(band), bandName(band) + ": Side", BAND_GAIN_MIN_DB, BAND_GAIN_MAX_DB),
-            std::make_unique<juce::AudioParameterFloat>(
+            std::make_unique<FiniteParameter>(
                 juce::ParameterID {panParameterId(band), PAN_PARAMETER_VERSION},
                 bandName(band) + ": Pan",
                 panRange(),
                 0.0F,
-                juce::AudioParameterFloatAttributes()
-                    .withStringFromValueFunction(formatPanValue)
-                    .withValueFromStringFunction(panPercentFromText)
+                juce::AudioParameterFloatAttributes().withStringFromValueFunction(formatPanValue),
+                ParameterKind::pan
             )
         );
         layout.add(
-            std::make_unique<juce::AudioParameterBool>(
-                juce::ParameterID {soloParameterId(band), SOLO_PARAMETER_VERSION}, bandName(band) + ": Solo", false
+            std::make_unique<FiniteParameter>(
+                juce::ParameterID {soloParameterId(band), SOLO_PARAMETER_VERSION},
+                bandName(band) + ": Solo",
+                juce::NormalisableRange<float>(0.0F, 1.0F, 1.0F),
+                0.0F,
+                juce::AudioParameterFloatAttributes(),
+                ParameterKind::boolean
             )
         );
     }
     layout.add(makeGainParameter(OUTPUT_GAIN_ID, "Output Gain", OUTPUT_GAIN_MIN_DB, OUTPUT_GAIN_MAX_DB));
     layout.add(
-        std::make_unique<juce::AudioParameterBool>(juce::ParameterID {BYPASS_ID, PARAMETER_VERSION}, "Bypass", false)
+        std::make_unique<FiniteParameter>(
+            juce::ParameterID {BYPASS_ID, PARAMETER_VERSION},
+            "Bypass",
+            juce::NormalisableRange<float>(0.0F, 1.0F, 1.0F),
+            0.0F,
+            juce::AudioParameterFloatAttributes(),
+            ParameterKind::boolean
+        )
     );
     layout.add(
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID {DELTA_ID, DELTA_PARAMETER_VERSION}, "Delta", false
+        std::make_unique<FiniteParameter>(
+            juce::ParameterID {DELTA_ID, DELTA_PARAMETER_VERSION},
+            "Delta",
+            juce::NormalisableRange<float>(0.0F, 1.0F, 1.0F),
+            0.0F,
+            juce::AudioParameterFloatAttributes(),
+            ParameterKind::boolean
         )
     );
     return layout;
@@ -214,7 +416,9 @@ Crossovers orderCrossovers(const Crossovers& requested)
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         const auto crossoversAbove = static_cast<float>(CROSSOVER_COUNT - 1 - crossover);
         const float upperLimit = MAX_FREQUENCY / std::pow(MIN_CROSSOVER_RATIO, crossoversAbove);
-        ordered.at(crossover) = std::clamp(requested.at(crossover), lowerLimit, upperLimit);
+        const auto frequency
+            = std::isfinite(requested.at(crossover)) ? requested.at(crossover) : DEFAULT_CROSSOVERS.at(crossover);
+        ordered.at(crossover) = std::clamp(frequency, lowerLimit, upperLimit);
         lowerLimit = ordered.at(crossover) * MIN_CROSSOVER_RATIO;
     }
     return ordered;
@@ -247,7 +451,7 @@ juce::String formatPan(const float percent)
 /// which lets the imager pass the input through bit for bit.
 float panFromPercent(const float percent)
 {
-    if (std::abs(percent) < PAN_STEP_PERCENT * 0.5F) {
+    if (!std::isfinite(percent) || std::abs(percent) < PAN_STEP_PERCENT * 0.5F) {
         return 0.0F;
     }
     return std::clamp(percent / PAN_MAX_PERCENT, -1.0F, 1.0F);
@@ -256,16 +460,11 @@ float panFromPercent(const float percent)
 /// Parses a pan typed by the user into percent:
 /// `C` is the centre, a number followed by `L` or `R` is that far to the left or right,
 /// and a plain number is a signed percent, negative to the left.
+/// Invalid text returns NaN for callers to reject. The parameter parser preserves the previous value instead.
 float panPercentFromText(const juce::String& text)
 {
-    const auto trimmed = text.trim().toUpperCase();
-    float percent = trimmed.getFloatValue();
-    if (trimmed.endsWithChar('L')) {
-        percent = -std::abs(percent);
-    } else if (trimmed.endsWithChar('R')) {
-        percent = std::abs(percent);
-    }
-    return std::clamp(percent, -PAN_MAX_PERCENT, PAN_MAX_PERCENT);
+    const auto percent = parameterValueFromText(text, ParameterKind::pan);
+    return percent ? std::clamp(*percent, -PAN_MAX_PERCENT, PAN_MAX_PERCENT) : std::numeric_limits<float>::quiet_NaN();
 }
 
 /// Converts a band gain from dB to a linear gain, with the lowest value of the range turning the signal off.
@@ -327,6 +526,9 @@ int sampleRateDoublings(const double sampleRate, const double referenceSampleRat
 /// Sets a parameter to a plain value in a host change gesture of its own.
 void setParameterInGesture(juce::RangedAudioParameter& parameter, const float value)
 {
+    if (!std::isfinite(value)) {
+        return;
+    }
     parameter.beginChangeGesture();
     parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
     parameter.endChangeGesture();

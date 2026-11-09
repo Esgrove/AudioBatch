@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "dsp/BandCorrelation.h"
 #include "dsp/CrossoverDesign.h"
 #include "dsp/PartitionedConvolver.h"
 #include "Parameters.h"
@@ -72,13 +73,17 @@ public:
     MultibandImager& operator=(const MultibandImager&) = delete;
     MultibandImager& operator=(MultibandImager&&) = delete;
 
+    [[nodiscard]] BandCorrelations getBandCorrelations() const noexcept;
     [[nodiscard]] Crossovers getActiveCrossovers() const;
 
+    [[nodiscard]] double getTailLengthSeconds() const noexcept;
     [[nodiscard]] int getLatencySamples() const;
 
     void prepare(double newSampleRate, int newChannelCount, const Crossovers& crossovers);
     void process(juce::AudioBuffer<float>& buffer);
     void release();
+    void reset() noexcept;
+    void setCorrelationEnabled(bool enabled) noexcept;
     void setCrossovers(const Crossovers& crossovers, bool offline);
     void setDelta(bool delta);
     void setGains(const BandGains& midGains, const BandGains& sideGains, float outputGain);
@@ -97,6 +102,10 @@ private:
     void lowpassSignal(PartitionedConvolver& convolver, std::span<std::vector<float>> outputs, bool crossfade);
     void mixPartition(int channels);
     void processPartition();
+    void updateCorrelationPartition();
+
+    /// Audio-thread-owned correlation history with atomically published independent readings.
+    BandCorrelation correlation;
 
     /// Ring buffer per channel that delays the raw input by the kernel half length.
     juce::AudioBuffer<float> delayLine;
@@ -158,6 +167,8 @@ private:
     /// Set by a designer when the spare slot holds new kernels, and cleared by the audio thread after switching.
     std::atomic<bool> switchPending {false};
 
+    /// Whether this processing pass computes band correlation, set only by the audio thread.
+    bool correlationEnabled {false};
     /// Sample rate the imager was prepared for.
     double sampleRate {REFERENCE_SAMPLE_RATE};
     /// Kernel slot the audio thread uses.

@@ -33,9 +33,6 @@ constexpr double TONE_FREQUENCY {1000.0};
 constexpr float TONE_AMPLITUDE {0.5F};
 /// Longest wait for the worker in the tests.
 constexpr std::chrono::seconds WAIT_LIMIT {5};
-/// Time the worker gets to discard the audio that queued before it started.
-constexpr std::chrono::milliseconds STARTUP_TIME {200};
-
 /// Returns a sine tone at the analyzer's default sample rate.
 std::vector<float> tone(const std::size_t frames)
 {
@@ -63,12 +60,11 @@ bool wakeUntil(SpectrogramWorker& worker, const std::function<bool()>& condition
     return condition();
 }
 
-/// Returns whether the ring is empty, leaving it so if it is. Pops at most one frame.
-bool ringIsEmpty(StereoSampleFifo& fifo)
+/// Waits for a completed worker pass rather than racing its SPSC read index with a second consumer.
+bool finishPass(SpectrogramWorker& worker)
 {
-    std::vector<float> left(1);
-    std::vector<float> right(1);
-    return fifo.pop(left, right) == 0;
+    const auto ticket = worker.requestPass();
+    return wakeUntil(worker, [&worker, ticket] { return worker.completedPassCount() >= ticket; });
 }
 }  // namespace
 
@@ -80,7 +76,7 @@ TEST(SpectrogramWorker, QueuedAudioBecomesParticles)
     SpectrogramWorker worker(fifo, renderer);
     worker.setSettings({.positionCurve = StereoPositionCurve {}, .analyze = true});
     worker.start();
-    std::this_thread::sleep_for(STARTUP_TIME);
+    ASSERT_TRUE(finishPass(worker));
 
     const auto samples = tone(QUEUED_FRAMES);
     fifo.push(samples, samples);
@@ -96,13 +92,69 @@ TEST(SpectrogramWorker, AudioIsDiscardedWhileAnalysisIsOff)
     SpectrogramWorker worker(fifo, renderer);
     worker.setSettings({.positionCurve = StereoPositionCurve {}, .analyze = false});
     worker.start();
-    std::this_thread::sleep_for(STARTUP_TIME);
+    ASSERT_TRUE(finishPass(worker));
 
     const auto samples = tone(QUEUED_FRAMES);
     fifo.push(samples, samples);
-    EXPECT_TRUE(wakeUntil(worker, [&fifo] { return ringIsEmpty(fifo); }));
+    ASSERT_TRUE(finishPass(worker));
+    // Filling the entire usable capacity proves that the worker drained the previous block.
+    const std::vector<float> full(static_cast<std::size_t>(ANALYZER_FIFO_FRAMES - 1), 0.0F);
+    EXPECT_EQ(fifo.push(full, full), ANALYZER_FIFO_FRAMES - 1);
+    ASSERT_TRUE(finishPass(worker));
     worker.stop();
     EXPECT_EQ(renderer.pendingParticleCount(), 0U);
+}
+
+TEST(SpectrogramWorker, SourceChangesDiscardQueuedAudioAndAnalyzerHistory)
+{
+    for (const bool changeRate : {false, true}) {
+        SCOPED_TRACE(changeRate);
+        StereoSampleFifo fifo;
+        juce::OpenGLContext context;
+        SpectrogramRenderer renderer(context);
+        SpectrogramWorker worker(fifo, renderer);
+        worker.start();
+        ASSERT_TRUE(finishPass(worker));
+        const auto samples = tone(QUEUED_FRAMES);
+        fifo.push(samples, samples);
+        ASSERT_TRUE(finishPass(worker));
+        ASSERT_GT(renderer.pendingParticleCount(), 0U);
+
+        // The queue and analyzer both contain the old source when the configuration changes.
+        fifo.push(samples, samples);
+        if (changeRate) {
+            fifo.setSampleRate(96'000.0);
+            worker.setSettings({.positionCurve = StereoPositionCurve {}, .sampleRate = 96'000.0});
+        } else {
+            fifo.setTap(false);
+        }
+        ASSERT_TRUE(finishPass(worker));
+        EXPECT_EQ(renderer.pendingParticleCount(), 0U);
+        const std::vector<float> silence(QUEUED_FRAMES, 0.0F);
+        fifo.push(silence, silence);
+        ASSERT_TRUE(finishPass(worker));
+        EXPECT_EQ(renderer.pendingParticleCount(), 0U);
+        fifo.push(samples, samples);
+        ASSERT_TRUE(finishPass(worker));
+        EXPECT_GT(renderer.pendingParticleCount(), 0U);
+        worker.stop();
+    }
+}
+
+TEST(SpectrogramWorker, ClearRejectsAlreadyQueuedAudio)
+{
+    StereoSampleFifo fifo;
+    juce::OpenGLContext context;
+    SpectrogramRenderer renderer(context);
+    SpectrogramWorker worker(fifo, renderer);
+    worker.start();
+    ASSERT_TRUE(finishPass(worker));
+    const auto samples = tone(QUEUED_FRAMES);
+    fifo.push(samples, samples);
+    worker.requestClear();
+    ASSERT_TRUE(finishPass(worker));
+    EXPECT_EQ(renderer.pendingParticleCount(), 0U);
+    worker.stop();
 }
 
 TEST(SpectrogramWorker, StopsWhileAProducerFloodsTheRing)

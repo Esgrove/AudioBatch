@@ -42,7 +42,8 @@ double blackmanHarris(const int index, const int length)
 /// Designs a lowpass kernel of length 2 × halfLength + 1 for a crossover at the given frequency.
 /// The kernel is symmetric around its centre tap, so it delays every frequency by halfLength samples,
 /// and its taps sum to exactly one in double precision before rounding to float.
-/// Allocates, so it runs on the message thread or the kernel design thread, never in the audio callback.
+/// Allocates, so it runs during preparation or on the kernel design thread during real-time playback.
+/// An explicitly non-real-time render may design kernels synchronously in its processing callback.
 std::vector<float> designLowpassKernel(const double crossover, const double sampleRate, const int halfLength)
 {
     const int length = 2 * halfLength + 1;
