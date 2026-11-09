@@ -29,7 +29,7 @@ This document explains ownership, signal flow, concurrency, and the numerical co
 The code is divided by responsibility rather than by plugin format:
 
 - [`ImageControlProcessor.*`](src/ImageControlProcessor.h) owns the host-facing lifecycle, parameter state,
-  analyzer tap, transient monitoring controls, and state synchronization.
+  analyzer tap, correlation monitoring control, and state synchronization.
 - [`Parameters.*`](src/Parameters.h) defines stable parameter IDs, version hints, ranges, defaults,
   display conversions, finite-value parsing, crossover ordering, and editor-setting property names.
 - [`dsp/`](src/dsp/MultibandImager.h) contains filter design, partitioned convolution, imaging, and band correlation.
@@ -53,8 +53,8 @@ The editor refers to its processor, which must outlive it.
 The main execution domains are:
 
 - **Host processing thread.** Reads parameter atomics once per host block, sets DSP targets,
-  processes arbitrary block lengths, pushes the chosen analysis tap, and applies Mono audition.
-  It owns all mutable convolution history, gain ramps, correlation moments, and monitor smoothing.
+  processes arbitrary block lengths, applies the final Mono fold, and pushes the chosen analysis tap.
+  It owns all mutable convolution history, gain ramps, correlation moments, and Mono smoothing.
 - **Kernel design thread.** A low-priority `KernelDesignThread` polls crossover requests every 20 ms.
   It allocates and transforms replacement kernels into a spare slot.
 - **JUCE message thread.** Owns components, parameter attachments, live editor settings,
@@ -76,7 +76,7 @@ Neither worker uses timeout-based forcible termination.
 ## Host parameters and controls
 
 APVTS owns three crossover parameters and each band's Mid, Side, Pan, and Solo parameters,
-plus output gain, Bypass, and Delta.
+plus output gain, Bypass, Delta, and Mono.
 Version hints distinguish parameter generations for hosts that use ordering hints, including Audio Unit hosts.
 Existing IDs and version hints are persistence and automation contracts, not refactoring details.
 
@@ -122,7 +122,7 @@ Leftward pan mirrors this operation.
 A fully panned shared signal can therefore peak 6 dB higher in the receiving channel.
 The processor neither limits nor clips floating-point output to prevent that boost.
 
-Gain, Pan, Solo, output gain, and Delta transitions use linear 20 ms ramps.
+Gain, Pan, Solo, output gain, Delta, and Mono transitions use linear 20 ms ramps.
 When all Pans are centered, the mixer sums Mid and Side bands separately and reconstructs once.
 Otherwise it reconstructs and pans each band before summing.
 
@@ -199,15 +199,17 @@ Both the exposed host bypass parameter and `processBlockBypassed` use this path.
 
 Delta subtracts an aligned dry reference from the gain-adjusted result.
 With solos active, its dry reference contains only the selected bands.
-Mono audition runs last in `ImageControlProcessor`, after the Post analyzer tap.
-It smoothly folds the final monitored output to \((L+R)/2\) in both channels, including when bypassed.
-It is transient per-instance state, not a saved or automatable processing parameter.
-Offline callbacks explicitly ignore it, so that exclusion depends on the host reporting non-real-time rendering.
+Mono runs last in `ImageControlProcessor`, before the Post analyzer tap.
+It smoothly folds the full processed output to \((L+R)/2\) in both channels, including after Delta or bypass.
+The saved, automatable `mono` parameter has version hint 5 and defaults to off for states without it.
+Its 20 ms ramp applies identically in real-time and offline callbacks.
+Preparation and reset initialize the blend from the parameter so an enabled fold applies from the first output sample.
+Pre analysis remains the unprocessed input.
 
 ## Per-band correlation
 
 [`BandCorrelation`](src/dsp/BandCorrelation.h) measures each processed band's stereo signal after Mid/Side, Solo, and Pan,
-before global Delta and Mono monitoring.
+before global Delta and Mono processing.
 It reuses the existing lowpass outputs and copies control smoothers for observation,
 without advancing the audio path's ramps or adding another filter bank.
 The measured values do not depend on the spectrogram's Pre/Post selection.
@@ -341,7 +343,8 @@ No production DSP depends on a successful graphics context.
 
 `getStateInformation` writes JUCE binary XML containing the APVTS parameter tree and an `EditorState` child.
 Editor properties include links, analysis mode, display preferences, correlation visibility, dimensions, and divider height.
-Mono audition, live analysis, meter history, and GPU contents are not persisted.
+Live analysis, meter history, and GPU contents are not persisted.
+Mono is persisted with the other audio parameters.
 Missing editor properties restore from deterministic defaults, independently of the instance's previous edits.
 Missing audio parameters use their declared defaults through APVTS.
 

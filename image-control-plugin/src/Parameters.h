@@ -1,6 +1,6 @@
 /// Declares the parameters of the ImageControl plugin:
 /// the three crossover frequencies, the mid and side gain, the pan, and the solo of each of the four bands,
-/// and the output gain.
+/// and the output gain, bypass, Delta, and Mono controls.
 /// The ids, ranges, and defaults live here so the processor, the editor, and the tests share one definition.
 /// Also declares the crossover ordering rule that both the DSP and the editor apply,
 /// and the names of the editor settings saved with the plugin state.
@@ -49,6 +49,8 @@ constexpr auto OUTPUT_GAIN_ID {"output_gain"};
 constexpr auto BYPASS_ID {"bypass"};
 /// Id of the delta parameter, which outputs only what the processing changes: the output minus the input.
 constexpr auto DELTA_ID {"delta"};
+/// Id of the mono parameter, which folds the final processed output equally into both channels.
+constexpr auto MONO_ID {"mono"};
 
 /// Name of the editor setting that selects the analyzer tap: true for the output, false for the input.
 constexpr auto ANALYZE_OUTPUT_PROPERTY {"analyzeOutput"};

@@ -80,9 +80,9 @@ constexpr BandPans CENTRED_PANS {};
 constexpr float OUTPUT_GAIN {0.9F};
 
 /// The complete callback modes, including a host bypass independent of the bypass parameter.
-enum class Mode : std::uint8_t { neutral, centred, panned, delta, bypass, hostBypass, monoAudition };
+enum class Mode : std::uint8_t { neutral, centred, panned, delta, bypass, hostBypass, mono };
 constexpr std::array<Mode, 7>
-    MODES {Mode::neutral, Mode::centred, Mode::panned, Mode::delta, Mode::bypass, Mode::hostBypass, Mode::monoAudition};
+    MODES {Mode::neutral, Mode::centred, Mode::panned, Mode::delta, Mode::bypass, Mode::hostBypass, Mode::mono};
 
 /// Work limits can be reduced without removing any sample-rate, block-size, or processing-mode coverage.
 struct Options {
@@ -231,8 +231,8 @@ std::string_view modeName(const Mode mode)
             return "bypass-param";
         case Mode::hostBypass:
             return "bypass-host";
-        case Mode::monoAudition:
-            return "mono-audition";
+        case Mode::mono:
+            return "mono";
     }
     throw std::logic_error("Unknown processing mode");
 }
@@ -248,7 +248,7 @@ void setParameter(ImageControlProcessor& processor, const juce::String& paramete
     parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
 }
 
-/// Applies one stable workload. Mono audition and correlation use the processor's public editor controls.
+/// Applies one stable workload through host parameters and the editor's correlation control.
 void configureProcessor(ImageControlProcessor& processor, const Mode mode, const bool meters)
 {
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
@@ -265,7 +265,7 @@ void configureProcessor(ImageControlProcessor& processor, const Mode mode, const
     setParameter(processor, OUTPUT_GAIN_ID, mode == Mode::neutral ? 0.0F : juce::Decibels::gainToDecibels(OUTPUT_GAIN));
     setParameter(processor, BYPASS_ID, mode == Mode::bypass ? 1.0F : 0.0F);
     setParameter(processor, DELTA_ID, mode == Mode::delta ? 1.0F : 0.0F);
-    processor.setMonoAuditionEnabled(mode == Mode::monoAudition);
+    setParameter(processor, MONO_ID, mode == Mode::mono ? 1.0F : 0.0F);
     processor.setCorrelationEnabled(meters);
 }
 

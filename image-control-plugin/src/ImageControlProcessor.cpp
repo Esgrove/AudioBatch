@@ -124,6 +124,7 @@ ImageControlProcessor::ImageControlProcessor() :
     outputGainValue = getRawValue(parameters, OUTPUT_GAIN_ID);
     bypassValue = getRawValue(parameters, BYPASS_ID);
     deltaValue = getRawValue(parameters, DELTA_ID);
+    monoValue = getRawValue(parameters, MONO_ID);
     editorStateSnapshot = serializeEditorState(editorState);
     editorState.addListener(this);
 }
@@ -182,12 +183,6 @@ BandCorrelations ImageControlProcessor::getBandCorrelations() const noexcept
     return readings;
 }
 
-/// Returns this instance's transient monitor selection, which is never part of saved state.
-bool ImageControlProcessor::isMonoAuditionEnabled() const noexcept
-{
-    return monoAuditionEnabled.load(std::memory_order_relaxed);
-}
-
 /// Lets an open editor request band metering. Hidden meters and closed editors disable the extra work.
 void ImageControlProcessor::setCorrelationEnabled(const bool enabled) noexcept
 {
@@ -195,12 +190,6 @@ void ImageControlProcessor::setCorrelationEnabled(const bool enabled) noexcept
         correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
         correlationUpdateMilliseconds.store(0, std::memory_order_release);
     }
-}
-
-/// Selects mono audition without changing any host parameter or serialized state.
-void ImageControlProcessor::setMonoAuditionEnabled(const bool enabled) noexcept
-{
-    monoAuditionEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 /// Returns the crossover parameters ordered the way the imager applies them.
@@ -313,8 +302,8 @@ void ImageControlProcessor::prepareToPlay(const double sampleRate, const int max
     );
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
-    monoAuditionSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
-    monoAuditionSmoother.setCurrentAndTargetValue(0.0F);
+    monoSmoother.reset(sampleRate, GAIN_SMOOTHING_SECONDS);
+    monoSmoother.setCurrentAndTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);
     setLatencySamples(imager.getLatencySamples());
 }
 
@@ -341,7 +330,7 @@ juce::AudioProcessorParameter* ImageControlProcessor::getBypassParameter() const
 /// instead of skipping the imager,
 /// so the latency stays the same and the output becomes the delayed input bit for bit without a click.
 /// Delta mode subtracts the delayed input from the output, and bypassing turns it off,
-/// so a bypassed plugin always passes the input through.
+/// so bypass restores the delayed input before the final Mono fold.
 /// Offline rendering designs moved crossovers synchronously, so its output does not depend on thread timing.
 void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, const bool bypassed)
 {
@@ -382,37 +371,33 @@ void ImageControlProcessor::processWithBypass(juce::AudioBuffer<float>& buffer, 
         pushToAnalyzer(buffer, analyzerEpoch);
     }
     imager.process(buffer);
+    applyMono(buffer);
     if (tapOutput) {
         pushToAnalyzer(buffer, analyzerEpoch);
     }
-    applyMonoAudition(buffer);
     if (meterEnabled && buffer.getNumSamples() > 0) {
         publishedCorrelationGeneration.store(meterGeneration, std::memory_order_release);
         correlationUpdateMilliseconds.store(juce::Time::getMillisecondCounter(), std::memory_order_release);
     }
 }
 
-/// Folds only the monitored output, after the analyzer tap, with a click-free blend.
-/// Offline output ignores both the selection and any unfinished live audition transition.
-void ImageControlProcessor::applyMonoAudition(juce::AudioBuffer<float>& buffer)
+/// Folds the final processed output equally into both channels before Post analysis, with a click-free blend.
+/// Mono follows Delta and bypass and applies identically to real-time and offline output.
+void ImageControlProcessor::applyMono(juce::AudioBuffer<float>& buffer)
 {
-    if (isNonRealtime()) {
-        monoAuditionSmoother.setCurrentAndTargetValue(0.0F);
-        return;
-    }
-    monoAuditionSmoother.setTargetValue(isMonoAuditionEnabled() ? 1.0F : 0.0F);
+    monoSmoother.setTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);
     if (buffer.getNumChannels() < 2) {
-        monoAuditionSmoother.skip(buffer.getNumSamples());
+        monoSmoother.skip(buffer.getNumSamples());
         return;
     }
-    if (!monoAuditionSmoother.isSmoothing() && juce::exactlyEqual(monoAuditionSmoother.getCurrentValue(), 0.0F)) {
+    if (!monoSmoother.isSmoothing() && juce::exactlyEqual(monoSmoother.getCurrentValue(), 0.0F)) {
         return;
     }
     const auto samples = static_cast<std::size_t>(buffer.getNumSamples());
     const std::span<float> left(buffer.getWritePointer(0), samples);
     const std::span<float> right(buffer.getWritePointer(1), samples);
     for (std::size_t sample = 0; sample < samples; ++sample) {
-        const float blend = monoAuditionSmoother.getNextValue();
+        const float blend = monoSmoother.getNextValue();
         const float mono = (left[sample] + right[sample]) * 0.5F;
         if (juce::exactlyEqual(blend, 1.0F)) {
             left[sample] = mono;
@@ -424,14 +409,14 @@ void ImageControlProcessor::applyMonoAudition(juce::AudioBuffer<float>& buffer)
     }
 }
 
-/// Clears pending audio while preserving parameters, prepared kernels, and the monitor selection.
+/// Clears pending audio and initializes the Mono blend from its parameter, preserving parameters and prepared kernels.
 void ImageControlProcessor::reset()
 {
     correlationUpdateMilliseconds.store(0, std::memory_order_release);
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
     imager.reset();
     analyzerFifo.beginEpoch();
-    monoAuditionSmoother.setCurrentAndTargetValue(0.0F);
+    monoSmoother.setCurrentAndTargetValue(monoValue->load() >= 0.5F ? 1.0F : 0.0F);
 }
 
 /// Stops the imager's design thread.

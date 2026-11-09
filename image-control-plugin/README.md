@@ -13,7 +13,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for code organization, DSP, rendering, an
   Width 0 makes a band mono, 1 preserves its image, and 2 doubles Side relative to Mid.
   Width adjusts Side gain rather than adding a separate automation parameter.
 - Per-band Pan, applied after the mid/side gains, so even a narrowed band can be placed to one side.
-- Combinable band solos, output gain, Delta monitoring, click-free bypass, and Mono audition.
+- Combinable band solos, output gain, Delta monitoring, click-free bypass, and automatable Mono output.
 - A spatial spectrogram for inspecting the input or processed output, with optional per-band correlation meters.
 
 Crossover frequencies stay ordered and at least a third of an octave apart.
@@ -24,15 +24,15 @@ See [Parameters.h](src/Parameters.h) for parameter ids, ranges, and defaults.
 
 Linear-phase crossovers split the signal into complementary bands that sum back to the delayed input.
 At neutral settings the output is the input delayed by the plugin latency, bit for bit.
-Gain, pan, solo, and bypass changes are smoothed to avoid clicks.
+Gain, pan, solo, Delta, Mono, and bypass changes are smoothed to avoid clicks.
 Crossover filters are redesigned off the audio thread and crossfaded into place.
 
 Delta monitors only what the processing changes, with the dry reference aligned to the output.
 It is silent at neutral settings and respects the selected solo bands.
 Bypass restores the delayed input with processing disabled, ignoring solos and Delta, without changing latency.
-Mono audition folds the monitored output to both channels after Delta or bypass, with a click-free transition.
-It is a transient monitor setting, not saved or automated, and is ignored when the host identifies offline rendering.
-The spectrogram and correlation meters remain stereo while auditioning in mono.
+Mono folds the full processed output equally into both channels after Delta or bypass, with a click-free transition.
+It is saved and automatable, applies to offline renders, and is reflected in the Post spectrogram.
+Pre analysis and per-band correlation meters remain independent of the final Mono fold.
 
 The FIR filters can ring beyond the latency-compensated input endpoint when bands have different settings.
 The plugin reports this finite tail to hosts so they can render it rather than truncate it.
@@ -69,7 +69,7 @@ and [test-signals/generate.py](test-signals/generate.py) for reference signals.
 
 The optional correlation row has one horizontal meter per band, from -1 for anti-phase to +1 for in-phase.
 It measures each processed band after its Mid/Side gains and Pan,
-before Delta and Mono audition, independently of Pre/Post.
+before Delta and Mono, independently of Pre/Post.
 Silence or insufficient energy in either channel gives an unavailable reading.
 Readings also clear when processing stops, the meters are hidden, or no new callbacks arrive.
 `Show band correlation` in Display settings controls the row independently of spectrogram visibility.

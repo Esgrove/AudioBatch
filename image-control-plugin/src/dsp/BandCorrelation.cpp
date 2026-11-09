@@ -64,7 +64,7 @@ void BandCorrelation::publish() noexcept
     }
 }
 
-/// Accumulates a processed band sample before global Delta and Mono monitoring.
+/// Accumulates a processed band sample before global Delta and Mono processing.
 void BandCorrelation::push(const std::size_t band, const float left, const float right) noexcept
 {
     auto& state = moments[band];

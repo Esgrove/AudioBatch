@@ -40,6 +40,8 @@ constexpr int PAN_PARAMETER_VERSION {2};
 constexpr int DELTA_PARAMETER_VERSION {3};
 /// Version hint of the solo parameters, which came after the delta parameter.
 constexpr int SOLO_PARAMETER_VERSION {4};
+/// Version hint of the mono parameter, ordered after the existing host parameters.
+constexpr int MONO_PARAMETER_VERSION {5};
 /// Step of the pan parameters, in percent.
 constexpr float PAN_STEP_PERCENT {1.0F};
 /// Frequencies in kHz below this are shown with two decimals, and higher ones with one.
@@ -277,7 +279,7 @@ std::unique_ptr<FiniteParameter> makeGainParameter(
 }
 }  // namespace
 
-/// Creates the crossover, band gain, band pan, band solo, output gain, bypass, and delta parameters.
+/// Creates the crossover, band gain, band pan, band solo, output gain, bypass, delta, and mono parameters.
 /// The band gains are in dB, and their lowest value turns the signal off.
 /// The band pans are in percent, from fully left at -100 through the centre at 0 to fully right at 100.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -334,6 +336,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         std::make_unique<FiniteParameter>(
             juce::ParameterID {DELTA_ID, DELTA_PARAMETER_VERSION},
             "Delta",
+            juce::NormalisableRange<float>(0.0F, 1.0F, 1.0F),
+            0.0F,
+            juce::AudioParameterFloatAttributes(),
+            ParameterKind::boolean
+        )
+    );
+    layout.add(
+        std::make_unique<FiniteParameter>(
+            juce::ParameterID {MONO_ID, MONO_PARAMETER_VERSION},
+            "Mono",
             juce::NormalisableRange<float>(0.0F, 1.0F, 1.0F),
             0.0F,
             juce::AudioParameterFloatAttributes(),

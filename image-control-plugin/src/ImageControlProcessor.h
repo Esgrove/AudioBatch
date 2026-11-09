@@ -44,10 +44,7 @@ public:
     [[nodiscard]] BandCorrelations getBandCorrelations() const noexcept;
     [[nodiscard]] Crossovers getCrossovers() const;
 
-    [[nodiscard]] bool isMonoAuditionEnabled() const noexcept;
-
     void setCorrelationEnabled(bool enabled) noexcept;
-    void setMonoAuditionEnabled(bool enabled) noexcept;
 
     [[nodiscard]] const juce::String getName() const override;
     [[nodiscard]] const juce::String getProgramName(int index) override;
@@ -84,7 +81,7 @@ private:
 
     void applyPendingEditorState();
 
-    void applyMonoAudition(juce::AudioBuffer<float>& buffer);
+    void applyMono(juce::AudioBuffer<float>& buffer);
     void processWithBypass(juce::AudioBuffer<float>& buffer, bool bypassed);
     void pushToAnalyzer(const juce::AudioBuffer<float>& buffer, AnalyzerEpoch epoch);
 
@@ -124,8 +121,11 @@ private:
     /// Raw value of the delta parameter, owned by the parameter tree.
     std::atomic<float>* deltaValue {nullptr};
 
-    /// Audio-thread-owned click-free blend, excluded from processing state and offline output.
-    SmoothedGain monoAuditionSmoother;
+    /// Raw value of the mono parameter, owned by the parameter tree.
+    std::atomic<float>* monoValue {nullptr};
+
+    /// Audio-thread-owned click-free fold of the final output before Post analysis.
+    SmoothedGain monoSmoother;
     /// Whether an editor requests correlation measurements. Never serialized.
     std::atomic<bool> correlationEnabled {false};
     /// Last metered callback time. Zero means no reading has been published for this view generation.
@@ -138,8 +138,6 @@ private:
     std::uint32_t activeCorrelationGeneration {0};
     /// Expiry is computed from the prepared host block size before callbacks can publish readings.
     std::atomic<std::uint32_t> correlationExpiryMilliseconds {0};
-    /// Per-instance monitoring selection, never saved or host-automatable.
-    std::atomic<bool> monoAuditionEnabled {false};
     /// Message-thread-only guard suppressing snapshot, analyzer-tap, and dirty updates during tree restores.
     bool restoringState {false};
 };
