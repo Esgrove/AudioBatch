@@ -7,7 +7,10 @@
 
 #include "analysis/StereoSampleFifo.h"
 #include "dsp/MultibandImager.h"
+#include "ParameterHistory.h"
 #include "Parameters.h"
+#include "ProcessingState.h"
+#include "UserPresets.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -70,6 +73,15 @@ public:
     [[nodiscard]] juce::ValueTree& getEditorState();
     [[nodiscard]] StereoSampleFifo& getAnalyzerFifo();
 
+    [[nodiscard]] ParameterHistory& getHistory();
+    [[nodiscard]] ProcessingSnapshot getSoundSnapshot();
+    [[nodiscard]] std::optional<UserPreset> getSelectedUserPreset() const;
+    [[nodiscard]] int getActiveComparisonSlot() const;
+    [[nodiscard]] bool copyComparisonToOtherSlot();
+    [[nodiscard]] bool loadSoundSnapshot(const ProcessingSnapshot& snapshot, const juce::String& description);
+    [[nodiscard]] bool selectComparisonSlot(int slot);
+    void setSelectedUserPreset(std::optional<UserPreset> preset);
+
     [[nodiscard]] BandCorrelationSnapshot getBandCorrelationSnapshot() const noexcept;
     [[nodiscard]] BandCorrelations getBandCorrelations() const noexcept;
     [[nodiscard]] Crossovers getCrossovers() const;
@@ -111,6 +123,9 @@ private:
 
     void applyPendingEditorState();
 
+    [[nodiscard]] bool applySoundSnapshot(const ProcessingSnapshot& snapshot, std::uint64_t generation);
+    void notifyComparisonChanged();
+
     void applyMono(juce::AudioBuffer<float>& buffer);
     void processWithBypass(juce::AudioBuffer<float>& buffer, bool bypassed);
     void pushToAnalyzer(const juce::AudioBuffer<float>& buffer, AnalyzerEpoch epoch);
@@ -124,9 +139,21 @@ private:
     juce::MemoryBlock editorStateSnapshot;
     /// Protects the snapshot, pending flag, and publication of the corresponding analyzer tap.
     std::mutex editorStateMutex;
-    /// Serializes host save/restore callbacks, without being acquired by the editor or audio callback.
-    /// Recursive because parameter listeners can synchronously request a save during a restore.
-    std::recursive_mutex stateInformationMutex;
+    /// Serializes host save/restore and local history commands, never the audio callback or live editor tree.
+    /// Recursive because parameter listeners can synchronously request a save during a restore or local command.
+    mutable std::recursive_mutex stateInformationMutex;
+    /// Explicit local history outlives editors and never observes incoming parameter automation.
+    ParameterHistory history;
+    /// Persistent sound slots, protected by stateInformationMutex. The selected slot is refreshed from live parameters.
+    std::array<ProcessingSnapshot, 2> comparisonSlots;
+    /// Selected comparison slot. Zero is A and one is B, protected by stateInformationMutex.
+    int activeComparisonSlot {0};
+    /// Session-only preset provenance per comparison slot, never needed to restore project audio.
+    std::array<std::optional<UserPreset>, 2> selectedUserPresets;
+    /// Generation at which session-only preset provenance was last set. Invalidated by any host restore.
+    std::uint64_t selectedPresetGeneration {0};
+    /// Prevents reentrant toolbar commands while a local command is notifying parameter listeners.
+    bool applyingSoundCommand {false};
     /// Whether the message-thread tree needs the latest snapshot. Protected by editorStateMutex.
     bool editorStatePending {false};
 

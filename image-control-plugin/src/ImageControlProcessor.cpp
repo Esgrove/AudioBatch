@@ -9,9 +9,12 @@
 #include "dsp/MultibandImager.h"
 #include "ImageControlEditor.h"
 #include "Parameters.h"
+#include "ProcessingState.h"
+#include "UserPresets.h"
 #include <system_error>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cmath>
@@ -20,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -31,6 +35,81 @@ namespace
 constexpr auto STATE_TAG {"ImageControl"};
 /// Tag of the editor settings element inside the saved state.
 constexpr auto EDITOR_STATE_TAG {"EditorState"};
+/// Host-state comparison metadata is separately versioned from the portable sound format.
+constexpr auto COMPARISON_STATE_TAG {"ComparisonState"};
+constexpr int COMPARISON_STATE_VERSION {1};
+
+/// Captures a detached host parameter tree, including defaults for parameters absent from legacy state.
+/// Unlike reading atomics, this also sees the complete target during a synchronous reentrant restore save.
+ProcessingSnapshot soundFromParameterTree(
+    const juce::ValueTree& state,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    auto snapshot = captureProcessingState(parameters);
+    for (auto& [parameterId, value] : snapshot) {
+        const auto* parameter = parameters.getParameter(parameterId);
+        const auto child = state.getChildWithProperty("id", parameterId);
+        value = child.isValid() ? static_cast<float>(child.getProperty("value"))
+                                : parameter->convertFrom0to1(parameter->getDefaultValue());
+    }
+    return snapshot;
+}
+
+/// Reads both persistent slots atomically as a unit, rejecting malformed or future metadata without rejecting sound.
+/// The top-level host parameters are authoritative for the selected slot even if its stored copy is stale.
+bool restoreComparisonState(
+    const juce::XmlElement& root,
+    const juce::AudioProcessorValueTreeState& parameters,
+    std::array<ProcessingSnapshot, 2>& slots,
+    int& active
+)
+{
+    const juce::XmlElement* comparison = nullptr;
+    for (const auto* child : root.getChildIterator()) {
+        if (child->hasTagName(COMPARISON_STATE_TAG)) {
+            if (comparison != nullptr) {
+                return false;
+            }
+            comparison = child;
+        }
+    }
+    if (comparison == nullptr || comparison->getStringAttribute("version") != juce::String(COMPARISON_STATE_VERSION)
+        || comparison->getNumAttributes() != 2)
+    {
+        return false;
+    }
+    const auto selected = comparison->getStringAttribute("active");
+    if (selected != "0" && selected != "1") {
+        return false;
+    }
+    std::array<bool, 2> seen {};
+    for (const auto* child : comparison->getChildIterator()) {
+        if (!child->hasTagName("Slot") || child->getNumAttributes() != 1) {
+            return false;
+        }
+        const auto index = child->getStringAttribute("id");
+        if (index != "0" && index != "1") {
+            return false;
+        }
+        const auto slot = static_cast<std::size_t>(index.getIntValue());
+        const auto* sound = child->getFirstChildElement();
+        if (seen[slot] || sound == nullptr || sound->getNextElement() != nullptr) {
+            return false;
+        }
+        const auto snapshot = processingStateFromXml(*sound, parameters);
+        if (!snapshot) {
+            return false;
+        }
+        slots[slot] = *snapshot;
+        seen[slot] = true;
+    }
+    if (!seen[0] || !seen[1]) {
+        return false;
+    }
+    active = selected.getIntValue();
+    return true;
+}
 
 /// Builds deterministic editor defaults independently of any edits on the current instance.
 /// Optional geometry is absent so the editor's layout defaults apply when loading a state without it.
@@ -75,8 +154,8 @@ bool isMessageThread()
 }
 
 /// Replaces invalid saved numeric values with the current finite value before APVTS normalizes them.
-/// Missing parameters remain absent so APVTS restores their declared defaults.
-void sanitizeParameterState(const juce::ValueTree& state, const juce::AudioProcessorValueTreeState& parameters)
+/// Missing parameters are explicitly filled with declared defaults, even when restoring onto an edited instance.
+void sanitizeParameterState(juce::ValueTree state, const juce::AudioProcessorValueTreeState& parameters)
 {
     for (auto child : state) {
         if (const auto* parameter = parameters.getParameter(child.getProperty("id").toString())) {
@@ -90,6 +169,20 @@ void sanitizeParameterState(const juce::ValueTree& state, const juce::AudioProce
                 value = plainValue(*parameter);
             }
             child.setProperty("value", static_cast<double>(value), nullptr);
+        }
+    }
+    // APVTS preserves current raw values for missing children on a reused instance.
+    // Insert declared defaults explicitly.
+    for (const auto& [parameterId, unused] : captureProcessingState(parameters, false)) {
+        juce::ignoreUnused(unused);
+        if (!state.getChildWithProperty("id", parameterId).isValid()) {
+            const auto* parameter = parameters.getParameter(parameterId);
+            juce::ValueTree child("PARAM");
+            child.setProperty("id", parameterId, nullptr);
+            child.setProperty(
+                "value", static_cast<double>(parameter->convertFrom0to1(parameter->getDefaultValue())), nullptr
+            );
+            state.appendChild(child, nullptr);
         }
     }
 }
@@ -123,7 +216,8 @@ ImageControlProcessor::ImageControlProcessor() :
             .withOutput("Output", juce::AudioChannelSet::stereo(), true)
     ),
     parameters(*this, nullptr, STATE_TAG, createParameterLayout()),
-    editorState(defaultEditorState())
+    editorState(defaultEditorState()),
+    history(parameters)
 {
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         crossoverValues.at(crossover) = getRawValue(parameters, crossoverParameterId(crossover));
@@ -141,6 +235,9 @@ ImageControlProcessor::ImageControlProcessor() :
     deltaValue = getRawValue(parameters, DELTA_ID);
     monoValue = getRawValue(parameters, MONO_ID);
     editorStateSnapshot = serializeEditorState(editorState);
+    history.setStateMutex(stateInformationMutex);
+    history.setMetadataChangedCallback([this] { notifyComparisonChanged(); });
+    comparisonSlots.fill(captureProcessingState(parameters));
     editorState.addListener(this);
 }
 
@@ -156,6 +253,155 @@ ImageControlProcessor::~ImageControlProcessor()
 juce::AudioProcessorValueTreeState& ImageControlProcessor::getParameters()
 {
     return parameters;
+}
+
+/// Returns the processor-owned history for explicit message-thread control adapters.
+ParameterHistory& ImageControlProcessor::getHistory()
+{
+    return history;
+}
+
+/// Captures the current sound, including headless host automation but excluding audition and editor controls.
+ProcessingSnapshot ImageControlProcessor::getSoundSnapshot()
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    return captureProcessingState(parameters);
+}
+
+/// Returns session-only preset provenance, logically cleared by a host restore without touching UI state.
+std::optional<UserPreset> ImageControlProcessor::getSelectedUserPreset() const
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (selectedPresetGeneration != history.generation()) {
+        return std::nullopt;
+    }
+    return selectedUserPresets.at(static_cast<std::size_t>(activeComparisonSlot));
+}
+
+/// Keeps the active slot's preset baseline across editor replacement, independently of its source file.
+void ImageControlProcessor::setSelectedUserPreset(std::optional<UserPreset> preset)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    const auto generation = history.generation();
+    if (selectedPresetGeneration != generation) {
+        selectedUserPresets = {};
+        selectedPresetGeneration = generation;
+    }
+    selectedUserPresets.at(static_cast<std::size_t>(activeComparisonSlot)) = std::move(preset);
+}
+
+/// Returns the selected persistent comparison slot without touching the message-thread editor tree.
+int ImageControlProcessor::getActiveComparisonSlot() const
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    return activeComparisonSlot;
+}
+
+/// Switches sounds as one local delta command, refreshing the outgoing slot from live automation first.
+/// Metadata is committed before parameter notifications so reentrant host saves observe the new selection.
+bool ImageControlProcessor::selectComparisonSlot(const int slot)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (slot < 0 || slot > 1 || slot == activeComparisonSlot || applyingSoundCommand || history.isEditing()
+        || history.isReplaying())
+    {
+        return false;
+    }
+    const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
+    const auto generation = history.generation();
+    const auto previous = activeComparisonSlot;
+    comparisonSlots.at(static_cast<std::size_t>(previous)) = captureProcessingState(parameters);
+    const auto target = comparisonSlots.at(static_cast<std::size_t>(slot));
+    history.beginEdit(slot == 0 ? "Switch to A" : "Switch to B");
+    history.setMetadataChange([this, previous, slot](const bool undo) {
+        comparisonSlots.at(static_cast<std::size_t>(activeComparisonSlot)) = captureProcessingState(parameters);
+        activeComparisonSlot = undo ? previous : slot;
+    });
+    activeComparisonSlot = slot;
+    const auto applied = applySoundSnapshot(target, generation);
+    history.endEdit();
+    return applied && history.generation() == generation;
+}
+
+/// Copies the active live sound to the inactive slot without sending any parameter writes.
+/// Undo patches only the destination slot, retaining subsequent unrelated sound or editor changes.
+bool ImageControlProcessor::copyComparisonToOtherSlot()
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (applyingSoundCommand || history.isEditing() || history.isReplaying()) {
+        return false;
+    }
+    const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
+    const auto generation = history.generation();
+    const auto source = captureProcessingState(parameters);
+    comparisonSlots.at(static_cast<std::size_t>(activeComparisonSlot)) = source;
+    const auto destination = static_cast<std::size_t>(1 - activeComparisonSlot);
+    const auto previous = comparisonSlots.at(destination);
+    if (sameProcessingState(previous, source)) {
+        return false;
+    }
+    history.beginEdit(activeComparisonSlot == 0 ? "Copy A to B" : "Copy B to A");
+    history.setMetadataChange([this, destination, previous, source](const bool undo) {
+        comparisonSlots.at(destination) = undo ? previous : source;
+    });
+    comparisonSlots.at(destination) = source;
+    history.endEdit();
+    return history.generation() == generation;
+}
+
+/// Recalls a validated portable sound as one chronological history command, preserving audition and editor settings.
+/// A complete finite in-range set is mandatory. Only changed parameters notify the host.
+bool ImageControlProcessor::loadSoundSnapshot(const ProcessingSnapshot& snapshot, const juce::String& description)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (applyingSoundCommand || history.isEditing() || history.isReplaying()) {
+        return false;
+    }
+    const auto document = processingStateToXml(snapshot);
+    if (document == nullptr) {
+        return false;
+    }
+    const auto validated = processingStateFromXml(*document, parameters);
+    if (!validated) {
+        return false;
+    }
+    if (sameProcessingState(captureProcessingState(parameters), *validated)) {
+        return true;
+    }
+    const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
+    const auto generation = history.generation();
+    history.beginEdit(description);
+    const auto applied = applySoundSnapshot(*validated, generation);
+    history.endEdit();
+    return applied && history.generation() == generation;
+}
+
+/// Sends balanced gestures only for the target's changed IDs, recording each before its first local write.
+/// Synchronous host restore aborts remaining writes so its new state cannot be overwritten by stale command work.
+bool ImageControlProcessor::applySoundSnapshot(const ProcessingSnapshot& snapshot, const std::uint64_t generation)
+{
+    for (const auto& [parameterId, value] : snapshot) {
+        if (history.generation() != generation) {
+            return false;
+        }
+        auto* parameter = parameters.getParameter(parameterId);
+        if (parameter == nullptr || juce::exactlyEqual(plainValue(*parameter), value)) {
+            continue;
+        }
+        history.touch(parameterId);
+        parameter->beginChangeGesture();
+        if (history.generation() == generation) {
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+        }
+        parameter->endChangeGesture();
+    }
+    return history.generation() == generation;
+}
+
+/// Marks persistent A/B metadata dirty after a complete original, undo, or redo command, never from the audio thread.
+void ImageControlProcessor::notifyComparisonChanged()
+{
+    updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withNonParameterStateChanged(true));
 }
 
 /// Returns the identity-stable editor settings, applying queued restores before message-thread access.
@@ -294,6 +540,7 @@ void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationDa
 {
     const std::scoped_lock stateLock(stateInformationMutex);
     const auto state = parameters.copyState();
+    comparisonSlots.at(static_cast<std::size_t>(activeComparisonSlot)) = soundFromParameterTree(state, parameters);
     juce::MemoryBlock snapshot;
     {
         const std::scoped_lock editorLock(editorStateMutex);
@@ -302,6 +549,16 @@ void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationDa
     if (const auto xml = state.createXml()) {
         const auto editor = juce::ValueTree::readFromData(snapshot.getData(), snapshot.getSize());
         xml->addChildElement(editor.createXml().release());
+        auto comparison = std::make_unique<juce::XmlElement>(COMPARISON_STATE_TAG);
+        comparison->setAttribute("version", COMPARISON_STATE_VERSION);
+        comparison->setAttribute("active", activeComparisonSlot);
+        for (std::size_t index = 0; index < comparisonSlots.size(); ++index) {
+            auto slot = std::make_unique<juce::XmlElement>("Slot");
+            slot->setAttribute("id", static_cast<int>(index));
+            slot->addChildElement(processingStateToXml(comparisonSlots.at(index)).release());
+            comparison->addChildElement(slot.release());
+        }
+        xml->addChildElement(comparison.release());
         copyXmlToBinary(*xml, destinationData);
     }
 }
@@ -554,10 +811,27 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
         xml->removeChildElement(savedEditorState, true);
     }
     auto snapshot = serializeEditorState(restoredEditor);
+    std::array<ProcessingSnapshot, 2> restoredSlots;
+    int restoredActive = 0;
+    const auto hasComparison = restoreComparisonState(*xml, parameters, restoredSlots, restoredActive);
+    // Comparison metadata must not become APVTS children, or subsequent saves would duplicate stale metadata.
+    while (auto* comparison = xml->getChildByName(COMPARISON_STATE_TAG)) {
+        xml->removeChildElement(comparison, true);
+    }
     const auto restoredParameters = juce::ValueTree::fromXml(*xml);
     {
         const std::scoped_lock stateLock(stateInformationMutex);
         sanitizeParameterState(restoredParameters, parameters);
+        const auto restoredSound = soundFromParameterTree(restoredParameters, parameters);
+        if (!hasComparison) {
+            restoredSlots.fill(restoredSound);
+            restoredActive = 0;
+        }
+        restoredSlots.at(static_cast<std::size_t>(restoredActive)) = restoredSound;
+        comparisonSlots = std::move(restoredSlots);
+        activeComparisonSlot = restoredActive;
+        // Only atomic invalidation runs here. Message-thread use later reclaims local command storage.
+        history.invalidate();
         {
             const std::scoped_lock editorLock(editorStateMutex);
             editorStateSnapshot = std::move(snapshot);
