@@ -56,6 +56,17 @@ void processInBlocks(MultibandImager& imager, juce::AudioBuffer<float>& buffer)
     }
 }
 
+/// Compares whole partitions exactly so warm-history tests observe the first resumed output samples.
+void expectSamePartition(const juce::AudioBuffer<float>& actual, const juce::AudioBuffer<float>& expected)
+{
+    for (int channel = 0; channel < 2; ++channel) {
+        for (int sample = 0; sample < PARTITION_SIZE; ++sample) {
+            ASSERT_EQ(actual.getSample(channel, sample), expected.getSample(channel, sample))
+                << "channel " << channel << " sample " << sample;
+        }
+    }
+}
+
 /// Returns the RMS of the side signal of a stereo buffer from a start sample up to an end sample, or to the end.
 double sideRms(const juce::AudioBuffer<float>& buffer, const int start, const int end = -1)
 {
@@ -104,6 +115,143 @@ TEST(Imager, NeutralSettingsDelayTheInputBitExactly)
         ASSERT_EQ(buffer.getSample(0, sample), expectedLeft) << "sample " << sample;
         ASSERT_EQ(buffer.getSample(1, sample), expectedRight) << "sample " << sample;
     }
+}
+
+TEST(Imager, SettledNearUnityDirectGainPreservesTheNeutralCopyAndSilentDelta)
+{
+    const auto left = makeNoise(0.4F, 12'288, 172);
+    const auto right = makeNoise(0.4F, 12'288, 173);
+    for (const bool delta : {false, true}) {
+        SCOPED_TRACE(delta);
+        auto buffer = makeBuffer({left, right});
+        MultibandImager imager;
+        const float gain = std::nextafter(1.0F, 2.0F);
+        // A distinct prior target lets JUCE accept this near-unity value rather than coalescing it with unity.
+        imager.setGains(uniformGains(1.0F), uniformGains(1.0F), 0.5F);
+        imager.setGains(uniformGains(1.0F), uniformGains(1.0F), gain);
+        imager.setDelta(delta);
+        imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        processInBlocks(imager, buffer);
+        // The established settled-unity predicate treats this direct target as neutral.
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+            const auto source = static_cast<std::size_t>(std::max(0, sample - LATENCY));
+            const bool silent = delta || sample < LATENCY;
+            ASSERT_EQ(buffer.getSample(0, sample), silent ? 0.0F : left[source]) << sample;
+            ASSERT_EQ(buffer.getSample(1, sample), silent ? 0.0F : right[source]) << sample;
+        }
+    }
+}
+
+TEST(Imager, NeutralHistoryAndConsumedCrossoversFeedTheFirstActivePartitions)
+{
+    const Crossovers moved {80.0F, 1800.0F, 8000.0F};
+    const auto left = makeNoise(0.4F, PARTITION_SIZE, 170);
+    const auto right = makeNoise(0.4F, PARTITION_SIZE, 171);
+    for (const bool offline : {false, true}) {
+        for (const bool delta : {false, true}) {
+            SCOPED_TRACE(offline);
+            SCOPED_TRACE(delta);
+            MultibandImager actual;
+            MultibandImager reference;
+            actual.setDelta(delta);
+            reference.setDelta(delta);
+            actual.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+            reference.prepare(TEST_SAMPLE_RATE, 2, moved);
+            // Visible correlation forces the reference to compute every ordinary output while neutral.
+            reference.setCorrelationEnabled(true);
+            const auto advance = [&] {
+                auto actualBlock = makeBuffer({left, right});
+                auto referenceBlock = makeBuffer({left, right});
+                actual.process(actualBlock);
+                reference.process(referenceBlock);
+                expectSamePartition(actualBlock, referenceBlock);
+            };
+            for (int partition = 0; partition < 40; ++partition) {
+                advance();
+            }
+            actual.setCrossovers(moved, offline);
+            for (int attempt = 0; attempt < 400 && !sameCrossovers(actual.getActiveCrossovers(), moved); ++attempt) {
+                advance();
+                if (!offline) {
+                    juce::Thread::sleep(5);
+                }
+            }
+            ASSERT_TRUE(sameCrossovers(actual.getActiveCrossovers(), moved));
+            for (auto* imager : {&actual, &reference}) {
+                imager->setGains({0.6F, 1.2F, 0.3F, 0.9F}, {1.3F, 0.4F, 1.1F, 0.7F}, 0.8F);
+                imager->setPans({-0.2F, 0.3F, 0.0F, 0.5F});
+                imager->setSolos({1.0F, 0.0F, 1.0F, 0.0F});
+            }
+            // Observe immediately, without allowing another FIR latency to refill missing history.
+            for (int partition = 0; partition < 8; ++partition) {
+                advance();
+            }
+        }
+    }
+}
+
+TEST(Imager, EnteringOfflineDesignsAnUnchangedRealtimeRequestBeforeProcessing)
+{
+    const Crossovers moved {80.0F, 1800.0F, 8000.0F};
+    const auto tone = makeSine(1000.0, 0.4F, PARTITION_SIZE);
+    MultibandImager imager;
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    imager.setCrossovers(moved, false);
+    // No realtime partition has consumed the request. Offline mode must take over with the same raw values.
+    imager.setCrossovers(moved, true);
+    auto block = makeBuffer({tone, tone});
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), moved));
+}
+
+TEST(Imager, ReturningToActiveCrossoversOfflineConsumesAStalePendingSlotAndRestoresTheLatestRequest)
+{
+    MultibandImager imager;
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    const Crossovers stale {80.0F, 1800.0F, 8000.0F};
+    // Synchronous design establishes a pending slot deterministically, without relying on background timing.
+    imager.setCrossovers(stale, true);
+    imager.setCrossovers(stale, false);
+    // The first offline request returns to the still-active kernels while the stale slot remains pending.
+    imager.setCrossovers(DEFAULT_CROSSOVERS, true);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), DEFAULT_CROSSOVERS));
+    juce::AudioBuffer<float> block(2, PARTITION_SIZE);
+    block.clear();
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), stale));
+    // Publication must design the latest request immediately, without another setter or host callback.
+    block.clear();
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), DEFAULT_CROSSOVERS));
+    imager.setCrossovers(DEFAULT_CROSSOVERS, true);
+    block.clear();
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), DEFAULT_CROSSOVERS));
+}
+
+TEST(Imager, OfflineTransitionFinishesAnOutstandingUnchangedCrossoverRequest)
+{
+    MultibandImager imager;
+    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    const Crossovers first {80.0F, 1800.0F, 8000.0F};
+    const Crossovers latest {120.0F, 2400.0F, 9000.0F};
+    // Queue two requests before a partition can publish either slot.
+    imager.setCrossovers(first, true);
+    imager.setCrossovers(latest, false);
+    // The raw values do not change, but offline mode must take over outstanding design work.
+    imager.setCrossovers(latest, true);
+    juce::AudioBuffer<float> block(2, PARTITION_SIZE);
+    block.clear();
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), first));
+    block.clear();
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), latest));
+    // Repeated unchanged offline calls must remain harmless after publication.
+    imager.setCrossovers(latest, true);
+    block.clear();
+    imager.process(block);
+    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), latest));
 }
 
 TEST(Imager, SideOffMakesBothChannelsEqual)

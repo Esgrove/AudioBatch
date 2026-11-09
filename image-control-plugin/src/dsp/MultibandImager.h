@@ -1,7 +1,8 @@
 /// Declares MultibandImager, the audio processing of ImageControl, and the KernelDesignThread it owns.
 /// The imager splits stereo into Mid/Side and four linear-phase bands, then applies source trims and Width/Recover.
 /// It reconstructs and pans each band before summing.
-/// The bands sum exactly to the delayed input, so neutral settings pass the input through, only delayed.
+/// The bands telescope to the delayed input algebraically.
+/// Exact neutral settings copy that delayed input rather than summing rounded filter outputs.
 
 #pragma once
 
@@ -52,14 +53,14 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// Solos mute the bands that are not soloed, unless no band or every band is soloed.
 ///
 /// The latency is the kernel half length plus one partition.
-/// While every gain and Width is at unity, every pan at the centre, and no band muted by a solo,
+/// While every gain and Width satisfies settled unity, every pan is at the centre, and no band is muted by a solo,
 /// the output is the input delayed by the latency, bit for bit.
 /// In delta mode the delayed input is subtracted from the output, so it carries only what the processing changed,
 /// and neutral settings give exact silence.
 /// With solos, delta subtracts only the soloed bands of the delayed input.
 ///
-/// prepare, release, and the destructor run on the message thread.
-/// Control setters and process run on the audio thread
+/// Preparation, release, and destruction require stopped callbacks and may run on host lifecycle threads.
+/// Control setters and process run on the audio thread, or during stopped preparation/reset,
 /// and never allocate during real-time playback.
 /// During non-real-time rendering the audio thread designs kernels itself and the design thread stands by,
 /// so the output never depends on thread timing.
@@ -105,6 +106,7 @@ private:
 
     void convolvePartition(bool stereo, bool crossfade);
     void convolveSignal(PartitionedConvolver& convolver, std::size_t kernel, std::span<float> output, bool crossfade);
+    void copyNeutralPartition();
     void designRequestedKernels(bool fromDesignThread);
     void lowpassSignal(
         PartitionedConvolver& convolver,
@@ -142,6 +144,12 @@ private:
     std::array<Crossovers, 2> slotCrossovers {};
     /// Crossovers last requested by the host, ordered, read as one snapshot through requestSequence.
     std::array<std::atomic<float>, CROSSOVER_COUNT> requestedCrossovers {};
+    /// Last raw crossover input, accessed only by the audio thread or during stopped preparation.
+    Crossovers lastCrossoverInput {};
+    /// Ordered request owned by the audio thread, distinct from a pending or active kernel slot.
+    Crossovers crossoverRequest {};
+    /// Last rendering mode supplied by the audio thread, avoiding unchanged atomic publications.
+    bool lastOfflineRendering {false};
 
     /// Glides of the mid gain of each band.
     std::array<SmoothedGain, BAND_COUNT> midGainSmoothers;

@@ -1,4 +1,4 @@
-/// Declares ImageControlProcessor, the audio processor of the ImageControl VST3 plugin.
+/// Declares ImageControlProcessor, the audio processor shared by ImageControl's plugin formats.
 /// It owns the parameters, the multiband imager that processes the audio,
 /// the ring that carries audio to the editor's spatial spectrogram,
 /// and the editor-only settings saved with the plugin state.
@@ -26,8 +26,29 @@ struct BandCorrelationSnapshot final {
     std::uint32_t generation {0};
 };
 
+/// Last effective raw controls and their converted targets, owned exclusively by the processing lifecycle thread.
+/// Bypass supplies neutral values here without modifying host parameters.
+struct ProcessingControlValues final {
+    /// Mid values, in dB for raw controls and linear amplitude for converted targets.
+    BandGains mid {};
+    /// Side values, in dB for raw controls and linear amplitude for converted targets.
+    BandGains side {};
+    /// Pan values, in percent for raw controls and signed unit amounts for converted targets.
+    BandPans pans {};
+    /// Independent Width multipliers.
+    BandWidths widths {};
+    /// Recover values, in percent for raw controls and unit amounts for converted targets.
+    BandRecoveries recoveries {};
+    /// Solo switches before their combined audible-band conversion.
+    BandSolos solos {};
+    /// Output gain, in dB for raw controls and linear amplitude for converted targets.
+    float output {0.0F};
+    /// Effective Delta switch.
+    bool delta {false};
+};
+
 /// The ImageControl audio processor.
-/// The audio thread reads the parameters each block and hands them to the MultibandImager.
+/// The audio thread reads parameters each block, reuses unchanged conversions, and updates MultibandImager targets.
 /// The analyzer tap pushes either the input or the output to the editor's ring.
 /// The state is the XML of the parameter tree with the editor settings as a child element.
 class ImageControlProcessor final :
@@ -137,6 +158,13 @@ private:
 
     /// Raw value of the mono parameter, owned by the parameter tree.
     std::atomic<float>* monoValue {nullptr};
+
+    /// Effective raw values seen by the last callback, prepare, or reset. Never changed by parameter listeners.
+    ProcessingControlValues cachedRawControls;
+    /// Converted targets reused when their exact raw values are unchanged.
+    ProcessingControlValues cachedProcessingTargets;
+    /// Whether the processing lifecycle has initialized every cached conversion and imager target.
+    bool processingControlsValid {false};
 
     /// Audio-thread-owned click-free fold of the final output before Post analysis.
     SmoothedGain monoSmoother;

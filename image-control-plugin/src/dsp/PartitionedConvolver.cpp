@@ -2,10 +2,9 @@
 /// The convolver uses uniformly partitioned overlap-save:
 /// each input partition is transformed together with the previous one,
 /// the spectra of the recent partitions are multiplied with the matching kernel partitions and summed,
-/// and the second half of the inverse transform is the exact linear convolution of the partition.
+/// and the second half of the inverse transform gives the causal FIR output, subject to floating-point rounding.
 /// Spectra are stored split, with the real parts of all bins followed by the imaginary parts,
-/// so the multiply-add over the bins is plain lane-by-lane arithmetic
-/// that NEON and AVX2 vectorize with fused multiply-adds.
+/// so the multiply-add over the bins is lane-by-lane arithmetic suitable for compiler vectorization.
 
 #include "dsp/PartitionedConvolver.h"
 
@@ -144,17 +143,16 @@ void PartitionedConvolver::pushInput(const std::span<const float> input)
 }
 
 /// Writes the convolution of the newest input partition with one kernel to the output, one partition long.
-/// The output is the exact causal convolution with the kernel, without any latency of the convolver itself.
+/// The output is the causal convolution with the kernel, subject to FFT rounding and without added latency.
+/// This reads retained input spectra without advancing history, so skipped outputs need no warmup when resumed.
 void PartitionedConvolver::convolve(const KernelSpectra& kernels, const std::size_t kernel, std::span<float> output)
 {
     jassert(kernels.getPartitionCount() == partitionCount);
     jassert(output.size() == partitionSize);
 
     std::ranges::fill(accumulator, 0.0F);
-    // In the hottest loop of the plugin, every span has the same length and the loop stays below it,
-    // so the compiler can prove each access in range, drop the hardening checks,
-    // and turn the split complex multiply-add into vector fused multiply-adds.
-    // Cutting the spans to the length checks their sizes once per partition.
+    // Equal-sized component spans expose the common bin bound to the optimizer.
+    // Whether checks are eliminated or arithmetic is vectorized depends on the compiler and build settings.
     const std::size_t bins = binValues / 2;
     const auto sumReal = std::span<float>(accumulator).first(bins);
     const auto sumImaginary = std::span<float>(accumulator).subspan(bins).first(bins);

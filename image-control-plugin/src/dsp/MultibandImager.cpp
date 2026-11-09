@@ -1,6 +1,7 @@
 /// Implements MultibandImager and its KernelDesignThread.
 /// The audio callback buffers the input into partitions, delays it by the kernel half length,
-/// runs the lowpass kernels on the mid and side of each partition, and mixes the bands with smoothed gains and pans.
+/// and retains raw Mid/Side convolution history even when the neutral-copy path needs no filter outputs.
+/// Active processing runs the required kernels and mixes the bands with smoothed controls.
 /// New crossovers are designed into a spare kernel slot off the audio thread,
 /// and the audio thread switches to that slot with a crossfade over one partition.
 
@@ -56,6 +57,14 @@ KernelSpectra designKernelSpectra(const Crossovers& crossovers, const double sam
 bool isSettledAtUnity(const SmoothedGain& gain)
 {
     return !gain.isSmoothing() && juce::approximatelyEqual(gain.getCurrentValue(), 1.0F);
+}
+
+/// Compares raw crossover values without treating nearby automation as an unchanged request.
+bool exactCrossovers(const Crossovers& first, const Crossovers& second)
+{
+    return std::ranges::equal(first, second, [](const float left, const float right) {
+        return juce::exactlyEqual(left, right);
+    });
 }
 
 /// Returns whether a smoothed pan has settled exactly at the centre.
@@ -120,6 +129,16 @@ float recoveredBandSample(
 )
 {
     return active ? gain * bandSample(lowpassed, band, sample, fullband[sample]) : 0.0F;
+}
+
+/// Applies the audible-band Solo factors without changing the source, Width, or recovery multiplication order.
+void applySoloGains(BandGains& midGains, BandGains& sideGains, BandGains& recoveryGains, const BandGains& solos)
+{
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        midGains[band] *= solos[band];
+        sideGains[band] *= solos[band];
+        recoveryGains[band] *= solos[band];
+    }
 }
 
 /// Returns the samples of one channel of a buffer.
@@ -228,6 +247,10 @@ void MultibandImager::prepare(const double newSampleRate, const int newChannelCo
     halfLength = kernelHalfLength(sampleRate);
 
     const Crossovers ordered = orderCrossovers(crossovers);
+    lastCrossoverInput = crossovers;
+    crossoverRequest = ordered;
+    lastOfflineRendering = false;
+    offlineRendering.store(false, std::memory_order_release);
     for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
         requestedCrossovers.at(crossover).store(ordered.at(crossover));
     }
@@ -360,7 +383,7 @@ void MultibandImager::setCorrelationEnabled(const bool enabled) noexcept
     }
 }
 
-/// Requests new crossover frequencies, which are ordered with orderCrossovers first.
+/// Orders crossover frequencies only when the raw input changes and publishes only a changed ordered request.
 /// During real-time playback the design thread picks the request up,
 /// and the audio thread crossfades to the new kernels when they are ready.
 /// During offline rendering the calling audio thread designs the kernels itself and the design thread stands by,
@@ -368,16 +391,39 @@ void MultibandImager::setCorrelationEnabled(const bool enabled) noexcept
 /// The three values are published as one snapshot, so the design thread never mixes two requests.
 void MultibandImager::setCrossovers(const Crossovers& crossovers, const bool offline)
 {
-    offlineRendering.store(offline, std::memory_order_release);
-    const Crossovers ordered = orderCrossovers(crossovers);
-    const std::uint32_t sequence = requestSequence.load(std::memory_order_relaxed);
-    requestSequence.store(sequence + 1, std::memory_order_relaxed);
-    std::atomic_thread_fence(std::memory_order_release);
-    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
-        requestedCrossovers[crossover].store(ordered[crossover], std::memory_order_relaxed);
+    const bool modeChanged = offline != lastOfflineRendering;
+    if (modeChanged) {
+        offlineRendering.store(offline, std::memory_order_release);
+        lastOfflineRendering = offline;
     }
-    requestSequence.store(sequence + 2, std::memory_order_release);
-    if (offline) {
+    bool requestChanged = false;
+    if (!exactCrossovers(crossovers, lastCrossoverInput)) {
+        lastCrossoverInput = crossovers;
+        const Crossovers ordered = orderCrossovers(crossovers);
+        requestChanged = !exactCrossovers(ordered, crossoverRequest);
+        if (requestChanged) {
+            crossoverRequest = ordered;
+            const std::uint32_t sequence = requestSequence.load(std::memory_order_relaxed);
+            requestSequence.store(sequence + 1, std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_release);
+            for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+                requestedCrossovers[crossover].store(ordered[crossover], std::memory_order_relaxed);
+            }
+            requestSequence.store(sequence + 2, std::memory_order_release);
+        }
+    }
+    // Entering offline rendering must join any design already inside the mutex,
+    // even if the latest request matches the active slot.
+    // That designer may still publish a stale pending slot before it finishes.
+    if (offline && modeChanged) {
+        designRequestedKernels(false);
+        return;
+    }
+    // A pending slot is consumed first. Its publication then checks whether the latest request still needs design.
+    if (offline && requestChanged
+        && !sameCrossovers(crossoverRequest, slotCrossovers[static_cast<std::size_t>(activeSlot)])
+        && !switchPending.load(std::memory_order_acquire))
+    {
         designRequestedKernels(false);
     }
 }
@@ -608,6 +654,7 @@ void MultibandImager::mixPartition(const int channels)
     const bool centred = isCentred();
     const bool unsoloed = isUnsoloed();
     const bool recovering = isRecoveryActive();
+    const bool needsSoloDry = !unsoloed && !isDeltaSettled(0.0F);
 
     BandGains midGains {};
     BandGains sideGains {};
@@ -626,11 +673,7 @@ void MultibandImager::mixPartition(const int channels)
             solos[band] = soloSmoothers[band].getNextValue();
         }
         if (!unsoloed) {
-            for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-                midGains[band] *= solos[band];
-                sideGains[band] *= solos[band];
-                recoveryGains[band] *= solos[band];
-            }
+            applySoloGains(midGains, sideGains, recoveryGains, solos);
         }
         const float outputGain = outputGainSmoother.getNextValue();
         const float delta = deltaSmoother.getNextValue();
@@ -640,7 +683,7 @@ void MultibandImager::mixPartition(const int channels)
             // What delta subtracts: the delayed input, or with solos only its heard bands.
             float dryLeft = delayedLeft[sample];
             float dryRight = delayedRight[sample];
-            if (!unsoloed) {
+            if (needsSoloDry) {
                 const float dryMid = sumBands(solos, midLowpassed, sample, delayedMid);
                 const float drySide = sumBands(solos, sideLowpassed, sample, delayedSide);
                 dryLeft = dryMid + drySide;
@@ -676,7 +719,7 @@ void MultibandImager::mixPartition(const int channels)
             outputRight[sample] = right * outputGain - delta * dryRight;
         } else {
             const float dry
-                = unsoloed ? delayedLeft[sample] : sumBands(solos, midLowpassed, sample, delayedLeft[sample]);
+                = needsSoloDry ? sumBands(solos, midLowpassed, sample, delayedLeft[sample]) : delayedLeft[sample];
             outputLeft[sample]
                 = sumBands(midGains, midLowpassed, sample, delayedLeft[sample]) * outputGain - delta * dry;
         }
@@ -736,9 +779,28 @@ void MultibandImager::convolvePartition(const bool stereo, const bool crossfade)
     }
 }
 
+/// Copies neutral delayed output or clears settled Delta, advancing inactive Width and Recover glides.
+void MultibandImager::copyNeutralPartition()
+{
+    for (auto& recovery : recoverySmoothers) {
+        recovery.skip(PARTITION_SIZE);
+    }
+    for (auto& width : widthSmoothers) {
+        width.skip(PARTITION_SIZE);
+    }
+    if (isDeltaSettled(0.0F)) {
+        for (int channel = 0; channel < channelCount; ++channel) {
+            outputBlock.copyFrom(channel, 0, delayedBlock, channel, 0, PARTITION_SIZE);
+        }
+        return;
+    }
+    outputBlock.clear();
+}
+
 /// Processes one full input partition into the output partition.
-/// The raw input is delayed by the kernel half length to line up with the kernel outputs,
-/// and while every gain is at unity, that delayed input is the output even during a kernel crossfade.
+/// The raw input is delayed by the kernel half length to line up with the kernel outputs.
+/// Exact neutral copy or silent Delta can skip output convolutions, but still advances raw histories,
+/// inactive control glides, and coherent kernel publication. Visible correlation always needs the band outputs.
 void MultibandImager::processPartition()
 {
     const auto ringMask = static_cast<std::size_t>(halfLength - 1);
@@ -773,15 +835,21 @@ void MultibandImager::processPartition()
         sideConvolver.pushInput(sideInput);
     }
 
+    const bool neutralCopy = isNeutral() && (isDeltaSettled(0.0F) || isDeltaSettled(1.0F));
     const bool crossfade = switchPending.load(std::memory_order_acquire);
-    convolvePartition(stereo, crossfade);
+    // Every partition keeps raw histories warm. Only output convolutions are optional on the neutral-copy path.
+    if (!neutralCopy || correlationEnabled) {
+        convolvePartition(stereo, crossfade);
+    }
     if (crossfade) {
         activeSlot = 1 - activeSlot;
         publishedActiveSlot.store(activeSlot, std::memory_order_release);
         switchPending.store(false, std::memory_order_release);
-        // Offline, a request that arrived while this switch was pending is designed right away,
-        // so it takes effect at the next partition no matter how the host splits its blocks.
-        if (offlineRendering.load(std::memory_order_relaxed)) {
+        // Publish even when neutral output skipped the crossfade arithmetic.
+        // A newer offline request must be designed for the next partition, independently of host block boundaries.
+        if (lastOfflineRendering
+            && !sameCrossovers(crossoverRequest, slotCrossovers[static_cast<std::size_t>(activeSlot)]))
+        {
             designRequestedKernels(false);
         }
     }
@@ -791,21 +859,8 @@ void MultibandImager::processPartition()
     if (correlationEnabled) {
         updateCorrelationPartition();
     }
-    if (isNeutral() && (isDeltaSettled(0.0F) || isDeltaSettled(1.0F))) {
-        // Inactive recovery still follows automation while the exact-copy path avoids arithmetic.
-        for (auto& recovery : recoverySmoothers) {
-            recovery.skip(PARTITION_SIZE);
-        }
-        for (auto& width : widthSmoothers) {
-            width.skip(PARTITION_SIZE);
-        }
-        if (isDeltaSettled(0.0F)) {
-            for (int channel = 0; channel < channelCount; ++channel) {
-                outputBlock.copyFrom(channel, 0, delayedBlock, channel, 0, PARTITION_SIZE);
-            }
-            return;
-        }
-        outputBlock.clear();
+    if (neutralCopy) {
+        copyNeutralPartition();
         return;
     }
     mixPartition(channelCount);

@@ -1,5 +1,6 @@
 /// Implements time-weighted, centered stereo correlation without allocating or locking during audio processing.
-/// Readings are published once per convolution partition and are invalid during silence or one-channel audio.
+/// Readings are published once per convolution partition and are invalid when either measured channel lacks power.
+/// The imager measures mono input in both channels, while one-sided stereo remains unavailable.
 
 #include "dsp/BandCorrelation.h"
 
