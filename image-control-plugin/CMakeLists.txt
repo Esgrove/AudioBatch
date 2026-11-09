@@ -239,6 +239,163 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     include(CTest)
     # IMAGE_CONTROL_BUILD_TESTS owns this project's tests, even in a cache with BUILD_TESTING=OFF.
     enable_testing()
+    if(IMAGE_CONTROL_SANITIZE STREQUAL "realtime")
+        # This process hosts the instrumented build-tree bundle with the same startup-linked RTSan runtime.
+        add_executable(ImageControlRealtimeTests "${CMAKE_CURRENT_SOURCE_DIR}/tests/RealtimeTests.cpp")
+        target_link_libraries(ImageControlRealtimeTests PRIVATE ImageControl)
+        # Compile the host implementation into shared JUCE code only in this isolated verification tree.
+        target_compile_definitions(ImageControl PRIVATE JUCE_PLUGINHOST_VST3=1)
+        target_compile_definitions(
+            ImageControlRealtimeTests PRIVATE JUCE_PLUGINHOST_VST3=1
+                                              IMAGE_CONTROL_REALTIME_VST3_PATH="$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+        )
+        target_link_options(ImageControlRealtimeTests PRIVATE -fsanitize=realtime)
+        add_dependencies(ImageControlRealtimeTests ImageControl_VST3)
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/RealtimeTests.cpp" TARGET_DIRECTORY ImageControlRealtimeTests
+            PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
+        )
+        find_program(IMAGE_CONTROL_UV_EXECUTABLE uv REQUIRED)
+
+        # Each callback scenario gets its own process, report directory, and bounded shared runner.
+        function(image_control_add_realtime_case case_name)
+            set(case_arguments ${ARGN})
+            # Successful and continuing scenarios must reach their own completion marker, not just exit quietly.
+            # Fail-fast detector controls and blocked audits terminate before that marker by design.
+            if(NOT "--expect" IN_LIST case_arguments OR "--diagnostic" IN_LIST case_arguments)
+                list(APPEND case_arguments --require-output "^ImageControl RTSan scenario completed: ${case_name}$")
+            endif()
+            add_test(
+                NAME ImageControlRealtime.${case_name}
+                COMMAND
+                    "${IMAGE_CONTROL_UV_EXECUTABLE}" run --script
+                    "${CMAKE_CURRENT_SOURCE_DIR}/../tests/realtime_sanitizer.py" --executable
+                    "$<TARGET_FILE:ImageControlRealtimeTests>" --case "${case_name}" --artifacts
+                    "${CMAKE_CURRENT_BINARY_DIR}/realtime-artifacts" ${case_arguments}
+            )
+            set_tests_properties(ImageControlRealtime.${case_name} PROPERTIES LABELS "realtime" TIMEOUT 45)
+        endfunction()
+
+        image_control_add_realtime_case(control-clean)
+        image_control_add_realtime_case(
+            control-allocate
+            --control
+            --expect
+            malloc
+            --stack
+            allocateControl
+        )
+        image_control_add_realtime_case(
+            control-free
+            --control
+            --expect
+            free
+            --stack
+            freeControl
+        )
+        image_control_add_realtime_case(
+            control-mutex
+            --control
+            --expect
+            pthread_mutex_lock
+            --stack
+            mutexControl
+        )
+        set_tests_properties(
+            ImageControlRealtime.control-clean ImageControlRealtime.control-allocate ImageControlRealtime.control-free
+            ImageControlRealtime.control-mutex PROPERTIES LABELS "realtime;realtime-control"
+        )
+        foreach(
+            case_name IN
+            ITEMS
+                direct-neutral-mono
+                direct-neutral-stereo
+                direct-active-mono
+                direct-active-stereo
+                direct-transitions
+                imager-handoff-neutral
+                imager-handoff-active
+        )
+            image_control_add_realtime_case(${case_name})
+            set_tests_properties(ImageControlRealtime.${case_name} PROPERTIES LABELS "realtime;realtime-clean")
+        endforeach()
+        # Observed on arm64 macOS with Homebrew LLVM 23: the host locks its MIDI event list before entering the bundle.
+        # These fail-fast audits are BLOCKED, not a claim that the hosted path is real-time safe.
+        foreach(case_name IN ITEMS hosted-first-callback hosted-cached-parameters)
+            image_control_add_realtime_case(
+                ${case_name}
+                "--argument=--case"
+                "--argument=${case_name}"
+                "--argument=--plugin"
+                "--argument=$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+                --expect
+                pthread_mutex_lock
+                --stack
+                "juce::MidiEventList::clear"
+                --stack
+                "juce::VST3PluginInstanceHeadless::associateWith"
+                --stack
+                processHosted
+            )
+            set_tests_properties(
+                ImageControlRealtime.${case_name} PROPERTIES LABELS "realtime;realtime-known-regression"
+            )
+        endforeach()
+
+        # Continuing probes reach the bundle without suppressing the host's earlier findings.
+        # The unchanged path has 8 reports: host clear/count lock-unlock pairs and the bundle callback lock-unlock.
+        # A changed cached parameter adds one Darwin thread-local initialization calloc beneath parameter delivery.
+        # Require the exact call/owner pair in each report, not an arbitrary mutex or allocator anywhere in the stack.
+        set(IMAGE_CONTROL_HOSTED_LOCK_STACK
+            "(?s:unsafe function .pthread_mutex_(lock|unlock). .*juce::(MidiEventList::(clear|getEventCount)|JuceVST3Component::processAudio))"
+        )
+        set(IMAGE_CONTROL_HOSTED_PARAMETER_STACK
+            "(?s:unsafe function .calloc. .*juce::setValueAndNotifyIfChanged.*juce::JuceVST3Component::processParameterChanges)"
+        )
+        image_control_add_realtime_case(
+            hosted-first-callback-diagnostic
+            "--argument=--case"
+            "--argument=hosted-first-callback-diagnostic"
+            "--argument=--plugin"
+            "--argument=$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+            --diagnostic
+            --expect
+            pthread_mutex_lock
+            --expect
+            pthread_mutex_unlock
+            --stack
+            "${IMAGE_CONTROL_HOSTED_LOCK_STACK}"
+            --stack
+            processHosted
+            --require-output
+            "^[ ]*Unique error count: 8[ ]*$"
+        )
+        image_control_add_realtime_case(
+            hosted-cached-parameters-diagnostic
+            "--argument=--case"
+            "--argument=hosted-cached-parameters-diagnostic"
+            "--argument=--plugin"
+            "--argument=$<TARGET_BUNDLE_DIR:ImageControl_VST3>"
+            --diagnostic
+            --expect
+            pthread_mutex_lock
+            --expect
+            pthread_mutex_unlock
+            --expect
+            calloc
+            --stack
+            "${IMAGE_CONTROL_HOSTED_LOCK_STACK}|${IMAGE_CONTROL_HOSTED_PARAMETER_STACK}"
+            --stack
+            processHosted
+            --require-output
+            "^[ ]*Unique error count: 9[ ]*$"
+        )
+        set_tests_properties(
+            ImageControlRealtime.hosted-first-callback-diagnostic
+            ImageControlRealtime.hosted-cached-parameters-diagnostic
+            PROPERTIES LABELS "realtime;realtime-known-regression;realtime-diagnostic"
+        )
+    endif()
     include(FetchContent)
     FetchContent_Declare(
         googletest

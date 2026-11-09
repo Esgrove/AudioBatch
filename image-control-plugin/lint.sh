@@ -6,6 +6,8 @@ set -eo pipefail
 # Builds the unit tests and benchmark of the Debug build first, which configures it when it is missing,
 # regenerates its compile database when the CMake files changed, and generates the JUCE headers clang-tidy needs.
 # On Windows the Ninja workspace is used, since the Visual Studio generators write no compile database.
+# The sanitizer-only callback probes use an existing RTSan database, never inferred ordinary build flags.
+# Ordinary lint does not configure the optional Homebrew LLVM workspace when it is absent.
 
 USAGE="Usage: $0 [OPTIONS] [-- CLANG_TIDY_ARGS...]
 
@@ -33,6 +35,8 @@ OPTIONS: All options are optional
 
     A changed header in --changed or --staged mode also lints the source file of the same name next to it.
     The files are linted as they are in the working tree.
+    RealtimeTests.cpp uses an existing cmake-build-mac-rtsan/ database, or an explicitly selected RTSan build.
+    Without that optional database it is skipped. Run ./sanitize.sh --realtime to prepare it.
 
     -v | --verbose
         Display commands being executed.
@@ -212,14 +216,37 @@ if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
     print_error_and_exit "$BUILD_DIR has no compile_commands.json, which needs a Ninja build directory."
 fi
 
+# Accept only a configured RTSan workspace with an explicit entry for the guarded callback probes.
+# Never infer ordinary flags for this file or weaken its compile-time instrumentation requirements.
+has_realtime_compile_database() {
+    local directory="$1"
+    [ -f "$directory/CMakeCache.txt" ] && [ -f "$directory/compile_commands.json" ] &&
+        grep -Fqx 'IMAGE_CONTROL_SANITIZE:STRING=realtime' "$directory/CMakeCache.txt" &&
+        grep -Fq "\"file\": \"$DIR/tests/RealtimeTests.cpp\"" "$directory/compile_commands.json"
+}
+
 # The configuration files are passed explicitly, and the test configuration inherits the project configuration and relaxes it for test code.
 # clang-tidy prints its diagnostics to stdout and fails with an error, such as a compile error,
 # which fails the run even without --check.
-# A source missing from the compile database is linted with flags inferred from its neighbours.
+# Ordinary sources missing from the database retain the existing neighbouring-flag inference.
 PROJECT_SOURCES=()
 TEST_SOURCES=()
+REALTIME_SOURCES=()
+REALTIME_BUILD_DIR=""
+if has_realtime_compile_database "$BUILD_DIR"; then
+    REALTIME_BUILD_DIR="$BUILD_DIR"
+elif [ "$BASH_PLATFORM" = mac ] && has_realtime_compile_database "$DIR/cmake-build-mac-rtsan"; then
+    REALTIME_BUILD_DIR="$DIR/cmake-build-mac-rtsan"
+fi
 while IFS= read -r source; do
     case "$source" in
+        "$DIR/tests/RealtimeTests.cpp")
+            if [ -n "$REALTIME_BUILD_DIR" ]; then
+                REALTIME_SOURCES+=("$source")
+            else
+                print_yellow "Skipping RTSan-only RealtimeTests.cpp: no instrumented database. Prepare it with ./sanitize.sh --realtime."
+            fi
+            ;;
         "$DIR/tests/"*)
             TEST_SOURCES+=("$source")
             ;;
@@ -229,7 +256,7 @@ while IFS= read -r source; do
     esac
 done < <(collect_sources)
 
-if [ "${#PROJECT_SOURCES[@]}" -eq 0 ] && [ "${#TEST_SOURCES[@]}" -eq 0 ]; then
+if [ "${#PROJECT_SOURCES[@]}" -eq 0 ] && [ "${#TEST_SOURCES[@]}" -eq 0 ] && [ "${#REALTIME_SOURCES[@]}" -eq 0 ]; then
     print_green "No $FILE_SELECTION C++ sources to lint (0 warnings)"
     exit 0
 fi
@@ -238,22 +265,27 @@ OUTPUT=$(mktemp)
 ERRORS=$(mktemp)
 trap 'rm -f "$OUTPUT" "$ERRORS"' EXIT
 
-# Lints the sources given after the configuration file, up to JOBS at a time.
+# Lints the sources given after their compilation database and configuration file, up to JOBS at a time.
 run_clang_tidy() {
-    local config="$1"
-    shift
+    local database="$1"
+    local config="$2"
+    shift 2
     if [ $# -eq 0 ]; then
         return 0
     fi
     printf '%s\0' "$@" |
-        xargs -0 -P "$JOBS" -n 1 "$CLANG_TIDY" -p "$BUILD_DIR" --quiet --config-file="$config" \
+        xargs -0 -P "$JOBS" -n 1 "$CLANG_TIDY" -p "$database" --quiet --config-file="$config" \
             --extra-arg=-Wno-unused-command-line-argument "${CLANG_TIDY_ARGS[@]}" >> "$OUTPUT" 2>> "$ERRORS"
 }
 
-print_magenta "Running clang-tidy on $((${#PROJECT_SOURCES[@]} + ${#TEST_SOURCES[@]})) source files with up to $JOBS parallel jobs..."
+print_magenta "Running clang-tidy on $((${#PROJECT_SOURCES[@]} + ${#TEST_SOURCES[@]} + ${#REALTIME_SOURCES[@]})) source files with up to $JOBS parallel jobs..."
 TIDY_STATUS=0
-run_clang_tidy "$ROOT/cpp/.clang-tidy" "${PROJECT_SOURCES[@]}" || TIDY_STATUS=1
-run_clang_tidy "$ROOT/cpp/tests/.clang-tidy" "${TEST_SOURCES[@]}" || TIDY_STATUS=1
+run_clang_tidy "$BUILD_DIR" "$ROOT/cpp/.clang-tidy" "${PROJECT_SOURCES[@]}" || TIDY_STATUS=1
+run_clang_tidy "$BUILD_DIR" "$ROOT/cpp/tests/.clang-tidy" "${TEST_SOURCES[@]}" || TIDY_STATUS=1
+if [ "${#REALTIME_SOURCES[@]}" -gt 0 ]; then
+    print_magenta "Linting RTSan-only callback probes with $REALTIME_BUILD_DIR"
+    run_clang_tidy "$REALTIME_BUILD_DIR" "$ROOT/cpp/tests/.clang-tidy" "${REALTIME_SOURCES[@]}" || TIDY_STATUS=1
+fi
 
 if [ "$TIDY_STATUS" -ne 0 ]; then
     cat "$OUTPUT"
