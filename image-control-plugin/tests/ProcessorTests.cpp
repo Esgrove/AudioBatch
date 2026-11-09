@@ -514,6 +514,25 @@ TEST(Processor, OfflineCrossoverMovesApplyDeterministically)
     EXPECT_LT(sideAfter, 1.0e-3);
 }
 
+/// Fresh instances smooth correlation numbers, and each saved readout preference replaces the prior setting.
+TEST(Processor, SmoothCorrelationReadoutDefaultsOnAndRoundTripsBothValues)
+{
+    ImageControlProcessor source;
+    EXPECT_TRUE(static_cast<bool>(source.getEditorState().getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    EXPECT_STREQ(SMOOTH_CORRELATION_READOUT_PROPERTY, "smoothCorrelationReadout");
+    for (const bool enabled : {false, true}) {
+        source.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, enabled, nullptr);
+        juce::MemoryBlock state;
+        source.getStateInformation(state);
+        ImageControlProcessor restored;
+        restored.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, !enabled, nullptr);
+        restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        EXPECT_EQ(
+            static_cast<bool>(restored.getEditorState().getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)), enabled
+        );
+    }
+}
+
 TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
 {
     ImageControlProcessor source;
@@ -533,6 +552,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
              PAN_EDGE_PROPERTY,
              SHOW_FPS_PROPERTY,
              SHOW_BAND_CORRELATION_PROPERTY,
+             SMOOTH_CORRELATION_READOUT_PROPERTY,
              BYPASS_RENDERING_PROPERTY,
              HIDE_SPECTROGRAM_PROPERTY,
          })
@@ -551,6 +571,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     restored.getEditorState().setProperty(PAN_EDGE_PROPERTY, 50.0, nullptr);
     restored.getEditorState().setProperty(SHOW_FPS_PROPERTY, true, nullptr);
     restored.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
+    restored.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, false, nullptr);
     restored.getEditorState().setProperty(BYPASS_RENDERING_PROPERTY, true, nullptr);
     restored.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
     restored.getEditorState().setProperty(EDITOR_WIDTH_PROPERTY, 1700, nullptr);
@@ -564,6 +585,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     EXPECT_FALSE(settings.hasProperty(EDITOR_HEIGHT_PROPERTY));
     EXPECT_FALSE(settings.hasProperty(BAND_SECTION_HEIGHT_PROPERTY));
     EXPECT_TRUE(static_cast<bool>(settings.getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(settings.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(linkPropertyName(0))));
     EXPECT_TRUE(static_cast<bool>(settings.getProperty(ANALYZE_OUTPUT_PROPERTY)));
     EXPECT_DOUBLE_EQ(static_cast<double>(settings.getProperty(PERSISTENCE_PROPERTY)), DEFAULT_PERSISTENCE_SECONDS);
@@ -587,19 +609,21 @@ TEST(Processor, EditorChangesNotifyTheHostButRestoresDoNot)
          {
              juce::Identifier(ANALYZE_OUTPUT_PROPERTY),
              juce::Identifier(SHOW_BAND_CORRELATION_PROPERTY),
+             juce::Identifier(SMOOTH_CORRELATION_READOUT_PROPERTY),
              linkPropertyName(1),
          })
     {
         processor.getEditorState().setProperty(property, false, nullptr);
     }
-    EXPECT_EQ(listener.dirtyChanges, 3);
+    EXPECT_EQ(listener.dirtyChanges, 4);
     processor.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.0, nullptr);
-    EXPECT_EQ(listener.dirtyChanges, 4);
-    processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-    EXPECT_EQ(listener.dirtyChanges, 4);
-    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(ANALYZE_OUTPUT_PROPERTY)));
-    processor.getEditorState().setProperty(SHOW_FPS_PROPERTY, true, nullptr);
     EXPECT_EQ(listener.dirtyChanges, 5);
+    processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    EXPECT_EQ(listener.dirtyChanges, 5);
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(ANALYZE_OUTPUT_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    processor.getEditorState().setProperty(SHOW_FPS_PROPERTY, true, nullptr);
+    EXPECT_EQ(listener.dirtyChanges, 6);
     processor.removeListener(&listener);
 }
 
@@ -615,10 +639,12 @@ TEST(Processor, StateWithoutEditorSettingsReplacesCurrentSettingsWithDefaults)
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
     processor.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
+    processor.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, false, nullptr);
     processor.getEditorState().setProperty(PHASE_COLOURS_PROPERTY, true, nullptr);
     processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(linkPropertyName(2))));
     EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(processor.getEditorState().getProperty(PHASE_COLOURS_PROPERTY)));
 }
 
@@ -905,6 +931,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     setParameter(source, OUTPUT_GAIN_ID, 1.5F);
     source.getEditorState().setProperty(linkPropertyName(1), false, nullptr);
     source.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.5, nullptr);
+    source.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, false, nullptr);
     juce::MemoryBlock state;
     source.getStateInformation(state);
 
@@ -924,6 +951,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     EXPECT_FALSE(static_cast<bool>(restored.getEditorState().getProperty(linkPropertyName(1))));
     EXPECT_TRUE(static_cast<bool>(restored.getEditorState().getProperty(linkPropertyName(0))));
     EXPECT_DOUBLE_EQ(static_cast<double>(restored.getEditorState().getProperty(PERSISTENCE_PROPERTY)), 2.5);
+    EXPECT_FALSE(static_cast<bool>(restored.getEditorState().getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
 }
 
 TEST(Processor, IgnoresForeignState)

@@ -703,9 +703,32 @@ TEST(BandCorrelationMeter, ExposesNamedReadOnlyValuesAndSilenceIsUnavailable)
     EXPECT_EQ(value->getCurrentValueAsString(), "Unavailable");
 }
 
+/// Native accessibility exposes the smoothed default and follows immediate readout-mode changes.
+TEST(BandCorrelationMeter, AccessibleValueUsesTheSmoothedDefaultAndCanSwitchToLive)
+{
+    constexpr double PERSISTENCE_SECONDS {0.6};
+    BandCorrelationMeter meter("Low");
+    meter.addToDesktop(0);
+    auto* handler = meter.getAccessibilityHandler();
+    ASSERT_NE(handler, nullptr);
+    auto* value = handler->getValueInterface();
+    ASSERT_NE(value, nullptr);
+    meter.setCorrelation(-0.75F);
+    meter.setCorrelation(0.75F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
+    EXPECT_EQ(meter.readoutText(), "+0.20");
+    meter.setSmoothedReadout(false);
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.75");
+    meter.setSmoothedReadout(true);
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
+    value->setValueAsString("1.00");
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
+}
+
 TEST(BandCorrelationMeter, ReadoutUsesOneUnicodeDashForUnavailableMeasurements)
 {
     BandCorrelationMeter meter("Low");
+    meter.setSmoothedReadout(false);
     const auto unavailable = juce::String::charToString(0x2014);
     EXPECT_EQ(meter.readoutText().length(), 1);
     EXPECT_EQ(meter.readoutText(), unavailable);
@@ -834,6 +857,76 @@ TEST(ImageControlEditor, CompactCorrelationRowKeepsExpandedHeightAndAlignsWithSt
     post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
     EXPECT_EQ(editor.getHeight(), 900);
     EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+}
+
+/// The display toggle defaults on, writes the saved property, and observes external setting changes.
+TEST(SettingsPanel, SmoothCorrelationNumbersDefaultsOnAndBindsBothDirections)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    const SettingsPanel settings(state);
+    auto* smooth = buttonWithText(settings, "Smooth correlation numbers");
+    ASSERT_NE(smooth, nullptr);
+    EXPECT_TRUE(smooth->getToggleState());
+    smooth->setToggleState(false, juce::sendNotificationSync);
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    state.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true, nullptr);
+    EXPECT_TRUE(smooth->getToggleState());
+}
+
+/// Applying settings through the real Post action updates all meters without clearing their histories.
+TEST(ImageControlEditor, SmoothCorrelationNumbersPropagatesToEveryMeterAndRestoresOnReopen)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    {
+        ImageControlEditor editor(processor);
+        editor.addToDesktop(0);
+        editor.setVisible(true);
+        const SettingsPanel settings(state);
+        auto* smooth = buttonWithText(settings, "Smooth correlation numbers");
+        auto* post = buttonWithText(editor, "Post");
+        ASSERT_NE(smooth, nullptr);
+        ASSERT_NE(post, nullptr);
+        std::array<BandCorrelationMeter*, BAND_COUNT> meters {};
+        constexpr std::array titles {
+            "Low correlation",
+            "Low Mid correlation",
+            "High Mid correlation",
+            "High correlation",
+        };
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            auto* meter = dynamic_cast<BandCorrelationMeter*>(childWithTitle(editor, titles.at(band)));
+            ASSERT_NE(meter, nullptr);
+            meters.at(band) = meter;
+            meter->setCorrelation(-0.75F);
+            meter->setCorrelation(0.75F);
+            EXPECT_EQ(meter->readoutText(), "-0.75");
+        }
+        for (const bool enabled : {false, true, false}) {
+            smooth->setToggleState(enabled, juce::sendNotificationSync);
+            // Analyzer tap actions apply all display settings through the real editor composition.
+            post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
+            for (const auto* meter : meters) {
+                EXPECT_EQ(meter->readoutText(), enabled ? "-0.75" : "+0.75");
+                const auto trend = meter->trendValue();
+                const auto range = meter->recentRange();
+                if (!trend.has_value() || !range.has_value()) {
+                    FAIL() << "Changing readout mode must preserve correlation history";
+                }
+                EXPECT_FLOAT_EQ(trend.value(), -0.75F);
+                EXPECT_FLOAT_EQ(range.value().getStart(), -0.75F);
+                EXPECT_FLOAT_EQ(range.value().getEnd(), 0.75F);
+            }
+        }
+    }
+    const ImageControlEditor reopened(processor);
+    auto* meter = dynamic_cast<BandCorrelationMeter*>(childWithTitle(reopened, "Low correlation"));
+    ASSERT_NE(meter, nullptr);
+    meter->setCorrelation(-0.75F);
+    meter->setCorrelation(0.75F);
+    EXPECT_EQ(meter->readoutText(), "+0.75");
 }
 
 TEST(ImageControlEditor, HiddenAndClosedMetersStopPublishingMeasurements)
