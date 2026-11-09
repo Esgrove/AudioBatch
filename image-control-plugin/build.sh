@@ -126,7 +126,7 @@ fi
 
 TARGETS=(--target ImageControl_VST3)
 if [ "$BASH_PLATFORM" = "mac" ]; then
-    TARGETS+=(ImageControl_AU)
+    TARGETS+=(ImageControl_AUSign)
 fi
 if [ "$RUN_TESTS" = true ]; then
     TARGETS+=(ImageControlTests)
