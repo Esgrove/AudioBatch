@@ -804,7 +804,10 @@ It retains debug symbols and standard library hardening, without native targetin
 Each sanitizer build has its own build directory, so the debug build is not affected.
 Sanitizers do not run the CLI or driven GUI integration tier.
 `./sanitize.sh --realtime` uses Homebrew LLVM in a separate macOS workspace to check hardware-free preview callbacks.
-It runs detector controls, clean prepared-renderer checks, and explicit blocked audits of application/JUCE callbacks.
+It runs detector controls, clean prepared-renderer and first-party callback checks,
+and explicit blocked audits of downstream JUCE buffering, device dispatch, and native hosting.
+The application callback uses single-attempt atomic admission,
+with waiting and native synchronization only on control threads.
 A verified `BLOCKED` report is not a clean callback result.
 Per-case logs are in `cmake-build-mac-rtsan/realtime-artifacts/`.
 Known locks in JUCE buffering, resampling, device dispatch, and native plugin hosting remain visible without suppressions.

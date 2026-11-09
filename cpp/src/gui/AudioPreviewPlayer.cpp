@@ -6,7 +6,9 @@
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/LiveChain.h"
+#include "plugins/PluginChainPreparation.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/CallbackAccess.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -155,8 +157,8 @@ AudioPreviewPlayer::~AudioPreviewPlayer()
     suspend();
     cancelPendingUpdate();
     deviceManager.removeAudioCallback(this);
+    detachLiveChain();
     release();
-    liveChain = nullptr;
     readAheadThread.stopThread(readAheadThreadStopTimeoutMilliseconds);
 }
 
@@ -219,7 +221,7 @@ std::unique_ptr<juce::XmlElement> AudioPreviewPlayer::createDeviceState() const
 }
 
 /// Releases the driver on the message thread, retaining its selected configuration for the next explicit play.
-/// Audio callbacks use a try-lock, so closing while the rendering lock is held cannot block on that lock.
+/// Callbacks excluded by control return silence immediately, so driver shutdown cannot wait on control ownership.
 void AudioPreviewPlayer::closeAudioDevice()
 {
     cancelPendingUpdate();
@@ -236,7 +238,7 @@ void AudioPreviewPlayer::closeAudioDevice()
 /// Used for application focus loss and shutdown, when retaining a driver for the stop ramp is inappropriate.
 void AudioPreviewPlayer::suspend()
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     startWhenInitialPositionReady = false;
     previewSource.stop();
     publishState();
@@ -289,7 +291,7 @@ void AudioPreviewPlayer::timerCallback()
 
 /// Loads a mono/stereo source without starting it or altering the file on disk.
 /// Optionally defers playback until the owner supplies the cue-derived initial position.
-/// The file is opened and its header read before the rendering lock is taken,
+/// The file is opened and its header read before the renderer access guard is taken,
 /// since the new reader is not part of the preview until it replaces the released one.
 bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForInitialPosition)
 {
@@ -298,7 +300,8 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForIniti
         : std::unique_ptr<juce::AudioFormatReader>(formatManager.createReaderFor(
               audioUrl.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
           ));
-    const juce::ScopedLock lock(renderingLock);
+    instantiatePreviewChain(pluginPreviewEnabled);
+    const utils::CallbackControlGuard control(renderingAccess);
     release();
     endedPending.store(false);
     if (reader == nullptr) {
@@ -312,7 +315,7 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForIniti
     readerSource = std::make_unique<PreviewReaderSource>(std::move(reader), readFailed);
     prepareInput();
     previewSource.setInputGain(LinearGain {.value = 1.0f}, true);
-    const auto refreshed = refreshPluginChain();
+    const auto refreshed = refreshPreparedPluginChain();
     juce::ignoreUnused(refreshed);
     waitingForInitialPosition = waitForInitialPosition;
     publishState();
@@ -351,7 +354,7 @@ void AudioPreviewPlayer::prepareInput()
 /// and the status timer closes it once nothing plays.
 void AudioPreviewPlayer::release()
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     startWhenInitialPositionReady = false;
     previewSource.stop();
     previewSource.releaseResources();
@@ -370,31 +373,62 @@ void AudioPreviewPlayer::release()
 /// Attaches the slot owner while retaining a weak observer and safe processor lifetimes.
 void AudioPreviewPlayer::setLiveChain(LiveChain& chain)
 {
-    const juce::ScopedLock lock(renderingLock);
-    liveChain = &chain;
-    const auto refreshed = refreshPluginChain();
+    const juce::WeakReference safeChain(&chain);
+    chain.instantiatePreview(sampleRate, blockSize, false, pluginPreviewEnabled);
+    const utils::CallbackControlGuard control(renderingAccess);
+    if (liveChain != nullptr) {
+        liveChain->setPreviewDetachCallback({});
+    }
+    liveChain = safeChain;
+    if (liveChain != nullptr) {
+        const juce::WeakReference safeThis(this);
+        liveChain->setPreviewDetachCallback([safeThis] {
+            if (safeThis != nullptr) {
+                safeThis->detachLiveChain();
+            }
+        });
+    }
+    const auto refreshed = refreshPreparedPluginChain();
     juce::ignoreUnused(refreshed);
 }
 
 /// Releases the weak slot observer and clears its processors from the preview before owner teardown.
 void AudioPreviewPlayer::detachLiveChain()
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
+    if (liveChain != nullptr) {
+        liveChain->setPreviewDetachCallback({});
+    }
     liveChain = nullptr;
-    const auto refreshed = refreshPluginChain();
+    const auto refreshed = refreshPreparedPluginChain();
     juce::ignoreUnused(refreshed);
 }
 
 /// Rebuilds the prepared pointer view after a structural or latency change, preserving audible time and intent.
 bool AudioPreviewPlayer::refreshPluginChain()
 {
-    const juce::ScopedLock lock(renderingLock);
+    instantiatePreviewChain(pluginPreviewEnabled);
+    return refreshPreparedPluginChain();
+}
+
+/// Creates unattached plugin instances before any control exclusion, leaving current audio running during loading.
+void AudioPreviewPlayer::instantiatePreviewChain(const bool loadEnabled)
+{
+    if (liveChain != nullptr) {
+        liveChain->instantiatePreview(sampleRate, blockSize, false, loadEnabled);
+    }
+}
+
+/// Publishes a prepared chain while callback access is excluded, preserving nested control ownership.
+bool AudioPreviewPlayer::refreshPreparedPluginChain()
+{
+    const utils::CallbackControlGuard control(renderingAccess);
     const auto position = previewSource.getCurrentPosition();
     auto resume = previewSource.isPlaying();
     previewSource.stop();
     PreviewChain chain;
     if (liveChain != nullptr) {
-        chain = liveChain->preparePreview(sampleRate, blockSize, false, pluginPreviewEnabled);
+        chain = liveChain->prepareInstantiatedPreview(sampleRate, blockSize, false, pluginPreviewEnabled);
     }
     const auto error = pluginPreviewEnabled ? chain.preparation.errorMessage : juce::String();
     if (error.isNotEmpty()) {
@@ -421,24 +455,26 @@ bool AudioPreviewPlayer::refreshPluginChain()
 /// Toggles the real-time chain, returning false if its complete configuration could not be prepared.
 bool AudioPreviewPlayer::setPluginPreviewEnabled(const bool enabled)
 {
-    const juce::ScopedLock lock(renderingLock);
+    instantiatePreviewChain(enabled);
+    const utils::CallbackControlGuard control(renderingAccess);
     pluginPreviewEnabled = enabled;
-    return refreshPluginChain();
+    return refreshPreparedPluginChain();
 }
 
 /// Changes compensation at the same audible position, re-priming only when playback is active.
 void AudioPreviewPlayer::setLatencyCompensated(const bool enabled)
 {
-    const juce::ScopedLock lock(renderingLock);
+    instantiatePreviewChain(pluginPreviewEnabled);
+    const utils::CallbackControlGuard control(renderingAccess);
     latencyCompensated = enabled;
-    const auto refreshed = refreshPluginChain();
+    const auto refreshed = refreshPreparedPluginChain();
     juce::ignoreUnused(refreshed);
 }
 
 /// Applies custom input gain to the wet path without changing dry preview or normalization.
 void AudioPreviewPlayer::setInputGain(const LinearGain gain, const bool immediately)
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     previewSource.setInputGain(gain, immediately);
 }
 
@@ -472,7 +508,8 @@ bool AudioPreviewPlayer::reposition(const double seconds, const bool resume)
 /// Starts or restarts playback without allowing the waveform to bypass latency compensation.
 void AudioPreviewPlayer::start()
 {
-    const juce::ScopedLock lock(renderingLock);
+    instantiatePreviewChain(pluginPreviewEnabled);
+    const utils::CallbackControlGuard control(renderingAccess);
     if (readerSource == nullptr || !applicationActive) {
         return;
     }
@@ -498,7 +535,7 @@ void AudioPreviewPlayer::start()
 /// Marks playback stopped immediately while fading the remaining callback audio to silence.
 void AudioPreviewPlayer::stop()
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     startWhenInitialPositionReady = false;
     previewSource.requestStop();
     publishState();
@@ -509,7 +546,7 @@ void AudioPreviewPlayer::stop()
 /// An explicit seek takes precedence over any initial cue position that arrives later.
 void AudioPreviewPlayer::setPosition(const double seconds)
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     const auto resume = isPlaying();
     waitingForInitialPosition = false;
     startWhenInitialPositionReady = false;
@@ -529,7 +566,7 @@ void AudioPreviewPlayer::setPosition(const double seconds)
 /// Stopped previews stay stopped, and a pending start begins directly at the resolved position.
 void AudioPreviewPlayer::completeInitialPosition(const double seconds)
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     if (waitingForInitialPosition) {
         setPosition(seconds);
     }
@@ -550,15 +587,66 @@ void AudioPreviewPlayer::togglePlayback()
 /// or the timeout passes, and reports whether they are ready.
 /// A seek only waits for the first output block, which a real-time device never outruns,
 /// but device-free tests render many blocks back to back and would otherwise outpace the decoder.
-/// It holds the rendering lock, so the audio callback outputs silence while it waits.
+/// It holds the renderer access guard, so the audio callback outputs silence while it waits.
 bool AudioPreviewPlayer::waitForReadAhead(const int sourceSamples, const juce::uint32 timeoutMilliseconds)
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     return bufferingSource != nullptr
         && bufferingSource->waitForNextAudioBlockReady({nullptr, 0, sourceSamples}, timeoutMilliseconds);
 }
 
-/// Forwards hardware-free sanitizer tests through the complete production callback, including lock destruction.
+/// Snapshots the real buffered cursor and failure flags outside the measured callback.
+TestCallbackProgress AudioPreviewPlayer::getTestCallbackProgress() const
+{
+    const utils::CallbackControlGuard control(renderingAccess);
+    return {
+        .bufferedReadPosition = bufferingSource != nullptr ? bufferingSource->getNextReadPosition() : 0,
+        .bufferUnderrun = bufferUnderrun.load(),
+        .readFailed = readFailed.load(),
+        .rendererFailed = publishedFailed.load(),
+    };
+}
+
+/// Attaches test-owned prepared processors to the production player without installed plugin or settings state.
+/// Callers keep processors alive until detachment, and prepare/release them only while callbacks are quiescent.
+void AudioPreviewPlayer::setTestCallbackChain(std::vector<juce::AudioPluginInstance*> processors)
+{
+    const utils::CallbackControlGuard control(renderingAccess);
+    const auto position = previewSource.getCurrentPosition();
+    const auto resume = previewSource.isPlaying();
+    previewSource.stop();
+    plugin_processing::ChainPreparation preparation;
+    for (const auto* processor : processors) {
+        plugin_processing::addToPreparation(preparation, *processor, sampleRate);
+    }
+    pluginPreviewEnabled = !processors.empty();
+    previewSource.setChain(std::move(processors), preparation, pluginPreviewEnabled, latencyCompensated);
+    const auto positioned = reposition(position, resume);
+    juce::ignoreUnused(positioned);
+}
+
+/// Attaches a test-owned source to the real renderer without JUCE device dispatch or buffering dependencies.
+/// The source must outlive the player or its next release. Only setup bypasses the decoder, never callback execution.
+void AudioPreviewPlayer::setTestCallbackInput(
+    juce::AudioSource& input,
+    const double durationSeconds,
+    const int channels,
+    const double rate,
+    const int block
+)
+{
+    const utils::CallbackControlGuard control(renderingAccess);
+    release();
+    sampleRate = rate;
+    blockSize = block;
+    previewSource.setInput(&input, durationSeconds, channels);
+    previewSource.prepareToPlay(blockSize, sampleRate);
+    previewSource.start();
+    deviceReady.store(true);
+    publishState();
+}
+
+/// Forwards hardware-free sanitizer tests through the complete production callback, including access release.
 void AudioPreviewPlayer::renderTestCallback(
     float* const* outputChannels,
     const int outputChannelCount,
@@ -576,14 +664,14 @@ bool AudioPreviewPlayer::hasLoadedSource() const noexcept
 }
 
 /// Reports logical playback, including a start waiting for cue metadata, rather than the reader's advanced position.
-/// Reads the published state, so the waveform and table updates never take the rendering lock.
+/// Reads the published state, so the waveform and table updates never take the renderer access guard.
 bool AudioPreviewPlayer::isPlaying() const
 {
     return startWhenInitialPositionReady || publishedPlaying.load();
 }
 
 /// Reports a stop whose fade-out the audio callback has not finished rendering yet.
-/// Reads the published state, so mouse handlers never take the rendering lock.
+/// Reads the published state, so mouse handlers never take the renderer access guard.
 bool AudioPreviewPlayer::isStopping() const
 {
     return publishedStopping.load();
@@ -596,15 +684,15 @@ bool AudioPreviewPlayer::isPluginPreviewEnabled() const noexcept
 }
 
 /// Returns the audible file position for the waveform, held at EOF while tails drain.
-/// Reads the published state, so the per-frame waveform update never takes the rendering lock.
+/// Reads the published state, so the per-frame waveform update never takes the renderer access guard.
 double AudioPreviewPlayer::getCurrentPosition() const
 {
     return publishedPosition.load();
 }
 
 /// Publishes the preview source's playback state for the lock-free getters.
-/// Called with the rendering lock held, after every change on the message thread and after every rendered block,
-/// so the published values always describe the state the last lock holder left behind.
+/// Called with exclusive control or callback admission, after every change and rendered block,
+/// so the published values always describe the state the previous exclusive owner left behind.
 void AudioPreviewPlayer::publishState()
 {
     publishedPosition.store(previewSource.getCurrentPosition());
@@ -676,7 +764,7 @@ void AudioPreviewPlayer::audioDeviceStopped()
 /// Prepares the new device context on the message thread while callbacks emit silence rather than wait.
 void AudioPreviewPlayer::handleAsyncUpdate()
 {
-    const juce::ScopedLock lock(renderingLock);
+    const utils::CallbackControlGuard control(renderingAccess);
     if (deviceManager.getCurrentAudioDevice() == nullptr) {
         return;
     }
@@ -692,7 +780,7 @@ void AudioPreviewPlayer::handleAsyncUpdate()
     sampleRate = newRate;
     blockSize = newBlockSize;
     prepareInput();
-    const bool refreshed = refreshPluginChain();
+    const bool refreshed = refreshPreparedPluginChain();
     const bool positioned = reposition(position, resume && refreshed);
     juce::ignoreUnused(positioned);
     deviceReady.store(true);
@@ -715,8 +803,8 @@ void AudioPreviewPlayer::audioDeviceIOCallbackWithContext(
             juce::FloatVectorOperations::clear(channel, sampleCount);
         }
     }
-    const juce::ScopedTryLock lock(renderingLock);
-    if (!lock.isLocked() || !deviceReady.load()) {
+    const utils::CallbackAccessGuard access(renderingAccess);
+    if (!access.isAcquired() || !deviceReady.load()) {
         return;
     }
     std::array<float*, 2> activeChannels {};
@@ -735,9 +823,9 @@ void AudioPreviewPlayer::audioDeviceIOCallbackWithContext(
 
 /// Moves audio/read-thread failures and EOF notifications onto the message thread.
 /// The waveform's VBlankAttachment calls this at the current display's refresh rate, including while idle or hidden.
-/// Every frame reads the published state and the plugin tails without the rendering lock,
+/// Every frame reads the published state and the plugin tails without the renderer access guard,
 /// and takes it only to apply a changed tail or to stop after a failure,
-/// because the audio callback outputs silence for every block in which the lock is busy.
+/// because the audio callback outputs silence whenever control has closed admission.
 void AudioPreviewPlayer::updatePlaybackStatus()
 {
     if (liveChain != nullptr) {
@@ -745,7 +833,7 @@ void AudioPreviewPlayer::updatePlaybackStatus()
         if (pluginPreviewEnabled) {
             // The plugins are only destroyed on the message thread, so querying them here needs no lock.
             if (const auto tailSamples = liveChain->getPreviewTailSamples(); tailSamples != appliedTailSamples) {
-                const juce::ScopedLock lock(renderingLock);
+                const utils::CallbackControlGuard control(renderingAccess);
                 previewSource.setTailSamples(tailSamples);
                 appliedTailSamples = tailSamples;
             }
@@ -756,7 +844,7 @@ void AudioPreviewPlayer::updatePlaybackStatus()
     if (decodeFailed || underrun || publishedFailed.load()) {
         juce::String pluginFailure;
         {
-            const juce::ScopedLock lock(renderingLock);
+            const utils::CallbackControlGuard control(renderingAccess);
             startWhenInitialPositionReady = false;
             previewSource.stop();
             if (previewSource.hasFailed()) {
@@ -799,8 +887,8 @@ void AudioPreviewPlayer::setErrorCallback(std::function<void(const juce::String&
 
 /// Logs every failure and gives the GUI an explicit message-thread notification.
 /// The GUI handler opens a dialog and saves the settings,
-/// so the per-frame status update reports its failures after releasing the rendering lock.
-/// The other failures happen while playback is stopping or not running, where holding the lock longer is inaudible.
+/// so the per-frame status update reports its failures after releasing the renderer access guard.
+/// Other failures occur while playback is stopping or inactive, where keeping control admission closed is inaudible.
 void AudioPreviewPlayer::reportError(const juce::String& message) const
 {
     utils::logError("Audio preview: {}", message);

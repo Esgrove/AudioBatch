@@ -310,7 +310,7 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
     );
     pluginLibrary = std::make_unique<PluginLibrary>(pluginAppProperties);
     liveChain = std::make_unique<LiveChain>(
-        *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
+        *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingAccess(), previewPlayer.getDeviceManager()
     );
     previewPlayer.setLiveChain(*liveChain);
     previewPlayer.setSavedDeviceState(pluginAppProperties.getUserSettings()->getXmlValue(audioDeviceStatePropertyKey));

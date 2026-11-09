@@ -7,6 +7,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/SpectrogramData.h"
+#include "CallbackBenchmark.h"
 #include "PluginBenchmark.h"
 #include "SpectrogramBenchmark.h"
 #include "TestHelpers.h"
@@ -223,6 +224,9 @@ int main(int argumentCount, char* arguments[])
     }
     if (helperArguments.contains("--benchmark-spectrogram")) {
         return audiobatch::tests::runSpectrogramBenchmark(helperArguments);
+    }
+    if (helperArguments.contains("--callback-benchmark")) {
+        return audiobatch::tests::runCallbackBenchmark(helperArguments);
     }
     if (helperArguments.contains("--vst3-benchmark")) {
         return audiobatch::tests::runPluginBenchmark(helperArguments);

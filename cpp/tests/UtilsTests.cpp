@@ -8,6 +8,7 @@
 #include "utils/AppInfo.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/BackgroundRunner.h"
+#include "utils/CallbackAccess.h"
 #include "utils/ConsolePrint.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
@@ -20,6 +21,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <latch>
 #include <memory>
@@ -91,6 +93,7 @@ private:
         juce::AudioFormatWriterOptions::SampleFormat sampleFormat
     );
 
+    void runCallbackAccessTests();
     void runConcurrentDirectoryTests();
     void runPickerFilterTests();
     void runDisposalTests();
@@ -104,6 +107,114 @@ private:
     void runSourceSafetyTests();
     void runWrittenAudioValidationTests(const juce::File& root);
 };
+
+/// Proves one-attempt callback exclusion, nested control ownership, and release/acquire publication.
+void UtilsTests::runCallbackAccessTests()
+{
+    beginTest("Callback admission is exclusive, nonrecursive, and closed throughout nested controls");
+    utils::CallbackAccess access;
+    {
+        const utils::CallbackAccessGuard first(access);
+        const utils::CallbackAccessGuard second(access);
+        expect(first.isAcquired());
+        expect(!second.isAcquired());
+    }
+    {
+        const utils::CallbackControlGuard outer(access);
+        {
+            const utils::CallbackControlGuard inner(access);
+            const utils::CallbackAccessGuard rejected(access);
+            expect(!rejected.isAcquired());
+        }
+        const utils::CallbackAccessGuard rejected(access);
+        expect(!rejected.isAcquired());
+    }
+    {
+        const utils::CallbackAccessGuard reopened(access);
+        expect(reopened.isAcquired());
+    }
+
+    beginTest("Closing admission waits for the active callback and cannot be erased by its release");
+    std::latch entered(1);
+    std::latch release(1);
+    std::latch controllerEntered(1);
+    std::latch releaseController(1);
+    int protectedValue = 0;
+    std::atomic<bool> callbackAcquired {false};
+    std::atomic<bool> controllerSawCallback {false};
+    std::thread callback([&] {
+        const utils::CallbackAccessGuard guard(access);
+        callbackAcquired.store(guard.isAcquired());
+        entered.count_down();
+        release.wait();
+        protectedValue = 17;
+    });
+    entered.wait();
+    std::thread controller([&] {
+        const utils::CallbackControlGuard guard(access);
+        controllerSawCallback.store(protectedValue == 17);
+        protectedValue = 42;
+        controllerEntered.count_down();
+        releaseController.wait();
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!access.isControlPendingForTesting() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    expect(access.isControlPendingForTesting());
+    release.count_down();
+    callback.join();
+    controllerEntered.wait();
+    {
+        const utils::CallbackAccessGuard rejected(access);
+        expect(!rejected.isAcquired());
+    }
+    releaseController.count_down();
+    controller.join();
+    {
+        const utils::CallbackAccessGuard reopened(access);
+        expect(reopened.isAcquired());
+        expect(callbackAcquired.load());
+        expect(controllerSawCallback.load());
+        expectEquals(protectedValue, 42);
+    }
+
+    beginTest("Competing controls and continuous callbacks never overlap mutable renderer access");
+    constexpr int ITERATIONS {256};
+    std::atomic<int> owners {0};
+    std::atomic<bool> overlap {false};
+    std::atomic<bool> finished {false};
+    std::thread continuous([&] {
+        while (!finished.load()) {
+            const utils::CallbackAccessGuard guard(access);
+            if (guard.isAcquired()) {
+                if (owners.fetch_add(1) != 0) {
+                    overlap.store(true);
+                }
+                ++protectedValue;
+                owners.fetch_sub(1);
+            }
+        }
+    });
+    const auto mutate = [&] {
+        for (int iteration = 0; iteration < ITERATIONS; ++iteration) {
+            const utils::CallbackControlGuard guard(access);
+            if (owners.fetch_add(1) != 0) {
+                overlap.store(true);
+            }
+            ++protectedValue;
+            owners.fetch_sub(1);
+        }
+    };
+    std::thread firstControl(mutate);
+    std::thread secondControl(mutate);
+    firstControl.join();
+    secondControl.join();
+    finished.store(true);
+    continuous.join();
+    expect(!overlap.load());
+    expect(protectedValue >= 42 + ITERATIONS * 2);
+}
 
 /// Checks that simultaneous directory owners cannot select or remove each other's paths.
 void UtilsTests::runConcurrentDirectoryTests()
@@ -142,6 +253,7 @@ void UtilsTests::runConcurrentDirectoryTests()
 void UtilsTests::runTest()
 {
     const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
+    runCallbackAccessTests();
     runConcurrentDirectoryTests();
 
     beginTest("Startup flags recognize complete options and their short aliases");

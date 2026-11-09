@@ -12,6 +12,7 @@
 #include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
+#include "utils/CallbackAccess.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -55,13 +56,13 @@ juce::String formatPluginDescription(const juce::PluginDescription& description)
 LiveChain::LiveChain(
     PluginLibrary& pluginLibrary,
     juce::ApplicationProperties& applicationProperties,
-    juce::CriticalSection& previewRenderingLock,
+    utils::CallbackAccess& previewRenderingAccess,
     juce::AudioDeviceManager& audioDeviceManager
 ) :
     library(pluginLibrary),
     appProperties(applicationProperties),
     previewDeviceManager(audioDeviceManager),
-    renderingLock(previewRenderingLock)
+    renderingAccess(previewRenderingAccess)
 {
     previewDeviceManager.addChangeListener(this);
     loadPersistedChain();
@@ -77,7 +78,9 @@ void LiveChain::saveChain()
 /// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
 LiveChain::~LiveChain()
 {
-    const juce::ScopedLock lock(renderingLock);
+    if (const auto detach = std::move(previewDetachCallback)) {
+        detach();
+    }
     utils::logDebug("Application shutdown: closing plugin windows");
     previewDeviceManager.removeChangeListener(this);
 
@@ -152,7 +155,7 @@ bool LiveChain::isSlotEnabled(const PluginSlotId slotId) const
 
 /// Returns the enabled plugins in chain order.
 /// Captures every instantiated slot first, so a processing run always uses the latest live tweaks.
-/// Capturing runs without the rendering lock, like a host saving plugin state while it plays,
+/// Capturing runs without closing callback admission, like a host saving plugin state while it plays,
 /// so starting a run does not silence the preview for the time large plugin states take to save.
 std::vector<EnabledChainPlugin> LiveChain::getEnabledPlugins()
 {
@@ -201,6 +204,12 @@ void LiveChain::setChainChangedCallback(ChainChangedCallback callback)
     chainChangedCallback = std::move(callback);
 }
 
+/// Installs a synchronous lifetime handoff for the player that borrows this chain's processors.
+void LiveChain::setPreviewDetachCallback(ChainChangedCallback callback)
+{
+    previewDetachCallback = std::move(callback);
+}
+
 /// Refreshes the device context of the chain editor without rebuilding rows or restarting preview.
 void LiveChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
@@ -214,7 +223,7 @@ void LiveChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 /// A window hidden by its close button counts as closed, because the dialog hides itself instead of deleting itself.
 /// The preview's display-synchronized VBlank callback drives this metadata and window housekeeping.
 /// Audio parameter changes use the shared processor directly and never wait for this update.
-/// Nothing here takes the rendering lock, so closing an editor during playback does not interrupt the preview:
+/// Nothing here closes callback admission, so closing an editor during playback does not interrupt the preview:
 /// the slots are only changed on the message thread,
 /// and capturing the state, deleting the editor, and reading the latency do not reconfigure the processor.
 void LiveChain::updatePreviewStatus()
@@ -292,7 +301,7 @@ void LiveChain::addPlugin(const juce::PluginDescription& description)
 {
     PluginSlotId slotId {};
     {
-        const juce::ScopedLock lock(renderingLock);
+        const utils::CallbackControlGuard control(renderingAccess);
         LiveSlot entry;
         entry.description = description;
         slotId = appendSlot(std::move(entry));
@@ -306,7 +315,7 @@ void LiveChain::addPlugin(const juce::PluginDescription& description)
 }
 
 /// Gives the slot a new id and appends it to the chain.
-/// The caller holds the rendering lock once the chain can be playing.
+/// The caller holds control admission once the chain can be playing.
 PluginSlotId LiveChain::appendSlot(LiveSlot entry)
 {
     entry.id = PluginSlotId {++lastSlotId};
@@ -315,8 +324,8 @@ PluginSlotId LiveChain::appendSlot(LiveSlot entry)
 }
 
 /// Removes the slot from the chain, closing its editor window if open.
-/// The slot leaves the chain under the rendering lock, but its processor is only destroyed
-/// after the live preview has dropped it, so the slow plugin teardown does not hold the lock.
+/// The slot leaves the chain under control admission, but its processor is only destroyed
+/// after the live preview has dropped it, so slow plugin teardown does not exclude callbacks.
 void LiveChain::removeSlot(const PluginSlotId slotId)
 {
     const auto index = getSlotIndex(slotId);
@@ -327,7 +336,7 @@ void LiveChain::removeSlot(const PluginSlotId slotId)
     {
         LiveSlot removed;
         {
-            const juce::ScopedLock lock(renderingLock);
+            const utils::CallbackControlGuard control(renderingAccess);
             removed = std::move(chain[static_cast<std::size_t>(*index)]);
             chain.erase(chain.begin() + *index);
         }
@@ -349,7 +358,7 @@ void LiveChain::moveSlot(const PluginSlotId slotId, const int toIndex)
     const auto fromIndex = *index;
 
     {
-        const juce::ScopedLock lock(renderingLock);
+        const utils::CallbackControlGuard control(renderingAccess);
 
         // Entries own their editor windows, so reordering carries any open editor along with its slot.
         if (fromIndex < toIndex) {
@@ -377,7 +386,7 @@ void LiveChain::setSlotEnabled(const PluginSlotId slotId, const bool enabled)
     }
 
     {
-        const juce::ScopedLock lock(renderingLock);
+        const utils::CallbackControlGuard control(renderingAccess);
         entry.enabled = enabled;
     }
 
@@ -386,7 +395,7 @@ void LiveChain::setSlotEnabled(const PluginSlotId slotId, const bool enabled)
 }
 
 /// Removes all slots from the chain, closing any open editor windows, and forgets the current preset.
-/// The processors are destroyed after the live preview has dropped them, without holding the rendering lock.
+/// The processors are destroyed after live preview has dropped them, without excluding callbacks.
 void LiveChain::clearChain()
 {
     presetName.clear();
@@ -397,7 +406,7 @@ void LiveChain::clearChain()
     {
         std::vector<LiveSlot> removed;
         {
-            const juce::ScopedLock lock(renderingLock);
+            const utils::CallbackControlGuard control(renderingAccess);
             removed.swap(chain);
         }
 
@@ -423,7 +432,7 @@ void LiveChain::captureOpenEditorStates()
 }
 
 /// Captures the latest state of the instantiated slots and returns the stored form of the chain in chain order.
-/// Capturing runs without the rendering lock, like a host saving plugin state while it plays,
+/// Capturing runs without closing callback admission, like a host saving plugin state while it plays,
 /// so saving the chain after every edit does not silence the preview for the time large states take.
 std::vector<SavedChainSlot> LiveChain::captureSavedSlots()
 {
