@@ -4,6 +4,8 @@
 #include "ui/ImageControlLookAndFeel.h"
 
 #include "ImageControlBinaryData.h"
+#include "ui/ControlSlider.h"
+#include "ui/DisplayDisclosure.h"
 
 #include <algorithm>
 #include <memory>
@@ -150,6 +152,7 @@ ImageControlLookAndFeel::~ImageControlLookAndFeel()
 void ImageControlLookAndFeel::globalFocusChanged(juce::Component* focusedComponent)
 {
     if (focusedComponent != nullptr && &focusedComponent->getLookAndFeel() == this
+        && dynamic_cast<DisplayDisclosure*>(focusedComponent) == nullptr
         && (dynamic_cast<juce::Button*>(focusedComponent) != nullptr
             || dynamic_cast<juce::Slider*>(focusedComponent) != nullptr
             || dynamic_cast<juce::ComboBox*>(focusedComponent) != nullptr))
@@ -159,11 +162,21 @@ void ImageControlLookAndFeel::globalFocusChanged(juce::Component* focusedCompone
 }
 
 /// Supplies the same subdued outline to every JUCE control that opts into keyboard focus visibility.
-std::unique_ptr<juce::FocusOutline> ImageControlLookAndFeel::createFocusOutlineForComponent(
-    juce::Component& /*component*/
-)
+std::unique_ptr<juce::FocusOutline> ImageControlLookAndFeel::createFocusOutlineForComponent(juce::Component& component)
 {
+    if (dynamic_cast<DisplayDisclosure*>(&component) != nullptr) {
+        return nullptr;
+    }
     return std::make_unique<juce::FocusOutline>(std::make_unique<ControlFocusOutline>());
+}
+
+/// Gives plugin sliders a stable numeric-only editor while leaving unrelated JUCE sliders unchanged.
+juce::Label* ImageControlLookAndFeel::createSliderTextBox(juce::Slider& slider)
+{
+    if (auto* control = dynamic_cast<ControlSlider*>(&slider)) {
+        return control->createValueBox().release();
+    }
+    return juce::LookAndFeel_V4::createSliderTextBox(slider);
 }
 
 /// Returns Roboto Mono at a height.

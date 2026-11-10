@@ -48,7 +48,10 @@ struct ImageControlEditorTestAccess;
 /// and JUCE paints the components over them, repainting only the regions that changed.
 /// The display settings live in a panel that the Settings button opens,
 /// and the editor applies them from the editor settings on every refresh.
-class ImageControlEditor final : public juce::AudioProcessorEditor, private juce::ComponentMovementWatcher
+class ImageControlEditor final :
+    public juce::AudioProcessorEditor,
+    private juce::ComponentMovementWatcher,
+    private juce::KeyListener
 {
 public:
     explicit ImageControlEditor(ImageControlProcessor& owner);
@@ -84,6 +87,7 @@ private:
     void openSettings();
     void refreshDisplay(double timestamp);
     void setAnalyzeOutput(bool output);
+    void setKeyboardRouting(bool enabled);
     void updateBandRanges();
     void updateCorrelationMonitoring();
     void updateDisplayDisclosures();
@@ -91,6 +95,8 @@ private:
     void updateSettingsBounds();
     void updatePresetIdentity();
     void updateSpectrogramMonitoring();
+
+    bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
 
     void componentMovedOrResized(bool wasMoved, bool wasResized) override;
     void componentPeerChanged() override;

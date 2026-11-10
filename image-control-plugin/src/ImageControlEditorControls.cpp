@@ -8,6 +8,7 @@
 #include "ui/ImageControlLookAndFeel.h"
 
 #include <array>
+#include <vector>
 
 namespace esgrove::image_control
 {
@@ -21,6 +22,36 @@ constexpr float ICON_STROKE_WIDTH {1.5F};
 constexpr int CHEVRON_INSET {9};
 /// Maximum host parameter label length used for a local history action.
 constexpr int HISTORY_NAME_LENGTH {100};
+
+/// Registers before each existing component's own key handler, so focused sliders cannot consume hover arrows first.
+/// Editor controls retain ownership, and removal runs while the same hierarchy is still alive.
+void routeKeyboard(juce::Component& component, juce::KeyListener& listener, const bool enabled)
+{
+    std::vector<juce::Component*> pending {&component};
+    while (!pending.empty()) {
+        auto* current = pending.back();
+        pending.pop_back();
+        if (enabled) {
+            current->addKeyListener(&listener);
+        } else {
+            current->removeKeyListener(&listener);
+        }
+        for (auto* child : current->getChildren()) {
+            pending.push_back(child);
+        }
+    }
+}
+
+/// Detects active native text entry even when an implementation child owns keyboard focus.
+bool isTextEntry(const juce::Component* component)
+{
+    for (const auto* current = component; current != nullptr; current = current->getParentComponent()) {
+        if (dynamic_cast<const juce::TextEditor*>(current) != nullptr) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /// Toggles a boolean parameter in a balanced host gesture and one local history edit.
 void toggleParameter(juce::RangedAudioParameter& parameter, ParameterHistory& history)
@@ -165,9 +196,30 @@ void ImageControlEditor::updateHistoryButtons()
     redoButton.setTooltip(history.canRedo() ? "Redo " + history.redoDescription() : "No processing edit to redo");
 }
 
+/// Installs or removes pre-control routing only while the editor-owned component hierarchy is alive.
+void ImageControlEditor::setKeyboardRouting(const bool enabled)
+{
+    routeKeyboard(*this, *this, enabled);
+}
+
+/// Gives hovered-spectrum arrows priority over a focused slider, without taking text-entry or modal commands.
+bool ImageControlEditor::keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent)
+{
+    if ((!key.isKeyCode(juce::KeyPress::leftKey) && !key.isKeyCode(juce::KeyPress::rightKey)) || !isEnabled()
+        || !spectrogram.isVisible() || spectrogramHidden || juce::Component::getNumCurrentlyModalComponents() != 0
+        || isTextEntry(originatingComponent) || isTextEntry(juce::Component::getCurrentlyFocusedComponent()))
+    {
+        return false;
+    }
+    return spectrogram.keyPressed(key);
+}
+
 /// Routes local editing and display shortcuts without taking text-editor commands or unrelated host shortcuts.
 bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
 {
+    if (keyPressed(key, juce::Component::getCurrentlyFocusedComponent())) {
+        return true;
+    }
     auto& history = imageControlProcessor.getHistory();
     const auto& parameters = imageControlProcessor.getParameters();
     const auto modifiers = key.getModifiers();

@@ -8,13 +8,14 @@
 
 namespace esgrove::image_control
 {
-/// A horizontal divider with an understated idle grip and keyboard resizing.
+/// A horizontal divider with a hover-only grip and keyboard resizing.
 /// Dragging or arrow keys report vertical movement so the editor can clamp and resize the sections on either side.
 class SplitDivider final : public juce::Component
 {
 public:
     SplitDivider();
 
+    [[nodiscard]] bool isGripVisible() const;
     void cancelDrag();
     void setDragCallback(std::function<void(int)> callback);
 

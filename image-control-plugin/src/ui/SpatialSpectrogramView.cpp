@@ -48,8 +48,8 @@ constexpr double HIGHLIGHT_SECONDS {0.08};
 /// Opacity of the dark veil over a band that the solos of other bands mute.
 constexpr float MUTED_BAND_ALPHA {0.55F};
 
-/// Width of the position labels on the left, in pixels.
-constexpr float POSITION_GUTTER {28.0F};
+/// Equal horizontal plot insets leave compact room for position labels on the left.
+constexpr float PLOT_SIDE_INSET {16.0F};
 /// Height of the frequency labels at the bottom, in pixels.
 constexpr float FREQUENCY_GUTTER {18.0F};
 /// Horizontal distance within which a click grabs a crossover line, in pixels.
@@ -242,14 +242,12 @@ SpatialSpectrogramView::~SpatialSpectrogramView()
 /// Returns the area of the spectrogram inside the axis labels.
 juce::Rectangle<float> SpatialSpectrogramView::getPlotBounds() const
 {
-    // Half a label of room above and to the right keeps the top position label and the last frequency label whole.
+    // Endpoint frequency labels are clamped to the view rather than requiring asymmetric plot gutters.
     return getLocalBounds()
         .toFloat()
-        .reduced(BOX_PADDING)
-        .withTrimmedLeft(POSITION_GUTTER - BOX_PADDING)
+        .reduced(PLOT_SIDE_INSET, BOX_PADDING)
         .withTrimmedBottom(FREQUENCY_GUTTER - BOX_PADDING)
-        .withTrimmedTop(LABEL_FONT_HEIGHT * 0.5F)
-        .withTrimmedRight(FREQUENCY_LABEL_WIDTH * 0.5F - BOX_PADDING);
+        .withTrimmedTop(LABEL_FONT_HEIGHT * 0.5F);
 }
 
 /// Returns the band under the pointer, or the band being dragged, if any.
@@ -723,14 +721,21 @@ void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
     for (const double frequency : GRID_FREQUENCIES) {
         const float x = frequencyToX(frequency);
         const juce::Rectangle<float> label(
-            x - FREQUENCY_LABEL_WIDTH * 0.5F, plot.getBottom(), FREQUENCY_LABEL_WIDTH, FREQUENCY_GUTTER
+            std::clamp(
+                x - FREQUENCY_LABEL_WIDTH * 0.5F,
+                0.0F,
+                std::max(0.0F, static_cast<float>(getWidth()) - FREQUENCY_LABEL_WIDTH)
+            ),
+            plot.getBottom(),
+            FREQUENCY_LABEL_WIDTH,
+            FREQUENCY_GUTTER
         );
         graphics.drawText(formatGridFrequency(frequency), label, juce::Justification::centred);
     }
     for (std::size_t index = 0; index < GRID_POSITIONS.size(); ++index) {
         const float y = positionToY(GRID_POSITIONS.at(index));
         const juce::Rectangle<float> label(
-            BOX_PADDING, y - LABEL_FONT_HEIGHT * 0.5F, POSITION_GUTTER - LABEL_INSET - BOX_PADDING, LABEL_FONT_HEIGHT
+            0.0F, y - LABEL_FONT_HEIGHT * 0.5F, PLOT_SIDE_INSET - LABEL_INSET, LABEL_FONT_HEIGHT
         );
         graphics.drawText(GRID_POSITION_LABELS.at(index), label, juce::Justification::centredRight);
     }

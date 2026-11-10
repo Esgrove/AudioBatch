@@ -487,9 +487,14 @@ The plot itself is left unpainted so the GPU image beneath the components remain
 and gain-only Link gesture behavior.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
-`DisplayDisclosure` overlays a hover/focus chevron on each optional analysis section.
-Hidden sections retain full-width clickable restore rows with right-hand chevrons, without adding a display toolbar.
-The band controls' action occupies reserved band-heading space, separate from analysis controls.
+`DisplayDisclosure` shows a centered translucent triangle while its optional section is hovered.
+Hidden sections retain full-width labelled restore rows, without adding a display toolbar.
+Pointer-acquired focus stays quiet, while keyboard traversal has a local neutral outline.
+The band controls' action occupies the gap above the strips, separate from analysis controls.
+The divider grip is hidden until hover, dragging, or keyboard focus.
+Spectrum Left/Right keys move a hovered crossover or proportionally move a whole band.
+Ordinary steps use ten percent of the crossover or geometric band-centre frequency, and Shift uses one percent,
+with each reference-frequency step bounded to 1–1000 Hz.
 The band-control disclosure replaces full strips with a compact Mid/Side/Width/Pan row,
 using the same sliders and attachments.
 Its persisted `compactBandControls` choice defaults to false, leaving legacy projects in the full view.
@@ -498,7 +503,10 @@ A single 28-pixel row uses value suffixes and directional pan text, without band
 Wider columns use full inline control names based on measured text widths, never a separate label row.
 With the spectrogram hidden, the fixed-height editor instead follows the compact value row.
 The preset name occupies the existing title area only when its selector row is collapsed.
-`SettingsPanel` bounds a scrolling content area to the editor, keeps focused controls visible,
+`ControlSlider` separates numeric text from fixed display units in its plugin-local value label.
+The inline editor shares the readout's font and placement, and Up/Down uses the slider's ordinary fine/coarse nudge path.
+`SettingsPanel` uses natural content height up to the editor's available bottom edge,
+bounds any remaining scrolling content to that space, keeps focused controls visible,
 validates numeric tokens, and scopes appearance reset separately from sound, visibility, and geometry.
 The modal Settings callout admits pointer events only to its opener,
 so a repeat click completes the ordinary release-driven close action without reopening.

@@ -26,6 +26,8 @@ public:
     SettingsPanel& operator=(const SettingsPanel&) = delete;
     SettingsPanel& operator=(SettingsPanel&&) = delete;
 
+    [[nodiscard]] int getNaturalHeight() const;
+
     void resetDisplayAppearance();
     void showKeyboardShortcuts();
     void showPreferences();
@@ -35,6 +37,7 @@ public:
     void resized() override;
 
 private:
+    void layoutPreferences(int width);
     void revealControl(juce::Component& control);
     void syncChoices();
 

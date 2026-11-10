@@ -138,7 +138,9 @@ TEST(KeyboardShortcutsPanel, RowsNameActualEditorActionsInTwoColumns)
     EXPECT_EQ(shortcutLabel(panel, "shortcut.close.action")->getText(), "Back / close Settings");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.close.keys")->getText(), "Escape");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.enter.keys")->getText(), "Enter");
-    EXPECT_EQ(shortcutLabel(panel, "shortcut.move.keys")->getText(), "Drag sideways");
+    EXPECT_EQ(shortcutLabel(panel, "shortcut.move.action")->getText(), "Hovered crossover / band (1-1000 Hz)");
+    EXPECT_EQ(shortcutLabel(panel, "shortcut.move.keys")->getText(), "Drag / arrows: 10% (Shift: 1%)");
+    EXPECT_EQ(shortcutLabel(panel, "shortcut.fineGain.keys")->getText(), "Shift+drag / Shift+wheel");
 }
 
 /// Modifier names match the target platform instead of presenting mixed-platform Command/Ctrl strings.

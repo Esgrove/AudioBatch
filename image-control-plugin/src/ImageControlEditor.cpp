@@ -83,6 +83,9 @@ constexpr float COMPACT_BRAND_FONT_HEIGHT {14.0F};
 constexpr int COMPACT_BRAND_HEIGHT {15};
 /// The local row action reserves only the header portion of the meter column.
 constexpr int CORRELATION_ACTION_HEIGHT {20};
+/// A full-height hover target separates correlation from the controls without covering either.
+constexpr int CONTROLS_ACTION_HEIGHT {12};
+constexpr int SECTION_ACTION_WIDTH {24};
 /// Returns a boolean editor setting.
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 {
@@ -240,9 +243,6 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band, owner.getHistory());
         constexpr int firstBandFocusOrder {16};
         bandStrips.at(band)->setExplicitFocusOrder(firstBandFocusOrder + static_cast<int>(band));
-        if (band == BAND_COUNT - 1) {
-            bandStrips.at(band)->setHeaderDisclosureInset(ICON_BUTTON_WIDTH + ICON_BUTTON_GAP);
-        }
         addAndMakeVisible(*bandStrips.at(band));
         correlationMeters.at(band) = std::make_unique<BandCorrelationMeter>(bandName(band));
         addAndMakeVisible(*correlationMeters.at(band));
@@ -293,6 +293,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     openGLContext.setComponentPaintingEnabled(true);
     openGLContext.setContinuousRepainting(false);
     openGLContext.attachTo(*this);
+    setKeyboardRouting(true);
 }
 
 /// Stops the analysis worker, detaches the OpenGL context,
@@ -300,6 +301,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 /// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    setKeyboardRouting(false);
     settingsCallout.reset();
     settingsPanel.reset();
     imageControlProcessor.setCorrelationEnabled(false);
@@ -331,15 +333,40 @@ void ImageControlEditor::resized()
     auto area = getLocalBounds().reduced(GAP);
 
     auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
-    // Compact widths keep all processing controls visible and separate at the minimum editor width.
-    constexpr int compactHeaderThreshold {940};
-    constexpr int compactTitleWidth {112};
-    constexpr int compactOutputWidth {105};
-    constexpr int compactOutputLabelWidth {42};
-    const bool compact = getWidth() < compactHeaderThreshold;
-    const int buttonWidth = compact ? 48 : 60;
-    const int tapWidth = compact ? 34 : 42;
-    auto identity = header.removeFromLeft(compact ? compactTitleWidth : TITLE_WIDTH + 16);
+    // Spend narrow-width pressure on spacing first, then flexible labels and buttons, and lastly the output track.
+    constexpr int groupGapCount {6};
+    constexpr int iconGapCount {2};
+    constexpr int minimumGap {2};
+    constexpr int preferredButtonWidth {60};
+    constexpr int preferredTapWidth {42};
+    constexpr int preferredIdentityWidth {TITLE_WIDTH + 16};
+    constexpr int fixedIconWidth {ICON_BUTTON_WIDTH * 4};
+    constexpr int preferredWidth {
+        preferredIdentityWidth + fixedIconWidth + preferredTapWidth * 2 + preferredButtonWidth * 3 + OUTPUT_LABEL_WIDTH
+            + OUTPUT_SLIDER_WIDTH + groupGapCount * GAP + iconGapCount * ICON_BUTTON_GAP,
+    };
+    double pressure = static_cast<double>(std::max(0, preferredWidth - header.getWidth()));
+    const auto compress = [&pressure](const int preferred, const int minimum, const int count) {
+        const double reduction
+            = std::min(static_cast<double>(preferred - minimum), pressure / static_cast<double>(count));
+        pressure = std::max(0.0, pressure - reduction * static_cast<double>(count));
+        return static_cast<double>(preferred) - reduction;
+    };
+    const double groupGap = compress(GAP, minimumGap, groupGapCount);
+    const double iconGap = compress(ICON_BUTTON_GAP, minimumGap, iconGapCount);
+    const double identityWidth = compress(preferredIdentityWidth, 112, 1);
+    const double buttonWidth = compress(preferredButtonWidth, 48, 3);
+    const double tapWidth = compress(preferredTapWidth, 34, 2);
+    const double outputLabelWidth = compress(OUTPUT_LABEL_WIDTH, 42, 1);
+    const auto outputWidth = static_cast<double>(header.getWidth()) - identityWidth - fixedIconWidth - tapWidth * 2.0
+        - buttonWidth * 3.0 - outputLabelWidth - groupGapCount * groupGap - iconGapCount * iconGap;
+    auto headerX = static_cast<double>(header.getX());
+    const auto takeHeader = [&headerX, &header](const double width) {
+        const int left = juce::roundToInt(headerX);
+        headerX += width;
+        return juce::Rectangle<int>(left, header.getY(), juce::roundToInt(headerX) - left, header.getHeight());
+    };
+    auto identity = takeHeader(identityWidth);
     if (presetLabel.isVisible()) {
         titleLabel.setBounds(identity.removeFromTop(COMPACT_BRAND_HEIGHT));
         presetLabel.setBounds(identity);
@@ -347,24 +374,25 @@ void ImageControlEditor::resized()
         titleLabel.setBounds(identity);
         presetLabel.setBounds({});
     }
-    settingsButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    header.removeFromLeft(GAP);
-    preButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
-    postButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
-    header.removeFromLeft(GAP);
-    undoButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    header.removeFromLeft(ICON_BUTTON_GAP);
-    redoButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    processingToolbarButton.setBounds(header.removeFromRight(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    header.removeFromRight(ICON_BUTTON_GAP);
-    outputSlider.setBounds(header.removeFromRight(compact ? compactOutputWidth : OUTPUT_SLIDER_WIDTH));
-    outputLabel.setBounds(header.removeFromRight(compact ? compactOutputLabelWidth : OUTPUT_LABEL_WIDTH));
-    header.removeFromRight(GAP);
-    bypassButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
-    header.removeFromRight(GAP);
-    deltaButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
-    header.removeFromRight(GAP);
-    monoButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
+    settingsButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    headerX += groupGap;
+    preButton.setBounds(takeHeader(tapWidth).reduced(0, BUTTON_INSET));
+    postButton.setBounds(takeHeader(tapWidth).reduced(0, BUTTON_INSET));
+    headerX += groupGap;
+    undoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    headerX += iconGap;
+    redoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    headerX += groupGap;
+    monoButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
+    headerX += groupGap;
+    deltaButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
+    headerX += groupGap;
+    bypassButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
+    headerX += groupGap;
+    outputLabel.setBounds(takeHeader(outputLabelWidth));
+    outputSlider.setBounds(takeHeader(outputWidth));
+    headerX += iconGap;
+    processingToolbarButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     area.removeFromTop(GAP);
     if (processingToolbarShown) {
         processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
@@ -377,7 +405,8 @@ void ImageControlEditor::resized()
         spectrogramDisclosure.setBounds(area.removeFromTop(RESTORE_HANDLE_HEIGHT));
         area.removeFromTop(GAP);
     }
-    const int correlationHeight = (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
+    const int correlationHeight
+        = (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + CONTROLS_ACTION_HEIGHT;
     int controlsHeight = compactBandControls ? BAND_STRIP_COMPACT_HEIGHT : bandSectionHeight;
     if (!spectrogramHidden) {
         const int maxBandSectionHeight
@@ -390,19 +419,19 @@ void ImageControlEditor::resized()
         const auto dividerArea = area.removeFromBottom(GAP);
         divider.setBounds(dividerArea.expanded(0, DIVIDER_GRAB_PADDING));
         spectrogram.setBounds(area);
-        spectrogramDisclosure.setBounds(area.removeFromTop(ICON_BUTTON_WIDTH)
-                                            .removeFromRight(ICON_BUTTON_WIDTH)
-                                            .translated(-BUTTON_INSET, BUTTON_INSET));
+        spectrogramDisclosure.setBounds(
+            area.withSizeKeepingCentre(SECTION_ACTION_WIDTH, CORRELATION_ACTION_HEIGHT).withY(area.getY())
+        );
         area = bandArea;
     }
 
     auto correlationArea = area.removeFromTop(correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT);
     correlationDisclosure.setBounds(
-        correlationShown ? correlationArea.withSize(ICON_BUTTON_WIDTH, CORRELATION_ACTION_HEIGHT)
-                               .withX(correlationArea.getRight() - ICON_BUTTON_WIDTH)
+        correlationShown ? correlationArea.withSizeKeepingCentre(SECTION_ACTION_WIDTH, CORRELATION_ACTION_HEIGHT)
+                               .withY(correlationArea.getY())
                          : correlationArea
     );
-    area.removeFromTop(GAP);
+    area.removeFromTop(CONTROLS_ACTION_HEIGHT);
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band)->setBounds(area.removeFromLeft(stripWidth));
@@ -424,22 +453,14 @@ void ImageControlEditor::resized()
     editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandSectionHeight, nullptr);
 }
 
-/// Keeps the full-strip action in its heading and the concise restore glyph inside the existing section gap.
+/// Centers the controls action in a dedicated gap, clear of every band value and analysis readout.
 void ImageControlEditor::layoutBandControlsDisclosure()
 {
-    constexpr int expandedBandInset {10};
-    const auto lastStrip = bandStrips.back()->getBounds();
-    if (compactBandControls) {
-        bandControlsDisclosure.setBounds(
-            lastStrip.getRight() - ICON_BUTTON_WIDTH, lastStrip.getY() - GAP, ICON_BUTTON_WIDTH, GAP
-        );
-        return;
-    }
     bandControlsDisclosure.setBounds(
-        lastStrip.getRight() - expandedBandInset - ICON_BUTTON_WIDTH,
-        lastStrip.getY() + expandedBandInset,
-        ICON_BUTTON_WIDTH,
-        CORRELATION_ACTION_HEIGHT
+        (getWidth() - SECTION_ACTION_WIDTH) / 2,
+        bandStrips.front()->getY() - CONTROLS_ACTION_HEIGHT,
+        SECTION_ACTION_WIDTH,
+        CONTROLS_ACTION_HEIGHT
     );
 }
 
@@ -465,7 +486,7 @@ int ImageControlEditor::compactHeight() const
     return HEADER_HEIGHT + GAP * 2 + (processingToolbarShown ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
         + RESTORE_HANDLE_HEIGHT + GAP
         + (compactBandControls ? BAND_STRIP_COMPACT_HEIGHT : std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT))
-        + (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
+        + (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + CONTROLS_ACTION_HEIGHT;
 }
 
 /// Returns the shared persistence of the particle fade and correlation trend/range, in seconds.
@@ -672,7 +693,7 @@ void ImageControlEditor::applyViewSettings()
     }
 }
 
-/// Keeps local disclosure targets available to keyboard users and reveals chevrons over their display.
+/// Keeps local disclosure targets available to keyboard users and reveals triangles over their display.
 void ImageControlEditor::updateDisplayDisclosures()
 {
     spectrogramDisclosure.setExpanded(!spectrogramHidden);
@@ -699,7 +720,8 @@ void ImageControlEditor::updateDisplayDisclosures()
         overControls = overControls || strip->getBounds().contains(pointer);
     }
     bandControlsDisclosure.setRevealed(
-        overControls || (!spectrogramHidden && divider.getBounds().contains(pointer))
+        overControls || bandControlsDisclosure.getBounds().contains(pointer)
+        || (!spectrogramHidden && divider.getBounds().contains(pointer))
         || (spectrogramHidden && pointer.y >= spectrogramDisclosure.getY()
             && pointer.y < spectrogramDisclosure.getBottom())
     );

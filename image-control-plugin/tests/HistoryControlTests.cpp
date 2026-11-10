@@ -85,6 +85,35 @@ private:
     bool restored {false};
 };
 
+/// Restores saved state from the first crossover value callback, before a second band edge can be written.
+class RestoreAtFirstValue final : public juce::AudioProcessorValueTreeState::Listener
+{
+public:
+    /// Keeps test-owned state and processor alive for the synchronous callback.
+    RestoreAtFirstValue(ImageControlProcessor& owner, const juce::MemoryBlock& saved) : processor(owner), state(saved)
+    {}
+    ~RestoreAtFirstValue() override = default;
+
+    RestoreAtFirstValue(const RestoreAtFirstValue&) = delete;
+    RestoreAtFirstValue(RestoreAtFirstValue&&) = delete;
+    RestoreAtFirstValue& operator=(const RestoreAtFirstValue&) = delete;
+    RestoreAtFirstValue& operator=(RestoreAtFirstValue&&) = delete;
+
+    /// Restores once, including protection against the restore's own synchronous value notifications.
+    void parameterChanged(const juce::String& /*parameterId*/, float /*value*/) override
+    {
+        if (!restored) {
+            restored = true;
+            processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        }
+    }
+
+private:
+    ImageControlProcessor& processor;
+    const juce::MemoryBlock& state;
+    bool restored {false};
+};
+
 /// Creates a production-handler event with stable pointer-down coordinates.
 juce::MouseEvent historyMouse(
     juce::Component& control,
@@ -478,6 +507,131 @@ TEST(HistoryControls, SpectrogramBandDragGroupsBothCrossovers)
     for (std::size_t index = 0; index < CROSSOVER_COUNT; ++index) {
         EXPECT_NEAR(processor.getCrossovers().at(index), after.at(index), 0.01F);
     }
+}
+
+/// Every keypress is one complete local edit with gestures only for its changed crossover parameters.
+TEST(HistoryControls, SpectrumKeyboardGroupsBandEdgesAndBalancesBoundaryGestures)
+{
+    for (const bool band : {false, true}) {
+        ImageControlProcessor processor;
+        auto& history = processor.getHistory();
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), history);
+        view.setSize(1000, 400);
+        const auto before = processor.getCrossovers();
+        auto& low = *processor.getParameters().getParameter(crossoverParameterId(0));
+        auto& middle = *processor.getParameters().getParameter(crossoverParameterId(1));
+        HistoryGestureCounter lowCounter;
+        HistoryGestureCounter middleCounter;
+        low.addListener(&lowCounter);
+        middle.addListener(&middleCounter);
+        const juce::Point<float> position {historyX(view, band ? 220.0 : 100.0), view.getPlotBounds().getCentreY()};
+        view.mouseMove(historyMouse(view, position, position, {}));
+        EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        const auto after = processor.getCrossovers();
+        EXPECT_EQ(lowCounter.boundaries, (std::vector<bool> {true, false}));
+        EXPECT_EQ(middleCounter.boundaries, band ? std::vector<bool>({true, false}) : std::vector<bool>());
+        EXPECT_FALSE(history.isEditing());
+        EXPECT_TRUE(history.undo());
+        for (std::size_t index = 0; index < CROSSOVER_COUNT; ++index) {
+            EXPECT_NEAR(processor.getCrossovers().at(index), before.at(index), 0.005F);
+        }
+        EXPECT_FALSE(history.canUndo());
+        EXPECT_TRUE(history.redo());
+        for (std::size_t index = 0; index < CROSSOVER_COUNT; ++index) {
+            EXPECT_NEAR(processor.getCrossovers().at(index), after.at(index), 0.005F);
+        }
+        low.removeListener(&lowCounter);
+        middle.removeListener(&middleCounter);
+    }
+}
+
+/// Limit keys consume the hover action without publishing a rounded parameter value or deleting redo.
+TEST(HistoryControls, SpectrumKeyboardNoOpAtLimitPreservesRedoAndOpensNoGesture)
+{
+    ImageControlProcessor processor;
+    auto& history = processor.getHistory();
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), history);
+    view.setSize(1000, 400);
+    auto& low = *processor.getParameters().getParameter(crossoverParameterId(0));
+    setParameterInGesture(low, MIN_FREQUENCY);
+    const juce::Point<float> position {
+        historyX(view, static_cast<double>(MIN_FREQUENCY)), view.getPlotBounds().getCentreY()
+    };
+    view.mouseMove(historyMouse(view, position, position, {}));
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_TRUE(history.undo());
+    EXPECT_TRUE(history.canRedo());
+    HistoryGestureCounter counter;
+    low.addListener(&counter);
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+    EXPECT_TRUE(counter.boundaries.empty());
+    EXPECT_FALSE(history.canUndo());
+    EXPECT_TRUE(history.canRedo());
+    EXPECT_FALSE(history.isEditing());
+    EXPECT_NEAR(historyValue(processor, crossoverParameterId(0)), MIN_FREQUENCY, 0.0001F);
+    low.removeListener(&counter);
+}
+
+/// Synchronous host restore at either edge's gesture start rejects all precomputed keyboard targets.
+TEST(HistoryControls, SpectrumKeyboardRestoreAtEitherGestureStartRejectsAllWrites)
+{
+    for (const std::size_t restoringEdge : {std::size_t {0}, std::size_t {1}}) {
+        ImageControlProcessor processor;
+        auto& history = processor.getHistory();
+        juce::MemoryBlock state;
+        processor.getStateInformation(state);
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), history);
+        view.setSize(1000, 400);
+        const juce::Point<float> position {historyX(view, 220.0), view.getPlotBounds().getCentreY()};
+        view.mouseMove(historyMouse(view, position, position, {}));
+        auto& restoring = *processor.getParameters().getParameter(crossoverParameterId(restoringEdge));
+        RestoreAtGestureStart restore(processor, state);
+        HistoryGestureCounter counter;
+        restoring.addListener(&counter);
+        restoring.addListener(&restore);
+        EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_EQ(counter.boundaries, (std::vector<bool> {true, false}));
+        EXPECT_NEAR(historyValue(processor, crossoverParameterId(0)), 100.0F, 0.001F);
+        EXPECT_NEAR(historyValue(processor, crossoverParameterId(1)), 500.0F, 0.001F);
+        EXPECT_FALSE(history.isEditing());
+        EXPECT_FALSE(history.canUndo());
+        restoring.removeListener(&restore);
+        restoring.removeListener(&counter);
+        // A fresh key uses the restored state and creates a usable transaction in the current generation.
+        EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_TRUE(history.undo());
+    }
+}
+
+/// Restoring from the first write cannot let the second precomputed band edge overwrite the restored sound.
+TEST(HistoryControls, SpectrumKeyboardRestoreDuringFirstValueRejectsSecondEdge)
+{
+    ImageControlProcessor processor;
+    auto& history = processor.getHistory();
+    juce::MemoryBlock state;
+    processor.getStateInformation(state);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), history);
+    view.setSize(1000, 400);
+    const juce::Point<float> position {historyX(view, 220.0), view.getPlotBounds().getCentreY()};
+    view.mouseMove(historyMouse(view, position, position, {}));
+    auto& low = *processor.getParameters().getParameter(crossoverParameterId(0));
+    auto& middle = *processor.getParameters().getParameter(crossoverParameterId(1));
+    RestoreAtFirstValue restore(processor, state);
+    HistoryGestureCounter lowCounter;
+    HistoryGestureCounter middleCounter;
+    low.addListener(&lowCounter);
+    processor.getParameters().addParameterListener(crossoverParameterId(0), &restore);
+    middle.addListener(&middleCounter);
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_NEAR(historyValue(processor, crossoverParameterId(0)), 100.0F, 0.001F);
+    EXPECT_NEAR(historyValue(processor, crossoverParameterId(1)), 500.0F, 0.001F);
+    EXPECT_EQ(lowCounter.boundaries, (std::vector<bool> {true, false}));
+    EXPECT_EQ(middleCounter.boundaries, (std::vector<bool> {true, false}));
+    EXPECT_FALSE(history.isEditing());
+    EXPECT_FALSE(history.canUndo());
+    middle.removeListener(&middleCounter);
+    processor.getParameters().removeParameterListener(crossoverParameterId(0), &restore);
+    low.removeListener(&lowCounter);
 }
 
 /// Spectrogram wheel gain edits and crossover resets are discrete commands, not one entry per changed parameter.

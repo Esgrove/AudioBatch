@@ -27,20 +27,20 @@ constexpr int PANEL_WIDTH {390};
 /// Insets and compact row sizes keep the complete settings comfortably readable.
 constexpr int MARGIN {12};
 constexpr int ROW_HEIGHT {28};
-constexpr int SECTION_HEIGHT {28};
+constexpr int TITLE_HEIGHT {32};
+constexpr int SECTION_HEIGHT {30};
 constexpr int SLIDER_LABEL_HEIGHT {18};
 constexpr int FOOTER_GAP {8};
-/// Natural height includes the title, description, four groups, and two footer actions.
-constexpr int CONTENT_HEIGHT {MARGIN * 2 + ROW_HEIGHT * 15 + SECTION_HEIGHT * 4 + SLIDER_LABEL_HEIGHT * 5 + FOOTER_GAP};
 /// Value boxes leave enough room for the explicit units.
 constexpr int VALUE_BOX_WIDTH {76};
 constexpr int VALUE_BOX_HEIGHT {22};
 /// Choice captions align while preserving space for both full option names.
 constexpr int CHOICE_LABEL_WIDTH {112};
 /// Display typography follows the ordinary editor controls.
-constexpr float TITLE_FONT_HEIGHT {15.0F};
+constexpr float TITLE_FONT_HEIGHT {20.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
-constexpr float SECTION_FONT_HEIGHT {12.0F};
+constexpr float SECTION_FONT_HEIGHT {14.0F};
+constexpr float DESCRIPTION_FONT_HEIGHT {12.0F};
 /// Settings use their persisted precision rather than arbitrary keyboard-only increments.
 constexpr double PERSISTENCE_STEP {0.01};
 constexpr double CONTRAST_STEP_PERCENT {1.0};
@@ -141,9 +141,11 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
     addAndMakeVisible(viewport);
 
     configureLabel(titleLabel, "Display settings");
+    identifyControl(titleLabel, "displaySettingsTitle", "Display settings");
     titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     configureLabel(descriptionLabel, "Display only. Audio processing is unchanged.");
-    descriptionLabel.setFont(textFont(SECTION_FONT_HEIGHT));
+    identifyControl(descriptionLabel, "displaySettingsDescription", "Display only. Audio processing is unchanged.");
+    descriptionLabel.setFont(textFont(DESCRIPTION_FONT_HEIGHT));
     descriptionLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     configureLabel(appearanceLabel, "Appearance", true);
     configureLabel(stereoPositionLabel, "Stereo position", true);
@@ -310,7 +312,8 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
 
     state.addListener(this);
     juce::Desktop::getInstance().addFocusChangeListener(this);
-    setSize(PANEL_WIDTH, std::clamp(maximumHeight.value_or(CONTENT_HEIGHT), 1, CONTENT_HEIGHT));
+    layoutPreferences(PANEL_WIDTH);
+    setSize(PANEL_WIDTH, std::clamp(maximumHeight.value_or(getNaturalHeight()), 1, getNaturalHeight()));
 }
 
 /// Detaches message-thread listeners before the settings bindings and viewport content are destroyed.
@@ -318,6 +321,12 @@ SettingsPanel::~SettingsPanel()
 {
     juce::Desktop::getInstance().removeFocusChangeListener(this);
     state.removeListener(this);
+}
+
+/// Measures the laid-out footer plus the bottom inset, so the preferred height always matches the real controls.
+int SettingsPanel::getNaturalHeight() const
+{
+    return keyboardShortcutsButton.getBottom() + MARGIN;
 }
 
 /// Resets display appearance only, leaving sound, links, presets, visibility, layout, and analysis enablement intact.
@@ -428,20 +437,31 @@ void SettingsPanel::paint(juce::Graphics& graphics)
 /// Lays out the full content independently of its bounded scrolling viewport.
 void SettingsPanel::resized()
 {
+    viewport.setBounds(getLocalBounds());
+    content.setSize(getWidth(), getNaturalHeight());
+    const int width = std::max(1, viewport.getViewWidth());
+    layoutPreferences(width);
+    content.setSize(width, getNaturalHeight());
     if (showingShortcuts) {
         auto area = getLocalBounds().reduced(MARGIN);
         backButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-        area.removeFromTop(8);
+        area.removeFromTop(FOOTER_GAP);
         shortcutsPanel.setBounds(area);
-        return;
     }
-    viewport.setBounds(getLocalBounds());
-    const int width = std::max(1, getWidth() - viewport.getScrollBarThickness());
-    content.setSize(width, CONTENT_HEIGHT);
-    auto area = content.getLocalBounds().reduced(MARGIN);
-    titleLabel.setBounds(area.removeFromTop(ROW_HEIGHT));
-    descriptionLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    appearanceLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
+}
+
+/// Positions each preference row once, leaving the final footer bounds as the source of natural content height.
+void SettingsPanel::layoutPreferences(const int width)
+{
+    int nextY = MARGIN;
+    const auto takeRow = [width, &nextY](const int height) {
+        const juce::Rectangle<int> row(MARGIN, nextY, std::max(1, width - MARGIN * 2), height);
+        nextY += height;
+        return row;
+    };
+    titleLabel.setBounds(takeRow(TITLE_HEIGHT));
+    descriptionLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
+    appearanceLabel.setBounds(takeRow(SECTION_HEIGHT));
     for (const auto& [label, choice] :
          std::array {
              std::pair<juce::Label*, juce::ComboBox*> {&colourLabel, &colourChoice},
@@ -449,28 +469,29 @@ void SettingsPanel::resized()
              std::pair<juce::Label*, juce::ComboBox*> {&renderingLabel, &renderingChoice},
          })
     {
-        auto row = area.removeFromTop(ROW_HEIGHT).reduced(0, 2);
+        auto row = takeRow(ROW_HEIGHT).reduced(0, 2);
         label->setBounds(row.removeFromLeft(CHOICE_LABEL_WIDTH));
         choice->setBounds(row);
     }
-    contrastLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    contrastSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
-    stereoPositionLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
-    panMidpointLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    panMidpointSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
-    panEdgeLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    panEdgeSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
-    correlationLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
-    showBandCorrelationButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    smoothCorrelationReadoutButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    displayLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
-    persistenceLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    persistenceSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
-    hideSpectrogramButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    bypassRenderingButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    showFpsButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    area.removeFromTop(FOOTER_GAP);
-    resetAppearanceButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    keyboardShortcutsButton.setBounds(area.removeFromTop(ROW_HEIGHT));
+    contrastLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
+    contrastSlider.setBounds(takeRow(ROW_HEIGHT));
+    stereoPositionLabel.setBounds(takeRow(SECTION_HEIGHT));
+    panMidpointLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
+    panMidpointSlider.setBounds(takeRow(ROW_HEIGHT));
+    panEdgeLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
+    panEdgeSlider.setBounds(takeRow(ROW_HEIGHT));
+    correlationLabel.setBounds(takeRow(SECTION_HEIGHT));
+    showBandCorrelationButton.setBounds(takeRow(ROW_HEIGHT));
+    smoothCorrelationReadoutButton.setBounds(takeRow(ROW_HEIGHT));
+    displayLabel.setBounds(takeRow(SECTION_HEIGHT));
+    persistenceLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
+    persistenceSlider.setBounds(takeRow(ROW_HEIGHT));
+    hideSpectrogramButton.setBounds(takeRow(ROW_HEIGHT));
+    bypassRenderingButton.setBounds(takeRow(ROW_HEIGHT));
+    showFpsButton.setBounds(takeRow(ROW_HEIGHT));
+    nextY += FOOTER_GAP;
+    resetAppearanceButton.setBounds(takeRow(ROW_HEIGHT));
+    nextY += FOOTER_GAP;
+    keyboardShortcutsButton.setBounds(takeRow(ROW_HEIGHT));
 }
 }  // namespace esgrove::image_control

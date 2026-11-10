@@ -46,6 +46,7 @@ public:
     [[nodiscard]] std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent(
         juce::Component& component
     ) override;
+    [[nodiscard]] juce::Label* createSliderTextBox(juce::Slider& slider) override;
     [[nodiscard]] juce::Font getLabelFont(juce::Label& label) override;
     [[nodiscard]] juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;
 
