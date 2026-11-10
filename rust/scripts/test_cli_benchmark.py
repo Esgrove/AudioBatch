@@ -118,6 +118,9 @@ class TestCorpusSafety(unittest.TestCase):
             results = root / "results"
             work.mkdir()
             results.mkdir()
+            config = root / ".cargo/config.toml"
+            config.parent.mkdir()
+            config.write_text('[build]\nrustflags = ["-C", "target-cpu=native"]\n', encoding="utf-8")
             sources = []
             for folder in ("fixtures/benchmark/output", "fixtures/normalization"):
                 source = root / folder / "tone.aif"
@@ -506,7 +509,10 @@ class TestReleaseSelection(unittest.TestCase):
                 binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.touch(mode=0o755)
             os.utime(release, (1, 1))
-            script = 'source "$1"; REPO="$2"; unset AUDIOBATCH_CPP_CLI AUDIOBATCH_CPP_BUILD_TYPE; find_cpp_cli release'
+            script = (
+                'source "$1"; REPO="$2"; REPO_ROOT="$(dirname "$REPO")"; '
+                "unset AUDIOBATCH_CPP_CLI AUDIOBATCH_CPP_BUILD_TYPE; find_cpp_cli release"
+            )
             selected = subprocess.run(  # noqa: S603
                 [BASH_EXECUTABLE, "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(rust)],
                 text=True,

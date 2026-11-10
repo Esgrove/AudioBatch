@@ -1,12 +1,28 @@
 #!/bin/bash
 set -eo pipefail
 
-# The Rust workspace root, which is the directory of this script.
+# The Rust application directory, with Cargo workspace configuration at its parent.
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export REPO
 
+# Keep application-only tools independent of the ImageControl workspace members.
+# shellcheck disable=SC2034
+APPLICATION_PACKAGE_ARGS=(
+    -p audiobatch-cli
+    -p audiobatch-core
+    -p audiobatch-gui
+    -p audiobatch-playback
+    -p audiobatch-plugins
+    -p audiobatch-test-plugin
+    -p build-info
+    -p serato-tags
+    -p test-fixtures
+    -p vst3-host
+)
+
+# The root helpers define and export REPO_ROOT for all repository-level paths below.
 # shellcheck source=../common.sh
-source "$REPO/../common.sh"
+source "$(dirname "$REPO")/common.sh"
 
 # The command line binary, which supports the completion subcommand.
 CLI_BINARY_NAME="audiobatch-rs"
@@ -87,7 +103,7 @@ cpp_cli_build_type() {
 # Passing "release" forbids a debug or unclassified baseline, including an explicit override.
 find_cpp_cli() {
     local profile="${1:-any}"
-    local cpp_directory="$REPO/../cpp"
+    local cpp_directory="$REPO_ROOT/cpp"
     local binary_name
     binary_name=$(executable_name audiobatch)
     if [ -n "${AUDIOBATCH_CPP_CLI:-}" ]; then
@@ -145,7 +161,7 @@ get_rust_executable_names() {
 # Print the version from the [workspace.package] section of the workspace manifest
 get_workspace_version() {
     awk -F'"' '/^\[workspace\.package\]/ { section = 1; next } /^\[/ { section = 0 } section && /^version/ { print $2; exit }' \
-        "$REPO/Cargo.toml"
+        "$REPO_ROOT/Cargo.toml"
 }
 
 # Compile the layered Icon Composer icon into Assets.car in the given resources directory.

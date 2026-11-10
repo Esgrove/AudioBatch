@@ -3,7 +3,7 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
-Run the workspace tests with code coverage using cargo-llvm-cov and cargo-nextest.
+Run the Rust application tests with code coverage using cargo-llvm-cov and cargo-nextest.
 Prints a per-file summary by default.
 
 OPTIONS: All options are optional
@@ -80,14 +80,14 @@ export CARGO_LLVM_COV_TARGET_DIR="$REPO/target/llvm-cov-target"
 
 if [ "$REPORT_ONLY" = true ]; then
     mkdir -p target/llvm-cov
-    cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --lcov --output-path target/llvm-cov/lcov.info
     html_options=()
     if [ "$OPEN" = true ]; then
         html_options=(--open)
     fi
-    cargo llvm-cov report --html "${html_options[@]}"
+    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --html --output-dir target/llvm-cov "${html_options[@]}"
     # Capture first so a failed report cannot be hidden by the closing Markdown fence.
-    summary=$(cargo llvm-cov report --summary-only)
+    summary=$(cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --summary-only)
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
         # shellcheck disable=SC2016
         printf '## Rust code coverage\n```text\n%s\n```\n' "$summary" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -106,7 +106,7 @@ fi
 
 print_magenta "Running tests with coverage..."
 TEST_STATUS=0
-cargo llvm-cov nextest --workspace --no-fail-fast --no-report || TEST_STATUS=$?
+cargo llvm-cov nextest "${APPLICATION_PACKAGE_ARGS[@]}" --no-fail-fast --no-report || TEST_STATUS=$?
 
 # Build and run the real CLI with the same instrumentation as nextest.
 # The shared suite preserves LLVM_PROFILE_FILE in every child environment.
@@ -121,16 +121,16 @@ run_cli_coverage() {
 }
 (run_cli_coverage) || TEST_STATUS=$?
 
-cargo llvm-cov report --summary-only
+cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --summary-only
 
 if [ "$LCOV" = true ]; then
     mkdir -p target/llvm-cov
-    cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --lcov --output-path target/llvm-cov/lcov.info
     print_green "LCOV report: $REPO/target/llvm-cov/lcov.info"
 fi
 
 if [ "$OPEN" = true ]; then
-    cargo llvm-cov report --html --open
+    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --html --output-dir target/llvm-cov --open
     print_green "HTML report: $REPO/target/llvm-cov/html/index.html"
 fi
 

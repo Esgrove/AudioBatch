@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -35,7 +36,7 @@ class SigningContracts(unittest.TestCase):
         for relative in [
             "common.sh",
             "rust/common.sh",
-            "rust/Cargo.toml",
+            "Cargo.toml",
             "rust/crates/core/licenses/ebur128.txt",
             "cpp/cmake/MacSigning.cmake",
             "assets/macos.entitlements",
@@ -169,6 +170,9 @@ fi
             info = plistlib.load(source)
         assert "NSMicrophoneUsageDescription" not in info
         assert info["CFBundleExecutable"] == "AudioBatchRs"
+        workspace_version = tomllib.loads((self.root / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+        assert info["CFBundleShortVersionString"] == workspace_version
+        assert info["CFBundleVersion"] == workspace_version
 
     def test_cpp_registers_signing_after_all_bundle_steps(self) -> None:
         """Production CMake uses the tested helper last and never supplies a developer team implicitly."""

@@ -116,7 +116,7 @@ run_case() {
     if [ "$expects_report" = false ] || [ "$diagnostic" = true ]; then
         completion=(--require-output "^test $name \\.\\.\\. (?:[^\\n]*\\n)*?ok$" --require-output '^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out;')
     fi
-    uv run --script "$DIR/../tests/realtime_sanitizer.py" \
+    uv run --script "$REPO_ROOT/tests/realtime_sanitizer.py" \
         --executable "$executable" --case "rust-${name//::/.}" --artifacts "$ARTIFACTS" --timeout 30 \
         --argument=--exact --argument="$name" --argument=--nocapture --argument=--test-threads=1 ${completion[@]+"${completion[@]}"} "$@"
 }

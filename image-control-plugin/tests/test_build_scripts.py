@@ -335,7 +335,7 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                         f"-DSTRICTNESS={level}",
                         f"-DPLUGIN={expected}",
                         "-P",
-                        str(self.plugin / "../cpp/cmake/RunPluginval.cmake"),
+                        str(self.root / "cpp/cmake/RunPluginval.cmake"),
                     ]
                     assert "building the pinned version" in result.stdout
                     assert "skipping" not in result.stdout
@@ -412,7 +412,7 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 "-DSTRICTNESS=9",
                 f"-DPLUGIN={self.environment['TEST_WINDOWS_PATH']}",
                 "-P",
-                str(self.plugin / "../cpp/cmake/RunPluginval.cmake"),
+                str(self.root / "cpp/cmake/RunPluginval.cmake"),
             ]
         ]
 
