@@ -36,9 +36,9 @@ namespace
 constexpr auto STATE_TAG {"ImageControl"};
 /// Tag of the editor settings element inside the saved state.
 constexpr auto EDITOR_STATE_TAG {"EditorState"};
-/// Host-state comparison metadata is separately versioned from the portable sound format.
+/// Independent optional host-state siblings must never reach the APVTS parameter tree.
 constexpr auto COMPARISON_STATE_TAG {"ComparisonState"};
-constexpr int COMPARISON_STATE_VERSION {1};
+constexpr auto PRESET_PROVENANCE_STATE_TAG {"PresetProvenanceState"};
 
 /// Captures a detached host parameter tree, including defaults for parameters absent from legacy state.
 /// Unlike reading atomics, this also sees the complete target during a synchronous reentrant restore save.
@@ -55,61 +55,6 @@ ProcessingSnapshot soundFromParameterTree(
                                 : parameter->convertFrom0to1(parameter->getDefaultValue());
     }
     return snapshot;
-}
-
-/// Reads both persistent slots atomically as a unit, rejecting malformed or future metadata without rejecting sound.
-/// The top-level host parameters are authoritative for the selected slot even if its stored copy is stale.
-bool restoreComparisonState(
-    const juce::XmlElement& root,
-    const juce::AudioProcessorValueTreeState& parameters,
-    std::array<ProcessingSnapshot, 2>& slots,
-    int& active
-)
-{
-    const juce::XmlElement* comparison = nullptr;
-    for (const auto* child : root.getChildIterator()) {
-        if (child->hasTagName(COMPARISON_STATE_TAG)) {
-            if (comparison != nullptr) {
-                return false;
-            }
-            comparison = child;
-        }
-    }
-    if (comparison == nullptr || comparison->getStringAttribute("version") != juce::String(COMPARISON_STATE_VERSION)
-        || comparison->getNumAttributes() != 2)
-    {
-        return false;
-    }
-    const auto selected = comparison->getStringAttribute("active");
-    if (selected != "0" && selected != "1") {
-        return false;
-    }
-    std::array<bool, 2> seen {};
-    for (const auto* child : comparison->getChildIterator()) {
-        if (!child->hasTagName("Slot") || child->getNumAttributes() != 1) {
-            return false;
-        }
-        const auto index = child->getStringAttribute("id");
-        if (index != "0" && index != "1") {
-            return false;
-        }
-        const auto slot = static_cast<std::size_t>(index.getIntValue());
-        const auto* sound = child->getFirstChildElement();
-        if (seen[slot] || sound == nullptr || sound->getNextElement() != nullptr) {
-            return false;
-        }
-        const auto snapshot = processingStateFromXml(*sound, parameters);
-        if (!snapshot) {
-            return false;
-        }
-        slots[slot] = *snapshot;
-        seen[slot] = true;
-    }
-    if (!seen[0] || !seen[1]) {
-        return false;
-    }
-    active = selected.getIntValue();
-    return true;
 }
 
 /// Builds deterministic editor defaults independently of any edits on the current instance.
@@ -247,6 +192,12 @@ ImageControlProcessor::ImageControlProcessor() :
     editorStateSnapshot = serializeEditorState(editorState);
     history.setStateMutex(stateInformationMutex);
     history.setMetadataChangedCallback([this] { notifyComparisonChanged(); });
+    history.setReplayCallback([this](const ProcessingSnapshot& target) {
+        auto& provenance = presetProvenance.at(static_cast<std::size_t>(activeComparisonSlot));
+        if (provenance) {
+            advancePresetRecallBaseline(*provenance, target, parameters);
+        }
+    });
     comparisonSlots.fill(captureProcessingState(parameters));
     editorState.addListener(this);
 }
@@ -275,29 +226,190 @@ ParameterHistory& ImageControlProcessor::getHistory()
 ProcessingSnapshot ImageControlProcessor::getSoundSnapshot()
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    return captureProcessingState(parameters);
+    return applyingParameterRestore ? soundFromParameterTree(restoredParameterTarget, parameters)
+                                    : captureProcessingState(parameters);
 }
 
-/// Returns session-only preset provenance, logically cleared by a host restore without touching UI state.
+/// Captures active-slot presentation as one detached unit, without reading the preset library or live editor tree.
+PresetPresentation ImageControlProcessor::getPresetPresentation()
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    const auto index = static_cast<std::size_t>(activeComparisonSlot);
+    auto sound = applyingParameterRestore ? soundFromParameterTree(restoredParameterTarget, parameters)
+                                          : captureProcessingState(parameters);
+    const auto& provenance = presetProvenance.at(index);
+    const auto modified = provenance
+        && (provenance->effectiveBaseline ? !sameProcessingState(sound, *provenance->effectiveBaseline)
+                                          : !matchesRecalledProcessingState(sound, provenance->baseline, parameters));
+    return {
+        .sound = std::move(sound),
+        .provenance = provenance,
+        .selection = selectedUserPresets.at(index),
+        .generation = history.generation(),
+        .comparisonSlot = activeComparisonSlot,
+        .modified = modified,
+    };
+}
+
+/// Returns durable active-slot provenance even when its library file is missing or has changed externally.
+std::optional<PresetProvenance> ImageControlProcessor::getPresetProvenance() const
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    return presetProvenance.at(static_cast<std::size_t>(activeComparisonSlot));
+}
+
+/// Returns only the transient exact library revision, never reconstructed implicitly from host metadata.
 std::optional<UserPreset> ImageControlProcessor::getSelectedUserPreset() const
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    if (selectedPresetGeneration != history.generation()) {
-        return std::nullopt;
-    }
     return selectedUserPresets.at(static_cast<std::size_t>(activeComparisonSlot));
 }
 
-/// Keeps the active slot's preset baseline across editor replacement, independently of its source file.
+/// Commits an explicit preset save, update, rename, or removal without changing the sound or undo history.
+/// True durable metadata changes dirty the host. An exact revision refresh alone does not.
+/// The caller's restore generation and slot must still match before any metadata is changed.
+bool ImageControlProcessor::setSelectedUserPreset(
+    std::optional<UserPreset> preset,
+    const std::uint64_t generation,
+    const int comparisonSlot
+)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (generation != history.generation() || comparisonSlot != activeComparisonSlot || applyingSoundCommand
+        || applyingParameterRestore || history.isEditing() || history.isReplaying())
+    {
+        return false;
+    }
+    std::optional<PresetProvenance> provenance;
+    if (preset) {
+        provenance = PresetProvenance {
+            .id = preset->id,
+            .name = preset->name,
+            .baseline = preset->snapshot,
+            .effectiveBaseline = processingStateAfterRecall(preset->snapshot, parameters),
+        };
+        if (!validPresetProvenance(*provenance, parameters)) {
+            return false;
+        }
+    }
+    const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
+    const auto index = static_cast<std::size_t>(activeComparisonSlot);
+    const bool changed = !samePresetProvenance(presetProvenance.at(index), provenance);
+    presetProvenance.at(index) = std::move(provenance);
+    selectedUserPresets.at(index) = std::move(preset);
+    if (changed) {
+        notifyComparisonChanged();
+    }
+    return generation == history.generation();
+}
+
+/// Applies an already synchronous explicit selection. Asynchronous completions use the checked overload.
 void ImageControlProcessor::setSelectedUserPreset(std::optional<UserPreset> preset)
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    const auto generation = history.generation();
-    if (selectedPresetGeneration != generation) {
-        selectedUserPresets = {};
-        selectedPresetGeneration = generation;
+    juce::ignoreUnused(setSelectedUserPreset(std::move(preset), history.generation(), activeComparisonSlot));
+}
+
+/// Reconnects only an explicitly resolved exact library revision, preserving the saved name and modified baseline.
+/// Detaching a stale binding or reconnecting the same UUID never changes sound, history, or host dirty state.
+bool ImageControlProcessor::reconnectSelectedUserPreset(
+    std::optional<UserPreset> preset,
+    const std::uint64_t generation,
+    const int comparisonSlot
+)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (generation != history.generation() || comparisonSlot != activeComparisonSlot || applyingSoundCommand
+        || applyingParameterRestore || history.isEditing() || history.isReplaying())
+    {
+        return false;
     }
-    selectedUserPresets.at(static_cast<std::size_t>(activeComparisonSlot)) = std::move(preset);
+    const auto index = static_cast<std::size_t>(activeComparisonSlot);
+    const auto& provenance = presetProvenance.at(index);
+    if (preset
+        && (!provenance || preset->id != provenance->id
+            || !validPresetProvenance(
+                {
+                    .id = preset->id,
+                    .name = preset->name,
+                    .baseline = preset->snapshot,
+                    .effectiveBaseline = std::nullopt,
+                },
+                parameters
+            )))
+    {
+        return false;
+    }
+    selectedUserPresets.at(index) = std::move(preset);
+    return true;
+}
+
+/// Publishes an explicit rename and actual file revision together while retaining the slot's immutable baseline.
+/// Requires the same durable identity and current restore/slot context. No sound or history is changed.
+bool ImageControlProcessor::renameSelectedUserPreset(
+    const UserPreset& preset,
+    const std::uint64_t generation,
+    const int comparisonSlot
+)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    if (generation != history.generation() || comparisonSlot != activeComparisonSlot || applyingSoundCommand
+        || applyingParameterRestore || history.isEditing() || history.isReplaying()
+        || !validPresetProvenance(
+            {.id = preset.id, .name = preset.name, .baseline = preset.snapshot, .effectiveBaseline = std::nullopt},
+            parameters
+        ))
+    {
+        return false;
+    }
+    auto& provenance = presetProvenance.at(static_cast<std::size_t>(activeComparisonSlot));
+    if (!provenance || provenance->id != preset.id) {
+        return false;
+    }
+    const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
+    const auto changed = provenance->name != preset.name;
+    provenance->name = preset.name;
+    selectedUserPresets.at(static_cast<std::size_t>(activeComparisonSlot)) = preset;
+    if (changed) {
+        notifyComparisonChanged();
+    }
+    return history.generation() == generation;
+}
+
+/// Installs durable provenance and the exact selection before any synchronous parameter notification.
+/// Only sound deltas enter undo, so undoing recall retains the selected preset's baseline and modified indicator.
+/// A restore from a parameter or dirty callback wins and invalidates every remaining part of this command.
+bool ImageControlProcessor::loadUserPreset(
+    const UserPreset& preset,
+    const std::uint64_t generation,
+    const int comparisonSlot
+)
+{
+    const std::scoped_lock stateLock(stateInformationMutex);
+    const PresetProvenance provenance {
+        .id = preset.id,
+        .name = preset.name,
+        .baseline = preset.snapshot,
+        .effectiveBaseline = processingStateAfterRecall(preset.snapshot, parameters),
+    };
+    if (generation != history.generation() || comparisonSlot != activeComparisonSlot || applyingSoundCommand
+        || applyingParameterRestore || history.isEditing() || history.isReplaying()
+        || !validPresetProvenance(provenance, parameters))
+    {
+        return false;
+    }
+    const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
+    const auto index = static_cast<std::size_t>(activeComparisonSlot);
+    const bool changed = !samePresetProvenance(presetProvenance.at(index), provenance);
+    presetProvenance.at(index) = provenance;
+    selectedUserPresets.at(index) = preset;
+    history.beginEdit("Load preset " + preset.name);
+    const auto applied = applySoundSnapshot(preset.snapshot, generation);
+    history.endEdit();
+    if (applied && history.generation() == generation && changed) {
+        notifyComparisonChanged();
+    }
+    return applied && history.generation() == generation;
 }
 
 /// Returns the selected persistent comparison slot without touching the message-thread editor tree.
@@ -312,8 +424,8 @@ int ImageControlProcessor::getActiveComparisonSlot() const
 bool ImageControlProcessor::selectComparisonSlot(const int slot)
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    if (slot < 0 || slot > 1 || slot == activeComparisonSlot || applyingSoundCommand || history.isEditing()
-        || history.isReplaying())
+    if (slot < 0 || slot > 1 || slot == activeComparisonSlot || applyingSoundCommand || applyingParameterRestore
+        || history.isEditing() || history.isReplaying())
     {
         return false;
     }
@@ -322,6 +434,10 @@ bool ImageControlProcessor::selectComparisonSlot(const int slot)
     const auto previous = activeComparisonSlot;
     comparisonSlots.at(static_cast<std::size_t>(previous)) = captureProcessingState(parameters);
     const auto target = comparisonSlots.at(static_cast<std::size_t>(slot));
+    auto& provenance = presetProvenance.at(static_cast<std::size_t>(slot));
+    if (provenance) {
+        advancePresetRecallBaseline(*provenance, target, parameters);
+    }
     history.beginEdit(slot == 0 ? "Switch to A" : "Switch to B");
     history.setMetadataChange([this, previous, slot](const bool undo) {
         comparisonSlots.at(static_cast<std::size_t>(activeComparisonSlot)) = captureProcessingState(parameters);
@@ -338,7 +454,7 @@ bool ImageControlProcessor::selectComparisonSlot(const int slot)
 bool ImageControlProcessor::copyComparisonToOtherSlot()
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    if (applyingSoundCommand || history.isEditing() || history.isReplaying()) {
+    if (applyingSoundCommand || applyingParameterRestore || history.isEditing() || history.isReplaying()) {
         return false;
     }
     const juce::ScopedValueSetter<bool> guard(applyingSoundCommand, true);
@@ -364,7 +480,7 @@ bool ImageControlProcessor::copyComparisonToOtherSlot()
 bool ImageControlProcessor::loadSoundSnapshot(const ProcessingSnapshot& snapshot, const juce::String& description)
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    if (applyingSoundCommand || history.isEditing() || history.isReplaying()) {
+    if (applyingSoundCommand || applyingParameterRestore || history.isEditing() || history.isReplaying()) {
         return false;
     }
     const auto document = processingStateToXml(snapshot);
@@ -549,7 +665,7 @@ void ImageControlProcessor::changeProgramName(int /*index*/, const juce::String&
 void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationData)
 {
     const std::scoped_lock stateLock(stateInformationMutex);
-    const auto state = parameters.copyState();
+    const auto state = applyingParameterRestore ? restoredParameterTarget.createCopy() : parameters.copyState();
     comparisonSlots.at(static_cast<std::size_t>(activeComparisonSlot)) = soundFromParameterTree(state, parameters);
     juce::MemoryBlock snapshot;
     {
@@ -559,16 +675,12 @@ void ImageControlProcessor::getStateInformation(juce::MemoryBlock& destinationDa
     if (const auto xml = state.createXml()) {
         const auto editor = juce::ValueTree::readFromData(snapshot.getData(), snapshot.getSize());
         xml->addChildElement(editor.createXml().release());
-        auto comparison = std::make_unique<juce::XmlElement>(COMPARISON_STATE_TAG);
-        comparison->setAttribute("version", COMPARISON_STATE_VERSION);
-        comparison->setAttribute("active", activeComparisonSlot);
-        for (std::size_t index = 0; index < comparisonSlots.size(); ++index) {
-            auto slot = std::make_unique<juce::XmlElement>("Slot");
-            slot->setAttribute("id", static_cast<int>(index));
-            slot->addChildElement(processingStateToXml(comparisonSlots.at(index)).release());
-            comparison->addChildElement(slot.release());
+        xml->addChildElement(
+            comparisonStateToXml({.slots = comparisonSlots, .active = activeComparisonSlot}).release()
+        );
+        if (presetProvenance[0] || presetProvenance[1]) {
+            xml->addChildElement(presetProvenanceStateToXml(presetProvenance).release());
         }
-        xml->addChildElement(comparison.release());
         copyXmlToBinary(*xml, destinationData);
     }
 }
@@ -810,7 +922,7 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
         return;
     }
     auto restoredEditor = defaultEditorState();
-    if (auto* savedEditorState = xml->getChildByName(EDITOR_STATE_TAG)) {
+    if (const auto* savedEditorState = xml->getChildByName(EDITOR_STATE_TAG)) {
         const auto saved = juce::ValueTree::fromXml(*savedEditorState);
         for (int property = 0; property < saved.getNumProperties(); ++property) {
             const auto name = saved.getPropertyName(property);
@@ -818,29 +930,35 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
         }
         // Linear focus has no equivalent on the pan curve, so missing curve settings take their defaults.
         restoredEditor.removeProperty(LEGACY_FOCUS_PROPERTY, nullptr);
-        xml->removeChildElement(savedEditorState, true);
     }
     auto snapshot = serializeEditorState(restoredEditor);
-    std::array<ProcessingSnapshot, 2> restoredSlots;
-    int restoredActive = 0;
-    const auto hasComparison = restoreComparisonState(*xml, parameters, restoredSlots, restoredActive);
-    // Comparison metadata must not become APVTS children, or subsequent saves would duplicate stale metadata.
-    while (auto* comparison = xml->getChildByName(COMPARISON_STATE_TAG)) {
-        xml->removeChildElement(comparison, true);
+    auto comparison = comparisonStateFromXml(*xml, parameters);
+    auto provenance = comparison ? presetProvenanceStateFromXml(*xml, parameters) : PresetProvenanceSlots {};
+    // Remove every optional root sibling before APVTS conversion, including unsupported and duplicate metadata.
+    for (const auto* tag : {EDITOR_STATE_TAG, COMPARISON_STATE_TAG, PRESET_PROVENANCE_STATE_TAG}) {
+        while (auto* child = xml->getChildByName(tag)) {
+            xml->removeChildElement(child, true);
+        }
     }
     const auto restoredParameters = juce::ValueTree::fromXml(*xml);
     {
         const std::scoped_lock stateLock(stateInformationMutex);
         sanitizeParameterState(restoredParameters, parameters);
         const auto restoredSound = soundFromParameterTree(restoredParameters, parameters);
-        if (!hasComparison) {
-            restoredSlots.fill(restoredSound);
-            restoredActive = 0;
+        if (!comparison) {
+            comparison = ComparisonState {};
+            comparison->slots.fill(restoredSound);
         }
-        restoredSlots.at(static_cast<std::size_t>(restoredActive)) = restoredSound;
-        comparisonSlots = std::move(restoredSlots);
-        activeComparisonSlot = restoredActive;
-        // Only atomic invalidation runs here. Message-thread use later reclaims local command storage.
+        comparison->slots.at(static_cast<std::size_t>(comparison->active)) = restoredSound;
+        comparisonSlots = std::move(comparison->slots);
+        activeComparisonSlot = comparison->active;
+        presetProvenance = std::move(provenance);
+        auto& activeProvenance = presetProvenance.at(static_cast<std::size_t>(activeComparisonSlot));
+        if (activeProvenance) {
+            advancePresetRecallBaseline(*activeProvenance, restoredSound, parameters);
+        }
+        selectedUserPresets = {};
+        // Only atomic history invalidation runs here. Message-thread use later reclaims local command storage.
         history.invalidate();
         {
             const std::scoped_lock editorLock(editorStateMutex);
@@ -848,7 +966,18 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
             editorStatePending = true;
             analyzerFifo.setTap(static_cast<bool>(restoredEditor.getProperty(ANALYZE_OUTPUT_PROPERTY, true)));
         }
-        parameters.replaceState(restoredParameters);
+        restoredParameterTarget = restoredParameters.createCopy();
+        if (!applyingParameterRestore) {
+            const juce::ScopedValueSetter<bool> guard(applyingParameterRestore, true);
+            auto generation = history.generation();
+            parameters.replaceState(restoredParameters);
+            // APVTS must finish reconnecting one tree before starting another connection pass.
+            // A nested restore publishes its complete target, which saves already observe above.
+            while (generation != history.generation()) {
+                generation = history.generation();
+                parameters.replaceState(restoredParameterTarget.createCopy());
+            }
+        }
     }
     if (isMessageThread() && !restoringState) {
         applyPendingEditorState();

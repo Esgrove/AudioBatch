@@ -84,7 +84,13 @@ public:
         if (command.metadata) {
             command.metadata(undo);
         }
+        if (generationChanged(expectedGeneration)) {
+            return false;
+        }
         const auto& values = undo ? command.before : command.after;
+        if (beforeReplay) {
+            beforeReplay(values);
+        }
         for (const auto& [parameterId, value] : values) {
             if (generationChanged(expectedGeneration)) {
                 return false;
@@ -101,6 +107,13 @@ public:
         }
         if (generationChanged(expectedGeneration)) {
             return false;
+        }
+        // Keep replay targets paired with their exact readback, since skewed normalization is not idempotent.
+        // Only replayed IDs are refreshed, and only after the complete generation-checked command succeeds.
+        auto& recorded = entries.at(undo ? position - 1 : position);
+        auto& recalled = undo ? recorded.before : recorded.after;
+        for (auto& [parameterId, value] : recalled) {
+            value = parameters.getRawParameterValue(parameterId)->load(std::memory_order_relaxed);
         }
         if (undo) {
             --position;
@@ -127,7 +140,8 @@ public:
     std::vector<HistoryEntry> entries;
     /// Processor notification sent after a complete metadata command or replay.
     std::function<void()> metadataChanged;
-
+    /// Processor hook runs after slot metadata changes and before replay emits parameter notifications.
+    std::function<void(const ProcessingSnapshot&)> beforeReplay;
     /// Fallback synchronization when this history is used without a processor state mutex.
     mutable std::recursive_mutex standaloneMutex;
     /// Active processor or fallback mutex reference, installed before history becomes externally accessible.
@@ -319,6 +333,14 @@ void ParameterHistory::setMetadataChange(std::function<void(bool)> change)
                   next(false);
               }
           };
+}
+
+/// Installs a processor-owned pre-replay hook under the same state lock as local commands and host restores.
+/// The hook receives only replayed IDs, after slot metadata is applied and before parameter notifications.
+void ParameterHistory::setReplayCallback(std::function<void(const ProcessingSnapshot&)> callback)
+{
+    const auto stateLock = implementation->lock();
+    implementation->beforeReplay = std::move(callback);
 }
 
 /// Installs the processor notification sent only after a complete metadata command has been committed or replayed.

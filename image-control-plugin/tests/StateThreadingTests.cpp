@@ -4,6 +4,8 @@
 
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ProcessingState.h"
+#include "UserPresets.h"
 
 #include <gtest/gtest.h>
 
@@ -14,6 +16,7 @@
 #include <functional>
 #include <latch>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -122,6 +125,15 @@ juce::MemoryBlock makeThreadingState(const int width, const bool output)
         bandWidth.setValueNotifyingHost(bandWidth.convertTo0to1(output ? 0.75F : 0.25F));
         recovery.setValueNotifyingHost(recovery.convertTo0to1(output ? 25.0F : 75.0F));
     }
+    source.setSelectedUserPreset(
+        UserPreset {
+            .file = {},
+            .fingerprint = "threading-revision",
+            .id = output ? "0123456789abcdef0123456789abcdef" : "fedcba9876543210fedcba9876543210",
+            .name = "Threading " + juce::String(width),
+            .snapshot = source.getSoundSnapshot(),
+        }
+    );
     juce::MemoryBlock state;
     source.getStateInformation(state);
     return state;
@@ -147,6 +159,16 @@ void expectThreadingSnapshot(const juce::XmlElement& snapshot, const int width, 
     const auto* gain = snapshot.getChildByAttribute("id", OUTPUT_GAIN_ID);
     ASSERT_NE(gain, nullptr);
     EXPECT_NEAR(gain->getDoubleAttribute("value"), -6.0, 0.01);
+    const auto* provenance = snapshot.getChildByName("PresetProvenanceState");
+    ASSERT_NE(provenance, nullptr);
+    const auto* slot = provenance->getChildByAttribute("id", "0");
+    ASSERT_NE(slot, nullptr);
+    EXPECT_EQ(slot->getStringAttribute("name"), "Threading " + juce::String(width));
+    EXPECT_EQ(
+        slot->getStringAttribute("presetId"),
+        output ? "0123456789abcdef0123456789abcdef" : "fedcba9876543210fedcba9876543210"
+    );
+    ASSERT_NE(slot->getChildByName("SoundState"), nullptr);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         const auto* bandWidth = snapshot.getChildByAttribute("id", widthParameterId(band));
         const auto* recovery = snapshot.getChildByAttribute("id", recoverParameterId(band));
@@ -458,5 +480,123 @@ TEST(StateThreading, ConcurrentHostSavesAndRestoresDoNotTouchBoundEditorTree)
     EXPECT_EQ(processor.getEditorState(), bound);
     processor.removeListener(&listener);
     bound.removeListener(&listener);
+}
+
+TEST(StateThreading, WorkerRestoreClearsTransientBindingBeforeReentrantSaveAndPresentation)
+{
+    const auto state = makeThreadingState(1400, false);
+    ImageControlProcessor processor;
+    auto oldSound = processor.getSoundSnapshot();
+    oldSound.at(OUTPUT_GAIN_ID) = 6.0F;
+    const UserPreset old {
+        .file = {},
+        .fingerprint = "old-revision",
+        .id = "123456789abcdef0123456789abcdef0",
+        .name = "Old selection",
+        .snapshot = oldSound,
+    };
+    const auto context = processor.getPresetPresentation();
+    ASSERT_TRUE(processor.loadUserPreset(old, context.generation, context.comparisonSlot));
+    ASSERT_TRUE(processor.getSelectedUserPreset());
+    ThreadingStateListener dirty;
+    processor.addListener(&dirty);
+    ReentrantSaveListener callback;
+    std::optional<PresetPresentation> presentation;
+    std::unique_ptr<juce::XmlElement> saved;
+    callback.save = [&] {
+        presentation = processor.getPresetPresentation();
+        saved = savedThreadingState(processor);
+    };
+    processor.getParameters().addParameterListener(OUTPUT_GAIN_ID, &callback);
+    std::thread worker([&] { processor.setStateInformation(state.getData(), static_cast<int>(state.getSize())); });
+    worker.join();
+    processor.getParameters().removeParameterListener(OUTPUT_GAIN_ID, &callback);
+    processor.removeListener(&dirty);
+    ASSERT_TRUE(presentation);
+    ASSERT_TRUE(presentation.value_or(PresetPresentation {}).provenance);
+    EXPECT_EQ(
+        presentation.value_or(PresetPresentation {}).provenance.value_or(PresetProvenance {}).name, "Threading 1400"
+    );
+    EXPECT_FALSE(presentation.value_or(PresetPresentation {}).selection);
+    EXPECT_FALSE(presentation.value_or(PresetPresentation {}).modified);
+    EXPECT_GT(presentation.value_or(PresetPresentation {}).generation, context.generation);
+    EXPECT_EQ(dirty.dirtyChanges.load(), 0);
+    EXPECT_FALSE(processor.getSelectedUserPreset());
+    ASSERT_NE(saved, nullptr);
+    expectThreadingSnapshot(*saved, 1400, false);
+}
+
+TEST(StateThreading, NestedParameterRestoreWinsSoundProvenanceAndGenerationOnEitherThread)
+{
+    const auto outer = makeThreadingState(1400, false);
+    const auto latest = makeThreadingState(1600, true);
+    for (const bool fromWorker : {false, true}) {
+        SCOPED_TRACE(fromWorker);
+        ImageControlProcessor processor;
+        const auto before = processor.getHistory().generation();
+        ThreadingStateListener dirty;
+        processor.addListener(&dirty);
+        ReentrantSaveListener callback;
+        callback.save = [&] { processor.setStateInformation(latest.getData(), static_cast<int>(latest.getSize())); };
+        processor.getParameters().addParameterListener(OUTPUT_GAIN_ID, &callback);
+        if (fromWorker) {
+            std::thread worker([&] {
+                processor.setStateInformation(outer.getData(), static_cast<int>(outer.getSize()));
+            });
+            worker.join();
+        } else {
+            processor.setStateInformation(outer.getData(), static_cast<int>(outer.getSize()));
+        }
+        processor.getParameters().removeParameterListener(OUTPUT_GAIN_ID, &callback);
+        processor.removeListener(&dirty);
+        EXPECT_EQ(callback.saves, 1);
+        EXPECT_EQ(processor.getHistory().generation(), before + 2);
+        EXPECT_EQ(dirty.dirtyChanges.load(), 0);
+        EXPECT_FALSE(processor.getSelectedUserPreset());
+        const auto presentation = processor.getPresetPresentation();
+        ASSERT_TRUE(presentation.provenance);
+        EXPECT_EQ(presentation.provenance.value_or(PresetProvenance {}).name, "Threading 1600");
+        EXPECT_FALSE(presentation.modified);
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            EXPECT_NEAR(presentation.sound.at(widthParameterId(band)), 0.75F, 0.001F);
+            EXPECT_NEAR(presentation.sound.at(recoverParameterId(band)), 25.0F, 0.001F);
+        }
+        const auto saved = savedThreadingState(processor);
+        ASSERT_NE(saved, nullptr);
+        expectThreadingSnapshot(*saved, 1600, true);
+    }
+}
+
+TEST(StateThreading, ConcurrentRestoreAndPresentationKeepProvenancePairedWithSound)
+{
+    const auto first = makeThreadingState(1400, false);
+    const auto second = makeThreadingState(1600, true);
+    ImageControlProcessor processor;
+    processor.setStateInformation(first.getData(), static_cast<int>(first.getSize()));
+    std::latch start(2);
+    std::jthread worker([&] {
+        start.arrive_and_wait();
+        for (int iteration = 0; iteration < 100; ++iteration) {
+            const auto& state = iteration % 2 == 0 ? first : second;
+            processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        }
+    });
+    start.arrive_and_wait();
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        const auto presentation = processor.getPresetPresentation();
+        ASSERT_TRUE(presentation.provenance);
+        EXPECT_FALSE(presentation.modified);
+        EXPECT_FALSE(presentation.selection);
+        EXPECT_TRUE(
+            sameProcessingState(presentation.sound, presentation.provenance.value_or(PresetProvenance {}).baseline)
+        );
+        const auto output = presentation.provenance.value_or(PresetProvenance {}).name == "Threading 1600";
+        EXPECT_NEAR(presentation.sound.at(widthParameterId(0)), output ? 0.75F : 0.25F, 0.001F);
+        EXPECT_EQ(
+            presentation.provenance.value_or(PresetProvenance {}).id,
+            output ? "0123456789abcdef0123456789abcdef" : "fedcba9876543210fedcba9876543210"
+        );
+    }
+    worker.join();
 }
 }  // namespace esgrove::image_control::test

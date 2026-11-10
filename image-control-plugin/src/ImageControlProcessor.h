@@ -51,6 +51,22 @@ struct ProcessingControlValues final {
     bool delta {false};
 };
 
+/// One detached active-slot presentation, captured under the processor's host-state mutex without disk access.
+struct PresetPresentation final {
+    /// Current sound, including headless automation.
+    ProcessingSnapshot sound;
+    /// Persistent identity, name, and baseline, even when the library entry is unavailable.
+    std::optional<PresetProvenance> provenance;
+    /// Exact library revision, present only after an explicit successful preset operation or reconnection.
+    std::optional<UserPreset> selection;
+    /// Restore generation that asynchronous commands must still match when they complete.
+    std::uint64_t generation {0};
+    /// Active comparison slot paired with all other fields.
+    int comparisonSlot {0};
+    /// Whether the sound differs exactly from its retained effective recall reference, with a legacy mapping fallback.
+    bool modified {false};
+};
+
 /// The ImageControl audio processor.
 /// The audio thread reads parameters each block, reuses unchanged conversions, and updates MultibandImager targets.
 /// The analyzer tap pushes either the input or the output to the editor's ring.
@@ -76,11 +92,25 @@ public:
 
     [[nodiscard]] ParameterHistory& getHistory();
     [[nodiscard]] ProcessingSnapshot getSoundSnapshot();
+    [[nodiscard]] PresetPresentation getPresetPresentation();
+    [[nodiscard]] std::optional<PresetProvenance> getPresetProvenance() const;
     [[nodiscard]] std::optional<UserPreset> getSelectedUserPreset() const;
     [[nodiscard]] int getActiveComparisonSlot() const;
     [[nodiscard]] bool copyComparisonToOtherSlot();
     [[nodiscard]] bool loadSoundSnapshot(const ProcessingSnapshot& snapshot, const juce::String& description);
+    [[nodiscard]] bool loadUserPreset(const UserPreset& preset, std::uint64_t generation, int comparisonSlot);
+    [[nodiscard]] bool reconnectSelectedUserPreset(
+        std::optional<UserPreset> preset,
+        std::uint64_t generation,
+        int comparisonSlot
+    );
+    [[nodiscard]] bool renameSelectedUserPreset(const UserPreset& preset, std::uint64_t generation, int comparisonSlot);
     [[nodiscard]] bool selectComparisonSlot(int slot);
+    [[nodiscard]] bool setSelectedUserPreset(
+        std::optional<UserPreset> preset,
+        std::uint64_t generation,
+        int comparisonSlot
+    );
     void setSelectedUserPreset(std::optional<UserPreset> preset);
 
     [[nodiscard]] BandCorrelationSnapshot getBandCorrelationSnapshot() const noexcept;
@@ -136,6 +166,9 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     /// Message-thread-only settings, kept in one tree so the editor's bindings survive state restores.
     juce::ValueTree editorState;
+    /// Detached latest accepted host parameter target, retained to finish a reentrant restore authoritatively.
+    /// Protected by stateInformationMutex and never shared with the APVTS-owned tree.
+    juce::ValueTree restoredParameterTarget;
     /// Detached binary editor settings, copied under editorStateMutex and never shared as a live tree.
     juce::MemoryBlock editorStateSnapshot;
     /// Protects the snapshot, pending flag, and publication of the corresponding analyzer tap.
@@ -149,12 +182,14 @@ private:
     std::array<ProcessingSnapshot, 2> comparisonSlots;
     /// Selected comparison slot. Zero is A and one is B, protected by stateInformationMutex.
     int activeComparisonSlot {0};
-    /// Session-only preset provenance per comparison slot, never needed to restore project audio.
+    /// Persistent per-slot identity and recall baseline, independent of library availability and history replay.
+    PresetProvenanceSlots presetProvenance;
+    /// Transient exact file revisions, cleared on every accepted host restore and never serialized.
     std::array<std::optional<UserPreset>, 2> selectedUserPresets;
-    /// Generation at which session-only preset provenance was last set. Invalidated by any host restore.
-    std::uint64_t selectedPresetGeneration {0};
     /// Prevents reentrant toolbar commands while a local command is notifying parameter listeners.
     bool applyingSoundCommand {false};
+    /// Prevents nested APVTS connection passes. Reentrant restores publish their target for the outer pass to apply.
+    bool applyingParameterRestore {false};
     /// Whether the message-thread tree needs the latest snapshot. Protected by editorStateMutex.
     bool editorStatePending {false};
 
