@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "ProcessingState.h"
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <cstdint>
@@ -46,6 +48,7 @@ public:
 
     void setMetadataChange(std::function<void(bool)> change);
     void setMetadataChangedCallback(std::function<void()> callback);
+    void setReplayCallback(std::function<void(const ProcessingSnapshot&)> callback);
     void setStateMutex(std::recursive_mutex& mutex);
 
 private:

@@ -4,8 +4,11 @@
 #include "ProcessingState.h"
 
 #include "Parameters.h"
+#include "UserPresets.h"
 #include <system_error>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cmath>
@@ -15,6 +18,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 
 namespace esgrove::image_control
 {
@@ -24,6 +28,37 @@ namespace
 constexpr int SOUND_STATE_VERSION {1};
 constexpr auto SOUND_STATE_TAG {"SoundState"};
 constexpr auto PLUGIN_IDENTITY {"com.esgrove.imagecontrol"};
+/// Optional host-state siblings have independent version contracts.
+constexpr auto COMPARISON_STATE_TAG {"ComparisonState"};
+constexpr int COMPARISON_STATE_VERSION {1};
+constexpr auto PRESET_PROVENANCE_STATE_TAG {"PresetProvenanceState"};
+constexpr int PRESET_PROVENANCE_STATE_VERSION {1};
+constexpr int UUID_HEX_CHARACTER_COUNT {32};
+
+/// Finds exactly one root sibling, rejecting duplicates rather than choosing an arbitrary metadata revision.
+const juce::XmlElement* uniqueChild(const juce::XmlElement& root, const juce::String& tag)
+{
+    const juce::XmlElement* result = nullptr;
+    for (const auto* child : root.getChildIterator()) {
+        if (child->hasTagName(tag)) {
+            if (result != nullptr) {
+                return nullptr;
+            }
+            result = child;
+        }
+    }
+    return result;
+}
+
+/// Requires a canonical decimal slot index, without accepting numeric prefixes or out-of-range values.
+std::optional<std::size_t> slotIndex(const juce::XmlElement& slot)
+{
+    const auto& identifier = slot.getStringAttribute("id");
+    if (identifier != "0" && identifier != "1") {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(identifier.getIntValue());
+}
 
 /// Audition controls remain host parameters and local undo targets, but are never part of a stored sound.
 bool isSoundParameter(const juce::String& parameterId)
@@ -137,6 +172,238 @@ std::optional<ProcessingSnapshot> processingStateFromXml(
         return std::nullopt;
     }
     return snapshot;
+}
+
+/// Writes the unchanged version-one comparison contract, separately from optional provenance.
+std::unique_ptr<juce::XmlElement> comparisonStateToXml(const ComparisonState& comparison)
+{
+    auto xml = std::make_unique<juce::XmlElement>(COMPARISON_STATE_TAG);
+    xml->setAttribute("version", COMPARISON_STATE_VERSION);
+    xml->setAttribute("active", comparison.active);
+    for (std::size_t index = 0; index < comparison.slots.size(); ++index) {
+        auto slot = std::make_unique<juce::XmlElement>("Slot");
+        slot->setAttribute("id", static_cast<int>(index));
+        slot->addChildElement(processingStateToXml(comparison.slots.at(index)).release());
+        xml->addChildElement(slot.release());
+    }
+    return xml;
+}
+
+/// Validates the two comparison sounds as a unit, without rejecting independently usable host parameters.
+std::optional<ComparisonState> comparisonStateFromXml(
+    const juce::XmlElement& root,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    const auto* comparison = uniqueChild(root, COMPARISON_STATE_TAG);
+    if (comparison == nullptr || comparison->getStringAttribute("version") != juce::String(COMPARISON_STATE_VERSION)
+        || comparison->getNumAttributes() != 2)
+    {
+        return std::nullopt;
+    }
+    const auto active = comparison->getStringAttribute("active");
+    if (active != "0" && active != "1") {
+        return std::nullopt;
+    }
+    ComparisonState result;
+    result.active = active.getIntValue();
+    std::array<bool, 2> seen {};
+    for (const auto* child : comparison->getChildIterator()) {
+        const auto index = slotIndex(*child);
+        const auto* sound = child->getFirstChildElement();
+        if (!child->hasTagName("Slot") || child->getNumAttributes() != 1 || !index || seen.at(*index)
+            || sound == nullptr || sound->getNextElement() != nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto snapshot = processingStateFromXml(*sound, parameters);
+        if (!snapshot) {
+            return std::nullopt;
+        }
+        result.slots.at(*index) = *snapshot;
+        seen.at(*index) = true;
+    }
+    return seen[0] && seen[1] ? std::optional(result) : std::nullopt;
+}
+
+/// Writes optional per-slot provenance without paths, fingerprints, library access, or derived modified flags.
+std::unique_ptr<juce::XmlElement> presetProvenanceStateToXml(const PresetProvenanceSlots& slots)
+{
+    auto xml = std::make_unique<juce::XmlElement>(PRESET_PROVENANCE_STATE_TAG);
+    xml->setAttribute("version", PRESET_PROVENANCE_STATE_VERSION);
+    for (std::size_t index = 0; index < slots.size(); ++index) {
+        if (const auto& provenance = slots.at(index)) {
+            auto slot = std::make_unique<juce::XmlElement>("Slot");
+            slot->setAttribute("id", static_cast<int>(index));
+            slot->setAttribute("presetId", provenance->id);
+            slot->setAttribute("name", provenance->name);
+            slot->addChildElement(processingStateToXml(provenance->baseline).release());
+            if (provenance->effectiveBaseline) {
+                auto effective = std::make_unique<juce::XmlElement>("EffectiveBaseline");
+                effective->addChildElement(processingStateToXml(*provenance->effectiveBaseline).release());
+                slot->addChildElement(effective.release());
+            }
+            xml->addChildElement(slot.release());
+        }
+    }
+    return xml;
+}
+
+/// Restores provenance only when the entire independent sibling is supported and strictly valid.
+/// Missing, ambiguous, malformed, or future metadata yields two unnamed slots without changing audio or comparison.
+PresetProvenanceSlots presetProvenanceStateFromXml(
+    const juce::XmlElement& root,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    const auto* metadata = uniqueChild(root, PRESET_PROVENANCE_STATE_TAG);
+    if (metadata == nullptr || metadata->getNumAttributes() != 1
+        || metadata->getStringAttribute("version") != juce::String(PRESET_PROVENANCE_STATE_VERSION))
+    {
+        return {};
+    }
+    PresetProvenanceSlots result;
+    for (const auto* child : metadata->getChildIterator()) {
+        const auto index = slotIndex(*child);
+        const auto* sound = child->getFirstChildElement();
+        if (!child->hasTagName("Slot") || child->getNumAttributes() != 3 || !index || result.at(*index)
+            || sound == nullptr)
+        {
+            return {};
+        }
+        const auto baseline = processingStateFromXml(*sound, parameters);
+        if (!baseline) {
+            return {};
+        }
+        PresetProvenance provenance {
+            .id = child->getStringAttribute("presetId"),
+            .name = child->getStringAttribute("name"),
+            .baseline = *baseline,
+            .effectiveBaseline = std::nullopt,
+        };
+        if (const auto* effective = sound->getNextElement()) {
+            const auto* effectiveSound = effective->getFirstChildElement();
+            if (!effective->hasTagName("EffectiveBaseline") || effective->getNumAttributes() != 0
+                || effective->getNextElement() != nullptr || effectiveSound == nullptr
+                || effectiveSound->getNextElement() != nullptr)
+            {
+                return {};
+            }
+            provenance.effectiveBaseline = processingStateFromXml(*effectiveSound, parameters);
+            if (!provenance.effectiveBaseline) {
+                return {};
+            }
+        }
+        if (!validPresetProvenance(provenance, parameters)) {
+            return {};
+        }
+        result.at(*index) = std::move(provenance);
+    }
+    return result;
+}
+
+/// Validates detached identity, display name, and the complete finite baseline without filesystem access.
+bool validPresetProvenance(const PresetProvenance& provenance, const juce::AudioProcessorValueTreeState& parameters)
+{
+    if (provenance.id.length() != UUID_HEX_CHARACTER_COUNT || !provenance.id.containsOnly("0123456789abcdef")
+        || juce::Uuid(provenance.id).isNull() || UserPresets::validateName(provenance.name).failed())
+    {
+        return false;
+    }
+    if (provenance.effectiveBaseline) {
+        const auto effective = processingStateToXml(*provenance.effectiveBaseline);
+        if (effective == nullptr || !processingStateFromXml(*effective, parameters)) {
+            return false;
+        }
+    }
+    const auto xml = processingStateToXml(provenance.baseline);
+    return xml != nullptr && processingStateFromXml(*xml, parameters).has_value();
+}
+
+/// Compares durable provenance only, leaving transient file revision rebinding outside host dirty tracking.
+bool samePresetProvenance(const std::optional<PresetProvenance>& first, const std::optional<PresetProvenance>& second)
+{
+    if (!first || !second) {
+        return first.has_value() == second.has_value();
+    }
+    return first->id == second->id && first->name == second->name
+        && sameProcessingState(first->baseline, second->baseline);
+}
+
+/// Advances only reference values that exactly match the sound being recalled, preserving genuine edits.
+/// Untouched controls can round during the same recall as a modified control, so references advance per ID.
+void advancePresetRecallBaseline(
+    PresetProvenance& provenance,
+    const ProcessingSnapshot& target,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    const auto recalled = processingStateAfterRecall(target, parameters);
+    auto reference = provenance.effectiveBaseline.value_or(provenance.baseline);
+    for (auto& [parameterId, value] : reference) {
+        const auto targetValue = target.find(parameterId);
+        if (targetValue == target.end()) {
+            continue;
+        }
+        const ProcessingSnapshot actual {{parameterId, targetValue->second}};
+        const ProcessingSnapshot expected {{parameterId, value}};
+        const bool matches = provenance.effectiveBaseline
+            ? sameProcessingState(actual, expected)
+            : matchesRecalledProcessingState(actual, expected, parameters);
+        if (matches) {
+            value = recalled.at(parameterId);
+        }
+    }
+    provenance.effectiveBaseline = std::move(reference);
+}
+
+/// Predicts the exact APVTS readback of a sound recalled through the finite parameter boundary.
+/// Parameters already equal to their target are not written, matching the processor's recall command.
+ProcessingSnapshot processingStateAfterRecall(
+    const ProcessingSnapshot& snapshot,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    auto result = snapshot;
+    for (auto& [parameterId, value] : result) {
+        if (const auto* parameter = parameters.getParameter(parameterId);
+            parameter != nullptr && !juce::exactlyEqual(plainValue(*parameter), value))
+        {
+            const auto stored = parameter->convertFrom0to1(parameter->convertTo0to1(value));
+            value = parameter->convertFrom0to1(parameter->convertTo0to1(stored));
+        }
+    }
+    return result;
+}
+
+/// Compares exact live values with the baseline or its effective recalled value, never with a tolerance.
+/// Recall converts plain to normalized, and FiniteParameter stores the converted plain value.
+/// APVTS then reads getValue and denormalizes again.
+/// Each conversion may round, so source floats are not always live floats.
+/// Direct equality also accepts captured baselines and untouched defaults without forcing needless recalls.
+bool matchesRecalledProcessingState(
+    const ProcessingSnapshot& current,
+    const ProcessingSnapshot& baseline,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    if (current.size() != baseline.size()) {
+        return false;
+    }
+    return std::ranges::all_of(baseline, [&](const auto& entry) {
+        const auto& [parameterId, expected] = entry;
+        const auto actual = current.find(parameterId);
+        const auto* parameter = parameters.getParameter(parameterId);
+        if (actual == current.end() || parameter == nullptr) {
+            return false;
+        }
+        if (juce::exactlyEqual(actual->second, expected)) {
+            return true;
+        }
+        const auto stored = parameter->convertFrom0to1(parameter->convertTo0to1(expected));
+        const auto recalled = parameter->convertFrom0to1(parameter->convertTo0to1(stored));
+        return juce::exactlyEqual(actual->second, recalled);
+    });
 }
 
 /// Compares IDs and exact stored float values, so history and A/B never hide a small but real parameter change.
