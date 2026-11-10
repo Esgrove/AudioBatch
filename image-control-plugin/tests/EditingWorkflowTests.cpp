@@ -345,7 +345,7 @@ TEST(EditingWorkflow, SnapshotRecallMatchesRealtimeAndOfflineHeadlessRendering)
         juce::MidiBuffer midi;
         for (int offset = 0; offset < buffer.getNumSamples(); offset += size) {
             juce::AudioBuffer<float> block(
-                buffer.getArrayOfWritePointers(), 2, offset, std::min(size, buffer.getNumSamples() - offset)
+                buffer.getArrayOfWritePointers(), 2, offset, (std::min)(size, buffer.getNumSamples() - offset)
             );
             processor.processBlock(block, midi);
         }
