@@ -10,6 +10,22 @@ This repository holds two versions of it side by side, each with its own agent i
 Each version also has an `ARCHITECTURE.md`, [`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md),
 which explains how its parts work together.
 
+## Agent Commands
+
+Reusable command prompts live in [`.agents/commands/`](.agents/commands/).
+`.cursor/commands` and `.claude/commands` link to that directory, so edit the canonical files only.
+
+- `/all-checks [scope] [check-only]` runs the complete applicable verification suite and fixes found issues by default.
+  Add `check-only` to report without applying fixes.
+- `/code-review [scope]` reviews current project code without editing.
+  Add `changes` for local changes or `base=<ref>` for branch changes plus local work.
+- `/guidelines-review [scope]` applies small, behavior-preserving organization and style fixes.
+  Add `check-only` to report without editing, or `changes` to limit cleanup to local changes.
+
+All commands default to the whole repository.
+Scopes are `all`, `audiobatch` for both applications and shared support, `cpp`, `rust`, and `imagecontrol` for the plugin.
+Each command documents its scope, safety boundaries, and reporting requirements.
+
 ## Platform Scope
 
 AudioBatch supports only macOS and Windows, as the README states.
