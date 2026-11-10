@@ -85,11 +85,11 @@ public:
     /// Reports the result a VST3 plugin returns when its process call fails.
     [[nodiscard]] int getLastProcessResult() const noexcept override
     {
-        return failedResult;
+        return FAILED_RESULT;
     }
 
     /// The result code reported, kResultFalse of the VST3 SDK.
-    static constexpr int failedResult {1};
+    static constexpr int FAILED_RESULT {1};
 };
 
 /// A test plugin that looks like a VST3 plugin whose process calls fail, while its audio passes through.

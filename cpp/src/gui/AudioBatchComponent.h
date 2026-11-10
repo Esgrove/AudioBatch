@@ -230,8 +230,8 @@ private:
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
         const juce::String& title,
-        int initialWidth = layout::dialogContentWidth,
-        int initialHeight = layout::dialogContentHeight
+        int initialWidth = layout::DIALOG_CONTENT_WIDTH,
+        int initialHeight = layout::DIALOG_CONTENT_HEIGHT
     );
     void processRecords(const std::vector<AudioAnalysisRecord>& records);
 

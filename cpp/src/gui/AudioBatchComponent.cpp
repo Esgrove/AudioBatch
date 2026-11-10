@@ -128,7 +128,7 @@ void AudioBatchComponent::configureResultsTable()
     resultsTable.setColour(juce::ListBox::backgroundColourId, CustomLookAndFeel::greyMediumDark());
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
-    resultsTable.setRowHeight(layout::resultsTableRowHeight);
+    resultsTable.setRowHeight(layout::RESULTS_TABLE_ROW_HEIGHT);
     resultsTable.setComponentID(control_ids::RESULTS);
     resultsTable.setTitle(control_titles::RESULTS);
     // The activity labels change while files are busy, so only the settled text decides the status column order.
@@ -149,13 +149,15 @@ void AudioBatchComponent::configurePreviewControls()
     // The first layout replaces these preferred sizes with the controls-fit preview height.
     mainVerticalLayout.setItemLayout(
         0,
-        layout::resultsTableMinimumHeight,
-        layout::resultsTableMaximumProportion,
-        layout::resultsTableMaximumProportion
+        layout::RESULTS_TABLE_MINIMUM_HEIGHT,
+        layout::RESULTS_TABLE_MAXIMUM_PROPORTION,
+        layout::RESULTS_TABLE_MAXIMUM_PROPORTION
     );
-    mainVerticalLayout.setItemLayout(1, layout::resizeBarHeight, layout::resizeBarHeight, layout::resizeBarHeight);
     mainVerticalLayout.setItemLayout(
-        2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewMinimumHeight
+        1, layout::RESIZE_BAR_HEIGHT, layout::RESIZE_BAR_HEIGHT, layout::RESIZE_BAR_HEIGHT
+    );
+    mainVerticalLayout.setItemLayout(
+        2, layout::PREVIEW_MINIMUM_HEIGHT, layout::PREVIEW_MAXIMUM_PROPORTION, layout::PREVIEW_MINIMUM_HEIGHT
     );
     addAndMakeVisible(waveformResizeBar);
     previewWorkspace.loadWidthSettings();
@@ -189,7 +191,7 @@ void AudioBatchComponent::configurePreviewControls()
         }
     };
     previewWorkspace.zoomSlider.onValueChange
-        = [this] { zoomLevelChanged(previewWorkspace.zoomSlider.getValue() * zoom_range::percentToScaleFactor); };
+        = [this] { zoomLevelChanged(previewWorkspace.zoomSlider.getValue() * zoom_range::PERCENT_TO_SCALE_FACTOR); };
 }
 
 /// Connects the plugin chain and the audio settings to the preview,
@@ -313,7 +315,9 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
         *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingAccess(), previewPlayer.getDeviceManager()
     );
     previewPlayer.setLiveChain(*liveChain);
-    previewPlayer.setSavedDeviceState(pluginAppProperties.getUserSettings()->getXmlValue(audioDeviceStatePropertyKey));
+    previewPlayer.setSavedDeviceState(
+        pluginAppProperties.getUserSettings()->getXmlValue(AUDIO_DEVICE_STATE_PROPERTY_KEY)
+    );
 
     addAndMakeVisible(statusBar);
     previewPlayer.getDeviceManager().addChangeListener(this);
@@ -323,7 +327,7 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
     configurePreviewControls();
     configureProcessingControls();
 
-    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, layout::tooltipDelayMilliseconds);
+    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, layout::TOOLTIP_DELAY_MILLISECONDS);
     logStartupCheckpoint("ui controls created");
 
     // Opening a shared database can wait for another writer, just like pruning can touch a slow file system.
@@ -335,7 +339,7 @@ AudioBatchComponent::AudioBatchComponent(AudioBatchComponentConfig config) :
     });
 
     setOpaque(true);
-    setSize(layout::initialComponentWidth, layout::initialComponentHeight);
+    setSize(layout::INITIAL_COMPONENT_WIDTH, layout::INITIAL_COMPONENT_HEIGHT);
     setWantsKeyboardFocus(true);
     startTimerHz(STATUS_REFRESH_RATE_HZ);
     logStartupCheckpoint("constructor complete");
@@ -418,10 +422,10 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
         const auto column = FLEXIBLE_COLUMNS[index];
         const auto columnId = std::to_underlying(column);
         if (header.isColumnVisible(columnId)) {
-            const auto minimum = column == AudioFileTableColumn::name ? layout::table::nameColumnMinimumWidth
-                                                                      : layout::table::pathColumnMinimumWidth;
-            const auto maximum = column == AudioFileTableColumn::name ? layout::table::nameMaximumWidth
-                                                                      : layout::table::pathMaximumWidth;
+            const auto minimum = column == AudioFileTableColumn::name ? layout::table::NAME_COLUMN_MINIMUM_WIDTH
+                                                                      : layout::table::PATH_COLUMN_MINIMUM_WIDTH;
+            const auto maximum = column == AudioFileTableColumn::name ? layout::table::NAME_MAXIMUM_WIDTH
+                                                                      : layout::table::PATH_MAXIMUM_WIDTH;
             widths[index] = minimum;
             capacities[index] = maximum - minimum;
             weights[index] = juce::jmax(0, header.getColumnWidth(columnId) - minimum);
@@ -470,14 +474,14 @@ void AudioBatchComponent::showAudioSettingsWindow()
         settingsWindow,
         audioSettingsComponent.get(),
         "Audio Settings",
-        layout::audioSettings::preferredWidth,
-        layout::audioSettings::preferredHeight
+        layout::audioSettings::PREFERRED_WIDTH,
+        layout::audioSettings::PREFERRED_HEIGHT
     );
     settingsWindow->setResizeLimits(
         settingsWindow->getWidth(),
         layout::audioSettings::MINIMUM_WINDOW_HEIGHT,
-        layout::dialogMaximumWindowSize,
-        layout::dialogMaximumWindowSize
+        layout::DIALOG_MAXIMUM_WINDOW_SIZE,
+        layout::DIALOG_MAXIMUM_WINDOW_SIZE
     );
     settingsWindow->addComponentListener(this);
 }
@@ -858,14 +862,14 @@ void AudioBatchComponent::openDialogWindow(
 #if JUCE_WINDOWS
     window->setUsingNativeTitleBar(false);
     window->setTitleBarTextCentred(false);
-    window->setTitleBarHeight(layout::titleBarHeight);
+    window->setTitleBarHeight(layout::TITLE_BAR_HEIGHT);
 #else
     window->setUsingNativeTitleBar(true);
 #endif
     window->setSize(window->getWidth(), window->getHeight());
     window->setResizable(true, true);
     window->setResizeLimits(
-        window->getWidth(), window->getHeight(), layout::dialogMaximumWindowSize, layout::dialogMaximumWindowSize
+        window->getWidth(), window->getHeight(), layout::DIALOG_MAXIMUM_WINDOW_SIZE, layout::DIALOG_MAXIMUM_WINDOW_SIZE
     );
     window->setColour(juce::DialogWindow::backgroundColourId, CustomLookAndFeel::greySemiDark());
     window->setVisible(true);

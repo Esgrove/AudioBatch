@@ -107,7 +107,7 @@ struct ShortTermLoudnessHistory {
     [[nodiscard]] double timeAt(std::size_t index) const noexcept;
 
     /// EBU-mode meter update rate, independent of the three-second measurement window.
-    static constexpr double updateRateHz {10.0};
+    static constexpr double UPDATE_RATE_HZ {10.0};
 
     /// Sample rate of the analyzed file.
     double sampleRate {0.0};
@@ -147,14 +147,14 @@ struct OverloadHistory {
     [[nodiscard]] std::uint8_t flagsAt(std::size_t bucket, int channel) const noexcept;
 
     /// Flag bit of a decoded sample whose magnitude exceeds 1.0.
-    static constexpr std::uint8_t sampleOver {0x01};
+    static constexpr std::uint8_t SAMPLE_OVER {0x01};
     /// Flag bit of a true peak above 1.0.
-    static constexpr std::uint8_t truePeakOver {0x02};
+    static constexpr std::uint8_t TRUE_PEAK_OVER {0x02};
     /// Every legal flag bit. Depends on the two individual bits above.
-    static constexpr std::uint8_t allFlags {sampleOver | truePeakOver};
+    static constexpr std::uint8_t ALL_FLAGS {SAMPLE_OVER | TRUE_PEAK_OVER};
 
     /// Largest number of buckets, reached by merging neighbouring buckets of longer files.
-    static constexpr std::size_t maximumBuckets {8192};
+    static constexpr std::size_t MAXIMUM_BUCKETS {8192};
 
     // Preserve the timing, channel, and flag aggregate contract used by overload-history clients.
     /// Sample rate of the analyzed file.
@@ -267,7 +267,7 @@ struct AudioAnalysisRecord {
     }
 
     /// Loudness that stands for silence, where no finite LUFS value exists.
-    static constexpr double negativeInfinityLoudness {-1000.0};
+    static constexpr double NEGATIVE_INFINITY_LOUDNESS {-1000.0};
 
     /// Where the record is in its lifecycle, from a pending placeholder to an analyzed, cached, or failed file.
     AudioAnalysisStatus status {AudioAnalysisStatus::pending};
@@ -306,9 +306,9 @@ struct AudioAnalysisRecord {
     /// Length of the audio in seconds.
     double durationSeconds {0.0};
     /// Integrated loudness in LUFS, or negativeInfinityLoudness for silence.
-    double integratedLufs {negativeInfinityLoudness};
+    double integratedLufs {NEGATIVE_INFINITY_LOUDNESS};
     /// Largest short-term loudness in LUFS, or negativeInfinityLoudness for silence.
-    double maxShortTermLufs {negativeInfinityLoudness};
+    double maxShortTermLufs {NEGATIVE_INFINITY_LOUDNESS};
     /// The larger of the channel true peaks.
     double overallTruePeak {0.0};
     /// True peak of the left or only channel as a linear amplitude.

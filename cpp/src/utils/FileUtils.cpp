@@ -38,10 +38,10 @@ namespace audiobatch::utils
 namespace
 {
 /// Highest number tried when a hidden backup or recovery name is already occupied.
-constexpr int maximumBackupIndex {1000};
+constexpr int MAXIMUM_BACKUP_INDEX {1000};
 #if !JUCE_WINDOWS
 /// Converts POSIX seconds to the high resolution timestamp used for identity checks.
-constexpr std::int64_t nanosecondsPerSecond {1'000'000'000};
+constexpr std::int64_t NANOSECONDS_PER_SECOND {1'000'000'000};
 #endif
 
 /// An approved output retained under an exclusively claimed backup entry.
@@ -358,7 +358,7 @@ void restoreOutputBackup(
 /// Returns the user-facing error describing where the new audio was kept.
 juce::String keepNewAudioAfterLostOriginal(const OutputTemporaryFile& temporaryFile, const juce::File& outputFile)
 {
-    for (int index = 1; index <= maximumBackupIndex; ++index) {
+    for (int index = 1; index <= MAXIMUM_BACKUP_INDEX; ++index) {
         const auto suffix = index == 1 ? juce::String() : juce::String(index);
         const auto keptFile = outputFile.getSiblingFile(
             outputFile.getFileNameWithoutExtension() + " (recovered)" + suffix + outputFile.getFileExtension()
@@ -386,7 +386,7 @@ std::unexpected<juce::String> sourceChangedFailure()
 std::expected<OutputBackup, juce::String> claimOutputBackup(const juce::File& outputFile, const OutputCommitHook& hook)
 {
     const FileIdentity identity(outputFile);
-    for (int index = 0; index <= maximumBackupIndex; ++index) {
+    for (int index = 0; index <= MAXIMUM_BACKUP_INDEX; ++index) {
         const auto suffix = index == 0 ? juce::String() : "." + juce::String(index);
         const auto candidate = outputFile.getSiblingFile("." + outputFile.getFileName() + ".backup" + suffix);
         if (hook) {
@@ -476,12 +476,12 @@ FileIdentity::FileIdentity(const juce::File& file) :
         };
 #if JUCE_MAC
         preciseTimes
-            = {information.st_mtimespec.tv_sec * nanosecondsPerSecond + information.st_mtimespec.tv_nsec,
-               information.st_ctimespec.tv_sec * nanosecondsPerSecond + information.st_ctimespec.tv_nsec};
+            = {information.st_mtimespec.tv_sec * NANOSECONDS_PER_SECOND + information.st_mtimespec.tv_nsec,
+               information.st_ctimespec.tv_sec * NANOSECONDS_PER_SECOND + information.st_ctimespec.tv_nsec};
 #else
         preciseTimes
-            = {information.st_mtim.tv_sec * nanosecondsPerSecond + information.st_mtim.tv_nsec,
-               information.st_ctim.tv_sec * nanosecondsPerSecond + information.st_ctim.tv_nsec};
+            = {information.st_mtim.tv_sec * NANOSECONDS_PER_SECOND + information.st_mtim.tv_nsec,
+               information.st_ctim.tv_sec * NANOSECONDS_PER_SECOND + information.st_ctim.tv_nsec};
 #endif
     }
 #endif
@@ -617,7 +617,7 @@ FolderGroups groupByParentFolder(const juce::Array<juce::File>& files, const int
 namespace
 {
 /// How long the background thread waits to reap the `open -R` process that reveals files in Finder.
-[[maybe_unused]] constexpr int revealProcessTimeoutMs {10'000};
+[[maybe_unused]] constexpr int REVEAL_PROCESS_TIMEOUT_MS {10'000};
 
 /// Shows the files of one folder selected in the platform file manager.
 /// Files that no longer exist are left out, and when none exists the folder opens instead.
@@ -643,7 +643,7 @@ void revealFolderFiles(const juce::File& folder, const juce::Array<juce::File>& 
         arguments.add(file.getFullPathName());
     }
     if (const auto process = std::make_shared<juce::ChildProcess>(); process->start(arguments, 0)) {
-        juce::Thread::launch([process] { process->waitForProcessToFinish(revealProcessTimeoutMs); });
+        juce::Thread::launch([process] { process->waitForProcessToFinish(REVEAL_PROCESS_TIMEOUT_MS); });
         return;
     }
 #endif
@@ -657,7 +657,7 @@ void revealFolderFiles(const juce::File& folder, const juce::Array<juce::File>& 
 /// Returns the number of folders left out because of the limit.
 int revealFilesInFileManager(const juce::Array<juce::File>& files)
 {
-    const auto folders = groupByParentFolder(files, maximumRevealFolders);
+    const auto folders = groupByParentFolder(files, MAXIMUM_REVEAL_FOLDERS);
     for (const auto& [folder, folderFiles] : folders.groups) {
         revealFolderFiles(folder, folderFiles);
     }
@@ -668,7 +668,7 @@ int revealFilesInFileManager(const juce::Array<juce::File>& files)
 /// Returns the number of folders left out because of the limit.
 int openParentDirectories(const juce::Array<juce::File>& files)
 {
-    const auto folders = groupByParentFolder(files, maximumRevealFolders);
+    const auto folders = groupByParentFolder(files, MAXIMUM_REVEAL_FOLDERS);
     for (const auto& [folder, folderFiles] : folders.groups) {
         if (folder.isDirectory()) {
             folder.revealToUser();

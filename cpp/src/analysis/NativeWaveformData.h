@@ -25,7 +25,7 @@ struct WaveformGeometry {
 };
 
 /// Largest supported serialized native thumbnail, including its fixed-size header.
-inline constexpr int maximumWaveformBytes {52 + 4'194'304 * 2 * 2};
+inline constexpr int MAXIMUM_WAVEFORM_BYTES {52 + 4'194'304 * 2 * 2};
 
 [[nodiscard]] std::optional<WaveformGeometry> waveformGeometry(std::span<const std::byte> data);
 

@@ -32,7 +32,7 @@ bool AudioBatchComponent::isPreviewSectionExpanded() const noexcept
 /// Later window resizes and divider drags keep the height the user sees instead.
 void AudioBatchComponent::fitPreviewToControls()
 {
-    const auto workspaceWidth = getWidth() - layout::mainContentPadding * 2;
+    const auto workspaceWidth = getWidth() - layout::MAIN_CONTENT_PADDING * 2;
     if (workspaceWidth <= 0 || previewFitInitialized) {
         return;
     }
@@ -71,7 +71,7 @@ void AudioBatchComponent::togglePreviewSection()
 void AudioBatchComponent::updatePreviewAnimation()
 {
     if (juce::Time::getMillisecondCounterHiRes() - animationStartedAtMilliseconds
-        >= layout::compactPreview::animationDurationMilliseconds)
+        >= layout::compactPreview::ANIMATION_DURATION_MILLISECONDS)
     {
         previewAnimationAttachment = {};
         restoreExpandedLayout = previewSectionExpanded;
@@ -87,8 +87,8 @@ void AudioBatchComponent::updatePreviewAnimation()
 void AudioBatchComponent::resized()
 {
     auto bounds = getLocalBounds();
-    statusBar.setBounds(bounds.removeFromBottom(layout::statusBar::height));
-    bounds.reduce(layout::mainContentPadding, layout::mainContentPadding);
+    statusBar.setBounds(bounds.removeFromBottom(layout::statusBar::HEIGHT));
+    bounds.reduce(layout::MAIN_CONTENT_PADDING, layout::MAIN_CONTENT_PADDING);
     workspaceAvailableHeight = juce::jmax(1, bounds.getHeight());
     if (expandedPreviewHeight == 0 && bounds.getHeight() > 0) {
         expandedPreviewHeight = layout::expandedPreviewFitHeight(bounds.getWidth());
@@ -99,25 +99,25 @@ void AudioBatchComponent::resized()
     previewWorkspace.setCompact(compact);
 
     if (compact) {
-        const auto targetHeight = previewSectionExpanded ? getExpandedPreviewHeight() : layout::compactPreview::height;
+        const auto targetHeight = previewSectionExpanded ? getExpandedPreviewHeight() : layout::compactPreview::HEIGHT;
         double progress = 1.0;
         if (!previewAnimationAttachment.isEmpty()) {
             progress = juce::jlimit(
                 0.0,
                 1.0,
                 (juce::Time::getMillisecondCounterHiRes() - animationStartedAtMilliseconds)
-                    / layout::compactPreview::animationDurationMilliseconds
+                    / layout::compactPreview::ANIMATION_DURATION_MILLISECONDS
             );
         }
         const auto easedProgress = progress * progress * (3.0 - 2.0 * progress);
         const auto startHeight = static_cast<double>(animationStartHeight);
         currentPreviewHeight = juce::jlimit(
-            layout::compactPreview::height,
-            juce::jmax(layout::compactPreview::height, bounds.getHeight()),
+            layout::compactPreview::HEIGHT,
+            juce::jmax(layout::compactPreview::HEIGHT, bounds.getHeight()),
             juce::roundToInt(startHeight + (targetHeight - startHeight) * easedProgress)
         );
         previewWorkspace.setBounds(bounds.removeFromBottom(currentPreviewHeight));
-        bounds.removeFromBottom(static_cast<int>(layout::resizeBarHeight));
+        bounds.removeFromBottom(static_cast<int>(layout::RESIZE_BAR_HEIGHT));
         resultsTable.setBounds(bounds);
     } else {
         // A layout at an unchanged height after the divider was dragged keeps the dragged height.
@@ -154,12 +154,12 @@ void AudioBatchComponent::setExpandedLayout(const int previewHeight)
     const auto height = static_cast<double>(workspaceAvailableHeight);
     mainVerticalLayout.setItemLayout(
         0,
-        layout::resultsTableMinimumHeight,
-        layout::resultsTableMaximumProportion,
-        -(height - previewHeight - layout::resizeBarHeight) / height
+        layout::RESULTS_TABLE_MINIMUM_HEIGHT,
+        layout::RESULTS_TABLE_MAXIMUM_PROPORTION,
+        -(height - previewHeight - layout::RESIZE_BAR_HEIGHT) / height
     );
     mainVerticalLayout.setItemLayout(
-        2, layout::previewMinimumHeight, layout::previewMaximumProportion, -previewHeight / height
+        2, layout::PREVIEW_MINIMUM_HEIGHT, layout::PREVIEW_MAXIMUM_PROPORTION, -previewHeight / height
     );
 }
 }  // namespace audiobatch

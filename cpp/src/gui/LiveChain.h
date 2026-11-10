@@ -215,7 +215,7 @@ private:
     /// Whether plugin state changed since saving or loading a preset.
     bool settingsChanged {false};
     /// Rate at which processors are prepared.
-    double previewSampleRate {utils::defaultSampleRate};
+    double previewSampleRate {utils::DEFAULT_SAMPLE_RATE};
     /// Block size at which processors are prepared.
     int previewBlockSize {512};
 

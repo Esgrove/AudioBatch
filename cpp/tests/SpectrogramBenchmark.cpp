@@ -180,12 +180,12 @@ void benchmarkMemory()
     const auto reference = buildStandalone(block);
     require(reference != nullptr && isValidSpectrogramData(*reference), "Could not build reference spectrogram");
     const auto expectedColumns
-        = static_cast<std::size_t>((TOTAL_FRAMES + SpectrogramData::hopSize - 1) / SpectrogramData::hopSize);
+        = static_cast<std::size_t>((TOTAL_FRAMES + SpectrogramData::HOP_SIZE - 1) / SpectrogramData::HOP_SIZE);
     require(
         reference->sampleRate == SAMPLE_RATE && reference->channelCount == CHANNELS
-            && reference->lengthInSamples == TOTAL_FRAMES && reference->samplesPerColumn == SpectrogramData::hopSize
+            && reference->lengthInSamples == TOTAL_FRAMES && reference->samplesPerColumn == SpectrogramData::HOP_SIZE
             && reference->columnCount() == expectedColumns
-            && reference->intensities.size() == expectedColumns * SpectrogramData::frequencyRows,
+            && reference->intensities.size() == expectedColumns * SpectrogramData::FREQUENCY_ROWS,
         "Unexpected deterministic source geometry"
     );
     const auto blob = serializeSpectrogram(*reference);
@@ -200,7 +200,7 @@ void benchmarkMemory()
         TOTAL_FRAMES,
         static_cast<std::size_t>(BLOCK_FRAMES) * CHANNELS * sizeof(float),
         reference->columnCount(),
-        SpectrogramData::frequencyRows,
+        SpectrogramData::FREQUENCY_ROWS,
         juce::NewLine::getDefault()
     );
     measure(

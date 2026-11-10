@@ -20,7 +20,7 @@ namespace audiobatch::analysis
 namespace
 {
 /// Bit depth assumed for lossy files, which is also the depth their normalized output is written in.
-constexpr int defaultLossyBitsPerSample {16};
+constexpr int DEFAULT_LOSSY_BITS_PER_SAMPLE {16};
 
 /// Returns true when the reader reports the decoder output bit depth instead of the source bit depth.
 /// JUCE's MP3 reader is the known case, since decoding hides the original encoding depth.
@@ -54,7 +54,7 @@ int resolveMp4BitsPerSample(const juce::File& file)
         return properties->bitsPerSample();
     }
 
-    return defaultLossyBitsPerSample;
+    return DEFAULT_LOSSY_BITS_PER_SAMPLE;
 }
 }  // namespace
 
@@ -68,7 +68,7 @@ int resolveMp4BitsPerSample(const juce::File& file)
 int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce::File& file)
 {
     if (reportsDecodedBitDepth(reader, file)) {
-        return defaultLossyBitsPerSample;
+        return DEFAULT_LOSSY_BITS_PER_SAMPLE;
     }
     if (isPlatformDecodedMp4(reader, file)) {
         return resolveMp4BitsPerSample(file);

@@ -37,13 +37,13 @@ enum class PreviewViewMode : std::uint8_t { waveform, spectrogram, sideBySide, s
 /// Persisted preview choices, independent of the current file and audio device.
 struct AudioPreviewPreferences {
     /// Initial top of the LUFS axis, shared by the settings and the waveform.
-    static constexpr double defaultLoudnessGraphMaximum {-4.0};
+    static constexpr double DEFAULT_LOUDNESS_GRAPH_MAXIMUM {-4.0};
     /// Initial bottom of the LUFS axis, shared by the settings and the waveform.
-    static constexpr double defaultLoudnessGraphMinimum {-24.0};
+    static constexpr double DEFAULT_LOUDNESS_GRAPH_MINIMUM {-24.0};
     /// Highest editable LUFS limit of the source loudness axis.
-    static constexpr double maximumLoudnessGraphLimit {6.0};
+    static constexpr double MAXIMUM_LOUDNESS_GRAPH_LIMIT {6.0};
     /// Lowest editable LUFS limit of the source loudness axis.
-    static constexpr double minimumLoudnessGraphLimit {-60.0};
+    static constexpr double MINIMUM_LOUDNESS_GRAPH_LIMIT {-60.0};
 
     // Preserve the designated preference construction order shared by settings and integration tests.
     /// True to play the preview through the plugin chain.
@@ -60,9 +60,9 @@ struct AudioPreviewPreferences {
     bool loudnessGraphEnabled {false};
 
     /// Bottom of the loudness axis in LUFS.
-    double loudnessGraphMinimum {defaultLoudnessGraphMinimum};
+    double loudnessGraphMinimum {DEFAULT_LOUDNESS_GRAPH_MINIMUM};
     /// Top of the loudness axis in LUFS.
-    double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
+    double loudnessGraphMaximum {DEFAULT_LOUDNESS_GRAPH_MAXIMUM};
 
     /// True to show the embedded album artwork beside the file name.
     /// Only the Options menu changes it, so Audio Settings carries it over unchanged.

@@ -28,15 +28,15 @@ namespace audiobatch
 namespace
 {
 /// Keys of the preview preferences in the application settings.
-constexpr auto pluginPreviewKey {"previewPluginChain"};
-constexpr auto compensationKey {"previewLatencyCompensation"};
-constexpr auto continuationKey {"previewContinuePlayback"};
-constexpr auto playFromFirstCuePointKey {"playFromFirstCuePoint"};
-constexpr auto waveformColoursKey {"seratoWaveformColours"};
-constexpr auto loudnessGraphKey {"loudnessGraphEnabled"};
-constexpr auto loudnessMinimumKey {"loudnessGraphMinimum"};
-constexpr auto loudnessMaximumKey {"loudnessGraphMaximum"};
-constexpr auto albumArtworkKey {"showAlbumArtwork"};
+constexpr auto PLUGIN_PREVIEW_KEY {"previewPluginChain"};
+constexpr auto COMPENSATION_KEY {"previewLatencyCompensation"};
+constexpr auto CONTINUATION_KEY {"previewContinuePlayback"};
+constexpr auto PLAY_FROM_FIRST_CUE_POINT_KEY {"playFromFirstCuePoint"};
+constexpr auto WAVEFORM_COLOURS_KEY {"seratoWaveformColours"};
+constexpr auto LOUDNESS_GRAPH_KEY {"loudnessGraphEnabled"};
+constexpr auto LOUDNESS_MINIMUM_KEY {"loudnessGraphMinimum"};
+constexpr auto LOUDNESS_MAXIMUM_KEY {"loudnessGraphMaximum"};
+constexpr auto ALBUM_ARTWORK_KEY {"showAlbumArtwork"};
 constexpr auto PREVIEW_VIEW_MODE_KEY {"previewViewMode"};
 constexpr auto SHOW_SAMPLE_OVERLOADS_KEY {"showSampleOverloads"};
 constexpr auto SHOW_TRUE_PEAK_OVERLOADS_KEY {"showTruePeakOverloads"};
@@ -53,10 +53,10 @@ constexpr std::array PREVIEW_VIEW_MODES {
 constexpr std::array PREVIEW_VIEW_NAMES {"waveform", "spectrogram", "side_by_side", "stacked"};
 constexpr std::array PREVIEW_VIEW_LABELS {"Waveform", "Spectrogram", "Both: side by side", "Both: stacked"};
 /// Most digits a loudness axis limit can have, enough for the whole LUFS values from -60 to +6.
-constexpr int maximumLoudnessLimitDigits {2};
+constexpr int MAXIMUM_LOUDNESS_LIMIT_DIGITS {2};
 
 /// Captions identify JUCE-owned device controls through their public label attachments.
-constexpr std::array deviceTooltipDescriptions {
+constexpr std::array DEVICE_TOOLTIP_DESCRIPTIONS {
     std::pair {"Audio device type:", "Choose the audio driver used for preview playback."},
     std::pair {"Output:", "Choose the audio interface or speakers used for preview playback."},
     std::pair {"Device:", "Choose the audio interface or speakers used for preview playback."},
@@ -74,7 +74,7 @@ class AudioSettingsTooltipWindow final : public juce::TooltipWindow
 public:
     /// Keeps tooltip rendering in the settings dialog's own native window.
     explicit AudioSettingsTooltipWindow(juce::Component& parent) :
-        juce::TooltipWindow(&parent, layout::tooltipDelayMilliseconds)
+        juce::TooltipWindow(&parent, layout::TOOLTIP_DELAY_MILLISECONDS)
     {}
 
     juce::String getTipFor(juce::Component& component) override;
@@ -108,7 +108,7 @@ juce::String getDeviceControlTooltip(const juce::Component& component)
         if (label != &component && label->getAttachedComponent() != &component) {
             continue;
         }
-        for (const auto& [caption, description] : deviceTooltipDescriptions) {
+        for (const auto& [caption, description] : DEVICE_TOOLTIP_DESCRIPTIONS) {
             if (label->getText() == juce::translate(caption)) {
                 return description;
             }
@@ -184,15 +184,15 @@ juce::String previewViewModeName(const PreviewViewMode mode)
 bool isValidLoudnessGraphLimitInput(const juce::String& text)
 {
     const auto digits = text.startsWithChar('-') ? text.substring(1) : text;
-    return digits.length() <= maximumLoudnessLimitDigits && (digits.isEmpty() || digits.containsOnly("0123456789"));
+    return digits.length() <= MAXIMUM_LOUDNESS_LIMIT_DIGITS && (digits.isEmpty() || digits.containsOnly("0123456789"));
 }
 
 /// Requires whole-LU axis limits within the supported range and keeps at least one LU between them.
 bool isValidLoudnessGraphRange(const double minimum, const double maximum)
 {
     return std::isfinite(minimum) && std::isfinite(maximum)
-        && minimum >= AudioPreviewPreferences::minimumLoudnessGraphLimit
-        && maximum <= AudioPreviewPreferences::maximumLoudnessGraphLimit && maximum - minimum >= 1.0
+        && minimum >= AudioPreviewPreferences::MINIMUM_LOUDNESS_GRAPH_LIMIT
+        && maximum <= AudioPreviewPreferences::MAXIMUM_LOUDNESS_GRAPH_LIMIT && maximum - minimum >= 1.0
         && std::floor(minimum) >= minimum && std::floor(maximum) >= maximum;
 }
 
@@ -200,13 +200,13 @@ bool isValidLoudnessGraphRange(const double minimum, const double maximum)
 AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& settings)
 {
     AudioPreviewPreferences preferences {
-        .pluginChainEnabled = settings.getBoolValue(pluginPreviewKey, false),
-        .latencyCompensated = settings.getBoolValue(compensationKey, true),
-        .continuePlayback = settings.getBoolValue(continuationKey, false),
-        .playFromFirstCuePoint = settings.getBoolValue(playFromFirstCuePointKey, false),
-        .seratoWaveformColours = settings.getBoolValue(waveformColoursKey, true),
-        .loudnessGraphEnabled = settings.getBoolValue(loudnessGraphKey, false),
-        .showAlbumArtwork = settings.getBoolValue(albumArtworkKey, true),
+        .pluginChainEnabled = settings.getBoolValue(PLUGIN_PREVIEW_KEY, false),
+        .latencyCompensated = settings.getBoolValue(COMPENSATION_KEY, true),
+        .continuePlayback = settings.getBoolValue(CONTINUATION_KEY, false),
+        .playFromFirstCuePoint = settings.getBoolValue(PLAY_FROM_FIRST_CUE_POINT_KEY, false),
+        .seratoWaveformColours = settings.getBoolValue(WAVEFORM_COLOURS_KEY, true),
+        .loudnessGraphEnabled = settings.getBoolValue(LOUDNESS_GRAPH_KEY, false),
+        .showAlbumArtwork = settings.getBoolValue(ALBUM_ARTWORK_KEY, true),
         .viewMode = previewViewModeFromName(settings.getValue(PREVIEW_VIEW_MODE_KEY)),
         .showSampleOverloads = settings.getBoolValue(SHOW_SAMPLE_OVERLOADS_KEY, true),
         .showTruePeakOverloads = settings.getBoolValue(SHOW_TRUE_PEAK_OVERLOADS_KEY, true),
@@ -214,12 +214,12 @@ AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& 
         .showGainAdjustedMetrics = settings.getBoolValue(SHOW_GAIN_ADJUSTED_METRICS_KEY, true),
     };
     // PropertiesFile's numeric conversion accepts a numeric prefix, so parse the complete saved text.
-    const auto minimum = readLoudnessLimit(
-        settings.getValue(loudnessMinimumKey, utils::format("{}", AudioPreviewPreferences::defaultLoudnessGraphMinimum))
-    );
-    const auto maximum = readLoudnessLimit(
-        settings.getValue(loudnessMaximumKey, utils::format("{}", AudioPreviewPreferences::defaultLoudnessGraphMaximum))
-    );
+    const auto minimum = readLoudnessLimit(settings.getValue(
+        LOUDNESS_MINIMUM_KEY, utils::format("{}", AudioPreviewPreferences::DEFAULT_LOUDNESS_GRAPH_MINIMUM)
+    ));
+    const auto maximum = readLoudnessLimit(settings.getValue(
+        LOUDNESS_MAXIMUM_KEY, utils::format("{}", AudioPreviewPreferences::DEFAULT_LOUDNESS_GRAPH_MAXIMUM)
+    ));
 
     if (minimum.has_value() && maximum.has_value() && isValidLoudnessGraphRange(*minimum, *maximum)) {
         preferences.loudnessGraphMinimum = *minimum;
@@ -227,8 +227,8 @@ AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& 
     } else {
         utils::logWarn(
             "Invalid saved loudness graph range, restoring {} to {} LUFS",
-            AudioPreviewPreferences::defaultLoudnessGraphMinimum,
-            AudioPreviewPreferences::defaultLoudnessGraphMaximum
+            AudioPreviewPreferences::DEFAULT_LOUDNESS_GRAPH_MINIMUM,
+            AudioPreviewPreferences::DEFAULT_LOUDNESS_GRAPH_MAXIMUM
         );
     }
     return preferences;
@@ -241,15 +241,15 @@ bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPrev
         utils::logError("Cannot save invalid loudness graph range");
         return false;
     }
-    settings.setValue(pluginPreviewKey, preferences.pluginChainEnabled);
-    settings.setValue(compensationKey, preferences.latencyCompensated);
-    settings.setValue(continuationKey, preferences.continuePlayback);
-    settings.setValue(playFromFirstCuePointKey, preferences.playFromFirstCuePoint);
-    settings.setValue(waveformColoursKey, preferences.seratoWaveformColours);
-    settings.setValue(loudnessGraphKey, preferences.loudnessGraphEnabled);
-    settings.setValue(loudnessMinimumKey, preferences.loudnessGraphMinimum);
-    settings.setValue(loudnessMaximumKey, preferences.loudnessGraphMaximum);
-    settings.setValue(albumArtworkKey, preferences.showAlbumArtwork);
+    settings.setValue(PLUGIN_PREVIEW_KEY, preferences.pluginChainEnabled);
+    settings.setValue(COMPENSATION_KEY, preferences.latencyCompensated);
+    settings.setValue(CONTINUATION_KEY, preferences.continuePlayback);
+    settings.setValue(PLAY_FROM_FIRST_CUE_POINT_KEY, preferences.playFromFirstCuePoint);
+    settings.setValue(WAVEFORM_COLOURS_KEY, preferences.seratoWaveformColours);
+    settings.setValue(LOUDNESS_GRAPH_KEY, preferences.loudnessGraphEnabled);
+    settings.setValue(LOUDNESS_MINIMUM_KEY, preferences.loudnessGraphMinimum);
+    settings.setValue(LOUDNESS_MAXIMUM_KEY, preferences.loudnessGraphMaximum);
+    settings.setValue(ALBUM_ARTWORK_KEY, preferences.showAlbumArtwork);
     settings.setValue(PREVIEW_VIEW_MODE_KEY, previewViewModeName(preferences.viewMode));
     settings.setValue(SHOW_SAMPLE_OVERLOADS_KEY, preferences.showSampleOverloads);
     settings.setValue(SHOW_TRUE_PEAK_OVERLOADS_KEY, preferences.showTruePeakOverloads);
@@ -279,7 +279,7 @@ double getPreviewStartPositionSeconds(
         return 0.0;
     }
     const auto firstCue = std::ranges::min_element(markers->get().cues, {}, &serato::CuePoint::positionMilliseconds);
-    const auto position = static_cast<double>(firstCue->positionMilliseconds) / utils::millisecondsPerSecond;
+    const auto position = static_cast<double>(firstCue->positionMilliseconds) / utils::MILLISECONDS_PER_SECOND;
     return position <= durationSeconds * 0.5 ? position : 0.0;
 }
 
@@ -299,7 +299,7 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
 {
     viewport.setViewedComponent(&content, false);
     viewport.setScrollBarsShown(true, false);
-    viewport.setScrollBarThickness(layout::scrollBarThickness);
+    viewport.setScrollBarThickness(layout::SCROLL_BAR_THICKNESS);
     addAndMakeVisible(viewport);
     content.addAndMakeVisible(deviceGroup);
     content.addAndMakeVisible(deviceSelector);
@@ -456,36 +456,36 @@ void AudioSettingsComponent::resized()
 {
     const juce::ScopedValueSetter<bool> layoutGuard(layingOut, true);
     viewport.setBounds(getLocalBounds());
-    const auto width = juce::jmax(0, getWidth() - layout::scrollBarThickness);
-    const auto area = juce::Rectangle<int>(0, 0, width, layout::audioSettings::preferredHeight)
-                          .reduced(layout::audioSettings::padding);
+    const auto width = juce::jmax(0, getWidth() - layout::SCROLL_BAR_THICKNESS);
+    const auto area = juce::Rectangle<int>(0, 0, width, layout::audioSettings::PREFERRED_HEIGHT)
+                          .reduced(layout::audioSettings::PADDING);
     deviceSelector.setBounds(
-        area.getX() + layout::audioSettings::padding,
+        area.getX() + layout::audioSettings::PADDING,
         area.getY() + layout::audioSettings::GROUP_TOP_INSET,
-        juce::jmax(0, area.getWidth() - layout::audioSettings::padding * 2),
+        juce::jmax(0, area.getWidth() - layout::audioSettings::PADDING * 2),
         juce::jmax(1, deviceSelector.getHeight())
     );
     deviceGroup.setBounds(
         area.getX(),
         area.getY(),
         area.getWidth(),
-        deviceSelector.getBottom() - area.getY() + layout::audioSettings::padding
+        deviceSelector.getBottom() - area.getY() + layout::audioSettings::PADDING
     );
     const auto groupTop = deviceGroup.getBottom() + layout::audioSettings::SECTION_SPACING;
-    const auto errorHeight = loudnessRangeError.getText().isNotEmpty() ? layout::audioSettings::rowHeight : 0;
+    const auto errorHeight = loudnessRangeError.getText().isNotEmpty() ? layout::audioSettings::ROW_HEIGHT : 0;
     previewGroup.setBounds(
         area.getX(),
         groupTop,
         area.getWidth(),
-        layout::audioSettings::PREFERENCES_HEIGHT + layout::audioSettings::rowHeight + errorHeight
+        layout::audioSettings::PREFERENCES_HEIGHT + layout::audioSettings::ROW_HEIGHT + errorHeight
     );
-    auto preferences = previewGroup.getBounds().reduced(layout::audioSettings::padding, 0);
+    auto preferences = previewGroup.getBounds().reduced(layout::audioSettings::PADDING, 0);
     preferences.removeFromTop(layout::audioSettings::GROUP_TOP_INSET);
-    auto viewRow = preferences.removeFromTop(layout::audioSettings::rowHeight);
-    previewViewLabel.setBounds(viewRow.removeFromLeft(layout::audioSettings::rangeLabelWidth * 2));
+    auto viewRow = preferences.removeFromTop(layout::audioSettings::ROW_HEIGHT);
+    previewViewLabel.setBounds(viewRow.removeFromLeft(layout::audioSettings::RANGE_LABEL_WIDTH * 2));
     const auto selectorWidth
         = juce::roundToInt(viewRow.getWidth() * layout::audioSettings::PREVIEW_SELECTOR_WIDTH_PROPORTION);
-    previewView.setBounds(viewRow.withWidth(selectorWidth).reduced(0, layout::audioSettings::rangeEditorPadding));
+    previewView.setBounds(viewRow.withWidth(selectorWidth).reduced(0, layout::audioSettings::RANGE_EDITOR_PADDING));
     for (auto* toggle :
          {
              &pluginToggle,
@@ -496,16 +496,16 @@ void AudioSettingsComponent::resized()
              &gainAdjustedMetricsToggle,
          })
     {
-        toggle->setBounds(preferences.removeFromTop(layout::audioSettings::rowHeight));
+        toggle->setBounds(preferences.removeFromTop(layout::audioSettings::ROW_HEIGHT));
     }
-    auto loudnessRow = preferences.removeFromTop(layout::audioSettings::rowHeight);
+    auto loudnessRow = preferences.removeFromTop(layout::audioSettings::ROW_HEIGHT);
     for (const auto& controls :
          {std::pair {&loudnessMaximumLabel, &loudnessMaximum}, std::pair {&loudnessMinimumLabel, &loudnessMinimum}})
     {
-        controls.second->setBounds(loudnessRow.removeFromRight(layout::audioSettings::rangeEditorWidth)
-                                       .reduced(0, layout::audioSettings::rangeEditorPadding));
-        controls.first->setBounds(loudnessRow.removeFromRight(layout::audioSettings::rangeLabelWidth));
-        loudnessRow.removeFromRight(layout::audioSettings::padding);
+        controls.second->setBounds(loudnessRow.removeFromRight(layout::audioSettings::RANGE_EDITOR_WIDTH)
+                                       .reduced(0, layout::audioSettings::RANGE_EDITOR_PADDING));
+        controls.first->setBounds(loudnessRow.removeFromRight(layout::audioSettings::RANGE_LABEL_WIDTH));
+        loudnessRow.removeFromRight(layout::audioSettings::PADDING);
     }
     loudnessGraphToggle.setBounds(loudnessRow);
     loudnessRangeError.setVisible(errorHeight > 0);
@@ -516,13 +516,13 @@ void AudioSettingsComponent::resized()
         area.getWidth(),
         layout::audioSettings::OVERLOAD_GROUP_HEIGHT
     );
-    auto overloads = overloadGroup.getBounds().reduced(layout::audioSettings::padding, 0);
+    auto overloads = overloadGroup.getBounds().reduced(layout::audioSettings::PADDING, 0);
     overloads.removeFromTop(layout::audioSettings::GROUP_TOP_INSET);
-    auto overloadRow = overloads.removeFromTop(layout::audioSettings::rowHeight);
+    auto overloadRow = overloads.removeFromTop(layout::audioSettings::ROW_HEIGHT);
     sampleOverloadsToggle.setBounds(overloadRow.removeFromLeft(overloadRow.getWidth() / 2));
     truePeakOverloadsToggle.setBounds(overloadRow);
-    overloadLinesToggle.setBounds(overloads.removeFromTop(layout::audioSettings::rowHeight));
-    content.setSize(width, overloadGroup.getBottom() + layout::audioSettings::padding);
+    overloadLinesToggle.setBounds(overloads.removeFromTop(layout::audioSettings::ROW_HEIGHT));
+    content.setSize(width, overloadGroup.getBottom() + layout::audioSettings::PADDING);
 }
 
 /// Relayouts when a device/backend change adds or removes native selector rows.

@@ -47,7 +47,7 @@ struct PluginExpectation {
 };
 
 /// The cases that fixtures/plugin_expected.py writes, which the Rust test-fixtures crate lists too.
-constexpr std::array pluginExpectations {
+constexpr std::array PLUGIN_EXPECTATIONS {
     PluginExpectation {
         .source = "stereo_split_44100_16.wav",
         .gain = 0.5f,
@@ -86,13 +86,13 @@ constexpr std::array pluginExpectations {
 };
 
 /// Index of the gain parameter of the test plugin, and of the width and latency parameters after it.
-constexpr int gainParameterIndex {0};
-constexpr int widthParameterIndex {1};
-constexpr int latencyParameterIndex {2};
+constexpr int GAIN_PARAMETER_INDEX {0};
+constexpr int WIDTH_PARAMETER_INDEX {1};
+constexpr int LATENCY_PARAMETER_INDEX {2};
 /// Largest latency of the test plugin in samples, which maps linearly from zero.
-constexpr float testLatencyMaximum {1024.0f};
+constexpr float TEST_LATENCY_MAXIMUM {1024.0f};
 /// Largest plain value of both test plugin parameters, which map linearly from zero.
-constexpr float testParameterMaximum {2.0f};
+constexpr float TEST_PARAMETER_MAXIMUM {2.0f};
 
 /// Reports state restoration synchronously, like a plugin that notifies the host for every state change.
 class NotifyingStatePlugin final : public TestPlugin
@@ -371,17 +371,17 @@ juce::File PluginPresetTests::savePresetWithParameters(
     }
 
     const auto& parameters = preview.instances.front()->getParameters();
-    expect(parameters.size() > latencyParameterIndex);
-    if (parameters.size() <= latencyParameterIndex) {
+    expect(parameters.size() > LATENCY_PARAMETER_INDEX);
+    if (parameters.size() <= LATENCY_PARAMETER_INDEX) {
         return {};
     }
-    expectEquals(parameters[gainParameterIndex]->getName(32), juce::String("Gain"));
-    expectEquals(parameters[widthParameterIndex]->getName(32), juce::String("Width"));
-    expectEquals(parameters[latencyParameterIndex]->getName(32), juce::String("Latency"));
-    parameters[gainParameterIndex]->setValueNotifyingHost(expectation.gain / testParameterMaximum);
-    parameters[widthParameterIndex]->setValueNotifyingHost(expectation.width / testParameterMaximum);
-    parameters[latencyParameterIndex]->setValueNotifyingHost(
-        static_cast<float>(expectation.latency) / testLatencyMaximum
+    expectEquals(parameters[GAIN_PARAMETER_INDEX]->getName(32), juce::String("Gain"));
+    expectEquals(parameters[WIDTH_PARAMETER_INDEX]->getName(32), juce::String("Width"));
+    expectEquals(parameters[LATENCY_PARAMETER_INDEX]->getName(32), juce::String("Latency"));
+    parameters[GAIN_PARAMETER_INDEX]->setValueNotifyingHost(expectation.gain / TEST_PARAMETER_MAXIMUM);
+    parameters[WIDTH_PARAMETER_INDEX]->setValueNotifyingHost(expectation.width / TEST_PARAMETER_MAXIMUM);
+    parameters[LATENCY_PARAMETER_INDEX]->setValueNotifyingHost(
+        static_cast<float>(expectation.latency) / TEST_LATENCY_MAXIMUM
     );
 
     const auto saved = chain.saveAsPreset(presetName);
@@ -487,7 +487,7 @@ void PluginPresetTests::testNullTest()
     const auto source = fixtureFile("stereo_split_44100_16.wav");
     expect(nullTestFiles(source, source).cancels());
 
-    const auto different = nullTestFiles(source, fixtureFile(pluginExpectations.front().expected));
+    const auto different = nullTestFiles(source, fixtureFile(PLUGIN_EXPECTATIONS.front().expected));
     expect(!different.cancels());
     expect(different.differingSamples > 0);
     expect(different.peakDifference > 0);
@@ -841,7 +841,7 @@ void PluginPresetTests::testPluginProcessing()
     }
 
     int caseIndex = 0;
-    for (const auto& expectation : pluginExpectations) {
+    for (const auto& expectation : PLUGIN_EXPECTATIONS) {
         beginTest(
             utils::format(
                 "The test VST3 output for gain {}, width {}, and latency {} on {} cancels against {}",

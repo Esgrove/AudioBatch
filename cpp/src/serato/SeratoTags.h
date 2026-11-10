@@ -34,31 +34,31 @@ struct TagNames {
     std::string_view description;
 };
 
-inline constexpr std::size_t maxTagPayloadBytes {Overview::maxPayloadBytes};
-inline constexpr std::size_t maxTagRecords {4096};
-inline constexpr std::size_t maxTagTextBytes {32'768};
+inline constexpr std::size_t MAX_TAG_PAYLOAD_BYTES {Overview::MAX_PAYLOAD_BYTES};
+inline constexpr std::size_t MAX_TAG_RECORDS {4096};
+inline constexpr std::size_t MAX_TAG_TEXT_BYTES {32'768};
 /// Largest decoded native FLAC value, the payload with room for its wrapper.
-inline constexpr std::size_t maxDecodedTagBytes {maxTagPayloadBytes + 1024};
+inline constexpr std::size_t MAX_DECODED_TAG_BYTES {MAX_TAG_PAYLOAD_BYTES + 1024};
 /// Largest Base64 text of a native FLAC value, with room for whitespace.
-inline constexpr std::size_t maxEncodedTagBytes {((maxDecodedTagBytes + 2) / 3) * 4 + 4096};
+inline constexpr std::size_t MAX_ENCODED_TAG_BYTES {((MAX_DECODED_TAG_BYTES + 2) / 3) * 4 + 4096};
 
 /// Names of the tags of each kind.
-inline constexpr TagNames overviewNames {.property = "SERATO_OVERVIEW", .description = "Serato Overview"};
-inline constexpr TagNames analysisNames {.property = "SERATO_ANALYSIS", .description = "Serato Analysis"};
-inline constexpr TagNames autotagsNames {.property = "SERATO_AUTOGAIN", .description = "Serato Autotags"};
-inline constexpr TagNames beatGridNames {.property = "SERATO_BEATGRID", .description = "Serato BeatGrid"};
-inline constexpr TagNames markersNames {.property = "SERATO_MARKERS_V2", .description = "Serato Markers2"};
+inline constexpr TagNames OVERVIEW_NAMES {.property = "SERATO_OVERVIEW", .description = "Serato Overview"};
+inline constexpr TagNames ANALYSIS_NAMES {.property = "SERATO_ANALYSIS", .description = "Serato Analysis"};
+inline constexpr TagNames AUTOTAGS_NAMES {.property = "SERATO_AUTOGAIN", .description = "Serato Autotags"};
+inline constexpr TagNames BEAT_GRID_NAMES {.property = "SERATO_BEATGRID", .description = "Serato BeatGrid"};
+inline constexpr TagNames MARKERS_NAMES {.property = "SERATO_MARKERS_V2", .description = "Serato Markers2"};
 /// Names of the legacy Markers_ tag, which is only read when a file has no usable Markers2 tag.
-inline constexpr TagNames legacyMarkersNames {.property = "SERATO_MARKERS", .description = "Serato Markers_"};
+inline constexpr TagNames LEGACY_MARKERS_NAMES {.property = "SERATO_MARKERS", .description = "Serato Markers_"};
 
 /// Names of every Serato tag that a FLAC file keeps as a native comment, including the legacy markers.
-inline constexpr std::array allTagNames {
-    overviewNames,
-    analysisNames,
-    autotagsNames,
-    beatGridNames,
-    markersNames,
-    legacyMarkersNames,
+inline constexpr std::array ALL_TAG_NAMES {
+    OVERVIEW_NAMES,
+    ANALYSIS_NAMES,
+    AUTOTAGS_NAMES,
+    BEAT_GRID_NAMES,
+    MARKERS_NAMES,
+    LEGACY_MARKERS_NAMES,
 };
 
 [[nodiscard]] TagReadResult parseTagPayload(

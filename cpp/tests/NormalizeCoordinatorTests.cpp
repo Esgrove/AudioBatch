@@ -32,10 +32,10 @@ namespace audiobatch::tests
 namespace
 {
 /// Allowed difference between the normalized peak and the target, in dB.
-constexpr double peakTolerance {0.01};
+constexpr double PEAK_TOLERANCE {0.01};
 
 /// How long a coordinator test waits for a run to reach the expected state before it fails.
-constexpr auto coordinatorTimeout {std::chrono::seconds(10)};
+constexpr auto COORDINATOR_TIMEOUT {std::chrono::seconds(10)};
 
 /// What a coordinator published during one run, collected from its callbacks.
 struct CoordinatorRun {
@@ -113,7 +113,7 @@ void NormalizeCoordinatorTests::runTest()
             if (result) {
                 expect(!result->hasError(), outcomeError(result->outcome));
                 if (!result->hasError()) {
-                    expectWithinAbsoluteError(peakDecibels(outcomeRecord(result->outcome)), -1.0, peakTolerance);
+                    expectWithinAbsoluteError(peakDecibels(outcomeRecord(result->outcome)), -1.0, PEAK_TOLERANCE);
                 }
             }
         }
@@ -206,7 +206,7 @@ CoordinatorRun NormalizeCoordinatorTests::runToCompletion(
 
     run.queuedFiles = coordinator.start(records, options);
     std::unique_lock lock(mutex);
-    expect(condition.wait_for(lock, coordinatorTimeout, [&] { return run.completedFiles >= 0; }));
+    expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return run.completedFiles >= 0; }));
     return run;
 }
 
@@ -233,7 +233,7 @@ void NormalizeCoordinatorTests::testCoordinatorCancellation(const TemporaryDirec
         std::unique_lock lock(mutex);
         ++startedFiles;
         condition.notify_all();
-        condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+        condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return released; });
     });
     coordinator.setResultCallback([&](const AudioNormalizationResult& /*result*/, int /*runId*/) {
         const std::scoped_lock lock(mutex);
@@ -250,14 +250,14 @@ void NormalizeCoordinatorTests::testCoordinatorCancellation(const TemporaryDirec
     const auto runId = coordinator.getCurrentRunId();
     {
         std::unique_lock lock(mutex);
-        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == 1; }));
+        expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return startedFiles == 1; }));
     }
 
     {
         // The run id changes before cancelAndWait starts waiting for the held job,
         // so the job sees the cancellation as soon as it is released.
         const std::jthread canceller([&coordinator] { coordinator.cancelAndWait(); });
-        const auto deadline = std::chrono::steady_clock::now() + coordinatorTimeout;
+        const auto deadline = std::chrono::steady_clock::now() + COORDINATOR_TIMEOUT;
         while (coordinator.getCurrentRunId() == runId && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::yield();
         }
@@ -307,7 +307,7 @@ void NormalizeCoordinatorTests::testCoordinatorStop(const TemporaryDirectory& di
         ++startedFiles;
         condition.notify_all();
         if (startedFiles > committedBeforeStop) {
-            condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+            condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return released; });
         }
     });
     coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
@@ -324,11 +324,11 @@ void NormalizeCoordinatorTests::testCoordinatorStop(const TemporaryDirectory& di
     options.targetPeakDbfs = -1.0;
     expectEquals(coordinator.start(records, options), fileCount);
     std::unique_lock lock(mutex);
-    expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == committedBeforeStop + 1; }));
+    expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return startedFiles == committedBeforeStop + 1; }));
     coordinator.requestStop();
     released = true;
     condition.notify_all();
-    expect(condition.wait_for(lock, coordinatorTimeout, [&] { return completedFiles >= 0; }));
+    expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return completedFiles >= 0; }));
 
     expectEquals(completedFiles, fileCount);
     expectEquals(startedFiles, committedBeforeStop + 1);

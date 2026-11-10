@@ -230,7 +230,7 @@ private:
     bool waitingForInitialPosition {false};
 
     /// Rate and block size at which the input and chain are prepared.
-    double sampleRate {utils::defaultSampleRate};
+    double sampleRate {utils::DEFAULT_SAMPLE_RATE};
     int blockSize {512};
     /// Last applied tail, avoiding unnecessary rendering-lock acquisitions.
     juce::int64 appliedTailSamples {-1};

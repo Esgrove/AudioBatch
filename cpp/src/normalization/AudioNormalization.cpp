@@ -34,15 +34,15 @@ namespace audiobatch
 /// Helpers for bit depth selection and chunked normalization.
 namespace
 {
-constexpr int normalizationBlockSize {32'768};
-constexpr auto normalizedAiffOutputExtension {".aif"};
-constexpr int defaultMp3BitsPerSample {16};
-constexpr auto cancelledMessage {"Normalization was cancelled"};
+constexpr int NORMALIZATION_BLOCK_SIZE {32'768};
+constexpr auto NORMALIZED_AIFF_OUTPUT_EXTENSION {".aif"};
+constexpr int DEFAULT_MP3_BITS_PER_SAMPLE {16};
+constexpr auto CANCELLED_MESSAGE {"Normalization was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
-constexpr float sourceAnalysisProgressShare {0.3f};
+constexpr float SOURCE_ANALYSIS_PROGRESS_SHARE {0.3f};
 /// Progress reserved for rendering and metering before metadata validation and commit.
-constexpr float renderProgressEnd {0.95f};
+constexpr float RENDER_PROGRESS_END {0.95f};
 
 /// Exact output measurements and the notice from tolerated source decode failures.
 struct NormalizedRender {
@@ -71,7 +71,7 @@ struct OutputCandidate {
 /// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
 /// A 16-bit file whose peak is the largest positive sample, 32767 of 32768,
 /// needs a gain one step above unity to reach 0 dBFS, and rewriting it would produce the same samples again.
-constexpr double atTargetToleranceSteps {1.5};
+constexpr double AT_TARGET_TOLERANCE_STEPS {1.5};
 
 /// Returns true when the gain is so close to unity
 /// that rewriting a file of the given output bit depth would change no sample by more than about one step,
@@ -79,13 +79,13 @@ constexpr double atTargetToleranceSteps {1.5};
 bool isAtTarget(const LinearGain gain, const int outputBitDepth)
 {
     const auto fullScaleSteps = std::ldexp(1.0, juce::jlimit(1, 32, outputBitDepth) - 1);
-    return std::abs(static_cast<double>(gain.value) - 1.0) <= atTargetToleranceSteps / fullScaleSteps;
+    return std::abs(static_cast<double>(gain.value) - 1.0) <= AT_TARGET_TOLERANCE_STEPS / fullScaleSteps;
 }
 
 /// Builds an explicitly cancelled result without error diagnostics, or logs and returns a genuine failure.
 AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
-    if (message == cancelledMessage || message == "Analysis was cancelled") {
+    if (message == CANCELLED_MESSAGE || message == "Analysis was cancelled") {
         return AudioNormalizationResult::cancelled(file);
     }
     utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), message);
@@ -102,7 +102,7 @@ NormalizationSource prepareNormalizationSource(
 {
     const bool sourceChanged = !sourceRecord.matchesFileOnDisk();
     const bool needsMeasurement = sourceChanged || sourceRecord.measurementProducer != MeasurementProducer::cpp;
-    const auto renderProgressStart = needsMeasurement ? sourceAnalysisProgressShare : 0.0f;
+    const auto renderProgressStart = needsMeasurement ? SOURCE_ANALYSIS_PROGRESS_SHARE : 0.0f;
     auto record = needsMeasurement
         ? analyzeFile(sourceRecord.file, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart))
         : sourceRecord;
@@ -176,7 +176,7 @@ int resolvePreferredOutputBitDepth(
     }
 
     if (utils::isMp3File(sourceFile)) {
-        return defaultMp3BitsPerSample;
+        return DEFAULT_MP3_BITS_PER_SAMPLE;
     }
 
     return static_cast<int>(reader.bitsPerSample);
@@ -196,8 +196,8 @@ std::expected<NormalizedRender, juce::String> renderNormalizedAudio(
     const utils::ProgressCallback& onProgress
 )
 {
-    juce::AudioBuffer<float> buffer(static_cast<int>(reader.numChannels), normalizationBlockSize);
-    juce::AudioBuffer<int> pcm(buffer.getNumChannels(), normalizationBlockSize);
+    juce::AudioBuffer<float> buffer(static_cast<int>(reader.numChannels), NORMALIZATION_BLOCK_SIZE);
+    juce::AudioBuffer<int> pcm(buffer.getNumChannels(), NORMALIZATION_BLOCK_SIZE);
     std::vector<float*> channelPointers(reader.numChannels);
     std::vector<const int*> outputChannels(static_cast<std::size_t>(buffer.getNumChannels()) + 1, nullptr);
 
@@ -213,14 +213,14 @@ std::expected<NormalizedRender, juce::String> renderNormalizedAudio(
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
 
     for (juce::int64 samplePosition = 0; samplePosition < reader.lengthInSamples;
-         samplePosition += normalizationBlockSize)
+         samplePosition += NORMALIZATION_BLOCK_SIZE)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            return std::unexpected(juce::String(cancelledMessage));
+            return std::unexpected(juce::String(CANCELLED_MESSAGE));
         }
 
         const auto samplesThisBlock = static_cast<int>(
-            juce::jmin<juce::int64>(normalizationBlockSize, reader.lengthInSamples - samplePosition)
+            juce::jmin<juce::int64>(NORMALIZATION_BLOCK_SIZE, reader.lengthInSamples - samplePosition)
         );
 
         // A failed read leaves the destination untouched, so without clearing, a
@@ -277,7 +277,7 @@ std::expected<NormalizedRender, juce::String> renderNormalizedAudio(
 /// Returns the output path normalization writes for the given source, which is always a sibling `<name>.aif`.
 juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 {
-    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
+    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + NORMALIZED_AIFF_OUTPUT_EXTENSION);
 }
 
 /// Returns the full paths of the records that cannot be normalized in this batch
@@ -343,7 +343,7 @@ std::expected<LinearGain, juce::String> getNormalizationGain(
     if (options.mode == AudioNormalizationMode::peak) {
         gainDecibels = options.targetPeakDbfs - juce::Decibels::gainToDecibels(peak, decibelFloor);
     } else {
-        if (record.integratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        if (record.integratedLufs <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS) {
             return std::unexpected(juce::String("File has no measurable loudness to normalize"));
         }
 
@@ -357,10 +357,10 @@ std::expected<LinearGain, juce::String> getNormalizationGain(
         }
     }
 
-    if (!std::isfinite(gainDecibels) || gainDecibels > AudioNormalizationOptions::maximumGainDb) {
+    if (!std::isfinite(gainDecibels) || gainDecibels > AudioNormalizationOptions::MAXIMUM_GAIN_DB) {
         return std::unexpected(
             utils::format(
-                "Reaching the target would need more than {:.0f} dB of gain", AudioNormalizationOptions::maximumGainDb
+                "Reaching the target would need more than {:.0f} dB of gain", AudioNormalizationOptions::MAXIMUM_GAIN_DB
             )
         );
     }
@@ -453,7 +453,7 @@ AudioNormalizationResult normalizeFile(
 
     if (outputFile == file && isAtTarget(*normalizationGain, getNormalizationOutputBitDepth(record, *reader))) {
         if (utils::isCancellationRequested(isCancelled)) {
-            return failNormalization(file, cancelledMessage);
+            return failNormalization(file, CANCELLED_MESSAGE);
         }
         if (!expectedSource.matches(file)) {
             return failNormalization(file, "The source file changed while normalization was being checked.");
@@ -505,7 +505,7 @@ AudioNormalizationResult normalizeFile(
         gain,
         writerBitDepth,
         isCancelled,
-        utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
+        utils::makeProgressRange(onProgress, renderProgressStart, RENDER_PROGRESS_END)
     );
 
     if (!rendered) {
@@ -544,7 +544,7 @@ AudioNormalizationResult normalizeFile(
     // The coordinator drops results of a cancelled run, so committing here would change files on disk
     // without the caller ever learning about it.
     if (utils::isCancellationRequested(isCancelled)) {
-        return failNormalization(file, cancelledMessage);
+        return failNormalization(file, CANCELLED_MESSAGE);
     }
 
     reader.reset();

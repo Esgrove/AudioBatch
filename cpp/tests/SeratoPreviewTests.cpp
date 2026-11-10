@@ -56,9 +56,9 @@ juce::MemoryBlock previewPeaks(juce::AudioFormatManager& formats, const int chan
 }
 
 /// Width of the preview in the tests, in logical pixels.
-constexpr int previewWidth {260};
+constexpr int PREVIEW_WIDTH {260};
 /// Height of the preview in the tests, in logical pixels.
-constexpr int previewHeight {104};
+constexpr int PREVIEW_HEIGHT {104};
 /// Returns the horizontal position of a time using the actual waveform plot, excluding its axis gutters.
 float expectedCuePosition(
     const ThumbnailComponent& thumbnail,
@@ -180,7 +180,7 @@ void SeratoPreviewTests::testCueArrows()
     juce::AudioFormatManager formats;
     AudioPreviewPlayer transport;
     ThumbnailComponent thumbnail(formats, transport);
-    thumbnail.setSize(previewWidth, previewHeight);
+    thumbnail.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
     const auto colour = juce::Colour(239, 37, 37);
     auto markers = std::make_shared<serato::Markers>();
     markers->cues.push_back({.positionMilliseconds = 500, .colour = colour.withAlpha(0.5f), .name = "Test cue"});
@@ -197,8 +197,8 @@ void SeratoPreviewTests::testCueArrows()
         const auto plot = thumbnail.getPlotGeometry().waveform;
         expectWithinAbsoluteError(cue.top, static_cast<float>(plot.getY()), 0.001f);
         expectWithinAbsoluteError(cue.bottom, static_cast<float>(plot.getBottom()), 0.001f);
-        expectWithinAbsoluteError(cue.height, layout::waveform::cueArrowHeight, 0.001f);
-        expectWithinAbsoluteError(cue.halfWidth, layout::waveform::cueArrowWidth / 2.0f, 0.001f);
+        expectWithinAbsoluteError(cue.height, layout::waveform::CUE_ARROW_HEIGHT, 0.001f);
+        expectWithinAbsoluteError(cue.halfWidth, layout::waveform::CUE_ARROW_WIDTH / 2.0f, 0.001f);
         // The arrows stay near the edges, so they never cover the middle of the waveform.
         expect(cue.height <= (cue.bottom - cue.top) / 4.0f);
     }
@@ -214,7 +214,7 @@ void SeratoPreviewTests::testCueArrows()
     thumbnail.setDisplayGain(1.0f);
 
     beginTest("Cue arrows shrink on a short waveform and keep their proportions");
-    thumbnail.setSize(previewWidth, 20);
+    thumbnail.setSize(PREVIEW_WIDTH, 20);
     const auto shortArrows = thumbnail.getCueArrows();
     expectEquals(static_cast<int>(shortArrows.size()), 1);
     if (shortArrows.size() == 1) {
@@ -222,11 +222,11 @@ void SeratoPreviewTests::testCueArrows()
         expectWithinAbsoluteError(cue.height, (cue.bottom - cue.top) / 4.0f, 0.001f);
         expectWithinAbsoluteError(
             cue.halfWidth * 2.0f / cue.height,
-            layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight,
+            layout::waveform::CUE_ARROW_WIDTH / layout::waveform::CUE_ARROW_HEIGHT,
             0.001f
         );
     }
-    thumbnail.setSize(previewWidth, previewHeight);
+    thumbnail.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
 
     beginTest("Millisecond cues stay aligned through zoom and pan, and cues outside the view have no arrows");
     for (const auto range : {juce::Range(0.25, 0.75), juce::Range(0.4, 0.9), juce::Range(-0.25, 0.75)}) {
@@ -254,7 +254,7 @@ void SeratoPreviewTests::testCueArrows()
     thumbnail.setRange({0.0, 1.0});
     const auto withoutOverview = thumbnail.getCueArrows();
     const auto overview = std::make_shared<serato::Overview>();
-    std::array<std::uint8_t, serato::Overview::bandCount> slice {};
+    std::array<std::uint8_t, serato::Overview::BAND_COUNT> slice {};
     slice.fill(30);
     overview->slices.push_back(slice);
     thumbnail.setSeratoOverview(overview);
@@ -272,7 +272,7 @@ void SeratoPreviewTests::testCueReset()
     juce::AudioFormatManager formats;
     AudioPreviewPlayer transport;
     ThumbnailComponent thumbnail(formats, transport);
-    thumbnail.setSize(previewWidth, previewHeight);
+    thumbnail.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
     const auto peaks = previewPeaks(formats, 1);
     const auto markers = std::make_shared<serato::Markers>();
     markers->cues.push_back({.positionMilliseconds = 500, .colour = juce::Colours::red, .name = {}});
@@ -329,7 +329,7 @@ void SeratoPreviewTests::testOverloadMarks()
     juce::AudioFormatManager formats;
     AudioPreviewPlayer transport;
     ThumbnailComponent thumbnail(formats, transport);
-    thumbnail.setSize(previewWidth, previewHeight);
+    thumbnail.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
     // One second at 8192 Hz in ten blocks of 819 frames and a final partial one, like the generated peaks.
     constexpr double sampleRate {8192.0};
     const auto blockSize = overloadBlockSize(sampleRate);
@@ -337,10 +337,10 @@ void SeratoPreviewTests::testOverloadMarks()
     for (int block = 0; block < 11; ++block) {
         std::array<std::uint8_t, 2> flags {};
         if (block == 2) {
-            flags[0] = OverloadHistory::sampleOver | OverloadHistory::truePeakOver;
+            flags[0] = OverloadHistory::SAMPLE_OVER | OverloadHistory::TRUE_PEAK_OVER;
         }
         if (block == 6) {
-            flags[1] = OverloadHistory::truePeakOver;
+            flags[1] = OverloadHistory::TRUE_PEAK_OVER;
         }
         builder.addBlock(flags);
     }
@@ -388,7 +388,7 @@ void SeratoPreviewTests::testOverloadMarks()
         for (int block = 0; block < 11; ++block) {
             shortBuilder.addBlock(
                 std::array<std::uint8_t, 2> {
-                    static_cast<std::uint8_t>(block == 10 ? OverloadHistory::sampleOver : 0),
+                    static_cast<std::uint8_t>(block == 10 ? OverloadHistory::SAMPLE_OVER : 0),
                     0,
                 }
             );
@@ -397,7 +397,7 @@ void SeratoPreviewTests::testOverloadMarks()
         const auto shortMarks = thumbnail.getOverloadMarks();
         expectEquals(static_cast<int>(shortMarks.size()), 1);
         if (!shortMarks.empty()) {
-            expect(shortMarks.front().horizontal.getLength() >= layout::waveform::overloadMinimumWidth);
+            expect(shortMarks.front().horizontal.getLength() >= layout::waveform::OVERLOAD_MINIMUM_WIDTH);
         }
     }
 
@@ -432,19 +432,19 @@ void SeratoPreviewTests::testOverloadFlagFiltering()
             for (const auto flags :
                  {
                      std::uint8_t {0},
-                     OverloadHistory::sampleOver,
-                     OverloadHistory::truePeakOver,
-                     static_cast<std::uint8_t>(OverloadHistory::sampleOver | OverloadHistory::truePeakOver),
+                     OverloadHistory::SAMPLE_OVER,
+                     OverloadHistory::TRUE_PEAK_OVER,
+                     static_cast<std::uint8_t>(OverloadHistory::SAMPLE_OVER | OverloadHistory::TRUE_PEAK_OVER),
                  })
             {
                 const auto filtered = visibleOverloadFlags(flags, sample, truePeak);
                 expect(
-                    ((filtered & OverloadHistory::sampleOver) != 0)
-                    == (sample && (flags & OverloadHistory::sampleOver) != 0)
+                    ((filtered & OverloadHistory::SAMPLE_OVER) != 0)
+                    == (sample && (flags & OverloadHistory::SAMPLE_OVER) != 0)
                 );
                 expect(
-                    ((filtered & OverloadHistory::truePeakOver) != 0)
-                    == (truePeak && (flags & OverloadHistory::truePeakOver) != 0)
+                    ((filtered & OverloadHistory::TRUE_PEAK_OVER) != 0)
+                    == (truePeak && (flags & OverloadHistory::TRUE_PEAK_OVER) != 0)
                 );
             }
         }
@@ -497,7 +497,7 @@ void SeratoPreviewTests::testOverloadSettings()
     juce::AudioFormatManager formats;
     AudioPreviewPlayer transport;
     ThumbnailComponent thumbnail(formats, transport);
-    thumbnail.setSize(previewWidth, previewHeight + 1);
+    thumbnail.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT + 1);
     for (const int channels : {1, 2}) {
         expect(thumbnail.loadFromCacheData(previewPeaks(formats, channels)));
         const auto history = std::make_shared<OverloadHistory>();
@@ -506,7 +506,7 @@ void SeratoPreviewTests::testOverloadSettings()
         history->lengthInSamples = 8192;
         history->samplesPerBucket = overloadBlockSize(history->sampleRate);
         history->flags.assign(
-            static_cast<std::size_t>(channels) * 11, OverloadHistory::sampleOver | OverloadHistory::truePeakOver
+            static_cast<std::size_t>(channels) * 11, OverloadHistory::SAMPLE_OVER | OverloadHistory::TRUE_PEAK_OVER
         );
         expect(isValidOverloadHistory(*history));
         thumbnail.setOverloadHistory(history);
@@ -531,15 +531,15 @@ void SeratoPreviewTests::testOverloadSettings()
 
     beginTest("True peaks paint last when separate columns overlap after minimum-width expansion");
     expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
-    thumbnail.setSize(layout::waveform::AXIS_GUTTER_WIDTH + layout::waveform::contentInset * 2 + 11, previewHeight);
+    thumbnail.setSize(layout::waveform::AXIS_GUTTER_WIDTH + layout::waveform::CONTENT_INSET * 2 + 11, PREVIEW_HEIGHT);
     const auto adjacent = std::make_shared<OverloadHistory>();
     adjacent->channelCount = 1;
     adjacent->sampleRate = 8192.0;
     adjacent->lengthInSamples = 8192;
     adjacent->samplesPerBucket = overloadBlockSize(adjacent->sampleRate);
     adjacent->flags.assign(11, 0);
-    adjacent->flags[2] = OverloadHistory::truePeakOver;
-    adjacent->flags[3] = OverloadHistory::sampleOver;
+    adjacent->flags[2] = OverloadHistory::TRUE_PEAK_OVER;
+    adjacent->flags[3] = OverloadHistory::SAMPLE_OVER;
     thumbnail.setOverloadHistory(adjacent);
     thumbnail.setOverloadIndicatorSettings(true, true, false);
     const auto adjacentMarks = thumbnail.getOverloadMarks();
@@ -549,13 +549,13 @@ void SeratoPreviewTests::testOverloadSettings()
         expect(!adjacentMarks[1].sampleOver);
         expect(adjacentMarks[0].horizontal.intersects(adjacentMarks[1].horizontal));
         expectWithinAbsoluteError(
-            adjacentMarks[0].horizontal.getLength(), layout::waveform::overloadMinimumWidth, 0.001f
+            adjacentMarks[0].horizontal.getLength(), layout::waveform::OVERLOAD_MINIMUM_WIDTH, 0.001f
         );
         expectWithinAbsoluteError(
-            adjacentMarks[1].horizontal.getLength(), layout::waveform::overloadMinimumWidth, 0.001f
+            adjacentMarks[1].horizontal.getLength(), layout::waveform::OVERLOAD_MINIMUM_WIDTH, 0.001f
         );
     }
-    thumbnail.setSize(previewWidth, previewHeight);
+    thumbnail.setSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
 
     beginTest("Overload display preferences survive source replacement without retaining source history");
     thumbnail.setOverloadIndicatorSettings(false, false, false);
@@ -565,7 +565,7 @@ void SeratoPreviewTests::testOverloadSettings()
     history->sampleRate = 8192.0;
     history->lengthInSamples = 8192;
     history->samplesPerBucket = overloadBlockSize(history->sampleRate);
-    history->flags.assign(11, OverloadHistory::sampleOver);
+    history->flags.assign(11, OverloadHistory::SAMPLE_OVER);
     expect(isValidOverloadHistory(*history));
     thumbnail.setOverloadHistory(history);
     expect(thumbnail.getOverloadMarks().empty());
@@ -658,7 +658,7 @@ void SeratoPreviewTests::testTrackInfo()
     expect(customGainFromDecibels(-0.1f).has_value());
     record.customGain = Decibels {3.0f};
     record.overallPeak = 0.0f;
-    record.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+    record.integratedLufs = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
     panel.showRecord(record, {});
     expectEquals(panelValue(panel, "Peak after custom gain"), juce::String("(-INF)"));
     expect(panelValue(panel, "Integrated loudness after custom gain").isEmpty());
@@ -699,21 +699,21 @@ void SeratoPreviewTests::testTrackInfo()
 void SeratoPreviewTests::testMetricCaptions()
 {
     beginTest("Metric captions switch to distinct unit-only labels when measured names cannot fit");
-    constexpr std::array CAPTIONS {"Peak", "True peak", "Short-term", "Integrated"};
-    constexpr std::array UNITS {"dBFS", "dBTP", "LUFS", "LUFS"};
-    constexpr std::array COMPACT_UNITS {"dBFS", "dBTP", "LUFS-S", "LUFS-I"};
-    for (std::size_t index = 0; index < CAPTIONS.size(); ++index) {
-        AudioInfoMetric metric(CAPTIONS[index], CAPTIONS[index], UNITS[index], COMPACT_UNITS[index]);
+    constexpr std::array captions {"Peak", "True peak", "Short-term", "Integrated"};
+    constexpr std::array units {"dBFS", "dBTP", "LUFS", "LUFS"};
+    constexpr std::array compactUnits {"dBFS", "dBTP", "LUFS-S", "LUFS-I"};
+    for (std::size_t index = 0; index < captions.size(); ++index) {
+        AudioInfoMetric metric(captions[index], captions[index], units[index], compactUnits[index]);
         metric.setValue("-12.50");
         for (const auto compact : {false, true}) {
             metric.setCompact(compact);
             for (const auto width : {30, 400, 30}) {
-                metric.setSize(width, layout::information::metricHeight);
+                metric.setSize(width, layout::information::METRIC_HEIGHT);
                 expect(hasVisibleMetricText(metric, "-12.50"));
-                expectEquals(metric.getName(), juce::String(CAPTIONS[index]));
-                expect(hasVisibleMetricText(metric, CAPTIONS[index]) == (width == 400));
+                expectEquals(metric.getName(), juce::String(captions[index]));
+                expect(hasVisibleMetricText(metric, captions[index]) == (width == 400));
                 if (width == 30) {
-                    expect(hasVisibleMetricText(metric, COMPACT_UNITS[index]));
+                    expect(hasVisibleMetricText(metric, compactUnits[index]));
                 }
             }
         }
@@ -749,7 +749,7 @@ void SeratoPreviewTests::testInfoDetails()
     expectEquals(panelValue(panel, "Sample rate"), juce::String("44.1 kHz"));
     expectEquals(panelValue(panel, "Bitrate"), juce::String("1410 kbps"));
     const auto grid = formatInfoGrid(details);
-    constexpr std::array FIELDS {
+    constexpr std::array fields {
         "Bit depth",
         "Sample rate",
         "Bitrate",
@@ -762,7 +762,7 @@ void SeratoPreviewTests::testInfoDetails()
         "Year",
     };
     for (std::size_t index = 0; index < grid.size(); ++index) {
-        expectEquals(grid[index].label, juce::String(FIELDS[index]));
+        expectEquals(grid[index].label, juce::String(fields[index]));
     }
     expect(grid[7].value.isEmpty() && grid[8].value.isEmpty() && grid[9].value.isEmpty());
     expect(panelValue(panel, "Samples").isEmpty());
@@ -1105,7 +1105,7 @@ void SeratoPreviewTests::testSpectrogramReset()
     data->channelCount = 2;
     data->lengthInSamples = 44'100;
     const auto columns = 1 + (data->lengthInSamples - 1) / data->samplesPerColumn;
-    data->intensities.resize(static_cast<std::size_t>(columns) * SpectrogramData::frequencyRows, 128);
+    data->intensities.resize(static_cast<std::size_t>(columns) * SpectrogramData::FREQUENCY_ROWS, 128);
     expect(isValidSpectrogramData(*data));
     thumbnail.setSpectrogramData(data);
     expect(thumbnail.hasSpectrogramRaster());
@@ -1127,7 +1127,7 @@ void SeratoPreviewTests::testSpectrogramReset()
     nativeGeometry->sampleRate = 8192;
     nativeGeometry->channelCount = 1;
     nativeGeometry->lengthInSamples = 8192;
-    nativeGeometry->intensities.resize(std::size_t {8} * SpectrogramData::frequencyRows, 128);
+    nativeGeometry->intensities.resize(std::size_t {8} * SpectrogramData::FREQUENCY_ROWS, 128);
     thumbnail.setSpectrogramData(nativeGeometry);
     expect(!thumbnail.hasSpectrogramRaster(), "Actual native channel geometry must also match");
     nativeGeometry->channelCount = 2;

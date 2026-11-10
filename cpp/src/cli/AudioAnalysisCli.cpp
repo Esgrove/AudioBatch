@@ -378,7 +378,7 @@ int cli::runAnalysis(
     reportInfo(
         utils::format(
             "Analysis complete: {:.2f} s, {} files ({} failed)",
-            analysisElapsedMs / utils::millisecondsPerSecond,
+            analysisElapsedMs / utils::MILLISECONDS_PER_SECOND,
             results.size(),
             analysisFailureCount
         )

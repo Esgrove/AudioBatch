@@ -73,21 +73,21 @@ juce::String formatClipCounts(const SignalMetrics& metrics)
 namespace
 {
 /// Lowest level shown in dB, which very quiet peaks are floored at.
-constexpr float minimumDisplayDecibels {-100.0f};
+constexpr float MINIMUM_DISPLAY_DECIBELS {-100.0f};
 /// Number of bits per second in a kilobit per second, used for the average bitrate.
-constexpr double kilobitsPerSecondDivisor {1000.0};
+constexpr double KILOBITS_PER_SECOND_DIVISOR {1000.0};
 /// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
-constexpr double bitsPerByte {8.0};
+constexpr double BITS_PER_BYTE {8.0};
 /// Number of hertz in a kilohertz, used when displaying sample rates.
-constexpr int hertzPerKilohertz {1000};
+constexpr int HERTZ_PER_KILOHERTZ {1000};
 /// Number of seconds in a minute, used when displaying durations.
-constexpr std::int64_t secondsPerMinute {60};
+constexpr std::int64_t SECONDS_PER_MINUTE {60};
 /// Number of minutes in an hour, used when displaying durations.
-constexpr std::int64_t minutesPerHour {60};
+constexpr std::int64_t MINUTES_PER_HOUR {60};
 /// Number of seconds in an hour, used when displaying durations.
-constexpr std::int64_t secondsPerHour {secondsPerMinute * minutesPerHour};
+constexpr std::int64_t SECONDS_PER_HOUR {SECONDS_PER_MINUTE * MINUTES_PER_HOUR};
 /// Number of tenths of a second in a second, the precision of the detailed duration.
-constexpr std::int64_t tenthsPerSecond {10};
+constexpr std::int64_t TENTHS_PER_SECOND {10};
 
 /// Number of pitch classes in a chromatic octave and entries on each Camelot wheel.
 constexpr int KEY_COUNT {12};
@@ -119,8 +119,8 @@ std::optional<juce::String> numberedCamelotKey(const juce::String& text)
         return utils::format("{}{}", number, suffix.toUpperCase());
     }
     if (suffix == "m" || suffix == "d") {
-        constexpr int OPEN_KEY_OFFSET {6};
-        return utils::format("{}{}", (number + OPEN_KEY_OFFSET) % KEY_COUNT + 1, suffix == "m" ? "A" : "B");
+        constexpr int openKeyOffset {6};
+        return utils::format("{}{}", (number + openKeyOffset) % KEY_COUNT + 1, suffix == "m" ? "A" : "B");
     }
     return std::nullopt;
 }
@@ -133,16 +133,16 @@ juce::String formatAmplitudeDecibels(const double amplitude)
         return "-INF";
     }
 
-    const auto decibels = juce::Decibels::gainToDecibels(static_cast<float>(amplitude), minimumDisplayDecibels);
+    const auto decibels = juce::Decibels::gainToDecibels(static_cast<float>(amplitude), MINIMUM_DISPLAY_DECIBELS);
     return utils::format("{:.2f}", decibels);
 }
 
 /// Formats whole seconds as "m:ss", or as "h:mm:ss" from one hour on.
 juce::String formatClock(const std::int64_t totalSeconds)
 {
-    const auto hours = totalSeconds / secondsPerHour;
-    const auto minutes = totalSeconds / secondsPerMinute % minutesPerHour;
-    const auto seconds = totalSeconds % secondsPerMinute;
+    const auto hours = totalSeconds / SECONDS_PER_HOUR;
+    const auto minutes = totalSeconds / SECONDS_PER_MINUTE % MINUTES_PER_HOUR;
+    const auto seconds = totalSeconds % SECONDS_PER_MINUTE;
 
     if (hours > 0) {
         return utils::format("{}:{:02}:{:02}", hours, minutes, seconds);
@@ -154,7 +154,7 @@ juce::String formatClock(const std::int64_t totalSeconds)
 /// Formats a LUFS loudness value, rendering the sentinel value as "-INF".
 juce::String formatLoudnessValue(const double loudness)
 {
-    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+    if (loudness <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS) {
         return "-INF";
     }
 
@@ -205,8 +205,8 @@ std::optional<juce::String> camelotKey(const juce::String& key)
         return std::nullopt;
     }
     // Natural-note pitch classes ordered C, D, E, F, G, A, B in the chromatic octave.
-    constexpr std::array NATURAL_PITCH_CLASSES {0, 2, 4, 5, 7, 9, 11};
-    auto pitchClass = NATURAL_PITCH_CLASSES[static_cast<std::size_t>(tonicIndex)];
+    constexpr std::array naturalPitchClasses {0, 2, 4, 5, 7, 9, 11};
+    auto pitchClass = naturalPitchClasses[static_cast<std::size_t>(tonicIndex)];
     text = text.substring(1).trim();
     if (text.startsWith("#") || text.startsWith(juce::String::fromUTF8("♯"))) {
         ++pitchClass;
@@ -267,7 +267,7 @@ double getAverageBitrateKbps(const AudioAnalysisRecord& record)
         return 0.0;
     }
 
-    return static_cast<double>(record.fileSize) * bitsPerByte / record.durationSeconds / kilobitsPerSecondDivisor;
+    return static_cast<double>(record.fileSize) * BITS_PER_BYTE / record.durationSeconds / KILOBITS_PER_SECOND_DIVISOR;
 }
 
 /// Formats the reported source bit depth for display, or "-" when unavailable.
@@ -332,8 +332,8 @@ juce::String formatDurationClockTenths(const double durationSeconds)
         return "-";
     }
 
-    const auto tenths = std::llround(durationSeconds * tenthsPerSecond);
-    return utils::format("{}.{}", formatClock(tenths / tenthsPerSecond), tenths % tenthsPerSecond);
+    const auto tenths = std::llround(durationSeconds * TENTHS_PER_SECOND);
+    return utils::format("{}.{}", formatClock(tenths / TENTHS_PER_SECOND), tenths % TENTHS_PER_SECOND);
 }
 
 /// Formats the sample rate in kHz without a unit suffix, such as "48" or "44.1", or "-" when it is not known.
@@ -343,11 +343,11 @@ juce::String formatSampleRateCompact(const AudioAnalysisRecord& record)
         return "-";
     }
 
-    if (record.sampleRate % hertzPerKilohertz == 0) {
-        return juce::String(record.sampleRate / hertzPerKilohertz);
+    if (record.sampleRate % HERTZ_PER_KILOHERTZ == 0) {
+        return juce::String(record.sampleRate / HERTZ_PER_KILOHERTZ);
     }
 
-    return utils::format("{:.1f}", static_cast<double>(record.sampleRate) / hertzPerKilohertz);
+    return utils::format("{:.1f}", static_cast<double>(record.sampleRate) / HERTZ_PER_KILOHERTZ);
 }
 
 /// Formats the sample rate with its unit for display in the GUI, or "-" when it is not known.

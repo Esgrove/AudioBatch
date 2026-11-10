@@ -147,7 +147,7 @@ void enrichTags(
     const utils::CancellationCheck& cancelled
 )
 {
-    const auto cachedTags = serato::getCachedTags(state.cache, identity, serato::allTagKinds);
+    const auto cachedTags = serato::getCachedTags(state.cache, identity, serato::ALL_TAG_KINDS);
     const auto tagsCached = std::ranges::all_of(cachedTags, [](const auto& result) { return result.has_value(); });
     std::shared_ptr<const serato::SeratoData> tags;
     try {
@@ -160,7 +160,7 @@ void enrichTags(
         return;
     }
     const auto finalTags = readMissing && !tagsCached
-        ? serato::getCachedTags(state.cache, identity, serato::allTagKinds)
+        ? serato::getCachedTags(state.cache, identity, serato::ALL_TAG_KINDS)
         : std::vector<std::optional<serato::TagReadResult>> {};
     const auto tagsReady = tagsCached
         || (readMissing && std::ranges::all_of(finalTags, [](const auto& result) { return result.has_value(); }));

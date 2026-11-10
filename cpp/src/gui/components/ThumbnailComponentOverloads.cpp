@@ -63,7 +63,7 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks(const bool sample
 {
     const auto bounds = waveformBounds();
     const auto channels = overloadHistory->channelCount;
-    const auto kind = sampleOver ? OverloadHistory::sampleOver : OverloadHistory::truePeakOver;
+    const auto kind = sampleOver ? OverloadHistory::SAMPLE_OVER : OverloadHistory::TRUE_PEAK_OVER;
     std::vector<OverloadMark> marks;
     for (int channel = 0; channel < channels; ++channel) {
         auto columns = projectOverloadColumns(*overloadHistory, channel, visibleRange, bounds.getWidth());
@@ -86,10 +86,10 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks(const bool sample
             }
             auto start = static_cast<float>(bounds.getX()) + static_cast<float>(column);
             auto finish = static_cast<float>(bounds.getX()) + static_cast<float>(end);
-            if (finish - start < layout::waveform::overloadMinimumWidth) {
+            if (finish - start < layout::waveform::OVERLOAD_MINIMUM_WIDTH) {
                 const auto centre = (start + finish) * 0.5f;
-                start = centre - layout::waveform::overloadMinimumWidth * 0.5f;
-                finish = centre + layout::waveform::overloadMinimumWidth * 0.5f;
+                start = centre - layout::waveform::OVERLOAD_MINIMUM_WIDTH * 0.5f;
+                finish = centre + layout::waveform::OVERLOAD_MINIMUM_WIDTH * 0.5f;
             }
             marks.push_back({
                 .horizontal = {start, finish},
@@ -120,9 +120,9 @@ void ThumbnailComponent::drawOverloads(juce::Graphics& graphics) const
         const auto colour = mark.sampleOver ? CustomLookAndFeel::yellow() : CustomLookAndFeel::orange();
         const auto width = mark.horizontal.getLength();
         const auto laneHeight = mark.laneBottom - mark.laneTop;
-        const auto height = std::min(layout::waveform::overloadCapHeight, laneHeight / 4.0f);
+        const auto height = std::min(layout::waveform::OVERLOAD_CAP_HEIGHT, laneHeight / 4.0f);
         if (mark.showLine) {
-            graphics.setColour(colour.withAlpha(layout::waveform::overloadTintAlpha));
+            graphics.setColour(colour.withAlpha(layout::waveform::OVERLOAD_TINT_ALPHA));
             graphics.fillRect(juce::Rectangle<float>(mark.horizontal.getStart(), mark.laneTop, width, laneHeight));
         }
         graphics.setColour(colour);
@@ -163,7 +163,7 @@ void ThumbnailComponent::drawSourceWarning(juce::Graphics& graphics, const juce:
         }
         const auto rectangle
             = juce::Rectangle<int>(bounds.getX() + static_cast<int>(column), bounds.getY(), 1, bounds.getHeight());
-        const auto truePeakOver = (mixed[column] & OverloadHistory::truePeakOver) != 0;
+        const auto truePeakOver = (mixed[column] & OverloadHistory::TRUE_PEAK_OVER) != 0;
         graphics.setColour(truePeakOver ? CustomLookAndFeel::orange() : CustomLookAndFeel::yellow());
         graphics.fillRect(rectangle);
     }

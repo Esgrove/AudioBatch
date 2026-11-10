@@ -268,10 +268,10 @@ private:
 };
 
 /// Largest lag in either direction that the null test checks for the best correlation, in samples.
-constexpr int maximumNullTestLag {256};
+constexpr int MAXIMUM_NULL_TEST_LAG {256};
 
 /// Scale from a float sample to a 16-bit sample value.
-constexpr float pcm16Scale {32'768.0f};
+constexpr float PCM16_SCALE {32'768.0f};
 
 /// Reads a file as 16-bit sample values, or returns nothing when it cannot be read.
 /// The float samples of a 16-bit file are exact multiples of one step, so rounding loses nothing.
@@ -300,14 +300,14 @@ std::optional<NullTestSamples> readIntegerSamples(const juce::File& file)
         auto& values = samples.channels[static_cast<std::size_t>(channel)];
         values.reserve(static_cast<std::size_t>(length));
         for (int sample = 0; sample < length; ++sample) {
-            values.push_back(static_cast<int>(std::lround(buffer.getSample(channel, sample) * pcm16Scale)));
+            values.push_back(static_cast<int>(std::lround(buffer.getSample(channel, sample) * PCM16_SCALE)));
         }
     }
     return samples;
 }
 
 /// Longest time a helper process waits for its parent before giving up, in milliseconds.
-constexpr juce::uint32 helperTimeoutMilliseconds {30'000};
+constexpr juce::uint32 HELPER_TIMEOUT_MILLISECONDS {30'000};
 
 /// Posts a message that stops the message loop, runs the loop, and returns 0 once the message was dispatched.
 /// Stopping the loop ends it for the rest of the process, so this only runs in a helper process.
@@ -335,10 +335,10 @@ int runScanLockHelper(const juce::String& lockName, const juce::File& releaseFil
         return 1;
     }
 
-    fmt::print("{}\n", scanLockHeldLine);
+    fmt::print("{}\n", SCAN_LOCK_HELD_LINE);
     std::fflush(stdout);
 
-    const auto deadline = juce::Time::getMillisecondCounter() + helperTimeoutMilliseconds;
+    const auto deadline = juce::Time::getMillisecondCounter() + HELPER_TIMEOUT_MILLISECONDS;
     while (!releaseFile.exists() && juce::Time::getMillisecondCounter() < deadline) {
         juce::Thread::sleep(5);
     }
@@ -362,7 +362,7 @@ int findBestLag(const std::vector<int>& expected, const std::vector<int>& actual
     int bestLag = 0;
     double bestCorrelation = -std::numeric_limits<double>::infinity();
 
-    for (int lag = -maximumNullTestLag; lag <= maximumNullTestLag; ++lag) {
+    for (int lag = -MAXIMUM_NULL_TEST_LAG; lag <= MAXIMUM_NULL_TEST_LAG; ++lag) {
         double correlation = 0.0;
         for (int sample = juce::jmax(0, -lag); sample < expectedLength && sample + lag < actualLength; ++sample) {
             const int actualSample = sample + lag;
@@ -446,7 +446,7 @@ juce::String NullTestResult::describe() const
     }
 
     const auto residual = peakDifference > 0
-        ? utils::format("{:.1f} dBFS", juce::Decibels::gainToDecibels(static_cast<float>(peakDifference) / pcm16Scale))
+        ? utils::format("{:.1f} dBFS", juce::Decibels::gainToDecibels(static_cast<float>(peakDifference) / PCM16_SCALE))
         : juce::String("silent");
     return utils::format(
         "{} with {} channels and {} samples expected, {} with {} channels and {} samples written, "
@@ -763,11 +763,11 @@ utils::CancellationCheck cancelAfterChecks(const int allowedChecks, std::shared_
 /// for checks that would change the state of the test process for good or that need a second process.
 std::optional<int> runHelperProcess(const juce::StringArray& arguments)
 {
-    if (arguments.size() == 1 && arguments[0] == messageLoopHelperArgument) {
+    if (arguments.size() == 1 && arguments[0] == MESSAGE_LOOP_HELPER_ARGUMENT) {
         return runMessageLoopHelper();
     }
 
-    if (arguments.size() == 3 && arguments[0] == scanLockHelperArgument) {
+    if (arguments.size() == 3 && arguments[0] == SCAN_LOCK_HELPER_ARGUMENT) {
         return runScanLockHelper(arguments[1], juce::File(arguments[2]));
     }
 

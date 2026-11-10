@@ -56,8 +56,8 @@ private:
     juce::TextButton peakButton {"Peak"};
 
     /// Remembered loudness mode target, in LUFS, kept while peak mode is selected.
-    double targetLufs {AudioNormalizationOptions::defaultTargetLufs};
+    double targetLufs {AudioNormalizationOptions::DEFAULT_TARGET_LUFS};
     /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
-    double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};
+    double targetPeakDbfs {AudioNormalizationOptions::DEFAULT_TARGET_PEAK_DBFS};
 };
 }  // namespace audiobatch

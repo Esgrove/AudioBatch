@@ -192,7 +192,7 @@ void SeratoTagCacheTests::runSeratoTests()
         cache, identity, serato::TagReadResult {.kind = serato::TagKind::analysis, .value = overview}
     ));
     serato::Overview oversized;
-    oversized.slices.resize(serato::Overview::maxSlices + 1);
+    oversized.slices.resize(serato::Overview::MAX_SLICES + 1);
     expect(!serato::storeCachedTag(cache, identity, serato::TagReadResult::present(std::move(oversized))));
     const auto retained = serato::getCachedTag(cache, identity);
     expect(retained && tagValue<serato::Overview>(*retained).value_or(serato::Overview {}).slices == overview.slices);
@@ -543,7 +543,7 @@ void SeratoTagCacheTests::runMultiKindRoundTripTests(
     expect(!cache.getAnalysis(file).has_value());
     expectSqlScalar(*this, databaseFile, "SELECT count(*) FROM file_analysis;", 0);
     expectSqlScalar(
-        *this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::allTagKinds.size())
+        *this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::ALL_TAG_KINDS.size())
     );
 }
 
@@ -556,7 +556,7 @@ void SeratoTagCacheTests::runMultiKindNegativeTests(
 )
 {
     beginTest("Each stable negative replaces only its own kind and has SQL NULL data");
-    for (const auto kind : serato::allTagKinds) {
+    for (const auto kind : serato::ALL_TAG_KINDS) {
         for (const auto status :
              {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
         {
@@ -590,7 +590,7 @@ void SeratoTagCacheTests::runMultiKindVersionTests(
 )
 {
     beginTest("A parser version mismatch invalidates only the matching positive or negative kind");
-    for (const auto kind : serato::allTagKinds) {
+    for (const auto kind : serato::ALL_TAG_KINDS) {
         for (const auto status : {serato::ReadStatus::present, serato::ReadStatus::absent}) {
             if (status == serato::ReadStatus::absent) {
                 expect(serato::storeCachedTag(cache, identity, serato::TagReadResult::missing(kind, status)));
@@ -674,7 +674,7 @@ void SeratoTagCacheTests::runMultiKindCoexistenceTests(
 
     beginTest("Explicit eviction removes every independently populated kind");
     expect(cache.removeAnalysis(file));
-    for (const auto kind : serato::allTagKinds) {
+    for (const auto kind : serato::ALL_TAG_KINDS) {
         expect(!serato::getCachedTag(cache, identity, kind));
     }
     expectSqlScalar(*this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
@@ -686,9 +686,9 @@ void SeratoTagCacheTests::runMultiKindCoexistenceTests(
     expect(file.deleteFile());
     expectEquals(cache.pruneMissingFiles([] { return true; }), 0);
     expectSqlScalar(
-        *this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::allTagKinds.size())
+        *this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::ALL_TAG_KINDS.size())
     );
-    expectEquals(cache.pruneMissingFiles(), static_cast<int>(serato::allTagKinds.size()));
+    expectEquals(cache.pruneMissingFiles(), static_cast<int>(serato::ALL_TAG_KINDS.size()));
     expectSqlScalar(*this, databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 }
 

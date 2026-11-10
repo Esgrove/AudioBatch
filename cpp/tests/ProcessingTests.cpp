@@ -129,7 +129,7 @@ void ProcessingTests::runTest()
         expectEquals(
             outcomeError(result.outcome),
             utils::format(
-                "{}: The plugin failed to process audio (result {})", plugin.getName(), FailingVST3Client::failedResult
+                "{}: The plugin failed to process audio (result {})", plugin.getName(), FailingVST3Client::FAILED_RESULT
             )
         );
         expectEquals(source.getSize(), sourceSize);
@@ -150,7 +150,7 @@ void ProcessingTests::runTest()
         expect(!result.hasError(), outcomeError(result.outcome));
         expectEquals(outcomeRecord(result.outcome).channels, 1);
         expectEquals(outcomeRecord(result.outcome).bitsPerSample, 16);
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels, 0.05);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), FIXTURE_PEAK_DECIBELS, 0.05);
         expect(outcomeNotice(result.outcome).isEmpty(), outcomeNotice(result.outcome));
         const auto messages = capture.getMessages();
         expect(std::ranges::any_of(messages, [&](const auto& message) {
@@ -169,7 +169,7 @@ void ProcessingTests::runTest()
         expect(!result.hasError(), outcomeError(result.outcome));
         expectEquals(outcomeRecord(result.outcome).channels, 1);
         // Both stereo channels carry the boosted signal, so their average keeps the full 6 dB boost.
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels + 6.0, 0.05);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), FIXTURE_PEAK_DECIBELS + 6.0, 0.05);
         // The mono plugin only sees its own channel, although the chain buffer is stereo.
         expectEquals(monoGain.getWidestBufferChannels(), 1);
         expectEquals(stereoSwap.getWidestBufferChannels(), 2);
@@ -186,7 +186,7 @@ void ProcessingTests::runTest()
 
         expect(!result.hasError(), outcomeError(result.outcome));
         expectEquals(outcomeRecord(result.outcome).channels, 1);
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0206, 0.05);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), FIXTURE_PEAK_DECIBELS - 6.0206, 0.05);
     }
 
     beginTest("A plugin that produces infinity fails the file and leaves the source unchanged");
@@ -221,7 +221,7 @@ void ProcessingTests::runTest()
             expect(!result.hasError(), outcomeError(result.outcome));
             expect(std::holds_alternative<OperationSucceeded>(result.outcome));
             expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), expectedPeak, 0.01);
-            expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
+            expectEquals(plugin.getPreparedBlockSize(), plugin_processing::PROCESSING_BLOCK_SIZE);
             expectWithinAbsoluteError(plugin.getLastSampleRate(), 44'100.0, 0.001);
             expectEquals(
                 plugin.getLifecycle().joinIntoString(","), juce::String("prepare,restore-initialized,reset,release")
@@ -251,7 +251,7 @@ void ProcessingTests::runTest()
 
         expect(preparation.errorMessage.isEmpty(), preparation.errorMessage);
         expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,reset"));
-        expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
+        expectEquals(plugin.getPreparedBlockSize(), plugin_processing::PROCESSING_BLOCK_SIZE);
         expectPreparedGain(plugin, 1.0f);
         plugin_processing::releasePluginResources(chainOf(plugin));
     }
@@ -351,7 +351,7 @@ void ProcessingTests::runTest()
         expect(!result.hasError(), outcomeError(result.outcome));
         expectEquals(disposedNames.joinIntoString(","), juce::String("in_place.aif"));
         expectEquals(disposedSizes[0], sourceSize);
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0206, 0.05);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), FIXTURE_PEAK_DECIBELS - 6.0206, 0.05);
     }
 
     beginTest("A source with more than two channels is refused and left unchanged");
@@ -416,8 +416,8 @@ void ProcessingTests::runTest()
                 const auto result = process(source, {&plugin});
 
                 expect(!result.hasError(), outcomeError(result.outcome));
-                expectEquals(outcomeRecord(result.outcome).lengthInSamples, clickFixtureLength);
-                expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), clickFixturePosition);
+                expectEquals(outcomeRecord(result.outcome).lengthInSamples, CLICK_FIXTURE_LENGTH);
+                expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), CLICK_FIXTURE_POSITION);
             }
         }
     }
@@ -607,7 +607,7 @@ void ProcessingTests::runTest()
         const auto result = processFileWithPlugins(record, options, chainOf(plugin));
 
         expect(!result.hasError(), outcomeError(result.outcome));
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0, 0.05);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), FIXTURE_PEAK_DECIBELS - 6.0, 0.05);
     }
 
     beginTest("The preview runs a mono-only plugin on a stereo file by folding both channels into it");
@@ -741,7 +741,7 @@ void ProcessingTests::runTest()
 
         expect(!result.hasError(), outcomeError(result.outcome));
         expect(outcomeNotice(result.outcome).isEmpty(), outcomeNotice(result.outcome));
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels, 0.05);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), FIXTURE_PEAK_DECIBELS, 0.05);
         expect(std::ranges::none_of(capture.getMessages(), [](const auto& message) {
             return message.contains("Output clipping");
         }));

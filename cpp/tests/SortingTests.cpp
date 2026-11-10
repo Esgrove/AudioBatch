@@ -197,7 +197,7 @@ public:
 
         beginTest("Silent loudness sorts below every measurable value");
         {
-            const auto silent = makeRecord("silent", 0.0f, AudioAnalysisRecord::negativeInfinityLoudness);
+            const auto silent = makeRecord("silent", 0.0f, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS);
             const auto quiet = makeRecord("quiet", 0.1f, -40.0);
             expect(results_sorting::compareRecordsByColumn(silent, quiet, AudioFileTableColumn::integratedLufs) < 0);
         }
@@ -247,8 +247,8 @@ public:
         beginTest("Silent loudness values tie and fall through to the secondary sort");
         {
             std::vector records {
-                makeRecord("louder silent", 0.5f, AudioAnalysisRecord::negativeInfinityLoudness),
-                makeRecord("quieter silent", 0.25f, AudioAnalysisRecord::negativeInfinityLoudness * 2.0),
+                makeRecord("louder silent", 0.5f, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS),
+                makeRecord("quieter silent", 0.25f, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS * 2.0),
                 makeRecord("measured", 0.1f, -30.0),
             };
 
@@ -428,8 +428,8 @@ private:
             std::numeric_limits<float>::quiet_NaN(),
         };
         constexpr std::array specialLoudness {
-            AudioAnalysisRecord::negativeInfinityLoudness,
-            AudioAnalysisRecord::negativeInfinityLoudness * 2.0,
+            AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS,
+            AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS * 2.0,
             -14.0,
             -23.0,
             std::numeric_limits<double>::quiet_NaN(),

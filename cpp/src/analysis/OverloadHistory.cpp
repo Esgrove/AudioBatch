@@ -23,13 +23,13 @@ namespace audiobatch
 namespace
 {
 /// Identifies an overload history blob, the bytes "OVLD" read as a little-endian integer.
-constexpr int overloadHistoryMagic {0x444c564f};
+constexpr int OVERLOAD_HISTORY_MAGIC {0x444c564f};
 /// Raised when the blob layout changes, so older blobs are rejected and their files analyzed again.
-constexpr int overloadHistoryVersion {1};
+constexpr int OVERLOAD_HISTORY_VERSION {1};
 /// Magic, version, sample rate, length, samples per bucket, channel count, and bucket count.
-constexpr std::size_t overloadHistoryHeaderBytes {4 + 4 + 8 + 8 + 8 + 4 + 4};
+constexpr std::size_t OVERLOAD_HISTORY_HEADER_BYTES {4 + 4 + 8 + 8 + 8 + 4 + 4};
 /// Most channels the loudness meter accepts, which the analysis also enforces.
-constexpr int maximumOverloadChannels {64};
+constexpr int MAXIMUM_OVERLOAD_CHANNELS {64};
 }  // namespace
 
 /// Starts an empty history for a file with the given stream parameters and analysis block size.
@@ -46,7 +46,7 @@ OverloadHistoryBuilder::OverloadHistoryBuilder(
     history.lengthInSamples = lengthInSamples;
     history.samplesPerBucket = samplesPerBlock;
     history.channelCount = std::max(0, channelCount);
-    history.flags.reserve(OverloadHistory::maximumBuckets * pending.size());
+    history.flags.reserve(OverloadHistory::MAXIMUM_BUCKETS * pending.size());
 }
 
 /// Folds the flags of the next analysis block, one byte per channel, into the pending bucket.
@@ -56,13 +56,13 @@ void OverloadHistoryBuilder::addBlock(const std::span<const std::uint8_t> blockF
 {
     const auto count = std::min(blockFlags.size(), pending.size());
     for (std::size_t channel = 0; channel < count; ++channel) {
-        pending[channel] |= static_cast<std::uint8_t>(blockFlags[channel] & OverloadHistory::allFlags);
+        pending[channel] |= static_cast<std::uint8_t>(blockFlags[channel] & OverloadHistory::ALL_FLAGS);
     }
     ++pendingBlocks;
     if (pendingBlocks < blocksPerBucket) {
         return;
     }
-    if (history.bucketCount() == OverloadHistory::maximumBuckets) {
+    if (history.bucketCount() == OverloadHistory::MAXIMUM_BUCKETS) {
         // The pending bucket becomes the first half of a bucket twice as long, which later blocks complete.
         mergePairs();
         return;
@@ -76,7 +76,7 @@ void OverloadHistoryBuilder::addBlock(const std::span<const std::uint8_t> blockF
 std::shared_ptr<const OverloadHistory> OverloadHistoryBuilder::finish()
 {
     if (pendingBlocks > 0) {
-        if (history.bucketCount() == OverloadHistory::maximumBuckets) {
+        if (history.bucketCount() == OverloadHistory::MAXIMUM_BUCKETS) {
             mergePairs();
         }
         history.flags.insert(history.flags.end(), pending.begin(), pending.end());
@@ -106,7 +106,7 @@ void OverloadHistoryBuilder::mergePairs()
 /// Returns the source frames of one analysis block, a tenth of a second matching the short-term loudness updates.
 int overloadBlockSize(const double sampleRate) noexcept
 {
-    return std::max(1, juce::roundToInt(sampleRate / ShortTermLoudnessHistory::updateRateHz));
+    return std::max(1, juce::roundToInt(sampleRate / ShortTermLoudnessHistory::UPDATE_RATE_HZ));
 }
 
 /// Projects the flags of one channel onto equal-width columns spanning the visible time range.
@@ -129,7 +129,7 @@ std::vector<std::uint8_t> projectOverloadColumns(
         return projected;
     }
     const auto secondsPerColumn = visibleRange.getLength() / static_cast<double>(columns);
-    const auto coverageSeconds = static_cast<double>(truePeakCoverageFrames) / history.sampleRate;
+    const auto coverageSeconds = static_cast<double>(TRUE_PEAK_COVERAGE_FRAMES) / history.sampleRate;
     const auto bucketSeconds = static_cast<double>(history.samplesPerBucket) / history.sampleRate;
     const auto firstBucket = static_cast<std::size_t>(
         std::clamp(std::floor(visibleRange.getStart() / bucketSeconds), 0.0, static_cast<double>(buckets - 1))
@@ -160,11 +160,11 @@ std::vector<std::uint8_t> projectOverloadColumns(
                 projected[column] |= bits;
             }
         };
-        if ((flags & OverloadHistory::sampleOver) != 0) {
-            fill(start, end, OverloadHistory::sampleOver);
+        if ((flags & OverloadHistory::SAMPLE_OVER) != 0) {
+            fill(start, end, OverloadHistory::SAMPLE_OVER);
         }
-        if ((flags & OverloadHistory::truePeakOver) != 0) {
-            fill(std::max(0.0, start - coverageSeconds), end, OverloadHistory::truePeakOver);
+        if ((flags & OverloadHistory::TRUE_PEAK_OVER) != 0) {
+            fill(std::max(0.0, start - coverageSeconds), end, OverloadHistory::TRUE_PEAK_OVER);
         }
     }
     return projected;
@@ -176,7 +176,7 @@ std::vector<std::uint8_t> projectOverloadColumns(
 /// and that every flag byte holds only legal bits.
 bool isValidOverloadHistory(const OverloadHistory& history)
 {
-    if (history.channelCount <= 0 || history.channelCount > maximumOverloadChannels
+    if (history.channelCount <= 0 || history.channelCount > MAXIMUM_OVERLOAD_CHANNELS
         || !std::isfinite(history.sampleRate) || history.sampleRate < 1.0
         || history.sampleRate > static_cast<double>(std::numeric_limits<int>::max()) || history.lengthInSamples < 0)
     {
@@ -193,7 +193,7 @@ bool isValidOverloadHistory(const OverloadHistory& history)
     const auto blocks = history.lengthInSamples / blockSize + (history.lengthInSamples % blockSize != 0 ? 1 : 0);
     const auto bucketsFor
         = [blocks](const std::int64_t perBucket) { return blocks / perBucket + (blocks % perBucket != 0 ? 1 : 0); };
-    const auto maximumBuckets = static_cast<std::int64_t>(OverloadHistory::maximumBuckets);
+    const auto maximumBuckets = static_cast<std::int64_t>(OverloadHistory::MAXIMUM_BUCKETS);
     const auto expectedBuckets = bucketsFor(blocksPerBucket);
     if (expectedBuckets > maximumBuckets || (blocksPerBucket > 1 && bucketsFor(blocksPerBucket / 2) <= maximumBuckets))
     {
@@ -205,7 +205,7 @@ bool isValidOverloadHistory(const OverloadHistory& history)
         return false;
     }
     return std::ranges::all_of(history.flags, [](const auto value) {
-        return (value & static_cast<std::uint8_t>(~OverloadHistory::allFlags)) == 0;
+        return (value & static_cast<std::uint8_t>(~OverloadHistory::ALL_FLAGS)) == 0;
     });
 }
 
@@ -228,8 +228,8 @@ juce::MemoryBlock serializeOverloadHistory(const OverloadHistory& history)
         return data;
     }
     juce::MemoryOutputStream output(data, false);
-    output.writeInt(overloadHistoryMagic);
-    output.writeInt(overloadHistoryVersion);
+    output.writeInt(OVERLOAD_HISTORY_MAGIC);
+    output.writeInt(OVERLOAD_HISTORY_VERSION);
     output.writeDouble(history.sampleRate);
     output.writeInt64(history.lengthInSamples);
     output.writeInt64(history.samplesPerBucket);
@@ -245,11 +245,11 @@ std::shared_ptr<const OverloadHistory> deserializeOverloadHistory(const std::spa
 {
     const void* data = blob.data();
     const auto bytes = blob.size();
-    if (data == nullptr || bytes < overloadHistoryHeaderBytes) {
+    if (data == nullptr || bytes < OVERLOAD_HISTORY_HEADER_BYTES) {
         return {};
     }
     juce::MemoryInputStream input(data, bytes, false);
-    if (input.readInt() != overloadHistoryMagic || input.readInt() != overloadHistoryVersion) {
+    if (input.readInt() != OVERLOAD_HISTORY_MAGIC || input.readInt() != OVERLOAD_HISTORY_VERSION) {
         return {};
     }
     OverloadHistory history;
@@ -258,10 +258,10 @@ std::shared_ptr<const OverloadHistory> deserializeOverloadHistory(const std::spa
     history.samplesPerBucket = input.readInt64();
     history.channelCount = input.readInt();
     const auto buckets = input.readInt();
-    if (history.channelCount <= 0 || history.channelCount > maximumOverloadChannels || buckets < 0
-        || std::cmp_greater(buckets, OverloadHistory::maximumBuckets)
+    if (history.channelCount <= 0 || history.channelCount > MAXIMUM_OVERLOAD_CHANNELS || buckets < 0
+        || std::cmp_greater(buckets, OverloadHistory::MAXIMUM_BUCKETS)
         || bytes
-            != overloadHistoryHeaderBytes
+            != OVERLOAD_HISTORY_HEADER_BYTES
                 + static_cast<std::size_t>(buckets) * static_cast<std::size_t>(history.channelCount))
     {
         return {};

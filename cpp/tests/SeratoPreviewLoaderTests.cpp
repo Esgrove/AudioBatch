@@ -130,7 +130,7 @@ public:
                 batches.emplace_back(kinds.begin(), kinds.end());
                 condition.notify_all();
                 if (gateFirst && paths.size() == 1) {
-                    condition.wait_for(lock, watchdog, [this] { return released; });
+                    condition.wait_for(lock, WATCHDOG, [this] { return released; });
                 }
                 observedCancellation = observedCancellation || cancelled();
             }
@@ -167,14 +167,14 @@ public:
     bool waitForDeliveries(const std::size_t count)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, watchdog, [this, count] { return deliveries.size() >= count; });
+        return condition.wait_for(lock, WATCHDOG, [this, count] { return deliveries.size() >= count; });
     }
 
     /// Waits for the exact latest generation even if an intervening completion was also queued.
     bool waitForGeneration(const std::uint64_t generation)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, watchdog, [this, generation] {
+        return condition.wait_for(lock, WATCHDOG, [this, generation] {
             return std::ranges::any_of(deliveries, [generation](const PreviewDelivery& result) {
                 return result.generation == generation;
             });
@@ -185,7 +185,7 @@ public:
     bool waitForReads(const std::size_t count)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, watchdog, [this, count] { return paths.size() >= count; });
+        return condition.wait_for(lock, WATCHDOG, [this, count] { return paths.size() >= count; });
     }
 
     /// Reports whether the reader saw cancellation at its return boundary.
@@ -204,7 +204,7 @@ public:
     }
 
 private:
-    static constexpr auto watchdog {std::chrono::seconds(10)};
+    static constexpr auto WATCHDOG {std::chrono::seconds(10)};
 
     ReadStatus status;
 
@@ -302,9 +302,9 @@ void SeratoPreviewLoaderTests::boundedSelection()
     const auto batches = probe.readBatches();
     expectEquals(static_cast<int>(batches.size()), 2);
     for (const auto& batch : batches) {
-        expect(batch == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
+        expect(batch == std::vector<serato::TagKind>(serato::ALL_TAG_KINDS.begin(), serato::ALL_TAG_KINDS.end()));
     }
-    for (const auto kind : serato::allTagKinds) {
+    for (const auto kind : serato::ALL_TAG_KINDS) {
         expect(!serato::getCachedTag(cache, utils::FileIdentity(second), kind));
         expect(!serato::getCachedTag(cache, utils::FileIdentity(third), kind));
     }
@@ -381,7 +381,7 @@ void SeratoPreviewLoaderTests::mutationDuringRead()
     }
     expect(loader.isCurrentGeneration(originalGeneration));
     expect(!probe.wasCancelled());
-    for (const auto kind : serato::allTagKinds) {
+    for (const auto kind : serato::ALL_TAG_KINDS) {
         expect(!serato::getCachedTag(cache, original, kind));
         expect(!serato::getCachedTag(cache, utils::FileIdentity(first), kind));
         expect(!serato::getCachedTag(cache, utils::FileIdentity(second), kind));
@@ -429,7 +429,7 @@ void SeratoPreviewLoaderTests::clearAndShutdown()
     expect(probe.wasCancelled());
     expect(probe.queued().empty());
     expectEquals(static_cast<int>(probe.readPaths().size()), 1);
-    for (const auto kind : serato::allTagKinds) {
+    for (const auto kind : serato::ALL_TAG_KINDS) {
         expect(!serato::getCachedTag(cache, utils::FileIdentity(first), kind));
         expect(!serato::getCachedTag(cache, utils::FileIdentity(second), kind));
     }
@@ -465,10 +465,11 @@ void SeratoPreviewLoaderTests::cacheRestartOutcome(const ReadStatus status)
         expectEquals(static_cast<int>(batches.size()), 1);
         if (!batches.empty()) {
             expect(
-                batches.front() == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end())
+                batches.front()
+                == std::vector<serato::TagKind>(serato::ALL_TAG_KINDS.begin(), serato::ALL_TAG_KINDS.end())
             );
         }
-        for (const auto kind : serato::allTagKinds) {
+        for (const auto kind : serato::ALL_TAG_KINDS) {
             const auto cached = serato::getCachedTag(cache, utils::FileIdentity(file), kind);
             expect(cached && cached->kind == kind && cached->status() == status);
         }
@@ -584,7 +585,7 @@ void SeratoPreviewLoaderTests::mixedBatchResults()
     loader.cancelAndWait();
     expectEquals(static_cast<int>(batches.size()), 2);
     if (batches.size() == 2) {
-        expect(batches.front() == std::vector<TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
+        expect(batches.front() == std::vector<TagKind>(serato::ALL_TAG_KINDS.begin(), serato::ALL_TAG_KINDS.end()));
         expect(batches.back() == std::vector<TagKind> {TagKind::autotags, TagKind::beatGrid});
     }
     for (const auto& delivery : probe.queued()) {
@@ -623,7 +624,7 @@ void SeratoPreviewLoaderTests::missingOverview()
         if (!batches.empty()) {
             expect(
                 batches.front()
-                == std::vector<serato::TagKind>(std::next(serato::allTagKinds.begin()), serato::allTagKinds.end())
+                == std::vector<serato::TagKind>(std::next(serato::ALL_TAG_KINDS.begin()), serato::ALL_TAG_KINDS.end())
             );
         }
         for (const auto& delivery : probe.queued()) {
@@ -699,7 +700,7 @@ void SeratoPreviewLoaderTests::transientResults()
                 probe.release();
             }
             loader.cancelAndWait();
-            for (const auto kind : serato::allTagKinds) {
+            for (const auto kind : serato::ALL_TAG_KINDS) {
                 expect(!serato::getCachedTag(cache, utils::FileIdentity(file), kind));
             }
             expectEquals(static_cast<int>(probe.readPaths().size()), 1);

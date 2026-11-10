@@ -32,7 +32,7 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto cancelledMessage {"Analysis was cancelled"};
+constexpr auto CANCELLED_MESSAGE {"Analysis was cancelled"};
 
 /// Preset-specific fit reproduced by fixtures/limiter_model.py from four full-file L2 renders.
 constexpr double LIMITER_CEILING_OFFSET_LU {-0.30};
@@ -178,7 +178,9 @@ std::expected<void, MeasurementFailure> measureDecodedAudio(
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            return std::unexpected(MeasurementFailure {.error = AnalysisError::cancelled, .message = cancelledMessage});
+            return std::unexpected(
+                MeasurementFailure {.error = AnalysisError::cancelled, .message = CANCELLED_MESSAGE}
+            );
         }
 
         const auto framesThisBlock
@@ -390,8 +392,8 @@ std::optional<double> estimateLimiterIntegratedLoudness(
 )
 {
     if (!std::isfinite(sourceIntegratedLufs) || !std::isfinite(hardClipIntegratedLufs) || !std::isfinite(gain.value)
-        || sourceIntegratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness
-        || hardClipIntegratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness || gain.value < 0.0f
+        || sourceIntegratedLufs <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS
+        || hardClipIntegratedLufs <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS || gain.value < 0.0f
         || static_cast<double>(gain.value) > LIMITER_MAX_GAIN_DB)
     {
         return std::nullopt;

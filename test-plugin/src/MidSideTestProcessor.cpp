@@ -15,29 +15,29 @@ namespace audiobatch::test_plugin
 {
 namespace
 {
-constexpr auto gainParameterId {"gain"};
-constexpr auto widthParameterId {"width"};
-constexpr auto latencyParameterId {"latency"};
-constexpr auto stateTag {"AudioBatchTestMS"};
+constexpr auto GAIN_PARAMETER_ID {"gain"};
+constexpr auto WIDTH_PARAMETER_ID {"width"};
+constexpr auto LATENCY_PARAMETER_ID {"latency"};
+constexpr auto STATE_TAG {"AudioBatchTestMS"};
 
 /// Creates the gain, width, and latency parameters in the order that gives them their legacy VST3 ids.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
-    const juce::NormalisableRange<float> range(0.0F, parameterMaximum);
+    const juce::NormalisableRange<float> range(0.0F, PARAMETER_MAXIMUM);
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     layout.add(
         std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID {gainParameterId, 1}, "Gain", range, parameterDefault
+            juce::ParameterID {GAIN_PARAMETER_ID, 1}, "Gain", range, PARAMETER_DEFAULT
         )
     );
     layout.add(
         std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID {widthParameterId, 1}, "Width", range, parameterDefault
+            juce::ParameterID {WIDTH_PARAMETER_ID, 1}, "Width", range, PARAMETER_DEFAULT
         )
     );
     layout.add(
         std::make_unique<juce::AudioParameterInt>(
-            juce::ParameterID {latencyParameterId, 1}, "Latency", 0, latencyMaximum, 0
+            juce::ParameterID {LATENCY_PARAMETER_ID, 1}, "Latency", 0, LATENCY_MAXIMUM, 0
         )
     );
     return layout;
@@ -67,10 +67,10 @@ MidSideTestProcessor::MidSideTestProcessor() :
             .withInput("Input", juce::AudioChannelSet::stereo(), true)
             .withOutput("Output", juce::AudioChannelSet::stereo(), true)
     ),
-    parameters(*this, nullptr, stateTag, createParameterLayout()),
-    gain(getParameterValue(parameters, gainParameterId)),
-    latency(getParameterValue(parameters, latencyParameterId)),
-    width(getParameterValue(parameters, widthParameterId))
+    parameters(*this, nullptr, STATE_TAG, createParameterLayout()),
+    gain(getParameterValue(parameters, GAIN_PARAMETER_ID)),
+    latency(getParameterValue(parameters, LATENCY_PARAMETER_ID)),
+    width(getParameterValue(parameters, WIDTH_PARAMETER_ID))
 {}
 
 /// Returns the plugin name.
@@ -152,7 +152,7 @@ bool MidSideTestProcessor::isBusesLayoutSupported(const BusesLayout& layouts) co
 /// Reads the latency parameter, reports it to the host, and clears the delay line to silence.
 void MidSideTestProcessor::prepareToPlay(double /*sampleRate*/, int /*maximumBlockSize*/)
 {
-    delaySamples = juce::jlimit(0, latencyMaximum, juce::roundToInt(latency.load()));
+    delaySamples = juce::jlimit(0, LATENCY_MAXIMUM, juce::roundToInt(latency.load()));
     delayLine.setSize(juce::jmax(1, getTotalNumOutputChannels()), juce::jmax(1, delaySamples));
     delayLine.clear();
     delayPosition = 0;
@@ -222,7 +222,7 @@ void MidSideTestProcessor::getStateInformation(juce::MemoryBlock& destinationDat
 /// Restores parameter values saved by getStateInformation, and ignores any other data.
 void MidSideTestProcessor::setStateInformation(const void* data, const int sizeInBytes)
 {
-    if (const auto xml = getXmlFromBinary(data, sizeInBytes); xml != nullptr && xml->hasTagName(stateTag)) {
+    if (const auto xml = getXmlFromBinary(data, sizeInBytes); xml != nullptr && xml->hasTagName(STATE_TAG)) {
         parameters.replaceState(juce::ValueTree::fromXml(*xml));
     }
 }

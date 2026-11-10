@@ -16,11 +16,11 @@ namespace audiobatch
 namespace
 {
 /// Number of tag kinds the selector byte chooses from, which are numbered from one.
-constexpr std::uint8_t tagKindCount {6};
+constexpr std::uint8_t TAG_KIND_COUNT {6};
 /// Selector bit that chooses the legacy marker layout instead of Markers2.
-constexpr std::uint8_t legacyMarkersBit {0x80};
+constexpr std::uint8_t LEGACY_MARKERS_BIT {0x80};
 /// Selector bits that choose the tag kind.
-constexpr std::uint8_t tagKindBits {0x7f};
+constexpr std::uint8_t TAG_KIND_BITS {0x7f};
 
 /// Runs the parsers and the cache codec on one fuzz input.
 /// A cache round trip that loses or changes a parsed tag aborts, which libFuzzer reports as a crash.
@@ -31,8 +31,8 @@ void fuzzTagPayload(const std::span<const std::uint8_t> input)
     }
     const auto selector = input.front();
     const auto payload = input.subspan(1);
-    const auto legacyMarkers = (selector & legacyMarkersBit) != 0;
-    const auto kind = static_cast<serato::TagKind>((selector & tagKindBits) % tagKindCount + 1);
+    const auto legacyMarkers = (selector & LEGACY_MARKERS_BIT) != 0;
+    const auto kind = static_cast<serato::TagKind>((selector & TAG_KIND_BITS) % TAG_KIND_COUNT + 1);
 
     std::ignore = serato::decodeTagBase64(payload, legacyMarkers);
 

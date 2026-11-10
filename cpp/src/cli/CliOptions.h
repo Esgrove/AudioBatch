@@ -101,7 +101,7 @@ consteval std::array<const char*, count> namesOf(const std::array<OptionName<Enu
 }
 
 /// Names accepted by --sort, with "loudness" as an alias for "lufs".
-inline constexpr auto sortModeNames {
+inline constexpr auto SORT_MODE_NAMES {
     std::to_array<OptionName<AudioAnalysisSortMode>>({
         {.name = "peak", .value = AudioAnalysisSortMode::peak},
         {.name = "lufs", .value = AudioAnalysisSortMode::loudness},
@@ -112,7 +112,7 @@ inline constexpr auto sortModeNames {
 };
 
 /// Names accepted by --output.
-inline constexpr auto outputFormatNames {
+inline constexpr auto OUTPUT_FORMAT_NAMES {
     std::to_array<OptionName<AudioAnalysisOutputFormat>>({
         {.name = "table", .value = AudioAnalysisOutputFormat::table},
         {.name = "csv", .value = AudioAnalysisOutputFormat::csv},
@@ -121,7 +121,7 @@ inline constexpr auto outputFormatNames {
 };
 
 /// Names accepted by --group-by.
-inline constexpr auto pluginGroupingNames {
+inline constexpr auto PLUGIN_GROUPING_NAMES {
     std::to_array<OptionName<PluginListGrouping>>({
         {.name = "name", .value = PluginListGrouping::name},
         {.name = "manufacturer", .value = PluginListGrouping::manufacturer},
@@ -131,7 +131,7 @@ inline constexpr auto pluginGroupingNames {
 };
 
 /// Shell names accepted by the completion subcommand.
-inline constexpr auto completionShellNames {
+inline constexpr auto COMPLETION_SHELL_NAMES {
     std::to_array<OptionName<CompletionShell>>({
         {.name = "zsh", .value = CompletionShell::zsh},
         {.name = "bash", .value = CompletionShell::bash},
@@ -141,19 +141,19 @@ inline constexpr auto completionShellNames {
 };
 
 /// The names of the enum option tables, which the options below offer as completions.
-inline constexpr auto sortModeValues {namesOf(sortModeNames)};
-inline constexpr auto outputFormatValues {namesOf(outputFormatNames)};
-inline constexpr auto pluginGroupingValues {namesOf(pluginGroupingNames)};
-inline constexpr auto completionShellValues {namesOf(completionShellNames)};
+inline constexpr auto SORT_MODE_VALUES {namesOf(SORT_MODE_NAMES)};
+inline constexpr auto OUTPUT_FORMAT_VALUES {namesOf(OUTPUT_FORMAT_NAMES)};
+inline constexpr auto PLUGIN_GROUPING_VALUES {namesOf(PLUGIN_GROUPING_NAMES)};
+inline constexpr auto COMPLETION_SHELL_VALUES {namesOf(COMPLETION_SHELL_NAMES)};
 
-inline constexpr CliOption helpOption {
+inline constexpr CliOption HELP_OPTION {
     .longName = "--help",
     .shortName = "-h",
     .valueName = "",
     .description = "Print usage and exit",
     .values = {},
 };
-inline constexpr CliOption versionOption {
+inline constexpr CliOption VERSION_OPTION {
     .longName = "--version",
     .shortName = "-V",
     .valueName = "",
@@ -161,92 +161,92 @@ inline constexpr CliOption versionOption {
     .values = {},
 };
 
-inline constexpr CliOption recurseOption {
+inline constexpr CliOption RECURSE_OPTION {
     .longName = "--recurse",
     .shortName = "-r",
     .valueName = "",
     .description = "Recurse into directories",
     .values = {},
 };
-inline constexpr CliOption refreshOption {
+inline constexpr CliOption REFRESH_OPTION {
     .longName = "--refresh",
     .shortName = "-f",
     .valueName = "",
     .description = "Ignore cached analysis and re-analyze files",
     .values = {},
 };
-inline constexpr CliOption normalizeOption {
+inline constexpr CliOption NORMALIZE_OPTION {
     .longName = "--normalize",
     .shortName = "-n",
     .valueName = "",
     .description = "Normalize analyzed files, then report the re-analyzed output peaks",
     .values = {},
 };
-inline constexpr CliOption forceOption {
+inline constexpr CliOption FORCE_OPTION {
     .longName = "--force",
     .shortName = "-F",
     .valueName = "",
     .description = "Let normalize replace an existing output file",
     .values = {},
 };
-inline constexpr CliOption deleteOption {
+inline constexpr CliOption DELETE_OPTION {
     .longName = "--delete",
     .shortName = "-D",
     .valueName = "",
     .description = "Permanently delete replaced originals instead of moving them to the trash",
     .values = {},
 };
-inline constexpr CliOption peakOption {
+inline constexpr CliOption PEAK_OPTION {
     .longName = "--peak",
     .shortName = "",
     .valueName = "dBFS",
     .description = "Normalize to this sample peak, -12 to 0 (default 0)",
     .values = {},
 };
-inline constexpr CliOption lufsOption {
+inline constexpr CliOption LUFS_OPTION {
     .longName = "--lufs",
     .shortName = "",
     .valueName = "LUFS",
     .description = "Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling",
     .values = {},
 };
-inline constexpr CliOption jobsOption {
+inline constexpr CliOption JOBS_OPTION {
     .longName = "--jobs",
     .shortName = "-j",
     .valueName = "count",
     .description = "Override worker count",
     .values = {},
 };
-inline constexpr CliOption sortOption {
+inline constexpr CliOption SORT_OPTION {
     .longName = "--sort",
     .shortName = "-s",
     .valueName = "mode",
     .description = "Sort by peak, lufs, name, or path",
-    .values = sortModeValues,
+    .values = SORT_MODE_VALUES,
 };
-inline constexpr CliOption reverseOption {
+inline constexpr CliOption REVERSE_OPTION {
     .longName = "--reverse",
     .shortName = "-S",
     .valueName = "",
     .description = "Sort in descending order",
     .values = {},
 };
-inline constexpr CliOption outputOption {
+inline constexpr CliOption OUTPUT_OPTION {
     .longName = "--output",
     .shortName = "-o",
     .valueName = "format",
     .description = "Print results as table (default), csv, or json",
-    .values = outputFormatValues,
+    .values = OUTPUT_FORMAT_VALUES,
 };
 
-inline constexpr CliOption groupByOption {
+inline constexpr CliOption GROUP_BY_OPTION {
     .longName = "--group-by",
     .shortName = "-g",
     .valueName = "mode",
     .description = "Group the plugin list by name (alphabetical), manufacturer, type, or format",
-    .values = pluginGroupingValues,
+    .values = PLUGIN_GROUPING_VALUES,
 };
-inline constexpr CliOption rescanOption {
+inline constexpr CliOption RESCAN_OPTION {
     .longName = "--rescan",
     .shortName = "-R",
     .valueName = "",
@@ -254,14 +254,14 @@ inline constexpr CliOption rescanOption {
     .values = {},
 };
 
-inline constexpr CliOption installOption {
+inline constexpr CliOption INSTALL_OPTION {
     .longName = "--install",
     .shortName = "-I",
     .valueName = "",
     .description = "Install the script to the shell's completion directory",
     .values = {},
 };
-inline constexpr CliOption verboseOption {
+inline constexpr CliOption VERBOSE_OPTION {
     .longName = "--verbose",
     .shortName = "-v",
     .valueName = "",
@@ -270,22 +270,22 @@ inline constexpr CliOption verboseOption {
 };
 
 /// The options of an analysis run, besides --help and --version.
-inline constexpr std::array analysisOptions {
-    std::cref(recurseOption),
-    std::cref(refreshOption),
-    std::cref(normalizeOption),
-    std::cref(forceOption),
-    std::cref(deleteOption),
-    std::cref(peakOption),
-    std::cref(lufsOption),
-    std::cref(jobsOption),
-    std::cref(sortOption),
-    std::cref(reverseOption),
-    std::cref(outputOption),
+inline constexpr std::array ANALYSIS_OPTIONS {
+    std::cref(RECURSE_OPTION),
+    std::cref(REFRESH_OPTION),
+    std::cref(NORMALIZE_OPTION),
+    std::cref(FORCE_OPTION),
+    std::cref(DELETE_OPTION),
+    std::cref(PEAK_OPTION),
+    std::cref(LUFS_OPTION),
+    std::cref(JOBS_OPTION),
+    std::cref(SORT_OPTION),
+    std::cref(REVERSE_OPTION),
+    std::cref(OUTPUT_OPTION),
 };
 
 /// Native saved chain selected by name or explicit preset path.
-inline constexpr CliOption presetOption {
+inline constexpr CliOption PRESET_OPTION {
     .longName = "--preset",
     .shortName = "-p",
     .valueName = "preset",
@@ -293,7 +293,7 @@ inline constexpr CliOption presetOption {
     .values = {},
 };
 /// Processing normalizes the input to the chain, never the rendered output.
-inline constexpr CliOption preNormalizeOption {
+inline constexpr CliOption PRE_NORMALIZE_OPTION {
     .longName = "--normalize",
     .shortName = "-n",
     .valueName = "",
@@ -301,7 +301,7 @@ inline constexpr CliOption preNormalizeOption {
     .values = {},
 };
 /// Processing replacement is allowed without normalization.
-inline constexpr CliOption processForceOption {
+inline constexpr CliOption PROCESS_FORCE_OPTION {
     .longName = "--force",
     .shortName = "-F",
     .valueName = "",
@@ -309,38 +309,38 @@ inline constexpr CliOption processForceOption {
     .values = {},
 };
 /// The options of a processing run.
-inline constexpr std::array processOptions {
-    std::cref(presetOption),
-    std::cref(recurseOption),
-    std::cref(refreshOption),
-    std::cref(preNormalizeOption),
-    std::cref(processForceOption),
-    std::cref(deleteOption),
-    std::cref(peakOption),
-    std::cref(lufsOption),
-    std::cref(jobsOption),
-    std::cref(sortOption),
-    std::cref(reverseOption),
-    std::cref(outputOption),
+inline constexpr std::array PROCESS_OPTIONS {
+    std::cref(PRESET_OPTION),
+    std::cref(RECURSE_OPTION),
+    std::cref(REFRESH_OPTION),
+    std::cref(PRE_NORMALIZE_OPTION),
+    std::cref(PROCESS_FORCE_OPTION),
+    std::cref(DELETE_OPTION),
+    std::cref(PEAK_OPTION),
+    std::cref(LUFS_OPTION),
+    std::cref(JOBS_OPTION),
+    std::cref(SORT_OPTION),
+    std::cref(REVERSE_OPTION),
+    std::cref(OUTPUT_OPTION),
 };
 
 /// The options of the list subcommand.
-inline constexpr std::array listOptions {std::cref(groupByOption), std::cref(rescanOption)};
+inline constexpr std::array LIST_OPTIONS {std::cref(GROUP_BY_OPTION), std::cref(RESCAN_OPTION)};
 
 /// The options of the completion subcommand.
-inline constexpr std::array completionOptions {std::cref(installOption), std::cref(verboseOption)};
+inline constexpr std::array COMPLETION_OPTIONS {std::cref(INSTALL_OPTION), std::cref(VERBOSE_OPTION)};
 
 /// The commands the help subcommand describes.
-inline constexpr auto helpCommandValues {std::to_array<const char*>({"process", "list", "completion", "help"})};
+inline constexpr auto HELP_COMMAND_VALUES {std::to_array<const char*>({"process", "list", "completion", "help"})};
 
 /// The subcommands, in the order the usage text and the shell completions list them.
-inline constexpr auto subcommands {
+inline constexpr auto SUBCOMMANDS {
     std::to_array<CliSubcommandInfo>({
         {
             .subcommand = CliSubcommand::process,
             .name = "process",
             .description = "Render audio through a saved plugin chain as 16-bit AIFF",
-            .options = processOptions,
+            .options = PROCESS_OPTIONS,
             .argumentName = "paths...",
             .argumentDescription = "Files and directories, current directory when omitted",
             .argumentRequired = false,
@@ -350,7 +350,7 @@ inline constexpr auto subcommands {
             .subcommand = CliSubcommand::list,
             .name = "list",
             .description = "List the available audio plugins",
-            .options = listOptions,
+            .options = LIST_OPTIONS,
             .argumentName = "",
             .argumentDescription = "",
             .argumentRequired = false,
@@ -360,11 +360,11 @@ inline constexpr auto subcommands {
             .subcommand = CliSubcommand::completion,
             .name = "completion",
             .description = "Print or install a shell completion script",
-            .options = completionOptions,
+            .options = COMPLETION_OPTIONS,
             .argumentName = "shell",
             .argumentDescription = "Shell to generate the script for",
             .argumentRequired = true,
-            .argumentValues = completionShellValues,
+            .argumentValues = COMPLETION_SHELL_VALUES,
         },
         {
             .subcommand = CliSubcommand::help,
@@ -374,7 +374,7 @@ inline constexpr auto subcommands {
             .argumentName = "command",
             .argumentDescription = "Command to print the help of",
             .argumentRequired = false,
-            .argumentValues = helpCommandValues,
+            .argumentValues = HELP_COMMAND_VALUES,
         },
     }),
 };

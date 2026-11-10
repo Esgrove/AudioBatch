@@ -274,7 +274,7 @@ void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int 
         = std::ranges::count_if(analysisResults, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
         "Analysis complete: {:.2f} s, {} files ({} analyzed, {} from cache, {} failed)",
-        elapsedMs / utils::millisecondsPerSecond,
+        elapsedMs / utils::MILLISECONDS_PER_SECOND,
         totalFiles,
         run.analyzedFiles,
         cachedFileCount,

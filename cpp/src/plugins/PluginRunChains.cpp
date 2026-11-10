@@ -15,7 +15,7 @@ namespace audiobatch
 namespace
 {
 /// How long a worker waits for a plugin chain to be released before checking for cancellation again, in milliseconds.
-constexpr int chainWaitIntervalMilliseconds {100};
+constexpr int CHAIN_WAIT_INTERVAL_MILLISECONDS {100};
 }  // namespace
 
 /// Takes ownership of the run's chains, with all of them free when `usable` is true.
@@ -68,7 +68,7 @@ std::optional<ChainLease> PluginRunChains::acquire(const std::function<bool()>& 
         }
 
         // More workers than chains is unusual, so polling while waiting costs little.
-        available.wait(chainWaitIntervalMilliseconds);
+        available.wait(CHAIN_WAIT_INTERVAL_MILLISECONDS);
     }
 
     return std::nullopt;

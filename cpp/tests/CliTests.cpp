@@ -365,7 +365,7 @@ public:
             auto normalization = normalizationOf({"-n", "--lufs", "-15"});
             expect(normalization.mode == AudioNormalizationMode::loudness);
             expectEquals(normalization.targetLufs, -15.0);
-            expectEquals(normalization.targetPeakDbfs, AudioNormalizationOptions::defaultTargetPeakDbfs);
+            expectEquals(normalization.targetPeakDbfs, AudioNormalizationOptions::DEFAULT_TARGET_PEAK_DBFS);
 
             normalization = normalizationOf({"-n", "--lufs=-16.5"});
             expectEquals(normalization.targetLufs, -16.5);
@@ -373,11 +373,11 @@ public:
             normalization = normalizationOf({"-n", "--peak", "-1"});
             expect(normalization.mode == AudioNormalizationMode::peak);
             expectEquals(normalization.targetPeakDbfs, -1.0);
-            expectEquals(normalization.targetLufs, AudioNormalizationOptions::defaultTargetLufs);
+            expectEquals(normalization.targetLufs, AudioNormalizationOptions::DEFAULT_TARGET_LUFS);
 
             normalization = normalizationOf({"-n"});
             expect(normalization.mode == AudioNormalizationMode::peak);
-            expectEquals(normalization.targetPeakDbfs, AudioNormalizationOptions::defaultTargetPeakDbfs);
+            expectEquals(normalization.targetPeakDbfs, AudioNormalizationOptions::DEFAULT_TARGET_PEAK_DBFS);
 
             expectError({"-n", "--lufs", "-30"}, CliParseErrorKind::valueOutOfRange);
             expectError({"-n", "--peak", "1"}, CliParseErrorKind::valueOutOfRange);
@@ -576,7 +576,7 @@ void CliTests::runCompletionTests()
 {
     beginTest("Completion scripts offer every option, value, and subcommand");
     {
-        for (const auto& shellName : cli::completionShellNames) {
+        for (const auto& shellName : cli::COMPLETION_SHELL_NAMES) {
             const auto script = cli::buildCompletionScript(shellName.value, "audiobatch");
             const auto label = juce::String(shellName.name);
             expect(!script.containsChar('\r'), label);
@@ -587,13 +587,13 @@ void CliTests::runCompletionTests()
                 const auto name = juce::String(option.longName).trimCharactersAtStart("-");
                 expect(script.contains(name), label + " misses " + option.longName);
             };
-            std::ranges::for_each(cli::analysisOptions, expectOption);
-            std::ranges::for_each(cli::listOptions, expectOption);
-            std::ranges::for_each(cli::completionOptions, expectOption);
-            for (const auto* value : cli::sortModeValues) {
+            std::ranges::for_each(cli::ANALYSIS_OPTIONS, expectOption);
+            std::ranges::for_each(cli::LIST_OPTIONS, expectOption);
+            std::ranges::for_each(cli::COMPLETION_OPTIONS, expectOption);
+            for (const auto* value : cli::SORT_MODE_VALUES) {
                 expect(script.contains(value), label + " misses the sort mode " + value);
             }
-            for (const auto& subcommand : cli::subcommands) {
+            for (const auto& subcommand : cli::SUBCOMMANDS) {
                 expect(script.contains(subcommand.name), label + " misses " + subcommand.name);
             }
         }
@@ -701,8 +701,8 @@ void CliTests::runOutputTests()
     AudioAnalysisRecord silent;
     silent.fullPath = "/music/silence.wav";
     silent.fileName = "silence.wav";
-    silent.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
-    silent.maxShortTermLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+    silent.integratedLufs = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
+    silent.maxShortTermLufs = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
     silent.status = AudioAnalysisStatus::analyzed;
 
     AudioAnalysisRecord failed;

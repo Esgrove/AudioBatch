@@ -92,7 +92,7 @@ private:
     /// Audible position in the file in seconds, held at the end while the tail drains.
     double position {0.0};
     /// Sample rate of the device that the input and the chain run at.
-    double processingRate {utils::defaultSampleRate};
+    double processingRate {utils::DEFAULT_SAMPLE_RATE};
 
     /// Most samples rendered through the chain at a time.
     int blockSize {512};

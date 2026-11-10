@@ -214,7 +214,7 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
 
     controlsViewport.setViewedComponent(&controlsContent, false);
     controlsViewport.setScrollBarsShown(true, false);
-    controlsViewport.setScrollBarThickness(layout::scrollBarThickness);
+    controlsViewport.setScrollBarThickness(layout::SCROLL_BAR_THICKNESS);
     controlsViewport.setName("Preview and processing controls");
     addAndMakeVisible(controlsViewport);
 
@@ -238,7 +238,7 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
         control_titles::CONTROLS_WIDTH_DIVIDER,
         [this] {
             return layout::previewColumns(
-                       getLocalBounds().reduced(layout::compactPreview::padding),
+                       getLocalBounds().reduced(layout::compactPreview::PADDING),
                        true,
                        controlsWidthScale,
                        informationWidthScale
@@ -303,12 +303,12 @@ void PreviewWorkspace::setPanelWidth(const bool information, const int width)
     if (isCompact()) {
         return;
     }
-    const auto bounds = getLocalBounds().reduced(layout::compactPreview::padding);
+    const auto bounds = getLocalBounds().reduced(layout::compactPreview::PADDING);
     const auto baseline = layout::previewColumnBaseline(bounds);
     const auto columns = layout::previewColumns(bounds, true, controlsWidthScale, informationWidthScale);
     const auto otherWidth = information ? columns.controls.getWidth() : columns.information.getWidth();
     const auto availableWidth = juce::jmax(
-        0, bounds.getWidth() - layout::sectionSpacing * 2 - layout::previewWidths::MINIMUM_WAVEFORM_WIDTH - otherWidth
+        0, bounds.getWidth() - layout::SECTION_SPACING * 2 - layout::previewWidths::MINIMUM_WAVEFORM_WIDTH - otherWidth
     );
     const auto baselineWidth = information ? baseline.information.getWidth() : baseline.controls.getWidth();
     const auto minimumScale = information ? layout::previewWidths::MINIMUM_INFORMATION_SCALE
@@ -382,7 +382,7 @@ void PreviewWorkspace::setPlaybackState(const bool enabled, const bool playing)
 /// and the scroll bar takes width only while the controls overflow the column.
 void PreviewWorkspace::resized()
 {
-    auto workspace = getLocalBounds().reduced(layout::compactPreview::padding);
+    auto workspace = getLocalBounds().reduced(layout::compactPreview::PADDING);
     workspace.setSize(juce::jmax(0, workspace.getWidth()), juce::jmax(0, workspace.getHeight()));
     const auto columns = layout::previewColumns(workspace, !isCompact(), controlsWidthScale, informationWidthScale);
     controlsWidthDivider->setVisible(!isCompact());
@@ -392,7 +392,7 @@ void PreviewWorkspace::resized()
     }
     if (isCompact()) {
         layoutCompact(
-            workspace, columns.controls.getWidth() - layout::previewToggle::size - layout::compactPreview::spacing
+            workspace, columns.controls.getWidth() - layout::previewToggle::SIZE - layout::compactPreview::SPACING
         );
         return;
     }
@@ -413,14 +413,14 @@ void PreviewWorkspace::resized()
     audioInfo.setBounds(columns.information);
     thumbnail.setBounds(columns.waveform);
     auto controls
-        = columns.controls.reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
-    layoutPlaybackButtons(controls.removeFromBottom(layout::processButtonHeight));
-    controls.removeFromBottom(layout::controlsSectionSpacing);
+        = columns.controls.reduced(layout::information::HORIZONTAL_PADDING, layout::information::VERTICAL_PADDING);
+    layoutPlaybackButtons(controls.removeFromBottom(layout::PROCESS_BUTTON_HEIGHT));
+    controls.removeFromBottom(layout::CONTROLS_SECTION_SPACING);
     controlsViewport.setBounds(controls);
-    const auto contentHeight = columns.wide ? layout::wideControlsContentHeight : layout::controlsContentHeight;
+    const auto contentHeight = columns.wide ? layout::WIDE_CONTROLS_CONTENT_HEIGHT : layout::CONTROLS_CONTENT_HEIGHT;
     const bool overflows = contentHeight > controls.getHeight();
     controlsContent.setSize(
-        juce::jmax(0, controls.getWidth() - (overflows ? layout::scrollBarThickness : 0)),
+        juce::jmax(0, controls.getWidth() - (overflows ? layout::SCROLL_BAR_THICKNESS : 0)),
         juce::jmax(controls.getHeight(), contentHeight)
     );
     previewChainToggle.setVisible(columns.wide);
@@ -436,17 +436,17 @@ void PreviewWorkspace::resized()
 /// Returns the area below them.
 juce::Rectangle<int> PreviewWorkspace::layoutSliders(juce::Rectangle<int> content)
 {
-    auto zoomRow = content.removeFromTop(layout::sliderRowHeight);
+    auto zoomRow = content.removeFromTop(layout::SLIDER_ROW_HEIGHT);
     previewSectionButton.setBounds(
-        zoomRow.removeFromLeft(layout::previewToggle::size)
-            .withSizeKeepingCentre(layout::previewToggle::size, layout::previewToggle::size)
+        zoomRow.removeFromLeft(layout::previewToggle::SIZE)
+            .withSizeKeepingCentre(layout::previewToggle::SIZE, layout::previewToggle::SIZE)
     );
     zoomLabel.setBounds(zoomRow);
-    zoomSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    gainLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
+    zoomSlider.setBounds(content.removeFromTop(layout::SLIDER_ROW_HEIGHT));
+    content.removeFromTop(layout::CONTROLS_SECTION_SPACING);
+    gainLabel.setBounds(content.removeFromTop(layout::SLIDER_ROW_HEIGHT));
+    gainSlider.setBounds(content.removeFromTop(layout::SLIDER_ROW_HEIGHT));
+    content.removeFromTop(layout::CONTROLS_SECTION_SPACING);
     return content;
 }
 
@@ -454,18 +454,18 @@ juce::Rectangle<int> PreviewWorkspace::layoutSliders(juce::Rectangle<int> conten
 void PreviewWorkspace::layoutNarrowControls(juce::Rectangle<int> content)
 {
     content = layoutSliders(content);
-    auto normalizeRow = content.removeFromTop(layout::normalizeToggleHeight);
+    auto normalizeRow = content.removeFromTop(layout::NORMALIZE_TOGGLE_HEIGHT);
     normalizeBeforePluginToggle.setBounds(
-        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
+        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::SECTION_SPACING) / 2)
     );
-    normalizeRow.removeFromLeft(layout::sectionSpacing);
+    normalizeRow.removeFromLeft(layout::SECTION_SPACING);
     forceOverwriteToggle.setBounds(normalizeRow);
-    content.removeFromTop(layout::normalizeTargetSpacing);
-    normalizationTargetControl.setBounds(content.removeFromTop(layout::normalizationTargetHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    settingsButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
+    content.removeFromTop(layout::NORMALIZE_TARGET_SPACING);
+    normalizationTargetControl.setBounds(content.removeFromTop(layout::NORMALIZATION_TARGET_HEIGHT));
+    content.removeFromTop(layout::CONTROLS_SECTION_SPACING);
+    pluginButton.setBounds(content.removeFromTop(layout::CONTROL_BUTTON_HEIGHT));
+    content.removeFromTop(layout::CONTROLS_SECTION_SPACING);
+    settingsButton.setBounds(content.removeFromTop(layout::CONTROL_BUTTON_HEIGHT));
 }
 
 /// Lays out the sliders across the full width, and below them two columns of three rows as tall as a button.
@@ -475,24 +475,24 @@ void PreviewWorkspace::layoutNarrowControls(juce::Rectangle<int> content)
 void PreviewWorkspace::layoutWideControls(juce::Rectangle<int> content)
 {
     content = layoutSliders(content);
-    auto left = content.removeFromLeft((content.getWidth() - layout::widePreview::columnSpacing) / 2);
-    content.removeFromLeft(layout::widePreview::columnSpacing);
+    auto left = content.removeFromLeft((content.getWidth() - layout::widePreview::COLUMN_SPACING) / 2);
+    content.removeFromLeft(layout::widePreview::COLUMN_SPACING);
     auto right = content;
 
-    previewChainToggle.setBounds(left.removeFromTop(layout::controlButtonHeight));
-    left.removeFromTop(layout::controlsSectionSpacing);
-    pluginButton.setBounds(left.removeFromTop(layout::controlButtonHeight));
-    left.removeFromTop(layout::controlsSectionSpacing);
-    settingsButton.setBounds(left.removeFromTop(layout::controlButtonHeight));
+    previewChainToggle.setBounds(left.removeFromTop(layout::CONTROL_BUTTON_HEIGHT));
+    left.removeFromTop(layout::CONTROLS_SECTION_SPACING);
+    pluginButton.setBounds(left.removeFromTop(layout::CONTROL_BUTTON_HEIGHT));
+    left.removeFromTop(layout::CONTROLS_SECTION_SPACING);
+    settingsButton.setBounds(left.removeFromTop(layout::CONTROL_BUTTON_HEIGHT));
 
-    auto normalizeRow = right.removeFromTop(layout::controlButtonHeight);
+    auto normalizeRow = right.removeFromTop(layout::CONTROL_BUTTON_HEIGHT);
     normalizeBeforePluginToggle.setBounds(
-        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
+        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::SECTION_SPACING) / 2)
     );
-    normalizeRow.removeFromLeft(layout::sectionSpacing);
+    normalizeRow.removeFromLeft(layout::SECTION_SPACING);
     forceOverwriteToggle.setBounds(normalizeRow);
-    right.removeFromTop(layout::controlsSectionSpacing);
-    normalizationTargetControl.setBounds(right.removeFromTop(layout::normalizationTargetHeight));
+    right.removeFromTop(layout::CONTROLS_SECTION_SPACING);
+    normalizationTargetControl.setBounds(right.removeFromTop(layout::NORMALIZATION_TARGET_HEIGHT));
 }
 
 /// Draws the toggle as a chevron that points down while the section is expanded and up while it is collapsed.
@@ -500,27 +500,27 @@ void PreviewWorkspace::configurePreviewSectionButton()
 {
     juce::Path chevronPath;
     chevronPath.startNewSubPath(0.0f, 0.0f);
-    chevronPath.lineTo(layout::previewToggle::glyphWidth * 0.5f, layout::previewToggle::glyphHeight);
-    chevronPath.lineTo(layout::previewToggle::glyphWidth, 0.0f);
+    chevronPath.lineTo(layout::previewToggle::GLYPH_WIDTH * 0.5f, layout::previewToggle::GLYPH_HEIGHT);
+    chevronPath.lineTo(layout::previewToggle::GLYPH_WIDTH, 0.0f);
     juce::DrawablePath collapseChevron;
     collapseChevron.setPath(chevronPath);
     collapseChevron.setFill(juce::Colours::transparentBlack);
     collapseChevron.setStrokeFill(CustomLookAndFeel::greyMiddleLight());
-    collapseChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
+    collapseChevron.setStrokeThickness(layout::previewToggle::STROKE_WIDTH);
     chevronPath.applyTransform(
         juce::AffineTransform::rotation(
             juce::MathConstants<float>::pi,
-            layout::previewToggle::glyphWidth * 0.5f,
-            layout::previewToggle::glyphHeight * 0.5f
+            layout::previewToggle::GLYPH_WIDTH * 0.5f,
+            layout::previewToggle::GLYPH_HEIGHT * 0.5f
         )
     );
     juce::DrawablePath expandChevron;
     expandChevron.setPath(chevronPath);
     expandChevron.setFill(juce::Colours::transparentBlack);
     expandChevron.setStrokeFill(CustomLookAndFeel::greyMiddleLight());
-    expandChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
+    expandChevron.setStrokeThickness(layout::previewToggle::STROKE_WIDTH);
     previewSectionButton.setImages(&collapseChevron, nullptr, nullptr, nullptr, &expandChevron);
-    previewSectionButton.setEdgeIndent(layout::previewToggle::imageInset);
+    previewSectionButton.setEdgeIndent(layout::previewToggle::IMAGE_INSET);
     previewSectionButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
     previewSectionButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
     previewSectionButton.setTooltip("Collapse bottom section (Ctrl+Shift+Space / Cmd+Shift+Space).");
@@ -531,14 +531,14 @@ void PreviewWorkspace::configurePreviewSectionButton()
 /// and the plugin chain and settings buttons.
 void PreviewWorkspace::configureSecondaryControls()
 {
-    zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
+    zoomSlider.setRange(zoom_range::MINIMUM_PERCENT, zoom_range::MAXIMUM_PERCENT, 1);
     zoomSlider.setNumDecimalPlacesToDisplay(0);
     zoomSlider.setSkewFactor(0.5);
-    zoomSlider.setValue(zoom_range::minimumPercent);
+    zoomSlider.setValue(zoom_range::MINIMUM_PERCENT);
     zoomSlider.setTextValueSuffix("%");
     zoomSlider.setTooltip("Adjust waveform zoom. You can also use the mouse wheel over the waveform.");
     zoomSlider.setTextBoxStyle(
-        juce::Slider::TextBoxRight, false, layout::zoomTextBoxWidth, zoomSlider.getTextBoxHeight()
+        juce::Slider::TextBoxRight, false, layout::ZOOM_TEXT_BOX_WIDTH, zoomSlider.getTextBoxHeight()
     );
     controlsContent.addAndMakeVisible(zoomSlider);
 
@@ -553,14 +553,14 @@ void PreviewWorkspace::configureSecondaryControls()
     gainLabel.setJustificationType(juce::Justification::centredLeft);
     controlsContent.addAndMakeVisible(gainLabel);
 
-    gainSlider.setRange(-gain_range::maximumDecibels, gain_range::maximumDecibels, gain_range::stepDecibels);
+    gainSlider.setRange(-gain_range::MAXIMUM_DECIBELS, gain_range::MAXIMUM_DECIBELS, gain_range::STEP_DECIBELS);
     gainSlider.setValue(0.0, juce::dontSendNotification);
     gainSlider.setNumDecimalPlacesToDisplay(1);
     gainSlider.setTextValueSuffix(" dB");
     gainSlider.setTooltip("Per-file gain in dB. Non-zero values override normalization for the file.");
     gainSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     gainSlider.setTextBoxStyle(
-        juce::Slider::TextBoxRight, false, layout::gainTextBoxWidth, gainSlider.getTextBoxHeight()
+        juce::Slider::TextBoxRight, false, layout::GAIN_TEXT_BOX_WIDTH, gainSlider.getTextBoxHeight()
     );
     gainSlider.setDoubleClickReturnValue(true, 0.0);
     gainSlider.setEnabled(false);
@@ -591,31 +591,31 @@ void PreviewWorkspace::configureSecondaryControls()
 /// the metrics, and the waveform in the remaining width.
 void PreviewWorkspace::layoutCompact(juce::Rectangle<int> bounds, const int playbackWidth)
 {
-    const auto toggleBounds = bounds.removeFromLeft(layout::previewToggle::size);
+    const auto toggleBounds = bounds.removeFromLeft(layout::previewToggle::SIZE);
     previewSectionButton.setBounds(
-        toggleBounds.withSizeKeepingCentre(layout::previewToggle::size, layout::previewToggle::size)
+        toggleBounds.withSizeKeepingCentre(layout::previewToggle::SIZE, layout::previewToggle::SIZE)
     );
-    bounds.removeFromLeft(layout::compactPreview::spacing);
+    bounds.removeFromLeft(layout::compactPreview::SPACING);
     layoutPlaybackButtons(bounds.removeFromLeft(playbackWidth));
-    bounds.removeFromLeft(layout::sectionSpacing);
+    bounds.removeFromLeft(layout::SECTION_SPACING);
     const auto metricsWidth = juce::jlimit(
-        layout::compactPreview::metricsMinimumWidth,
+        layout::compactPreview::METRICS_MINIMUM_WIDTH,
         juce::jmax(
-            layout::compactPreview::metricsMinimumWidth,
-            bounds.getWidth() - layout::compactPreview::minimumWaveformWidth - layout::sectionSpacing
+            layout::compactPreview::METRICS_MINIMUM_WIDTH,
+            bounds.getWidth() - layout::compactPreview::MINIMUM_WAVEFORM_WIDTH - layout::SECTION_SPACING
         ),
-        juce::roundToInt(bounds.getWidth() * layout::compactPreview::metricsWidthProportion)
+        juce::roundToInt(bounds.getWidth() * layout::compactPreview::METRICS_WIDTH_PROPORTION)
     );
     audioInfo.setBounds(bounds.removeFromLeft(metricsWidth));
-    bounds.removeFromLeft(layout::sectionSpacing);
+    bounds.removeFromLeft(layout::SECTION_SPACING);
     thumbnail.setBounds(bounds);
 }
 
 /// Splits a playback row consistently in both workspace presentations.
 void PreviewWorkspace::layoutPlaybackButtons(juce::Rectangle<int> bounds)
 {
-    startStopButton.setBounds(bounds.removeFromLeft((bounds.getWidth() - layout::sectionSpacing) / 2));
-    bounds.removeFromLeft(layout::sectionSpacing);
+    startStopButton.setBounds(bounds.removeFromLeft((bounds.getWidth() - layout::SECTION_SPACING) / 2));
+    bounds.removeFromLeft(layout::SECTION_SPACING);
     processButton.setBounds(bounds);
 }
 }  // namespace audiobatch

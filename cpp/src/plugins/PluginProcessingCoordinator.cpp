@@ -31,7 +31,7 @@ namespace audiobatch
 namespace
 {
 /// How long cancelAndWait waits for running plugin processing jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds {60'000};
+constexpr int JOB_SHUTDOWN_TIMEOUT_MILLISECONDS {60'000};
 
 /// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
 /// At least one chain is required.
@@ -72,7 +72,7 @@ int getPluginProcessingWorkerCount(const int physicalCoreCount, const int logica
 
 /// Creates a coordinator with a thread pool sized for the current machine.
 PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
-    runner(workerCount, jobShutdownTimeoutMilliseconds)
+    runner(workerCount, JOB_SHUTDOWN_TIMEOUT_MILLISECONDS)
 {}
 
 /// Cancels any in-flight work and waits for every job, so workers cannot access destroyed coordinator state.
@@ -85,7 +85,7 @@ PluginProcessingCoordinator::~PluginProcessingCoordinator()
     if (runner.hasJobs()) {
         utils::logError(
             "A plugin did not stop within {:.0f} s, so AudioBatch ends without waiting for it",
-            jobShutdownTimeoutMilliseconds / utils::millisecondsPerSecond
+            JOB_SHUTDOWN_TIMEOUT_MILLISECONDS / utils::MILLISECONDS_PER_SECOND
         );
         juce::Process::terminate();
     }

@@ -25,7 +25,7 @@ namespace
 {
 /// Number of background threads the plugin manager scans on.
 /// One thread keeps the window responsive while the worker process loads each plugin in turn.
-constexpr int pluginScanThreadCount {1};
+constexpr int PLUGIN_SCAN_THREAD_COUNT {1};
 }  // namespace
 
 /// Registers the plugin formats, installs the out-of-process scanner,
@@ -95,7 +95,7 @@ std::unique_ptr<juce::PluginListComponent> PluginLibrary::createScanComponent()
 
     // Without a scan thread the component scans on the message thread,
     // which then blocks while the worker process loads each plugin.
-    component->setNumberOfThreadsForScanning(pluginScanThreadCount);
+    component->setNumberOfThreadsForScanning(PLUGIN_SCAN_THREAD_COUNT);
     return component;
 }
 
@@ -149,7 +149,7 @@ ChainInstantiation PluginLibrary::instantiateChains(
         for (const auto& [description, descriptorRef] : enabledPlugins) {
             juce::String error;
             auto instance
-                = formatManager.createPluginInstance(description, utils::defaultSampleRate, defaultBlockSize, error);
+                = formatManager.createPluginInstance(description, utils::DEFAULT_SAMPLE_RATE, defaultBlockSize, error);
 
             if (instance == nullptr) {
                 instantiation.errorMessage = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");

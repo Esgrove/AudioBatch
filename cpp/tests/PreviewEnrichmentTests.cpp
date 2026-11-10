@@ -116,14 +116,14 @@ public:
     bool waitForCalls(const std::size_t count)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, watchdog, [&] { return calls.size() >= count; });
+        return condition.wait_for(lock, WATCHDOG, [&] { return calls.size() >= count; });
     }
 
     /// Waits until the injected work has reached its final cancellation check.
     bool waitForFinished(const std::size_t count)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, watchdog, [&] { return finished >= count; });
+        return condition.wait_for(lock, WATCHDOG, [&] { return finished >= count; });
     }
 
     /// Opens a fixed number of worker gates, without sleeps or message-loop dispatch.
@@ -147,7 +147,7 @@ public:
         ++active;
         maximumActive = std::max(maximumActive, active);
         condition.notify_all();
-        condition.wait_for(lock, watchdog, [&] { return released > index; });
+        condition.wait_for(lock, WATCHDOG, [&] { return released > index; });
         calls[index].cancelled = cancelled();
         --active;
         ++finished;
@@ -155,7 +155,7 @@ public:
     }
 
 private:
-    static constexpr auto watchdog {std::chrono::milliseconds(500)};
+    static constexpr auto WATCHDOG {std::chrono::milliseconds(500)};
 
     std::condition_variable condition;
     mutable std::mutex mutex;
@@ -652,7 +652,7 @@ void PreviewEnrichmentTests::testMetadata(const juce::File& first)
         const auto database = directory.getChildFile("cache.db");
         {
             AnalysisCache cache(database);
-            for (const auto kind : serato::allTagKinds) {
+            for (const auto kind : serato::ALL_TAG_KINDS) {
                 const auto result = kind == serato::TagKind::analysis
                     ? serato::TagReadResult::present(serato::Analysis {.majorVersion = 2, .minorVersion = 5})
                     : serato::TagReadResult::missing(kind, serato::ReadStatus::absent);
@@ -704,7 +704,7 @@ void PreviewEnrichmentTests::testMetadata(const juce::File& first)
         expectEquals(reads, 1);
         expect(serato::loadPreviewData(cache, identity, {}, true, reader) == nullptr);
         expectEquals(reads, 1);
-        const auto cached = serato::getCachedTags(cache, identity, serato::allTagKinds);
+        const auto cached = serato::getCachedTags(cache, identity, serato::ALL_TAG_KINDS);
         expect(std::ranges::all_of(cached, [](const auto& result) { return result.has_value(); }));
     }
 }
@@ -754,7 +754,7 @@ void PreviewEnrichmentTests::testArtifacts(const juce::File& first)
         failed.readSucceeded = false;
         const auto artifacts = buildPreviewAudioArtifacts(failed, true, true);
         expect(!artifacts.waveform && !artifacts.spectrogram);
-        expectEquals(failed.reads, DecodeFailureTracker::maximumConsecutiveFailures);
+        expectEquals(failed.reads, DecodeFailureTracker::MAXIMUM_CONSECUTIVE_FAILURES);
         WaveformTestReader nonfinite;
         nonfinite.sample = std::numeric_limits<float>::quiet_NaN();
         const auto invalid = buildPreviewAudioArtifacts(nonfinite, true, true);
@@ -964,7 +964,7 @@ void PreviewEnrichmentTests::testWaveforms(const juce::File& first)
         WaveformTestReader reader;
         reader.readSucceeded = false;
         expect(!buildNativeWaveform(reader));
-        expectEquals(reader.reads, DecodeFailureTracker::maximumConsecutiveFailures);
+        expectEquals(reader.reads, DecodeFailureTracker::MAXIMUM_CONSECUTIVE_FAILURES);
     }
 
     beginTest("Obsolete filesystem identities never open or publish native waveforms");

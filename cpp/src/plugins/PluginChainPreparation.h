@@ -16,9 +16,9 @@
 namespace audiobatch::plugin_processing
 {
 /// Block size in samples the chain is prepared for and processed in.
-constexpr int processingBlockSize {1024};
+constexpr int PROCESSING_BLOCK_SIZE {1024};
 /// Per-plugin bound shared by offline rendering and live preview.
-constexpr double maximumTailSeconds {20.0};
+constexpr double MAXIMUM_TAIL_SECONDS {20.0};
 
 /// Values gathered while preparing a plugin chain for one file that rendering needs.
 struct ChainPreparation {

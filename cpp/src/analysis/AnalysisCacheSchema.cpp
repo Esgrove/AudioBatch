@@ -80,7 +80,7 @@ void AnalysisCache::closeUnlocked()
     utils::logDebug(
         "Closed analysis cache at {} in {:.3f} s",
         databasePath.quoted(),
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::MILLISECONDS_PER_SECOND
     );
 }
 
@@ -205,14 +205,14 @@ bool AnalysisCache::openUnlocked()
         utils::logError(
             "Failed to open analysis cache at {} in {:.3f} s",
             databasePath.quoted(),
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::MILLISECONDS_PER_SECOND
         );
         database.reset();
         return false;
     }
 
     utils::logDebug("Analysis cache startup: sqlite3_open_v2 returned successfully");
-    sqlite3_busy_timeout(database.get(), busyTimeoutMilliseconds);
+    sqlite3_busy_timeout(database.get(), BUSY_TIMEOUT_MILLISECONDS);
 
     // Any failure from here on closes the connection again,
     // so a later call retries the whole open instead of using a database with an incomplete schema.
@@ -336,7 +336,7 @@ bool AnalysisCache::openUnlocked()
         "Opened analysis cache at {} ({}) in {:.3f} s",
         databasePath.quoted(),
         databaseFound ? "existing" : "new",
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::MILLISECONDS_PER_SECOND
     );
 
     return true;

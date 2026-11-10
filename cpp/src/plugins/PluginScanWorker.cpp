@@ -15,7 +15,7 @@ namespace audiobatch
 namespace
 {
 /// Tag of the element that holds the plugin descriptions of a worker reply.
-constexpr auto resultsXmlTag {"PLUGINS"};
+constexpr auto RESULTS_XML_TAG {"PLUGINS"};
 }  // namespace
 
 /// Creates the worker with the plugin formats of the main process.
@@ -37,7 +37,7 @@ PluginScanWorker::~PluginScanWorker()
 /// Returns false for any other command line, in which case the worker does nothing.
 bool PluginScanWorker::initialiseFromCommandLine(const juce::String& commandLine)
 {
-    return ChildProcessWorker::initialiseFromCommandLine(commandLine, pluginScanWorkerProcessUid);
+    return ChildProcessWorker::initialiseFromCommandLine(commandLine, PLUGIN_SCAN_WORKER_PROCESS_UID);
 }
 
 /// Queues a scan request and schedules it on the message thread.
@@ -111,7 +111,7 @@ juce::OwnedArray<juce::PluginDescription> PluginScanWorker::scan(const juce::Mem
 /// Serializes the descriptions as XML and sends them to the main process.
 void PluginScanWorker::sendResults(const juce::OwnedArray<juce::PluginDescription>& results)
 {
-    juce::XmlElement xml(resultsXmlTag);
+    juce::XmlElement xml(RESULTS_XML_TAG);
 
     for (const auto* description : results) {
         xml.addChildElement(description->createXml().release());

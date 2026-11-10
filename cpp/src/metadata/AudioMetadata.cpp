@@ -49,7 +49,7 @@ namespace
 {
 /// ID3v2.3 frames that ID3v2.4 drops.
 /// TagLib folds TDAT and TIME into TDRC when reading and discards all of them when saving as ID3v2.4.
-constexpr std::array obsoleteId3v23Frames {"EQUA", "RVAD", "TDAT", "TIME", "TRDA", "TSIZ"};
+constexpr std::array OBSOLETE_ID3V23_FRAMES {"EQUA", "RVAD", "TDAT", "TIME", "TRDA", "TSIZ"};
 
 /// Returns a Serato tag name as a JUCE string.
 juce::String toJuce(const std::string_view name)
@@ -79,7 +79,7 @@ std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupp
     const auto isObsolete = [tag](const TagLib::ID3v2::Frame& frame) {
         return tag->get().header()->majorVersion() < 4
             && std::ranges::any_of(
-                   obsoleteId3v23Frames, [&frame](const char* frameId) { return frame.frameID() == frameId; }
+                   OBSOLETE_ID3V23_FRAMES, [&frame](const char* frameId) { return frame.frameID() == frameId; }
             );
     };
     std::vector<juce::MemoryBlock> frames;
@@ -212,12 +212,12 @@ bool writeId3Frames(TagLib::ID3v2::Tag& tag, const std::vector<juce::MemoryBlock
 /// Other Serato fields and unrelated custom frames are retained even when their payloads are unrecognized.
 void removeSeratoOverview(AudioMetadata& metadata)
 {
-    const auto property = toJuce(serato::overviewNames.property);
+    const auto property = toJuce(serato::OVERVIEW_NAMES.property);
     std::erase_if(metadata.properties, [&property](const MetadataProperty& metadataProperty) {
         return metadataProperty.key.equalsIgnoreCase(property);
     });
-    const TagLib::String frameDescription(std::string(serato::overviewNames.description));
-    const TagLib::String textDescription(std::string(serato::overviewNames.property));
+    const TagLib::String frameDescription(std::string(serato::OVERVIEW_NAMES.description));
+    const TagLib::String textDescription(std::string(serato::OVERVIEW_NAMES.property));
     std::erase_if(metadata.id3v2Frames, [&frameDescription, &textDescription](const juce::MemoryBlock& bytes) {
         const auto frame = restoreId3Frame(bytes);
         const auto* object = dynamic_cast<const TagLib::ID3v2::GeneralEncapsulatedObjectFrame*>(frame.get());
@@ -324,10 +324,10 @@ void appendSeratoFrames(AudioMetadata& metadata)
         // libc++ uses a pointer here, but MSVC uses an iterator class.
         // Convert to a pointer explicitly so auto* is portable and satisfies clang-tidy.
         const auto* const names
-            = std::to_address(std::ranges::find_if(serato::allTagNames, [&property](const auto& entry) {
+            = std::to_address(std::ranges::find_if(serato::ALL_TAG_NAMES, [&property](const auto& entry) {
                   return property.key.equalsIgnoreCase(toJuce(entry.property));
               }));
-        if (names == std::to_address(serato::allTagNames.end())) {
+        if (names == std::to_address(serato::ALL_TAG_NAMES.end())) {
             continue;
         }
         for (const auto& value : property.values) {

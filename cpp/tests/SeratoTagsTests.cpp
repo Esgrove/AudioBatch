@@ -23,12 +23,12 @@ namespace audiobatch::tests
 {
 namespace
 {
-constexpr std::array<std::uint8_t, 8> bigEndianBytes {0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
+constexpr std::array<std::uint8_t, 8> BIG_ENDIAN_BYTES {0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
 
 // The field width comes from the span type, so these only compile with exactly the right number of bytes.
-static_assert(serato::readBigEndian<std::uint32_t>(std::span(bigEndianBytes).first<4>()) == 0x1234'5678U);
-static_assert(serato::readBigEndian<std::uint32_t>(std::span(bigEndianBytes).last<4>()) == 0x9abc'def0U);
-static_assert(serato::readBigEndian<std::uint64_t>(std::span(bigEndianBytes)) == 0x1234'5678'9abc'def0ULL);
+static_assert(serato::readBigEndian<std::uint32_t>(std::span(BIG_ENDIAN_BYTES).first<4>()) == 0x1234'5678U);
+static_assert(serato::readBigEndian<std::uint32_t>(std::span(BIG_ENDIAN_BYTES).last<4>()) == 0x9abc'def0U);
+static_assert(serato::readBigEndian<std::uint64_t>(std::span(BIG_ENDIAN_BYTES)) == 0x1234'5678'9abc'def0ULL);
 
 /// Copies an output stream into unsigned parser input.
 std::vector<std::uint8_t> payloadBytes(const juce::MemoryOutputStream& stream)
@@ -225,7 +225,7 @@ void SeratoTagsTests::testRealLayouts()
             expect(!serato::parseTagPayload(kind, *unwrapped).value.has_value());
         }
     };
-    std::vector<std::uint8_t> overview(2 + serato::Overview::bandCount, 37);
+    std::vector<std::uint8_t> overview(2 + serato::Overview::BAND_COUNT, 37);
     overview[0] = 1;
     overview[1] = 5;
     checkNative(serato::TagKind::overview, overview);
@@ -287,9 +287,9 @@ void SeratoTagsTests::testRealLayouts()
 void SeratoTagsTests::testPayloads()
 {
     beginTest("Stable kind IDs, versions and analysis are independent of musical key");
-    for (std::size_t index = 0; index < serato::allTagKinds.size(); ++index) {
-        expectEquals(static_cast<int>(serato::allTagKinds[index]), static_cast<int>(index + 1));
-        expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), index == 0 ? 3 : 2);
+    for (std::size_t index = 0; index < serato::ALL_TAG_KINDS.size(); ++index) {
+        expectEquals(static_cast<int>(serato::ALL_TAG_KINDS[index]), static_cast<int>(index + 1));
+        expectEquals(static_cast<int>(serato::parserVersion(serato::ALL_TAG_KINDS[index])), index == 0 ? 3 : 2);
     }
     expect(!serato::supportsTagKind(std::bit_cast<serato::TagKind>(std::uint8_t {99})));
     const std::array<std::uint8_t, 2> analysis {2, 1};

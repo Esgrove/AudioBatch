@@ -32,11 +32,11 @@ namespace audiobatch::tests
 namespace
 {
 /// Sample rate of the generated files, which gives analysis blocks of 4410 frames.
-constexpr double generatedSampleRate {44'100.0};
+constexpr double GENERATED_SAMPLE_RATE {44'100.0};
 /// Source frames of one analysis block at the generated sample rate.
-constexpr int generatedBlockSize {4410};
+constexpr int GENERATED_BLOCK_SIZE {4410};
 /// The block size as a sample count, for history lengths.
-constexpr std::int64_t generatedBlockLength {generatedBlockSize};
+constexpr std::int64_t GENERATED_BLOCK_LENGTH {GENERATED_BLOCK_SIZE};
 
 /// Writes a 32-bit float WAV file whose samples the generator returns for each channel and frame.
 bool writeFloatWav(
@@ -57,7 +57,7 @@ bool writeFloatWav(
     const auto writer = format.createWriterFor(
         stream,
         juce::AudioFormatWriterOptions()
-            .withSampleRate(generatedSampleRate)
+            .withSampleRate(GENERATED_SAMPLE_RATE)
             .withNumChannels(channels)
             .withBitsPerSample(32)
             .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint)
@@ -87,7 +87,7 @@ void destroyReferenceMeter(ebur128_state* meter)
 /// Builds a history from per-block flags of a single channel.
 std::shared_ptr<const OverloadHistory> buildMono(const std::vector<std::uint8_t>& blocks, const std::int64_t length)
 {
-    OverloadHistoryBuilder builder(1, generatedSampleRate, length, generatedBlockSize);
+    OverloadHistoryBuilder builder(1, GENERATED_SAMPLE_RATE, length, GENERATED_BLOCK_SIZE);
     for (const auto flags : blocks) {
         builder.addBlock(std::array {flags});
     }
@@ -128,57 +128,57 @@ void OverloadHistoryTests::runBuilderTests()
 {
     beginTest("Each block becomes one bucket, including a final partial block");
     {
-        const auto history = buildMono({0, OverloadHistory::sampleOver, 0}, 2 * generatedBlockSize + 10);
+        const auto history = buildMono({0, OverloadHistory::SAMPLE_OVER, 0}, 2 * GENERATED_BLOCK_SIZE + 10);
         expectEquals(static_cast<int>(history->bucketCount()), 3);
-        expectEquals(history->samplesPerBucket, static_cast<std::int64_t>(generatedBlockSize));
-        expectEquals(static_cast<int>(history->flagsAt(1, 0)), static_cast<int>(OverloadHistory::sampleOver));
+        expectEquals(history->samplesPerBucket, static_cast<std::int64_t>(GENERATED_BLOCK_SIZE));
+        expectEquals(static_cast<int>(history->flagsAt(1, 0)), static_cast<int>(OverloadHistory::SAMPLE_OVER));
         expect(isValidOverloadHistory(*history));
         expectWithinAbsoluteError(
-            history->bucketEndTime(2), (2.0 * generatedBlockSize + 10.0) / generatedSampleRate, 0.0000001
+            history->bucketEndTime(2), (2.0 * GENERATED_BLOCK_SIZE + 10.0) / GENERATED_SAMPLE_RATE, 0.0000001
         );
     }
 
     beginTest("An all-clear history is valid and has no overloads");
     {
-        const auto history = buildMono({0, 0}, 2 * generatedBlockLength);
+        const auto history = buildMono({0, 0}, 2 * GENERATED_BLOCK_LENGTH);
         expect(isValidOverloadHistory(*history));
         expect(!history->hasOverloads());
     }
 
     beginTest("Long histories merge neighbouring buckets and keep isolated overloads");
     {
-        constexpr auto blocks = static_cast<std::int64_t>(OverloadHistory::maximumBuckets) * 3 + 5;
+        constexpr auto blocks = static_cast<std::int64_t>(OverloadHistory::MAXIMUM_BUCKETS) * 3 + 5;
         std::vector<std::uint8_t> flags(static_cast<std::size_t>(blocks), 0);
-        flags[1] = OverloadHistory::truePeakOver;
-        flags.back() = OverloadHistory::sampleOver;
-        const auto history = buildMono(flags, blocks * generatedBlockSize);
-        expect(history->bucketCount() <= OverloadHistory::maximumBuckets);
-        expectEquals(history->samplesPerBucket, 4 * generatedBlockLength);
-        expectEquals(static_cast<int>(history->flagsAt(0, 0)), static_cast<int>(OverloadHistory::truePeakOver));
+        flags[1] = OverloadHistory::TRUE_PEAK_OVER;
+        flags.back() = OverloadHistory::SAMPLE_OVER;
+        const auto history = buildMono(flags, blocks * GENERATED_BLOCK_SIZE);
+        expect(history->bucketCount() <= OverloadHistory::MAXIMUM_BUCKETS);
+        expectEquals(history->samplesPerBucket, 4 * GENERATED_BLOCK_LENGTH);
+        expectEquals(static_cast<int>(history->flagsAt(0, 0)), static_cast<int>(OverloadHistory::TRUE_PEAK_OVER));
         expectEquals(
             static_cast<int>(history->flagsAt(history->bucketCount() - 1, 0)),
-            static_cast<int>(OverloadHistory::sampleOver)
+            static_cast<int>(OverloadHistory::SAMPLE_OVER)
         );
         expect(isValidOverloadHistory(*history));
     }
 
     beginTest("Exactly the maximum number of blocks needs no merging");
     {
-        const std::vector<std::uint8_t> flags(OverloadHistory::maximumBuckets, 0);
+        const std::vector<std::uint8_t> flags(OverloadHistory::MAXIMUM_BUCKETS, 0);
         const auto history
-            = buildMono(flags, static_cast<std::int64_t>(OverloadHistory::maximumBuckets) * generatedBlockSize);
-        expectEquals(history->bucketCount(), OverloadHistory::maximumBuckets);
-        expectEquals(history->samplesPerBucket, static_cast<std::int64_t>(generatedBlockSize));
+            = buildMono(flags, static_cast<std::int64_t>(OverloadHistory::MAXIMUM_BUCKETS) * GENERATED_BLOCK_SIZE);
+        expectEquals(history->bucketCount(), OverloadHistory::MAXIMUM_BUCKETS);
+        expectEquals(history->samplesPerBucket, static_cast<std::int64_t>(GENERATED_BLOCK_SIZE));
         expect(isValidOverloadHistory(*history));
     }
 
     beginTest("Stereo flags stay in their own channel");
     {
-        OverloadHistoryBuilder builder(2, generatedSampleRate, generatedBlockSize, generatedBlockSize);
-        builder.addBlock(std::array<std::uint8_t, 2> {0, OverloadHistory::sampleOver});
+        OverloadHistoryBuilder builder(2, GENERATED_SAMPLE_RATE, GENERATED_BLOCK_SIZE, GENERATED_BLOCK_SIZE);
+        builder.addBlock(std::array<std::uint8_t, 2> {0, OverloadHistory::SAMPLE_OVER});
         const auto history = builder.finish();
         expectEquals(static_cast<int>(history->flagsAt(0, 0)), 0);
-        expectEquals(static_cast<int>(history->flagsAt(0, 1)), static_cast<int>(OverloadHistory::sampleOver));
+        expectEquals(static_cast<int>(history->flagsAt(0, 1)), static_cast<int>(OverloadHistory::SAMPLE_OVER));
     }
 }
 
@@ -186,7 +186,7 @@ void OverloadHistoryTests::runBuilderTests()
 void OverloadHistoryTests::runBlobTests()
 {
     const auto history
-        = buildMono({OverloadHistory::sampleOver, 0, OverloadHistory::allFlags}, 3 * generatedBlockLength);
+        = buildMono({OverloadHistory::SAMPLE_OVER, 0, OverloadHistory::ALL_FLAGS}, 3 * GENERATED_BLOCK_LENGTH);
 
     beginTest("An overload history blob round trips");
     {
@@ -250,16 +250,16 @@ void OverloadHistoryTests::runProjectionTests()
 {
     constexpr auto blocks = 1000;
     std::vector<std::uint8_t> flags(blocks, 0);
-    flags[500] = OverloadHistory::sampleOver;
-    flags[700] = OverloadHistory::truePeakOver;
-    const auto history = buildMono(flags, static_cast<std::int64_t>(blocks) * generatedBlockSize);
-    const auto duration = static_cast<double>(blocks) * generatedBlockSize / generatedSampleRate;
+    flags[500] = OverloadHistory::SAMPLE_OVER;
+    flags[700] = OverloadHistory::TRUE_PEAK_OVER;
+    const auto history = buildMono(flags, static_cast<std::int64_t>(blocks) * GENERATED_BLOCK_SIZE);
+    const auto duration = static_cast<double>(blocks) * GENERATED_BLOCK_SIZE / GENERATED_SAMPLE_RATE;
 
     beginTest("A subpixel overload still marks its column when zoomed out");
     {
         const auto columns = projectOverloadColumns(*history, 0, {0.0, duration}, 100);
-        expectEquals(static_cast<int>(columns[50]), static_cast<int>(OverloadHistory::sampleOver));
-        expect((columns[70] & OverloadHistory::truePeakOver) != 0);
+        expectEquals(static_cast<int>(columns[50]), static_cast<int>(OverloadHistory::SAMPLE_OVER));
+        expect((columns[70] & OverloadHistory::TRUE_PEAK_OVER) != 0);
         int marked = 0;
         for (const auto value : columns) {
             marked += value != 0 ? 1 : 0;
@@ -269,19 +269,19 @@ void OverloadHistoryTests::runProjectionTests()
 
     beginTest("A sample over keeps its exact bucket while a true peak over also covers the filter delay");
     {
-        const auto bucketSeconds = generatedBlockSize / generatedSampleRate;
+        const auto bucketSeconds = GENERATED_BLOCK_SIZE / GENERATED_SAMPLE_RATE;
         const auto sampleStart = 500 * bucketSeconds;
         const auto columns
             = projectOverloadColumns(*history, 0, {sampleStart - bucketSeconds, sampleStart + 2 * bucketSeconds}, 3);
         expectEquals(static_cast<int>(columns[0]), 0);
-        expectEquals(static_cast<int>(columns[1]), static_cast<int>(OverloadHistory::sampleOver));
+        expectEquals(static_cast<int>(columns[1]), static_cast<int>(OverloadHistory::SAMPLE_OVER));
         expectEquals(static_cast<int>(columns[2]), 0);
 
         const auto peakStart = 700 * bucketSeconds;
         const auto peakColumns
             = projectOverloadColumns(*history, 0, {peakStart - bucketSeconds, peakStart + 2 * bucketSeconds}, 3);
-        expectEquals(static_cast<int>(peakColumns[0]), static_cast<int>(OverloadHistory::truePeakOver));
-        expectEquals(static_cast<int>(peakColumns[1]), static_cast<int>(OverloadHistory::truePeakOver));
+        expectEquals(static_cast<int>(peakColumns[0]), static_cast<int>(OverloadHistory::TRUE_PEAK_OVER));
+        expectEquals(static_cast<int>(peakColumns[1]), static_cast<int>(OverloadHistory::TRUE_PEAK_OVER));
         expectEquals(static_cast<int>(peakColumns[2]), 0);
     }
 
@@ -304,20 +304,20 @@ void OverloadHistoryTests::runAnalysisTests()
     beginTest("Samples above full scale are sample overs per channel, and samples exactly at full scale are not");
     {
         // Four full blocks and a partial one, with spikes in the middle of their blocks.
-        constexpr int frames = 4 * generatedBlockSize + 100;
-        constexpr int middle = generatedBlockSize / 2;
+        constexpr int frames = 4 * GENERATED_BLOCK_SIZE + 100;
+        constexpr int middle = GENERATED_BLOCK_SIZE / 2;
         const auto file = directory.getChildFile("overs.wav");
         expect(writeFloatWav(file, 2, frames, [](const int channel, const int frame) {
-            if (channel == 0 && frame == generatedBlockSize + middle) {
+            if (channel == 0 && frame == GENERATED_BLOCK_SIZE + middle) {
                 return 1.0f;
             }
-            if (channel == 0 && frame == generatedBlockSize + middle + 10) {
+            if (channel == 0 && frame == GENERATED_BLOCK_SIZE + middle + 10) {
                 return -1.0f;
             }
-            if (channel == 1 && frame == 2 * generatedBlockSize + middle) {
+            if (channel == 1 && frame == 2 * GENERATED_BLOCK_SIZE + middle) {
                 return 1.25f;
             }
-            if (channel == 0 && frame == 3 * generatedBlockSize + middle) {
+            if (channel == 0 && frame == 3 * GENERATED_BLOCK_SIZE + middle) {
                 return -1.5f;
             }
             return 0.0f;
@@ -330,14 +330,14 @@ void OverloadHistoryTests::runAnalysisTests()
             expectEquals(static_cast<int>(history.bucketCount()), 5);
             expectEquals(history.channelCount, 2);
             const auto sampleOver = [&history](const std::size_t bucket, const int channel) {
-                return (history.flagsAt(bucket, channel) & OverloadHistory::sampleOver) != 0;
+                return (history.flagsAt(bucket, channel) & OverloadHistory::SAMPLE_OVER) != 0;
             };
             expect(!sampleOver(0, 0) && !sampleOver(0, 1));
             expect(!sampleOver(1, 0), "exactly full scale");
             expect(!sampleOver(2, 0) && sampleOver(2, 1));
             expect(sampleOver(3, 0) && !sampleOver(3, 1));
             expect(!sampleOver(4, 0) && !sampleOver(4, 1));
-            expect((history.flagsAt(2, 1) & OverloadHistory::truePeakOver) != 0);
+            expect((history.flagsAt(2, 1) & OverloadHistory::TRUE_PEAK_OVER) != 0);
             expect(overloadHistoryMatches(history, record));
         }
         expectWithinAbsoluteError(record.overallPeak, -1.5f, 0.0001f);
@@ -346,7 +346,7 @@ void OverloadHistoryTests::runAnalysisTests()
     beginTest("A true peak above full scale between samples below it is a true peak over only");
     {
         // A quarter sample rate sine sampled 45 degrees from its peaks reaches 1.2 between samples of 0.85.
-        constexpr int frames = 2 * generatedBlockSize;
+        constexpr int frames = 2 * GENERATED_BLOCK_SIZE;
         const auto file = directory.getChildFile("intersample.wav");
         expect(writeFloatWav(file, 1, frames, [](int, const int frame) {
             const auto phase = std::numbers::pi / 2.0 * frame + std::numbers::pi / 4.0;
@@ -359,7 +359,7 @@ void OverloadHistoryTests::runAnalysisTests()
             for (std::size_t bucket = 0; bucket < record.overloads->bucketCount(); ++bucket) {
                 expectEquals(
                     static_cast<int>(record.overloads->flagsAt(bucket, 0)),
-                    static_cast<int>(OverloadHistory::truePeakOver)
+                    static_cast<int>(OverloadHistory::TRUE_PEAK_OVER)
                 );
             }
         }
@@ -383,9 +383,9 @@ void OverloadHistoryTests::runBoundaryTests()
 {
     beginTest("True-peak interpolation crosses analysis blocks and EOF retains only the existing source coverage");
     const TemporaryDirectory directory;
-    constexpr int frames = generatedBlockSize + 32;
+    constexpr int frames = GENERATED_BLOCK_SIZE + 32;
     const auto sample = [](const int frame) {
-        if (frame >= generatedBlockSize - 4 && frame < generatedBlockSize) {
+        if (frame >= GENERATED_BLOCK_SIZE - 4 && frame < GENERATED_BLOCK_SIZE) {
             return frame % 4 < 2 ? 0.85f : -0.85f;
         }
         return frame == frames - 1 ? 0.99f : 0.0f;
@@ -395,7 +395,8 @@ void OverloadHistoryTests::runBoundaryTests()
     const auto record = analyzeFile(file);
     expect(!record.hasError(), record.errorMessage);
     const std::unique_ptr<ebur128_state, decltype(&destroyReferenceMeter)> meter(
-        ebur128_init(1, static_cast<unsigned long>(generatedSampleRate), EBUR128_MODE_TRUE_PEAK), destroyReferenceMeter
+        ebur128_init(1, static_cast<unsigned long>(GENERATED_SAMPLE_RATE), EBUR128_MODE_TRUE_PEAK),
+        destroyReferenceMeter
     );
     expect(meter != nullptr);
     expect(record.overloads != nullptr);
@@ -407,19 +408,19 @@ void OverloadHistoryTests::runBoundaryTests()
         samples[static_cast<std::size_t>(frame)] = sample(frame);
     }
     for (std::size_t bucket = 0; bucket < 2; ++bucket) {
-        const auto offset = bucket * static_cast<std::size_t>(generatedBlockSize);
+        const auto offset = bucket * static_cast<std::size_t>(GENERATED_BLOCK_SIZE);
         const auto block = std::span(samples).subspan(offset).first(
-            std::min(samples.size() - offset, static_cast<std::size_t>(generatedBlockSize))
+            std::min(samples.size() - offset, static_cast<std::size_t>(GENERATED_BLOCK_SIZE))
         );
         expectEquals(
             ebur128_add_frames_float(meter.get(), block.data(), block.size()), static_cast<int>(EBUR128_SUCCESS)
         );
         double peak = 0.0;
         expectEquals(ebur128_prev_true_peak(meter.get(), 0, &peak), static_cast<int>(EBUR128_SUCCESS));
-        const auto expected = peak > 1.0 ? OverloadHistory::truePeakOver : 0;
+        const auto expected = peak > 1.0 ? OverloadHistory::TRUE_PEAK_OVER : 0;
         expectEquals(static_cast<int>(record.overloads->flagsAt(bucket, 0)), static_cast<int>(expected));
     }
-    expect((record.overloads->flagsAt(1, 0) & OverloadHistory::truePeakOver) != 0);
+    expect((record.overloads->flagsAt(1, 0) & OverloadHistory::TRUE_PEAK_OVER) != 0);
     expectEquals(record.overloads->lengthInSamples, static_cast<std::int64_t>(frames));
     double unflushedPeak = 0.0;
     expectEquals(ebur128_true_peak(meter.get(), 0, &unflushedPeak), static_cast<int>(EBUR128_SUCCESS));
@@ -432,8 +433,8 @@ void OverloadHistoryTests::runCacheTests()
     const TemporaryDirectory directory;
     const auto databaseFile = directory.getChildFile("overloads.db");
     const auto file = directory.getChildFile("cached_overs.wav");
-    expect(writeFloatWav(file, 2, 3 * generatedBlockSize, [](const int channel, const int frame) {
-        return channel == 1 && frame == generatedBlockSize + 7 ? 2.0f : 0.0f;
+    expect(writeFloatWav(file, 2, 3 * GENERATED_BLOCK_SIZE, [](const int channel, const int frame) {
+        return channel == 1 && frame == GENERATED_BLOCK_SIZE + 7 ? 2.0f : 0.0f;
     }));
     const auto record = analyzeFile(file);
     expect(record.overloads && record.overloads->hasOverloads());

@@ -119,17 +119,17 @@ void ThumbnailComponent::setSpectrogramData(std::shared_ptr<const SpectrogramDat
     spectrogramData = std::move(data);
     spectrogramRaster = {};
     if (spectrogramData) {
-        static const auto palette = makeSpectrogramPalette();
+        static const auto PALETTE = makeSpectrogramPalette();
         const auto& source = *spectrogramData;
         const auto columns = static_cast<int>(source.columnCount());
-        spectrogramRaster = juce::Image(juce::Image::RGB, columns, SpectrogramData::frequencyRows, false);
+        spectrogramRaster = juce::Image(juce::Image::RGB, columns, SpectrogramData::FREQUENCY_ROWS, false);
         const juce::Image::BitmapData pixels(spectrogramRaster, juce::Image::BitmapData::writeOnly);
         for (int column = 0; column < columns; ++column) {
-            for (int row = 0; row < SpectrogramData::frequencyRows; ++row) {
-                const auto index
-                    = static_cast<std::size_t>(column) * SpectrogramData::frequencyRows + static_cast<std::size_t>(row);
+            for (int row = 0; row < SpectrogramData::FREQUENCY_ROWS; ++row) {
+                const auto index = static_cast<std::size_t>(column) * SpectrogramData::FREQUENCY_ROWS
+                    + static_cast<std::size_t>(row);
                 pixels.setPixelColour(
-                    column, SpectrogramData::frequencyRows - 1 - row, palette[source.intensities[index]]
+                    column, SpectrogramData::FREQUENCY_ROWS - 1 - row, PALETTE[source.intensities[index]]
                 );
             }
         }
@@ -146,8 +146,8 @@ void ThumbnailComponent::drawSpectrogram(juce::Graphics& graphics, const juce::R
     graphics.setColour(juce::Colour(SPECTROGRAM_PALETTE.front()));
     graphics.fillRect(bounds);
     if (!spectrogramData || !spectrogramRaster.isValid() || visibleRange.getLength() <= 0.0) {
-        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::spectrogramPlaceholderAlpha));
-        graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::placeholderFontHeight));
+        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::SPECTROGRAM_PLACEHOLDER_ALPHA));
+        graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::PLACEHOLDER_FONT_HEIGHT));
         graphics.drawFittedText(
             spectrogramCompleted ? "Spectrogram unavailable" : "Computing spectrogram…",
             bounds,
@@ -197,9 +197,9 @@ void ThumbnailComponent::drawFrequencyAxis(juce::Graphics& graphics, const Previ
     const auto maximumMel = frequencyToMel(std::max(nyquist, PREVIEW_FREQUENCIES.back()));
     const auto plot = geometry.spectrogram;
     const auto gutter = geometry.frequencyAxis;
-    const auto labelHeight = juce::roundToInt(layout::waveform::loudnessFontHeight);
+    const auto labelHeight = juce::roundToInt(layout::waveform::LOUDNESS_FONT_HEIGHT);
     std::vector<juce::Range<int>> occupied;
-    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
+    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::LOUDNESS_FONT_HEIGHT));
     for (const auto frequency : PREVIEW_FREQUENCIES) {
         const auto vertical = static_cast<float>(plot.getBottom())
             - static_cast<float>(frequencyToMel(frequency) / maximumMel) * static_cast<float>(plot.getHeight());
@@ -208,7 +208,7 @@ void ThumbnailComponent::drawFrequencyAxis(juce::Graphics& graphics, const Previ
             gutter.getY(),
             std::max(gutter.getY(), gutter.getBottom() - labelHeight)
         );
-        const juce::Range<int> band(top, top + layout::waveform::frequencyTickSpacing);
+        const juce::Range<int> band(top, top + layout::waveform::FREQUENCY_TICK_SPACING);
         if (std::ranges::any_of(occupied, [&](const auto other) { return other.intersects(band); })) {
             continue;
         }
@@ -220,13 +220,13 @@ void ThumbnailComponent::drawFrequencyAxis(juce::Graphics& graphics, const Previ
                                                          .trimCharactersAtEnd(".")
                                                  )
                                                : utils::format("{:.0f}", frequency);
-        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::frequencyLabelAlpha));
+        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::FREQUENCY_LABEL_ALPHA));
         graphics.drawText(
             label,
             gutter.withY(top).withHeight(labelHeight),
             gutter.getX() >= plot.getRight() ? juce::Justification::centredLeft : juce::Justification::centredRight
         );
-        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::frequencyGridAlpha));
+        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::FREQUENCY_GRID_ALPHA));
         graphics.drawHorizontalLine(
             juce::roundToInt(vertical), static_cast<float>(plot.getX()), static_cast<float>(plot.getRight())
         );
@@ -237,19 +237,19 @@ void ThumbnailComponent::drawFrequencyAxis(juce::Graphics& graphics, const Previ
 /// Without the loudness grid, subtle reference lines follow signed amplitude rather than clamped caption centres.
 void ThumbnailComponent::drawWaveformAxis(juce::Graphics& graphics, const PreviewPlotGeometry& geometry) const
 {
-    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
-    graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::frequencyLabelAlpha));
+    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::LOUDNESS_FONT_HEIGHT));
+    graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::FREQUENCY_LABEL_ALPHA));
     const auto justification = geometry.amplitudeAxis.getX() >= geometry.waveform.getRight()
         ? juce::Justification::centredLeft
         : juce::Justification::centredRight;
     for (const auto& label : previewAmplitudeLabels(geometry, sourceChannels)) {
         const auto text = utils::format("{:.0f}", label.decibels);
-        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::frequencyLabelAlpha));
+        graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::FREQUENCY_LABEL_ALPHA));
         graphics.drawText(text, label.bounds, justification);
         if (!loudnessGraphEnabled) {
             const juce::Graphics::ScopedSaveState savedState(graphics);
             graphics.reduceClipRegion(geometry.waveform);
-            graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::amplitudeGridAlpha));
+            graphics.setColour(juce::Colours::white.withAlpha(layout::waveform::AMPLITUDE_GRID_ALPHA));
             graphics.drawHorizontalLine(
                 juce::roundToInt(label.vertical),
                 static_cast<float>(geometry.waveform.getX()),
@@ -276,15 +276,16 @@ std::vector<CueArrows> ThumbnailComponent::getCueArrows(const juce::Rectangle<in
     if (!seratoMarkers || bounds.isEmpty() || visibleRange.getLength() <= 0.0) {
         return {};
     }
-    const auto arrowHeight = std::min(layout::waveform::cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
+    const auto arrowHeight
+        = std::min(layout::waveform::CUE_ARROW_HEIGHT, static_cast<float>(bounds.getHeight()) / 4.0f);
     const auto halfWidth = std::min(
-                               layout::waveform::cueArrowWidth,
-                               arrowHeight * layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight
+                               layout::waveform::CUE_ARROW_WIDTH,
+                               arrowHeight * layout::waveform::CUE_ARROW_WIDTH / layout::waveform::CUE_ARROW_HEIGHT
                            )
         * 0.5f;
     std::vector<CueArrows> arrows;
     for (const auto& cue : seratoMarkers->cues) {
-        const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::millisecondsPerSecond;
+        const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::MILLISECONDS_PER_SECOND;
         if (seconds > sourceDuration() || seconds < visibleRange.getStart() || seconds > visibleRange.getEnd()) {
             continue;
         }
@@ -335,7 +336,7 @@ void ThumbnailComponent::drawPlayheads(juce::Graphics& graphics) const
         );
     }
     if (transportSource.isPlaying() || scrubbing) {
-        drawPositionMarker(graphics, playheadTime, juce::Colours::white.withAlpha(layout::waveform::playheadAlpha));
+        drawPositionMarker(graphics, playheadTime, juce::Colours::white.withAlpha(layout::waveform::PLAYHEAD_ALPHA));
     }
 }
 
@@ -353,9 +354,9 @@ void ThumbnailComponent::drawPositionMarker(
         graphics.reduceClipRegion(plot);
         const auto horizontal = previewTimeToX(time, visibleRange, plot);
         graphics.fillRect(
-            horizontal - layout::waveform::positionMarkerWidth * 0.5f,
+            horizontal - layout::waveform::POSITION_MARKER_WIDTH * 0.5f,
             static_cast<float>(plot.getY()),
-            layout::waveform::positionMarkerWidth,
+            layout::waveform::POSITION_MARKER_WIDTH,
             static_cast<float>(plot.getHeight())
         );
     }
@@ -384,9 +385,9 @@ void ThumbnailComponent::updateCursorPosition()
             }
             const auto horizontal = previewTimeToX(time.value_or(playheadTime), visibleRange, plot);
             const auto marker = juce::Rectangle<float>(
-                                    horizontal - layout::waveform::positionMarkerWidth * 0.5f,
+                                    horizontal - layout::waveform::POSITION_MARKER_WIDTH * 0.5f,
                                     static_cast<float>(plot.getY()),
-                                    layout::waveform::positionMarkerWidth,
+                                    layout::waveform::POSITION_MARKER_WIDTH,
                                     static_cast<float>(plot.getHeight())
             )
                                     .getSmallestIntegerContainer()

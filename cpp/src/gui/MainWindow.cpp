@@ -27,7 +27,7 @@ namespace
 {
 /// First id of the plugin chain presets submenu, which uses the ids from it upwards.
 /// It sits above the command ids and far below the Add Plugin submenu ids of juce::KnownPluginList.
-constexpr int presetsMenuFirstItemId {1000};
+constexpr int PRESETS_MENU_FIRST_ITEM_ID {1000};
 
 /// Menu bar items that menuItemSelected runs directly.
 /// Their ids stay below the command ids, and both stay far below the Add Plugin submenu ids of juce::KnownPluginList.
@@ -89,9 +89,9 @@ constexpr std::array PREVIEW_VIEW_COMMANDS {
 };
 
 /// First of the contiguous command ids.
-constexpr CommandId firstCommand {CommandId::rescan};
+constexpr CommandId FIRST_COMMAND {CommandId::rescan};
 /// Last of the contiguous command ids, which new commands replace.
-constexpr CommandId lastCommand {CommandId::stopPlayback};
+constexpr CommandId LAST_COMMAND {CommandId::stopPlayback};
 
 /// Disjoint submenu ranges below the plugin library's generated ids.
 constexpr int COLUMNS_MENU_FIRST_ID {2000};
@@ -107,7 +107,7 @@ constexpr std::optional<MenuItemId> menuItemFromId(const int menuItemID) noexcep
 /// Returns the command for a JUCE command id, or nullopt for an id this window does not register.
 constexpr std::optional<CommandId> commandFromId(const juce::CommandID commandID) noexcept
 {
-    return utils::enumFromId<CommandId, firstCommand, lastCommand>(commandID);
+    return utils::enumFromId<CommandId, FIRST_COMMAND, LAST_COMMAND>(commandID);
 }
 
 /// Adds a menu bar item that menuItemSelected runs.
@@ -148,7 +148,7 @@ MainWindow::MainWindow(const juce::String& name) :
 #if JUCE_WINDOWS
     setUsingNativeTitleBar(false);
     setTitleBarTextCentred(false);
-    setTitleBarHeight(layout::titleBarHeight);
+    setTitleBarHeight(layout::TITLE_BAR_HEIGHT);
 #else
     setUsingNativeTitleBar(true);
 #endif
@@ -172,18 +172,21 @@ MainWindow::MainWindow(const juce::String& name) :
     juce::MenuBarModel::setMacMainMenu(this);
 #endif
 #else
-    setMenuBar(this, layout::inWindowMenuBarHeight);
+    setMenuBar(this, layout::IN_WINDOW_MENU_BAR_HEIGHT);
 #endif
     logStartupCheckpoint("menu bar configured");
 
     setResizable(true, true);
     setResizeLimits(
-        layout::minimumWindowWidth, layout::minimumWindowHeight, layout::maximumWindowSize, layout::maximumWindowSize
+        layout::MINIMUM_WINDOW_WIDTH,
+        layout::MINIMUM_WINDOW_HEIGHT,
+        layout::MAXIMUM_WINDOW_SIZE,
+        layout::MAXIMUM_WINDOW_SIZE
     );
     if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) {
         setBounds(layout::initialWindowBounds(display->userBounds.toNearestInt()));
     } else {
-        centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
+        centreWithSize(layout::DEFAULT_WINDOW_WIDTH, layout::DEFAULT_WINDOW_HEIGHT);
     }
     content->fitPreviewToControls();
     logStartupCheckpoint("constructor complete");
@@ -303,8 +306,8 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         getAudioBatch().handleOutputDeviceMenuItem(menuItemID, OUTPUT_MENU_FIRST_ID);
         return;
     }
-    if (std::cmp_greater_equal(menuItemID, std::to_underlying(firstCommand))
-        && std::cmp_less_equal(menuItemID, std::to_underlying(lastCommand)))
+    if (std::cmp_greater_equal(menuItemID, std::to_underlying(FIRST_COMMAND))
+        && std::cmp_less_equal(menuItemID, std::to_underlying(LAST_COMMAND)))
     {
         return;
     }
@@ -356,8 +359,8 @@ juce::ApplicationCommandTarget* MainWindow::getNextCommandTarget()
 /// Lists the commands that appear in the menu bar with a keyboard shortcut.
 void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
 {
-    constexpr juce::CommandID lastCommandID {std::to_underlying(lastCommand)};
-    for (juce::CommandID commandID = std::to_underlying(firstCommand); commandID <= lastCommandID; ++commandID) {
+    constexpr juce::CommandID lastCommandId {std::to_underlying(LAST_COMMAND)};
+    for (juce::CommandID commandID = std::to_underlying(FIRST_COMMAND); commandID <= lastCommandId; ++commandID) {
         commands.add(commandID);
     }
 }
@@ -823,7 +826,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
         summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
     );
     addCommandItem(menu, commandManager, CommandId::editChain);
-    menu.addSubMenu("Chain Presets", chain.createPresetsMenu(presetsMenuFirstItemId));
+    menu.addSubMenu("Chain Presets", chain.createPresetsMenu(PRESETS_MENU_FIRST_ITEM_ID));
     menu.addSeparator();
 
     chain.getLibrary().reload();
@@ -853,7 +856,7 @@ void MainWindow::handlePluginChoiceMenuItem(const int menuItemID) const
     auto& chain = getAudioBatch().getLiveChain();
     const auto index = juce::KnownPluginList::getIndexChosenByMenu(pluginMenuTypes, menuItemID);
     if (index < 0 || index >= pluginMenuTypes.size()) {
-        chain.handlePresetsMenuItem(menuItemID, presetsMenuFirstItemId);
+        chain.handlePresetsMenuItem(menuItemID, PRESETS_MENU_FIRST_ITEM_ID);
         return;
     }
 

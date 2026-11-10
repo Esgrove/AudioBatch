@@ -75,7 +75,7 @@ public:
         if (failedBlockPosition < 0) {
             failedBlockPosition = samplePosition;
         }
-        if (consecutiveFailures >= maximumConsecutiveFailures) {
+        if (consecutiveFailures >= MAXIMUM_CONSECUTIVE_FAILURES) {
             stoppedAt = samplePosition;
             return false;
         }
@@ -83,7 +83,7 @@ public:
     }
 
     /// Number of consecutive failed blocks, outside the final block, after which decoding stops.
-    static constexpr int maximumConsecutiveFailures {3};
+    static constexpr int MAXIMUM_CONSECUTIVE_FAILURES {3};
 
 private:
     /// Position of the first failed block before the final block, or -1 when there was none.

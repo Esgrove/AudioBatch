@@ -97,8 +97,8 @@ int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord
 /// Three-way loudness comparison that sorts negative-infinity readings below every measurable value.
 int compareLoudness(const double left, const double right)
 {
-    const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
-    const auto rightIsNegativeInfinity = right <= AudioAnalysisRecord::negativeInfinityLoudness;
+    const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
+    const auto rightIsNegativeInfinity = right <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
 
     if (leftIsNegativeInfinity && rightIsNegativeInfinity) {
         return 0;

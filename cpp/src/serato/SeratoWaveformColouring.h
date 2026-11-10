@@ -31,7 +31,7 @@ struct ColouredThumbnailImage {
 };
 
 /// Bounds gradient storage independently of tag size and offscreen slice count.
-inline constexpr int maxWaveformGradientStops {4096};
+inline constexpr int MAX_WAVEFORM_GRADIENT_STOPS {4096};
 
 [[nodiscard]] ColouredThumbnailImage renderColouredThumbnail(
     const juce::Graphics& graphics,
@@ -42,7 +42,7 @@ inline constexpr int maxWaveformGradientStops {4096};
     const juce::ColourGradient& gradient
 );
 [[nodiscard]] juce::Colour colourForOverviewSlice(
-    const std::array<std::uint8_t, Overview::bandCount>& cells,
+    const std::array<std::uint8_t, Overview::BAND_COUNT>& cells,
     juce::Colour fallback
 );
 

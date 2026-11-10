@@ -19,27 +19,27 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::array<std::uint8_t, 4> cacheMagic {'S', 'O', 'V', 'R'};
-constexpr std::array<std::uint8_t, 2> payloadHeader {0x01, 0x05};
-constexpr std::size_t cacheHeaderBytes {16};
+constexpr std::array<std::uint8_t, 4> CACHE_MAGIC {'S', 'O', 'V', 'R'};
+constexpr std::array<std::uint8_t, 2> PAYLOAD_HEADER {0x01, 0x05};
+constexpr std::size_t CACHE_HEADER_BYTES {16};
 /// Raster layout is independent of the parser-result revision used by the tag cache.
-constexpr std::uint32_t cacheFormatVersion {2};
-constexpr std::size_t kindOffset {4};
-constexpr std::size_t versionOffset {8};
-constexpr std::size_t countOffset {12};
-constexpr std::size_t fieldBytes {sizeof(std::uint32_t)};
+constexpr std::uint32_t CACHE_FORMAT_VERSION {2};
+constexpr std::size_t KIND_OFFSET {4};
+constexpr std::size_t VERSION_OFFSET {8};
+constexpr std::size_t COUNT_OFFSET {12};
+constexpr std::size_t FIELD_BYTES {sizeof(std::uint32_t)};
 
 /// Reads the four-byte big-endian header field at the given offset.
 template<std::size_t Offset>
 std::uint32_t readHeaderField(const std::span<const std::uint8_t> bytes)
 {
-    return readBigEndian<std::uint32_t>(bytes.subspan<Offset, fieldBytes>());
+    return readBigEndian<std::uint32_t>(bytes.subspan<Offset, FIELD_BYTES>());
 }
 
 /// Writes a four-byte big-endian field to an already allocated cache header.
 void writeBigEndian(std::span<std::uint8_t> output, const std::uint32_t value)
 {
-    const auto bytes = std::bit_cast<std::array<std::uint8_t, fieldBytes>>(juce::ByteOrder::swapIfLittleEndian(value));
+    const auto bytes = std::bit_cast<std::array<std::uint8_t, FIELD_BYTES>>(juce::ByteOrder::swapIfLittleEndian(value));
     std::ranges::copy(bytes, output.begin());
 }
 
@@ -47,10 +47,10 @@ void writeBigEndian(std::span<std::uint8_t> output, const std::uint32_t value)
 Overview copySlices(const std::span<const std::uint8_t> bands)
 {
     Overview overview;
-    overview.slices.resize(bands.size() / Overview::bandCount);
+    overview.slices.resize(bands.size() / Overview::BAND_COUNT);
     for (std::size_t index = 0; index < overview.slices.size(); ++index) {
         std::ranges::copy(
-            bands.subspan(index * Overview::bandCount, Overview::bandCount), overview.slices[index].begin()
+            bands.subspan(index * Overview::BAND_COUNT, Overview::BAND_COUNT), overview.slices[index].begin()
         );
     }
     return overview;
@@ -73,30 +73,30 @@ Overview copySlices(const std::span<const std::uint8_t> bands)
 /// The returned slices own their data independently of the input buffer.
 std::optional<Overview> Overview::parse(const std::span<const std::uint8_t> bytes)
 {
-    if (bytes.size() < payloadHeader.size() + bandCount || bytes.size() > maxPayloadBytes
-        || !std::ranges::equal(bytes.first(payloadHeader.size()), payloadHeader)
-        || (bytes.size() - payloadHeader.size()) % bandCount != 0)
+    if (bytes.size() < PAYLOAD_HEADER.size() + BAND_COUNT || bytes.size() > MAX_PAYLOAD_BYTES
+        || !std::ranges::equal(bytes.first(PAYLOAD_HEADER.size()), PAYLOAD_HEADER)
+        || (bytes.size() - PAYLOAD_HEADER.size()) % BAND_COUNT != 0)
     {
         return std::nullopt;
     }
-    return copySlices(bytes.subspan(payloadHeader.size()));
+    return copySlices(bytes.subspan(PAYLOAD_HEADER.size()));
 }
 
 /// Encodes magic, kind, raster format version and count as big-endian fields followed by raw palette indices.
 /// Returns an empty block when the public slice vector is empty or exceeds maxSlices.
 juce::MemoryBlock Overview::serialize() const
 {
-    if (slices.empty() || slices.size() > maxSlices) {
+    if (slices.empty() || slices.size() > MAX_SLICES) {
         return {};
     }
-    juce::MemoryBlock output(cacheHeaderBytes + slices.size() * bandCount);
+    juce::MemoryBlock output(CACHE_HEADER_BYTES + slices.size() * BAND_COUNT);
     const std::span bytes {static_cast<std::uint8_t*>(output.getData()), output.getSize()};
-    std::ranges::copy(cacheMagic, bytes.begin());
-    writeBigEndian(bytes.subspan(kindOffset, fieldBytes), std::to_underlying(TagKind::overview));
-    writeBigEndian(bytes.subspan(versionOffset, fieldBytes), cacheFormatVersion);
-    writeBigEndian(bytes.subspan(countOffset, fieldBytes), static_cast<std::uint32_t>(slices.size()));
+    std::ranges::copy(CACHE_MAGIC, bytes.begin());
+    writeBigEndian(bytes.subspan(KIND_OFFSET, FIELD_BYTES), std::to_underlying(TagKind::overview));
+    writeBigEndian(bytes.subspan(VERSION_OFFSET, FIELD_BYTES), CACHE_FORMAT_VERSION);
+    writeBigEndian(bytes.subspan(COUNT_OFFSET, FIELD_BYTES), static_cast<std::uint32_t>(slices.size()));
     for (std::size_t index = 0; index < slices.size(); ++index) {
-        std::ranges::copy(slices[index], bytes.subspan(cacheHeaderBytes + index * bandCount, bandCount).begin());
+        std::ranges::copy(slices[index], bytes.subspan(CACHE_HEADER_BYTES + index * BAND_COUNT, BAND_COUNT).begin());
     }
     return output;
 }
@@ -105,18 +105,18 @@ juce::MemoryBlock Overview::serialize() const
 /// Unknown magic, kind, version, count or an inexact length is a cache miss.
 std::optional<Overview> Overview::deserialize(const std::span<const std::uint8_t> bytes)
 {
-    if (bytes.size() < cacheHeaderBytes || !std::ranges::equal(bytes.first(cacheMagic.size()), cacheMagic)
-        || readHeaderField<kindOffset>(bytes) != std::to_underlying(TagKind::overview)
-        || readHeaderField<versionOffset>(bytes) != cacheFormatVersion)
+    if (bytes.size() < CACHE_HEADER_BYTES || !std::ranges::equal(bytes.first(CACHE_MAGIC.size()), CACHE_MAGIC)
+        || readHeaderField<KIND_OFFSET>(bytes) != std::to_underlying(TagKind::overview)
+        || readHeaderField<VERSION_OFFSET>(bytes) != CACHE_FORMAT_VERSION)
     {
         return std::nullopt;
     }
-    const auto count = readHeaderField<countOffset>(bytes);
-    if (count == 0 || count > maxSlices
-        || bytes.size() != cacheHeaderBytes + static_cast<std::size_t>(count) * bandCount)
+    const auto count = readHeaderField<COUNT_OFFSET>(bytes);
+    if (count == 0 || count > MAX_SLICES
+        || bytes.size() != CACHE_HEADER_BYTES + static_cast<std::size_t>(count) * BAND_COUNT)
     {
         return std::nullopt;
     }
-    return copySlices(bytes.subspan(cacheHeaderBytes));
+    return copySlices(bytes.subspan(CACHE_HEADER_BYTES));
 }
 }  // namespace audiobatch::serato

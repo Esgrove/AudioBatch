@@ -36,10 +36,10 @@ struct BenchmarkInput {
 };
 
 /// Parameters whose arithmetic is independently reproduced by the comparison runner.
-constexpr float benchmarkGain {0.5f};
-constexpr float benchmarkWidth {0.5f};
+constexpr float BENCHMARK_GAIN {0.5f};
+constexpr float BENCHMARK_WIDTH {0.5f};
 /// Maximum decoded workload, preventing unreasonable test-harness allocations.
-constexpr int maximumFrames {32'000'000};
+constexpr int MAXIMUM_FRAMES {32'000'000};
 
 /// Parses a complete bounded decimal integer, refusing missing or malformed values.
 int boundedInteger(const juce::String& text, const int minimum, const int maximum)
@@ -85,7 +85,7 @@ BenchmarkInput loadInput(const juce::File& source, const int repeats)
 {
     const auto reader = utils::createAudioReader(source);
     if (reader == nullptr || reader->numChannels < 1 || reader->numChannels > 2 || reader->lengthInSamples <= 0
-        || reader->lengthInSamples > maximumFrames / repeats || !std::isfinite(reader->sampleRate)
+        || reader->lengthInSamples > MAXIMUM_FRAMES / repeats || !std::isfinite(reader->sampleRate)
         || reader->sampleRate < 16.0 || reader->sampleRate > 2'822'400.0)
     {
         throw std::runtime_error("Benchmark needs bounded mono/stereo audio at a supported sample rate");
@@ -118,7 +118,7 @@ void render(
     const bool hostOnly
 )
 {
-    constexpr auto block = plugin_processing::processingBlockSize;
+    constexpr auto block = plugin_processing::PROCESSING_BLOCK_SIZE;
     const auto channels = input.getNumChannels();
     const auto frames = input.getNumSamples();
     for (int position = 0; position < output.getNumSamples(); position += block) {
@@ -153,8 +153,8 @@ void setBenchmarkParameters(const juce::AudioPluginInstance& plugin, const int l
     {
         throw std::runtime_error("Test plugin is missing the expected Gain, Width, or Latency parameters");
     }
-    parameters[0]->setValueNotifyingHost(benchmarkGain * 0.5f);
-    parameters[1]->setValueNotifyingHost(benchmarkWidth * 0.5f);
+    parameters[0]->setValueNotifyingHost(BENCHMARK_GAIN * 0.5f);
+    parameters[1]->setValueNotifyingHost(BENCHMARK_WIDTH * 0.5f);
     parameters[2]->setValueNotifyingHost(static_cast<float>(latency) / 1024.0f);
 }
 
@@ -219,15 +219,16 @@ juce::var benchmark(const juce::StringArray& arguments)
     PluginProcessingOptions options;
     juce::MidiBuffer midi;
     midi.ensureSize(2048);
-    juce::AudioBuffer<float> scratch(channels, plugin_processing::processingBlockSize);
+    juce::AudioBuffer<float> scratch(channels, plugin_processing::PROCESSING_BLOCK_SIZE);
     for (int instance = 0; instance < instanceCount; ++instance) {
         juce::String error;
-        auto plugin = formats.createPluginInstance(**description, rate, plugin_processing::processingBlockSize, error);
+        auto plugin
+            = formats.createPluginInstance(**description, rate, plugin_processing::PROCESSING_BLOCK_SIZE, error);
         if (plugin == nullptr || !plugin_processing::configurePluginChannels(*plugin, channels)) {
             throw std::runtime_error(utils::format("Could not create test plugin: {}", error).toStdString());
         }
         plugin->setNonRealtime(true);
-        plugin->prepareToPlay(rate, plugin_processing::processingBlockSize);
+        plugin->prepareToPlay(rate, plugin_processing::PROCESSING_BLOCK_SIZE);
         setBenchmarkParameters(*plugin, latencyPerPlugin);
         scratch.clear();
         midi.clear();
@@ -240,7 +241,7 @@ juce::var benchmark(const juce::StringArray& arguments)
         plugins.push_back(std::move(plugin));
     }
     const auto latency = instanceCount * latencyPerPlugin;
-    constexpr auto block = plugin_processing::processingBlockSize;
+    constexpr auto block = plugin_processing::PROCESSING_BLOCK_SIZE;
     const auto renderedFrames = ((frames + latency + block - 1) / block) * block;
     juce::AudioBuffer<float> output(channels, renderedFrames);
     juce::AudioBuffer<float> reference(channels, renderedFrames);
@@ -278,8 +279,8 @@ juce::var benchmark(const juce::StringArray& arguments)
     object->setProperty("block_frames", block);
     object->setProperty("instances", instanceCount);
     object->setProperty("latency_frames", latency);
-    object->setProperty("gain", static_cast<double>(benchmarkGain));
-    object->setProperty("width", static_cast<double>(benchmarkWidth));
+    object->setProperty("gain", static_cast<double>(BENCHMARK_GAIN));
+    object->setProperty("width", static_cast<double>(BENCHMARK_WIDTH));
     object->setProperty("seconds", seconds);
     object->setProperty("input_file", inputFile.getFullPathName());
     object->setProperty("output_file", outputFile.getFullPathName());

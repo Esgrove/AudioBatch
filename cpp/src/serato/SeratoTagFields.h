@@ -21,9 +21,9 @@
 namespace audiobatch::serato
 {
 /// Offset of the name in a Markers2 cue record.
-inline constexpr std::size_t cueNameOffset {12};
+inline constexpr std::size_t CUE_NAME_OFFSET {12};
 /// Offset of the name in a Markers2 loop record.
-inline constexpr std::size_t loopNameOffset {20};
+inline constexpr std::size_t LOOP_NAME_OFFSET {20};
 
 /// Checks padding without accepting unparsed trailing records or text.
 inline bool allZero(std::span<const std::uint8_t> bytes)
@@ -34,7 +34,7 @@ inline bool allZero(std::span<const std::uint8_t> bytes)
 /// Returns a validated UTF-8 string of bounded length without embedded nulls.
 inline std::optional<juce::String> utf8(std::span<const std::uint8_t> bytes)
 {
-    if (bytes.size() > maxTagTextBytes || std::ranges::find(bytes, std::uint8_t {0}) != bytes.end()) {
+    if (bytes.size() > MAX_TAG_TEXT_BYTES || std::ranges::find(bytes, std::uint8_t {0}) != bytes.end()) {
         return std::nullopt;
     }
     const std::string text(bytes.begin(), bytes.end());
@@ -57,7 +57,7 @@ public:
     std::optional<juce::String> text()
     {
         const auto size = number();
-        if (!size || *size > maxTagTextBytes) {
+        if (!size || *size > MAX_TAG_TEXT_BYTES) {
             return std::nullopt;
         }
         const auto bytes = take(*size);

@@ -27,9 +27,9 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto pluginChainPropertyKey {"pluginChain"};
-constexpr auto legacySelectedPluginIdPropertyKey {"selectedPluginIdentifier"};
-constexpr auto legacySelectedPluginStatePropertyKey {"selectedPluginState"};
+constexpr auto PLUGIN_CHAIN_PROPERTY_KEY {"pluginChain"};
+constexpr auto LEGACY_SELECTED_PLUGIN_ID_PROPERTY_KEY {"selectedPluginIdentifier"};
+constexpr auto LEGACY_SELECTED_PLUGIN_STATE_PROPERTY_KEY {"selectedPluginState"};
 
 /// Builds the descriptor ref for one chain entry.
 PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
@@ -473,7 +473,7 @@ void LiveChain::loadPersistedChain()
         return;
     }
 
-    if (const auto chainXml = settings->getValue(pluginChainPropertyKey); chainXml.isNotEmpty()) {
+    if (const auto chainXml = settings->getValue(PLUGIN_CHAIN_PROPERTY_KEY); chainXml.isNotEmpty()) {
         const auto element = juce::parseXML(chainXml);
         auto slots = element != nullptr ? plugin_presets::parseChainXml(*element) : std::nullopt;
         if (!slots.has_value()) {
@@ -488,12 +488,12 @@ void LiveChain::loadPersistedChain()
     }
 
     // Migrate a legacy single-plugin selection into a one-slot chain.
-    const auto legacyPluginXml = settings->getValue(legacySelectedPluginIdPropertyKey);
+    const auto legacyPluginXml = settings->getValue(LEGACY_SELECTED_PLUGIN_ID_PROPERTY_KEY);
     if (legacyPluginXml.isEmpty()) {
         return;
     }
 
-    auto entry = parseLegacyEntry(legacyPluginXml, settings->getValue(legacySelectedPluginStatePropertyKey));
+    auto entry = parseLegacyEntry(legacyPluginXml, settings->getValue(LEGACY_SELECTED_PLUGIN_STATE_PROPERTY_KEY));
     if (!entry.has_value()) {
         return;
     }
@@ -501,8 +501,8 @@ void LiveChain::loadPersistedChain()
     appendSlot(std::move(*entry));
     persistChain();
 
-    settings->removeValue(legacySelectedPluginIdPropertyKey);
-    settings->removeValue(legacySelectedPluginStatePropertyKey);
+    settings->removeValue(LEGACY_SELECTED_PLUGIN_ID_PROPERTY_KEY);
+    settings->removeValue(LEGACY_SELECTED_PLUGIN_STATE_PROPERTY_KEY);
     settings->saveIfNeeded();
 }
 
@@ -518,12 +518,12 @@ void LiveChain::persistChain()
     const auto slots = captureSavedSlots();
 
     if (slots.empty()) {
-        settings->removeValue(pluginChainPropertyKey);
+        settings->removeValue(PLUGIN_CHAIN_PROPERTY_KEY);
         settings->saveIfNeeded();
         return;
     }
 
-    settings->setValue(pluginChainPropertyKey, plugin_presets::createChainXml(slots)->toString());
+    settings->setValue(PLUGIN_CHAIN_PROPERTY_KEY, plugin_presets::createChainXml(slots)->toString());
     settings->saveIfNeeded();
 }
 

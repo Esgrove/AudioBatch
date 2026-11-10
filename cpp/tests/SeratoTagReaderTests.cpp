@@ -37,7 +37,7 @@ namespace
 /// Returns a nonstandard three-slice synthetic payload, not derived from any music file.
 std::vector<std::uint8_t> readerPayload()
 {
-    std::vector<std::uint8_t> bytes(2 + 3 * serato::Overview::bandCount, 37);
+    std::vector<std::uint8_t> bytes(2 + 3 * serato::Overview::BAND_COUNT, 37);
     bytes[0] = 1;
     bytes[1] = 5;
     bytes.back() = 127;
@@ -274,7 +274,7 @@ bool writeSyntheticTags(
     tag->removeFrames("GEOB");
     if (manyUnrelated) {
         const std::array<std::uint8_t, 1> unrelated {0};
-        for (std::size_t index = 0; index <= serato::maxTagRecords; ++index) {
+        for (std::size_t index = 0; index <= serato::MAX_TAG_RECORDS; ++index) {
             addGeob(*tag, "Unrelated", unrelated, TagLib::String::Latin1);
         }
     }
@@ -763,7 +763,7 @@ void SeratoTagReaderTests::testMetadata()
         expect(createSyntheticContainer(file));
         expect(writeSyntheticTags(file));
         const auto before = fileChecksum(file);
-        const auto results = serato::readTags(file, serato::allTagKinds);
+        const auto results = serato::readTags(file, serato::ALL_TAG_KINDS);
         expectEquals(static_cast<int>(results.size()), 6, extension);
         for (std::size_t index = 0; index < results.size(); ++index) {
             expectEquals(static_cast<int>(results[index].kind), static_cast<int>(index + 1));
@@ -775,7 +775,7 @@ void SeratoTagReaderTests::testMetadata()
         }
         expect(before.has_value() && before == fileChecksum(file));
         expect(writeSyntheticTags(file, true));
-        const auto mixed = serato::readTags(file, serato::allTagKinds);
+        const auto mixed = serato::readTags(file, serato::ALL_TAG_KINDS);
         expectEquals(static_cast<int>(mixed.size()), 6, extension);
         for (std::size_t index = 0; index < mixed.size(); ++index) {
             expectEquals(
@@ -783,7 +783,7 @@ void SeratoTagReaderTests::testMetadata()
                 static_cast<int>(index == 2 ? serato::ReadStatus::invalid : serato::ReadStatus::present)
             );
         }
-        const auto cancelled = serato::readTags(file, serato::allTagKinds, [] { return true; });
+        const auto cancelled = serato::readTags(file, serato::ALL_TAG_KINDS, [] { return true; });
         expectEquals(static_cast<int>(cancelled.size()), 6, extension);
         for (const auto& result : cancelled) {
             expectEquals(static_cast<int>(result.status()), static_cast<int>(serato::ReadStatus::cancelled));

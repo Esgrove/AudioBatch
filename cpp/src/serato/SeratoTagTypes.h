@@ -37,7 +37,7 @@ enum class ReadStatus : std::uint8_t {
     cancelled = 6,
 };
 
-inline constexpr std::array allTagKinds {
+inline constexpr std::array ALL_TAG_KINDS {
     TagKind::overview,
     TagKind::analysis,
     TagKind::autotags,
@@ -168,12 +168,12 @@ struct SeratoData {
 /// The owned value of one present tag, with the alternatives in the order of allTagKinds.
 using TagValue = std::variant<Overview, Analysis, Autotags, BeatGrid, Markers, TrackInfo>;
 
-static_assert(std::variant_size_v<TagValue> == allTagKinds.size());
+static_assert(std::variant_size_v<TagValue> == ALL_TAG_KINDS.size());
 
 /// Returns the kind of tag a value belongs to.
 [[nodiscard]] constexpr TagKind kindOf(const TagValue& value) noexcept
 {
-    return allTagKinds[value.index()];
+    return ALL_TAG_KINDS[value.index()];
 }
 
 /// Reports one requested kind, with the owned value of a present tag or the status that explains why there is none.
@@ -205,7 +205,7 @@ struct TagReadResult {
 };
 
 /// Version of the cached track information layout, raised when the album, genre, year, and comment were added.
-inline constexpr std::uint32_t trackInfoParserVersion {2};
+inline constexpr std::uint32_t TRACK_INFO_PARSER_VERSION {2};
 
 /// Reports the independent numeric cache schema version for a supported kind.
 /// Version two reparses native FLAC extraction failures
@@ -213,14 +213,14 @@ inline constexpr std::uint32_t trackInfoParserVersion {2};
 [[nodiscard]] constexpr std::uint32_t parserVersion(const TagKind kind)
 {
     if (kind == TagKind::overview) {
-        return overviewParserVersion;
+        return OVERVIEW_PARSER_VERSION;
     }
-    return kind == TagKind::trackInfo ? trackInfoParserVersion : 2;
+    return kind == TagKind::trackInfo ? TRACK_INFO_PARSER_VERSION : 2;
 }
 
 /// Rejects unrecognized persisted kind identifiers.
 [[nodiscard]] constexpr bool supportsTagKind(TagKind kind)
 {
-    return std::ranges::any_of(allTagKinds, [kind](const auto supported) { return kind == supported; });
+    return std::ranges::any_of(ALL_TAG_KINDS, [kind](const auto supported) { return kind == supported; });
 }
 }  // namespace audiobatch::serato

@@ -124,7 +124,7 @@ bool configurePreviewChannels(juce::AudioPluginInstance& plugin)
 juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, const double sampleRate)
 {
     const auto seconds = plugin.getTailLengthSeconds();
-    const auto boundedSeconds = std::isnan(seconds) ? 0.0 : juce::jlimit(0.0, maximumTailSeconds, seconds);
+    const auto boundedSeconds = std::isnan(seconds) ? 0.0 : juce::jlimit(0.0, MAXIMUM_TAIL_SECONDS, seconds);
     return static_cast<juce::int64>(std::ceil(boundedSeconds * sampleRate));
 }
 
@@ -146,7 +146,7 @@ void addToPreparation(ChainPreparation& preparation, const juce::AudioPluginInst
 juce::String formatPluginLatency(const juce::int64 samples, const double sampleRate)
 {
     return utils::format(
-        "{} samples ({:.2f} ms)", samples, static_cast<double>(samples) * utils::millisecondsPerSecond / sampleRate
+        "{} samples ({:.2f} ms)", samples, static_cast<double>(samples) * utils::MILLISECONDS_PER_SECOND / sampleRate
     );
 }
 
@@ -223,7 +223,7 @@ ChainPreparation prepareChain(
         enableOfflineRendering(*plugin);
 
         // Restore plugin state per-file so each file starts clean.
-        restoreStateAndPrepare(*plugin, options.plugins[pluginIndex].state, sampleRate, processingBlockSize);
+        restoreStateAndPrepare(*plugin, options.plugins[pluginIndex].state, sampleRate, PROCESSING_BLOCK_SIZE);
         plugin->reset();
         addToPreparation(preparation, *plugin, sampleRate);
     }

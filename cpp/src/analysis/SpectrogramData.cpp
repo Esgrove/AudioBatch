@@ -21,7 +21,7 @@ namespace
 constexpr std::uint32_t MAGIC {0x43455053};
 constexpr std::size_t HEADER_BYTES {72};
 constexpr std::size_t MAXIMUM_PAYLOAD_BYTES {
-    static_cast<std::size_t>(SpectrogramData::maximumColumns) * SpectrogramData::frequencyRows,
+    static_cast<std::size_t>(SpectrogramData::MAXIMUM_COLUMNS) * SpectrogramData::FREQUENCY_ROWS,
 };
 constexpr double MEL_SCALE {2595.0};
 constexpr double MEL_FREQUENCY {700.0};
@@ -39,8 +39,8 @@ constexpr std::size_t FLOOR_OFFSET {56};
 /// Finds the canonical stride without multiplying a possibly enormous source length.
 std::int64_t canonicalStride(const std::int64_t length)
 {
-    std::int64_t stride = SpectrogramData::hopSize;
-    while (length > 0 && 1 + (length - 1) / stride > SpectrogramData::maximumColumns) {
+    std::int64_t stride = SpectrogramData::HOP_SIZE;
+    while (length > 0 && 1 + (length - 1) / stride > SpectrogramData::MAXIMUM_COLUMNS) {
         stride *= 2;
     }
     return stride;
@@ -49,9 +49,9 @@ std::int64_t canonicalStride(const std::int64_t length)
 /// Writes an unsigned integer explicitly, independently of host byte order and alignment.
 void writeLittleEndian(std::span<std::byte> bytes, const std::size_t offset, std::uint64_t value, const int count)
 {
-    constexpr std::uint64_t BYTE_MASK {0xff};
+    constexpr std::uint64_t byteMask {0xff};
     for (int index = 0; index < count; ++index) {
-        bytes[offset + static_cast<std::size_t>(index)] = static_cast<std::byte>(value & BYTE_MASK);
+        bytes[offset + static_cast<std::size_t>(index)] = static_cast<std::byte>(value & byteMask);
         value >>= 8U;
     }
 }
@@ -71,7 +71,7 @@ std::uint64_t readLittleEndian(const std::span<const std::byte> bytes, const std
 /// Returns the number of complete columns, without assuming that unvalidated bytes have legal geometry.
 std::size_t SpectrogramData::columnCount() const noexcept
 {
-    return intensities.size() / static_cast<std::size_t>(frequencyRows);
+    return intensities.size() / static_cast<std::size_t>(FREQUENCY_ROWS);
 }
 
 /// Converts hertz using the HTK mel definition, with zero hertz at zero mel.
@@ -89,8 +89,8 @@ double melToFrequency(const double mel) noexcept
 /// Decodes a byte to the center of its fixed linear decibel quantization level.
 double spectrogramDecibels(const std::uint8_t intensity) noexcept
 {
-    return SpectrogramData::minimumDecibels
-        + static_cast<double>(intensity) * (SpectrogramData::maximumDecibels - SpectrogramData::minimumDecibels)
+    return SpectrogramData::MINIMUM_DECIBELS
+        + static_cast<double>(intensity) * (SpectrogramData::MAXIMUM_DECIBELS - SpectrogramData::MINIMUM_DECIBELS)
         / DECIBEL_STEPS;
 }
 
@@ -104,7 +104,7 @@ bool isValidSpectrogramData(const SpectrogramData& data)
         return false;
     }
     const auto columns = 1 + (data.lengthInSamples - 1) / data.samplesPerColumn;
-    return data.intensities.size() == static_cast<std::size_t>(columns) * SpectrogramData::frequencyRows;
+    return data.intensities.size() == static_cast<std::size_t>(columns) * SpectrogramData::FREQUENCY_ROWS;
 }
 
 /// Checks decoded geometry rather than presentation duration or producer-specific loudness values.
@@ -124,19 +124,19 @@ juce::MemoryBlock serializeSpectrogram(const SpectrogramData& data)
     }
     std::array<std::byte, HEADER_BYTES> header {};
     writeLittleEndian(header, 0, MAGIC, 4);
-    writeLittleEndian(header, 4, SpectrogramData::serializationVersion, 4);
-    writeLittleEndian(header, 8, SpectrogramData::algorithmVersion, 4);
-    writeLittleEndian(header, FFT_OFFSET, SpectrogramData::fftSize, 4);
-    writeLittleEndian(header, 16, SpectrogramData::hopSize, 4);
-    writeLittleEndian(header, ROWS_OFFSET, SpectrogramData::frequencyRows, 4);
-    writeLittleEndian(header, MAXIMUM_COLUMNS_OFFSET, SpectrogramData::maximumColumns, 4);
+    writeLittleEndian(header, 4, SpectrogramData::SERIALIZATION_VERSION, 4);
+    writeLittleEndian(header, 8, SpectrogramData::ALGORITHM_VERSION, 4);
+    writeLittleEndian(header, FFT_OFFSET, SpectrogramData::FFT_SIZE, 4);
+    writeLittleEndian(header, 16, SpectrogramData::HOP_SIZE, 4);
+    writeLittleEndian(header, ROWS_OFFSET, SpectrogramData::FREQUENCY_ROWS, 4);
+    writeLittleEndian(header, MAXIMUM_COLUMNS_OFFSET, SpectrogramData::MAXIMUM_COLUMNS, 4);
     writeLittleEndian(header, SAMPLE_RATE_OFFSET, static_cast<std::uint32_t>(data.sampleRate), 4);
     writeLittleEndian(header, 32, static_cast<std::uint32_t>(data.channelCount), 4);
     writeLittleEndian(header, COLUMNS_OFFSET, data.columnCount(), 4);
     writeLittleEndian(header, LENGTH_OFFSET, static_cast<std::uint64_t>(data.lengthInSamples), 8);
     writeLittleEndian(header, STRIDE_OFFSET, static_cast<std::uint64_t>(data.samplesPerColumn), 8);
-    writeLittleEndian(header, FLOOR_OFFSET, std::bit_cast<std::uint64_t>(SpectrogramData::minimumDecibels), 8);
-    writeLittleEndian(header, 64, std::bit_cast<std::uint64_t>(SpectrogramData::maximumDecibels), 8);
+    writeLittleEndian(header, FLOOR_OFFSET, std::bit_cast<std::uint64_t>(SpectrogramData::MINIMUM_DECIBELS), 8);
+    writeLittleEndian(header, 64, std::bit_cast<std::uint64_t>(SpectrogramData::MAXIMUM_DECIBELS), 8);
     juce::MemoryBlock blob(header.data(), header.size());
     blob.append(data.intensities.data(), data.intensities.size());
     return blob;
@@ -150,20 +150,20 @@ std::shared_ptr<const SpectrogramData> deserializeSpectrogram(const std::span<co
     }
     const std::array<std::uint32_t, 7> profile {
         MAGIC,
-        SpectrogramData::serializationVersion,
-        SpectrogramData::algorithmVersion,
-        SpectrogramData::fftSize,
-        SpectrogramData::hopSize,
-        SpectrogramData::frequencyRows,
-        SpectrogramData::maximumColumns,
+        SpectrogramData::SERIALIZATION_VERSION,
+        SpectrogramData::ALGORITHM_VERSION,
+        SpectrogramData::FFT_SIZE,
+        SpectrogramData::HOP_SIZE,
+        SpectrogramData::FREQUENCY_ROWS,
+        SpectrogramData::MAXIMUM_COLUMNS,
     };
     for (std::size_t index = 0; index < profile.size(); ++index) {
         if (readLittleEndian(blob, index * 4, 4) != profile[index]) {
             return nullptr;
         }
     }
-    if (readLittleEndian(blob, FLOOR_OFFSET, 8) != std::bit_cast<std::uint64_t>(SpectrogramData::minimumDecibels)
-        || readLittleEndian(blob, 64, 8) != std::bit_cast<std::uint64_t>(SpectrogramData::maximumDecibels))
+    if (readLittleEndian(blob, FLOOR_OFFSET, 8) != std::bit_cast<std::uint64_t>(SpectrogramData::MINIMUM_DECIBELS)
+        || readLittleEndian(blob, 64, 8) != std::bit_cast<std::uint64_t>(SpectrogramData::MAXIMUM_DECIBELS))
     {
         return nullptr;
     }
@@ -173,13 +173,13 @@ std::shared_ptr<const SpectrogramData> deserializeSpectrogram(const std::span<co
     const auto length = readLittleEndian(blob, LENGTH_OFFSET, 8);
     const auto stride = readLittleEndian(blob, STRIDE_OFFSET, 8);
     if (sampleRate == 0 || sampleRate > static_cast<std::uint64_t>(std::numeric_limits<int>::max()) || channels < 1
-        || channels > 2 || columns == 0 || columns > static_cast<std::uint64_t>(SpectrogramData::maximumColumns)
+        || channels > 2 || columns == 0 || columns > static_cast<std::uint64_t>(SpectrogramData::MAXIMUM_COLUMNS)
         || length == 0 || length > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
         || std::cmp_not_equal(stride, canonicalStride(static_cast<std::int64_t>(length))))
     {
         return nullptr;
     }
-    if (columns != 1 + (length - 1) / stride || blob.size() - HEADER_BYTES != columns * SpectrogramData::frequencyRows)
+    if (columns != 1 + (length - 1) / stride || blob.size() - HEADER_BYTES != columns * SpectrogramData::FREQUENCY_ROWS)
     {
         return nullptr;
     }

@@ -59,7 +59,7 @@ public:
         expectEquals(layout::table::initialColumnWidth(AudioFileTableColumn::name), 210);
         expectEquals(layout::table::initialColumnWidth(AudioFileTableColumn::folder), 140);
         expectEquals(layout::table::initialColumnWidth(AudioFileTableColumn::path), 160);
-        expect(layout::table::initiallyVisibleColumnWidth <= layout::table::initiallyVisibleColumnWidthBudget);
+        expect(layout::table::INITIALLY_VISIBLE_COLUMN_WIDTH <= layout::table::INITIALLY_VISIBLE_COLUMN_WIDTH_BUDGET);
 
         beginTest("Merging appends new paths and replaces the row of a known path in place");
         {
