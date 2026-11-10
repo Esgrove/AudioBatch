@@ -64,12 +64,14 @@ Audio Unit plugins are only hosted by the C++ application.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the parts work together, with charts.
 This section lists the files.
 
-The repository-root [`Cargo.toml`](../Cargo.toml) defines the virtual workspace,
+The repository-root [`Cargo.toml`](../Cargo.toml) defines the shared virtual workspace,
 and its `rust-version` declares the required Rust toolchain.
 Shared package metadata, dependency versions, and lints are defined once there,
 and the main workspace crates inherit them with `.workspace = true`.
-The versions of their external dependencies are declared in its `[workspace.dependencies]` table,
-including those that only one crate uses.
+AudioBatch dependency versions remain in its `[workspace.dependencies]` table.
+ImageControl reuses shared entries but declares plugin-only dependencies in its own crate manifests.
+The application and primary ImageControl crates share the root lockfile and `rust/target` artifact directory.
+ImageControl's own VST3/Iced adapter lives in `image-control-plugin/rust/crates/plugin` and uses no GPUI patches.
 The excluded `fuzz/` workspace declares its own dependencies.
 Write ordinary versions as full `major.minor.patch` versions, so compatible updates are picked up.
 Possible breaking changes are not a reason to add an exact pin.
@@ -367,6 +369,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 ## Build And Test Commands
 
 Run the application scripts from `rust/`. Cargo commands also work from the repository root.
+Use explicit application packages for scoped Cargo work, because root `--workspace` includes primary ImageControl crates.
 After making code changes, always run:
 
 ```shell

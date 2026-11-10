@@ -35,7 +35,7 @@
 *.app
 /cpp/audiobatch
 
-# Rust workspace and isolated prototype artifacts
+# Repository-root Cargo artifacts
 /target/
 
 # Build

@@ -11,21 +11,21 @@ rust-version.workspace = true
 [dependencies]
 crossbeam-channel.workspace = true
 dirs.workspace = true
-fearless_simd.workspace = true
 fearless_simd_macros.workspace = true
+fearless_simd.workspace = true
 jiff.workspace = true
 lofty.workspace = true
 rayon.workspace = true
 realfft.workspace = true
 rusqlite.workspace = true
 serato-tags.workspace = true
-symphonia.workspace = true
 symphonia-common.workspace = true
+symphonia.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 tracing-log.workspace = true
 tracing-subscriber.workspace = true
+tracing.workspace = true
 trash.workspace = true
 walkdir.workspace = true
 

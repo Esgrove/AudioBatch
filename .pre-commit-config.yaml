@@ -48,7 +48,7 @@ repos:
         entry: cargo fmt --all --
         types: [rust]
         language: system
-        files: ^(rust/|image-control-plugin/rust/crates/(dsp|nice|xtask)/)
+        files: ^(rust/|image-control-plugin/rust/crates/(dsp|plugin|xtask)/)
         pass_filenames: false
         priority: 1
 

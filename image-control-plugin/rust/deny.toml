@@ -1,0 +1,23 @@
+# The distributed plugin's third-party dependencies must permit commercial proprietary reuse.
+# The repository's own GPL packages are named exceptions, not a relicensing of this spike.
+[graph]
+all-features = true
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
+
+[licenses]
+confidence-threshold = 0.8
+allow = ["MIT", "Apache-2.0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Zlib", "Unicode-3.0", "BSL-1.0", "CC0-1.0", "OFL-1.1", "0BSD"]
+exceptions = [
+    { name = "image-control-plugin-rs", allow = ["GPL-3.0-only", "GPL-3.0-or-later"] },
+    { name = "image-control-xtask", allow = ["GPL-3.0-only", "GPL-3.0-or-later"] },
+    { name = "image-control-dsp", allow = ["GPL-3.0-only", "GPL-3.0-or-later"] },
+    # Host test support only, never a runtime dependency of the distributed effect.
+    { name = "audiobatch-test-plugin", allow = ["GPL-3.0-only", "GPL-3.0-or-later"] },
+    { name = "vst3-host", allow = ["GPL-3.0-only", "GPL-3.0-or-later"] },
+    # Build-time header generation is not linked into the plugin.
+    { name = "cbindgen", allow = ["MPL-2.0"] },
+    # MPL permits larger proprietary works, but these files retain source and notice obligations.
+    # No modifications to these third-party crates are made by this spike.
+    { name = "dwrote", allow = ["MPL-2.0"] },
+    { name = "option-ext", allow = ["MPL-2.0"] },
+]

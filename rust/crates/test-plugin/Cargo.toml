@@ -10,8 +10,8 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-vst3.workspace = true
 vst3-host.workspace = true
+vst3.workspace = true
 
 [[example]]
 name = "module"

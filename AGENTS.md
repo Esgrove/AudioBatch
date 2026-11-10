@@ -82,11 +82,15 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
 - `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging effect,
   as a VST3 and, on macOS, an Audio Unit, described in `image-control-plugin/README.md`.
   It is a real plugin for processing audio, mainly from AudioBatch's plugin chain, and not part of either application.
-  It is C++ only, so the feature scope and behavioral parity rules below do not apply to it,
-  and its names and ids never carry AudioBatch branding.
+  Its C++ implementation and independent Rust VST3 experiment are outside the application feature scope
+  and behavioral parity rules.
+  Its names and ids never carry AudioBatch branding.
   `image-control-plugin/build.sh` builds it with the JUCE submodule in `cpp/JUCE`,
   and runs its GoogleTest unit tests with `--test`.
   `image-control-plugin/install.sh` builds it with `build.sh` and installs it into the plugin folders.
+  `image-control-plugin/rust/` contains one own-wrapper VST3/Iced/wgpu implementation in `crates/plugin`,
+  with shared processing in `crates/dsp` and packaging in `crates/xtask`, all in the root Cargo workspace.
+  Its scripts run from that directory and produce `ImageControl RS`, without replacing C++ `ImageControl`.
   `image-control-plugin/format.sh` formats it,
   and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
   It includes `cpp/cmake/Optimizations.cmake`, so it targets the same CPUs and optimizations as AudioBatch.
@@ -259,9 +263,11 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 
 ### Repository work
 
-- The repository-root `Cargo.toml` and `Cargo.lock` define the Rust workspace.
-  Shared dependencies and Rust lints belong there. Plugin-only dependencies stay in their own crate manifests.
-  Cargo commands work from the root. Scope project work with explicit packages rather than `--workspace`.
+- The repository-root `Cargo.toml` and `Cargo.lock` define the shared Rust workspace for AudioBatch
+  and primary ImageControl.
+  Shared dependencies and Rust lints belong there. ImageControl-only dependencies stay in its own crate manifests.
+  Cargo commands work from the root. Scope application or plugin work with explicit packages rather than `--workspace`.
+  ImageControl has one Rust implementation: `crates/dsp`, `crates/plugin`, and `crates/xtask` under its Rust directory.
 - Run each project's build, format, lint, and test scripts from its own directory.
   The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
   and `lint.sh --check` reports warnings without applying fixes.

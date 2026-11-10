@@ -85,6 +85,8 @@ and November 1, 2026 Windows measurements, benchmark settings, and validation li
 Run the commands from this directory.
 The required Rust toolchain is declared by `rust-version` in the [root workspace](../Cargo.toml).
 Cargo commands work from the repository root or this directory, with artifacts under `rust/target`.
+Shared dependencies live in the root manifest, while ImageControl-only dependencies stay in its crate manifests.
+Its own VST3/Iced adapter lives in `image-control-plugin/rust/crates/plugin`, independently of this application's GPUI GUI.
 
 ```shell
 ./build.sh
