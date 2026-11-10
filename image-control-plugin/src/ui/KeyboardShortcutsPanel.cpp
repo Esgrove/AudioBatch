@@ -67,7 +67,11 @@ constexpr std::array SHORTCUTS {
     Shortcut {.identifier = "enter", .action = "Type a value", .keys = "Enter"},
     Shortcut {.identifier = "fine", .action = "Fine slider drag / wheel", .keys = "Shift+drag / Shift+wheel"},
     Shortcut {.identifier = "reset", .action = "Reset slider or crossover", .keys = "Double-click"},
-    Shortcut {.identifier = "move", .action = "Move crossover or band", .keys = "Drag sideways"},
+    Shortcut {
+        .identifier = "move",
+        .action = "Hovered crossover / band (1-1000 Hz)",
+        .keys = "Drag / arrows: 10% (Shift: 1%)",
+    },
     Shortcut {.identifier = "mid", .action = "Change band Mid gain", .keys = MID_KEYS},
     Shortcut {.identifier = "side", .action = "Change band Side gain", .keys = SIDE_KEYS},
     Shortcut {.identifier = "fineGain", .action = "Fine band gain gesture", .keys = "Shift+drag / Shift+wheel"},

@@ -1,5 +1,5 @@
 /// Declares a compact disclosure for optional analysis displays.
-/// Expanded displays reveal only a chevron on hover or keyboard focus.
+/// Displays reveal a translucent centered triangle on hover.
 /// Collapsed displays retain a labelled restore handle without a dedicated toolbar.
 
 #pragma once
@@ -14,10 +14,13 @@ class DisplayDisclosure final : public juce::Button
 public:
     explicit DisplayDisclosure(const juce::String& displayName, bool showCollapsedLabel = true);
 
+    [[nodiscard]] bool isIndicatorVisible() const;
     void setExpanded(bool expanded);
     void setRevealed(bool shouldReveal);
 
 protected:
+    void focusGained(juce::Component::FocusChangeType cause) override;
+    void focusLost(juce::Component::FocusChangeType cause) override;
     void paintButton(juce::Graphics& graphics, bool highlighted, bool down) override;
 
 private:
@@ -25,7 +28,9 @@ private:
     const juce::String displayName;
     /// Display sections retain a labelled restore handle, while compact controls use an icon-only action.
     const bool labelWhenCollapsed;
-    /// Whether the expanded display currently contains the pointer.
+    /// Whether Tab traversal acquired focus rather than a pointer action.
+    bool keyboardFocus {false};
+    /// Whether the associated display currently contains the pointer.
     bool revealed {false};
 };
 }  // namespace esgrove::image_control

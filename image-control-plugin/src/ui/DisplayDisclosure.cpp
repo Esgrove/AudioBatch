@@ -1,5 +1,5 @@
-/// Implements quiet contextual chevrons and full-width collapsed restore rows.
-/// Glyphs remain small while keyboard and pointer targets preserve display visibility access.
+/// Implements centered hover triangles and full-width collapsed restore rows.
+/// Pointer focus stays quiet while keyboard traversal retains a neutral focus cue.
 
 #include "ui/DisplayDisclosure.h"
 
@@ -9,27 +9,14 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Small neutral glyphs fit the ordinary display margins without becoming prominent controls.
-constexpr float ICON_WIDTH {7.0F};
-constexpr float ICON_HEIGHT {3.0F};
-constexpr float ICON_STROKE {1.0F};
-constexpr float ICON_TARGET_WIDTH {20.0F};
+/// Filled translucent triangles remain legible without competing with the analysis displays.
+constexpr float ICON_WIDTH {16.0F};
+constexpr float ICON_HEIGHT {8.0F};
+constexpr float ICON_ALPHA {0.55F};
+constexpr float PRESSED_ALPHA {0.8F};
 constexpr float LABEL_HEIGHT {11.0F};
-
-/// Draws a font-independent directional chevron inside a stable pointer target.
-void paintChevron(const juce::Graphics& graphics, const juce::Rectangle<float> target, const bool expanded)
-{
-    const auto icon = target.withSizeKeepingCentre(ICON_WIDTH, ICON_HEIGHT);
-    const float tip = expanded ? icon.getY() : icon.getBottom();
-    const float edge = expanded ? icon.getBottom() : icon.getY();
-    juce::Path chevron;
-    chevron.startNewSubPath(icon.getX(), edge);
-    chevron.lineTo(icon.getCentreX(), tip);
-    chevron.lineTo(icon.getRight(), edge);
-    graphics.strokePath(
-        chevron, juce::PathStrokeType(ICON_STROKE, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)
-    );
-}
+constexpr float LABEL_INSET {4.0F};
+constexpr float FOCUS_CORNER_RADIUS {3.0F};
 }  // namespace
 
 /// Creates a focusable toggle whose state describes display visibility.
@@ -39,9 +26,15 @@ DisplayDisclosure::DisplayDisclosure(const juce::String& name, const bool showCo
     labelWhenCollapsed(showCollapsedLabel)
 {
     setWantsKeyboardFocus(true);
-    setHasFocusOutline(true);
+    setHasFocusOutline(false);
     setToggleable(true);
     setExpanded(true);
+}
+
+/// Reports the hover-only glyph policy independently of keyboard focus styling.
+bool DisplayDisclosure::isIndicatorVisible() const
+{
+    return revealed || isMouseOver() || isDown();
 }
 
 /// Updates the accessible action and visible collapsed label together.
@@ -58,7 +51,7 @@ void DisplayDisclosure::setExpanded(const bool expanded)
     repaint();
 }
 
-/// Reveals an expanded display's chevron without changing its hit target or focusability.
+/// Reveals a display's triangle without changing its hit target or focusability.
 void DisplayDisclosure::setRevealed(const bool shouldReveal)
 {
     if (revealed != shouldReveal) {
@@ -67,22 +60,44 @@ void DisplayDisclosure::setRevealed(const bool shouldReveal)
     }
 }
 
-/// Uses only a neutral foreground change on hover, without painting a broad background highlight.
+/// Shows a neutral outline only when keyboard traversal acquired the focus.
+void DisplayDisclosure::focusGained(const juce::Component::FocusChangeType cause)
+{
+    keyboardFocus = cause == juce::Component::focusChangedByTabKey;
+    juce::Button::focusGained(cause);
+    repaint();
+}
+
+/// Clears the traversal cue when focus leaves the section action.
+void DisplayDisclosure::focusLost(const juce::Component::FocusChangeType cause)
+{
+    keyboardFocus = false;
+    juce::Button::focusLost(cause);
+    repaint();
+}
+
+/// Draws a centered hover triangle without painting a selected section background.
 void DisplayDisclosure::paintButton(juce::Graphics& graphics, const bool highlighted, const bool down)
 {
-    const bool expanded = getToggleState();
-    if (expanded && !revealed && !highlighted && !hasKeyboardFocus(true)) {
-        return;
-    }
-    auto area = getLocalBounds().toFloat();
-    graphics.setColour(juce::Colour(highlighted || down ? palette::GREY_LIGHT : palette::GREY_MIDDLE_LIGHT));
-    if (!expanded && labelWhenCollapsed) {
-        paintChevron(graphics, area.removeFromLeft(ICON_TARGET_WIDTH), false);
-        paintChevron(graphics, area.removeFromRight(ICON_TARGET_WIDTH), false);
+    const auto area = getLocalBounds().toFloat();
+    if (!getToggleState() && labelWhenCollapsed) {
+        graphics.setColour(juce::Colour(palette::GREY_MIDDLE_LIGHT));
         graphics.setFont(textFont(LABEL_HEIGHT));
-        graphics.drawText(displayName, area, juce::Justification::centredLeft);
+        graphics.drawText(displayName, area.reduced(LABEL_INSET, 0.0F), juce::Justification::centredLeft);
+    }
+    if (keyboardFocus && hasKeyboardFocus(false)) {
+        graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(ICON_ALPHA));
+        graphics.drawRoundedRectangle(area.reduced(1.0F), FOCUS_CORNER_RADIUS, 1.0F);
+    }
+    if (!isIndicatorVisible() && !highlighted && !down) {
         return;
     }
-    paintChevron(graphics, area, expanded);
+    const auto icon = area.withSizeKeepingCentre(ICON_WIDTH, ICON_HEIGHT);
+    const float tip = getToggleState() ? icon.getY() : icon.getBottom();
+    const float edge = getToggleState() ? icon.getBottom() : icon.getY();
+    juce::Path triangle;
+    triangle.addTriangle(icon.getX(), edge, icon.getCentreX(), tip, icon.getRight(), edge);
+    graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(down ? PRESSED_ALPHA : ICON_ALPHA));
+    graphics.fillPath(triangle);
 }
 }  // namespace esgrove::image_control

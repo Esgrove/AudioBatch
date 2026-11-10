@@ -182,10 +182,10 @@ BandCorrelationMeter::BandCorrelationMeter(const juce::String& band)
     );
 }
 
-/// Returns the selected signed reading or a single Unicode em dash when no valid measurement is available.
+/// Returns the selected signed reading, leaving the visual readout blank when unavailable.
 juce::String BandCorrelationMeter::readoutText() const
 {
-    return trend.has_value() ? valueText() : juce::String(u8"\u2014");
+    return trend.has_value() ? valueText() : juce::String {};
 }
 
 /// Returns the selected trend or live value for visual and accessible readouts, or an unavailable status.
@@ -508,9 +508,7 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
     graphics.drawText("+1", area, juce::Justification::centredRight);
     const auto readout = getLocalBounds().reduced(meterMargin, 2).removeFromTop(meterLabelHeight);
     graphics.setFont(monoFont(meterFontHeight));
-    // Reserve the same trailing inset in every column for the row's contextual disclosure.
-    const auto readoutArea = readout.withTrimmedRight(16);
-    graphics.drawText(readoutText(), readoutArea, juce::Justification::centredRight);
+    graphics.drawText(readoutText(), readout, juce::Justification::centredRight);
 }
 
 /// Exposes a named, read-only text value without slider actions.

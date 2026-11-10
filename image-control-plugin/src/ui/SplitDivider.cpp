@@ -17,8 +17,6 @@ constexpr float GRIP_WIDTH {48.0F};
 constexpr float GRIP_HEIGHT {4.0F};
 /// The ordinary keyboard step is easy to see, while Shift retains single-pixel control.
 constexpr int KEYBOARD_STEP {8};
-/// Idle grip opacity keeps the resize affordance visible without competing with the plot.
-constexpr float IDLE_GRIP_ALPHA {0.35F};
 }  // namespace
 
 /// Names the resize affordance and makes it reachable without a pointer.
@@ -31,6 +29,12 @@ SplitDivider::SplitDivider()
     setWantsKeyboardFocus(true);
     setHasFocusOutline(true);
     setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+}
+
+/// Reports whether pointer interaction or keyboard focus needs the otherwise hidden resize affordance.
+bool SplitDivider::isGripVisible() const
+{
+    return hovered || dragging || hasKeyboardFocus(false);
 }
 
 /// Releases a captured pointer drag before its layout is hidden or replaced.
@@ -54,15 +58,15 @@ void SplitDivider::setDragCallback(std::function<void(int)> callback)
     onDrag = std::move(callback);
 }
 
-/// Shows a subtle idle grip, brightening it during hover, dragging, or keyboard focus.
+/// Shows the grip only during hover, dragging, or keyboard focus.
 void SplitDivider::paint(juce::Graphics& graphics)
 {
-    const auto grip = getLocalBounds().toFloat().withSizeKeepingCentre(GRIP_WIDTH, GRIP_HEIGHT);
     const bool focused = hasKeyboardFocus(false);
-    graphics.setColour(
-        juce::Colour(dragging || focused ? palette::GREY_MIDDLE_LIGHT : palette::GREY_MIDDLE)
-            .withAlpha(hovered || dragging || focused ? 1.0F : IDLE_GRIP_ALPHA)
-    );
+    if (!isGripVisible()) {
+        return;
+    }
+    const auto grip = getLocalBounds().toFloat().withSizeKeepingCentre(GRIP_WIDTH, GRIP_HEIGHT);
+    graphics.setColour(juce::Colour(dragging || focused ? palette::GREY_MIDDLE_LIGHT : palette::GREY_MIDDLE));
     graphics.fillRoundedRectangle(grip, GRIP_HEIGHT * 0.5F);
 }
 
@@ -90,7 +94,7 @@ void SplitDivider::focusGained(juce::Component::FocusChangeType /*cause*/)
     repaint();
 }
 
-/// Restores the ordinary idle or hovered grip after focus leaves.
+/// Repaints the hover-only grip after focus leaves.
 void SplitDivider::focusLost(juce::Component::FocusChangeType /*cause*/)
 {
     repaint();
@@ -103,7 +107,7 @@ void SplitDivider::mouseEnter(const juce::MouseEvent& /*event*/)
     repaint();
 }
 
-/// Returns the grip to its subdued idle appearance.
+/// Hides the grip when the pointer leaves unless dragging or keyboard focus still needs it.
 void SplitDivider::mouseExit(const juce::MouseEvent& /*event*/)
 {
     hovered = false;

@@ -4,6 +4,7 @@
 /// The SpectrogramRenderer draws the particles on the GPU,
 /// and the view paints the grid, the bands, and the crossovers over them.
 /// The crossovers are vertical lines that can be dragged, a band can be dragged sideways to move it,
+/// and Left/Right moves the hovered boundary or band in frequency-relative steps, with Shift for fine adjustment,
 /// a vertical drag or the mouse wheel over a band with Ctrl or Cmd changes its mid gain,
 /// and with Alt or Option, or the plain mouse wheel, its side gain.
 /// Bands that the solos mute are veiled.
@@ -111,6 +112,7 @@ public:
     void setRenderingBypassed(bool bypassed);
     void setRenderingUnavailable(bool unavailable);
 
+    bool keyPressed(const juce::KeyPress& key) override;
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
@@ -148,6 +150,7 @@ private:
     void setLocalValue(juce::RangedAudioParameter& parameter, const juce::String& parameterId, float value);
 
     void applyGainChange(std::size_t band, bool mid, float change);
+    void applyKeyboardCrossovers(const Crossovers& before, const Crossovers& after, const juce::String& name);
     void changeBandGain(const juce::MouseEvent& event);
     void moveBand(const juce::MouseEvent& event);
     void moveCrossover(const juce::MouseEvent& event);

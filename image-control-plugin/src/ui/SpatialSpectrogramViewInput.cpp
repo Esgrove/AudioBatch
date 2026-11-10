@@ -1,5 +1,5 @@
-/// Implements the mouse controls of SpatialSpectrogramView:
-/// dragging crossovers and bands, the mid and side gain drags and wheel steps with Link,
+/// Implements the mouse and keyboard controls of SpatialSpectrogramView:
+/// moving hovered crossovers and bands, the mid and side gain drags and wheel steps with Link,
 /// the cursor and the hover state, and the tooltip that explains what a drag does.
 
 #include "ParameterHistory.h"
@@ -9,6 +9,7 @@
 #include "ui/SpectrogramParticles.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -21,6 +22,11 @@ namespace
 constexpr float GAIN_DECIBELS_PER_PIXEL {0.12F};
 /// Share of the gain drag used while Shift is held, for fine adjustment.
 constexpr float FINE_DRAG_SHARE {0.2F};
+/// Ordinary frequency keys move ten percent. Shift uses one percent, with each step bounded in plain Hz.
+constexpr double FREQUENCY_KEY_SHARE {0.1};
+constexpr double FINE_FREQUENCY_KEY_SHARE {0.01};
+constexpr double MIN_FREQUENCY_KEY_STEP {1.0};
+constexpr double MAX_FREQUENCY_KEY_STEP {1000.0};
 
 /// Returns the crossovers bounding a band, omitting the outer edge of the Low and High bands.
 std::vector<std::size_t> bandEdges(const std::size_t band)
@@ -35,6 +41,61 @@ std::vector<std::size_t> bandEdges(const std::size_t band)
     return edges;
 }
 
+/// Returns the legal crossover lower bound while retaining the common minimum separation rule.
+float crossoverLowerLimit(const Crossovers& crossovers, const std::size_t edge)
+{
+    return edge == 0 ? MIN_FREQUENCY : crossovers.at(edge - 1) * MIN_CROSSOVER_RATIO;
+}
+
+/// Returns the legal crossover upper bound from the unchanged neighbour or absolute frequency ceiling.
+float crossoverUpperLimit(const Crossovers& crossovers, const std::size_t edge)
+{
+    return edge + 1 == CROSSOVER_COUNT ? MAX_FREQUENCY : crossovers.at(edge + 1) / MIN_CROSSOVER_RATIO;
+}
+
+/// Returns the bounded plain-Hz keyboard step at a crossover or geometric band centre.
+double frequencyKeyChange(const double reference, const juce::KeyPress& key)
+{
+    const double share = key.getModifiers().isShiftDown() ? FINE_FREQUENCY_KEY_SHARE : FREQUENCY_KEY_SHARE;
+    const double step = std::clamp(reference * share, MIN_FREQUENCY_KEY_STEP, MAX_FREQUENCY_KEY_STEP);
+    return key.isKeyCode(juce::KeyPress::leftKey) ? -step : step;
+}
+
+/// Computes a single-boundary target without changing the live parameters or opening a gesture.
+Crossovers crossoverKeyTarget(const Crossovers& before, const std::size_t edge, const juce::KeyPress& key)
+{
+    auto after = before;
+    const auto reference = static_cast<double>(before.at(edge));
+    const float lower = crossoverLowerLimit(before, edge);
+    const float upper = std::max(lower, crossoverUpperLimit(before, edge));
+    after.at(edge) = std::clamp(static_cast<float>(reference + frequencyKeyChange(reference, key)), lower, upper);
+    return after;
+}
+
+/// Moves a band's inner edges by one common ratio, preserving its proportional width on every displayed axis.
+Crossovers bandKeyTarget(const Crossovers& before, const std::size_t band, const juce::KeyPress& key)
+{
+    const double low = band == 0 ? static_cast<double>(MIN_FREQUENCY) : static_cast<double>(before.at(band - 1));
+    const double high
+        = band == CROSSOVER_COUNT ? static_cast<double>(MAX_FREQUENCY) : static_cast<double>(before.at(band));
+    const double reference = std::sqrt(low * high);
+    const auto edges = bandEdges(band);
+    const auto first = edges.front();
+    const auto last = edges.back();
+    const double lowestRatio
+        = static_cast<double>(crossoverLowerLimit(before, first)) / static_cast<double>(before.at(first));
+    const double highestRatio
+        = static_cast<double>(crossoverUpperLimit(before, last)) / static_cast<double>(before.at(last));
+    const double ratio = lowestRatio > highestRatio
+        ? 1.0
+        : std::clamp(1.0 + frequencyKeyChange(reference, key) / reference, lowestRatio, highestRatio);
+    auto after = before;
+    for (const auto edge : edges) {
+        after.at(edge) = static_cast<float>(static_cast<double>(before.at(edge)) * ratio);
+    }
+    return after;
+}
+
 /// Returns whether Ctrl or Cmd selects mid gain for a band drag or wheel gesture.
 bool isMidModifier(const juce::ModifierKeys& modifiers)
 {
@@ -47,6 +108,67 @@ bool isSideModifier(const juce::ModifierKeys& modifiers)
     return modifiers.isAltDown() && !isMidModifier(modifiers);
 }
 }  // namespace
+
+/// Nudges the hovered crossover, or the hovered band's edges proportionally, in one discrete local command.
+/// Plain-Hz steps are independent of the displayed axis. The caller routes hover keys before focused sliders.
+bool SpatialSpectrogramView::keyPressed(const juce::KeyPress& key)
+{
+    const auto modifiers = key.getModifiers();
+    const bool left = key.isKeyCode(juce::KeyPress::leftKey);
+    if ((!left && !key.isKeyCode(juce::KeyPress::rightKey)) || !isEnabled() || modifiers.isCommandDown()
+        || modifiers.isCtrlDown() || modifiers.isAltDown()
+        || (!hoveredCrossover.has_value() && !hoveredBand.has_value() && drag == SpectrogramDrag::none))
+    {
+        return false;
+    }
+    // Consume a valid hover key during another gesture without nesting parameter gestures or changing its history.
+    if (drag != SpectrogramDrag::none || history.isEditing() || history.isReplaying()) {
+        return true;
+    }
+    const Crossovers before = currentCrossovers();
+    if (hoveredCrossover.has_value()) {
+        applyKeyboardCrossovers(before, crossoverKeyTarget(before, *hoveredCrossover, key), "Move crossover");
+        return true;
+    }
+    if (hoveredBand.has_value()) {
+        applyKeyboardCrossovers(
+            before, bandKeyTarget(before, *hoveredBand, key), "Move " + bandName(*hoveredBand) + " band"
+        );
+        return true;
+    }
+    return false;
+}
+
+/// Publishes a complete keyboard target with balanced gestures and restore-generation checks on every write.
+/// Unchanged targets create neither host gestures nor history, retaining any existing redo branch.
+void SpatialSpectrogramView::applyKeyboardCrossovers(
+    const Crossovers& before,
+    const Crossovers& after,
+    const juce::String& name
+)
+{
+    std::vector<std::size_t> changed;
+    for (std::size_t edge = 0; edge < CROSSOVER_COUNT; ++edge) {
+        if (!juce::approximatelyEqual(before.at(edge), after.at(edge))) {
+            changed.push_back(edge);
+        }
+    }
+    // Avoid normalization round-trip drift at a limit, and preserve an existing redo branch on a no-op.
+    if (changed.empty()) {
+        return;
+    }
+    beginHistoryEdit(name);
+    for (const auto edge : changed) {
+        crossoverParameters.at(edge).get().beginChangeGesture();
+    }
+    for (const auto edge : changed) {
+        setLocalValue(crossoverParameters.at(edge).get(), crossoverParameterId(edge), after.at(edge));
+    }
+    for (const auto edge : changed) {
+        crossoverParameters.at(edge).get().endChangeGesture();
+    }
+    endHistoryEdit();
+}
 
 /// Resets a double-clicked crossover to its default frequency.
 void SpatialSpectrogramView::mouseDoubleClick(const juce::MouseEvent& event)
@@ -248,11 +370,14 @@ juce::String SpatialSpectrogramView::getTooltip()
     const juce::String sideModifier = "Alt";
 #endif
     if (hoveredCrossover.has_value()) {
-        return "Drag to move the crossover between two bands. Double-click to reset it";
+        return "Drag to move the hovered crossover. Left/Right moves 10%. Shift+Left/Right moves 1%. "
+               "Key steps are limited to 1-1000 Hz. "
+               "Double-click to reset it";
     }
     if (hoveredBand.has_value()) {
-        return "Drag sideways to move the band. " + midModifier + "-drag up or down, or " + midModifier
-            + "-scroll, to change its Mid. " + sideModifier
+        return "Drag sideways to move the hovered band. Left/Right moves 10%. Shift+Left/Right moves 1%. "
+               "Key steps use the band's geometric centre, limited to 1-1000 Hz. "
+            + midModifier + "-drag up or down, or " + midModifier + "-scroll, to change its Mid. " + sideModifier
             + "-drag, or scroll, to change its Side. Hold Shift for finer steps. Press S to solo the band";
     }
     return {};

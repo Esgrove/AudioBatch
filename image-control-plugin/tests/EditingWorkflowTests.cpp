@@ -8,14 +8,17 @@
 #include "tests/TestSignals.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
+#include "ui/DisplayDisclosure.h"
 #include "ui/ProcessingToolbar.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SplitDivider.h"
 #include "UserPresets.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -135,6 +138,113 @@ TEST(EditingWorkflow, ToolbarFitsMinimumWidthAndCompactLayout)
         ASSERT_NE(strip, nullptr);
         EXPECT_GE(strip->getY(), toolbar->getBottom());
         EXPECT_GE(strip->getHeight(), BAND_STRIP_MIN_HEIGHT);
+    }
+}
+
+/// Header pressure compresses gaps before the output track, with no breakpoint jumps or unexplained spacer.
+TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    auto* settings = editingControl(editor, "display-settings");
+    auto* redo = editingControl(editor, "processing-redo");
+    auto* output = editingChild<ControlSlider>(editor);
+    juce::Button* mono = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == "Mono") {
+            mono = button;
+        }
+    }
+    ASSERT_NE(settings, nullptr);
+    ASSERT_NE(redo, nullptr);
+    ASSERT_NE(output, nullptr);
+    ASSERT_NE(mono, nullptr);
+    int previousSettingsX = -1;
+    int previousOutputWidth = -1;
+    for (int width = 760; width <= 1200; ++width) {
+        editor.setSize(width, editor.getHeight());
+        EXPECT_GE(mono->getX() - redo->getRight(), 2);
+        EXPECT_LE(mono->getX() - redo->getRight(), 8);
+        EXPECT_GE(output->getWidth(), 190);
+        if (previousSettingsX >= 0) {
+            EXPECT_LE(std::abs(settings->getX() - previousSettingsX), 1);
+            EXPECT_LE(std::abs(output->getWidth() - previousOutputWidth), 2);
+        }
+        previousSettingsX = settings->getX();
+        previousOutputWidth = output->getWidth();
+    }
+}
+
+/// Hover affordances stay centered and focusable without requesting a strong selected outline.
+TEST(EditingWorkflow, DisclosuresUseCenteredHoverOnlyIndicators)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    for (const auto* identifier : {"spectrogram-disclosure", "correlation-disclosure", "band-controls-disclosure"}) {
+        auto* disclosure = dynamic_cast<DisplayDisclosure*>(editingControl(editor, identifier));
+        ASSERT_NE(disclosure, nullptr);
+        EXPECT_LE(std::abs(disclosure->getBounds().getCentreX() - editor.getWidth() / 2), 1);
+        EXPECT_TRUE(disclosure->getWantsKeyboardFocus());
+        EXPECT_FALSE(disclosure->hasFocusOutline());
+        disclosure->setRevealed(false);
+        EXPECT_FALSE(disclosure->isIndicatorVisible());
+        disclosure->setRevealed(true);
+        EXPECT_TRUE(disclosure->isIndicatorVisible());
+        disclosure->onClick();
+        disclosure->setRevealed(false);
+        EXPECT_FALSE(disclosure->isIndicatorVisible());
+        EXPECT_FALSE(disclosure->hasFocusOutline());
+    }
+}
+
+/// Divider visibility follows interaction rather than an always-visible resize handle.
+TEST(EditingWorkflow, DividerGripIsHiddenUntilHoverOrDrag)
+{
+    SplitDivider divider;
+    divider.setSize(200, 16);
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent event {
+        juce::Desktop::getInstance().getMainMouseSource(),
+        {100.0F, 8.0F},
+        juce::ModifierKeys::leftButtonModifier,
+        1.0F,
+        0.0F,
+        0.0F,
+        0.0F,
+        0.0F,
+        &divider,
+        &divider,
+        now,
+        {100.0F, 8.0F},
+        now,
+        1,
+        false,
+    };
+    EXPECT_FALSE(divider.isGripVisible());
+    divider.mouseEnter(event);
+    EXPECT_TRUE(divider.isGripVisible());
+    divider.mouseExit(event);
+    EXPECT_FALSE(divider.isGripVisible());
+    divider.mouseDown(event);
+    EXPECT_TRUE(divider.isGripVisible());
+    divider.mouseExit(event);
+    EXPECT_TRUE(divider.isGripVisible());
+    divider.mouseUp(event);
+    EXPECT_FALSE(divider.isGripVisible());
+}
+
+/// Equal compact plot margins retain the same geometry for renderer and pointer mapping.
+TEST(EditingWorkflow, SpectrogramHasEqualReducedSideInsets)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    auto* view = editingChild<SpatialSpectrogramView>(editor);
+    ASSERT_NE(view, nullptr);
+    for (const int width : {760, 940, 1200}) {
+        editor.setSize(width, editor.getHeight());
+        const auto plot = view->getPlotBounds();
+        EXPECT_FLOAT_EQ(plot.getX(), static_cast<float>(view->getWidth()) - plot.getRight());
+        EXPECT_FLOAT_EQ(plot.getX(), 16.0F);
     }
 }
 
@@ -370,6 +480,37 @@ TEST(EditingWorkflow, DisplayDisclosuresPreserveGeometryAndRestoreHiddenSections
                 EXPECT_EQ(editingChild<BandStrip>(editor)->getHeight(), 304);
             }
         }
+    }
+}
+
+/// Settings uses available below-toolbar space before introducing a scrollbar and stops at natural content height.
+TEST(EditingWorkflow, SettingsExpandsToAvailableBottomBeforeScrolling)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    auto* settings = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
+    ASSERT_NE(settings, nullptr);
+    settings->onClick();
+    auto* panel = editingChild<SettingsPanel>(editor);
+    auto* callout = dynamic_cast<juce::CallOutBox*>(editingControl(editor, "display-settings-callout"));
+    if (panel == nullptr && callout != nullptr) {
+        panel = editingChild<SettingsPanel>(*callout);
+    }
+    ASSERT_NE(panel, nullptr);
+    ASSERT_NE(callout, nullptr);
+    auto* viewport = dynamic_cast<juce::Viewport*>(editingControl(*panel, "settings-viewport"));
+    if (viewport == nullptr) {
+        viewport = editingChild<juce::Viewport>(*panel);
+    }
+    ASSERT_NE(viewport, nullptr);
+    for (const int height : {900, 600, 764, 1200, 600}) {
+        editor.setSize(1000, height);
+        const int available = height - settings->getBottom() - callout->getBorderSize() * 2;
+        EXPECT_EQ(panel->getHeight(), std::min(available, panel->getNaturalHeight()));
+        EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
+        EXPECT_EQ(viewport->getVerticalScrollBar().isVisible(), available < panel->getNaturalHeight());
     }
 }
 

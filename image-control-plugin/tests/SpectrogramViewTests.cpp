@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -155,10 +156,25 @@ void dragOnView(
 }
 
 /// Returns the x coordinate of a frequency in the view's plot on the logarithmic axis.
-float xOf(const SpatialSpectrogramView& view, const double frequency)
+float xOf(
+    const SpatialSpectrogramView& view,
+    const double frequency,
+    const FrequencyScale scale = FrequencyScale::logarithmic
+)
 {
     const auto plot = view.getPlotBounds();
-    return plot.getX() + static_cast<float>(frequencyToShare(frequency, FrequencyScale::logarithmic)) * plot.getWidth();
+    return plot.getX() + static_cast<float>(frequencyToShare(frequency, scale)) * plot.getWidth();
+}
+
+/// Sets the real pointer-hover target without taking keyboard focus away from another editor control.
+void hoverFrequency(
+    SpatialSpectrogramView& view,
+    const double frequency,
+    const FrequencyScale scale = FrequencyScale::logarithmic
+)
+{
+    const juce::Point<float> position {xOf(view, frequency, scale), view.getPlotBounds().getCentreY()};
+    view.mouseMove(mouseEvent(view, position, position, {}));
 }
 
 /// Returns the frequency an octave count above another.
@@ -282,6 +298,181 @@ TEST(SpectrogramView, BandMoveStopsAtTheMinimumRatioToTheCrossoverThatStays)
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 100.0F, 0.5F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), lowest, 1.0F);
     EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), lowest * 10.0F, 10.0F);
+}
+
+/// Boundary keys use ten percent ordinarily and one percent with Shift, clamped in Hz in either projection.
+TEST(SpectrogramView, HoveredCrossoverKeysUseFrequencyRelativeStepsOnEveryAxis)
+{
+    for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
+        for (const auto index : {std::size_t {0}, std::size_t {2}}) {
+            for (const bool fine : {false, true}) {
+                ImageControlProcessor processor;
+                SpatialSpectrogramView view(
+                    processor.getParameters(), processor.getEditorState(), processor.getHistory()
+                );
+                view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+                view.setFrequencyScale(scale);
+                const float before = parameterValue(processor, crossoverParameterId(index));
+                hoverFrequency(view, static_cast<double>(before), scale);
+                const float step = (index == 0 ? 10.0F : 500.0F) * (fine ? 0.1F : 1.0F);
+                const auto modifiers = fine ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys::noModifiers;
+                EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey, modifiers, 0)));
+                EXPECT_NEAR(parameterValue(processor, crossoverParameterId(index)), before + step, 0.005F);
+                hoverFrequency(view, static_cast<double>(before + step), scale);
+                EXPECT_TRUE(view.getTooltip().contains("Shift+Left/Right"));
+            }
+        }
+    }
+}
+
+/// Both coarse and fine steps apply their own absolute clamp, so Shift cannot bypass the minimum one-Hz step.
+TEST(SpectrogramView, KeyboardFrequencyStepsClampAfterSelectingCoarseOrFineShare)
+{
+    for (const bool fine : {false, true}) {
+        for (const bool high : {false, true}) {
+            ImageControlProcessor processor;
+            SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+            view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+            const std::size_t edge = high ? 2 : 0;
+            const float frequency = high ? 15'000.0F : 50.0F;
+            setParameterInGesture(*processor.getParameters().getParameter(crossoverParameterId(edge)), frequency);
+            hoverFrequency(view, static_cast<double>(frequency));
+            const float highStep = fine ? 150.0F : 1000.0F;
+            const float lowStep = fine ? 1.0F : 5.0F;
+            const float step = high ? highStep : lowStep;
+            EXPECT_TRUE(view.keyPressed(
+                juce::KeyPress(
+                    juce::KeyPress::rightKey,
+                    fine ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys::noModifiers,
+                    0
+                )
+            ));
+            EXPECT_NEAR(parameterValue(processor, crossoverParameterId(edge)), frequency + step, 0.01F);
+        }
+    }
+}
+
+/// Whole-band keyboard changes preserve the edge ratio in both projections, unlike projection-dependent pointer drags.
+TEST(SpectrogramView, HoveredMiddleBandKeysMoveBothEdgesProportionally)
+{
+    for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
+        for (const bool fine : {false, true}) {
+            ImageControlProcessor processor;
+            SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+            view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+            view.setFrequencyScale(scale);
+            hoverFrequency(view, std::sqrt(100.0 * 500.0), scale);
+            const auto modifiers = fine ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys::noModifiers;
+            EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::leftKey, modifiers, 0)));
+            const float ratio = fine ? 0.99F : 0.9F;
+            EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 100.0F * ratio, 0.001F);
+            EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F * ratio, 0.002F);
+            EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), 5000.0F, 0.005F);
+            EXPECT_NEAR(
+                parameterValue(processor, crossoverParameterId(1)) / parameterValue(processor, crossoverParameterId(0)),
+                5.0F,
+                0.0001F
+            );
+        }
+    }
+}
+
+/// The Low and High bands use their geometric centre for the step but move only their inner crossover.
+TEST(SpectrogramView, HoveredOuterBandKeysMoveOnlyTheirInnerEdge)
+{
+    for (const bool high : {false, true}) {
+        ImageControlProcessor processor;
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+        view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+        hoverFrequency(view, high ? 10'000.0 : 40.0);
+        EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        const float expectedLow = high ? 100.0F : 110.0F;
+        const float expectedHigh = high ? 5500.0F : 5000.0F;
+        EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), expectedLow, 0.002F);
+        EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 500.0F, 0.002F);
+        EXPECT_NEAR(parameterValue(processor, crossoverParameterId(2)), expectedHigh, 0.005F);
+    }
+}
+
+/// Repeated keys stop at the absolute frequency bounds and at the same minimum neighbour ratio as pointer input.
+TEST(SpectrogramView, HoveredKeysClampToFrequencyAndNeighbourLimits)
+{
+    for (const bool band : {false, true}) {
+        for (const bool high : {false, true}) {
+            ImageControlProcessor processor;
+            SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+            // A wide hit-test-only view leaves room to hover the narrow outer bands without hitting their boundary.
+            view.setSize(band ? 100'000 : VIEW_WIDTH, VIEW_HEIGHT);
+            const auto edge = high ? std::size_t {2} : std::size_t {0};
+            setParameterInGesture(
+                *processor.getParameters().getParameter(crossoverParameterId(edge)),
+                high ? MAX_FREQUENCY - 100.0F : MIN_FREQUENCY + 0.5F
+            );
+            const double bandHoverFrequency = high ? 19'980.0 : 20.1;
+            const double hover = band ? bandHoverFrequency
+                                      : static_cast<double>(parameterValue(processor, crossoverParameterId(edge)));
+            hoverFrequency(view, hover);
+            if (band) {
+                ASSERT_TRUE(view.getHoveredBand().has_value());
+            }
+            EXPECT_TRUE(view.keyPressed(juce::KeyPress(high ? juce::KeyPress::rightKey : juce::KeyPress::leftKey)));
+            EXPECT_NEAR(
+                parameterValue(processor, crossoverParameterId(edge)), high ? MAX_FREQUENCY : MIN_FREQUENCY, 0.005F
+            );
+        }
+    }
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const float lower = 100.0F * MIN_CROSSOVER_RATIO;
+    setParameterInGesture(*processor.getParameters().getParameter(crossoverParameterId(1)), lower + 0.1F);
+    hoverFrequency(view, static_cast<double>(lower + 0.1F));
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), lower, 0.001F);
+}
+
+/// A stopped middle band preserves its edge ratio rather than clamping each boundary independently.
+TEST(SpectrogramView, MiddleBandKeysClampTheirCommonRatioToExternalNeighbours)
+{
+    for (const bool right : {false, true}) {
+        ImageControlProcessor processor;
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+        view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+        hoverFrequency(view, 1500.0);
+        ASSERT_EQ(view.getHoveredBand(), std::optional<std::size_t>(2));
+        for (int press = 0; press < 2000; ++press) {
+            EXPECT_TRUE(view.keyPressed(juce::KeyPress(right ? juce::KeyPress::rightKey : juce::KeyPress::leftKey)));
+        }
+        const float low = parameterValue(processor, crossoverParameterId(1));
+        const float high = parameterValue(processor, crossoverParameterId(2));
+        EXPECT_NEAR(low, right ? MAX_FREQUENCY * 0.1F : 100.0F * MIN_CROSSOVER_RATIO, 0.02F);
+        EXPECT_NEAR(high, low * 10.0F, 0.1F);
+        EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 100.0F, 0.002F);
+    }
+}
+
+/// Spectrum hover never captures non-horizontal keys, command modifiers, disabled input, or absent hover.
+TEST(SpectrogramView, HoveredKeysExcludeModifiersDisabledViewAndPointerDrags)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    EXPECT_FALSE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    hoverFrequency(view, 100.0);
+    for (const int modifier :
+         {juce::ModifierKeys::commandModifier, juce::ModifierKeys::ctrlModifier, juce::ModifierKeys::altModifier})
+    {
+        EXPECT_FALSE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey, modifier, 0)));
+    }
+    EXPECT_FALSE(view.keyPressed(juce::KeyPress(juce::KeyPress::upKey)));
+    view.setEnabled(false);
+    EXPECT_FALSE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    view.setEnabled(true);
+    const juce::Point<float> position {xOf(view, 100.0), view.getPlotBounds().getCentreY()};
+    view.mouseDown(mouseEvent(view, position, position, juce::ModifierKeys::leftButtonModifier));
+    EXPECT_TRUE(view.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 100.0F, 0.001F);
+    view.endDrag();
 }
 
 TEST(SpectrogramView, CommandDragChangesTheMidGainAndLinkedSide)
@@ -736,13 +927,11 @@ TEST(BandCorrelationMeter, AccessibleValueUsesTheSmoothedDefaultAndCanSwitchToLi
     EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
 }
 
-TEST(BandCorrelationMeter, ReadoutUsesOneUnicodeDashForUnavailableMeasurements)
+TEST(BandCorrelationMeter, ReadoutIsBlankForUnavailableMeasurements)
 {
     BandCorrelationMeter meter("Low");
     meter.setSmoothedReadout(false);
-    const auto unavailable = juce::String::charToString(0x2014);
-    EXPECT_EQ(meter.readoutText().length(), 1);
-    EXPECT_EQ(meter.readoutText(), unavailable);
+    EXPECT_TRUE(meter.readoutText().isEmpty());
     EXPECT_EQ(meter.valueText(), "Unavailable");
 
     meter.setCorrelation(-0.75F);
@@ -759,10 +948,69 @@ TEST(BandCorrelationMeter, ReadoutUsesOneUnicodeDashForUnavailableMeasurements)
     };
     for (const float value : unavailableValues) {
         meter.setCorrelation(value);
-        EXPECT_EQ(meter.readoutText().length(), 1);
-        EXPECT_EQ(meter.readoutText(), unavailable);
+        EXPECT_TRUE(meter.readoutText().isEmpty());
         EXPECT_EQ(meter.valueText(), "Unavailable");
     }
+}
+
+/// Native peer dispatch must consult the hover listener before the focused production slider consumes arrows.
+TEST(ImageControlEditor, SpectrumHoverArrowsPrecedeFocusedSliderAndExcludeTextAndModals)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    SpatialSpectrogramView* view = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (auto* candidate = dynamic_cast<SpatialSpectrogramView*>(child)) {
+            view = candidate;
+        }
+    }
+    auto* slider = dynamic_cast<ControlSlider*>(childWithTitle(editor, "Low Width"));
+    ASSERT_NE(view, nullptr);
+    ASSERT_NE(slider, nullptr);
+    auto* peer = editor.getPeer();
+    ASSERT_NE(peer, nullptr);
+    slider->grabKeyboardFocus();
+    ASSERT_TRUE(slider->hasKeyboardFocus(false));
+    hoverFrequency(*view, 100.0);
+    EXPECT_TRUE(peer->handleKeyPress(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 110.0F, 0.001F);
+    EXPECT_NEAR(parameterValue(processor, widthParameterId(0)), 1.0F, 0.001F);
+    EXPECT_TRUE(slider->hasKeyboardFocus(false));
+
+    hoverFrequency(*view, 200.0);
+    EXPECT_TRUE(peer->handleKeyPress(juce::KeyPress(juce::KeyPress::leftKey)));
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 99.0F, 0.002F);
+    EXPECT_NEAR(parameterValue(processor, crossoverParameterId(1)), 450.0F, 0.002F);
+    view->mouseExit(mouseEvent(*view, {}, {}, {}));
+    EXPECT_TRUE(peer->handleKeyPress(juce::KeyPress(juce::KeyPress::rightKey)));
+    EXPECT_NEAR(parameterValue(processor, widthParameterId(0)), 1.02F, 0.001F);
+
+    hoverFrequency(*view, 100.0);
+    ASSERT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    juce::TextEditor* text = nullptr;
+    for (auto* child : slider->getChildren()) {
+        if (const auto* label = dynamic_cast<juce::Label*>(child)) {
+            text = label->getCurrentTextEditor();
+        }
+    }
+    ASSERT_NE(text, nullptr);
+    text->grabKeyboardFocus();
+    const auto before = processor.getCrossovers();
+    peer->handleKeyPress(juce::KeyPress(juce::KeyPress::rightKey));
+    EXPECT_EQ(processor.getCrossovers(), before);
+    EXPECT_TRUE(text->hasKeyboardFocus(false));
+    text->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+
+    juce::Component modal;
+    modal.setSize(80, 40);
+    modal.setWantsKeyboardFocus(true);
+    editor.addAndMakeVisible(modal);
+    modal.enterModalState(false);
+    peer->handleKeyPress(juce::KeyPress(juce::KeyPress::rightKey));
+    EXPECT_EQ(processor.getCrossovers(), before);
+    modal.exitModalState(0);
 }
 
 TEST(ImageControlEditor, CoreProfileRequested)

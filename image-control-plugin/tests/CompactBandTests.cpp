@@ -6,6 +6,9 @@
 #include "Parameters.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
+#include "ui/DisplayDisclosure.h"
+#include "ui/HistoryAttachments.h"
+#include "ui/ImageControlLookAndFeel.h"
 
 #include <gtest/gtest.h>
 
@@ -17,9 +20,12 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -146,6 +152,19 @@ juce::MouseWheelDetails compactNotch()
     return wheel;
 }
 
+/// Waits for native editor callbacks without assuming one platform event pump delivers asynchronous messages.
+bool waitForCompactEditorClose(const juce::Label& label)
+{
+    const double deadline = juce::Time::getMillisecondCounterHiRes() + 500.0;
+    do {
+        dispatchCompactChanges();
+        if (!label.isBeingEdited()) {
+            return true;
+        }
+    } while (juce::Time::getMillisecondCounterHiRes() < deadline);
+    return false;
+}
+
 /// Opens the real JUCE text editor with Return and commits through its own Return-key handling.
 bool enterCompactValue(ControlSlider& slider, const juce::String& text)
 {
@@ -160,13 +179,9 @@ bool enterCompactValue(ControlSlider& slider, const juce::String& text)
     editor->setText(text, false);
     // Return posts a message even when the editor leaves the key available to its parent.
     editor->keyPressed(juce::KeyPress(juce::KeyPress::returnKey));
-    const double deadline = juce::Time::getMillisecondCounterHiRes() + 500.0;
-    do {
-        dispatchCompactChanges();
-        if (!label->isBeingEdited()) {
-            return true;
-        }
-    } while (juce::Time::getMillisecondCounterHiRes() < deadline);
+    if (waitForCompactEditorClose(*label)) {
+        return true;
+    }
     slider.hideTextBox(true);
     return false;
 }
@@ -200,7 +215,7 @@ std::pair<juce::String, double> compactEntryExample(const ControlSlider& slider)
     if (slider.getName() == "Pan") {
         return {"25L", -25.0};
     }
-    return {"-3.27 dB", -3.27};
+    return {"-3.27", -3.27};
 }
 
 /// Returns native default text and plain values for all four compact controls.
@@ -226,8 +241,10 @@ float compactParameterValue(ImageControlProcessor& processor, const juce::String
 TEST(CompactBands, MinimumWidthGeometryAndBoundaryValuesRemainLegible)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         BandStrip strip(processor.getParameters(), processor.getEditorState(), band, processor.getHistory());
+        strip.setLookAndFeel(&lookAndFeel);
         strip.setCompact(true);
         strip.setHeaderDisclosureInset(24);
         EXPECT_EQ(BAND_STRIP_COMPACT_HEIGHT, 28);
@@ -274,7 +291,9 @@ TEST(CompactBands, MinimumWidthGeometryAndBoundaryValuesRemainLegible)
 TEST(CompactBands, SuffixesAndInlineFullNamesIdentifyAllFourValues)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     const std::array titles {"Low Mid", "Low Side", "Low Width", "Low Pan"};
@@ -322,7 +341,9 @@ TEST(CompactBands, SuffixesAndInlineFullNamesIdentifyAllFourValues)
 TEST(CompactBands, FullNamesReadinessUsesWorstCaseGlyphsAndRemainsStableUnderAutomation)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     const std::array titles {"Low Mid", "Low Side", "Low Width", "Low Pan"};
     const std::array parameterIds {
@@ -366,7 +387,9 @@ TEST(CompactBands, FullNamesReadinessUsesWorstCaseGlyphsAndRemainsStableUnderAut
 TEST(CompactBands, PanDirectionsAndNumericEntryUseExistingParameterParser)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     strip.addToDesktop(0);
@@ -400,9 +423,11 @@ TEST(CompactBands, PanDirectionsAndNumericEntryUseExistingParameterParser)
 TEST(CompactBands, PanHistoryAndAutomationRemainIndependentOfLinkedGains)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     auto& history = processor.getHistory();
     processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     auto* pan = compactControl<ControlSlider>(strip, "Low Pan");
@@ -430,8 +455,10 @@ TEST(CompactBands, PanHistoryAndAutomationRemainIndependentOfLinkedGains)
 TEST(CompactBands, WideResizePreservesNumericEditorAndActivePanGesture)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     auto& history = processor.getHistory();
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     strip.addToDesktop(0);
@@ -479,7 +506,9 @@ TEST(CompactBands, WideResizePreservesNumericEditorAndActivePanGesture)
 TEST(CompactBands, FullLayoutRestoresWithoutReplacingControlsOrAttachments)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setRangeText("20 Hz - 120 Hz");
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
     std::vector<std::pair<juce::Component::SafePointer<juce::Component>, juce::Rectangle<int>>> bounds;
@@ -552,7 +581,9 @@ TEST(CompactBands, FullLayoutRestoresWithoutReplacingControlsOrAttachments)
 TEST(CompactBands, WheelAndArrowsKeepFineStepsAndHostShortcutRouting)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     for (const auto* title : {"Low Mid", "Low Side", "Low Width", "Low Pan"}) {
@@ -593,7 +624,9 @@ TEST(CompactBands, RelativeDragFineAdjustmentAndResetUseExistingSliderGestures)
 {
     for (const auto* title : {"Low Mid", "Low Side", "Low Width", "Low Pan"}) {
         ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
         BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+        strip.setLookAndFeel(&lookAndFeel);
         strip.setCompact(true);
         strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
         auto* slider = compactControl<ControlSlider>(strip, title);
@@ -623,7 +656,9 @@ TEST(CompactBands, RelativeDragFineAdjustmentAndResetUseExistingSliderGestures)
 TEST(CompactBands, ReturnNumericEntryUsesFullParameterParserAndPreservesMalformedValues)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     strip.addToDesktop(0);
@@ -642,7 +677,7 @@ TEST(CompactBands, ReturnNumericEntryUsesFullParameterParserAndPreservesMalforme
             EXPECT_DOUBLE_EQ(slider->getValue(), accepted);
         }
         if (gain) {
-            ASSERT_TRUE(enterCompactValue(*slider, "-inf dB"));
+            ASSERT_TRUE(enterCompactValue(*slider, "-inf"));
             EXPECT_DOUBLE_EQ(slider->getValue(), BAND_GAIN_MIN_DB);
         }
         EXPECT_FALSE(processor.getHistory().isEditing());
@@ -655,6 +690,7 @@ TEST(CompactBands, LinkedInputPathsShareOneHistoryCommandAndBalancedHostGestures
     for (int input = 0; input < 5; ++input) {
         SCOPED_TRACE(input);
         ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
         auto& history = processor.getHistory();
         processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
         auto& midParameter = *processor.getParameters().getParameter(midGainParameterId(0));
@@ -664,6 +700,7 @@ TEST(CompactBands, LinkedInputPathsShareOneHistoryCommandAndBalancedHostGestures
         const CompactGestureCounter midGestures(midParameter);
         const CompactGestureCounter sideGestures(sideParameter);
         BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+        strip.setLookAndFeel(&lookAndFeel);
         strip.setCompact(true);
         strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
         strip.addToDesktop(0);
@@ -702,9 +739,11 @@ TEST(CompactBands, LinkedInputPathsShareOneHistoryCommandAndBalancedHostGestures
 TEST(CompactBands, AutomationExcludedAndLinkedSideOffPreserved)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     auto& history = processor.getHistory();
     processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
@@ -738,11 +777,13 @@ TEST(CompactBands, ModeSwitchClosesActiveGesturesInBothDirections)
 {
     for (const bool initiallyCompact : {false, true}) {
         ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
         auto& history = processor.getHistory();
         processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
         const CompactGestureCounter midGestures(*processor.getParameters().getParameter(midGainParameterId(0)));
         const CompactGestureCounter sideGestures(*processor.getParameters().getParameter(sideGainParameterId(0)));
         BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+        strip.setLookAndFeel(&lookAndFeel);
         strip.setCompact(initiallyCompact);
         strip.setSize(240, initiallyCompact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
         auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
@@ -771,7 +812,9 @@ TEST(CompactBands, ModeSwitchFinishesNumericEntrySafely)
     for (const bool initiallyCompact : {false, true}) {
         for (const bool valid : {false, true}) {
             ImageControlProcessor processor;
+            ImageControlLookAndFeel lookAndFeel;
             BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+            strip.setLookAndFeel(&lookAndFeel);
             strip.setCompact(initiallyCompact);
             strip.setSize(240, initiallyCompact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
             strip.addToDesktop(0);
@@ -782,7 +825,7 @@ TEST(CompactBands, ModeSwitchFinishesNumericEntrySafely)
             auto* label = compactValueBox(*mid);
             ASSERT_NE(label, nullptr);
             ASSERT_NE(label->getCurrentTextEditor(), nullptr);
-            label->getCurrentTextEditor()->setText(valid ? "-3.27 dB" : "broken", false);
+            label->getCurrentTextEditor()->setText(valid ? "-3.27" : "broken", false);
             strip.setCompact(!initiallyCompact);
             EXPECT_NEAR(mid->getValue(), valid ? -3.27 : 0.0, 0.0001);
             EXPECT_FALSE(processor.getHistory().isEditing());
@@ -799,12 +842,14 @@ TEST(CompactBands, TeardownWithFocusedNumericEditorDoesNotCommitOrLeakGestures)
 {
     for (const bool compact : {false, true}) {
         ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
         auto& history = processor.getHistory();
         processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
         const CompactGestureCounter midGestures(*processor.getParameters().getParameter(midGainParameterId(0)));
         const CompactGestureCounter sideGestures(*processor.getParameters().getParameter(sideGainParameterId(0)));
         {
             BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+            strip.setLookAndFeel(&lookAndFeel);
             strip.setCompact(compact);
             strip.setSize(240, compact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
             strip.addToDesktop(0);
@@ -830,7 +875,9 @@ TEST(CompactBands, TeardownWithFocusedNumericEditorDoesNotCommitOrLeakGestures)
 TEST(CompactBands, FocusMovesFromHiddenControlsAndRetainedValuesKeepFocus)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
     strip.addToDesktop(0);
     strip.setVisible(true);
@@ -861,7 +908,9 @@ TEST(CompactBands, FocusMovesFromHiddenControlsAndRetainedValuesKeepFocus)
 TEST(CompactBands, AccessibilityKeepsFullNamesUnitsAndEditing)
 {
     ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     strip.addToDesktop(0);
@@ -883,5 +932,309 @@ TEST(CompactBands, AccessibilityKeepsFullNamesUnitsAndEditing)
         EXPECT_TRUE(processor.getHistory().undo());
         EXPECT_NEAR(slider->getValue(), initialValue, 0.0001);
     }
+}
+/// Real expanded and compact fields keep their value font, text origin, and fixed suffix outside selection.
+TEST(CompactBands, NumericEditorKeepsFieldPresentationAndNoneditableSuffixes)
+{
+    for (const bool compact : {false, true}) {
+        ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+        strip.setLookAndFeel(&lookAndFeel);
+        strip.setCompact(compact);
+        strip.setSize(240, compact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
+        strip.addToDesktop(0);
+        strip.setVisible(true);
+        for (const auto* title : {"Low Mid", "Low Side", "Low Width", "Low Pan", "Low Recover"}) {
+            auto* slider = compactControl<ControlSlider>(strip, title);
+            ASSERT_NE(slider, nullptr);
+            if (!slider->isVisible()) {
+                continue;
+            }
+            auto* label = compactValueBox(*slider);
+            ASSERT_NE(label, nullptr);
+            if (slider->getName() == "Recover") {
+                setParameterInGesture(*processor.getParameters().getParameter(recoverParameterId(0)), 25.0F);
+                EXPECT_EQ(slider->numericValueSuffix(), " %");
+            }
+            const auto bounds = label->getBounds();
+            const auto font = label->getLookAndFeel().getLabelFont(*label);
+            const auto number = slider->numericValueText();
+            const auto suffix = slider->numericValueSuffix();
+            ASSERT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+            auto* editor = label->getCurrentTextEditor();
+            ASSERT_NE(editor, nullptr);
+            EXPECT_EQ(editor->getText(), number);
+            EXPECT_EQ(editor->getHighlightedText(), number);
+            EXPECT_EQ(editor->getFont(), font);
+            EXPECT_EQ(editor->getJustificationType(), juce::Justification::centredLeft);
+            EXPECT_EQ(editor->getBorder(), juce::BorderSize<int>());
+            EXPECT_EQ(editor->getLeftIndent(), 0);
+            EXPECT_EQ(editor->getTopIndent(), 0);
+            EXPECT_TRUE(editor->findColour(juce::TextEditor::backgroundColourId).isTransparent());
+            EXPECT_TRUE(editor->findColour(juce::TextEditor::focusedOutlineColourId).isTransparent());
+            EXPECT_EQ(
+                editor->findColour(juce::TextEditor::textColourId),
+                slider->findColour(juce::Slider::textBoxTextColourId)
+            );
+            EXPECT_EQ(label->getBounds(), bounds);
+            const auto area = label->getBorderSize().subtractedFrom(label->getLocalBounds());
+            const int suffixWidth = static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, suffix)));
+            const int numberWidth
+                = std::max(1, static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, number))));
+            EXPECT_EQ(editor->getX(), area.getX() + (area.getWidth() - numberWidth - suffixWidth) / 2);
+            EXPECT_LE(editor->getRight() + suffixWidth, area.getRight());
+            const auto editorBounds = editor->getBounds();
+            editor->selectAll();
+            EXPECT_EQ(editor->getHighlightedText(), number);
+            slider->hideTextBox(true);
+            ASSERT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+            ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+            EXPECT_EQ(label->getCurrentTextEditor()->getBounds(), editorBounds);
+            slider->hideTextBox(true);
+        }
+        EXPECT_FALSE(processor.getHistory().canUndo());
+    }
+}
+
+/// Long valid drafts scroll within the numeric region so their trailing precision remains reachable.
+TEST(CompactBands, NumericEditorKeepsLongDraftCaretVisibleWithoutCoveringUnit)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setCompact(true);
+    strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
+    strip.addToDesktop(0);
+    strip.setVisible(true);
+    auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
+    ASSERT_NE(mid, nullptr);
+    ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    auto* label = compactValueBox(*mid);
+    ASSERT_NE(label, nullptr);
+    auto* editor = label->getCurrentTextEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->selectAll();
+    editor->insertTextAtCaret("-12.34567890123456789");
+    dispatchCompactChanges();
+    const auto caret = editor->getCaretRectangleForCharIndex(editor->getCaretPosition());
+    EXPECT_GE(caret.getX(), 0);
+    EXPECT_LE(caret.getX(), editor->getWidth());
+    EXPECT_LT(editor->getWidth(), editor->getTextWidth());
+    EXPECT_LT(editor->getRight(), label->getWidth());
+    mid->hideTextBox(true);
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Unitless frequency edits use the displayed scale while explicit units retain the strict host parser contract.
+TEST(CompactBands, FrequencyEditorKeepsHertzAndKilohertzFixedWithoutChangingHostParser)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    ControlSlider slider;
+    slider.setLookAndFeel(&lookAndFeel);
+    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 100, 24);
+    const HistorySliderAttachment attachment(
+        processor.getParameters(), crossoverParameterId(1), slider, processor.getHistory()
+    );
+    slider.setSize(240, 24);
+    slider.addToDesktop(0);
+    slider.setVisible(true);
+    auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(1));
+    for (const auto& [value, number, suffix, entry, expected] :
+         std::array {
+             std::tuple {800.0F, "800", " Hz", "850", 850.0F},
+             std::tuple {1'500.0F, "1.50", " kHz", "1.75", 1'750.0F},
+             std::tuple {1'500.0F, "1.50", " kHz", "900 Hz", 900.0F},
+         })
+    {
+        setParameterInGesture(parameter, value);
+        ASSERT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        auto* label = compactValueBox(slider);
+        ASSERT_NE(label, nullptr);
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        EXPECT_EQ(label->getCurrentTextEditor()->getText(), number);
+        EXPECT_EQ(slider.numericValueSuffix(), suffix);
+        slider.hideTextBox(true);
+        ASSERT_TRUE(enterCompactValue(slider, entry));
+        EXPECT_NEAR(slider.getValue(), expected, 0.01);
+    }
+    EXPECT_NEAR(slider.getValueFromText("1.75"), MIN_FREQUENCY, 0.01);
+    EXPECT_NEAR(slider.getValueFromText("1.75 kHz"), 1'750.0, 0.01);
+    const double accepted = slider.getValue();
+    for (const auto* malformed : {"1 kHz kHz", "1 Hz Hz", "1.5junk", "", "nan", "inf"}) {
+        ASSERT_TRUE(enterCompactValue(slider, malformed));
+        EXPECT_DOUBLE_EQ(slider.getValue(), accepted);
+    }
+}
+
+/// Untouched rounded readouts do not quantize parameter values, and recovery retains its explicit Off token.
+TEST(CompactBands, NumericEditorPreservesUntouchedPrecisionAndRecoveryOff)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+    strip.addToDesktop(0);
+    strip.setVisible(true);
+    for (const auto* title : {"Low Mid", "Low Pan", "Low Recover"}) {
+        auto* slider = compactControl<ControlSlider>(strip, title);
+        ASSERT_NE(slider, nullptr);
+        auto parameterId = midGainParameterId(0);
+        if (slider->getName() == "Pan") {
+            parameterId = panParameterId(0);
+        } else if (slider->getName() == "Recover") {
+            parameterId = recoverParameterId(0);
+        }
+        auto& parameter = *processor.getParameters().getParameter(parameterId);
+        setParameterInGesture(parameter, slider->getName() == "Pan" ? -25.4F : 3.27F);
+        const double original = slider->getValue();
+        EXPECT_TRUE(enterCompactValue(*slider, slider->numericValueText()));
+        EXPECT_DOUBLE_EQ(slider->getValue(), original);
+        EXPECT_FALSE(processor.getHistory().canUndo());
+        if (slider->getName() == "Recover") {
+            EXPECT_TRUE(enterCompactValue(*slider, "Off"));
+            EXPECT_NEAR(slider->getValue(), 0.0, 0.0001);
+            EXPECT_EQ(slider->numericValueText(), "Off");
+            EXPECT_EQ(slider->numericValueSuffix(), "");
+            EXPECT_TRUE(processor.getHistory().undo());
+            EXPECT_DOUBLE_EQ(slider->getValue(), original);
+        }
+    }
+}
+
+/// Vertical arrows in the real numeric editor retain coarse/fine conventions, balanced Link gestures, and undo.
+TEST(CompactBands, NumericEditorArrowsReuseSliderNudgesAndLinkedHistory)
+{
+    for (const bool compact : {false, true}) {
+        ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
+        auto& history = processor.getHistory();
+        processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
+        auto& midParameter = *processor.getParameters().getParameter(midGainParameterId(0));
+        auto& sideParameter = *processor.getParameters().getParameter(sideGainParameterId(0));
+        setParameterInGesture(midParameter, -6.0F);
+        setParameterInGesture(sideParameter, -6.0F);
+        const CompactGestureCounter midGestures(midParameter);
+        const CompactGestureCounter sideGestures(sideParameter);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+        strip.setLookAndFeel(&lookAndFeel);
+        strip.setCompact(compact);
+        strip.setSize(240, compact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
+        strip.addToDesktop(0);
+        strip.setVisible(true);
+        auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
+        ASSERT_NE(mid, nullptr);
+        ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        auto* label = compactValueBox(*mid);
+        ASSERT_NE(label, nullptr);
+        for (const int modifier :
+             {juce::ModifierKeys::commandModifier, juce::ModifierKeys::ctrlModifier, juce::ModifierKeys::altModifier})
+        {
+            ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+            EXPECT_FALSE(label->getCurrentTextEditor()->keyPressed(juce::KeyPress(juce::KeyPress::upKey, modifier, 0)));
+            EXPECT_NEAR(mid->getValue(), -6.0, 0.0001);
+        }
+        ASSERT_TRUE(label->getCurrentTextEditor()->keyPressed(juce::KeyPress(juce::KeyPress::upKey)));
+        const double coarse = mid->getValue();
+        EXPECT_NEAR(coarse, -5.28, 0.0001);
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        EXPECT_EQ(label->getCurrentTextEditor()->getText(), mid->numericValueText());
+        ASSERT_TRUE(label->getCurrentTextEditor()->keyPressed(
+            juce::KeyPress(juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier, 0)
+        ));
+        EXPECT_NEAR(mid->getValue(), coarse - 0.07, 0.0001);
+        EXPECT_NEAR(compactParameterValue(processor, sideGainParameterId(0)), mid->getValue(), 0.0001);
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        const double finalValue = mid->getValue();
+        EXPECT_TRUE(label->getCurrentTextEditor()->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        EXPECT_TRUE(waitForCompactEditorClose(*label));
+        EXPECT_DOUBLE_EQ(mid->getValue(), finalValue);
+        EXPECT_EQ(midGestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false}));
+        EXPECT_EQ(sideGestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false}));
+        EXPECT_TRUE(history.undo());
+        EXPECT_NEAR(mid->getValue(), coarse, 0.0001);
+        EXPECT_TRUE(history.undo());
+        EXPECT_NEAR(mid->getValue(), -6.0, 0.0001);
+        EXPECT_NEAR(compactParameterValue(processor, sideGainParameterId(0)), -6.0F, 0.0001F);
+        EXPECT_FALSE(history.canUndo());
+    }
+}
+
+/// Escape discards a draft, focus loss commits it, and automation closes stale text without becoming a local edit.
+TEST(CompactBands, NumericEditorCancelFocusLossAndAutomationPreserveNativeLifecycle)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    auto& history = processor.getHistory();
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+    strip.addToDesktop(0);
+    strip.setVisible(true);
+    auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
+    auto* side = compactControl<ControlSlider>(strip, "Low Side");
+    ASSERT_NE(mid, nullptr);
+    ASSERT_NE(side, nullptr);
+    ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    auto* label = compactValueBox(*mid);
+    ASSERT_NE(label, nullptr);
+    ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+    label->getCurrentTextEditor()->setText("-3.27", false);
+    EXPECT_TRUE(label->getCurrentTextEditor()->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    EXPECT_TRUE(waitForCompactEditorClose(*label));
+    EXPECT_NEAR(mid->getValue(), 0.0, 0.0001);
+    EXPECT_FALSE(history.canUndo());
+    ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+    label->getCurrentTextEditor()->setText("-3.27", false);
+    side->grabKeyboardFocus();
+    EXPECT_TRUE(waitForCompactEditorClose(*label));
+    EXPECT_NEAR(mid->getValue(), -3.27, 0.0001);
+    EXPECT_TRUE(history.undo());
+    ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+    label->getCurrentTextEditor()->setText("-4.5", false);
+    auto& parameter = *processor.getParameters().getParameter(midGainParameterId(0));
+    parameter.setValueNotifyingHost(parameter.convertTo0to1(-9.0F));
+    EXPECT_TRUE(waitForCompactEditorClose(*label));
+    EXPECT_NEAR(mid->getValue(), -9.0, 0.0001);
+    EXPECT_FALSE(history.canUndo());
+    EXPECT_TRUE(history.canRedo());
+}
+
+/// Display disclosures paint local keyboard focus instead of gaining a section-sized managed outline.
+TEST(CompactBands, DisclosureFocusOptOutLeavesOrdinaryButtonOutlinesEnabled)
+{
+    ImageControlLookAndFeel lookAndFeel;
+    juce::Component root;
+    DisplayDisclosure disclosure("Controls", false);
+    juce::TextButton ordinary("Action");
+    root.setLookAndFeel(&lookAndFeel);
+    root.addAndMakeVisible(disclosure);
+    root.addAndMakeVisible(ordinary);
+    root.setSize(240, 80);
+    disclosure.setBounds(0, 0, 240, 28);
+    disclosure.setHasFocusOutline(false);
+    ordinary.setBounds(0, 40, 100, 28);
+    ordinary.setHasFocusOutline(false);
+    root.addToDesktop(0);
+    root.setVisible(true);
+    root.toFront(true);
+    disclosure.grabKeyboardFocus();
+    EXPECT_TRUE(disclosure.hasKeyboardFocus(false));
+    EXPECT_FALSE(disclosure.hasFocusOutline());
+    EXPECT_EQ(lookAndFeel.createFocusOutlineForComponent(disclosure), nullptr);
+    ordinary.grabKeyboardFocus();
+    const double deadline = juce::Time::getMillisecondCounterHiRes() + 500.0;
+    do {
+        dispatchCompactChanges();
+    } while (!ordinary.hasFocusOutline() && juce::Time::getMillisecondCounterHiRes() < deadline);
+    EXPECT_TRUE(ordinary.hasKeyboardFocus(false));
+    EXPECT_TRUE(ordinary.hasFocusOutline());
+    EXPECT_NE(lookAndFeel.createFocusOutlineForComponent(ordinary), nullptr);
+    root.setLookAndFeel(nullptr);
 }
 }  // namespace esgrove::image_control::test

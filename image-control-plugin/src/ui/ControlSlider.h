@@ -8,6 +8,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <memory>
 #include <optional>
 
 namespace esgrove::image_control
@@ -32,7 +33,10 @@ public:
     ControlSlider& operator=(const ControlSlider&) = delete;
     ControlSlider& operator=(ControlSlider&&) = delete;
 
+    [[nodiscard]] std::unique_ptr<juce::Label> createValueBox();
     [[nodiscard]] juce::String compactValueText();
+    [[nodiscard]] juce::String numericValueSuffix();
+    [[nodiscard]] juce::String numericValueText();
     [[nodiscard]] int compactValueRequiredWidth(bool fullNames) const;
     void endDrag();
     void setCompactValue(const juce::String& identity);

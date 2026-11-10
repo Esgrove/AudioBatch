@@ -11,17 +11,13 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Parent-contained callouts reserve their arrow and look-and-feel border on both edges.
-constexpr int SETTINGS_MAX_HEIGHT {640};
-constexpr int SETTINGS_BORDER_ALLOWANCE {48};
-
 /// Keeps the opening Settings button available as a release-driven close action while the callout is modal.
 class SettingsCallout final : public juce::CallOutBox
 {
 public:
     /// Retains only safe component observers, while the editor owns both this callout and its content.
     SettingsCallout(juce::Component& content, juce::Component& target, juce::Component& editor) :
-        CallOutBox(content, target.getBounds(), &editor),
+        CallOutBox(content, target, &editor),
         button(&target)
     {
         setComponentID("display-settings-callout");
@@ -39,10 +35,13 @@ private:
 };
 }  // namespace
 
-/// Returns the settings height bounded by the editor's available space and the callout border.
+/// Fits natural settings content below its actual anchor, reserving the native callout's border on both edges.
 int ImageControlEditor::settingsPanelHeight() const
 {
-    return std::min(SETTINGS_MAX_HEIGHT, getHeight() - SETTINGS_BORDER_ALLOWANCE);
+    const auto anchor = getLocalArea(&settingsButton, settingsButton.getLocalBounds());
+    const int availableHeight
+        = getLocalBounds().getBottom() - anchor.getBottom() - settingsCallout->getBorderSize() * 2;
+    return std::clamp(availableHeight, 1, settingsPanel->getNaturalHeight());
 }
 
 /// F1 enters the shortcuts submenu in Settings without creating another window or popup layer.
@@ -64,9 +63,10 @@ void ImageControlEditor::openSettings()
         settingsCallout->dismiss();
         return;
     }
-    settingsPanel = std::make_unique<SettingsPanel>(imageControlProcessor.getEditorState(), settingsPanelHeight());
+    settingsPanel = std::make_unique<SettingsPanel>(imageControlProcessor.getEditorState());
     const juce::Component::SafePointer<ImageControlEditor> safeThis(this);
     settingsCallout = std::make_unique<SettingsCallout>(*settingsPanel, settingsButton, *this);
+    updateSettingsBounds();
     const juce::Component::SafePointer<juce::CallOutBox> safeCallout(settingsCallout.get());
     settingsCallout->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, safeCallout](int) {
                                          if (safeThis == nullptr || safeCallout == nullptr
@@ -91,7 +91,8 @@ void ImageControlEditor::updateSettingsBounds()
 {
     if (settingsCallout != nullptr && settingsPanel != nullptr) {
         settingsPanel->setSize(settingsPanel->getWidth(), settingsPanelHeight());
-        settingsCallout->updatePosition(settingsButton.getBounds(), getLocalBounds());
+        const auto anchor = getLocalArea(&settingsButton, settingsButton.getLocalBounds());
+        settingsCallout->updatePosition(anchor, getLocalBounds().withTrimmedTop(anchor.getBottom()));
     }
 }
 }  // namespace esgrove::image_control

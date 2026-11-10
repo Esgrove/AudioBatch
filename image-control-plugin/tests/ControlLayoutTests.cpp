@@ -23,6 +23,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <utility>
 #include <vector>
@@ -342,8 +343,8 @@ TEST(SettingsPanel, AppearanceResetLeavesSoundVisibilityLayoutLinksAndStoppedAna
     EXPECT_FLOAT_EQ(plainValue(gain), -7.0F);
 }
 
-/// Height limits bound the popup while its compact settings and footer retain a complete scrolling layout.
-TEST(SettingsPanel, ViewportBoundsCompactContentWithoutEmbeddedHelp)
+/// Height limits bound the viewport to natural content, with a readable footer gap and no unused scroll gutter.
+TEST(SettingsPanel, ViewportBoundsNaturalContentWithoutEmbeddedHelp)
 {
     ImageControlProcessor processor;
     for (const int maximumHeight : {1, 180, 320, 640, 2000}) {
@@ -355,8 +356,14 @@ TEST(SettingsPanel, ViewportBoundsCompactContentWithoutEmbeddedHelp)
         EXPECT_EQ(viewport->getBounds(), panel.getLocalBounds());
         auto* content = viewport->getViewedComponent();
         ASSERT_NE(content, nullptr);
-        EXPECT_GE(content->getHeight(), 650);
-        EXPECT_LE(content->getHeight(), 730);
+        EXPECT_EQ(content->getHeight(), panel.getNaturalHeight());
+        EXPECT_EQ(panel.getHeight(), std::min(maximumHeight, panel.getNaturalHeight()));
+        EXPECT_EQ(
+            viewport->getVerticalScrollBar().isVisible(),
+            maximumHeight < panel.getNaturalHeight() && maximumHeight > viewport->getScrollBarThickness()
+        );
+        EXPECT_FALSE(viewport->getHorizontalScrollBar().isVisible());
+        EXPECT_EQ(content->getWidth(), viewport->getViewWidth());
         EXPECT_GE(content->getHeight(), panel.getHeight());
         EXPECT_LE(content->getWidth(), viewport->getWidth());
         for (const auto* child : content->getChildren()) {
@@ -367,7 +374,11 @@ TEST(SettingsPanel, ViewportBoundsCompactContentWithoutEmbeddedHelp)
         }
         EXPECT_EQ(settingsControl<juce::Component>(panel, "displayControlsHelp"), nullptr);
         auto* shortcuts = settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts");
+        auto* reset = settingsControl<juce::TextButton>(panel, "resetDisplayAppearance");
         ASSERT_NE(shortcuts, nullptr);
+        ASSERT_NE(reset, nullptr);
+        EXPECT_GE(shortcuts->getY() - reset->getBottom(), 8);
+        EXPECT_EQ(panel.getNaturalHeight() - shortcuts->getBottom(), shortcuts->getX());
         viewport->setViewPosition(0, content->getHeight());
         if (maximumHeight < content->getHeight()) {
             EXPECT_GT(viewport->getViewPositionY(), 0);
@@ -381,6 +392,32 @@ TEST(SettingsPanel, ViewportBoundsCompactContentWithoutEmbeddedHelp)
         }
         if (maximumHeight >= content->getHeight()) {
             EXPECT_EQ(panel.getHeight(), content->getHeight());
+        }
+    }
+}
+
+/// Growing and shrinking the real viewport crosses the scroll threshold exactly at the measured natural height.
+TEST(SettingsPanel, ResizeUsesFullWidthAndOnlyScrollsBelowNaturalHeight)
+{
+    ImageControlProcessor processor;
+    SettingsPanel panel(processor.getEditorState(), 240);
+    auto* viewport = settingsControl<juce::Viewport>(panel, "displaySettingsViewport");
+    ASSERT_NE(viewport, nullptr);
+    auto* content = viewport->getViewedComponent();
+    ASSERT_NE(content, nullptr);
+    const int naturalHeight = panel.getNaturalHeight();
+    for (const int height : {naturalHeight - 1, naturalHeight, naturalHeight + 100, 300, naturalHeight}) {
+        SCOPED_TRACE(height);
+        panel.setSize(panel.getWidth(), height);
+        EXPECT_EQ(panel.getNaturalHeight(), naturalHeight);
+        EXPECT_EQ(content->getHeight(), naturalHeight);
+        EXPECT_EQ(content->getWidth(), viewport->getViewWidth());
+        EXPECT_EQ(viewport->getVerticalScrollBar().isVisible(), height < naturalHeight);
+        EXPECT_FALSE(viewport->getHorizontalScrollBar().isVisible());
+        viewport->setViewPosition(0, naturalHeight);
+        EXPECT_EQ(viewport->getViewPositionY(), std::max(0, naturalHeight - height));
+        if (height >= naturalHeight) {
+            EXPECT_EQ(content->getWidth(), panel.getWidth());
         }
     }
 }
@@ -463,11 +500,21 @@ TEST(SettingsPanel, SubmenuBackKeysLeavePreferenceDismissalToOwner)
     }
 }
 
-/// Concise labels sit under explicit display-only groups without enlarging the section typography.
-TEST(SettingsPanel, CompactDisplayOnlyGroupsRetainFullAccessibleControlTitles)
+/// Larger title and group fonts retain a separate descriptive size and full accessible control titles.
+TEST(SettingsPanel, DisplayOnlyGroupsHaveReadableTypographyAndFullAccessibleControlTitles)
 {
     ImageControlProcessor processor;
     const SettingsPanel panel(processor.getEditorState());
+    auto* title = settingsControl<juce::Label>(panel, "displaySettingsTitle");
+    auto* description = settingsControl<juce::Label>(panel, "displaySettingsDescription");
+    ASSERT_NE(title, nullptr);
+    ASSERT_NE(description, nullptr);
+    EXPECT_FLOAT_EQ(title->getFont().getHeight(), 20.0F);
+    EXPECT_TRUE(title->getFont().isBold());
+    EXPECT_FLOAT_EQ(description->getFont().getHeight(), 12.0F);
+    EXPECT_GE(static_cast<float>(title->getHeight()), title->getFont().getHeight());
+    EXPECT_GE(static_cast<float>(description->getHeight()), description->getFont().getHeight());
+    EXPECT_LE(title->getBottom(), description->getY());
     const std::array groups {
         std::pair {"displayAppearanceSection", "Appearance"},
         std::pair {"displayStereoPositionSection", "Stereo position"},
@@ -479,7 +526,10 @@ TEST(SettingsPanel, CompactDisplayOnlyGroupsRetainFullAccessibleControlTitles)
         auto* heading = settingsControl<juce::Label>(panel, identifier);
         ASSERT_NE(heading, nullptr);
         EXPECT_EQ(heading->getText(), text);
-        EXPECT_FLOAT_EQ(heading->getFont().getHeight(), 12.0F);
+        EXPECT_FLOAT_EQ(heading->getFont().getHeight(), 14.0F);
+        EXPECT_TRUE(heading->getFont().isBold());
+        EXPECT_GT(heading->getFont().getHeight(), description->getFont().getHeight());
+        EXPECT_GE(static_cast<float>(heading->getHeight()), heading->getFont().getHeight());
         EXPECT_GT(heading->getY(), previousY);
         previousY = heading->getY();
     }
@@ -489,6 +539,108 @@ TEST(SettingsPanel, CompactDisplayOnlyGroupsRetainFullAccessibleControlTitles)
     ASSERT_NE(edge, nullptr);
     EXPECT_EQ(midpoint->getTitle(), "Display position midpoint (50%)");
     EXPECT_EQ(edge->getTitle(), "Display position edge (99%)");
+}
+
+/// Resizing inside the shortcuts submenu keeps hidden preferences laid out and retains their legal scroll position.
+TEST(SettingsPanel, SubmenuResizePreservesPreferenceScrollAndControlLifetime)
+{
+    ImageControlProcessor processor;
+    SettingsPanel panel(processor.getEditorState(), 300);
+    auto* viewport = settingsControl<juce::Viewport>(panel, "displaySettingsViewport");
+    auto* shortcuts = settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts");
+    auto* reference = settingsControl<juce::Component>(panel, "keyboardShortcuts");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(shortcuts, nullptr);
+    ASSERT_NE(reference, nullptr);
+    viewport->setViewPosition(0, 120);
+    const int scrollPosition = viewport->getViewPositionY();
+    ASSERT_GT(scrollPosition, 0);
+    const juce::Component::SafePointer<juce::TextButton> safeShortcuts(shortcuts);
+    panel.showKeyboardShortcuts();
+    panel.setSize(panel.getWidth(), 260);
+    EXPECT_TRUE(reference->isVisible());
+    EXPECT_TRUE(panel.getLocalBounds().contains(reference->getBounds()));
+    EXPECT_EQ(viewport->getHeight(), 260);
+    panel.showPreferences();
+    EXPECT_EQ(viewport->getViewPositionY(), scrollPosition);
+    EXPECT_EQ(safeShortcuts.getComponent(), shortcuts);
+    EXPECT_EQ(settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts"), shortcuts);
+}
+
+/// The owned popup grows below its real anchor before scrolling and clamps to natural content after every resize.
+TEST(ImageControlEditor, SettingsCalloutUsesAnchorChromeAndNaturalContentHeight)
+{
+    ImageControlProcessor processor;
+    processor.getEditorState().setProperty(EDITOR_HEIGHT_PROPERTY, 600, nullptr);
+    ImageControlEditor editor(processor);
+    auto* opener = settingsControl<juce::Button>(editor, "display-settings");
+    ASSERT_NE(opener, nullptr);
+    opener->onClick();
+    auto* callout = childOfType<juce::CallOutBox>(editor);
+    ASSERT_NE(callout, nullptr);
+    auto* panel = childOfType<SettingsPanel>(*callout);
+    ASSERT_NE(panel, nullptr);
+    auto* viewport = settingsControl<juce::Viewport>(*panel, "displaySettingsViewport");
+    auto* reference = settingsControl<juce::Component>(*panel, "keyboardShortcuts");
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(reference, nullptr);
+    auto* content = viewport->getViewedComponent();
+    ASSERT_NE(content, nullptr);
+    const int naturalHeight = panel->getNaturalHeight();
+    const int border = callout->getBorderSize();
+    const auto anchor = editor.getLocalArea(opener, opener->getLocalBounds());
+    const int exactFitHeight = anchor.getBottom() + border * 2 + naturalHeight;
+    int previousHeight = 0;
+    for (const int height : {600, 680, exactFitHeight - 1, exactFitHeight, 1100, 600, 1100}) {
+        SCOPED_TRACE(height);
+        editor.setSize(editor.getWidth(), height);
+        const auto currentAnchor = editor.getLocalArea(opener, opener->getLocalBounds());
+        const int available = editor.getHeight() - currentAnchor.getBottom() - border * 2;
+        EXPECT_EQ(panel->getHeight(), std::min(available, naturalHeight));
+        EXPECT_EQ(callout->getHeight(), panel->getHeight() + border * 2);
+        EXPECT_EQ(panel->getY(), border);
+        EXPECT_EQ(panel->getNaturalHeight(), naturalHeight);
+        EXPECT_EQ(content->getHeight(), naturalHeight);
+        EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
+        EXPECT_GE(callout->getY(), currentAnchor.getBottom());
+        EXPECT_EQ(viewport->getVerticalScrollBar().isVisible(), available < naturalHeight);
+        if (height == 680) {
+            EXPECT_GT(panel->getHeight(), previousHeight);
+        }
+        if (height == 1100) {
+            EXPECT_GT(panel->getHeight(), 640);
+            EXPECT_EQ(content->getWidth(), viewport->getWidth());
+        }
+        previousHeight = panel->getHeight();
+    }
+    panel->showKeyboardShortcuts();
+    EXPECT_TRUE(reference->isVisible());
+    editor.setSize(editor.getWidth(), 600);
+    const auto resizedAnchor = editor.getLocalArea(opener, opener->getLocalBounds());
+    EXPECT_EQ(panel->getHeight(), 600 - resizedAnchor.getBottom() - border * 2);
+    EXPECT_TRUE(panel->getLocalBounds().contains(reference->getBounds()));
+    EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
+    panel->showPreferences();
+    EXPECT_TRUE(viewport->isVisible());
+    EXPECT_TRUE(viewport->getVerticalScrollBar().isVisible());
+    editor.setSize(editor.getWidth(), 1100);
+    EXPECT_EQ(panel->getHeight(), naturalHeight);
+    EXPECT_FALSE(viewport->getVerticalScrollBar().isVisible());
+    EXPECT_EQ(childOfType<juce::CallOutBox>(editor), callout);
+    EXPECT_EQ(childOfType<SettingsPanel>(*callout), panel);
+    for (const bool compact : {false, true}) {
+        SCOPED_TRACE(compact);
+        processor.getEditorState().setProperty(COMPACT_BAND_CONTROLS_PROPERTY, compact, nullptr);
+        processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+        const auto compactAnchor = editor.getLocalArea(opener, opener->getLocalBounds());
+        const int available = editor.getHeight() - compactAnchor.getBottom() - border * 2;
+        EXPECT_EQ(panel->getHeight(), std::min(available, naturalHeight));
+        EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
+        EXPECT_EQ(viewport->getVerticalScrollBar().isVisible(), available < naturalHeight);
+        panel->showKeyboardShortcuts();
+        EXPECT_TRUE(panel->getLocalBounds().contains(reference->getBounds()));
+        panel->showPreferences();
+    }
 }
 
 /// Keyboard traversal reveals distant controls rather than leaving focus below the popup's visible viewport.
