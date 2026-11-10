@@ -20,6 +20,11 @@
 
 namespace esgrove::image_control
 {
+namespace test
+{
+struct BandCorrelationMeterTestAccess;
+}
+
 /// Smallest height of a band strip that fits its margins, its name and range rows, and its five slider rows, in pixels.
 constexpr int BAND_STRIP_MIN_HEIGHT {280};
 
@@ -34,6 +39,10 @@ struct CorrelationHistoryBucket final {
     float minimum {0.0F};
     /// Highest live reading observed in this bucket.
     float maximum {0.0F};
+    /// Most recent observation of the minimum, for continuous fading without bucket-boundary steps.
+    double minimumSeconds {0.0};
+    /// Most recent observation of the maximum, for continuous fading without bucket-boundary steps.
+    double maximumSeconds {0.0};
 };
 
 /// A read-only horizontal correlation meter with live, smoothed, and recent-range indicators.
@@ -59,8 +68,13 @@ public:
     void paint(juce::Graphics& graphics) override;
 
 private:
+    friend struct test::BandCorrelationMeterTestAccess;
+
+    [[nodiscard]] bool updateRangeIntensity(double persistenceSeconds);
     void advanceHistory(float value, double elapsedSeconds, double persistenceSeconds);
 
+    /// Fixed spatial resolution of the soft range field, independent of component width and display refresh rate.
+    static constexpr std::size_t RANGE_INTENSITY_SAMPLES {129};
     /// Bucket resolution bounds late expiry of an observed extreme to at most 1/120 second.
     static constexpr double HISTORY_BUCKET_SECONDS {1.0 / 120.0};
     /// One extra bucket retains the partial bucket at the maximum trailing-window boundary.
@@ -70,6 +84,8 @@ private:
 
     /// Observations covering maximum Persistence, regardless of the currently selected window.
     std::array<CorrelationHistoryBucket, HISTORY_CAPACITY> history {};
+    /// Soft spatial coverage of recent observations, fading continuously to zero within Persistence.
+    std::array<float, RANGE_INTENSITY_SAMPLES> rangeIntensity {};
     /// Last finite correlation, or empty for silence and other unavailable measurements.
     std::optional<float> correlation;
     /// Display-only exponential average, initialized directly from the first valid measurement.

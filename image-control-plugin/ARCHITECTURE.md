@@ -141,6 +141,9 @@ check stale selections, and replace files through temporary outputs.
 The directory is injectable for tests, and construction does not create it.
 `ui/ProcessingToolbar.*` schedules filesystem work outside audio and host-state callbacks,
 then applies completed user commands on the message thread through checked component lifetimes.
+Undo/redo live in the header as vector curved-arrow buttons, alongside a chevron for the A/B and preset row.
+The persisted `showProcessingToolbar` editor property defaults to true.
+Collapsing that row is immediate and leaves header history actions and asynchronous preset completion handling active.
 Project recall never reads the preset library.
 
 ## Audio signal flow
@@ -350,14 +353,18 @@ Expiry is at least 250 ms and allows two prepared host blocks when those are lon
 Only the processing thread touches the accumulated moments.
 
 The message-thread meter keeps the live marker immediate.
-A shape-distinct yellow notch adds an exponential trend, with Persistence as its time constant.
+A yellow highlight with a narrow core and soft halo adds an exponential trend, with Persistence as its time constant.
 The numerical readout and accessible value follow that trend by default.
 `Smooth correlation numbers` binds the persisted `smoothCorrelationReadout` editor property, which defaults to true.
 Disabling it selects live numerical and accessible values immediately, without clearing or advancing history.
-A translucent box spans the minimum and maximum display-observed readings over the trailing Persistence duration.
-It does not promise audio-thread extrema between display refreshes.
+A soft spatial field fills the range between recent observations and the live reading.
+Each observation's coverage fades with a smoothstep age envelope, reaching zero at Persistence without an extra release tail.
+A fixed 129-sample field has feathered horizontal edges and layered vertical glow, matching the spectrogram's soft treatment.
+The exact extrema remain the minimum and maximum display-observed readings over the trailing Persistence duration.
+They do not promise audio-thread extrema between display refreshes.
 A fixed ring retains 1/120-second buckets of observed minima and maxima for the maximum Persistence window.
-An extreme can remain visible at most one bucket beyond its nominal expiry.
+Each extreme keeps its actual observation time so the visual fade is continuous across bucket boundaries.
+An extreme can remain in the exact range at most one bucket beyond its nominal expiry.
 Shortening or increasing Persistence immediately selects a new window from that retained history,
 without resetting the live value or trend.
 Elapsed seconds, rather than frame counts or capped animation steps, drive smoothing and expiry.

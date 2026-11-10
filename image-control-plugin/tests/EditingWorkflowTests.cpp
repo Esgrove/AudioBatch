@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <vector>
 
 #if JUCE_MAC
@@ -76,27 +77,139 @@ void pumpEditing(ProcessingToolbar& toolbar, const std::function<bool()>& done)
 }
 }  // namespace
 
-/// The toolbar occupies its own usable row even at the minimum width and with analysis hidden.
+/// Both rows keep distinct, usable hit targets at minimum width and across the full-width layout threshold.
 TEST(EditingWorkflow, ToolbarFitsMinimumWidthAndCompactLayout)
 {
     ImageControlProcessor processor;
-    processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
     ImageControlEditor editor(processor);
-    editor.setSize(760, editor.getHeight());
     auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    auto* undo = dynamic_cast<juce::DrawableButton*>(editingControl(editor, "processing-undo"));
+    auto* redo = dynamic_cast<juce::DrawableButton*>(editingControl(editor, "processing-redo"));
+    auto* toggle = dynamic_cast<juce::DrawableButton*>(editingControl(editor, "processing-toolbar-toggle"));
     ASSERT_NE(toolbar, nullptr);
-    EXPECT_EQ(toolbar->getHeight(), PROCESSING_TOOLBAR_HEIGHT);
-    EXPECT_TRUE(editor.getLocalBounds().contains(toolbar->getBounds()));
-    for (const auto* child : toolbar->getChildren()) {
-        if (child->isVisible()) {
+    ASSERT_NE(undo, nullptr);
+    ASSERT_NE(redo, nullptr);
+    ASSERT_NE(toggle, nullptr);
+    EXPECT_EQ(undo->getParentComponent(), &editor);
+    EXPECT_EQ(redo->getParentComponent(), &editor);
+    EXPECT_EQ(toggle->getParentComponent(), &editor);
+    EXPECT_NE(undo->getNormalImage(), nullptr);
+    EXPECT_NE(redo->getNormalImage(), nullptr);
+    EXPECT_NE(toggle->getNormalImage(), nullptr);
+    for (const int width : {760, 939, 940, 1000, 1200}) {
+        editor.setSize(width, editor.getHeight());
+        EXPECT_EQ(toolbar->getHeight(), PROCESSING_TOOLBAR_HEIGHT);
+        EXPECT_TRUE(editor.getLocalBounds().contains(toolbar->getBounds()));
+        std::vector<juce::Rectangle<int>> headerBounds;
+        for (const auto* child : editor.getChildren()) {
+            if (child->isVisible() && child->getY() < toolbar->getY()
+                && (dynamic_cast<const juce::Button*>(child) != nullptr
+                    || dynamic_cast<const juce::Label*>(child) != nullptr
+                    || dynamic_cast<const juce::Slider*>(child) != nullptr))
+            {
+                EXPECT_FALSE(child->getBounds().isEmpty());
+                EXPECT_TRUE(editor.getLocalBounds().contains(child->getBounds()));
+                for (const auto bounds : headerBounds) {
+                    EXPECT_FALSE(bounds.intersects(child->getBounds()));
+                }
+                headerBounds.push_back(child->getBounds());
+            }
+        }
+        const auto* content = toolbar->getChildComponent(0);
+        ASSERT_NE(content, nullptr);
+        std::vector<juce::Rectangle<int>> rowBounds;
+        for (const auto* child : content->getChildren()) {
             EXPECT_FALSE(child->getBounds().isEmpty());
-            EXPECT_TRUE(toolbar->getLocalBounds().contains(child->getBounds()));
+            EXPECT_TRUE(content->getLocalBounds().contains(child->getBounds()));
+            for (const auto bounds : rowBounds) {
+                EXPECT_FALSE(bounds.intersects(child->getBounds()));
+            }
+            rowBounds.push_back(child->getBounds());
+        }
+        auto* strip = editingChild<BandStrip>(editor);
+        ASSERT_NE(strip, nullptr);
+        EXPECT_GE(strip->getY(), toolbar->getBottom());
+        EXPECT_GE(strip->getHeight(), BAND_STRIP_MIN_HEIGHT);
+    }
+}
+
+/// Disclosure changes are immediate, preserve expanded size, and survive editor replacement in both analysis modes.
+TEST(EditingWorkflow, ToolbarDisclosurePreservesExpandedHeightAndUpdatesCompactHeight)
+{
+    for (const bool hidden : {false, true}) {
+        ImageControlProcessor processor;
+        auto& state = processor.getEditorState();
+        state.setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
+        state.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 304, nullptr);
+        state.setProperty(HIDE_SPECTROGRAM_PROPERTY, hidden, nullptr);
+        int collapsedHeight = 0;
+        {
+            ImageControlEditor editor(processor);
+            editor.setSize(760, editor.getHeight());
+            auto* toolbar = editingChild<ProcessingToolbar>(editor);
+            auto* toggle = dynamic_cast<juce::Button*>(editingControl(editor, "processing-toolbar-toggle"));
+            ASSERT_NE(toolbar, nullptr);
+            ASSERT_NE(toggle, nullptr);
+            const int expandedHeight = editor.getHeight();
+            auto* strip = editingChild<BandStrip>(editor);
+            ASSERT_NE(strip, nullptr);
+            const auto stripHeight = strip->getHeight();
+            const auto* expandedImage = dynamic_cast<juce::DrawableButton*>(toggle)->getCurrentImage();
+            for (int round = 0; round < 3; ++round) {
+                toggle->onClick();
+                EXPECT_FALSE(toolbar->isVisible());
+                EXPECT_FALSE(toggle->getToggleState());
+                EXPECT_FALSE(static_cast<bool>(state.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));
+                EXPECT_EQ(editor.getHeight(), hidden ? expandedHeight - PROCESSING_TOOLBAR_HEIGHT - 8 : expandedHeight);
+                EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+                EXPECT_EQ(editingChild<BandStrip>(editor)->getHeight(), stripHeight);
+                EXPECT_NE(dynamic_cast<juce::DrawableButton*>(toggle)->getCurrentImage(), expandedImage);
+                collapsedHeight = editor.getHeight();
+                toggle->onClick();
+                EXPECT_TRUE(toolbar->isVisible());
+                EXPECT_TRUE(toggle->getToggleState());
+                EXPECT_EQ(editor.getHeight(), expandedHeight);
+                EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+            }
+            toggle->onClick();
+        }
+        ImageControlEditor reopened(processor);
+        auto* toolbar = editingChild<ProcessingToolbar>(reopened);
+        auto* toggle = dynamic_cast<juce::Button*>(editingControl(reopened, "processing-toolbar-toggle"));
+        ASSERT_NE(toolbar, nullptr);
+        ASSERT_NE(toggle, nullptr);
+        EXPECT_FALSE(toolbar->isVisible());
+        EXPECT_FALSE(toggle->getToggleState());
+        EXPECT_EQ(reopened.getHeight(), collapsedHeight);
+        EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+        // A restored property is applied by the same production settings path used on every display refresh.
+        state.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true, nullptr);
+        for (auto* child : reopened.getChildren()) {
+            if (const auto* button = dynamic_cast<juce::Button*>(child);
+                button != nullptr && button->getButtonText() == "Post")
+            {
+                button->onClick();
+            }
+        }
+        EXPECT_TRUE(toolbar->isVisible());
+        EXPECT_TRUE(toggle->getToggleState());
+        EXPECT_EQ(reopened.getHeight(), hidden ? collapsedHeight + PROCESSING_TOOLBAR_HEIGHT + 8 : 900);
+        EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+        if (hidden) {
+            toggle->onClick();
+            state.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
+            for (auto* child : reopened.getChildren()) {
+                if (const auto* button = dynamic_cast<juce::Button*>(child);
+                    button != nullptr && button->getButtonText() == "Post")
+                {
+                    button->onClick();
+                }
+            }
+            EXPECT_EQ(reopened.getHeight(), 900);
+            EXPECT_FALSE(toolbar->isVisible());
+            EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
         }
     }
-    auto* strip = editingChild<BandStrip>(editor);
-    ASSERT_NE(strip, nullptr);
-    EXPECT_GE(strip->getY(), toolbar->getBottom());
-    EXPECT_GE(strip->getHeight(), BAND_STRIP_MIN_HEIGHT);
 }
 
 /// Global toggle shortcuts participate in the same history as slider and bulk editing commands.
@@ -117,7 +230,96 @@ TEST(EditingWorkflow, KeyboardToggleUndoAndRedoUseLocalHistory)
         juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)
     ));
     EXPECT_FALSE(juce::exactlyEqual(bypass->getValue(), original));
+    auto* toggle = dynamic_cast<juce::Button*>(editingControl(editor, "processing-toolbar-toggle"));
+    auto* undo = dynamic_cast<juce::Button*>(editingControl(editor, "processing-undo"));
+    auto* redo = dynamic_cast<juce::Button*>(editingControl(editor, "processing-redo"));
+    ASSERT_NE(toggle, nullptr);
+    ASSERT_NE(undo, nullptr);
+    ASSERT_NE(redo, nullptr);
+    toggle->onClick();
+    EXPECT_TRUE(undo->isVisible());
+    EXPECT_TRUE(redo->isVisible());
+    EXPECT_TRUE(undo->isEnabled());
+    EXPECT_FALSE(redo->isEnabled());
+    EXPECT_EQ(undo->getTooltip(), "Undo Bypass");
+    undo->onClick();
+    EXPECT_FLOAT_EQ(bypass->getValue(), original);
+    EXPECT_FALSE(undo->isEnabled());
+    EXPECT_TRUE(redo->isEnabled());
+    EXPECT_EQ(redo->getTooltip(), "Redo Bypass");
+    EXPECT_TRUE(editor.keyPressed(
+        juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)
+    ));
+    EXPECT_FALSE(juce::exactlyEqual(bypass->getValue(), original));
+    processor.getHistory().beginEdit("Open gesture");
+    toggle->onClick();
+    EXPECT_FALSE(undo->isEnabled());
+    EXPECT_FALSE(redo->isEnabled());
+    processor.getHistory().endEdit();
 }
+
+/// Both redo bindings share the editor's local history, including when the optional second row is hidden.
+TEST(EditingWorkflow, UndoAndBothRedoShortcutsWorkWithEitherToolbarVisibility)
+{
+    ImageControlProcessor processor;
+    processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+    ImageControlEditor editor(processor);
+    auto* bypass = processor.getParameters().getParameter(BYPASS_ID);
+    auto* toggle = dynamic_cast<juce::Button*>(editingControl(editor, "processing-toolbar-toggle"));
+    ASSERT_NE(bypass, nullptr);
+    ASSERT_NE(toggle, nullptr);
+    const auto original = bypass->getValue();
+    ASSERT_TRUE(editor.keyPressed(juce::KeyPress('b', juce::ModifierKeys::commandModifier, 0)));
+    const auto edited = bypass->getValue();
+    const std::vector<juce::KeyPress> redoKeys {
+        juce::KeyPress('y', juce::ModifierKeys::commandModifier, 0),
+        juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0),
+    };
+    for (int visibility = 0; visibility < 2; ++visibility) {
+        for (const auto& redoKey : redoKeys) {
+            EXPECT_TRUE(editor.keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)));
+            EXPECT_FLOAT_EQ(bypass->getValue(), original);
+            EXPECT_TRUE(editor.keyPressed(redoKey));
+            EXPECT_FLOAT_EQ(bypass->getValue(), edited);
+            EXPECT_FALSE(editor.keyPressed(juce::KeyPress('y', juce::ModifierKeys::noModifiers, 0)));
+            EXPECT_FALSE(editor.keyPressed(juce::KeyPress('z', juce::ModifierKeys::noModifiers, 0)));
+            EXPECT_FALSE(editor.keyPressed(
+                juce::KeyPress('y', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0)
+            ));
+            EXPECT_FLOAT_EQ(bypass->getValue(), edited);
+        }
+        toggle->onClick();
+    }
+}
+
+/// Font-independent header buttons retain native accessible names and a toggle state for row disclosure.
+TEST(EditingWorkflow, HeaderSymbolsExposeAccessibleNamesAndActions)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    for (const auto& [identifier, title] :
+         std::vector<std::pair<juce::String, juce::String>> {
+             {"processing-undo", "Undo processing edit"},
+             {"processing-redo", "Redo processing edit"},
+             {"processing-toolbar-toggle", "A/B comparison and presets"},
+         })
+    {
+        auto* control = editingControl(editor, identifier);
+        ASSERT_NE(control, nullptr);
+        auto* handler = control->getAccessibilityHandler();
+        ASSERT_NE(handler, nullptr);
+        EXPECT_EQ(handler->getRole(), juce::AccessibilityRole::button);
+        EXPECT_EQ(handler->getTitle(), title);
+    }
+    auto* toggle = editingControl(editor, "processing-toolbar-toggle");
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    ASSERT_NE(toggle, nullptr);
+    ASSERT_NE(toolbar, nullptr);
+    EXPECT_TRUE(toggle->getAccessibilityHandler()->getActions().invoke(juce::AccessibilityActionType::toggle));
+    EXPECT_FALSE(toolbar->isVisible());
+}
+
 /// A recalled sound reaches the same production DSP path with the editor closed and different host block sizes.
 TEST(EditingWorkflow, SnapshotRecallMatchesRealtimeAndOfflineHeadlessRendering)
 {
@@ -177,6 +379,7 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         ASSERT_NE(selector, nullptr);
         pumpEditing(toolbar, [&] { return selector->getNumItems() == 1 && selector->isEnabled(); });
         selector->setSelectedId(1, juce::sendNotificationSync);
+        toolbar.setVisible(false);
         pumpEditing(toolbar, [&] { return processor.getSelectedUserPreset().has_value(); });
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), -9.0F, 0.001F);
         EXPECT_TRUE(processor.getHistory().canUndo());
@@ -192,6 +395,35 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(reopened, "preset-selector"));
         ASSERT_NE(selector, nullptr);
         EXPECT_EQ(selector->getText(), "Narrow test *");
+    }
+    EXPECT_TRUE(directory.deleteRecursively());
+}
+/// A collapsed row still rejects a pending load after header/shortcut history commands restore the captured sound.
+TEST(EditingWorkflow, HistoryCommandsRejectPendingPresetLoadsWhileCollapsed)
+{
+    ImageControlProcessor processor;
+    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("ImageControl-PendingPreset-" + juce::Uuid().toString());
+    UserPresets const library(processor.getParameters(), directory);
+    auto sound = processor.getSoundSnapshot();
+    sound.at(OUTPUT_GAIN_ID) = -9.0F;
+    ASSERT_TRUE(library.saveAs("Pending load", sound).has_value());
+    sound.at(OUTPUT_GAIN_ID) = -6.0F;
+    ASSERT_TRUE(processor.loadSoundSnapshot(sound, "Previous edit"));
+    {
+        ProcessingToolbar toolbar(processor, directory);
+        auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(toolbar, "preset-selector"));
+        auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-status"));
+        ASSERT_NE(selector, nullptr);
+        ASSERT_NE(status, nullptr);
+        pumpEditing(toolbar, [&] { return selector->getNumItems() == 1 && selector->isEnabled(); });
+        selector->setSelectedId(1, juce::sendNotificationSync);
+        toolbar.setVisible(false);
+        toolbar.undo();
+        toolbar.redo();
+        pumpEditing(toolbar, [&] { return status->getText() != "Working..."; });
+        EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), -6.0F, 0.001F);
+        EXPECT_FALSE(processor.getSelectedUserPreset().has_value());
     }
     EXPECT_TRUE(directory.deleteRecursively());
 }

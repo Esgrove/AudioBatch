@@ -28,10 +28,13 @@ See [Parameters.h](src/Parameters.h) for parameter ids, ranges, and defaults.
 
 ## Editing and presets
 
-Undo and Redo track local parameter edits, including linked controls and spectrogram gestures.
+The header's curved-arrow Undo and Redo buttons track local parameter edits,
+including linked controls and spectrogram gestures.
+Its chevron shows or hides the A/B and preset row, and that layout choice is saved with the host project.
 The history survives closing the editor but is not saved with a project, and a host state restore clears it.
 Incoming host automation and display-setting edits do not create undo entries.
-Use Cmd+Z and Cmd+Shift+Z on macOS, or Ctrl+Z and Ctrl+Y on Windows, while the editor has focus.
+Use Cmd+Z on macOS or Ctrl+Z on Windows to undo while the editor has focus.
+Redo accepts both Cmd+Y and Cmd+Shift+Z on macOS, or Ctrl+Y and Ctrl+Shift+Z on Windows.
 Text fields keep their own editing shortcuts.
 
 A and B hold independently editable sound settings, with a copy action for the other slot.
@@ -108,8 +111,8 @@ It measures each processed band after its source trims, Width/Recover, and Pan,
 before Delta and Mono, independently of Pre/Post.
 Silence or insufficient energy in either channel gives an unavailable reading.
 Readings also clear when processing stops, the meters are hidden, or no new callbacks arrive.
-The coloured marker shows the live reading, a yellow notch shows its smoothed trend,
-and a translucent box spans the recently observed range.
+The coloured marker shows the live reading, a yellow highlight shows its smoothed trend,
+and a soft trail fills the recently observed range, fading its older portions within the same persistence window.
 The number and accessible value follow the smoothed trend by default.
 Turn off `Smooth correlation numbers` in Display settings for live numbers without resetting meter history.
 `Persistence` controls both trend smoothing and the range duration, as well as the spectrogram fade.

@@ -668,6 +668,24 @@ TEST(Processor, SmoothCorrelationReadoutDefaultsOnAndRoundTripsBothValues)
     }
 }
 
+/// Toolbar disclosure is editor-only state, defaults expanded, and round-trips both visibility choices.
+TEST(Processor, ProcessingToolbarDefaultsExpandedAndRoundTripsBothValues)
+{
+    ImageControlProcessor source;
+    EXPECT_STREQ(SHOW_PROCESSING_TOOLBAR_PROPERTY, "showProcessingToolbar");
+    EXPECT_TRUE(static_cast<bool>(source.getEditorState().getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));
+    for (const bool shown : {false, true}) {
+        source.getEditorState().setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, shown, nullptr);
+        juce::MemoryBlock state;
+        source.getStateInformation(state);
+        ImageControlProcessor restored;
+        restored.getEditorState().setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, !shown, nullptr);
+        restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        EXPECT_EQ(static_cast<bool>(restored.getEditorState().getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)), shown);
+        EXPECT_FALSE(restored.getHistory().canUndo());
+    }
+}
+
 TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
 {
     ImageControlProcessor source;
@@ -690,6 +708,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
              SMOOTH_CORRELATION_READOUT_PROPERTY,
              BYPASS_RENDERING_PROPERTY,
              HIDE_SPECTROGRAM_PROPERTY,
+             SHOW_PROCESSING_TOOLBAR_PROPERTY,
          })
     {
         editorSettings->removeAttribute(property);
@@ -709,6 +728,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     restored.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, false, nullptr);
     restored.getEditorState().setProperty(BYPASS_RENDERING_PROPERTY, true, nullptr);
     restored.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+    restored.getEditorState().setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, false, nullptr);
     restored.getEditorState().setProperty(EDITOR_WIDTH_PROPERTY, 1700, nullptr);
     restored.getEditorState().setProperty(EDITOR_HEIGHT_PROPERTY, 1200, nullptr);
     restored.getEditorState().setProperty(BAND_SECTION_HEIGHT_PROPERTY, 300, nullptr);
@@ -730,6 +750,7 @@ TEST(Processor, RestoringAnOlderStateKeepsMissingEditorSettingsAtTheirDefaults)
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(SHOW_FPS_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(BYPASS_RENDERING_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(settings.getProperty(HIDE_SPECTROGRAM_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(settings.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));
 }
 
 TEST(Processor, EditorChangesNotifyTheHostButRestoresDoNot)
@@ -773,11 +794,13 @@ TEST(Processor, StateWithoutEditorSettingsReplacesCurrentSettingsWithDefaults)
     juce::AudioProcessor::copyXmlToBinary(*xml, state);
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
+    processor.getEditorState().setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, false, nullptr);
     processor.getEditorState().setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
     processor.getEditorState().setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, false, nullptr);
     processor.getEditorState().setProperty(PHASE_COLOURS_PROPERTY, true, nullptr);
     processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(linkPropertyName(2))));
+    EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));
     EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
     EXPECT_TRUE(static_cast<bool>(processor.getEditorState().getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(processor.getEditorState().getProperty(PHASE_COLOURS_PROPERTY)));

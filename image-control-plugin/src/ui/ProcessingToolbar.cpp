@@ -1,4 +1,4 @@
-/// Implements the compact history, A/B, and user-preset controls and their accessible keyboard focus order.
+/// Implements A/B and user-preset controls, plus history commands shared by the editor's header and shortcuts.
 /// A single disk worker publishes detached results for refresh to consume without any message-thread rendezvous.
 /// Dialogs and file choosers are owned by the toolbar, and asynchronous callbacks check component SafePointers.
 
@@ -31,7 +31,6 @@ namespace
 constexpr int CONTROL_INSET {4};
 constexpr int CONTROL_GAP {4};
 constexpr int GROUP_GAP {12};
-constexpr int HISTORY_WIDTH {52};
 constexpr int SLOT_WIDTH {32};
 constexpr int COPY_WIDTH {72};
 constexpr int MENU_WIDTH {72};
@@ -39,13 +38,11 @@ constexpr int STATUS_WIDTH {76};
 /// Status text remains legible without competing with the compact preset selector.
 constexpr float STATUS_FONT_HEIGHT {12.0F};
 /// Stable left-to-right keyboard traversal, independent of member declaration order.
-constexpr int UNDO_FOCUS_ORDER {1};
-constexpr int REDO_FOCUS_ORDER {2};
-constexpr int SLOT_A_FOCUS_ORDER {3};
-constexpr int SLOT_B_FOCUS_ORDER {4};
-constexpr int COPY_FOCUS_ORDER {5};
-constexpr int PRESET_SELECTOR_FOCUS_ORDER {6};
-constexpr int PRESET_MENU_FOCUS_ORDER {7};
+constexpr int SLOT_A_FOCUS_ORDER {1};
+constexpr int SLOT_B_FOCUS_ORDER {2};
+constexpr int COPY_FOCUS_ORDER {3};
+constexpr int PRESET_SELECTOR_FOCUS_ORDER {4};
+constexpr int PRESET_MENU_FOCUS_ORDER {5};
 /// Dialog result IDs are explicit, including Cancel as the non-destructive default for confirmations.
 constexpr int ACCEPT_RESULT {1};
 constexpr int CANCEL_RESULT {0};
@@ -226,7 +223,9 @@ public:
     ProcessingToolbarContent& operator=(const ProcessingToolbarContent&) = delete;
     ProcessingToolbarContent& operator=(ProcessingToolbarContent&&) = delete;
 
+    void redo();
     void refresh();
+    void undo();
 
     void resized() override;
 
@@ -261,10 +260,6 @@ private:
     /// Immutable parameter definitions referenced by the library outlive the joined disk worker.
     UserPresets library;
 
-    /// Replays the previous local processing command.
-    juce::TextButton undoButton {"Undo"};
-    /// Replays the next local processing command.
-    juce::TextButton redoButton {"Redo"};
     /// Selects the first persistent comparison sound.
     juce::TextButton slotAButton {"A"};
     /// Selects the second persistent comparison sound.
@@ -320,9 +315,7 @@ ProcessingToolbarContent::ProcessingToolbarContent(ImageControlProcessor& owner,
     library(owner.getParameters(), presetDirectory)
 {
     setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
-    setTitle("Processing history, A/B comparison, and presets");
-    identifyControl(undoButton, "processing-undo", "Undo processing edit", UNDO_FOCUS_ORDER);
-    identifyControl(redoButton, "processing-redo", "Redo processing edit", REDO_FOCUS_ORDER);
+    setTitle("A/B comparison and presets");
     identifyControl(slotAButton, "comparison-a", "Comparison slot A", SLOT_A_FOCUS_ORDER);
     identifyControl(slotBButton, "comparison-b", "Comparison slot B", SLOT_B_FOCUS_ORDER);
     identifyControl(copyButton, "comparison-copy", "Copy active comparison to the other slot", COPY_FOCUS_ORDER);
@@ -344,18 +337,6 @@ ProcessingToolbarContent::ProcessingToolbarContent(ImageControlProcessor& owner,
     presetSelector.setTextWhenNoChoicesAvailable("No user presets. Choose Save As from Presets");
     presetSelector.setTooltip("Load a user preset into the active comparison slot. * means the sound has changed");
     presetMenuButton.setTooltip("Save As, Update, Rename, Delete, Import, Export, and Refresh user presets");
-    undoButton.onClick = [this] {
-        if (processor.getHistory().undo()) {
-            pendingLoadChanged = pendingLoadSound.has_value();
-            refresh();
-        }
-    };
-    redoButton.onClick = [this] {
-        if (processor.getHistory().redo()) {
-            pendingLoadChanged = pendingLoadSound.has_value();
-            refresh();
-        }
-    };
     slotAButton.onClick = [this] {
         if (processor.selectComparisonSlot(0)) {
             pendingLoadChanged = pendingLoadSound.has_value();
@@ -377,8 +358,6 @@ ProcessingToolbarContent::ProcessingToolbarContent(ImageControlProcessor& owner,
     presetMenuButton.onClick = [this] { showPresetMenu(); };
     for (auto* control :
          std::initializer_list<juce::Component*> {
-             &undoButton,
-             &redoButton,
              &slotAButton,
              &slotBButton,
              &copyButton,
@@ -425,10 +404,6 @@ PresetRequest ProcessingToolbarContent::makeRequest(const PresetOperation operat
 void ProcessingToolbarContent::resized()
 {
     auto area = getLocalBounds().reduced(0, CONTROL_INSET);
-    undoButton.setBounds(area.removeFromLeft(HISTORY_WIDTH));
-    area.removeFromLeft(CONTROL_GAP);
-    redoButton.setBounds(area.removeFromLeft(HISTORY_WIDTH));
-    area.removeFromLeft(GROUP_GAP);
     slotAButton.setBounds(area.removeFromLeft(SLOT_WIDTH));
     slotBButton.setBounds(area.removeFromLeft(SLOT_WIDTH));
     area.removeFromLeft(CONTROL_GAP);
@@ -441,7 +416,25 @@ void ProcessingToolbarContent::resized()
     presetSelector.setBounds(area);
 }
 
-/// Consumes a detached worker result and refreshes history, A/B, preset selection, and modified status.
+/// Replays a history action and invalidates a pending preset load even if another action restores the same sound.
+void ProcessingToolbarContent::undo()
+{
+    if (processor.getHistory().undo()) {
+        pendingLoadChanged = pendingLoadSound.has_value();
+    }
+    refresh();
+}
+
+/// Uses the same pending-load guard for redo, independent of the row's visibility.
+void ProcessingToolbarContent::redo()
+{
+    if (processor.getHistory().redo()) {
+        pendingLoadChanged = pendingLoadSound.has_value();
+    }
+    refresh();
+}
+
+/// Consumes a detached worker result and refreshes A/B, preset selection, and modified status.
 void ProcessingToolbarContent::refresh()
 {
     observePendingLoad();
@@ -457,10 +450,6 @@ void ProcessingToolbarContent::refresh()
         pendingLoadSound.reset();
     }
     auto const& history = processor.getHistory();
-    undoButton.setEnabled(history.canUndo() && !history.isEditing());
-    redoButton.setEnabled(history.canRedo() && !history.isEditing());
-    undoButton.setTooltip(history.canUndo() ? "Undo " + history.undoDescription() : "No processing edit to undo");
-    redoButton.setTooltip(history.canRedo() ? "Redo " + history.redoDescription() : "No processing edit to redo");
     const bool slotA = processor.getActiveComparisonSlot() == 0;
     slotAButton.setToggleState(slotA, juce::dontSendNotification);
     slotBButton.setToggleState(!slotA, juce::dontSendNotification);
@@ -910,7 +899,19 @@ ProcessingToolbar::ProcessingToolbar(ImageControlProcessor& processor, const juc
 /// Releases dialogs and finishes independent disk operations before the processor reference can become invalid.
 ProcessingToolbar::~ProcessingToolbar() = default;
 
-/// Called by the editor's VBlank callback on the message thread.
+/// Routes header and keyboard redo through the pending-preset-load guard on the message thread.
+void ProcessingToolbar::redo()
+{
+    content->redo();
+}
+
+/// Routes header and keyboard undo through the pending-preset-load guard on the message thread.
+void ProcessingToolbar::undo()
+{
+    content->undo();
+}
+
+/// Called by the editor's VBlank callback on the message thread, including while this row is collapsed.
 void ProcessingToolbar::refresh()
 {
     content->refresh();

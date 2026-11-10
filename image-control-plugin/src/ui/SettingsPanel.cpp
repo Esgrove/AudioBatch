@@ -98,7 +98,7 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState)
     );
     smoothCorrelationReadoutButton.setTooltip(
         "Show the smoothed trend in correlation numbers, using Persistence. "
-        "Turn off for live numbers. The live marker, trend notch, and recent range are unchanged"
+        "Turn off for live numbers. The live marker, trend highlight, and recent range are unchanged"
     );
     bypassRenderingButton.setTooltip(
         "Stop analyzing and drawing the spectrogram to save CPU and GPU time. The audio is still processed"

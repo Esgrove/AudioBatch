@@ -1,7 +1,7 @@
 /// Declares ImageControlEditor, the editor of the ImageControl plugin.
 /// A header holds the settings button and the analyzer tap on the left,
-/// and mono, delta, bypass, and output gain on the right.
-/// A second row holds local undo/redo, A/B comparisons, and user presets.
+/// local undo/redo in the middle, and mono, delta, bypass, output gain, and a disclosure chevron on the right.
+/// The collapsible second row holds A/B comparisons and user presets.
 /// The spatial spectrogram fills the middle, with the correlation row and four band strips below it,
 /// and a divider between them resizes the two.
 
@@ -70,14 +70,17 @@ private:
     [[nodiscard]] int compactHeight() const;
     [[nodiscard]] double persistenceSeconds() const;
 
+    void applyLayoutSettings();
     void applySpectrogramHidden(bool hidden);
     void applyViewSettings();
+    void configureHeaderIcons();
     void measureFramesPerSecond(double elapsed);
     void openSettings();
     void refreshDisplay(double timestamp);
     void setAnalyzeOutput(bool output);
     void updateBandRanges();
     void updateCorrelationMonitoring();
+    void updateHistoryButtons();
     void updateSpectrogramMonitoring();
 
     void componentMovedOrResized(bool wasMoved, bool wasResized) override;
@@ -119,6 +122,12 @@ private:
     juce::TextButton preButton {"Pre"};
     /// Shows the output of the plugin in the spectrogram, the right half of the analyzer tap switch.
     juce::TextButton postButton {"Post"};
+    /// Immediately shows or hides the A/B and presets row without animation.
+    juce::DrawableButton processingToolbarButton {"A/B and presets", juce::DrawableButton::ImageFitted};
+    /// Always-visible compact redo action, routed through the toolbar's pending-preset-load guard.
+    juce::DrawableButton redoButton {"Redo", juce::DrawableButton::ImageOnButtonBackgroundOriginalSize};
+    /// Always-visible compact undo action, routed through the toolbar's pending-preset-load guard.
+    juce::DrawableButton undoButton {"Undo", juce::DrawableButton::ImageOnButtonBackgroundOriginalSize};
     /// Label of the output gain.
     juce::Label outputLabel;
     /// The output gain.
@@ -167,6 +176,8 @@ private:
     bool layoutTransition {false};
     /// Whether the correlation row is shown, independently of the spectrogram settings.
     bool correlationShown {true};
+    /// Whether the A/B and user-preset toolbar row is shown, independently of analysis visibility.
+    bool processingToolbarShown {true};
     /// Whether the spectrogram is hidden, which shrinks the editor to the header and the band strips.
     bool spectrogramHidden {false};
     /// Whether the particles are not analyzed or drawn, while the audio is still processed.

@@ -20,6 +20,24 @@
 
 namespace esgrove::image_control::test
 {
+/// Observes the production fade field without coupling tests to painted pixels or exposing a public display API.
+struct BandCorrelationMeterTestAccess final {
+    /// Returns the cached field at a signed correlation coordinate that lies on a spatial sample.
+    [[nodiscard]] static float intensityAt(const BandCorrelationMeter& meter, const float value)
+    {
+        const auto sample = static_cast<std::size_t>(
+            std::lround((value + 1.0F) * 0.5F * static_cast<float>(meter.rangeIntensity.size() - 1))
+        );
+        return meter.rangeIntensity.at(sample);
+    }
+
+    /// Returns whether all retained visual coverage is absent.
+    [[nodiscard]] static bool fieldIsClear(const BandCorrelationMeter& meter)
+    {
+        return std::ranges::none_of(meter.rangeIntensity, [](const float intensity) { return intensity > 0.0F; });
+    }
+};
+
 namespace
 {
 /// Maximum permitted late expiry of a display-observed extreme, in seconds.
@@ -320,6 +338,7 @@ TEST(BandCorrelationMeter, NonfiniteReadingsClearAndReseedHistory)
         EXPECT_EQ(meter.valueText(), "Unavailable");
         EXPECT_FALSE(meter.trendValue().has_value());
         EXPECT_FALSE(meter.recentRange().has_value());
+        EXPECT_TRUE(BandCorrelationMeterTestAccess::fieldIsClear(meter));
         meter.setCorrelation(0.4F, 0.1, MAX_PERSISTENCE_SECONDS);
         expectTrend(meter, 0.4);
         expectRange(meter, 0.4F, 0.4F);
@@ -394,6 +413,8 @@ TEST(BandCorrelationMeter, InvalidElapsedTimeAndLongGapsResetHistory)
         EXPECT_EQ(meter.readoutText(), "-0.25");
         expectTrend(meter, -0.25);
         expectRange(meter, -0.25F, -0.25F);
+        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.5F), 0.0F);
         meter.setCorrelation(0.25F, 0.1, MAX_PERSISTENCE_SECONDS);
         expectTrend(meter, 0.25 - 0.5 * std::exp(-0.1 / MAX_PERSISTENCE_SECONDS));
         expectRange(meter, -0.25F, 0.25F);
@@ -462,6 +483,114 @@ TEST(BandCorrelationMeter, RepeatedRingWrapsPreserveBoundedRollingExtrema)
     meter.setCorrelation(0.75F, 0.0, MAX_PERSISTENCE_SECONDS);
     expectTrend(meter, 0.75);
     expectRange(meter, 0.75F, 0.75F);
+}
+
+/// An isolated old excursion fades smoothly while its exact range remains held, and is gone at the same expiry.
+TEST(BandCorrelationMeter, RangeFieldFadesBeforeExpiryWithoutExtendingPersistence)
+{
+    constexpr double PERSISTENCE_SECONDS {0.8};
+    BandCorrelationMeter meter("Low");
+    meter.setCorrelation(-1.0F, 0.0, PERSISTENCE_SECONDS);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 1.0F);
+    for (int step = 1; step <= 4; ++step) {
+        meter.setCorrelation(1.0F, 0.2, PERSISTENCE_SECONDS);
+        const double remaining = 1.0 - static_cast<double>(step) * 0.25;
+        const double expected = remaining * remaining * (3.0 - 2.0 * remaining);
+        EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), expected, 1.0e-6);
+        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 1.0F), 1.0F);
+        if (step < 4) {
+            expectRange(meter, -1.0F, 1.0F);
+        }
+    }
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+}
+
+/// Refresh counts and bucket phases do not quantize the visual release of an isolated excursion.
+TEST(BandCorrelationMeter, RangeFieldUsesObservationAgeIndependentlyOfRefreshRate)
+{
+    constexpr double PERSISTENCE_SECONDS {0.8};
+    constexpr double OBSERVATION_PHASE_SECONDS {0.003};
+    for (const int frames : {1, 24, 60, 144, 1000}) {
+        SCOPED_TRACE(frames);
+        BandCorrelationMeter meter("Low");
+        meter.setCorrelation(-1.0F, OBSERVATION_PHASE_SECONDS, PERSISTENCE_SECONDS);
+        for (int frame = 0; frame < frames; ++frame) {
+            meter.setCorrelation(1.0F, PERSISTENCE_SECONDS * 0.5 / static_cast<double>(frames), PERSISTENCE_SECONDS);
+        }
+        EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
+    }
+}
+
+/// A recent minimum and maximum fade independently, rather than applying one opacity to a moving rectangle.
+TEST(BandCorrelationMeter, RangeFieldHasIndependentFadingEdgesAndSoftSpatialFalloff)
+{
+    BandCorrelationMeter meter("Low");
+    meter.setCorrelation(-1.0F, 0.0, 1.0);
+    meter.setCorrelation(1.0F, 0.25, 1.0);
+    meter.setCorrelation(0.0F, 0.25, 1.0);
+    EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
+    EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, 1.0F), 0.84375F, 1.0e-6F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.0F), 1.0F);
+    meter.clearHistory();
+    EXPECT_TRUE(BandCorrelationMeterTestAccess::fieldIsClear(meter));
+    meter.setCorrelation(0.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.0F), 1.0F);
+    const float feather = BandCorrelationMeterTestAccess::intensityAt(meter, 0.03125F);
+    EXPECT_GT(feather, 0.0F);
+    EXPECT_LT(feather, 1.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.0625F), 0.0F);
+}
+
+/// Changing Persistence immediately reselects and reweights retained history without extending the selected window.
+TEST(BandCorrelationMeter, RangeFieldReusesRetainedHistoryWhenPersistenceChanges)
+{
+    BandCorrelationMeter meter("Low");
+    meter.setCorrelation(-1.0F, 0.0, MAX_PERSISTENCE_SECONDS);
+    meter.setCorrelation(1.0F, 0.4, MAX_PERSISTENCE_SECONDS);
+    meter.setCorrelation(1.0F, 0.0, 0.2);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+    meter.setCorrelation(1.0F, 0.0, 0.8);
+    EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
+    meter.setCorrelation(std::numeric_limits<float>::quiet_NaN());
+    EXPECT_TRUE(BandCorrelationMeterTestAccess::fieldIsClear(meter));
+    meter.setCorrelation(1.0F, 0.0, MAX_PERSISTENCE_SECONDS);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+}
+
+/// A separate observation log validates filled spatial coverage and independent age weighting across ring wraps.
+TEST(BandCorrelationMeter, RangeFieldMatchesIndependentObservationCoverage)
+{
+    constexpr double REFRESH_SECONDS {1.0 / 64.0};
+    constexpr std::array WINDOWS {MIN_PERSISTENCE_SECONDS, 0.25, DEFAULT_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS};
+    constexpr std::array PROBES {-1.0F, -0.5F, 0.0F, 0.5F, 1.0F};
+    BandCorrelationMeter meter("Low");
+    std::deque<std::pair<double, float>> observations;
+    for (int reading = 0; reading < 2048; ++reading) {
+        const double now = static_cast<double>(reading) * REFRESH_SECONDS;
+        const double persistence = WINDOWS.at(static_cast<std::size_t>(reading / 257) % WINDOWS.size());
+        const auto value = static_cast<float>(std::sin(static_cast<double>(reading) * 0.031));
+        meter.setCorrelation(value, reading > 0 ? REFRESH_SECONDS : 0.0, persistence);
+        observations.emplace_back(now, value);
+        while (observations.front().first < now - MAX_PERSISTENCE_SECONDS) {
+            observations.pop_front();
+        }
+        if (reading % 31 != 0) {
+            continue;
+        }
+        SCOPED_TRACE(reading);
+        for (const float probe : PROBES) {
+            double expected = 0.0;
+            for (const auto& [time, observed] : observations) {
+                const double remaining = std::clamp(1.0 - (now - time) / persistence, 0.0, 1.0);
+                const double opacity = remaining * remaining * (3.0 - 2.0 * remaining);
+                const float distance
+                    = std::max({std::min(observed, value) - probe, probe - std::max(observed, value), 0.0F});
+                const double coverage = std::clamp(1.0 - static_cast<double>(distance) / 0.06, 0.0, 1.0);
+                expected = std::max(expected, opacity * coverage * coverage * (3.0 - 2.0 * coverage));
+            }
+            EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, probe), expected, 1.0e-6);
+        }
+    }
 }
 
 /// Software painting traverses unavailable, ranged, endpoint, and cleared states without pixel comparisons.
