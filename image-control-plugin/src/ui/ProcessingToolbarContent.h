@@ -5,6 +5,7 @@
 
 #include "ProcessingState.h"
 #include "ui/ImageControlLookAndFeel.h"
+#include "ui/ProcessingToolbar.h"
 #include "UserPresets.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -101,7 +102,11 @@ struct PresetMailbox final {
 class ProcessingToolbarContent final : public juce::Component
 {
 public:
-    ProcessingToolbarContent(ImageControlProcessor& owner, const juce::File& presetDirectory);
+    ProcessingToolbarContent(
+        ImageControlProcessor& owner,
+        const juce::File& presetDirectory,
+        PresetDialogPresentation dialogs
+    );
 
     ~ProcessingToolbarContent() override;
 
@@ -126,11 +131,14 @@ private:
     void acceptCompletion(PresetCompletion completion);
     void acceptPresetResult(const PresetRequest& request, UserPreset preset);
     void applyListing(UserPresetListing listing);
+    void beginDialog(std::function<void(int)> completion);
     void chooseExport();
     void chooseImport();
     void confirmDelete();
     void confirmReconnect();
     void confirmUpdate();
+    void configureDialogPresentation();
+    void finishDialog(int result);
     void handleMenuAction(int action);
     void loadSelectedPreset();
     void observePendingLoad();
@@ -167,10 +175,15 @@ private:
     /// Opens explicit library commands without changing processing.
     juce::TextButton presetMenuButton {"Presets"};
 
+    /// Explicit per-toolbar presentation, never a process-global or production error suppression switch.
+    const PresetDialogPresentation dialogPresentation;
+
     /// Modal windows keep the plugin palette even if they are not children of the editor.
     ImageControlLookAndFeel dialogLookAndFeel;
     /// Current asynchronous confirmation or name-entry window, cancelled during teardown.
     std::unique_ptr<juce::AlertWindow> dialog;
+    /// Peerless test presentation invokes the same completion without registering a desktop modal window.
+    std::function<void(int)> dialogCompletion;
     /// Native import/export chooser owned until completion or teardown.
     std::unique_ptr<juce::FileChooser> fileChooser;
     /// Last completed library scan, indexed by the selector's item IDs.

@@ -5,12 +5,17 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cstdint>
 #include <memory>
 
 namespace esgrove::image_control
 {
 class ImageControlProcessor;
 class ProcessingToolbarContent;
+
+/// Controls alert presentation per instance.
+/// Non-rendering dialogs retain contents and actions without desktop peers or modality.
+enum class PresetDialogPresentation : std::uint8_t { visible, nonRendering };
 
 /// Height of the processing row, including its vertical control insets, in logical pixels.
 inline constexpr int PROCESSING_TOOLBAR_HEIGHT {32};
@@ -21,7 +26,11 @@ class ProcessingToolbar final : public juce::Component
 {
 public:
     explicit ProcessingToolbar(ImageControlProcessor& processor);
-    ProcessingToolbar(ImageControlProcessor& processor, const juce::File& presetDirectory);
+    ProcessingToolbar(
+        ImageControlProcessor& processor,
+        const juce::File& presetDirectory,
+        PresetDialogPresentation dialogs = PresetDialogPresentation::visible
+    );
 
     ~ProcessingToolbar() override;
 

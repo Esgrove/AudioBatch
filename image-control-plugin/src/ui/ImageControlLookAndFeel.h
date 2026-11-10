@@ -49,6 +49,17 @@ public:
     [[nodiscard]] juce::Font getLabelFont(juce::Label& label) override;
     [[nodiscard]] juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;
 
+    [[nodiscard]] juce::Font getAlertWindowFont() override;
+    [[nodiscard]] juce::Font getAlertWindowMessageFont() override;
+    [[nodiscard]] juce::Font getAlertWindowTitleFont() override;
+    [[nodiscard]] int getAlertWindowButtonHeight() override;
+    void drawAlertBox(
+        juce::Graphics& graphics,
+        juce::AlertWindow& alert,
+        const juce::Rectangle<int>& textArea,
+        juce::TextLayout& textLayout
+    ) override;
+
 private:
     void globalFocusChanged(juce::Component* focusedComponent) override;
 };

@@ -4,6 +4,7 @@
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ProcessingState.h"
+#include "ui/ImageControlLookAndFeel.h"
 #include "ui/ProcessingToolbar.h"
 #include "ui/ProcessingToolbarContent.h"
 #include "UserPresets.h"
@@ -43,6 +44,18 @@ struct PresetWorkflowTestAccess final {
     static juce::AlertWindow* dialog(ProcessingToolbar& toolbar)
     {
         return content(toolbar).dialog.get();
+    }
+
+    /// Checks the production constructor's default without opening a visible alert during tests.
+    static bool usesVisibleDialogs(ProcessingToolbar& toolbar)
+    {
+        return content(toolbar).dialogPresentation == PresetDialogPresentation::visible;
+    }
+
+    /// Raises a production warning without a filesystem failure or a native dialog driver.
+    static void warning(ProcessingToolbar& toolbar, const juce::String& message)
+    {
+        content(toolbar).showError(message);
     }
 
     /// Captures the real message-thread request before testing an intervening state transition.
@@ -180,7 +193,7 @@ public:
     /// Builds the real toolbar with injected storage and waits for its independent initial scan.
     void openToolbar()
     {
-        toolbar = std::make_unique<ProcessingToolbar>(processor, directory);
+        toolbar = std::make_unique<ProcessingToolbar>(processor, directory, PresetDialogPresentation::nonRendering);
         toolbar->setSize(744, PROCESSING_TOOLBAR_HEIGHT);
         waitForPreset(*toolbar, [&] { return !PresetWorkflowTestAccess::busy(*toolbar); });
     }
@@ -196,7 +209,7 @@ public:
         }
     }
 
-    /// Accepts a real owned confirmation through its button callback, then pumps its asynchronous modal completion.
+    /// Accepts a real owned confirmation through its button callback, then pumps its asynchronous completion.
     void acceptDialog() const
     {
         const juce::Component::SafePointer<juce::AlertWindow> dialog(PresetWorkflowTestAccess::dialog(*toolbar));
@@ -227,6 +240,112 @@ protected:
         EXPECT_TRUE(directory.deleteRecursively());
     }
 };
+
+/// Ordinary plugin construction keeps dialogs visible, independently of neighboring non-rendering test instances.
+TEST_F(PresetWorkflowTest, DialogVisibilityIsAnExplicitPerInstancePolicy)
+{
+    ProcessingToolbar production(processor, directory);
+    EXPECT_TRUE(PresetWorkflowTestAccess::usesVisibleDialogs(production));
+    openToolbar();
+    EXPECT_FALSE(PresetWorkflowTestAccess::usesVisibleDialogs(*toolbar));
+    EXPECT_TRUE(PresetWorkflowTestAccess::usesVisibleDialogs(production));
+}
+
+/// Test alerts retain messages, styling and asynchronous actions without desktop rendering or modal activation.
+TEST_F(PresetWorkflowTest, NonRenderingWarningsRetainMessagesActionsAndPluginStyling)
+{
+    openToolbar();
+    const auto message = juce::String("The preset file changed. Refresh the library and try again.");
+    PresetWorkflowTestAccess::warning(*toolbar, message);
+    auto* warning = PresetWorkflowTestAccess::dialog(*toolbar);
+    ASSERT_NE(warning, nullptr);
+    EXPECT_TRUE(warning->getDescription().contains(message));
+    EXPECT_EQ(warning->getAlertType(), juce::MessageBoxIconType::WarningIcon);
+    EXPECT_EQ(warning->getNumButtons(), 1);
+    EXPECT_FALSE(warning->isCurrentlyModal());
+    EXPECT_FALSE(warning->isVisible());
+    EXPECT_FALSE(warning->isOnDesktop());
+    EXPECT_EQ(warning->getPeer(), nullptr);
+    juce::ModalComponentManager::getInstance()->bringModalComponentsToFront();
+    EXPECT_EQ(warning->getPeer(), nullptr);
+    EXPECT_FALSE(warning->hasKeyboardFocus(true));
+    EXPECT_FLOAT_EQ(warning->getAlpha(), 0.0F);
+    EXPECT_FALSE(warning->getWantsKeyboardFocus());
+    EXPECT_FALSE(warning->hasKeyboardFocus(true));
+    EXPECT_NE(dynamic_cast<ImageControlLookAndFeel*>(&warning->getLookAndFeel()), nullptr);
+    acceptDialog();
+    EXPECT_EQ(PresetWorkflowTestAccess::dialog(*toolbar), nullptr);
+}
+
+/// Naming and destructive confirmations use the same non-rendering presentation as failure reports.
+TEST_F(PresetWorkflowTest, AllPresetDialogKindsAreNonRenderingInWorkflowTests)
+{
+    saveAndLoad();
+    openToolbar();
+    for (const auto action :
+         {
+             PresetMenuAction::saveAs,
+             PresetMenuAction::rename,
+             PresetMenuAction::update,
+             PresetMenuAction::remove,
+             PresetMenuAction::reconnect,
+         })
+    {
+        PresetWorkflowTestAccess::action(*toolbar, action);
+        auto* current = PresetWorkflowTestAccess::dialog(*toolbar);
+        ASSERT_NE(current, nullptr);
+        EXPECT_FLOAT_EQ(current->getAlpha(), 0.0F);
+        EXPECT_FALSE(current->isOnDesktop());
+        EXPECT_FALSE(current->isVisible());
+        EXPECT_EQ(current->getPeer(), nullptr);
+        EXPECT_FALSE(current->getWantsKeyboardFocus());
+        EXPECT_FALSE(current->hasKeyboardFocus(true));
+        const juce::Component::SafePointer<juce::AlertWindow> safeDialog(current);
+        auto* cancel = current->getButton(1);
+        ASSERT_NE(cancel, nullptr);
+        cancel->onClick();
+        waitForPreset(*toolbar, [&] { return safeDialog == nullptr; });
+    }
+}
+
+/// Closing the toolbar invalidates queued test-dialog results before they can start filesystem commands.
+TEST_F(PresetWorkflowTest, PeerlessDialogCompletionIsCancelledOnToolbarDestruction)
+{
+    openToolbar();
+    PresetWorkflowTestAccess::action(*toolbar, PresetMenuAction::saveAs);
+    const juce::Component::SafePointer<juce::AlertWindow> pending(PresetWorkflowTestAccess::dialog(*toolbar));
+    ASSERT_NE(pending, nullptr);
+    auto* input = pending->getTextEditor("presetName");
+    ASSERT_NE(input, nullptr);
+    input->setText("Must not be saved after teardown");
+    auto* accept = pending->getButton(0);
+    ASSERT_NE(accept, nullptr);
+    accept->onClick();
+    EXPECT_NE(pending, nullptr);
+    EXPECT_FALSE(PresetWorkflowTestAccess::busy(*toolbar));
+    toolbar.reset();
+    EXPECT_EQ(pending, nullptr);
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        pumpPresetEvents();
+    }
+    const auto listing = library.list();
+    ASSERT_TRUE(listing.has_value());
+    EXPECT_TRUE(listing->presets.empty());
+    EXPECT_FALSE(processor.getPresetProvenance());
+}
+
+/// Alert palette and fonts are explicit plugin choices rather than a host's default look and feel.
+TEST_F(PresetWorkflowTest, AlertLookAndFeelUsesPluginPaletteAndTypography)
+{
+    ImageControlLookAndFeel look;
+    EXPECT_EQ(look.findColour(juce::AlertWindow::backgroundColourId), juce::Colour(palette::GREY_SEMI_DARK));
+    EXPECT_EQ(look.findColour(juce::AlertWindow::textColourId), juce::Colour(palette::GREY_SUPER_LIGHT));
+    EXPECT_EQ(look.findColour(juce::AlertWindow::outlineColourId), juce::Colour(palette::GREY_MEDIUM));
+    EXPECT_EQ(look.getAlertWindowTitleFont().getTypefaceName(), textFont(16.0F).getTypefaceName());
+    EXPECT_EQ(look.getAlertWindowMessageFont().getTypefaceName(), textFont(13.0F).getTypefaceName());
+    EXPECT_EQ(look.getAlertWindowFont().getTypefaceName(), textFont(13.0F).getTypefaceName());
+    EXPECT_LE(look.getAlertWindowButtonHeight(), 30);
+}
 
 TEST_F(PresetWorkflowTest, RestoredNameAndBaselineRemainVisibleWithoutBindingOrLibraryFile)
 {
@@ -430,7 +549,9 @@ TEST_F(PresetWorkflowTest, InvalidNameStaysInSameDialogUntilCorrectedOrCancelled
     ASSERT_NE(accept, nullptr);
     accept->onClick();
     EXPECT_EQ(PresetWorkflowTestAccess::dialog(*toolbar), dialog);
-    EXPECT_TRUE(dialog->isCurrentlyModal());
+    EXPECT_FALSE(dialog->isCurrentlyModal());
+    EXPECT_FALSE(dialog->isOnDesktop());
+    EXPECT_FALSE(dialog->isVisible());
     EXPECT_EQ(input->getText(), "../invalid");
     EXPECT_FALSE(input->getDescription().isEmpty());
     EXPECT_FALSE(PresetWorkflowTestAccess::busy(*toolbar));
