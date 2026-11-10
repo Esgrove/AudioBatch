@@ -8,6 +8,7 @@ argument-hint: "[all|audiobatch|cpp|rust|imagecontrol] [changes|base=<ref>] [foc
 Perform an evidence-based code review. Do not modify code unless the user explicitly requests fixes.
 Arguments: $ARGUMENTS
 Treat arguments or instructions appended to this command as scope, review target, and focus.
+If the arguments line still shows a literal `$ARGUMENTS` placeholder, use the text the user wrote after the command.
 
 ## Select scope and target
 
@@ -44,8 +45,9 @@ Do not interpolate arbitrary command arguments into shell commands.
 2. For `cpp`, read `cpp/AGENTS.md`, `cpp/ARCHITECTURE.md`, and applicable `.agents/rules/` files.
 3. For `rust`, read `rust/AGENTS.md` and `rust/ARCHITECTURE.md`.
    Read the C++ instructions where Rust explicitly inherits prose, naming, and documentation conventions.
-4. For ImageControl, read `image-control-plugin/README.md`, `image-control-plugin/ARCHITECTURE.md`,
-   and applicable `.agents/rules/` files. Do not impose AudioBatch branding or application parity on this plugin.
+4. For ImageControl, read `image-control-plugin/AGENTS.md`, `image-control-plugin/README.md`,
+   `image-control-plugin/ARCHITECTURE.md`, and applicable `.agents/rules/` files.
+   Do not impose AudioBatch branding or application parity on this plugin.
 5. Load the GPUI Kit coding skill before reviewing Rust GUI architecture, ownership, API, or testing decisions.
    Load its design guides too when assessing layout, interaction, or interface copy, if those skills are available.
 
@@ -93,7 +95,8 @@ Do not invoke specialized Bugbot or security-review agents unless the user expli
   compiler and standard-library differences, feature-gated code, and platform-specific dependencies.
   A native check or cross-compile lint is not proof of a successful build and run on another platform.
 - ImageControl's own DSP and state contracts, including neutral transparency, crossover ordering,
-  parameter automation and smoothing, latency and tail reporting, presets, undo/A-B state, and analyzer handoff.
+  stable parameter ids and version hints, parameter automation and smoothing, latency and tail reporting,
+  saved-state compatibility, presets, undo/A-B state, and analyzer handoff.
   Apply these only when ImageControl is selected.
 - Test independence and failure visibility, immutable recording inputs, fixture provenance,
   shared expectation coverage, silently skipped plugin or LFS tests, CI path filters, and packaging contracts.

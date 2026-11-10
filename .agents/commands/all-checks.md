@@ -8,6 +8,7 @@ argument-hint: "[all|audiobatch|cpp|rust|imagecontrol] [check-only] [additional 
 Run the project's checks, not just a plan or a list of commands.
 Arguments: $ARGUMENTS
 Treat arguments or instructions appended to this command as the requested scope, mode, and constraints.
+If the arguments line still shows a literal `$ARGUMENTS` placeholder, use the text the user wrote after the command.
 Default to the whole repository, fixing issues found by the checks and rerunning affected validation.
 `check-only` runs the checks and reports issues without editing source, configuration, or expectations.
 Do not use autofixing commands in check-only mode. State the selected scope and mode before starting.
@@ -24,7 +25,7 @@ Do not use autofixing commands in check-only mode. State the selected scope and 
 
 Read root `AGENTS.md`, the selected projects' instructions and architecture documents,
 and their verification scripts and relevant `.github/workflows/` files before running commands.
-For ImageControl, read its `README.md` and `ARCHITECTURE.md` and the applicable `.agents/rules/` files.
+For ImageControl, read its `AGENTS.md`, `README.md`, and `ARCHITECTURE.md` and the applicable `.agents/rules/` files.
 The current scripts and workflows are authoritative if this checklist becomes stale.
 Support only macOS and Windows. Run each project's commands from its own directory.
 
@@ -51,10 +52,9 @@ Support only macOS and Windows. Run each project's commands from its own directo
 
 For `all`, run `./format.sh --check` from the repository root.
 It covers both projects, ImageControl, shared C++ sources, shell scripts, Python, prose, and JSON.
-For application-only scopes, run each selected project's `./format.sh --check` from its directory.
-Note that `cpp/format.sh` also checks the test plugin and ImageControl.
-For ImageControl-only checks, use that C++ formatter in check mode and identify its broader coverage in the report.
-Do not invent an `image-control` selector for the root formatter.
+For the `cpp`, `rust`, and `imagecontrol` scopes, run each selected project's `./format.sh --check` from its directory,
+or the root `./format.sh <project> --check` with `cpp`, `rust`, or `image-control`.
+The C++ script also covers the test plugin that both applications load.
 
 The format scripts can skip optional tools such as shfmt and slb when absent.
 Record those omissions explicitly. Check `.agents/commands/` and `.agents/rules/` with slb when available.

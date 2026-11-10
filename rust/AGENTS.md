@@ -1,7 +1,7 @@
 # AGENTS.md
 
 This file governs everything under `rust/`, the Rust version of AudioBatch.
-`../cpp/AGENTS.md` describes the C++ application in `../cpp/`, a sibling implementation that is still in progress.
+`../cpp/AGENTS.md` describes the C++ application in `../cpp/`, the reference implementation of AudioBatch.
 Its build, format, lint, and CMake instructions do not apply here.
 Its prose style, naming, and documentation rules do.
 When the two files disagree about code under `rust/`, this file wins.
@@ -10,8 +10,10 @@ When the two files disagree about code under `rust/`, this file wins.
 
 - Follow the repository-wide [behavioral parity rules](../AGENTS.md#behavioral-parity).
   Differences in results for the same input are bugs unless a narrow, technically justified exception is documented.
-- Read the C++ sources freely to understand how a feature behaves,
-  but question anything that looks wrong before carrying it over, because that application is not finished either.
+- Read the C++ sources freely to understand how a feature behaves.
+  The C++ application is a reference,
+  not an oracle that overrides the file format or independently verified expectations.
+  Question anything that looks wrong before carrying it over, and fix a confirmed bug in both applications.
   `../cpp/src/analysis/AudioAnalysis.cpp`, `../cpp/src/analysis/AnalysisCache*.cpp`, and `../cpp/src/cli/`
   are the closest counterparts of `crates/core` and `crates/cli`, and `../cpp/src/plugins/`
   and `../cpp/src/gui/LiveChain*.cpp` of `crates/plugins` and the GUI's `plugins/`.
@@ -94,6 +96,9 @@ and the coordinated `vst3` SDK pin described below.
     It trims the gapless padding the way the decoders of the C++ application do, keeping the source timeline aligned,
     reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
     and leaving out the MP3 synthesis delay when no LAME header states the encoder delay.
+  - `loudness/known_answers.rs` checks the loudness against known answers from the EBU Tech 3341 and 3342 signals,
+    independently of any reference implementation.
+    `golden_tests.rs` holds the golden snapshot tests of the analysis and normalization output.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
     `overload.rs` builds and validates bounded per-channel source overload flags and their independent cache blob.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
@@ -103,8 +108,11 @@ and the coordinated `vst3` SDK pin described below.
   - `gain_loudness.rs` remeasures gain-and-hard-clip loudness and applies the empirical integrated limiter estimate.
     Its results are presentation predictions, never source metrics, cache authority, or live plugin measurements.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
-  - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`
+    `file_selection.rs` chooses the paths of a drag out and groups selected files by folder for revealing them.
+  - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`,
+    the Rust waveform table in `cache/waveform_cache.rs`,
     and the shared `spectrogram_cache` table in `cache/spectrogram.rs`,
+    while the `cache/test_*.rs` files hold its tests by area,
     `coordinator.rs` runs analysis in parallel with cancellation and progress events,
     and `normalize_coordinator.rs` does the same for normalization, keeping the cache in step with the outputs.
   - `format.rs` formats levels, file properties, and Folder-column home shortening for display.
@@ -129,6 +137,13 @@ and the coordinated `vst3` SDK pin described below.
   `lib.rs` holds the `Player`, `device.rs` the output device selection and stream configuration,
   `engine.rs` the decode thread, `pipeline.rs` the conversion of a file to stereo frames at the device rate,
   `output/mod.rs` the shared state and the callback renderer, and `preview_insert.rs` the `PreviewInsert` trait.
+  `callback_access.rs` gives the callback exclusive renderer access with one atomic admission attempt,
+  so the callback never touches a mutex or wakes a waiter, and control threads close admission before waiting.
+  `stream_errors.rs` carries stream errors out of the callback through a bounded channel.
+  `callback_lifecycle_tests.rs` and `callback_transport_tests.rs` hold the hardware-free callback contracts,
+  and `realtime_tests.rs` the RealtimeSanitizer controls, which only the nightly `rtsan.sh` configuration enables.
+  The ignored, hardware-free callback benchmark is in `callback_benchmark.rs`,
+  with its CPU accounting in `callback_benchmark_cpu.rs` and its native insert in `callback_benchmark_native.rs`.
 - `crates/vst3-host` (`vst3-host`): VST3 hosting on top of the raw `vst3` bindings.
   `module.rs` loads bundles, `factory.rs` lists their classes,
   `instance.rs` holds the plugin lifecycle and the host side parameter changes of `set_parameter`,
@@ -152,6 +167,9 @@ and the coordinated `vst3` SDK pin described below.
   `chain_signal.rs` holds the channel handling that processing and the preview share,
   `processing_chain.rs` the instances one processing worker renders with,
   and `scan_protocol.rs` the messages between a scan and its worker process.
+  `tests/realtime.rs` holds the RealtimeSanitizer contracts of the complete preview chain.
+  The `vst3_benchmark` example measures native VST3 processing for `scripts/vst3_benchmark.sh`,
+  and the `limiter_probe` example collects the gain sweeps that `../fixtures/limiter_model.py` fits.
 - `crates/test-plugin` (`audiobatch-test-plugin`): dev-only fake VST3 plugins for the tests.
   `factory()` serves them inside the test process, and the `module` example builds them into a library
   that `bundle.rs` wraps in a `.vst3` bundle, found under `target/<profile>/examples`.
@@ -196,6 +214,7 @@ and the coordinated `vst3` SDK pin described below.
   with `waveform/` holding their geometry, rendering, axes, loudness graph, overloads, and spectrogram raster,
   `controls.rs` and `info_panel.rs` for the controls column and the information panel,
   and `settings_window.rs` for the Audio Settings window.
+  `controls/slider.rs` is the focusable slider with shared pointer, keyboard, and accessibility value changes.
   `control_ids.rs` holds the element ids of the controls shared with the C++ application.
   `menus.rs` defines the actions, the shortcuts, and the menu bar, `theme.rs` the palette and the fonts,
   `settings.rs` the saved preferences, `normalization.rs` the normalization target and options,
@@ -206,6 +225,7 @@ and the coordinated `vst3` SDK pin described below.
   and `file_drag/windows.rs` is its OLE drag source on Windows, where gpui has no outbound file drag.
   `single_instance.rs` hands the paths of a second launch to the running app,
   `demo.rs` holds the data of the `--demo-rows` stress test, and `snapshot.rs` the `snapshot` feature.
+  `build_info.rs` holds the version and build metadata that the About dialog, `--version`, and the log show.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
   On macOS, `build.sh` and `install.sh` package it as `AudioBatchRs.app` through `create_mac_app_bundle` in `common.sh`.
 - `crates/build-info` (`build-info`): the build script helper of the CLI and the GUI.
@@ -271,8 +291,11 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 - **Unsafe code.** The workspace denies `unsafe_code`,
   and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`, kept as narrow as possible.
   Mostly this is in `vst3-host` and the test plugin,
-  plus the Windows file drag in `crates/gui/src/file_drag/windows.rs`
-  and the Core Audio AAC bridge in `crates/core/src/decode/native_aac.rs`.
+  plus the Windows file drag in `crates/gui/src/file_drag/windows.rs`,
+  the Core Audio AAC bridge in `crates/core/src/decode/native_aac.rs`,
+  the callback admission in `crates/playback/src/callback_access.rs`,
+  and the test-only RealtimeSanitizer and CPU accounting code in `crates/playback/src/realtime_tests.rs`,
+  `crates/playback/src/callback_benchmark_cpu.rs`, and `crates/plugins/tests/realtime.rs`.
   Every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
   Keep COM pointers inside `vst3-host`, so the crates above it stay safe.
   Run `./miri.sh` after changing unsafe code in its covered modules,
@@ -385,11 +408,24 @@ Other commands:
 # Cover only Rust workspace tests, without the Python CLI contracts
 cargo llvm-cov nextest --workspace
 
-# Run the unsafe VST3 code, the Serato parsers, and the cache blob readers under Miri on nightly
+# Run the unsafe VST3 code, the Serato parsers, the callback admission, and the cache blob readers under Miri on nightly
 ./miri.sh
 
 # Build the cargo-fuzz targets, replay their corpus, and fuzz each for 60 seconds, add --replay to only replay
 ./fuzz.sh
+# Select the Serato, CLI, and cache targets, or only the decoder, and set the fuzzing time
+./fuzz.sh --targets parsers --seconds 60
+./fuzz.sh --targets decoder
+
+# Check the playback and preview callbacks with RealtimeSanitizer on macOS, with nightly Rust and Homebrew LLVM
+./rtsan.sh --skip-native --artifacts target/rtsan/artifacts/first-party
+./rtsan.sh --diagnostic
+
+# Compare native VST3 processing in both hosts with the real test plugin
+./scripts/vst3_benchmark.sh --iterations 30 --repeat 100
+
+# Check the macOS AAC reconstruction of both CLIs against FFmpeg and afconvert
+uv run --script scripts/test_aac_reconstruction.py --cpp-cli <absolute-cpp-cli> --rust-cli <absolute-rust-cli>
 
 # Generate the long benchmark inputs, which the file benchmarks skip when absent
 uv run ../fixtures/benchmark/generate.py
@@ -439,6 +475,8 @@ An explicit `--corpus <directory>` uses only that directory.
 Measured runs alternate C++ and Rust, with warmup once per command,
 and fresh copies and correctness checks outside timing.
 Raw hyperfine exports, combined run statistics, Markdown, and machine/build metadata stay in `target/cli-benchmark/`.
+[`../docs/performance.md`](../docs/performance.md) records the measured comparisons and how to reproduce them,
+including the VST3 and playback callback comparisons.
 
 The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,
 `AUDIOBATCH_GUI_SNAPSHOT_SIZE` as a window size such as `1000x800`,
@@ -593,10 +631,23 @@ Mention the C++ application only when it matters for the implementation:
   but a file with only a few tests can keep them in a single module.
   Split a module that grows past a few hundred lines by area.
 - `miri.sh` runs the tests of `vst3-host`, `audiobatch-test-plugin`, `serato-tags`,
+  the callback admission, lifecycle, and transport tests of `audiobatch-playback`,
   and the waveform, overload, and spectrogram blob readers of the core under Miri with Stacked Borrows.
   In those crates, mark a test that needs the file system, a plugin bundle, an audio device, or SQLite,
   or that takes minutes under Miri, with `#[cfg_attr(miri, ignore = "reason")]`.
   Fix undefined behaviour that Miri finds instead of ignoring the test.
+- `rtsan.sh` builds and runs the RealtimeSanitizer contracts on macOS with an installed nightly Rust
+  and the matching Homebrew LLVM runtime, each scenario in its own process.
+  `--skip-native` requires clean first-party callbacks, including admission and guard destruction,
+  without the native VST3 cases.
+  `--diagnostic` also verifies the known native plugin and stream-error disposal blockers as `BLOCKED` audits,
+  which are not clean results.
+  The build and diagnostics stay in `target/rtsan/`, and `--artifacts <directory>` selects where reports go.
+  Run it after changing callback, renderer, or preview insert code.
+  A missing or mismatched runtime blocks the check, and the check proves no audio deadlines.
+- The callback benchmark is an ignored libtest case, `callback_benchmark::production_callback`.
+  `../tests/callback_benchmark.py` compares paired baseline and candidate runs,
+  following [`../docs/performance.md`](../docs/performance.md).
 - The cargo-fuzz targets in `fuzz/` cover the Serato tag parsers, the CLI arguments, the cache blobs, and decoding.
   `serato_tags` and `cli_arguments` share their input layout with the C++ harnesses in `../cpp/tests/fuzz/`,
   and `fuzz.sh` replays the C++ corpus in place, so keep the layouts in step.

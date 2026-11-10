@@ -1,20 +1,25 @@
 ---
 description: Declaration order and file organization of the C++ sources
-globs: cpp/src/**,cpp/tests/**,test-plugin/src/**,image-control-plugin/src/**,image-control-plugin/tests/**
+globs: cpp/src/**, cpp/tests/**, test-plugin/src/**, image-control-plugin/src/**, image-control-plugin/tests/**, image-control-plugin/benchmarks/**
 paths:
   - "cpp/src/**"
   - "cpp/tests/**"
   - "test-plugin/src/**"
   - "image-control-plugin/src/**"
   - "image-control-plugin/tests/**"
+  - "image-control-plugin/benchmarks/**"
 alwaysApply: false
 ---
 
 # Code organization
 
 These rules apply to every C++ source and header under `cpp/src/`, `cpp/tests/`, and `test-plugin/src/`,
-and under `image-control-plugin/src/` and `image-control-plugin/tests/` for the ImageControl plugin.
-Paths below are relative to `cpp/`, and `AGENTS.md` means `cpp/AGENTS.md`.
+and under `image-control-plugin/src/`, `image-control-plugin/tests/`, and `image-control-plugin/benchmarks/`
+for the ImageControl plugin.
+Paths below are relative to the project being changed, `cpp/` or `image-control-plugin/`,
+and `AGENTS.md` means that project's `AGENTS.md`.
+Where the plugin uses its own names, such as its namespace and its `OptionalRef` alias,
+`image-control-plugin/AGENTS.md` states them.
 
 ## Declaration order
 
@@ -69,9 +74,9 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
   Inside it, declare the types and constants first, then the helper functions.
   Wrap platform-specific helpers in `#if` blocks inside it instead of opening another anonymous namespace,
   and do not nest it in a named namespace of the file.
-- Make enums `enum class`.
-  Convert the integer ids JUCE passes for menu items, commands, and table columns back with `utils::enumFromId`,
-  and switch over every enumerator without a `default` label.
+- Make enums `enum class`, and switch over every enumerator without a `default` label.
+  The C++ application converts the integer ids
+  that JUCE passes for menu items, commands, and table columns back to enums with `utils::enumFromId`.
 - Put all project code in `namespace audiobatch`, so classes and their member definitions share it.
   The ImageControl plugin is not part of AudioBatch, so its code uses `namespace esgrove::image_control` instead.
   Keep `main`, the JUCE application macro, and forward declarations of third-party types outside it.
@@ -92,7 +97,7 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
 
 ## File size and structure
 
-- Put each file in the `src/` subdirectory of its domain, as listed in the Source Layout section of `AGENTS.md`.
+- Put each file in the `src/` subdirectory of its domain, as listed in the layout section of `AGENTS.md`.
   Keep a header next to its source, and add a new directory only for a new domain with several files.
 - Include project headers by their path relative to `src/`, such as `#include "analysis/AudioAnalysis.h"`,
   also from within the same directory, and never with `../`.
@@ -122,6 +127,9 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
 - Use `constexpr` for every variable and function that can be evaluated at compile time.
 - Use `consteval` for functions that must never run at runtime.
 - Put file-local constants in an anonymous namespace as `constexpr` without a redundant `static`.
+- Name shared constants in `SCREAMING_SNAKE_CASE`: namespace-scope constants,
+  including file-local ones in anonymous namespaces, and static class constants.
+  Constants inside a function, including `constexpr` locals, are local variables and use camelCase.
 - Prefer named constants over unexplained numeric literals when values represent domain concepts, protocol fields,
   policy limits, or reused values. Keep self-evident arithmetic and conventional values inline.
 - Function-local `static const` is fine for values that need runtime initialization, such as fonts.
@@ -129,7 +137,7 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
 ## Initialization
 
 - Prefer direct brace initialization for data members and namespace-scope constants,
-  such as `int blockSize {512};` and `constexpr int fileSize {0};`,
+  such as `int blockSize {512};` and `constexpr int FILE_SIZE {0};`,
   instead of copy initialization with `=`.
   Apply this to classes and structs, including those defined in source files.
 - Do not extend this preference to local variables, loop initializers, or constructor initializer lists.
@@ -146,8 +154,14 @@ Run `clang-format -i --style=file` on every changed file.
 
 ## Sanitizers
 
-Use `./sanitize.sh` (the `macos-asan` preset) to run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
-when changing ownership, threading, or buffer handling code.
-Use `./sanitize.sh --thread` (the `macos-tsan` preset) to run them under ThreadSanitizer when changing threading code.
-On Windows, `./sanitize.sh` uses `windows-asan` with MSVC AddressSanitizer only.
-ThreadSanitizer is not supported there.
+Both the C++ application and ImageControl have a `./sanitize.sh`, each with its own build directories.
+
+- Use `./sanitize.sh` to run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
+  when changing ownership, threading, or buffer handling code.
+- Use `./sanitize.sh --thread` to run them under ThreadSanitizer when changing threading code.
+  ThreadSanitizer is macOS only.
+- Use `./sanitize.sh --realtime` on macOS, with Homebrew LLVM, when changing audio callback code.
+  It runs the RealtimeSanitizer callback scenarios.
+  Verified `BLOCKED` audits of dependency code are not clean results.
+- On Windows, the C++ application's `./sanitize.sh` uses `windows-asan` with MSVC AddressSanitizer only,
+  and `--clang` uses LLVM AddressSanitizer. ImageControl's sanitizers are macOS only.

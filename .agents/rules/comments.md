@@ -1,6 +1,6 @@
 ---
 description: Commenting conventions for the C++ sources, the test plugin, and the documentation next to them
-globs: cpp/**,test-plugin/**,image-control-plugin/**
+globs: cpp/**, test-plugin/**, image-control-plugin/**
 paths:
   - "cpp/**"
   - "test-plugin/**"
@@ -13,7 +13,7 @@ alwaysApply: false
 ## Comment formatting
 
 Comments in code and files that a change touches, and the documentation related to them, may be reformatted.
-Follow the semantic line break rules in `cpp/AGENTS.md`.
+Follow the semantic line break rules in `cpp/AGENTS.md`, or in `image-control-plugin/AGENTS.md` for the plugin.
 The Rust port has the same rules in `rust/AGENTS.md`.
 Leave comments in files the change does not touch as they are, unless asked to reformat them.
 
