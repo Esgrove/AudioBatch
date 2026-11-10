@@ -4,10 +4,10 @@
 #pragma once
 
 #include "ui/ControlSlider.h"
+#include "ui/KeyboardShortcutsPanel.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include <functional>
 #include <optional>
 
 namespace esgrove::image_control
@@ -27,8 +27,10 @@ public:
     SettingsPanel& operator=(SettingsPanel&&) = delete;
 
     void resetDisplayAppearance();
-    void setKeyboardShortcutsCallback(std::function<void()> callback);
+    void showKeyboardShortcuts();
+    void showPreferences();
 
+    bool keyPressed(const juce::KeyPress& key) override;
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
@@ -68,7 +70,7 @@ private:
     ControlSlider panMidpointSlider;
     ControlSlider persistenceSlider;
 
-    juce::TextButton keyboardShortcutsButton {juce::String::fromUTF8("Keyboard shortcuts\xe2\x80\xa6")};
+    juce::TextButton keyboardShortcutsButton {"Keyboard shortcuts"};
     juce::TextButton resetAppearanceButton {"Reset display appearance"};
 
     juce::ToggleButton bypassRenderingButton {"Stop spectrogram analysis"};
@@ -77,7 +79,9 @@ private:
     juce::ToggleButton showFpsButton {"Show frame rate"};
     juce::ToggleButton smoothCorrelationReadoutButton {"Smooth correlation numbers"};
 
-    /// Requests the editor-owned shortcuts window on the message thread, without changing settings.
-    std::function<void()> onShowKeyboardShortcuts;
+    /// Nested reference replaces preferences within the same callout, without another window or modal layer.
+    KeyboardShortcutsPanel shortcutsPanel;
+    juce::TextButton backButton {"Back to Settings"};
+    bool showingShortcuts {false};
 };
 }  // namespace esgrove::image_control

@@ -14,10 +14,11 @@ namespace esgrove::image_control
 namespace
 {
 /// Font-independent header symbols use one restrained stroke and compact disclosure proportions.
-constexpr float CHEVRON_WIDTH {10.0F};
-constexpr float CHEVRON_HEIGHT {5.0F};
+constexpr float CHEVRON_WIDTH {7.0F};
+constexpr float CHEVRON_HEIGHT {3.0F};
+constexpr float CHEVRON_STROKE_WIDTH {1.0F};
 constexpr float ICON_STROKE_WIDTH {1.5F};
-constexpr int CHEVRON_INSET {7};
+constexpr int CHEVRON_INSET {9};
 /// Maximum host parameter label length used for a local history action.
 constexpr int HISTORY_NAME_LENGTH {100};
 
@@ -139,7 +140,7 @@ void ImageControlEditor::configureHeaderIcons()
     collapseChevron.setPath(chevronPath);
     collapseChevron.setFill(juce::Colours::transparentBlack);
     collapseChevron.setStrokeFill(juce::Colour(palette::GREY_MIDDLE_LIGHT));
-    collapseChevron.setStrokeThickness(ICON_STROKE_WIDTH);
+    collapseChevron.setStrokeThickness(CHEVRON_STROKE_WIDTH);
     chevronPath.applyTransform(
         juce::AffineTransform::rotation(juce::MathConstants<float>::pi, CHEVRON_WIDTH * 0.5F, CHEVRON_HEIGHT * 0.5F)
     );
@@ -147,7 +148,7 @@ void ImageControlEditor::configureHeaderIcons()
     expandChevron.setPath(chevronPath);
     expandChevron.setFill(juce::Colours::transparentBlack);
     expandChevron.setStrokeFill(juce::Colour(palette::GREY_MIDDLE_LIGHT));
-    expandChevron.setStrokeThickness(ICON_STROKE_WIDTH);
+    expandChevron.setStrokeThickness(CHEVRON_STROKE_WIDTH);
     processingToolbarButton.setImages(&expandChevron, nullptr, nullptr, nullptr, &collapseChevron);
     processingToolbarButton.setEdgeIndent(CHEVRON_INSET);
     processingToolbarButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);

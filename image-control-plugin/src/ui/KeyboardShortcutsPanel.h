@@ -10,7 +10,7 @@
 namespace esgrove::image_control
 {
 /// Owns grouped action and key labels without editor state, sound parameters, or external content.
-/// The editor owns this component and its surrounding window, including the window's close behavior.
+/// Settings owns this component as a nested reference, without a separate native window.
 class KeyboardShortcutsPanel final : public juce::Component
 {
 public:

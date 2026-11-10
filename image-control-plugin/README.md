@@ -35,7 +35,8 @@ The history survives closing the editor but is not saved with a project, and a h
 Incoming host automation and display-setting edits do not create undo entries.
 See [Keyboard shortcuts](#keyboard-shortcuts) for editing, navigation, and modifier gestures.
 Hover either analysis section to reveal its collapse chevron, or focus it with the keyboard.
-Hidden sections expand when clicking anywhere along their collapsed row, including the right-hand chevron.
+Hidden sections expand when clicking anywhere along their collapsed row,
+with small chevrons beside the label and at the right.
 The same visibility choices are available in Settings.
 The band controls' chevron switches between full strips and a compact Mid/Side/Width/Pan value row.
 Compact controls give their space to the spectrogram without resizing its window or changing sound settings.
@@ -81,8 +82,8 @@ Text fields keep their own editing shortcuts instead of triggering plugin-wide c
 | --- | --- |
 | Focus next / previous control | Tab / Shift+Tab |
 | Open Display settings | Cmd+comma (macOS) / Ctrl+comma (Windows) |
-| Open the separate Keyboard shortcuts window | F1 or Keyboard shortcuts in Settings |
-| Dismiss Display settings or cancel a preset dialog | Escape |
+| Open the Keyboard shortcuts submenu | F1 or Keyboard shortcuts in Settings |
+| Return from shortcuts / dismiss Display settings / cancel a preset dialog | Escape |
 | Resize with the divider focused | Up / Down, 8 pixels per press |
 | Resize the divider finely | Shift+Up / Shift+Down, 1 pixel per press |
 
@@ -99,7 +100,8 @@ Text fields keep their own editing shortcuts instead of triggering plugin-wide c
 
 Compact values use suffixes `M` and `S` for Mid and Side gains in dB, and `W` for the Width multiplier.
 Pan shows `C` at centre, or an amount followed by `L` or `R`, such as `25L` or `33R`.
-Taller windows show full `MID`, `SIDE`, `WIDTH`, and `PAN` labels above the values instead.
+When width permits, full control names sit beside their values on the same line.
+The concise view has no band headings or separate label rows.
 All four retain wheel, arrow-key, fine-adjustment, numeric-entry, and reset gestures.
 Recover, Solo, and Link retain their settings. Expand the full strips to edit those controls directly.
 

@@ -70,7 +70,6 @@ private:
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
     [[nodiscard]] std::optional<std::size_t> bandUnderPointer() const;
     [[nodiscard]] int compactHeight() const;
-    [[nodiscard]] int compactBandHeight() const;
     [[nodiscard]] int settingsPanelHeight() const;
     [[nodiscard]] bool synchronizeRestoredLayout();
     [[nodiscard]] double persistenceSeconds() const;
@@ -213,9 +212,6 @@ private:
     double measuredFramesPerSecond {0.0};
     /// The renderer's frame count when the frame rate was last measured.
     int measuredFrameCount {0};
-
-    /// Modeless shortcut reference is editor-owned and closes before the editor's look and feel.
-    std::unique_ptr<juce::DocumentWindow> shortcutsWindow;
 
     /// Owned settings content is destroyed synchronously before its processor and bound state.
     std::unique_ptr<SettingsPanel> settingsPanel;

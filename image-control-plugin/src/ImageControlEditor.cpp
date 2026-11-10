@@ -83,9 +83,6 @@ constexpr float COMPACT_BRAND_FONT_HEIGHT {14.0F};
 constexpr int COMPACT_BRAND_HEIGHT {15};
 /// The local row action reserves only the header portion of the meter column.
 constexpr int CORRELATION_ACTION_HEIGHT {20};
-/// Roomy visual-first windows can afford a small full-name row above the compact numeric controls.
-constexpr int LABELLED_COMPACT_EDITOR_HEIGHT {800};
-
 /// Returns a boolean editor setting.
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 {
@@ -303,7 +300,6 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 /// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
-    shortcutsWindow.reset();
     settingsCallout.reset();
     settingsPanel.reset();
     imageControlProcessor.setCorrelationEnabled(false);
@@ -382,7 +378,7 @@ void ImageControlEditor::resized()
         area.removeFromTop(GAP);
     }
     const int correlationHeight = (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
-    int controlsHeight = compactBandControls ? compactBandHeight() : bandSectionHeight;
+    int controlsHeight = compactBandControls ? BAND_STRIP_COMPACT_HEIGHT : bandSectionHeight;
     if (!spectrogramHidden) {
         const int maxBandSectionHeight
             = std::max(BAND_STRIP_MIN_HEIGHT, area.getHeight() - GAP - MIN_SPECTROGRAM_HEIGHT - correlationHeight);
@@ -428,15 +424,22 @@ void ImageControlEditor::resized()
     editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandSectionHeight, nullptr);
 }
 
-/// Places the band action in reserved band-heading space, separate from both analysis disclosures.
+/// Keeps the full-strip action in its heading and the concise restore glyph inside the existing section gap.
 void ImageControlEditor::layoutBandControlsDisclosure()
 {
     constexpr int expandedBandInset {10};
     const auto lastStrip = bandStrips.back()->getBounds();
-    const int inset = compactBandControls ? 0 : expandedBandInset;
-    const int height = compactBandControls ? RESTORE_HANDLE_HEIGHT : CORRELATION_ACTION_HEIGHT;
+    if (compactBandControls) {
+        bandControlsDisclosure.setBounds(
+            lastStrip.getRight() - ICON_BUTTON_WIDTH, lastStrip.getY() - GAP, ICON_BUTTON_WIDTH, GAP
+        );
+        return;
+    }
     bandControlsDisclosure.setBounds(
-        lastStrip.getRight() - inset - ICON_BUTTON_WIDTH, lastStrip.getY() + inset, ICON_BUTTON_WIDTH, height
+        lastStrip.getRight() - expandedBandInset - ICON_BUTTON_WIDTH,
+        lastStrip.getY() + expandedBandInset,
+        ICON_BUTTON_WIDTH,
+        CORRELATION_ACTION_HEIGHT
     );
 }
 
@@ -456,19 +459,12 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
     return std::nullopt;
 }
 
-/// Uses full compact labels only when the spectrogram has room to spare, keeping hidden-display windows minimal.
-int ImageControlEditor::compactBandHeight() const
-{
-    return !spectrogramHidden && getHeight() >= LABELLED_COMPACT_EDITOR_HEIGHT ? BAND_STRIP_COMPACT_LABELLED_HEIGHT
-                                                                               : BAND_STRIP_COMPACT_HEIGHT;
-}
-
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
 int ImageControlEditor::compactHeight() const
 {
     return HEADER_HEIGHT + GAP * 2 + (processingToolbarShown ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
         + RESTORE_HANDLE_HEIGHT + GAP
-        + (compactBandControls ? compactBandHeight() : std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT))
+        + (compactBandControls ? BAND_STRIP_COMPACT_HEIGHT : std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT))
         + (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
 }
 

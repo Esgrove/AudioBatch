@@ -33,9 +33,10 @@ public:
     ControlSlider& operator=(ControlSlider&&) = delete;
 
     [[nodiscard]] juce::String compactValueText();
+    [[nodiscard]] int compactValueRequiredWidth(bool fullNames) const;
     void endDrag();
     void setCompactValue(const juce::String& identity);
-    void setCompactValueLabelled(bool labelled);
+    void setCompactValueFullNames(bool fullNames);
     void setWheelStep(double step);
 
     juce::String getTooltip() override;
@@ -52,8 +53,8 @@ public:
 private:
     /// Compact value identity, or empty for the ordinary track and value-box presentation. Pan uses P internally.
     juce::String compactIdentity;
-    /// Whether a separate full-name label identifies the compact value, suppressing the M, S, and W suffixes.
-    bool compactValueLabelled {false};
+    /// Whether painted values use inline full names instead of single-letter suffixes and direction-only pan.
+    bool compactValueFullNames {false};
     /// Native text-box placement restored after compact presentation.
     juce::Slider::TextEntryBoxPosition expandedTextBoxPosition {juce::Slider::TextBoxRight};
     /// Native text-box width restored after compact presentation.
