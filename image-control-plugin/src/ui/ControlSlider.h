@@ -32,17 +32,36 @@ public:
     ControlSlider& operator=(const ControlSlider&) = delete;
     ControlSlider& operator=(ControlSlider&&) = delete;
 
+    [[nodiscard]] juce::String compactValueText();
     void endDrag();
+    void setCompactValue(const juce::String& identity);
+    void setCompactValueLabelled(bool labelled);
     void setWheelStep(double step);
 
+    juce::String getTooltip() override;
     double getValueFromText(const juce::String& text) override;
     bool keyPressed(const juce::KeyPress& key) override;
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
+    void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
+    void paint(juce::Graphics& graphics) override;
+    void resized() override;
 
 private:
+    /// Compact value identity, or empty for the ordinary track and value-box presentation. Pan uses P internally.
+    juce::String compactIdentity;
+    /// Whether a separate full-name label identifies the compact value, suppressing the M, S, and W suffixes.
+    bool compactValueLabelled {false};
+    /// Native text-box placement restored after compact presentation.
+    juce::Slider::TextEntryBoxPosition expandedTextBoxPosition {juce::Slider::TextBoxRight};
+    /// Native text-box width restored after compact presentation.
+    int expandedTextBoxWidth {0};
+    /// Native text-box height restored after compact presentation.
+    int expandedTextBoxHeight {0};
+    /// Native text-box editability restored after compact presentation.
+    bool expandedTextBoxReadOnly {false};
     /// Last pointer-down event, retained only until the pointer gesture ends or the control is torn down.
     std::optional<juce::MouseEvent> dragStartEvent;
     /// Change of the value per mouse wheel step.

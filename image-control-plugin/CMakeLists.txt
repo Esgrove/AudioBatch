@@ -453,6 +453,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/EditingWorkflowTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/PresetWorkflowTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ControlLayoutTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/CompactBandTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ConvolverTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationMeterTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationTests.cpp"
