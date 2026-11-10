@@ -4,6 +4,7 @@
 #include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ProcessingState.h"
 #include "tests/TestSignals.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
@@ -395,8 +396,8 @@ TEST(EditingWorkflow, MinimumHeightFitsAllOptionalRows)
     }
 }
 
-/// Settings is a bounded toggle, while F1 opens one separate editor-owned reference window.
-TEST(EditingWorkflow, SettingsToggleAndDedicatedShortcutsWindow)
+/// F1 enters the bounded Settings submenu without replacing the callout or adding a desktop window.
+TEST(EditingWorkflow, SettingsToggleAndF1ShareNestedShortcutsCallout)
 {
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
@@ -407,6 +408,8 @@ TEST(EditingWorkflow, SettingsToggleAndDedicatedShortcutsWindow)
     auto* button = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
     ASSERT_NE(toolbar, nullptr);
     ASSERT_NE(button, nullptr);
+    const auto& desktop = juce::Desktop::getInstance();
+    const int desktopComponents = desktop.getNumComponents();
     button->onClick();
     auto* callout = editingChild<juce::CallOutBox>(editor);
     ASSERT_NE(callout, nullptr);
@@ -416,30 +419,47 @@ TEST(EditingWorkflow, SettingsToggleAndDedicatedShortcutsWindow)
     EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
     EXPECT_EQ(editingControl(*settings, "displayControlsHelp"), nullptr);
     const juce::Component::SafePointer<juce::CallOutBox> safeCallout(callout);
+    const auto calloutBounds = callout->getBounds();
+    const auto panelBounds = settings->getBounds();
     auto* output = editingChild<ControlSlider>(editor);
     ASSERT_NE(output, nullptr);
     EXPECT_TRUE(callout->canModalEventBeSentToComponent(button));
     EXPECT_FALSE(callout->canModalEventBeSentToComponent(output));
-    button->onClick();
+    auto* reference = editingControl(*settings, "keyboardShortcuts");
+    auto* preferences = editingControl(*settings, "displaySettingsViewport");
+    ASSERT_NE(reference, nullptr);
+    ASSERT_NE(preferences, nullptr);
+    EXPECT_FALSE(reference->isVisible());
+    for (int activation = 0; activation < 2; ++activation) {
+        EXPECT_TRUE(editor.keyPressed(juce::KeyPress(juce::KeyPress::F1Key)));
+        EXPECT_EQ(editingChild<juce::CallOutBox>(editor), callout);
+        EXPECT_EQ(editingChild<SettingsPanel>(*callout), settings);
+        EXPECT_TRUE(reference->isVisible());
+        EXPECT_FALSE(preferences->isVisible());
+        EXPECT_FALSE(reference->isOnDesktop());
+        EXPECT_EQ(callout->getBounds(), calloutBounds);
+        EXPECT_EQ(settings->getBounds(), panelBounds);
+        EXPECT_EQ(desktop.getNumComponents(), desktopComponents);
+    }
+    for (int index = 0; index < desktop.getNumComponents(); ++index) {
+        EXPECT_NE(desktop.getComponent(index)->getComponentID(), "keyboard-shortcuts-window");
+    }
+    EXPECT_TRUE(settings->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), callout);
+    EXPECT_FALSE(reference->isVisible());
+    EXPECT_TRUE(preferences->isVisible());
+    EXPECT_FALSE(settings->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    EXPECT_TRUE(callout->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
     pumpEditing(*toolbar, [&] { return safeCallout == nullptr; });
     EXPECT_EQ(editingChild<juce::CallOutBox>(editor), nullptr);
+
     EXPECT_TRUE(editor.keyPressed(juce::KeyPress(juce::KeyPress::F1Key)));
-    juce::Component::SafePointer<juce::Component> help;
-    const auto& desktop = juce::Desktop::getInstance();
-    for (int index = 0; index < desktop.getNumComponents(); ++index) {
-        auto* component = desktop.getComponent(index);
-        if (component->getComponentID() == "keyboard-shortcuts-window") {
-            help = component;
-        }
-    }
-    ASSERT_NE(help, nullptr);
-    EXPECT_TRUE(help->isVisible());
-    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), nullptr);
-    EXPECT_TRUE(help->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
-    EXPECT_FALSE(help->isVisible());
-    button->onClick();
     auto* first = editingChild<juce::CallOutBox>(editor);
     ASSERT_NE(first, nullptr);
+    auto* openedReference = editingControl(*first, "keyboardShortcuts");
+    ASSERT_NE(openedReference, nullptr);
+    EXPECT_TRUE(openedReference->isVisible());
+    EXPECT_EQ(desktop.getNumComponents(), desktopComponents);
     const juce::Component::SafePointer<juce::CallOutBox> safeFirst(first);
     // A rapid double activation cannot queue a replacement while dismissal is pending.
     button->onClick();
@@ -448,39 +468,52 @@ TEST(EditingWorkflow, SettingsToggleAndDedicatedShortcutsWindow)
     EXPECT_EQ(editingChild<juce::CallOutBox>(editor), nullptr);
 }
 
-/// The settings footer closes its popup before opening the separate reference, which is destroyed with the editor.
-TEST(EditingWorkflow, SettingsFooterOpensOwnedShortcutsReference)
+/// Footer and Back navigation retain the same callout, preference scroll position, and unmodified sound.
+TEST(EditingWorkflow, SettingsFooterAndBackPreserveOwnedCalloutAndPreferences)
 {
     ImageControlProcessor processor;
-    juce::Component::SafePointer<juce::Component> help;
-    {
-        ImageControlEditor editor(processor);
-        editor.addToDesktop(0);
-        editor.setVisible(true);
-        auto* button = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
-        auto* toolbar = editingChild<ProcessingToolbar>(editor);
-        ASSERT_NE(button, nullptr);
-        ASSERT_NE(toolbar, nullptr);
-        button->onClick();
-        auto* callout = editingChild<juce::CallOutBox>(editor);
-        ASSERT_NE(callout, nullptr);
-        auto* shortcuts = dynamic_cast<juce::Button*>(editingControl(*callout, "showKeyboardShortcuts"));
-        ASSERT_NE(shortcuts, nullptr);
-        const juce::Component::SafePointer<juce::CallOutBox> safeCallout(callout);
-        shortcuts->onClick();
-        pumpEditing(*toolbar, [&] { return safeCallout == nullptr; });
-        const auto& desktop = juce::Desktop::getInstance();
-        for (int index = 0; index < desktop.getNumComponents(); ++index) {
-            auto* component = desktop.getComponent(index);
-            if (component->getComponentID() == "keyboard-shortcuts-window") {
-                help = component;
-            }
-        }
-        ASSERT_NE(help, nullptr);
-        EXPECT_TRUE(help->isVisible());
-        EXPECT_FALSE(processor.getHistory().canUndo());
-    }
-    EXPECT_EQ(help, nullptr);
+    processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    auto* button = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
+    ASSERT_NE(button, nullptr);
+    button->onClick();
+    auto* callout = editingChild<juce::CallOutBox>(editor);
+    ASSERT_NE(callout, nullptr);
+    auto* settings = editingChild<SettingsPanel>(*callout);
+    auto* shortcuts = dynamic_cast<juce::Button*>(editingControl(*callout, "showKeyboardShortcuts"));
+    auto* back = dynamic_cast<juce::Button*>(editingControl(*callout, "keyboardShortcutsBack"));
+    auto* preferences = dynamic_cast<juce::Viewport*>(editingControl(*callout, "displaySettingsViewport"));
+    auto* reference = editingControl(*callout, "keyboardShortcuts");
+    ASSERT_NE(settings, nullptr);
+    ASSERT_NE(shortcuts, nullptr);
+    ASSERT_NE(back, nullptr);
+    ASSERT_NE(preferences, nullptr);
+    ASSERT_NE(reference, nullptr);
+    preferences->setViewPosition(0, preferences->getViewedComponent()->getHeight());
+    shortcuts->grabKeyboardFocus();
+    const auto scrollPosition = preferences->getViewPositionY();
+    ASSERT_GT(scrollPosition, 0);
+    const auto settingsState = processor.getEditorState().createCopy();
+    const auto sound = processor.getSoundSnapshot();
+    const auto bounds = callout->getBounds();
+    shortcuts->onClick();
+    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), callout);
+    EXPECT_TRUE(reference->isVisible());
+    EXPECT_FALSE(preferences->isVisible());
+    EXPECT_TRUE(back->hasKeyboardFocus(false));
+    EXPECT_EQ(callout->getBounds(), bounds);
+    back->onClick();
+    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), callout);
+    EXPECT_FALSE(reference->isVisible());
+    EXPECT_TRUE(preferences->isVisible());
+    EXPECT_EQ(preferences->getViewPositionY(), scrollPosition);
+    EXPECT_TRUE(shortcuts->hasKeyboardFocus(false));
+    EXPECT_EQ(callout->getBounds(), bounds);
+    EXPECT_TRUE(processor.getEditorState().isEquivalentTo(settingsState));
+    EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), sound));
+    EXPECT_FALSE(processor.getHistory().canUndo());
 }
 
 /// Deferred dismissal does not take focus away from a control selected outside the settings callout.
@@ -504,24 +537,32 @@ TEST(EditingWorkflow, SettingsDismissalPreservesNewControlFocus)
     EXPECT_TRUE(slider->hasKeyboardFocus(true));
 }
 
-/// Closing an instance with an open settings callout destroys bound content before processor state disappears.
-TEST(EditingWorkflow, OpenSettingsTearsDownSynchronouslyWithEditor)
+/// Closing Settings or its shortcuts submenu destroys editor-owned content before processor state disappears.
+TEST(EditingWorkflow, OpenSettingsAndShortcutsTearDownSynchronouslyWithEditor)
 {
-    juce::Component::SafePointer<juce::CallOutBox> callout;
-    juce::Component::SafePointer<SettingsPanel> panel;
-    {
+    for (const bool submenu : {false, true}) {
+        SCOPED_TRACE(submenu);
+        juce::Component::SafePointer<juce::CallOutBox> callout;
+        juce::Component::SafePointer<SettingsPanel> panel;
+        juce::Component::SafePointer<juce::Component> reference;
         auto processor = std::make_unique<ImageControlProcessor>();
         auto editor = std::make_unique<ImageControlEditor>(*processor);
         editor->addToDesktop(0);
         editor->setVisible(true);
-        EXPECT_TRUE(editor->keyPressed(juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)));
+        const auto key = submenu ? juce::KeyPress(juce::KeyPress::F1Key)
+                                 : juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0);
+        EXPECT_TRUE(editor->keyPressed(key));
         callout = editingChild<juce::CallOutBox>(*editor);
         ASSERT_NE(callout, nullptr);
         panel = editingChild<SettingsPanel>(*callout);
         ASSERT_NE(panel, nullptr);
+        reference = editingControl(*panel, "keyboardShortcuts");
+        ASSERT_NE(reference, nullptr);
+        EXPECT_EQ(reference->isVisible(), submenu);
         editor.reset();
         EXPECT_EQ(callout, nullptr);
         EXPECT_EQ(panel, nullptr);
+        EXPECT_EQ(reference, nullptr);
         processor = nullptr;
     }
     juce::ModalComponentManager::getInstance()->cancelAllModalComponents();

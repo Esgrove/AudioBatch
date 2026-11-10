@@ -61,7 +61,7 @@ constexpr std::array SHORTCUTS {
     Shortcut {.identifier = "focus", .action = "Next / previous control", .keys = "Tab / Shift+Tab"},
     Shortcut {.identifier = "settings", .action = "Display settings", .keys = SETTINGS_KEYS},
     Shortcut {.identifier = "help", .action = "Keyboard shortcuts", .keys = "F1"},
-    Shortcut {.identifier = "close", .action = "Close settings or shortcuts", .keys = "Escape"},
+    Shortcut {.identifier = "close", .action = "Back / close Settings", .keys = "Escape"},
     Shortcut {.identifier = "divider", .action = "Resize focused divider", .keys = "Up / Down (Shift: fine)"},
     Shortcut {.identifier = "adjust", .action = "Adjust focused value", .keys = "Arrows (Shift: fine)"},
     Shortcut {.identifier = "enter", .action = "Type a value", .keys = "Enter"},
@@ -133,8 +133,8 @@ KeyboardShortcutsPanel::KeyboardShortcutsPanel()
     configureLabel(
         descriptionLabel,
         "keyboardShortcutsDescription",
-        "Local controls while the editor has focus. Escape closes this window.",
-        "Local controls while the editor has focus. Escape closes this window."
+        "Editor controls while focused. Escape returns to Settings.",
+        "Editor controls while focused. Escape returns to Settings."
     );
     descriptionLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     content.addAndMakeVisible(titleLabel);
@@ -175,8 +175,12 @@ void KeyboardShortcutsPanel::paint(juce::Graphics& graphics)
 void KeyboardShortcutsPanel::resized()
 {
     viewport.setBounds(getLocalBounds());
-    const int scrollBarWidth = getHeight() < CONTENT_HEIGHT ? viewport.getScrollBarThickness() : 0;
-    content.setSize(std::max(1, getWidth() - scrollBarWidth), CONTENT_HEIGHT);
+    constexpr int stackedWidthThreshold {460};
+    const bool stacked = getWidth() < stackedWidthThreshold;
+    const int rowHeight = stacked ? ROW_HEIGHT * 2 : ROW_HEIGHT;
+    const int contentHeight = CONTENT_HEIGHT + (stacked ? static_cast<int>(SHORTCUTS.size()) * ROW_HEIGHT : 0);
+    const int scrollBarWidth = getHeight() < contentHeight ? viewport.getScrollBarThickness() : 0;
+    content.setSize(std::max(1, getWidth() - scrollBarWidth), contentHeight);
     auto area = content.getLocalBounds().reduced(MARGIN);
     titleLabel.setBounds(area.removeFromTop(TITLE_HEIGHT));
     descriptionLabel.setBounds(area.removeFromTop(DESCRIPTION_HEIGHT));
@@ -184,9 +188,15 @@ void KeyboardShortcutsPanel::resized()
     for (std::size_t groupIndex = 0; groupIndex < GROUPS.size(); ++groupIndex) {
         groupLabels.at(groupIndex).setBounds(area.removeFromTop(GROUP_HEIGHT));
         for (std::size_t rowIndex = 0; rowIndex < GROUPS.at(groupIndex).rows; ++rowIndex) {
-            auto row = area.removeFromTop(ROW_HEIGHT);
-            actionLabels.at(shortcutIndex).setBounds(row.removeFromLeft((row.getWidth() - COLUMN_GAP) / 2));
-            row.removeFromLeft(COLUMN_GAP);
+            auto row = area.removeFromTop(rowHeight);
+            if (stacked) {
+                actionLabels.at(shortcutIndex).setBounds(row.removeFromTop(ROW_HEIGHT));
+                keyLabels.at(shortcutIndex).setJustificationType(juce::Justification::centredLeft);
+            } else {
+                actionLabels.at(shortcutIndex).setBounds(row.removeFromLeft((row.getWidth() - COLUMN_GAP) / 2));
+                row.removeFromLeft(COLUMN_GAP);
+                keyLabels.at(shortcutIndex).setJustificationType(juce::Justification::centredRight);
+            }
             keyLabels.at(shortcutIndex).setBounds(row);
             ++shortcutIndex;
         }

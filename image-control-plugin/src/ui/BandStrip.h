@@ -28,11 +28,8 @@ struct BandCorrelationMeterTestAccess;
 /// Smallest height of a band strip that fits its margins, its name and range rows, and its five slider rows, in pixels.
 constexpr int BAND_STRIP_MIN_HEIGHT {280};
 
-/// Height of the compact band name and editable Mid, Side, Width, and Pan value row, in pixels.
-constexpr int BAND_STRIP_COMPACT_HEIGHT {44};
-
-/// Height of compact controls with a full-name label row above Mid, Side, Width, and Pan, in pixels.
-constexpr int BAND_STRIP_COMPACT_LABELLED_HEIGHT {60};
+/// Height of the compact editable Mid, Side, Width, and Pan value row with its margins, in pixels.
+constexpr int BAND_STRIP_COMPACT_HEIGHT {28};
 
 /// Height of the independent band correlation row, in pixels.
 constexpr int BAND_CORRELATION_HEIGHT {48};
@@ -209,7 +206,7 @@ private:
     bool linkedHistoryEditing {false};
     /// Whether the current Mid gesture opened a matching Side gesture, captured before Link can change.
     bool linkedSideGesture {false};
-    /// Whether only the band name, editable Mid, Side, Width, and Pan, and optional compact labels are visible.
+    /// Whether only editable Mid, Side, Width, and Pan values with inline identities are visible.
     bool compact {false};
     /// Space in the final band's full heading reserved for the editor's controls disclosure.
     int headerDisclosureInset {0};

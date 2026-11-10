@@ -30,6 +30,26 @@ constexpr float COMPACT_FONT_HEIGHT {11.0F};
 constexpr int COMPACT_VALUE_PADDING {2};
 /// Radius of the compact numeric field, in pixels.
 constexpr float COMPACT_CORNER_RADIUS {3.0F};
+
+/// Identifies painted compact values inline without changing native entry or accessibility text.
+juce::String compactValueSuffix(const juce::String& identity, const bool fullNames)
+{
+    if (fullNames) {
+        if (identity == "M") {
+            return " MID";
+        }
+        if (identity == "S") {
+            return " SIDE";
+        }
+        if (identity == "W") {
+            return " WIDTH";
+        }
+        if (identity == "P") {
+            return " PAN";
+        }
+    }
+    return identity == "P" ? juce::String {} : identity;
+}
 }  // namespace
 
 /// Turns a mouse wheel event into a signed number of whole steps, positive for scrolling up or away.
@@ -97,9 +117,28 @@ juce::String ControlSlider::compactValueText()
             text = "+" + text;
         }
     } else if (compactIdentity == "P") {
-        return text.removeCharacters(" %");
+        text = text.removeCharacters(" %");
     }
-    return text + (compactValueLabelled ? juce::String {} : compactIdentity);
+    return text + compactValueSuffix(compactIdentity, compactValueFullNames);
+}
+
+/// Measures worst-case glyphs with the painted font and padding, independent of the current automated value.
+int ControlSlider::compactValueRequiredWidth(const bool fullNames) const
+{
+    const auto font = monoFont(COMPACT_FONT_HEIGHT);
+    const auto suffix = compactValueSuffix(compactIdentity, fullNames);
+    const auto widthFor = [&font, &suffix](const juce::String& value) {
+        return juce::GlyphArrangement::getStringWidth(font, value + suffix);
+    };
+    float width = 0.0F;
+    if (compactIdentity == "M" || compactIdentity == "S") {
+        width = std::max({widthFor("-60.0"), widthFor("+12.0"), widthFor("-inf")});
+    } else if (compactIdentity == "W") {
+        width = widthFor("2.00");
+    } else if (compactIdentity == "P") {
+        width = std::max({widthFor("100L"), widthFor("100R"), widthFor("C")});
+    }
+    return static_cast<int>(std::ceil(width)) + COMPACT_VALUE_PADDING * 2;
 }
 
 /// Switches presentation without replacing the slider, parser, native editor, or parameter attachment.
@@ -133,11 +172,11 @@ void ControlSlider::setCompactValue(const juce::String& identity)
     }
 }
 
-/// Changes only painted suffixes, leaving active gestures and JUCE's numeric editor intact during resizing.
-void ControlSlider::setCompactValueLabelled(const bool labelled)
+/// Changes only painted inline identities, leaving active gestures and JUCE's numeric editor intact during resizing.
+void ControlSlider::setCompactValueFullNames(const bool fullNames)
 {
-    if (compactValueLabelled != labelled) {
-        compactValueLabelled = labelled;
+    if (compactValueFullNames != fullNames) {
+        compactValueFullNames = fullNames;
         repaint();
     }
 }

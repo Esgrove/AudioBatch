@@ -488,15 +488,16 @@ The band-control disclosure replaces full strips with a compact Mid/Side/Width/P
 using the same sliders and attachments.
 Its persisted `compactBandControls` choice defaults to false, leaving legacy projects in the full view.
 Compacting retains the window dimensions and saved full-strip height, releasing the remaining space to the spectrogram.
-A 44-pixel row uses value suffixes and directional pan text. At 800 pixels of editor height or more,
-a 60-pixel row adds full parameter labels without changing the stored layout preference.
+A single 28-pixel row uses value suffixes and directional pan text, without band headings.
+Wider columns use full inline control names based on measured text widths, never a separate label row.
 With the spectrogram hidden, the fixed-height editor instead follows the compact value row.
 The preset name occupies the existing title area only when its selector row is collapsed.
 `SettingsPanel` bounds a scrolling content area to the editor, keeps focused controls visible,
 validates numeric tokens, and scopes appearance reset separately from sound, visibility, and geometry.
 The modal Settings callout admits pointer events only to its opener,
 so a repeat click completes the ordinary release-driven close action without reopening.
-Its footer and F1 open a separate modeless shortcut reference owned by the editor.
+Its footer and F1 enter a shortcuts submenu inside the same callout.
+Back or Escape returns to preferences without losing their scroll position or changing sound.
 The stereo-position overlay starts at the plot's right edge, leaving the centre-to-edge mapping visible beside Settings.
 
 ### OpenGL passes

@@ -1,9 +1,7 @@
-/// Implements the ImageControl editor's owned settings callout and modeless keyboard shortcut reference window.
+/// Implements the ImageControl editor's owned Settings callout and nested keyboard shortcuts navigation.
 
 #include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
-#include "ui/ImageControlLookAndFeel.h"
-#include "ui/KeyboardShortcutsPanel.h"
 #include "ui/SettingsPanel.h"
 
 #include <algorithm>
@@ -39,56 +37,6 @@ private:
     /// Editor-owned opener, which can disappear during plugin teardown.
     juce::Component::SafePointer<juce::Component> button;
 };
-
-/// A modeless native reference window, hidden on close and destroyed with the plugin editor.
-class ShortcutsWindow final : public juce::DocumentWindow
-{
-public:
-    /// Owns only reference content, without retaining processor state or starting another modal workflow.
-    explicit ShortcutsWindow(juce::Component& editor) :
-        DocumentWindow("Keyboard shortcuts", juce::Colour(palette::GREY_SEMI_DARK), juce::DocumentWindow::closeButton)
-    {
-        setComponentID("keyboard-shortcuts-window");
-        setTitle("ImageControl keyboard shortcuts");
-        setLookAndFeel(&editor.getLookAndFeel());
-        setUsingNativeTitleBar(true);
-        setContentOwned(new KeyboardShortcutsPanel(), true);
-        setResizable(true, false);
-        constexpr int minimumWidth {480};
-        constexpr int minimumHeight {360};
-        constexpr int maximumWidth {900};
-        constexpr int maximumHeight {1000};
-        setResizeLimits(minimumWidth, minimumHeight, maximumWidth, maximumHeight);
-        centreAroundComponent(&editor, getWidth(), getHeight());
-    }
-
-    /// Detaches the editor-owned palette while the editor and its look and feel are still alive.
-    ~ShortcutsWindow() override
-    {
-        setLookAndFeel(nullptr);
-    }
-
-    ShortcutsWindow(const ShortcutsWindow&) = delete;
-    ShortcutsWindow(ShortcutsWindow&&) = delete;
-    ShortcutsWindow& operator=(const ShortcutsWindow&) = delete;
-    ShortcutsWindow& operator=(ShortcutsWindow&&) = delete;
-
-    /// Closing the reference never changes sound or the display preferences.
-    void closeButtonPressed() override
-    {
-        setVisible(false);
-    }
-
-    /// Escape closes this modeless reference without affecting editor shortcuts.
-    bool keyPressed(const juce::KeyPress& key) override
-    {
-        if (key.getKeyCode() == juce::KeyPress::escapeKey) {
-            closeButtonPressed();
-            return true;
-        }
-        return juce::DocumentWindow::keyPressed(key);
-    }
-};
 }  // namespace
 
 /// Returns the settings height bounded by the editor's available space and the callout border.
@@ -97,17 +45,15 @@ int ImageControlEditor::settingsPanelHeight() const
     return std::min(SETTINGS_MAX_HEIGHT, getHeight() - SETTINGS_BORDER_ALLOWANCE);
 }
 
-/// Opens one modeless, editor-owned shortcut reference without leaving Settings stacked underneath it.
+/// F1 enters the shortcuts submenu in Settings without creating another window or popup layer.
 void ImageControlEditor::openKeyboardShortcuts()
 {
-    if (settingsCallout != nullptr) {
-        settingsCallout->dismiss();
+    if (settingsCallout == nullptr) {
+        openSettings();
     }
-    if (shortcutsWindow == nullptr) {
-        shortcutsWindow = std::make_unique<ShortcutsWindow>(*this);
+    if (settingsPanel != nullptr) {
+        settingsPanel->showKeyboardShortcuts();
     }
-    shortcutsWindow->setVisible(true);
-    shortcutsWindow->toFront(true);
 }
 
 /// Opens an editor-owned bounded callout, with synchronous teardown before the processor's settings disappear.
@@ -120,11 +66,6 @@ void ImageControlEditor::openSettings()
     }
     settingsPanel = std::make_unique<SettingsPanel>(imageControlProcessor.getEditorState(), settingsPanelHeight());
     const juce::Component::SafePointer<ImageControlEditor> safeThis(this);
-    settingsPanel->setKeyboardShortcutsCallback([safeThis] {
-        if (safeThis != nullptr) {
-            safeThis->openKeyboardShortcuts();
-        }
-    });
     settingsCallout = std::make_unique<SettingsCallout>(*settingsPanel, settingsButton, *this);
     const juce::Component::SafePointer<juce::CallOutBox> safeCallout(settingsCallout.get());
     settingsCallout->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, safeCallout](int) {
@@ -139,10 +80,7 @@ void ImageControlEditor::openSettings()
                                              || safeCallout->isParentOf(focused) || focused == safeThis.getComponent();
                                          safeThis->settingsCallout.reset();
                                          safeThis->settingsPanel.reset();
-                                         if (restoreFocus && safeThis->isShowing()
-                                             && (safeThis->shortcutsWindow == nullptr
-                                                 || !safeThis->shortcutsWindow->isVisible()))
-                                         {
+                                         if (restoreFocus && safeThis->isShowing()) {
                                              safeThis->settingsButton.grabKeyboardFocus();
                                          }
                                      }));

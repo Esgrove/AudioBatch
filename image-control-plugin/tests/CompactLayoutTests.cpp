@@ -70,6 +70,12 @@ void expectCompactColumns(const ImageControlEditor& editor, const int expectedHe
         }
     }
     for (const auto* child : editor.getChildren()) {
+        if ((dynamic_cast<const BandCorrelationMeter*>(child) != nullptr && child->isVisible())
+            || child->getComponentID() == "correlation-disclosure"
+            || child->getComponentID() == "spectrogram-disclosure")
+        {
+            EXPECT_FALSE(child->getBounds().intersects(toggle->getBounds()));
+        }
         if (dynamic_cast<const BandCorrelationMeter*>(child) == nullptr || !child->isVisible()) {
             continue;
         }
@@ -104,8 +110,8 @@ TEST(CompactLayout, ToggleReclaimsSpectrogramSpaceWithoutChangingWindowOrSavedBa
         toggle->onClick();
         EXPECT_TRUE(static_cast<bool>(state.getProperty(COMPACT_BAND_CONTROLS_PROPERTY)));
         EXPECT_EQ(editor.getLocalBounds(), originalSize);
-        EXPECT_EQ(strip->getHeight(), BAND_STRIP_COMPACT_LABELLED_HEIGHT);
-        EXPECT_EQ(spectrum->getHeight() - plotHeight, bandHeight - BAND_STRIP_COMPACT_LABELLED_HEIGHT);
+        EXPECT_EQ(strip->getHeight(), BAND_STRIP_COMPACT_HEIGHT);
+        EXPECT_EQ(spectrum->getHeight() - plotHeight, bandHeight - BAND_STRIP_COMPACT_HEIGHT);
         EXPECT_FALSE(divider->isVisible());
         EXPECT_FALSE(toggle->getToggleState());
         EXPECT_EQ(static_cast<int>(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), bandHeight);
@@ -142,7 +148,7 @@ TEST(CompactLayout, CompactRowsStayAlignedAndReachableAtMinimumWidthAndEveryDisp
         for (const int width : {760, 940, 1200}) {
             editor.setSize(width, editor.getHeight());
             EXPECT_TRUE(editor.getLocalBounds().contains(toggle->getBounds()));
-            expectCompactColumns(editor, spectrum ? BAND_STRIP_COMPACT_LABELLED_HEIGHT : BAND_STRIP_COMPACT_HEIGHT);
+            expectCompactColumns(editor, BAND_STRIP_COMPACT_HEIGHT);
             EXPECT_EQ(static_cast<int>(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), 360);
             EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
         }
@@ -163,14 +169,14 @@ TEST(CompactLayout, CompactChoiceSurvivesHostStateAndEditorReopening)
     state.setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
     {
         ImageControlEditor editor(processor);
-        EXPECT_EQ(compactChild<BandStrip>(editor)->getHeight(), BAND_STRIP_COMPACT_LABELLED_HEIGHT);
+        EXPECT_EQ(compactChild<BandStrip>(editor)->getHeight(), BAND_STRIP_COMPACT_HEIGHT);
     }
     juce::MemoryBlock saved;
     processor.getStateInformation(saved);
     ImageControlProcessor restored;
     restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
     ImageControlEditor reopened(restored);
-    EXPECT_EQ(compactChild<BandStrip>(reopened)->getHeight(), BAND_STRIP_COMPACT_LABELLED_HEIGHT);
+    EXPECT_EQ(compactChild<BandStrip>(reopened)->getHeight(), BAND_STRIP_COMPACT_HEIGHT);
     auto* toggle = compactToggle(reopened);
     ASSERT_NE(toggle, nullptr);
     toggle->onClick();
@@ -193,7 +199,7 @@ TEST(CompactLayout, ResizingWithCompactControlsPreservesTheFullStripPreference)
     for (const int height : {600, 799, 800, 1000, 764}) {
         editor.setSize(760, height);
         EXPECT_EQ(editor.getHeight(), height);
-        EXPECT_EQ(strip->getHeight(), height >= 800 ? BAND_STRIP_COMPACT_LABELLED_HEIGHT : BAND_STRIP_COMPACT_HEIGHT);
+        EXPECT_EQ(strip->getHeight(), BAND_STRIP_COMPACT_HEIGHT);
         EXPECT_EQ(static_cast<int>(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), 360);
         EXPECT_GE(spectrum->getHeight(), 160);
     }
@@ -279,8 +285,8 @@ TEST(CompactLayout, ModeChangingHostRestoreDiscardsUnchangedParameterText)
     EXPECT_FALSE(processor.getHistory().canUndo());
 }
 
-/// Automatic compact labels never resize the editor or open another history command while a value is being edited.
-TEST(CompactLayout, RoomyCompactLabelsFollowHeightWithoutChangingSoundOrFieldFocus)
+/// Changing vertical space never adds a second concise row or interrupts a focused value.
+TEST(CompactLayout, ConciseControlsStaySingleRowAcrossEditorHeights)
 {
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(COMPACT_BAND_CONTROLS_PROPERTY, true, nullptr);
@@ -303,15 +309,15 @@ TEST(CompactLayout, RoomyCompactLabelsFollowHeightWithoutChangingSoundOrFieldFoc
     for (const int height : {800, 799, 900, 600}) {
         editor.setSize(760, height);
         EXPECT_EQ(editor.getHeight(), height);
-        EXPECT_EQ(strip->getHeight(), height >= 800 ? BAND_STRIP_COMPACT_LABELLED_HEIGHT : BAND_STRIP_COMPACT_HEIGHT);
+        EXPECT_EQ(strip->getHeight(), BAND_STRIP_COMPACT_HEIGHT);
         EXPECT_TRUE(pan->hasKeyboardFocus(true));
         EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), sound));
         EXPECT_FALSE(processor.getHistory().canUndo());
     }
 }
 
-/// Crossing the compact-label threshold must leave an open numeric editor and its unfinished text intact.
-TEST(CompactLayout, AdaptiveLabelsDoNotCommitOrDismissNumericEntry)
+/// Expanding inline control names with width leaves unfinished numeric input and keyboard focus intact.
+TEST(CompactLayout, InlineNamesDoNotCommitOrDismissNumericEntry)
 {
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(COMPACT_BAND_CONTROLS_PROPERTY, true, nullptr);
@@ -338,8 +344,8 @@ TEST(CompactLayout, AdaptiveLabelsDoNotCommitOrDismissNumericEntry)
     }
     ASSERT_NE(input, nullptr);
     input->setText("25L", false);
-    for (const int height : {800, 799, 1000}) {
-        editor.setSize(760, height);
+    for (const int width : {1600, 760, 2000}) {
+        editor.setSize(width, 800);
         EXPECT_TRUE(input->isShowing());
         EXPECT_EQ(input->getText(), "25L");
         EXPECT_TRUE(input->hasKeyboardFocus(true));

@@ -222,14 +222,16 @@ float compactParameterValue(ImageControlProcessor& processor, const juce::String
 }
 }  // namespace
 
-/// Both compact heights fit four nonoverlapping fields, all band names, and representative worst-case glyph widths.
+/// One compact row fits four nonoverlapping fields and worst-case glyphs without any separate band or control labels.
 TEST(CompactBands, MinimumWidthGeometryAndBoundaryValuesRemainLegible)
 {
     ImageControlProcessor processor;
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         BandStrip strip(processor.getParameters(), processor.getEditorState(), band, processor.getHistory());
         strip.setCompact(true);
-        for (const auto size : {juce::Point<int> {180, 44}, {181, 44}, {240, 44}, {400, 44}, {180, 60}, {240, 60}}) {
+        strip.setHeaderDisclosureInset(24);
+        EXPECT_EQ(BAND_STRIP_COMPACT_HEIGHT, 28);
+        for (const auto size : {juce::Point<int> {180, 28}, {181, 28}, {240, 28}, {400, 28}}) {
             SCOPED_TRACE(band);
             SCOPED_TRACE(size.toString().toStdString());
             strip.setSize(size.x, size.y);
@@ -242,78 +244,120 @@ TEST(CompactBands, MinimumWidthGeometryAndBoundaryValuesRemainLegible)
                 ASSERT_NE(slider, nullptr);
                 EXPECT_TRUE(slider->isVisible());
                 EXPECT_EQ(slider->getY(), mid->getY());
+                EXPECT_EQ(slider->getY(), 2);
                 EXPECT_EQ(slider->getHeight(), 24);
                 EXPECT_GT(slider->getX(), previousRight);
                 EXPECT_GE(slider->getWidth(), slider->getName() == "Pan" ? 30 : 40);
                 previousRight = slider->getRight();
                 expectCompactBoundaryValuesFit(*slider);
             }
+            EXPECT_EQ(strip.getWidth() - previousRight, 2);
+            int visibleControls = 0;
             bool foundName = false;
             for (auto* child : strip.getChildren()) {
-                if (const auto* label = dynamic_cast<juce::Label*>(child);
-                    label != nullptr && label->getText() == title)
-                {
-                    foundName = true;
-                    EXPECT_TRUE(label->isVisible());
-                    EXPECT_LE(label->getBottom(), mid->getY());
-                    EXPECT_GE(label->getWidth(), 150);
-                    EXPECT_EQ(strip.getWidth() - label->getRight(), 26);
+                if (const auto* label = dynamic_cast<juce::Label*>(child)) {
+                    EXPECT_FALSE(label->isVisible());
+                    foundName = foundName || label->getText() == title;
                 }
                 if (child->isVisible()) {
+                    ++visibleControls;
                     EXPECT_TRUE(strip.getLocalBounds().contains(child->getBounds()));
                 }
             }
+            EXPECT_EQ(visibleControls, 4);
             EXPECT_TRUE(foundName);
         }
     }
 }
 
-/// Suffixes identify short compact values, while roomy labels identify the same unchanged numeric controls.
-TEST(CompactBands, SuffixesAndRoomyLabelsIdentifyAllFourValues)
+/// Width alone selects short suffixes or inline full names without showing another label row or replacing controls.
+TEST(CompactBands, SuffixesAndInlineFullNamesIdentifyAllFourValues)
 {
     ImageControlProcessor processor;
     BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
     strip.setCompact(true);
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
-    const std::array examples {
-        std::pair {"Low Mid", "+0.5M"},
-        std::pair {"Low Side", "-1.2S"},
-        std::pair {"Low Width", "1.00W"},
-        std::pair {"Low Pan", "C"},
-    };
-    for (const auto& [title, expected] : examples) {
-        auto* slider = compactControl<ControlSlider>(strip, title);
+    const std::array titles {"Low Mid", "Low Side", "Low Width", "Low Pan"};
+    const std::array shortValues {"+0.5M", "-1.2S", "1.00W", "C"};
+    const std::array fullValues {"+0.5 MID", "-1.2 SIDE", "1.00 WIDTH", "C PAN"};
+    std::array<juce::Component::SafePointer<ControlSlider>, 4> controls;
+    int fullNameWidth = 4 + 3 * 2;
+    for (std::size_t index = 0; index < titles.size(); ++index) {
+        auto* slider = compactControl<ControlSlider>(strip, titles.at(index));
         ASSERT_NE(slider, nullptr);
+        controls.at(index) = slider;
+        fullNameWidth += slider->compactValueRequiredWidth(true);
         if (slider->getName() == "Mid") {
             slider->setValue(0.5, juce::dontSendNotification);
         } else if (slider->getName() == "Side") {
             slider->setValue(-1.2, juce::dontSendNotification);
         }
-        EXPECT_EQ(slider->compactValueText(), expected);
     }
-    strip.setSize(180, BAND_STRIP_COMPACT_LABELLED_HEIGHT);
-    for (const auto* name : {"Mid", "Side", "Width", "Pan"}) {
-        auto* slider = compactControl<ControlSlider>(strip, "Low " + juce::String(name));
-        ASSERT_NE(slider, nullptr);
-        bool foundLabel = false;
-        for (auto* child : strip.getChildren()) {
-            if (auto* label = dynamic_cast<juce::Label*>(child);
-                label != nullptr && label->getText() == juce::String(name).toUpperCase())
-            {
-                foundLabel = true;
-                EXPECT_TRUE(label->isVisible());
-                EXPECT_EQ(label->getX(), slider->getX());
-                EXPECT_EQ(label->getWidth(), slider->getWidth());
-                EXPECT_LE(label->getBottom(), slider->getY());
-                const auto font = label->getLookAndFeel().getLabelFont(*label);
-                EXPECT_LE(
-                    juce::GlyphArrangement::getStringWidth(font, label->getText()),
-                    static_cast<float>(label->getWidth())
-                );
+    EXPECT_GT(fullNameWidth, 180);
+    EXPECT_LE(fullNameWidth, 400);
+    for (const int width : {180, 240, 400, 240, 180}) {
+        SCOPED_TRACE(width);
+        strip.setSize(width, BAND_STRIP_COMPACT_HEIGHT);
+        const auto& expected = width >= fullNameWidth ? fullValues : shortValues;
+        for (std::size_t index = 0; index < titles.size(); ++index) {
+            auto* slider = compactControl<ControlSlider>(strip, titles.at(index));
+            ASSERT_EQ(slider, controls.at(index).getComponent());
+            EXPECT_EQ(slider->compactValueText(), expected.at(index));
+            EXPECT_EQ(slider->getY(), 2);
+            EXPECT_EQ(slider->getHeight(), 24);
+            if (width == 400) {
+                EXPECT_GE(slider->getWidth(), slider->compactValueRequiredWidth(true));
             }
         }
-        EXPECT_TRUE(foundLabel);
-        EXPECT_FALSE(slider->compactValueText().endsWith(slider->getName().substring(0, 1)));
+        for (auto* child : strip.getChildren()) {
+            if (dynamic_cast<juce::Label*>(child) != nullptr) {
+                EXPECT_FALSE(child->isVisible());
+            }
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// All four controls change naming mode together at the measured worst-case width, never from automated values.
+TEST(CompactBands, FullNamesReadinessUsesWorstCaseGlyphsAndRemainsStableUnderAutomation)
+{
+    ImageControlProcessor processor;
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setCompact(true);
+    const std::array titles {"Low Mid", "Low Side", "Low Width", "Low Pan"};
+    const std::array parameterIds {
+        midGainParameterId(0),
+        sideGainParameterId(0),
+        widthParameterId(0),
+        panParameterId(0),
+    };
+    const std::array shortSuffixes {"M", "S", "W", ""};
+    const std::array fullSuffixes {" MID", " SIDE", " WIDTH", " PAN"};
+    int fullNameWidth = 4 + 3 * 2;
+    for (const auto* title : titles) {
+        auto* slider = compactControl<ControlSlider>(strip, title);
+        ASSERT_NE(slider, nullptr);
+        fullNameWidth += slider->compactValueRequiredWidth(true);
+    }
+    for (const int width : {fullNameWidth - 1, fullNameWidth, fullNameWidth + 1}) {
+        SCOPED_TRACE(width);
+        strip.setSize(width, BAND_STRIP_COMPACT_HEIGHT);
+        const bool fullNames = width >= fullNameWidth;
+        const auto& suffixes = fullNames ? fullSuffixes : shortSuffixes;
+        for (std::size_t index = 0; index < titles.size(); ++index) {
+            auto* slider = compactControl<ControlSlider>(strip, titles.at(index));
+            ASSERT_NE(slider, nullptr);
+            auto& parameter = *processor.getParameters().getParameter(parameterIds.at(index));
+            for (const float value : {0.0F, 0.5F, 1.0F}) {
+                parameter.setValueNotifyingHost(value);
+                EXPECT_TRUE(slider->compactValueText().endsWith(suffixes.at(index)));
+                if (!fullNames) {
+                    EXPECT_FALSE(slider->compactValueText().contains(" "));
+                }
+                EXPECT_GE(slider->getWidth(), slider->compactValueRequiredWidth(fullNames));
+            }
+            expectCompactBoundaryValuesFit(*slider);
+        }
     }
     EXPECT_FALSE(processor.getHistory().canUndo());
 }
@@ -382,8 +426,8 @@ TEST(CompactBands, PanHistoryAndAutomationRemainIndependentOfLinkedGains)
     EXPECT_TRUE(sideGestures.gestureBoundaries().empty());
 }
 
-/// Resizing between compact heights changes only labels and suffixes, not active editing or parameter gestures.
-TEST(CompactBands, RoomyResizePreservesNumericEditorAndActivePanGesture)
+/// Resizing between short and full inline names preserves the native numeric editor and active parameter gesture.
+TEST(CompactBands, WideResizePreservesNumericEditorAndActivePanGesture)
 {
     ImageControlProcessor processor;
     auto& history = processor.getHistory();
@@ -400,10 +444,18 @@ TEST(CompactBands, RoomyResizePreservesNumericEditorAndActivePanGesture)
     const juce::Component::SafePointer<juce::TextEditor> editor(label->getCurrentTextEditor());
     ASSERT_NE(editor, nullptr);
     editor->setText("33R", false);
-    strip.setSize(180, BAND_STRIP_COMPACT_LABELLED_HEIGHT);
+    strip.setSize(400, BAND_STRIP_COMPACT_HEIGHT);
     EXPECT_EQ(compactValueBox(*pan), label);
     EXPECT_EQ(label->getCurrentTextEditor(), editor.getComponent());
     EXPECT_EQ(editor->getText(), "33R");
+    EXPECT_EQ(pan->compactValueText(), "C PAN");
+    pan->setCompactValueFullNames(false);
+    EXPECT_EQ(label->getCurrentTextEditor(), editor.getComponent());
+    EXPECT_EQ(pan->compactValueText(), "C");
+    pan->setCompactValueFullNames(true);
+    EXPECT_EQ(label->getCurrentTextEditor(), editor.getComponent());
+    EXPECT_EQ(editor->getText(), "33R");
+    EXPECT_EQ(pan->compactValueText(), "C PAN");
     EXPECT_FALSE(history.canUndo());
     strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
     EXPECT_EQ(label->getCurrentTextEditor(), editor.getComponent());
@@ -414,7 +466,7 @@ TEST(CompactBands, RoomyResizePreservesNumericEditorAndActivePanGesture)
     pan->mouseDown(compactMouse(*pan));
     pan->mouseDrag(compactMouse(*pan, {32.0F, 12.0F}));
     EXPECT_TRUE(history.isEditing());
-    strip.setSize(180, BAND_STRIP_COMPACT_LABELLED_HEIGHT);
+    strip.setSize(400, BAND_STRIP_COMPACT_HEIGHT);
     EXPECT_TRUE(history.isEditing());
     EXPECT_EQ(gestures.gestureBoundaries(), (std::vector<bool> {true}));
     pan->endDrag();
@@ -431,8 +483,18 @@ TEST(CompactBands, FullLayoutRestoresWithoutReplacingControlsOrAttachments)
     strip.setRangeText("20 Hz - 120 Hz");
     strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
     std::vector<std::pair<juce::Component::SafePointer<juce::Component>, juce::Rectangle<int>>> bounds;
+    std::vector<std::pair<juce::Component::SafePointer<juce::Label>, juce::Font>> labelFonts;
+    std::vector<std::pair<juce::Component::SafePointer<ControlSlider>, juce::Font>> valueFonts;
     for (auto* child : strip.getChildren()) {
         bounds.emplace_back(child, child->getBounds());
+        if (auto* label = dynamic_cast<juce::Label*>(child)) {
+            labelFonts.emplace_back(label, label->getFont());
+        }
+        if (auto* slider = dynamic_cast<ControlSlider*>(child)) {
+            auto* label = compactValueBox(*slider);
+            ASSERT_NE(label, nullptr);
+            valueFonts.emplace_back(slider, label->getFont());
+        }
     }
     auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
     auto* side = compactControl<ControlSlider>(strip, "Low Side");
@@ -466,6 +528,16 @@ TEST(CompactBands, FullLayoutRestoresWithoutReplacingControlsOrAttachments)
         ASSERT_NE(child, nullptr);
         EXPECT_TRUE(child->isVisible());
         EXPECT_EQ(child->getBounds(), originalBounds);
+    }
+    for (const auto& [label, originalFont] : labelFonts) {
+        ASSERT_NE(label, nullptr);
+        EXPECT_EQ(label->getFont(), originalFont);
+    }
+    for (const auto& [slider, originalFont] : valueFonts) {
+        ASSERT_NE(slider, nullptr);
+        auto* label = compactValueBox(*slider);
+        ASSERT_NE(label, nullptr);
+        EXPECT_EQ(label->getFont(), originalFont);
     }
     EXPECT_EQ(mid->getTooltip(), tooltip);
     EXPECT_EQ(mid->getTextBoxWidth(), 78);

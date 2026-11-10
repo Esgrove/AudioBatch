@@ -5,6 +5,7 @@
 #include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ProcessingState.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
@@ -120,6 +121,23 @@ void dispatchControlChanges()
         DispatchMessageW(&message);
     }
 #endif
+}
+
+/// Waits for one notification per coupled slider without accepting duplicates or assuming a platform queue depth.
+bool waitForSliderChanges(const SliderChangeCounter& first, const SliderChangeCounter& second)
+{
+    constexpr double timeoutMilliseconds = 500.0;
+    const double deadline = juce::Time::getMillisecondCounterHiRes() + timeoutMilliseconds;
+    do {
+        dispatchControlChanges();
+        if (first.changeCount() > 1 || second.changeCount() > 1) {
+            return false;
+        }
+        if (first.changeCount() == 1 && second.changeCount() == 1) {
+            return true;
+        }
+    } while (juce::Time::getMillisecondCounterHiRes() < deadline);
+    return false;
 }
 
 /// Waits for asynchronous focus scrolling with a fixed deadline instead of assuming a platform queue depth.
@@ -367,27 +385,82 @@ TEST(SettingsPanel, ViewportBoundsCompactContentWithoutEmbeddedHelp)
     }
 }
 
-/// The reference action is an optional editor callback, not an embedded text wall or a settings mutation.
-TEST(SettingsPanel, KeyboardShortcutsFooterCallsOwnerWithoutChangingSettings)
+/// The footer and Back action swap nested views without changing settings, sound, bounds, or preference scroll.
+TEST(SettingsPanel, KeyboardShortcutsFooterEntersNestedViewAndReturnsWithoutChangingSettings)
 {
     ImageControlProcessor processor;
     auto& state = processor.getEditorState();
-    SettingsPanel panel(state);
+    const SettingsPanel panel(state, 300);
     auto* shortcuts = settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts");
+    auto* back = settingsControl<juce::TextButton>(panel, "keyboardShortcutsBack");
+    auto* reference = settingsControl<juce::Component>(panel, "keyboardShortcuts");
+    auto* viewport = settingsControl<juce::Viewport>(panel, "displaySettingsViewport");
+    auto* contrast = settingsControl<ControlSlider>(panel, CONTRAST_PROPERTY);
     ASSERT_NE(shortcuts, nullptr);
-    EXPECT_EQ(shortcuts->getButtonText(), juce::String::fromUTF8("Keyboard shortcuts\xe2\x80\xa6"));
+    ASSERT_NE(back, nullptr);
+    ASSERT_NE(reference, nullptr);
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(contrast, nullptr);
+    EXPECT_EQ(shortcuts->getButtonText(), "Keyboard shortcuts");
     EXPECT_TRUE(shortcuts->getWantsKeyboardFocus());
+    EXPECT_TRUE(back->getWantsKeyboardFocus());
+    EXPECT_TRUE(back->getTitle().contains("Settings"));
+    EXPECT_FALSE(back->isVisible());
+    EXPECT_FALSE(reference->isVisible());
+    viewport->setViewPosition(0, viewport->getViewedComponent()->getHeight());
+    const int scrollPosition = viewport->getViewPositionY();
+    ASSERT_GT(scrollPosition, 0);
+    const auto bounds = panel.getBounds();
     const auto before = state.createCopy();
+    const auto sound = processor.getSoundSnapshot();
+    const auto contrastTitle = contrast->getTitle();
     shortcuts->onClick();
+    EXPECT_FALSE(viewport->isVisible());
+    EXPECT_TRUE(reference->isVisible());
+    EXPECT_TRUE(back->isVisible());
+    EXPECT_EQ(reference->getParentComponent(), &panel);
+    EXPECT_EQ(panel.getBounds(), bounds);
+    EXPECT_EQ(settingsControl<ControlSlider>(panel, CONTRAST_PROPERTY), contrast);
+    EXPECT_EQ(contrast->getTitle(), contrastTitle);
+    EXPECT_TRUE(panel.getLocalBounds().contains(reference->getBounds()));
+    EXPECT_TRUE(panel.getLocalBounds().contains(back->getBounds()));
+    EXPECT_FALSE(reference->getBounds().intersects(back->getBounds()));
     EXPECT_TRUE(state.isEquivalentTo(before));
-    int opened = 0;
-    panel.setKeyboardShortcutsCallback([&opened] { ++opened; });
-    shortcuts->onClick();
-    EXPECT_EQ(opened, 1);
+    back->onClick();
+    EXPECT_TRUE(viewport->isVisible());
+    EXPECT_FALSE(reference->isVisible());
+    EXPECT_FALSE(back->isVisible());
+    EXPECT_EQ(viewport->getViewPositionY(), scrollPosition);
+    EXPECT_EQ(panel.getBounds(), bounds);
     EXPECT_TRUE(state.isEquivalentTo(before));
-    panel.setKeyboardShortcutsCallback({});
-    shortcuts->onClick();
-    EXPECT_EQ(opened, 1);
+    EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), sound));
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Escape and Alt+Left return one level, leaving an outer owner to handle Escape from preferences.
+TEST(SettingsPanel, SubmenuBackKeysLeavePreferenceDismissalToOwner)
+{
+    ImageControlProcessor processor;
+    SettingsPanel panel(processor.getEditorState(), 300);
+    auto* reference = settingsControl<juce::Component>(panel, "keyboardShortcuts");
+    auto* viewport = settingsControl<juce::Viewport>(panel, "displaySettingsViewport");
+    ASSERT_NE(reference, nullptr);
+    ASSERT_NE(viewport, nullptr);
+    for (const auto& key :
+         std::array {
+             juce::KeyPress(juce::KeyPress::escapeKey),
+             juce::KeyPress(juce::KeyPress::leftKey, juce::ModifierKeys::altModifier, 0),
+         })
+    {
+        panel.showKeyboardShortcuts();
+        EXPECT_TRUE(reference->isVisible());
+        EXPECT_FALSE(panel.keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+        EXPECT_TRUE(reference->isVisible());
+        EXPECT_TRUE(panel.keyPressed(key));
+        EXPECT_FALSE(reference->isVisible());
+        EXPECT_TRUE(viewport->isVisible());
+        EXPECT_FALSE(panel.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    }
 }
 
 /// Concise labels sit under explicit display-only groups without enlarging the section typography.
@@ -515,7 +588,7 @@ TEST(SettingsPanel, PanMidpointPushesTheEdgeWithoutRecursiveNotifications)
     const SliderChangeCounter edgeChanges(*edge);
 
     midpoint->setValue(MAX_PAN_MIDPOINT_DB, juce::sendNotificationSync);
-    dispatchControlChanges();
+    EXPECT_TRUE(waitForSliderChanges(midpointChanges, edgeChanges));
     EXPECT_DOUBLE_EQ(midpoint->getValue(), MAX_PAN_MIDPOINT_DB);
     EXPECT_DOUBLE_EQ(edge->getValue(), MAX_PAN_MIDPOINT_DB + MIN_PAN_CURVE_GAP_DB);
     EXPECT_DOUBLE_EQ(static_cast<double>(state.getProperty(PAN_MIDPOINT_PROPERTY)), midpoint->getValue());
@@ -553,7 +626,7 @@ TEST(SettingsPanel, PanEdgePushesTheMidpointAndSavesTheCoupledValues)
         const SliderChangeCounter edgeChanges(*edge);
 
         edge->setValue(MIN_PAN_EDGE_DB, juce::sendNotificationSync);
-        dispatchControlChanges();
+        EXPECT_TRUE(waitForSliderChanges(midpointChanges, edgeChanges));
         EXPECT_DOUBLE_EQ(edge->getValue(), MIN_PAN_EDGE_DB);
         EXPECT_DOUBLE_EQ(midpoint->getValue(), MIN_PAN_EDGE_DB - MIN_PAN_CURVE_GAP_DB);
         EXPECT_DOUBLE_EQ(static_cast<double>(state.getProperty(PAN_MIDPOINT_PROPERTY)), midpoint->getValue());

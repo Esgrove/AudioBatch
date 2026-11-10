@@ -300,15 +300,13 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
     content.addAndMakeVisible(resetAppearanceButton);
 
     identifyControl(keyboardShortcutsButton, "showKeyboardShortcuts", "Show keyboard shortcuts");
-    keyboardShortcutsButton.setTooltip("Open the keyboard and pointer shortcuts reference in a separate window. F1.");
-    keyboardShortcutsButton.onClick = [this] {
-        // The owner may dismiss this panel while opening its shortcuts window.
-        const auto showShortcuts = onShowKeyboardShortcuts;
-        if (showShortcuts) {
-            showShortcuts();
-        }
-    };
+    keyboardShortcutsButton.setTooltip("Open the keyboard and pointer shortcuts submenu. F1.");
+    keyboardShortcutsButton.onClick = [this] { showKeyboardShortcuts(); };
     content.addAndMakeVisible(keyboardShortcutsButton);
+    identifyControl(backButton, "keyboardShortcutsBack", "Back to Display Settings");
+    backButton.onClick = [this] { showPreferences(); };
+    addChildComponent(backButton);
+    addChildComponent(shortcutsPanel);
 
     state.addListener(this);
     juce::Desktop::getInstance().addFocusChangeListener(this);
@@ -336,10 +334,44 @@ void SettingsPanel::resetDisplayAppearance()
     state.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true, nullptr);
 }
 
-/// Installs or clears the editor-owned shortcuts request on the message thread.
-void SettingsPanel::setKeyboardShortcutsCallback(std::function<void()> callback)
+/// Replaces preferences with the nested shortcuts reference inside the existing callout.
+void SettingsPanel::showKeyboardShortcuts()
 {
-    onShowKeyboardShortcuts = std::move(callback);
+    showingShortcuts = true;
+    viewport.setVisible(false);
+    shortcutsPanel.setVisible(true);
+    backButton.setVisible(true);
+    resized();
+    if (isShowing()) {
+        backButton.grabKeyboardFocus();
+    }
+}
+
+/// Returns to preferences, retaining their scroll position and all bound control values.
+void SettingsPanel::showPreferences()
+{
+    showingShortcuts = false;
+    shortcutsPanel.setVisible(false);
+    backButton.setVisible(false);
+    viewport.setVisible(true);
+    resized();
+    if (isShowing()) {
+        keyboardShortcutsButton.grabKeyboardFocus();
+    }
+}
+
+/// Escape or Alt+Left goes back one submenu level before a subsequent Escape dismisses Settings.
+bool SettingsPanel::keyPressed(const juce::KeyPress& key)
+{
+    const auto modifiers = key.getModifiers();
+    if (showingShortcuts
+        && (key.getKeyCode() == juce::KeyPress::escapeKey
+            || (key.getKeyCode() == juce::KeyPress::leftKey && modifiers.isAltDown())))
+    {
+        showPreferences();
+        return true;
+    }
+    return false;
 }
 
 /// Keeps a newly focused control visible, including a slider's nested inline text editor.
@@ -396,6 +428,13 @@ void SettingsPanel::paint(juce::Graphics& graphics)
 /// Lays out the full content independently of its bounded scrolling viewport.
 void SettingsPanel::resized()
 {
+    if (showingShortcuts) {
+        auto area = getLocalBounds().reduced(MARGIN);
+        backButton.setBounds(area.removeFromTop(ROW_HEIGHT));
+        area.removeFromTop(8);
+        shortcutsPanel.setBounds(area);
+        return;
+    }
     viewport.setBounds(getLocalBounds());
     const int width = std::max(1, getWidth() - viewport.getScrollBarThickness());
     content.setSize(width, CONTENT_HEIGHT);

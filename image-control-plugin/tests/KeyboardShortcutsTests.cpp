@@ -1,4 +1,4 @@
-/// Tests the standalone shortcuts reference through native labels, stable identities, and layout contracts.
+/// Tests the nested shortcuts reference through native labels, stable identities, and responsive layout contracts.
 
 #include "ui/KeyboardShortcutsPanel.h"
 
@@ -75,8 +75,7 @@ TEST(KeyboardShortcutsPanel, GroupsHaveMeaningfulNativeLabelsAndStableIdentities
     }
     auto* description = shortcutLabel(panel, "keyboardShortcutsDescription");
     ASSERT_NE(description, nullptr);
-    EXPECT_TRUE(description->getText().contains("focus"));
-    EXPECT_TRUE(description->getText().contains("Escape"));
+    EXPECT_EQ(description->getText(), "Editor controls while focused. Escape returns to Settings.");
     auto* viewport = shortcutViewport(panel);
     ASSERT_NE(viewport, nullptr);
     auto* content = viewport->getViewedComponent();
@@ -136,6 +135,7 @@ TEST(KeyboardShortcutsPanel, RowsNameActualEditorActionsInTwoColumns)
     EXPECT_EQ(shortcutLabel(panel, "shortcut.audioBypass.action")->getText(), "Toggle audio Bypass");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.solo.keys")->getText(), "S");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.help.keys")->getText(), "F1");
+    EXPECT_EQ(shortcutLabel(panel, "shortcut.close.action")->getText(), "Back / close Settings");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.close.keys")->getText(), "Escape");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.enter.keys")->getText(), "Enter");
     EXPECT_EQ(shortcutLabel(panel, "shortcut.move.keys")->getText(), "Drag sideways");
@@ -176,8 +176,8 @@ TEST(KeyboardShortcutsPanel, UsesNativePlatformModifierNames)
     EXPECT_FALSE(side->getText().contains(foreignAlternate));
 }
 
-/// The ordinary window fits every reference row, and a smaller host-constrained window scrolls rather than clips.
-TEST(KeyboardShortcutsPanel, NaturalWindowFitsAndSmallerHeightRetainsCompleteReference)
+/// The natural panel fits every reference row, and a bounded submenu scrolls rather than clips.
+TEST(KeyboardShortcutsPanel, NaturalPanelFitsAndSmallerHeightRetainsCompleteReference)
 {
     KeyboardShortcutsPanel panel;
     EXPECT_EQ(panel.getWidth(), 520);
@@ -204,5 +204,75 @@ TEST(KeyboardShortcutsPanel, NaturalWindowFitsAndSmallerHeightRetainsCompleteRef
     const auto visibleBounds = viewport->getLocalArea(lastKeys, lastKeys->getLocalBounds());
     EXPECT_GE(visibleBounds.getY(), 0);
     EXPECT_LE(visibleBounds.getBottom(), viewport->getViewHeight());
+}
+
+/// Narrow Settings content stacks each action above its gesture and reserves both lines in the scroll height.
+TEST(KeyboardShortcutsPanel, NarrowSubmenuStacksCompleteRowsBelowResponsiveThreshold)
+{
+    KeyboardShortcutsPanel panel;
+    auto* viewport = shortcutViewport(panel);
+    ASSERT_NE(viewport, nullptr);
+    auto* content = viewport->getViewedComponent();
+    ASSERT_NE(content, nullptr);
+    const int naturalContentHeight = content->getHeight();
+    const std::array identifiers {
+        "undo",
+        "redo",
+        "audioBypass",
+        "delta",
+        "solo",
+        "focus",
+        "settings",
+        "help",
+        "close",
+        "divider",
+        "adjust",
+        "enter",
+        "fine",
+        "reset",
+        "move",
+        "mid",
+        "side",
+        "fineGain",
+    };
+    for (const int width : {390, 459, 460, 520}) {
+        SCOPED_TRACE(width);
+        panel.setSize(width, 240);
+        const bool stacked = width < 460;
+        EXPECT_EQ(
+            content->getHeight(), naturalContentHeight + (stacked ? static_cast<int>(identifiers.size()) * 18 : 0)
+        );
+        EXPECT_LE(content->getWidth(), viewport->getViewWidth());
+        for (const auto* identifier : identifiers) {
+            SCOPED_TRACE(identifier);
+            const auto prefix = juce::String("shortcut.") + identifier;
+            auto* action = shortcutLabel(panel, prefix + ".action");
+            auto* keys = shortcutLabel(panel, prefix + ".keys");
+            ASSERT_NE(action, nullptr);
+            ASSERT_NE(keys, nullptr);
+            EXPECT_TRUE(content->getLocalBounds().contains(action->getBounds()));
+            EXPECT_TRUE(content->getLocalBounds().contains(keys->getBounds()));
+            EXPECT_EQ(action->getHeight(), 18);
+            EXPECT_EQ(keys->getHeight(), 18);
+            EXPECT_FALSE(action->getBounds().intersects(keys->getBounds()));
+            if (stacked) {
+                EXPECT_EQ(action->getBottom(), keys->getY());
+                EXPECT_EQ(action->getX(), keys->getX());
+                EXPECT_EQ(action->getWidth(), keys->getWidth());
+                EXPECT_EQ(keys->getJustificationType(), juce::Justification::centredLeft);
+            } else {
+                EXPECT_EQ(action->getY(), keys->getY());
+                EXPECT_LT(action->getRight(), keys->getX());
+                EXPECT_EQ(keys->getJustificationType(), juce::Justification::centredRight);
+            }
+        }
+        auto* lastKeys = shortcutLabel(panel, "shortcut.fineGain.keys");
+        ASSERT_NE(lastKeys, nullptr);
+        viewport->setViewPosition(0, content->getHeight());
+        EXPECT_GT(viewport->getViewPositionY(), 0);
+        const auto visibleBounds = viewport->getLocalArea(lastKeys, lastKeys->getLocalBounds());
+        EXPECT_GE(visibleBounds.getY(), 0);
+        EXPECT_LE(visibleBounds.getBottom(), viewport->getViewHeight());
+    }
 }
 }  // namespace esgrove::image_control::test
