@@ -3,6 +3,7 @@
 /// Metamorphic checks additionally cover exact neutrality, arbitrary blocks, automation, history, and finite tails.
 
 #include "dsp/MultibandImager.h"
+#include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "tests/TestSignals.h"
 
@@ -12,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <numbers>
 #include <span>
 #include <utility>
@@ -153,6 +155,91 @@ class RecoveryBands : public testing::TestWithParam<std::size_t>
 {};
 }  // namespace
 
+/// Host formatting exposes whole percentages, while legacy Off input, strict parsing, and clamping remain intact.
+TEST(Recovery, PercentDisplayIncludesZeroAndLegacyOffStillParses)
+{
+    ImageControlProcessor processor;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        auto& parameter = *processor.getParameters().getParameter(recoverParameterId(band));
+        for (const auto& [value, text] :
+             std::array {
+                 std::pair {0.0F, "0%"},
+                 std::pair {37.0F, "37%"},
+                 std::pair {38.0F, "38%"},
+                 std::pair {100.0F, "100%"},
+                 std::pair {150.0F, "150%"},
+                 std::pair {200.0F, "200%"},
+             })
+        {
+            SCOPED_TRACE(band);
+            setParameterInGesture(parameter, value);
+            EXPECT_EQ(parameter.getCurrentValueAsText(), text);
+            EXPECT_EQ(parameter.getText(parameter.getValue(), 0), text);
+            parameter.setValueNotifyingHost(parameter.getValueForText(text));
+            EXPECT_FLOAT_EQ(plainValue(parameter), value);
+        }
+        for (const auto* text : {"Off", " oFf ", "0", "0.0 %"}) {
+            setParameterInGesture(parameter, 37.5F);
+            parameter.setValueNotifyingHost(parameter.getValueForText(text));
+            EXPECT_FLOAT_EQ(plainValue(parameter), 0.0F);
+            EXPECT_EQ(parameter.getCurrentValueAsText(), "0%");
+        }
+        setParameterInGesture(parameter, 37.5F);
+        for (const auto* text : {"Off %", "0 % %", "1 dB", "nan", "inf%", "1e9999", "12% trailing", ""}) {
+            parameter.setValueNotifyingHost(parameter.getValueForText(text));
+            EXPECT_FLOAT_EQ(plainValue(parameter), 38.0F) << text;
+        }
+        parameter.setValueNotifyingHost(parameter.getValueForText("250 %"));
+        EXPECT_FLOAT_EQ(plainValue(parameter), RECOVER_MAX_PERCENT);
+        parameter.setValueNotifyingHost(parameter.getValueForText("-1 %"));
+        EXPECT_FLOAT_EQ(plainValue(parameter), 0.0F);
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Fractional host automation and text share the one-percent grid without entering local undo history.
+TEST(Recovery, FractionalAutomationAndTextSnapToWholePercentAndRejectNonFiniteValues)
+{
+    ImageControlProcessor processor;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        SCOPED_TRACE(band);
+        auto& parameter = *processor.getParameters().getParameter(recoverParameterId(band));
+        for (const auto& [input, expected] :
+             std::array {
+                 std::pair {0.1F, 0.0F},
+                 std::pair {37.4F, 37.0F},
+                 std::pair {37.5F, 38.0F},
+                 std::pair {99.5F, 100.0F},
+                 std::pair {199.6F, 200.0F},
+             })
+        {
+            SCOPED_TRACE(input);
+            // Send the unsnapped normalized value rather than pre-snapping it through convertTo0to1.
+            parameter.setValueNotifyingHost(input / 200.0F);
+            EXPECT_FLOAT_EQ(plainValue(parameter), expected);
+            EXPECT_FLOAT_EQ(processor.getParameters().getRawParameterValue(parameter.paramID)->load(), expected);
+            EXPECT_EQ(parameter.getCurrentValueAsText(), juce::String(juce::roundToInt(expected)) + "%");
+            parameter.setValueNotifyingHost(parameter.getValueForText(juce::String(input, 1) + " %"));
+            EXPECT_FLOAT_EQ(plainValue(parameter), expected);
+        }
+        setParameterInGesture(parameter, 37.5F);
+        for (const float invalid :
+             {
+                 std::numeric_limits<float>::quiet_NaN(),
+                 std::numeric_limits<float>::infinity(),
+                 -std::numeric_limits<float>::infinity(),
+             })
+        {
+            parameter.setValueNotifyingHost(invalid);
+            EXPECT_FLOAT_EQ(plainValue(parameter), 38.0F);
+            EXPECT_FLOAT_EQ(processor.getParameters().getRawParameterValue(parameter.paramID)->load(), 38.0F);
+            EXPECT_EQ(parameter.getCurrentValueAsText(), "38%");
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+    EXPECT_FALSE(processor.getHistory().isEditing());
+}
+
 TEST_P(RecoveryRates, PureSideBecomesNegativeCosineAtTheExistingLatency)
 {
     const double rate = GetParam();
@@ -171,6 +258,90 @@ TEST_P(RecoveryRates, PureSideBecomesNegativeCosineAtTheExistingLatency)
         return std::pair {recovered, recovered};
     });
     EXPECT_GT(rms(channelOf(output, 0).subspan(static_cast<std::size_t>(settled))), 0.19);
+}
+
+/// Doubling recovery doubles only its quadrature contribution, without rescaling source Mid or ordinary Side.
+TEST(Recovery, TwoHundredPercentDoublesTheRecoveryContribution)
+{
+    constexpr int samples = 12'000;
+    constexpr int latency = 4096 + PARTITION_SIZE;
+    const auto mid = makeSine(750.0, 0.2F, samples);
+    const auto side = makeSine(CARRIER, 0.3F, samples);
+    const auto input = encodeMidSide(mid, side);
+    RecoveryControls controls;
+    controls.mid.fill(0.7F);
+    controls.side.fill(0.8F);
+    controls.output = 0.9F;
+    for (const float width : {0.0F, 0.5F}) {
+        SCOPED_TRACE(width);
+        controls.widths.fill(width);
+        controls.recoveries.fill(0.0F);
+        const auto plain = renderRecovery(input, controls);
+        controls.recoveries.fill(1.0F);
+        const auto single = renderRecovery(input, controls);
+        controls.recoveries.fill(2.0F);
+        const auto doubled = renderRecovery(input, controls);
+        for (int channel = 0; channel < 2; ++channel) {
+            for (int sample = 0; sample < samples; ++sample) {
+                const float baseline = plain.getSample(channel, sample);
+                ASSERT_NEAR(
+                    doubled.getSample(channel, sample) - baseline,
+                    2.0F * (single.getSample(channel, sample) - baseline),
+                    2.0e-6F
+                ) << sample;
+            }
+        }
+        for (const auto& [output, recovery] : std::array {std::pair {&single, 1.0}, std::pair {&doubled, 2.0}}) {
+            SCOPED_TRACE(recovery);
+            expectAnalytical(*output, 9000, samples, [width, recovery](const int sample) {
+                const double phase = 2.0 * std::numbers::pi * CARRIER * (sample - latency) / TEST_SAMPLE_RATE;
+                const double recovered = -recovery * (1.0 - static_cast<double>(width)) * 0.8 * 0.3 * std::cos(phase);
+                const double midValue = 0.7 * 0.2 * std::sin(phase * 0.5) + recovered;
+                const double sideValue = static_cast<double>(width) * 0.8 * 0.3 * std::sin(phase);
+                return std::pair {0.9 * (midValue + sideValue), 0.9 * (midValue - sideValue)};
+            });
+        }
+    }
+}
+
+/// Direct DSP callers receive the same bounded targets, including finite values above the host's range.
+TEST(Recovery, FiniteRecoveryAmountsClampToZeroAndTwo)
+{
+    const auto input = makeBuffer({makeNoise(0.4F, 12'009, 182), makeNoise(0.4F, 12'009, 183)});
+    RecoveryControls controls;
+    controls.widths = {0.0F, 0.25F, 0.6F, 0.4F};
+    controls.recoveries = {2.5F, std::numeric_limits<float>::max(), -0.5F, 1.5F};
+    const auto clamped = renderRecovery(input, controls);
+    controls.recoveries = {2.0F, 2.0F, 0.0F, 1.5F};
+    const auto bounded = renderRecovery(input, controls);
+    for (int channel = 0; channel < 2; ++channel) {
+        for (int sample = 0; sample < input.getNumSamples(); ++sample) {
+            ASSERT_EQ(clamped.getSample(channel, sample), bounded.getSample(channel, sample)) << sample;
+        }
+    }
+}
+
+/// Non-finite direct DSP targets disable recovery rather than injecting non-finite output or saturating at maximum.
+TEST(Recovery, NonFiniteRecoveryAmountsDisableRecovery)
+{
+    const auto input = makeBuffer({makeNoise(0.4F, 12'009, 184), makeNoise(0.4F, 12'009, 185)});
+    RecoveryControls controls;
+    controls.widths = {0.0F, 0.25F, 0.6F, 0.4F};
+    controls.recoveries = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::quiet_NaN(),
+    };
+    const auto rejected = renderRecovery(input, controls);
+    controls.recoveries.fill(0.0F);
+    const auto plain = renderRecovery(input, controls);
+    for (int channel = 0; channel < 2; ++channel) {
+        for (int sample = 0; sample < input.getNumSamples(); ++sample) {
+            ASSERT_TRUE(std::isfinite(rejected.getSample(channel, sample))) << sample;
+            ASSERT_EQ(rejected.getSample(channel, sample), plain.getSample(channel, sample)) << sample;
+        }
+    }
 }
 
 TEST_P(RecoveryRates, PureMidIgnoresWidthAndRecoveryIncludingMonoInput)
@@ -314,12 +485,12 @@ TEST(Recovery, UnityWidthIsBitExactNeutralEvenWithRecoveryAndMovingCrossovers)
         auto output = makeBuffer({left, right});
         MultibandImager imager;
         RecoveryControls controls;
-        controls.recoveries = {1.0F, 0.25F, 0.75F, 1.0F};
+        controls.recoveries = {2.0F, 1.5F, 0.75F, 2.0F};
         controls.delta = delta;
         setControls(imager, controls);
         imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
         renderSlice(imager, output, 0, change);
-        imager.setRecoveries({0.0F, 1.0F, 0.5F, 0.25F});
+        imager.setRecoveries({0.0F, 2.0F, 1.5F, 0.25F});
         imager.setCrossovers({80.0F, 1800.0F, 8000.0F}, true);
         renderSlice(imager, output, change, samples);
         for (int sample = 0; sample < samples; ++sample) {
@@ -383,7 +554,7 @@ TEST(Recovery, RecoveryCannotAddSignalWhenWidthIsUnityOrWider)
     RecoveryControls controls;
     controls.mid = {0.4F, 0.8F, 1.2F, 0.0F};
     controls.widths = {1.0F, 1.25F, 1.7F, 2.0F};
-    controls.recoveries.fill(1.0F);
+    controls.recoveries.fill(2.0F);
     const auto recovered = renderRecovery(input, controls);
     controls.recoveries.fill(0.0F);
     const auto plain = renderRecovery(input, controls);

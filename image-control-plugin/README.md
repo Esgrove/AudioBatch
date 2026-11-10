@@ -11,7 +11,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for code organization, DSP, rendering, an
 - Four frequency bands: Low, Low Mid, High Mid, and High, with three adjustable crossovers.
 - Independent Mid and Side source trims, Width, and Recover per band.
   Width 0 removes Side, 1 leaves it unchanged, and 2 doubles it after the source trim.
-  Recover defaults to Off and adds a quadrature-rotated share of removed Side to Mid only below Width 1.
+  Recover defaults to 0% and adds a quadrature-rotated share of removed Side to Mid only below Width 1.
 - Per-band Pan, applied after Width/Recover, so even a narrowed band can be placed to one side.
 - Combinable band solos, output gain, Delta monitoring, click-free bypass, and automatable Mono output.
 - A spatial spectrogram for inspecting the input or processed output, with optional per-band correlation meters.
@@ -20,7 +20,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for code organization, DSP, rendering, an
 Crossover frequencies stay ordered and at least a third of an octave apart.
 Hosts can save and automate the processing parameters in real-time and offline renders.
 Width and Recover have independent host parameters, separate from Mid and Side gains.
-Recover sits beneath Width, with 0% shown as Off.
+Recover sits beneath Width, ranges up to 200% in whole-percent steps, and uses a consistent readout including `0%`.
+200% doubles the recovered contribution relative to 100%, or +6.02 dB, not the overall output level.
 Side Off prevents recovery, while Mid Off leaves recovered content audible.
 Width remains editable with Mid Off, and Link affects only gain edits.
 Older states retain their existing gains with Width 1 and Recover Off, without a gain-derived migration.

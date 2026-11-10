@@ -329,7 +329,7 @@ juce::String ControlSlider::numericValueText()
         return compactValueText().dropLastCharacters(suffix.length());
     }
     const auto text = getTextFromValue(getValue());
-    for (const auto* suffix : {" kHz", " Hz", " dB", " %"}) {
+    for (const auto* suffix : {" kHz", " Hz", " dB", "%"}) {
         if (text.endsWith(suffix)) {
             return text.dropLastCharacters(juce::String(suffix).length());
         }
@@ -460,6 +460,22 @@ void ControlSlider::paint(juce::Graphics& graphics)
     graphics.drawText(
         compactValueText(), getLocalBounds().reduced(COMPACT_VALUE_PADDING, 0), juce::Justification::centred
     );
+}
+
+/// Initializes the numeric label when a newly attached slider first inherits the plugin's look and feel.
+/// JUCE constructs sliders before their parent is known and does not rebuild value boxes on hierarchy changes.
+void ControlSlider::parentHierarchyChanged()
+{
+    juce::Slider::parentHierarchyChanged();
+    if (dynamic_cast<ImageControlLookAndFeel*>(&getLookAndFeel()) == nullptr) {
+        return;
+    }
+    for (auto* child : getChildren()) {
+        if (dynamic_cast<juce::Label*>(child) != nullptr && dynamic_cast<NumericValueLabel*>(child) == nullptr) {
+            lookAndFeelChanged();
+            return;
+        }
+    }
 }
 
 /// Leaves JUCE's label available as the exact-value editor, but routes ordinary field input to the slider itself.

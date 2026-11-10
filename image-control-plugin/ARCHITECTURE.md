@@ -85,12 +85,18 @@ Version hints distinguish parameter generations for hosts that use ordering hint
 Existing IDs and version hints are persistence and automation contracts, not refactoring details.
 The Width parameters append with version hint 6 after the existing Mono generation at hint 5,
 then the Recover parameters append with hint 7.
-Width ranges from 0 to 2 and defaults to 1. Recover ranges from 0% to 100% and defaults to 0% Off.
+Width ranges from 0 to 2 and defaults to 1. Recover ranges from 0% to 200% and defaults to 0%.
 `widthParameterId(band)` and `recoverParameterId(band)` name `band1_width` through `band4_width`
 and `band1_recover` through `band4_recover`.
 All four Width parameters follow Mono, then all four Recover parameters, preserving every existing host index.
-Width uses steps of 0.01 and Recover uses steps of 0.1 percentage points.
-The processor passes `BandWidths` to `setWidths` and converts host percentages to linear `BandRecoveries` for `setRecoveries`.
+Width uses steps of 0.01 and Recover uses whole percentage points.
+Fractional text, host values, and saved plain percentages snap to the nearest whole percent.
+Recover percentages convert to linear amplitude by dividing by 100, independent of the 200% ceiling.
+Saved plain percentages retain their scale and snap to whole-percent precision.
+The expanded range maps host-normalized automation 0–1 to 0–200%,
+so existing host automation stored as normalized values must be rescaled to preserve its former percentages.
+The processor passes `BandWidths` to `setWidths`
+and converts host percentages to linear `BandRecoveries` for `setRecoveries`.
 Both controls use the same processing path for real-time and offline automation.
 
 The private `FiniteParameter` implementation preserves the declared ranges and host metadata.
@@ -105,7 +111,8 @@ Host parameters are sampled by block, and DSP changes take effect at convolution
 The plugin does not implement a separate sample-accurate VST3 parameter-queue engine.
 
 Width and Recover use their own APVTS slider attachments, not a gain-derived Width macro.
-Recover sits beneath Width, displays 0% as Off, and contributes audio only below Width 1.
+Recover sits beneath Width, displays every amount as a whole percentage including `0%`,
+and contributes audio only below Width 1. Its parser accepts legacy Off input as zero.
 Width remains available with Mid Off. Side Off prevents recovery, while Mid Off mutes only source Mid.
 Link is persisted editor behavior that moves Side with a user Mid gain gesture, not incoming host automation.
 It does not link or rewrite Width and Recover.
@@ -191,6 +198,8 @@ M' = g_M M + r\max(0, 1-w)g_S Q(S), \qquad S' = w g_S S.
 Here \(Q(S)\) is the band's finite quadrature-rotated Side signal aligned with its ordinary Mid and Side.
 The recovery coefficient follows removed waveform amplitude, not removed power.
 At Width 0.5 and Recover 100%, it adds half of the phase-rotated, source-trimmed Side into Mid.
+Recover 200% doubles that contribution, a 6.0206 dB amplitude increase relative to Recover 100%,
+without applying an equivalent gain to the whole output.
 There is no square-root power-transfer law, signal-dependent gain compensation, or automatic center boost.
 Recovery is independently controlled and defaults to off, rather than being inferred from gain ratios.
 Side Off removes both ordinary and recovered Side. Mid Off removes source Mid but leaves recovered content.

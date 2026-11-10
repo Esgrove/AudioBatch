@@ -236,6 +236,26 @@ TEST(SettingsPanel, ControlsAreNamedAndExplicitChoicesFollowLiveState)
     );
 }
 
+/// Percentage readouts keep the unit adjacent while the numeric editor retains a separate noneditable suffix.
+TEST(SettingsPanel, PercentageReadoutsKeepPercentAdjacentToNumber)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    SettingsPanel panel(processor.getEditorState());
+    panel.setLookAndFeel(&lookAndFeel);
+    auto* slider = settingsControl<ControlSlider>(panel, CONTRAST_PROPERTY);
+    ASSERT_NE(slider, nullptr);
+    EXPECT_EQ(slider->getTextValueSuffix(), "%");
+    for (const double value : {0.0, 50.0, 100.0}) {
+        const auto text = slider->getTextFromValue(value);
+        EXPECT_TRUE(text.endsWithChar('%'));
+        EXPECT_FALSE(text.contains(" %"));
+        EXPECT_DOUBLE_EQ(slider->getValueFromText(text), value);
+    }
+    EXPECT_EQ(slider->numericValueSuffix(), "%");
+    EXPECT_FALSE(slider->numericValueText().containsChar('%'));
+}
+
 /// Strict settings entry consumes one finite token and one optional matching unit, never a valid prefix of junk.
 TEST(SettingsPanel, NumericEntryIsFiniteFullTokenAndPreservesInvalidValues)
 {

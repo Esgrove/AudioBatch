@@ -11,6 +11,7 @@
 
 #include <juce_events/juce_events.h>
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <functional>
@@ -223,6 +224,70 @@ TEST(StateThreading, WorkerRestorePublishesSnapshotAndTapBeforeMessageDispatch)
     EXPECT_EQ(listener.dirtyChanges.load(), 0);
     EXPECT_FALSE(listener.workerNotification.load());
     processor.removeListener(&listener);
+    bound.removeListener(&listener);
+}
+
+/// Legacy plain-unit state snaps recovery on a host worker, including detached saves before message dispatch.
+TEST(StateThreading, LegacyFractionalRecoveryStateSnapsBeforeMessageDispatchAndClearsHistory)
+{
+    auto state = makeThreadingState(1400, false);
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
+    ASSERT_NE(xml, nullptr);
+    for (const auto* tag : {"ComparisonState", "PresetProvenanceState"}) {
+        if (auto* child = xml->getChildByName(tag)) {
+            xml->removeChildElement(child, true);
+        }
+    }
+    constexpr std::array<float, BAND_COUNT> inputs {0.1F, 37.4F, 37.5F, 199.6F};
+    constexpr std::array<float, BAND_COUNT> expected {0.0F, 37.0F, 38.0F, 200.0F};
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        auto* child = xml->getChildByAttribute("id", recoverParameterId(band));
+        ASSERT_NE(child, nullptr);
+        child->setAttribute("value", static_cast<double>(inputs[band]));
+    }
+    juce::AudioProcessor::copyXmlToBinary(*xml, state);
+    ImageControlProcessor processor;
+    auto& history = processor.getHistory();
+    history.beginEdit("Recovery edit");
+    history.touch(recoverParameterId(0));
+    auto& recovery = *processor.getParameters().getParameter(recoverParameterId(0));
+    recovery.setValueNotifyingHost(recovery.convertTo0to1(50.0F));
+    history.endEdit();
+    ASSERT_TRUE(history.canUndo());
+    auto bound = processor.getEditorState();
+    ThreadingStateListener listener;
+    bound.addListener(&listener);
+    std::thread worker([&] {
+        processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        const auto saved = savedThreadingState(processor);
+        ASSERT_NE(saved, nullptr);
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            const auto& parameter = *processor.getParameters().getParameter(recoverParameterId(band));
+            EXPECT_FLOAT_EQ(plainValue(parameter), expected[band]);
+            EXPECT_FLOAT_EQ(
+                processor.getParameters().getRawParameterValue(recoverParameterId(band))->load(), expected[band]
+            );
+            EXPECT_EQ(parameter.getCurrentValueAsText(), juce::String(juce::roundToInt(expected[band])) + "%");
+            const auto* child = saved->getChildByAttribute("id", recoverParameterId(band));
+            ASSERT_NE(child, nullptr);
+            EXPECT_DOUBLE_EQ(child->getDoubleAttribute("value"), static_cast<double>(expected[band]));
+        }
+    });
+    worker.join();
+    EXPECT_EQ(listener.treeChanges.load(), 0);
+    EXPECT_FALSE(listener.workerNotification.load());
+    EXPECT_FALSE(history.canUndo());
+    EXPECT_FALSE(history.canRedo());
+    EXPECT_FALSE(history.isEditing());
+    EXPECT_EQ(processor.getEditorState(), bound);
+    EXPECT_EQ(static_cast<int>(bound.getProperty(EDITOR_WIDTH_PROPERTY)), 1400);
+    EXPECT_FALSE(listener.workerNotification.load());
+    for (const int slot : {1, 0}) {
+        ASSERT_TRUE(processor.selectComparisonSlot(slot));
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            EXPECT_FLOAT_EQ(processor.getSoundSnapshot().at(recoverParameterId(band)), expected[band]);
+        }
+    }
     bound.removeListener(&listener);
 }
 

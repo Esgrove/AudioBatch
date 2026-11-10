@@ -787,7 +787,7 @@ TEST(BandStrip, WidthAndRecoverExposeIndependentAccessibleValuesAndTextAttachmen
         auto* value = handler->getValueInterface();
         ASSERT_NE(value, nullptr);
         EXPECT_FALSE(value->isReadOnly());
-        EXPECT_EQ(value->getCurrentValueAsString(), recovering ? "Off" : "1.00");
+        EXPECT_EQ(value->getCurrentValueAsString(), recovering ? "0%" : "1.00");
         EXPECT_NEAR(value->getCurrentValue(), recovering ? 0.0 : 1.0, 0.001);
         juce::Label* valueBox = nullptr;
         for (auto* child : slider->getChildren()) {
@@ -797,15 +797,31 @@ TEST(BandStrip, WidthAndRecoverExposeIndependentAccessibleValuesAndTextAttachmen
             }
         }
         ASSERT_NE(valueBox, nullptr);
-        EXPECT_EQ(valueBox->getText(), recovering ? "Off" : "1.00");
+        EXPECT_EQ(valueBox->getText(), recovering ? "0%" : "1.00");
         // Deliver text through the production value-box callback and its parameter attachment.
         valueBox->setText(recovering ? "37.5 %" : "150 %", juce::sendNotificationSync);
         EXPECT_NEAR(
             parameterValue(processor, recovering ? recoverParameterId(0) : widthParameterId(0)),
-            recovering ? 37.5F : 1.5F,
+            recovering ? 38.0F : 1.5F,
             0.001F
         );
-        EXPECT_NEAR(value->getCurrentValue(), recovering ? 37.5 : 1.5, 0.001);
+        EXPECT_NEAR(value->getCurrentValue(), recovering ? 38.0 : 1.5, 0.001);
+        EXPECT_EQ(value->getCurrentValueAsString(), recovering ? "38%" : "1.50");
+        EXPECT_EQ(valueBox->getText(), recovering ? "38%" : "1.50");
+        if (recovering) {
+            value->setValueAsString("37.4 %");
+            EXPECT_DOUBLE_EQ(value->getCurrentValue(), 37.0);
+            EXPECT_FLOAT_EQ(parameterValue(processor, recoverParameterId(0)), 37.0F);
+            EXPECT_EQ(value->getCurrentValueAsString(), "37%");
+            EXPECT_EQ(valueBox->getText(), "37%");
+            value->setValue(37.5);
+            EXPECT_DOUBLE_EQ(value->getCurrentValue(), 38.0);
+            EXPECT_EQ(value->getCurrentValueAsString(), "38%");
+            value->setValueAsString("0.1 %");
+            EXPECT_DOUBLE_EQ(value->getCurrentValue(), 0.0);
+            EXPECT_FLOAT_EQ(parameterValue(processor, recoverParameterId(0)), 0.0F);
+            EXPECT_EQ(value->getCurrentValueAsString(), "0%");
+        }
         value->setValueAsString(recovering ? "Off" : "2");
         EXPECT_NEAR(
             parameterValue(processor, recovering ? recoverParameterId(0) : widthParameterId(0)),
@@ -838,6 +854,16 @@ TEST(BandStrip, WidthAndRecoverStayEnabledWithMidOffAndFollowOnlyTheirOwnAutomat
     setParameterInGesture(side, 6.0F);
     EXPECT_NEAR(width->getValue(), 0.4, 0.001);
     EXPECT_NEAR(recover->getValue(), 75.0, 0.001);
+    auto& recovery = *processor.getParameters().getParameter(recoverParameterId(2));
+    recovery.setValueNotifyingHost(37.5F / 200.0F);
+    EXPECT_FLOAT_EQ(plainValue(recovery), 38.0F);
+    EXPECT_DOUBLE_EQ(recover->getValue(), 38.0);
+    EXPECT_EQ(recover->getTextFromValue(recover->getValue()), "38%");
+    EXPECT_NEAR(width->getValue(), 0.4, 0.001);
+    recovery.setValueNotifyingHost(0.1F / 200.0F);
+    EXPECT_FLOAT_EQ(plainValue(recovery), 0.0F);
+    EXPECT_DOUBLE_EQ(recover->getValue(), 0.0);
+    EXPECT_EQ(recover->getTextFromValue(recover->getValue()), "0%");
     EXPECT_NEAR(plainValue(mid), -12.0F, 0.001F);
     EXPECT_NEAR(plainValue(side), 6.0F, 0.001F);
 }
@@ -858,7 +884,7 @@ TEST(BandStrip, WidthAndRecoverWheelKeysAndResetUseBalancedIndependentGestures)
         slider->mouseWheelMove(mouseEvent(*slider, position, position, {}), notch(1.0F));
         EXPECT_NEAR(plainValue(parameter), recovering ? 1.0F : 1.01F, 0.001F);
         EXPECT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
-        EXPECT_NEAR(plainValue(parameter), recovering ? 2.0F : 1.03F, 0.001F);
+        EXPECT_NEAR(plainValue(parameter), recovering ? 3.0F : 1.03F, 0.001F);
         const auto event = mouseEvent(*slider, position, position, juce::ModifierKeys::leftButtonModifier);
         slider->mouseDown(event);
         slider->mouseDoubleClick(event);

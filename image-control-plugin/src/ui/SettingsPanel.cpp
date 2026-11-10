@@ -104,7 +104,7 @@ void configureSlider(
 {
     slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, VALUE_BOX_WIDTH, VALUE_BOX_HEIGHT);
     slider.setRange(minimum, maximum, interval);
-    slider.setTextValueSuffix(" " + suffix);
+    slider.setTextValueSuffix(suffix == "%" ? suffix : " " + suffix);
     slider.setDoubleClickReturnValue(true, defaultValue);
     slider.valueFromTextFunction
         = [&slider, suffix](const juce::String& text) { return settingValueFromText(text, suffix, slider.getValue()); };

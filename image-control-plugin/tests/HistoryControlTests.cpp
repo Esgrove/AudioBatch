@@ -14,6 +14,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <cstddef>
 
 #if JUCE_MAC
@@ -293,12 +294,14 @@ TEST(HistoryControls, SliderDiscreteInputPathsAreCompleteCommands)
             ASSERT_NE(handler, nullptr);
             auto* value = handler->getValueInterface();
             ASSERT_NE(value, nullptr);
-            value->setValueAsString("25 %");
+            value->setValueAsString("25.5 %");
         } else {
             slider.setValue(12.5, juce::sendNotificationSync);
         }
         const float edited = historyValue(processor, recoverParameterId(0));
-        EXPECT_GT(edited, 0.0F);
+        constexpr std::array<float, 5> expected {2.0F, 1.0F, 38.0F, 26.0F, 13.0F};
+        EXPECT_FLOAT_EQ(edited, expected.at(static_cast<std::size_t>(input)));
+        EXPECT_DOUBLE_EQ(slider.getValue(), static_cast<double>(expected.at(static_cast<std::size_t>(input))));
         EXPECT_FALSE(history.isEditing());
         EXPECT_TRUE(history.canUndo());
         EXPECT_TRUE(history.undo());

@@ -69,6 +69,8 @@ constexpr int ICON_BUTTON_GAP {4};
 constexpr int OUTPUT_LABEL_WIDTH {52};
 /// Width of the output gain slider, in pixels.
 constexpr int OUTPUT_SLIDER_WIDTH {190};
+/// Wide editors retain a usable track without stretching the output control across the window.
+constexpr double MAX_OUTPUT_SLIDER_WIDTH {240.0};
 /// Width of the output gain value box, in pixels.
 constexpr int VALUE_BOX_WIDTH {70};
 /// Height of the output gain value box, in pixels.
@@ -85,7 +87,7 @@ constexpr int COMPACT_BRAND_HEIGHT {15};
 constexpr int CORRELATION_ACTION_HEIGHT {20};
 /// A full-height hover target separates correlation from the controls without covering either.
 constexpr int CONTROLS_ACTION_HEIGHT {12};
-constexpr int SECTION_ACTION_WIDTH {24};
+constexpr int SECTION_ACTION_WIDTH {48};
 /// Returns a boolean editor setting.
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 {
@@ -390,7 +392,7 @@ void ImageControlEditor::resized()
     bypassButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
     headerX += groupGap;
     outputLabel.setBounds(takeHeader(outputLabelWidth));
-    outputSlider.setBounds(takeHeader(outputWidth));
+    outputSlider.setBounds(takeHeader(std::min(outputWidth, MAX_OUTPUT_SLIDER_WIDTH)));
     headerX += iconGap;
     processingToolbarButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     area.removeFromTop(GAP);
@@ -419,8 +421,10 @@ void ImageControlEditor::resized()
         const auto dividerArea = area.removeFromBottom(GAP);
         divider.setBounds(dividerArea.expanded(0, DIVIDER_GRAB_PADDING));
         spectrogram.setBounds(area);
-        spectrogramDisclosure.setBounds(
-            area.withSizeKeepingCentre(SECTION_ACTION_WIDTH, CORRELATION_ACTION_HEIGHT).withY(area.getY())
+        spectrogramDisclosure.setBounds(area.withSizeKeepingCentre(SECTION_ACTION_WIDTH, CORRELATION_ACTION_HEIGHT));
+        const float plotTop = static_cast<float>(spectrogram.getY()) + spectrogram.getPlotBounds().getY();
+        spectrogramDisclosure.setTopLeftPosition(
+            spectrogramDisclosure.getX(), juce::roundToInt(plotTop - spectrogramDisclosure.getIndicatorBounds().getY())
         );
         area = bandArea;
     }
@@ -431,6 +435,12 @@ void ImageControlEditor::resized()
                                .withY(correlationArea.getY())
                          : correlationArea
     );
+    if (correlationShown) {
+        correlationDisclosure.setTopLeftPosition(
+            correlationDisclosure.getX(),
+            correlationArea.getY() - juce::roundToInt(correlationDisclosure.getIndicatorBounds().getY())
+        );
+    }
     area.removeFromTop(CONTROLS_ACTION_HEIGHT);
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {

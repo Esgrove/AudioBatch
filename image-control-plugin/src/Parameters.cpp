@@ -46,12 +46,10 @@ constexpr int MONO_PARAMETER_VERSION {5};
 constexpr int WIDTH_PARAMETER_VERSION {6};
 /// Version hint of the Recover parameters, appended after every Width parameter.
 constexpr int RECOVER_PARAMETER_VERSION {7};
-/// Percent corresponding to a unit linear multiplier.
-constexpr float PERCENT_PER_UNIT {100.0F};
 /// Step of the independent linear side multiplier.
 constexpr float WIDTH_STEP {0.01F};
 /// Step of the host-facing recovery amount, in percent.
-constexpr float RECOVER_STEP_PERCENT {0.1F};
+constexpr float RECOVER_STEP_PERCENT {1.0F};
 /// Step of the pan parameters, in percent.
 constexpr float PAN_STEP_PERCENT {1.0F};
 /// Frequencies in kHz below this are shown with two decimals, and higher ones with one.
@@ -287,10 +285,10 @@ juce::String formatWidthValue(const float width, const int /*maximumLength*/)
     return {width, 2};
 }
 
-/// Formats recovery as an explicit Off at zero and otherwise a percentage.
+/// Formats recovery as a whole percentage with an adjacent percent sign, including its zero default.
 juce::String formatRecoveryValue(const float percent, const int /*maximumLength*/)
 {
-    return percent < RECOVER_STEP_PERCENT * 0.5F ? juce::String("Off") : juce::String(percent, 1) + " %";
+    return juce::String(juce::roundToInt(percent)) + "%";
 }
 
 /// Converts a gain in dB to linear, treating values within half a parameter step of 0 dB as exactly unity.

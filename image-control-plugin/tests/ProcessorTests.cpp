@@ -254,7 +254,7 @@ TEST(Processor, RecoverUsesPercentAfterSourceTrimsAndRetainsSideWhenMidIsOff)
 {
     for (const bool offline : {false, true}) {
         for (const bool sideOff : {false, true}) {
-            for (const float percent : {0.0F, 25.0F, 100.0F}) {
+            for (const float percent : {0.0F, 25.0F, 100.0F, 150.0F, 200.0F}) {
                 ImageControlProcessor processor;
                 processor.setNonRealtime(offline);
                 for (std::size_t band = 0; band < BAND_COUNT; ++band) {
@@ -269,9 +269,9 @@ TEST(Processor, RecoverUsesPercentAfterSourceTrimsAndRetainsSideWhenMidIsOff)
                 std::ranges::transform(tone, inverted.begin(), [](const float sample) { return -sample; });
                 auto buffer = makeBuffer({tone, inverted});
                 renderBuffer(processor, buffer, 511);
-                const double expectedRms = sideOff ? 0.0
-                                                   : 0.5 * juce::MathConstants<double>::sqrt2 * 0.5
-                        * static_cast<double>(percent / RECOVER_MAX_PERCENT);
+                const double expectedRms = sideOff
+                    ? 0.0
+                    : 0.5 * juce::MathConstants<double>::sqrt2 * 0.5 * static_cast<double>(percent / PERCENT_PER_UNIT);
                 EXPECT_NEAR(rms(channelOf(buffer, 0).subspan(12'000, 9600)), expectedRms, 0.002);
                 for (int sample = 12'000; sample < buffer.getNumSamples(); ++sample) {
                     ASSERT_EQ(buffer.getSample(0, sample), buffer.getSample(1, sample));
@@ -348,8 +348,8 @@ TEST(Processor, RepeatedSmallBlocksPreserveWidthAndRecoveryGlides)
             setParameter(processor, recoverParameterId(band), 30.0F + static_cast<float>(band) * 20.0F);
             // Use the same APVTS raw values as the callback, avoiding a second normalized-value round trip.
             widths[band] = processor.getParameters().getRawParameterValue(widthParameterId(band))->load();
-            recoveries[band] = processor.getParameters().getRawParameterValue(recoverParameterId(band))->load()
-                / RECOVER_MAX_PERCENT;
+            recoveries[band]
+                = processor.getParameters().getRawParameterValue(recoverParameterId(band))->load() / PERCENT_PER_UNIT;
         }
         reference.setWidths(widths);
         reference.setRecoveries(recoveries);
@@ -443,7 +443,7 @@ TEST(Processor, WidthAndRecoverSavedStateRendersTheSameHeadlessOutput)
     ImageControlProcessor source;
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         setParameter(source, widthParameterId(band), static_cast<float>(band) * 0.25F);
-        setParameter(source, recoverParameterId(band), 25.0F + static_cast<float>(band) * 20.0F);
+        setParameter(source, recoverParameterId(band), 50.0F + static_cast<float>(band) * 50.0F);
     }
     setParameter(source, midGainParameterId(1), -3.0F);
     setParameter(source, sideGainParameterId(2), -6.0F);
@@ -452,6 +452,9 @@ TEST(Processor, WidthAndRecoverSavedStateRendersTheSameHeadlessOutput)
     source.getStateInformation(state);
     ImageControlProcessor restored;
     restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        EXPECT_FLOAT_EQ(getParameter(restored, recoverParameterId(band)), 50.0F + static_cast<float>(band) * 50.0F);
+    }
     source.setNonRealtime(false);
     restored.setNonRealtime(true);
     source.prepareToPlay(TEST_SAMPLE_RATE, 37);
@@ -891,8 +894,12 @@ TEST(Processor, WidthAndRecoverParseFiniteNumbersPercentAndRecoveryOff)
     for (const auto& [text, expected] :
          {
              std::pair {"25", 25.0F},
-             std::pair {"37.5 %", 37.5F},
-             std::pair {"150%", RECOVER_MAX_PERCENT},
+             std::pair {"0.1 %", 0.0F},
+             std::pair {"37.4 %", 37.0F},
+             std::pair {"37.5 %", 38.0F},
+             std::pair {"150%", 150.0F},
+             std::pair {"200%", 200.0F},
+             std::pair {"250%", RECOVER_MAX_PERCENT},
              std::pair {" oFf ", 0.0F},
          })
     {
@@ -912,10 +919,13 @@ TEST(Processor, WidthAndRecoverParseFiniteNumbersPercentAndRecoveryOff)
         width.setValueNotifyingHost(width.getValueForText(width.getCurrentValueAsText()));
         EXPECT_NEAR(plainValue(width), value, 0.001F);
     }
-    for (const float value : {0.0F, 0.1F, 37.5F, RECOVER_MAX_PERCENT}) {
+    for (const auto& [value, expected] :
+         {std::pair {0.0F, 0.0F}, std::pair {0.1F, 0.0F}, std::pair {37.5F, 38.0F}, std::pair {200.0F, 200.0F}})
+    {
         recover.setValueNotifyingHost(recover.convertTo0to1(value));
+        EXPECT_FLOAT_EQ(plainValue(recover), expected);
         recover.setValueNotifyingHost(recover.getValueForText(recover.getCurrentValueAsText()));
-        EXPECT_NEAR(plainValue(recover), value, 0.001F);
+        EXPECT_FLOAT_EQ(plainValue(recover), expected);
     }
 }
 
@@ -923,6 +933,7 @@ TEST(Processor, NonFiniteSavedValuesPreservePriorValues)
 {
     ImageControlProcessor processor;
     setParameter(processor, OUTPUT_GAIN_ID, -6.0F);
+    setParameter(processor, recoverParameterId(0), 37.5F);
     juce::MemoryBlock state;
     processor.getStateInformation(state);
     const auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), static_cast<int>(state.getSize()));
@@ -944,6 +955,8 @@ TEST(Processor, NonFiniteSavedValuesPreservePriorValues)
     juce::AudioProcessor::copyXmlToBinary(*xml, state);
     processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     EXPECT_NEAR(getParameter(processor, OUTPUT_GAIN_ID), -6.0F, 0.01F);
+    EXPECT_FLOAT_EQ(getParameter(processor, recoverParameterId(0)), 38.0F);
+    EXPECT_FLOAT_EQ(processor.getParameters().getRawParameterValue(recoverParameterId(0))->load(), 38.0F);
     for (auto* base : static_cast<juce::AudioProcessor&>(processor).getParameters()) {
         const auto* parameter = dynamic_cast<juce::RangedAudioParameter*>(base);
         ASSERT_NE(parameter, nullptr);
@@ -1086,6 +1099,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     setParameter(source, soloParameterId(3), 1.0F);
     setParameter(source, widthParameterId(2), 0.35F);
     setParameter(source, recoverParameterId(2), 72.5F);
+    EXPECT_FLOAT_EQ(getParameter(source, recoverParameterId(2)), 73.0F);
     setParameter(source, OUTPUT_GAIN_ID, 1.5F);
     source.getEditorState().setProperty(linkPropertyName(1), false, nullptr);
     source.getEditorState().setProperty(PERSISTENCE_PROPERTY, 2.5, nullptr);
@@ -1102,7 +1116,7 @@ TEST(Processor, StateRoundTripsParametersAndEditorSettings)
     EXPECT_FLOAT_EQ(getParameter(restored, soloParameterId(3)), 1.0F);
     EXPECT_FLOAT_EQ(getParameter(restored, soloParameterId(0)), 0.0F);
     EXPECT_NEAR(getParameter(restored, widthParameterId(2)), 0.35F, 0.001F);
-    EXPECT_NEAR(getParameter(restored, recoverParameterId(2)), 72.5F, 0.001F);
+    EXPECT_FLOAT_EQ(getParameter(restored, recoverParameterId(2)), 73.0F);
     EXPECT_FLOAT_EQ(getParameter(restored, widthParameterId(0)), 1.0F);
     EXPECT_FLOAT_EQ(getParameter(restored, recoverParameterId(0)), 0.0F);
     EXPECT_NEAR(getParameter(restored, OUTPUT_GAIN_ID), 1.5F, 0.01F);

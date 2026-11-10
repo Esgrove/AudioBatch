@@ -798,13 +798,28 @@ TEST(Comparison, ValidFileRecallIsCleanWithoutRewritingSourceFloatsAndRepresenta
         EXPECT_FALSE(presentation.modified);
         EXPECT_TRUE(sameProcessingState(presentation.provenance.value_or(PresetProvenance {}).baseline, sound));
         EXPECT_TRUE(sameProcessingState(presentation.selection.value_or(UserPreset {}).snapshot, sound));
+        EXPECT_FLOAT_EQ(presentation.sound.at(recoverParameterId(3)), 24.0F);
+        EXPECT_FLOAT_EQ(
+            presentation.provenance.value_or(PresetProvenance {}).baseline.at(recoverParameterId(3)), 23.7F
+        );
         const auto state = comparisonState(processor);
         ImageControlProcessor restored;
         restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
         EXPECT_FALSE(restored.getPresetPresentation().modified);
+        EXPECT_FLOAT_EQ(restored.getSoundSnapshot().at(recoverParameterId(3)), 24.0F);
         ASSERT_TRUE(restored.selectComparisonSlot(1));
         ASSERT_TRUE(restored.selectComparisonSlot(0));
         EXPECT_FALSE(restored.getPresetPresentation().modified);
+        EXPECT_FLOAT_EQ(restored.getSoundSnapshot().at(recoverParameterId(3)), 24.0F);
+        auto& recovery = *processor.getParameters().getParameter(recoverParameterId(3));
+        recovery.setValueNotifyingHost(23.6F / 200.0F);
+        EXPECT_FLOAT_EQ(processor.getSoundSnapshot().at(recoverParameterId(3)), 24.0F);
+        EXPECT_FALSE(processor.getPresetPresentation().modified);
+        recovery.setValueNotifyingHost(24.5F / 200.0F);
+        EXPECT_FLOAT_EQ(processor.getSoundSnapshot().at(recoverParameterId(3)), 25.0F);
+        EXPECT_TRUE(processor.getPresetPresentation().modified);
+        ASSERT_TRUE(loadComparisonPreset(processor, loaded.value()));
+        EXPECT_FALSE(processor.getPresetPresentation().modified);
         setComparisonGain(processor, gain + 0.1F);
         presentation = processor.getPresetPresentation();
         EXPECT_TRUE(presentation.modified);

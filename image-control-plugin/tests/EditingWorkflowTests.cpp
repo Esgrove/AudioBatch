@@ -166,12 +166,18 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
         EXPECT_GE(mono->getX() - redo->getRight(), 2);
         EXPECT_LE(mono->getX() - redo->getRight(), 8);
         EXPECT_GE(output->getWidth(), 190);
+        EXPECT_LE(output->getWidth(), 240);
         if (previousSettingsX >= 0) {
             EXPECT_LE(std::abs(settings->getX() - previousSettingsX), 1);
             EXPECT_LE(std::abs(output->getWidth() - previousOutputWidth), 2);
         }
         previousSettingsX = settings->getX();
         previousOutputWidth = output->getWidth();
+    }
+    for (const int width : {1600, 2400, 4096}) {
+        editor.setSize(width, editor.getHeight());
+        EXPECT_EQ(output->getWidth(), 240);
+        EXPECT_LE(mono->getX() - redo->getRight(), 8);
     }
 }
 
@@ -195,6 +201,40 @@ TEST(EditingWorkflow, DisclosuresUseCenteredHoverOnlyIndicators)
         EXPECT_FALSE(disclosure->isIndicatorVisible());
         EXPECT_FALSE(disclosure->hasFocusOutline());
     }
+}
+
+/// Disclosure directions follow the section's collapse direction, and the spectrum arrow meets the plot border.
+TEST(EditingWorkflow, DisclosureDirectionsAndSpectrumBorderFollowLayout)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    auto* view = editingChild<SpatialSpectrogramView>(editor);
+    auto* spectrum = dynamic_cast<DisplayDisclosure*>(editingControl(editor, "spectrogram-disclosure"));
+    auto* correlation = dynamic_cast<DisplayDisclosure*>(editingControl(editor, "correlation-disclosure"));
+    auto* controls = dynamic_cast<DisplayDisclosure*>(editingControl(editor, "band-controls-disclosure"));
+    ASSERT_NE(view, nullptr);
+    ASSERT_NE(spectrum, nullptr);
+    ASSERT_NE(correlation, nullptr);
+    ASSERT_NE(controls, nullptr);
+    for (const int width : {760, 1000, 2000}) {
+        editor.setSize(width, 900);
+        EXPECT_FALSE(spectrum->isIndicatorPointingDown());
+        for (const auto* disclosure : {spectrum, correlation, controls}) {
+            EXPECT_FLOAT_EQ(disclosure->getIndicatorBounds().getWidth(), 36.0F);
+        }
+        const float plotTop = static_cast<float>(view->getY()) + view->getPlotBounds().getY();
+        const float triangleTop = static_cast<float>(spectrum->getY()) + spectrum->getIndicatorBounds().getY();
+        EXPECT_NEAR(triangleTop, plotTop, 0.5F);
+        for (const auto* disclosure : {correlation, controls}) {
+            EXPECT_TRUE(disclosure->isIndicatorPointingDown());
+            disclosure->onClick();
+            EXPECT_FALSE(disclosure->isIndicatorPointingDown());
+            disclosure->onClick();
+            EXPECT_TRUE(disclosure->isIndicatorPointingDown());
+        }
+    }
+    spectrum->onClick();
+    EXPECT_TRUE(spectrum->isIndicatorPointingDown());
 }
 
 /// Divider visibility follows interaction rather than an always-visible resize handle.

@@ -328,7 +328,7 @@ void configureProcessor(ImageControlProcessor& processor, const Mode mode, const
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         const bool neutral = mode == Mode::neutral;
         setParameter(processor, widthParameterId(band), widths[band]);
-        setParameter(processor, recoverParameterId(band), recoveries[band] * RECOVER_MAX_PERCENT);
+        setParameter(processor, recoverParameterId(band), recoveries[band] * PERCENT_PER_UNIT);
         setParameter(
             processor, midGainParameterId(band), neutral ? 0.0F : juce::Decibels::gainToDecibels(MID_GAINS[band])
         );
