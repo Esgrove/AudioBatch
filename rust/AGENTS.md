@@ -64,7 +64,8 @@ Audio Unit plugins are only hosted by the C++ application.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the parts work together, with charts.
 This section lists the files.
 
-`Cargo.toml` is a virtual workspace, and its `rust-version` declares the required Rust toolchain.
+The repository-root [`Cargo.toml`](../Cargo.toml) defines the virtual workspace,
+and its `rust-version` declares the required Rust toolchain.
 Shared package metadata, dependency versions, and lints are defined once there,
 and the main workspace crates inherit them with `.workspace = true`.
 The versions of their external dependencies are declared in its `[workspace.dependencies]` table,
@@ -365,7 +366,7 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 
 ## Build And Test Commands
 
-Run all commands from the `rust/` directory.
+Run the application scripts from `rust/`. Cargo commands also work from the repository root.
 After making code changes, always run:
 
 ```shell
@@ -486,7 +487,7 @@ The GUI shares its palette, fonts, and icons with the C++ application,
 so both versions look alike, and `../cpp/src/gui/` is worth comparing when changing the layout.
 
 Dependencies are compiled with optimizations even in debug builds, because decoding is too slow otherwise.
-`.cargo/config.toml` compiles for the native CPU, and CI clears that tuning with an empty `RUSTFLAGS`.
+The root `.cargo/config.toml` compiles for the native CPU, and CI clears that tuning with an empty `RUSTFLAGS`.
 The production meter still requires AVX2 on x86 or NEON on Apple Silicon.
 Clearing native tuning does not provide an older-CPU compatibility mode.
 The shell scripts in `rust/` source `common.sh`, which names the CLI and GUI binaries and the macOS app bundle,

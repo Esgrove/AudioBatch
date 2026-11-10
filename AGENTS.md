@@ -259,9 +259,15 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 
 ### Repository work
 
-- Run each project's build, format, lint, and test commands from its own directory.
+- The repository-root `Cargo.toml` and `Cargo.lock` define the Rust workspace.
+  Shared dependencies and Rust lints belong there. Plugin-only dependencies stay in their own crate manifests.
+  Cargo commands work from the root. Scope project work with explicit packages rather than `--workspace`.
+- Run each project's build, format, lint, and test scripts from its own directory.
   The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
   and `lint.sh --check` reports warnings without applying fixes.
+- Parameter-taking shell entry points support both `-h` and `--help`, print useful usage, and exit successfully
+  before builds, installations, required-tool checks, or other side effects.
+  Use `REPO_ROOT` from root `common.sh` for repository-level paths, without reconstructing them through project `..` paths.
 - Stage with explicit paths, such as `git add cpp`, `git add rust`, or `git add image-control-plugin`.
 - Keep README updates concise and targeted, preserving existing structure and useful content.
   Do not fully rewrite or broadly condense an existing README unless explicitly requested.

@@ -83,7 +83,8 @@ and November 1, 2026 Windows measurements, benchmark settings, and validation li
 ## Build
 
 Run the commands from this directory.
-The required Rust toolchain is declared by `rust-version` in [`Cargo.toml`](Cargo.toml).
+The required Rust toolchain is declared by `rust-version` in the [root workspace](../Cargo.toml).
+Cargo commands work from the repository root or this directory, with artifacts under `rust/target`.
 
 ```shell
 ./build.sh
@@ -129,7 +130,8 @@ The `.ico` file is generated from `icon_win.png` with ImageMagick:
 magick ../assets/icon_win.png -define icon:auto-resize=256,128,96,64,48,40,32,24,20,16 ../assets/icon_win.ico
 ```
 
-`.cargo/config.toml` compiles for the native CPU, so binaries built here may not run on older machines.
+The root [`.cargo/config.toml`](../.cargo/config.toml) compiles for the native CPU,
+so binaries built here may not run on older machines.
 CI overrides it with an empty `RUSTFLAGS`.
 The meter still requires AVX2 on x86 or NEON on Apple Silicon, so clearing native tuning is not an older-CPU mode.
 

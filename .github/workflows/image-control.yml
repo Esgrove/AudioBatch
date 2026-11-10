@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - ".github/workflows/image-control.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "rustfmt.toml"
       - "assets/**"
       - "common.sh"
       - "cpp/.clang-format"
@@ -27,6 +32,11 @@ on:
   pull_request:
     paths:
       - ".github/workflows/image-control.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "rustfmt.toml"
       - "assets/**"
       - "common.sh"
       - "cpp/.clang-format"

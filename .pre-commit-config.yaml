@@ -45,10 +45,10 @@ repos:
       - id: cargo-fmt
         name: Rust Format
         description: Run rustfmt on Rust files included in the commit, with the Rust workspace settings.
-        entry: bash -c 'cd rust && cargo fmt --'
+        entry: cargo fmt --all --
         types: [rust]
         language: system
-        files: ^rust/
+        files: ^(rust/|image-control-plugin/rust/crates/(dsp|nice|xtask)/)
         pass_filenames: false
         priority: 1
 

@@ -35,6 +35,9 @@
 *.app
 /cpp/audiobatch
 
+# Rust workspace and isolated prototype artifacts
+/target/
+
 # Build
 
 /assets/icon.afdesign

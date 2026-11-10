@@ -7,6 +7,11 @@ on:
     paths:
       - ".gitattributes"
       - ".github/workflows/parity.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "rustfmt.toml"
       - "cpp/**"
       - "fixtures/**"
       - "rust/**"
@@ -15,6 +20,11 @@ on:
     paths:
       - ".gitattributes"
       - ".github/workflows/parity.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "rustfmt.toml"
       - "cpp/**"
       - "fixtures/**"
       - "rust/**"
@@ -27,7 +37,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Overrides target-cpu=native from rust/.cargo/config.toml,
+  # Overrides target-cpu=native from .cargo/config.toml,
   # which can cause illegal instruction errors on runners with different CPUs.
   RUSTFLAGS: ""
 
@@ -101,7 +111,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
 
       # Requires every normalization fixture represented by the golden snapshots, not an empty or partial LFS checkout.
       - name: Check exact full normalization corpus

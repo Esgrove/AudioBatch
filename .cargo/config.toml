@@ -1,0 +1,4 @@
+[build]
+# Keep the established application artifact paths while sharing one workspace from the repository root.
+target-dir = "rust/target"
+rustflags = ["-C", "target-cpu=native"]
