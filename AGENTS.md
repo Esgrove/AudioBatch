@@ -276,6 +276,8 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   Do not turn READMEs into detailed UI walkthroughs.
   Keep rolling requirements such as the Rust toolchain version in their authoritative configuration, not duplicated prose.
 - Commit messages and all prose follow the semantic line break style described in the project files.
+- Never use `feat:` or `chore:` commit prefixes, including scoped forms such as `feat(area):` or `chore(area):`.
+  Prefer a descriptive project or topic prefix, such as `rust:`, `image-control:`, `build:`, or `docs:`.
 - **NEVER run destructive git commands**, such as `git checkout -- <file>`, `git restore`, `git reset --hard`,
   `git clean`, or `git stash drop`.
   Ask the user to do it manually if something needs undoing.
