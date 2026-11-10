@@ -6,6 +6,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <memory>
+
 namespace esgrove::image_control
 {
 /// Opaque ARGB values of the palette, the same as AudioBatch's palette.
@@ -29,12 +31,25 @@ constexpr juce::uint32 YELLOW {0xffCEAF6C};
 
 /// The editor's look and feel: AudioBatch's dark colour scheme and control colours,
 /// Roboto for text, and Roboto Mono for the value boxes of sliders so numbers line up.
-class ImageControlLookAndFeel final : public juce::LookAndFeel_V4
+class ImageControlLookAndFeel final : public juce::LookAndFeel_V4, private juce::FocusChangeListener
 {
 public:
     ImageControlLookAndFeel();
 
+    ~ImageControlLookAndFeel() override;
+
+    ImageControlLookAndFeel(const ImageControlLookAndFeel&) = delete;
+    ImageControlLookAndFeel(ImageControlLookAndFeel&&) = delete;
+    ImageControlLookAndFeel& operator=(const ImageControlLookAndFeel&) = delete;
+    ImageControlLookAndFeel& operator=(ImageControlLookAndFeel&&) = delete;
+
+    [[nodiscard]] std::unique_ptr<juce::FocusOutline> createFocusOutlineForComponent(
+        juce::Component& component
+    ) override;
     [[nodiscard]] juce::Font getLabelFont(juce::Label& label) override;
     [[nodiscard]] juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;
+
+private:
+    void globalFocusChanged(juce::Component* focusedComponent) override;
 };
 }  // namespace esgrove::image_control

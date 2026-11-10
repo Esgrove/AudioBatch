@@ -6,11 +6,37 @@
 #include "ImageControlBinaryData.h"
 
 #include <algorithm>
+#include <memory>
 
 namespace esgrove::image_control
 {
 namespace
 {
+/// Uses JUCE's managed focus overlay so sliders, toggles, and drawable buttons share one restrained treatment.
+class ControlFocusOutline final : public juce::FocusOutline::OutlineWindowProperties
+{
+public:
+    /// Keeps the overlay inside the control so callouts and adjacent rows do not clip its border.
+    juce::Rectangle<int> getOutlineBounds(juce::Component& component) override
+    {
+        return component.getScreenBounds();
+    }
+
+    /// Draws a thin accent outline without changing the ordinary hover and selected states.
+    void drawOutline(juce::Graphics& graphics, const int width, const int height) override
+    {
+        constexpr float thickness = 1.0F;
+        constexpr float cornerRadius = 3.0F;
+        constexpr float opacity = 0.7F;
+        graphics.setColour(juce::Colour(palette::BLUE).withAlpha(opacity));
+        graphics.drawRoundedRectangle(
+            juce::Rectangle<float>(static_cast<float>(width), static_cast<float>(height)).reduced(thickness * 0.5F),
+            cornerRadius,
+            thickness
+        );
+    }
+};
+
 /// Opacity of the slider track fill, as in AudioBatch.
 constexpr float SLIDER_TRACK_ALPHA {0.7F};
 /// Opacity of the text of a text button that is off, as in AudioBatch.
@@ -97,6 +123,34 @@ ImageControlLookAndFeel::ImageControlLookAndFeel()
     setColour(juce::TooltipWindow::textColourId, colour(palette::GREY_SUPER_LIGHT));
 
     setDefaultSansSerifTypeface(textTypeface());
+    juce::Desktop::getInstance().addFocusChangeListener(this);
+}
+
+/// Detaches the desktop observer before JUCE releases this editor-owned look and feel.
+ImageControlLookAndFeel::~ImageControlLookAndFeel()
+{
+    juce::Desktop::getInstance().removeFocusChangeListener(this);
+}
+
+/// Opts ordinary JUCE buttons, including drawables and toggles, into the shared focus outline.
+/// JUCE notifies these listeners before creating its managed outline, so no component-specific paint hooks are needed.
+void ImageControlLookAndFeel::globalFocusChanged(juce::Component* focusedComponent)
+{
+    if (focusedComponent != nullptr && &focusedComponent->getLookAndFeel() == this
+        && (dynamic_cast<juce::Button*>(focusedComponent) != nullptr
+            || dynamic_cast<juce::Slider*>(focusedComponent) != nullptr
+            || dynamic_cast<juce::ComboBox*>(focusedComponent) != nullptr))
+    {
+        focusedComponent->setHasFocusOutline(true);
+    }
+}
+
+/// Supplies the same subdued outline to every JUCE control that opts into keyboard focus visibility.
+std::unique_ptr<juce::FocusOutline> ImageControlLookAndFeel::createFocusOutlineForComponent(
+    juce::Component& /*component*/
+)
+{
+    return std::make_unique<juce::FocusOutline>(std::make_unique<ControlFocusOutline>());
 }
 
 /// Returns Roboto Mono at a height.

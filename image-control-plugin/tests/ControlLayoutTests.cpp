@@ -6,6 +6,8 @@
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/BandStrip.h"
+#include "ui/ControlSlider.h"
+#include "ui/ImageControlLookAndFeel.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SplitDivider.h"
@@ -20,6 +22,8 @@
 #include <windows.h>
 #endif
 
+#include <array>
+#include <utility>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -79,16 +83,23 @@ Child* childOfType(const juce::Component& parent)
     return nullptr;
 }
 
-/// Finds a panel-owned pan slider through its displayed unit and supported range.
-/// The nullable observer remains valid until the panel is destroyed.
-juce::Slider* panSlider(const SettingsPanel& panel, const double minimum, const double maximum)
+/// Finds an owned descendant by stable identity, returning a nullable observer valid until parent destruction.
+/// An explicit stack avoids recursion through JUCE's implementation-owned viewport and control children.
+template<typename Control>
+Control* settingsControl(const juce::Component& parent, const juce::String& identifier)
 {
-    for (auto* child : panel.getChildren()) {
-        if (auto* slider = dynamic_cast<juce::Slider*>(child); slider != nullptr
-            && slider->getTextValueSuffix() == " dB" && juce::approximatelyEqual(slider->getMinimum(), minimum)
-            && juce::approximatelyEqual(slider->getMaximum(), maximum))
-        {
-            return slider;
+    std::vector<juce::Component*> pending;
+    for (auto* child : parent.getChildren()) {
+        pending.push_back(child);
+    }
+    while (!pending.empty()) {
+        auto* child = pending.back();
+        pending.pop_back();
+        if (child->getComponentID() == identifier) {
+            return dynamic_cast<Control*>(child);
+        }
+        for (auto* descendant : child->getChildren()) {
+            pending.push_back(descendant);
         }
     }
     return nullptr;
@@ -111,18 +122,35 @@ void dispatchControlChanges()
 #endif
 }
 
+/// Waits for asynchronous focus scrolling with a fixed deadline instead of assuming a platform queue depth.
+/// JUCE delivers a bounded number of messages per native run-loop pass, which varies with native peer setup.
+bool waitForVisibleControl(const juce::Viewport& viewport, const juce::Component& control)
+{
+    constexpr double timeoutMilliseconds = 500.0;
+    const double deadline = juce::Time::getMillisecondCounterHiRes() + timeoutMilliseconds;
+    do {
+        dispatchControlChanges();
+        const auto bounds = viewport.getLocalArea(&control, control.getLocalBounds());
+        if (control.hasKeyboardFocus(false) && bounds.getY() >= 0 && bounds.getBottom() <= viewport.getViewHeight()) {
+            return true;
+        }
+    } while (juce::Time::getMillisecondCounterHiRes() < deadline);
+    return false;
+}
+
 /// Creates a handler event at a fixed screen position even when layout has moved the component since mouse-down.
 juce::MouseEvent mouseAtScreen(
     juce::Component& component,
     const juce::Point<int> screenPosition,
-    const juce::Point<int> downScreenPosition
+    const juce::Point<int> downScreenPosition,
+    const juce::ModifierKeys modifiers = juce::ModifierKeys::leftButtonModifier
 )
 {
     const auto now = juce::Time::getCurrentTime();
     return {
         juce::Desktop::getInstance().getMainMouseSource(),
         component.getLocalPoint(nullptr, screenPosition).toFloat(),
-        juce::ModifierKeys::leftButtonModifier,
+        modifiers,
         1.0F,
         0.0F,
         0.0F,
@@ -139,6 +167,269 @@ juce::MouseEvent mouseAtScreen(
 }
 }  // namespace
 
+/// Every interactive setting has a stable id and a useful accessible title, including both explicit choices.
+TEST(SettingsPanel, ControlsAreNamedAndExplicitChoicesFollowLiveState)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    SettingsPanel panel(state, 300);
+    const std::array ids {
+        PERSISTENCE_PROPERTY,
+        CONTRAST_PROPERTY,
+        PAN_MIDPOINT_PROPERTY,
+        PAN_EDGE_PROPERTY,
+        PHASE_COLOURS_PROPERTY,
+        MEL_SCALE_PROPERTY,
+        SOLID_RENDERING_PROPERTY,
+        HIDE_SPECTROGRAM_PROPERTY,
+        SHOW_BAND_CORRELATION_PROPERTY,
+        SMOOTH_CORRELATION_READOUT_PROPERTY,
+        BYPASS_RENDERING_PROPERTY,
+        SHOW_FPS_PROPERTY,
+        "resetDisplayAppearance",
+        "displayControlsHelp",
+    };
+    panel.addToDesktop(0);
+    for (const auto* identifier : ids) {
+        SCOPED_TRACE(identifier);
+        auto* control = settingsControl<juce::Component>(panel, identifier);
+        ASSERT_NE(control, nullptr);
+        EXPECT_TRUE(control->getName().isNotEmpty());
+        EXPECT_TRUE(control->getTitle().isNotEmpty());
+        EXPECT_TRUE(control->hasFocusOutline());
+        auto* accessibility = control->getAccessibilityHandler();
+        ASSERT_NE(accessibility, nullptr);
+        EXPECT_EQ(accessibility->getTitle(), control->getTitle());
+    }
+    for (const auto* property : {PHASE_COLOURS_PROPERTY, MEL_SCALE_PROPERTY, SOLID_RENDERING_PROPERTY}) {
+        auto* choice = settingsControl<juce::ComboBox>(panel, property);
+        ASSERT_NE(choice, nullptr);
+        EXPECT_EQ(choice->getNumItems(), 2);
+        EXPECT_EQ(choice->getSelectedId(), 1);
+        state.setProperty(property, true, nullptr);
+        EXPECT_EQ(choice->getSelectedId(), 2);
+        choice->setSelectedId(1, juce::sendNotificationSync);
+        EXPECT_FALSE(static_cast<bool>(state.getProperty(property)));
+    }
+    EXPECT_EQ(
+        settingsControl<juce::ToggleButton>(panel, BYPASS_RENDERING_PROPERTY)->getButtonText(),
+        "Stop spectrogram analysis"
+    );
+}
+
+/// Strict settings entry consumes one finite token and one optional matching unit, never a valid prefix of junk.
+TEST(SettingsPanel, NumericEntryIsFiniteFullTokenAndPreservesInvalidValues)
+{
+    ImageControlProcessor processor;
+    const SettingsPanel panel(processor.getEditorState());
+    const std::array settings {
+        std::pair<const char*, const char*> {PERSISTENCE_PROPERTY, "s"},
+        std::pair<const char*, const char*> {CONTRAST_PROPERTY, "%"},
+        std::pair<const char*, const char*> {PAN_MIDPOINT_PROPERTY, "dB"},
+        std::pair<const char*, const char*> {PAN_EDGE_PROPERTY, "dB"},
+    };
+    for (const auto& [identifier, suffix] : settings) {
+        SCOPED_TRACE(identifier);
+        auto* slider = settingsControl<ControlSlider>(panel, identifier);
+        ASSERT_NE(slider, nullptr);
+        const double original = slider->getValue();
+        for (const juce::String invalid :
+             {
+                 "",
+                 " ",
+                 "garbage",
+                 "nan",
+                 "inf",
+                 "-inf",
+                 "1e9999",
+                 "12junk",
+                 "++12",
+                 "+-12",
+                 "12 34",
+                 "12,5",
+                 "12 dB junk",
+                 "0x10",
+             })
+        {
+            SCOPED_TRACE(invalid.toStdString());
+            EXPECT_DOUBLE_EQ(slider->getValueFromText(invalid), original);
+        }
+        const juce::String unit(suffix);
+        EXPECT_DOUBLE_EQ(slider->getValueFromText("12 " + unit + " " + unit), original);
+        EXPECT_DOUBLE_EQ(slider->getValueFromText("12" + unit + unit), original);
+        EXPECT_DOUBLE_EQ(slider->getValueFromText("  +1.25  "), 1.25);
+        EXPECT_DOUBLE_EQ(slider->getValueFromText("  1.25 " + unit + "  "), 1.25);
+        EXPECT_DOUBLE_EQ(slider->getValueFromText("1.25" + unit.toUpperCase()), 1.25);
+        EXPECT_DOUBLE_EQ(slider->getValueFromText("1.25e1 " + unit), 12.5);
+        slider->setValue(slider->getValueFromText("-999"), juce::sendNotificationSync);
+        EXPECT_DOUBLE_EQ(slider->getValue(), slider->getMinimum());
+        slider->setValue(slider->getValueFromText("99999"), juce::sendNotificationSync);
+        EXPECT_DOUBLE_EQ(slider->getValue(), slider->getMaximum());
+    }
+}
+
+/// Reset is intentionally narrower than a plugin reset and cannot change audition, layout, or analysis enablement.
+TEST(SettingsPanel, AppearanceResetLeavesSoundVisibilityLayoutLinksAndStoppedAnalysisUntouched)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    state.setProperty(PERSISTENCE_PROPERTY, MAX_PERSISTENCE_SECONDS, nullptr);
+    state.setProperty(CONTRAST_PROPERTY, 1.0, nullptr);
+    state.setProperty(PAN_MIDPOINT_PROPERTY, MAX_PAN_MIDPOINT_DB, nullptr);
+    state.setProperty(PAN_EDGE_PROPERTY, MAX_PAN_EDGE_DB, nullptr);
+    for (const auto* property :
+         {
+             PHASE_COLOURS_PROPERTY,
+             MEL_SCALE_PROPERTY,
+             SOLID_RENDERING_PROPERTY,
+             SHOW_FPS_PROPERTY,
+             HIDE_SPECTROGRAM_PROPERTY,
+             BYPASS_RENDERING_PROPERTY,
+         })
+    {
+        state.setProperty(property, true, nullptr);
+    }
+    state.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, false, nullptr);
+    state.setProperty(SHOW_BAND_CORRELATION_PROPERTY, false, nullptr);
+    state.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, false, nullptr);
+    state.setProperty(ANALYZE_OUTPUT_PROPERTY, false, nullptr);
+    state.setProperty(linkPropertyName(0), true, nullptr);
+    state.setProperty(EDITOR_HEIGHT_PROPERTY, 800, nullptr);
+    state.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 310, nullptr);
+    auto& gain = *processor.getParameters().getParameter(midGainParameterId(0));
+    gain.setValueNotifyingHost(gain.convertTo0to1(-7.0F));
+    const SettingsPanel panel(state);
+    auto* reset = settingsControl<juce::TextButton>(panel, "resetDisplayAppearance");
+    ASSERT_NE(reset, nullptr);
+    reset->onClick();
+    dispatchControlChanges();
+    EXPECT_DOUBLE_EQ(static_cast<double>(state.getProperty(PERSISTENCE_PROPERTY)), DEFAULT_PERSISTENCE_SECONDS);
+    EXPECT_DOUBLE_EQ(static_cast<double>(state.getProperty(CONTRAST_PROPERTY)), DEFAULT_CONTRAST_PERCENT);
+    EXPECT_DOUBLE_EQ(static_cast<double>(state.getProperty(PAN_MIDPOINT_PROPERTY)), DEFAULT_PAN_MIDPOINT_DB);
+    EXPECT_DOUBLE_EQ(static_cast<double>(state.getProperty(PAN_EDGE_PROPERTY)), DEFAULT_PAN_EDGE_DB);
+    for (const auto* property :
+         {PHASE_COLOURS_PROPERTY, MEL_SCALE_PROPERTY, SOLID_RENDERING_PROPERTY, SHOW_FPS_PROPERTY})
+    {
+        EXPECT_FALSE(static_cast<bool>(state.getProperty(property)));
+    }
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(HIDE_SPECTROGRAM_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(BYPASS_RENDERING_PROPERTY)));
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(ANALYZE_OUTPUT_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(linkPropertyName(0))));
+    EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 800);
+    EXPECT_EQ(static_cast<int>(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), 310);
+    EXPECT_FLOAT_EQ(plainValue(gain), -7.0F);
+}
+
+/// Height limits bound the popup, not its settings, and help remains reachable even in the shortest viewport.
+TEST(SettingsPanel, ViewportBoundsContentAndRevealsHelp)
+{
+    ImageControlProcessor processor;
+    for (const int maximumHeight : {1, 180, 320, 640, 2000}) {
+        SCOPED_TRACE(maximumHeight);
+        SettingsPanel panel(processor.getEditorState(), maximumHeight);
+        EXPECT_LE(panel.getHeight(), maximumHeight);
+        auto* viewport = childOfType<juce::Viewport>(panel);
+        ASSERT_NE(viewport, nullptr);
+        EXPECT_EQ(viewport->getBounds(), panel.getLocalBounds());
+        auto* content = viewport->getViewedComponent();
+        ASSERT_NE(content, nullptr);
+        EXPECT_GT(content->getHeight(), panel.getHeight());
+        EXPECT_LE(content->getWidth(), viewport->getWidth());
+        for (const auto* child : content->getChildren()) {
+            EXPECT_TRUE(content->getLocalBounds().contains(child->getBounds()));
+            EXPECT_GT(child->getHeight(), 0);
+        }
+        panel.showHelp();
+        EXPECT_GT(viewport->getViewPositionY(), 0);
+        auto* help = settingsControl<juce::TextEditor>(panel, "displayControlsHelp");
+        ASSERT_NE(help, nullptr);
+        EXPECT_TRUE(help->isReadOnly());
+        EXPECT_TRUE(help->getText().contains("Audio Bypass"));
+    }
+}
+
+/// Keyboard traversal reveals distant controls rather than leaving focus below the popup's visible viewport.
+TEST(SettingsPanel, FocusedControlsScrollIntoView)
+{
+    ImageControlProcessor processor;
+    SettingsPanel panel(processor.getEditorState(), 240);
+    panel.addToDesktop(0);
+    panel.setVisible(true);
+    panel.toFront(true);
+    auto* viewport = childOfType<juce::Viewport>(panel);
+    auto* reset = settingsControl<juce::TextButton>(panel, "resetDisplayAppearance");
+    auto* persistence = settingsControl<ControlSlider>(panel, PERSISTENCE_PROPERTY);
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_NE(reset, nullptr);
+    ASSERT_NE(persistence, nullptr);
+    reset->grabKeyboardFocus();
+    EXPECT_TRUE(waitForVisibleControl(*viewport, *reset));
+    ASSERT_TRUE(reset->hasKeyboardFocus(false));
+    auto visibleBounds = viewport->getLocalArea(reset, reset->getLocalBounds());
+    EXPECT_GE(visibleBounds.getY(), 0);
+    EXPECT_LE(visibleBounds.getBottom(), viewport->getViewHeight());
+    EXPECT_GT(viewport->getViewPositionY(), 0);
+    persistence->grabKeyboardFocus();
+    EXPECT_TRUE(waitForVisibleControl(*viewport, *persistence));
+    ASSERT_TRUE(persistence->hasKeyboardFocus(false));
+    visibleBounds = viewport->getLocalArea(persistence, persistence->getLocalBounds());
+    EXPECT_GE(visibleBounds.getY(), 0);
+    EXPECT_LE(visibleBounds.getBottom(), viewport->getViewHeight());
+}
+
+/// Legal slider intervals remain reachable even when a fine range-based nudge would otherwise round to no change.
+TEST(ControlSlider, KeyboardNudgesRespectMinimumIntervalsAndBalanceGestures)
+{
+    for (const int modifiers : {0, static_cast<int>(juce::ModifierKeys::shiftModifier)}) {
+        ControlSlider slider;
+        slider.setRange(3.0, 24.0, 1.0);
+        slider.setValue(12.0, juce::dontSendNotification);
+        std::vector<bool> gestures;
+        slider.onDragStart = [&] { gestures.push_back(true); };
+        slider.onDragEnd = [&] { gestures.push_back(false); };
+        EXPECT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::rightKey, modifiers, 0)));
+        EXPECT_DOUBLE_EQ(slider.getValue(), 13.0);
+        EXPECT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::downKey, modifiers, 0)));
+        EXPECT_DOUBLE_EQ(slider.getValue(), 12.0);
+        EXPECT_EQ(gestures, (std::vector<bool> {true, false, true, false}));
+        slider.setValue(slider.getMaximum(), juce::dontSendNotification);
+        EXPECT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::upKey, modifiers, 0)));
+        EXPECT_DOUBLE_EQ(slider.getValue(), slider.getMaximum());
+    }
+}
+
+/// Command, Control, and Alt arrow shortcuts belong to the host and must not start slider gestures.
+TEST(ControlSlider, ModifiedArrowsAreNotConsumed)
+{
+    ControlSlider slider;
+    slider.setRange(0.0, 100.0, 1.0);
+    slider.setValue(50.0, juce::dontSendNotification);
+    int starts = 0;
+    int ends = 0;
+    slider.onDragStart = [&] { ++starts; };
+    slider.onDragEnd = [&] { ++ends; };
+    for (const int modifier :
+         {juce::ModifierKeys::commandModifier, juce::ModifierKeys::ctrlModifier, juce::ModifierKeys::altModifier})
+    {
+        for (const int shift : {0, static_cast<int>(juce::ModifierKeys::shiftModifier)}) {
+            for (const int arrow :
+                 {juce::KeyPress::leftKey, juce::KeyPress::rightKey, juce::KeyPress::upKey, juce::KeyPress::downKey})
+            {
+                EXPECT_FALSE(
+                    slider.keyPressed(juce::KeyPress(arrow, juce::ModifierKeys(modifier).withFlags(shift), 0))
+                );
+                EXPECT_DOUBLE_EQ(slider.getValue(), 50.0);
+            }
+        }
+    }
+    EXPECT_EQ(starts, 0);
+    EXPECT_EQ(ends, 0);
+}
+
 /// Raising the midpoint pushes the edge once, while a noncolliding edit leaves the edge untouched.
 TEST(SettingsPanel, PanMidpointPushesTheEdgeWithoutRecursiveNotifications)
 {
@@ -147,8 +438,8 @@ TEST(SettingsPanel, PanMidpointPushesTheEdgeWithoutRecursiveNotifications)
     state.setProperty(PAN_MIDPOINT_PROPERTY, MIN_PAN_MIDPOINT_DB, nullptr);
     state.setProperty(PAN_EDGE_PROPERTY, MIN_PAN_EDGE_DB, nullptr);
     const SettingsPanel panel(state);
-    auto* midpoint = panSlider(panel, MIN_PAN_MIDPOINT_DB, MAX_PAN_MIDPOINT_DB);
-    auto* edge = panSlider(panel, MIN_PAN_EDGE_DB, MAX_PAN_EDGE_DB);
+    auto* midpoint = settingsControl<juce::Slider>(panel, PAN_MIDPOINT_PROPERTY);
+    auto* edge = settingsControl<juce::Slider>(panel, PAN_EDGE_PROPERTY);
     ASSERT_NE(midpoint, nullptr);
     ASSERT_NE(edge, nullptr);
     dispatchControlChanges();
@@ -185,8 +476,8 @@ TEST(SettingsPanel, PanEdgePushesTheMidpointAndSavesTheCoupledValues)
     state.setProperty(PAN_EDGE_PROPERTY, MAX_PAN_EDGE_DB, nullptr);
     {
         const SettingsPanel panel(state);
-        auto* midpoint = panSlider(panel, MIN_PAN_MIDPOINT_DB, MAX_PAN_MIDPOINT_DB);
-        auto* edge = panSlider(panel, MIN_PAN_EDGE_DB, MAX_PAN_EDGE_DB);
+        auto* midpoint = settingsControl<juce::Slider>(panel, PAN_MIDPOINT_PROPERTY);
+        auto* edge = settingsControl<juce::Slider>(panel, PAN_EDGE_PROPERTY);
         ASSERT_NE(midpoint, nullptr);
         ASSERT_NE(edge, nullptr);
         dispatchControlChanges();
@@ -211,12 +502,90 @@ TEST(SettingsPanel, PanEdgePushesTheMidpointAndSavesTheCoupledValues)
     ImageControlProcessor restored;
     restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
     const SettingsPanel reopened(restored.getEditorState());
-    auto* midpoint = panSlider(reopened, MIN_PAN_MIDPOINT_DB, MAX_PAN_MIDPOINT_DB);
-    auto* edge = panSlider(reopened, MIN_PAN_EDGE_DB, MAX_PAN_EDGE_DB);
+    auto* midpoint = settingsControl<juce::Slider>(reopened, PAN_MIDPOINT_PROPERTY);
+    auto* edge = settingsControl<juce::Slider>(reopened, PAN_EDGE_PROPERTY);
     ASSERT_NE(midpoint, nullptr);
     ASSERT_NE(edge, nullptr);
     EXPECT_DOUBLE_EQ(midpoint->getValue(), MIN_PAN_EDGE_DB - MIN_PAN_CURVE_GAP_DB);
     EXPECT_DOUBLE_EQ(edge->getValue(), MIN_PAN_EDGE_DB);
+}
+
+/// The divider is named and keyboard-reachable, with coarse and fine vertical steps using the same callback.
+TEST(SplitDivider, KeyboardResizeUsesNamedFocusableControlAndRejectsHostShortcuts)
+{
+    SplitDivider divider;
+    EXPECT_EQ(divider.getComponentID(), "displayBandDivider");
+    EXPECT_TRUE(divider.getTitle().contains("divider"));
+    EXPECT_TRUE(divider.getWantsKeyboardFocus());
+    EXPECT_TRUE(divider.hasFocusOutline());
+    std::vector<int> movements;
+    divider.setDragCallback([&](const int delta) { movements.push_back(delta); });
+    EXPECT_TRUE(divider.keyPressed(juce::KeyPress(juce::KeyPress::downKey)));
+    EXPECT_TRUE(divider.keyPressed(juce::KeyPress(juce::KeyPress::upKey)));
+    EXPECT_TRUE(divider.keyPressed(juce::KeyPress(juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier, 0)));
+    EXPECT_TRUE(divider.keyPressed(juce::KeyPress(juce::KeyPress::upKey, juce::ModifierKeys::shiftModifier, 0)));
+    EXPECT_EQ(movements, (std::vector<int> {8, -8, 1, -1}));
+    for (const int modifier :
+         {juce::ModifierKeys::commandModifier, juce::ModifierKeys::ctrlModifier, juce::ModifierKeys::altModifier})
+    {
+        EXPECT_FALSE(divider.keyPressed(juce::KeyPress(juce::KeyPress::upKey, modifier, 0)));
+        EXPECT_FALSE(divider.keyPressed(
+            juce::KeyPress(
+                juce::KeyPress::downKey, juce::ModifierKeys(modifier).withFlags(juce::ModifierKeys::shiftModifier), 0
+            )
+        ));
+    }
+    EXPECT_FALSE(divider.keyPressed(juce::KeyPress(juce::KeyPress::leftKey)));
+    divider.setEnabled(false);
+    EXPECT_FALSE(divider.keyPressed(juce::KeyPress(juce::KeyPress::downKey)));
+    EXPECT_EQ(movements.size(), 4U);
+}
+
+/// Only a genuine left-button drag can resize, including synthetic handlers dispatched before mouse-down.
+TEST(SplitDivider, PointerResizeRejectsNonLeftButtonsAndUnstartedDrags)
+{
+    SplitDivider divider;
+    divider.setBounds(0, 100, 400, 16);
+    std::vector<int> movements;
+    divider.setDragCallback([&](const int delta) { movements.push_back(delta); });
+    const auto start = divider.localPointToGlobal(juce::Point<int> {5, 5});
+    const auto end = start.translated(0, 20);
+    divider.mouseDrag(mouseAtScreen(divider, end, start));
+    for (const int buttons :
+         {
+             static_cast<int>(juce::ModifierKeys::rightButtonModifier),
+             static_cast<int>(juce::ModifierKeys::middleButtonModifier),
+             juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::rightButtonModifier,
+             juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::backButtonModifier,
+         })
+    {
+        divider.mouseDown(mouseAtScreen(divider, start, start, buttons));
+        divider.mouseDrag(mouseAtScreen(divider, end, start, buttons));
+        divider.mouseUp(mouseAtScreen(divider, end, start, buttons));
+    }
+    EXPECT_TRUE(movements.empty());
+    divider.mouseDown(mouseAtScreen(divider, start, start));
+    divider.mouseDrag(mouseAtScreen(divider, end, start));
+    EXPECT_EQ(movements, (std::vector<int> {20}));
+    EXPECT_FALSE(divider.keyPressed(juce::KeyPress(juce::KeyPress::downKey)));
+    divider.mouseUp(mouseAtScreen(divider, end, start));
+    divider.mouseDrag(mouseAtScreen(divider, end.translated(0, 10), start));
+    EXPECT_EQ(movements, (std::vector<int> {20}));
+}
+
+/// JUCE manages one shared outline rather than each control painting an unrelated focus style.
+TEST(ControlSlider, LookAndFeelCreatesSharedFocusOutline)
+{
+    ImageControlLookAndFeel lookAndFeel;
+    ControlSlider slider;
+    EXPECT_TRUE(slider.hasFocusOutline());
+    EXPECT_NE(lookAndFeel.createFocusOutlineForComponent(slider), nullptr);
+    juce::TextButton button("Settings");
+    EXPECT_NE(lookAndFeel.createFocusOutlineForComponent(button), nullptr);
+    juce::ToggleButton toggle("Show correlation");
+    EXPECT_NE(lookAndFeel.createFocusOutlineForComponent(toggle), nullptr);
+    juce::DrawableButton drawable("Undo", juce::DrawableButton::ImageFitted);
+    EXPECT_NE(lookAndFeel.createFocusOutlineForComponent(drawable), nullptr);
 }
 
 /// Relayout moves the divider under the pointer, so local coordinates cannot stand in for incremental screen movement.
