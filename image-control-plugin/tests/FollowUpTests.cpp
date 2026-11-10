@@ -50,6 +50,18 @@ struct SpectrogramViewTestAccess {
         return view.bandResponses(view.currentCrossovers());
     }
 
+    /// Returns the label bounds used by the position mapping overlay without painting pixels.
+    [[nodiscard]] juce::Rectangle<float> positionLabel(const float difference, const bool leftChannel) const
+    {
+        return view.positionCurveLabelBounds(difference, leftChannel);
+    }
+
+    /// Returns the same right-origin position mapping used by curve samples, guides, and centre-line ticks.
+    [[nodiscard]] juce::Point<float> positionPoint(const float difference, const bool leftChannel) const
+    {
+        return view.positionCurvePoint(difference, leftChannel);
+    }
+
     /// Counts geometry builds independently of path equality or allocator behavior.
     [[nodiscard]] std::uint64_t builds() const
     {
@@ -285,6 +297,111 @@ TEST(CorrelationLifecycle, MissingCallbacksExpireWithoutReadingOrMutatingAudioHi
     expectUnavailable(processor.getBandCorrelations());
     processor.releaseResources();
 }
+
+/// Mapping samples and centre-line ticks share a right-origin dB axis, independent of the frequency projection.
+TEST(SpectrogramPositionOverlay, RightOriginEndpointsAndMirroredSettingsUseThePlotBounds)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    const SpectrogramViewTestAccess access(view);
+    for (const auto& curve :
+         std::array {
+             StereoPositionCurve(3.0, 12.0),
+             StereoPositionCurve(10.0, 32.0),
+             StereoPositionCurve(24.0, 27.0),
+             StereoPositionCurve(24.0, 60.0),
+         })
+    {
+        view.setPositionCurve(curve);
+        for (const int width : {300, 760, 999}) {
+            view.setSize(width, 401);
+            const auto plot = view.getPlotBounds();
+            const float range = curve.edge() * 1.5F;
+            for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
+                view.setFrequencyScale(scale);
+                for (const bool leftChannel : {true, false}) {
+                    const auto origin = access.positionPoint(0.0F, leftChannel);
+                    EXPECT_FLOAT_EQ(origin.x, plot.getRight());
+                    EXPECT_FLOAT_EQ(origin.y, plot.getCentreY());
+                    EXPECT_FLOAT_EQ(access.positionPoint(range, leftChannel).x, plot.getX());
+                    const auto midpoint = access.positionPoint(curve.midpoint(), leftChannel);
+                    EXPECT_FLOAT_EQ(midpoint.x, plot.getRight() - curve.midpoint() / range * plot.getWidth());
+                    EXPECT_NEAR(midpoint.y, plot.getY() + (leftChannel ? 0.25F : 0.75F) * plot.getHeight(), 1.0e-4F);
+                    const auto edge = access.positionPoint(curve.edge(), leftChannel);
+                    EXPECT_FLOAT_EQ(edge.x, plot.getRight() - (2.0F / 3.0F) * plot.getWidth());
+                    EXPECT_NEAR(edge.y, plot.getY() + (leftChannel ? 0.005F : 0.995F) * plot.getHeight(), 1.0e-4F);
+                }
+                float previousX = plot.getRight();
+                for (const float difference : {3.0F, 6.0F, 12.0F, range}) {
+                    const auto upper = access.positionPoint(difference, true);
+                    const auto lower = access.positionPoint(difference, false);
+                    EXPECT_FLOAT_EQ(upper.x, lower.x);
+                    EXPECT_LT(upper.x, previousX);
+                    EXPECT_GE(upper.x, plot.getX());
+                    EXPECT_NEAR(upper.y + lower.y, plot.getCentreY() * 2.0F, 1.0e-4F);
+                    previousX = upper.x;
+                }
+            }
+        }
+    }
+}
+
+/// Right-aligned guide pills remain exposed and wholly inside even when the stereo mapping reaches an edge.
+TEST(SpectrogramPositionOverlay, GuideLabelsStayInsideTheRightSideOfThePlot)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    const SpectrogramViewTestAccess access(view);
+    for (const auto& curve : std::array {StereoPositionCurve(3.0, 12.0), StereoPositionCurve(24.0, 60.0)}) {
+        view.setPositionCurve(curve);
+        for (const int width : {300, 760, 999}) {
+            for (const int height : {120, 401}) {
+                view.setSize(width, height);
+                const auto plot = view.getPlotBounds();
+                for (const float difference : {3.0F, 6.0F, 12.0F, 18.0F, 24.0F, 36.0F, 48.0F, curve.edge()}) {
+                    const auto upper = access.positionLabel(difference, true);
+                    const auto lower = access.positionLabel(difference, false);
+                    EXPECT_FALSE(upper.isEmpty());
+                    EXPECT_FALSE(lower.isEmpty());
+                    EXPECT_TRUE(plot.contains(upper));
+                    EXPECT_TRUE(plot.contains(lower));
+                    EXPECT_GT(upper.getX(), plot.getCentreX());
+                    EXPECT_GT(lower.getX(), plot.getCentreX());
+                    EXPECT_FLOAT_EQ(upper.getRight(), plot.getRight() - 4.0F);
+                    EXPECT_FLOAT_EQ(lower.getRight(), plot.getRight() - 4.0F);
+                    EXPECT_NEAR(upper.getCentreY() + lower.getCentreY(), plot.getCentreY() * 2.0F, 1.0e-4F);
+                }
+            }
+        }
+    }
+}
+
+/// Geometry and frequency-scale changes leave the existing hold, fade, and same-setting timing untouched.
+TEST(SpectrogramPositionOverlay, GeometryDoesNotChangeTheHoldAndFadeContract)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    view.setSize(760, 401);
+    const SpectrogramViewTestAccess access(view);
+    view.setPositionCurve(StereoPositionCurve {});
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 0.0F);
+    const StereoPositionCurve curve(10.0, 32.0);
+    view.setPositionCurve(curve);
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 1.0F);
+    view.advance(2.5);
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 1.0F);
+    view.setFrequencyScale(FrequencyScale::mel);
+    view.setSize(999, 401);
+    EXPECT_FLOAT_EQ(access.positionPoint(0.0F, true).x, view.getPlotBounds().getRight());
+    view.setPositionCurve(curve);
+    view.advance(0.25);
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 0.5F);
+    view.advance(0.25);
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 0.0F);
+    view.setPositionCurve(StereoPositionCurve(12.0, 40.0));
+    EXPECT_FLOAT_EQ(view.positionCurveOpacity(), 1.0F);
+}
+
 /// Hover, gains, solo veils, and status opacity reuse geometry, while projection changes invalidate it.
 TEST(SpectrogramOverlayCache, OnlyPlotScaleAndOrderedCrossoversInvalidateGeometry)
 {
