@@ -264,14 +264,20 @@ def positive_integer(value: str) -> int:
     return parsed
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe benchmark inputs without building a host or loading installed plugins."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-e", "--cli", default=shutil.which("audiobatch"), help="AudioBatch CLI executable")
+    parser.add_argument(
+        "-r", "--runs", type=positive_integer, default=4, help="Renders per format, an even count of at least 2"
+    )
+    parser.add_argument("-j", "--jobs", type=positive_integer, default=1, help="Files rendered at once")
+    return parser
+
+
 def main() -> None:
     """Build the preset writer, render each format several times, and print the timings and the comparison."""
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--cli", default=shutil.which("audiobatch"), help="AudioBatch CLI executable")
-    parser.add_argument(
-        "--runs", type=positive_integer, default=4, help="Renders per format, an even count of at least 2"
-    )
-    parser.add_argument("--jobs", type=positive_integer, default=1, help="Files rendered at once")
+    parser = build_parser()
     arguments = parser.parse_args()
     if arguments.runs < MINIMUM_RUNS or arguments.runs % 2 != 0:
         parser.error("--runs must be even and at least 2 for counterbalanced timing and repeat determinism")

@@ -32,6 +32,14 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
 
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
+
 CLEAN=false
 LCOV=false
 OPEN=false

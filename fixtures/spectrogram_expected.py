@@ -234,10 +234,18 @@ def jq_formatted(text: str) -> bytes:
     return subprocess.run(command, input=text.encode(), capture_output=True, check=True).stdout  # noqa: S603
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe verification mode without generating or writing any artifacts."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "-c", "--check", action="store_true", help="Regenerate in memory and compare every artifact byte"
+    )
+    return parser
+
+
 def main() -> None:
     """Write artifacts, or report stale/missing artifacts with a nonzero check exit status."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Regenerate in memory and compare every artifact byte")
+    parser = build_parser()
     arguments = parser.parse_args()
     outputs = generate_outputs()
     if arguments.check:

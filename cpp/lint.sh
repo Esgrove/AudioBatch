@@ -34,7 +34,7 @@ OPTIONS: All options are optional
     -p | --build-dir <directory>
         Use this build directory's compile database instead of auto-detecting one.
 
-    --prepare
+    -P | --prepare
         Reconfigure the selected Ninja workspace and generate the headers needed by clang-tidy.
         Avoids compiling the applications. With --fuzz, builds the harnesses instead.
 
@@ -43,7 +43,7 @@ OPTIONS: All options are optional
         Use 1 for serial processing. Diagnostics are grouped by source file.
         Fixes and shared export files always use serial processing to avoid concurrent writes.
 
-    --clang
+    -k | --clang
         Select the Windows clang-cl workspace. Ignored on macOS.
 
     -b | --build-type <type>
@@ -62,6 +62,14 @@ Arguments after -- are passed to clang-tidy as is.
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
+
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
 
 init_options() {
     CHECK=false
@@ -93,7 +101,7 @@ init_options() {
             -f | --fuzz)
                 FUZZ=true
                 ;;
-            --prepare)
+            -P | --prepare)
                 PREPARE=true
                 ;;
             -v | --verbose)
@@ -113,7 +121,7 @@ init_options() {
                 JOBS="$2"
                 shift
                 ;;
-            --clang)
+            -k | --clang)
                 if [ "$BASH_PLATFORM" = "windows" ]; then
                     USE_CLANG=true
                 fi

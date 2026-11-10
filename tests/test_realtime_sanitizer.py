@@ -221,6 +221,39 @@ class OptionContracts(unittest.TestCase):
         assert not options.diagnostic
         assert runner.parse_options([*self.arguments(), "--timeout=180"]).timeout == 180
 
+    def test_short_aliases_preserve_exact_arguments_and_policies(self) -> None:
+        """Short spellings produce the same validated namespace, including repeated negative child arguments."""
+        long = [
+            *self.arguments(),
+            "--argument=--flag",
+            "--argument=-1",
+            "--expect=malloc",
+            "--expect=free",
+            f"--stack={CALLBACK}",
+            "--require-output=finished",
+            "--timeout=12.5",
+            "--control",
+            "--diagnostic",
+        ]
+        short = [
+            "-e",
+            sys.executable,
+            "-n",
+            "unit-case",
+            "-A",
+            "unused-artifacts",
+            "-a=--flag",
+            "-a=-1",
+            "-E=malloc",
+            "-E=free",
+            f"-s={CALLBACK}",
+            "-O=finished",
+            "-t=12.5",
+            "-c",
+            "-G",
+        ]
+        assert runner.parse_options(short) == runner.parse_options(long)
+
     def test_invalid_options_exit_with_usage_error(self) -> None:
         """Reject unbounded deadlines, incomplete expectations, malformed regexes, and path labels."""
         invalid = [

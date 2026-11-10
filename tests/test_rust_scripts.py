@@ -37,6 +37,14 @@ class RustScriptContracts(unittest.TestCase):
             "common.sh",
             "rust/common.sh",
             "rust/build.sh",
+            "rust/install.sh",
+            "rust/completions.sh",
+            "rust/miri.sh",
+            "rust/rtsan.sh",
+            "rust/scripts/cli_benchmark.sh",
+            "rust/scripts/parity.sh",
+            "rust/scripts/snapshot.sh",
+            "rust/scripts/vst3_benchmark.sh",
             "rust/lint.sh",
             "rust/format.sh",
             "rust/test.sh",
@@ -44,6 +52,7 @@ class RustScriptContracts(unittest.TestCase):
             "rust/fuzz.sh",
         ]:
             destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, destination)
             destination.chmod(0o755)
         self.tools = self.root / "bin"
@@ -51,7 +60,7 @@ class RustScriptContracts(unittest.TestCase):
         self.log = self.root / "commands.log"
         self.fuzz = self.project / "fuzz"
         self.fuzz.mkdir()
-        for name in ["cargo", "cargo-llvm-cov", "cargo-nextest", "cargo-fuzz", "rustup", "uv"]:
+        for name in ["cargo", "cargo-llvm-cov", "cargo-nextest", "cargo-fuzz", "rustup", "uv", "hyperfine"]:
             tool = self.tools / name
             tool.write_text(
                 """#!/bin/bash
@@ -135,6 +144,241 @@ fi
         if not self.log.exists():
             return []
         return [record.removesuffix("\0").split("\0") for record in self.log.read_text().splitlines()]
+
+    def test_help_exits_before_loading_helpers_or_querying_tools(self) -> None:
+        """Both help forms work even with unavailable helpers, missing values, and conflicting selections."""
+        (self.project / "common.sh").unlink()
+        scripts = [*self.project.glob("*.sh"), *self.project.glob("scripts/*.sh")]
+        for script in scripts:
+            for help_option in ["-h", "--help"]:
+                with self.subTest(script=script.name, help=help_option):
+                    arguments = ["--unknown", "--artifacts", help_option]
+                    if script.name == "snapshot.sh":
+                        arguments.insert(0, "save")
+                    result = self.invoke(str(script.relative_to(self.project)), *arguments)
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    assert "Usage:" in result.stdout
+                    assert self.commands() == []
+                    assert not (self.project / "target").exists()
+
+    def assert_equivalent_commands(
+        self, script: str, long_options: list[str], short_options: list[str], **environment: str
+    ) -> list[list[str]]:
+        """Compare actual child argv, statuses, and canonical diagnostics for both option spellings."""
+        recordings = []
+        results = []
+        for arguments in [long_options, short_options]:
+            self.log.unlink(missing_ok=True)
+            result = self.invoke(script, *arguments, **environment)
+            results.append(result)
+            commands = self.commands()
+            private_paths = [
+                line.removeprefix(prefix)
+                for line in result.stdout.splitlines()
+                for prefix in ["Benchmark results and failure logs: ", "VST3 benchmark reports: "]
+                if line.startswith(prefix)
+            ]
+            if commands and commands[0][0] == "uv" and "init" in commands[0]:
+                private_paths.append(commands[0][commands[0].index("init") + 1])
+            for private_path in private_paths:
+                commands = [[value.replace(private_path, "<private>") for value in command] for command in commands]
+            recordings.append(commands)
+        assert results[0].returncode == results[1].returncode, [result.stderr for result in results]
+        assert recordings[0] == recordings[1], recordings
+        return recordings[0]
+
+    def test_test_tier_aliases_preserve_concrete_commands(self) -> None:
+        """Short tiers are normalized before selection and integration-artifact validation."""
+        for long_option, short_option in [
+            ("--unit", "-u"),
+            ("--gui-integration", "-g"),
+            ("--optimized", "-O"),
+            ("--cli-integration", "-i"),
+            ("--tooling", "-T"),
+        ]:
+            with self.subTest(tier=long_option):
+                long_options, short_options = [long_option], [short_option]
+                if "integration" in long_option:
+                    long_options += ["--artifacts", "alias diagnostics"]
+                    short_options += ["-A", "alias diagnostics"]
+                commands = self.assert_equivalent_commands("test.sh", long_options, short_options)
+                assert commands
+        for arguments in [["-u", "--unit"], ["-u", "-O"], ["-A"], ["-u", "-A", "invalid"]]:
+            self.log.unlink(missing_ok=True)
+            result = self.invoke("test.sh", *arguments)
+            assert result.returncode != 0
+            assert self.commands() == []
+
+    def test_fuzz_aliases_preserve_build_replay_and_mutation(self) -> None:
+        """Canonical modes retain identical group selection, resource limits, and duration forwarding."""
+        for long_mode, short_mode in [("--build-only", "-B"), ("--replay", "-r"), ("--fuzz", "-f")]:
+            with self.subTest(mode=long_mode):
+                commands = self.assert_equivalent_commands(
+                    "fuzz.sh",
+                    [long_mode, "--targets", "decoder", "--seconds", "3"],
+                    [short_mode, "-T", "decoder", "-s", "3"],
+                )
+                assert commands[0][5:] == ["+nightly", "fuzz", "build", "decode_audio"]
+        commands = self.assert_equivalent_commands(
+            "fuzz.sh", ["--no-build", "--replay", "--replay"], ["-N", "-r", "--replay"]
+        )
+        assert all(command[0] != "cargo" for command in commands)
+        for arguments in [["-B", "-N"], ["-r", "--fuzz"], ["--replay", "-f"], ["-s"], ["-T"]]:
+            self.log.unlink(missing_ok=True)
+            result = self.invoke("fuzz.sh", *arguments)
+            assert result.returncode != 0
+            assert self.commands() == []
+
+    def test_coverage_miri_and_release_aliases_preserve_commands(self) -> None:
+        """Reporting, optional toolchain installation, and release selection retain their existing semantics."""
+        commands = self.assert_equivalent_commands("coverage.sh", ["--report-only", "--open"], ["-r", "-o"])
+        assert all(command[5:7] == ["llvm-cov", "report"] for command in commands)
+        commands = self.assert_equivalent_commands("miri.sh", ["--install"], ["-I"])
+        assert commands[0][0] == "rustup"
+        assert commands[0][5:] == [
+            "toolchain",
+            "install",
+            "nightly",
+            "--profile",
+            "minimal",
+            "--component",
+            "miri,rust-src",
+        ]
+        commands = self.assert_equivalent_commands(
+            "build.sh", ["--debug", "--release"], ["-d", "-R"], FAIL_MATCH="build"
+        )
+        assert commands[0][5:7] == ["build", "--release"]
+        commands = self.assert_equivalent_commands(
+            "install.sh", ["--cli-only", "--reuse"], ["-l", "-r"], FAIL_MATCH="install"
+        )
+        assert commands[0][5:] == ["install", "--force", "--locked", "--path", "crates/cli"]
+
+    def test_benchmark_shell_aliases_preserve_child_arguments(self) -> None:
+        """Benchmark switches use corpus -c, executable -C, and measured runs -r without building."""
+        rust_cli = self.project / "target/release/audiobatch-rs"
+        rust_cli.parent.mkdir(parents=True)
+        rust_cli.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        rust_cli.chmod(0o755)
+        cpp = self.root / "Release/audiobatch"
+        cpp.parent.mkdir()
+        shutil.copyfile(rust_cli, cpp)
+        cpp.chmod(0o755)
+        commands = self.assert_equivalent_commands(
+            "scripts/cli_benchmark.sh",
+            ["--no-build", "--jobs", "2", "--runs", "3", "--warmup", "0", "--corpus", "custom corpus"],
+            ["-N", "-j", "2", "-r", "3", "-w", "0", "-c", "custom corpus"],
+            AUDIOBATCH_CPP_CLI=str(cpp),
+            FAIL_MATCH="init",
+            TMPDIR=str(self.root),
+        )
+        # Each run intentionally gets private random result/work directories.
+        assert commands[0][-8:] == ["--jobs", "2", "--runs", "3", "--warmup", "0", "--corpus", "custom corpus"]
+
+    def test_vst3_benchmark_aliases_and_repeat_preserve_runs(self) -> None:
+        """Every public spelling forwards the same positional iteration and measured-run counts."""
+        cpp = self.root / "Release/AudioBatchTests"
+        cpp.parent.mkdir()
+        shutil.copyfile(self.tools / "cargo", cpp)
+        cpp.chmod(0o755)
+        rust = self.project / "target/release/examples/vst3_benchmark"
+        rust.parent.mkdir(parents=True)
+        shutil.copyfile(self.tools / "cargo", rust)
+        rust.chmod(0o755)
+        bundle = self.root / "AudioBatch Test MS.vst3"
+        bundle.mkdir()
+        for runs_option in ["--runs", "--repeat"]:
+            with self.subTest(runs=runs_option):
+                commands = self.assert_equivalent_commands(
+                    "scripts/vst3_benchmark.sh",
+                    ["--no-build", "--iterations", "4", runs_option, "7", "--cpp", str(cpp), "--bundle", str(bundle)],
+                    ["-N", "-i", "4", "-r", "7", "-C", str(cpp), "-b", str(bundle)],
+                    FAIL_MATCH="--vst3-benchmark",
+                )
+                assert len(commands) == 1
+                assert commands[0][5:7] == ["--vst3-benchmark", str(bundle)]
+                assert commands[0][-2:] == ["4", "7"]
+
+    def test_realtime_aliases_preserve_native_and_diagnostic_cases(self) -> None:
+        """Native omission and known-blocker diagnostics select identical recorded subprocess contracts."""
+        llvm = self.root / "fake LLVM"
+        llvm.mkdir()
+        runtime = llvm / "runtime.dylib"
+        runtime.touch()
+        bodies = {
+            "rustc": "printf 'rustc nightly\\nhost: aarch64-apple-darwin\\nLLVM version: 22.1.0\\n'\n",
+            "clang": f"printf '%s\\n' '{runtime}'\n"
+            "if [ \"$1\" = --version ]; then printf 'clang version 22.1.0\\n'; fi\n",
+            "llvm-symbolizer": "exit 0\n",
+            "otool": "printf 'libclang_rt.rtsan_osx_dynamic.dylib\\n'\n",
+            "jq": f"printf '%s\\n' '{self.tools / 'cargo'}'\n",
+        }
+        for name, body in bodies.items():
+            directory = llvm if name in {"clang", "llvm-symbolizer"} else self.tools
+            tool = directory / name
+            tool.write_text("#!/bin/bash\n" + body, encoding="utf-8")
+            tool.chmod(0o755)
+        bundle = self.root / "build-tree.vst3"
+        bundle.mkdir()
+        for long_mode, short_mode in [("--skip-native", "-S"), ("--diagnostic", "-G")]:
+            with self.subTest(mode=long_mode):
+                commands = self.assert_equivalent_commands(
+                    "rtsan.sh",
+                    [long_mode, "--artifacts", "realtime diagnostics"],
+                    [short_mode, "-A", "realtime diagnostics"],
+                    AUDIOBATCH_RTSAN_CLANG=str(llvm / "clang"),
+                    AUDIOBATCH_TEST_VST3=str(bundle),
+                )
+                cases = [command[5:] for command in commands if command[0] == "uv"]
+                assert cases
+                assert all("--artifacts" in command for command in cases)
+                assert sum("--diagnostic" in command for command in cases) == (5 if short_mode == "-G" else 0)
+                assert any("rust-preview_native_first_automation" in command for command in cases) == (
+                    short_mode == "-G"
+                )
+
+    def test_parity_release_alias_preserves_build_selection(self) -> None:
+        """Release profile and retained recursion and tolerance aliases choose identical child arguments."""
+        cpp = self.root / "Release/audiobatch"
+        cpp.parent.mkdir()
+        cpp.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        cpp.chmod(0o755)
+        commands = self.assert_equivalent_commands(
+            "scripts/parity.sh",
+            ["--release", "--recurse", "--tolerance", "0.01", "--normalize", "--peak", "-1", "input.wav"],
+            ["-R", "-r", "-t", "0.01", "-n", "-p", "-1", "input.wav"],
+            AUDIOBATCH_CPP_CLI=str(cpp),
+            FAIL_MATCH="build",
+        )
+        assert commands[0][5:] == ["build", "--quiet", "--release", "--bin", "audiobatch-rs"]
+
+    def test_positional_scripts_preserve_literal_paths_after_separator(self) -> None:
+        """A file named --help is processed, rather than reinterpreted as script or child-tool help."""
+        (self.root / "fixtures").mkdir()
+        source = self.root / "--help"
+        source.write_bytes(b"original")
+        binary = self.project / "target/release/audiobatch-rs"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/bash\nprintf '[]\\n'\n", encoding="utf-8")
+        binary.chmod(0o755)
+        snapshot = self.root / "saved snapshot"
+        result = self.invoke("scripts/snapshot.sh", "save", str(snapshot), "--", "--help")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Saved the snapshot" in result.stdout
+        assert (snapshot / "peak/1/--help").read_bytes() == b"original"
+        assert (snapshot / "lufs/1/--help").read_bytes() == b"original"
+        result = self.invoke("scripts/snapshot.sh", "compare", str(snapshot), "--", "--help")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "analyze.json: identical" in result.stdout
+        self.log.unlink(missing_ok=True)
+        cpp = self.root / "Release/audiobatch"
+        cpp.parent.mkdir()
+        shutil.copyfile(binary, cpp)
+        cpp.chmod(0o755)
+        result = self.invoke("scripts/parity.sh", "-R", "--", "--help", AUDIOBATCH_CPP_CLI=str(cpp))
+        assert result.returncode == 0, result.stdout + result.stderr
+        preparation = next(command for command in self.commands() if "--inputs" in command)
+        assert preparation[preparation.index("--inputs") + 1 :] == ["./--help"]
+        assert source.read_bytes() == b"original"
 
     def test_build_selects_only_application_binaries(self) -> None:
         """Packaging must not build or distribute plugin workspace binaries."""

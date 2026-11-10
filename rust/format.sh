@@ -17,6 +17,17 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
+# Resolve help before loading platform helpers or checking formatters.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
+
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh

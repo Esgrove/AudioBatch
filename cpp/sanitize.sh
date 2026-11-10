@@ -20,14 +20,14 @@ OPTIONS: All options are optional
         Use ThreadSanitizer instead of AddressSanitizer and UndefinedBehaviorSanitizer.
         Only supported on macOS.
 
-    --realtime
+    -R | --realtime
         Check focused preview callbacks with RealtimeSanitizer. Only supported on macOS.
         Cannot be combined with --thread or --clang.
 
     -v | --verbose
         Display commands being executed.
 
-    --clang
+    -k | --clang
         Use clang-cl and LLVM AddressSanitizer. Only supported on Windows.
 "
 
@@ -35,6 +35,14 @@ OPTIONS: All options are optional
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
+
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
 
 THREAD_SANITIZER=false
 REALTIME_SANITIZER=false
@@ -55,10 +63,10 @@ init_options() {
             -v | --verbose)
                 set -x
                 ;;
-            --realtime)
+            -R | --realtime)
                 REALTIME_SANITIZER=true
                 ;;
-            --clang)
+            -k | --clang)
                 USE_CLANG=true
                 ;;
             *)

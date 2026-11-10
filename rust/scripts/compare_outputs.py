@@ -429,8 +429,8 @@ def check_preservation(folder: Path, snapshot: dict) -> list[str]:
     return differences
 
 
-def main() -> None:
-    """Snapshots inputs or compares normalized folders against each other and their original sources."""
+def build_parser() -> argparse.ArgumentParser:
+    """Describe snapshot and comparison options without inspecting audio or writing captures."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("cpp", type=Path, nargs="?", help="Folder the C++ CLI normalized")
     parser.add_argument("rust", type=Path, nargs="?", help="Folder the Rust CLI normalized")
@@ -451,14 +451,21 @@ def main() -> None:
         help="Print the paths of the lossy sources in the folder relative to it, and exit",
     )
     parser.add_argument(
+        "-m",
         "--mode",
         choices=("peak", "lufs"),
         default="peak",
         help="Normalization mode, permits one integer PCM step for lossless outputs only in lufs mode",
     )
-    parser.add_argument("--snapshot", type=Path, metavar="FOLDER", help="Snapshot originals before normalization")
-    parser.add_argument("--expectations", type=Path, help="Expected outcomes from compare_levels.py")
-    parser.add_argument("--snapshots", type=Path, nargs=2, help="Original C++ and Rust snapshot files")
+    parser.add_argument("-s", "--snapshot", type=Path, metavar="FOLDER", help="Snapshot originals before normalization")
+    parser.add_argument("-E", "--expectations", type=Path, help="Expected outcomes from compare_levels.py")
+    parser.add_argument("-S", "--snapshots", type=Path, nargs=2, help="Original C++ and Rust snapshot files")
+    return parser
+
+
+def main() -> None:
+    """Snapshots inputs or compares normalized folders against each other and their original sources."""
+    parser = build_parser()
     arguments = parser.parse_args()
 
     if arguments.snapshot is not None:

@@ -2,16 +2,22 @@
 # Audits the real packaged own-wrapper VST3, not an in-process factory or an installed plugin.
 set -euo pipefail
 
-USAGE="Usage: $0 [--bundle <path>] [--skip-build]
+USAGE="Usage: $0 [OPTIONS]
 
 Run process-isolated native RealtimeSanitizer checks against the packaged ImageControl RS VST3.
 Every native callback case requires a clean result. No dependency reports are suppressed.
 Requires macOS, nightly Rust, uv, jq, and a matching Homebrew LLVM runtime.
 
 OPTIONS:
-    -h | --help       Display these instructions without building or checking dependencies.
-    --bundle <path>   Audit this build-tree VST3 instead of the default own-wrapper bundle.
-    --skip-build      Reuse the supplied/default bundle instead of building the Release plugin.
+    -h | --help
+        Display these instructions without building or checking dependencies.
+
+    -b | --bundle <path>
+        Audit this build-tree VST3 instead of the default own-wrapper bundle.
+
+    -N | --no-build
+        Reuse the supplied/default bundle instead of building the Release plugin.
+        --skip-build is a deprecated alias for --no-build.
 
 CASES:
     Detector controls, cold automation, reset, concurrent detached state save/restore,
@@ -24,9 +30,9 @@ ENVIRONMENT:
 for argument in "$@"; do
     case "$argument" in
         -h | --help)
-                     printf '%s\n' "$USAGE"
-                                             exit 0
-                                                    ;;
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
         --) break ;;
     esac
 done
@@ -38,12 +44,12 @@ BUNDLE="${IMAGE_CONTROL_OWN_BUNDLE:-${CARGO_TARGET_DIR:-$REPO_ROOT/rust/target}/
 SKIP_BUILD=false
 while [ $# -gt 0 ]; do
     case "$1" in
-        --bundle)
+        -b | --bundle)
             [ $# -ge 2 ] || print_error_and_exit "--bundle requires a path"
             BUNDLE="$2"
             shift
             ;;
-        --skip-build) SKIP_BUILD=true ;;
+        -N | --no-build | --skip-build) SKIP_BUILD=true ;;
         *) print_error_and_exit "Unknown option: $1. See --help." ;;
     esac
     shift

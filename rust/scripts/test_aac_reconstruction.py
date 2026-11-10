@@ -210,13 +210,20 @@ def check_outputs(inputs: list[Path], directory: Path, cpp: Path, rust: Path) ->
             print(f"  {steps} maximum PCM steps, {differing} differing samples")
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe executable and copied-input selection without running reconstruction diagnostics."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-C", "--cpp-cli", type=Path, required=True)
+    parser.add_argument("-R", "--rust-cli", type=Path, required=True)
+    parser.add_argument(
+        "-i", "--input", type=Path, action="append", default=[], help="Additional original AAC input, copied"
+    )
+    return parser
+
+
 def main() -> None:
     """Runs bounded native diagnostics and production parity without writing fixtures or normal application storage."""
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--cpp-cli", type=Path, required=True)
-    parser.add_argument("--rust-cli", type=Path, required=True)
-    parser.add_argument("--input", type=Path, action="append", default=[], help="Additional original AAC input, copied")
-    arguments = parser.parse_args()
+    arguments = build_parser().parse_args()
     with tempfile.TemporaryDirectory(prefix="audiobatch-aac-") as temporary:
         directory = Path(temporary)
         inputs = check_reconstruction(directory)

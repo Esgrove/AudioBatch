@@ -870,6 +870,34 @@ class CliIntegration(unittest.TestCase):
         assert list(self.audio.iterdir()) == [output], "No unfinished output files may remain"
 
 
+class RunnerOptionContracts(unittest.TestCase):
+    """Check runner aliases without launching an audio application or resolving executable paths."""
+
+    def test_aliases_preserve_typed_paths_and_unittest_passthrough(self) -> None:
+        """Only owned runner options are consumed, including when unittest arguments follow a terminator."""
+        parser = build_parser()
+        for passthrough in (["-v", "CliIntegration.test_help"], ["--", "-v", "-negative-test-name"]):
+            short = parser.parse_known_args(
+                ["-e", "CLI path", "-p", "plugin path", "-A", "artifact path", *passthrough]
+            )
+            long = parser.parse_known_args(
+                [
+                    "--cli",
+                    "CLI path",
+                    "--test-plugin",
+                    "plugin path",
+                    "--artifacts",
+                    "artifact path",
+                    *passthrough,
+                ]
+            )
+            assert short == long
+            assert short[0] == argparse.Namespace(
+                cli=Path("CLI path"), test_plugin=Path("plugin path"), artifacts=Path("artifact path")
+            )
+            assert short[1] == passthrough
+
+
 class PluginDiscoveryContracts(unittest.TestCase):
     """Find the test effect in the standalone build script's documented output directories."""
 
@@ -900,13 +928,18 @@ class PluginDiscoveryContracts(unittest.TestCase):
                 assert contents["slots"][0]["plugin"]["bundle"] == str(bundle)
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe runner options separately from the unittest arguments passed through unchanged."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-e", "--cli", type=Path, required=True, help="Built C++ or Rust CLI executable")
+    parser.add_argument("-p", "--test-plugin", type=Path, help="Built AudioBatch Test MS VST3 bundle")
+    parser.add_argument("-A", "--artifacts", type=Path, help="Keep per-case diagnostics after a failure")
+    return parser
+
+
 def main() -> int:
     """Configure one executable and run the portable process-contract suite."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cli", type=Path, required=True, help="Built C++ or Rust CLI executable")
-    parser.add_argument("--test-plugin", type=Path, help="Built AudioBatch Test MS VST3 bundle")
-    parser.add_argument("--artifacts", type=Path, help="Keep per-case diagnostics after a failure")
-    arguments, test_arguments = parser.parse_known_args()
+    arguments, test_arguments = build_parser().parse_known_args()
     CliIntegration.executable = arguments.cli.resolve(strict=True)
     CliIntegration.test_plugin = arguments.test_plugin.resolve(strict=True) if arguments.test_plugin else None
     CliIntegration.artifacts = arguments.artifacts.resolve() if arguments.artifacts else None

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-USAGE="Usage: $0 [OPTIONS] <paths...>
+USAGE="Usage: $0 [OPTIONS] [--] <paths...>
 
 Compare the analysis results of the Rust and the C++ AudioBatch CLI.
 Runs both on the same paths with --refresh and JSON output,
@@ -41,9 +41,20 @@ OPTIONS: All options are optional
     -l | --lufs <LUFS>
         Normalize to this integrated loudness instead of a peak.
 
-    --release
+    -R | --release
         Build and run the Rust CLI in release mode, which is faster on large folders.
 "
+
+# Resolve help before loading platform helpers or checking input paths.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../common.sh
@@ -66,6 +77,9 @@ while [ $# -gt 0 ]; do
             RECURSE=(--recurse)
             ;;
         -t | --tolerance)
+            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == -* ]]; then
+                print_error_and_exit "$1 requires a tolerance."
+            fi
             TOLERANCE="$2"
             shift
             ;;
@@ -73,15 +87,30 @@ while [ $# -gt 0 ]; do
             NORMALIZE=(--normalize)
             ;;
         -p | --peak)
+            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+                print_error_and_exit "$1 requires a sample peak."
+            fi
             TARGET=(--peak "$2")
             shift
             ;;
         -l | --lufs)
+            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+                print_error_and_exit "$1 requires a loudness."
+            fi
             TARGET=(--lufs "$2")
             shift
             ;;
-        --release)
+        -R | --release)
             PROFILE="release"
+            ;;
+        --)
+            shift
+            for path in "$@"; do
+                # Keep option-looking literal paths unambiguous for the CLIs and Python helpers.
+                if [[ "$path" == -* ]]; then path="./$path"; fi
+                PATHS+=("$path")
+            done
+            break
             ;;
         -*)
             echo "Unknown option: $1" >&2
@@ -243,4 +272,4 @@ if [ ${#NORMALIZE[@]} -gt 0 ]; then
     uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" --mode "$MODE" \
         --lossy "$WORK_DIR/lossy.txt" --snapshots "$WORK_DIR/cpp-before.json" "$WORK_DIR/rust-before.json" || STATUS=1
 fi
-exit $STATUS
+exit "$STATUS"

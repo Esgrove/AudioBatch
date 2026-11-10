@@ -18,9 +18,24 @@ OPTIONS: All options are optional
     -c | --clean
         Accepted for the root scripts. Only the C++ CMake build directory is cleaned.
 
+    -r | --reuse
+        Accepted for compatibility with the C++ installer, without changing Rust installation.
+        Rust still builds and installs through Cargo's incremental build cache.
+
     -v | --verbose
         Display commands being executed.
 "
+
+# Resolve help before loading platform helpers or checking installation tools.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -81,6 +96,8 @@ install_windows_gui_app() {
     cp -f "./target/release/$GUI_BINARY_NAME.exe" "$APP_DESTINATION"
     copy_third_party_licenses "$app_install_dir/licenses"
 
+    # PowerShell expands its own environment variables, not the calling shell.
+    # shellcheck disable=SC2016
     AUDIOBATCH_TARGET_PATH="$windows_app_destination" \
         AUDIOBATCH_SHORTCUT_PATH="$windows_shortcut_destination" \
         powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command '
@@ -125,7 +142,7 @@ if [ "$CLI_ONLY" = false ]; then
     if [ "$BASH_PLATFORM" = "mac" ]; then
         echo "$("$APP_DESTINATION/Contents/MacOS/$GUI_BINARY_NAME" --version) in $APP_DESTINATION"
     elif [ "$BASH_PLATFORM" = "windows" ]; then
-        echo "$(cygpath -w "$APP_DESTINATION")"
+        cygpath -w "$APP_DESTINATION"
     else
         echo "$("$GUI_BINARY_NAME" --version) from $(command -v "$GUI_BINARY_NAME")"
     fi

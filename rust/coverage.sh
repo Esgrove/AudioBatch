@@ -19,7 +19,7 @@ OPTIONS: All options are optional
     -o | --open
         Write the HTML report to target/llvm-cov/html and open it in the browser.
 
-    --report-only
+    -r | --report-only
         Write LCOV, HTML, and a summary from existing coverage data without running tests.
         Append the summary to GITHUB_STEP_SUMMARY when set.
         Cannot be combined with --clean.
@@ -27,6 +27,17 @@ OPTIONS: All options are optional
     -v | --verbose
         Display commands being executed.
 "
+
+# Resolve help before loading platform helpers or checking coverage tools.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -52,7 +63,7 @@ while [ $# -gt 0 ]; do
         -o | --open)
             OPEN=true
             ;;
-        --report-only)
+        -r | --report-only)
             REPORT_ONLY=true
             ;;
         -v | --verbose)

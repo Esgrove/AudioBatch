@@ -116,11 +116,16 @@ def fit_model(
     }
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe optional report capture without running the model fit."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-o", "--output", type=Path, help="Write the full fit report as JSON")
+    return parser
+
+
 def main() -> None:
     """Print reproducible coefficients, comparisons, and held-out errors, optionally saving JSON."""
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--output", type=Path, help="Write the full fit report as JSON")
-    args = parser.parse_args()
+    args = build_parser().parse_args()
     observations = np.array(
         [
             (source, gain, clip, output, index)

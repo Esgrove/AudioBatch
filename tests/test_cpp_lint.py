@@ -58,6 +58,9 @@ class LintReporting(unittest.TestCase):
         )
         self.tools = self.root / "bin"
         self.tools.mkdir()
+        xcrun = self.tools / "xcrun"
+        xcrun.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        xcrun.chmod(0o755)
         # Select a supported platform without depending on the host running this shell regression.
         uname = self.tools / "uname"
         uname.write_text("#!/bin/bash\nprintf '%s\\n' \"${LINT_TEST_PLATFORM:-Darwin}\"\n", encoding="utf-8")
@@ -81,6 +84,8 @@ if [ "$1" = --version ]; then
     printf 'Fake clang-tidy\nReporting regression test\n'
     exit 0
 fi
+printf '%s\\t' "$@" >> "$LINT_TEST_LOG"
+printf '\\n' >> "$LINT_TEST_LOG"
 for argument in "$@"; do
     case "$argument" in
         *.cpp)
@@ -107,7 +112,13 @@ exit "${LINT_TEST_STATUS:-0}"
         clang_tidy.chmod(0o755)
 
     def invoke(
-        self, jobs: int, *, warning: bool = False, status: int = 0, windows: bool = False, prepare: bool = False
+        self,
+        jobs: int,
+        *extra_arguments: str,
+        warning: bool = False,
+        status: int = 0,
+        windows: bool = False,
+        short: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """Run the real lint script with only the analyzer replaced and a bounded timeout."""
         environment = os.environ.copy()
@@ -118,18 +129,18 @@ exit "${LINT_TEST_STATUS:-0}"
             LINT_TEST_PLATFORM="MINGW64_NT" if windows else "Darwin",
             LINT_TEST_MIXED_ROOT="C:/Users/Lint [test]/repository",
             LINT_TEST_NATIVE_ROOT=r"C:\Users\Lint [test]\repository",
+            LINT_TEST_LOG=str(self.root / "clang-tidy.log"),
         )
         arguments = [
             self.bash,
             "lint.sh",
-            "--check",
-            "--build-dir",
+            "-c" if short else "--check",
+            "-p" if short else "--build-dir",
             "build",
-            "--jobs",
+            "-j" if short else "--jobs",
             str(jobs),
         ]
-        if prepare:
-            arguments.append("--prepare")
+        arguments.extend(extra_arguments)
         return subprocess.run(  # noqa: S603
             arguments,
             cwd=self.project,
@@ -139,6 +150,50 @@ exit "${LINT_TEST_STATUS:-0}"
             timeout=30,
             check=False,
         )
+
+    def test_short_prepare_jobs_and_build_type_preserve_values(self) -> None:
+        """Exercise the short prepare alias and value-taking aliases with logged fake CMake."""
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Debug\n", encoding="utf-8"
+        )
+        log = self.root / "cmake.log"
+        cmake = self.tools / "cmake"
+        cmake.write_text(
+            '#!/bin/bash\nprintf "%s\\t" "$@" >> ../cmake.log\nprintf "\\n" >> ../cmake.log\n',
+            encoding="utf-8",
+        )
+        cmake.chmod(0o755)
+        result = self.invoke(1, "-P", "-b", "Debug", "-k", short=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        configure, build = [line.rstrip("\t").split("\t") for line in log.read_text(encoding="utf-8").splitlines()]
+        assert "-DCMAKE_BUILD_TYPE=Debug" in configure
+        assert "-DBUILD_TESTING=ON" in configure
+        assert "--target" in build
+        assert "AudioBatchTests_artefacts/JuceLibraryCode/JuceHeader.h" in build
+
+    def test_downstream_help_and_flag_spelling_are_passed_through_unchanged(self) -> None:
+        """A --help after the separator belongs to clang-tidy, never the script help scanner."""
+        result = self.invoke(1, "--", "--help", "-P", "--checks=test-*", short=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Usage:" not in result.stdout
+        commands = [
+            line.rstrip("\t").split("\t")
+            for line in (self.root / "clang-tidy.log").read_text(encoding="utf-8").splitlines()
+        ]
+        assert commands
+        for command in commands:
+            assert command[-3:] == ["--help", "-P", "--checks=test-*"]
+
+    def test_short_clang_alias_requires_a_windows_clang_workspace(self) -> None:
+        """The Windows compiler alias selects the same compatibility guard as its long spelling."""
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER:FILEPATH=cl.exe\n",
+            encoding="utf-8",
+        )
+        result = self.invoke(1, "-k", windows=True, short=True)
+        assert result.returncode != 0
+        assert "--clang requires a clang-cl workspace" in result.stderr
+        assert not (self.root / "clang-tidy.log").exists()
 
     def test_prepare_refreshes_only_generated_header_targets(self) -> None:
         """Refresh a restored Ninja workspace even when its compile database already exists."""
@@ -152,7 +207,7 @@ exit "${LINT_TEST_STATUS:-0}"
             encoding="utf-8",
         )
         cmake.chmod(0o755)
-        result = self.invoke(2, prepare=True)
+        result = self.invoke(2, "--prepare")
         assert result.returncode == 0, result.stdout + result.stderr
         configure, build = [line.rstrip("\t").split("\t") for line in log.read_text(encoding="utf-8").splitlines()]
         assert "-DBUILD_TESTING=ON" in configure

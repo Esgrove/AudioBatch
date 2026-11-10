@@ -18,7 +18,7 @@ OPTIONS: All options are optional
     -x | --xcode
         Use Xcode as the build system (macOS only, default is Ninja).
 
-    --clang
+    -k | --clang
         Use LLVM clang-cl and LLD with Ninja on Windows. Ignored on macOS.
 
     -o | --open
@@ -54,6 +54,14 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
 
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
+
 init_options() {
     BUILD_TYPE="Release"
     USE_NINJA=false
@@ -73,7 +81,7 @@ init_options() {
             -n | --ninja)
                 USE_NINJA=true
                 ;;
-            --clang)
+            -k | --clang)
                 if [ "$BASH_PLATFORM" = "windows" ]; then
                     USE_CLANG=true
                     USE_NINJA=true

@@ -152,11 +152,16 @@ def expected() -> dict:
     }
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe read-only verification without calculating or writing expectations."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-c", "--check", action="store_true")
+    return parser
+
+
 def main() -> None:
     """Write reproducible expectations, or fail when committed values differ."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true")
-    arguments = parser.parse_args()
+    arguments = build_parser().parse_args()
     jq = shutil.which("jq")
     if jq is None:
         message = "jq not found in path, it formats the expected JSON like format.sh"

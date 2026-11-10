@@ -299,19 +299,26 @@ def inspect(path: Path) -> dict:
     }
 
 
-def main() -> int:
-    """Prints or saves an independent capture, or verifies reviewed expectations without changing them."""
+def build_parser() -> argparse.ArgumentParser:
+    """Describe input selection and capture options without inspecting fixture metadata."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "-d",
         "--directory",
         type=Path,
         default=Path(__file__).resolve().parent,
         help="Fixture directory, defaulting to this script's directory",
     )
-    parser.add_argument("--output", type=Path, help="Write inspection JSON here instead of stdout")
+    parser.add_argument("-o", "--output", type=Path, help="Write inspection JSON here instead of stdout")
     parser.add_argument(
-        "--check", action="store_true", help="Compare with expected.json without rewriting expectations"
+        "-c", "--check", action="store_true", help="Compare with expected.json without rewriting expectations"
     )
+    return parser
+
+
+def main() -> int:
+    """Prints or saves an independent capture, or verifies reviewed expectations without changing them."""
+    parser = build_parser()
     args = parser.parse_args()
     paths = sorted(path for path in args.directory.iterdir() if path.suffix.lower() in AUDIO_SUFFIXES)
     if not paths:

@@ -433,19 +433,19 @@ def report(work: Path, results: Path) -> None:
     (results / "summary.md").write_text("\n".join(markdown) + "\n", encoding="utf-8")
 
 
-def main() -> None:
-    """Dispatches internal benchmark preparation and validation operations."""
+def build_parser() -> argparse.ArgumentParser:
+    """Describe benchmark subcommands without preparing workspaces or running executables."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     initialization = commands.add_parser("init")
     initialization.add_argument("work", type=Path)
     initialization.add_argument("results", type=Path)
-    initialization.add_argument("--cpp", type=Path, required=True)
-    initialization.add_argument("--rust", type=Path, required=True)
-    initialization.add_argument("--jobs", type=int, required=True)
-    initialization.add_argument("--runs", type=int, required=True)
-    initialization.add_argument("--warmup", type=int, required=True)
-    initialization.add_argument("--corpus", default="auto")
+    initialization.add_argument("-C", "--cpp", type=Path, required=True)
+    initialization.add_argument("-R", "--rust", type=Path, required=True)
+    initialization.add_argument("-j", "--jobs", type=int, required=True)
+    initialization.add_argument("-r", "--runs", type=int, required=True)
+    initialization.add_argument("-w", "--warmup", type=int, required=True)
+    initialization.add_argument("-c", "--corpus", default="auto")
     for name in ("prepare", "check", "compare", "combine", "report"):
         command = commands.add_parser(name)
         command.add_argument("work", type=Path)
@@ -456,6 +456,12 @@ def main() -> None:
         if name in {"check", "compare", "combine"}:
             command.add_argument("mode", choices=TARGETS)
             command.add_argument("jobs", type=int)
+    return parser
+
+
+def main() -> None:
+    """Dispatches internal benchmark preparation and validation operations."""
+    parser = build_parser()
     arguments = parser.parse_args()
     try:
         if arguments.command == "init":

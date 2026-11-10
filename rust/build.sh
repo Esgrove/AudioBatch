@@ -16,12 +16,26 @@ OPTIONS: All options are optional
     -d | --debug
         Build the debug binaries instead of release binaries.
 
+    -R | --release
+        Build the release binaries (default).
+
     -c | --clean
         Accepted for the root scripts. Only the C++ CMake build directory is cleaned.
 
     -v | --verbose
         Display commands being executed.
 "
+
+# Resolve help before loading platform helpers or checking build tools.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -41,6 +55,9 @@ while [ $# -gt 0 ]; do
             ;;
         -d | --debug)
             BUILD_PROFILE="debug"
+            ;;
+        -R | --release)
+            BUILD_PROFILE="release"
             ;;
         -c | --clean)
             # Only the C++ project has a CMake build directory to clean.

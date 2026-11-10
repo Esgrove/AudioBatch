@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which("bash")
 SCRIPTS = ("build.sh", "install.sh")
+ALL_SCRIPTS = (*SCRIPTS, "coverage.sh", "sanitize.sh", "format.sh", "lint.sh")
 
 
 class BuildScriptContracts(unittest.TestCase):
@@ -34,8 +35,7 @@ class BuildScriptContracts(unittest.TestCase):
         for relative in (
             "common.sh",
             "image-control-plugin/common.sh",
-            "image-control-plugin/build.sh",
-            "image-control-plugin/install.sh",
+            *(f"image-control-plugin/{script}" for script in ALL_SCRIPTS),
             "cpp/cmake/Pluginval.cmake",
             "cpp/cmake/RunPluginval.cmake",
         ):
@@ -103,6 +103,7 @@ else
         if [ "$1" = -B ]; then
             mkdir -p "$2"
             : > "$2/CMakeCache.txt"
+            printf '[]\\n' > "$2/compile_commands.json"
             exit 0
         fi
         shift
@@ -206,7 +207,7 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
 
     def test_production_scripts_have_valid_bash_syntax(self) -> None:
         """Syntax-check both entry points and both sourced helpers without executing them."""
-        for script in ("common.sh", *(f"image-control-plugin/{name}" for name in (*SCRIPTS, "common.sh"))):
+        for script in ("common.sh", *(f"image-control-plugin/{name}" for name in (*ALL_SCRIPTS, "common.sh"))):
             with self.subTest(script=script):
                 self.assert_success(self.run_bash("-n", str(self.root / script)))
         assert not self.commands()
@@ -217,12 +218,179 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
             with self.subTest(script=script):
                 result = self.invoke(script, "--help")
                 self.assert_success(result)
-                for text in ("--validate", "-V", "--validation-level", "pluginval", "PATH", "5", "10"):
+                for text in ("--validate", "-V", "--validation-level", "-L", "pluginval", "PATH", "5", "10"):
                     assert text in result.stdout, result.stdout
                 assert ("built" if script == "build.sh" else "installed") in result.stdout.lower()
                 if script == "install.sh":
                     assert "auval" in result.stdout
                 assert not self.commands()
+
+    def test_all_help_aliases_exit_before_argument_errors_or_tools(self) -> None:
+        """Help anywhere before a passthrough separator wins over malformed options and values."""
+        for script in ALL_SCRIPTS:
+            for flag in ("-h", "--help"):
+                for prefix in ((), ("--unknown",), ("--validation-level",)):
+                    with self.subTest(script=script, flag=flag, prefix=prefix):
+                        result = self.invoke(script, *prefix, flag, "--unknown")
+                        self.assert_success(result)
+                        assert "Usage:" in result.stdout
+                        assert not self.commands()
+                        assert not (self.home / "Library").exists()
+
+    def test_unknown_options_fail_before_side_effects(self) -> None:
+        """Reject trailing unknown flags before tools, builds, cleaning, or installations."""
+        for script in ALL_SCRIPTS:
+            with self.subTest(script=script):
+                result = self.invoke(script, "-v", "--unknown")
+                assert result.returncode != 0, result.stdout + result.stderr
+                assert "Unknown option" in result.stderr
+                assert not self.commands()
+                assert not (self.home / "Library").exists()
+
+    def test_lint_preserves_help_after_passthrough_separator(self) -> None:
+        """A clang-tidy help argument is not consumed by the wrapper's early help scan."""
+        result = self.invoke("lint.sh", "--", "--help")
+        assert result.returncode != 0
+        assert "clang-tidy not found" in result.stderr
+        assert "Usage:" not in result.stdout
+        assert not self.commands()
+
+    def test_build_and_installer_selection_aliases(self) -> None:
+        """Short and long Debug, clean, reuse, verbose, and test flags keep identical behavior."""
+        for script in SCRIPTS:
+            for debug, clean, reuse, verbose, test in (
+                ("-d", "-c", "-r", "-v", "-t"),
+                ("--debug", "--clean", "--reuse", "--verbose", "--test"),
+            ):
+                with self.subTest(script=script, debug=debug):
+                    marker = self.built_vst3("Debug") / "stale"
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.touch()
+                    self.clear_log()
+                    arguments = [debug, clean, verbose]
+                    if script == "build.sh":
+                        arguments.append(test)
+                    self.assert_success(self.invoke(script, *arguments))
+                    assert not marker.exists()
+                    assert "Debug" in self.commands("cmake")[1]
+                    assert bool(self.commands("ctest")) == (script == "build.sh")
+                    self.clear_log()
+                    self.assert_success(self.invoke(script, debug, reuse))
+                    assert len(self.commands("cmake")) == 1
+                    assert self.commands("cmake")[0][0] == "--build"
+
+    def test_build_print_type_and_ninja_aliases(self) -> None:
+        """Path-only selection honors both build-type and Windows Ninja aliases without building."""
+        for print_flag, build_type, ninja in (("-p", "-b", "-n"), ("--print", "--build-type", "--ninja")):
+            with self.subTest(print_flag=print_flag):
+                result = self.invoke(
+                    "build.sh", print_flag, build_type, "RelWithDebInfo", ninja, TEST_PLATFORM="MINGW64_NT"
+                )
+                self.assert_success(result)
+                expected = (
+                    self.plugin
+                    / "cmake-build-ninja-relwithdebinfo/ImageControl_artefacts/RelWithDebInfo/VST3/ImageControl.vst3"
+                )
+                assert result.stdout.strip() == str(expected)
+                assert not self.commands()
+
+    def test_sanitizer_thread_and_realtime_aliases(self) -> None:
+        """Both sanitizer mode aliases configure the same isolated instrumentation workspaces."""
+        llvm = self.root / "fake LLVM"
+        (llvm / "bin").mkdir(parents=True)
+        for compiler in ("clang", "clang++"):
+            executable = llvm / "bin" / compiler
+            executable.write_text(f"#!{BASH}\nexit 0\n", encoding="utf-8")
+            executable.chmod(0o755)
+        self.write_tool("brew", 'printf "%s\\n" "$TEST_LLVM"\n')
+        self.write_tool("uv", "exit 0\n")
+        for mode, sanitizer in (
+            ("-t", "thread"),
+            ("--thread", "thread"),
+            ("-R", "realtime"),
+            ("--realtime", "realtime"),
+        ):
+            with self.subTest(mode=mode):
+                self.clear_log()
+                self.assert_success(self.invoke("sanitize.sh", mode, TEST_LLVM=str(llvm)))
+                assert f"-DIMAGE_CONTROL_SANITIZE={sanitizer}" in self.commands("cmake")[0]
+                assert len(self.commands("ctest")) == 1
+
+    def test_coverage_report_aliases(self) -> None:
+        """Both LCOV and HTML switches reach their report tools without touching real coverage tools."""
+        self.write_tool("xcrun", 'printf "%s/%s\\n" "${0%/*}" "$2"\n')
+        self.write_tool("llvm-profdata", "exit 0\n")
+        self.write_tool("llvm-cov", "exit 0\n")
+        self.write_tool("open", "exit 0\n")
+        self.write_tool("git", "printf 'src/Contract.cpp\\0'\n")
+        source = self.plugin / "src/Contract.cpp"
+        source.parent.mkdir()
+        source.touch()
+        for lcov, open_flag in (("-l", "-o"), ("--lcov", "--open")):
+            with self.subTest(lcov=lcov):
+                self.clear_log()
+                self.assert_success(self.invoke("coverage.sh", lcov, open_flag))
+                assert [command[0] for command in self.commands("llvm-cov")] == ["report", "export", "show"]
+                assert "-format=lcov" in self.commands("llvm-cov")[1]
+                assert self.commands("open") == [
+                    [str(self.plugin / "cmake-build-mac-coverage/coverage/html/index.html")]
+                ]
+
+    def test_lint_selection_and_check_aliases(self) -> None:
+        """All lint selectors, database paths, job counts, and check aliases reach the production command."""
+        for command in ("find", "sort", "mktemp", "xargs", "cat"):
+            executable = shutil.which(command)
+            assert executable is not None
+            (self.tools / command).symlink_to(executable)
+        self.write_tool("git", "printf 'image-control-plugin/tests/Contract.cpp\\n'\n")
+        self.write_tool("clang-tidy", "printf 'contract.cpp:1:1: warning: contract warning\\n'\n")
+        for directory in ("src", "tests", "benchmarks"):
+            (self.plugin / directory).mkdir(exist_ok=True)
+        (self.plugin / "tests/Contract.cpp").touch()
+        (self.root / "cpp/JUCE/modules").mkdir()
+        for config in (".clang-tidy", ".clang-format", "tests/.clang-tidy"):
+            target = self.root / "cpp" / config
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch()
+            (self.plugin / config).symlink_to(target)
+        database = self.plugin / "selected lint workspace"
+        for check, build_dir, jobs, selectors in (
+            ("-c", "-p", "-j", ("-C", "-s")),
+            ("--check", "--build-dir", "--jobs", ("--changed", "--staged")),
+        ):
+            for selector in selectors:
+                with self.subTest(check=check, selector=selector):
+                    self.clear_log()
+                    result = self.invoke("lint.sh", check, selector, build_dir, str(database), jobs, "1")
+                    assert result.returncode == 1, result.stdout + result.stderr
+                    assert "clang-tidy reported 1 warnings" in result.stdout
+                    tidy = self.commands("clang-tidy")
+                    assert len(tidy) == 1
+                    assert tidy[0][:2] == ["-p", str(database)]
+                    assert tidy[0][-1] == str(self.plugin / "tests/Contract.cpp")
+                    git = self.commands("git")
+                    assert any("--cached" in command for command in git) == (selector in ("-s", "--staged"))
+        self.clear_log()
+        result = self.invoke("lint.sh", "--changed", "--build-dir", str(database), "--jobs", "1")
+        self.assert_success(result)
+        assert "clang-tidy reported 1 warnings" in result.stdout
+
+    def test_format_check_aliases(self) -> None:
+        """Both check aliases call the nonmutating formatter mode rather than rewriting files."""
+        for command in ("find", "sort"):
+            executable = shutil.which(command)
+            assert executable is not None
+            (self.tools / command).symlink_to(executable)
+        for directory in ("src", "tests", "benchmarks"):
+            (self.plugin / directory).mkdir(exist_ok=True)
+        self.write_tool("clang-format", "exit 37\n")
+        for flag in ("-c", "--check"):
+            with self.subTest(flag=flag):
+                self.clear_log()
+                result = self.invoke("format.sh", flag)
+                assert result.returncode == 37, result.stdout + result.stderr
+                assert "--dry-run" in self.commands("clang-format")[0]
+                assert "-i" not in self.commands("clang-format")[0]
 
     def test_validation_is_opt_in(self) -> None:
         """Ordinary builds and installs never invoke either validator."""
@@ -246,11 +414,12 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
     def test_each_valid_level_implies_validation(self) -> None:
         """Every accepted value works without a separate --validate flag."""
         for script in SCRIPTS:
-            for level in range(5, 11):
-                with self.subTest(script=script, level=level):
-                    self.clear_log()
-                    self.assert_success(self.invoke(script, "--validation-level", str(level)))
-                    self.assert_validation(script, level)
+            for flag in ("--validation-level", "-L"):
+                for level in range(5, 11):
+                    with self.subTest(script=script, flag=flag, level=level):
+                        self.clear_log()
+                        self.assert_success(self.invoke(script, flag, str(level)))
+                        self.assert_validation(script, level)
 
     def test_invalid_levels_fail_before_build_or_install_side_effects(self) -> None:
         """Reject missing, empty, noncanonical, noninteger, and out-of-range arguments before --clean."""
@@ -261,17 +430,18 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
             marker.write_text("do not replace", encoding="utf-8")
         invalid = (None, "", "word", "5.0", "5e0", "-1", "4", "11", "+5", "05", " 5", "5 ", "99999999999999999999")
         for script in SCRIPTS:
-            for level in invalid:
-                with self.subTest(script=script, level=level):
-                    arguments = ["--clean", "--validation-level"]
-                    if level is not None:
-                        arguments.append(level)
-                    result = self.invoke(script, *arguments)
-                    assert result.returncode != 0, result.stdout + result.stderr
-                    assert "validation" in (result.stdout + result.stderr).lower()
-                    assert not self.commands(), self.commands()
-                    for marker in (built_marker, installed_marker):
-                        assert marker.read_text() == "do not replace"
+            for flag in ("--validation-level", "-L"):
+                for level in invalid:
+                    with self.subTest(script=script, flag=flag, level=level):
+                        arguments = ["--clean", flag]
+                        if level is not None:
+                            arguments.append(level)
+                        result = self.invoke(script, *arguments)
+                        assert result.returncode != 0, result.stdout + result.stderr
+                        assert "validation" in (result.stdout + result.stderr).lower()
+                        assert not self.commands(), self.commands()
+                        for marker in (built_marker, installed_marker):
+                            assert marker.read_text() == "do not replace"
 
     def test_build_validation_follows_build_and_unit_tests(self) -> None:
         """Validate the selected nondefault build only after CTest succeeds."""

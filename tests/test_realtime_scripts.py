@@ -165,6 +165,17 @@ class RealtimeScripts(unittest.TestCase):
             "realtime",
         ]
 
+    def test_sanitizer_short_aliases_preserve_command_routing(self) -> None:
+        """Short selection aliases run the same isolated target and flags as their canonical long forms."""
+        for project in PROJECTS[:2]:
+            for short, long in (("-R", "--realtime"), ("-t", "--thread")):
+                with self.subTest(project=project, short=short):
+                    expected = self.invoke(project, long)
+                    expected_commands = self.commands()
+                    actual = self.invoke(project, short)
+                    assert actual.returncode == expected.returncode, actual.stdout + actual.stderr
+                    assert self.commands() == expected_commands
+
     def test_realtime_conflicts_fail_in_both_argument_orders(self) -> None:
         """Reject thread and realtime combinations before configuration, including the short thread flag."""
         for project in PROJECTS[:2]:

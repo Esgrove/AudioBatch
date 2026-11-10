@@ -18,6 +18,18 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
         After a project name, display the instructions of that project's script.
+
+    -l | --cli-only
+        Install only the CLIs, followed by the ImageControl plugin unless a project is named.
+
+    -c | --clean
+        Clean the selected C++ build directory before rebuilding.
+
+    -r | --reuse
+        Reuse the existing C++ build directory. Rust accepts this compatibility option without changing its build.
+
+    -v | --verbose
+        Display commands being executed.
 "
 
 # Import common functions

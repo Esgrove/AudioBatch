@@ -12,12 +12,23 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
-    --install
+    -I | --install
         Install the nightly toolchain with the miri and rust-src components first.
 
     -v | --verbose
         Display commands being executed.
 "
+
+# Resolve help before loading platform helpers or checking the toolchain.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
@@ -29,7 +40,7 @@ while [ $# -gt 0 ]; do
         -h | --help)
             print_usage_and_exit 0
             ;;
-        --install)
+        -I | --install)
             INSTALL=true
             ;;
         -v | --verbose)
