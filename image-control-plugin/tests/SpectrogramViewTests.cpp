@@ -708,7 +708,7 @@ TEST(BandCorrelationMeter, ExposesNamedReadOnlyValuesAndSilenceIsUnavailable)
 /// Native accessibility exposes the smoothed default and follows immediate readout-mode changes.
 TEST(BandCorrelationMeter, AccessibleValueUsesTheSmoothedDefaultAndCanSwitchToLive)
 {
-    constexpr double PERSISTENCE_SECONDS {0.6};
+    constexpr double persistenceSeconds {0.6};
     BandCorrelationMeter meter("Low");
     meter.addToDesktop(0);
     auto* handler = meter.getAccessibilityHandler();
@@ -716,7 +716,7 @@ TEST(BandCorrelationMeter, AccessibleValueUsesTheSmoothedDefaultAndCanSwitchToLi
     auto* value = handler->getValueInterface();
     ASSERT_NE(value, nullptr);
     meter.setCorrelation(-0.75F);
-    meter.setCorrelation(0.75F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+    meter.setCorrelation(0.75F, persistenceSeconds, persistenceSeconds);
     EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
     EXPECT_EQ(meter.readoutText(), "+0.20");
     meter.setSmoothedReadout(false);

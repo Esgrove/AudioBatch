@@ -112,8 +112,8 @@ TEST(Correlation, UnequalDcOffsetsDoNotBiasSignedCenteredCorrelation)
         BandCorrelation meter;
         meter.prepare(TEST_SAMPLE_RATE);
         // Four seconds lets the initial zero-mean prior decay below the centered-power threshold.
-        constexpr int SETTLING_SAMPLES {192'000};
-        for (int sample = 0; sample < SETTLING_SAMPLES; ++sample) {
+        constexpr int settlingSamples {192'000};
+        for (int sample = 0; sample < settlingSamples; ++sample) {
             const float signal = sample % 2 == 0 ? 0.125F : -0.125F;
             meter.push(0, 0.625F + signal, -0.25F + sign * 3.0F * signal);
         }
@@ -128,8 +128,8 @@ TEST(Correlation, SettledConstantChannelsAreUnavailableEvenWithNonzeroDcPower)
 {
     BandCorrelation meter;
     meter.prepare(TEST_SAMPLE_RATE);
-    constexpr int SETTLING_SAMPLES {192'000};
-    for (int sample = 0; sample < SETTLING_SAMPLES; ++sample) {
+    constexpr int settlingSamples {192'000};
+    for (int sample = 0; sample < settlingSamples; ++sample) {
         const float signal = sample % 2 == 0 ? 0.25F : -0.25F;
         meter.push(0, 0.5F, 0.5F);
         meter.push(1, 0.75F, -0.25F);
@@ -166,8 +166,8 @@ TEST(Correlation, SampleRateChangesPreserveThePhysicalIntegrationTime)
 
 TEST(Correlation, ProcessedBandMetersFollowActualWidthRecoveryAndPanWithoutChangingPcm)
 {
-    constexpr std::array<double, BAND_COUNT> FREQUENCIES {50.0, 250.0, 1500.0, 12'000.0};
-    const auto left = makeComb(FREQUENCIES, 0.1F, 28'672);
+    constexpr std::array<double, BAND_COUNT> frequencies {50.0, 250.0, 1500.0, 12'000.0};
+    const auto left = makeComb(frequencies, 0.1F, 28'672);
     std::vector<float> right(left.size());
     std::ranges::transform(left, right.begin(), [](const float value) { return -value; });
     for (const int mode : {0, 1, 2, 3, 4}) {
@@ -230,7 +230,7 @@ TEST(Correlation, VisibilityAndControlTransitionsNeverAdvanceAudioSmoothersOrFil
     for (auto* imager : {&first, &second}) {
         imager->prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
     }
-    constexpr std::array<int, phases> BLOCK_SIZES {37, 511, 1, 4097, 257};
+    constexpr std::array<int, phases> blockSizes {37, 511, 1, 4097, 257};
     for (int phase = 0; phase < phases; ++phase) {
         SCOPED_TRACE(phase);
         first.setCorrelationEnabled(phase != 2);
@@ -259,8 +259,8 @@ TEST(Correlation, VisibilityAndControlTransitionsNeverAdvanceAudioSmoothersOrFil
         const int start = phase * phaseSamples;
         juce::AudioBuffer<float> meteredSlice(metered.getArrayOfWritePointers(), 2, start, phaseSamples);
         juce::AudioBuffer<float> unmeteredSlice(unmetered.getArrayOfWritePointers(), 2, start, phaseSamples);
-        renderMetered(first, meteredSlice, BLOCK_SIZES[static_cast<std::size_t>(phase)]);
-        renderMetered(second, unmeteredSlice, BLOCK_SIZES[static_cast<std::size_t>(phase)]);
+        renderMetered(first, meteredSlice, blockSizes[static_cast<std::size_t>(phase)]);
+        renderMetered(second, unmeteredSlice, blockSizes[static_cast<std::size_t>(phase)]);
         for (int channel = 0; channel < 2; ++channel) {
             for (int sample = 0; sample < phaseSamples; ++sample) {
                 ASSERT_EQ(meteredSlice.getSample(channel, sample), unmeteredSlice.getSample(channel, sample)) << sample;
@@ -284,21 +284,21 @@ TEST(Correlation, RealtimeRecoveryKernelHandoffsSwitchBothSlotsWithConcurrentMet
     imager.setRecoveries({0.25F, 0.5F, 0.75F, 1.0F});
     imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
     imager.setCorrelationEnabled(true);
-    constexpr int BLOCK_SAMPLES {1024};
+    constexpr int blockSamples {1024};
     // Every tone repeats exactly in this block and excites a different band at either requested crossover set.
-    constexpr std::array<double, BAND_COUNT> FREQUENCIES {46.875, 281.25, 1500.0, 12'000.0};
-    const auto side = makeComb(FREQUENCIES, 0.1F, BLOCK_SAMPLES);
+    constexpr std::array<double, BAND_COUNT> frequencies {46.875, 281.25, 1500.0, 12'000.0};
+    const auto side = makeComb(frequencies, 0.1F, blockSamples);
     std::vector<float> inverted(side.size());
     std::ranges::transform(side, inverted.begin(), [](const float value) { return -value; });
     auto buffer = makeBuffer({side, inverted});
     bool finitePcm = true;
     double outputPower = 0.0;
     const auto processSide = [&] {
-        buffer.copyFrom(0, 0, side.data(), BLOCK_SAMPLES);
-        buffer.copyFrom(1, 0, inverted.data(), BLOCK_SAMPLES);
+        buffer.copyFrom(0, 0, side.data(), blockSamples);
+        buffer.copyFrom(1, 0, inverted.data(), blockSamples);
         imager.process(buffer);
         for (int channel = 0; channel < 2; ++channel) {
-            for (int sample = 0; sample < BLOCK_SAMPLES; ++sample) {
+            for (int sample = 0; sample < blockSamples; ++sample) {
                 const float value = buffer.getSample(channel, sample);
                 finitePcm = finitePcm && std::isfinite(value);
                 outputPower += static_cast<double>(value) * static_cast<double>(value);
@@ -314,19 +314,19 @@ TEST(Correlation, RealtimeRecoveryKernelHandoffsSwitchBothSlotsWithConcurrentMet
     std::jthread reader([&imager, &valid](const std::stop_token& stop) {
         monitorPublishedCorrelations(imager, valid, stop);
     });
-    constexpr std::array<Crossovers, 2> REQUESTS {
+    constexpr std::array<Crossovers, 2> requests {
         {
             {80.0F, 1200.0F, 8000.0F},
             {150.0F, 700.0F, 4000.0F},
         },
     };
-    for (const auto& requested : REQUESTS) {
+    for (const auto& requested : requests) {
         SCOPED_TRACE(requested[1]);
         const auto previous = imager.getActiveCrossovers();
         imager.setCrossovers(requested, false);
         // Allow the instrumented background designer the same bounded handoff window as the RTSan probes.
-        constexpr auto HANDOFF_TIMEOUT = std::chrono::seconds(5);
-        const auto deadline = std::chrono::steady_clock::now() + HANDOFF_TIMEOUT;
+        constexpr auto handoffTimeout = std::chrono::seconds(5);
+        const auto deadline = std::chrono::steady_clock::now() + handoffTimeout;
         // Two distinct, observed transitions necessarily hand off from slot 0 to 1 and back to slot 0.
         while (!juce::approximatelyEqual(imager.getActiveCrossovers()[1], requested[1])
                && std::chrono::steady_clock::now() < deadline)

@@ -748,11 +748,11 @@ void timeProcessorMatrix(const Options& options)
 /// Isolates settled nonneutral gains/pans and solo/delta at small callbacks without another rate/meter/worker matrix.
 void timeFocusedProcessor(const Options& options)
 {
-    constexpr double SAMPLE_RATE {48'000.0};
+    constexpr double sampleRate {48'000.0};
     fmt::print("\nFocused steady small callbacks (settled nonneutral gains/pans, meters off, drained FIFO):\n");
     for (const int blockSize : {32, 64}) {
         for (const Mode mode : {Mode::panned, Mode::solo, Mode::delta, Mode::soloDelta}) {
-            timeProcessor(options, SAMPLE_RATE, {.fixedSize = blockSize}, mode, false, false, false);
+            timeProcessor(options, sampleRate, {.fixedSize = blockSize}, mode, false, false, false);
         }
     }
 }
@@ -766,13 +766,13 @@ void timeImager(
     const BandRecoveries& recoveries = RECOVERY_OFF
 )
 {
-    constexpr double SAMPLE_RATE {48'000.0};
+    constexpr double sampleRate {48'000.0};
     MultibandImager imager;
     imager.setGains(MID_GAINS, SIDE_GAINS, OUTPUT_GAIN);
     imager.setPans(pans);
     imager.setWidths(widths);
     imager.setRecoveries(recoveries);
-    imager.prepare(SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    imager.prepare(sampleRate, 2, DEFAULT_CROSSOVERS);
     const auto left = makeNoise(MAXIMUM_BLOCK_SIZE, 1);
     const auto right = makeNoise(MAXIMUM_BLOCK_SIZE, 2);
     juce::AudioBuffer<float> block(2, MAXIMUM_BLOCK_SIZE);
@@ -785,8 +785,8 @@ void timeImager(
     for (int index = 0; index < warmupBlocks; ++index) {
         process();
     }
-    const int blocks = static_cast<int>(std::ceil(options.componentAudioSeconds * SAMPLE_RATE / MAXIMUM_BLOCK_SIZE));
-    const double audioSeconds = static_cast<double>(blocks * MAXIMUM_BLOCK_SIZE) / SAMPLE_RATE;
+    const int blocks = static_cast<int>(std::ceil(options.componentAudioSeconds * sampleRate / MAXIMUM_BLOCK_SIZE));
+    const double audioSeconds = static_cast<double>(blocks * MAXIMUM_BLOCK_SIZE) / sampleRate;
     std::vector<double> measurements;
     double checksum = 0.0;
     for (int repetition = 0; repetition < options.repetitions; ++repetition) {
@@ -817,13 +817,13 @@ void timeImager(
 /// Each observation batches calls to reduce clock overhead. One untimed block advances ramps and observes output.
 void timeImagerSetters(const Options& options)
 {
-    constexpr int SETTER_BATCH_SIZE {1024};
-    constexpr double SAMPLE_RATE {48'000.0};
+    constexpr int setterBatchSize {1024};
+    constexpr double sampleRate {48'000.0};
     for (const bool changing : {false, true}) {
         MultibandImager imager;
         imager.setWidths(NARROW_WIDTHS);
         imager.setRecoveries(ALL_RECOVERY);
-        imager.prepare(SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+        imager.prepare(sampleRate, 2, DEFAULT_CROSSOVERS);
         const auto left = makeNoise(MAXIMUM_BLOCK_SIZE, 1);
         const auto right = makeNoise(MAXIMUM_BLOCK_SIZE, 2);
         juce::AudioBuffer<float> block(2, MAXIMUM_BLOCK_SIZE);
@@ -834,7 +834,7 @@ void timeImagerSetters(const Options& options)
             return static_cast<double>(block.getSample(0, MAXIMUM_BLOCK_SIZE - 1));
         };
         const auto setTargets = [&] {
-            for (int call = 0; call < SETTER_BATCH_SIZE; ++call) {
+            for (int call = 0; call < setterBatchSize; ++call) {
                 const bool alternate = changing && call % 2 == 0;
                 imager.setWidths(alternate ? UNITY_WIDTHS : NARROW_WIDTHS);
                 imager.setRecoveries(alternate ? RECOVERY_OFF : ALL_RECOVERY);
@@ -854,7 +854,7 @@ void timeImagerSetters(const Options& options)
             for (int batch = 0; batch < options.refreshes; ++batch) {
                 const auto start = Clock::now();
                 setTargets();
-                measurements.push_back(Microseconds(Clock::now() - start).count() / SETTER_BATCH_SIZE);
+                measurements.push_back(Microseconds(Clock::now() - start).count() / setterBatchSize);
                 checksum += observe();
             }
         }
@@ -864,7 +864,7 @@ void timeImagerSetters(const Options& options)
             "imager setters=width+recover targets={} pairs/batch={} n={} "
             "us/pair[p50/p95/p99/max]={:.6f}/{:.6f}/{:.6f}/{:.6f} process=excluded check={:.6f}\n",
             changing ? "changing" : "steady",
-            SETTER_BATCH_SIZE,
+            setterBatchSize,
             measurements.size(),
             result.p50,
             result.p95,
@@ -878,14 +878,14 @@ void timeImagerSetters(const Options& options)
 /// Times analysis plus particle construction after priming the analyzer's longest history.
 void timeSpectrogramAnalysis(const Options& options)
 {
-    constexpr double SAMPLE_RATE {48'000.0};
+    constexpr double sampleRate {48'000.0};
     SpatialAnalyzer analyzer;
-    analyzer.prepare(SAMPLE_RATE);
+    analyzer.prepare(sampleRate);
     SpectrogramParticleBuilder particles;
     analyzer.setFrameCallback([&particles](
                                   const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame
                               ) { particles.addFrame(points, frame); });
-    const auto samplesPerRefresh = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
+    const auto samplesPerRefresh = static_cast<std::size_t>(sampleRate) / REFRESH_RATE;
     const auto left = makeNoise(samplesPerRefresh, 3);
     const auto right = makeNoise(samplesPerRefresh, 4);
     const auto process = [&] {
@@ -923,9 +923,9 @@ void timeSpectrogramAnalysis(const Options& options)
 /// Times the analyzer with a constant-time observing callback, excluding particle construction and frame copies.
 void timeSpectrogramAnalyzerOnly(const Options& options)
 {
-    constexpr double SAMPLE_RATE {48'000.0};
+    constexpr double sampleRate {48'000.0};
     SpatialAnalyzer analyzer;
-    analyzer.prepare(SAMPLE_RATE);
+    analyzer.prepare(sampleRate);
     std::size_t frameCount = 0;
     std::size_t pointCount = 0;
     double checksum = 0.0;
@@ -937,7 +937,7 @@ void timeSpectrogramAnalyzerOnly(const Options& options)
             checksum += static_cast<double>(points.front().level);
         }
     });
-    const auto samplesPerRefresh = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
+    const auto samplesPerRefresh = static_cast<std::size_t>(sampleRate) / REFRESH_RATE;
     const auto left = makeNoise(samplesPerRefresh, 3);
     const auto right = makeNoise(samplesPerRefresh, 4);
     for (int refresh = 0; refresh < REFRESH_RATE; ++refresh) {
@@ -976,21 +976,21 @@ void timeSpectrogramAnalyzerOnly(const Options& options)
 /// Analysis, frame copies, capture storage, and result checksums are outside the particle-only clock pair.
 void timeSpectrogramParticlesOnly(const Options& options)
 {
-    constexpr double SAMPLE_RATE {48'000.0};
-    constexpr auto SAMPLES_PER_REFRESH = static_cast<std::size_t>(SAMPLE_RATE) / REFRESH_RATE;
+    constexpr double sampleRate {48'000.0};
+    constexpr auto samplesPerRefresh = static_cast<std::size_t>(sampleRate) / REFRESH_RATE;
     // 128 refreshes contain 51,200 samples, a multiple of every analyzer hop at 48 kHz.
-    constexpr std::size_t CAPTURE_REFRESHES {128};
-    constexpr double CAPTURE_SECONDS = static_cast<double>(CAPTURE_REFRESHES * SAMPLES_PER_REFRESH) / SAMPLE_RATE;
-    std::array<std::vector<CapturedSpectralFrame>, CAPTURE_REFRESHES> captured;
+    constexpr std::size_t captureRefreshes {128};
+    constexpr double captureSeconds = static_cast<double>(captureRefreshes * samplesPerRefresh) / sampleRate;
+    std::array<std::vector<CapturedSpectralFrame>, captureRefreshes> captured;
     SpectrogramParticleBuilder particles;
     {
         SpatialAnalyzer analyzer;
-        analyzer.prepare(SAMPLE_RATE);
+        analyzer.prepare(sampleRate);
         analyzer.setFrameCallback([&particles](
                                       const std::span<const SpectralPoint> points, const SpectralFrameInfo& frame
                                   ) { particles.addFrame(points, frame); });
-        const auto left = makeNoise(SAMPLES_PER_REFRESH, 3);
-        const auto right = makeNoise(SAMPLES_PER_REFRESH, 4);
+        const auto left = makeNoise(samplesPerRefresh, 3);
+        const auto right = makeNoise(samplesPerRefresh, 4);
         // Seed all tier peaks and the reference clock through the actual warmup endpoints before replay begins.
         for (int refresh = 0; refresh < REFRESH_RATE; ++refresh) {
             particles.clear();
@@ -1010,7 +1010,7 @@ void timeSpectrogramParticlesOnly(const Options& options)
     const auto replay = [&](const std::size_t refresh) {
         particles.clear();
         const std::size_t cycle = refresh / captured.size();
-        const double cycleOffset = static_cast<double>(cycle) * CAPTURE_SECONDS;
+        const double cycleOffset = static_cast<double>(cycle) * captureSeconds;
         for (const auto& frame : captured[refresh % captured.size()]) {
             auto info = frame.info;
             info.endSeconds += cycleOffset;
@@ -1136,9 +1136,9 @@ void timeSpectrogramOverlays(const Options& options, const OverlayHover hover = 
 /// Input generation, canvas clearing, setup/layout, and observable history/pixel checksums are outside the clock pair.
 void timeBandCorrelationMeters(const Options& options, const bool changing, const double persistenceSeconds)
 {
-    constexpr int METER_WIDTH {VIEW_WIDTH / static_cast<int>(BAND_COUNT)};
-    constexpr double REFRESH_SECONDS {1.0 / REFRESH_RATE};
-    constexpr std::array<float, BAND_COUNT> STEADY_VALUES {-0.8F, -0.2F, 0.3F, 0.9F};
+    constexpr int meterWidth {VIEW_WIDTH / static_cast<int>(BAND_COUNT)};
+    constexpr double refreshSeconds {1.0 / REFRESH_RATE};
+    constexpr std::array<float, BAND_COUNT> steadyValues {-0.8F, -0.2F, 0.3F, 0.9F};
     const int warmupRefreshes = static_cast<int>(std::ceil(MAX_PERSISTENCE_SECONDS * REFRESH_RATE)) + 1;
     std::array<std::array<float, BAND_COUNT>, REFRESH_RATE> readings {};
     for (std::size_t refresh = 0; refresh < readings.size(); ++refresh) {
@@ -1147,7 +1147,7 @@ void timeBandCorrelationMeters(const Options& options, const bool changing, cons
                 + static_cast<double>(band) / static_cast<double>(BAND_COUNT);
             readings[refresh][band] = changing
                 ? static_cast<float>(std::sin(juce::MathConstants<double>::twoPi * phase))
-                : STEADY_VALUES[band];
+                : steadyValues[band];
         }
     }
     juce::Component row;
@@ -1155,14 +1155,14 @@ void timeBandCorrelationMeters(const Options& options, const bool changing, cons
     std::array<std::unique_ptr<BandCorrelationMeter>, BAND_COUNT> meters;
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         meters[band] = std::make_unique<BandCorrelationMeter>(bandName(band));
-        meters[band]->setBounds(static_cast<int>(band) * METER_WIDTH, 0, METER_WIDTH, BAND_CORRELATION_HEIGHT);
+        meters[band]->setBounds(static_cast<int>(band) * meterWidth, 0, meterWidth, BAND_CORRELATION_HEIGHT);
         row.addAndMakeVisible(*meters[band]);
     }
     juce::Image canvas(juce::Image::ARGB, VIEW_WIDTH, BAND_CORRELATION_HEIGHT, true, juce::SoftwareImageType {});
     juce::Graphics graphics(canvas);
     const auto updateAndPaint = [&](const std::array<float, BAND_COUNT>& values) {
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            meters[band]->setCorrelation(values[band], REFRESH_SECONDS, persistenceSeconds);
+            meters[band]->setCorrelation(values[band], refreshSeconds, persistenceSeconds);
         }
         row.paintEntireComponent(graphics, false);
     };
@@ -1191,7 +1191,7 @@ void timeBandCorrelationMeters(const Options& options, const bool changing, cons
                     checksum += static_cast<double>(range->getStart()) + static_cast<double>(range->getEnd());
                 }
                 const auto pixel = canvas.getPixelAt(
-                    static_cast<int>(band) * METER_WIDTH + refresh % METER_WIDTH, refresh % BAND_CORRELATION_HEIGHT
+                    static_cast<int>(band) * meterWidth + refresh % meterWidth, refresh % BAND_CORRELATION_HEIGHT
                 );
                 pixelChecksum += pixel.getARGB();
             }
@@ -1207,7 +1207,7 @@ void timeBandCorrelationMeters(const Options& options, const bool changing, cons
         VIEW_WIDTH,
         BAND_CORRELATION_HEIGHT,
         REFRESH_RATE,
-        static_cast<double>(warmupRefreshes) * REFRESH_SECONDS,
+        static_cast<double>(warmupRefreshes) * refreshSeconds,
         measurements.size(),
         result.p50,
         result.p95,

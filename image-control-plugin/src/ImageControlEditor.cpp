@@ -304,18 +304,18 @@ void ImageControlEditor::configureHeaderIcons()
     processingToolbarButton.setToggleable(true);
     processingToolbar.setExplicitFocusOrder(4);
 
-    constexpr juce::Point<float> ARROW_END {12.0F, 11.0F};
-    constexpr juce::Point<float> ARROW_CURVE_FIRST {15.0F, 4.0F};
-    constexpr juce::Point<float> ARROW_CURVE_SECOND {7.0F, 0.0F};
-    constexpr juce::Point<float> ARROW_TIP {1.0F, 6.0F};
-    constexpr juce::Point<float> ARROW_HEAD_TOP {1.0F, 2.0F};
-    constexpr juce::Point<float> ARROW_HEAD_RIGHT {5.0F, 6.0F};
+    constexpr juce::Point<float> arrowEnd {12.0F, 11.0F};
+    constexpr juce::Point<float> arrowCurveFirst {15.0F, 4.0F};
+    constexpr juce::Point<float> arrowCurveSecond {7.0F, 0.0F};
+    constexpr juce::Point<float> arrowTip {1.0F, 6.0F};
+    constexpr juce::Point<float> arrowHeadTop {1.0F, 2.0F};
+    constexpr juce::Point<float> arrowHeadRight {5.0F, 6.0F};
     juce::Path arrowPath;
-    arrowPath.startNewSubPath(ARROW_END);
-    arrowPath.cubicTo(ARROW_CURVE_FIRST, ARROW_CURVE_SECOND, ARROW_TIP);
-    arrowPath.startNewSubPath(ARROW_HEAD_TOP);
-    arrowPath.lineTo(ARROW_TIP);
-    arrowPath.lineTo(ARROW_HEAD_RIGHT);
+    arrowPath.startNewSubPath(arrowEnd);
+    arrowPath.cubicTo(arrowCurveFirst, arrowCurveSecond, arrowTip);
+    arrowPath.startNewSubPath(arrowHeadTop);
+    arrowPath.lineTo(arrowTip);
+    arrowPath.lineTo(arrowHeadRight);
     juce::DrawablePath arrow;
     arrow.setPath(arrowPath);
     arrow.setFill(juce::Colours::transparentBlack);
@@ -433,14 +433,14 @@ void ImageControlEditor::resized()
 
     auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
     // Compact widths keep all processing controls visible and separate at the minimum editor width.
-    constexpr int COMPACT_HEADER_THRESHOLD {940};
-    constexpr int COMPACT_TITLE_WIDTH {100};
-    constexpr int COMPACT_OUTPUT_WIDTH {126};
-    constexpr int COMPACT_OUTPUT_LABEL_WIDTH {46};
-    const bool compact = getWidth() < COMPACT_HEADER_THRESHOLD;
+    constexpr int compactHeaderThreshold {940};
+    constexpr int compactTitleWidth {100};
+    constexpr int compactOutputWidth {126};
+    constexpr int compactOutputLabelWidth {46};
+    const bool compact = getWidth() < compactHeaderThreshold;
     const int buttonWidth = compact ? 60 : HEADER_BUTTON_WIDTH;
     const int tapWidth = compact ? 42 : TAP_BUTTON_WIDTH;
-    titleLabel.setBounds(header.removeFromLeft(compact ? COMPACT_TITLE_WIDTH : TITLE_WIDTH));
+    titleLabel.setBounds(header.removeFromLeft(compact ? compactTitleWidth : TITLE_WIDTH));
     settingsButton.setBounds(header.removeFromLeft(compact ? 64 : HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     header.removeFromLeft(GAP);
     preButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
@@ -451,8 +451,8 @@ void ImageControlEditor::resized()
     redoButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     processingToolbarButton.setBounds(header.removeFromRight(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     header.removeFromRight(ICON_BUTTON_GAP);
-    outputSlider.setBounds(header.removeFromRight(compact ? COMPACT_OUTPUT_WIDTH : OUTPUT_SLIDER_WIDTH));
-    outputLabel.setBounds(header.removeFromRight(compact ? COMPACT_OUTPUT_LABEL_WIDTH : OUTPUT_LABEL_WIDTH));
+    outputSlider.setBounds(header.removeFromRight(compact ? compactOutputWidth : OUTPUT_SLIDER_WIDTH));
+    outputLabel.setBounds(header.removeFromRight(compact ? compactOutputLabelWidth : OUTPUT_LABEL_WIDTH));
     header.removeFromRight(GAP);
     bypassButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
     header.removeFromRight(GAP);
