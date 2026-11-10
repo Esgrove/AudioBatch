@@ -1,5 +1,5 @@
 # ImageControl
-# A multiband mid/side stereo imaging effect by Esgrove, as a VST3 and, on macOS, an Audio Unit,
+# A multiband mid/side stereo imaging effect, as a VST3 and, on macOS, an Audio Unit,
 # with a spatial spectrogram editor.
 # Builds on its own with the JUCE submodule of the AudioBatch C++ project.
 
