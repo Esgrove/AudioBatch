@@ -33,13 +33,9 @@ including linked controls and spectrogram gestures.
 Its chevron shows or hides the A/B and preset row, and that layout choice is saved with the host project.
 The history survives closing the editor but is not saved with a project, and a host state restore clears it.
 Incoming host automation and display-setting edits do not create undo entries.
-Use Cmd+Z on macOS or Ctrl+Z on Windows to undo while the editor has focus.
-Redo accepts both Cmd+Y and Cmd+Shift+Z on macOS, or Ctrl+Y and Ctrl+Shift+Z on Windows.
-Text fields keep their own editing shortcuts.
-Cmd+comma on macOS or Ctrl+comma on Windows opens Display settings, and F1 opens its controls help.
-Sliders support arrows, Shift for fine adjustment, wheel edits, numeric entry, and double-click reset.
-Hover the spectrogram or correlation row to reveal its collapse chevron, also visible on keyboard focus.
-A hidden section retains a labelled restore handle, and Settings offers the same visibility choices.
+See [Keyboard shortcuts](#keyboard-shortcuts) for editing, navigation, and modifier gestures.
+Hover either analysis section to reveal its collapse chevron, or focus it with the keyboard.
+Hidden sections retain labelled restore handles, with the same visibility choices available in Settings.
 
 A and B hold independently editable sound settings, with a copy action for the other slot.
 Both slots and the selected slot are saved with the host project.
@@ -60,6 +56,55 @@ The library is shared by plugin instances and formats, separately from host pres
 It lives in `~/Library/Application Support/esgrove/ImageControl/Presets` on macOS
 and `%APPDATA%\\esgrove\\ImageControl\\Presets` on Windows.
 Projects save their sound independently of these files.
+
+## Keyboard shortcuts
+
+Shortcuts apply while the plugin editor has keyboard focus and the host forwards the keys.
+Text fields keep their own editing shortcuts instead of triggering plugin-wide commands.
+
+### Editing and monitoring
+
+| Action | macOS | Windows |
+| --- | --- | --- |
+| Undo local processing edit | Cmd+Z | Ctrl+Z |
+| Redo local processing edit | Cmd+Shift+Z or Cmd+Y | Ctrl+Shift+Z or Ctrl+Y |
+| Toggle audio Bypass | Cmd+B | Ctrl+B |
+| Toggle Delta monitoring | Cmd+D | Ctrl+D |
+| Toggle Solo for the band under the pointer | S | S |
+
+### Navigation and display
+
+| Action | Shortcut |
+| --- | --- |
+| Focus next / previous control | Tab / Shift+Tab |
+| Open Display settings | Cmd+comma (macOS) / Ctrl+comma (Windows) |
+| Open controls help | F1 |
+| Dismiss Display settings or cancel a preset dialog | Escape |
+| Resize with the divider focused | Up / Down, 8 pixels per press |
+| Resize the divider finely | Shift+Up / Shift+Down, 1 pixel per press |
+
+### Sliders and value fields
+
+| Action | Key or gesture |
+| --- | --- |
+| Increase / decrease a focused slider | Right or Up / Left or Down |
+| Adjust a focused slider finely | Shift+arrow key, at least one legal value step |
+| Fine pointer adjustment | Shift+drag or Shift+scroll |
+| Enter an exact value | Click the value field, type a value, then press Return / Enter |
+| Reset a slider | Double-click its track or thumb |
+
+### Spectrogram gestures
+
+Start band gestures inside a band region, away from crossover lines.
+Mid gain edits follow the band's Link setting, while Side gain edits leave Mid unchanged.
+
+| Action | macOS | Windows |
+| --- | --- | --- |
+| Move a crossover or band | Drag sideways | Drag sideways |
+| Reset a crossover | Double-click its line | Double-click its line |
+| Change band Mid gain | Cmd+drag vertically or Cmd+scroll | Ctrl+drag vertically or Ctrl+scroll |
+| Change band Side gain | Option+drag vertically or scroll | Alt+drag vertically or scroll |
+| Adjust band gain finely | Add Shift to a gain drag or scroll gesture | Add Shift to a gain drag or scroll gesture |
 
 ## Processing and transparency
 
