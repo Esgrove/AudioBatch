@@ -86,7 +86,7 @@ void ImageControlEditor::configureHeaderIcons()
     processingToolbarButton.setToggleable(true);
     int focusOrder = 1;
     for (auto* control :
-         std::array<juce::Component*, 14> {
+         std::array<juce::Component*, 15> {
              &settingsButton,
              &preButton,
              &postButton,
@@ -101,6 +101,7 @@ void ImageControlEditor::configureHeaderIcons()
              &spectrogramDisclosure,
              &divider,
              &correlationDisclosure,
+             &bandControlsDisclosure,
          })
     {
         control->setExplicitFocusOrder(focusOrder++);
@@ -195,7 +196,7 @@ bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
         return true;
     }
     if (key.getKeyCode() == juce::KeyPress::F1Key && !modifiers.isAnyModifierKeyDown()) {
-        openSettings(true);
+        openKeyboardShortcuts();
         return true;
     }
     if (commandOnly && letter == 'd') {

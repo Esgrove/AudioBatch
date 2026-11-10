@@ -1,4 +1,4 @@
-/// Declares SettingsPanel, the bounded, scrollable display preferences and keyboard help panel.
+/// Declares SettingsPanel, the bounded, scrollable display preferences panel.
 /// Controls bind only to editor settings and never change sound parameters or presets.
 
 #pragma once
@@ -7,11 +7,12 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
 #include <optional>
 
 namespace esgrove::image_control
 {
-/// Groups shared persistence, spectrogram appearance, correlation, advanced display settings, and controls help.
+/// Groups appearance, stereo display mapping, correlation, and display behavior without sound parameters.
 /// The caller owns the message-thread editor state for the lifetime of the panel.
 class SettingsPanel final : public juce::Component, private juce::FocusChangeListener, private juce::ValueTree::Listener
 {
@@ -26,7 +27,7 @@ public:
     SettingsPanel& operator=(SettingsPanel&&) = delete;
 
     void resetDisplayAppearance();
-    void showHelp();
+    void setKeyboardShortcutsCallback(std::function<void()> callback);
 
     void paint(juce::Graphics& graphics) override;
     void resized() override;
@@ -44,18 +45,18 @@ private:
     juce::Component content;
     juce::Viewport viewport;
 
-    juce::Label advancedLabel;
+    juce::Label appearanceLabel;
     juce::Label colourLabel;
     juce::Label contrastLabel;
     juce::Label correlationLabel;
+    juce::Label descriptionLabel;
+    juce::Label displayLabel;
     juce::Label frequencyLabel;
-    juce::Label helpLabel;
     juce::Label panEdgeLabel;
     juce::Label panMidpointLabel;
     juce::Label persistenceLabel;
     juce::Label renderingLabel;
-    juce::Label sharedLabel;
-    juce::Label spectrogramLabel;
+    juce::Label stereoPositionLabel;
     juce::Label titleLabel;
 
     juce::ComboBox colourChoice;
@@ -67,13 +68,16 @@ private:
     ControlSlider panMidpointSlider;
     ControlSlider persistenceSlider;
 
+    juce::TextButton keyboardShortcutsButton {juce::String::fromUTF8("Keyboard shortcuts\xe2\x80\xa6")};
     juce::TextButton resetAppearanceButton {"Reset display appearance"};
-    juce::TextEditor helpText;
 
     juce::ToggleButton bypassRenderingButton {"Stop spectrogram analysis"};
     juce::ToggleButton hideSpectrogramButton {"Hide spectrogram"};
     juce::ToggleButton showBandCorrelationButton {"Show band correlation"};
     juce::ToggleButton showFpsButton {"Show frame rate"};
     juce::ToggleButton smoothCorrelationReadoutButton {"Smooth correlation numbers"};
+
+    /// Requests the editor-owned shortcuts window on the message thread, without changing settings.
+    std::function<void()> onShowKeyboardShortcuts;
 };
 }  // namespace esgrove::image_control

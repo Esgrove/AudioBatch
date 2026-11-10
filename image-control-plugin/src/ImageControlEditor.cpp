@@ -14,7 +14,6 @@
 #include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/ProcessingToolbar.h"
-#include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
@@ -23,7 +22,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <optional>
 namespace esgrove::image_control
@@ -79,17 +77,14 @@ constexpr int VALUE_BOX_HEIGHT {20};
 constexpr float BYPASSED_STRIP_ALPHA {0.72F};
 /// Height retained by a hidden display's labelled restore handle.
 constexpr int RESTORE_HANDLE_HEIGHT {18};
-/// Width of the collapsed display's labelled restore handle.
-constexpr int RESTORE_HANDLE_WIDTH {112};
 /// Quiet identity typography fits a preset subtitle within the ordinary header height.
 constexpr float PRESET_FONT_HEIGHT {11.0F};
 constexpr float COMPACT_BRAND_FONT_HEIGHT {14.0F};
 constexpr int COMPACT_BRAND_HEIGHT {15};
-/// Parent-contained callouts reserve their arrow and look-and-feel border on both edges.
-constexpr int SETTINGS_MAX_HEIGHT {640};
-constexpr int SETTINGS_BORDER_ALLOWANCE {48};
 /// The local row action reserves only the header portion of the meter column.
 constexpr int CORRELATION_ACTION_HEIGHT {20};
+/// Roomy visual-first windows can afford a small full-name row above the compact numeric controls.
+constexpr int LABELLED_COMPACT_EDITOR_HEIGHT {800};
 
 /// Returns a boolean editor setting.
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
@@ -107,6 +102,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     processingToolbar(owner),
     spectrogram(owner.getParameters(), owner.getEditorState(), owner.getHistory()),
     spectrogramWorker(owner.getAnalyzerFifo(), spectrogramRenderer),
+    layoutGeneration(owner.getHistory().generation()),
     tooltips(*this),
     vblankAttachment(this, [this](const double timestamp) { refreshDisplay(timestamp); })
 {
@@ -115,7 +111,6 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     setWantsKeyboardFocus(true);
     auto& editorState = owner.getEditorState();
     auto& parameters = owner.getParameters();
-
     titleLabel.setText("ImageControl", juce::dontSendNotification);
     titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
@@ -128,6 +123,12 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addChildComponent(presetLabel);
     spectrogramDisclosure.setComponentID("spectrogram-disclosure");
     correlationDisclosure.setComponentID("correlation-disclosure");
+    bandControlsDisclosure.setComponentID("band-controls-disclosure");
+    bandControlsDisclosure.onClick = [this] {
+        auto& state = imageControlProcessor.getEditorState();
+        state.setProperty(COMPACT_BAND_CONTROLS_PROPERTY, !compactBandControls, nullptr);
+        applyViewSettings();
+    };
     spectrogramDisclosure.onClick = [this] {
         auto& state = imageControlProcessor.getEditorState();
         state.setProperty(HIDE_SPECTROGRAM_PROPERTY, !spectrogramHidden, nullptr);
@@ -140,6 +141,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     };
     addAndMakeVisible(spectrogramDisclosure);
     addAndMakeVisible(correlationDisclosure);
+    addAndMakeVisible(bandControlsDisclosure);
     configureHeaderIcons();
     undoButton.onClick = [this] {
         processingToolbar.undo();
@@ -224,13 +226,26 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addAndMakeVisible(processingToolbar);
     addAndMakeVisible(spectrogram);
     divider.setDragCallback([this](const int delta) {
+        const auto& state = imageControlProcessor.getEditorState();
+        if (layoutGeneration != imageControlProcessor.getHistory().generation()) {
+            divider.cancelDrag();
+            applyViewSettings();
+            return;
+        }
+        if (booleanSetting(state, COMPACT_BAND_CONTROLS_PROPERTY) || booleanSetting(state, HIDE_SPECTROGRAM_PROPERTY)) {
+            divider.cancelDrag();
+            return;
+        }
         bandSectionHeight -= delta;
         resized();
     });
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band, owner.getHistory());
-        constexpr int firstBandFocusOrder {15};
+        constexpr int firstBandFocusOrder {16};
         bandStrips.at(band)->setExplicitFocusOrder(firstBandFocusOrder + static_cast<int>(band));
+        if (band == BAND_COUNT - 1) {
+            bandStrips.at(band)->setHeaderDisclosureInset(ICON_BUTTON_WIDTH + ICON_BUTTON_GAP);
+        }
         addAndMakeVisible(*bandStrips.at(band));
         correlationMeters.at(band) = std::make_unique<BandCorrelationMeter>(bandName(band));
         addAndMakeVisible(*correlationMeters.at(band));
@@ -238,11 +253,16 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addAndMakeVisible(divider);
     spectrogramDisclosure.toFront(false);
     correlationDisclosure.toFront(false);
+    bandControlsDisclosure.toFront(false);
     addChildComponent(tooltips);
     updateBandRanges();
 
     processingToolbarShown = static_cast<bool>(editorState.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true));
     processingToolbar.setVisible(processingToolbarShown);
+    compactBandControls = booleanSetting(editorState, COMPACT_BAND_CONTROLS_PROPERTY);
+    for (const auto& strip : bandStrips) {
+        strip->setCompact(compactBandControls);
+    }
     correlationShown = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
     for (const auto& meter : correlationMeters) {
         meter->setVisible(correlationShown);
@@ -283,6 +303,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 /// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    shortcutsWindow.reset();
     settingsCallout.reset();
     settingsPanel.reset();
     imageControlProcessor.setCorrelationEnabled(false);
@@ -357,15 +378,19 @@ void ImageControlEditor::resized()
     }
 
     if (spectrogramHidden) {
-        spectrogramDisclosure.setBounds(area.removeFromTop(RESTORE_HANDLE_HEIGHT).withWidth(RESTORE_HANDLE_WIDTH));
+        spectrogramDisclosure.setBounds(area.removeFromTop(RESTORE_HANDLE_HEIGHT));
         area.removeFromTop(GAP);
     }
     const int correlationHeight = (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
+    int controlsHeight = compactBandControls ? compactBandHeight() : bandSectionHeight;
     if (!spectrogramHidden) {
         const int maxBandSectionHeight
             = std::max(BAND_STRIP_MIN_HEIGHT, area.getHeight() - GAP - MIN_SPECTROGRAM_HEIGHT - correlationHeight);
-        bandSectionHeight = std::clamp(bandSectionHeight, BAND_STRIP_MIN_HEIGHT, maxBandSectionHeight);
-        const auto bandArea = area.removeFromBottom(bandSectionHeight + correlationHeight);
+        if (!compactBandControls) {
+            bandSectionHeight = std::clamp(bandSectionHeight, BAND_STRIP_MIN_HEIGHT, maxBandSectionHeight);
+            controlsHeight = bandSectionHeight;
+        }
+        const auto bandArea = area.removeFromBottom(controlsHeight + correlationHeight);
         const auto dividerArea = area.removeFromBottom(GAP);
         divider.setBounds(dividerArea.expanded(0, DIVIDER_GRAB_PADDING));
         spectrogram.setBounds(area);
@@ -379,7 +404,7 @@ void ImageControlEditor::resized()
     correlationDisclosure.setBounds(
         correlationShown ? correlationArea.withSize(ICON_BUTTON_WIDTH, CORRELATION_ACTION_HEIGHT)
                                .withX(correlationArea.getRight() - ICON_BUTTON_WIDTH)
-                         : correlationArea.withWidth(RESTORE_HANDLE_WIDTH)
+                         : correlationArea
     );
     area.removeFromTop(GAP);
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
@@ -389,16 +414,8 @@ void ImageControlEditor::resized()
         area.removeFromLeft(GAP);
         correlationArea.removeFromLeft(GAP);
     }
-    if (settingsCallout != nullptr) {
-        for (auto* child : settingsCallout->getChildren()) {
-            if (auto* panel = dynamic_cast<SettingsPanel*>(child)) {
-                panel->setSize(
-                    panel->getWidth(), std::min(SETTINGS_MAX_HEIGHT, getHeight() - SETTINGS_BORDER_ALLOWANCE)
-                );
-            }
-        }
-        settingsCallout->updatePosition(settingsButton.getBounds(), getLocalBounds());
-    }
+    layoutBandControlsDisclosure();
+    updateSettingsBounds();
 
     if (!layoutRestored || layoutTransition) {
         return;
@@ -409,6 +426,18 @@ void ImageControlEditor::resized()
         editorState.setProperty(EDITOR_HEIGHT_PROPERTY, getHeight(), nullptr);
     }
     editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandSectionHeight, nullptr);
+}
+
+/// Places the band action in reserved band-heading space, separate from both analysis disclosures.
+void ImageControlEditor::layoutBandControlsDisclosure()
+{
+    constexpr int expandedBandInset {10};
+    const auto lastStrip = bandStrips.back()->getBounds();
+    const int inset = compactBandControls ? 0 : expandedBandInset;
+    const int height = compactBandControls ? RESTORE_HANDLE_HEIGHT : CORRELATION_ACTION_HEIGHT;
+    bandControlsDisclosure.setBounds(
+        lastStrip.getRight() - inset - ICON_BUTTON_WIDTH, lastStrip.getY() + inset, ICON_BUTTON_WIDTH, height
+    );
 }
 
 /// Returns the band under the pointer: the band hovered in the spectrogram, or the band strip the pointer is over.
@@ -427,11 +456,19 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
     return std::nullopt;
 }
 
+/// Uses full compact labels only when the spectrogram has room to spare, keeping hidden-display windows minimal.
+int ImageControlEditor::compactBandHeight() const
+{
+    return !spectrogramHidden && getHeight() >= LABELLED_COMPACT_EDITOR_HEIGHT ? BAND_STRIP_COMPACT_LABELLED_HEIGHT
+                                                                               : BAND_STRIP_COMPACT_HEIGHT;
+}
+
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
 int ImageControlEditor::compactHeight() const
 {
     return HEADER_HEIGHT + GAP * 2 + (processingToolbarShown ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
-        + RESTORE_HANDLE_HEIGHT + GAP + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT)
+        + RESTORE_HANDLE_HEIGHT + GAP
+        + (compactBandControls ? compactBandHeight() : std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT))
         + (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
 }
 
@@ -469,7 +506,7 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
         spectrogram.endDrag();
     }
     spectrogram.setVisible(!hidden);
-    divider.setVisible(!hidden);
+    divider.setVisible(!hidden && !compactBandControls);
     spectrogramWorker.requestClear();
     if (hidden) {
         const int height = compactHeight();
@@ -485,10 +522,31 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
     repaint();
 }
 
+/// Accepts restored strip geometry and cancels unfinished text before a restored mode can relayout controls.
+bool ImageControlEditor::synchronizeRestoredLayout()
+{
+    const auto generation = imageControlProcessor.getHistory().generation();
+    if (layoutGeneration == generation) {
+        return false;
+    }
+    layoutGeneration = generation;
+    divider.cancelDrag();
+    for (const auto& strip : bandStrips) {
+        strip->discardPendingEdits();
+    }
+    const auto& state = imageControlProcessor.getEditorState();
+    bandSectionHeight = std::max(
+        BAND_STRIP_MIN_HEIGHT,
+        static_cast<int>(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY, DEFAULT_BAND_SECTION_HEIGHT))
+    );
+    return true;
+}
+
 /// Applies row visibility and compact sizing together so a restored layout cannot overwrite expanded dimensions.
 void ImageControlEditor::applyLayoutSettings()
 {
     const auto& editorState = imageControlProcessor.getEditorState();
+    const bool restored = synchronizeRestoredLayout();
     const bool showToolbar = static_cast<bool>(editorState.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true));
     const bool toolbarChanged = processingToolbarShown != showToolbar;
     processingToolbarShown = showToolbar;
@@ -505,11 +563,23 @@ void ImageControlEditor::applyLayoutSettings()
             meter->setVisible(showCorrelation);
         }
     }
+    const bool compact = booleanSetting(editorState, COMPACT_BAND_CONTROLS_PROPERTY);
+    const bool controlsChanged = compactBandControls != compact;
+    if (controlsChanged) {
+        if (compact && divider.hasKeyboardFocus(true) && isShowing()) {
+            bandControlsDisclosure.grabKeyboardFocus();
+        }
+        compactBandControls = compact;
+        for (const auto& strip : bandStrips) {
+            strip->setCompact(compact);
+        }
+    }
+    divider.setVisible(!spectrogramHidden && !compactBandControls);
     const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
     if (shownHidden != hidden) {
         shownHidden = hidden;
         applySpectrogramHidden(hidden);
-    } else if (toolbarChanged || correlationChanged) {
+    } else if (toolbarChanged || correlationChanged || controlsChanged || restored) {
         if (hidden) {
             // Compact mode's fixed height follows the visible rows without replacing the saved expanded height.
             const juce::ScopedValueSetter<bool> transition(layoutTransition, true);
@@ -611,6 +681,16 @@ void ImageControlEditor::updateDisplayDisclosures()
 {
     spectrogramDisclosure.setExpanded(!spectrogramHidden);
     correlationDisclosure.setExpanded(correlationShown);
+    const juce::String bandAction
+        = compactBandControls ? "Expand band controls" : "Collapse band controls to Mid, Side, Width, and Pan";
+    if (bandControlsDisclosure.getToggleState() == compactBandControls
+        || bandControlsDisclosure.getTitle() != bandAction)
+    {
+        bandControlsDisclosure.setExpanded(!compactBandControls);
+        bandControlsDisclosure.setTitle(bandAction);
+        bandControlsDisclosure.setDescription(bandAction);
+        bandControlsDisclosure.setTooltip(bandAction);
+    }
     const auto pointer = getMouseXYRelative();
     spectrogramDisclosure.setRevealed(spectrogram.getBounds().contains(pointer));
     bool overCorrelation = false;
@@ -618,6 +698,15 @@ void ImageControlEditor::updateDisplayDisclosures()
         overCorrelation = overCorrelation || (meter->isVisible() && meter->getBounds().contains(pointer));
     }
     correlationDisclosure.setRevealed(overCorrelation);
+    bool overControls = false;
+    for (const auto& strip : bandStrips) {
+        overControls = overControls || strip->getBounds().contains(pointer);
+    }
+    bandControlsDisclosure.setRevealed(
+        overControls || (!spectrogramHidden && divider.getBounds().contains(pointer))
+        || (spectrogramHidden && pointer.y >= spectrogramDisclosure.getY()
+            && pointer.y < spectrogramDisclosure.getBottom())
+    );
 }
 
 /// Shows named preset feedback only where the expanded selector is not already showing it.
@@ -698,45 +787,6 @@ void ImageControlEditor::measureFramesPerSecond(const double elapsed)
         measuredFramesPerSecond = static_cast<double>(frames - measuredFrameCount) / frameRateClock;
         measuredFrameCount = frames;
         frameRateClock = 0.0;
-    }
-}
-
-/// Opens an editor-owned bounded callout, with synchronous teardown before the processor's settings disappear.
-/// Dismissal restores Settings focus only when an outside click has not already focused another control.
-void ImageControlEditor::openSettings(const bool showHelp)
-{
-    if (settingsCallout != nullptr) {
-        if (showHelp) {
-            settingsPanel->showHelp();
-        } else {
-            settingsCallout->grabKeyboardFocus();
-        }
-        return;
-    }
-    settingsPanel = std::make_unique<SettingsPanel>(
-        imageControlProcessor.getEditorState(), getHeight() - SETTINGS_BORDER_ALLOWANCE
-    );
-    settingsCallout = std::make_unique<juce::CallOutBox>(*settingsPanel, settingsButton.getBounds(), this);
-    const juce::Component::SafePointer<ImageControlEditor> safeThis(this);
-    const juce::Component::SafePointer<juce::CallOutBox> safeCallout(settingsCallout.get());
-    settingsCallout->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, safeCallout](int) {
-                                         if (safeThis == nullptr || safeCallout == nullptr
-                                             || safeThis->settingsCallout.get() != safeCallout.getComponent())
-                                         {
-                                             return;
-                                         }
-                                         const auto* focused = juce::Component::getCurrentlyFocusedComponent();
-                                         const bool restoreFocus = focused == nullptr
-                                             || focused == safeCallout.getComponent()
-                                             || safeCallout->isParentOf(focused) || focused == safeThis.getComponent();
-                                         safeThis->settingsCallout.reset();
-                                         safeThis->settingsPanel.reset();
-                                         if (restoreFocus && safeThis->isShowing()) {
-                                             safeThis->settingsButton.grabKeyboardFocus();
-                                         }
-                                     }));
-    if (showHelp) {
-        settingsPanel->showHelp();
     }
 }
 

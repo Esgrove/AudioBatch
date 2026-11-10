@@ -79,6 +79,7 @@ juce::ValueTree defaultEditorState()
     defaults.setProperty(BYPASS_RENDERING_PROPERTY, false, nullptr);
     defaults.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
     defaults.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true, nullptr);
+    defaults.setProperty(COMPACT_BAND_CONTROLS_PROPERTY, false, nullptr);
     return defaults;
 }
 

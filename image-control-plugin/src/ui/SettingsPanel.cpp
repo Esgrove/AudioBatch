@@ -1,4 +1,4 @@
-/// Implements grouped, scrollable display settings, strict numeric entry, scoped reset, and accessible controls help.
+/// Implements compact display settings, strict numeric entry, scoped reset, and a separate shortcuts action.
 
 #include "ui/SettingsPanel.h"
 
@@ -11,6 +11,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -21,17 +22,16 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Preferred panel width and maximum natural height, before the caller's viewport limit.
+/// Preferred width before the caller bounds the visible height.
 constexpr int PANEL_WIDTH {390};
-constexpr int PANEL_HEIGHT {640};
-/// Full content stays scrollable even when the caller allows only a compact popup.
-constexpr int CONTENT_HEIGHT {1240};
-/// Insets and row sizes keep settings comfortably readable without widening the editor.
+/// Insets and compact row sizes keep the complete settings comfortably readable.
 constexpr int MARGIN {12};
 constexpr int ROW_HEIGHT {28};
-constexpr int SECTION_HEIGHT {32};
-constexpr int SLIDER_LABEL_HEIGHT {20};
-constexpr int HELP_HEIGHT {560};
+constexpr int SECTION_HEIGHT {28};
+constexpr int SLIDER_LABEL_HEIGHT {18};
+constexpr int FOOTER_GAP {8};
+/// Natural height includes the title, description, four groups, and two footer actions.
+constexpr int CONTENT_HEIGHT {MARGIN * 2 + ROW_HEIGHT * 15 + SECTION_HEIGHT * 4 + SLIDER_LABEL_HEIGHT * 5 + FOOTER_GAP};
 /// Value boxes leave enough room for the explicit units.
 constexpr int VALUE_BOX_WIDTH {76};
 constexpr int VALUE_BOX_HEIGHT {22};
@@ -40,6 +40,7 @@ constexpr int CHOICE_LABEL_WIDTH {112};
 /// Display typography follows the ordinary editor controls.
 constexpr float TITLE_FONT_HEIGHT {15.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
+constexpr float SECTION_FONT_HEIGHT {12.0F};
 /// Settings use their persisted precision rather than arbitrary keyboard-only increments.
 constexpr double PERSISTENCE_STEP {0.01};
 constexpr double CONTRAST_STEP_PERCENT {1.0};
@@ -57,7 +58,10 @@ void identifyControl(juce::Component& control, const juce::String& identifier, c
 void configureLabel(juce::Label& label, const juce::String& text, const bool heading = false)
 {
     label.setText(text, juce::dontSendNotification);
-    label.setFont(heading ? textFont(LABEL_FONT_HEIGHT).boldened() : textFont(LABEL_FONT_HEIGHT));
+    label.setFont(heading ? textFont(SECTION_FONT_HEIGHT).boldened() : textFont(LABEL_FONT_HEIGHT));
+    if (heading) {
+        label.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    }
     label.setBorderSize({});
     label.setJustificationType(juce::Justification::bottomLeft);
 }
@@ -129,35 +133,41 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
 {
     identifyControl(*this, "displaySettings", "Display settings");
     setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
-    identifyControl(content, "displaySettingsContent", "Display preferences and controls help");
+    identifyControl(content, "displaySettingsContent", "Display preferences");
     identifyControl(viewport, "displaySettingsViewport", "Scrollable display settings");
     viewport.setViewedComponent(&content, false);
     viewport.setScrollBarsShown(true, false);
     viewport.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::never);
     addAndMakeVisible(viewport);
 
-    configureLabel(titleLabel, "Display settings", true);
+    configureLabel(titleLabel, "Display settings");
     titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
-    configureLabel(sharedLabel, "Shared Persistence", true);
-    configureLabel(spectrogramLabel, "Spectrogram", true);
+    configureLabel(descriptionLabel, "Display only. Audio processing is unchanged.");
+    descriptionLabel.setFont(textFont(SECTION_FONT_HEIGHT));
+    descriptionLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    configureLabel(appearanceLabel, "Appearance", true);
+    configureLabel(stereoPositionLabel, "Stereo position", true);
     configureLabel(correlationLabel, "Correlation", true);
-    configureLabel(advancedLabel, "Advanced", true);
-    configureLabel(helpLabel, "Help / controls", true);
-    configureLabel(persistenceLabel, "Persistence (spectrogram and correlation)");
+    configureLabel(displayLabel, "Display behavior", true);
+    identifyControl(appearanceLabel, "displayAppearanceSection", "Spectrogram appearance");
+    identifyControl(stereoPositionLabel, "displayStereoPositionSection", "Stereo position display mapping");
+    identifyControl(correlationLabel, "displayCorrelationSection", "Correlation display");
+    identifyControl(displayLabel, "displayBehaviorSection", "Display behavior");
+    configureLabel(persistenceLabel, "Persistence");
     configureLabel(contrastLabel, "Contrast");
-    configureLabel(panMidpointLabel, "Display position midpoint (50%)");
-    configureLabel(panEdgeLabel, "Display position edge (99%)");
+    configureLabel(panMidpointLabel, "Midpoint (50%)");
+    configureLabel(panEdgeLabel, "Edge (99%)");
     configureLabel(colourLabel, "Colour");
     configureLabel(frequencyLabel, "Frequency scale");
     configureLabel(renderingLabel, "Rendering");
     for (auto* label :
          {
              &titleLabel,
-             &sharedLabel,
-             &spectrogramLabel,
+             &descriptionLabel,
+             &appearanceLabel,
+             &stereoPositionLabel,
              &correlationLabel,
-             &advancedLabel,
-             &helpLabel,
+             &displayLabel,
              &persistenceLabel,
              &contrastLabel,
              &panMidpointLabel,
@@ -289,30 +299,20 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
     resetAppearanceButton.onClick = [this] { resetDisplayAppearance(); };
     content.addAndMakeVisible(resetAppearanceButton);
 
-    identifyControl(helpText, "displayControlsHelp", "Help and controls");
-    helpText.setMultiLine(true, true);
-    helpText.setReadOnly(true);
-    helpText.setScrollbarsShown(false);
-    helpText.setFont(textFont(LABEL_FONT_HEIGHT));
-    helpText.setText(
-        "Tab / Shift+Tab: move between controls.\n"
-        "Arrow keys: adjust a focused slider. Shift: finer adjustment.\n"
-        "Drag sliders relatively. Hold Shift for fine dragging or wheel steps. Double-click to reset a control.\n"
-        "Spectrogram: drag crossovers or bands sideways. Command/Ctrl-drag vertically: Mid. "
-        "Option/Alt-drag vertically: Side.\n"
-        "Hover section edges to find collapse controls. Visibility toggles remain available here.\n"
-        "Focus the divider and use Up / Down to resize (Shift: 1 pixel).\n"
-        "S over a band: Solo. Command/Ctrl+B: Bypass. Command/Ctrl+D: Delta.\n"
-        "Command/Ctrl+Z: Undo. Command/Ctrl+Y or Command/Ctrl+Shift+Z: Redo.\n"
-        "Link follows local Mid gain edits, not host automation. Width and Recover remain independent.\n"
-        "Stop spectrogram analysis affects the display only. Audio Bypass is a separate main control.\n"
-        "F1: controls help. Command/Ctrl+comma: display settings. Escape: close settings."
-    );
-    content.addAndMakeVisible(helpText);
+    identifyControl(keyboardShortcutsButton, "showKeyboardShortcuts", "Show keyboard shortcuts");
+    keyboardShortcutsButton.setTooltip("Open the keyboard and pointer shortcuts reference in a separate window. F1.");
+    keyboardShortcutsButton.onClick = [this] {
+        // The owner may dismiss this panel while opening its shortcuts window.
+        const auto showShortcuts = onShowKeyboardShortcuts;
+        if (showShortcuts) {
+            showShortcuts();
+        }
+    };
+    content.addAndMakeVisible(keyboardShortcutsButton);
 
     state.addListener(this);
     juce::Desktop::getInstance().addFocusChangeListener(this);
-    setSize(PANEL_WIDTH, std::clamp(maximumHeight.value_or(PANEL_HEIGHT), 1, PANEL_HEIGHT));
+    setSize(PANEL_WIDTH, std::clamp(maximumHeight.value_or(CONTENT_HEIGHT), 1, CONTENT_HEIGHT));
 }
 
 /// Detaches message-thread listeners before the settings bindings and viewport content are destroyed.
@@ -336,13 +336,10 @@ void SettingsPanel::resetDisplayAppearance()
     state.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true, nullptr);
 }
 
-/// Makes the complete help section visible and focuses its accessible, selectable text when the panel is showing.
-void SettingsPanel::showHelp()
+/// Installs or clears the editor-owned shortcuts request on the message thread.
+void SettingsPanel::setKeyboardShortcutsCallback(std::function<void()> callback)
 {
-    revealControl(helpText);
-    if (isShowing()) {
-        helpText.grabKeyboardFocus();
-    }
+    onShowKeyboardShortcuts = std::move(callback);
 }
 
 /// Keeps a newly focused control visible, including a slider's nested inline text editor.
@@ -404,11 +401,8 @@ void SettingsPanel::resized()
     content.setSize(width, CONTENT_HEIGHT);
     auto area = content.getLocalBounds().reduced(MARGIN);
     titleLabel.setBounds(area.removeFromTop(ROW_HEIGHT));
-    sharedLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
-    persistenceLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
-    persistenceSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
-    spectrogramLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
-    hideSpectrogramButton.setBounds(area.removeFromTop(ROW_HEIGHT));
+    descriptionLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
+    appearanceLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
     for (const auto& [label, choice] :
          std::array {
              std::pair<juce::Label*, juce::ComboBox*> {&colourLabel, &colourChoice},
@@ -422,6 +416,7 @@ void SettingsPanel::resized()
     }
     contrastLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
     contrastSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
+    stereoPositionLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
     panMidpointLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
     panMidpointSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
     panEdgeLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
@@ -429,12 +424,14 @@ void SettingsPanel::resized()
     correlationLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
     showBandCorrelationButton.setBounds(area.removeFromTop(ROW_HEIGHT));
     smoothCorrelationReadoutButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    advancedLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
+    displayLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
+    persistenceLabel.setBounds(area.removeFromTop(SLIDER_LABEL_HEIGHT));
+    persistenceSlider.setBounds(area.removeFromTop(ROW_HEIGHT));
+    hideSpectrogramButton.setBounds(area.removeFromTop(ROW_HEIGHT));
     bypassRenderingButton.setBounds(area.removeFromTop(ROW_HEIGHT));
     showFpsButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    area.removeFromTop(8);
+    area.removeFromTop(FOOTER_GAP);
     resetAppearanceButton.setBounds(area.removeFromTop(ROW_HEIGHT));
-    helpLabel.setBounds(area.removeFromTop(SECTION_HEIGHT));
-    helpText.setBounds(area.removeFromTop(HELP_HEIGHT));
+    keyboardShortcutsButton.setBounds(area.removeFromTop(ROW_HEIGHT));
 }
 }  // namespace esgrove::image_control

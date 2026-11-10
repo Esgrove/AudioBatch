@@ -15,12 +15,14 @@ class SplitDivider final : public juce::Component
 public:
     SplitDivider();
 
+    void cancelDrag();
     void setDragCallback(std::function<void(int)> callback);
 
     bool keyPressed(const juce::KeyPress& key) override;
     void focusGained(juce::Component::FocusChangeType cause) override;
     void focusLost(juce::Component::FocusChangeType cause) override;
     void paint(juce::Graphics& graphics) override;
+    void visibilityChanged() override;
     void mouseEnter(const juce::MouseEvent& event) override;
     void mouseExit(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;

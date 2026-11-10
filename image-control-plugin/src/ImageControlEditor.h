@@ -70,20 +70,26 @@ private:
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
     [[nodiscard]] std::optional<std::size_t> bandUnderPointer() const;
     [[nodiscard]] int compactHeight() const;
+    [[nodiscard]] int compactBandHeight() const;
+    [[nodiscard]] int settingsPanelHeight() const;
+    [[nodiscard]] bool synchronizeRestoredLayout();
     [[nodiscard]] double persistenceSeconds() const;
 
     void applyLayoutSettings();
     void applySpectrogramHidden(bool hidden);
     void applyViewSettings();
     void configureHeaderIcons();
+    void layoutBandControlsDisclosure();
     void measureFramesPerSecond(double elapsed);
-    void openSettings(bool showHelp = false);
+    void openKeyboardShortcuts();
+    void openSettings();
     void refreshDisplay(double timestamp);
     void setAnalyzeOutput(bool output);
     void updateBandRanges();
     void updateCorrelationMonitoring();
     void updateDisplayDisclosures();
     void updateHistoryButtons();
+    void updateSettingsBounds();
     void updatePresetIdentity();
     void updateSpectrogramMonitoring();
 
@@ -109,7 +115,7 @@ private:
     SpectrogramWorker spectrogramWorker;
     /// The draggable divider between the spectrogram and the band strips.
     SplitDivider divider;
-    /// Height of the band strip section, in pixels, which the divider changes.
+    /// Saved height of the full band strip section, unchanged while compact values are shown.
     int bandSectionHeight {0};
 
     /// The plugin name in the header.
@@ -120,6 +126,8 @@ private:
     DisplayDisclosure spectrogramDisclosure {"Spectrogram"};
     /// Local correlation hide action, or its labelled restore handle.
     DisplayDisclosure correlationDisclosure {"Correlation"};
+    /// Collapses full band strips to values without adding a toolbar row.
+    DisplayDisclosure bandControlsDisclosure {"Band controls", false};
     /// Toggles the bypass parameter.
     juce::TextButton bypassButton {"Bypass"};
     /// Toggles the delta parameter, which outputs only what the processing changes.
@@ -182,12 +190,16 @@ private:
     /// Whether the saved layout has been restored, so layout changes are saved from now on.
     /// Until then, sizes JUCE applies while the editor is built, such as the minimum size, are not saved.
     bool layoutRestored {false};
+    /// Host restore epoch last applied to layout and unfinished control editing.
+    std::uint64_t layoutGeneration {0};
     /// Suppresses intermediate layout writes while changing resize limits between compact and expanded layouts.
     bool layoutTransition {false};
     /// Whether the correlation row is shown, independently of the spectrogram settings.
     bool correlationShown {true};
     /// Whether the A/B and user-preset toolbar row is shown, independently of analysis visibility.
     bool processingToolbarShown {true};
+    /// Compact values release the full strip area to the spectrogram without replacing the saved strip height.
+    bool compactBandControls {false};
     /// Whether the spectrogram is hidden, which shrinks the editor to the header and the band strips.
     bool spectrogramHidden {false};
     /// Whether the particles are not analyzed or drawn, while the audio is still processed.
@@ -201,6 +213,9 @@ private:
     double measuredFramesPerSecond {0.0};
     /// The renderer's frame count when the frame rate was last measured.
     int measuredFrameCount {0};
+
+    /// Modeless shortcut reference is editor-owned and closes before the editor's look and feel.
+    std::unique_ptr<juce::DocumentWindow> shortcutsWindow;
 
     /// Owned settings content is destroyed synchronously before its processor and bound state.
     std::unique_ptr<SettingsPanel> settingsPanel;

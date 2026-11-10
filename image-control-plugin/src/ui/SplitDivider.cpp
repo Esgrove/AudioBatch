@@ -33,6 +33,21 @@ SplitDivider::SplitDivider()
     setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
 }
 
+/// Releases a captured pointer drag before its layout is hidden or replaced.
+void SplitDivider::cancelDrag()
+{
+    dragging = false;
+    repaint();
+}
+
+/// Cancels captured movement as soon as this divider is hidden.
+void SplitDivider::visibilityChanged()
+{
+    if (!isVisible()) {
+        cancelDrag();
+    }
+}
+
 /// Sets the callback that receives vertical movement since the previous drag report, in pixels, positive downwards.
 void SplitDivider::setDragCallback(std::function<void(int)> callback)
 {
@@ -126,7 +141,6 @@ void SplitDivider::mouseDrag(const juce::MouseEvent& event)
 /// Ends the drag.
 void SplitDivider::mouseUp(const juce::MouseEvent& /*event*/)
 {
-    dragging = false;
-    repaint();
+    cancelDrag();
 }
 }  // namespace esgrove::image_control
