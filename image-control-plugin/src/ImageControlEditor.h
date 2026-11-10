@@ -82,6 +82,7 @@ private:
     void applyViewSettings();
     void configureHeaderIcons();
     void layoutBandControlsDisclosure();
+    void layoutHeader(juce::Rectangle<int> header);
     void measureFramesPerSecond(double elapsed);
     void openKeyboardShortcuts();
     void openSettings();

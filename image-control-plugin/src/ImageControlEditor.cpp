@@ -70,7 +70,7 @@ constexpr int OUTPUT_LABEL_WIDTH {52};
 /// Width of the output gain slider, in pixels.
 constexpr int OUTPUT_SLIDER_WIDTH {190};
 /// Wide editors retain a usable track without stretching the output control across the window.
-constexpr double MAX_OUTPUT_SLIDER_WIDTH {240.0};
+constexpr int MAX_OUTPUT_SLIDER_WIDTH {240};
 /// Width of the output gain value box, in pixels.
 constexpr int VALUE_BOX_WIDTH {70};
 /// Height of the output gain value box, in pixels.
@@ -326,15 +326,9 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(juce::Colour(palette::GREY_DARK));
 }
 
-/// Lays out the header, the spectrogram, the divider, and the band strips,
-/// and remembers the size and the band section height in the editor settings once the saved layout is restored.
-/// While the spectrogram is hidden, the band strips fill the editor below the header,
-/// and the saved height stays the one to restore when the spectrogram is shown again.
-void ImageControlEditor::resized()
+/// Allocates whole pixels monotonically, keeping the monitoring and output group anchored to the right.
+void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
 {
-    auto area = getLocalBounds().reduced(GAP);
-
-    auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
     // Spend narrow-width pressure on spacing first, then flexible labels and buttons, and lastly the output track.
     constexpr int groupGapCount {6};
     constexpr int iconGapCount {2};
@@ -342,33 +336,62 @@ void ImageControlEditor::resized()
     constexpr int preferredButtonWidth {60};
     constexpr int preferredTapWidth {42};
     constexpr int preferredIdentityWidth {TITLE_WIDTH + 16};
+    constexpr int minimumIdentityWidth {112};
+    constexpr int minimumButtonWidth {48};
+    constexpr int minimumTapWidth {34};
+    constexpr int minimumOutputLabelWidth {42};
     constexpr int fixedIconWidth {ICON_BUTTON_WIDTH * 4};
     constexpr int preferredWidth {
         preferredIdentityWidth + fixedIconWidth + preferredTapWidth * 2 + preferredButtonWidth * 3 + OUTPUT_LABEL_WIDTH
             + OUTPUT_SLIDER_WIDTH + groupGapCount * GAP + iconGapCount * ICON_BUTTON_GAP,
     };
-    double pressure = static_cast<double>(std::max(0, preferredWidth - header.getWidth()));
-    const auto compress = [&pressure](const int preferred, const int minimum, const int count) {
-        const double reduction
-            = std::min(static_cast<double>(preferred - minimum), pressure / static_cast<double>(count));
-        pressure = std::max(0.0, pressure - reduction * static_cast<double>(count));
-        return static_cast<double>(preferred) - reduction;
+    int pressure = std::max(0, preferredWidth - header.getWidth());
+    // Each extra window pixel restores exactly one slot pixel. No fractional boundary can round backwards.
+    const auto compress = [&pressure](auto& widths, const int minimum) {
+        while (pressure > 0) {
+            bool changed = false;
+            for (auto& width : widths) {
+                if (width > minimum && pressure > 0) {
+                    --width;
+                    --pressure;
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                break;
+            }
+        }
     };
-    const double groupGap = compress(GAP, minimumGap, groupGapCount);
-    const double iconGap = compress(ICON_BUTTON_GAP, minimumGap, iconGapCount);
-    const double identityWidth = compress(preferredIdentityWidth, 112, 1);
-    const double buttonWidth = compress(preferredButtonWidth, 48, 3);
-    const double tapWidth = compress(preferredTapWidth, 34, 2);
-    const double outputLabelWidth = compress(OUTPUT_LABEL_WIDTH, 42, 1);
-    const auto outputWidth = static_cast<double>(header.getWidth()) - identityWidth - fixedIconWidth - tapWidth * 2.0
-        - buttonWidth * 3.0 - outputLabelWidth - groupGapCount * groupGap - iconGapCount * iconGap;
-    auto headerX = static_cast<double>(header.getX());
-    const auto takeHeader = [&headerX, &header](const double width) {
-        const int left = juce::roundToInt(headerX);
+    std::array<int, groupGapCount> groupGaps {};
+    groupGaps.fill(GAP);
+    std::array<int, iconGapCount> iconGaps {};
+    iconGaps.fill(ICON_BUTTON_GAP);
+    std::array identityWidths {preferredIdentityWidth};
+    std::array buttonWidths {preferredButtonWidth, preferredButtonWidth, preferredButtonWidth};
+    std::array tapWidths {preferredTapWidth, preferredTapWidth};
+    std::array outputLabelWidths {OUTPUT_LABEL_WIDTH};
+    compress(groupGaps, minimumGap);
+    compress(iconGaps, minimumGap);
+    compress(identityWidths, minimumIdentityWidth);
+    compress(buttonWidths, minimumButtonWidth);
+    compress(tapWidths, minimumTapWidth);
+    compress(outputLabelWidths, minimumOutputLabelWidth);
+    const auto sum = [](const auto& widths) {
+        int total = 0;
+        for (const int width : widths) {
+            total += width;
+        }
+        return total;
+    };
+    const int outputWidth = header.getWidth() - sum(identityWidths) - fixedIconWidth - sum(tapWidths)
+        - sum(buttonWidths) - sum(outputLabelWidths) - sum(groupGaps) - sum(iconGaps);
+    int headerX = header.getX();
+    const auto takeHeader = [&headerX, &header](const int width) {
+        const int left = headerX;
         headerX += width;
-        return juce::Rectangle<int>(left, header.getY(), juce::roundToInt(headerX) - left, header.getHeight());
+        return juce::Rectangle<int>(left, header.getY(), width, header.getHeight());
     };
-    auto identity = takeHeader(identityWidth);
+    auto identity = takeHeader(identityWidths.front());
     if (presetLabel.isVisible()) {
         titleLabel.setBounds(identity.removeFromTop(COMPACT_BRAND_HEIGHT));
         presetLabel.setBounds(identity);
@@ -377,24 +400,35 @@ void ImageControlEditor::resized()
         presetLabel.setBounds({});
     }
     settingsButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    headerX += groupGap;
-    preButton.setBounds(takeHeader(tapWidth).reduced(0, BUTTON_INSET));
-    postButton.setBounds(takeHeader(tapWidth).reduced(0, BUTTON_INSET));
-    headerX += groupGap;
+    headerX += groupGaps.at(0);
+    preButton.setBounds(takeHeader(tapWidths.at(0)).reduced(0, BUTTON_INSET));
+    postButton.setBounds(takeHeader(tapWidths.at(1)).reduced(0, BUTTON_INSET));
+    headerX += groupGaps.at(1);
     undoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    headerX += iconGap;
+    headerX += iconGaps.at(0);
     redoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    headerX += groupGap;
-    monoButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
-    headerX += groupGap;
-    deltaButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
-    headerX += groupGap;
-    bypassButton.setBounds(takeHeader(buttonWidth).reduced(0, BUTTON_INSET));
-    headerX += groupGap;
-    outputLabel.setBounds(takeHeader(outputLabelWidth));
+    // Extra space separates the left tools from the right-anchored monitoring and output controls.
+    headerX += groupGaps.at(2) + std::max(0, outputWidth - MAX_OUTPUT_SLIDER_WIDTH);
+    monoButton.setBounds(takeHeader(buttonWidths.at(0)).reduced(0, BUTTON_INSET));
+    headerX += groupGaps.at(3);
+    deltaButton.setBounds(takeHeader(buttonWidths.at(1)).reduced(0, BUTTON_INSET));
+    headerX += groupGaps.at(4);
+    bypassButton.setBounds(takeHeader(buttonWidths.at(2)).reduced(0, BUTTON_INSET));
+    headerX += groupGaps.back();
+    outputLabel.setBounds(takeHeader(outputLabelWidths.front()));
     outputSlider.setBounds(takeHeader(std::min(outputWidth, MAX_OUTPUT_SLIDER_WIDTH)));
-    headerX += iconGap;
+    headerX += iconGaps.at(1);
     processingToolbarButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+}
+
+/// Lays out the header, the spectrogram, the divider, and the band strips,
+/// and remembers the size and the band section height in the editor settings once the saved layout is restored.
+/// While the spectrogram is hidden, the band strips fill the editor below the header,
+/// and the saved height stays the one to restore when the spectrogram is shown again.
+void ImageControlEditor::resized()
+{
+    auto area = getLocalBounds().reduced(GAP);
+    layoutHeader(area.removeFromTop(HEADER_HEIGHT - GAP));
     area.removeFromTop(GAP);
     if (processingToolbarShown) {
         processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
