@@ -581,13 +581,13 @@ void ImageControlProcessor::prepareToPlay(const double sampleRate, const int max
     imager.prepare(sampleRate, getTotalNumOutputChannels(), getCrossovers());
     analyzerFifo.setSampleRate(sampleRate);
     analyzerFifo.beginEpoch();
-    constexpr double MILLISECONDS_PER_SECOND {1000.0};
-    constexpr std::uint32_t MIN_CORRELATION_EXPIRY_MILLISECONDS {250};
+    constexpr double millisecondsPerSecond {1000.0};
+    constexpr std::uint32_t minCorrelationExpiryMilliseconds {250};
     const auto blockExpiry = static_cast<std::uint32_t>(
-        std::ceil(static_cast<double>(std::max(maximumBlockSize, 0)) * 2.0 * MILLISECONDS_PER_SECOND / sampleRate)
+        std::ceil(static_cast<double>(std::max(maximumBlockSize, 0)) * 2.0 * millisecondsPerSecond / sampleRate)
     );
     correlationExpiryMilliseconds.store(
-        std::max(MIN_CORRELATION_EXPIRY_MILLISECONDS, blockExpiry), std::memory_order_relaxed
+        std::max(minCorrelationExpiryMilliseconds, blockExpiry), std::memory_order_relaxed
     );
     correlationGeneration.fetch_add(1, std::memory_order_acq_rel);
     correlationUpdateMilliseconds.store(0, std::memory_order_release);

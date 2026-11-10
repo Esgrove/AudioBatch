@@ -89,16 +89,16 @@ TEST(BandCorrelationMeter, FirstReadingInitializesHistoryWithoutZeroBias)
 /// The numerical and accessible readouts follow the exponential trend by default.
 TEST(BandCorrelationMeter, DefaultReadoutFollowsTheExponentialTrend)
 {
-    constexpr double PERSISTENCE_SECONDS {0.6};
+    constexpr double persistenceSeconds {0.6};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(-0.75F);
-    meter.setCorrelation(0.75F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+    meter.setCorrelation(0.75F, persistenceSeconds, persistenceSeconds);
     EXPECT_EQ(meter.readoutText(), "+0.20");
     EXPECT_EQ(meter.valueText(), "+0.20");
     expectTrend(meter, 0.75 - 1.5 * std::exp(-1.0));
     expectRange(meter, -0.75F, 0.75F);
 
-    meter.setCorrelation(0.75F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+    meter.setCorrelation(0.75F, persistenceSeconds, persistenceSeconds);
     EXPECT_EQ(meter.readoutText(), "+0.55");
     EXPECT_EQ(meter.valueText(), "+0.55");
     expectTrend(meter, 0.75 - 1.5 * std::exp(-2.0));
@@ -107,10 +107,10 @@ TEST(BandCorrelationMeter, DefaultReadoutFollowsTheExponentialTrend)
 /// Switching readout mode changes text immediately without resetting or advancing either history indicator.
 TEST(BandCorrelationMeter, ReadoutModeChangesPreserveHistoryAndKeepLiveModeImmediate)
 {
-    constexpr double PERSISTENCE_SECONDS {0.6};
+    constexpr double persistenceSeconds {0.6};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(-0.75F);
-    meter.setCorrelation(0.75F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+    meter.setCorrelation(0.75F, persistenceSeconds, persistenceSeconds);
     const double expected = 0.75 - 1.5 * std::exp(-1.0);
     for (int toggle = 0; toggle < 2; ++toggle) {
         meter.setSmoothedReadout(false);
@@ -125,25 +125,25 @@ TEST(BandCorrelationMeter, ReadoutModeChangesPreserveHistoryAndKeepLiveModeImmed
         expectRange(meter, -0.75F, 0.75F);
     }
     meter.setSmoothedReadout(false);
-    meter.setCorrelation(-0.25F, 0.0, PERSISTENCE_SECONDS);
+    meter.setCorrelation(-0.25F, 0.0, persistenceSeconds);
     EXPECT_EQ(meter.readoutText(), "-0.25");
     EXPECT_EQ(meter.valueText(), "-0.25");
     expectTrend(meter, expected);
     expectRange(meter, -0.75F, 0.75F);
     meter.setSmoothedReadout(true);
     EXPECT_EQ(meter.readoutText(), "+0.20");
-    meter.setCorrelation(-0.25F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+    meter.setCorrelation(-0.25F, persistenceSeconds, persistenceSeconds);
     expectTrend(meter, -0.25 + (expected + 0.25) * std::exp(-1.0));
 }
 
 /// Identical live readings keep updating the displayed trend until its rounded text reaches the held value.
 TEST(BandCorrelationMeter, RepeatedHeldReadingsConvergeTheDisplayedText)
 {
-    constexpr double PERSISTENCE_SECONDS {0.1};
+    constexpr double persistenceSeconds {0.1};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(-1.0F);
     for (const char* expected : {"-0.21", "+0.08", "+0.19", "+0.23", "+0.24", "+0.25"}) {
-        meter.setCorrelation(0.25F, PERSISTENCE_SECONDS, PERSISTENCE_SECONDS);
+        meter.setCorrelation(0.25F, persistenceSeconds, persistenceSeconds);
         EXPECT_EQ(meter.readoutText(), expected);
         EXPECT_EQ(meter.valueText(), expected);
     }
@@ -152,15 +152,15 @@ TEST(BandCorrelationMeter, RepeatedHeldReadingsConvergeTheDisplayedText)
 /// A held step reaches the same response after the same real time at low, high, and irregular refresh rates.
 TEST(BandCorrelationMeter, HeldStepConvergesIndependentlyOfFrameRate)
 {
-    constexpr double PERSISTENCE_SECONDS {0.6};
-    constexpr double DURATION_SECONDS {1.2};
-    const double expected = 1.0 - 2.0 * std::exp(-DURATION_SECONDS / PERSISTENCE_SECONDS);
+    constexpr double persistenceSeconds {0.6};
+    constexpr double durationSeconds {1.2};
+    const double expected = 1.0 - 2.0 * std::exp(-durationSeconds / persistenceSeconds);
     for (const int frames : {1, 18, 36, 72, 144, 288, 1200}) {
         SCOPED_TRACE(frames);
         BandCorrelationMeter meter("Low");
         meter.setCorrelation(-1.0F);
         for (int frame = 0; frame < frames; ++frame) {
-            meter.setCorrelation(1.0F, DURATION_SECONDS / static_cast<double>(frames), PERSISTENCE_SECONDS);
+            meter.setCorrelation(1.0F, durationSeconds / static_cast<double>(frames), persistenceSeconds);
         }
         expectTrend(meter, expected);
         EXPECT_EQ(meter.readoutText(), "+0.73");
@@ -169,7 +169,7 @@ TEST(BandCorrelationMeter, HeldStepConvergesIndependentlyOfFrameRate)
     BandCorrelationMeter irregular("Low");
     irregular.setCorrelation(-1.0F);
     for (const double elapsed : {0.01, 0.19, 0.003, 0.497, 0.5}) {
-        irregular.setCorrelation(1.0F, elapsed, PERSISTENCE_SECONDS);
+        irregular.setCorrelation(1.0F, elapsed, persistenceSeconds);
     }
     expectTrend(irregular, expected);
 }
@@ -191,35 +191,35 @@ TEST(BandCorrelationMeter, ZeroElapsedRecordsExcursionsWithoutAdvancingTheTrend)
 /// Repeated identical readings still advance smoothing and age an old extreme out of the trailing window.
 TEST(BandCorrelationMeter, UnchangedReadingsAdvanceTrendAndExpireTheRange)
 {
-    constexpr double PERSISTENCE_SECONDS {0.1};
-    constexpr double REFRESH_SECONDS {0.025};
+    constexpr double persistenceSeconds {0.1};
+    constexpr double refreshSeconds {0.025};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(-1.0F);
     for (int frame = 0; frame < 3; ++frame) {
-        meter.setCorrelation(0.25F, REFRESH_SECONDS, PERSISTENCE_SECONDS);
+        meter.setCorrelation(0.25F, refreshSeconds, persistenceSeconds);
     }
     expectRange(meter, -1.0F, 0.25F);
-    expectTrend(meter, 0.25 - 1.25 * std::exp(-0.075 / PERSISTENCE_SECONDS));
+    expectTrend(meter, 0.25 - 1.25 * std::exp(-0.075 / persistenceSeconds));
     for (int frame = 0; frame < 2; ++frame) {
-        meter.setCorrelation(0.25F, REFRESH_SECONDS, PERSISTENCE_SECONDS);
+        meter.setCorrelation(0.25F, refreshSeconds, persistenceSeconds);
     }
     expectRange(meter, 0.25F, 0.25F);
-    expectTrend(meter, 0.25 - 1.25 * std::exp(-0.125 / PERSISTENCE_SECONDS));
+    expectTrend(meter, 0.25 - 1.25 * std::exp(-0.125 / persistenceSeconds));
 }
 
 /// Multiple observations in one bucket preserve both extrema, even after more refreshes than history buckets.
 TEST(BandCorrelationMeter, HighRefreshRetainsBothExcursionsSharingOneBucket)
 {
-    constexpr double REFRESH_SECONDS {EXPIRY_RESOLUTION_SECONDS * 0.125};
-    constexpr double PERSISTENCE_SECONDS {1.0};
+    constexpr double refreshSeconds {EXPIRY_RESOLUTION_SECONDS * 0.125};
+    constexpr double persistenceSeconds {1.0};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(0.1F);
     for (const float value : {-0.9F, 0.8F, -0.3F, 0.2F}) {
-        meter.setCorrelation(value, REFRESH_SECONDS, PERSISTENCE_SECONDS);
+        meter.setCorrelation(value, refreshSeconds, persistenceSeconds);
     }
     expectRange(meter, -0.9F, 0.8F);
     for (int frame = 0; frame < 600; ++frame) {
-        meter.setCorrelation(0.2F, REFRESH_SECONDS, PERSISTENCE_SECONDS);
+        meter.setCorrelation(0.2F, refreshSeconds, persistenceSeconds);
     }
     expectRange(meter, -0.9F, 0.8F);
 }
@@ -227,14 +227,14 @@ TEST(BandCorrelationMeter, HighRefreshRetainsBothExcursionsSharingOneBucket)
 /// Extrema never disappear early and expire within one 1/120-second resolution at different bucket phases.
 TEST(BandCorrelationMeter, RollingExpiryIsBoundedByOneHundredTwentiethOfASecond)
 {
-    constexpr double PERSISTENCE_SECONDS {0.1};
+    constexpr double persistenceSeconds {0.1};
     for (const double phase : {0.125, 0.375, 0.625, 0.875}) {
         SCOPED_TRACE(phase);
         BandCorrelationMeter meter("Low");
-        meter.setCorrelation(-1.0F, phase * EXPIRY_RESOLUTION_SECONDS, PERSISTENCE_SECONDS);
-        meter.setCorrelation(0.0F, PERSISTENCE_SECONDS - EXPIRY_RESOLUTION_SECONDS * 0.01, PERSISTENCE_SECONDS);
+        meter.setCorrelation(-1.0F, phase * EXPIRY_RESOLUTION_SECONDS, persistenceSeconds);
+        meter.setCorrelation(0.0F, persistenceSeconds - EXPIRY_RESOLUTION_SECONDS * 0.01, persistenceSeconds);
         expectRange(meter, -1.0F, 0.0F);
-        meter.setCorrelation(0.0F, EXPIRY_RESOLUTION_SECONDS * 1.01, PERSISTENCE_SECONDS);
+        meter.setCorrelation(0.0F, EXPIRY_RESOLUTION_SECONDS * 1.01, persistenceSeconds);
         expectRange(meter, 0.0F, 0.0F);
     }
 }
@@ -242,15 +242,15 @@ TEST(BandCorrelationMeter, RollingExpiryIsBoundedByOneHundredTwentiethOfASecond)
 /// The lower and upper extremes age out independently rather than clearing the whole range together.
 TEST(BandCorrelationMeter, OldMinimumAndMaximumExpireIndependently)
 {
-    constexpr double PERSISTENCE_SECONDS {0.1};
+    constexpr double persistenceSeconds {0.1};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(-1.0F);
-    meter.setCorrelation(1.0F, 0.05, PERSISTENCE_SECONDS);
-    meter.setCorrelation(0.0F, 0.025, PERSISTENCE_SECONDS);
+    meter.setCorrelation(1.0F, 0.05, persistenceSeconds);
+    meter.setCorrelation(0.0F, 0.025, persistenceSeconds);
     expectRange(meter, -1.0F, 1.0F);
-    meter.setCorrelation(0.0F, 0.035, PERSISTENCE_SECONDS);
+    meter.setCorrelation(0.0F, 0.035, persistenceSeconds);
     expectRange(meter, 0.0F, 1.0F);
-    meter.setCorrelation(0.0F, 0.05, PERSISTENCE_SECONDS);
+    meter.setCorrelation(0.0F, 0.05, persistenceSeconds);
     expectRange(meter, 0.0F, 0.0F);
 }
 
@@ -294,7 +294,7 @@ TEST(BandCorrelationMeter, IncreasingPersistenceDoesNotResurrectExpiredHistory)
 /// Finite Persistence is clamped to its supported range, while nonfinite values select the default time constant.
 TEST(BandCorrelationMeter, PersistenceValidationAppliesToTrendAndRange)
 {
-    constexpr auto CASES = std::array {
+    constexpr auto cases = std::array {
         std::pair {-100.0, MIN_PERSISTENCE_SECONDS},
         std::pair {0.0, MIN_PERSISTENCE_SECONDS},
         std::pair {MIN_PERSISTENCE_SECONDS * 0.5, MIN_PERSISTENCE_SECONDS},
@@ -307,16 +307,16 @@ TEST(BandCorrelationMeter, PersistenceValidationAppliesToTrendAndRange)
         std::pair {std::numeric_limits<double>::infinity(), DEFAULT_PERSISTENCE_SECONDS},
         std::pair {-std::numeric_limits<double>::infinity(), DEFAULT_PERSISTENCE_SECONDS},
     };
-    constexpr double ELAPSED_SECONDS {MIN_PERSISTENCE_SECONDS * 0.5};
-    for (const auto& [supplied, effective] : CASES) {
+    constexpr double elapsedSeconds {MIN_PERSISTENCE_SECONDS * 0.5};
+    for (const auto& [supplied, effective] : cases) {
         SCOPED_TRACE(supplied);
         BandCorrelationMeter meter("Low");
         meter.setCorrelation(-1.0F);
-        meter.setCorrelation(1.0F, ELAPSED_SECONDS, supplied);
-        expectTrend(meter, 1.0 - 2.0 * std::exp(-ELAPSED_SECONDS / effective));
+        meter.setCorrelation(1.0F, elapsedSeconds, supplied);
+        expectTrend(meter, 1.0 - 2.0 * std::exp(-elapsedSeconds / effective));
         expectRange(meter, -1.0F, 1.0F);
         meter.setCorrelation(1.0F, effective, supplied);
-        expectTrend(meter, 1.0 - 2.0 * std::exp(-(ELAPSED_SECONDS + effective) / effective));
+        expectTrend(meter, 1.0 - 2.0 * std::exp(-(elapsedSeconds + effective) / effective));
         expectRange(meter, 1.0F, 1.0F);
     }
 }
@@ -424,27 +424,27 @@ TEST(BandCorrelationMeter, InvalidElapsedTimeAndLongGapsResetHistory)
 /// Many ring wraps agree with exact and resolution-extended windows from an independent observation log.
 TEST(BandCorrelationMeter, RepeatedRingWrapsPreserveBoundedRollingExtrema)
 {
-    constexpr double REFRESH_SECONDS {1.0 / 64.0};
-    constexpr int READING_COUNT {32'768};
-    constexpr std::array WINDOWS {MIN_PERSISTENCE_SECONDS, 0.125, 0.5, MAX_PERSISTENCE_SECONDS};
+    constexpr double refreshSeconds {1.0 / 64.0};
+    constexpr int readingCount {32'768};
+    constexpr std::array windows {MIN_PERSISTENCE_SECONDS, 0.125, 0.5, MAX_PERSISTENCE_SECONDS};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(0.0F);
     std::deque<std::pair<double, float>> observations {{0.0, 0.0F}};
-    for (int reading = 1; reading <= READING_COUNT; ++reading) {
-        const double now = static_cast<double>(reading) * REFRESH_SECONDS;
-        const double persistence = WINDOWS.at(static_cast<std::size_t>(reading / 257) % WINDOWS.size());
+    for (int reading = 1; reading <= readingCount; ++reading) {
+        const double now = static_cast<double>(reading) * refreshSeconds;
+        const double persistence = windows.at(static_cast<std::size_t>(reading / 257) % windows.size());
         float value = static_cast<float>(reading % 11 - 5) * 0.05F;
         if (reading % 257 == 0) {
             value = -1.0F;
         } else if (reading % 509 == 0) {
             value = 1.0F;
         }
-        meter.setCorrelation(value, REFRESH_SECONDS, persistence);
+        meter.setCorrelation(value, refreshSeconds, persistence);
         observations.emplace_back(now, value);
         while (observations.front().first < now - MAX_PERSISTENCE_SECONDS - EXPIRY_RESOLUTION_SECONDS) {
             observations.pop_front();
         }
-        if (reading % 127 != 0 && reading != READING_COUNT) {
+        if (reading % 127 != 0 && reading != readingCount) {
             continue;
         }
         SCOPED_TRACE(reading);
@@ -488,12 +488,12 @@ TEST(BandCorrelationMeter, RepeatedRingWrapsPreserveBoundedRollingExtrema)
 /// An isolated old excursion fades smoothly while its exact range remains held, and is gone at the same expiry.
 TEST(BandCorrelationMeter, RangeFieldFadesBeforeExpiryWithoutExtendingPersistence)
 {
-    constexpr double PERSISTENCE_SECONDS {0.8};
+    constexpr double persistenceSeconds {0.8};
     BandCorrelationMeter meter("Low");
-    meter.setCorrelation(-1.0F, 0.0, PERSISTENCE_SECONDS);
+    meter.setCorrelation(-1.0F, 0.0, persistenceSeconds);
     EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 1.0F);
     for (int step = 1; step <= 4; ++step) {
-        meter.setCorrelation(1.0F, 0.2, PERSISTENCE_SECONDS);
+        meter.setCorrelation(1.0F, 0.2, persistenceSeconds);
         const double remaining = 1.0 - static_cast<double>(step) * 0.25;
         const double expected = remaining * remaining * (3.0 - 2.0 * remaining);
         EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), expected, 1.0e-6);
@@ -508,14 +508,14 @@ TEST(BandCorrelationMeter, RangeFieldFadesBeforeExpiryWithoutExtendingPersistenc
 /// Refresh counts and bucket phases do not quantize the visual release of an isolated excursion.
 TEST(BandCorrelationMeter, RangeFieldUsesObservationAgeIndependentlyOfRefreshRate)
 {
-    constexpr double PERSISTENCE_SECONDS {0.8};
-    constexpr double OBSERVATION_PHASE_SECONDS {0.003};
+    constexpr double persistenceSeconds {0.8};
+    constexpr double observationPhaseSeconds {0.003};
     for (const int frames : {1, 24, 60, 144, 1000}) {
         SCOPED_TRACE(frames);
         BandCorrelationMeter meter("Low");
-        meter.setCorrelation(-1.0F, OBSERVATION_PHASE_SECONDS, PERSISTENCE_SECONDS);
+        meter.setCorrelation(-1.0F, observationPhaseSeconds, persistenceSeconds);
         for (int frame = 0; frame < frames; ++frame) {
-            meter.setCorrelation(1.0F, PERSISTENCE_SECONDS * 0.5 / static_cast<double>(frames), PERSISTENCE_SECONDS);
+            meter.setCorrelation(1.0F, persistenceSeconds * 0.5 / static_cast<double>(frames), persistenceSeconds);
         }
         EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
     }
@@ -560,16 +560,16 @@ TEST(BandCorrelationMeter, RangeFieldReusesRetainedHistoryWhenPersistenceChanges
 /// A separate observation log validates filled spatial coverage and independent age weighting across ring wraps.
 TEST(BandCorrelationMeter, RangeFieldMatchesIndependentObservationCoverage)
 {
-    constexpr double REFRESH_SECONDS {1.0 / 64.0};
-    constexpr std::array WINDOWS {MIN_PERSISTENCE_SECONDS, 0.25, DEFAULT_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS};
-    constexpr std::array PROBES {-1.0F, -0.5F, 0.0F, 0.5F, 1.0F};
+    constexpr double refreshSeconds {1.0 / 64.0};
+    constexpr std::array windows {MIN_PERSISTENCE_SECONDS, 0.25, DEFAULT_PERSISTENCE_SECONDS, MAX_PERSISTENCE_SECONDS};
+    constexpr std::array probes {-1.0F, -0.5F, 0.0F, 0.5F, 1.0F};
     BandCorrelationMeter meter("Low");
     std::deque<std::pair<double, float>> observations;
     for (int reading = 0; reading < 2048; ++reading) {
-        const double now = static_cast<double>(reading) * REFRESH_SECONDS;
-        const double persistence = WINDOWS.at(static_cast<std::size_t>(reading / 257) % WINDOWS.size());
+        const double now = static_cast<double>(reading) * refreshSeconds;
+        const double persistence = windows.at(static_cast<std::size_t>(reading / 257) % windows.size());
         const auto value = static_cast<float>(std::sin(static_cast<double>(reading) * 0.031));
-        meter.setCorrelation(value, reading > 0 ? REFRESH_SECONDS : 0.0, persistence);
+        meter.setCorrelation(value, reading > 0 ? refreshSeconds : 0.0, persistence);
         observations.emplace_back(now, value);
         while (observations.front().first < now - MAX_PERSISTENCE_SECONDS) {
             observations.pop_front();
@@ -578,7 +578,7 @@ TEST(BandCorrelationMeter, RangeFieldMatchesIndependentObservationCoverage)
             continue;
         }
         SCOPED_TRACE(reading);
-        for (const float probe : PROBES) {
+        for (const float probe : probes) {
             double expected = 0.0;
             for (const auto& [time, observed] : observations) {
                 const double remaining = std::clamp(1.0 - (now - time) / persistence, 0.0, 1.0);

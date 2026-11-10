@@ -614,9 +614,9 @@ void MultibandImager::convolveSignal(
     convolver.convolve(kernelSlots[static_cast<std::size_t>(activeSlot)], kernel, output);
     if (crossfade) {
         convolver.convolve(kernelSlots[static_cast<std::size_t>(1 - activeSlot)], kernel, fadeScratch);
-        constexpr float FADE_STEP {1.0F / static_cast<float>(PARTITION_SIZE)};
+        constexpr float fadeStep {1.0F / static_cast<float>(PARTITION_SIZE)};
         for (std::size_t sample = 0; sample < output.size(); ++sample) {
-            const float fade = static_cast<float>(sample + 1) * FADE_STEP;
+            const float fade = static_cast<float>(sample + 1) * fadeStep;
             output[sample] += (fadeScratch[sample] - output[sample]) * fade;
         }
     }

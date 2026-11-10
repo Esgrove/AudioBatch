@@ -123,42 +123,42 @@ TEST(Crossover, QuadratureHasExactTypeThreeSymmetryAndEndpointZeros)
 
 TEST(Crossover, FullbandQuadratureMatchesAnalyticalWindowedCotangentImpulse)
 {
-    constexpr int HALF_LENGTH {64};
-    constexpr int DESIGN_SIZE {256};
-    const auto kernel = designQuadratureKernel(TEST_SAMPLE_RATE, HALF_LENGTH);
-    for (int offset = 1; offset <= HALF_LENGTH; ++offset) {
+    constexpr int halfLength {64};
+    constexpr int designSize {256};
+    const auto kernel = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength);
+    for (int offset = 1; offset <= halfLength; ++offset) {
         SCOPED_TRACE(offset);
         // The inverse sine sum of a flat imaginary spectrum is 2 cot(pi n / N) / N on odd offsets.
         // Even offsets vanish. This closed form tests the finite frequency grid without another FFT oracle.
-        const double phase = std::numbers::pi * static_cast<double>(offset) / static_cast<double>(DESIGN_SIZE);
-        const double impulse = offset % 2 == 0 ? 0.0 : 2.0 / (static_cast<double>(DESIGN_SIZE) * std::tan(phase));
-        const double expected = impulse * analyticalWindow(offset, HALF_LENGTH);
-        EXPECT_NEAR(kernel[static_cast<std::size_t>(HALF_LENGTH + offset)], expected, 1.0e-7);
-        EXPECT_NEAR(kernel[static_cast<std::size_t>(HALF_LENGTH - offset)], -expected, 1.0e-7);
+        const double phase = std::numbers::pi * static_cast<double>(offset) / static_cast<double>(designSize);
+        const double impulse = offset % 2 == 0 ? 0.0 : 2.0 / (static_cast<double>(designSize) * std::tan(phase));
+        const double expected = impulse * analyticalWindow(offset, halfLength);
+        EXPECT_NEAR(kernel[static_cast<std::size_t>(halfLength + offset)], expected, 1.0e-7);
+        EXPECT_NEAR(kernel[static_cast<std::size_t>(halfLength - offset)], -expected, 1.0e-7);
     }
 }
 
 TEST(Crossover, QuadratureLowpassMatchesIndependentWindowedSineSum)
 {
-    constexpr int HALF_LENGTH {64};
-    constexpr int DESIGN_SIZE {256};
-    constexpr double CROSSOVER {6000.0};
-    const auto kernel = designQuadratureKernel(TEST_SAMPLE_RATE, HALF_LENGTH, CROSSOVER);
-    for (int offset = 1; offset <= HALF_LENGTH; ++offset) {
+    constexpr int halfLength {64};
+    constexpr int designSize {256};
+    constexpr double crossover {6000.0};
+    const auto kernel = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength, crossover);
+    for (int offset = 1; offset <= halfLength; ++offset) {
         SCOPED_TRACE(offset);
         double impulse = 0.0;
-        for (int bin = 1; bin < DESIGN_SIZE / 2; ++bin) {
-            const double frequency = TEST_SAMPLE_RATE * static_cast<double>(bin) / static_cast<double>(DESIGN_SIZE);
-            const double progress = std::clamp(std::log2(frequency / CROSSOVER) + 0.5, 0.0, 1.0);
+        for (int bin = 1; bin < designSize / 2; ++bin) {
+            const double frequency = TEST_SAMPLE_RATE * static_cast<double>(bin) / static_cast<double>(designSize);
+            const double progress = std::clamp(std::log2(frequency / crossover) + 0.5, 0.0, 1.0);
             const double target = 0.5 * (1.0 + std::cos(std::numbers::pi * progress));
             impulse += target
                 * std::sin(2.0 * std::numbers::pi * static_cast<double>(bin * offset)
-                           / static_cast<double>(DESIGN_SIZE));
+                           / static_cast<double>(designSize));
         }
         const double expected
-            = impulse * (2.0 / static_cast<double>(DESIGN_SIZE)) * analyticalWindow(offset, HALF_LENGTH);
-        EXPECT_NEAR(kernel[static_cast<std::size_t>(HALF_LENGTH + offset)], expected, 1.0e-7);
-        EXPECT_NEAR(kernel[static_cast<std::size_t>(HALF_LENGTH - offset)], -expected, 1.0e-7);
+            = impulse * (2.0 / static_cast<double>(designSize)) * analyticalWindow(offset, halfLength);
+        EXPECT_NEAR(kernel[static_cast<std::size_t>(halfLength + offset)], expected, 1.0e-7);
+        EXPECT_NEAR(kernel[static_cast<std::size_t>(halfLength - offset)], -expected, 1.0e-7);
     }
 }
 
@@ -232,11 +232,11 @@ TEST(Crossover, MinimumCrossoverRetainsFiniteOrdinaryResponseWithoutDcNormalizat
 
 TEST(Crossover, QuadratureBandDifferencesAreComplementaryToFullband)
 {
-    constexpr int HALF_LENGTH {4096};
-    const auto low = designQuadratureKernel(TEST_SAMPLE_RATE, HALF_LENGTH, 100.0);
-    const auto middle = designQuadratureKernel(TEST_SAMPLE_RATE, HALF_LENGTH, 500.0);
-    const auto high = designQuadratureKernel(TEST_SAMPLE_RATE, HALF_LENGTH, 5000.0);
-    const auto fullband = designQuadratureKernel(TEST_SAMPLE_RATE, HALF_LENGTH);
+    constexpr int halfLength {4096};
+    const auto low = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength, 100.0);
+    const auto middle = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength, 500.0);
+    const auto high = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength, 5000.0);
+    const auto fullband = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength);
     std::array<std::vector<float>, 4> bands;
     for (auto& band : bands) {
         band.resize(fullband.size());

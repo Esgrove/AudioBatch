@@ -275,22 +275,22 @@ void runHandoff(const bool active)
         side.fill(0.4F);
         imager.setGains(mid, side, 0.9F);
     }
-    constexpr Crossovers MOVED_CROSSOVERS {180.0F, 1200.0F, 6500.0F};
+    constexpr Crossovers movedCrossovers {180.0F, 1200.0F, 6500.0F};
     juce::AudioBuffer<float> buffer(2, 511);
     onFreshThread([&] {
         const auto deadline = std::chrono::steady_clock::now() + HANDOFF_TIMEOUT;
         do {
             fillInput(buffer);
-            processHandoff(imager, buffer, MOVED_CROSSOVERS);
+            processHandoff(imager, buffer, movedCrossovers);
             checkOutput(buffer);
-            if (sameCrossovers(imager.getActiveCrossovers(), MOVED_CROSSOVERS)) {
+            if (sameCrossovers(imager.getActiveCrossovers(), movedCrossovers)) {
                 return;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         } while (std::chrono::steady_clock::now() < deadline);
         require(false, "Crossover request never became active");
     });
-    require(sameCrossovers(imager.getActiveCrossovers(), MOVED_CROSSOVERS), "Active crossover proof failed");
+    require(sameCrossovers(imager.getActiveCrossovers(), movedCrossovers), "Active crossover proof failed");
     imager.release();
 }
 

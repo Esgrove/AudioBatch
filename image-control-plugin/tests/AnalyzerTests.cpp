@@ -184,46 +184,46 @@ TEST(Analyzer, TierDeadlinesAreGroupedLowToHighOnOneAudioClockAndClearRestartsIt
 
 TEST(Analyzer, CachedPowersMatchDirectNeighbourhoodSummationInBinOrder)
 {
-    constexpr std::size_t WINDOW_LENGTH {1024};
-    constexpr std::size_t FFT_SIZE {WINDOW_LENGTH * 2};
-    constexpr double BIN_WIDTH {TEST_SAMPLE_RATE / static_cast<double>(FFT_SIZE)};
-    constexpr std::size_t FIRST_BIN {171};
-    constexpr std::size_t LAST_BIN {853};
-    const auto left = makeNoise(0.5F, WINDOW_LENGTH, 47);
-    const auto right = makeNoise(0.3F, WINDOW_LENGTH, 49);
-    const auto frames = analyzeFrames(left, right, TEST_SAMPLE_RATE, WINDOW_LENGTH);
+    constexpr std::size_t windowLength {1024};
+    constexpr std::size_t fftSize {windowLength * 2};
+    constexpr double binWidth {TEST_SAMPLE_RATE / static_cast<double>(fftSize)};
+    constexpr std::size_t firstBin {171};
+    constexpr std::size_t lastBin {853};
+    const auto left = makeNoise(0.5F, windowLength, 47);
+    const auto right = makeNoise(0.3F, windowLength, 49);
+    const auto frames = analyzeFrames(left, right, TEST_SAMPLE_RATE, windowLength);
     ASSERT_FALSE(frames.empty());
     ASSERT_EQ(frames.back().metadata.tierIndex, ANALYSIS_TIER_COUNT - 1);
 
     const juce::dsp::FFT transform(11);
-    std::vector<std::complex<float>> samples(FFT_SIZE);
-    std::vector<std::complex<float>> spectrum(FFT_SIZE);
-    for (std::size_t index = 0; index < WINDOW_LENGTH; ++index) {
+    std::vector<std::complex<float>> samples(fftSize);
+    std::vector<std::complex<float>> spectrum(fftSize);
+    for (std::size_t index = 0; index < windowLength; ++index) {
         samples[index] = {left[index], right[index]};
     }
     transform.perform(samples.data(), spectrum.data(), false);
     const auto channels = [&spectrum](const std::size_t bin) {
         const auto packed = spectrum[bin];
-        const auto mirrored = std::conj(spectrum[(FFT_SIZE - bin) % FFT_SIZE]);
+        const auto mirrored = std::conj(spectrum[(fftSize - bin) % fftSize]);
         const auto difference = (packed - mirrored) * 0.5F;
         return std::pair {(packed + mirrored) * 0.5F, std::complex<float>(difference.imag(), -difference.real())};
     };
-    std::vector<std::complex<float>> hannLeft(LAST_BIN - FIRST_BIN + 1);
+    std::vector<std::complex<float>> hannLeft(lastBin - firstBin + 1);
     std::vector<std::complex<float>> hannRight(hannLeft.size());
-    for (std::size_t bin = FIRST_BIN; bin <= LAST_BIN; ++bin) {
+    for (std::size_t bin = firstBin; bin <= lastBin; ++bin) {
         const auto [centreLeft, centreRight] = channels(bin);
         const auto [lowerLeft, lowerRight] = channels(bin - 2);
         const auto [upperLeft, upperRight] = channels(bin + 2);
-        hannLeft[bin - FIRST_BIN] = centreLeft * 0.5F - (lowerLeft + upperLeft) * 0.25F;
-        hannRight[bin - FIRST_BIN] = centreRight * 0.5F - (lowerRight + upperRight) * 0.25F;
+        hannLeft[bin - firstBin] = centreLeft * 0.5F - (lowerLeft + upperLeft) * 0.25F;
+        hannRight[bin - firstBin] = centreRight * 0.5F - (lowerRight + upperRight) * 0.25F;
     }
     const double smoothingRatio = std::exp2(POSITION_SMOOTHING_OCTAVES * 0.5) - 1.0;
     const StereoPositionCurve curve;
     const auto& points = frames.back().points;
     ASSERT_EQ(points.size(), hannLeft.size());
     for (std::size_t index = 0; index < points.size(); ++index) {
-        const double frequency = static_cast<double>(FIRST_BIN + index) * BIN_WIDTH;
-        const auto reach = static_cast<std::size_t>(std::floor(frequency * smoothingRatio / BIN_WIDTH));
+        const double frequency = static_cast<double>(firstBin + index) * binWidth;
+        const auto reach = static_cast<std::size_t>(std::floor(frequency * smoothingRatio / binWidth));
         const std::size_t first = index - std::min(index, reach);
         const std::size_t last = std::min(points.size() - 1, index + reach);
         float leftPower = 0.0F;

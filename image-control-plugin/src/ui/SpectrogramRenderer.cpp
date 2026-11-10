@@ -899,8 +899,8 @@ void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport,
     compositeUniforms->cornerRadius.set(SPECTROGRAM_PLOT_CORNER_RADIUS * scale);
     compositeUniforms->exposure.set(exposure);
     // The glow chain adds up one blurred copy per level, so its strength is shared between them.
-    constexpr float GLOW_PER_LEVEL {GLOW_STRENGTH / static_cast<float>(SPECTROGRAM_BLOOM_LEVEL_COUNT)};
-    compositeUniforms->glowStrength.set(solid ? GLOW_PER_LEVEL * SOLID_GLOW_SHARE : GLOW_PER_LEVEL);
+    constexpr float glowPerLevel {GLOW_STRENGTH / static_cast<float>(SPECTROGRAM_BLOOM_LEVEL_COUNT)};
+    compositeUniforms->glowStrength.set(solid ? glowPerLevel * SOLID_GLOW_SHARE : glowPerLevel);
     compositeUniforms->solid.set(solid ? 1.0F : 0.0F);
     compositeUniforms->fieldSize.set(static_cast<float>(field.width), static_cast<float>(field.height));
     compositeUniforms->outlineWidth.set(SOLID_OUTLINE_PIXELS * scale);

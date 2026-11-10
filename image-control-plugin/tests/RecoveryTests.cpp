@@ -439,8 +439,8 @@ TEST(Recovery, IrregularAndSingleSampleBlocksHaveIdenticalActiveRecovery)
     controls.widths = {0.0F, 0.25F, 0.6F, 1.5F};
     controls.recoveries = {1.0F, 0.75F, 0.4F, 1.0F};
     controls.pans = {-0.4F, 0.2F, 0.0F, 0.3F};
-    constexpr std::array<int, 1> SINGLE_SAMPLE {1};
-    const auto reference = renderRecovery(input, controls, TEST_SAMPLE_RATE, SINGLE_SAMPLE);
+    constexpr std::array<int, 1> singleSample {1};
+    const auto reference = renderRecovery(input, controls, TEST_SAMPLE_RATE, singleSample);
     const auto irregular = renderRecovery(input, controls);
     for (int channel = 0; channel < 2; ++channel) {
         for (int sample = 0; sample < input.getNumSamples(); ++sample) {

@@ -358,9 +358,9 @@ bool BandCorrelationMeter::updateRangeIntensity(const double persistenceSeconds)
         }
         const float minimum = std::min(value, *correlation);
         const float maximum = std::max(value, *correlation);
-        constexpr float SPATIAL_STEP {2.0F / static_cast<float>(RANGE_INTENSITY_SAMPLES - 1)};
+        constexpr float spatialStep {2.0F / static_cast<float>(RANGE_INTENSITY_SAMPLES - 1)};
         for (std::size_t sample = 0; sample < rangeIntensity.size(); ++sample) {
-            const float position = -1.0F + static_cast<float>(sample) * SPATIAL_STEP;
+            const float position = -1.0F + static_cast<float>(sample) * spatialStep;
             const float distance = std::max({minimum - position, position - maximum, 0.0F});
             const float coverage = std::clamp(1.0F - distance / CORRELATION_RANGE_FEATHER, 0.0F, 1.0F);
             const float feather = coverage * coverage * (3.0F - 2.0F * coverage);
@@ -389,30 +389,30 @@ bool BandCorrelationMeter::updateRangeIntensity(const double persistenceSeconds)
 /// Layers a soft fading range, an integrated yellow trend glow, and an immediate live marker above the scale.
 void BandCorrelationMeter::paint(juce::Graphics& graphics)
 {
-    constexpr int METER_MARGIN {10};
-    constexpr int METER_LABEL_HEIGHT {17};
-    constexpr float TRACK_HEIGHT {5.0F};
-    constexpr float MARKER_WIDTH {3.0F};
-    constexpr float METER_FONT_HEIGHT {11.0F};
-    constexpr float MARKER_EXTENSION {2.0F};
-    auto area = getLocalBounds().reduced(METER_MARGIN, 2);
-    graphics.setFont(textFont(METER_FONT_HEIGHT));
+    constexpr int meterMargin {10};
+    constexpr int meterLabelHeight {17};
+    constexpr float trackHeight {5.0F};
+    constexpr float markerWidth {3.0F};
+    constexpr float meterFontHeight {11.0F};
+    constexpr float markerExtension {2.0F};
+    auto area = getLocalBounds().reduced(meterMargin, 2);
+    graphics.setFont(textFont(meterFontHeight));
     graphics.setColour(juce::Colour(palette::GREY_MIDDLE_LIGHT));
-    graphics.drawText("Correlation", area.removeFromTop(METER_LABEL_HEIGHT), juce::Justification::centredLeft);
+    graphics.drawText("Correlation", area.removeFromTop(meterLabelHeight), juce::Justification::centredLeft);
     const juce::Rectangle<float> track {
         static_cast<float>(area.getX()),
         static_cast<float>(area.getY()),
         static_cast<float>(area.getWidth()),
-        TRACK_HEIGHT
+        trackHeight
     };
     graphics.setColour(juce::Colour(palette::GREY_MEDIUM));
-    graphics.fillRoundedRectangle(track, TRACK_HEIGHT * 0.5F);
+    graphics.fillRoundedRectangle(track, trackHeight * 0.5F);
     const auto positionFor
         = [&track](const float value) { return track.getX() + (value + 1.0F) * 0.5F * track.getWidth(); };
     if (correlation.has_value() && track.getWidth() > 0.0F) {
-        constexpr float RANGE_LIGHT_SHARE {0.55F};
+        constexpr float rangeLightShare {0.55F};
         const auto rangeColour
-            = juce::Colour(palette::BLUE).interpolatedWith(juce::Colour(palette::GREY_LIGHT), RANGE_LIGHT_SHARE);
+            = juce::Colour(palette::BLUE).interpolatedWith(juce::Colour(palette::GREY_LIGHT), rangeLightShare);
         // Lift faint, older coverage without changing its duration or introducing a hard opacity floor.
         const auto visibleAlpha = [](const float intensity) { return intensity * 2.0F / (1.0F + intensity); };
         juce::ColourGradient gradient(
@@ -424,80 +424,77 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
             track.getCentreY(),
             false
         );
-        constexpr double COLOUR_STEP {1.0 / static_cast<double>(RANGE_INTENSITY_SAMPLES - 1)};
+        constexpr double colourStep {1.0 / static_cast<double>(RANGE_INTENSITY_SAMPLES - 1)};
         for (std::size_t sample = 1; sample + 1 < rangeIntensity.size(); ++sample) {
             gradient.addColour(
-                static_cast<double>(sample) * COLOUR_STEP,
-                rangeColour.withAlpha(visibleAlpha(rangeIntensity.at(sample)))
+                static_cast<double>(sample) * colourStep, rangeColour.withAlpha(visibleAlpha(rangeIntensity.at(sample)))
             );
         }
         graphics.setGradientFill(gradient);
-        constexpr std::array LAYER_EXTENSIONS {4.0F, 2.0F, 0.0F};
-        constexpr std::array LAYER_ALPHAS {0.14F, 0.34F, 0.6F};
-        for (std::size_t layer = 0; layer < LAYER_EXTENSIONS.size(); ++layer) {
-            graphics.setOpacity(LAYER_ALPHAS.at(layer));
-            graphics.fillRoundedRectangle(track.expanded(0.0F, LAYER_EXTENSIONS.at(layer)), TRACK_HEIGHT * 0.5F);
+        constexpr std::array layerExtensions {4.0F, 2.0F, 0.0F};
+        constexpr std::array layerAlphas {0.14F, 0.34F, 0.6F};
+        for (std::size_t layer = 0; layer < layerExtensions.size(); ++layer) {
+            graphics.setOpacity(layerAlphas.at(layer));
+            graphics.fillRoundedRectangle(track.expanded(0.0F, layerExtensions.at(layer)), trackHeight * 0.5F);
         }
     }
     graphics.setColour(juce::Colour(palette::GREY_LIGHT));
-    graphics.fillRect(
-        track.getCentreX(), track.getY() - MARKER_EXTENSION, 1.0F, TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
-    );
+    graphics.fillRect(track.getCentreX(), track.getY() - markerExtension, 1.0F, trackHeight + markerExtension * 2.0F);
     if (trend.has_value()) {
-        constexpr float TREND_GLOW_HALF_WIDTH {12.0F};
-        constexpr float TREND_CORE_WIDTH {2.0F};
-        constexpr float TREND_GLOW_ALPHA {0.7F};
-        constexpr float TREND_HALO_ALPHA {0.22F};
-        constexpr float TREND_SHOULDER_ALPHA {0.2F};
-        constexpr double TREND_LEFT_SHOULDER {0.25};
-        constexpr double TREND_RIGHT_SHOULDER {1.0 - TREND_LEFT_SHOULDER};
+        constexpr float trendGlowHalfWidth {12.0F};
+        constexpr float trendCoreWidth {2.0F};
+        constexpr float trendGlowAlpha {0.7F};
+        constexpr float trendHaloAlpha {0.22F};
+        constexpr float trendShoulderAlpha {0.2F};
+        constexpr double trendLeftShoulder {0.25};
+        constexpr double trendRightShoulder {1.0 - trendLeftShoulder};
         const float position = positionFor(*trend);
         const auto yellow = juce::Colour(palette::YELLOW);
         juce::ColourGradient glow(
             yellow.withAlpha(0.0F),
-            position - TREND_GLOW_HALF_WIDTH,
+            position - trendGlowHalfWidth,
             track.getCentreY(),
             yellow.withAlpha(0.0F),
-            position + TREND_GLOW_HALF_WIDTH,
+            position + trendGlowHalfWidth,
             track.getCentreY(),
             false
         );
-        glow.addColour(TREND_LEFT_SHOULDER, yellow.withAlpha(TREND_SHOULDER_ALPHA));
-        glow.addColour(0.5, yellow.withAlpha(TREND_GLOW_ALPHA));
-        glow.addColour(TREND_RIGHT_SHOULDER, yellow.withAlpha(TREND_SHOULDER_ALPHA));
+        glow.addColour(trendLeftShoulder, yellow.withAlpha(trendShoulderAlpha));
+        glow.addColour(0.5, yellow.withAlpha(trendGlowAlpha));
+        glow.addColour(trendRightShoulder, yellow.withAlpha(trendShoulderAlpha));
         const juce::Graphics::ScopedSaveState saved(graphics);
-        graphics.reduceClipRegion(track.expanded(0.0F, MARKER_EXTENSION * 2.0F).getSmallestIntegerContainer());
+        graphics.reduceClipRegion(track.expanded(0.0F, markerExtension * 2.0F).getSmallestIntegerContainer());
         graphics.setGradientFill(glow);
-        const auto highlight = track.withLeft(position - TREND_GLOW_HALF_WIDTH).withWidth(TREND_GLOW_HALF_WIDTH * 2.0F);
-        graphics.setOpacity(TREND_HALO_ALPHA);
-        graphics.fillRoundedRectangle(highlight.expanded(0.0F, MARKER_EXTENSION * 2.0F), TRACK_HEIGHT * 0.5F);
+        const auto highlight = track.withLeft(position - trendGlowHalfWidth).withWidth(trendGlowHalfWidth * 2.0F);
+        graphics.setOpacity(trendHaloAlpha);
+        graphics.fillRoundedRectangle(highlight.expanded(0.0F, markerExtension * 2.0F), trackHeight * 0.5F);
         graphics.setOpacity(1.0F);
-        graphics.fillRoundedRectangle(highlight, TRACK_HEIGHT * 0.5F);
+        graphics.fillRoundedRectangle(highlight, trackHeight * 0.5F);
         graphics.setColour(yellow);
         graphics.fillRoundedRectangle(
-            std::clamp(position - TREND_CORE_WIDTH * 0.5F, track.getX(), track.getRight() - TREND_CORE_WIDTH),
-            track.getY() - MARKER_EXTENSION,
-            TREND_CORE_WIDTH,
-            TRACK_HEIGHT + MARKER_EXTENSION * 2.0F,
-            TREND_CORE_WIDTH * 0.5F
+            std::clamp(position - trendCoreWidth * 0.5F, track.getX(), track.getRight() - trendCoreWidth),
+            track.getY() - markerExtension,
+            trendCoreWidth,
+            trackHeight + markerExtension * 2.0F,
+            trendCoreWidth * 0.5F
         );
     }
     if (correlation.has_value()) {
         const float position = positionFor(*correlation);
         graphics.setColour(juce::Colour(*correlation < 0.0F ? palette::ORANGE : palette::BLUE));
         graphics.fillRect(
-            std::clamp(position - MARKER_WIDTH * 0.5F, track.getX(), track.getRight() - MARKER_WIDTH),
-            track.getY() - MARKER_EXTENSION,
-            MARKER_WIDTH,
-            TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
+            std::clamp(position - markerWidth * 0.5F, track.getX(), track.getRight() - markerWidth),
+            track.getY() - markerExtension,
+            markerWidth,
+            trackHeight + markerExtension * 2.0F
         );
     }
-    area.removeFromTop(static_cast<int>(TRACK_HEIGHT) + 2);
+    area.removeFromTop(static_cast<int>(trackHeight) + 2);
     graphics.setColour(juce::Colour(palette::GREY_MIDDLE_LIGHT));
     graphics.drawText("-1", area, juce::Justification::centredLeft);
     graphics.drawText("0", area, juce::Justification::centred);
     graphics.drawText("+1", area, juce::Justification::centredRight);
-    const auto readout = getLocalBounds().reduced(METER_MARGIN, 2).removeFromTop(METER_LABEL_HEIGHT);
+    const auto readout = getLocalBounds().reduced(meterMargin, 2).removeFromTop(meterLabelHeight);
     graphics.drawText(readoutText(), readout, juce::Justification::centredRight);
 }
 
