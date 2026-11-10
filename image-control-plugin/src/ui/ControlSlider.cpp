@@ -2,6 +2,8 @@
 
 #include "ui/ControlSlider.h"
 
+#include "ui/ImageControlLookAndFeel.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -22,6 +24,12 @@ constexpr double FINE_NUDGE_SHARE {0.1};
 constexpr float WHEEL_NOTCH_DELTA {60.0F / 256.0F};
 /// Smooth wheel movement, such as from a trackpad, that takes one step.
 constexpr float SMOOTH_WHEEL_DELTA_PER_STEP {0.05F};
+/// Readable mono text that fits signed gain suffixes in a 49-pixel field and 100L/100R in a 32-pixel field.
+constexpr float COMPACT_FONT_HEIGHT {11.0F};
+/// Padding around each compact value, in pixels.
+constexpr int COMPACT_VALUE_PADDING {2};
+/// Radius of the compact numeric field, in pixels.
+constexpr float COMPACT_CORNER_RADIUS {3.0F};
 }  // namespace
 
 /// Turns a mouse wheel event into a signed number of whole steps, positive for scrolling up or away.
@@ -63,7 +71,11 @@ ControlSlider::ControlSlider()
 /// Closes a pointer gesture while its listeners and parameter attachments still exist.
 ControlSlider::~ControlSlider()
 {
+    hideTextBox(true);
     endDrag();
+    if (hasKeyboardFocus(true)) {
+        giveAwayKeyboardFocus();
+    }
 }
 
 /// Ends a pointer drag through JUCE, which balances both slider listeners and user callbacks.
@@ -72,6 +84,115 @@ void ControlSlider::endDrag()
     if (dragStartEvent.has_value()) {
         juce::Slider::mouseUp(*dragStartEvent);
         dragStartEvent.reset();
+    }
+}
+
+/// Formats only the compact painted value. Native text entry and accessibility retain the parameter's full units.
+juce::String ControlSlider::compactValueText()
+{
+    auto text = getTextFromValue(getValue());
+    if (compactIdentity == "M" || compactIdentity == "S") {
+        text = text.upToFirstOccurrenceOf(" dB", false, true);
+        if (!text.startsWithChar('-')) {
+            text = "+" + text;
+        }
+    } else if (compactIdentity == "P") {
+        return text.removeCharacters(" %");
+    }
+    return text + (compactValueLabelled ? juce::String {} : compactIdentity);
+}
+
+/// Switches presentation without replacing the slider, parser, native editor, or parameter attachment.
+/// An empty identity restores the original value box and track after finishing any local edit.
+void ControlSlider::setCompactValue(const juce::String& identity)
+{
+    if (compactIdentity == identity) {
+        return;
+    }
+    const bool restoreFocus = hasKeyboardFocus(true);
+    hideTextBox(false);
+    endDrag();
+    if (compactIdentity.isEmpty()) {
+        expandedTextBoxPosition = getTextBoxPosition();
+        expandedTextBoxWidth = getTextBoxWidth();
+        expandedTextBoxHeight = getTextBoxHeight();
+        expandedTextBoxReadOnly = !isTextBoxEditable();
+    }
+    compactIdentity = identity;
+    wheelRemainder = 0.0F;
+    if (compactIdentity.isNotEmpty()) {
+        // JUCE retains its own editor and range geometry, but the compact field paints the readout itself.
+        setTextBoxStyle(juce::Slider::TextBoxRight, false, 0, 0);
+    } else {
+        setTextBoxStyle(expandedTextBoxPosition, expandedTextBoxReadOnly, expandedTextBoxWidth, expandedTextBoxHeight);
+    }
+    resized();
+    repaint();
+    if (restoreFocus && isShowing()) {
+        grabKeyboardFocus();
+    }
+}
+
+/// Changes only painted suffixes, leaving active gestures and JUCE's numeric editor intact during resizing.
+void ControlSlider::setCompactValueLabelled(const bool labelled)
+{
+    if (compactValueLabelled != labelled) {
+        compactValueLabelled = labelled;
+        repaint();
+    }
+}
+
+/// Adds discoverable numeric entry and explicit units while leaving the full-size tooltip unchanged.
+juce::String ControlSlider::getTooltip()
+{
+    auto tooltip = juce::Slider::getTooltip();
+    if (compactIdentity.isEmpty()) {
+        return tooltip;
+    }
+    juce::String unit;
+    if (compactIdentity == "W") {
+        unit = " multiplier";
+    } else if (compactIdentity == "P") {
+        unit = " (percent pan)";
+    }
+    return tooltip + "\n" + getTitle() + ": " + getTextFromValue(getValue()) + unit
+        + ". Press Return to enter an exact value. Shift gives fine adjustment";
+}
+
+/// Paints a readable numeric field without a track, keeping the native slider's keyboard and pointer semantics.
+void ControlSlider::paint(juce::Graphics& graphics)
+{
+    if (compactIdentity.isEmpty()) {
+        juce::Slider::paint(graphics);
+        return;
+    }
+    const auto bounds = getLocalBounds().toFloat().reduced(0.5F);
+    graphics.setColour(findColour(juce::Slider::textBoxBackgroundColourId));
+    graphics.fillRoundedRectangle(bounds, COMPACT_CORNER_RADIUS);
+    graphics.setColour(findColour(juce::Slider::textBoxTextColourId).withMultipliedAlpha(isEnabled() ? 1.0F : 0.5F));
+    graphics.setFont(monoFont(COMPACT_FONT_HEIGHT));
+    graphics.drawText(
+        compactValueText(), getLocalBounds().reduced(COMPACT_VALUE_PADDING, 0), juce::Justification::centred
+    );
+}
+
+/// Leaves JUCE's label available as the exact-value editor, but routes ordinary field input to the slider itself.
+void ControlSlider::resized()
+{
+    juce::Slider::resized();
+    if (compactIdentity.isEmpty()) {
+        return;
+    }
+    for (auto* child : getChildren()) {
+        if (auto* label = dynamic_cast<juce::Label*>(child)) {
+            label->setBounds(getLocalBounds());
+            label->setFont(monoFont(COMPACT_FONT_HEIGHT));
+            label->setBorderSize({0, COMPACT_VALUE_PADDING, 0, COMPACT_VALUE_PADDING});
+            label->setColour(juce::Label::textColourId, juce::Colours::transparentBlack);
+            label->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+            label->setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
+            label->setInterceptsMouseClicks(false, true);
+        }
     }
 }
 
@@ -93,11 +214,21 @@ void ControlSlider::mouseDown(const juce::MouseEvent& event)
     juce::Slider::mouseDown(event);
 }
 
-/// Ends JUCE's pointer gesture and forgets the retained event.
+/// Ignores stale movement after layout has explicitly ended a gesture, including a compact-mode switch.
+void ControlSlider::mouseDrag(const juce::MouseEvent& event)
+{
+    if (dragStartEvent.has_value()) {
+        juce::Slider::mouseDrag(event);
+    }
+}
+
+/// Ends JUCE's pointer gesture once and forgets the retained event.
 void ControlSlider::mouseUp(const juce::MouseEvent& event)
 {
-    juce::Slider::mouseUp(event);
-    dragStartEvent.reset();
+    if (dragStartEvent.has_value()) {
+        juce::Slider::mouseUp(event);
+        dragStartEvent.reset();
+    }
 }
 
 /// Sets the change of the value per mouse wheel step, such as 0.1 dB for a gain or one percent for a pan.
@@ -123,6 +254,12 @@ bool ControlSlider::keyPressed(const juce::KeyPress& key)
         return false;
     }
     const int keyCode = key.getKeyCode();
+    if (keyCode == juce::KeyPress::returnKey && !key.getModifiers().isAnyModifierKeyDown()
+        && getTextBoxPosition() != juce::Slider::NoTextBox && isTextBoxEditable())
+    {
+        showTextBox();
+        return true;
+    }
     double direction = 0.0;
     if (keyCode == juce::KeyPress::rightKey || keyCode == juce::KeyPress::upKey) {
         direction = 1.0;

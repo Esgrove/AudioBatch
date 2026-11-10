@@ -28,6 +28,12 @@ struct BandCorrelationMeterTestAccess;
 /// Smallest height of a band strip that fits its margins, its name and range rows, and its five slider rows, in pixels.
 constexpr int BAND_STRIP_MIN_HEIGHT {280};
 
+/// Height of the compact band name and editable Mid, Side, Width, and Pan value row, in pixels.
+constexpr int BAND_STRIP_COMPACT_HEIGHT {44};
+
+/// Height of compact controls with a full-name label row above Mid, Side, Width, and Pan, in pixels.
+constexpr int BAND_STRIP_COMPACT_LABELLED_HEIGHT {60};
+
 /// Height of the independent band correlation row, in pixels.
 constexpr int BAND_CORRELATION_HEIGHT {48};
 
@@ -127,6 +133,9 @@ public:
     BandStrip& operator=(const BandStrip&) = delete;
     BandStrip& operator=(BandStrip&&) = delete;
 
+    void discardPendingEdits();
+    void setHeaderDisclosureInset(int inset);
+    void setCompact(bool compact);
     void setRangeText(const juce::String& text);
 
     void paint(juce::Graphics& graphics) override;
@@ -200,5 +209,9 @@ private:
     bool linkedHistoryEditing {false};
     /// Whether the current Mid gesture opened a matching Side gesture, captured before Link can change.
     bool linkedSideGesture {false};
+    /// Whether only the band name, editable Mid, Side, Width, and Pan, and optional compact labels are visible.
+    bool compact {false};
+    /// Space in the final band's full heading reserved for the editor's controls disclosure.
+    int headerDisclosureInset {0};
 };
 }  // namespace esgrove::image_control

@@ -98,6 +98,30 @@ constexpr float CORRELATION_RANGE_FEATHER {0.06F};
 constexpr float HEADBAND_THICKNESS {2.0F};
 /// Corner radius of the ear cups of the headphone icon, in icon units.
 constexpr float EAR_CUP_CORNER {1.5F};
+/// Height of the compact name row, in pixels.
+constexpr int COMPACT_HEADER_HEIGHT {14};
+/// Equal trailing space in each band name row keeps the editor's restore disclosure clear of text.
+constexpr int COMPACT_DISCLOSURE_SPACE {24};
+/// Height of the compact editable value row, in pixels.
+constexpr int COMPACT_VALUE_HEIGHT {24};
+/// Narrow inset leaves room for four compact values at the minimum 180-pixel column width.
+constexpr int COMPACT_MARGIN {2};
+/// Gap between compact numeric fields, in pixels.
+constexpr int COMPACT_VALUE_GAP {2};
+/// Font height keeps the full band name visible above the compact values.
+constexpr float COMPACT_NAME_FONT_HEIGHT {12.0F};
+/// JUCE's ordinary label inset, restored with the expanded band heading.
+constexpr int EXPANDED_NAME_INSET {5};
+/// Additional label row height used by roomy compact strips.
+constexpr int COMPACT_LABEL_HEIGHT {BAND_STRIP_COMPACT_LABELLED_HEIGHT - BAND_STRIP_COMPACT_HEIGHT};
+/// Font height of compact full-name labels, sized for the narrow Width and Pan columns.
+constexpr float COMPACT_LABEL_FONT_HEIGHT {11.0F};
+/// Relative field widths at a 180-pixel column: gains keep signed tenths, Width keeps hundredths, and Pan four glyphs.
+constexpr std::array COMPACT_FIELD_WEIGHTS {49, 49, 40, 32};
+/// Total field allocation units, excluding gaps.
+constexpr int COMPACT_TOTAL_FIELD_WEIGHT {170};
+
+static_assert(BAND_STRIP_COMPACT_HEIGHT == COMPACT_MARGIN * 2 + COMPACT_HEADER_HEIGHT + COMPACT_VALUE_HEIGHT + 2);
 
 static_assert(
     BAND_STRIP_MIN_HEIGHT == MARGIN * 2 + HEADER_ROW_HEIGHT * 2 + SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT),
@@ -667,6 +691,7 @@ BandStrip::BandStrip(
 BandStrip::~BandStrip()
 {
     for (auto* slider : {&midSlider, &sideSlider, &panSlider, &widthSlider, &recoverSlider}) {
+        slider->hideTextBox(true);
         slider->endDrag();
         slider->onDragStart = nullptr;
         slider->onDragEnd = nullptr;
@@ -678,6 +703,86 @@ BandStrip::~BandStrip()
     widthAttachment.reset();
     recoverAttachment.reset();
     soloAttachment.reset();
+}
+
+/// Cancels unfinished numeric text after a host restore, without overwriting restored parameter values.
+void BandStrip::discardPendingEdits()
+{
+    for (auto* slider : {&midSlider, &sideSlider, &widthSlider, &recoverSlider, &panSlider}) {
+        slider->hideTextBox(true);
+        slider->endDrag();
+    }
+}
+
+/// Finishes edits before changing geometry, retaining controls, attachments, tooltips, and editor-only Link state.
+/// Focus on controls hidden by compaction moves to Mid. Focus on the four retained values stays on its slider.
+void BandStrip::setCompact(const bool shouldBeCompact)
+{
+    if (compact == shouldBeCompact) {
+        return;
+    }
+    juce::Component::SafePointer<juce::Component> focusedControl;
+    for (auto* control :
+         std::array<juce::Component*, 7> {
+             &midSlider,
+             &sideSlider,
+             &widthSlider,
+             &recoverSlider,
+             &panSlider,
+             &soloButton,
+             &linkButton,
+         })
+    {
+        if (control->hasKeyboardFocus(true)) {
+            focusedControl = control;
+            break;
+        }
+    }
+    for (auto* slider : {&midSlider, &sideSlider, &widthSlider, &recoverSlider, &panSlider}) {
+        slider->hideTextBox(false);
+        slider->endDrag();
+    }
+    compact = shouldBeCompact;
+    midSlider.setCompactValue(compact ? "M" : "");
+    sideSlider.setCompactValue(compact ? "S" : "");
+    widthSlider.setCompactValue(compact ? "W" : "");
+    panSlider.setCompactValue(compact ? "P" : "");
+    for (auto* control :
+         std::array<juce::Component*, 9> {
+             &rangeLabel,
+             &midLabel,
+             &sideLabel,
+             &widthLabel,
+             &recoverLabel,
+             &panLabel,
+             &recoverSlider,
+             &soloButton,
+             &linkButton,
+         })
+    {
+        control->setVisible(!compact);
+    }
+    nameLabel.setFont(textFont(compact ? COMPACT_NAME_FONT_HEIGHT : NAME_FONT_HEIGHT).boldened());
+    nameLabel.setBorderSize(
+        compact ? juce::BorderSize<int> {} : juce::BorderSize<int> {1, EXPANDED_NAME_INSET, 1, EXPANDED_NAME_INSET}
+    );
+    resized();
+    if (focusedControl != nullptr && isShowing()) {
+        if (compact && focusedControl.getComponent() != &midSlider && focusedControl.getComponent() != &sideSlider
+            && focusedControl.getComponent() != &widthSlider && focusedControl.getComponent() != &panSlider)
+        {
+            midSlider.grabKeyboardFocus();
+        } else {
+            focusedControl->grabKeyboardFocus();
+        }
+    }
+}
+
+/// Reserves editor-owned disclosure space without overlapping Solo or Link in the full heading.
+void BandStrip::setHeaderDisclosureInset(const int inset)
+{
+    headerDisclosureInset = std::max(0, inset);
+    resized();
 }
 
 /// Paints the rounded background of the strip.
@@ -692,8 +797,51 @@ void BandStrip::paint(juce::Graphics& graphics)
 /// each with its label above it. The slider rows share the remaining height evenly.
 void BandStrip::resized()
 {
+    if (compact) {
+        auto area = getLocalBounds().reduced(COMPACT_MARGIN);
+        nameLabel.setBounds(area.removeFromTop(COMPACT_HEADER_HEIGHT).withTrimmedRight(COMPACT_DISCLOSURE_SPACE));
+        area.removeFromTop(2);
+        const bool labelled = getHeight() >= BAND_STRIP_COMPACT_LABELLED_HEIGHT;
+        auto labels = labelled ? area.removeFromTop(COMPACT_LABEL_HEIGHT) : juce::Rectangle<int> {};
+        auto values = area.removeFromTop(COMPACT_VALUE_HEIGHT);
+        const int fieldSpace = std::max(0, values.getWidth() - COMPACT_VALUE_GAP * 3);
+        const std::array controls {
+            std::pair {&midLabel, &midSlider},
+            std::pair {&sideLabel, &sideSlider},
+            std::pair {&widthLabel, &widthSlider},
+            std::pair {&panLabel, &panSlider},
+        };
+        for (std::size_t index = 0; index < controls.size(); ++index) {
+            const auto& [label, slider] = controls.at(index);
+            const int fieldWidth = index + 1 == controls.size()
+                ? values.getWidth()
+                : fieldSpace * COMPACT_FIELD_WEIGHTS.at(index) / COMPACT_TOTAL_FIELD_WEIGHT;
+            slider->setCompactValueLabelled(labelled);
+            slider->setBounds(values.removeFromLeft(fieldWidth));
+            label->setVisible(labelled);
+            label->setText(slider->getName().toUpperCase(), juce::dontSendNotification);
+            label->setFont(textFont(COMPACT_LABEL_FONT_HEIGHT));
+            label->setJustificationType(juce::Justification::centred);
+            label->setBounds(labels.removeFromLeft(fieldWidth));
+            values.removeFromLeft(COMPACT_VALUE_GAP);
+            labels.removeFromLeft(COMPACT_VALUE_GAP);
+        }
+        return;
+    }
+    for (const auto& [label, slider] :
+         std::array {
+             std::pair {&midLabel, &midSlider},
+             std::pair {&sideLabel, &sideSlider},
+             std::pair {&widthLabel, &widthSlider},
+             std::pair {&panLabel, &panSlider},
+         })
+    {
+        label->setText(slider->getName(), juce::dontSendNotification);
+        label->setFont(textFont(LABEL_FONT_HEIGHT));
+        label->setJustificationType(juce::Justification::bottomLeft);
+    }
     auto area = getLocalBounds().reduced(MARGIN);
-    auto header = area.removeFromTop(HEADER_ROW_HEIGHT);
+    auto header = area.removeFromTop(HEADER_ROW_HEIGHT).withTrimmedRight(headerDisclosureInset);
     linkButton.setBounds(header.removeFromRight(LINK_WIDTH));
     header.removeFromRight(SOLO_GAP);
     soloButton.setBounds(header.removeFromRight(HEADER_ROW_HEIGHT));
