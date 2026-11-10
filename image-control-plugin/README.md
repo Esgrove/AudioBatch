@@ -165,7 +165,7 @@ Lint requires clang-tidy and the shared C++ configuration.
 It prepares a Debug build and compile database.
 On Windows, enable Developer Mode and `git config core.symlinks true` before checkout
 so the configuration symlinks are real links, not text placeholders.
-`../cpp/format.sh` formats this plugin along with the shared C++ sources.
+`./format.sh` formats the plugin's C++, CMake, shell, Python, and prose files, and `./format.sh --check` verifies them.
 On macOS, `./sanitize.sh` runs the plugin tests with AddressSanitizer and UndefinedBehaviorSanitizer,
 `./sanitize.sh --thread` uses ThreadSanitizer, and `./coverage.sh --lcov` reports plugin source coverage.
 `./sanitize.sh --realtime` uses Homebrew LLVM to check cold real-time processing and the build-tree VST3 on macOS.

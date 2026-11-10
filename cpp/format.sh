@@ -60,19 +60,18 @@ if [ "$BASH_PLATFORM" = windows ]; then
 fi
 
 # Collect the C++ sources and headers under src/ and tests/, including subdirectories,
-# those of the test plugin that the tests load, and those of the ImageControl plugin.
-# The plugins format with the explicit style file instead of relying on their configuration symlinks.
+# and those of the test plugin that the tests load.
+# The test plugin formats with the explicit style file instead of relying on its configuration symlink.
 # Paths are relative to the repository root, so that the clang-format output is short and free of "..".
 CPP_FILES=()
 PLUGIN_CPP_FILES=()
 while IFS= read -r file; do
-    if [[ "$file" == test-plugin/* || "$file" == image-control-plugin/* ]]; then
+    if [[ "$file" == test-plugin/* ]]; then
         PLUGIN_CPP_FILES+=("$file")
     else
         CPP_FILES+=("$file")
     fi
-done < <(cd "$REPO_ROOT" && find cpp/src cpp/tests test-plugin/src image-control-plugin/src \
-    image-control-plugin/tests image-control-plugin/benchmarks -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+done < <(cd "$REPO_ROOT" && find cpp/src cpp/tests test-plugin/src -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
@@ -97,7 +96,7 @@ else
 fi
 
 if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
-    CMAKE_FILES=(CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt ../image-control-plugin/CMakeLists.txt)
+    CMAKE_FILES=(CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt)
     if [ "$CHECK" = true ]; then
         print_magenta "Checking CMake formatting..."
         print_file_list Checking "${CMAKE_FILES[@]}"
@@ -110,7 +109,7 @@ if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
 fi
 
 if [ -n "$(command -v shfmt)" ]; then
-    SHELL_FILES=(./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh ../image-control-plugin/*.sh)
+    SHELL_FILES=(./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh)
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
         print_file_list Checking "${SHELL_FILES[@]}"
