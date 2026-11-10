@@ -14,25 +14,25 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 audiobatch-core.workspace = true
 audiobatch-playback.workspace = true
 audiobatch-plugins.workspace = true
-async-channel.workspace = true
 crossbeam-channel.workspace = true
 gpui-kit.workspace = true
 gpui-pre = { workspace = true, optional = true }
 gpui-pre-platform = { workspace = true, optional = true }
 image.workspace = true
 raw-window-handle.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 tracing.workspace = true
 trash.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }
 
 [dev-dependencies]
-gpui-kit = { workspace = true, features = ["test-support"] }
 audiobatch-test-plugin.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 test-fixtures.workspace = true
 
@@ -41,8 +41,8 @@ test-fixtures.workspace = true
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
-    "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Com",
     "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_System_SystemServices",

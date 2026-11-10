@@ -23,6 +23,20 @@ but it is an independent plugin, not part of either application.
 [ARCHITECTURE.md](ARCHITECTURE.md) explains ownership, signal flow, threading, and the numerical contracts.
 Read the architecture section of the area you change before changing DSP, state, threading, or rendering code.
 
+## Rust experiment
+
+`rust/` contains one independent VST3 implementation in the repository-root Cargo workspace.
+`rust/crates/dsp` owns framework-independent processing, `rust/crates/plugin` the narrow VST3/Iced/wgpu adapter,
+and `rust/crates/xtask` the bundler. The package and plugin identities are stable across directory renames.
+There is no plugin-local GPUI workspace, vendored embedding patch, or nice-plug runtime.
+AudioBatch's application GPUI dependencies remain separate.
+Run `build.sh`, `test.sh`, `lint.sh --check`, and `format.sh --check` from `rust/` for this experiment.
+Use root Rust lints and formatting, narrow documented unsafe ABI boundaries, and the plugin realtime contracts below.
+Treat Rust state/class identities separately from the C++ persistence contracts.
+Cross-implementation state migration is not implied.
+The evaluation and remaining platform/lifecycle gates are documented in [`docs/rust-evaluation.md`](docs/rust-evaluation.md).
+The C++-specific organization, JUCE, and OpenGL instructions below apply to the C++ implementation.
+
 ## Layout
 
 - `src/ImageControlProcessor.*` owns the host-facing lifecycle, the parameter state, the analyzer tap,
