@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -141,7 +142,7 @@ TEST(EditingWorkflow, ToolbarFitsMinimumWidthAndCompactLayout)
     }
 }
 
-/// Header pressure compresses gaps before the output track, with no breakpoint jumps or unexplained spacer.
+/// Header pressure compresses gaps smoothly while spare space stays before the right-anchored output group.
 TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
 {
     ImageControlProcessor processor;
@@ -149,22 +150,41 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
     auto* settings = editingControl(editor, "display-settings");
     auto* redo = editingControl(editor, "processing-redo");
     auto* output = editingChild<ControlSlider>(editor);
+    auto* toolbarToggle = editingControl(editor, "processing-toolbar-toggle");
+    juce::Button* bypass = nullptr;
+    juce::Button* delta = nullptr;
     juce::Button* mono = nullptr;
     for (auto* child : editor.getChildren()) {
-        if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == "Mono") {
-            mono = button;
+        if (auto* button = dynamic_cast<juce::Button*>(child)) {
+            if (button->getButtonText() == "Mono") {
+                mono = button;
+            } else if (button->getButtonText() == "Delta") {
+                delta = button;
+            } else if (button->getButtonText() == "Bypass") {
+                bypass = button;
+            }
         }
     }
     ASSERT_NE(settings, nullptr);
     ASSERT_NE(redo, nullptr);
     ASSERT_NE(output, nullptr);
+    ASSERT_NE(toolbarToggle, nullptr);
     ASSERT_NE(mono, nullptr);
+    ASSERT_NE(delta, nullptr);
+    ASSERT_NE(bypass, nullptr);
     int previousSettingsX = -1;
     int previousOutputWidth = -1;
     for (int width = 760; width <= 1200; ++width) {
         editor.setSize(width, editor.getHeight());
         EXPECT_GE(mono->getX() - redo->getRight(), 2);
-        EXPECT_LE(mono->getX() - redo->getRight(), 8);
+        if (output->getWidth() < 240) {
+            EXPECT_LE(mono->getX() - redo->getRight(), 8);
+        }
+        EXPECT_EQ(toolbarToggle->getRight(), width - 8);
+        EXPECT_GE(delta->getX() - mono->getRight(), 2);
+        EXPECT_LE(delta->getX() - mono->getRight(), 8);
+        EXPECT_GE(bypass->getX() - delta->getRight(), 2);
+        EXPECT_LE(bypass->getX() - delta->getRight(), 8);
         EXPECT_GE(output->getWidth(), 190);
         EXPECT_LE(output->getWidth(), 240);
         if (previousSettingsX >= 0) {
@@ -174,10 +194,66 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
         previousSettingsX = settings->getX();
         previousOutputWidth = output->getWidth();
     }
+    std::vector<int> rightInsets;
     for (const int width : {1600, 2400, 4096}) {
         editor.setSize(width, editor.getHeight());
         EXPECT_EQ(output->getWidth(), 240);
-        EXPECT_LE(mono->getX() - redo->getRight(), 8);
+        EXPECT_EQ(toolbarToggle->getRight(), width - 8);
+        std::vector<int> insets;
+        for (const auto* control : std::array<const juce::Component*, 4> {mono, delta, bypass, output}) {
+            insets.push_back(width - control->getRight());
+        }
+        if (rightInsets.empty()) {
+            rightInsets = insets;
+        } else {
+            EXPECT_EQ(insets, rightInsets);
+        }
+    }
+}
+
+/// Every header edge and width moves monotonically during one-pixel resizing and retraces the same geometry.
+TEST(EditingWorkflow, HeaderResizingNeverOscillatesOrChangesButtonWidthsBackwards)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.setSize(760, editor.getHeight());
+    std::vector<juce::Component*> controls;
+    for (auto* child : editor.getChildren()) {
+        if (child->isVisible() && child->getY() < 36
+            && (dynamic_cast<juce::Button*>(child) != nullptr || dynamic_cast<juce::Slider*>(child) != nullptr
+                || dynamic_cast<juce::Label*>(child) != nullptr))
+        {
+            controls.push_back(child);
+        }
+    }
+    ASSERT_FALSE(controls.empty());
+    std::vector<std::vector<juce::Rectangle<int>>> layouts;
+    for (int width = 760; width <= 1300; ++width) {
+        editor.setSize(width, editor.getHeight());
+        std::vector<juce::Rectangle<int>> bounds;
+        for (std::size_t index = 0; index < controls.size(); ++index) {
+            const auto current = controls.at(index)->getBounds();
+            SCOPED_TRACE(controls.at(index)->getName().toStdString());
+            SCOPED_TRACE(width);
+            if (!layouts.empty()) {
+                const auto previous = layouts.back().at(index);
+                EXPECT_GE(current.getX(), previous.getX());
+                EXPECT_LE(current.getX(), previous.getX() + 1);
+                EXPECT_GE(current.getRight(), previous.getRight());
+                EXPECT_LE(current.getRight(), previous.getRight() + 1);
+                EXPECT_GE(current.getWidth(), previous.getWidth());
+                EXPECT_LE(current.getWidth(), previous.getWidth() + 1);
+            }
+            bounds.push_back(current);
+        }
+        layouts.push_back(bounds);
+    }
+    for (int width = 1300; width >= 760; --width) {
+        editor.setSize(width, editor.getHeight());
+        const auto& expected = layouts.at(static_cast<std::size_t>(width - 760));
+        for (std::size_t index = 0; index < controls.size(); ++index) {
+            EXPECT_EQ(controls.at(index)->getBounds(), expected.at(index));
+        }
     }
 }
 
