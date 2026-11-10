@@ -187,7 +187,7 @@ TEST(SettingsPanel, ControlsAreNamedAndExplicitChoicesFollowLiveState)
         BYPASS_RENDERING_PROPERTY,
         SHOW_FPS_PROPERTY,
         "resetDisplayAppearance",
-        "displayControlsHelp",
+        "showKeyboardShortcuts",
     };
     panel.addToDesktop(0);
     for (const auto* identifier : ids) {
@@ -324,32 +324,98 @@ TEST(SettingsPanel, AppearanceResetLeavesSoundVisibilityLayoutLinksAndStoppedAna
     EXPECT_FLOAT_EQ(plainValue(gain), -7.0F);
 }
 
-/// Height limits bound the popup, not its settings, and help remains reachable even in the shortest viewport.
-TEST(SettingsPanel, ViewportBoundsContentAndRevealsHelp)
+/// Height limits bound the popup while its compact settings and footer retain a complete scrolling layout.
+TEST(SettingsPanel, ViewportBoundsCompactContentWithoutEmbeddedHelp)
 {
     ImageControlProcessor processor;
     for (const int maximumHeight : {1, 180, 320, 640, 2000}) {
         SCOPED_TRACE(maximumHeight);
-        SettingsPanel panel(processor.getEditorState(), maximumHeight);
+        const SettingsPanel panel(processor.getEditorState(), maximumHeight);
         EXPECT_LE(panel.getHeight(), maximumHeight);
         auto* viewport = childOfType<juce::Viewport>(panel);
         ASSERT_NE(viewport, nullptr);
         EXPECT_EQ(viewport->getBounds(), panel.getLocalBounds());
         auto* content = viewport->getViewedComponent();
         ASSERT_NE(content, nullptr);
-        EXPECT_GT(content->getHeight(), panel.getHeight());
+        EXPECT_GE(content->getHeight(), 650);
+        EXPECT_LE(content->getHeight(), 730);
+        EXPECT_GE(content->getHeight(), panel.getHeight());
         EXPECT_LE(content->getWidth(), viewport->getWidth());
         for (const auto* child : content->getChildren()) {
+            SCOPED_TRACE(child->getComponentID().toStdString());
             EXPECT_TRUE(content->getLocalBounds().contains(child->getBounds()));
             EXPECT_GT(child->getHeight(), 0);
+            EXPECT_EQ(dynamic_cast<const juce::TextEditor*>(child), nullptr);
         }
-        panel.showHelp();
-        EXPECT_GT(viewport->getViewPositionY(), 0);
-        auto* help = settingsControl<juce::TextEditor>(panel, "displayControlsHelp");
-        ASSERT_NE(help, nullptr);
-        EXPECT_TRUE(help->isReadOnly());
-        EXPECT_TRUE(help->getText().contains("Audio Bypass"));
+        EXPECT_EQ(settingsControl<juce::Component>(panel, "displayControlsHelp"), nullptr);
+        auto* shortcuts = settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts");
+        ASSERT_NE(shortcuts, nullptr);
+        viewport->setViewPosition(0, content->getHeight());
+        if (maximumHeight < content->getHeight()) {
+            EXPECT_GT(viewport->getViewPositionY(), 0);
+        } else {
+            EXPECT_EQ(viewport->getViewPositionY(), 0);
+        }
+        if (maximumHeight >= shortcuts->getHeight()) {
+            const auto bounds = viewport->getLocalArea(shortcuts, shortcuts->getLocalBounds());
+            EXPECT_GE(bounds.getY(), 0);
+            EXPECT_LE(bounds.getBottom(), viewport->getViewHeight());
+        }
+        if (maximumHeight >= content->getHeight()) {
+            EXPECT_EQ(panel.getHeight(), content->getHeight());
+        }
     }
+}
+
+/// The reference action is an optional editor callback, not an embedded text wall or a settings mutation.
+TEST(SettingsPanel, KeyboardShortcutsFooterCallsOwnerWithoutChangingSettings)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    SettingsPanel panel(state);
+    auto* shortcuts = settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts");
+    ASSERT_NE(shortcuts, nullptr);
+    EXPECT_EQ(shortcuts->getButtonText(), juce::String::fromUTF8("Keyboard shortcuts\xe2\x80\xa6"));
+    EXPECT_TRUE(shortcuts->getWantsKeyboardFocus());
+    const auto before = state.createCopy();
+    shortcuts->onClick();
+    EXPECT_TRUE(state.isEquivalentTo(before));
+    int opened = 0;
+    panel.setKeyboardShortcutsCallback([&opened] { ++opened; });
+    shortcuts->onClick();
+    EXPECT_EQ(opened, 1);
+    EXPECT_TRUE(state.isEquivalentTo(before));
+    panel.setKeyboardShortcutsCallback({});
+    shortcuts->onClick();
+    EXPECT_EQ(opened, 1);
+}
+
+/// Concise labels sit under explicit display-only groups without enlarging the section typography.
+TEST(SettingsPanel, CompactDisplayOnlyGroupsRetainFullAccessibleControlTitles)
+{
+    ImageControlProcessor processor;
+    const SettingsPanel panel(processor.getEditorState());
+    const std::array groups {
+        std::pair {"displayAppearanceSection", "Appearance"},
+        std::pair {"displayStereoPositionSection", "Stereo position"},
+        std::pair {"displayCorrelationSection", "Correlation"},
+        std::pair {"displayBehaviorSection", "Display behavior"},
+    };
+    int previousY = 0;
+    for (const auto& [identifier, text] : groups) {
+        auto* heading = settingsControl<juce::Label>(panel, identifier);
+        ASSERT_NE(heading, nullptr);
+        EXPECT_EQ(heading->getText(), text);
+        EXPECT_FLOAT_EQ(heading->getFont().getHeight(), 12.0F);
+        EXPECT_GT(heading->getY(), previousY);
+        previousY = heading->getY();
+    }
+    const auto* midpoint = settingsControl<ControlSlider>(panel, PAN_MIDPOINT_PROPERTY);
+    const auto* edge = settingsControl<ControlSlider>(panel, PAN_EDGE_PROPERTY);
+    ASSERT_NE(midpoint, nullptr);
+    ASSERT_NE(edge, nullptr);
+    EXPECT_EQ(midpoint->getTitle(), "Display position midpoint (50%)");
+    EXPECT_EQ(edge->getTitle(), "Display position edge (99%)");
 }
 
 /// Keyboard traversal reveals distant controls rather than leaving focus below the popup's visible viewport.
@@ -361,22 +427,24 @@ TEST(SettingsPanel, FocusedControlsScrollIntoView)
     panel.setVisible(true);
     panel.toFront(true);
     auto* viewport = childOfType<juce::Viewport>(panel);
-    auto* reset = settingsControl<juce::TextButton>(panel, "resetDisplayAppearance");
-    auto* persistence = settingsControl<ControlSlider>(panel, PERSISTENCE_PROPERTY);
+    auto* shortcuts = settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts");
+    auto* contrast = settingsControl<ControlSlider>(panel, CONTRAST_PROPERTY);
     ASSERT_NE(viewport, nullptr);
-    ASSERT_NE(reset, nullptr);
-    ASSERT_NE(persistence, nullptr);
-    reset->grabKeyboardFocus();
-    EXPECT_TRUE(waitForVisibleControl(*viewport, *reset));
-    ASSERT_TRUE(reset->hasKeyboardFocus(false));
-    auto visibleBounds = viewport->getLocalArea(reset, reset->getLocalBounds());
+    ASSERT_NE(shortcuts, nullptr);
+    ASSERT_NE(contrast, nullptr);
+    shortcuts->grabKeyboardFocus();
+    EXPECT_TRUE(waitForVisibleControl(*viewport, *shortcuts));
+    ASSERT_TRUE(shortcuts->hasKeyboardFocus(false));
+    auto visibleBounds = viewport->getLocalArea(shortcuts, shortcuts->getLocalBounds());
     EXPECT_GE(visibleBounds.getY(), 0);
     EXPECT_LE(visibleBounds.getBottom(), viewport->getViewHeight());
     EXPECT_GT(viewport->getViewPositionY(), 0);
-    persistence->grabKeyboardFocus();
-    EXPECT_TRUE(waitForVisibleControl(*viewport, *persistence));
-    ASSERT_TRUE(persistence->hasKeyboardFocus(false));
-    visibleBounds = viewport->getLocalArea(persistence, persistence->getLocalBounds());
+    const int footerPosition = viewport->getViewPositionY();
+    contrast->grabKeyboardFocus();
+    EXPECT_TRUE(waitForVisibleControl(*viewport, *contrast));
+    ASSERT_TRUE(contrast->hasKeyboardFocus(false));
+    EXPECT_LT(viewport->getViewPositionY(), footerPosition);
+    visibleBounds = viewport->getLocalArea(contrast, contrast->getLocalBounds());
     EXPECT_GE(visibleBounds.getY(), 0);
     EXPECT_LE(visibleBounds.getBottom(), viewport->getViewHeight());
 }

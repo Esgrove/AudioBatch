@@ -104,6 +104,8 @@ constexpr auto BYPASS_RENDERING_PROPERTY {"bypassRendering"};
 constexpr auto HIDE_SPECTROGRAM_PROPERTY {"hideSpectrogram"};
 /// Name of the editor setting that shows the second toolbar row with A/B comparison and user presets.
 constexpr auto SHOW_PROCESSING_TOOLBAR_PROPERTY {"showProcessingToolbar"};
+/// Name of the editor setting that replaces full band strips with compact Mid, Side, Width, and Pan values.
+constexpr auto COMPACT_BAND_CONTROLS_PROPERTY {"compactBandControls"};
 /// Shortest particle-fade and correlation-trend time constant, also the shortest correlation range window, in seconds.
 constexpr double MIN_PERSISTENCE_SECONDS {0.05};
 /// Longest particle-fade and correlation-trend time constant, also the longest correlation range window, in seconds.

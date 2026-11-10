@@ -15,7 +15,10 @@ constexpr float ICON_STROKE {1.5F};
 constexpr float LABEL_HEIGHT {11.0F};
 }  // namespace
 /// Creates a focusable toggle whose state describes display visibility.
-DisplayDisclosure::DisplayDisclosure(const juce::String& name) : Button(name), displayName(name)
+DisplayDisclosure::DisplayDisclosure(const juce::String& name, const bool showCollapsedLabel) :
+    Button(name),
+    displayName(name),
+    labelWhenCollapsed(showCollapsedLabel)
 {
     setWantsKeyboardFocus(true);
     setHasFocusOutline(true);
@@ -60,7 +63,8 @@ void DisplayDisclosure::paintButton(juce::Graphics& graphics, const bool highlig
         graphics.setColour(juce::Colour(palette::GREY_MEDIUM_DARK));
         graphics.fillRoundedRectangle(area, CORNER_RADIUS);
     }
-    const auto icon = area.removeFromLeft(24.0F).withSizeKeepingCentre(10.0F, 5.0F);
+    const auto iconArea = !expanded && labelWhenCollapsed ? area.removeFromRight(24.0F) : area.removeFromLeft(24.0F);
+    const auto icon = iconArea.withSizeKeepingCentre(10.0F, 5.0F);
     juce::Path chevron;
     const float tip = expanded ? icon.getY() : icon.getBottom();
     const float edge = expanded ? icon.getBottom() : icon.getY();
@@ -71,7 +75,7 @@ void DisplayDisclosure::paintButton(juce::Graphics& graphics, const bool highlig
     graphics.strokePath(
         chevron, juce::PathStrokeType(ICON_STROKE, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)
     );
-    if (!expanded) {
+    if (!expanded && labelWhenCollapsed) {
         graphics.setFont(textFont(LABEL_HEIGHT));
         graphics.drawText(displayName, area, juce::Justification::centredLeft);
     }

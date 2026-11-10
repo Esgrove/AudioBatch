@@ -395,41 +395,92 @@ TEST(EditingWorkflow, MinimumHeightFitsAllOptionalRows)
     }
 }
 
-/// Settings shortcuts open one bounded production callout and text editing keeps ownership of ordinary shortcuts.
-TEST(EditingWorkflow, SettingsAndHelpShortcutsUseBoundedCalloutWithoutStealingTextEdits)
+/// Settings is a bounded toggle, while F1 opens one separate editor-owned reference window.
+TEST(EditingWorkflow, SettingsToggleAndDedicatedShortcutsWindow)
 {
     ImageControlProcessor processor;
     processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
     ImageControlEditor editor(processor);
     editor.addToDesktop(0);
     editor.setVisible(true);
-    EXPECT_TRUE(editor.keyPressed(juce::KeyPress(juce::KeyPress::F1Key)));
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    auto* button = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
+    ASSERT_NE(toolbar, nullptr);
+    ASSERT_NE(button, nullptr);
+    button->onClick();
     auto* callout = editingChild<juce::CallOutBox>(editor);
     ASSERT_NE(callout, nullptr);
     auto* settings = editingChild<SettingsPanel>(*callout);
     ASSERT_NE(settings, nullptr);
     EXPECT_LE(settings->getHeight(), editor.getHeight() - 40);
     EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
-    auto* help = editingControl(*settings, "displayControlsHelp");
-    ASSERT_NE(help, nullptr);
-    EXPECT_TRUE(help->hasKeyboardFocus(true));
-    const auto historySize = processor.getHistory().canUndo();
-    EXPECT_FALSE(editor.keyPressed(juce::KeyPress('b', juce::ModifierKeys::commandModifier, 0)));
-    EXPECT_EQ(processor.getHistory().canUndo(), historySize);
-    auto* toolbar = editingChild<ProcessingToolbar>(editor);
-    ASSERT_NE(toolbar, nullptr);
+    EXPECT_EQ(editingControl(*settings, "displayControlsHelp"), nullptr);
     const juce::Component::SafePointer<juce::CallOutBox> safeCallout(callout);
-    callout->dismiss();
+    auto* output = editingChild<ControlSlider>(editor);
+    ASSERT_NE(output, nullptr);
+    EXPECT_TRUE(callout->canModalEventBeSentToComponent(button));
+    EXPECT_FALSE(callout->canModalEventBeSentToComponent(output));
+    button->onClick();
     pumpEditing(*toolbar, [&] { return safeCallout == nullptr; });
-    auto* settingsButton = editingControl(editor, "display-settings");
-    ASSERT_NE(settingsButton, nullptr);
-    EXPECT_TRUE(settingsButton->hasKeyboardFocus(true));
-    EXPECT_TRUE(editor.keyPressed(juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)));
-    auto* reopened = editingChild<juce::CallOutBox>(editor);
-    ASSERT_NE(reopened, nullptr);
-    const juce::Component::SafePointer<juce::CallOutBox> safeReopened(reopened);
-    reopened->dismiss();
-    pumpEditing(*toolbar, [&] { return safeReopened == nullptr; });
+    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), nullptr);
+    EXPECT_TRUE(editor.keyPressed(juce::KeyPress(juce::KeyPress::F1Key)));
+    juce::Component::SafePointer<juce::Component> help;
+    const auto& desktop = juce::Desktop::getInstance();
+    for (int index = 0; index < desktop.getNumComponents(); ++index) {
+        auto* component = desktop.getComponent(index);
+        if (component->getComponentID() == "keyboard-shortcuts-window") {
+            help = component;
+        }
+    }
+    ASSERT_NE(help, nullptr);
+    EXPECT_TRUE(help->isVisible());
+    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), nullptr);
+    EXPECT_TRUE(help->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)));
+    EXPECT_FALSE(help->isVisible());
+    button->onClick();
+    auto* first = editingChild<juce::CallOutBox>(editor);
+    ASSERT_NE(first, nullptr);
+    const juce::Component::SafePointer<juce::CallOutBox> safeFirst(first);
+    // A rapid double activation cannot queue a replacement while dismissal is pending.
+    button->onClick();
+    button->onClick();
+    pumpEditing(*toolbar, [&] { return safeFirst == nullptr; });
+    EXPECT_EQ(editingChild<juce::CallOutBox>(editor), nullptr);
+}
+
+/// The settings footer closes its popup before opening the separate reference, which is destroyed with the editor.
+TEST(EditingWorkflow, SettingsFooterOpensOwnedShortcutsReference)
+{
+    ImageControlProcessor processor;
+    juce::Component::SafePointer<juce::Component> help;
+    {
+        ImageControlEditor editor(processor);
+        editor.addToDesktop(0);
+        editor.setVisible(true);
+        auto* button = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
+        auto* toolbar = editingChild<ProcessingToolbar>(editor);
+        ASSERT_NE(button, nullptr);
+        ASSERT_NE(toolbar, nullptr);
+        button->onClick();
+        auto* callout = editingChild<juce::CallOutBox>(editor);
+        ASSERT_NE(callout, nullptr);
+        auto* shortcuts = dynamic_cast<juce::Button*>(editingControl(*callout, "showKeyboardShortcuts"));
+        ASSERT_NE(shortcuts, nullptr);
+        const juce::Component::SafePointer<juce::CallOutBox> safeCallout(callout);
+        shortcuts->onClick();
+        pumpEditing(*toolbar, [&] { return safeCallout == nullptr; });
+        const auto& desktop = juce::Desktop::getInstance();
+        for (int index = 0; index < desktop.getNumComponents(); ++index) {
+            auto* component = desktop.getComponent(index);
+            if (component->getComponentID() == "keyboard-shortcuts-window") {
+                help = component;
+            }
+        }
+        ASSERT_NE(help, nullptr);
+        EXPECT_TRUE(help->isVisible());
+        EXPECT_FALSE(processor.getHistory().canUndo());
+    }
+    EXPECT_EQ(help, nullptr);
 }
 
 /// Deferred dismissal does not take focus away from a control selected outside the settings callout.
@@ -461,6 +512,8 @@ TEST(EditingWorkflow, OpenSettingsTearsDownSynchronouslyWithEditor)
     {
         auto processor = std::make_unique<ImageControlProcessor>();
         auto editor = std::make_unique<ImageControlEditor>(*processor);
+        editor->addToDesktop(0);
+        editor->setVisible(true);
         EXPECT_TRUE(editor->keyPressed(juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)));
         callout = editingChild<juce::CallOutBox>(*editor);
         ASSERT_NE(callout, nullptr);

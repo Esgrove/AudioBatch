@@ -35,7 +35,10 @@ The history survives closing the editor but is not saved with a project, and a h
 Incoming host automation and display-setting edits do not create undo entries.
 See [Keyboard shortcuts](#keyboard-shortcuts) for editing, navigation, and modifier gestures.
 Hover either analysis section to reveal its collapse chevron, or focus it with the keyboard.
-Hidden sections retain labelled restore handles, with the same visibility choices available in Settings.
+Hidden sections expand when clicking anywhere along their collapsed row, including the right-hand chevron.
+The same visibility choices are available in Settings.
+The band controls' chevron switches between full strips and a compact Mid/Side/Width/Pan value row.
+Compact controls give their space to the spectrogram without resizing its window or changing sound settings.
 
 A and B hold independently editable sound settings, with a copy action for the other slot.
 Both slots and the selected slot are saved with the host project.
@@ -78,7 +81,7 @@ Text fields keep their own editing shortcuts instead of triggering plugin-wide c
 | --- | --- |
 | Focus next / previous control | Tab / Shift+Tab |
 | Open Display settings | Cmd+comma (macOS) / Ctrl+comma (Windows) |
-| Open controls help | F1 |
+| Open the separate Keyboard shortcuts window | F1 or Keyboard shortcuts in Settings |
 | Dismiss Display settings or cancel a preset dialog | Escape |
 | Resize with the divider focused | Up / Down, 8 pixels per press |
 | Resize the divider finely | Shift+Up / Shift+Down, 1 pixel per press |
@@ -90,8 +93,15 @@ Text fields keep their own editing shortcuts instead of triggering plugin-wide c
 | Increase / decrease a focused slider | Right or Up / Left or Down |
 | Adjust a focused slider finely | Shift+arrow key, at least one legal value step |
 | Fine pointer adjustment | Shift+drag or Shift+scroll |
-| Enter an exact value | Click the value field, type a value, then press Return / Enter |
+| Enter an exact value | Click a value field, or press Return / Enter on a focused compact value, then type a value |
+| Commit / cancel numeric entry | Return / Enter / Escape |
 | Reset a slider | Double-click its track or thumb |
+
+Compact values use suffixes `M` and `S` for Mid and Side gains in dB, and `W` for the Width multiplier.
+Pan shows `C` at centre, or an amount followed by `L` or `R`, such as `25L` or `33R`.
+Taller windows show full `MID`, `SIDE`, `WIDTH`, and `PAN` labels above the values instead.
+All four retain wheel, arrow-key, fine-adjustment, numeric-entry, and reset gestures.
+Recover, Solo, and Link retain their settings. Expand the full strips to edit those controls directly.
 
 ### Spectrogram gestures
 
