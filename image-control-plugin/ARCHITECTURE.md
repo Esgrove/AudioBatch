@@ -124,6 +124,9 @@ Explicit local transactions capture only touched parameters before their writes.
 Linked controls and two-crossover spectrogram drags nest their boundaries into one logical transaction.
 Host automation does not enter history, and host restore invalidates open transactions and recorded actions.
 Replay sends balanced host gestures without recording itself or resetting the DSP.
+A pre-replay callback advances matching effective preset references before parameter notifications.
+Successful replay retains its exact parameter readback for that direction,
+so repeated skewed parameter conversions do not create false modified feedback.
 
 The processor owns two comparison slots and the active selection.
 Live parameters are authoritative for the active slot, so headless automation is captured when saving or switching.
@@ -144,7 +147,19 @@ then applies completed user commands on the message thread through checked compo
 Undo/redo live in the header as vector curved-arrow buttons, alongside a chevron for the A/B and preset row.
 The persisted `showProcessingToolbar` editor property defaults to true.
 Collapsing that row is immediate and leaves header history actions and asynchronous preset completion handling active.
+Successful metadata completions wait for active local sound gestures before publication,
+then recheck restore generation, slot, baseline, and bound revision.
 Project recall never reads the preset library.
+An independently versioned `PresetProvenanceState` root sibling stores each slot's optional UUID, name, and sound baseline.
+It carries no file path, fingerprint, or derived modified flag, and leaves `ComparisonState` v1 unchanged.
+The source baseline stays exact.
+An optional effective baseline tracks the exact parameter representation established by recall,
+so normalization round trips do not imply an edit and distinct published parameter values remain modified.
+Malformed provenance clears identity without rejecting valid sound or comparison state.
+Host restore clears transient library bindings, and explicit UUID reconnection reads and accepts an exact revision
+without changing the project's baseline or sound.
+Preset recall publishes provenance before synchronous host parameter callbacks, under the existing state mutex.
+Metadata-only changes notify the host, while restores, scans, and transient reconnections do not dirty the project.
 
 ## Audio signal flow
 
@@ -466,6 +481,11 @@ The plot itself is left unpainted so the GPU image beneath the components remain
 and gain-only Link gesture behavior.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
+`DisplayDisclosure` overlays a hover/focus chevron on each optional analysis section.
+Hidden sections retain small labelled restore handles, without adding a display toolbar.
+The preset name occupies the existing title area only when its selector row is collapsed.
+`SettingsPanel` bounds a scrolling content area to the editor, keeps focused controls visible,
+validates numeric tokens, and scopes appearance reset separately from sound, visibility, and geometry.
 
 ### OpenGL passes
 

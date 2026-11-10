@@ -21,11 +21,11 @@
 #include "ui/SpectrogramWorker.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
-
 namespace esgrove::image_control
 {
 namespace
@@ -61,24 +61,12 @@ constexpr double FRAME_RATE_WINDOW_SECONDS {0.5};
 constexpr float TITLE_FONT_HEIGHT {18.0F};
 /// Width of the title, in pixels.
 constexpr int TITLE_WIDTH {124};
-/// Width of the header buttons, in pixels.
-constexpr int HEADER_BUTTON_WIDTH {76};
 /// Vertical inset of the buttons in the header, in pixels.
 constexpr int BUTTON_INSET {2};
 /// Width of the compact undo, redo, and disclosure buttons.
 constexpr int ICON_BUTTON_WIDTH {24};
 /// Gap between compact icon buttons.
 constexpr int ICON_BUTTON_GAP {4};
-/// Width of the vector disclosure glyph, matching AudioBatch's section controls.
-constexpr float CHEVRON_WIDTH {10.0F};
-/// Height of the vector disclosure glyph.
-constexpr float CHEVRON_HEIGHT {5.0F};
-/// Stroke shared by the header's font-independent vector symbols.
-constexpr float ICON_STROKE_WIDTH {1.5F};
-/// Inset keeps the disclosure glyph compact inside its full button hit target.
-constexpr int CHEVRON_INSET {7};
-/// Width of each half of the Pre and Post analyzer tap switch, in pixels.
-constexpr int TAP_BUTTON_WIDTH {56};
 /// Width of the output label, in pixels.
 constexpr int OUTPUT_LABEL_WIDTH {52};
 /// Width of the output gain slider, in pixels.
@@ -87,26 +75,21 @@ constexpr int OUTPUT_SLIDER_WIDTH {190};
 constexpr int VALUE_BOX_WIDTH {70};
 /// Height of the output gain value box, in pixels.
 constexpr int VALUE_BOX_HEIGHT {20};
-/// Maximum host parameter label length used for a local history action.
-constexpr int HISTORY_NAME_LENGTH {100};
 /// Opacity of the band strips while the plugin is bypassed.
-constexpr float BYPASSED_STRIP_ALPHA {0.45F};
-
-/// Toggles a boolean parameter in a host change gesture of its own.
-void toggleParameter(juce::RangedAudioParameter& parameter, ParameterHistory& history)
-{
-    const auto generation = history.generation();
-    history.beginEdit(parameter.getName(HISTORY_NAME_LENGTH));
-    history.touch(parameter.paramID);
-    parameter.beginChangeGesture();
-    if (generation == history.generation()) {
-        parameter.setValueNotifyingHost(parameter.getValue() >= 0.5F ? 0.0F : 1.0F);
-    }
-    parameter.endChangeGesture();
-    if (generation == history.generation()) {
-        history.endEdit();
-    }
-}
+constexpr float BYPASSED_STRIP_ALPHA {0.72F};
+/// Height retained by a hidden display's labelled restore handle.
+constexpr int RESTORE_HANDLE_HEIGHT {18};
+/// Width of the collapsed display's labelled restore handle.
+constexpr int RESTORE_HANDLE_WIDTH {112};
+/// Quiet identity typography fits a preset subtitle within the ordinary header height.
+constexpr float PRESET_FONT_HEIGHT {11.0F};
+constexpr float COMPACT_BRAND_FONT_HEIGHT {14.0F};
+constexpr int COMPACT_BRAND_HEIGHT {15};
+/// Parent-contained callouts reserve their arrow and look-and-feel border on both edges.
+constexpr int SETTINGS_MAX_HEIGHT {640};
+constexpr int SETTINGS_BORDER_ALLOWANCE {48};
+/// The local row action reserves only the header portion of the meter column.
+constexpr int CORRELATION_ACTION_HEIGHT {20};
 
 /// Returns a boolean editor setting.
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
@@ -137,6 +120,26 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
+    presetLabel.setComponentID("header-preset-name");
+    presetLabel.setTitle("Current preset");
+    presetLabel.setFont(textFont(PRESET_FONT_HEIGHT));
+    presetLabel.setBorderSize({});
+    presetLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    addChildComponent(presetLabel);
+    spectrogramDisclosure.setComponentID("spectrogram-disclosure");
+    correlationDisclosure.setComponentID("correlation-disclosure");
+    spectrogramDisclosure.onClick = [this] {
+        auto& state = imageControlProcessor.getEditorState();
+        state.setProperty(HIDE_SPECTROGRAM_PROPERTY, !spectrogramHidden, nullptr);
+        applyViewSettings();
+    };
+    correlationDisclosure.onClick = [this] {
+        auto& state = imageControlProcessor.getEditorState();
+        state.setProperty(SHOW_BAND_CORRELATION_PROPERTY, !correlationShown, nullptr);
+        applyViewSettings();
+    };
+    addAndMakeVisible(spectrogramDisclosure);
+    addAndMakeVisible(correlationDisclosure);
     configureHeaderIcons();
     undoButton.onClick = [this] {
         processingToolbar.undo();
@@ -156,6 +159,11 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addAndMakeVisible(redoButton);
     addAndMakeVisible(processingToolbarButton);
 
+    for (auto* button : {&monoButton, &deltaButton, &bypassButton}) {
+        button->setWantsKeyboardFocus(true);
+    }
+    preButton.setWantsKeyboardFocus(true);
+    postButton.setWantsKeyboardFocus(true);
     bypassButton.setClickingTogglesState(true);
     bypassButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::ORANGE));
 #if JUCE_MAC
@@ -188,9 +196,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     monoAttachment = std::make_unique<HistoryButtonAttachment>(parameters, MONO_ID, monoButton, owner.getHistory());
     addAndMakeVisible(monoButton);
 
-    settingsButton.setTooltip(
-        "Display settings: the colours, the frequency scale, the contrast, the rendering style, and how particles fade"
-    );
+    settingsButton.setTooltip("Display settings and controls help (" + shortcutModifier + "+comma, F1 for help)");
     settingsButton.onClick = [this] { openSettings(); };
     addAndMakeVisible(settingsButton);
 
@@ -223,11 +229,15 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     });
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band) = std::make_unique<BandStrip>(parameters, editorState, band, owner.getHistory());
+        constexpr int firstBandFocusOrder {15};
+        bandStrips.at(band)->setExplicitFocusOrder(firstBandFocusOrder + static_cast<int>(band));
         addAndMakeVisible(*bandStrips.at(band));
         correlationMeters.at(band) = std::make_unique<BandCorrelationMeter>(bandName(band));
         addAndMakeVisible(*correlationMeters.at(band));
     }
     addAndMakeVisible(divider);
+    spectrogramDisclosure.toFront(false);
+    correlationDisclosure.toFront(false);
     addChildComponent(tooltips);
     updateBandRanges();
 
@@ -273,6 +283,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 /// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    settingsCallout.reset();
+    settingsPanel.reset();
     imageControlProcessor.setCorrelationEnabled(false);
     outputSlider.endDrag();
     spectrogramWorker.stop();
@@ -283,85 +295,6 @@ ImageControlEditor::~ImageControlEditor()
     setLookAndFeel(nullptr);
 }
 
-/// Creates compact vector symbols with full button hit targets and stable, font-independent accessible identities.
-void ImageControlEditor::configureHeaderIcons()
-{
-    undoButton.setComponentID("processing-undo");
-    undoButton.setTitle("Undo processing edit");
-    undoButton.setDescription("Undo processing edit");
-    undoButton.setWantsKeyboardFocus(true);
-    undoButton.setExplicitFocusOrder(1);
-    redoButton.setComponentID("processing-redo");
-    redoButton.setTitle("Redo processing edit");
-    redoButton.setDescription("Redo processing edit");
-    redoButton.setWantsKeyboardFocus(true);
-    redoButton.setExplicitFocusOrder(2);
-    processingToolbarButton.setComponentID("processing-toolbar-toggle");
-    processingToolbarButton.setTitle("A/B comparison and presets");
-    processingToolbarButton.setDescription("Show or hide A/B comparison and presets");
-    processingToolbarButton.setWantsKeyboardFocus(true);
-    processingToolbarButton.setExplicitFocusOrder(3);
-    processingToolbarButton.setToggleable(true);
-    processingToolbar.setExplicitFocusOrder(4);
-
-    constexpr juce::Point<float> arrowEnd {12.0F, 11.0F};
-    constexpr juce::Point<float> arrowCurveFirst {15.0F, 4.0F};
-    constexpr juce::Point<float> arrowCurveSecond {7.0F, 0.0F};
-    constexpr juce::Point<float> arrowTip {1.0F, 6.0F};
-    constexpr juce::Point<float> arrowHeadTop {1.0F, 2.0F};
-    constexpr juce::Point<float> arrowHeadRight {5.0F, 6.0F};
-    juce::Path arrowPath;
-    arrowPath.startNewSubPath(arrowEnd);
-    arrowPath.cubicTo(arrowCurveFirst, arrowCurveSecond, arrowTip);
-    arrowPath.startNewSubPath(arrowHeadTop);
-    arrowPath.lineTo(arrowTip);
-    arrowPath.lineTo(arrowHeadRight);
-    juce::DrawablePath arrow;
-    arrow.setPath(arrowPath);
-    arrow.setFill(juce::Colours::transparentBlack);
-    arrow.setStrokeFill(juce::Colour(palette::GREY_SUPER_LIGHT));
-    arrow.setStrokeType(
-        juce::PathStrokeType(ICON_STROKE_WIDTH, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)
-    );
-    undoButton.setImages(&arrow);
-    arrowPath.applyTransform(juce::AffineTransform::scale(-1.0F, 1.0F));
-    arrow.setPath(arrowPath);
-    redoButton.setImages(&arrow);
-
-    // A row below the button collapses upward and expands downward, with no animated transition.
-    juce::Path chevronPath;
-    chevronPath.startNewSubPath(0.0F, CHEVRON_HEIGHT);
-    chevronPath.lineTo(CHEVRON_WIDTH * 0.5F, 0.0F);
-    chevronPath.lineTo(CHEVRON_WIDTH, CHEVRON_HEIGHT);
-    juce::DrawablePath collapseChevron;
-    collapseChevron.setPath(chevronPath);
-    collapseChevron.setFill(juce::Colours::transparentBlack);
-    collapseChevron.setStrokeFill(juce::Colour(palette::GREY_MIDDLE_LIGHT));
-    collapseChevron.setStrokeThickness(ICON_STROKE_WIDTH);
-    chevronPath.applyTransform(
-        juce::AffineTransform::rotation(juce::MathConstants<float>::pi, CHEVRON_WIDTH * 0.5F, CHEVRON_HEIGHT * 0.5F)
-    );
-    juce::DrawablePath expandChevron;
-    expandChevron.setPath(chevronPath);
-    expandChevron.setFill(juce::Colours::transparentBlack);
-    expandChevron.setStrokeFill(juce::Colour(palette::GREY_MIDDLE_LIGHT));
-    expandChevron.setStrokeThickness(ICON_STROKE_WIDTH);
-    processingToolbarButton.setImages(&expandChevron, nullptr, nullptr, nullptr, &collapseChevron);
-    processingToolbarButton.setEdgeIndent(CHEVRON_INSET);
-    processingToolbarButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
-    processingToolbarButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
-}
-
-/// Keeps always-visible history availability and descriptive tooltips synchronized with processor-owned history.
-void ImageControlEditor::updateHistoryButtons()
-{
-    const auto& history = imageControlProcessor.getHistory();
-    undoButton.setEnabled(history.canUndo() && !history.isEditing());
-    redoButton.setEnabled(history.canRedo() && !history.isEditing());
-    undoButton.setTooltip(history.canUndo() ? "Undo " + history.undoDescription() : "No processing edit to undo");
-    redoButton.setTooltip(history.canRedo() ? "Redo " + history.redoDescription() : "No processing edit to redo");
-}
-
 /// Fills the background, leaving the plot of the spectrogram unpainted so the OpenGL picture shows through.
 void ImageControlEditor::paint(juce::Graphics& graphics)
 {
@@ -370,57 +303,6 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
         graphics.excludeClipRegion(plot.getSmallestIntegerContainer());
     }
     graphics.fillAll(juce::Colour(palette::GREY_DARK));
-}
-
-/// Handles the editor's keyboard shortcuts, which also reach it from controls that do not use the key:
-/// S toggles the solo of the band under the pointer, in the spectrogram or a band strip,
-/// and Ctrl or Cmd with D toggles Delta and with B toggles Bypass.
-/// Ctrl or Cmd with Z undoes, while Y or Shift+Z redoes, except when a text field owns editing focus.
-/// Each toggle is its own host gesture. Other keys go on to the host.
-bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
-{
-    auto& history = imageControlProcessor.getHistory();
-    const auto& parameters = imageControlProcessor.getParameters();
-    const auto modifiers = key.getModifiers();
-    const auto* focused = juce::Component::getCurrentlyFocusedComponent();
-    const bool textEditing = dynamic_cast<const juce::TextEditor*>(focused) != nullptr;
-    const auto letter = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
-    if (!textEditing && modifiers.isCommandDown() && !modifiers.isAltDown()) {
-        const bool redoShortcut
-            = (letter == 'z' && modifiers.isShiftDown()) || (letter == 'y' && !modifiers.isShiftDown());
-        if (redoShortcut) {
-            processingToolbar.redo();
-            updateHistoryButtons();
-            return true;
-        }
-        if (letter == 'z') {
-            processingToolbar.undo();
-            updateHistoryButtons();
-            return true;
-        }
-    }
-    if (textEditing) {
-        return false;
-    }
-    const auto character = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
-    const bool commandOnly = modifiers.isCommandDown() && !modifiers.isAltDown() && !modifiers.isShiftDown();
-    if (commandOnly && character == 'd') {
-        toggleParameter(*parameters.getParameter(DELTA_ID), history);
-        return true;
-    }
-    if (commandOnly && character == 'b') {
-        toggleParameter(*parameters.getParameter(BYPASS_ID), history);
-        return true;
-    }
-    if (character == 's' && !modifiers.isCommandDown() && !modifiers.isCtrlDown() && !modifiers.isAltDown()) {
-        const auto band = bandUnderPointer();
-        if (!band.has_value()) {
-            return false;
-        }
-        toggleParameter(*parameters.getParameter(soloParameterId(*band)), history);
-        return true;
-    }
-    return false;
 }
 
 /// Lays out the header, the spectrogram, the divider, and the band strips,
@@ -434,14 +316,21 @@ void ImageControlEditor::resized()
     auto header = area.removeFromTop(HEADER_HEIGHT - GAP);
     // Compact widths keep all processing controls visible and separate at the minimum editor width.
     constexpr int compactHeaderThreshold {940};
-    constexpr int compactTitleWidth {100};
-    constexpr int compactOutputWidth {126};
-    constexpr int compactOutputLabelWidth {46};
+    constexpr int compactTitleWidth {112};
+    constexpr int compactOutputWidth {105};
+    constexpr int compactOutputLabelWidth {42};
     const bool compact = getWidth() < compactHeaderThreshold;
-    const int buttonWidth = compact ? 60 : HEADER_BUTTON_WIDTH;
-    const int tapWidth = compact ? 42 : TAP_BUTTON_WIDTH;
-    titleLabel.setBounds(header.removeFromLeft(compact ? compactTitleWidth : TITLE_WIDTH));
-    settingsButton.setBounds(header.removeFromLeft(compact ? 64 : HEADER_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    const int buttonWidth = compact ? 48 : 60;
+    const int tapWidth = compact ? 34 : 42;
+    auto identity = header.removeFromLeft(compact ? compactTitleWidth : TITLE_WIDTH + 16);
+    if (presetLabel.isVisible()) {
+        titleLabel.setBounds(identity.removeFromTop(COMPACT_BRAND_HEIGHT));
+        presetLabel.setBounds(identity);
+    } else {
+        titleLabel.setBounds(identity);
+        presetLabel.setBounds({});
+    }
+    settingsButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     header.removeFromLeft(GAP);
     preButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
     postButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
@@ -467,7 +356,11 @@ void ImageControlEditor::resized()
         processingToolbar.setBounds({});
     }
 
-    const int correlationHeight = correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0;
+    if (spectrogramHidden) {
+        spectrogramDisclosure.setBounds(area.removeFromTop(RESTORE_HANDLE_HEIGHT).withWidth(RESTORE_HANDLE_WIDTH));
+        area.removeFromTop(GAP);
+    }
+    const int correlationHeight = (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
     if (!spectrogramHidden) {
         const int maxBandSectionHeight
             = std::max(BAND_STRIP_MIN_HEIGHT, area.getHeight() - GAP - MIN_SPECTROGRAM_HEIGHT - correlationHeight);
@@ -476,19 +369,35 @@ void ImageControlEditor::resized()
         const auto dividerArea = area.removeFromBottom(GAP);
         divider.setBounds(dividerArea.expanded(0, DIVIDER_GRAB_PADDING));
         spectrogram.setBounds(area);
+        spectrogramDisclosure.setBounds(area.removeFromTop(ICON_BUTTON_WIDTH)
+                                            .removeFromRight(ICON_BUTTON_WIDTH)
+                                            .translated(-BUTTON_INSET, BUTTON_INSET));
         area = bandArea;
     }
 
-    auto correlationArea = correlationShown ? area.removeFromTop(BAND_CORRELATION_HEIGHT) : juce::Rectangle<int> {};
-    if (correlationShown) {
-        area.removeFromTop(GAP);
-    }
+    auto correlationArea = area.removeFromTop(correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT);
+    correlationDisclosure.setBounds(
+        correlationShown ? correlationArea.withSize(ICON_BUTTON_WIDTH, CORRELATION_ACTION_HEIGHT)
+                               .withX(correlationArea.getRight() - ICON_BUTTON_WIDTH)
+                         : correlationArea.withWidth(RESTORE_HANDLE_WIDTH)
+    );
+    area.removeFromTop(GAP);
     const int stripWidth = (area.getWidth() - GAP * static_cast<int>(BAND_COUNT - 1)) / static_cast<int>(BAND_COUNT);
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         bandStrips.at(band)->setBounds(area.removeFromLeft(stripWidth));
         correlationMeters.at(band)->setBounds(correlationArea.removeFromLeft(stripWidth));
         area.removeFromLeft(GAP);
         correlationArea.removeFromLeft(GAP);
+    }
+    if (settingsCallout != nullptr) {
+        for (auto* child : settingsCallout->getChildren()) {
+            if (auto* panel = dynamic_cast<SettingsPanel*>(child)) {
+                panel->setSize(
+                    panel->getWidth(), std::min(SETTINGS_MAX_HEIGHT, getHeight() - SETTINGS_BORDER_ALLOWANCE)
+                );
+            }
+        }
+        settingsCallout->updatePosition(settingsButton.getBounds(), getLocalBounds());
     }
 
     if (!layoutRestored || layoutTransition) {
@@ -522,7 +431,8 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
 int ImageControlEditor::compactHeight() const
 {
     return HEADER_HEIGHT + GAP * 2 + (processingToolbarShown ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
-        + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT) + (correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0);
+        + RESTORE_HANDLE_HEIGHT + GAP + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT)
+        + (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + GAP;
 }
 
 /// Returns the shared persistence of the particle fade and correlation trend/range, in seconds.
@@ -621,6 +531,8 @@ void ImageControlEditor::applyViewSettings()
     processingToolbar.refresh();
     updateHistoryButtons();
     applyLayoutSettings();
+    updateDisplayDisclosures();
+    updatePresetIdentity();
     const auto& editorState = imageControlProcessor.getEditorState();
     const bool smoothCorrelationReadout
         = static_cast<bool>(editorState.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true));
@@ -636,6 +548,8 @@ void ImageControlEditor::applyViewSettings()
         // Resuming starts from a clean picture and analysis instead of a frozen one.
         spectrogramWorker.requestClear();
     }
+    preButton.setEnabled(!spectrogramHidden && !bypassRendering);
+    postButton.setEnabled(!spectrogramHidden && !bypassRendering);
     const bool tapOutput = booleanSetting(editorState, ANALYZE_OUTPUT_PROPERTY);
     const bool phaseColours = booleanSetting(editorState, PHASE_COLOURS_PROPERTY);
     const auto scale
@@ -689,6 +603,42 @@ void ImageControlEditor::applyViewSettings()
             strip->setAlpha(bypassed ? BYPASSED_STRIP_ALPHA : 1.0F);
         }
         shownBypassed = bypassed;
+    }
+}
+
+/// Keeps local disclosure targets available to keyboard users and reveals chevrons over their display.
+void ImageControlEditor::updateDisplayDisclosures()
+{
+    spectrogramDisclosure.setExpanded(!spectrogramHidden);
+    correlationDisclosure.setExpanded(correlationShown);
+    const auto pointer = getMouseXYRelative();
+    spectrogramDisclosure.setRevealed(spectrogram.getBounds().contains(pointer));
+    bool overCorrelation = false;
+    for (const auto& meter : correlationMeters) {
+        overCorrelation = overCorrelation || (meter->isVisible() && meter->getBounds().contains(pointer));
+    }
+    correlationDisclosure.setRevealed(overCorrelation);
+}
+
+/// Shows named preset feedback only where the expanded selector is not already showing it.
+void ImageControlEditor::updatePresetIdentity()
+{
+    const auto presentation = imageControlProcessor.getPresetPresentation();
+    const auto& provenance = presentation.provenance;
+    const bool show = !processingToolbarShown && provenance.has_value();
+    juce::String text;
+    if (provenance.has_value()) {
+        text = provenance->name + (presentation.modified ? " *" : "");
+    }
+    const bool visibilityChanged = presetLabel.isVisible() != show;
+    presetLabel.setText(text, juce::dontSendNotification);
+    const auto description = text.isEmpty() ? text : text + " · Slot " + (presentation.comparisonSlot == 0 ? "A" : "B");
+    presetLabel.setTooltip(description);
+    presetLabel.setDescription(description);
+    presetLabel.setVisible(show);
+    titleLabel.setFont(textFont(show ? COMPACT_BRAND_FONT_HEIGHT : TITLE_FONT_HEIGHT).boldened());
+    if (visibilityChanged) {
+        resized();
     }
 }
 
@@ -751,13 +701,43 @@ void ImageControlEditor::measureFramesPerSecond(const double elapsed)
     }
 }
 
-/// Opens the display settings in a call-out box pointing at the settings button.
-/// The box owns the panel and closes when it loses focus.
-void ImageControlEditor::openSettings()
+/// Opens an editor-owned bounded callout, with synchronous teardown before the processor's settings disappear.
+/// Dismissal restores Settings focus only when an outside click has not already focused another control.
+void ImageControlEditor::openSettings(const bool showHelp)
 {
-    juce::CallOutBox::launchAsynchronously(
-        std::make_unique<SettingsPanel>(imageControlProcessor.getEditorState()), settingsButton.getBounds(), this
+    if (settingsCallout != nullptr) {
+        if (showHelp) {
+            settingsPanel->showHelp();
+        } else {
+            settingsCallout->grabKeyboardFocus();
+        }
+        return;
+    }
+    settingsPanel = std::make_unique<SettingsPanel>(
+        imageControlProcessor.getEditorState(), getHeight() - SETTINGS_BORDER_ALLOWANCE
     );
+    settingsCallout = std::make_unique<juce::CallOutBox>(*settingsPanel, settingsButton.getBounds(), this);
+    const juce::Component::SafePointer<ImageControlEditor> safeThis(this);
+    const juce::Component::SafePointer<juce::CallOutBox> safeCallout(settingsCallout.get());
+    settingsCallout->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, safeCallout](int) {
+                                         if (safeThis == nullptr || safeCallout == nullptr
+                                             || safeThis->settingsCallout.get() != safeCallout.getComponent())
+                                         {
+                                             return;
+                                         }
+                                         const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+                                         const bool restoreFocus = focused == nullptr
+                                             || focused == safeCallout.getComponent()
+                                             || safeCallout->isParentOf(focused) || focused == safeThis.getComponent();
+                                         safeThis->settingsCallout.reset();
+                                         safeThis->settingsPanel.reset();
+                                         if (restoreFocus && safeThis->isShowing()) {
+                                             safeThis->settingsButton.grabKeyboardFocus();
+                                         }
+                                     }));
+    if (showHelp) {
+        settingsPanel->showHelp();
+    }
 }
 
 /// Selects the analyzer tap from the Pre and Post switch: the output of the plugin, or its input.

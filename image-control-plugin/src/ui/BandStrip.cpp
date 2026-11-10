@@ -495,7 +495,10 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
     graphics.drawText("0", area, juce::Justification::centred);
     graphics.drawText("+1", area, juce::Justification::centredRight);
     const auto readout = getLocalBounds().reduced(meterMargin, 2).removeFromTop(meterLabelHeight);
-    graphics.drawText(readoutText(), readout, juce::Justification::centredRight);
+    graphics.setFont(monoFont(meterFontHeight));
+    // Reserve the same trailing inset in every column for the row's contextual disclosure.
+    const auto readoutArea = readout.withTrimmedRight(16);
+    graphics.drawText(readoutText(), readoutArea, juce::Justification::centredRight);
 }
 
 /// Exposes a named, read-only text value without slider actions.
@@ -521,6 +524,8 @@ BandStrip::BandStrip(
     history(localHistory),
     sideId(sideGainParameterId(band))
 {
+    setTitle(bandName(band) + " band controls");
+    setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
     nameLabel.setText(bandName(band), juce::dontSendNotification);
     nameLabel.setFont(textFont(NAME_FONT_HEIGHT).boldened());
     nameLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
@@ -536,7 +541,9 @@ BandStrip::BandStrip(
     midSlider.setDoubleClickReturnValue(true, 0.0);
     sideSlider.setDoubleClickReturnValue(true, 0.0);
     midSlider.setTooltip("Level of the band's mid, what both channels share. Double-click to reset");
-    sideSlider.setTooltip("Level of the band's side, what differs between the channels. Off makes the band mono");
+    sideSlider.setTooltip(
+        "Level of the band's side, what differs between the channels. Off makes the band mono. Double-click to reset"
+    );
     midAttachment = std::make_unique<HistorySliderAttachment>(parameters, midGainParameterId(band), midSlider, history);
     sideAttachment
         = std::make_unique<HistorySliderAttachment>(parameters, sideGainParameterId(band), sideSlider, history);
@@ -569,7 +576,8 @@ BandStrip::BandStrip(
 
     linkButton.getToggleStateValue().referTo(editorState.getPropertyAsValue(linkPropertyName(band), nullptr));
     linkButton.setTooltip(
-        "Dragging Mid moves only the Side trim by the same amount. Width and Recover stay independent"
+        "Editing Mid also moves the Side trim by the same amount, including drag, wheel, keys, and numeric entry. "
+        "Width and Recover stay independent"
     );
     addAndMakeVisible(linkButton);
 
@@ -637,6 +645,22 @@ BandStrip::BandStrip(
     }
     soloButton.setTitle(bandName(band) + " Solo");
     linkButton.setTitle(bandName(band) + " Link");
+    soloButton.setWantsKeyboardFocus(true);
+    linkButton.setWantsKeyboardFocus(true);
+    int focusOrder = 1;
+    for (auto* control :
+         std::array<juce::Component*, 7> {
+             &soloButton,
+             &linkButton,
+             &midSlider,
+             &sideSlider,
+             &widthSlider,
+             &recoverSlider,
+             &panSlider,
+         })
+    {
+        control->setExplicitFocusOrder(focusOrder++);
+    }
 }
 
 /// Closes active gestures and detaches the sliders before they are destroyed.

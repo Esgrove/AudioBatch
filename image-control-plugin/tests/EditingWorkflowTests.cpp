@@ -6,13 +6,17 @@
 #include "Parameters.h"
 #include "tests/TestSignals.h"
 #include "ui/BandStrip.h"
+#include "ui/ControlSlider.h"
 #include "ui/ProcessingToolbar.h"
+#include "ui/SettingsPanel.h"
+#include "ui/SpatialSpectrogramView.h"
 #include "UserPresets.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -320,6 +324,193 @@ TEST(EditingWorkflow, HeaderSymbolsExposeAccessibleNamesAndActions)
     EXPECT_FALSE(toolbar->isVisible());
 }
 
+/// Contextual display actions preserve the expanded layout and remain reachable in every visibility combination.
+TEST(EditingWorkflow, DisplayDisclosuresPreserveGeometryAndRestoreHiddenSections)
+{
+    for (const bool toolbarShown : {false, true}) {
+        for (const bool spectrumShown : {false, true}) {
+            for (const bool correlationShown : {false, true}) {
+                ImageControlProcessor processor;
+                auto& state = processor.getEditorState();
+                state.setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
+                state.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 304, nullptr);
+                state.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, toolbarShown, nullptr);
+                state.setProperty(HIDE_SPECTROGRAM_PROPERTY, !spectrumShown, nullptr);
+                state.setProperty(SHOW_BAND_CORRELATION_PROPERTY, correlationShown, nullptr);
+                ImageControlEditor editor(processor);
+                auto* spectrum = dynamic_cast<juce::Button*>(editingControl(editor, "spectrogram-disclosure"));
+                auto* correlation = dynamic_cast<juce::Button*>(editingControl(editor, "correlation-disclosure"));
+                auto* settings = dynamic_cast<juce::Button*>(editingControl(editor, "display-settings"));
+                ASSERT_NE(spectrum, nullptr);
+                ASSERT_NE(correlation, nullptr);
+                ASSERT_NE(settings, nullptr);
+                for (const int width : {760, 939, 940, 1000, 1200}) {
+                    editor.setSize(width, editor.getHeight());
+                    EXPECT_TRUE(editor.getLocalBounds().contains(spectrum->getBounds()));
+                    EXPECT_TRUE(editor.getLocalBounds().contains(correlation->getBounds()));
+                    EXPECT_TRUE(spectrum->isVisible());
+                    EXPECT_TRUE(correlation->isVisible());
+                    EXPECT_TRUE(spectrum->getWantsKeyboardFocus());
+                    EXPECT_TRUE(correlation->getWantsKeyboardFocus());
+                    EXPECT_EQ(spectrum->getToggleState(), spectrumShown);
+                    EXPECT_EQ(correlation->getToggleState(), correlationShown);
+                    const auto* strip = editingChild<BandStrip>(editor);
+                    ASSERT_NE(strip, nullptr);
+                    EXPECT_EQ(strip->getHeight(), 304);
+                }
+                spectrum->onClick();
+                EXPECT_EQ(static_cast<bool>(state.getProperty(HIDE_SPECTROGRAM_PROPERTY)), spectrumShown);
+                spectrum->onClick();
+                EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+                correlation->onClick();
+                EXPECT_EQ(static_cast<bool>(state.getProperty(SHOW_BAND_CORRELATION_PROPERTY)), !correlationShown);
+                correlation->onClick();
+                EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+                EXPECT_EQ(editingChild<BandStrip>(editor)->getHeight(), 304);
+            }
+        }
+    }
+}
+
+/// The minimum expanded editor still fits full-size strips and a usable spectrogram with both restore handles.
+TEST(EditingWorkflow, MinimumHeightFitsAllOptionalRows)
+{
+    for (const bool toolbar : {false, true}) {
+        for (const bool correlation : {false, true}) {
+            ImageControlProcessor processor;
+            auto& state = processor.getEditorState();
+            state.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, toolbar, nullptr);
+            state.setProperty(SHOW_BAND_CORRELATION_PROPERTY, correlation, nullptr);
+            ImageControlEditor editor(processor);
+            editor.setSize(760, 600);
+            const auto* strip = editingChild<BandStrip>(editor);
+            const auto* spectrum = editingChild<SpatialSpectrogramView>(editor);
+            ASSERT_NE(strip, nullptr);
+            ASSERT_NE(spectrum, nullptr);
+            EXPECT_GE(strip->getHeight(), BAND_STRIP_MIN_HEIGHT);
+            EXPECT_GE(spectrum->getHeight(), 160);
+            EXPECT_TRUE(editor.getLocalBounds().contains(strip->getBounds()));
+            EXPECT_TRUE(editor.getLocalBounds().contains(spectrum->getBounds()));
+        }
+    }
+}
+
+/// Settings shortcuts open one bounded production callout and text editing keeps ownership of ordinary shortcuts.
+TEST(EditingWorkflow, SettingsAndHelpShortcutsUseBoundedCalloutWithoutStealingTextEdits)
+{
+    ImageControlProcessor processor;
+    processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    EXPECT_TRUE(editor.keyPressed(juce::KeyPress(juce::KeyPress::F1Key)));
+    auto* callout = editingChild<juce::CallOutBox>(editor);
+    ASSERT_NE(callout, nullptr);
+    auto* settings = editingChild<SettingsPanel>(*callout);
+    ASSERT_NE(settings, nullptr);
+    EXPECT_LE(settings->getHeight(), editor.getHeight() - 40);
+    EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
+    auto* help = editingControl(*settings, "displayControlsHelp");
+    ASSERT_NE(help, nullptr);
+    EXPECT_TRUE(help->hasKeyboardFocus(true));
+    const auto historySize = processor.getHistory().canUndo();
+    EXPECT_FALSE(editor.keyPressed(juce::KeyPress('b', juce::ModifierKeys::commandModifier, 0)));
+    EXPECT_EQ(processor.getHistory().canUndo(), historySize);
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    ASSERT_NE(toolbar, nullptr);
+    const juce::Component::SafePointer<juce::CallOutBox> safeCallout(callout);
+    callout->dismiss();
+    pumpEditing(*toolbar, [&] { return safeCallout == nullptr; });
+    auto* settingsButton = editingControl(editor, "display-settings");
+    ASSERT_NE(settingsButton, nullptr);
+    EXPECT_TRUE(settingsButton->hasKeyboardFocus(true));
+    EXPECT_TRUE(editor.keyPressed(juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)));
+    auto* reopened = editingChild<juce::CallOutBox>(editor);
+    ASSERT_NE(reopened, nullptr);
+    const juce::Component::SafePointer<juce::CallOutBox> safeReopened(reopened);
+    reopened->dismiss();
+    pumpEditing(*toolbar, [&] { return safeReopened == nullptr; });
+}
+
+/// Deferred dismissal does not take focus away from a control selected outside the settings callout.
+TEST(EditingWorkflow, SettingsDismissalPreservesNewControlFocus)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    ASSERT_NE(toolbar, nullptr);
+    EXPECT_TRUE(editor.keyPressed(juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)));
+    auto* callout = editingChild<juce::CallOutBox>(editor);
+    ASSERT_NE(callout, nullptr);
+    const juce::Component::SafePointer<juce::CallOutBox> safeCallout(callout);
+    auto* slider = editingChild<ControlSlider>(editor);
+    ASSERT_NE(slider, nullptr);
+    callout->exitModalState(0);
+    slider->grabKeyboardFocus();
+    pumpEditing(*toolbar, [&] { return safeCallout == nullptr; });
+    EXPECT_TRUE(slider->hasKeyboardFocus(true));
+}
+
+/// Closing an instance with an open settings callout destroys bound content before processor state disappears.
+TEST(EditingWorkflow, OpenSettingsTearsDownSynchronouslyWithEditor)
+{
+    juce::Component::SafePointer<juce::CallOutBox> callout;
+    juce::Component::SafePointer<SettingsPanel> panel;
+    {
+        auto processor = std::make_unique<ImageControlProcessor>();
+        auto editor = std::make_unique<ImageControlEditor>(*processor);
+        EXPECT_TRUE(editor->keyPressed(juce::KeyPress(',', juce::ModifierKeys::commandModifier, 0)));
+        callout = editingChild<juce::CallOutBox>(*editor);
+        ASSERT_NE(callout, nullptr);
+        panel = editingChild<SettingsPanel>(*callout);
+        ASSERT_NE(panel, nullptr);
+        editor.reset();
+        EXPECT_EQ(callout, nullptr);
+        EXPECT_EQ(panel, nullptr);
+        processor = nullptr;
+    }
+    juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
+}
+
+/// Restored preset feedback uses the existing title space only when the selector row is hidden.
+TEST(EditingWorkflow, RestoredPresetIdentityAppearsOnceAndFitsLongNames)
+{
+    ImageControlProcessor source;
+    UserPreset preset;
+    preset.id = juce::Uuid().toString();
+    preset.name = juce::String::fromUTF8("Wide ambience and detailed spatial movement \xe2\x80\x94 \xc3\xa4\xc3\xb6");
+    preset.snapshot = source.getSoundSnapshot();
+    source.setSelectedUserPreset(preset);
+    source.getEditorState().setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, false, nullptr);
+    juce::MemoryBlock state;
+    source.getStateInformation(state);
+    ImageControlProcessor restored;
+    restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    ImageControlEditor editor(restored);
+    auto* identity = dynamic_cast<juce::Label*>(editingControl(editor, "header-preset-name"));
+    auto* disclosure = dynamic_cast<juce::Button*>(editingControl(editor, "processing-toolbar-toggle"));
+    ASSERT_NE(identity, nullptr);
+    ASSERT_NE(disclosure, nullptr);
+    EXPECT_TRUE(identity->isVisible());
+    EXPECT_EQ(identity->getText(), preset.name);
+    EXPECT_EQ(identity->getTooltip(), preset.name + " · Slot A");
+    for (const int width : {760, 940, 1200}) {
+        editor.setSize(width, editor.getHeight());
+        EXPECT_TRUE(editor.getLocalBounds().contains(identity->getBounds()));
+        for (auto* child : editor.getChildren()) {
+            if (child != identity && child->isVisible() && dynamic_cast<juce::Button*>(child) != nullptr) {
+                EXPECT_FALSE(identity->getBounds().intersects(child->getBounds()));
+            }
+        }
+    }
+    disclosure->onClick();
+    EXPECT_FALSE(identity->isVisible());
+    disclosure->onClick();
+    EXPECT_TRUE(identity->isVisible());
+}
+
 /// A recalled sound reaches the same production DSP path with the editor closed and different host block sizes.
 TEST(EditingWorkflow, SnapshotRecallMatchesRealtimeAndOfflineHeadlessRendering)
 {
@@ -386,7 +577,10 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         auto* output = processor.getParameters().getParameter(OUTPUT_GAIN_ID);
         output->setValueNotifyingHost(output->convertTo0to1(-6.0F));
         toolbar.refresh();
-        EXPECT_TRUE(selector->getText().endsWith(" *"));
+        EXPECT_EQ(selector->getText(), "Narrow test");
+        auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-status"));
+        ASSERT_NE(status, nullptr);
+        EXPECT_EQ(status->getText(), "Modified");
         EXPECT_TRUE(processor.getHistory().undo());
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), 0.0F, 0.001F);
     }
@@ -394,7 +588,10 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         ProcessingToolbar reopened(processor, directory);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(reopened, "preset-selector"));
         ASSERT_NE(selector, nullptr);
-        EXPECT_EQ(selector->getText(), "Narrow test *");
+        EXPECT_EQ(selector->getText(), "Narrow test");
+        auto* status = dynamic_cast<juce::Label*>(editingControl(reopened, "preset-status"));
+        ASSERT_NE(status, nullptr);
+        EXPECT_EQ(status->getText(), "Modified");
     }
     EXPECT_TRUE(directory.deleteRecursively());
 }
@@ -413,7 +610,7 @@ TEST(EditingWorkflow, HistoryCommandsRejectPendingPresetLoadsWhileCollapsed)
     {
         ProcessingToolbar toolbar(processor, directory);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(toolbar, "preset-selector"));
-        auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-status"));
+        auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-library-status"));
         ASSERT_NE(selector, nullptr);
         ASSERT_NE(status, nullptr);
         pumpEditing(toolbar, [&] { return selector->getNumItems() == 1 && selector->isEnabled(); });
@@ -421,7 +618,7 @@ TEST(EditingWorkflow, HistoryCommandsRejectPendingPresetLoadsWhileCollapsed)
         toolbar.setVisible(false);
         toolbar.undo();
         toolbar.redo();
-        pumpEditing(toolbar, [&] { return status->getText() != "Working..."; });
+        pumpEditing(toolbar, [&] { return status->getText() != "Loading..."; });
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), -6.0F, 0.001F);
         EXPECT_FALSE(processor.getSelectedUserPreset().has_value());
     }

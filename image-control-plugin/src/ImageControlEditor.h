@@ -10,9 +10,11 @@
 #include "Parameters.h"
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
+#include "ui/DisplayDisclosure.h"
 #include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/ProcessingToolbar.h"
+#include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramRenderer.h"
 #include "ui/SpectrogramWorker.h"
@@ -75,12 +77,14 @@ private:
     void applyViewSettings();
     void configureHeaderIcons();
     void measureFramesPerSecond(double elapsed);
-    void openSettings();
+    void openSettings(bool showHelp = false);
     void refreshDisplay(double timestamp);
     void setAnalyzeOutput(bool output);
     void updateBandRanges();
     void updateCorrelationMonitoring();
+    void updateDisplayDisclosures();
     void updateHistoryButtons();
+    void updatePresetIdentity();
     void updateSpectrogramMonitoring();
 
     void componentMovedOrResized(bool wasMoved, bool wasResized) override;
@@ -110,6 +114,12 @@ private:
 
     /// The plugin name in the header.
     juce::Label titleLabel;
+    /// Named preset feedback confined to the title area while the preset row is collapsed.
+    juce::Label presetLabel;
+    /// Local spectrogram hide action, or its labelled restore handle.
+    DisplayDisclosure spectrogramDisclosure {"Spectrogram"};
+    /// Local correlation hide action, or its labelled restore handle.
+    DisplayDisclosure correlationDisclosure {"Correlation"};
     /// Toggles the bypass parameter.
     juce::TextButton bypassButton {"Bypass"};
     /// Toggles the delta parameter, which outputs only what the processing changes.
@@ -117,7 +127,7 @@ private:
     /// Toggles the mono parameter, which folds the final processed output equally into both channels.
     juce::TextButton monoButton {"Mono"};
     /// Opens the display settings.
-    juce::TextButton settingsButton {"Settings"};
+    juce::DrawableButton settingsButton {"Settings", juce::DrawableButton::ImageFitted};
     /// Shows the input of the plugin in the spectrogram, the left half of the analyzer tap switch.
     juce::TextButton preButton {"Pre"};
     /// Shows the output of the plugin in the spectrogram, the right half of the analyzer tap switch.
@@ -191,6 +201,11 @@ private:
     double measuredFramesPerSecond {0.0};
     /// The renderer's frame count when the frame rate was last measured.
     int measuredFrameCount {0};
+
+    /// Owned settings content is destroyed synchronously before its processor and bound state.
+    std::unique_ptr<SettingsPanel> settingsPanel;
+    /// Editor-owned callout is destroyed before its referenced content.
+    std::unique_ptr<juce::CallOutBox> settingsCallout;
 
     /// The tooltip bubble, kept above the other components.
     TooltipOverlay tooltips;
