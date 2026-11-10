@@ -6,6 +6,7 @@
 #include "dsp/MultibandImager.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include <fmt/base.h>
 #include <mach-o/dyld.h>
 #include <string_view>
 
@@ -22,7 +23,6 @@
 #include <exception>
 #include <functional>
 #include <memory>
-#include <print>
 #include <pthread.h>
 #include <span>
 #include <stdexcept>
@@ -389,7 +389,7 @@ int run(const std::span<char*> arguments)
             require(false, "Unknown real-time scenario");
         }
     }
-    std::println("ImageControl RTSan scenario completed: {}", scenario);
+    fmt::print("ImageControl RTSan scenario completed: {}\n", scenario);
     return 0;
 }
 }  // namespace
@@ -401,7 +401,7 @@ int main(const int argc, char* argv[])
     try {
         return esgrove::image_control::realtime::run(std::span(argv, static_cast<std::size_t>(argc)));
     } catch (const std::exception& error) {
-        std::println(stderr, "ImageControl RTSan setup/assertion failure: {}", error.what());
+        fmt::print(stderr, "ImageControl RTSan setup/assertion failure: {}\n", error.what());
         return 2;
     }
 }

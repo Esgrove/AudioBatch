@@ -249,10 +249,30 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     include(CTest)
     # IMAGE_CONTROL_BUILD_TESTS owns this project's tests, even in a cache with BUILD_TESTING=OFF.
     enable_testing()
+
+    # {fmt} prints the console output of the benchmark, the preset writer, and the RTSan host.
+    # The plugin and its format wrappers never link it, since plugin code does not print.
+    # The pin matches the AudioBatch application in ../cpp/CMakeLists.txt.
+    # SYSTEM exempts its headers from the warnings-as-errors flags.
+    include(FetchContent)
+    FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        # 12.2.1
+        GIT_TAG 208219daff58f2a7438f6931cc2ddc358acf33ef
+        SYSTEM
+    )
+    set(FMT_DOC OFF CACHE BOOL "" FORCE)
+    set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+    set(FMT_TEST OFF CACHE BOOL "" FORCE)
+    set(FMT_FUZZ OFF CACHE BOOL "" FORCE)
+    set(FMT_MODULE OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(fmt)
+
     if(IMAGE_CONTROL_SANITIZE STREQUAL "realtime")
         # This process hosts the instrumented build-tree bundle with the same startup-linked RTSan runtime.
         add_executable(ImageControlRealtimeTests "${CMAKE_CURRENT_SOURCE_DIR}/tests/RealtimeTests.cpp")
-        target_link_libraries(ImageControlRealtimeTests PRIVATE ImageControl)
+        target_link_libraries(ImageControlRealtimeTests PRIVATE ImageControl fmt::fmt)
         # Compile the host implementation into shared JUCE code only in this isolated verification tree.
         target_compile_definitions(ImageControl PRIVATE JUCE_PLUGINHOST_VST3=1)
         target_compile_definitions(
@@ -406,7 +426,6 @@ if(IMAGE_CONTROL_BUILD_TESTS)
             PROPERTIES LABELS "realtime;realtime-known-regression;realtime-diagnostic"
         )
     endif()
-    include(FetchContent)
     FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
@@ -463,7 +482,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
 
     # Times the audio processing and the spectrogram rendering. It is not a test, so CTest does not run it.
     add_executable(ImageControlBenchmark "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp")
-    target_link_libraries(ImageControlBenchmark PRIVATE ImageControl)
+    target_link_libraries(ImageControlBenchmark PRIVATE ImageControl fmt::fmt)
     set_source_files_properties(
         "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp" TARGET_DIRECTORY ImageControlBenchmark
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
@@ -482,7 +501,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     )
     target_link_libraries(
         ImageControlPresetWriter
-        PRIVATE juce::juce_audio_processors juce::juce_audio_utils
+        PRIVATE juce::juce_audio_processors juce::juce_audio_utils fmt::fmt
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
     )
     set_source_files_properties(

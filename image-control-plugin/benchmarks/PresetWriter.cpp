@@ -6,6 +6,7 @@
 /// Usage: ImageControlPresetWriter <output directory>
 
 #include "Parameters.h"
+#include <fmt/base.h>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
@@ -14,7 +15,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
-#include <print>
 #include <span>
 
 namespace esgrove::image_control::benchmark
@@ -114,7 +114,7 @@ bool applySettings(const juce::AudioPluginInstance& plugin)
             }
         }
         if (!found) {
-            std::println(stderr, "Parameter not found: {}", setting.name);
+            fmt::print(stderr, "Parameter not found: {}\n", setting.name);
             allFound = false;
         }
     }
@@ -147,13 +147,13 @@ int main(const int argc, char* argv[])
 {
     const std::span arguments(argv, static_cast<std::size_t>(argc));
     if (arguments.size() != 2) {
-        std::println(stderr, "Usage: ImageControlPresetWriter <output directory>");
+        fmt::print(stderr, "Usage: ImageControlPresetWriter <output directory>\n");
         return 2;
     }
     const juce::ScopedJuceInitialiser_GUI juce;
     const juce::File directory(juce::File::getCurrentWorkingDirectory().getChildFile(arguments[1]));
     if (!directory.createDirectory()) {
-        std::println(stderr, "Cannot create {}", directory.getFullPathName().toStdString());
+        fmt::print(stderr, "Cannot create {}\n", directory.getFullPathName().toStdString());
         return 1;
     }
 
@@ -173,7 +173,7 @@ int main(const int argc, char* argv[])
             error
         );
         if (plugin == nullptr) {
-            std::println(stderr, "Cannot load the {}: {}", format->getName().toStdString(), error.toStdString());
+            fmt::print(stderr, "Cannot load the {}: {}\n", format->getName().toStdString(), error.toStdString());
             return 1;
         }
         if (!esgrove::image_control::benchmark::applySettings(*plugin)) {
@@ -182,14 +182,14 @@ int main(const int argc, char* argv[])
         const auto label = format->getName() == "AudioUnit" ? juce::String("AU") : format->getName();
         const auto file = directory.getChildFile("ImageControl " + label + ".xml");
         if (!esgrove::image_control::benchmark::writePreset(*plugin, file)) {
-            std::println(stderr, "Cannot write {}", file.getFullPathName().toStdString());
+            fmt::print(stderr, "Cannot write {}\n", file.getFullPathName().toStdString());
             return 1;
         }
-        std::println("{}", file.getFullPathName().toStdString());
+        fmt::print("{}\n", file.getFullPathName().toStdString());
         ++written;
     }
     if (written == 0) {
-        std::println(stderr, "ImageControl is not installed. Run ./install.sh first.");
+        fmt::print(stderr, "ImageControl is not installed. Run ./install.sh first.\n");
         return 1;
     }
     return 0;
