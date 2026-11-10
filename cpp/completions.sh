@@ -7,7 +7,6 @@ Install shell completions for the audiobatch CLI.
 Automatically detects the platform and installs completions for the appropriate shells:
   - Windows: bash and powershell
   - macOS:   zsh
-  - Linux:   zsh and bash
 
 Uses the audiobatch in path, or the one install.sh puts in ~/.local/bin.
 
@@ -26,6 +25,14 @@ OPTIONS: All options are optional
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
+
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
 
 SILENT=false
 

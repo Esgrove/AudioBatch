@@ -18,21 +18,21 @@ OPTIONS: All options are optional
         Use an existing CMake workspace, including Ninja, Xcode, or Visual Studio workspaces.
         A new directory uses the platform's default debug preset and the selected build type.
 
-    --unit
+    -u | --unit
         Build and run only the unit suites.
 
-    --integration
+    -i | --integration
         Build and run only the CLI and driven GUI integration tier.
         Cannot be combined with --unit.
 
-    --build-only
+    -B | --build-only
         Configure and build the selected test targets without running them.
 
-    --no-build
+    -N | --no-build
         Run tests from an already configured and built workspace without configuring or building it.
         Cannot be combined with --build-only.
 
-    --visible [delay-ms]
+    -W | --visible [delay-ms]
         Show the driven GUI integration window on screen, pausing after each action so you can follow it.
         The optional delay sets the pause in milliseconds,
         defaulting to and capped by the constants in tests/GuiDriver.h.
@@ -46,6 +46,14 @@ OPTIONS: All options are optional
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
+
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
 
 BUILD_TYPE="Debug"
 BUILD_DIR=""
@@ -71,19 +79,23 @@ while [ $# -gt 0 ]; do
             fi
             shift
             ;;
-        --unit | --integration)
-            if [ "$TIER" != all ] && [ "$TIER" != "${1#--}" ]; then
+        -u | --unit | -i | --integration)
+            case "$1" in
+                -u | --unit) SELECTED_TIER=unit ;;
+                -i | --integration) SELECTED_TIER=integration ;;
+            esac
+            if [ "$TIER" != all ] && [ "$TIER" != "$SELECTED_TIER" ]; then
                 print_error_and_exit "--unit and --integration cannot be used together."
             fi
-            TIER="${1#--}"
+            TIER="$SELECTED_TIER"
             ;;
-        --build-only)
+        -B | --build-only)
             BUILD_ONLY=true
             ;;
-        --no-build)
+        -N | --no-build)
             NO_BUILD=true
             ;;
-        --visible)
+        -W | --visible)
             VISIBLE=true
             if [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
                 VISIBLE_DELAY="$2"

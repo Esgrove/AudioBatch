@@ -19,6 +19,16 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
+for argument in "$@"; do
+    case "$argument" in
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+        --) break ;;
+    esac
+done
+
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh

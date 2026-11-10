@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-USAGE="Usage: $0 save|compare <dir> [paths...]
+USAGE="Usage: $0 save|compare <dir> [--] [paths...]
 
 Save the output of the Rust CLI, or compare a later run to a saved snapshot.
 Analyzes the paths with --refresh and JSON output,
@@ -21,19 +21,15 @@ OPTIONS:
 
 # Resolve help before checking fixtures or creating snapshot directories.
 # Arguments after -- are literal paths, not help requests.
-case "${1:-}" in
-    save | compare | -h | --help)
-        for argument in "$@"; do
-            case "$argument" in
-                --) break ;;
-                -h | --help)
-                    printf '%s\n' "$USAGE"
-                    exit 0
-                    ;;
-            esac
-        done
-        ;;
-esac
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../common.sh
@@ -57,7 +53,15 @@ mkdir -p "$(dirname "$2")"
 SNAPSHOT_DIR="$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")"
 shift 2
 
-PATHS=("$@")
+if [ "${1:-}" = -- ]; then
+    shift
+fi
+PATHS=()
+for path in "$@"; do
+    # cp and the comparison helpers must receive option-looking names as literal paths.
+    if [[ "$path" == -* ]]; then path="./$path"; fi
+    PATHS+=("$path")
+done
 if [ ${#PATHS[@]} -eq 0 ]; then
     for path in "$FIXTURES_DIR"/*.*; do
         case "$path" in
@@ -140,4 +144,4 @@ for mode in peak lufs; do
     uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$SNAPSHOT_DIR/$mode" "$WORK_DIR/current/$mode" \
         --lossy "$WORK_DIR/lossy.txt" || STATUS=1
 done
-exit $STATUS
+exit "$STATUS"

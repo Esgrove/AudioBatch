@@ -43,6 +43,16 @@ OPTIONS: All options are optional
 
 Arguments after -- are passed to clang-tidy as is."
 
+for argument in "$@"; do
+    case "$argument" in
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+        --) break ;;
+    esac
+done
+
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$DIR/.." && pwd)
 # shellcheck source=./common.sh

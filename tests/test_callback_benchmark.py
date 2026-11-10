@@ -749,6 +749,28 @@ class WindowsCleanupContracts(unittest.TestCase):
 class OptionContracts(unittest.TestCase):
     """Malformed commands or incomplete policies fail before any executable or artifact operation."""
 
+    def test_short_aliases_preserve_commands_json_and_policy(self) -> None:
+        """Every alias, including role-specific metadata, produces the same validated namespace."""
+        values = [
+            ("--baseline-command", "-b", json.dumps([sys.executable, "-c", "print(-1)", "--flag"])),
+            ("--candidate-command", "-k", json.dumps([sys.executable, "--version"])),
+            ("--pairs", "-P", "2"),
+            ("--artifacts", "-A", str(Path(tempfile.gettempdir()).resolve() / "unused artifacts")),
+            ("--cwd", "-d", str(Path.cwd())),
+            ("--timeout", "-t", "12.5"),
+            ("--report-key", "-K", "benchmark.cases"),
+            ("--native-schema", "-N", "rust"),
+            ("--field-map", "-F", '{"case": "case"}'),
+            ("--env", "-v", '{"SHARED": "with spaces"}'),
+            ("--baseline-env", "-u", '{"ROLE": "baseline"}'),
+            ("--candidate-env", "-U", '{"ROLE": "candidate"}'),
+            ("--baseline-metadata", "-M", '{"flags": ["-O3"]}'),
+            ("--candidate-metadata", "-m", '{"flags": ["-O2"]}'),
+        ]
+        long = [token for option, _, value in values for token in (option, value)]
+        short = [token for _, option, value in values for token in (option, value)]
+        assert runner.parse_options([*short, "-q"]) == runner.parse_options([*long, "--capture-only"])
+
     def test_usage_errors(self) -> None:
         """Reject shell strings, invalid environments, relative artifact paths, and nonfinite timeouts."""
         valid = [

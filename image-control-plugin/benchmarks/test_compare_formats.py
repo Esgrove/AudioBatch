@@ -225,6 +225,14 @@ class RenderContracts(unittest.TestCase):
         assert raised.value.code != 0
         assert "samples differ" in str(raised.value.code)
 
+    def test_cli_aliases_preserve_executable_and_typed_counts(self) -> None:
+        """Parsing aliases does not require installed formats, generated inputs, or a preset writer."""
+        parser = comparator.build_parser()
+        short = parser.parse_args(["-e", "CLI with spaces", "-r", "6", "-j", "2"])
+        long = parser.parse_args(["--cli", "CLI with spaces", "--runs", "6", "--jobs", "2"])
+        assert short == long
+        assert short == argparse.Namespace(cli="CLI with spaces", runs=6, jobs=2)
+
     def test_cli_rejects_invalid_run_and_job_counts(self) -> None:
         """No empty run, absent repeat check, unbalanced run order, or zero jobs may report success."""
         for arguments in [["--runs", "0"], ["--runs", "-1"], ["--runs", "1"], ["--runs", "3"], ["--jobs", "0"]]:

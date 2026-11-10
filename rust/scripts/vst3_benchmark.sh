@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-USAGE="Usage: $0 [--iterations N] [--repeat N] [--cpp PATH] [--bundle PATH] [--no-build]
+USAGE="Usage: $0 [OPTIONS]
 
 Compare in-memory offline processing of AudioBatch Test MS in both native hosts.
 Decoding, plugin setup, allocation, and sample exports are outside timing.
@@ -15,40 +15,62 @@ Builds the Release C++ test executable and Rust example unless --no-build is pas
 
 OPTIONS:
     -h | --help
-        Display these instructions."
+        Display these instructions.
+    -i | --iterations N
+        Processing iterations in each measured run. Default: 10.
+    -r | --runs N
+        Measured runs per host and case. Default: 20. --repeat is an equivalent long alias.
+    -C | --cpp PATH
+        Use this Release C++ benchmark executable.
+    -b | --bundle PATH
+        Use this build-tree test-plugin bundle.
+    -N | --no-build
+        Use existing benchmark executables without building them.
+"
+
+# Resolve help before loading platform helpers or checking benchmark tools.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../common.sh
 source "$DIR/common.sh"
-ROOT=$(cd "$DIR/.." && pwd)
+ROOT="$REPO_ROOT"
 ITERATIONS=10
-REPEAT=20
+RUNS=20
 CPP=""
 BUNDLE=""
 BUILD=true
 while [ $# -gt 0 ]; do
     case "$1" in
         -h | --help) print_usage_and_exit 0 ;;
-        --iterations | --repeat | --cpp | --bundle)
+        -i | --iterations | -r | --runs | --repeat | -C | --cpp | -b | --bundle)
             if [ $# -lt 2 ] || [ -z "$2" ]; then
                 print_error_and_exit "Missing value for $1"
             fi
             case "$1" in
-                --iterations) ITERATIONS="$2" ;;
-                --repeat) REPEAT="$2" ;;
-                --cpp) CPP="$2" ;;
-                --bundle) BUNDLE="$2" ;;
+                -i | --iterations) ITERATIONS="$2" ;;
+                -r | --runs | --repeat) RUNS="$2" ;;
+                -C | --cpp) CPP="$2" ;;
+                -b | --bundle) BUNDLE="$2" ;;
             esac
             shift
             ;;
-        --no-build) BUILD=false ;;
+        -N | --no-build) BUILD=false ;;
         *) print_error_and_exit "Unknown option: $1" ;;
     esac
     shift
 done
-for value in "$ITERATIONS" "$REPEAT"; do
+for value in "$ITERATIONS" "$RUNS"; do
     if ! [[ "$value" =~ ^[1-9][0-9]{0,2}$|^1000$ ]]; then
-        print_error_and_exit "Iterations and repeats must be decimal integers from 1 through 1000."
+        print_error_and_exit "Iterations and runs must be decimal integers from 1 through 1000."
     fi
 done
 case "$BASH_PLATFORM" in
@@ -101,7 +123,7 @@ for entry in "${CASES[@]}"; do
     read -r INPUT MODE INSTANCES LATENCY <<< "$entry"
     NAME="${INPUT%.*}-$MODE-$INSTANCES-$LATENCY"
     INPUT=$(native_path "$ROOT/fixtures/$INPUT")
-    COMMON=("$(native_path "$BUNDLE")" "$INPUT" "" "$MODE" "$INSTANCES" "$LATENCY" "$ITERATIONS" "$REPEAT")
+    COMMON=("$(native_path "$BUNDLE")" "$INPUT" "" "$MODE" "$INSTANCES" "$LATENCY" "$ITERATIONS" "$RUNS")
     if [ $((INDEX % 2)) -eq 0 ]; then
         HOSTS=(cpp rust)
     else

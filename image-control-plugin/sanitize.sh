@@ -12,8 +12,18 @@ No application target or installed plugin is built or modified.
 OPTIONS:
     -h | --help       Display these instructions without building.
     -t | --thread     Run ThreadSanitizer instead of address/undefined checks.
-    --realtime        Run the separate RealtimeSanitizer callback checks.
+    -R | --realtime   Run the separate RealtimeSanitizer callback checks.
     -v | --verbose    Display commands being executed."
+
+for argument in "$@"; do
+    case "$argument" in
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+        --) break ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
@@ -31,7 +41,7 @@ while [ $# -gt 0 ]; do
             SANITIZERS="thread"
             BUILD_DIR="$REPO/cmake-build-mac-tsan"
             ;;
-        --realtime)
+        -R | --realtime)
             if [ "$SANITIZERS" = thread ]; then
                 print_error_and_exit "--thread and --realtime require separate builds."
             fi

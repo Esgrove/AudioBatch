@@ -114,21 +114,31 @@ def expected_report_error(
     return None
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe explicit execution and diagnostic policies without launching a scenario."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-e", "--executable", type=Path, required=True)
+    parser.add_argument(
+        "-n", "--case", required=True, help="Artifact label and default --case argument to the executable"
+    )
+    parser.add_argument("-a", "--argument", action="append", default=[], help="Exact argv entry, use --argument=--flag")
+    parser.add_argument("-E", "--expect", action="append", default=[], help="Full-match unsafe function regex")
+    parser.add_argument("-s", "--stack", action="append", default=[], help="Regex required in every sanitizer stack")
+    parser.add_argument("-O", "--require-output", action="append", default=[])
+    parser.add_argument("-A", "--artifacts", type=Path, required=True)
+    parser.add_argument("-t", "--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "-c", "--control", action="store_true", help="An intentional detector self-test, not a blocked audit"
+    )
+    parser.add_argument(
+        "-G", "--diagnostic", action="store_true", help="Continue after errors and verify all reported findings"
+    )
+    return parser
+
+
 def parse_options(arguments: list[str] | None = None) -> argparse.Namespace:
     """Keep the invocation explicit and reject unbounded or ambiguous execution policies."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--executable", type=Path, required=True)
-    parser.add_argument("--case", required=True, help="Artifact label and default --case argument to the executable")
-    parser.add_argument("--argument", action="append", default=[], help="Exact argv entry, use --argument=--flag")
-    parser.add_argument("--expect", action="append", default=[], help="Full-match unsafe function regex")
-    parser.add_argument("--stack", action="append", default=[], help="Regex required in every sanitizer stack")
-    parser.add_argument("--require-output", action="append", default=[])
-    parser.add_argument("--artifacts", type=Path, required=True)
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
-    parser.add_argument("--control", action="store_true", help="An intentional detector self-test, not a blocked audit")
-    parser.add_argument(
-        "--diagnostic", action="store_true", help="Continue after errors and verify all reported findings"
-    )
+    parser = build_parser()
     options = parser.parse_args(arguments)
     if not 0.0 < options.timeout <= MAX_TIMEOUT_SECONDS:
         parser.error("--timeout must be greater than zero and at most 180 seconds")

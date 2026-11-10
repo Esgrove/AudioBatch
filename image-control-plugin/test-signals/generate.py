@@ -276,15 +276,20 @@ def signals(group: str = "all") -> dict[str, np.ndarray]:
     return result
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Describe signal selection and output policy without generating or writing audio."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-f", "--force", action="store_true", help="write the files again even when they exist")
+    parser.add_argument(
+        "-g", "--group", choices=("all", "spatial", "listening"), default="all", help="select the input collection"
+    )
+    parser.add_argument("-o", "--output", type=Path, default=OUTPUT_DIRECTORY, help="directory for generated WAV files")
+    return parser
+
+
 def main() -> None:
     """Writes selected inputs that do not exist yet, or replaces them with --force."""
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--force", action="store_true", help="write the files again even when they exist")
-    parser.add_argument(
-        "--group", choices=("all", "spatial", "listening"), default="all", help="select the input collection"
-    )
-    parser.add_argument("--output", type=Path, default=OUTPUT_DIRECTORY, help="directory for generated WAV files")
-    arguments = parser.parse_args()
+    arguments = build_parser().parse_args()
 
     arguments.output.mkdir(parents=True, exist_ok=True)
     written = 0

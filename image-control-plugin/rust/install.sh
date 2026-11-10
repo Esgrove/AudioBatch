@@ -13,13 +13,23 @@ Default installation folders:
     Windows: %LOCALAPPDATA%/Programs/Common/VST3 (per-user, no elevation)
 
 OPTIONS:
-    -h | --help            Display these instructions without building or installing.
-    -d | --debug           Build and install Debug instead of Release.
-    --no-build             Install the existing primary bundle without rebuilding.
-    --destination <dir>    Install into this VST3 directory instead of the default.
-    -V | --validate        Validate the installed VST3 with pluginval at strictness 5.
-    --validation-level <5-10>
-                           Set pluginval strictness and enable installed validation.
+    -h | --help
+        Display these instructions without building or installing.
+
+    -d | --debug
+        Build and install Debug instead of Release.
+
+    -N | --no-build
+        Install the existing primary bundle without rebuilding.
+
+    -D | --destination <dir>
+        Install into this VST3 directory instead of the default.
+
+    -V | --validate
+        Validate the installed VST3 with pluginval at strictness 5.
+
+    -L | --validation-level <5-10>
+        Set pluginval strictness and enable installed validation.
 
 The built bundle is under repository-root rust/target/bundled/ unless CARGO_TARGET_DIR is supplied.
 The installed plugin is named ImageControl RS. Rescan VST3 plugins in the host after installation.
@@ -29,9 +39,9 @@ The own VST3 wrapper is checked separately from the abandoned Nice experiment. S
 for argument in "$@"; do
     case "$argument" in
         -h | --help)
-                     printf '%s\n' "$USAGE"
-                                             exit 0
-                                                    ;;
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
         --) break ;;
     esac
 done
@@ -49,14 +59,14 @@ DESTINATION=
 while [ $# -gt 0 ]; do
     case "$1" in
         -d | --debug) BUILD_OPTIONS+=(--debug) ;;
-        --no-build) NO_BUILD=true ;;
+        -N | --no-build) NO_BUILD=true ;;
         -V | --validate) VALIDATE=true ;;
-        --destination)
+        -D | --destination)
             [ $# -ge 2 ] && [ -n "$2" ] || print_error_and_exit "--destination requires a directory. See --help."
             DESTINATION="$2"
             shift
             ;;
-        --validation-level)
+        -L | --validation-level)
             [ $# -ge 2 ] || print_error_and_exit "--validation-level requires an integer from 5 to 10."
             VALIDATION_LEVEL="$2"
             VALIDATE=true

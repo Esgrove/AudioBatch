@@ -777,29 +777,40 @@ def capture_run(options: argparse.Namespace, role: str, pair: int) -> dict[str, 
     return result
 
 
-def parse_options(arguments: list[str] | None = None) -> argparse.Namespace:  # noqa: PLR0912
-    """Keep commands, metadata, finite deadlines, and artifact destinations explicit."""
+def build_parser() -> argparse.ArgumentParser:
+    """Describe benchmark commands and evidence options without touching artifacts or launching children."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--baseline-command", required=True, help="JSON argv array; argv[0] is the benchmark executable"
+        "-b", "--baseline-command", required=True, help="JSON argv array; argv[0] is the benchmark executable"
     )
-    parser.add_argument("--candidate-command", help="JSON argv array; same command as baseline measures noise")
-    parser.add_argument("--pairs", type=int, default=10)
-    parser.add_argument("--artifacts", type=Path, required=True)
-    parser.add_argument("--cwd", type=Path, default=Path.cwd())
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
-    parser.add_argument("--capture-only", action="store_true")
-    parser.add_argument("--report-key", default="")
+    parser.add_argument("-k", "--candidate-command", help="JSON argv array; same command as baseline measures noise")
+    parser.add_argument("-P", "--pairs", type=int, default=10)
+    parser.add_argument("-A", "--artifacts", type=Path, required=True)
+    parser.add_argument("-d", "--cwd", type=Path, default=Path.cwd())
+    parser.add_argument("-t", "--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument("-q", "--capture-only", action="store_true")
+    parser.add_argument("-K", "--report-key", default="")
     parser.add_argument(
-        "--native-schema", choices=("cpp", "rust"), help="Explicit frozen version-1 native report adapter"
+        "-N", "--native-schema", choices=("cpp", "rust"), help="Explicit frozen version-1 native report adapter"
     )
-    parser.add_argument("--field-map", default="{}", help="JSON object mapping canonical fields to dotted source paths")
-    parser.add_argument("--env", default="{}", help="Shared JSON string-to-string environment overrides")
-    for role in ("baseline", "candidate"):
-        parser.add_argument(f"--{role}-env", default="{}")
+    parser.add_argument(
+        "-F", "--field-map", default="{}", help="JSON object mapping canonical fields to dotted source paths"
+    )
+    parser.add_argument("-e", "--env", default="{}", help="Shared JSON string-to-string environment overrides")
+    for role, environment_short, metadata_short in (("baseline", "-u", "-M"), ("candidate", "-U", "-m")):
+        parser.add_argument(environment_short, f"--{role}-env", default="{}")
         parser.add_argument(
-            f"--{role}-metadata", default="{}", help="Caller-provided build/toolchain/fixture identities"
+            metadata_short,
+            f"--{role}-metadata",
+            default="{}",
+            help="Caller-provided build/toolchain/fixture identities",
         )
+    return parser
+
+
+def parse_options(arguments: list[str] | None = None) -> argparse.Namespace:  # noqa: PLR0912
+    """Keep commands, metadata, finite deadlines, and artifact destinations explicit."""
+    parser = build_parser()
     options = parser.parse_args(arguments)
     if not options.capture_only and options.candidate_command is None:
         parser.error("--candidate-command is required unless --capture-only is supplied")

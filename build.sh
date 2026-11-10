@@ -19,6 +19,15 @@ OPTIONS: All options are optional
 
     -d | --debug
         Build debug binaries in both projects, or in the named project.
+
+    -l | --cli-only
+        Build only the CLIs.
+
+    -c | --clean
+        Clean the selected C++ build directory before rebuilding.
+
+    -v | --verbose
+        Display commands being executed.
 "
 
 # Import common functions

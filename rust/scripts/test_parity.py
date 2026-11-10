@@ -449,12 +449,24 @@ class TestNormalizationMode(unittest.TestCase):
                 "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
                 "PARITY_RECORD": str(record),
             }
-            for target, mode in (([], "peak"), (["--peak", "-1"], "peak"), (["--lufs", "-14"], "lufs")):
+            for target, mode in (
+                ([], "peak"),
+                (["--peak", "-1"], "peak"),
+                (["-p", "-1"], "peak"),
+                (["--lufs", "-14"], "lufs"),
+                (["-l", "-14"], "lufs"),
+            ):
                 record.write_text("", encoding="utf-8")
                 with self.subTest(target=target):
                     # The checked-in shell entry point receives fixture paths as separate arguments.
                     subprocess.run(  # noqa: S603
-                        [BASH_EXECUTABLE, str(scripts / "parity.sh"), "--normalize", *target, str(source)],
+                        [
+                            BASH_EXECUTABLE,
+                            str(scripts / "parity.sh"),
+                            "-n" if target and target[0] in {"-p", "-l"} else "--normalize",
+                            *target,
+                            str(source),
+                        ],
                         check=True,
                         capture_output=True,
                         env=environment,

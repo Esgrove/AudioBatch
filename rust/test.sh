@@ -11,23 +11,23 @@ OPTIONS: Choose at most one test tier
     -h | --help
         Display these instructions.
 
-    --unit
+    -u | --unit
         Run application unit and service tests, excluding GUI integration workflows.
 
-    --gui-integration
+    -g | --gui-integration
         Run nonvisual GUI workflows and save their output to gui.log in the artifacts directory.
 
-    --optimized
+    -O | --optimized
         Run release core tests, plus the CLI normalization subset on Windows.
 
-    --cli-integration
+    -i | --cli-integration
         Build the debug CLI and run its executable contracts through uv.
         CARGO_TARGET_DIR selects the build directory, defaulting to target/.
 
-    --tooling
+    -T | --tooling
         Check the parity oracles and benchmark tooling through uv.
 
-    --artifacts DIRECTORY
+    -A | --artifacts DIRECTORY
         Set the diagnostic directory for an integration tier.
         Defaults to target/integration-artifacts for GUI and target/integration-artifacts/cli for CLI.
         Relative paths are resolved from the rust/ application directory.
@@ -35,6 +35,17 @@ OPTIONS: Choose at most one test tier
     -v | --verbose
         Display commands being executed.
 "
+
+# Resolve help before loading platform helpers or checking test tools.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
@@ -48,13 +59,19 @@ while [ $# -gt 0 ]; do
         -h | --help)
             print_usage_and_exit 0
             ;;
-        --unit | --gui-integration | --optimized | --cli-integration | --tooling)
+        -u | --unit | -g | --gui-integration | -O | --optimized | -i | --cli-integration | -T | --tooling)
             if [ -n "$TIER" ]; then
                 print_error_and_exit "Choose only one test tier."
             fi
-            TIER="$1"
+            case "$1" in
+                -u | --unit) TIER=--unit ;;
+                -g | --gui-integration) TIER=--gui-integration ;;
+                -O | --optimized) TIER=--optimized ;;
+                -i | --cli-integration) TIER=--cli-integration ;;
+                -T | --tooling) TIER=--tooling ;;
+            esac
             ;;
-        --artifacts)
+        -A | --artifacts)
             if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == -* ]]; then
                 print_error_and_exit "--artifacts requires a directory."
             fi

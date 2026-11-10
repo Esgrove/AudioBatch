@@ -26,14 +26,31 @@ class TestRunner(unittest.TestCase):
         self.root = Path(temporary.name).resolve() / "repository with spaces"
         self.project = self.root / "cpp"
         self.project.mkdir(parents=True)
-        for relative in ["common.sh", "cpp/common.sh", "cpp/test.sh", "cpp/fuzz.sh"]:
-            shutil.copyfile(ROOT / relative, self.root / relative)
+        for relative in [
+            "common.sh",
+            "cpp/common.sh",
+            "cpp/build.sh",
+            "cpp/completions.sh",
+            "cpp/coverage.sh",
+            "cpp/format.sh",
+            "cpp/fuzz.sh",
+            "cpp/install.sh",
+            "cpp/lint.sh",
+            "cpp/sanitize.sh",
+            "cpp/test.sh",
+            "test-plugin/build.sh",
+        ]:
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, destination)
         self.tools = self.root / "bin"
         self.tools.mkdir()
         self.log = self.root / "commands.log"
         for name, contents in {
             "uname": "printf '%s\\n' \"${TEST_PLATFORM:-Darwin}\"\n",
             "cl": "exit 0\n",
+            "clang-cl": "printf '%s\\n' '/fake LLVM/resource'\n",
+            "lld-link": "exit 0\n",
             "cygpath": "printf '%s\\n' \"$2\"\n",
             "uv": "exit 0\n",
             "cmake": """printf '%s\\t' cmake "$CCACHE_DIR" "$@" >> "$TEST_LOG"
@@ -87,6 +104,121 @@ exit "${TEST_CTEST_STATUS:-0}"
             encoding="utf-8",
         )
         return path
+
+    def test_help_precedes_invalid_options_and_value_parsing(self) -> None:
+        """Show help anywhere before tool checks, validation, installations, or builds."""
+        for script in [
+            "build.sh",
+            "completions.sh",
+            "coverage.sh",
+            "format.sh",
+            "fuzz.sh",
+            "install.sh",
+            "lint.sh",
+            "sanitize.sh",
+            "test.sh",
+            "../test-plugin/build.sh",
+        ]:
+            for help_option in ["-h", "--help"]:
+                for preceding in [("--unknown",), ("--build-type", "--unknown")]:
+                    with self.subTest(script=script, help_option=help_option, preceding=preceding):
+                        result = self.invoke(*preceding, help_option, TEST_SCRIPT=script)
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        assert "Usage:" in result.stdout
+                        assert not self.log.exists()
+
+    def test_short_test_options_select_canonical_tiers_and_values(self) -> None:
+        """Short and long repeated selections retain tier names and whitespace in option values."""
+        directory = self.workspace("custom workspace")
+        for short, long, tier in [("-u", "--unit", "unit"), ("-i", "--integration", "integration")]:
+            with self.subTest(tier=tier):
+                result = self.invoke(short, long, "-p", directory.name, "-b", "Debug", "-N")
+                assert result.returncode == 0, result.stdout + result.stderr
+                [ctest] = self.commands()
+                assert ctest[ctest.index("-L") + 1] == tier
+                assert ctest[ctest.index("--test-dir") + 1] == str(directory)
+                self.log.unlink()
+        result = self.invoke("-u", "--unit", "-B")
+        assert result.returncode == 0, result.stdout + result.stderr
+        _, build = self.commands()
+        assert build[build.index("--target") + 1 :] == ["AudioBatchTests", "--config", "Debug"]
+
+    def test_short_visible_option_selects_integration(self) -> None:
+        """Visible mode accepts its optional value and rejects the unit tier with either spelling."""
+        directory = self.workspace("custom workspace")
+        result = self.invoke("-W", "15", "-N", "-p", directory.name)
+        assert result.returncode == 0, result.stdout + result.stderr
+        [ctest] = self.commands()
+        assert ctest[ctest.index("-L") + 1] == "integration"
+        self.log.unlink()
+        for arguments in [("-W", "-u"), ("--visible", "-u"), ("-W", "--unit")]:
+            with self.subTest(arguments=arguments):
+                result = self.invoke(*arguments)
+                assert result.returncode != 0
+                assert "cannot be used with --unit" in result.stderr
+                assert not self.log.exists()
+
+    def test_short_modes_still_reject_mixed_spelling_conflicts(self) -> None:
+        """Canonical mode comparisons reject conflicting short and long flags before builds."""
+        for script, pairs in [
+            ("test.sh", [("-u", "--integration"), ("--unit", "-i"), ("-B", "--no-build")]),
+            ("fuzz.sh", [("-r", "--fuzz"), ("--replay", "-f"), ("-B", "--no-build")]),
+        ]:
+            for arguments in pairs:
+                with self.subTest(script=script, arguments=arguments):
+                    result = self.invoke(*arguments, TEST_SCRIPT=script)
+                    assert result.returncode != 0
+                    assert "cannot be used together" in result.stderr
+                    assert not self.log.exists()
+
+    def test_short_sanitizer_options_select_the_expected_presets(self) -> None:
+        """Use fake CMake and CTest to verify thread and realtime alias routing."""
+        for option, preset, target, label in [
+            ("-t", "macos-tsan", "AudioBatchTests", "unit"),
+            ("-R", "macos-rtsan", "AudioBatchRealtimeTests", "realtime"),
+        ]:
+            with self.subTest(option=option):
+                result = self.invoke(option, TEST_SCRIPT="sanitize.sh")
+                assert result.returncode == 0, result.stdout + result.stderr
+                configure, build, ctest = self.commands()
+                assert configure[-3:] == ["--preset", preset, "-DBUILD_TESTING=ON"]
+                assert build[-4:] == ["--preset", preset, "--target", target]
+                assert ctest[ctest.index("-L") + 1] == label
+                self.log.unlink()
+
+    def test_short_clang_sanitizer_selects_windows_llvm(self) -> None:
+        """Route the compiler alias through the Windows LLVM preset without a physical toolchain."""
+        result = self.invoke("-k", TEST_SCRIPT="sanitize.sh", TEST_PLATFORM="MINGW64_NT")
+        assert result.returncode == 0, result.stdout + result.stderr
+        configure, build, ctest = self.commands()
+        assert configure[-3:] == ["--preset", "windows-clang-asan", "-DBUILD_TESTING=ON"]
+        assert build[-4:] == ["--preset", "windows-clang-asan", "--target", "AudioBatchTests"]
+        assert ctest[ctest.index("--build-config") + 1] == "RelWithDebInfo"
+
+    def test_short_clang_build_preserves_existing_reuse_and_cli_aliases(self) -> None:
+        """Package only an isolated fake CLI while selecting the Windows clang Debug workspace."""
+        directory = self.workspace("cmake-build-windows-clang-debug")
+        artifact = directory / "AudioBatchCli_artefacts/Debug/audiobatch.exe"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        artifact.chmod(0o755)
+        for name in ["ccache", "file"]:
+            tool = self.tools / name
+            tool.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+            tool.chmod(0o755)
+        result = self.invoke("-k", "-r", "-l", "-d", TEST_SCRIPT="build.sh", TEST_PLATFORM="MINGW64_NT")
+        assert result.returncode == 0, result.stdout + result.stderr
+        [build] = self.commands()
+        assert build[2:] == ["--build", str(directory), "--target", "AudioBatchCli", "--config", "Debug"]
+        assert (self.project / "audiobatch.exe").is_file()
+        assert not (self.project / "AudioBatchApp.exe").exists()
+
+    def test_test_plugin_keeps_print_and_debug_aliases(self) -> None:
+        """Printing the Debug bundle stays side-effect free and retains the legacy -p meaning."""
+        result = self.invoke("-p", "-d", TEST_SCRIPT="../test-plugin/build.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "cmake-build-debug/AudioBatchTestPlugin_artefacts/Debug/VST3/AudioBatch Test MS.vst3" in result.stdout
+        assert not self.log.exists()
 
     def test_default_builds_and_runs_both_tiers(self) -> None:
         """Use the debug preset, build every required executable, and leave CTest unfiltered."""
@@ -173,6 +305,17 @@ exit "${TEST_CTEST_STATUS:-0}"
         assert str(self.project / "cmake-build-windows-release") in configure
         assert build[-2:] == ["--config", "Release"]
 
+    def test_short_fuzz_modes_retain_canonical_names(self) -> None:
+        """Repeated alias spellings select replay without launching live fuzzers."""
+        result = self.invoke("-B", TEST_SCRIPT="fuzz.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert len(self.commands()) == 2
+        self.log.unlink()
+        result = self.invoke("-N", "-r", "--replay", "-s", "2", TEST_SCRIPT="fuzz.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        [ctest] = self.commands()
+        assert ctest[0] == "ctest"
+
     def test_fuzz_build_and_replay_use_shared_workspace(self) -> None:
         """Keep fuzz compilation and corpus replay independently reproducible without running live fuzzers."""
         result = self.invoke("--build-only", TEST_SCRIPT="fuzz.sh")
@@ -195,7 +338,7 @@ exit "${TEST_CTEST_STATUS:-0}"
                 encoding="utf-8",
             )
             harness.chmod(0o755)
-        result = self.invoke("--no-build", "--fuzz", "--seconds", "2", TEST_SCRIPT="fuzz.sh")
+        result = self.invoke("-N", "-f", "--fuzz", "-s", "2", TEST_SCRIPT="fuzz.sh")
         assert result.returncode == 0, result.stdout + result.stderr
         for name, command in zip(["SeratoTagFuzzer", "CliArgumentsFuzzer"], self.commands(), strict=True):
             assert command == [

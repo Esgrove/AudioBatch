@@ -12,30 +12,41 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
-    --build-only
+    -B | --build-only
         Build the targets without running them.
 
-    --no-build
+    -N | --no-build
         Use existing targets without building.
         Cannot be combined with --build-only.
 
-    --replay
+    -r | --replay
         Only replay the committed corpus.
 
-    --fuzz
+    -f | --fuzz
         Only fuzz, without a separate corpus replay.
         Cannot be combined with --replay.
 
-    --seconds <count>
+    -s | --seconds <count>
         Fuzz each target for this many seconds. Defaults to 60.
 
-    --targets <all|parsers|decoder>
+    -T | --targets <all|parsers|decoder>
         Select all targets (default), the Serato/CLI/cache targets, or only decode_audio.
         Applies to building, replay, and mutation fuzzing. Failures always remain nonzero.
 
     -v | --verbose
         Display commands being executed.
 "
+
+# Resolve help before loading platform helpers or checking fuzzing tools.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
@@ -53,26 +64,30 @@ while [ $# -gt 0 ]; do
         -h | --help)
             print_usage_and_exit 0
             ;;
-        --build-only)
+        -B | --build-only)
             BUILD_ONLY=true
             ;;
-        --no-build)
+        -N | --no-build)
             NO_BUILD=true
             ;;
-        --replay | --fuzz)
-            if [ "$MODE" != all ] && [ "$MODE" != "${1#--}" ]; then
+        -r | --replay | -f | --fuzz)
+            case "$1" in
+                -r | --replay) selected_mode=replay ;;
+                -f | --fuzz) selected_mode=fuzz ;;
+            esac
+            if [ "$MODE" != all ] && [ "$MODE" != "$selected_mode" ]; then
                 print_error_and_exit "--replay and --fuzz cannot be used together."
             fi
-            MODE="${1#--}"
+            MODE="$selected_mode"
             ;;
-        --seconds)
+        -s | --seconds)
             if [ $# -lt 2 ]; then
                 print_error_and_exit "Missing value for $1."
             fi
             SECONDS_PER_TARGET="$2"
             shift
             ;;
-        --targets)
+        -T | --targets)
             if [ $# -lt 2 ]; then
                 print_error_and_exit "Missing value for $1."
             fi

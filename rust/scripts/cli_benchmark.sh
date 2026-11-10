@@ -32,9 +32,20 @@ OPTIONS:
         Warmup runs per command. Default: 1.
     -c | --corpus <directory|auto>
         Use only this audio corpus read-only, or auto for both default collections. Default: auto.
-    --no-build
+    -N | --no-build
         Use the existing Rust target/release CLI instead of building it.
 "
+
+# Resolve help before loading platform helpers or querying the worker count.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../common.sh
@@ -60,7 +71,7 @@ while [ $# -gt 0 ]; do
             esac
             shift
             ;;
-        --no-build) BUILD=false ;;
+        -N | --no-build) BUILD=false ;;
         *)
             print_error "Unknown option: $1"
             print_usage_and_exit

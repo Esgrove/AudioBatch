@@ -81,11 +81,13 @@ class RustInstallContracts(unittest.TestCase):
     def test_help_never_builds_signs_or_installs(self) -> None:
         """Both help aliases exit before touching build tools or installation folders."""
         for flag in ("-h", "--help"):
-            result = self.invoke(flag)
-            assert result.returncode == 0, result.stderr
-            assert "Usage:" in result.stdout
-            assert not self.log.exists()
-            assert not (self.home / "Library").exists()
+            for prefix in ((), ("--unknown",), ("--validation-level",)):
+                result = self.invoke(*prefix, flag, "--unknown")
+                assert result.returncode == 0, result.stderr
+                for option in ("-N | --no-build", "-D | --destination", "-L | --validation-level"):
+                    assert option in result.stdout
+                assert not self.log.exists()
+                assert not (self.home / "Library").exists()
 
     def test_default_mac_install_is_separate_and_replaces_only_rust_bundle(self) -> None:
         """A staged replacement preserves the separate C++ plugin and forwards build/validation options."""
@@ -104,6 +106,44 @@ class RustInstallContracts(unittest.TestCase):
         assert "build --debug" in self.log.read_text()
         assert "pluginval --strictness-level 5 --validate" in self.log.read_text()
         assert not list(destination.glob(".imagecontrol-rs-install.*"))
+
+    def test_short_debug_and_validate_aliases(self) -> None:
+        """The short build and validation switches forward the same options as their long forms."""
+        result = self.invoke("-d", "-V")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "build --debug" in self.log.read_text()
+        assert "pluginval --strictness-level 5 --validate" in self.log.read_text()
+
+    def test_validation_level_destination_and_no_build_aliases(self) -> None:
+        """Both complete alias sets install existing output and accept every strictness from five to ten."""
+        for no_build, destination_flag, level_flag in (
+            ("-N", "-D", "-L"),
+            ("--no-build", "--destination", "--validation-level"),
+        ):
+            for level in range(5, 11):
+                with self.subTest(no_build=no_build, level=level):
+                    self.log.unlink(missing_ok=True)
+                    destination = self.root / f"custom VST3 {level}"
+                    result = self.invoke(no_build, destination_flag, str(destination), level_flag, str(level))
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    assert (destination / "ImageControl RS.vst3/Contents").is_dir()
+                    assert "build " not in self.log.read_text()
+                    assert f"pluginval --strictness-level {level} --validate {destination}" in self.log.read_text()
+
+    def test_invalid_validation_alias_values_fail_before_side_effects(self) -> None:
+        """Reject missing, noncanonical, and out-of-range strictness before build or destination creation."""
+        for flag in ("-L", "--validation-level"):
+            for value in (None, "", "4", "11", "05", "+5", "5.0", "word"):
+                with self.subTest(flag=flag, value=value):
+                    arguments = [flag] if value is None else [flag, value]
+                    result = self.invoke(*arguments)
+                    assert result.returncode != 0
+                    assert not self.log.exists()
+                    assert not (self.home / "Library").exists()
+        for flag in ("-D", "--destination"):
+            result = self.invoke(flag)
+            assert result.returncode != 0
+            assert not self.log.exists()
 
     def test_build_failure_leaves_installed_plugin_untouched(self) -> None:
         """Never replace an installed bundle with stale output after a failed build."""
@@ -150,5 +190,197 @@ class RustInstallContracts(unittest.TestCase):
         assert (destination / "ImageControl RS.vst3").is_symlink()
 
 
+class RustEntryPointContracts(unittest.TestCase):
+    """Exercise every other production Rust script against recording tools in a disposable workspace."""
+
+    scripts = ("build.sh", "test.sh", "lint.sh", "format.sh", "rtsan.sh")
+
+    def setUp(self) -> None:
+        """Keep all Cargo, formatting, signing, and native host execution inside fake tools."""
+        assert BASH is not None
+        temporary = tempfile.TemporaryDirectory(prefix="imagecontrol-rust-scripts-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "repository with spaces"
+        for relative in (
+            "common.sh",
+            "image-control-plugin/common.sh",
+            *(f"image-control-plugin/rust/{script}" for script in self.scripts),
+        ):
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, destination)
+        self.directory = self.root / "image-control-plugin/rust"
+        self.tools = self.root / "tools"
+        self.tools.mkdir()
+        self.log = self.root / "commands.log"
+        for command in ("dirname", "mkdir"):
+            executable = shutil.which(command)
+            assert executable is not None
+            (self.tools / command).symlink_to(executable)
+        uname = self.tools / "uname"
+        uname.write_text(f'#!{BASH}\nprintf "Darwin\\n"\n', encoding="utf-8")
+        uname.chmod(0o755)
+        for name in ("cargo", "codesign", "pluginval", "shfmt", "slb"):
+            executable = self.tools / name
+            executable.write_text(
+                f'#!{BASH}\nprintf "%s\\0" "${{0##*/}}" "$@" >> "$COMMAND_LOG"\nprintf "\\n" >> "$COMMAND_LOG"\n',
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+        self.bundle = self.root / "rust/target/bundled/ImageControl RS.vst3"
+        (self.bundle / "Contents").mkdir(parents=True)
+        self.environment = {"PATH": str(self.tools), "COMMAND_LOG": str(self.log), "LC_ALL": "C"}
+
+    def invoke(self, script: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """Run the copied script with a bounded timeout and no inherited executable search path."""
+        assert BASH is not None
+        return subprocess.run(  # noqa: S603
+            [BASH, str(self.directory / script), *arguments],
+            cwd=self.directory,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+
+    def commands(self, name: str | None = None) -> list[list[str]]:
+        """Read exact argument boundaries so spaces in manifests and bundle paths remain meaningful."""
+        if not self.log.exists():
+            return []
+        commands = [line.removesuffix("\0").split("\0") for line in self.log.read_text().splitlines()]
+        return commands if name is None else [command[1:] for command in commands if command[0] == name]
+
+    def test_help_aliases_anywhere_precede_errors_and_tools(self) -> None:
+        """Both help forms exit before invalid options, missing operands, or dependency checks."""
+        for script in self.scripts:
+            for flag in ("-h", "--help"):
+                for prefix in ((), ("--unknown",), ("--bundle",)):
+                    with self.subTest(script=script, flag=flag, prefix=prefix):
+                        result = self.invoke(script, *prefix, flag, "--unknown")
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        assert "Usage:" in result.stdout
+                        assert not self.commands()
+
+    def test_unknown_and_trailing_options_fail_before_tools(self) -> None:
+        """No entry point silently ignores extra arguments or performs work before rejecting them."""
+        selections = {
+            "build.sh": "-d",
+            "test.sh": "-l",
+            "lint.sh": "-c",
+            "format.sh": "-c",
+            "rtsan.sh": "-N",
+        }
+        for script, selection in selections.items():
+            for arguments in (("--unknown",), (selection, "--unknown")):
+                with self.subTest(script=script, arguments=arguments):
+                    result = self.invoke(script, *arguments)
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    assert not self.commands()
+        for arguments in (("-m", "-l"), ("--licenses", "--licenses"), ("--miri", "extra")):
+            result = self.invoke("test.sh", *arguments)
+            assert result.returncode != 0
+            assert not self.commands()
+
+    def test_build_aliases_preserve_primary_workspace_packaging(self) -> None:
+        """Both alias sets package the primary root-workspace plugin, test it, and validate its bundle."""
+        for arguments in (("-d", "-t", "-V"), ("--debug", "--test", "--validate")):
+            with self.subTest(arguments=arguments):
+                self.log.unlink(missing_ok=True)
+                result = self.invoke("build.sh", *arguments)
+                assert result.returncode == 0, result.stdout + result.stderr
+                cargo = self.commands("cargo")
+                assert cargo[0] == [
+                    "run",
+                    "--manifest-path",
+                    str(self.root / "Cargo.toml"),
+                    "-p",
+                    "image-control-xtask",
+                    "--",
+                    "bundle",
+                    "image-control-plugin-rs",
+                ]
+                assert cargo[1] == [
+                    "test",
+                    "--manifest-path",
+                    str(self.root / "Cargo.toml"),
+                    "-p",
+                    "image-control-dsp",
+                    "-p",
+                    "image-control-plugin-rs",
+                    "-p",
+                    "image-control-xtask",
+                    "--all-features",
+                ]
+                assert self.commands("pluginval") == [["--strictness-level", "5", "--validate", str(self.bundle)]]
+                assert self.commands("codesign") == [
+                    ["--force", "--sign", "-", str(self.bundle)],
+                    ["--verify", "--strict", str(self.bundle)],
+                ]
+        self.log.unlink()
+        result = self.invoke("build.sh")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self.commands("cargo")[0][-1] == "--release"
+        assert not self.commands("pluginval")
+
+    def test_miri_and_licenses_aliases(self) -> None:
+        """Both modes retain their existing package scope and cannot invoke native hosts."""
+        for short, long, count in (("-m", "--miri", 3), ("-l", "--licenses", 1)):
+            self.log.unlink(missing_ok=True)
+            result = self.invoke("test.sh", short)
+            assert result.returncode == 0, result.stdout + result.stderr
+            expected = self.commands()
+            assert len(self.commands("cargo")) == count
+            if short == "-l":
+                assert self.commands("cargo") == [
+                    ["deny", "--manifest-path", str(self.directory / "crates/plugin/Cargo.toml"), "check", "licenses"]
+                ]
+            else:
+                assert all(command[:3] == ["+nightly", "miri", "test"] for command in self.commands("cargo"))
+            self.log.unlink()
+            result = self.invoke("test.sh", long)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert self.commands() == expected
+
+    def test_check_aliases_preserve_nonmutating_tools(self) -> None:
+        """Short and long check flags reach Cargo and every optional formatter without fix arguments."""
+        for script in ("lint.sh", "format.sh"):
+            expected = None
+            for flag in ("-c", "--check"):
+                with self.subTest(script=script, flag=flag):
+                    self.log.unlink(missing_ok=True)
+                    result = self.invoke(script, flag)
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    commands = self.commands()
+                    if expected is not None:
+                        assert commands == expected
+                    expected = commands
+                    assert "--fix" not in self.commands("cargo")[0]
+                    if script == "format.sh":
+                        assert self.commands("cargo")[0][-1] == "--check"
+                        assert self.commands("shfmt")[0][0] == "--diff"
+                        assert self.commands("slb")[0][0] == "crates"
+                    else:
+                        assert self.commands("cargo")[0][-3:] == ["--", "-D", "warnings"]
+
+    def test_rtsan_bundle_and_no_build_aliases_skip_packaging(self) -> None:
+        """All no-build aliases reject the supplied missing bundle without builds or native dependencies."""
+        missing = self.root / "missing bundle.vst3"
+        for bundle in ("-b", "--bundle"):
+            for no_build in ("-N", "--no-build", "--skip-build"):
+                with self.subTest(bundle=bundle, no_build=no_build):
+                    result = self.invoke("rtsan.sh", bundle, str(missing), no_build)
+                    assert result.returncode != 0
+                    assert f"Build-tree VST3 is missing: {missing}" in result.stderr
+                    assert not self.commands()
+            result = self.invoke("rtsan.sh", bundle)
+            assert result.returncode != 0
+            assert "requires a path" in result.stderr
+            assert not self.commands()
+        help_result = self.invoke("rtsan.sh", "-h")
+        assert "-N | --no-build" in help_result.stdout
+        assert "--skip-build is a deprecated alias" in help_result.stdout
+
+
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)

@@ -121,11 +121,16 @@ def render_master(source: Source, master: Path) -> None:
     ffmpeg("-f", "lavfi", "-i", lavfi, "-af", f"volume={GAIN_DB}dB", "-c:a", "pcm_f32le", str(master))
 
 
-def main() -> None:
-    """Renders every missing file of the set."""
+def build_parser() -> argparse.ArgumentParser:
+    """Describe regeneration policy without rendering files or checking external tools."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-f", "--force", action="store_true", help="Render the files that already exist again")
-    arguments = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    """Renders every missing file of the set."""
+    arguments = build_parser().parse_args()
 
     OUTPUT_DIRECTORY.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as work_directory:

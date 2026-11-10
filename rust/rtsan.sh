@@ -9,9 +9,9 @@ Only macOS hosts with native realtime sanitizer support are accepted.
 
 OPTIONS:
     -h | --help          Display these instructions.
-    --artifacts DIR     Save versions, build records, and subprocess diagnostics in DIR.
-    --diagnostic        Collect known production blockers without treating them as clean passes.
-    --skip-native       Explicitly omit the build-tree native VST3 contracts.
+    -A | --artifacts DIR Save versions, build records, and subprocess diagnostics in DIR.
+    -G | --diagnostic    Collect known production blockers without treating them as clean passes.
+    -S | --skip-native   Explicitly omit the build-tree native VST3 contracts.
     -v | --verbose      Display commands being executed.
 
 Environment:
@@ -19,6 +19,17 @@ Environment:
     AUDIOBATCH_RTSAN_CLANG      Matching clang executable, default Homebrew LLVM.
     AUDIOBATCH_TEST_VST3        Build-tree native bundle, default AudioBatch Test MS.
 "
+
+# Resolve help before loading platform helpers or checking the native toolchain.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
@@ -31,13 +42,15 @@ NATIVE=true
 while [ $# -gt 0 ]; do
     case "$1" in
         -h | --help) print_usage_and_exit 0 ;;
-        --artifacts)
-            [ $# -ge 2 ] || print_error_and_exit "--artifacts requires a directory"
+        -A | --artifacts)
+            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == -* ]]; then
+                print_error_and_exit "--artifacts requires a directory"
+            fi
             ARTIFACTS="$2"
             shift
             ;;
-        --diagnostic) DIAGNOSTIC=true ;;
-        --skip-native) NATIVE=false ;;
+        -G | --diagnostic) DIAGNOSTIC=true ;;
+        -S | --skip-native) NATIVE=false ;;
         -v | --verbose) set -x ;;
         *) print_error_and_exit "Unknown option: $1" ;;
     esac

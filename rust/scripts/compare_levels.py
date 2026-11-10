@@ -266,21 +266,27 @@ def compare_results(
     return differences
 
 
-def main() -> None:
-    """Writes pre-operation expectations or validates the two CLI result files."""
+def build_parser() -> argparse.ArgumentParser:
+    """Describe comparison and expectation inputs without reading or writing their files."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("cpp", type=Path, nargs="?", help="JSON output of the C++ CLI")
     parser.add_argument("rust", type=Path, nargs="?", help="JSON output of the Rust CLI")
     parser.add_argument("-t", "--tolerance", type=float, default=0.05, help="Allowed level difference in dB or LU")
     parser.add_argument("-f", "--folders", type=Path, nargs=2, metavar="FOLDER", help="Normalized folders")
-    parser.add_argument("--expectations", type=Path, help="Pre-operation expectations JSON")
-    parser.add_argument("--write-expectations", type=Path, help="Write expectations before invoking the CLIs")
-    parser.add_argument("--inputs", type=Path, nargs="+", help="Original input files or directories")
-    parser.add_argument("--base", type=Path, help="Folder to make written expectation paths relative to")
+    parser.add_argument("-E", "--expectations", type=Path, help="Pre-operation expectations JSON")
+    parser.add_argument("-W", "--write-expectations", type=Path, help="Write expectations before invoking the CLIs")
+    parser.add_argument("-i", "--inputs", type=Path, nargs="+", help="Original input files or directories")
+    parser.add_argument("-b", "--base", type=Path, help="Folder to make written expectation paths relative to")
     parser.add_argument("-r", "--recurse", action="store_true", help="Discover inputs recursively")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("-p", "--peak", type=float, help="Sample peak target the outputs must reach")
     target.add_argument("-l", "--lufs", type=float, help="Integrated loudness target the outputs must reach")
+    return parser
+
+
+def main() -> None:
+    """Writes pre-operation expectations or validates the two CLI result files."""
+    parser = build_parser()
     arguments = parser.parse_args()
     if arguments.write_expectations is not None:
         if not arguments.inputs:

@@ -45,11 +45,21 @@ OPTIONS: All options are optional
         Use pluginval from PATH, or fetch and build the pinned version in ../.deps/ if missing.
         Audio Unit validation with auval requires install.sh --validate.
 
-    --validation-level <5-10>
+    -L | --validation-level <5-10>
         Set pluginval strictness and enable validation. Default is 5.
 
     -v | --verbose
         Display commands being executed."
+
+for argument in "$@"; do
+    case "$argument" in
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+        --) break ;;
+    esac
+done
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
@@ -100,9 +110,9 @@ init_options() {
             -V | --validate)
                 VALIDATE=true
                 ;;
-            --validation-level)
+            -L | --validation-level)
                 if [ $# -lt 2 ]; then
-                    print_error_and_exit "Missing value for $1."
+                    print_error_and_exit "Missing value for --validation-level."
                 fi
                 VALIDATION_LEVEL="$2"
                 VALIDATE=true

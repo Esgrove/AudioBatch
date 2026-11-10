@@ -265,9 +265,20 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 - Run each project's build, format, lint, and test scripts from its own directory.
   The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
   and `lint.sh --check` reports warnings without applying fixes.
-- Parameter-taking shell entry points support both `-h` and `--help`, print useful usage, and exit successfully
+- First-party scripts provide both short and long forms for optional arguments whenever possible.
+  Reuse the same spelling and short character for the same concept across scripts, and document both in help.
+  Reserve `-h` for help and `-v` for verbosity. Do not reuse them for another option in a script without that feature.
+  Preserve existing spellings as compatibility aliases when standardizing names.
+  Keep positional arguments and `--` passthrough intact.
+  Common pairs include `-h/--help`, `-v/--verbose`, `-d/--debug`, `-c/--check` in checkers,
+  `-c/--clean` in builders, `-j/--jobs`, `-t/--test`, `-V/--validate`, `-L/--validation-level`,
+  `-N/--no-build`, `-B/--build-only`, `-A/--artifacts`, and `-R/--realtime` in sanitizer scripts.
+  `tests/test_shell_help.py` checks shell help and shared flag names.
+  `tests/test_python_options.py` checks Python aliases against their real parsers without running the tools.
+  Parameter-taking shell entry points print useful help and exit successfully
   before builds, installations, required-tool checks, or other side effects.
-  Use `REPO_ROOT` from root `common.sh` for repository-level paths, without reconstructing them through project `..` paths.
+  Use `REPO_ROOT` from root `common.sh` for repository-level paths.
+  Do not reconstruct the root through project `..` paths.
 - Stage with explicit paths, such as `git add cpp`, `git add rust`, or `git add image-control-plugin`.
 - Keep README updates concise and targeted, preserving existing structure and useful content.
   Do not fully rewrite or broadly condense an existing README unless explicitly requested.

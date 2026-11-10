@@ -11,21 +11,21 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
-    --build-only
+    -B | --build-only
         Configure and build the harnesses without running them.
 
-    --no-build
+    -N | --no-build
         Use existing harnesses without configuring or building.
         Cannot be combined with --build-only.
 
-    --replay
+    -r | --replay
         Only replay the committed corpus.
 
-    --fuzz
+    -f | --fuzz
         Only fuzz, without a separate corpus replay.
         Cannot be combined with --replay.
 
-    --seconds <count>
+    -s | --seconds <count>
         Fuzz each harness for this many seconds. Defaults to 60.
 
     -v | --verbose
@@ -36,6 +36,14 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
 
+# Help takes precedence over parsing and validation, but not over downstream arguments after --.
+for argument in "$@"; do
+    case "$argument" in
+        --) break ;;
+        -h | --help) print_usage_and_exit 0 ;;
+    esac
+done
+
 BUILD_ONLY=false
 NO_BUILD=false
 MODE=all
@@ -45,19 +53,23 @@ while [ $# -gt 0 ]; do
         -h | --help)
             print_usage_and_exit 0
             ;;
-        --build-only)
+        -B | --build-only)
             BUILD_ONLY=true
             ;;
-        --no-build)
+        -N | --no-build)
             NO_BUILD=true
             ;;
-        --replay | --fuzz)
-            if [ "$MODE" != all ] && [ "$MODE" != "${1#--}" ]; then
+        -r | --replay | -f | --fuzz)
+            case "$1" in
+                -r | --replay) SELECTED_MODE=replay ;;
+                -f | --fuzz) SELECTED_MODE=fuzz ;;
+            esac
+            if [ "$MODE" != all ] && [ "$MODE" != "$SELECTED_MODE" ]; then
                 print_error_and_exit "--replay and --fuzz cannot be used together."
             fi
-            MODE="${1#--}"
+            MODE="$SELECTED_MODE"
             ;;
-        --seconds)
+        -s | --seconds)
             if [ $# -lt 2 ]; then
                 print_error_and_exit "Missing value for $1."
             fi

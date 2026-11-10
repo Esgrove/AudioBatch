@@ -44,9 +44,10 @@ jobs:
           clang-format --version
           ./format.sh --check
 
-      - name: Check shell help and isolated Rust plugin installation
+      - name: Check script flag aliases and isolated Rust plugin installation
         run: |
           uv run --script tests/test_shell_help.py
+          uv run --script tests/test_python_options.py
           uv run --script image-control-plugin/rust/tests/test_install_script.py
 
   plugin-expected:

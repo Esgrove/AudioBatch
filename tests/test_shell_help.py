@@ -4,6 +4,7 @@
 # ///
 """Verify first-party shell entry points expose help without invoking tools or changing files."""
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,6 +22,68 @@ SCRIPT_DIRECTORIES = (
     "image-control-plugin/rust",
     "test-plugin",
 )
+# Concepts share a canonical pair. Different concepts may reuse a character in different entry points.
+CANONICAL_SHORT_FLAGS = {
+    "--help": "-h",
+    "--verbose": "-v",
+    "--debug": "-d",
+    "--check": "-c",
+    "--clean": "-c",
+    "--jobs": "-j",
+    "--test": "-t",
+    "--validate": "-V",
+    "--validation-level": "-L",
+    "--no-build": "-N",
+    "--build-only": "-B",
+    "--artifacts": "-A",
+    "--realtime": "-R",
+    "--build-type": "-b",
+    "--build-dir": "-p",
+    "--clang": "-k",
+    "--prepare": "-P",
+    "--ninja": "-n",
+    "--xcode": "-x",
+    "--reuse": "-r",
+    "--open": "-o",
+    "--print": "-p",
+    "--cli-only": "-l",
+    "--app-only": "-a",
+    "--thread": "-t",
+    "--lcov": "-l",
+    "--unit": "-u",
+    "--gui-integration": "-g",
+    "--cli-integration": "-i",
+    "--integration": "-i",
+    "--optimized": "-O",
+    "--tooling": "-T",
+    "--miri": "-m",
+    "--licenses": "-l",
+    "--diagnostic": "-G",
+    "--skip-native": "-S",
+    "--destination": "-D",
+    "--bundle": "-b",
+    "--report-only": "-r",
+    "--replay": "-r",
+    "--fuzz": "-f",
+    "--seconds": "-s",
+    "--targets": "-T",
+    "--install": "-I",
+    "--release": "-R",
+    "--iterations": "-i",
+    "--runs": "-r",
+    "--warmup": "-w",
+    "--corpus": "-c",
+    "--cpp": "-C",
+    "--visible": "-W",
+    "--silent": "-s",
+    "--changed": "-C",
+    "--staged": "-s",
+    "--recurse": "-r",
+    "--normalize": "-n",
+    "--tolerance": "-t",
+    "--peak": "-p",
+    "--lufs": "-l",
+}
 SIDE_EFFECT_TOOLS = (
     "cargo",
     "rustup",
@@ -123,6 +186,58 @@ class ShellHelpContracts(unittest.TestCase):
                     assert "-h" in result.stdout, f"{relative}: short help alias undocumented"
                     assert not self.log.exists(), self.log.read_text() if self.log.exists() else ""
                     assert not (self.root / "home").exists(), f"{relative}: help created user storage"
+
+    def test_rust_plugin_rejects_removed_frontend_flags_before_building(self) -> None:
+        """Removed prototype choices fail explicitly instead of silently selecting another implementation."""
+        assert BASH is not None
+        for script, flag in (("build.sh", "--raw"), ("build.sh", "--editor"), ("test.sh", "--raw")):
+            result = subprocess.run(  # noqa: S603
+                [BASH, str(self.root / "image-control-plugin/rust" / script), flag],
+                cwd=self.root,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            assert result.returncode != 0, result.stdout + result.stderr
+            output = (result.stdout + result.stderr).lower()
+            assert "usage:" in output or "unknown option" in output, result.stdout + result.stderr
+            assert not self.log.exists(), self.log.read_text() if self.log.exists() else ""
+
+    def test_option_help_documents_short_and_long_forms(self) -> None:
+        """Every shell option declaration has an explicit usable short spelling, not just help."""
+        assert BASH is not None
+        declaration = re.compile(
+            r"^\s+(?P<flags>(?:-[A-Za-z]|--[a-z][a-z0-9-]*)(?:\s*\|\s*(?:-[A-Za-z]|--[a-z][a-z0-9-]*))*)"
+        )
+        for relative in entry_points():
+            result = subprocess.run(  # noqa: S603
+                [BASH, str(self.root / relative), "--help"],
+                cwd=self.root,
+                env=self.environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            for line in result.stdout.splitlines():
+                match = declaration.match(line)
+                if match is None:
+                    continue
+                if re.search(r"\bis a (?:deprecated |compatibility )?alias\b", line):
+                    continue
+                flags = match.group("flags")
+                assert re.search(r"(?:^|\|)\s*-[A-Za-z](?:\s|$|\|)", flags), f"{relative}: missing short form: {line}"
+                long_flags = re.findall(r"--[a-z][a-z0-9-]*", flags)
+                assert long_flags, f"{relative}: missing long form: {line}"
+                for option in long_flags:
+                    expected = CANONICAL_SHORT_FLAGS.get(option)
+                    if expected is not None:
+                        assert expected in re.split(r"\s*\|\s*", flags), (
+                            f"{relative}: {option} must use {expected}: {line}"
+                        )
 
     def test_project_dispatch_preserves_side_effect_free_help(self) -> None:
         """Root wrappers delegate project help without running the real project command."""
