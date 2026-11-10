@@ -9,6 +9,7 @@ Check the selected code against the repository's existing guidelines and make sm
 This is lighter than a full correctness review or an all-checks run.
 Arguments: $ARGUMENTS
 Treat arguments or instructions appended to this command as scope, file selection, and mode.
+If the arguments line still shows a literal `$ARGUMENTS` placeholder, use the text the user wrote after the command.
 Default to the whole repository, applying safe fixes. `check-only` reports without editing.
 
 ## Scope
@@ -35,7 +36,7 @@ Read root `AGENTS.md` and record `git status --short` before edits.
 For selected application code, read its `AGENTS.md` and `ARCHITECTURE.md`.
 For Rust, also read the C++ prose, naming, and documentation rules that Rust explicitly inherits.
 For C++ and ImageControl, read `.agents/rules/code-organization.md` and `.agents/rules/comments.md`.
-For ImageControl, read its `README.md` and `ARCHITECTURE.md`.
+For ImageControl, read its `AGENTS.md`, `README.md`, and `ARCHITECTURE.md`.
 Apply its own namespace and branding, not AudioBatch application-specific names or parity requirements.
 For Rust GUI architecture, ownership, API, or test decisions, load the GPUI Kit coding skill when available.
 Do not redesign screens. If a requested cleanup changes presentation or interaction,
@@ -64,7 +65,9 @@ Preserve unrelated work. Do not stage, commit, clean build directories, or run d
 ### Style, naming, and documentation
 
 - Prefer descriptive full names, established domain terms, and the existing local naming conventions.
-  Check named constants, C++ digit separators, brace initialization where required,
+  Check named constants, `SCREAMING_SNAKE_CASE` for shared C++ constants and camelCase for function-local ones,
+  C++ digit separators,
+  brace initialization where required,
   and compile-time evaluation where the value and contract are genuinely constant.
 - Keep ownership explicit with values, references, RAII, and the project's documented observer types.
   Do not mechanically convert API-boundary raw pointers or rewrite ownership during a cosmetic pass.
@@ -109,6 +112,7 @@ After edits, the required project validation still applies. A lightweight review
 
 - Format every changed C++ source or header with `clang-format -i --style=file`.
   Run CMake formatting for changed CMake files, then the applicable C++ or ImageControl lint script.
+  ImageControl's own `./format.sh` formats its C++, CMake, shell, Python, and prose files.
   Use `--check --changed` for targeted feedback where suitable,
   but remember that header-driven lint only adds the neighboring source with the same stem.
   Build all affected consumers, including both GUI and CLI for shared C++ code,

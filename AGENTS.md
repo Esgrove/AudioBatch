@@ -9,6 +9,8 @@ This repository holds two versions of it side by side, each with its own agent i
 
 Each version also has an `ARCHITECTURE.md`, [`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md),
 which explains how its parts work together.
+The ImageControl plugin in `image-control-plugin/` is a separate C++ project with its own instructions.
+Read [`image-control-plugin/AGENTS.md`](image-control-plugin/AGENTS.md) before changing anything under it.
 
 ## Agent Commands
 
@@ -36,17 +38,25 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
 ## Shared Files
 
 - `assets/` holds the icons and fonts that both applications bundle.
-- `common.sh` holds the shell helpers shared by the scripts of both projects,
+- `common.sh` holds the shell helpers shared by the scripts of all three projects,
   such as platform detection and colored output.
-  `cpp/common.sh` and `rust/common.sh` source it and add their project specific parts.
-- `build.sh`, `install.sh`, and `format.sh` run the scripts of the same name in both projects,
+  `cpp/common.sh`, `rust/common.sh`, and `image-control-plugin/common.sh` source it
+  and add their project specific parts.
+- `build.sh`, `install.sh`, `format.sh`, and `lint.sh` run the scripts of the same name in both applications,
   or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
-  Unqualified `install.sh` also installs ImageControl after both applications, even with `--cli-only`.
-  `install.sh image-control` installs only the plugin, and root installer options are not forwarded to it.
-  Run `image-control-plugin/install.sh` directly for plugin-specific options.
+  Unqualified `install.sh`, `format.sh`, and `lint.sh` also run the ImageControl script after both applications,
+  and `install.sh` does so even with `--cli-only`.
+  An `image-control` first argument runs only the plugin script.
+  `install.sh image-control` does not forward root installer options,
+  so run `image-control-plugin/install.sh` directly for plugin-specific options.
   `format.sh` also formats the root shell scripts and the prose outside the projects when shfmt and slb are installed,
   runs ruff on the Python scripts through uv,
   and formats tracked and non-ignored new JSON files with jq using two-space indentation.
+  `lint.sh --check` reports warnings without applying fixes.
+- `bump-version.sh` bumps the versions of the C++ application, the Rust workspace, and the test plugin together,
+  a patch by default, or `--major` or `--minor`.
+  `--commit` commits only the version files and adds an annotated `vX.Y.Z` tag.
+  ImageControl keeps its own version in `image-control-plugin/CMakeLists.txt`.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place,
   and `fixtures/README.md` lists them with what each one tests.
   `fixtures/generate.sh` regenerates the ordinary audio with ffmpeg and the plugin expected outputs,
@@ -69,7 +79,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   When its processing changes, update the script, regenerate the files,
   and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
   Review and update only the affected checksum entries using the fixture identity-capture procedure.
-- `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging effect by esgrove,
+- `image-control-plugin/` holds ImageControl, a multiband mid/side stereo imaging effect,
   as a VST3 and, on macOS, an Audio Unit, described in `image-control-plugin/README.md`.
   It is a real plugin for processing audio, mainly from AudioBatch's plugin chain, and not part of either application.
   It is C++ only, so the feature scope and behavioral parity rules below do not apply to it,
@@ -77,23 +87,24 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `image-control-plugin/build.sh` builds it with the JUCE submodule in `cpp/JUCE`,
   and runs its GoogleTest unit tests with `--test`.
   `image-control-plugin/install.sh` builds it with `build.sh` and installs it into the plugin folders.
-  `cpp/format.sh` formats it, and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
+  `image-control-plugin/format.sh` formats it,
+  and `image-control-plugin/lint.sh` checks it with the C++ clang-tidy configuration.
   It includes `cpp/cmake/Optimizations.cmake`, so it targets the same CPUs and optimizations as AudioBatch.
   `image-control-plugin/benchmarks/compare_formats.py` renders files through its VST3
   and Audio Unit with the AudioBatch CLI, and compares their speed and output.
   `image-control-plugin/test-signals/generate.py` writes stereo sines, sine combs,
   and noise at set level differences into its ignored `output/` directory, for checking the spatial spectrogram by eye.
 - `fixtures/spectrogram_expected/` holds short PCM16 inputs and sparse NumPy power expectations for the spectrogram,
- which both test suites read in place.
- `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
- and `format.yml` runs it with `--check`.
- Both applications share the bounded `spectrogram_cache` table and its `SPEC` codec.
- Their grids may differ by one intensity step in at most one cell per thousand,
- because `juce::dsp::FFT` and `realfft` round their last bits differently.
- The Rust shared-cache tests measure that documented exception against the C++ test executable.
+  which both test suites read in place.
+  `uv run --script fixtures/spectrogram_expected.py` regenerates them independently of either application's DSP,
+  and `format.yml` runs it with `--check`.
+  Both applications share the bounded `spectrogram_cache` table and its `SPEC` codec.
+  Their grids may differ by one intensity step in at most one cell per thousand,
+  because `juce::dsp::FFT` and `realfft` round their last bits differently.
+  The Rust shared-cache tests measure that documented exception against the C++ test executable.
 - `fixtures/limiter_model.py` fits the empirical limiter model of the gain-adjusted integrated loudness estimate.
- Its observations come from the Rust `limiter_probe` example, and `fixtures/README.md` describes both.
- When the fit changes, update the `LIMITER_LOSS_*` constants and the expected estimates in both applications.
+  Its observations come from the Rust `limiter_probe` example, and `fixtures/README.md` describes both.
+  When the fit changes, update the `LIMITER_LOSS_*` constants and the expected estimates in both applications.
 - `fixtures/normalization/` holds a larger collection for comparing the normalized output of both applications.
   It has music-like audio in representative supported formats, sample rates, and bit depths,
   from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.
@@ -104,11 +115,28 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Its `output/` directory is ignored by git, and the benchmarks skip files that are absent.
   Run it through uv before measuring decoding or file analysis throughput.
 - `cpp/tests/fuzz/corpus/` holds the seeds of the C++ libFuzzer harnesses, run by `cpp/fuzz.sh`.
- The Rust cargo-fuzz targets `serato_tags` and `cli_arguments` in `rust/fuzz/` share their input layouts,
- and `rust/fuzz.sh` replays that corpus in place next to its own seeds in `rust/fuzz/corpus/`.
- Change a harness input layout in both projects together.
- `rust/miri.sh` runs the unsafe VST3 hosting code, the Serato parsers, and the cache blob readers under Miri.
-- `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
+  The Rust cargo-fuzz targets `serato_tags` and `cli_arguments` in `rust/fuzz/` share their input layouts,
+  and `rust/fuzz.sh` replays that corpus in place next to its own seeds in `rust/fuzz/corpus/`.
+  Change a harness input layout in both projects together.
+  The Rust-only `cache_blobs` and `decode_audio` targets have only their own seeds.
+  `rust/miri.sh` runs the unsafe VST3 hosting code, the Serato parsers, the playback callback admission,
+  and the cache blob readers under Miri.
+- `.agents/rules/` holds the rules for the C++ sources of the C++ application, the test plugin, and ImageControl.
+  `.claude/rules` is a symlink to it, and the `.mdc` files in `.cursor/rules/` are symlinks to its files,
+  because Cursor reads only `.mdc` rules there.
+  Edit the canonical files in `.agents/rules/` only.
+- RealtimeSanitizer checks the audio callbacks of all three C++ and Rust projects on macOS with Homebrew LLVM:
+  `cpp/sanitize.sh --realtime`, `rust/rtsan.sh`, and `image-control-plugin/sanitize.sh --realtime`.
+  `tests/realtime_sanitizer.py` is their shared bounded runner, which runs each scenario in its own process.
+  It separates detector controls and clean callback cases from verified `BLOCKED` audits of known dependency findings.
+  A `BLOCKED` audit is not a clean result, and these checks detect exercised unsafe calls, not audio deadlines.
+- `tests/callback_benchmark.py` compares paired, hardware-free playback callback runs of a baseline and a candidate
+  Release executable of either application, for changes to callback synchronization.
+  [`docs/performance.md`](docs/performance.md) records the measured CLI, VST3, and callback comparisons
+  and how to reproduce them.
+- The other `tests/test_*.py` scripts check the shell and Python tooling contracts through uv:
+  the C++ lint and test runners, the Rust scripts, the realtime runner and scripts, the callback benchmark,
+  and the macOS signing helper.
 - `tests/cli_integration.py` runs the same executable-level CLI contracts against either built CLI through uv.
   Pass `--cli <absolute-executable-path>` and optionally `--artifacts <directory>` for failure diagnostics.
   It isolates application storage with `AUDIOBATCH_DATA_ROOT`
@@ -125,7 +153,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   The C++ tier drives a transparent desktop window through `cpp/tests/GuiDriver.*`,
   and the Rust tier uses gpui-kit's test window helpers.
 - `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, `rust/scripts/`,
-  `image-control-plugin/benchmarks/`, and `image-control-plugin/test-signals/`,
+  `image-control-plugin/benchmarks/`, `image-control-plugin/tests/`, and `image-control-plugin/test-signals/`,
   and pins it in `uv.lock`.
   Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.
   Each script declares its Python version and packages in an inline `# /// script` block
@@ -140,17 +168,27 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   `format.yml` runs the root `./format.sh --check` on every change,
   checks that `fixtures/plugin_expected/` matches what its script writes,
   and verifies the independent spectrogram and source-metric expectations with their generators' `--check` modes.
+  Both also include the root `tests/` scripts.
+  `cpp.yml` builds and tests Debug and Release on macOS and Windows,
+  and runs coverage, clang-tidy with the tooling contract tests, the sanitizers, RealtimeSanitizer, and fuzzing.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
- Its macOS build job also runs `tests/test_mac_signing.py`, the packaging contracts of the shared signing helper.
- Its `miri` and `fuzz` jobs run `rust/miri.sh` and `rust/fuzz.sh` on macOS with nightly Rust,
- and its path filters also include the C++ fuzz corpus that the Rust fuzz job replays.
+  Its macOS build job also runs `tests/test_mac_signing.py`, the packaging contracts of the shared signing helper.
+  Its `miri`, `fuzz`, and `realtime` jobs run `rust/miri.sh`, `rust/fuzz.sh`, and `rust/rtsan.sh` on macOS with nightly Rust.
+  The realtime job requires clean first-party callbacks with `--skip-native`,
+  then verifies known blockers with `--diagnostic`.
+  A separate non-blocking job fuzzes the decoder for diagnostics.
+  Its path filters also include the C++ fuzz corpus that the Rust fuzz job replays.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
-  `image-control.yml` builds and tests ImageControl on macOS and Windows,
-  runs clang-tidy on macOS, and validates its Audio Unit on macOS.
-  Its path filters cover the plugin, JUCE submodule, shared C++ style and optimization configuration,
-  native CPU detection helper, root `common.sh`, and the workflow itself, excluding Markdown-only changes.
+  It also runs the shared-cache tests in both directions.
+  `image-control.yml` builds and tests ImageControl in Debug and Release on macOS and Windows,
+  validates the VST3 with the pinned pluginval, and validates its Audio Unit on macOS.
+  It also runs clang-tidy, AddressSanitizer, ThreadSanitizer, RealtimeSanitizer, coverage,
+  and the plugin's script contract tests on macOS.
+  Its path filters cover the plugin, JUCE submodule, shared C++ style, optimization, and pluginval configuration,
+  native CPU detection helper, root `common.sh`, the shared realtime runner and its tests,
+  the Python configuration, and the workflow itself, excluding Markdown-only changes.
 
 ## Isolated Application Storage
 
@@ -215,6 +253,7 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   such as the bit-exact true peak contract, the goldens, and peak normalization output.
   Elsewhere results only need to be close enough that no difference is visible or audible.
 - Measure runtime changes with the existing benchmarks.
+  [`docs/performance.md`](docs/performance.md) describes the benchmark procedures and the recorded results.
   Compilers often already optimize division by two and common subexpressions,
   so distinguish clearer source code from demonstrated performance improvements.
 
@@ -223,14 +262,14 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 - Run each project's build, format, lint, and test commands from its own directory.
   The root `lint.sh` lints the C++ project, the Rust project, and ImageControl in one go,
   and `lint.sh --check` reports warnings without applying fixes.
-- Stage with explicit paths, such as `git add cpp` or `git add rust`.
+- Stage with explicit paths, such as `git add cpp`, `git add rust`, or `git add image-control-plugin`.
 - Keep README updates concise and targeted, preserving existing structure and useful content.
   Do not fully rewrite or broadly condense an existing README unless explicitly requested.
   Focus additions on purpose, key capabilities, essential setup and commands, and important caveats.
   Link to architecture, agent instructions, or focused reference documentation instead of duplicating implementation details.
   Do not turn READMEs into detailed UI walkthroughs.
   Keep rolling requirements such as the Rust toolchain version in their authoritative configuration, not duplicated prose.
-- Commit messages and all prose follow the semantic line break style described in both project files.
+- Commit messages and all prose follow the semantic line break style described in the project files.
 - **NEVER run destructive git commands**, such as `git checkout -- <file>`, `git restore`, `git reset --hard`,
   `git clean`, or `git stash drop`.
   Ask the user to do it manually if something needs undoing.

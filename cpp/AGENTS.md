@@ -127,6 +127,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       which would move the audio later than the Serato cue points of the file.
     - `ThreadUtils.*` holds the `CancellationCheck` callback the services poll
       and the cancellable blocking call from a worker to the message thread.
+    - `CallbackAccess.h` holds `CallbackAccess` and its guard,
+      which give the audio callback exclusive access with one atomic admission attempt and no native mutex or wakeup.
+      Control threads close admission before waiting for an in-flight callback, so continuous audio cannot starve them.
     - `MessageThreadBatcher.*` holds `AsyncCallback` and `MessageThreadBatcher`,
       which hand work from worker threads to the message thread in coalesced batches.
     - `BackgroundRunner.*` holds `RunCallback` and `BackgroundRunner`, which the three coordinators share.
@@ -249,6 +252,13 @@ Tests:
   Suites are `juce::UnitTest` classes, one per file, created through the factories in `tests/TestSuites.h`.
   `TestMain.cpp` registers each suite as a GoogleTest test, so CTest discovers and filters them by name,
   and each suite has a five minute time limit.
+  The same executable has helper modes for benchmarks and subprocess tests:
+  `--benchmark-spectrogram`, `--callback-benchmark` for `../tests/callback_benchmark.py`,
+  and `--vst3-benchmark` for `../rust/scripts/vst3_benchmark.sh`.
+- `AudioBatchIntegrationTests`, built from `tests/IntegrationMain.cpp`, holds the driven GUI integration workflows,
+  which run the real main view with copied fixtures and temporary storage.
+- `AudioBatchRealtimeTests`, built from `tests/RealtimeTests.cpp` only in the `macos-rtsan` preset,
+  holds the RealtimeSanitizer preview callback scenarios that `./sanitize.sh --realtime` runs.
 - `../fixtures/` at the repository root holds small committed audio files, shared with the Rust port:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, and MP3, mono and stereo,
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
@@ -261,6 +271,8 @@ Tests:
   and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg,
   and `../fixtures/serato_overview.py` writes the Serato tag, which ffmpeg cannot.
+  `../fixtures/README.md` lists every fixture, including the real recordings in `../fixtures/metadata/`,
+  the display tables, and the independent spectrogram and source-metric expectations.
 - `../test-plugin/` holds `AudioBatch Test MS`, a JUCE VST3 effect with a gain, a mid/side width,
   and a latency parameter, described in `../test-plugin/README.md`,
   which the C++ and the Rust tests both load.
@@ -277,7 +289,8 @@ Tests:
   Tests that modify files work on copies in a temporary directory.
 - `tests/fuzz/` holds the libFuzzer harnesses for the Serato tag parsers and the CLI argument parser,
   one executable per file, with a committed seed corpus per harness in `tests/fuzz/corpus/`.
-  Only the `macos-fuzz` preset builds them, because they need the libFuzzer runtime of Homebrew LLVM.
+  Only the `macos-fuzz` preset builds them, because they need the libFuzzer runtime of Homebrew LLVM,
+  and `./fuzz.sh` builds and runs them.
 
 ## Dependencies
 
@@ -288,6 +301,7 @@ Tests:
   so meters can be created on several threads at once.
 - TagLib, fetched via CMake, for cross-format metadata handling.
 - {fmt}, fetched via CMake, for string formatting (see `src/utils/StringFormat.h`).
+- GoogleTest, fetched via CMake at a pinned commit for the test executables.
 
 ## Working Rules
 
@@ -338,7 +352,10 @@ Tests:
   Do not add redundant empty initializers to default-constructed class objects or members initialized by a constructor.
   Keep another initialization form when braces would change type deduction or constructor overload selection.
   Examples include container size constructors and copies of `juce::Array`.
-- Name constants in `SCREAMING_SNAKE_CASE`.
+- Name shared constants in `SCREAMING_SNAKE_CASE`:
+  `constexpr` and `const` values at namespace scope, including file-local ones in anonymous namespaces,
+  and static class constants.
+  Constants inside a function, including `constexpr` locals, are local variables and use camelCase.
 - Prefer named constants over unexplained numeric literals when values represent domain concepts, protocol fields,
   policy limits, or reused values. Keep self-evident arithmetic and conventional values inline.
 - Use apostrophe digit separators in C++ decimal numeric literals with more than four digits in the integer part.
@@ -491,6 +508,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   CMake requires it for the registered shared CLI integration suite even when that tier will not run.
 - On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
+- The `macos-release`, `windows-release`, `windows-ninja-*`, and `windows-clang-*` presets select the other configurations.
+  Each preset uses its own `cmake-build-*` directory.
 - To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer, run `./sanitize.sh`.
   It configures the `macos-asan` preset in `cmake-build-mac-asan`, builds `AudioBatchTests`, and runs `ctest -L unit`.
   Sanitizer scripts run only unit suites, not the CLI or driven GUI integration tier.
@@ -499,6 +518,17 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   `./sanitize.sh --clang` uses LLVM AddressSanitizer with the `windows-clang-asan` preset.
   It uses RelWithDebInfo and the dynamic release CRT because LLVM AddressSanitizer rejects the Debug CRT.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
+- `./sanitize.sh --realtime` checks the hardware-free preview callbacks with Homebrew LLVM RealtimeSanitizer on macOS,
+  using the `macos-rtsan` preset in `cmake-build-mac-rtsan`.
+  It builds `AudioBatchRealtimeTests` and runs each scenario in its own process through `../tests/realtime_sanitizer.py`.
+  Detector controls and clean first-party callback cases must pass with no finding.
+  Known locks in JUCE buffering, resampling, device dispatch, and native plugin hosting are explicit `BLOCKED` audits,
+  not suppressions and not clean results.
+  Per-case logs are in `cmake-build-mac-rtsan/realtime-artifacts/`.
+  The checks detect exercised unsafe calls, not audio deadlines or arbitrary plugin safety.
+  Run it after changing preview callback code.
+  Lint its sources with `./lint.sh --check --build-dir cmake-build-mac-rtsan`,
+  because the ordinary compilation database omits them.
 - To measure code coverage on macOS, run `./coverage.sh`.
   It configures and builds the `macos-coverage` preset in `cmake-build-mac-coverage`,
   which sets the `AUDIOBATCH_COVERAGE` CMake option for Clang source based coverage,
@@ -509,11 +539,14 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - Every build enables standard library hardening,
   `_LIBCPP_HARDENING_MODE` on macOS and `_MSVC_STL_HARDENING` on Windows,
   so out of range access through the standard containers traps instead of reading past the end.
-- To fuzz, run `cmake --preset macos-fuzz` and `cmake --build --preset macos-fuzz`.
-  `ctest --test-dir cmake-build-mac-fuzz` runs each harness once over its corpus.
-  Running a harness with a scratch corpus directory and `-max_total_time=60` fuzzes it,
-  and an input that found a new crash belongs in its corpus once the bug is fixed.
-  CI replays the corpus and fuzzes each harness for a minute, and uploads any crashing input as an artifact.
+- To fuzz, run `./fuzz.sh`, which builds the `macos-fuzz` preset, replays the committed corpus,
+  and fuzzes each harness for 60 seconds.
+  `--build-only` only builds, `--no-build` reuses the built harnesses, `--replay` only replays the corpus,
+  `--fuzz` only fuzzes, and `--seconds <count>` sets the fuzzing time per harness.
+  New inputs go to `fuzz-scratch/` and crashing inputs to `fuzz-artifacts/`, and the committed corpus is never modified.
+  An input that found a new crash belongs in its corpus once the bug is fixed.
+  CI runs `--build-only`, then `--no-build --replay`, then `--no-build --fuzz --seconds 60`,
+  and uploads any crashing input as an artifact.
 - If you need Ninja and `compile_commands.json` on Windows,
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
@@ -595,11 +628,10 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   The fallback uses Python 3.14 because cmakelang's token scanner is incompatible with Python 3.15.
   After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
 - `./format.sh` covers this `cpp/` directory,
-  the sources, CMake files, and scripts of `../test-plugin/` and `../image-control-plugin/`,
-  and `../fixtures/generate.sh`,
+  the sources, CMake files, and scripts of `../test-plugin/`, and `../fixtures/generate.sh`,
   and also checks the prose under `cpp/` with `slb` when it is installed.
-  Check the prose in `../test-plugin/` and `../.agents/rules/` separately.
-- `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt,
+  Check the prose in `../test-plugin/` and `../.agents/` separately.
+- `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt, ruff,
   and basic file checks through [prek](https://prek.j178.dev).
 - CI runs the root `../format.sh --check`, which includes this directory, in `../.github/workflows/format.yml`.
 
@@ -625,6 +657,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   It configures and builds that workspace automatically when its database is missing, stale, or incomplete.
   `--fuzz --prepare` also builds the harnesses, rather than only generating headers.
   CI runs it on macOS with the latest Homebrew LLVM, so the build must stay free of clang-tidy warnings.
+- The RealtimeSanitizer probes in `tests/RealtimeTests.cpp` exist only in the `cmake-build-mac-rtsan` database.
+  Run `./sanitize.sh --realtime` first, then `./lint.sh --check --build-dir cmake-build-mac-rtsan`.
 - If `clang-tidy` reports a check that is genuinely a poor fit for the project,
   disable it explicitly in `.clang-tidy` and add a short comment explaining why.
   Do not silence individual warnings with inline comments.
