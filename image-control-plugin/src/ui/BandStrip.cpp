@@ -92,6 +92,8 @@ constexpr double RECOVER_WHEEL_STEP_PERCENT {1.0};
 constexpr double PAN_WHEEL_STEP {1.0};
 /// Side of the square box the headphone icon of the Solo button is drawn in, in icon units.
 constexpr float HEADPHONE_BOX {24.0F};
+/// Half-width of the correlation range's soft spatial edge in signed correlation units.
+constexpr float CORRELATION_RANGE_FEATHER {0.06F};
 /// Thickness of the headband of the headphone icon, in icon units.
 constexpr float HEADBAND_THICKNESS {2.0F};
 /// Corner radius of the ear cups of the headphone icon, in icon units.
@@ -157,12 +159,12 @@ BandCorrelationMeter::BandCorrelationMeter(const juce::String& band)
     setTitle(band + " correlation");
     setDescription(
         "Stereo correlation: -1 anti-phase, 0 uncorrelated, +1 in-phase. "
-        "The number shows the trend by default, the notch shows the trend, the coloured line is live, "
-        "and the box shows the recent range. Silence is unavailable"
+        "The number shows the trend by default, the yellow highlight shows the trend, the coloured line is live, "
+        "and the fading trail shows the recent range. Silence is unavailable"
     );
     setTooltip(
         "Processed band correlation: -1 is anti-phase, 0 is uncorrelated, +1 is in-phase. "
-        "The coloured line is live, the yellow notch shows the trend, and the shaded box is the recent range. "
+        "The coloured line is live, the yellow highlight shows the trend, and the soft trail fades with age. "
         "Numbers show the trend by default. Turn off Smooth correlation numbers in Settings for live numbers. "
         "Persistence controls trend smoothing and range duration. Silence is unavailable"
     );
@@ -200,7 +202,7 @@ void BandCorrelationMeter::setSmoothedReadout(const bool smoothed)
     }
 }
 
-/// Returns the display-smoothed trend shared by the notch and numerical readout.
+/// Returns the display-smoothed trend shared by the highlight and numerical readout.
 std::optional<float> BandCorrelationMeter::trendValue() const
 {
     return trend;
@@ -258,7 +260,8 @@ void BandCorrelationMeter::setCorrelation(
         || (previousRange.has_value() && range.has_value()
             && (!juce::approximatelyEqual(previousRange->getStart(), range->getStart())
                 || !juce::approximatelyEqual(previousRange->getEnd(), range->getEnd())));
-    if (liveChanged || trendChanged || rangeChanged) {
+    const bool intensityChanged = updateRangeIntensity(persistence);
+    if (liveChanged || trendChanged || rangeChanged || intensityChanged) {
         repaint();
     }
     if (previousValueText != valueText()) {
@@ -292,15 +295,26 @@ void BandCorrelationMeter::advanceHistory(
     const std::size_t last = (historyBegin + historyCount + HISTORY_CAPACITY - 1) % HISTORY_CAPACITY;
     if (historyCount > 0 && bucketStart <= history.at(last).startSeconds) {
         auto& bucket = history.at(last);
-        bucket.minimum = std::min(bucket.minimum, value);
-        bucket.maximum = std::max(bucket.maximum, value);
+        if (value <= bucket.minimum) {
+            bucket.minimum = value;
+            bucket.minimumSeconds = historySeconds;
+        }
+        if (value >= bucket.maximum) {
+            bucket.maximum = value;
+            bucket.maximumSeconds = historySeconds;
+        }
     } else {
         if (historyCount == HISTORY_CAPACITY) {
             historyBegin = (historyBegin + 1) % HISTORY_CAPACITY;
             --historyCount;
         }
-        history.at((historyBegin + historyCount) % HISTORY_CAPACITY)
-            = {.startSeconds = bucketStart, .minimum = value, .maximum = value};
+        history.at((historyBegin + historyCount) % HISTORY_CAPACITY) = {
+            .startSeconds = bucketStart,
+            .minimum = value,
+            .maximum = value,
+            .minimumSeconds = historySeconds,
+            .maximumSeconds = historySeconds,
+        };
         ++historyCount;
     }
     float minimum = value;
@@ -316,7 +330,63 @@ void BandCorrelationMeter::advanceHistory(
     range = juce::Range<float>(minimum, maximum);
 }
 
-/// Layers the observed range, zero tick, trend notch, and live marker above the correlation scale.
+/// Rebuilds a soft coverage field from the same retained observations as the exact range.
+/// Each old extreme fades with a smoothstep envelope that reaches zero at Persistence, with no extra release tail.
+/// Connecting each extreme to the live reading keeps the range filled while its oldest portions fade independently.
+bool BandCorrelationMeter::updateRangeIntensity(const double persistenceSeconds)
+{
+    const auto previous = rangeIntensity;
+    rangeIntensity.fill(0.0F);
+    if (!correlation.has_value()) {
+        return std::ranges::any_of(previous, [](const float intensity) { return intensity > 0.0F; });
+    }
+    float minimumCovered = *correlation;
+    float maximumCovered = *correlation;
+    double minimumCoveredSeconds = historySeconds;
+    double maximumCoveredSeconds = historySeconds;
+    const auto addObservation = [&](const float value, const double observedSeconds) {
+        // Newer outer observations already cover an older inner interval, including its identical soft edge.
+        if (value >= minimumCovered && value <= maximumCovered
+            && observedSeconds < std::min(minimumCoveredSeconds, maximumCoveredSeconds))
+        {
+            return;
+        }
+        const double remaining = std::clamp(1.0 - (historySeconds - observedSeconds) / persistenceSeconds, 0.0, 1.0);
+        const auto opacity = static_cast<float>(remaining * remaining * (3.0 - 2.0 * remaining));
+        if (opacity <= 0.0F) {
+            return;
+        }
+        const float minimum = std::min(value, *correlation);
+        const float maximum = std::max(value, *correlation);
+        constexpr float SPATIAL_STEP {2.0F / static_cast<float>(RANGE_INTENSITY_SAMPLES - 1)};
+        for (std::size_t sample = 0; sample < rangeIntensity.size(); ++sample) {
+            const float position = -1.0F + static_cast<float>(sample) * SPATIAL_STEP;
+            const float distance = std::max({minimum - position, position - maximum, 0.0F});
+            const float coverage = std::clamp(1.0F - distance / CORRELATION_RANGE_FEATHER, 0.0F, 1.0F);
+            const float feather = coverage * coverage * (3.0F - 2.0F * coverage);
+            rangeIntensity.at(sample) = std::max(rangeIntensity.at(sample), opacity * feather);
+        }
+        if (value < minimumCovered) {
+            minimumCovered = value;
+            minimumCoveredSeconds = observedSeconds;
+        }
+        if (value > maximumCovered) {
+            maximumCovered = value;
+            maximumCoveredSeconds = observedSeconds;
+        }
+    };
+    addObservation(*correlation, historySeconds);
+    for (std::size_t index = historyCount; index > 0; --index) {
+        const auto& bucket = history.at((historyBegin + index - 1) % HISTORY_CAPACITY);
+        addObservation(bucket.minimum, bucket.minimumSeconds);
+        addObservation(bucket.maximum, bucket.maximumSeconds);
+    }
+    return !std::ranges::equal(previous, rangeIntensity, [](const float first, const float second) {
+        return juce::approximatelyEqual(first, second);
+    });
+}
+
+/// Layers a soft fading range, an integrated yellow trend glow, and an immediate live marker above the scale.
 void BandCorrelationMeter::paint(juce::Graphics& graphics)
 {
     constexpr int METER_MARGIN {10};
@@ -339,40 +409,78 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
     graphics.fillRoundedRectangle(track, TRACK_HEIGHT * 0.5F);
     const auto positionFor
         = [&track](const float value) { return track.getX() + (value + 1.0F) * 0.5F * track.getWidth(); };
-    if (range.has_value()) {
-        constexpr float MIN_RANGE_WIDTH {2.0F};
-        constexpr float RANGE_ALPHA {0.35F};
-        const float width = std::clamp(
-            positionFor(range->getEnd()) - positionFor(range->getStart()), MIN_RANGE_WIDTH, track.getWidth()
+    if (correlation.has_value() && track.getWidth() > 0.0F) {
+        constexpr float RANGE_LIGHT_SHARE {0.55F};
+        const auto rangeColour
+            = juce::Colour(palette::BLUE).interpolatedWith(juce::Colour(palette::GREY_LIGHT), RANGE_LIGHT_SHARE);
+        // Lift faint, older coverage without changing its duration or introducing a hard opacity floor.
+        const auto visibleAlpha = [](const float intensity) { return intensity * 2.0F / (1.0F + intensity); };
+        juce::ColourGradient gradient(
+            rangeColour.withAlpha(visibleAlpha(rangeIntensity.front())),
+            track.getX(),
+            track.getCentreY(),
+            rangeColour.withAlpha(visibleAlpha(rangeIntensity.back())),
+            track.getRight(),
+            track.getCentreY(),
+            false
         );
-        const float left = std::clamp(positionFor(range->getStart()), track.getX(), track.getRight() - width);
-        const juce::Rectangle<float> box {
-            left, track.getY() - MARKER_EXTENSION, width, TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
-        };
-        graphics.setColour(juce::Colour(palette::GREY_SUPER_LIGHT).withAlpha(RANGE_ALPHA));
-        graphics.fillRect(box);
-        graphics.drawRect(box, 1.0F);
+        constexpr double COLOUR_STEP {1.0 / static_cast<double>(RANGE_INTENSITY_SAMPLES - 1)};
+        for (std::size_t sample = 1; sample + 1 < rangeIntensity.size(); ++sample) {
+            gradient.addColour(
+                static_cast<double>(sample) * COLOUR_STEP,
+                rangeColour.withAlpha(visibleAlpha(rangeIntensity.at(sample)))
+            );
+        }
+        graphics.setGradientFill(gradient);
+        constexpr std::array LAYER_EXTENSIONS {4.0F, 2.0F, 0.0F};
+        constexpr std::array LAYER_ALPHAS {0.14F, 0.34F, 0.6F};
+        for (std::size_t layer = 0; layer < LAYER_EXTENSIONS.size(); ++layer) {
+            graphics.setOpacity(LAYER_ALPHAS.at(layer));
+            graphics.fillRoundedRectangle(track.expanded(0.0F, LAYER_EXTENSIONS.at(layer)), TRACK_HEIGHT * 0.5F);
+        }
     }
     graphics.setColour(juce::Colour(palette::GREY_LIGHT));
     graphics.fillRect(
         track.getCentreX(), track.getY() - MARKER_EXTENSION, 1.0F, TRACK_HEIGHT + MARKER_EXTENSION * 2.0F
     );
     if (trend.has_value()) {
-        constexpr float TREND_HALF_WIDTH {3.0F};
-        constexpr float TREND_HEIGHT {3.0F};
-        const float position
-            = std::clamp(positionFor(*trend), track.getX() + TREND_HALF_WIDTH, track.getRight() - TREND_HALF_WIDTH);
-        juce::Path notch;
-        notch.addTriangle(
-            position - TREND_HALF_WIDTH,
-            track.getY() - MARKER_EXTENSION,
-            position + TREND_HALF_WIDTH,
-            track.getY() - MARKER_EXTENSION,
-            position,
-            track.getY() - MARKER_EXTENSION + TREND_HEIGHT
+        constexpr float TREND_GLOW_HALF_WIDTH {12.0F};
+        constexpr float TREND_CORE_WIDTH {2.0F};
+        constexpr float TREND_GLOW_ALPHA {0.7F};
+        constexpr float TREND_HALO_ALPHA {0.22F};
+        constexpr float TREND_SHOULDER_ALPHA {0.2F};
+        constexpr double TREND_LEFT_SHOULDER {0.25};
+        constexpr double TREND_RIGHT_SHOULDER {1.0 - TREND_LEFT_SHOULDER};
+        const float position = positionFor(*trend);
+        const auto yellow = juce::Colour(palette::YELLOW);
+        juce::ColourGradient glow(
+            yellow.withAlpha(0.0F),
+            position - TREND_GLOW_HALF_WIDTH,
+            track.getCentreY(),
+            yellow.withAlpha(0.0F),
+            position + TREND_GLOW_HALF_WIDTH,
+            track.getCentreY(),
+            false
         );
-        graphics.setColour(juce::Colour(palette::YELLOW));
-        graphics.fillPath(notch);
+        glow.addColour(TREND_LEFT_SHOULDER, yellow.withAlpha(TREND_SHOULDER_ALPHA));
+        glow.addColour(0.5, yellow.withAlpha(TREND_GLOW_ALPHA));
+        glow.addColour(TREND_RIGHT_SHOULDER, yellow.withAlpha(TREND_SHOULDER_ALPHA));
+        const juce::Graphics::ScopedSaveState saved(graphics);
+        graphics.reduceClipRegion(track.expanded(0.0F, MARKER_EXTENSION * 2.0F).getSmallestIntegerContainer());
+        graphics.setGradientFill(glow);
+        const auto highlight = track.withLeft(position - TREND_GLOW_HALF_WIDTH).withWidth(TREND_GLOW_HALF_WIDTH * 2.0F);
+        graphics.setOpacity(TREND_HALO_ALPHA);
+        graphics.fillRoundedRectangle(highlight.expanded(0.0F, MARKER_EXTENSION * 2.0F), TRACK_HEIGHT * 0.5F);
+        graphics.setOpacity(1.0F);
+        graphics.fillRoundedRectangle(highlight, TRACK_HEIGHT * 0.5F);
+        graphics.setColour(yellow);
+        graphics.fillRoundedRectangle(
+            std::clamp(position - TREND_CORE_WIDTH * 0.5F, track.getX(), track.getRight() - TREND_CORE_WIDTH),
+            track.getY() - MARKER_EXTENSION,
+            TREND_CORE_WIDTH,
+            TRACK_HEIGHT + MARKER_EXTENSION * 2.0F,
+            TREND_CORE_WIDTH * 0.5F
+        );
     }
     if (correlation.has_value()) {
         const float position = positionFor(*correlation);

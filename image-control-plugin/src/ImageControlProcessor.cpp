@@ -133,6 +133,7 @@ juce::ValueTree defaultEditorState()
     defaults.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true, nullptr);
     defaults.setProperty(BYPASS_RENDERING_PROPERTY, false, nullptr);
     defaults.setProperty(HIDE_SPECTROGRAM_PROPERTY, false, nullptr);
+    defaults.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true, nullptr);
     return defaults;
 }
 

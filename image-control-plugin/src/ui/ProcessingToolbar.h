@@ -1,4 +1,4 @@
-/// Declares ImageControl's compact processing toolbar for local history, A/B comparison, and user presets.
+/// Declares ImageControl's A/B and preset row, with history commands shared by the editor's header and shortcuts.
 /// File operations run on a serialized worker. All controls, dialogs, and sound changes belong to the message thread.
 
 #pragma once
@@ -30,7 +30,9 @@ public:
     ProcessingToolbar& operator=(const ProcessingToolbar&) = delete;
     ProcessingToolbar& operator=(ProcessingToolbar&&) = delete;
 
+    void redo();
     void refresh();
+    void undo();
 
     void resized() override;
 

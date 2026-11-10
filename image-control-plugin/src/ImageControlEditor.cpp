@@ -3,7 +3,7 @@
 /// the layout and saved size, the OpenGL context that draws the spectrogram, the analysis worker,
 /// the display refresh that wakes the worker, advances the overlays, and sets the renderer's fade,
 /// applying the display settings with bypassing and hiding the spectrogram, measuring the frame rate,
-/// the local undo/A/B/preset toolbar, and the keyboard shortcuts for editing and monitoring.
+/// the header's history and disclosure actions, the A/B/preset toolbar, and the editing and monitoring shortcuts.
 
 #include "ImageControlEditor.h"
 
@@ -65,6 +65,18 @@ constexpr int TITLE_WIDTH {124};
 constexpr int HEADER_BUTTON_WIDTH {76};
 /// Vertical inset of the buttons in the header, in pixels.
 constexpr int BUTTON_INSET {2};
+/// Width of the compact undo, redo, and disclosure buttons.
+constexpr int ICON_BUTTON_WIDTH {24};
+/// Gap between compact icon buttons.
+constexpr int ICON_BUTTON_GAP {4};
+/// Width of the vector disclosure glyph, matching AudioBatch's section controls.
+constexpr float CHEVRON_WIDTH {10.0F};
+/// Height of the vector disclosure glyph.
+constexpr float CHEVRON_HEIGHT {5.0F};
+/// Stroke shared by the header's font-independent vector symbols.
+constexpr float ICON_STROKE_WIDTH {1.5F};
+/// Inset keeps the disclosure glyph compact inside its full button hit target.
+constexpr int CHEVRON_INSET {7};
 /// Width of each half of the Pre and Post analyzer tap switch, in pixels.
 constexpr int TAP_BUTTON_WIDTH {56};
 /// Width of the output label, in pixels.
@@ -125,6 +137,24 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
+    configureHeaderIcons();
+    undoButton.onClick = [this] {
+        processingToolbar.undo();
+        updateHistoryButtons();
+    };
+    redoButton.onClick = [this] {
+        processingToolbar.redo();
+        updateHistoryButtons();
+    };
+    processingToolbarButton.onClick = [this] {
+        auto& state = imageControlProcessor.getEditorState();
+        const bool shown = static_cast<bool>(state.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true));
+        state.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, !shown, nullptr);
+        applyViewSettings();
+    };
+    addAndMakeVisible(undoButton);
+    addAndMakeVisible(redoButton);
+    addAndMakeVisible(processingToolbarButton);
 
     bypassButton.setClickingTogglesState(true);
     bypassButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(palette::ORANGE));
@@ -201,6 +231,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     addChildComponent(tooltips);
     updateBandRanges();
 
+    processingToolbarShown = static_cast<bool>(editorState.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true));
+    processingToolbar.setVisible(processingToolbarShown);
     correlationShown = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
     for (const auto& meter : correlationMeters) {
         meter->setVisible(correlationShown);
@@ -251,6 +283,85 @@ ImageControlEditor::~ImageControlEditor()
     setLookAndFeel(nullptr);
 }
 
+/// Creates compact vector symbols with full button hit targets and stable, font-independent accessible identities.
+void ImageControlEditor::configureHeaderIcons()
+{
+    undoButton.setComponentID("processing-undo");
+    undoButton.setTitle("Undo processing edit");
+    undoButton.setDescription("Undo processing edit");
+    undoButton.setWantsKeyboardFocus(true);
+    undoButton.setExplicitFocusOrder(1);
+    redoButton.setComponentID("processing-redo");
+    redoButton.setTitle("Redo processing edit");
+    redoButton.setDescription("Redo processing edit");
+    redoButton.setWantsKeyboardFocus(true);
+    redoButton.setExplicitFocusOrder(2);
+    processingToolbarButton.setComponentID("processing-toolbar-toggle");
+    processingToolbarButton.setTitle("A/B comparison and presets");
+    processingToolbarButton.setDescription("Show or hide A/B comparison and presets");
+    processingToolbarButton.setWantsKeyboardFocus(true);
+    processingToolbarButton.setExplicitFocusOrder(3);
+    processingToolbarButton.setToggleable(true);
+    processingToolbar.setExplicitFocusOrder(4);
+
+    constexpr juce::Point<float> ARROW_END {12.0F, 11.0F};
+    constexpr juce::Point<float> ARROW_CURVE_FIRST {15.0F, 4.0F};
+    constexpr juce::Point<float> ARROW_CURVE_SECOND {7.0F, 0.0F};
+    constexpr juce::Point<float> ARROW_TIP {1.0F, 6.0F};
+    constexpr juce::Point<float> ARROW_HEAD_TOP {1.0F, 2.0F};
+    constexpr juce::Point<float> ARROW_HEAD_RIGHT {5.0F, 6.0F};
+    juce::Path arrowPath;
+    arrowPath.startNewSubPath(ARROW_END);
+    arrowPath.cubicTo(ARROW_CURVE_FIRST, ARROW_CURVE_SECOND, ARROW_TIP);
+    arrowPath.startNewSubPath(ARROW_HEAD_TOP);
+    arrowPath.lineTo(ARROW_TIP);
+    arrowPath.lineTo(ARROW_HEAD_RIGHT);
+    juce::DrawablePath arrow;
+    arrow.setPath(arrowPath);
+    arrow.setFill(juce::Colours::transparentBlack);
+    arrow.setStrokeFill(juce::Colour(palette::GREY_SUPER_LIGHT));
+    arrow.setStrokeType(
+        juce::PathStrokeType(ICON_STROKE_WIDTH, juce::PathStrokeType::curved, juce::PathStrokeType::rounded)
+    );
+    undoButton.setImages(&arrow);
+    arrowPath.applyTransform(juce::AffineTransform::scale(-1.0F, 1.0F));
+    arrow.setPath(arrowPath);
+    redoButton.setImages(&arrow);
+
+    // A row below the button collapses upward and expands downward, with no animated transition.
+    juce::Path chevronPath;
+    chevronPath.startNewSubPath(0.0F, CHEVRON_HEIGHT);
+    chevronPath.lineTo(CHEVRON_WIDTH * 0.5F, 0.0F);
+    chevronPath.lineTo(CHEVRON_WIDTH, CHEVRON_HEIGHT);
+    juce::DrawablePath collapseChevron;
+    collapseChevron.setPath(chevronPath);
+    collapseChevron.setFill(juce::Colours::transparentBlack);
+    collapseChevron.setStrokeFill(juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    collapseChevron.setStrokeThickness(ICON_STROKE_WIDTH);
+    chevronPath.applyTransform(
+        juce::AffineTransform::rotation(juce::MathConstants<float>::pi, CHEVRON_WIDTH * 0.5F, CHEVRON_HEIGHT * 0.5F)
+    );
+    juce::DrawablePath expandChevron;
+    expandChevron.setPath(chevronPath);
+    expandChevron.setFill(juce::Colours::transparentBlack);
+    expandChevron.setStrokeFill(juce::Colour(palette::GREY_MIDDLE_LIGHT));
+    expandChevron.setStrokeThickness(ICON_STROKE_WIDTH);
+    processingToolbarButton.setImages(&expandChevron, nullptr, nullptr, nullptr, &collapseChevron);
+    processingToolbarButton.setEdgeIndent(CHEVRON_INSET);
+    processingToolbarButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
+    processingToolbarButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
+}
+
+/// Keeps always-visible history availability and descriptive tooltips synchronized with processor-owned history.
+void ImageControlEditor::updateHistoryButtons()
+{
+    const auto& history = imageControlProcessor.getHistory();
+    undoButton.setEnabled(history.canUndo() && !history.isEditing());
+    redoButton.setEnabled(history.canRedo() && !history.isEditing());
+    undoButton.setTooltip(history.canUndo() ? "Undo " + history.undoDescription() : "No processing edit to undo");
+    redoButton.setTooltip(history.canRedo() ? "Redo " + history.redoDescription() : "No processing edit to redo");
+}
+
 /// Fills the background, leaving the plot of the spectrogram unpainted so the OpenGL picture shows through.
 void ImageControlEditor::paint(juce::Graphics& graphics)
 {
@@ -264,6 +375,7 @@ void ImageControlEditor::paint(juce::Graphics& graphics)
 /// Handles the editor's keyboard shortcuts, which also reach it from controls that do not use the key:
 /// S toggles the solo of the band under the pointer, in the spectrogram or a band strip,
 /// and Ctrl or Cmd with D toggles Delta and with B toggles Bypass.
+/// Ctrl or Cmd with Z undoes, while Y or Shift+Z redoes, except when a text field owns editing focus.
 /// Each toggle is its own host gesture. Other keys go on to the host.
 bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
 {
@@ -274,20 +386,16 @@ bool ImageControlEditor::keyPressed(const juce::KeyPress& key)
     const bool textEditing = dynamic_cast<const juce::TextEditor*>(focused) != nullptr;
     const auto letter = juce::CharacterFunctions::toLowerCase(static_cast<juce::juce_wchar>(key.getKeyCode()));
     if (!textEditing && modifiers.isCommandDown() && !modifiers.isAltDown()) {
-#if JUCE_WINDOWS
         const bool redoShortcut
             = (letter == 'z' && modifiers.isShiftDown()) || (letter == 'y' && !modifiers.isShiftDown());
-#else
-        const bool redoShortcut = letter == 'z' && modifiers.isShiftDown();
-#endif
         if (redoShortcut) {
-            static_cast<void>(history.redo());
-            processingToolbar.refresh();
+            processingToolbar.redo();
+            updateHistoryButtons();
             return true;
         }
         if (letter == 'z') {
-            static_cast<void>(history.undo());
-            processingToolbar.refresh();
+            processingToolbar.undo();
+            updateHistoryButtons();
             return true;
         }
     }
@@ -337,6 +445,12 @@ void ImageControlEditor::resized()
     header.removeFromLeft(GAP);
     preButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
     postButton.setBounds(header.removeFromLeft(tapWidth).reduced(0, BUTTON_INSET));
+    header.removeFromLeft(GAP);
+    undoButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    header.removeFromLeft(ICON_BUTTON_GAP);
+    redoButton.setBounds(header.removeFromLeft(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    processingToolbarButton.setBounds(header.removeFromRight(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    header.removeFromRight(ICON_BUTTON_GAP);
     outputSlider.setBounds(header.removeFromRight(compact ? COMPACT_OUTPUT_WIDTH : OUTPUT_SLIDER_WIDTH));
     outputLabel.setBounds(header.removeFromRight(compact ? COMPACT_OUTPUT_LABEL_WIDTH : OUTPUT_LABEL_WIDTH));
     header.removeFromRight(GAP);
@@ -346,8 +460,12 @@ void ImageControlEditor::resized()
     header.removeFromRight(GAP);
     monoButton.setBounds(header.removeFromRight(buttonWidth).reduced(0, BUTTON_INSET));
     area.removeFromTop(GAP);
-    processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
-    area.removeFromTop(GAP);
+    if (processingToolbarShown) {
+        processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
+        area.removeFromTop(GAP);
+    } else {
+        processingToolbar.setBounds({});
+    }
 
     const int correlationHeight = correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0;
     if (!spectrogramHidden) {
@@ -403,8 +521,8 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
 int ImageControlEditor::compactHeight() const
 {
-    return HEADER_HEIGHT + PROCESSING_TOOLBAR_HEIGHT + GAP * 3 + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT)
-        + (correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0);
+    return HEADER_HEIGHT + GAP * 2 + (processingToolbarShown ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
+        + std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT) + (correlationShown ? BAND_CORRELATION_HEIGHT + GAP : 0);
 }
 
 /// Returns the shared persistence of the particle fade and correlation trend/range, in seconds.
@@ -457,36 +575,59 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
     repaint();
 }
 
+/// Applies row visibility and compact sizing together so a restored layout cannot overwrite expanded dimensions.
+void ImageControlEditor::applyLayoutSettings()
+{
+    const auto& editorState = imageControlProcessor.getEditorState();
+    const bool showToolbar = static_cast<bool>(editorState.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true));
+    const bool toolbarChanged = processingToolbarShown != showToolbar;
+    processingToolbarShown = showToolbar;
+    processingToolbar.setVisible(showToolbar);
+    processingToolbarButton.setToggleState(showToolbar, juce::dontSendNotification);
+    processingToolbarButton.setTooltip(
+        showToolbar ? "Hide A/B comparison and presets" : "Show A/B comparison and presets"
+    );
+    const bool showCorrelation = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
+    const bool correlationChanged = correlationShown != showCorrelation;
+    if (correlationChanged) {
+        correlationShown = showCorrelation;
+        for (const auto& meter : correlationMeters) {
+            meter->setVisible(showCorrelation);
+        }
+    }
+    const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
+    if (shownHidden != hidden) {
+        shownHidden = hidden;
+        applySpectrogramHidden(hidden);
+    } else if (toolbarChanged || correlationChanged) {
+        if (hidden) {
+            // Compact mode's fixed height follows the visible rows without replacing the saved expanded height.
+            const juce::ScopedValueSetter<bool> transition(layoutTransition, true);
+            const int height = compactHeight();
+            setResizeLimits(MIN_EDITOR_WIDTH, height, MAX_EDITOR_WIDTH, height);
+            setSize(getWidth(), height);
+        }
+        resized();
+        repaint();
+    }
+}
+
 /// Applies the display settings and the bypass to the analysis worker, the spectrogram, and the band strips.
 /// The settings change through the settings panel or a restored state, so this runs on every refresh.
 /// Changing the tap, the colours, or the scale clears the particles, so the old view does not linger.
 void ImageControlEditor::applyViewSettings()
 {
+    // Keep consuming preset completions and observing edits even while the second row is collapsed.
     processingToolbar.refresh();
+    updateHistoryButtons();
+    applyLayoutSettings();
     const auto& editorState = imageControlProcessor.getEditorState();
-    const bool showCorrelation = static_cast<bool>(editorState.getProperty(SHOW_BAND_CORRELATION_PROPERTY, true));
-    if (correlationShown != showCorrelation) {
-        correlationShown = showCorrelation;
-        for (const auto& meter : correlationMeters) {
-            meter->setVisible(showCorrelation);
-        }
-        if (spectrogramHidden) {
-            applySpectrogramHidden(true);
-        } else {
-            resized();
-        }
-    }
     const bool smoothCorrelationReadout
         = static_cast<bool>(editorState.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true));
     for (const auto& meter : correlationMeters) {
         meter->setSmoothedReadout(smoothCorrelationReadout);
     }
     updateCorrelationMonitoring();
-    const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
-    if (shownHidden != hidden) {
-        shownHidden = hidden;
-        applySpectrogramHidden(hidden);
-    }
     const bool bypassRendering = booleanSetting(editorState, BYPASS_RENDERING_PROPERTY);
     if (shownRenderingBypassed != bypassRendering) {
         shownRenderingBypassed = bypassRendering;
