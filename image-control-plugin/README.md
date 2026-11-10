@@ -36,6 +36,10 @@ Incoming host automation and display-setting edits do not create undo entries.
 Use Cmd+Z on macOS or Ctrl+Z on Windows to undo while the editor has focus.
 Redo accepts both Cmd+Y and Cmd+Shift+Z on macOS, or Ctrl+Y and Ctrl+Shift+Z on Windows.
 Text fields keep their own editing shortcuts.
+Cmd+comma on macOS or Ctrl+comma on Windows opens Display settings, and F1 opens its controls help.
+Sliders support arrows, Shift for fine adjustment, wheel edits, numeric entry, and double-click reset.
+Hover the spectrogram or correlation row to reveal its collapse chevron, also visible on keyboard focus.
+A hidden section retains a labelled restore handle, and Settings offers the same visibility choices.
 
 A and B hold independently editable sound settings, with a copy action for the other slot.
 Both slots and the selected slot are saved with the host project.
@@ -44,7 +48,13 @@ Solo, Delta, Bypass, Link, and display preferences stay unchanged.
 Switching A/B, copying a slot, and loading a preset each form one undo step.
 
 The preset menu saves, updates, renames, deletes, imports, and exports ImageControl sound presets.
-An asterisk marks settings that differ from the selected preset.
+Modified status marks sound settings that differ from the selected preset baseline.
+When the preset row is collapsed, its name and a modified asterisk appear in the existing title area.
+Both A/B slots retain their selected preset names and baselines with the host project, even without the library files.
+Copy changes only the other slot's sound, not its preset identity.
+After project restore, explicitly reconnect the library revision before updating, renaming, deleting, or exporting it.
+Reconnection does not load sound or replace the stored baseline.
+Updates ask for confirmation, and exports use the saved library revision rather than current edits.
 Imports add to the library without changing the current sound.
 The library is shared by plugin instances and formats, separately from host presets and AudioBatch chain presets.
 It lives in `~/Library/Application Support/esgrove/ImageControl/Presets` on macOS

@@ -99,6 +99,7 @@ public:
     SpatialSpectrogramView& operator=(SpatialSpectrogramView&&) = delete;
 
     [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
+    [[nodiscard]] juce::Rectangle<float> crossoverLabelBounds(std::size_t crossover) const;
     [[nodiscard]] std::optional<std::size_t> getHoveredBand() const;
     [[nodiscard]] float positionCurveOpacity() const;
 

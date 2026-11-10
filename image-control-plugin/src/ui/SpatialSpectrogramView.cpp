@@ -58,8 +58,6 @@ constexpr float GRAB_DISTANCE {6.0F};
 constexpr float LABEL_FONT_HEIGHT {11.0F};
 /// Space between a line and its label, in pixels.
 constexpr float LABEL_INSET {4.0F};
-/// Width of a crossover label, in pixels.
-constexpr float CROSSOVER_LABEL_WIDTH {70.0F};
 /// Width of a frequency axis label, in pixels.
 constexpr float FREQUENCY_LABEL_WIDTH {40.0F};
 /// Frequencies with a grid line and a label.
@@ -637,6 +635,24 @@ void SpatialSpectrogramView::paintBandResponses(juce::Graphics& graphics, const 
     }
 }
 
+/// Keeps the complete frequency pill within the plot, flipping to the left when the line is near the right edge.
+juce::Rectangle<float> SpatialSpectrogramView::crossoverLabelBounds(const std::size_t crossover) const
+{
+    const auto plot = getPlotBounds();
+    const auto crossovers = currentCrossovers();
+    const auto label = formatFrequency(crossovers.at(crossover));
+    const float width = std::min(
+        plot.getWidth(),
+        juce::GlyphArrangement::getStringWidth(textFont(LABEL_FONT_HEIGHT), label) + PILL_PADDING * 2.0F
+    );
+    const float height = LABEL_FONT_HEIGHT + PILL_PADDING;
+    const float lineX = frequencyToX(static_cast<double>(crossovers.at(crossover)));
+    const float rightX = lineX + LABEL_INSET;
+    const float preferredX = rightX + width <= plot.getRight() ? rightX : lineX - LABEL_INSET - width;
+    const float left = std::clamp(preferredX, plot.getX(), plot.getRight() - width);
+    return {left, plot.getBottom() - LABEL_FONT_HEIGHT - LABEL_INSET - height * 0.5F, width, height};
+}
+
 /// Paints the crossover lines, faint at rest, with a layered glow and a brighter line while hovered or dragged,
 /// and their frequencies in label pills that brighten with them.
 void SpatialSpectrogramView::paintCrossovers(juce::Graphics& graphics, const Crossovers& crossovers) const
@@ -662,15 +678,10 @@ void SpatialSpectrogramView::paintCrossovers(juce::Graphics& graphics, const Cro
             plot.getBottom(),
             CROSSOVER_THICKNESS + (CROSSOVER_ACTIVE_THICKNESS - CROSSOVER_THICKNESS) * highlight
         );
-        const juce::Point<float> labelCentre(
-            x + LABEL_INSET + CROSSOVER_LABEL_WIDTH * 0.5F, plot.getBottom() - LABEL_FONT_HEIGHT - LABEL_INSET
-        );
+        const auto label = formatFrequency(crossovers.at(crossover));
+        const auto labelCentre = crossoverLabelBounds(crossover).getCentre();
         paintLabelPill(
-            graphics,
-            formatFrequency(crossovers.at(crossover)),
-            labelCentre,
-            CROSSOVER_LABEL_ALPHA + (1.0F - CROSSOVER_LABEL_ALPHA) * highlight,
-            lineColour
+            graphics, label, labelCentre, CROSSOVER_LABEL_ALPHA + (1.0F - CROSSOVER_LABEL_ALPHA) * highlight, lineColour
         );
     }
 }

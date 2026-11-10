@@ -76,9 +76,18 @@ juce::Component* childWithTitle(const juce::Component& parent, const juce::Strin
 /// The parent owns the result. Check it before use and use it only while the parent retains the button.
 juce::Button* buttonWithText(const juce::Component& parent, const juce::String& text)
 {
+    std::vector<juce::Component*> pending;
     for (auto* child : parent.getChildren()) {
+        pending.push_back(child);
+    }
+    while (!pending.empty()) {
+        auto* child = pending.back();
+        pending.pop_back();
         if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == text) {
             return button;
+        }
+        for (auto* nested : child->getChildren()) {
+            pending.push_back(nested);
         }
     }
     return nullptr;
@@ -813,6 +822,26 @@ TEST(ImageControlEditor, MonoIsComposedBeforeDeltaAndBypassAtMinimumWidthAndReta
     EXPECT_TRUE(mono->getToggleState());
 }
 
+/// Extreme crossover positions retain the complete frequency readout inside the visible plot in both projections.
+TEST(SpatialSpectrogramView, CrossoverFrequencyLabelsStayInsidePlot)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(CROSSOVER_COUNT - 1));
+    parameter.setValueNotifyingHost(1.0F);
+    for (const int width : {300, 760, 1000}) {
+        view.setSize(width, 200);
+        for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
+            view.setFrequencyScale(scale);
+            for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+                const auto label = view.crossoverLabelBounds(crossover);
+                EXPECT_FALSE(label.isEmpty());
+                EXPECT_TRUE(view.getPlotBounds().contains(label));
+            }
+        }
+    }
+}
+
 TEST(ImageControlEditor, CompactCorrelationRowKeepsExpandedHeightAndAlignsWithStrips)
 {
     ImageControlProcessor processor;
@@ -831,7 +860,8 @@ TEST(ImageControlEditor, CompactCorrelationRowKeepsExpandedHeightAndAlignsWithSt
     show->setToggleState(false, juce::sendNotificationSync);
     // Analyzer tap actions apply all display settings through the real editor composition.
     post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
-    EXPECT_EQ(withCorrelation - editor.getHeight(), BAND_CORRELATION_HEIGHT + 8);
+    // Hidden correlation retains an 18-pixel labelled restore handle in the same section.
+    EXPECT_EQ(withCorrelation - editor.getHeight(), BAND_CORRELATION_HEIGHT - 18);
     EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
     show->setToggleState(true, juce::sendNotificationSync);
     post->setToggleState(!post->getToggleState(), juce::sendNotificationSync);
