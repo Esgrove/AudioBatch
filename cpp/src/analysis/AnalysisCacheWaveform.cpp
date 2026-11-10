@@ -51,13 +51,14 @@ std::optional<juce::MemoryBlock> AnalysisCache::getWaveformData(const juce::File
     const auto cachedWaveformVersion = sqlite3_column_int(statement, 3);
     const auto cachedAnalysisVersion = sqlite3_column_int(statement, 4);
 
-    if (cachedFileSize != fileSize || cachedModifiedTime != modifiedTimeMs || cachedWaveformVersion != waveformVersion
-        || cachedAnalysisVersion != analysisVersion)
+    if (cachedFileSize != fileSize || cachedModifiedTime != modifiedTimeMs || cachedWaveformVersion != WAVEFORM_VERSION
+        || cachedAnalysisVersion != ANALYSIS_VERSION)
     {
         return std::nullopt;
     }
 
-    if (sqlite3_column_type(statement, 2) != SQLITE_BLOB || sqlite3_column_bytes(statement, 2) > maximumWaveformBytes) {
+    if (sqlite3_column_type(statement, 2) != SQLITE_BLOB || sqlite3_column_bytes(statement, 2) > MAXIMUM_WAVEFORM_BYTES)
+    {
         return std::nullopt;
     }
     const auto* data = static_cast<const std::byte*>(sqlite3_column_blob(statement, 2));
@@ -109,16 +110,18 @@ bool AnalysisCache::storeWaveformData(const utils::FileIdentity& identity, const
         return false;
     }
 
-    const bool bound = sqlite::bindBlob(*statement, waveform_parameter::waveformData, waveformData)
-        && sqlite::bindInt64(*statement, waveform_parameter::waveformVersion, waveformVersion)
-        && sqlite::bindInt64(*statement, waveform_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())
-        && sqlite::bindText(*statement, waveform_parameter::filePath, identity.path)
-        && sqlite::bindInt64(*statement, waveform_parameter::fileSize, identity.fileSize)
-        && sqlite::bindInt64(*statement, waveform_parameter::modifiedTimeMs, identity.modifiedTimeMs)
-        && sqlite::bindInt64(*statement, waveform_parameter::analysisVersion, analysisVersion)
-        && sqlite::bindInt64(*statement, waveform_parameter::lengthInSamples, geometry->lengthInSamples)
-        && sqlite::bindInt64(*statement, waveform_parameter::sampleRate, geometry->sampleRate)
-        && sqlite::bindInt64(*statement, waveform_parameter::channels, geometry->channels);
+    const bool bound = sqlite::bindBlob(*statement, waveform_parameter::WAVEFORM_DATA, waveformData)
+        && sqlite::bindInt64(*statement, waveform_parameter::WAVEFORM_VERSION, WAVEFORM_VERSION)
+        && sqlite::bindInt64(
+                           *statement, waveform_parameter::UPDATED_AT_MS, juce::Time::getCurrentTime().toMilliseconds()
+        )
+        && sqlite::bindText(*statement, waveform_parameter::FILE_PATH, identity.path)
+        && sqlite::bindInt64(*statement, waveform_parameter::FILE_SIZE, identity.fileSize)
+        && sqlite::bindInt64(*statement, waveform_parameter::MODIFIED_TIME_MS, identity.modifiedTimeMs)
+        && sqlite::bindInt64(*statement, waveform_parameter::ANALYSIS_VERSION, ANALYSIS_VERSION)
+        && sqlite::bindInt64(*statement, waveform_parameter::LENGTH_IN_SAMPLES, geometry->lengthInSamples)
+        && sqlite::bindInt64(*statement, waveform_parameter::SAMPLE_RATE, geometry->sampleRate)
+        && sqlite::bindInt64(*statement, waveform_parameter::CHANNELS, geometry->channels);
 
     return bound && sqlite::stepToCompletion(*statement) && sqlite3_changes(database.get()) > 0;
 }

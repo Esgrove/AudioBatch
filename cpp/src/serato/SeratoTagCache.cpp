@@ -28,35 +28,35 @@ namespace
 {
 /// Largest serialized tag of any kind that the cache stores: a header of four 32-bit fields and the largest payload.
 /// The overview serializer writes the same header with a payload two bytes smaller than the largest one.
-constexpr std::size_t maximumCachedTagBytes {4 * sizeof(std::uint32_t) + maxTagPayloadBytes};
+constexpr std::size_t MAXIMUM_CACHED_TAG_BYTES {4 * sizeof(std::uint32_t) + MAX_TAG_PAYLOAD_BYTES};
 
 /// Zero-based columns for independent tag lookup, including the key's stored SQLite types.
 namespace tag_column
 {
-constexpr int fileSize {0};
-constexpr int modifiedTimeMs {1};
-constexpr int parserVersion {2};
-constexpr int resultState {3};
-constexpr int decodedData {4};
-constexpr int updatedAtMs {5};
-constexpr int filePath {6};
-constexpr int tagKind {7};
+constexpr int FILE_SIZE {0};
+constexpr int MODIFIED_TIME_MS {1};
+constexpr int PARSER_VERSION {2};
+constexpr int RESULT_STATE {3};
+constexpr int DECODED_DATA {4};
+constexpr int UPDATED_AT_MS {5};
+constexpr int FILE_PATH {6};
+constexpr int TAG_KIND {7};
 }  // namespace tag_column
 
 /// One-based parameters for independent per-kind tag UPSERT.
 namespace tag_parameter
 {
-constexpr int filePath {1};
-constexpr int tagKind {2};
-constexpr int fileSize {3};
-constexpr int modifiedTimeMs {4};
-constexpr int parserVersion {5};
-constexpr int resultState {6};
-constexpr int decodedData {7};
-constexpr int updatedAtMs {8};
-constexpr int observedSourcePresent {9};
-constexpr int observedFileSize {10};
-constexpr int observedModifiedTimeMs {11};
+constexpr int FILE_PATH {1};
+constexpr int TAG_KIND {2};
+constexpr int FILE_SIZE {3};
+constexpr int MODIFIED_TIME_MS {4};
+constexpr int PARSER_VERSION {5};
+constexpr int RESULT_STATE {6};
+constexpr int DECODED_DATA {7};
+constexpr int UPDATED_AT_MS {8};
+constexpr int OBSERVED_SOURCE_PRESENT {9};
+constexpr int OBSERVED_FILE_SIZE {10};
+constexpr int OBSERVED_MODIFIED_TIME_MS {11};
 }  // namespace tag_parameter
 
 /// The validated contents of one cached row.
@@ -95,38 +95,38 @@ std::optional<CachedTagRow> readTagRow(
     bool valid = true;
     for (const auto column :
          std::array {
-             tag_column::fileSize,
-             tag_column::modifiedTimeMs,
-             tag_column::parserVersion,
-             tag_column::resultState,
-             tag_column::updatedAtMs,
-             tag_column::tagKind,
+             tag_column::FILE_SIZE,
+             tag_column::MODIFIED_TIME_MS,
+             tag_column::PARSER_VERSION,
+             tag_column::RESULT_STATE,
+             tag_column::UPDATED_AT_MS,
+             tag_column::TAG_KIND,
          })
     {
         valid = valid && sqlite3_column_type(row, column) == SQLITE_INTEGER;
     }
-    valid = valid && sqlite3_column_int64(row, tag_column::fileSize) == identity.fileSize
-        && sqlite3_column_int64(row, tag_column::modifiedTimeMs) == identity.modifiedTimeMs
-        && sqlite3_column_int64(row, tag_column::parserVersion) == parserVersion(kind)
-        && sqlite3_column_int64(row, tag_column::updatedAtMs) > 0
-        && sqlite3_column_type(row, tag_column::filePath) == SQLITE_TEXT
-        && sqlite::columnText(*row, tag_column::filePath) == identity.path
-        && std::cmp_equal(sqlite3_column_int64(row, tag_column::tagKind), std::to_underlying(kind));
-    const auto state = sqlite3_column_int64(row, tag_column::resultState);
+    valid = valid && sqlite3_column_int64(row, tag_column::FILE_SIZE) == identity.fileSize
+        && sqlite3_column_int64(row, tag_column::MODIFIED_TIME_MS) == identity.modifiedTimeMs
+        && sqlite3_column_int64(row, tag_column::PARSER_VERSION) == parserVersion(kind)
+        && sqlite3_column_int64(row, tag_column::UPDATED_AT_MS) > 0
+        && sqlite3_column_type(row, tag_column::FILE_PATH) == SQLITE_TEXT
+        && sqlite::columnText(*row, tag_column::FILE_PATH) == identity.path
+        && std::cmp_equal(sqlite3_column_int64(row, tag_column::TAG_KIND), std::to_underlying(kind));
+    const auto state = sqlite3_column_int64(row, tag_column::RESULT_STATE);
     const auto stateIs
         = [state](const ReadStatus candidate) { return std::cmp_equal(state, std::to_underlying(candidate)); };
     CachedTagRow cached;
     if (valid && stateIs(ReadStatus::present)) {
-        const auto bytes = sqlite3_column_bytes(row, tag_column::decodedData);
-        valid = sqlite3_column_type(row, tag_column::decodedData) == SQLITE_BLOB && bytes > 0
-            && std::cmp_less_equal(bytes, maximumCachedTagBytes);
+        const auto bytes = sqlite3_column_bytes(row, tag_column::DECODED_DATA);
+        valid = sqlite3_column_type(row, tag_column::DECODED_DATA) == SQLITE_BLOB && bytes > 0
+            && std::cmp_less_equal(bytes, MAXIMUM_CACHED_TAG_BYTES);
         if (valid) {
-            cached.data = sqlite::columnBlob(*row, tag_column::decodedData);
+            cached.data = sqlite::columnBlob(*row, tag_column::DECODED_DATA);
         }
     } else {
         valid = valid
             && (stateIs(ReadStatus::absent) || stateIs(ReadStatus::unsupported) || stateIs(ReadStatus::invalid))
-            && sqlite3_column_type(row, tag_column::decodedData) == SQLITE_NULL;
+            && sqlite3_column_type(row, tag_column::DECODED_DATA) == SQLITE_NULL;
     }
     if (!valid) {
         return std::nullopt;
@@ -169,20 +169,20 @@ bool writeTagRow(
         return false;
     }
     const bool dataBound = status == ReadStatus::present
-        ? sqlite::bindBlob(*statement, tag_parameter::decodedData, data)
-        : sqlite::bindNull(*statement, tag_parameter::decodedData);
-    const bool bound = dataBound && sqlite::bindText(*statement, tag_parameter::filePath, identity.path)
-        && sqlite::bindInt64(*statement, tag_parameter::tagKind, std::to_underlying(kind))
-        && sqlite::bindInt64(*statement, tag_parameter::fileSize, identity.fileSize)
-        && sqlite::bindInt64(*statement, tag_parameter::modifiedTimeMs, identity.modifiedTimeMs)
-        && sqlite::bindInt64(*statement, tag_parameter::parserVersion, parserVersion(kind))
-        && sqlite::bindInt64(*statement, tag_parameter::resultState, std::to_underlying(status))
-        && sqlite::bindInt64(*statement, tag_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
+        ? sqlite::bindBlob(*statement, tag_parameter::DECODED_DATA, data)
+        : sqlite::bindNull(*statement, tag_parameter::DECODED_DATA);
+    const bool bound = dataBound && sqlite::bindText(*statement, tag_parameter::FILE_PATH, identity.path)
+        && sqlite::bindInt64(*statement, tag_parameter::TAG_KIND, std::to_underlying(kind))
+        && sqlite::bindInt64(*statement, tag_parameter::FILE_SIZE, identity.fileSize)
+        && sqlite::bindInt64(*statement, tag_parameter::MODIFIED_TIME_MS, identity.modifiedTimeMs)
+        && sqlite::bindInt64(*statement, tag_parameter::PARSER_VERSION, parserVersion(kind))
+        && sqlite::bindInt64(*statement, tag_parameter::RESULT_STATE, std::to_underlying(status))
+        && sqlite::bindInt64(*statement, tag_parameter::UPDATED_AT_MS, juce::Time::getCurrentTime().toMilliseconds());
     const bool sourceBound
-        = sqlite::bindInt64(*statement, tag_parameter::observedSourcePresent, observedSource.has_value() ? 1 : 0)
-        && sqlite::bindInt64(*statement, tag_parameter::observedFileSize, observedSource ? observedSource->first : 0)
+        = sqlite::bindInt64(*statement, tag_parameter::OBSERVED_SOURCE_PRESENT, observedSource.has_value() ? 1 : 0)
+        && sqlite::bindInt64(*statement, tag_parameter::OBSERVED_FILE_SIZE, observedSource ? observedSource->first : 0)
         && sqlite::bindInt64(
-              *statement, tag_parameter::observedModifiedTimeMs, observedSource ? observedSource->second : 0
+              *statement, tag_parameter::OBSERVED_MODIFIED_TIME_MS, observedSource ? observedSource->second : 0
         );
     return bound && sourceBound && sqlite::stepToCompletion(*statement);
 }
@@ -255,7 +255,7 @@ bool storeCachedTag(AnalysisCache& cache, const utils::FileIdentity& identity, c
     switch (status) {
         case ReadStatus::present:
             data = serializeTag(result);
-            if (data.isEmpty() || data.getSize() > maximumCachedTagBytes) {
+            if (data.isEmpty() || data.getSize() > MAXIMUM_CACHED_TAG_BYTES) {
                 return false;
             }
             break;

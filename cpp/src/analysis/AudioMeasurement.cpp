@@ -33,9 +33,9 @@ namespace audiobatch
 namespace
 {
 /// Stream limits accepted by libebur128.
-constexpr int maximumLoudnessChannels {64};
-constexpr double minimumLoudnessSampleRate {16.0};
-constexpr double maximumLoudnessSampleRate {2'822'400.0};
+constexpr int MAXIMUM_LOUDNESS_CHANNELS {64};
+constexpr double MINIMUM_LOUDNESS_SAMPLE_RATE {16.0};
+constexpr double MAXIMUM_LOUDNESS_SAMPLE_RATE {2'822'400.0};
 
 /// Owns a libebur128 state through its C destruction API.
 struct EbuR128StateDeleter {
@@ -67,9 +67,9 @@ std::unique_ptr<ebur128_state, EbuR128StateDeleter> createLoudnessState(const in
 /// Maps silence and non-finite loudness to the record sentinel.
 double normalizeLoudness(const double value)
 {
-    return std::isfinite(value) && value > AudioAnalysisRecord::negativeInfinityLoudness
+    return std::isfinite(value) && value > AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS
         ? value
-        : AudioAnalysisRecord::negativeInfinityLoudness;
+        : AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
 }
 }  // namespace
 
@@ -148,7 +148,7 @@ struct AudioMeasurementState {
             }
             minimums[channel] = std::min(minimums[channel], minimum);
             maximums[channel] = std::max(maximums[channel], maximum);
-            flags[channel] = minimum < -1.0f || maximum > 1.0f ? OverloadHistory::sampleOver : 0;
+            flags[channel] = minimum < -1.0f || maximum > 1.0f ? OverloadHistory::SAMPLE_OVER : 0;
         }
         if (ebur128_add_frames_float(meter.get(), interleaved.data(), static_cast<std::size_t>(frames))
             != EBUR128_SUCCESS)
@@ -161,11 +161,11 @@ struct AudioMeasurementState {
                 return std::unexpected(juce::String("True peak analysis failed while processing audio"));
             }
             if (peak > 1.0) {
-                flags[channel] |= OverloadHistory::truePeakOver;
+                flags[channel] |= OverloadHistory::TRUE_PEAK_OVER;
             }
         }
         overloads.addBlock(flags);
-        double loudness = AudioAnalysisRecord::negativeInfinityLoudness;
+        double loudness = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
         if (ebur128_loudness_shortterm(meter.get(), &loudness) != EBUR128_SUCCESS) {
             return std::unexpected(juce::String("Short-term loudness analysis failed"));
         }
@@ -201,7 +201,7 @@ struct AudioMeasurementState {
     [[nodiscard]] SignalMetrics finishSignalMetrics(const AudioAnalysisRecord& record) const
     {
         const auto ratio = [&](const double loudness) -> std::optional<double> {
-            if (record.overallTruePeak <= 0.0 || loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+            if (record.overallTruePeak <= 0.0 || loudness <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS) {
                 return std::nullopt;
             }
             const auto value = std::fma(20.0, std::log10(record.overallTruePeak), -loudness);
@@ -306,7 +306,7 @@ struct AudioMeasurementState {
     std::vector<std::uint8_t> flags;
 
     /// Highest normalized short-term reading.
-    double maxShortTerm {AudioAnalysisRecord::negativeInfinityLoudness};
+    double maxShortTerm {AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS};
     /// Frames buffered in an incomplete interval.
     int partialFrames {0};
     /// Prevents reading a moved-out history or extending a completed measurement.
@@ -318,8 +318,8 @@ struct AudioMeasurementState {
 /// Checks stream bounds before allocating buffers or rounding its sample rate.
 bool isSupportedMeasurementStream(const int channelCount, const double sampleRate) noexcept
 {
-    return channelCount > 0 && channelCount <= maximumLoudnessChannels && std::isfinite(sampleRate)
-        && sampleRate >= minimumLoudnessSampleRate && sampleRate <= maximumLoudnessSampleRate;
+    return channelCount > 0 && channelCount <= MAXIMUM_LOUDNESS_CHANNELS && std::isfinite(sampleRate)
+        && sampleRate >= MINIMUM_LOUDNESS_SAMPLE_RATE && sampleRate <= MAXIMUM_LOUDNESS_SAMPLE_RATE;
 }
 
 /// Initializes a validated stream, retaining initialization failures for callers to report.
@@ -480,7 +480,7 @@ std::expected<AudioAnalysisRecord, juce::String> AudioMeasurement::finish()
             record.overallTruePeak = std::max(record.overallTruePeak, truePeak);
         }
     }
-    double integrated = AudioAnalysisRecord::negativeInfinityLoudness;
+    double integrated = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
     if (ebur128_loudness_global(measurement.meter.get(), &integrated) != EBUR128_SUCCESS) {
         return std::unexpected(juce::String("Integrated loudness analysis failed"));
     }

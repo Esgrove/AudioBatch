@@ -140,14 +140,14 @@ void PreviewPlayerTests::runTest()
 void PreviewPlayerTests::testCallbackLifecycleHandoffs()
 {
     beginTest("Seek, release, load, chain replacement, device close, and destruction wait for an active callback");
-    constexpr double RATE {48'000.0};
-    constexpr int BLOCK {127};
+    constexpr double rate {48'000.0};
+    constexpr int block {127};
     for (int operation = 0; operation < 7; ++operation) {
         PausedCallbackInput input;
         auto player = std::make_unique<AudioPreviewPlayer>(false);
-        player->setTestCallbackInput(input, 1.0, 2, RATE, BLOCK);
-        juce::AudioBuffer<float> output(2, BLOCK);
-        std::thread callback([&] { player->renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        player->setTestCallbackInput(input, 1.0, 2, rate, block);
+        juce::AudioBuffer<float> output(2, block);
+        std::thread callback([&] { player->renderTestCallback(output.getArrayOfWritePointers(), 2, block); });
         input.entered.wait();
         auto& access = player->getRenderingAccess();
         std::atomic<bool> observedClosure {false};
@@ -188,7 +188,7 @@ void PreviewPlayerTests::testCallbackLifecycleHandoffs()
         expect(observedClosure.load());
         expect(!input.overlappingRelease.load());
         expect(loaded);
-        expect(output.getMagnitude(0, BLOCK) > 0.001f);
+        expect(output.getMagnitude(0, block) > 0.001f);
     }
 }
 
@@ -196,63 +196,63 @@ void PreviewPlayerTests::testCallbackLifecycleHandoffs()
 void PreviewPlayerTests::testExcludedCallback()
 {
     beginTest("Excluded callbacks preserve playback and clear all channels until control reopens admission");
-    constexpr double RATE {48'000.0};
-    constexpr int BLOCK {127};
+    constexpr double rate {48'000.0};
+    constexpr int block {127};
     juce::AudioBuffer<float> samples(2, 1024);
     for (int channel = 0; channel < 2; ++channel) {
         juce::FloatVectorOperations::fill(samples.getWritePointer(channel), 0.25f, samples.getNumSamples());
     }
     juce::MemoryAudioSource source(samples, false, false);
     AudioPreviewPlayer player(false);
-    player.setTestCallbackInput(source, samples.getNumSamples() / RATE, 2, RATE, BLOCK);
-    juce::AudioBuffer<float> output(3, BLOCK);
+    player.setTestCallbackInput(source, samples.getNumSamples() / rate, 2, rate, block);
+    juce::AudioBuffer<float> output(3, block);
     for (int channel = 0; channel < output.getNumChannels(); ++channel) {
-        juce::FloatVectorOperations::fill(output.getWritePointer(channel), 1.0f, BLOCK);
+        juce::FloatVectorOperations::fill(output.getWritePointer(channel), 1.0f, block);
     }
     {
         const utils::CallbackControlGuard control(player.getRenderingAccess());
-        std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 3, BLOCK); });
+        std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 3, block); });
         callback.join();
     }
     expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 1.0e-12);
     expectEquals(source.getNextReadPosition(), juce::int64 {0});
-    expectWithinAbsoluteError(output.getMagnitude(0, BLOCK), 0.0f, 1.0e-7f);
+    expectWithinAbsoluteError(output.getMagnitude(0, block), 0.0f, 1.0e-7f);
     expect(player.isPlaying());
-    std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 3, BLOCK); });
+    std::thread callback([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 3, block); });
     callback.join();
     expect(player.getCurrentPosition() > 0.0);
-    expectEquals(source.getNextReadPosition(), juce::int64 {BLOCK});
-    expect(output.getMagnitude(0, BLOCK) > 0.001f);
-    expectWithinAbsoluteError(output.getMagnitude(2, 0, BLOCK), 0.0f, 1.0e-7f);
+    expectEquals(source.getNextReadPosition(), juce::int64 {block});
+    expect(output.getMagnitude(0, block) > 0.001f);
+    expectWithinAbsoluteError(output.getMagnitude(2, 0, block), 0.0f, 1.0e-7f);
 }
 
 /// Repeatedly detaches an idle insert, closes/reopens the simulated device, and recovers from a failed open.
 void PreviewPlayerTests::testRepeatedDeviceAndInsertHandoffs()
 {
     beginTest("Idle insert handoffs and failed device reopen retain safe callback lifetimes");
-    constexpr double RATE {48'000.0};
-    constexpr int BLOCK {127};
+    constexpr double rate {48'000.0};
+    constexpr int block {127};
     TestPlugin effect({.gain = 0.5f});
-    effect.setRateAndBufferSizeDetails(RATE, BLOCK);
-    effect.prepareToPlay(RATE, BLOCK);
+    effect.setRateAndBufferSizeDetails(rate, block);
+    effect.prepareToPlay(rate, block);
     TestAudioDeviceState device;
-    device.blockSize = BLOCK;
+    device.blockSize = block;
     AudioPreviewPlayer player;
     installTestAudioDevice(player.getDeviceManager(), device);
-    juce::AudioBuffer<float> output(2, BLOCK);
+    juce::AudioBuffer<float> output(2, block);
     for (int iteration = 0; iteration < 4; ++iteration) {
         expect(player.load(juce::URL(fixtureFile("sine_stereo_44100_16.wav"))));
         player.start();
         player.setTestCallbackChain({&effect});
         expect(player.waitForReadAhead(4096, 2000));
-        std::thread wet([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        std::thread wet([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, block); });
         wet.join();
-        expect(output.getMagnitude(0, BLOCK) > 0.001f);
+        expect(output.getMagnitude(0, block) > 0.001f);
         player.suspend();
         player.setTestCallbackChain({});
-        std::thread stopped([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        std::thread stopped([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, block); });
         stopped.join();
-        expectWithinAbsoluteError(output.getMagnitude(0, BLOCK), 0.0f, 1.0e-7f);
+        expectWithinAbsoluteError(output.getMagnitude(0, block), 0.0f, 1.0e-7f);
         device.openError = "Injected output-open failure";
         player.start();
         expect(!player.isPlaying());
@@ -261,9 +261,9 @@ void PreviewPlayerTests::testRepeatedDeviceAndInsertHandoffs()
         player.start();
         expect(player.isPlaying());
         expect(player.waitForReadAhead(4096, 2000));
-        std::thread reopened([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, BLOCK); });
+        std::thread reopened([&] { player.renderTestCallback(output.getArrayOfWritePointers(), 2, block); });
         reopened.join();
-        expect(output.getMagnitude(0, BLOCK) > 0.001f);
+        expect(output.getMagnitude(0, block) > 0.001f);
         player.suspend();
         player.release();
     }
@@ -294,19 +294,19 @@ void PreviewPlayerTests::testOutputStatusFormatting()
 void PreviewPlayerTests::testPreviewFitHeight()
 {
     beginTest("The startup preview height fits the controls of the wide and the one-column layouts");
-    expectEquals(layout::widePreviewFitHeight, 282);
-    expectEquals(layout::narrowPreviewFitHeight, 348);
+    expectEquals(layout::WIDE_PREVIEW_FIT_HEIGHT, 282);
+    expectEquals(layout::NARROW_PREVIEW_FIT_HEIGHT, 348);
 
-    const auto wideBreakpoint = (layout::widePreview::minimumHalfWidth * 2) + (layout::compactPreview::padding * 2);
-    expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint), layout::widePreviewFitHeight);
-    expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint - 1), layout::narrowPreviewFitHeight);
+    const auto wideBreakpoint = (layout::widePreview::MINIMUM_HALF_WIDTH * 2) + (layout::compactPreview::PADDING * 2);
+    expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint), layout::WIDE_PREVIEW_FIT_HEIGHT);
+    expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint - 1), layout::NARROW_PREVIEW_FIT_HEIGHT);
     expectEquals(
-        layout::expandedPreviewFitHeight(layout::defaultWindowWidth - (layout::mainContentPadding * 2)),
-        layout::widePreviewFitHeight
+        layout::expandedPreviewFitHeight(layout::DEFAULT_WINDOW_WIDTH - (layout::MAIN_CONTENT_PADDING * 2)),
+        layout::WIDE_PREVIEW_FIT_HEIGHT
     );
-    expectEquals(layout::expandedPreviewFitHeight(layout::minimumWindowWidth), layout::narrowPreviewFitHeight);
-    expectEquals(layout::expandedPreviewFitHeight(0), layout::narrowPreviewFitHeight);
-    expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint + 1), layout::widePreviewFitHeight);
+    expectEquals(layout::expandedPreviewFitHeight(layout::MINIMUM_WINDOW_WIDTH), layout::NARROW_PREVIEW_FIT_HEIGHT);
+    expectEquals(layout::expandedPreviewFitHeight(0), layout::NARROW_PREVIEW_FIT_HEIGHT);
+    expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint + 1), layout::WIDE_PREVIEW_FIT_HEIGHT);
 
     beginTest("Short windows clamp the controls fit while preserving the table minimum and manual preference");
     expectEquals(layout::constrainedPreviewHeight(348, 530), 284);
@@ -345,10 +345,10 @@ void PreviewPlayerTests::testPreviewWidths()
         const auto defaults = layout::previewColumns(bounds);
         const auto controls = layout::previewColumns(bounds, true, 1.10, 0.90);
         expectEquals(controls.information.getWidth(), defaults.information.getWidth());
-        expectEquals(controls.information.getX() - controls.controls.getRight(), layout::sectionSpacing);
+        expectEquals(controls.information.getX() - controls.controls.getRight(), layout::SECTION_SPACING);
         const auto information = layout::previewColumns(bounds, true, 0.95, 1.10);
         expectEquals(information.controls.getWidth(), defaults.controls.getWidth());
-        expectEquals(information.waveform.getX() - information.information.getRight(), layout::sectionSpacing);
+        expectEquals(information.waveform.getX() - information.information.getRight(), layout::SECTION_SPACING);
         const auto minimum = layout::previewColumns(bounds, true, -1.0, -1.0);
         const auto maximum = layout::previewColumns(bounds, true, 100.0, 100.0);
         const auto baseline = layout::previewColumnBaseline(bounds);
@@ -403,7 +403,7 @@ void PreviewPlayerTests::testLoudnessAxisIntervals()
                 if (maximum - minimum > interval) {
                     expect(
                         static_cast<double>(interval * height) / (maximum - minimum)
-                        >= static_cast<double>(layout::waveform::loudnessFontHeight)
+                        >= static_cast<double>(layout::waveform::LOUDNESS_FONT_HEIGHT)
                     );
                 }
                 int previous = first - interval;
@@ -1149,13 +1149,13 @@ void PreviewPlayerTests::testOverloadPreferences()
     if (selector == nullptr || hasMissingToggle) {
         return;
     }
-    panel.setSize(layout::audioSettings::preferredWidth, layout::audioSettings::preferredHeight);
+    panel.setSize(layout::audioSettings::PREFERRED_WIDTH, layout::audioSettings::PREFERRED_HEIGHT);
     expectEquals(toggles[0]->getY(), toggles[1]->getY());
     expectEquals(toggles[0]->getRight(), toggles[1]->getX());
     expectEquals(toggles[0]->getBottom(), toggles[2]->getY());
     for (const auto* toggle : toggles) {
         expect(toggle->getWidth() > 0);
-        expectEquals(toggle->getHeight(), layout::audioSettings::rowHeight);
+        expectEquals(toggle->getHeight(), layout::audioSettings::ROW_HEIGHT);
     }
     AudioPreviewPreferences canonical;
     int callbacks = 0;
@@ -1363,7 +1363,7 @@ void PreviewPlayerTests::testSettingsGeometry()
     juce::AudioDeviceManager manager;
     AudioSettingsComponent panel(manager);
     panel.setPreferences(AudioPreviewPreferences {.loudnessGraphEnabled = true});
-    panel.setSize(layout::audioSettings::preferredWidth, layout::audioSettings::preferredHeight);
+    panel.setSize(layout::audioSettings::PREFERRED_WIDTH, layout::audioSettings::PREFERRED_HEIGHT);
     auto* viewport = dynamic_cast<juce::Viewport*>(panel.getChildComponent(0));
     expect(viewport != nullptr);
     if (viewport == nullptr || viewport->getViewedComponent() == nullptr) {
@@ -1414,20 +1414,20 @@ void PreviewPlayerTests::testSettingsGeometry()
         return;
     }
     expectEquals(deviceSelector->getY() - deviceGroup->getY(), layout::audioSettings::GROUP_TOP_INSET);
-    expectEquals(deviceGroup->getBottom() - deviceSelector->getBottom(), layout::audioSettings::padding);
+    expectEquals(deviceGroup->getBottom() - deviceSelector->getBottom(), layout::audioSettings::PADDING);
     expectEquals(previewGroup->getY() - deviceGroup->getBottom(), layout::audioSettings::SECTION_SPACING);
     expectEquals(
         previewView->getY() - previewGroup->getY(),
-        layout::audioSettings::GROUP_TOP_INSET + layout::audioSettings::rangeEditorPadding
+        layout::audioSettings::GROUP_TOP_INSET + layout::audioSettings::RANGE_EDITOR_PADDING
     );
     const auto controlLaneWidth
-        = previewGroup->getWidth() - layout::audioSettings::padding * 2 - layout::audioSettings::rangeLabelWidth * 2;
+        = previewGroup->getWidth() - layout::audioSettings::PADDING * 2 - layout::audioSettings::RANGE_LABEL_WIDTH * 2;
     expectEquals(
         previewView->getWidth(),
         juce::roundToInt(controlLaneWidth * layout::audioSettings::PREVIEW_SELECTOR_WIDTH_PROPORTION)
     );
-    expect(layout::audioSettings::MINIMUM_WINDOW_HEIGHT < layout::audioSettings::preferredHeight);
-    expectEquals(previewGroup->getBottom() - loudnessToggle->getBottom(), layout::audioSettings::padding);
+    expect(layout::audioSettings::MINIMUM_WINDOW_HEIGHT < layout::audioSettings::PREFERRED_HEIGHT);
+    expectEquals(previewGroup->getBottom() - loudnessToggle->getBottom(), layout::audioSettings::PADDING);
     verifyOverloadSettingsGroup(content, *previewGroup);
 
     verifyDisabledLoudnessRange(panel, content, *minimumEditor);
@@ -1440,21 +1440,21 @@ void PreviewPlayerTests::testSettingsGeometry()
     minimumEditor->onReturnKey();
     expect(errorLabel->isVisible());
     expect(errorLabel->getText().isNotEmpty());
-    expectEquals(content.getHeight(), validHeight + layout::audioSettings::rowHeight);
+    expectEquals(content.getHeight(), validHeight + layout::audioSettings::ROW_HEIGHT);
     expectEquals(errorLabel->getY(), loudnessToggle->getBottom());
-    expectEquals(previewGroup->getBottom() - errorLabel->getBottom(), layout::audioSettings::padding);
+    expectEquals(previewGroup->getBottom() - errorLabel->getBottom(), layout::audioSettings::PADDING);
     minimumEditor->onReturnKey();
     expect(!errorLabel->isVisible());
     expectEquals(content.getHeight(), validHeight);
 
     beginTest("A shorter settings viewport preserves complete scrollable content");
-    panel.setSize(layout::audioSettings::preferredWidth, 180);
+    panel.setSize(layout::audioSettings::PREFERRED_WIDTH, 180);
     expectEquals(content.getHeight(), validHeight);
     expect(content.getHeight() > viewport->getHeight());
     viewport->setViewPosition(0, content.getHeight());
     expect(viewport->getViewPositionY() > 0);
     expect(
-        viewport->getViewPositionY() + viewport->getViewHeight() >= content.getHeight() - layout::audioSettings::padding
+        viewport->getViewPositionY() + viewport->getViewHeight() >= content.getHeight() - layout::audioSettings::PADDING
     );
 }
 
@@ -1522,7 +1522,7 @@ void PreviewPlayerTests::verifyOverloadSettingsGroup(
         expect(overloadGroup->getBounds().contains(toggle->getBounds()));
         expect(!previewGroup.getBounds().intersects(toggle->getBounds()));
     }
-    expectEquals(content.getHeight() - overloadGroup->getBottom(), layout::audioSettings::padding);
+    expectEquals(content.getHeight() - overloadGroup->getBottom(), layout::audioSettings::PADDING);
 }
 
 /// Keeps lifecycle and foreign cache labels out of the inspector without losing failure detail or operation context.
@@ -1592,7 +1592,7 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
             juce::TextLayout textLayout;
             textLayout.createLayout(attributed, static_cast<float>(width));
             const auto expectedHeight = juce::jmax(
-                layout::information::rowHeight,
+                layout::information::ROW_HEIGHT,
                 juce::roundToInt(std::ceil(textLayout.getHeight())) + layout::information::DETAIL_TEXT_PADDING * 2
             );
             expectEquals(wrapped.getPreferredHeight(width), expectedHeight);
@@ -1601,13 +1601,13 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
         }
     }
     wrapped.setText(texts[2], juce::dontSendNotification);
-    expect(wrapped.getPreferredHeight(40) > layout::information::rowHeight * 3);
+    expect(wrapped.getPreferredHeight(40) > layout::information::ROW_HEIGHT * 3);
     expect(wrapped.getPreferredHeight(40) > wrapped.getPreferredHeight(480));
     expectEquals(wrapped.getPreferredHeight(0), wrapped.getPreferredHeight(1));
     AudioInfoText singleLine("Genre", false);
     singleLine.setText(texts[2], juce::dontSendNotification);
-    expectEquals(singleLine.getPreferredHeight(40), layout::information::rowHeight);
-    expectEquals(singleLine.getPreferredHeight(480), layout::information::rowHeight);
+    expectEquals(singleLine.getPreferredHeight(40), layout::information::ROW_HEIGHT);
+    expectEquals(singleLine.getPreferredHeight(480), layout::information::ROW_HEIGHT);
 
     beginTest("Single-line values retain full labelled tooltips while narrow bounds clip their visible text");
     singleLine.setValues({
@@ -1616,7 +1616,7 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
         {.label = "Duration", .value = "3:25.4"},
         {.label = "Size", .value = "36.2 MB"},
     });
-    singleLine.setSize(20, layout::information::rowHeight);
+    singleLine.setSize(20, layout::information::ROW_HEIGHT);
     expectEquals(singleLine.getText(), juce::String::fromUTF8("FLAC · Stereo · 3:25.4 · 36.2 MB"));
     expectEquals(
         singleLine.getTooltip(), juce::String("Format: FLAC, Channels: Stereo, Duration: 3:25.4, Size: 36.2 MB")
@@ -1701,10 +1701,10 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
         expect(correlation->getY() > format->getBottom());
         expectEquals(album->getY(), genre->getBottom());
         expectEquals(comment->getY(), album->getBottom());
-        expectEquals(genre->getHeight(), layout::information::rowHeight);
+        expectEquals(genre->getHeight(), layout::information::ROW_HEIGHT);
         expectEquals(album->getHeight(), album->getPreferredHeight(album->getWidth()));
         expectEquals(comment->getHeight(), comment->getPreferredHeight(comment->getWidth()));
-        expectEquals(album->getX(), layout::information::detailFieldWidth);
+        expectEquals(album->getX(), layout::information::DETAIL_FIELD_WIDTH);
         expectEquals(album->getRight(), content.getWidth());
         expectEquals(content.getHeight(), comment->getBottom());
         expectEquals(genre->getDescription(), juce::String("Genre: ") + texts[0]);
@@ -1712,7 +1712,9 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
     verifyLayout();
     const auto narrowHeight = panel.getPreferredHeight();
     panel.setWide(true);
-    expectEquals(panel.getPreferredHeight(), narrowHeight - layout::information::metricHeight - layout::sectionSpacing);
+    expectEquals(
+        panel.getPreferredHeight(), narrowHeight - layout::information::METRIC_HEIGHT - layout::SECTION_SPACING
+    );
     verifyLayout();
     panel.setWide(false);
     panel.setSize(260, panel.getPreferredHeight());
@@ -1739,7 +1741,7 @@ void PreviewPlayerTests::testInspectorDetailsLayout()
     expectEquals(track->getY(), error->getBottom());
     expectEquals(
         panel.getPreferredHeight(),
-        pendingHeight + error->getPreferredHeight(error->getWidth()) + layout::information::verticalPadding
+        pendingHeight + error->getPreferredHeight(error->getWidth()) + layout::information::VERTICAL_PADDING
     );
     panel.clear();
     expect(!format->isVisible() && !audio->isVisible() && !track->isVisible());

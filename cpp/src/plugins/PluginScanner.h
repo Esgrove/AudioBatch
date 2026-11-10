@@ -10,16 +10,16 @@
 namespace audiobatch
 {
 /// Unique id that marks the command line of a plugin scan worker process.
-constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
+constexpr auto PLUGIN_SCAN_WORKER_PROCESS_UID {"audiobatch-plugin-scan-worker"};
 
 /// Longest wait for the worker to scan one plugin, the same as in the Rust version.
 /// Without it, a plugin that hangs in the worker would block the scan for good:
 /// the CLI rescan cannot be cancelled, and the GUI scan would wait until the user cancels it.
 /// Generous, because a copy-protected plugin can show a licensing prompt in the worker while it is scanned.
-constexpr auto pluginScanTimeout {std::chrono::seconds(180)};
+constexpr auto PLUGIN_SCAN_TIMEOUT {std::chrono::seconds(180)};
 
 /// Name of the inter-process lock that the GUI and the CLI take around a plugin scan.
-constexpr auto pluginScanLockName {"AudioBatchPluginScan"};
+constexpr auto PLUGIN_SCAN_LOCK_NAME {"AudioBatchPluginScan"};
 
 /// Inter-process lock that serializes plugin scans between the GUI and the CLI.
 /// Each scan loads the known-plugins list, adds to it, and saves it,
@@ -28,7 +28,7 @@ constexpr auto pluginScanLockName {"AudioBatchPluginScan"};
 class PluginScanLock
 {
 public:
-    explicit PluginScanLock(const juce::String& lockName = pluginScanLockName);
+    explicit PluginScanLock(const juce::String& lockName = PLUGIN_SCAN_LOCK_NAME);
 
     ~PluginScanLock();
 

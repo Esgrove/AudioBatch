@@ -20,17 +20,17 @@ namespace audiobatch
 namespace normalize_target
 {
 /// Step of the target sample peak, in dB.
-constexpr double peakStepDecibels {0.1};
+constexpr double PEAK_STEP_DECIBELS {0.1};
 /// Step of the target loudness, in LU.
-constexpr double loudnessStepDecibels {0.5};
+constexpr double LOUDNESS_STEP_DECIBELS {0.5};
 /// Radio group of the Peak and Loudness buttons, which must be non-zero.
-constexpr int modeRadioGroupId {1};
+constexpr int MODE_RADIO_GROUP_ID {1};
 /// Opacity of the grey filled part of the target slider.
 /// The fill is neutral, so it does not compete with the blue of the chosen mode right above it.
-constexpr float targetFillAlpha {0.7f};
-constexpr auto modeSettingKey {"normalizeMode"};
-constexpr auto targetPeakSettingKey {"normalizeTargetPeakDbfs"};
-constexpr auto targetLufsSettingKey {"normalizeTargetLufs"};
+constexpr float TARGET_FILL_ALPHA {0.7f};
+constexpr auto MODE_SETTING_KEY {"normalizeMode"};
+constexpr auto TARGET_PEAK_SETTING_KEY {"normalizeTargetPeakDbfs"};
+constexpr auto TARGET_LUFS_SETTING_KEY {"normalizeTargetLufs"};
 }  // namespace normalize_target
 
 /// Creates the controls. The settings are read later by loadSettings,
@@ -43,7 +43,7 @@ NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperti
     properties(applicationProperties)
 {
     for (auto* button : {&peakButton, &loudnessButton}) {
-        button->setRadioGroupId(normalize_target::modeRadioGroupId);
+        button->setRadioGroupId(normalize_target::MODE_RADIO_GROUP_ID);
         addAndMakeVisible(*button);
     }
     peakButton.setConnectedEdges(juce::Button::ConnectedOnRight);
@@ -65,7 +65,7 @@ NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperti
 
     targetSlider.setSliderStyle(juce::Slider::LinearBar);
     targetSlider.setColour(
-        juce::Slider::trackColourId, CustomLookAndFeel::greyMiddle().withAlpha(normalize_target::targetFillAlpha)
+        juce::Slider::trackColourId, CustomLookAndFeel::greyMiddle().withAlpha(normalize_target::TARGET_FILL_ALPHA)
     );
     targetSlider.setNumDecimalPlacesToDisplay(1);
     targetSlider.setTooltip("Target level for normalization.");
@@ -86,19 +86,21 @@ void NormalizationTargetControl::loadSettings()
 {
     const auto* settings = properties.getUserSettings();
     targetPeakDbfs = juce::jlimit(
-        AudioNormalizationOptions::minimumTargetPeakDbfs,
-        AudioNormalizationOptions::maximumTargetPeakDbfs,
+        AudioNormalizationOptions::MINIMUM_TARGET_PEAK_DBFS,
+        AudioNormalizationOptions::MAXIMUM_TARGET_PEAK_DBFS,
         settings->getDoubleValue(
-            normalize_target::targetPeakSettingKey, AudioNormalizationOptions::defaultTargetPeakDbfs
+            normalize_target::TARGET_PEAK_SETTING_KEY, AudioNormalizationOptions::DEFAULT_TARGET_PEAK_DBFS
         )
     );
     targetLufs = juce::jlimit(
-        AudioNormalizationOptions::minimumTargetLufs,
-        AudioNormalizationOptions::maximumTargetLufs,
-        settings->getDoubleValue(normalize_target::targetLufsSettingKey, AudioNormalizationOptions::defaultTargetLufs)
+        AudioNormalizationOptions::MINIMUM_TARGET_LUFS,
+        AudioNormalizationOptions::MAXIMUM_TARGET_LUFS,
+        settings->getDoubleValue(
+            normalize_target::TARGET_LUFS_SETTING_KEY, AudioNormalizationOptions::DEFAULT_TARGET_LUFS
+        )
     );
 
-    const auto loudness = settings->getValue(normalize_target::modeSettingKey) == "loudness";
+    const auto loudness = settings->getValue(normalize_target::MODE_SETTING_KEY) == "loudness";
     (loudness ? loudnessButton : peakButton).setToggleState(true, juce::dontSendNotification);
     updateSlider();
 }
@@ -130,13 +132,13 @@ juce::String NormalizationTargetControl::describeTarget() const
 void NormalizationTargetControl::resized()
 {
     auto bounds = getLocalBounds();
-    auto modeRow = bounds.removeFromTop(layout::controlButtonHeight);
+    auto modeRow = bounds.removeFromTop(layout::CONTROL_BUTTON_HEIGHT);
     peakButton.setBounds(modeRow.removeFromLeft(modeRow.getWidth() / 2));
     loudnessButton.setBounds(modeRow);
-    bounds.removeFromTop(layout::normalizeTargetSpacing);
-    auto sliderRow = bounds.removeFromTop(layout::controlButtonHeight);
-    targetSlider.setBounds(sliderRow.removeFromLeft((sliderRow.getWidth() - layout::sectionSpacing) / 2));
-    sliderRow.removeFromLeft(layout::sectionSpacing);
+    bounds.removeFromTop(layout::NORMALIZE_TARGET_SPACING);
+    auto sliderRow = bounds.removeFromTop(layout::CONTROL_BUTTON_HEIGHT);
+    targetSlider.setBounds(sliderRow.removeFromLeft((sliderRow.getWidth() - layout::SECTION_SPACING) / 2));
+    sliderRow.removeFromLeft(layout::SECTION_SPACING);
     normalizeButton.setBounds(sliderRow);
 }
 
@@ -179,9 +181,9 @@ void NormalizationTargetControl::selectMode(const bool loudness)
 void NormalizationTargetControl::saveSettings() const
 {
     auto* settings = properties.getUserSettings();
-    settings->setValue(normalize_target::modeSettingKey, isLoudnessMode() ? "loudness" : "peak");
-    settings->setValue(normalize_target::targetPeakSettingKey, targetPeakDbfs);
-    settings->setValue(normalize_target::targetLufsSettingKey, targetLufs);
+    settings->setValue(normalize_target::MODE_SETTING_KEY, isLoudnessMode() ? "loudness" : "peak");
+    settings->setValue(normalize_target::TARGET_PEAK_SETTING_KEY, targetPeakDbfs);
+    settings->setValue(normalize_target::TARGET_LUFS_SETTING_KEY, targetLufs);
 }
 
 /// Switches the slider between the peak and loudness ranges for the selected mode,
@@ -190,17 +192,17 @@ void NormalizationTargetControl::updateSlider()
 {
     if (isLoudnessMode()) {
         targetSlider.setRange(
-            AudioNormalizationOptions::minimumTargetLufs,
-            AudioNormalizationOptions::maximumTargetLufs,
-            normalize_target::loudnessStepDecibels
+            AudioNormalizationOptions::MINIMUM_TARGET_LUFS,
+            AudioNormalizationOptions::MAXIMUM_TARGET_LUFS,
+            normalize_target::LOUDNESS_STEP_DECIBELS
         );
         targetSlider.setTextValueSuffix(" LUFS");
         targetSlider.setValue(targetLufs, juce::dontSendNotification);
     } else {
         targetSlider.setRange(
-            AudioNormalizationOptions::minimumTargetPeakDbfs,
-            AudioNormalizationOptions::maximumTargetPeakDbfs,
-            normalize_target::peakStepDecibels
+            AudioNormalizationOptions::MINIMUM_TARGET_PEAK_DBFS,
+            AudioNormalizationOptions::MAXIMUM_TARGET_PEAK_DBFS,
+            normalize_target::PEAK_STEP_DECIBELS
         );
         targetSlider.setTextValueSuffix(" dBFS");
         targetSlider.setValue(targetPeakDbfs, juce::dontSendNotification);

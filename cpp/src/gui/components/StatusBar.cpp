@@ -19,13 +19,13 @@ namespace audiobatch
 namespace
 {
 /// Converts a sample rate in hertz to kilohertz.
-constexpr double hertzPerKilohertz {1000.0};
+constexpr double HERTZ_PER_KILOHERTZ {1000.0};
 /// Converts the stored tenths of a percent to a fraction.
-constexpr float permillePerUnit {1000.0f};
+constexpr float PERMILLE_PER_UNIT {1000.0f};
 /// Opacity of the unfilled track behind the progress line.
-constexpr float progressTrackAlpha {0.25f};
+constexpr float PROGRESS_TRACK_ALPHA {0.25f};
 /// Extra width for the output device text, so rounding never makes the label truncate it.
-constexpr int outputTextSlack {2};
+constexpr int OUTPUT_TEXT_SLACK {2};
 }  // namespace
 
 /// Returns the device name with the sample rate and buffer size, for example "Speakers, 48 kHz, 512 samples".
@@ -37,7 +37,7 @@ juce::String formatAudioOutputStatus(const AudioOutputStatus& status)
     parts.add(status.deviceName.isNotEmpty() ? status.deviceName : juce::String("Default output"));
 
     if (status.sampleRate > 0.0) {
-        parts.add(utils::format("{:g} kHz", status.sampleRate / hertzPerKilohertz));
+        parts.add(utils::format("{:g} kHz", status.sampleRate / HERTZ_PER_KILOHERTZ));
     }
 
     if (status.bufferSize > 0) {
@@ -50,31 +50,31 @@ juce::String formatAudioOutputStatus(const AudioOutputStatus& status)
 /// Formats both source times with hours when the total reaches one hour, otherwise as minutes and seconds.
 juce::String formatPlaybackTime(const double positionSeconds, const double durationSeconds)
 {
-    constexpr auto MAXIMUM_DISPLAY_SECONDS = 999'999'999.0;
+    constexpr auto maximumDisplaySeconds = 999'999'999.0;
     const auto duration
-        = std::isfinite(durationSeconds) ? std::clamp(durationSeconds, 0.0, MAXIMUM_DISPLAY_SECONDS) : 0.0;
+        = std::isfinite(durationSeconds) ? std::clamp(durationSeconds, 0.0, maximumDisplaySeconds) : 0.0;
     const auto position = std::isfinite(positionSeconds) ? std::clamp(positionSeconds, 0.0, duration) : 0.0;
-    constexpr std::int64_t SECONDS_PER_MINUTE {60};
+    constexpr std::int64_t secondsPerMinute {60};
     const auto current = static_cast<std::int64_t>(std::floor(position));
     const auto total = static_cast<std::int64_t>(std::floor(duration));
-    constexpr std::int64_t SECONDS_PER_HOUR {3600};
-    if (total >= SECONDS_PER_HOUR) {
+    constexpr std::int64_t secondsPerHour {3600};
+    if (total >= secondsPerHour) {
         return utils::format(
             "{}:{:02}:{:02} / {}:{:02}:{:02}",
-            current / SECONDS_PER_HOUR,
-            (current / SECONDS_PER_MINUTE) % SECONDS_PER_MINUTE,
-            current % SECONDS_PER_MINUTE,
-            total / SECONDS_PER_HOUR,
-            (total / SECONDS_PER_MINUTE) % SECONDS_PER_MINUTE,
-            total % SECONDS_PER_MINUTE
+            current / secondsPerHour,
+            (current / secondsPerMinute) % secondsPerMinute,
+            current % secondsPerMinute,
+            total / secondsPerHour,
+            (total / secondsPerMinute) % secondsPerMinute,
+            total % secondsPerMinute
         );
     }
     return utils::format(
         "{:02}:{:02} / {:02}:{:02}",
-        current / SECONDS_PER_MINUTE,
-        current % SECONDS_PER_MINUTE,
-        total / SECONDS_PER_MINUTE,
-        total % SECONDS_PER_MINUTE
+        current / secondsPerMinute,
+        current % secondsPerMinute,
+        total / secondsPerMinute,
+        total % secondsPerMinute
     );
 }
 
@@ -82,7 +82,7 @@ juce::String formatPlaybackTime(const double positionSeconds, const double durat
 /// The output device starts as the closed default output until the owner reports the real device.
 StatusBar::StatusBar()
 {
-    const auto font = CustomLookAndFeel::getTextFont().withHeight(layout::statusBar::fontHeight);
+    const auto font = CustomLookAndFeel::getTextFont().withHeight(layout::statusBar::FONT_HEIGHT);
 
     for (auto* label : {&pathLabel, &statusLabel, &playbackLabel, &outputLabel}) {
         utils::styleLabel(*label, font, CustomLookAndFeel::greyMiddleLight());
@@ -159,13 +159,16 @@ void StatusBar::paint(juce::Graphics& graphics)
     graphics.setColour(CustomLookAndFeel::greyMedium());
     graphics.fillRect(getLocalBounds().withHeight(1));
 
-    const auto separatorHeight = getHeight() - layout::statusBar::separatorInset * 2;
+    const auto separatorHeight = getHeight() - layout::statusBar::SEPARATOR_INSET * 2;
     for (const auto* label : {&statusLabel, &playbackLabel, &outputLabel}) {
         if (!label->isVisible()) {
             continue;
         }
         graphics.fillRect(
-            label->getX() - layout::statusBar::sectionSpacing / 2, layout::statusBar::separatorInset, 1, separatorHeight
+            label->getX() - layout::statusBar::SECTION_SPACING / 2,
+            layout::statusBar::SEPARATOR_INSET,
+            1,
+            separatorHeight
         );
     }
 
@@ -174,10 +177,10 @@ void StatusBar::paint(juce::Graphics& graphics)
     }
 
     const auto bar = getProgressBounds().toFloat();
-    graphics.setColour(CustomLookAndFeel::greyMiddle().withAlpha(progressTrackAlpha));
+    graphics.setColour(CustomLookAndFeel::greyMiddle().withAlpha(PROGRESS_TRACK_ALPHA));
     graphics.fillRect(bar);
     graphics.setColour(CustomLookAndFeel::blue());
-    graphics.fillRect(bar.withWidth(bar.getWidth() * static_cast<float>(progressPermille) / permillePerUnit));
+    graphics.fillRect(bar.withWidth(bar.getWidth() * static_cast<float>(progressPermille) / PERMILLE_PER_UNIT));
 }
 
 /// Gives the output device the width of its text up to a maximum,
@@ -185,30 +188,30 @@ void StatusBar::paint(juce::Graphics& graphics)
 /// Both truncate their text with an ellipsis when it does not fit.
 void StatusBar::resized()
 {
-    auto bounds = getLocalBounds().reduced(layout::statusBar::horizontalPadding, 0);
+    auto bounds = getLocalBounds().reduced(layout::statusBar::HORIZONTAL_PADDING, 0);
 
     const auto outputTextWidth
         = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(outputLabel.getFont(), outputLabel.getText())));
     outputLabel.setBounds(bounds.removeFromRight(
-        juce::jmin(layout::statusBar::outputStatusMaximumWidth, outputTextWidth + outputTextSlack)
+        juce::jmin(layout::statusBar::OUTPUT_STATUS_MAXIMUM_WIDTH, outputTextWidth + OUTPUT_TEXT_SLACK)
     ));
-    bounds.removeFromRight(layout::statusBar::sectionSpacing);
+    bounds.removeFromRight(layout::statusBar::SECTION_SPACING);
     if (playbackLabel.isVisible()) {
         const auto timeWidth = juce::roundToInt(
             std::ceil(juce::TextLayout::getStringWidth(playbackLabel.getFont(), playbackLabel.getText()))
         );
-        playbackLabel.setBounds(bounds.removeFromRight(std::min(bounds.getWidth(), timeWidth + outputTextSlack)));
-        bounds.removeFromRight(std::min(layout::statusBar::sectionSpacing, bounds.getWidth()));
+        playbackLabel.setBounds(bounds.removeFromRight(std::min(bounds.getWidth(), timeWidth + OUTPUT_TEXT_SLACK)));
+        bounds.removeFromRight(std::min(layout::statusBar::SECTION_SPACING, bounds.getWidth()));
     }
-    const auto pathWidth = juce::roundToInt(bounds.getWidth() * layout::statusBar::pathProportion);
+    const auto pathWidth = juce::roundToInt(bounds.getWidth() * layout::statusBar::PATH_PROPORTION);
     pathLabel.setBounds(bounds.removeFromLeft(pathWidth));
-    bounds.removeFromLeft(layout::statusBar::sectionSpacing);
+    bounds.removeFromLeft(layout::statusBar::SECTION_SPACING);
     statusLabel.setBounds(bounds);
 }
 
 /// Returns the strip along the top edge where the progress line is drawn.
 juce::Rectangle<int> StatusBar::getProgressBounds() const
 {
-    return getLocalBounds().withHeight(layout::statusBar::progressHeight);
+    return getLocalBounds().withHeight(layout::statusBar::PROGRESS_HEIGHT);
 }
 }  // namespace audiobatch

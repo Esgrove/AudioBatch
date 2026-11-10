@@ -40,35 +40,35 @@ namespace audiobatch
 namespace
 {
 /// Fraction of the visible range scrolled per unit of horizontal mouse wheel movement.
-constexpr double horizontalScrollStepRatio {0.10};
+constexpr double HORIZONTAL_SCROLL_STEP_RATIO {0.10};
 
 /// The vertical mouse wheel zooms by wheelZoomBase raised to the wheel movement times wheelZoomMovementScale.
-constexpr double wheelZoomBase {1.2};
-constexpr double wheelZoomMovementScale {8.0};
+constexpr double WHEEL_ZOOM_BASE {1.2};
+constexpr double WHEEL_ZOOM_MOVEMENT_SCALE {8.0};
 
 /// Fraction of the total length near the start of the file within which zooming always anchors at the playhead.
-constexpr double zoomStartAnchorRatio {0.05};
+constexpr double ZOOM_START_ANCHOR_RATIO {0.05};
 
 /// Opacity of the cue arrow outline.
-constexpr float cueArrowOutlineAlpha {0.8f};
+constexpr float CUE_ARROW_OUTLINE_ALPHA {0.8f};
 
 /// Number of Serato hot cue slots reachable with the number keys 1 to 8.
-constexpr int hotCueSlotCount {8};
+constexpr int HOT_CUE_SLOT_COUNT {8};
 
 /// Coarsest waveform detail, which keeps the cached waveform of a long file small.
-constexpr int maximumSamplesPerThumbnailPoint {1024};
+constexpr int MAXIMUM_SAMPLES_PER_THUMBNAIL_POINT {1024};
 
 /// Opacity of the outline drawn while the waveform has keyboard focus.
-constexpr float focusOutlineAlpha {0.6f};
+constexpr float FOCUS_OUTLINE_ALPHA {0.6f};
 
 /// Opacity of the white labels of the loudness axis.
-constexpr float loudnessLabelAlpha {0.8f};
+constexpr float LOUDNESS_LABEL_ALPHA {0.8f};
 
 /// Opacity of the white grid lines at the loudness axis ticks.
-constexpr float loudnessGridAlpha {0.12f};
+constexpr float LOUDNESS_GRID_ALPHA {0.12f};
 
 /// Opacity of the black outline drawn under the loudness curve, which keeps it readable over the waveform.
-constexpr float loudnessOutlineAlpha {0.65f};
+constexpr float LOUDNESS_OUTLINE_ALPHA {0.65f};
 
 }  // namespace
 
@@ -76,7 +76,9 @@ constexpr float loudnessOutlineAlpha {0.65f};
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, AudioPreviewPlayer& source) :
     transportSource(source),
     thumbnailFormats(formatManager),
-    thumbnail(std::make_unique<juce::AudioThumbnail>(maximumSamplesPerThumbnailPoint, formatManager, thumbnailCache))
+    thumbnail(
+        std::make_unique<juce::AudioThumbnail>(MAXIMUM_SAMPLES_PER_THUMBNAIL_POINT, formatManager, thumbnailCache)
+    )
 {
     thumbnail->addChangeListener(this);
 
@@ -95,7 +97,7 @@ ThumbnailComponent::~ThumbnailComponent()
 void ThumbnailComponent::paint(juce::Graphics& graphics)
 {
     juce::Path outline;
-    outline.addRoundedRectangle(getLocalBounds().toFloat(), layout::waveform::cornerRadius);
+    outline.addRoundedRectangle(getLocalBounds().toFloat(), layout::waveform::CORNER_RADIUS);
     graphics.reduceClipRegion(outline);
     graphics.setColour(CustomLookAndFeel::greyMediumDark());
     graphics.fillPath(outline);
@@ -122,16 +124,16 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         drawLoudnessGraph(graphics);
         drawPlayheads(graphics);
     } else {
-        graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::placeholderFontHeight));
+        graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::PLACEHOLDER_FONT_HEIGHT));
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 
     if (hasKeyboardFocus(false)) {
-        graphics.setColour(CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
+        graphics.setColour(CustomLookAndFeel::blue().withAlpha(FOCUS_OUTLINE_ALPHA));
         graphics.drawRoundedRectangle(
-            getLocalBounds().toFloat().reduced(layout::waveform::focusOutlineWidth * 0.5f),
-            layout::waveform::cornerRadius,
-            layout::waveform::focusOutlineWidth
+            getLocalBounds().toFloat().reduced(layout::waveform::FOCUS_OUTLINE_WIDTH * 0.5f),
+            layout::waveform::CORNER_RADIUS,
+            layout::waveform::FOCUS_OUTLINE_WIDTH
         );
     }
 }
@@ -490,7 +492,7 @@ bool ThumbnailComponent::keyPressed(const juce::KeyPress& key)
     const auto modifiers = key.getModifiers();
     const auto character = key.getTextCharacter();
     if (modifiers.isCommandDown() || modifiers.isCtrlDown() || modifiers.isAltDown() || character < '1'
-        || character >= '1' + hotCueSlotCount)
+        || character >= '1' + HOT_CUE_SLOT_COUNT)
     {
         return false;
     }
@@ -527,7 +529,7 @@ void ThumbnailComponent::jumpToHotCue(const int slot)
         return;
     }
 
-    const auto seconds = static_cast<double>(cue->positionMilliseconds) / utils::millisecondsPerSecond;
+    const auto seconds = static_cast<double>(cue->positionMilliseconds) / utils::MILLISECONDS_PER_SECOND;
     transportSource.setPosition(juce::jlimit(0.0, sourceDuration(), seconds));
     transportSource.start();
     updateCursorPosition();
@@ -611,7 +613,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
             const auto direction = delta > 0.0f ? 1 : -1;
             if (!fine) {
                 fineGainWheelEvents = 0;
-                mouseWheelGainCallback(static_cast<float>(direction) * gain_range::wheelStepDecibels);
+                mouseWheelGainCallback(static_cast<float>(direction) * gain_range::WHEEL_STEP_DECIBELS);
                 return;
             }
             // Reversing the wheel starts the count again, so the gain never moves against the wheel.
@@ -619,22 +621,23 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
                 fineGainWheelEvents = 0;
             }
             fineGainWheelEvents += direction;
-            if (std::abs(fineGainWheelEvents) >= gain_range::fineWheelEventsPerStep) {
+            if (std::abs(fineGainWheelEvents) >= gain_range::FINE_WHEEL_EVENTS_PER_STEP) {
                 fineGainWheelEvents = 0;
-                mouseWheelGainCallback(static_cast<float>(direction) * gain_range::wheelStepDecibels);
+                mouseWheelGainCallback(static_cast<float>(direction) * gain_range::WHEEL_STEP_DECIBELS);
             }
             return;
         }
     }
 
     if (std::abs(wheel.deltaY) > 0.0f && mouseWheelZoomCallback) {
-        const auto zoomFactor = std::pow(wheelZoomBase, static_cast<double>(wheel.deltaY) * wheelZoomMovementScale);
+        const auto zoomFactor
+            = std::pow(WHEEL_ZOOM_BASE, static_cast<double>(wheel.deltaY) * WHEEL_ZOOM_MOVEMENT_SCALE);
         mouseWheelZoomCallback(zoomFactor);
         return;
     }
 
     auto newStart = visibleRange.getStart()
-        - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * horizontalScrollStepRatio;
+        - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * HORIZONTAL_SCROLL_STEP_RATIO;
     newStart = juce::jlimit(0.0, juce::jmax(0.0, sourceDuration() - visibleRange.getLength()), newStart);
     setRange({newStart, newStart + visibleRange.getLength()});
 }
@@ -696,7 +699,7 @@ void ThumbnailComponent::drawLoudnessGraph(juce::Graphics& graphics) const
 void ThumbnailComponent::drawLoudnessAxis(juce::Graphics& graphics, const juce::Rectangle<int> bounds) const
 {
     const auto plot = bounds.toFloat();
-    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
+    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::LOUDNESS_FONT_HEIGHT));
     const auto gutter = getPlotGeometry().loudnessAxis;
     const auto interval = layout::waveform::loudnessTickInterval(
         juce::roundToInt(loudnessMinimum), juce::roundToInt(loudnessMaximum), bounds.getHeight()
@@ -704,17 +707,17 @@ void ThumbnailComponent::drawLoudnessAxis(juce::Graphics& graphics, const juce::
     const auto firstTick = static_cast<int>(std::ceil(loudnessMinimum / interval)) * interval;
     for (int value = firstTick; value <= loudnessMaximum; value += interval) {
         const auto vertical = loudnessToY(value, bounds);
-        const auto labelHeight = juce::roundToInt(layout::waveform::loudnessFontHeight);
+        const auto labelHeight = juce::roundToInt(layout::waveform::LOUDNESS_FONT_HEIGHT);
         const auto labelTop = std::clamp(
             juce::roundToInt(vertical) - labelHeight / 2,
             gutter.getY(),
             std::max(gutter.getY(), gutter.getBottom() - labelHeight)
         );
-        graphics.setColour(juce::Colours::white.withAlpha(loudnessLabelAlpha));
+        graphics.setColour(juce::Colours::white.withAlpha(LOUDNESS_LABEL_ALPHA));
         graphics.drawText(
             utils::format("{}", value), gutter.withY(labelTop).withHeight(labelHeight), juce::Justification::centredLeft
         );
-        graphics.setColour(juce::Colours::white.withAlpha(loudnessGridAlpha));
+        graphics.setColour(juce::Colours::white.withAlpha(LOUDNESS_GRID_ALPHA));
         graphics.drawHorizontalLine(juce::roundToInt(vertical), plot.getX(), plot.getRight());
     }
 }
@@ -751,7 +754,7 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
             const auto vertical = loudnessToY(static_cast<double>(history.values[index]), bounds);
             if (newSegment) {
                 line.startNewSubPath(horizontal, vertical);
-                const auto diameter = layout::waveform::loudnessLineWidth;
+                const auto diameter = layout::waveform::LOUDNESS_LINE_WIDTH;
                 segmentStarts.addEllipse(horizontal - diameter * 0.5f, vertical - diameter * 0.5f, diameter, diameter);
                 newSegment = false;
             } else {
@@ -762,7 +765,7 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
     };
     for (auto index = first; index <= last; ++index) {
         const auto value = history.values[index];
-        if (!std::isfinite(value) || static_cast<double>(value) <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        if (!std::isfinite(value) || static_cast<double>(value) <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS) {
             flushBucket();
             newSegment = true;
             continue;
@@ -792,11 +795,11 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
     flushBucket();
     const juce::Graphics::ScopedSaveState savedState(graphics);
     graphics.reduceClipRegion(bounds);
-    graphics.setColour(juce::Colours::black.withAlpha(loudnessOutlineAlpha));
+    graphics.setColour(juce::Colours::black.withAlpha(LOUDNESS_OUTLINE_ALPHA));
     graphics.strokePath(
         line,
         juce::PathStrokeType(
-            layout::waveform::loudnessLineWidth + layout::waveform::loudnessOutlineWidth,
+            layout::waveform::LOUDNESS_LINE_WIDTH + layout::waveform::LOUDNESS_OUTLINE_WIDTH,
             juce::PathStrokeType::curved,
             juce::PathStrokeType::rounded
         )
@@ -806,7 +809,7 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
     graphics.strokePath(
         line,
         juce::PathStrokeType(
-            layout::waveform::loudnessLineWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded
+            layout::waveform::LOUDNESS_LINE_WIDTH, juce::PathStrokeType::curved, juce::PathStrokeType::rounded
         )
     );
 }
@@ -840,7 +843,7 @@ void ThumbnailComponent::setDisplayGain(const float linearGain)
 /// Null, empty and oversized data remove colouring. The owner must reject stale asynchronous results.
 void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const serato::Overview> overview)
 {
-    if (overview && (overview->slices.empty() || overview->slices.size() > serato::Overview::maxSlices)) {
+    if (overview && (overview->slices.empty() || overview->slices.size() > serato::Overview::MAX_SLICES)) {
         overview.reset();
     }
     colouredWaveform.reset();
@@ -901,8 +904,8 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics, const juce::Re
             cue.horizontalPosition,
             cue.bottom - cue.height
         );
-        graphics.setColour(juce::Colours::black.withAlpha(cueArrowOutlineAlpha));
-        graphics.strokePath(arrows, juce::PathStrokeType(layout::waveform::cueArrowOutlineWidth));
+        graphics.setColour(juce::Colours::black.withAlpha(CUE_ARROW_OUTLINE_ALPHA));
+        graphics.strokePath(arrows, juce::PathStrokeType(layout::waveform::CUE_ARROW_OUTLINE_WIDTH));
         graphics.setColour(cue.colour);
         graphics.fillPath(arrows);
     }
@@ -917,7 +920,7 @@ void ThumbnailComponent::setZoom(const double zoomLevel)
     const auto start = transportSource.getCurrentPosition();
     const auto zoom = sourceDuration() / zoomLevel;
     const auto end = juce::jmin(sourceDuration(), start + zoom);
-    if (start < sourceDuration() * zoomStartAnchorRatio || sourceDuration() - start > zoom) {
+    if (start < sourceDuration() * ZOOM_START_ANCHOR_RATIO || sourceDuration() - start > zoom) {
         setRange(juce::Range(start, end));
     } else {
         // The remaining distance is shorter than the zoom length, so zoom from the end instead.

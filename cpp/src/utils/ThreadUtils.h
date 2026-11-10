@@ -25,7 +25,7 @@ using ProgressCallback = std::function<void(float progress)>;
 using CancellationCheck = std::function<bool()>;
 
 /// Number of milliseconds in one second, shared by duration conversions and timing output.
-inline constexpr double millisecondsPerSecond {1000.0};
+inline constexpr double MILLISECONDS_PER_SECOND {1000.0};
 
 ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
 /// Deleted, because the returned callback refers to onProgress, which a temporary would leave dangling.

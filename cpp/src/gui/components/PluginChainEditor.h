@@ -87,7 +87,7 @@ private:
     juce::TextButton updatePresetButton {"Update"};
 
     /// Serves tooltips independently of the main window.
-    juce::TooltipWindow tooltipWindow {this, layout::tooltipDelayMilliseconds};
+    juce::TooltipWindow tooltipWindow {this, layout::TOOLTIP_DELAY_MILLISECONDS};
     /// Scrolls the borrowed row container.
     juce::Viewport viewport;
 

@@ -21,29 +21,29 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr int paletteLevels {6};
-constexpr int palettePlaneSize {paletteLevels * paletteLevels};
-constexpr int paletteSize {palettePlaneSize * paletteLevels};
-constexpr int paletteComponentStep {51};
-constexpr double maximumColourComponent {255.0};
+constexpr int PALETTE_LEVELS {6};
+constexpr int PALETTE_PLANE_SIZE {PALETTE_LEVELS * PALETTE_LEVELS};
+constexpr int PALETTE_SIZE {PALETTE_PLANE_SIZE * PALETTE_LEVELS};
+constexpr int PALETTE_COMPONENT_STEP {51};
+constexpr double MAXIMUM_COLOUR_COMPONENT {255.0};
 
 /// Decodes the fixed RGB cube at compile time, including its two background entries.
 consteval auto makePaletteComponents()
 {
-    std::array<std::array<std::uint8_t, 3>, paletteSize> components {};
+    std::array<std::array<std::uint8_t, 3>, PALETTE_SIZE> components {};
     for (std::size_t index = 0; index < components.size(); ++index) {
         const auto value = static_cast<int>(index);
         components[index] = {
-            static_cast<std::uint8_t>(value / palettePlaneSize * paletteComponentStep),
-            static_cast<std::uint8_t>(value % palettePlaneSize / paletteLevels * paletteComponentStep),
-            static_cast<std::uint8_t>(value % paletteLevels * paletteComponentStep),
+            static_cast<std::uint8_t>(value / PALETTE_PLANE_SIZE * PALETTE_COMPONENT_STEP),
+            static_cast<std::uint8_t>(value % PALETTE_PLANE_SIZE / PALETTE_LEVELS * PALETTE_COMPONENT_STEP),
+            static_cast<std::uint8_t>(value % PALETTE_LEVELS * PALETTE_COMPONENT_STEP),
         };
     }
     return components;
 }
 
 /// Exact integer palette components shared by all slices.
-constexpr auto paletteComponents {makePaletteComponents()};
+constexpr auto PALETTE_COMPONENTS {makePaletteComponents()};
 
 /// Retains decoded RGB sums and foreground cell weight until the final arithmetic mean.
 struct ColourContributions {
@@ -57,16 +57,16 @@ struct ColourContributions {
 /// Indices 0 and 1 are background. Indices 216 through 255 remain provisionally unknown or reserved.
 /// Reserved values are skipped rather than assigned an unverified grayscale palette.
 void accumulateSlice(
-    const std::array<std::uint8_t, Overview::bandCount>& cells,
+    const std::array<std::uint8_t, Overview::BAND_COUNT>& cells,
     const double sampleWeight,
     ColourContributions& contributions
 )
 {
     for (const auto paletteIndex : cells) {
-        if (paletteIndex <= 1 || paletteIndex >= paletteSize) {
+        if (paletteIndex <= 1 || paletteIndex >= PALETTE_SIZE) {
             continue;
         }
-        const auto& [red, green, blue] = paletteComponents[paletteIndex];
+        const auto& [red, green, blue] = PALETTE_COMPONENTS[paletteIndex];
         contributions.components[0] += static_cast<double>(red) * sampleWeight;
         contributions.components[1] += static_cast<double>(green) * sampleWeight;
         contributions.components[2] += static_cast<double>(blue) * sampleWeight;
@@ -81,10 +81,10 @@ juce::Colour colourForContributions(const ColourContributions& contributions, co
         return fallback.withAlpha(1.0f);
     }
 
-    const auto divisor = contributions.weight * maximumColourComponent;
+    const auto divisor = contributions.weight * MAXIMUM_COLOUR_COMPONENT;
     const auto component = [divisor](const double sum) {
         const auto normalized = std::clamp(static_cast<float>(sum / divisor), 0.0f, 1.0f);
-        return static_cast<juce::uint8>(std::lround(normalized * static_cast<float>(maximumColourComponent)));
+        return static_cast<juce::uint8>(std::lround(normalized * static_cast<float>(MAXIMUM_COLOUR_COMPONENT)));
     };
     return {
         component(contributions.components[0]),
@@ -154,7 +154,7 @@ ColourContributions contributionsOverInterval(
 /// No grayscale mapping is asserted for reserved values. With no eligible cells, the supplied fallback becomes opaque.
 /// An index is not a strength, so uniform audio gain is not represented by scaling these bytes.
 juce::Colour colourForOverviewSlice(
-    const std::array<std::uint8_t, Overview::bandCount>& cells,
+    const std::array<std::uint8_t, Overview::BAND_COUNT>& cells,
     const juce::Colour fallback
 )
 {
@@ -177,7 +177,7 @@ std::optional<juce::ColourGradient> makeOverviewGradient(
     const juce::Colour fallback
 )
 {
-    if (overview.slices.empty() || overview.slices.size() > Overview::maxSlices || waveformBounds.isEmpty()
+    if (overview.slices.empty() || overview.slices.size() > Overview::MAX_SLICES || waveformBounds.isEmpty()
         || !std::isfinite(totalLength) || totalLength <= 0.0 || !std::isfinite(visibleRange.getStart())
         || !std::isfinite(visibleRange.getEnd()) || !std::isfinite(visibleRange.getLength())
         || visibleRange.getLength() <= 0.0)
@@ -195,7 +195,7 @@ std::optional<juce::ColourGradient> makeOverviewGradient(
         false
     );
 
-    const auto sampleCount = std::min(waveformBounds.getWidth(), maxWaveformGradientStops - 2);
+    const auto sampleCount = std::min(waveformBounds.getWidth(), MAX_WAVEFORM_GRADIENT_STOPS - 2);
     const auto sampleDuration = visibleRange.getLength() / static_cast<double>(sampleCount);
     const auto combineSlices = sampleDuration / totalLength * static_cast<double>(overview.slices.size()) > 1.0;
     for (int sample = 0; sample < sampleCount; ++sample) {

@@ -296,11 +296,15 @@ void AudioBatchIntegrationTest::storageIsolation()
     }
     EXPECT_EQ(*root, temporary.get());
     EXPECT_EQ(utils::defaultAnalysisDatabaseFile(root), temporary.get().getChildFile("AudioBatch/analysis.db"));
-    const auto isolatedLock = utils::scopedPluginScanLockName(pluginScanLockName, root);
-    EXPECT_NE(isolatedLock, juce::String(pluginScanLockName));
-    EXPECT_EQ(isolatedLock, utils::scopedPluginScanLockName(pluginScanLockName, root));
-    EXPECT_NE(isolatedLock, utils::scopedPluginScanLockName(pluginScanLockName, temporary.get().getChildFile("other")));
-    EXPECT_EQ(utils::scopedPluginScanLockName(pluginScanLockName, std::nullopt), juce::String(pluginScanLockName));
+    const auto isolatedLock = utils::scopedPluginScanLockName(PLUGIN_SCAN_LOCK_NAME, root);
+    EXPECT_NE(isolatedLock, juce::String(PLUGIN_SCAN_LOCK_NAME));
+    EXPECT_EQ(isolatedLock, utils::scopedPluginScanLockName(PLUGIN_SCAN_LOCK_NAME, root));
+    EXPECT_NE(
+        isolatedLock, utils::scopedPluginScanLockName(PLUGIN_SCAN_LOCK_NAME, temporary.get().getChildFile("other"))
+    );
+    EXPECT_EQ(
+        utils::scopedPluginScanLockName(PLUGIN_SCAN_LOCK_NAME, std::nullopt), juce::String(PLUGIN_SCAN_LOCK_NAME)
+    );
     const auto logger = utils::createDefaultLogger("audiobatch", "scanner", root);
     EXPECT_EQ(logger->getLogFile(), temporary.get().getChildFile("AudioBatch/logs/scanner.log"));
     EXPECT_TRUE(logger->getLogFile().existsAsFile());
@@ -377,9 +381,11 @@ void AudioBatchIntegrationTest::openAndSort()
         // Reproduce a dominant name-column share that reaches its maximum before the other columns.
         // The remaining pixels must go to folder/path, including when both initially have zero surplus.
         auto& mutableHeader = view.resultsTable.getHeader();
-        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::name), layout::table::nameMaximumWidth);
-        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::folder), layout::table::pathColumnMinimumWidth);
-        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::path), layout::table::pathColumnMinimumWidth);
+        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::name), layout::table::NAME_MAXIMUM_WIDTH);
+        mutableHeader.setColumnWidth(
+            toColumnId(AudioFileTableColumn::folder), layout::table::PATH_COLUMN_MINIMUM_WIDTH
+        );
+        mutableHeader.setColumnWidth(toColumnId(AudioFileTableColumn::path), layout::table::PATH_COLUMN_MINIMUM_WIDTH);
         view.updateResultsTableColumnWidths();
         int total = 0;
         int fixed = 0;
@@ -393,8 +399,8 @@ void AudioBatchIntegrationTest::openAndSort()
                 fixed += header.getColumnWidth(columnId);
             }
         }
-        const int minimum = layout::table::nameColumnMinimumWidth + 2 * layout::table::pathColumnMinimumWidth;
-        const int maximum = layout::table::nameMaximumWidth + 2 * layout::table::pathMaximumWidth;
+        const int minimum = layout::table::NAME_COLUMN_MINIMUM_WIDTH + 2 * layout::table::PATH_COLUMN_MINIMUM_WIDTH;
+        const int maximum = layout::table::NAME_MAXIMUM_WIDTH + 2 * layout::table::PATH_MAXIMUM_WIDTH;
         EXPECT_EQ(total, std::clamp(view.resultsTable.getVisibleContentWidth(), fixed + minimum, fixed + maximum));
         const std::array widths {
             header.getColumnWidth(toColumnId(AudioFileTableColumn::name)),
@@ -405,11 +411,15 @@ void AudioBatchIntegrationTest::openAndSort()
         EXPECT_EQ(header.getColumnWidth(toColumnId(AudioFileTableColumn::name)), widths[0]);
         EXPECT_EQ(header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)), widths[1]);
         EXPECT_EQ(header.getColumnWidth(toColumnId(AudioFileTableColumn::path)), widths[2]);
-        EXPECT_GE(header.getColumnWidth(toColumnId(AudioFileTableColumn::name)), layout::table::nameColumnMinimumWidth);
         EXPECT_GE(
-            header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)), layout::table::pathColumnMinimumWidth
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::name)), layout::table::NAME_COLUMN_MINIMUM_WIDTH
         );
-        EXPECT_GE(header.getColumnWidth(toColumnId(AudioFileTableColumn::path)), layout::table::pathColumnMinimumWidth);
+        EXPECT_GE(
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::folder)), layout::table::PATH_COLUMN_MINIMUM_WIDTH
+        );
+        EXPECT_GE(
+            header.getColumnWidth(toColumnId(AudioFileTableColumn::path)), layout::table::PATH_COLUMN_MINIMUM_WIDTH
+        );
     }
     view.setSize(1920, 1080);
     tests::GuiDriver::settle();
@@ -540,7 +550,7 @@ void AudioBatchIntegrationTest::normalizeSelection()
     EXPECT_TRUE(record.isReady());
     EXPECT_NEAR(
         static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak))),
-        AudioNormalizationOptions::defaultTargetPeakDbfs,
+        AudioNormalizationOptions::DEFAULT_TARGET_PEAK_DBFS,
         0.01
     );
     EXPECT_FALSE(view.previewPlayer.getOutputStatus().open);
@@ -729,7 +739,7 @@ void AudioBatchIntegrationTest::previewWidths()
         EXPECT_EQ(informationDivider->getX(), workspace.audioInfo.getRight());
         EXPECT_EQ(informationDivider->getRight(), workspace.thumbnail.getX());
         const auto height = workspace.getHeight();
-        const auto initialControlsWidth = controlsDivider->getX() - layout::compactPreview::padding;
+        const auto initialControlsWidth = controlsDivider->getX() - layout::compactPreview::PADDING;
         const auto initialInformationWidth = workspace.audioInfo.getWidth();
         auto& settings = *view.pluginAppProperties.getUserSettings();
         EXPECT_FALSE(settings.containsKey("previewControlsWidthScale"));
@@ -737,13 +747,13 @@ void AudioBatchIntegrationTest::previewWidths()
         settings.setValue("unrelatedWidthSetting", "keep me");
 
         dragControls(24);
-        EXPECT_EQ(controlsDivider->getX() - layout::compactPreview::padding, initialControlsWidth + 24);
+        EXPECT_EQ(controlsDivider->getX() - layout::compactPreview::PADDING, initialControlsWidth + 24);
         EXPECT_EQ(workspace.audioInfo.getWidth(), initialInformationWidth);
         EXPECT_EQ(workspace.getHeight(), height);
         EXPECT_TRUE(settings.containsKey("previewControlsWidthScale"));
         EXPECT_EQ(
             driver.find(control_ids::CONTROLS_WIDTH_DIVIDER).value,
-            utils::format("{} pixels", controlsDivider->getX() - layout::compactPreview::padding)
+            utils::format("{} pixels", controlsDivider->getX() - layout::compactPreview::PADDING)
         );
         const auto controlsAfterDrag = controlsDivider->getX();
         const auto storedControls = settings.getDoubleValue("previewControlsWidthScale");
@@ -765,12 +775,12 @@ void AudioBatchIntegrationTest::previewWidths()
         driver.press(control_ids::INFORMATION_WIDTH_DIVIDER, juce::KeyPress(juce::KeyPress::rightKey));
         const auto informationAfterKey = workspace.audioInfo.getWidth();
         const auto baseline
-            = layout::previewColumnBaseline(workspace.getLocalBounds().reduced(layout::compactPreview::padding));
+            = layout::previewColumnBaseline(workspace.getLocalBounds().reduced(layout::compactPreview::PADDING));
         for (const auto distance : {-1000, 1000}) {
             dragControls(distance);
             EXPECT_EQ(workspace.audioInfo.getWidth(), informationAfterKey);
             EXPECT_EQ(
-                controlsDivider->getX() - layout::compactPreview::padding,
+                controlsDivider->getX() - layout::compactPreview::PADDING,
                 juce::roundToInt(baseline.controls.getWidth() * (distance < 0 ? 0.855 : 1.10))
             );
         }
@@ -803,9 +813,9 @@ void AudioBatchIntegrationTest::previewWidths()
         EXPECT_FALSE(controlsDivider->isVisible());
         EXPECT_FALSE(informationDivider->isVisible());
         const auto compact
-            = layout::previewColumns(workspace.getLocalBounds().reduced(layout::compactPreview::padding), false);
-        EXPECT_EQ(workspace.startStopButton.getX(), layout::compactPreview::padding + 14 + 6);
-        EXPECT_EQ(workspace.processButton.getRight(), layout::compactPreview::padding + compact.controls.getWidth());
+            = layout::previewColumns(workspace.getLocalBounds().reduced(layout::compactPreview::PADDING), false);
+        EXPECT_EQ(workspace.startStopButton.getX(), layout::compactPreview::PADDING + 14 + 6);
+        EXPECT_EQ(workspace.processButton.getRight(), layout::compactPreview::PADDING + compact.controls.getWidth());
         workspace.setCompact(false);
         EXPECT_TRUE(controlsDivider->isVisible());
         EXPECT_TRUE(informationDivider->isVisible());
@@ -818,7 +828,7 @@ void AudioBatchIntegrationTest::previewWidths()
     recreated.setSize(1300, 900);
     const auto& workspace = recreated.previewWorkspace;
     const auto expected = layout::previewColumns(
-        workspace.getLocalBounds().reduced(layout::compactPreview::padding), true, savedControls, savedInformation
+        workspace.getLocalBounds().reduced(layout::compactPreview::PADDING), true, savedControls, savedInformation
     );
     EXPECT_EQ(workspace.audioInfo.getBounds(), expected.information);
     EXPECT_EQ(workspace.thumbnail.getBounds(), expected.waveform);

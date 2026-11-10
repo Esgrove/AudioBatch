@@ -31,8 +31,8 @@ namespace audiobatch
 {
 namespace
 {
-constexpr double maximumDurationError {1.0e-9};
-constexpr int maximumMeasurementSampleRate {2'822'400};
+constexpr double MAXIMUM_DURATION_ERROR {1.0e-9};
+constexpr int MAXIMUM_MEASUREMENT_SAMPLE_RATE {2'822'400};
 /// One cached row, identified by path and the file version it describes.
 struct CachedRow {
     /// Path of the file the row describes.
@@ -63,15 +63,15 @@ bool validRecordColumns(sqlite3_stmt& statement)
 {
     for (const auto column :
          {
-             analysis_column::fileSize,
-             analysis_column::modifiedTimeMs,
-             analysis_column::lengthInSamples,
-             analysis_column::sampleRate,
-             analysis_column::channels,
-             analysis_column::bitsPerSample,
-             analysis_column::status,
-             analysis_column::analysisVersion,
-             analysis_column::hasCustomGain,
+             analysis_column::FILE_SIZE,
+             analysis_column::MODIFIED_TIME_MS,
+             analysis_column::LENGTH_IN_SAMPLES,
+             analysis_column::SAMPLE_RATE,
+             analysis_column::CHANNELS,
+             analysis_column::BITS_PER_SAMPLE,
+             analysis_column::STATUS,
+             analysis_column::ANALYSIS_VERSION,
+             analysis_column::HAS_CUSTOM_GAIN,
          })
     {
         if (sqlite3_column_type(&statement, column) != SQLITE_INTEGER) {
@@ -80,16 +80,16 @@ bool validRecordColumns(sqlite3_stmt& statement)
     }
     for (const auto column :
          {
-             analysis_column::durationSeconds,
-             analysis_column::peakLeft,
-             analysis_column::peakRight,
-             analysis_column::overallPeak,
-             analysis_column::truePeakLeft,
-             analysis_column::truePeakRight,
-             analysis_column::overallTruePeak,
-             analysis_column::maxShortTermLufs,
-             analysis_column::integratedLufs,
-             analysis_column::customGainDb,
+             analysis_column::DURATION_SECONDS,
+             analysis_column::PEAK_LEFT,
+             analysis_column::PEAK_RIGHT,
+             analysis_column::OVERALL_PEAK,
+             analysis_column::TRUE_PEAK_LEFT,
+             analysis_column::TRUE_PEAK_RIGHT,
+             analysis_column::OVERALL_TRUE_PEAK,
+             analysis_column::MAX_SHORT_TERM_LUFS,
+             analysis_column::INTEGRATED_LUFS,
+             analysis_column::CUSTOM_GAIN_DB,
          })
     {
         const auto type = sqlite3_column_type(&statement, column);
@@ -101,12 +101,12 @@ bool validRecordColumns(sqlite3_stmt& statement)
     }
     for (const auto column :
          {
-             analysis_column::sampleRate,
-             analysis_column::channels,
-             analysis_column::bitsPerSample,
-             analysis_column::status,
-             analysis_column::analysisVersion,
-             analysis_column::hasCustomGain,
+             analysis_column::SAMPLE_RATE,
+             analysis_column::CHANNELS,
+             analysis_column::BITS_PER_SAMPLE,
+             analysis_column::STATUS,
+             analysis_column::ANALYSIS_VERSION,
+             analysis_column::HAS_CUSTOM_GAIN,
          })
     {
         const auto value = sqlite3_column_int64(&statement, column);
@@ -116,10 +116,10 @@ bool validRecordColumns(sqlite3_stmt& statement)
     }
     for (const auto column :
          {
-             analysis_column::peakLeft,
-             analysis_column::peakRight,
-             analysis_column::overallPeak,
-             analysis_column::customGainDb,
+             analysis_column::PEAK_LEFT,
+             analysis_column::PEAK_RIGHT,
+             analysis_column::OVERALL_PEAK,
+             analysis_column::CUSTOM_GAIN_DB,
          })
     {
         if (std::abs(sqlite3_column_double(&statement, column))
@@ -128,23 +128,23 @@ bool validRecordColumns(sqlite3_stmt& statement)
             return false;
         }
     }
-    return sqlite3_column_type(&statement, analysis_column::fileName) == SQLITE_TEXT
-        && sqlite3_column_bytes(&statement, analysis_column::fileName) <= 4096
-        && (sqlite3_column_type(&statement, analysis_column::formatName) == SQLITE_TEXT
-            || sqlite3_column_type(&statement, analysis_column::formatName) == SQLITE_NULL)
-        && sqlite3_column_bytes(&statement, analysis_column::formatName) <= 4096
-        && (sqlite3_column_type(&statement, analysis_column::errorMessage) == SQLITE_TEXT
-            || sqlite3_column_type(&statement, analysis_column::errorMessage) == SQLITE_NULL)
-        && sqlite3_column_bytes(&statement, analysis_column::errorMessage) <= 65'536
-        && sqlite3_column_type(&statement, analysis_column::measurementProducer) == SQLITE_TEXT
-        && sqlite3_column_bytes(&statement, analysis_column::measurementProducer) <= 4;
+    return sqlite3_column_type(&statement, analysis_column::FILE_NAME) == SQLITE_TEXT
+        && sqlite3_column_bytes(&statement, analysis_column::FILE_NAME) <= 4096
+        && (sqlite3_column_type(&statement, analysis_column::FORMAT_NAME) == SQLITE_TEXT
+            || sqlite3_column_type(&statement, analysis_column::FORMAT_NAME) == SQLITE_NULL)
+        && sqlite3_column_bytes(&statement, analysis_column::FORMAT_NAME) <= 4096
+        && (sqlite3_column_type(&statement, analysis_column::ERROR_MESSAGE) == SQLITE_TEXT
+            || sqlite3_column_type(&statement, analysis_column::ERROR_MESSAGE) == SQLITE_NULL)
+        && sqlite3_column_bytes(&statement, analysis_column::ERROR_MESSAGE) <= 65'536
+        && sqlite3_column_type(&statement, analysis_column::MEASUREMENT_PRODUCER) == SQLITE_TEXT
+        && sqlite3_column_bytes(&statement, analysis_column::MEASUREMENT_PRODUCER) <= 4;
 }
 
 /// Validates numerical measurements and geometry before adopting data from either implementation.
 bool validMeasurements(const AudioAnalysisRecord& record)
 {
     const auto validLoudness = [](const double value) {
-        return std::isfinite(value) && value >= AudioAnalysisRecord::negativeInfinityLoudness
+        return std::isfinite(value) && value >= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS
             && value <= MAXIMUM_CACHED_LOUDNESS;
     };
     const auto validPeak = [](const double value) {
@@ -158,11 +158,11 @@ bool validMeasurements(const AudioAnalysisRecord& record)
     if (record.hasError()) {
         return true;
     }
-    return record.isReady() && record.sampleRate >= 16 && record.sampleRate <= maximumMeasurementSampleRate
+    return record.isReady() && record.sampleRate >= 16 && record.sampleRate <= MAXIMUM_MEASUREMENT_SAMPLE_RATE
         && record.channels >= 1 && record.channels <= MAXIMUM_CACHED_CHANNELS && record.bitsPerSample >= 0
         && record.bitsPerSample <= 64 && record.lengthInSamples >= 0 && std::isfinite(record.durationSeconds)
         && std::abs(record.durationSeconds - static_cast<double>(record.lengthInSamples) / record.sampleRate)
-        <= maximumDurationError
+        <= MAXIMUM_DURATION_ERROR
         && validPeak(static_cast<double>(record.peakLeft)) && validPeak(static_cast<double>(record.peakRight))
         && validPeak(static_cast<double>(record.overallPeak)) && std::isfinite(record.truePeakLeft)
         && std::isfinite(record.truePeakRight) && std::isfinite(record.overallTruePeak) && record.truePeakLeft >= 0.0
@@ -172,17 +172,18 @@ bool validMeasurements(const AudioAnalysisRecord& record)
 /// Restores required bounded histories independently of optional waveform and tag artifacts.
 bool readRequiredHistories(sqlite3_stmt& statement, AudioAnalysisRecord& record)
 {
-    if (sqlite3_column_type(&statement, analysis_column::shortTermLoudness) == SQLITE_BLOB
-        && sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness)
+    if (sqlite3_column_type(&statement, analysis_column::SHORT_TERM_LOUDNESS) == SQLITE_BLOB
+        && sqlite3_column_bytes(&statement, analysis_column::SHORT_TERM_LOUDNESS)
             <= static_cast<int>(MAXIMUM_HISTORY_BYTES))
     {
         // SQLite owns this nullable blob until the next step or reset. Reject null before forming a byte span.
         if (const auto* data
-            = static_cast<const std::byte*>(sqlite3_column_blob(&statement, analysis_column::shortTermLoudness)))
+            = static_cast<const std::byte*>(sqlite3_column_blob(&statement, analysis_column::SHORT_TERM_LOUDNESS)))
         {
             record.shortTermLoudness = deserializeLoudnessHistory(
                 std::span(
-                    data, static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::shortTermLoudness))
+                    data,
+                    static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::SHORT_TERM_LOUDNESS))
                 ),
                 record
             );
@@ -194,14 +195,15 @@ bool readRequiredHistories(sqlite3_stmt& statement, AudioAnalysisRecord& record)
         );
         return false;
     }
-    constexpr auto maximumOverloadBytes = 40 + OverloadHistory::maximumBuckets * 64;
-    if (sqlite3_column_type(&statement, analysis_column::overloadHistory) == SQLITE_BLOB
-        && sqlite3_column_bytes(&statement, analysis_column::overloadHistory) <= static_cast<int>(maximumOverloadBytes))
+    constexpr auto maximumOverloadBytes = 40 + OverloadHistory::MAXIMUM_BUCKETS * 64;
+    if (sqlite3_column_type(&statement, analysis_column::OVERLOAD_HISTORY) == SQLITE_BLOB
+        && sqlite3_column_bytes(&statement, analysis_column::OVERLOAD_HISTORY)
+            <= static_cast<int>(maximumOverloadBytes))
     {
         record.overloads = deserializeOverloadHistory(
             std::span(
-                static_cast<const std::byte*>(sqlite3_column_blob(&statement, analysis_column::overloadHistory)),
-                static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::overloadHistory))
+                static_cast<const std::byte*>(sqlite3_column_blob(&statement, analysis_column::OVERLOAD_HISTORY)),
+                static_cast<std::size_t>(sqlite3_column_bytes(&statement, analysis_column::OVERLOAD_HISTORY))
             )
         );
     }
@@ -229,11 +231,11 @@ bool bindHistories(
     const AudioAnalysisRecord& record
 )
 {
-    return sqlite::bindNull(statement, analysis_parameter::waveformData)
-        && (failed ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
-                   : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudness))
-        && (failed ? sqlite::bindNull(statement, analysis_parameter::overloadHistory)
-                   : sqlite::bindBlob(statement, analysis_parameter::overloadHistory, overloads))
+    return sqlite::bindNull(statement, analysis_parameter::WAVEFORM_DATA)
+        && (failed ? sqlite::bindNull(statement, analysis_parameter::SHORT_TERM_LOUDNESS)
+                   : sqlite::bindBlob(statement, analysis_parameter::SHORT_TERM_LOUDNESS, loudness))
+        && (failed ? sqlite::bindNull(statement, analysis_parameter::OVERLOAD_HISTORY)
+                   : sqlite::bindBlob(statement, analysis_parameter::OVERLOAD_HISTORY, overloads))
         && bindSignalMetrics(statement, record);
 }
 
@@ -241,9 +243,11 @@ bool bindHistories(
 bool bindObservedSource(sqlite3_stmt& statement, const std::optional<std::pair<std::int64_t, std::int64_t>>& source)
 {
     const auto [size, modified] = source.value_or(std::pair<std::int64_t, std::int64_t> {});
-    return sqlite::bindInt64(statement, analysis_parameter::observedSourcePresent, static_cast<int>(source.has_value()))
-        && sqlite::bindInt64(statement, analysis_parameter::observedFileSize, size)
-        && sqlite::bindInt64(statement, analysis_parameter::observedModifiedTimeMs, modified);
+    return sqlite::bindInt64(
+               statement, analysis_parameter::OBSERVED_SOURCE_PRESENT, static_cast<int>(source.has_value())
+           )
+        && sqlite::bindInt64(statement, analysis_parameter::OBSERVED_FILE_SIZE, size)
+        && sqlite::bindInt64(statement, analysis_parameter::OBSERVED_MODIFIED_TIME_MS, modified);
 }
 
 /// Reads the persisted source version with the caller's connection and returns false only for database errors.
@@ -306,8 +310,8 @@ bool invalidateIncompatibleSpectrograms(
     const AudioAnalysisRecord& record
 )
 {
-    constexpr int CHANNELS_PARAMETER {5};
-    constexpr int LENGTH_PARAMETER {6};
+    constexpr int channelsParameter {5};
+    constexpr int lengthParameter {6};
     constexpr auto sql = R"SQL(
         DELETE FROM spectrogram_cache WHERE file_path = ?1
             AND (file_size <> ?2 OR modified_time_ms <> ?3 OR sample_rate <> ?4
@@ -320,8 +324,8 @@ bool invalidateIncompatibleSpectrograms(
     return statement.isValid() && sqlite::bindText(*statement, 1, record.fullPath)
         && sqlite::bindInt64(*statement, 2, record.fileSize) && sqlite::bindInt64(*statement, 3, record.modifiedTimeMs)
         && sqlite::bindInt64(*statement, 4, record.sampleRate)
-        && sqlite::bindInt64(*statement, CHANNELS_PARAMETER, record.channels)
-        && sqlite::bindInt64(*statement, LENGTH_PARAMETER, record.lengthInSamples)
+        && sqlite::bindInt64(*statement, channelsParameter, record.channels)
+        && sqlite::bindInt64(*statement, lengthParameter, record.lengthInSamples)
         && sqlite::stepToCompletion(*statement);
 }
 }  // namespace
@@ -379,37 +383,37 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
     if (!validRecordColumns(*statement)) {
         return std::nullopt;
     }
-    const auto producer = sqlite::columnText(*statement, analysis_column::measurementProducer);
+    const auto producer = sqlite::columnText(*statement, analysis_column::MEASUREMENT_PRODUCER);
     if (producer != "cpp" && producer != "rust") {
         return std::nullopt;
     }
     record.measurementProducer = producer == "cpp" ? MeasurementProducer::cpp : MeasurementProducer::rust;
-    const auto cachedFileSize = sqlite3_column_int64(statement, analysis_column::fileSize);
-    const auto cachedModifiedTime = sqlite3_column_int64(statement, analysis_column::modifiedTimeMs);
-    const auto cachedVersion = sqlite3_column_int(statement, analysis_column::analysisVersion);
+    const auto cachedFileSize = sqlite3_column_int64(statement, analysis_column::FILE_SIZE);
+    const auto cachedModifiedTime = sqlite3_column_int64(statement, analysis_column::MODIFIED_TIME_MS);
+    const auto cachedVersion = sqlite3_column_int(statement, analysis_column::ANALYSIS_VERSION);
 
     if (cachedFileSize != record.fileSize || cachedModifiedTime != record.modifiedTimeMs
-        || cachedVersion != analysisVersion)
+        || cachedVersion != ANALYSIS_VERSION)
     {
         return std::nullopt;
     }
 
-    record.fileName = sqlite::columnText(*statement, analysis_column::fileName);
-    record.formatName = sqlite::columnText(*statement, analysis_column::formatName);
-    record.lengthInSamples = sqlite3_column_int64(statement, analysis_column::lengthInSamples);
-    record.durationSeconds = sqlite3_column_double(statement, analysis_column::durationSeconds);
-    record.peakLeft = static_cast<float>(sqlite3_column_double(statement, analysis_column::peakLeft));
-    record.peakRight = static_cast<float>(sqlite3_column_double(statement, analysis_column::peakRight));
-    record.overallPeak = static_cast<float>(sqlite3_column_double(statement, analysis_column::overallPeak));
-    record.truePeakLeft = sqlite3_column_double(statement, analysis_column::truePeakLeft);
-    record.truePeakRight = sqlite3_column_double(statement, analysis_column::truePeakRight);
-    record.overallTruePeak = sqlite3_column_double(statement, analysis_column::overallTruePeak);
-    record.maxShortTermLufs = sqlite3_column_double(statement, analysis_column::maxShortTermLufs);
-    record.integratedLufs = sqlite3_column_double(statement, analysis_column::integratedLufs);
-    record.sampleRate = sqlite3_column_int(statement, analysis_column::sampleRate);
-    record.channels = sqlite3_column_int(statement, analysis_column::channels);
-    record.bitsPerSample = sqlite3_column_int(statement, analysis_column::bitsPerSample);
-    const auto status = statusFromColumn(sqlite3_column_int(statement, analysis_column::status));
+    record.fileName = sqlite::columnText(*statement, analysis_column::FILE_NAME);
+    record.formatName = sqlite::columnText(*statement, analysis_column::FORMAT_NAME);
+    record.lengthInSamples = sqlite3_column_int64(statement, analysis_column::LENGTH_IN_SAMPLES);
+    record.durationSeconds = sqlite3_column_double(statement, analysis_column::DURATION_SECONDS);
+    record.peakLeft = static_cast<float>(sqlite3_column_double(statement, analysis_column::PEAK_LEFT));
+    record.peakRight = static_cast<float>(sqlite3_column_double(statement, analysis_column::PEAK_RIGHT));
+    record.overallPeak = static_cast<float>(sqlite3_column_double(statement, analysis_column::OVERALL_PEAK));
+    record.truePeakLeft = sqlite3_column_double(statement, analysis_column::TRUE_PEAK_LEFT);
+    record.truePeakRight = sqlite3_column_double(statement, analysis_column::TRUE_PEAK_RIGHT);
+    record.overallTruePeak = sqlite3_column_double(statement, analysis_column::OVERALL_TRUE_PEAK);
+    record.maxShortTermLufs = sqlite3_column_double(statement, analysis_column::MAX_SHORT_TERM_LUFS);
+    record.integratedLufs = sqlite3_column_double(statement, analysis_column::INTEGRATED_LUFS);
+    record.sampleRate = sqlite3_column_int(statement, analysis_column::SAMPLE_RATE);
+    record.channels = sqlite3_column_int(statement, analysis_column::CHANNELS);
+    record.bitsPerSample = sqlite3_column_int(statement, analysis_column::BITS_PER_SAMPLE);
+    const auto status = statusFromColumn(sqlite3_column_int(statement, analysis_column::STATUS));
     if (!status.has_value()) {
         utils::logWarn("Invalid cached analysis status for {}, reanalysis required", record.fullPath.quoted());
         return std::nullopt;
@@ -418,18 +422,18 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
     if (record.hasError() && record.measurementProducer != MeasurementProducer::cpp) {
         return std::nullopt;
     }
-    record.errorMessage = sqlite::columnText(*statement, analysis_column::errorMessage);
+    record.errorMessage = sqlite::columnText(*statement, analysis_column::ERROR_MESSAGE);
     // Only failures that repeat for the same bytes are stored.
     if (record.hasError()) {
         record.error = AnalysisError::unsupported;
     }
-    const auto hasCustomGain = sqlite3_column_int64(statement, analysis_column::hasCustomGain);
+    const auto hasCustomGain = sqlite3_column_int64(statement, analysis_column::HAS_CUSTOM_GAIN);
     if (hasCustomGain != 0 && hasCustomGain != 1) {
         return std::nullopt;
     }
     if (hasCustomGain == 1) {
         record.customGain
-            = Decibels {static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb))};
+            = Decibels {static_cast<float>(sqlite3_column_double(statement, analysis_column::CUSTOM_GAIN_DB))};
     }
     if (!validMeasurements(record)) {
         return std::nullopt;
@@ -577,35 +581,39 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     }
 
     auto& statement = *prepared;
-    const bool textBound = sqlite::bindText(statement, analysis_parameter::filePath, record.fullPath)
-        && sqlite::bindText(statement, analysis_parameter::fileName, record.fileName)
-        && sqlite::bindText(statement, analysis_parameter::formatName, record.formatName)
-        && sqlite::bindText(statement, analysis_parameter::errorMessage, record.errorMessage)
+    const bool textBound = sqlite::bindText(statement, analysis_parameter::FILE_PATH, record.fullPath)
+        && sqlite::bindText(statement, analysis_parameter::FILE_NAME, record.fileName)
+        && sqlite::bindText(statement, analysis_parameter::FORMAT_NAME, record.formatName)
+        && sqlite::bindText(statement, analysis_parameter::ERROR_MESSAGE, record.errorMessage)
         && sqlite::bindText(statement,
-                            analysis_parameter::measurementProducer,
+                            analysis_parameter::MEASUREMENT_PRODUCER,
                             record.measurementProducer == MeasurementProducer::cpp ? "cpp" : "rust");
-    const bool integersBound = sqlite::bindInt64(statement, analysis_parameter::fileSize, record.fileSize)
-        && sqlite::bindInt64(statement, analysis_parameter::modifiedTimeMs, record.modifiedTimeMs)
-        && sqlite::bindInt64(statement, analysis_parameter::lengthInSamples, record.lengthInSamples)
-        && sqlite::bindInt64(statement, analysis_parameter::sampleRate, record.sampleRate)
-        && sqlite::bindInt64(statement, analysis_parameter::channels, record.channels)
-        && sqlite::bindInt64(statement, analysis_parameter::bitsPerSample, record.bitsPerSample)
-        && sqlite::bindInt64(statement, analysis_parameter::status, std::to_underlying(record.status))
-        && sqlite::bindInt64(statement, analysis_parameter::waveformVersion, 0)
-        && sqlite::bindInt64(statement, analysis_parameter::analysisVersion, analysisVersion)
-        && sqlite::bindInt64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())
-        && sqlite::bindInt64(statement, analysis_parameter::hasCustomGain, record.customGain.has_value() ? 1 : 0);
-    const bool numbersBound = sqlite::bindDouble(statement, analysis_parameter::durationSeconds, record.durationSeconds)
-        && sqlite::bindDouble(statement, analysis_parameter::peakLeft, static_cast<double>(record.peakLeft))
-        && sqlite::bindDouble(statement, analysis_parameter::peakRight, static_cast<double>(record.peakRight))
-        && sqlite::bindDouble(statement, analysis_parameter::overallPeak, static_cast<double>(record.overallPeak))
-        && sqlite::bindDouble(statement, analysis_parameter::truePeakLeft, record.truePeakLeft)
-        && sqlite::bindDouble(statement, analysis_parameter::truePeakRight, record.truePeakRight)
-        && sqlite::bindDouble(statement, analysis_parameter::overallTruePeak, record.overallTruePeak)
-        && sqlite::bindDouble(statement, analysis_parameter::maxShortTermLufs, record.maxShortTermLufs)
-        && sqlite::bindDouble(statement, analysis_parameter::integratedLufs, record.integratedLufs)
+    const bool integersBound = sqlite::bindInt64(statement, analysis_parameter::FILE_SIZE, record.fileSize)
+        && sqlite::bindInt64(statement, analysis_parameter::MODIFIED_TIME_MS, record.modifiedTimeMs)
+        && sqlite::bindInt64(statement, analysis_parameter::LENGTH_IN_SAMPLES, record.lengthInSamples)
+        && sqlite::bindInt64(statement, analysis_parameter::SAMPLE_RATE, record.sampleRate)
+        && sqlite::bindInt64(statement, analysis_parameter::CHANNELS, record.channels)
+        && sqlite::bindInt64(statement, analysis_parameter::BITS_PER_SAMPLE, record.bitsPerSample)
+        && sqlite::bindInt64(statement, analysis_parameter::STATUS, std::to_underlying(record.status))
+        && sqlite::bindInt64(statement, analysis_parameter::WAVEFORM_VERSION, 0)
+        && sqlite::bindInt64(statement, analysis_parameter::ANALYSIS_VERSION, ANALYSIS_VERSION)
+        && sqlite::bindInt64(statement,
+                             analysis_parameter::UPDATED_AT_MS,
+                             juce::Time::getCurrentTime().toMilliseconds())
+        && sqlite::bindInt64(statement, analysis_parameter::HAS_CUSTOM_GAIN, record.customGain.has_value() ? 1 : 0);
+    const bool numbersBound = sqlite::bindDouble(
+                                  statement, analysis_parameter::DURATION_SECONDS, record.durationSeconds
+                              )
+        && sqlite::bindDouble(statement, analysis_parameter::PEAK_LEFT, static_cast<double>(record.peakLeft))
+        && sqlite::bindDouble(statement, analysis_parameter::PEAK_RIGHT, static_cast<double>(record.peakRight))
+        && sqlite::bindDouble(statement, analysis_parameter::OVERALL_PEAK, static_cast<double>(record.overallPeak))
+        && sqlite::bindDouble(statement, analysis_parameter::TRUE_PEAK_LEFT, record.truePeakLeft)
+        && sqlite::bindDouble(statement, analysis_parameter::TRUE_PEAK_RIGHT, record.truePeakRight)
+        && sqlite::bindDouble(statement, analysis_parameter::OVERALL_TRUE_PEAK, record.overallTruePeak)
+        && sqlite::bindDouble(statement, analysis_parameter::MAX_SHORT_TERM_LUFS, record.maxShortTermLufs)
+        && sqlite::bindDouble(statement, analysis_parameter::INTEGRATED_LUFS, record.integratedLufs)
         && sqlite::bindDouble(statement,
-                              analysis_parameter::customGainDb,
+                              analysis_parameter::CUSTOM_GAIN_DB,
                               static_cast<double>(record.customGain.value_or(Decibels {}).value));
     const bool blobsBound = bindHistories(statement, record.hasError(), loudnessData, overloadData, record);
 

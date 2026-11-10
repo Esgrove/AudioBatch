@@ -25,13 +25,13 @@
 namespace audiobatch
 {
 /// Largest width or height of a decoded thumbnail, twice the 48 px it is drawn at for high density displays.
-constexpr int artworkThumbnailSize {96};
+constexpr int ARTWORK_THUMBNAIL_SIZE {96};
 
 /// Largest width or height a source image may declare, so a hostile header cannot make the decoder allocate gigabytes.
-constexpr int artworkMaximumSourceDimension {4096};
+constexpr int ARTWORK_MAXIMUM_SOURCE_DIMENSION {4096};
 
 /// Maximum decoded RGBA pixel storage, checked with division before multiplying the source dimensions.
-constexpr std::size_t artworkMaximumDecodedBytes {std::size_t {64} * 1024 * 1024};
+constexpr std::size_t ARTWORK_MAXIMUM_DECODED_BYTES {std::size_t {64} * 1024 * 1024};
 
 /// One artwork request, with the file identity it was made for.
 struct ArtworkRequest {

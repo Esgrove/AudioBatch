@@ -29,23 +29,23 @@ enum class AudioNormalizationMode : std::uint8_t {
 /// Options controlling how a file is normalized.
 struct AudioNormalizationOptions {
     /// Default target integrated loudness, in LUFS.
-    static constexpr double defaultTargetLufs {-14.0};
+    static constexpr double DEFAULT_TARGET_LUFS {-14.0};
     /// Default target sample peak, in dBFS.
-    static constexpr double defaultTargetPeakDbfs {0.0};
+    static constexpr double DEFAULT_TARGET_PEAK_DBFS {0.0};
     /// Default highest true peak allowed in loudness mode, in dBTP.
-    static constexpr double defaultTruePeakCeilingDbtp {-0.3};
+    static constexpr double DEFAULT_TRUE_PEAK_CEILING_DBTP {-0.3};
 
     /// Largest gain normalization applies, in dB.
     /// A file that would need more is close to silent, and raising it further would mostly amplify noise.
-    static constexpr double maximumGainDb {40.0};
+    static constexpr double MAXIMUM_GAIN_DB {40.0};
     /// Highest accepted target integrated loudness, in LUFS.
-    static constexpr double maximumTargetLufs {-6.0};
+    static constexpr double MAXIMUM_TARGET_LUFS {-6.0};
     /// Highest accepted target sample peak, in dBFS.
-    static constexpr double maximumTargetPeakDbfs {0.0};
+    static constexpr double MAXIMUM_TARGET_PEAK_DBFS {0.0};
     /// Lowest accepted target integrated loudness, in LUFS.
-    static constexpr double minimumTargetLufs {-24.0};
+    static constexpr double MINIMUM_TARGET_LUFS {-24.0};
     /// Lowest accepted target sample peak, in dBFS.
-    static constexpr double minimumTargetPeakDbfs {-12.0};
+    static constexpr double MINIMUM_TARGET_PEAK_DBFS {-12.0};
 
     /// Whether the target is a sample peak or an integrated loudness.
     AudioNormalizationMode mode {AudioNormalizationMode::peak};
@@ -55,12 +55,12 @@ struct AudioNormalizationOptions {
     utils::FileDisposer disposeFile {utils::trashFile};
 
     /// Target integrated loudness in loudness mode, in LUFS.
-    double targetLufs {defaultTargetLufs};
+    double targetLufs {DEFAULT_TARGET_LUFS};
     /// Target sample peak in peak mode, in dBFS.
-    double targetPeakDbfs {defaultTargetPeakDbfs};
+    double targetPeakDbfs {DEFAULT_TARGET_PEAK_DBFS};
     /// Highest true peak allowed in loudness mode, in dBTP.
     /// When reaching the target loudness would exceed it, the gain is reduced to stay at the ceiling.
-    double truePeakCeilingDbtp {defaultTruePeakCeilingDbtp};
+    double truePeakCeilingDbtp {DEFAULT_TRUE_PEAK_CEILING_DBTP};
 
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.

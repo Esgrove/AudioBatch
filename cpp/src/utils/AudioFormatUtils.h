@@ -23,7 +23,7 @@
 namespace audiobatch::utils
 {
 /// Fallback sample rate for preview and plugin preparation before an audio device is available.
-constexpr double defaultSampleRate {48'000.0};
+constexpr double DEFAULT_SAMPLE_RATE {48'000.0};
 OptionalRef<juce::AudioFormat> findAiffFormat(const juce::AudioFormatManager& formatManager);
 [[nodiscard]] TagLib::FileName tagLibFileName(const juce::String& fullPath);
 juce::AudioFormatManager& threadLocalFormatManager();

@@ -26,7 +26,7 @@ namespace audiobatch::tests
 namespace
 {
 /// How long a coordinator test waits for a run to reach the expected state before it fails.
-constexpr auto coordinatorTimeout {std::chrono::seconds(10)};
+constexpr auto COORDINATOR_TIMEOUT {std::chrono::seconds(10)};
 }  // namespace
 
 /// Checks what an analysis run publishes, in which order, and that a replaced run goes quiet.
@@ -130,7 +130,7 @@ public:
             AnalysisCoordinator coordinator(cache, 1);
             coordinator.setStartingCallback([&](const juce::File&, int) {
                 started.store(true);
-                const auto deadline = std::chrono::steady_clock::now() + coordinatorTimeout;
+                const auto deadline = std::chrono::steady_clock::now() + COORDINATOR_TIMEOUT;
                 while (!finished.load() && std::chrono::steady_clock::now() < deadline) {
                     std::this_thread::yield();
                 }
@@ -178,7 +178,7 @@ private:
             }
             heldRunId = runId;
             condition.notify_all();
-            condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+            condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return released; });
         });
         coordinator.setResultCallback([&](const AudioAnalysisRecord& /*record*/, const int runId) {
             const std::scoped_lock lock(mutex);
@@ -196,7 +196,7 @@ private:
         const auto replacedRunId = coordinator.start(replacedRun);
         {
             std::unique_lock lock(mutex);
-            expect(condition.wait_for(lock, coordinatorTimeout, [&] { return heldRunId >= 0; }));
+            expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return heldRunId >= 0; }));
             expectEquals(heldRunId, replacedRunId);
         }
 
@@ -210,7 +210,7 @@ private:
             std::unique_lock lock(mutex);
             released = true;
             condition.notify_all();
-            expect(condition.wait_for(lock, coordinatorTimeout, [&] {
+            expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] {
                 return std::ranges::contains(completedRunIds, currentRunId);
             }));
         }

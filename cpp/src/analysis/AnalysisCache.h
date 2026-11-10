@@ -96,9 +96,9 @@ private:
     void closeUnlocked();
 
     /// Raised when the analysis changed, so cached results of the older analysis are analyzed again.
-    static constexpr int analysisVersion {16};
+    static constexpr int ANALYSIS_VERSION {16};
     /// Raised when waveform detail or source-version rules change, so older peaks are generated again.
-    static constexpr int waveformVersion {3};
+    static constexpr int WAVEFORM_VERSION {3};
 
     /// Serializes every use of the connection, which is opened without SQLite's own mutex.
     juce::CriticalSection mutex;

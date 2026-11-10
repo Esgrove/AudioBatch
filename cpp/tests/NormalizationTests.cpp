@@ -34,7 +34,7 @@ namespace audiobatch::tests
 namespace
 {
 /// Allowed difference between the normalized peak and 0 dBFS, in dB.
-constexpr double peakTolerance {0.01};
+constexpr double PEAK_TOLERANCE {0.01};
 
 /// Builds an analysis record for a file path without analyzing it.
 AudioAnalysisRecord recordForPath(const juce::String& path)
@@ -98,7 +98,7 @@ void NormalizationTests::checkInPlaceNormalization(
     expectEquals(outcomeRecord(result.outcome).channels, channels);
     expectEquals(outcomeRecord(result.outcome).sampleRate, sampleRate);
     expectEquals(outcomeRecord(result.outcome).bitsPerSample, bitsPerSample);
-    expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), 0.0, peakTolerance);
+    expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), 0.0, PEAK_TOLERANCE);
 }
 
 /// Converts sources of other formats to AIFF, checking the tags and art carried over and the output bit depth.
@@ -212,12 +212,12 @@ void NormalizationTests::runGainLimitTests()
         options.targetLufs = -14.0;
 
         // Both values are whole numbers, so the gain is exactly the limit.
-        record.integratedLufs = options.targetLufs - AudioNormalizationOptions::maximumGainDb;
+        record.integratedLufs = options.targetLufs - AudioNormalizationOptions::MAXIMUM_GAIN_DB;
         const auto atLimit = getNormalizationGain(record, options);
         expect(atLimit.has_value(), atLimit.error_or({}));
         expectWithinAbsoluteError(
             static_cast<double>(juce::Decibels::gainToDecibels(atLimit.value_or(LinearGain {0.0f}).value)),
-            AudioNormalizationOptions::maximumGainDb,
+            AudioNormalizationOptions::MAXIMUM_GAIN_DB,
             0.001
         );
 
@@ -254,7 +254,7 @@ void NormalizationTests::runGainLimitTests()
 
         // A single click has a peak, but the gate leaves no loudness to measure.
         auto click = analyzeFile(fixtureFile("click_mono_44100_16.wav"));
-        click.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+        click.integratedLufs = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
         const auto clickGain = getNormalizationGain(click, options);
         expectEquals(clickGain.error_or({}), juce::String("File has no measurable loudness to normalize"));
         options.mode = AudioNormalizationMode::peak;
@@ -581,7 +581,7 @@ void NormalizationTests::runFileTests()
             expect(!result.hasError(), outcomeError(result.outcome));
             expect(outcomeRecord(result.outcome).file == source);
             expect(source.existsAsFile());
-            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), 0.0, peakTolerance);
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), 0.0, PEAK_TOLERANCE);
         }
     }
 
@@ -600,7 +600,7 @@ void NormalizationTests::runFileTests()
         const auto result = normalizeFile(staleRecord, testNormalizationOptions());
         expect(!result.hasError(), outcomeError(result.outcome));
         expectWithinAbsoluteError(
-            outcomeRecord(result.outcome).integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1
+            outcomeRecord(result.outcome).integratedLufs, FIXTURE_LOUDNESS - FIXTURE_PEAK_DECIBELS, 0.1
         );
     }
 
@@ -642,7 +642,7 @@ void NormalizationTests::runFileTests()
         expect(source.getLastModificationTime() == modifiedBefore);
         expectEquals(source.getSize(), sizeBefore);
         expect(outcomeRecord(result.outcome).matchesFileOnDisk());
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), options.targetPeakDbfs, peakTolerance);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), options.targetPeakDbfs, PEAK_TOLERANCE);
     }
 
     beginTest("Foreign levels are remeasured before refusal and in-place no-op decisions");
@@ -657,7 +657,7 @@ void NormalizationTests::runFileTests()
         if (!result.hasError()) {
             const auto& output = outcomeRecord(result.outcome);
             expect(output.measurementProducer == MeasurementProducer::cpp);
-            expectWithinAbsoluteError(peakDecibels(output), 0.0, peakTolerance);
+            expectWithinAbsoluteError(peakDecibels(output), 0.0, PEAK_TOLERANCE);
         }
     }
 
@@ -744,7 +744,7 @@ void NormalizationTests::runFileTests()
         expect(gain.has_value(), gain.error_or({}));
         expectWithinAbsoluteError(
             static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(LinearGain {0.0f}).value)),
-            AudioNormalizationOptions::defaultTruePeakCeilingDbtp
+            AudioNormalizationOptions::DEFAULT_TRUE_PEAK_CEILING_DBTP
                 - juce::Decibels::gainToDecibels(record.overallTruePeak),
             0.01
         );
@@ -770,7 +770,7 @@ void NormalizationTests::runFileTests()
 
         const auto result = normalizeFile(analyzeFile(source), options);
         expect(!result.hasError(), outcomeError(result.outcome));
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, peakTolerance);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, PEAK_TOLERANCE);
     }
 
     beginTest("A silent file cannot be normalized");
@@ -826,8 +826,8 @@ void NormalizationTests::runFileTests()
 
         expect(!result.hasError(), outcomeError(result.outcome));
         expectEquals(outcomeRecord(result.outcome).file.getFileName(), juce::String("click.aif"));
-        expectEquals(outcomeRecord(result.outcome).lengthInSamples, clickFixtureLength);
-        expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), clickFixturePosition);
+        expectEquals(outcomeRecord(result.outcome).lengthInSamples, CLICK_FIXTURE_LENGTH);
+        expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), CLICK_FIXTURE_POSITION);
     }
 
     beginTest("An .aif source normalized in place disposes of a copy of the original first");
@@ -848,7 +848,7 @@ void NormalizationTests::runFileTests()
         expect(!result.hasError(), outcomeError(result.outcome));
         expectEquals(disposedNames.joinIntoString(","), juce::String("backup.aif"));
         expectEquals(disposedSizes[0], sourceSize);
-        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, peakTolerance);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, PEAK_TOLERANCE);
     }
 
     beginTest("An in-place no-op disposes of nothing");

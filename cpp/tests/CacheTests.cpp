@@ -74,14 +74,14 @@ SpectrogramData spectrogramForRecord(const AudioAnalysisRecord& record)
     data.lengthInSamples = record.lengthInSamples;
     while (std::cmp_greater(
         data.lengthInSamples / data.samplesPerColumn + (data.lengthInSamples % data.samplesPerColumn != 0 ? 1 : 0),
-        SpectrogramData::maximumColumns
+        SpectrogramData::MAXIMUM_COLUMNS
     ))
     {
         data.samplesPerColumn *= 2;
     }
     const auto columns
         = data.lengthInSamples / data.samplesPerColumn + (data.lengthInSamples % data.samplesPerColumn != 0 ? 1 : 0);
-    data.intensities.resize(static_cast<std::size_t>(columns) * SpectrogramData::frequencyRows, 73);
+    data.intensities.resize(static_cast<std::size_t>(columns) * SpectrogramData::FREQUENCY_ROWS, 73);
     return data;
 }
 }  // namespace
@@ -862,7 +862,8 @@ void CacheTests::runLoudnessHistoryTests()
     expect(cached.shortTermLoudness != nullptr);
     if (cached.shortTermLoudness && !cached.shortTermLoudness->values.empty()) {
         expectEquals(
-            cached.shortTermLoudness->values.front(), static_cast<float>(AudioAnalysisRecord::negativeInfinityLoudness)
+            cached.shortTermLoudness->values.front(),
+            static_cast<float>(AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS)
         );
     }
     const auto broken = directory.copyFixture("broken.wav");

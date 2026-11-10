@@ -14,12 +14,12 @@ namespace audiobatch
 namespace
 {
 /// Longest input that is parsed, since longer command lines exercise no new code paths.
-constexpr std::size_t maxInputBytes {4096};
+constexpr std::size_t MAX_INPUT_BYTES {4096};
 
 /// Parses the lines of one fuzz input as command line arguments.
 void fuzzArguments(const std::span<const std::uint8_t> input)
 {
-    if (input.size() > maxInputBytes) {
+    if (input.size() > MAX_INPUT_BYTES) {
         return;
     }
     const auto text = juce::String::createStringFromData(input.data(), static_cast<int>(input.size()));

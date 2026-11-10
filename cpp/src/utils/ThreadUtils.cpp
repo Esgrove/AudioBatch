@@ -19,7 +19,7 @@ namespace audiobatch::utils
 namespace
 {
 /// How long a worker waits for the message thread between cancellation checks, in milliseconds.
-constexpr int messageThreadPollIntervalMs {20};
+constexpr int MESSAGE_THREAD_POLL_INTERVAL_MS {20};
 
 /// Lifecycle of a MessageThreadCall.
 enum class MessageThreadCallState : std::uint8_t { pending, running, abandoned };
@@ -93,7 +93,7 @@ bool callOnMessageThread(std::function<void()> function, const CancellationCheck
         return false;
     }
 
-    while (!call->finished.wait(messageThreadPollIntervalMs)) {
+    while (!call->finished.wait(MESSAGE_THREAD_POLL_INTERVAL_MS)) {
         if (!isCancellationRequested(isCancelled)) {
             continue;
         }

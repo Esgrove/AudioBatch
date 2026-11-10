@@ -13,7 +13,7 @@
 namespace audiobatch
 {
 /// Settings key of the output device the user chose in the audio settings, restored by the first playback.
-constexpr auto audioDeviceStatePropertyKey {"audioDeviceState"};
+constexpr auto AUDIO_DEVICE_STATE_PROPERTY_KEY {"audioDeviceState"};
 
 /// Items of the per-file context menu, whose values are the JUCE popup menu result ids.
 /// New items go at the end, and fileMenuItemFromId names the last one.
@@ -80,25 +80,25 @@ enum class AudioFileTableColumn : std::uint8_t {
 namespace zoom_range
 {
 /// Smallest zoom level in percent, which is also the initial value and shows the whole file.
-constexpr int minimumPercent {100};
+constexpr int MINIMUM_PERCENT {100};
 /// Largest zoom level in percent.
-constexpr int maximumPercent {2000};
+constexpr int MAXIMUM_PERCENT {2000};
 /// Converts a zoom percentage into the scale factor the thumbnail expects.
-constexpr double percentToScaleFactor {0.01};
+constexpr double PERCENT_TO_SCALE_FACTOR {0.01};
 }  // namespace zoom_range
 
 /// Range and step of the per-file gain slider in decibels.
 namespace gain_range
 {
 /// Largest boost or cut in dB the gain slider allows in either direction.
-constexpr double maximumDecibels {12.0};
+constexpr double MAXIMUM_DECIBELS {12.0};
 /// Step size in dB for the slider and for its mouse wheel.
-constexpr double stepDecibels {0.1};
+constexpr double STEP_DECIBELS {0.1};
 /// Gain change in dB of one Ctrl/Cmd mouse wheel event over the waveform, one slider step.
-constexpr float wheelStepDecibels {0.1f};
+constexpr float WHEEL_STEP_DECIBELS {0.1f};
 /// Ctrl/Cmd and Shift mouse wheel events over the waveform per gain step, for fine adjustment of 0.01 dB per event.
 /// The gain keeps the resolution of the slider, so the events add up before the gain changes.
-constexpr int fineWheelEventsPerStep {10};
+constexpr int FINE_WHEEL_EVENTS_PER_STEP {10};
 }  // namespace gain_range
 
 }  // namespace audiobatch

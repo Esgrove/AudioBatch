@@ -195,8 +195,8 @@ void ArtworkTests::testDecoding()
 
     const auto wide = encodePng(400, 200, juce::Colours::white);
     const auto wideImage = ArtworkLoader::decodeThumbnail(asBytes(wide.getData(), wide.getSize()));
-    expectEquals(wideImage.getWidth(), artworkThumbnailSize);
-    expectEquals(wideImage.getHeight(), artworkThumbnailSize / 2);
+    expectEquals(wideImage.getWidth(), ARTWORK_THUMBNAIL_SIZE);
+    expectEquals(wideImage.getHeight(), ARTWORK_THUMBNAIL_SIZE / 2);
 
     const juce::Image jpegSource(juce::Image::RGB, 12, 6, true);
     juce::JPEGImageFormat jpegFormat;

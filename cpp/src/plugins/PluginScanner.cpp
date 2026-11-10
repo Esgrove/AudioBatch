@@ -46,7 +46,7 @@ public:
 #endif
 
 /// Environment variable with extra folders to search for VST3 plugins.
-constexpr auto vst3PathVariable {"VST3_PATH"};
+constexpr auto VST3_PATH_VARIABLE {"VST3_PATH"};
 
 #if JUCE_PLUGINHOST_VST3
 /// VST3 format whose default search path splits VST3_PATH with the separator of the platform's path lists.
@@ -59,7 +59,7 @@ public:
     {
         return buildVst3SearchPath(
             VST3PluginFormat::getDefaultLocationsToSearch(),
-            juce::SystemStats::getEnvironmentVariable(vst3PathVariable, {}),
+            juce::SystemStats::getEnvironmentVariable(VST3_PATH_VARIABLE, {}),
             juce::File::getSeparatorChar() == '\\' ? ";" : ":"
         );
     }
@@ -67,13 +67,13 @@ public:
 #endif
 
 /// Name of the known-plugins list file next to the settings file.
-constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
+constexpr auto KNOWN_PLUGIN_LIST_FILE_NAME {"KnownPlugins.xml"};
 /// Settings key under which older versions kept the known-plugins list.
-constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
+constexpr auto LEGACY_KNOWN_PLUGIN_LIST_PROPERTY_KEY {"knownPluginList"};
 /// Start of the identifier of every Audio Unit.
-constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
+constexpr auto AUDIO_UNIT_IDENTIFIER_PREFIX {"AudioUnit:"};
 /// Manufacturer code that ends the identifiers of the Audio Units built into macOS.
-constexpr auto appleManufacturerCode {"appl"};
+constexpr auto APPLE_MANUFACTURER_CODE {"appl"};
 }  // namespace
 
 /// Rebuilds the search path JUCE made from VST3_PATH and the standard folders,
@@ -113,8 +113,8 @@ juce::FileSearchPath buildVst3SearchPath(
 /// for example "AudioUnit:Effects/aufx,lmtr,appl".
 bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier)
 {
-    return fileOrIdentifier.startsWith(audioUnitIdentifierPrefix)
-        && fileOrIdentifier.fromLastOccurrenceOf(",", false, false) == appleManufacturerCode;
+    return fileOrIdentifier.startsWith(AUDIO_UNIT_IDENTIFIER_PREFIX)
+        && fileOrIdentifier.fromLastOccurrenceOf(",", false, false) == APPLE_MANUFACTURER_CODE;
 }
 
 /// Registers the VST3 and Audio Unit formats that CMakeLists.txt enables, in the order juce::addDefaultFormatsToManager
@@ -209,7 +209,7 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
     // ChildProcessCoordinator passes "--<uid>:<pipe name>" as the first argument.
     // Match ChildProcessWorker::initialiseFromCommandLine exactly,
     // so the same text in a later argument of an ordinary launch is not mistaken for a worker.
-    return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
+    return commandLine.trim().startsWith(utils::format("--{}:", PLUGIN_SCAN_WORKER_PROCESS_UID));
 }
 
 /// Returns the KnownPlugins.xml file next to the given settings file.
@@ -217,7 +217,7 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
 /// so the GUI and the CLI can each update it without overwriting the other one's settings.
 juce::File getKnownPluginListFile(const juce::PropertiesFile& settings)
 {
-    return settings.getFile().getSiblingFile(knownPluginListFileName);
+    return settings.getFile().getSiblingFile(KNOWN_PLUGIN_LIST_FILE_NAME);
 }
 
 /// Restores the known-plugins list from the KnownPlugins.xml file next to the settings file.
@@ -238,7 +238,7 @@ void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPlugin
     }
 
     // Older versions stored the list in the settings.
-    const auto legacyXmlText = settings.getValue(legacyKnownPluginListPropertyKey);
+    const auto legacyXmlText = settings.getValue(LEGACY_KNOWN_PLUGIN_LIST_PROPERTY_KEY);
     if (const auto element = juce::parseXML(legacyXmlText); element != nullptr) {
         knownPluginList.recreateFromXml(*element);
         removeBuiltInApplePlugins(knownPluginList);
@@ -267,7 +267,7 @@ bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList, const juc
 /// Only the GUI calls this, since it owns the settings file.
 void migrateKnownPluginList(juce::PropertiesFile& settings)
 {
-    if (!settings.containsKey(legacyKnownPluginListPropertyKey)) {
+    if (!settings.containsKey(LEGACY_KNOWN_PLUGIN_LIST_PROPERTY_KEY)) {
         return;
     }
 
@@ -283,7 +283,7 @@ void migrateKnownPluginList(juce::PropertiesFile& settings)
         utils::logInfo("Moved the known plugins list to {}", file.getFullPathName().quoted());
     }
 
-    settings.removeValue(legacyKnownPluginListPropertyKey);
+    settings.removeValue(LEGACY_KNOWN_PLUGIN_LIST_PROPERTY_KEY);
     settings.saveIfNeeded();
 }
 
@@ -291,7 +291,7 @@ void migrateKnownPluginList(juce::PropertiesFile& settings)
 /// Every process that uses the same name shares the lock, and tests pass their own name to stay apart from the app.
 PluginScanLock::PluginScanLock(const juce::String& lockName) :
 #ifdef AUDIOBATCH_TESTING
-    lock(lockName == pluginScanLockName ? utils::format("{}-tests", lockName) : lockName)
+    lock(lockName == PLUGIN_SCAN_LOCK_NAME ? utils::format("{}-tests", lockName) : lockName)
 #else
     lock(utils::scopedPluginScanLockName(lockName))
 #endif

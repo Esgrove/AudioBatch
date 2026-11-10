@@ -19,8 +19,8 @@ namespace audiobatch
 {
 namespace
 {
-constexpr int transitionLengthSamples {64};
-constexpr double gainRampSeconds {0.005};
+constexpr int TRANSITION_LENGTH_SAMPLES {64};
+constexpr double GAIN_RAMP_SECONDS {0.005};
 }  // namespace
 
 /// Prepares the input and all scratch views. Plugin preparation belongs to the message-thread host.
@@ -29,7 +29,7 @@ void PluginPreviewSource::prepareToPlay(const int samplesPerBlockExpected, const
     processingRate = sampleRate;
     blockSize = juce::jmax(1, samplesPerBlockExpected);
     lengthSamples = static_cast<juce::int64>(std::ceil(duration * processingRate));
-    inputGain.reset(processingRate, gainRampSeconds);
+    inputGain.reset(processingRate, GAIN_RAMP_SECONDS);
     allocateBuffers();
     if (input != nullptr) {
         input->prepareToPlay(blockSize, processingRate);
@@ -154,7 +154,7 @@ void PluginPreviewSource::requestStop()
         stop();
     } else if (playing) {
         stopRequested = true;
-        fadeOutRemaining = transitionLengthSamples;
+        fadeOutRemaining = TRANSITION_LENGTH_SAMPLES;
     }
 }
 
@@ -206,13 +206,13 @@ void PluginPreviewSource::copyOutput(
         info.buffer->addFrom(0, info.startSample + offset, scratch, 1, 0, samples);
         info.buffer->applyGain(0, info.startSample + offset, samples, 0.5f);
     }
-    if (transitionSamples < transitionLengthSamples) {
-        const auto rampSamples = juce::jmin(samples, transitionLengthSamples - transitionSamples);
+    if (transitionSamples < TRANSITION_LENGTH_SAMPLES) {
+        const auto rampSamples = juce::jmin(samples, TRANSITION_LENGTH_SAMPLES - transitionSamples);
         info.buffer->applyGainRamp(
             info.startSample + offset,
             rampSamples,
-            static_cast<float>(transitionSamples + 1) / transitionLengthSamples,
-            static_cast<float>(transitionSamples + rampSamples) / transitionLengthSamples
+            static_cast<float>(transitionSamples + 1) / TRANSITION_LENGTH_SAMPLES,
+            static_cast<float>(transitionSamples + rampSamples) / TRANSITION_LENGTH_SAMPLES
         );
         transitionSamples += rampSamples;
     }
@@ -222,8 +222,8 @@ void PluginPreviewSource::copyOutput(
         info.buffer->applyGainRamp(
             info.startSample + offset,
             samples,
-            static_cast<float>(fadeOutRemaining) / transitionLengthSamples,
-            static_cast<float>(fadeOutRemaining - samples) / transitionLengthSamples
+            static_cast<float>(fadeOutRemaining) / TRANSITION_LENGTH_SAMPLES,
+            static_cast<float>(fadeOutRemaining - samples) / TRANSITION_LENGTH_SAMPLES
         );
         fadeOutRemaining -= samples;
         if (fadeOutRemaining == 0) {

@@ -69,17 +69,17 @@ PluginChainSlotRow::PluginChainSlotRow(
 /// Lays out the toggle, labels and action buttons.
 void PluginChainSlotRow::resized()
 {
-    auto area = getLocalBounds().reduced(layout::pluginEditor::rowPadding);
-    enabledToggle.setBounds(area.removeFromLeft(layout::pluginEditor::rowIconButtonWidth));
-    removeButton.setBounds(area.removeFromRight(layout::pluginEditor::rowSquareButtonSize));
-    area.removeFromRight(layout::pluginEditor::rowPadding);
-    downButton.setBounds(area.removeFromRight(layout::pluginEditor::rowSquareButtonSize));
-    area.removeFromRight(layout::pluginEditor::rowPadding);
-    upButton.setBounds(area.removeFromRight(layout::pluginEditor::rowSquareButtonSize));
-    area.removeFromRight(layout::pluginEditor::rowPadding);
-    editButton.setBounds(area.removeFromRight(layout::pluginEditor::rowEditButtonWidth));
-    area.removeFromRight(layout::pluginEditor::rowPadding);
-    nameLabel.setBounds(area.removeFromTop(layout::pluginEditor::nameHeight));
+    auto area = getLocalBounds().reduced(layout::pluginEditor::ROW_PADDING);
+    enabledToggle.setBounds(area.removeFromLeft(layout::pluginEditor::ROW_ICON_BUTTON_WIDTH));
+    removeButton.setBounds(area.removeFromRight(layout::pluginEditor::ROW_SQUARE_BUTTON_SIZE));
+    area.removeFromRight(layout::pluginEditor::ROW_PADDING);
+    downButton.setBounds(area.removeFromRight(layout::pluginEditor::ROW_SQUARE_BUTTON_SIZE));
+    area.removeFromRight(layout::pluginEditor::ROW_PADDING);
+    upButton.setBounds(area.removeFromRight(layout::pluginEditor::ROW_SQUARE_BUTTON_SIZE));
+    area.removeFromRight(layout::pluginEditor::ROW_PADDING);
+    editButton.setBounds(area.removeFromRight(layout::pluginEditor::ROW_EDIT_BUTTON_WIDTH));
+    area.removeFromRight(layout::pluginEditor::ROW_PADDING);
+    nameLabel.setBounds(area.removeFromTop(layout::pluginEditor::NAME_HEIGHT));
     latencyLabel.setBounds(area);
 }
 
@@ -100,7 +100,7 @@ void PluginChainSlotRow::updateLatency()
 void PluginChainSlotRow::paint(juce::Graphics& graphics)
 {
     graphics.setColour(dragging ? CustomLookAndFeel::greyMedium() : CustomLookAndFeel::greyMediumDark());
-    graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), layout::pluginEditor::rowCornerRadius);
+    graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), layout::pluginEditor::ROW_CORNER_RADIUS);
 }
 
 /// Starts dragging and raises the row above its neighbours.

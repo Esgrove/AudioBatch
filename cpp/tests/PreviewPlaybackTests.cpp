@@ -27,8 +27,8 @@ namespace audiobatch::tests
 {
 namespace
 {
-constexpr double previewTestRate {8000.0};
-constexpr int previewTestBlockSize {64};
+constexpr double PREVIEW_TEST_RATE {8000.0};
+constexpr int PREVIEW_TEST_BLOCK_SIZE {64};
 
 /// Stores the application settings of a test in the given temporary directory, so the user's settings stay untouched.
 void useTemporarySettings(juce::ApplicationProperties& properties, const TemporaryDirectory& temporary)
@@ -219,12 +219,12 @@ private:
 
     juce::AudioBuffer<float> history;
     PreviewTestSettings settings;
-    double rate {previewTestRate};
+    double rate {PREVIEW_TEST_RATE};
     int historyPosition {0};
 };
 
 /// Collects callback output until the renderer finishes, including any trailing zero padding in the final callback.
-std::vector<float> renderPreview(PluginPreviewSource& source, const int blockSize = previewTestBlockSize)
+std::vector<float> renderPreview(PluginPreviewSource& source, const int blockSize = PREVIEW_TEST_BLOCK_SIZE)
 {
     std::vector<float> samples;
     juce::AudioBuffer<float> output(2, blockSize);
@@ -244,7 +244,7 @@ plugin_processing::ChainPreparation previewPreparation(const std::vector<juce::A
     result.processChannelCount = 2;
     for (const auto* plugin : plugins) {
         result.latencySamples += plugin->getLatencySamples();
-        result.tailSamples += plugin_processing::getPluginTailSamples(*plugin, previewTestRate);
+        result.tailSamples += plugin_processing::getPluginTailSamples(*plugin, PREVIEW_TEST_RATE);
     }
     return result;
 }
@@ -300,18 +300,20 @@ void PreviewPlaybackTests::testCursor()
         juce::MemoryAudioSource input(audio, false);
         PreviewTestPlugin plugin;
         plugin.getSettings().delay = 131;
-        plugin.prepareToPlay(previewTestRate, previewTestBlockSize);
+        plugin.prepareToPlay(PREVIEW_TEST_RATE, PREVIEW_TEST_BLOCK_SIZE);
         PluginPreviewSource source;
-        source.setInput(&input, 512.0 / previewTestRate, 2);
+        source.setInput(&input, 512.0 / PREVIEW_TEST_RATE, 2);
         source.setChain({&plugin}, previewPreparation({&plugin}), true, compensate);
-        source.prepareToPlay(previewTestBlockSize, previewTestRate);
+        source.prepareToPlay(PREVIEW_TEST_BLOCK_SIZE, PREVIEW_TEST_RATE);
         source.start();
-        juce::AudioBuffer<float> output(2, previewTestBlockSize);
-        source.getNextAudioBlock({&output, 0, previewTestBlockSize});
-        source.getNextAudioBlock({&output, 0, previewTestBlockSize});
-        expectWithinAbsoluteError(source.getCurrentPosition(), compensate ? 0.0 : 128.0 / previewTestRate, 0.000001);
-        source.getNextAudioBlock({&output, 0, previewTestBlockSize});
-        expectWithinAbsoluteError(source.getCurrentPosition(), (compensate ? 61.0 : 192.0) / previewTestRate, 0.000001);
+        juce::AudioBuffer<float> output(2, PREVIEW_TEST_BLOCK_SIZE);
+        source.getNextAudioBlock({&output, 0, PREVIEW_TEST_BLOCK_SIZE});
+        source.getNextAudioBlock({&output, 0, PREVIEW_TEST_BLOCK_SIZE});
+        expectWithinAbsoluteError(source.getCurrentPosition(), compensate ? 0.0 : 128.0 / PREVIEW_TEST_RATE, 0.000001);
+        source.getNextAudioBlock({&output, 0, PREVIEW_TEST_BLOCK_SIZE});
+        expectWithinAbsoluteError(
+            source.getCurrentPosition(), (compensate ? 61.0 : 192.0) / PREVIEW_TEST_RATE, 0.000001
+        );
         source.stop();
         expect(!source.isPlaying());
     }
@@ -326,11 +328,11 @@ void PreviewPlaybackTests::testInvalidOutput()
     juce::MemoryAudioSource input(audio, false);
     PreviewTestPlugin plugin;
     plugin.getSettings().invalid = true;
-    plugin.prepareToPlay(previewTestRate, previewTestBlockSize);
+    plugin.prepareToPlay(PREVIEW_TEST_RATE, PREVIEW_TEST_BLOCK_SIZE);
     PluginPreviewSource source;
-    source.setInput(&input, 256.0 / previewTestRate, 2);
+    source.setInput(&input, 256.0 / PREVIEW_TEST_RATE, 2);
     source.setChain({&plugin}, previewPreparation({&plugin}), true, true);
-    source.prepareToPlay(previewTestBlockSize, previewTestRate);
+    source.prepareToPlay(PREVIEW_TEST_BLOCK_SIZE, PREVIEW_TEST_RATE);
     source.start();
     juce::AudioBuffer<float> output(2, 64);
     source.getNextAudioBlock({&output, 0, 64});
@@ -352,11 +354,11 @@ void PreviewPlaybackTests::testLatency()
             juce::MemoryAudioSource input(audio, false);
             PreviewTestPlugin plugin;
             plugin.getSettings().delay = delay;
-            plugin.prepareToPlay(previewTestRate, previewTestBlockSize);
+            plugin.prepareToPlay(PREVIEW_TEST_RATE, PREVIEW_TEST_BLOCK_SIZE);
             PluginPreviewSource source;
-            source.setInput(&input, 512.0 / previewTestRate, 2);
+            source.setInput(&input, 512.0 / PREVIEW_TEST_RATE, 2);
             source.setChain({&plugin}, previewPreparation({&plugin}), true, compensate);
-            source.prepareToPlay(previewTestBlockSize, previewTestRate);
+            source.prepareToPlay(PREVIEW_TEST_BLOCK_SIZE, PREVIEW_TEST_RATE);
             source.start();
             const auto output = renderPreview(source);
             expect(!source.isPlaying());
@@ -366,7 +368,7 @@ void PreviewPlaybackTests::testLatency()
                 expectWithinAbsoluteError(output[100 + static_cast<std::size_t>(delay)], 0.5f, 0.00001f);
                 expectWithinAbsoluteError(output[511 + static_cast<std::size_t>(delay)], 0.25f, 0.00001f);
             }
-            expectWithinAbsoluteError(source.getCurrentPosition(), 512.0 / previewTestRate, 0.000001);
+            expectWithinAbsoluteError(source.getCurrentPosition(), 512.0 / PREVIEW_TEST_RATE, 0.000001);
             source.releaseResources();
         }
     }
@@ -386,13 +388,13 @@ void PreviewPlaybackTests::testGainAndEdits()
     first.getSettings().offset = 0.1f;
     second.getSettings().gain = 0.5f;
     second.getSettings().offset = 0.2f;
-    first.prepareToPlay(previewTestRate, previewTestBlockSize);
-    second.prepareToPlay(previewTestRate, previewTestBlockSize);
+    first.prepareToPlay(PREVIEW_TEST_RATE, PREVIEW_TEST_BLOCK_SIZE);
+    second.prepareToPlay(PREVIEW_TEST_RATE, PREVIEW_TEST_BLOCK_SIZE);
     PluginPreviewSource source;
-    source.setInput(&input, 1024.0 / previewTestRate, 1);
+    source.setInput(&input, 1024.0 / PREVIEW_TEST_RATE, 1);
     source.setChain({}, plugin_processing::ChainPreparation(), false, true);
     source.setInputGain(LinearGain {2.0f}, true);
-    source.prepareToPlay(previewTestBlockSize, previewTestRate);
+    source.prepareToPlay(PREVIEW_TEST_BLOCK_SIZE, PREVIEW_TEST_RATE);
     source.start();
     juce::AudioBuffer<float> output(2, 128);
     source.getNextAudioBlock({&output, 0, 128});
@@ -430,9 +432,9 @@ void PreviewPlaybackTests::testLatencyFormattingAndTailLimit()
     expectEquals(formatPluginPreviewRate(44'100.0, false), juce::String("No audio device. Inspection rate: 44100 Hz."));
     PreviewTestPlugin plugin;
     plugin.getSettings().reportedTail = std::numeric_limits<double>::infinity();
-    expectEquals(plugin_processing::getPluginTailSamples(plugin, previewTestRate), juce::int64 {160'000});
+    expectEquals(plugin_processing::getPluginTailSamples(plugin, PREVIEW_TEST_RATE), juce::int64 {160'000});
     plugin.getSettings().reportedTail = 0.001;
-    expectEquals(plugin_processing::getPluginTailSamples(plugin, previewTestRate), juce::int64 {8});
+    expectEquals(plugin_processing::getPluginTailSamples(plugin, PREVIEW_TEST_RATE), juce::int64 {8});
 }
 
 /// Drains the delayed final sample and echo, then clears effect history on a seek/restart.
@@ -447,11 +449,11 @@ void PreviewPlaybackTests::testTailAndReset()
         PreviewTestPlugin plugin;
         plugin.getSettings().delay = 17;
         plugin.getSettings().echo = 23;
-        plugin.prepareToPlay(previewTestRate, previewTestBlockSize);
+        plugin.prepareToPlay(PREVIEW_TEST_RATE, PREVIEW_TEST_BLOCK_SIZE);
         PluginPreviewSource source;
-        source.setInput(&input, 256.0 / previewTestRate, 2);
+        source.setInput(&input, 256.0 / PREVIEW_TEST_RATE, 2);
         source.setChain({&plugin}, previewPreparation({&plugin}), true, compensate);
-        source.prepareToPlay(previewTestBlockSize, previewTestRate);
+        source.prepareToPlay(PREVIEW_TEST_BLOCK_SIZE, PREVIEW_TEST_RATE);
         source.start();
         const auto output = renderPreview(source, 37);
         expect(output.size() >= 296);
@@ -553,11 +555,11 @@ void PreviewPlaybackTests::testStopRampAndTailUpdates()
     juce::FloatVectorOperations::fill(audio.getWritePointer(1), 0.5f, 256);
     juce::MemoryAudioSource input(audio, false);
     PreviewTestPlugin plugin;
-    plugin.prepareToPlay(previewTestRate, 64);
+    plugin.prepareToPlay(PREVIEW_TEST_RATE, 64);
     PluginPreviewSource source;
-    source.setInput(&input, 256.0 / previewTestRate, 2);
+    source.setInput(&input, 256.0 / PREVIEW_TEST_RATE, 2);
     source.setChain({&plugin}, previewPreparation({&plugin}), true, true);
-    source.prepareToPlay(64, previewTestRate);
+    source.prepareToPlay(64, PREVIEW_TEST_RATE);
     source.start();
     juce::AudioBuffer<float> output(2, 64);
     source.getNextAudioBlock({&output, 0, 64});

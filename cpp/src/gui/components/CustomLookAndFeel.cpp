@@ -15,39 +15,39 @@ namespace audiobatch
 namespace
 {
 /// Alpha of a title bar button glyph while the button is disabled or pressed.
-constexpr float dimmedGlyphAlpha {0.6f};
+constexpr float DIMMED_GLYPH_ALPHA {0.6f};
 
 /// Opacity of the title bar icon while the window is inactive.
-constexpr float inactiveTitleIconOpacity {0.6f};
+constexpr float INACTIVE_TITLE_ICON_OPACITY {0.6f};
 
 /// Alpha of the combo box outline while the combo box has keyboard focus.
-constexpr float comboBoxFocusedOutlineAlpha {0.45f};
+constexpr float COMBO_BOX_FOCUSED_OUTLINE_ALPHA {0.45f};
 
 /// Alpha of the hyperlink button text colour.
-constexpr float hyperlinkTextAlpha {0.9f};
+constexpr float HYPERLINK_TEXT_ALPHA {0.9f};
 
 /// Alpha of the highlighted popup menu item background.
-constexpr float popupMenuHighlightAlpha {0.18f};
+constexpr float POPUP_MENU_HIGHLIGHT_ALPHA {0.18f};
 
 /// Alpha of the text button label while the button is toggled off.
-constexpr float textButtonOffTextAlpha {0.96f};
+constexpr float TEXT_BUTTON_OFF_TEXT_ALPHA {0.96f};
 
 /// Alpha of the linear slider track fill.
-constexpr float sliderTrackAlpha {0.7f};
+constexpr float SLIDER_TRACK_ALPHA {0.7f};
 
 /// Alpha of the rotary slider value arc.
-constexpr float rotarySliderFillAlpha {0.72f};
+constexpr float ROTARY_SLIDER_FILL_ALPHA {0.72f};
 
 /// Alpha of the text editor selection highlight.
-constexpr float textEditorHighlightAlpha {0.24f};
+constexpr float TEXT_EDITOR_HIGHLIGHT_ALPHA {0.24f};
 
 /// Alpha of popup menu separator lines relative to the menu text colour.
-constexpr float popupMenuSeparatorAlpha {0.3f};
+constexpr float POPUP_MENU_SEPARATOR_ALPHA {0.3f};
 
 /// Opacity of a column hover highlight relative to its pressed highlight.
-constexpr float tableHeaderHoverAlpha {0.625f};
+constexpr float TABLE_HEADER_HOVER_ALPHA {0.625f};
 /// Sort-arrow colour matching JUCE's existing table header rendering.
-constexpr juce::uint32 tableHeaderSortArrowColour {0x99000000};
+constexpr juce::uint32 TABLE_HEADER_SORT_ARROW_COLOUR {0x99000000};
 
 /// Title bar button (close, minimise, maximise) drawn with the project palette.
 /// Created by createDocumentWindowButton, ownership passes to the DocumentWindow.
@@ -93,7 +93,7 @@ protected:
         graphics.fillAll(background);
 
         if (!isEnabled() || shouldDrawButtonAsDown) {
-            glyphColour = colour.withAlpha(dimmedGlyphAlpha);
+            glyphColour = colour.withAlpha(DIMMED_GLYPH_ALPHA);
         }
 
         if (shouldDrawButtonAsHighlighted) {
@@ -139,9 +139,10 @@ void CustomLookAndFeel::drawToggleButton(
 )
 {
     const auto fontHeight = juce::jmin(
-        layout::theme::toggleFontHeight, static_cast<float>(button.getHeight()) * layout::theme::toggleFontHeightRatio
+        layout::theme::TOGGLE_FONT_HEIGHT,
+        static_cast<float>(button.getHeight()) * layout::theme::TOGGLE_FONT_HEIGHT_RATIO
     );
-    const auto tickWidth = fontHeight * layout::theme::toggleTickWidthRatio;
+    const auto tickWidth = fontHeight * layout::theme::TOGGLE_TICK_WIDTH_RATIO;
     drawTickBox(
         graphics,
         button,
@@ -161,7 +162,7 @@ void CustomLookAndFeel::drawToggleButton(
     }
     graphics.drawFittedText(
         button.getButtonText(),
-        button.getLocalBounds().withTrimmedLeft(juce::roundToInt(tickWidth) + layout::theme::toggleTextSpacing),
+        button.getLocalBounds().withTrimmedLeft(juce::roundToInt(tickWidth) + layout::theme::TOGGLE_TEXT_SPACING),
         juce::Justification::centredLeft,
         1
     );
@@ -173,10 +174,10 @@ const juce::Font& CustomLookAndFeel::getTextFont()
 {
     // The typeface constructor leaves the name and style empty,
     // which withTypeface on default options would assert on in debug builds.
-    static const juce::Font font {juce::FontOptions {
+    static const juce::Font FONT {juce::FontOptions {
         juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)
     }};
-    return font;
+    return FONT;
 }
 
 /// Returns the base monospaced font created from the embedded Roboto Mono typeface, before height is applied.
@@ -185,10 +186,10 @@ const juce::Font& CustomLookAndFeel::getMonoBaseFont()
 {
     // The typeface constructor leaves the name and style empty,
     // which withTypeface on default options would assert on in debug builds.
-    static const juce::Font font {juce::FontOptions {juce::Typeface::createSystemTypefaceFor(
+    static const juce::Font FONT {juce::FontOptions {juce::Typeface::createSystemTypefaceFor(
         BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize
     )}};
-    return font;
+    return FONT;
 }
 
 /// Builds the colour palette for the requested light or dark theme variant.
@@ -198,28 +199,28 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
 
     setColour(juce::ComboBox::arrowColourId, blue());
     setColour(juce::ComboBox::backgroundColourId, greySemiDark());
-    setColour(juce::ComboBox::focusedOutlineColourId, blue().withAlpha(comboBoxFocusedOutlineAlpha));
+    setColour(juce::ComboBox::focusedOutlineColourId, blue().withAlpha(COMBO_BOX_FOCUSED_OUTLINE_ALPHA));
     setColour(juce::ComboBox::outlineColourId, greyMedium());
-    setColour(juce::HyperlinkButton::textColourId, blue().withAlpha(hyperlinkTextAlpha));
+    setColour(juce::HyperlinkButton::textColourId, blue().withAlpha(HYPERLINK_TEXT_ALPHA));
     setColour(juce::PopupMenu::backgroundColourId, greySemiDark());
-    setColour(juce::PopupMenu::highlightedBackgroundColourId, blue().withAlpha(popupMenuHighlightAlpha));
+    setColour(juce::PopupMenu::highlightedBackgroundColourId, blue().withAlpha(POPUP_MENU_HIGHLIGHT_ALPHA));
     setColour(juce::PopupMenu::highlightedTextColourId, greySuperLight());
     setColour(juce::PopupMenu::textColourId, greyLight());
     setColour(juce::ResizableWindow::backgroundColourId, greyDark());
     setColour(juce::TextButton::buttonColourId, greyMedium());
     setColour(juce::TextButton::buttonOnColourId, blue());
-    setColour(juce::TextButton::textColourOffId, greySuperLight().withAlpha(textButtonOffTextAlpha));
+    setColour(juce::TextButton::textColourOffId, greySuperLight().withAlpha(TEXT_BUTTON_OFF_TEXT_ALPHA));
     setColour(juce::TextButton::textColourOnId, greySuperLight());
     setColour(juce::Slider::backgroundColourId, greyMedium());
-    setColour(juce::Slider::trackColourId, blue().withAlpha(sliderTrackAlpha));
+    setColour(juce::Slider::trackColourId, blue().withAlpha(SLIDER_TRACK_ALPHA));
     setColour(juce::Slider::thumbColourId, greySuperLight());
-    setColour(juce::Slider::rotarySliderFillColourId, blue().withAlpha(rotarySliderFillAlpha));
+    setColour(juce::Slider::rotarySliderFillColourId, blue().withAlpha(ROTARY_SLIDER_FILL_ALPHA));
     setColour(juce::Slider::rotarySliderOutlineColourId, greyMedium());
     setColour(juce::Slider::textBoxBackgroundColourId, greyMediumDark());
     setColour(juce::Slider::textBoxTextColourId, greySuperLight());
     setColour(juce::Slider::textBoxOutlineColourId, greyMedium());
     setColour(juce::TextEditor::backgroundColourId, greySemiDark());
-    setColour(juce::TextEditor::highlightColourId, blue().withAlpha(textEditorHighlightAlpha));
+    setColour(juce::TextEditor::highlightColourId, blue().withAlpha(TEXT_EDITOR_HIGHLIGHT_ALPHA));
     setColour(juce::TextEditor::outlineColourId, greyMedium());
     setColour(juce::TooltipWindow::backgroundColourId, greyMediumDark());
     setColour(juce::TooltipWindow::textColourId, greySuperLight());
@@ -259,15 +260,15 @@ juce::Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType
         shape.addLineSegment({0.0f, 0.5f, 1.0f, 0.5f}, crossThickness);
 
         juce::Path fullscreenShape;
-        fullscreenShape.startNewSubPath(layout::theme::fullscreenGlyphInset, 100.0f);
+        fullscreenShape.startNewSubPath(layout::theme::FULLSCREEN_GLYPH_INSET, 100.0f);
         fullscreenShape.lineTo(0.0f, 100.0f);
         fullscreenShape.lineTo(0.0f, 0.0f);
         fullscreenShape.lineTo(100.0f, 0.0f);
-        fullscreenShape.lineTo(100.0f, layout::theme::fullscreenGlyphInset);
+        fullscreenShape.lineTo(100.0f, layout::theme::FULLSCREEN_GLYPH_INSET);
         fullscreenShape.addRectangle(
-            layout::theme::fullscreenGlyphInset, layout::theme::fullscreenGlyphInset, 100.0f, 100.0f
+            layout::theme::FULLSCREEN_GLYPH_INSET, layout::theme::FULLSCREEN_GLYPH_INSET, 100.0f, 100.0f
         );
-        juce::PathStrokeType(layout::theme::fullscreenGlyphStrokeThickness)
+        juce::PathStrokeType(layout::theme::FULLSCREEN_GLYPH_STROKE_THICKNESS)
             .createStrokedPath(fullscreenShape, fullscreenShape);
 
         return new CustomDocumentWindowButton(
@@ -324,7 +325,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     }
 
     if (icon != nullptr) {
-        graphics.setOpacity(isActive ? 1.0f : inactiveTitleIconOpacity);
+        graphics.setOpacity(isActive ? 1.0f : INACTIVE_TITLE_ICON_OPACITY);
         graphics.drawImageWithin(
             *icon, textX, (height - iconHeight) / 2, iconWidth, iconHeight, juce::RectanglePlacement::centred, false
         );
@@ -380,9 +381,9 @@ void CustomLookAndFeel::drawPopupMenuItem(
 )
 {
     if (isSeparator) {
-        auto separatorArea = area.reduced(layout::theme::popupMenuSeparatorInset, 0);
+        auto separatorArea = area.reduced(layout::theme::POPUP_MENU_SEPARATOR_INSET, 0);
         separatorArea.removeFromTop(juce::roundToInt(static_cast<float>(separatorArea.getHeight()) * 0.5f - 0.5f));
-        graphics.setColour(findColour(juce::PopupMenu::textColourId).withAlpha(popupMenuSeparatorAlpha));
+        graphics.setColour(findColour(juce::PopupMenu::textColourId).withAlpha(POPUP_MENU_SEPARATOR_ALPHA));
         graphics.fillRect(separatorArea.removeFromTop(1));
     } else {
         const auto textColour
@@ -400,7 +401,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
         itemArea.reduce(
             juce::jmin(
-                layout::theme::popupMenuItemMaximumPadding, area.getWidth() / layout::theme::popupMenuItemPaddingDivisor
+                layout::theme::POPUP_MENU_ITEM_MAXIMUM_PADDING,
+                area.getWidth() / layout::theme::POPUP_MENU_ITEM_PADDING_DIVISOR
             ),
             0
         );
@@ -431,7 +433,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
             graphics.fillPath(
                 tick,
                 tick.getTransformToScaleToFit(
-                    iconArea.reduced(iconArea.getWidth() / layout::theme::popupMenuTickInsetDivisor, 0).toFloat(), true
+                    iconArea.reduced(iconArea.getWidth() / layout::theme::POPUP_MENU_TICK_INSET_DIVISOR, 0).toFloat(),
+                    true
                 )
             );
         }
@@ -444,7 +447,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
             juce::Path path;
             path.startNewSubPath(arrowX, centreY - arrowHeight * 0.5f);
-            path.lineTo(arrowX + arrowHeight * layout::theme::subMenuArrowWidthRatio, centreY);
+            path.lineTo(arrowX + arrowHeight * layout::theme::SUB_MENU_ARROW_WIDTH_RATIO, centreY);
             path.lineTo(arrowX, centreY + arrowHeight * 0.5f);
 
             graphics.strokePath(path, juce::PathStrokeType(2.0f));
@@ -455,8 +458,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
         if (shortcutKeyText.isNotEmpty()) {
             auto shortcutFont = font;
-            shortcutFont.setHeight(shortcutFont.getHeight() * layout::theme::shortcutFontHeightRatio);
-            shortcutFont.setHorizontalScale(layout::theme::shortcutFontHorizontalScale);
+            shortcutFont.setHeight(shortcutFont.getHeight() * layout::theme::SHORTCUT_FONT_HEIGHT_RATIO);
+            shortcutFont.setHorizontalScale(layout::theme::SHORTCUT_FONT_HORIZONTAL_SCALE);
             graphics.setFont(shortcutFont);
             graphics.drawText(shortcutKeyText, itemArea, juce::Justification::centredRight, true);
         }
@@ -481,20 +484,20 @@ void CustomLookAndFeel::drawTableHeaderColumn(
     if (isMouseDown) {
         graphics.fillAll(highlightColour);
     } else if (isMouseOver) {
-        graphics.fillAll(highlightColour.withMultipliedAlpha(tableHeaderHoverAlpha));
+        graphics.fillAll(highlightColour.withMultipliedAlpha(TABLE_HEADER_HOVER_ALPHA));
     }
 
     juce::Rectangle<int> area(width, height);
-    area.reduce(layout::theme::tableHeaderTextInset, 0);
+    area.reduce(layout::theme::TABLE_HEADER_TEXT_INSET, 0);
     const auto flags = static_cast<unsigned int>(columnFlags);
     constexpr auto sortedForwards = static_cast<unsigned int>(juce::TableHeaderComponent::sortedForwards);
     constexpr auto sortedBackwards = static_cast<unsigned int>(juce::TableHeaderComponent::sortedBackwards);
     if ((flags & (sortedForwards | sortedBackwards)) != 0) {
         juce::Path sortArrow;
-        const auto tip = (flags & sortedForwards) != 0 ? -layout::theme::tableHeaderSortArrowTip
-                                                       : layout::theme::tableHeaderSortArrowTip;
+        const auto tip = (flags & sortedForwards) != 0 ? -layout::theme::TABLE_HEADER_SORT_ARROW_TIP
+                                                       : layout::theme::TABLE_HEADER_SORT_ARROW_TIP;
         sortArrow.addTriangle(0.0f, 0.0f, 0.5f, tip, 1.0f, 0.0f);
-        graphics.setColour(juce::Colour(tableHeaderSortArrowColour));
+        graphics.setColour(juce::Colour(TABLE_HEADER_SORT_ARROW_COLOUR));
         graphics.fillPath(
             sortArrow, sortArrow.getTransformToScaleToFit(area.removeFromRight(height / 2).reduced(2).toFloat(), true)
         );
@@ -510,8 +513,8 @@ void CustomLookAndFeel::drawTableHeaderColumn(
 juce::Font CustomLookAndFeel::getTableHeaderFont(const int headerHeight)
 {
     return getTextFont().withHeight(
-        static_cast<float>(headerHeight) * layout::theme::tableHeaderFontHeightRatio
-        + layout::theme::tableHeaderFontHeightIncrease
+        static_cast<float>(headerHeight) * layout::theme::TABLE_HEADER_FONT_HEIGHT_RATIO
+        + layout::theme::TABLE_HEADER_FONT_HEIGHT_INCREASE
     );
 }
 
@@ -525,7 +528,7 @@ void CustomLookAndFeel::getIdealPopupMenuItemSize(
 )
 {
     const auto itemHeight
-        = !isSeparator && standardMenuItemHeight <= 0 ? layout::theme::popupMenuItemHeight : standardMenuItemHeight;
+        = !isSeparator && standardMenuItemHeight <= 0 ? layout::theme::POPUP_MENU_ITEM_HEIGHT : standardMenuItemHeight;
     juce::LookAndFeel_V4::getIdealPopupMenuItemSize(text, isSeparator, itemHeight, idealWidth, idealHeight);
 }
 
@@ -536,13 +539,13 @@ juce::Font CustomLookAndFeel::getMenuBarFont(
     const juce::String& /*itemText*/
 )
 {
-    return getTextFont().withHeight(layout::theme::menuBarFontHeight);
+    return getTextFont().withHeight(layout::theme::MENU_BAR_FONT_HEIGHT);
 }
 
 /// Uses the same embedded Roboto font for popup sizing and item painting.
 juce::Font CustomLookAndFeel::getPopupMenuFont()
 {
-    return getTextFont().withHeight(layout::theme::popupMenuFontHeight);
+    return getTextFont().withHeight(layout::theme::POPUP_MENU_FONT_HEIGHT);
 }
 
 /// Returns the button label font, scaled down with the button height and capped at 16 points.
@@ -550,8 +553,8 @@ juce::Font CustomLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/, co
 {
     return getTextFont().withHeight(
         juce::jmin(
-            layout::theme::maximumButtonFontHeight,
-            static_cast<float>(buttonHeight) * layout::theme::buttonFontHeightRatio
+            layout::theme::MAXIMUM_BUTTON_FONT_HEIGHT,
+            static_cast<float>(buttonHeight) * layout::theme::BUTTON_FONT_HEIGHT_RATIO
         )
     );
 }
@@ -566,7 +569,7 @@ void CustomLookAndFeel::drawTooltip(
 {
     const juce::Rectangle bounds {width, height};
     graphics.setColour(findColour(juce::TooltipWindow::backgroundColourId));
-    graphics.fillRoundedRectangle(bounds.toFloat(), layout::theme::tooltipCornerRadius);
+    graphics.fillRoundedRectangle(bounds.toFloat(), layout::theme::TOOLTIP_CORNER_RADIUS);
     layoutTooltipText(text, findColour(juce::TooltipWindow::textColourId))
         .draw(graphics, {static_cast<float>(width), static_cast<float>(height)});
 }
@@ -577,10 +580,12 @@ juce::TextLayout CustomLookAndFeel::layoutTooltipText(const juce::String& text, 
 {
     juce::AttributedString attributedText;
     attributedText.setJustification(juce::Justification::centred);
-    attributedText.append(text, getTextFont().withHeight(layout::theme::tooltipFontHeight), colour);
+    attributedText.append(text, getTextFont().withHeight(layout::theme::TOOLTIP_FONT_HEIGHT), colour);
 
     juce::TextLayout layout;
-    layout.createLayoutWithBalancedLineLengths(attributedText, static_cast<float>(layout::theme::tooltipMaximumWidth));
+    layout.createLayoutWithBalancedLineLengths(
+        attributedText, static_cast<float>(layout::theme::TOOLTIP_MAXIMUM_WIDTH)
+    );
     return layout;
 }
 }  // namespace audiobatch

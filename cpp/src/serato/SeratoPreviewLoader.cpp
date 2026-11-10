@@ -42,9 +42,9 @@ bool loadMissingTags(
 )
 {
     std::vector<TagKind> misses;
-    for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
+    for (std::size_t index = 0; index < ALL_TAG_KINDS.size(); ++index) {
         if (!results[index]) {
-            misses.push_back(allTagKinds[index]);
+            misses.push_back(ALL_TAG_KINDS[index]);
         }
     }
     if (misses.empty()) {
@@ -62,9 +62,9 @@ bool loadMissingTags(
     }
     for (auto& result : fresh) {
         const auto index = static_cast<std::size_t>(
-            std::ranges::distance(allTagKinds.begin(), std::ranges::find(allTagKinds, result.kind))
+            std::ranges::distance(ALL_TAG_KINDS.begin(), std::ranges::find(ALL_TAG_KINDS, result.kind))
         );
-        if (index == allTagKinds.size() || std::ranges::find(misses, result.kind) == misses.end()) {
+        if (index == ALL_TAG_KINDS.size() || std::ranges::find(misses, result.kind) == misses.end()) {
             continue;
         }
         if (results[index]) {
@@ -225,7 +225,7 @@ std::shared_ptr<const SeratoData> loadPreviewData(
     if (utils::isCancellationRequested(isCancelled) || !identity.matches(file)) {
         return {};
     }
-    auto results = getCachedTags(cache, identity, allTagKinds);
+    auto results = getCachedTags(cache, identity, ALL_TAG_KINDS);
     if (readMissing && !loadMissingTags(cache, identity, results, isCancelled, reader)) {
         return {};
     }

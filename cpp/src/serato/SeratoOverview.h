@@ -15,7 +15,7 @@ namespace audiobatch::serato
 {
 /// Revision of persisted Overview outcomes, including first-valid duplicate recovery in physical source order.
 /// Independent of the unchanged version-two SOVR raster encoding.
-inline constexpr std::uint32_t overviewParserVersion {3};
+inline constexpr std::uint32_t OVERVIEW_PARSER_VERSION {3};
 
 /// Owns the Serato Overview's coarse color raster for the whole track.
 /// Common payloads contain 240 consecutive time slices regardless of track duration,
@@ -32,13 +32,13 @@ struct Overview {
     [[nodiscard]] juce::MemoryBlock serialize() const;
 
     /// Number of vertical raster cells, retaining the existing serialized column layout.
-    static constexpr std::size_t bandCount {16};
+    static constexpr std::size_t BAND_COUNT {16};
     /// Highest number of horizontal slices accepted when parsing or deserializing.
-    static constexpr std::size_t maxSlices {65'536};
+    static constexpr std::size_t MAX_SLICES {65'536};
     /// Largest valid payload size, including the two byte header.
-    static constexpr std::size_t maxPayloadBytes {2 + maxSlices * bandCount};
+    static constexpr std::size_t MAX_PAYLOAD_BYTES {2 + MAX_SLICES * BAND_COUNT};
 
     /// Palette indices of the raster, one array of bandCount cells per horizontal slice.
-    std::vector<std::array<std::uint8_t, bandCount>> slices;
+    std::vector<std::array<std::uint8_t, BAND_COUNT>> slices;
 };
 }  // namespace audiobatch::serato

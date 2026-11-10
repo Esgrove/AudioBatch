@@ -20,8 +20,8 @@ class AudioMeasurement;
 /// Transient loudness of decoded samples after custom gain and hard clipping at 0 dBFS.
 /// Never persisted or substituted for source measurements, and excludes limiter and plugin behavior.
 struct GainAdjustedLoudness {
-    double integratedLufs {AudioAnalysisRecord::negativeInfinityLoudness};
-    double maxShortTermLufs {AudioAnalysisRecord::negativeInfinityLoudness};
+    double integratedLufs {AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS};
+    double maxShortTermLufs {AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS};
 };
 
 [[nodiscard]] std::optional<double> estimateLimiterIntegratedLoudness(

@@ -30,7 +30,7 @@ std::unique_ptr<juce::FileLogger> createDefaultLogger(
 /// The start value must come from juce::Time::getMillisecondCounterHiRes.
 inline double elapsedSecondsSince(const double startedAtMilliseconds)
 {
-    return (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / millisecondsPerSecond;
+    return (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / MILLISECONDS_PER_SECOND;
 }
 
 void installCrashLogging();

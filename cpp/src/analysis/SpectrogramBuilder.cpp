@@ -23,7 +23,7 @@ namespace audiobatch
 namespace
 {
 constexpr int FFT_ORDER {12};
-constexpr int HALF_WINDOW {SpectrogramData::fftSize / 2};
+constexpr int HALF_WINDOW {SpectrogramData::FFT_SIZE / 2};
 constexpr int FREQUENCY_BINS {HALF_WINDOW + 1};
 constexpr int MAXIMUM_CHANNELS {2};
 constexpr double DECIBEL_STEPS {255.0};
@@ -42,7 +42,7 @@ struct SpectrogramWindow {
     SpectrogramWindow();
 
     /// Float coefficients used directly by the source-rate FFT input multiplication.
-    std::array<float, SpectrogramData::fftSize> symmetricHann {};
+    std::array<float, SpectrogramData::FFT_SIZE> symmetricHann {};
     /// Stored float coefficients accumulated in ascending sample order in double precision.
     double sum {0.0};
 };
@@ -51,9 +51,10 @@ struct SpectrogramWindow {
 /// Casting each coefficient to float before its double accumulation preserves the algorithm's operation order.
 SpectrogramWindow::SpectrogramWindow()
 {
-    for (int frame = 0; frame < SpectrogramData::fftSize; ++frame) {
-        const auto coefficient
-            = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * frame / (SpectrogramData::fftSize - 1)));
+    for (int frame = 0; frame < SpectrogramData::FFT_SIZE; ++frame) {
+        const auto coefficient = static_cast<float>(
+            0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * frame / (SpectrogramData::FFT_SIZE - 1))
+        );
         symmetricHann[static_cast<std::size_t>(frame)] = coefficient;
         sum += static_cast<double>(coefficient);
     }
@@ -74,9 +75,9 @@ const SpectrogramWindow& spectrogramWindow()
 std::uint8_t quantizePower(const double power)
 {
     const auto decibels = POWER_DECIBEL_FACTOR * std::log10(std::max(power, MINIMUM_POWER));
-    const auto normalized = (std::clamp(decibels, SpectrogramData::minimumDecibels, SpectrogramData::maximumDecibels)
-                             - SpectrogramData::minimumDecibels)
-        / (SpectrogramData::maximumDecibels - SpectrogramData::minimumDecibels);
+    const auto normalized = (std::clamp(decibels, SpectrogramData::MINIMUM_DECIBELS, SpectrogramData::MAXIMUM_DECIBELS)
+                             - SpectrogramData::MINIMUM_DECIBELS)
+        / (SpectrogramData::MAXIMUM_DECIBELS - SpectrogramData::MINIMUM_DECIBELS);
     return static_cast<std::uint8_t>(std::floor(normalized * DECIBEL_STEPS + 0.5));
 }
 }  // namespace
@@ -96,13 +97,13 @@ struct SpectrogramBuilderState {
     std::shared_ptr<const SpectrogramData> result;
 
     /// Fixed source-frame ring storage for the supported mono or stereo channels.
-    std::array<std::array<float, SpectrogramData::fftSize>, MAXIMUM_CHANNELS> pcm {};
+    std::array<std::array<float, SpectrogramData::FFT_SIZE>, MAXIMUM_CHANNELS> pcm {};
     /// Independent channel powers accumulated for the current source window.
     std::array<double, FREQUENCY_BINS> powers {};
     /// Per-source-rate mel row supports calculated once for this builder.
-    std::array<SpectrogramRowSupport, SpectrogramData::frequencyRows> rowSupports {};
+    std::array<SpectrogramRowSupport, SpectrogramData::FREQUENCY_ROWS> rowSupports {};
     /// Fixed input/output work array reused for every channel FFT.
-    std::array<float, static_cast<std::size_t>(SpectrogramData::fftSize) * 2> scratch {};
+    std::array<float, static_cast<std::size_t>(SpectrogramData::FFT_SIZE) * 2> scratch {};
 
     /// Channel-average and window-sum power normalization, constant throughout this stream.
     double inverseWindowPower {0.0};
@@ -127,14 +128,14 @@ SpectrogramBuilderState::SpectrogramBuilderState(const int channels, const int s
         return;
     }
     data.intensities.reserve(
-        static_cast<std::size_t>(SpectrogramData::maximumColumns) * SpectrogramData::frequencyRows
+        static_cast<std::size_t>(SpectrogramData::MAXIMUM_COLUMNS) * SpectrogramData::FREQUENCY_ROWS
     );
     const auto windowSum = spectrogramWindow().sum;
     inverseWindowPower = 1.0 / (windowSum * windowSum * channels);
     const auto maximumMel = frequencyToMel(sampleRate * 0.5);
-    const auto melStep = maximumMel / SpectrogramData::frequencyRows;
-    const auto frequencyToBin = static_cast<double>(SpectrogramData::fftSize) / sampleRate;
-    for (int row = 0; row < SpectrogramData::frequencyRows; ++row) {
+    const auto melStep = maximumMel / SpectrogramData::FREQUENCY_ROWS;
+    const auto frequencyToBin = static_cast<double>(SpectrogramData::FFT_SIZE) / sampleRate;
+    for (int row = 0; row < SpectrogramData::FREQUENCY_ROWS; ++row) {
         const auto lowBin = melToFrequency(row * melStep) * frequencyToBin;
         const auto highBin = melToFrequency((row + 1) * melStep) * frequencyToBin;
         auto& support = rowSupports[static_cast<std::size_t>(row)];
@@ -148,18 +149,18 @@ SpectrogramBuilderState::SpectrogramBuilderState(const int channels, const int s
 /// and never overlaps a source column that a later destination still needs.
 void SpectrogramBuilderState::mergePairs()
 {
-    constexpr auto ROWS = static_cast<std::size_t>(SpectrogramData::frequencyRows);
+    constexpr auto rows = static_cast<std::size_t>(SpectrogramData::FREQUENCY_ROWS);
     const auto columns = data.columnCount();
     const std::span intensities(data.intensities);
     for (std::size_t column = 0; column < columns / 2; ++column) {
-        const auto first = intensities.subspan(2 * column * ROWS, ROWS);
-        const auto second = intensities.subspan((2 * column + 1) * ROWS, ROWS);
-        const auto destination = intensities.subspan(column * ROWS, ROWS);
-        for (std::size_t row = 0; row < ROWS; ++row) {
+        const auto first = intensities.subspan(2 * column * rows, rows);
+        const auto second = intensities.subspan((2 * column + 1) * rows, rows);
+        const auto destination = intensities.subspan(column * rows, rows);
+        for (std::size_t row = 0; row < rows; ++row) {
             destination[row] = std::max(first[row], second[row]);
         }
     }
-    data.intensities.resize((columns / 2) * SpectrogramData::frequencyRows);
+    data.intensities.resize((columns / 2) * SpectrogramData::FREQUENCY_ROWS);
     data.samplesPerColumn *= 2;
 }
 
@@ -176,8 +177,8 @@ void SpectrogramBuilderState::appendColumn()
     const auto firstSource = std::max<std::int64_t>(nextCenter - HALF_WINDOW, 0);
     const auto lastSource = std::min<std::int64_t>(nextCenter + HALF_WINDOW, data.lengthInSamples);
     const auto validFrames = static_cast<std::size_t>(std::max<std::int64_t>(lastSource - firstSource, 0));
-    const auto ringStart = static_cast<std::size_t>(firstSource % SpectrogramData::fftSize);
-    const auto leading = std::min(validFrames, static_cast<std::size_t>(SpectrogramData::fftSize) - ringStart);
+    const auto ringStart = static_cast<std::size_t>(firstSource % SpectrogramData::FFT_SIZE);
+    const auto leading = std::min(validFrames, static_cast<std::size_t>(SpectrogramData::FFT_SIZE) - ringStart);
     for (int channel = 0; channel < data.channelCount; ++channel) {
         scratch.fill(0.0f);
         const auto& ring = pcm[static_cast<std::size_t>(channel)];
@@ -201,12 +202,12 @@ void SpectrogramBuilderState::appendColumn()
         valid = false;
         return;
     }
-    if (nextCenter / data.samplesPerColumn >= SpectrogramData::maximumColumns) {
+    if (nextCenter / data.samplesPerColumn >= SpectrogramData::MAXIMUM_COLUMNS) {
         mergePairs();
     }
     const auto column = static_cast<std::size_t>(nextCenter / data.samplesPerColumn);
     if (column == data.columnCount()) {
-        data.intensities.resize(data.intensities.size() + SpectrogramData::frequencyRows, 0);
+        data.intensities.resize(data.intensities.size() + SpectrogramData::FREQUENCY_ROWS, 0);
     }
     for (std::size_t row = 0; row < rowSupports.size(); ++row) {
         const auto support = rowSupports[row];
@@ -214,10 +215,10 @@ void SpectrogramBuilderState::appendColumn()
         for (int bin = support.firstBin; bin <= support.lastBin; ++bin) {
             maximumPower = std::max(maximumPower, powers[static_cast<std::size_t>(bin)]);
         }
-        auto& intensity = data.intensities[column * SpectrogramData::frequencyRows + row];
+        auto& intensity = data.intensities[column * SpectrogramData::FREQUENCY_ROWS + row];
         intensity = std::max(intensity, quantizePower(maximumPower));
     }
-    nextCenter += SpectrogramData::hopSize;
+    nextCenter += SpectrogramData::HOP_SIZE;
 }
 
 /// Creates an isolated optional-artifact builder, without holding or changing caller PCM.
@@ -238,13 +239,13 @@ void SpectrogramBuilder::push(const juce::AudioBuffer<float>& samples, const int
     }
     if (firstSample < 0 || frames < 0 || firstSample > samples.getNumSamples()
         || frames > samples.getNumSamples() - firstSample || samples.getNumChannels() != working.data.channelCount
-        || working.data.lengthInSamples > std::numeric_limits<std::int64_t>::max() - SpectrogramData::fftSize - frames)
+        || working.data.lengthInSamples > std::numeric_limits<std::int64_t>::max() - SpectrogramData::FFT_SIZE - frames)
     {
         working.valid = false;
         return;
     }
     for (int frame = 0; frame < frames; ++frame) {
-        const auto position = static_cast<std::size_t>(working.data.lengthInSamples % SpectrogramData::fftSize);
+        const auto position = static_cast<std::size_t>(working.data.lengthInSamples % SpectrogramData::FFT_SIZE);
         for (int channel = 0; channel < working.data.channelCount; ++channel) {
             const auto sample = samples.getSample(channel, firstSample + frame);
             if (!std::isfinite(sample)) {

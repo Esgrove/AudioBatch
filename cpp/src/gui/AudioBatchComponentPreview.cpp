@@ -533,7 +533,7 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
         // Only a device chosen in the audio settings has a state, so automatic opens never replace the choice.
         if (const auto state = previewPlayer.createDeviceState(); state != nullptr) {
             auto* settings = pluginAppProperties.getUserSettings();
-            settings->setValue(audioDeviceStatePropertyKey, state.get());
+            settings->setValue(AUDIO_DEVICE_STATE_PROPERTY_KEY, state.get());
             settings->saveIfNeeded();
         }
         return;

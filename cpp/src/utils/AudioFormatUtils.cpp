@@ -25,7 +25,7 @@ namespace
 {
 constexpr int MPEG_LAYER_III {3};
 /// Samples of layer III synthesis delay that both JUCE's MP3 reader and Core Audio leave out at the start of a file.
-constexpr juce::int64 mp3DecoderDelaySamples {529};
+constexpr juce::int64 MP3_DECODER_DELAY_SAMPLES {529};
 }  // namespace
 
 /// Applies one float gain multiplication and matches JUCE's float-to-integer writer conversion.
@@ -98,12 +98,12 @@ void registerAudioFormats(juce::AudioFormatManager& formatManager)
 juce::AudioFormatManager& threadLocalFormatManager()
 {
     thread_local juce::AudioFormatManager formatManager;
-    thread_local const bool initialized = [] {
+    thread_local const bool INITIALIZED = [] {
         registerAudioFormats(formatManager);
         return true;
     }();
 
-    juce::ignoreUnused(initialized);
+    juce::ignoreUnused(INITIALIZED);
     return formatManager;
 }
 
@@ -166,7 +166,7 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
         position += header.frameLength();
     }
 
-    reader->lengthInSamples = juce::jmax<juce::int64>(0, sampleCount - mp3DecoderDelaySamples);
+    reader->lengthInSamples = juce::jmax<juce::int64>(0, sampleCount - MP3_DECODER_DELAY_SAMPLES);
     return reader;
 }
 

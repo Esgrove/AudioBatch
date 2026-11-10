@@ -424,7 +424,7 @@ void AudioBatchComponent::reportFolderLimit(const int skippedFolders)
         statusBar.setStatusText(
             utils::format(
                 "Opened the first {} folders, {} more {} left out",
-                utils::maximumRevealFolders,
+                utils::MAXIMUM_REVEAL_FOLDERS,
                 skippedFolders,
                 skippedFolders == 1 ? "folder" : "folders"
             )

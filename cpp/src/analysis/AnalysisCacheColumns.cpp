@@ -50,7 +50,7 @@ bool validHistoryTiming(
             static_cast<double>(history.lengthInSamples) / history.sampleRate, record.durationSeconds
         )
         || history.samplesPerPoint
-            != juce::jmax(1, juce::roundToInt(history.sampleRate / ShortTermLoudnessHistory::updateRateHz)))
+            != juce::jmax(1, juce::roundToInt(history.sampleRate / ShortTermLoudnessHistory::UPDATE_RATE_HZ)))
     {
         return false;
     }
@@ -64,7 +64,7 @@ bool validHistoryTiming(
 /// The upper bound is deliberately above the roughly +800 LUFS representable by finite float PCM.
 bool validHistoryValue(const float value)
 {
-    return std::isfinite(value) && static_cast<double>(value) >= AudioAnalysisRecord::negativeInfinityLoudness
+    return std::isfinite(value) && static_cast<double>(value) >= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS
         && static_cast<double>(value) <= MAXIMUM_CACHED_LOUDNESS;
 }
 
@@ -86,7 +86,7 @@ bool readMetricScalar(sqlite3_stmt& statement, const int column, std::optional<d
 /// Reads a required little-endian channel array after checking its exact bounded size.
 bool readMetricArray(sqlite3_stmt& statement, const int column, AudioAnalysisRecord& record)
 {
-    const auto expected = column == analysis_column::dcOffsets && record.lengthInSamples == 0
+    const auto expected = column == analysis_column::DC_OFFSETS && record.lengthInSamples == 0
         ? 0
         : record.channels * METRIC_VALUE_BYTES;
     if (sqlite3_column_type(&statement, column) != SQLITE_BLOB || sqlite3_column_bytes(&statement, column) != expected)
@@ -95,7 +95,7 @@ bool readMetricArray(sqlite3_stmt& statement, const int column, AudioAnalysisRec
     }
     juce::MemoryInputStream input(sqlite3_column_blob(&statement, column), static_cast<std::size_t>(expected), false);
     for (int channel = 0; channel < expected / METRIC_VALUE_BYTES; ++channel) {
-        if (column == analysis_column::dcOffsets) {
+        if (column == analysis_column::DC_OFFSETS) {
             const auto value = input.readDouble();
             if (!std::isfinite(value) || std::abs(value) > static_cast<double>(std::numeric_limits<float>::max())) {
                 return false;
@@ -183,18 +183,18 @@ bool readSignalMetrics(sqlite3_stmt& statement, AudioAnalysisRecord& record)
     auto& metrics = record.signalMetrics;
     for (const auto& [column, destination] :
          {
-             std::pair {analysis_column::plrDb, &metrics.plrDb},
-             std::pair {analysis_column::psrDb, &metrics.psrDb},
-             std::pair {analysis_column::crestFactorDb, &metrics.crestFactorDb},
-             std::pair {analysis_column::stereoCorrelation, &metrics.stereoCorrelation},
+             std::pair {analysis_column::PLR_DB, &metrics.plrDb},
+             std::pair {analysis_column::PSR_DB, &metrics.psrDb},
+             std::pair {analysis_column::CREST_FACTOR_DB, &metrics.crestFactorDb},
+             std::pair {analysis_column::STEREO_CORRELATION, &metrics.stereoCorrelation},
          })
     {
         if (!readMetricScalar(statement, column, *destination)) {
             return false;
         }
     }
-    return readMetricArray(statement, analysis_column::dcOffsets, record)
-        && readMetricArray(statement, analysis_column::clipCounts, record)
+    return readMetricArray(statement, analysis_column::DC_OFFSETS, record)
+        && readMetricArray(statement, analysis_column::CLIP_COUNTS, record)
         && (!metrics.stereoCorrelation || (std::abs(*metrics.stereoCorrelation) <= 1.0 && record.channels <= 2))
         && (record.channels != 1
             || (metrics.stereoCorrelation && juce::approximatelyEqual(*metrics.stereoCorrelation, 1.0)));
@@ -206,10 +206,10 @@ bool bindSignalMetrics(sqlite3_stmt& statement, const AudioAnalysisRecord& recor
     const auto& metrics = record.signalMetrics;
     for (const auto& [parameter, value] :
          {
-             std::pair {analysis_parameter::plrDb, metrics.plrDb},
-             std::pair {analysis_parameter::psrDb, metrics.psrDb},
-             std::pair {analysis_parameter::crestFactorDb, metrics.crestFactorDb},
-             std::pair {analysis_parameter::stereoCorrelation, metrics.stereoCorrelation},
+             std::pair {analysis_parameter::PLR_DB, metrics.plrDb},
+             std::pair {analysis_parameter::PSR_DB, metrics.psrDb},
+             std::pair {analysis_parameter::CREST_FACTOR_DB, metrics.crestFactorDb},
+             std::pair {analysis_parameter::STEREO_CORRELATION, metrics.stereoCorrelation},
          })
     {
         if (!(value ? sqlite::bindDouble(statement, parameter, *value) : sqlite::bindNull(statement, parameter))) {
@@ -224,7 +224,7 @@ bool bindSignalMetrics(sqlite3_stmt& statement, const AudioAnalysisRecord& recor
     for (const auto value : metrics.clipCounts) {
         counts.writeInt64(static_cast<std::int64_t>(value));
     }
-    return sqlite::bindBlob(statement, analysis_parameter::dcOffsets, offsets.getMemoryBlock())
-        && sqlite::bindBlob(statement, analysis_parameter::clipCounts, counts.getMemoryBlock());
+    return sqlite::bindBlob(statement, analysis_parameter::DC_OFFSETS, offsets.getMemoryBlock())
+        && sqlite::bindBlob(statement, analysis_parameter::CLIP_COUNTS, counts.getMemoryBlock());
 }
 }  // namespace audiobatch

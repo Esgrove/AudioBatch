@@ -49,7 +49,7 @@ struct ToneFixture {
 };
 
 /// The tone fixtures and what analysis should report for them.
-constexpr std::array toneFixtures {
+constexpr std::array TONE_FIXTURES {
     ToneFixture {
         .fileName = "sine_stereo_44100_16.wav",
         .channels = 2,
@@ -154,7 +154,7 @@ constexpr std::array toneFixtures {
         .sampleRate = 44'100,
         .bitsPerSample = 16,
         .lossy = true,
-        .lengthInSamples = noXingFixtureLength,
+        .lengthInSamples = NO_XING_FIXTURE_LENGTH,
     },
 #if JUCE_MAC
     // Only Core Audio decodes AAC, and it removes the priming and padding that the MP4 edit list records.
@@ -169,9 +169,9 @@ constexpr std::array toneFixtures {
 };
 
 /// Allowed level difference for lossless fixtures, in dB or LU.
-constexpr double losslessTolerance {0.05};
+constexpr double LOSSLESS_TOLERANCE {0.05};
 /// Allowed level difference for lossy fixtures, in dB or LU.
-constexpr double lossyTolerance {0.5};
+constexpr double LOSSY_TOLERANCE {0.5};
 
 }  // namespace
 
@@ -184,7 +184,7 @@ public:
     /// Runs the analysis checks.
     void runTest() override
     {
-        for (const auto& fixture : toneFixtures) {
+        for (const auto& fixture : TONE_FIXTURES) {
             checkToneFixture(fixture);
         }
 
@@ -193,12 +193,12 @@ public:
             const auto record = analyzeFile(fixtureFile("silence_stereo_44100_16.wav"));
             expect(!record.hasError(), record.errorMessage);
             expectEquals(record.overallPeak, 0.0f);
-            expectEquals(record.integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+            expectEquals(record.integratedLufs, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS);
             expect(record.shortTermLoudness != nullptr);
             if (record.shortTermLoudness) {
                 expectEquals(static_cast<int>(record.shortTermLoudness->values.size()), 10);
                 for (const auto value : record.shortTermLoudness->values) {
-                    expectEquals(value, static_cast<float>(AudioAnalysisRecord::negativeInfinityLoudness));
+                    expectEquals(value, static_cast<float>(AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS));
                 }
             }
         }
@@ -207,13 +207,13 @@ public:
         {
             const auto record = analyzeFile(fixtureFile("intersample_stereo_44100_24.wav"));
             expect(!record.hasError(), record.errorMessage);
-            expectWithinAbsoluteError(peakDecibels(record), intersampleFixturePeakDecibels, losslessTolerance);
+            expectWithinAbsoluteError(peakDecibels(record), INTERSAMPLE_FIXTURE_PEAK_DECIBELS, LOSSLESS_TOLERANCE);
             expectWithinAbsoluteError(
                 juce::Decibels::gainToDecibels(record.overallTruePeak),
-                intersampleFixtureTruePeakDecibels,
-                losslessTolerance
+                INTERSAMPLE_FIXTURE_TRUE_PEAK_DECIBELS,
+                LOSSLESS_TOLERANCE
             );
-            expectWithinAbsoluteError(record.integratedLufs, intersampleFixtureLoudness, losslessTolerance);
+            expectWithinAbsoluteError(record.integratedLufs, INTERSAMPLE_FIXTURE_LOUDNESS, LOSSLESS_TOLERANCE);
         }
 
         testLoudnessHistory();
@@ -459,7 +459,7 @@ private:
         }
         for (const auto invalid :
              {
-                 AudioAnalysisRecord::negativeInfinityLoudness,
+                 AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS,
                  -1001.0,
                  std::numeric_limits<double>::infinity(),
                  -std::numeric_limits<double>::infinity(),
@@ -469,7 +469,7 @@ private:
             expect(!estimateLimiterIntegratedLoudness(invalid, Decibels {2.0f}, -8.1));
             expect(!estimateLimiterIntegratedLoudness(-10.0, Decibels {2.0f}, invalid));
         }
-        const auto silence = AudioAnalysisRecord::negativeInfinityLoudness;
+        const auto silence = AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS;
         expectEquals(estimateLimiterIntegratedLoudness(silence, Decibels {2.0f}, silence).value_or(silence), silence);
     }
 
@@ -531,7 +531,7 @@ private:
             }
         }
         const auto gatedSource = temporary.getChildFile("clipped--80.wav");
-        expectEquals(analyzeFile(gatedSource).integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+        expectEquals(analyzeFile(gatedSource).integratedLufs, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS);
         const auto raisedAboveGate = measureGainAdjustedLoudness(gatedSource, Decibels {80.0f});
         expect(raisedAboveGate.has_value());
         if (raisedAboveGate) {
@@ -549,7 +549,7 @@ private:
         const auto silence = measureGainAdjustedLoudness(fixtureFile("silence_stereo_44100_16.wav"), Decibels {20.0f});
         expect(silence.has_value());
         if (silence) {
-            expectEquals(silence->integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+            expectEquals(silence->integratedLufs, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS);
         }
     }
 
@@ -565,12 +565,12 @@ private:
 
         expectEquals(record.bitsPerSample, fixture.bitsPerSample);
 
-        const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
-        expectWithinAbsoluteError(peakDecibels(record), fixturePeakDecibels, tolerance);
+        const auto tolerance = fixture.lossy ? LOSSY_TOLERANCE : LOSSLESS_TOLERANCE;
+        expectWithinAbsoluteError(peakDecibels(record), FIXTURE_PEAK_DECIBELS, tolerance);
         expectWithinAbsoluteError(
-            juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
+            juce::Decibels::gainToDecibels(record.overallTruePeak), FIXTURE_PEAK_DECIBELS, tolerance
         );
-        expectWithinAbsoluteError(record.integratedLufs, fixtureLoudness, tolerance);
+        expectWithinAbsoluteError(record.integratedLufs, FIXTURE_LOUDNESS, tolerance);
         const auto expectedLength = fixture.lengthInSamples.value_or(juce::int64 {fixture.sampleRate});
         expectEquals(record.lengthInSamples, static_cast<std::int64_t>(expectedLength), "decoded length in samples");
         expectWithinAbsoluteError(
@@ -601,7 +601,7 @@ private:
             expectWithinAbsoluteError(history.timeAt(0), 0.1, 0.000001);
             expectWithinAbsoluteError(history.timeAt(9), 1.0, 0.000001);
             expectWithinAbsoluteError(
-                static_cast<double>(history.values.back()), fixtureLoudness - 10.0 * std::log10(3.0), 0.1
+                static_cast<double>(history.values.back()), FIXTURE_LOUDNESS - 10.0 * std::log10(3.0), 0.1
             );
             expect(history.values.front() < history.values.back());
             auto copied = record;

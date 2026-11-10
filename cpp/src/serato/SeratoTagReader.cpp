@@ -30,9 +30,9 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t containerCodeBytes {4};
-constexpr std::size_t containerTypeOffset {2 * containerCodeBytes};
-constexpr std::size_t containerHeaderBytes {containerTypeOffset + containerCodeBytes};
+constexpr std::size_t CONTAINER_CODE_BYTES {4};
+constexpr std::size_t CONTAINER_TYPE_OFFSET {2 * CONTAINER_CODE_BYTES};
+constexpr std::size_t CONTAINER_HEADER_BYTES {CONTAINER_TYPE_OFFSET + CONTAINER_CODE_BYTES};
 
 /// Rejects truncated or mislabeled RIFF containers that TagLib can otherwise report as valid empty tags.
 bool hasValidContainerHeader(const juce::File& file)
@@ -44,13 +44,13 @@ bool hasValidContainerHeader(const juce::File& file)
     if (!file.hasFileExtension("wav;wave;aif;aiff;aifc")) {
         return true;
     }
-    std::array<char, containerHeaderBytes> header {};
+    std::array<char, CONTAINER_HEADER_BYTES> header {};
     if (input->read(header.data(), static_cast<int>(header.size())) != static_cast<int>(header.size())) {
         return false;
     }
     const std::string_view bytes(header.data(), header.size());
-    const auto container = bytes.substr(0, containerCodeBytes);
-    const auto type = bytes.substr(containerTypeOffset, containerCodeBytes);
+    const auto container = bytes.substr(0, CONTAINER_CODE_BYTES);
+    const auto type = bytes.substr(CONTAINER_TYPE_OFFSET, CONTAINER_CODE_BYTES);
     return file.hasFileExtension("wav;wave") ? container == "RIFF" && type == "WAVE"
                                              : container == "FORM" && (type == "AIFF" || type == "AIFC");
 }
@@ -58,7 +58,7 @@ bool hasValidContainerHeader(const juce::File& file)
 /// Parses one bounded GEOB object, copying the signed TagLib bytes into the unsigned parser input.
 TagReadResult parseId3Payload(const TagKind kind, const TagLib::ByteVector& payload, const bool legacy)
 {
-    if (payload.size() > maxTagPayloadBytes) {
+    if (payload.size() > MAX_TAG_PAYLOAD_BYTES) {
         return TagReadResult::missing(kind, ReadStatus::invalid);
     }
     const std::vector<std::uint8_t> bytes(payload.begin(), payload.end());
@@ -89,7 +89,7 @@ TagReadResult readId3Frames(
             continue;
         }
         result = TagReadResult::missing(kind, ReadStatus::invalid);
-        if (kind != TagKind::overview && ++matchingRecords > maxTagRecords) {
+        if (kind != TagKind::overview && ++matchingRecords > MAX_TAG_RECORDS) {
             break;
         }
         auto parsed = parseId3Payload(kind, object->object(), legacy);
@@ -126,7 +126,7 @@ TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, con
     const auto invalid = [kind] { return TagReadResult::missing(kind, ReadStatus::invalid); };
     // Base64 is ASCII, and to8Bit keeps only the low byte of every other character,
     // so for example U+0141 would pass as the Base64 letter 'A'.
-    if (!value.isAscii() || value.size() > maxEncodedTagBytes) {
+    if (!value.isAscii() || value.size() > MAX_ENCODED_TAG_BYTES) {
         return invalid();
     }
     const auto names = getTagNames(kind, legacy);
@@ -162,7 +162,7 @@ TagReadResult readFlacTag(
             continue;
         }
         result = TagReadResult::missing(kind, ReadStatus::invalid);
-        if (kind != TagKind::overview && entry->second.size() > maxTagRecords) {
+        if (kind != TagKind::overview && entry->second.size() > MAX_TAG_RECORDS) {
             continue;
         }
         for (const auto& value : entry->second) {
@@ -197,11 +197,11 @@ juce::String readYear(const juce::String& date)
 /// Validates one bounded standard property and stores it as the first usable value of its field.
 bool readTrackInfoValue(TrackInfo& info, const std::string_view name, const TagLib::String& value)
 {
-    if (value.size() > maxTagTextBytes) {
+    if (value.size() > MAX_TAG_TEXT_BYTES) {
         return false;
     }
     const auto text = value.to8Bit(true);
-    if (text.size() > maxTagTextBytes) {
+    if (text.size() > MAX_TAG_TEXT_BYTES) {
         return false;
     }
     if (name == "BPM") {
@@ -247,7 +247,7 @@ TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::
             continue;
         }
         result = TagReadResult::missing(TagKind::trackInfo, ReadStatus::invalid);
-        if (entry->second.size() > maxTagRecords) {
+        if (entry->second.size() > MAX_TAG_RECORDS) {
             continue;
         }
         for (const auto& value : entry->second) {
@@ -305,7 +305,7 @@ std::vector<TagReadResult> readTags(
     const utils::CancellationCheck& isCancelled
 )
 {
-    if (kinds.empty() || kinds.size() > maxTagRecords) {
+    if (kinds.empty() || kinds.size() > MAX_TAG_RECORDS) {
         return {};
     }
     auto results

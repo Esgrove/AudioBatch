@@ -21,16 +21,16 @@ namespace audiobatch::plugin_presets
 {
 namespace
 {
-constexpr auto chainXmlTag {"PLUGIN_CHAIN"};
-constexpr auto slotXmlTag {"SLOT"};
-constexpr auto slotEnabledAttribute {"enabled"};
-constexpr auto slotStateAttribute {"state"};
+constexpr auto CHAIN_XML_TAG {"PLUGIN_CHAIN"};
+constexpr auto SLOT_XML_TAG {"SLOT"};
+constexpr auto SLOT_ENABLED_ATTRIBUTE {"enabled"};
+constexpr auto SLOT_STATE_ATTRIBUTE {"state"};
 
-constexpr auto presetXmlTag {"PLUGIN_CHAIN_PRESET"};
-constexpr auto presetNameAttribute {"name"};
-constexpr auto presetVersionAttribute {"version"};
+constexpr auto PRESET_XML_TAG {"PLUGIN_CHAIN_PRESET"};
+constexpr auto PRESET_NAME_ATTRIBUTE {"name"};
+constexpr auto PRESET_VERSION_ATTRIBUTE {"version"};
 /// Version of the preset file format, raised when a change would make older versions misread the file.
-constexpr int presetFormatVersion {1};
+constexpr int PRESET_FORMAT_VERSION {1};
 
 /// Parses one stored slot, or returns an empty optional when its plugin description cannot be loaded.
 std::optional<SavedChainSlot> parseSlot(const juce::XmlElement& slotElement)
@@ -45,8 +45,8 @@ std::optional<SavedChainSlot> parseSlot(const juce::XmlElement& slotElement)
         return std::nullopt;
     }
 
-    slot.enabled = slotElement.getBoolAttribute(slotEnabledAttribute, true);
-    slot.state = decodeState(slotElement.getStringAttribute(slotStateAttribute));
+    slot.enabled = slotElement.getBoolAttribute(SLOT_ENABLED_ATTRIBUTE, true);
+    slot.state = decodeState(slotElement.getStringAttribute(SLOT_STATE_ATTRIBUTE));
     return slot;
 }
 
@@ -54,16 +54,16 @@ std::optional<SavedChainSlot> parseSlot(const juce::XmlElement& slotElement)
 std::expected<void, juce::String> validateStrictChain(const juce::XmlElement& chain)
 {
     for (const auto* child : chain.getChildIterator()) {
-        if (!child->hasTagName(slotXmlTag) || !parseSlot(*child)) {
+        if (!child->hasTagName(SLOT_XML_TAG) || !parseSlot(*child)) {
             return std::unexpected(juce::String("The preset contains a damaged plugin slot"));
         }
-        if (child->hasAttribute(slotEnabledAttribute)) {
-            const auto enabled = child->getStringAttribute(slotEnabledAttribute);
+        if (child->hasAttribute(SLOT_ENABLED_ATTRIBUTE)) {
+            const auto enabled = child->getStringAttribute(SLOT_ENABLED_ATTRIBUTE);
             if (enabled != "0" && enabled != "1") {
                 return std::unexpected(juce::String("The preset contains an invalid plugin enabled flag"));
             }
         }
-        const auto encoded = child->getStringAttribute(slotStateAttribute);
+        const auto encoded = child->getStringAttribute(SLOT_STATE_ATTRIBUTE);
         if (encoded.isEmpty()) {
             continue;
         }
@@ -82,7 +82,7 @@ std::expected<void, juce::String> validateStrictChain(const juce::XmlElement& ch
 /// Slots whose description cannot be written are left out, and empty plugin states are not stored.
 std::unique_ptr<juce::XmlElement> createChainXml(const std::span<const SavedChainSlot> slots)
 {
-    auto chainElement = std::make_unique<juce::XmlElement>(chainXmlTag);
+    auto chainElement = std::make_unique<juce::XmlElement>(CHAIN_XML_TAG);
 
     for (const auto& slot : slots) {
         auto descriptionElement = slot.description.createXml();
@@ -90,12 +90,12 @@ std::unique_ptr<juce::XmlElement> createChainXml(const std::span<const SavedChai
             continue;
         }
 
-        auto* slotElement = chainElement->createNewChildElement(slotXmlTag);
-        slotElement->setAttribute(slotEnabledAttribute, static_cast<int>(slot.enabled));
+        auto* slotElement = chainElement->createNewChildElement(SLOT_XML_TAG);
+        slotElement->setAttribute(SLOT_ENABLED_ATTRIBUTE, static_cast<int>(slot.enabled));
 
         if (slot.state.getSize() > 0) {
             slotElement->setAttribute(
-                slotStateAttribute, juce::Base64::toBase64(slot.state.getData(), slot.state.getSize())
+                SLOT_STATE_ATTRIBUTE, juce::Base64::toBase64(slot.state.getData(), slot.state.getSize())
             );
         }
 
@@ -109,12 +109,12 @@ std::unique_ptr<juce::XmlElement> createChainXml(const std::span<const SavedChai
 /// Slots whose plugin description cannot be loaded are skipped, so one damaged slot does not lose the rest.
 std::optional<std::vector<SavedChainSlot>> parseChainXml(const juce::XmlElement& element)
 {
-    if (!element.hasTagName(chainXmlTag)) {
+    if (!element.hasTagName(CHAIN_XML_TAG)) {
         return std::nullopt;
     }
 
     std::vector<SavedChainSlot> slots;
-    for (const auto* slotElement : element.getChildWithTagNameIterator(slotXmlTag)) {
+    for (const auto* slotElement : element.getChildWithTagNameIterator(SLOT_XML_TAG)) {
         if (auto slot = parseSlot(*slotElement); slot.has_value()) {
             slots.push_back(std::move(*slot));
         }
@@ -147,7 +147,7 @@ juce::MemoryBlock decodeState(const juce::String& stateBase64)
 /// Tests that point the settings at a temporary folder get a temporary preset folder with it.
 juce::File getPresetDirectory(const juce::File& settingsFile)
 {
-    return settingsFile.getSiblingFile(presetFolderName);
+    return settingsFile.getSiblingFile(PRESET_FOLDER_NAME);
 }
 
 /// Turns a preset name into a name that is valid as a file name on every platform.
@@ -166,7 +166,7 @@ std::optional<juce::File> getPresetFile(const juce::File& directory, const juce:
         return std::nullopt;
     }
 
-    return directory.getChildFile(fileName + presetFileExtension);
+    return directory.getChildFile(fileName + PRESET_FILE_EXTENSION);
 }
 
 /// Lists the preset files in the folder, sorted by name, ignoring case.
@@ -183,7 +183,7 @@ std::vector<ChainPresetInfo> listPresets(const juce::File& directory)
     for (const auto& entry : juce::RangedDirectoryIterator(
              directory,
              false,
-             utils::format("*{}", presetFileExtension),
+             utils::format("*{}", PRESET_FILE_EXTENSION),
              // NOLINTNEXTLINE(bugprone-signed-bitwise): JUCE's file-search flags use an int-based API.
              juce::File::findFiles | juce::File::ignoreHiddenFiles
          ))
@@ -227,9 +227,9 @@ std::expected<juce::File, juce::String> savePreset(
         );
     }
 
-    juce::XmlElement presetElement(presetXmlTag);
-    presetElement.setAttribute(presetNameAttribute, file->getFileNameWithoutExtension());
-    presetElement.setAttribute(presetVersionAttribute, presetFormatVersion);
+    juce::XmlElement presetElement(PRESET_XML_TAG);
+    presetElement.setAttribute(PRESET_NAME_ATTRIBUTE, file->getFileNameWithoutExtension());
+    presetElement.setAttribute(PRESET_VERSION_ATTRIBUTE, PRESET_FORMAT_VERSION);
     presetElement.addChildElement(createChainXml(slots).release());
 
     // The hidden temporary file keeps an interrupted save out of the preset list,
@@ -266,23 +266,23 @@ std::expected<std::vector<SavedChainSlot>, juce::String> loadPreset(const juce::
     }
 
     const auto element = juce::parseXML(file);
-    if (element == nullptr || !element->hasTagName(presetXmlTag)) {
+    if (element == nullptr || !element->hasTagName(PRESET_XML_TAG)) {
         return std::unexpected(utils::format("{} is not a plugin chain preset", file.getFileName().quoted()));
     }
 
-    if (element->getIntAttribute(presetVersionAttribute, presetFormatVersion) > presetFormatVersion) {
+    if (element->getIntAttribute(PRESET_VERSION_ATTRIBUTE, PRESET_FORMAT_VERSION) > PRESET_FORMAT_VERSION) {
         return std::unexpected(
             utils::format("{} was saved by a newer version of AudioBatch", file.getFileName().quoted())
         );
     }
 
-    if (strict && element->hasAttribute(presetVersionAttribute)
-        && element->getStringAttribute(presetVersionAttribute) != juce::String(presetFormatVersion))
+    if (strict && element->hasAttribute(PRESET_VERSION_ATTRIBUTE)
+        && element->getStringAttribute(PRESET_VERSION_ATTRIBUTE) != juce::String(PRESET_FORMAT_VERSION))
     {
         return std::unexpected(juce::String("The preset contains an invalid format version"));
     }
 
-    const auto* chainElement = element->getChildByName(chainXmlTag);
+    const auto* chainElement = element->getChildByName(CHAIN_XML_TAG);
     auto slots = chainElement != nullptr ? parseChainXml(*chainElement) : std::nullopt;
     if (!slots.has_value()) {
         return std::unexpected(utils::format("{} has no plugin chain", file.getFileName().quoted()));

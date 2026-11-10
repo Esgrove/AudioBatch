@@ -35,10 +35,10 @@ namespace audiobatch::tests
 namespace
 {
 /// How long a coordinator test waits for a run to reach the expected state before it fails.
-constexpr auto coordinatorTimeout {std::chrono::seconds(10)};
+constexpr auto COORDINATOR_TIMEOUT {std::chrono::seconds(10)};
 
 /// Start error of a run whose chains do not match its plugins.
-constexpr auto noChainsMessage {"No plugin chain instances were available to start processing."};
+constexpr auto NO_CHAINS_MESSAGE {"No plugin chain instances were available to start processing."};
 
 /// One published result and the run it belongs to.
 struct PublishedResult {
@@ -94,7 +94,7 @@ public:
     bool waitForCompletion(const int runId)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, coordinatorTimeout, [&] {
+        return condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] {
             return std::ranges::contains(completions, runId, &std::pair<int, int>::second);
         });
     }
@@ -103,7 +103,7 @@ public:
     bool waitForStartedFiles(const std::size_t count)
     {
         std::unique_lock lock(mutex);
-        return condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles.size() >= count; });
+        return condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return startedFiles.size() >= count; });
     }
 
     /// Installs the starting, result, completion, and start error callbacks on the coordinator.
@@ -115,7 +115,7 @@ public:
             startedRunIds.push_back(runId);
             condition.notify_all();
             if (holding && startedFiles.size() == 1) {
-                condition.wait_for(lock, coordinatorTimeout, [this] { return released; });
+                condition.wait_for(lock, COORDINATOR_TIMEOUT, [this] { return released; });
             }
         });
         coordinator.setResultCallback([this](const PluginProcessingResult& result, const int runId) {
@@ -287,7 +287,7 @@ void PluginCoordinatorTests::runTest()
         expectEquals(coordinator.start({analyzeFile(source)}, options, makeChains(1)), 0);
         const auto runId = coordinator.getCurrentRunId();
         expect(recorder.waitForCompletion(runId));
-        expectEquals(recorder.getStartErrors().joinIntoString(","), juce::String(noChainsMessage));
+        expectEquals(recorder.getStartErrors().joinIntoString(","), juce::String(NO_CHAINS_MESSAGE));
         expect(recorder.getStartErrorRunIds() == std::vector {runId});
         expect(recorder.getCompletions() == std::vector {std::pair {0, runId}});
         expect(recorder.getResults().empty());
@@ -303,7 +303,7 @@ void PluginCoordinatorTests::runTest()
 /// Safe to call from a helper thread, since it reports nothing to the test runner itself.
 bool PluginCoordinatorTests::waitForRunIdChange(const PluginProcessingCoordinator& coordinator, const int runId)
 {
-    const auto deadline = std::chrono::steady_clock::now() + coordinatorTimeout;
+    const auto deadline = std::chrono::steady_clock::now() + COORDINATOR_TIMEOUT;
     while (coordinator.getCurrentRunId() == runId && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -383,7 +383,7 @@ void PluginCoordinatorTests::testCoordinator(const TemporaryDirectory& directory
         utils::logInfo("Test file starting: {}", file.getFileName().quoted());
         startedPaths.push_back(file.getFullPathName());
         condition.notify_all();
-        condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+        condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return released; });
     });
     coordinator.setResultCallback([&](const PluginProcessingResult& result, int /*runId*/) {
         const std::scoped_lock lock(mutex);
@@ -404,11 +404,11 @@ void PluginCoordinatorTests::testCoordinator(const TemporaryDirectory& directory
     {
         std::unique_lock lock(mutex);
         if (workerCount > 1) {
-            expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedPaths.size() >= 6; }));
+            expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return startedPaths.size() >= 6; }));
             released = true;
             condition.notify_all();
         }
-        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return completedFiles == 7; }));
+        expect(condition.wait_for(lock, COORDINATOR_TIMEOUT, [&] { return completedFiles == 7; }));
     }
     coordinator.cancelAndWait();
     expectEquals(resultCount, 7);

@@ -44,30 +44,30 @@ namespace audiobatch
 namespace
 {
 /// Block size for copying the rendered intermediate file into the final output.
-constexpr int finalizeBlockSize {32'768};
+constexpr int FINALIZE_BLOCK_SIZE {32'768};
 /// Level below which rendered tail samples count as silence and are trimmed from the end of the output.
 /// The value is -96 dB, the noise floor of 16-bit audio.
-constexpr float silenceThreshold {1.5849e-5f};
+constexpr float SILENCE_THRESHOLD {1.5849e-5f};
 /// Fixed PCM depth of plugin-processed output, independent of the source.
-constexpr int outputBitsPerSample {16};
+constexpr int OUTPUT_BITS_PER_SAMPLE {16};
 /// Scale from floating-point full scale to a signed 16-bit PCM value.
-constexpr int outputPcmScale {32'768};
+constexpr int OUTPUT_PCM_SCALE {32'768};
 /// JUCE's integer writer takes PCM values aligned to the most significant bits of a 32-bit integer.
-constexpr int outputPcmAlignment {65'536};
+constexpr int OUTPUT_PCM_ALIGNMENT {65'536};
 /// Error message of a file whose processing was cancelled before it was committed.
-constexpr auto cancelledMessage {"Processing was cancelled"};
+constexpr auto CANCELLED_MESSAGE {"Processing was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
-constexpr float sourceAnalysisProgressShare {0.1f};
+constexpr float SOURCE_ANALYSIS_PROGRESS_SHARE {0.1f};
 /// Progress at which rendering through the chain ends and writing the final output begins.
-constexpr float renderProgressEnd {0.7f};
+constexpr float RENDER_PROGRESS_END {0.7f};
 /// Progress reserved for the final PCM write and metering before metadata validation and commit.
-constexpr float writeProgressEnd {0.95f};
+constexpr float WRITE_PROGRESS_END {0.95f};
 
 /// Most channels a source can have, since processing, like analysis, targets mono and stereo files.
 /// A file with more channels is refused, because the output would drop the extra channels
 /// before the original is replaced.
-constexpr unsigned int maximumProcessingChannels {2};
+constexpr unsigned int MAXIMUM_PROCESSING_CHANNELS {2};
 
 /// Length measurements of the rendered chain output, used to finalize the output file.
 struct RenderSummary {
@@ -203,7 +203,7 @@ void measureOutputBlock(const juce::AudioBuffer<float>& block, const int numSamp
 {
     for (int sample = numSamples - 1; sample >= 0; --sample) {
         for (int channel = 0; channel < block.getNumChannels(); ++channel) {
-            if (std::abs(block.getSample(channel, sample)) > silenceThreshold) {
+            if (std::abs(block.getSample(channel, sample)) > SILENCE_THRESHOLD) {
                 summary.lastAudibleSample = summary.samplesWritten + sample;
                 return;
             }
@@ -232,22 +232,22 @@ std::expected<RenderSummary, juce::String> renderThroughChain(
     const auto latencySamples = preparation.latencySamples;
     RenderSummary summary;
 
-    juce::AudioBuffer<float> buffer(preparation.processChannelCount, plugin_processing::processingBlockSize);
-    juce::AudioBuffer<float> readBuffer(numChannels, plugin_processing::processingBlockSize);
+    juce::AudioBuffer<float> buffer(preparation.processChannelCount, plugin_processing::PROCESSING_BLOCK_SIZE);
+    juce::AudioBuffer<float> readBuffer(numChannels, plugin_processing::PROCESSING_BLOCK_SIZE);
     juce::MidiBuffer midi;
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
 
     const auto totalSamples = reader.lengthInSamples + latencySamples + preparation.tailSamples;
 
     for (juce::int64 samplePosition = 0; samplePosition < totalSamples;
-         samplePosition += plugin_processing::processingBlockSize)
+         samplePosition += plugin_processing::PROCESSING_BLOCK_SIZE)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            return std::unexpected(juce::String(cancelledMessage));
+            return std::unexpected(juce::String(CANCELLED_MESSAGE));
         }
 
         const auto samplesThisBlock = static_cast<int>(
-            juce::jmin<juce::int64>(plugin_processing::processingBlockSize, totalSamples - samplePosition)
+            juce::jmin<juce::int64>(plugin_processing::PROCESSING_BLOCK_SIZE, totalSamples - samplePosition)
         );
 
         // Clearing the whole block also pads a short final block with silence up to the prepared block size,
@@ -331,8 +331,8 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
 )
 {
     WriteSummary summary;
-    juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), finalizeBlockSize);
-    juce::AudioBuffer<int> quantizedBlock(block.getNumChannels(), finalizeBlockSize);
+    juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), FINALIZE_BLOCK_SIZE);
+    juce::AudioBuffer<int> quantizedBlock(block.getNumChannels(), FINALIZE_BLOCK_SIZE);
     std::vector<const int*> outputChannels(static_cast<std::size_t>(block.getNumChannels()) + 1, nullptr);
     for (int channel = 0; channel < block.getNumChannels(); ++channel) {
         outputChannels[static_cast<std::size_t>(channel)] = quantizedBlock.getReadPointer(channel);
@@ -342,13 +342,13 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
         return std::unexpected(initialized.error());
     }
 
-    for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += finalizeBlockSize) {
+    for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += FINALIZE_BLOCK_SIZE) {
         if (utils::isCancellationRequested(isCancelled)) {
-            return std::unexpected(juce::String(cancelledMessage));
+            return std::unexpected(juce::String(CANCELLED_MESSAGE));
         }
 
         const auto samplesThisBlock
-            = static_cast<int>(juce::jmin<juce::int64>(finalizeBlockSize, finalLength - samplePosition));
+            = static_cast<int>(juce::jmin<juce::int64>(FINALIZE_BLOCK_SIZE, finalLength - samplePosition));
 
         if (!renderedReader.read(&block, 0, samplesThisBlock, samplePosition, true, true)) {
             return std::unexpected(juce::String("Failed while reading the rendered audio"));
@@ -360,16 +360,16 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
                 quantizedBlock.getWritePointer(channel), static_cast<std::size_t>(samplesThisBlock)
             );
             for (std::size_t sample = 0; sample < input.size(); ++sample) {
-                constexpr float minimumPcmValue {-static_cast<float>(outputPcmScale)};
-                constexpr float maximumPcmValue {static_cast<float>(outputPcmScale - 1)};
-                const auto scaled = input[sample] * static_cast<float>(outputPcmScale);
+                constexpr float minimumPcmValue {-static_cast<float>(OUTPUT_PCM_SCALE)};
+                constexpr float maximumPcmValue {static_cast<float>(OUTPUT_PCM_SCALE - 1)};
+                const auto scaled = input[sample] * static_cast<float>(OUTPUT_PCM_SCALE);
                 // Values between the largest step and the next one round down to the largest step,
                 // so only values from the next step on are cut off.
                 summary.clipped
-                    = summary.clipped || scaled < minimumPcmValue || scaled >= static_cast<float>(outputPcmScale);
+                    = summary.clipped || scaled < minimumPcmValue || scaled >= static_cast<float>(OUTPUT_PCM_SCALE);
                 const auto limited = juce::jlimit(minimumPcmValue, maximumPcmValue, scaled);
-                output[sample] = static_cast<int>(std::floor(limited)) * outputPcmAlignment;
-                input[sample] = utils::pcmSampleToFloat(output[sample], outputBitsPerSample);
+                output[sample] = static_cast<int>(std::floor(limited)) * OUTPUT_PCM_ALIGNMENT;
+                input[sample] = utils::pcmSampleToFloat(output[sample], OUTPUT_BITS_PER_SAMPLE);
             }
         }
 
@@ -453,7 +453,7 @@ std::expected<RenderSummary, juce::String> renderChainToFile(
     const auto preparation = preparedChain.prepare(options, numChannels, reader.sampleRate);
 
     if (!preparation.has_value()) {
-        return std::unexpected(juce::String(cancelledMessage));
+        return std::unexpected(juce::String(CANCELLED_MESSAGE));
     }
 
     if (preparation->errorMessage.isNotEmpty()) {
@@ -506,7 +506,7 @@ std::expected<WriteSummary, juce::String> writeProcessedAiff(
     const auto writerOptions = juce::AudioFormatWriterOptions()
                                    .withSampleRate(sourceReader.sampleRate)
                                    .withNumChannels(static_cast<int>(renderedReader->numChannels))
-                                   .withBitsPerSample(outputBitsPerSample)
+                                   .withBitsPerSample(OUTPUT_BITS_PER_SAMPLE)
                                    .withMetadataValues(utils::aiffWriterMetadata(sourceReader.metadataValues));
     const auto writer = aiffFormat.createWriterFor(outputStream, writerOptions);
 
@@ -680,7 +680,7 @@ PluginProcessingResult processFileWithPlugins(
     const bool needsMeasurement = sourceChanged
         || (sourceRecord.measurementProducer != MeasurementProducer::cpp && !sourceRecord.customGain
             && options.normalizeBeforePlugin.has_value());
-    const auto renderProgressStart = needsMeasurement ? sourceAnalysisProgressShare : 0.0f;
+    const auto renderProgressStart = needsMeasurement ? SOURCE_ANALYSIS_PROGRESS_SHARE : 0.0f;
     const auto record = refreshIfChanged(
         sourceRecord,
         needsMeasurement,
@@ -711,7 +711,7 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, outputCheck.error());
     }
 
-    if (reader->numChannels < 1 || reader->numChannels > maximumProcessingChannels) {
+    if (reader->numChannels < 1 || reader->numChannels > MAXIMUM_PROCESSING_CHANNELS) {
         return fail(
             file,
             utils::format("Only mono and stereo files can be processed, this file has {} channels", reader->numChannels)
@@ -730,7 +730,7 @@ PluginProcessingResult processFileWithPlugins(
         numChannels,
         inputGain.gain.value,
         isCancelled,
-        utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
+        utils::makeProgressRange(onProgress, renderProgressStart, RENDER_PROGRESS_END)
     );
 
     if (!summary) {
@@ -749,7 +749,7 @@ PluginProcessingResult processFileWithPlugins(
         *reader,
         finalLength,
         isCancelled,
-        utils::makeProgressRange(onProgress, renderProgressEnd, writeProgressEnd)
+        utils::makeProgressRange(onProgress, RENDER_PROGRESS_END, WRITE_PROGRESS_END)
     );
 
     if (!written) {
@@ -779,7 +779,7 @@ PluginProcessingResult processFileWithPlugins(
     // The coordinator drops results of a cancelled run, so committing here would change files on disk
     // without the caller ever learning about it.
     if (utils::isCancellationRequested(isCancelled)) {
-        return fail(file, cancelledMessage);
+        return fail(file, CANCELLED_MESSAGE);
     }
 
     reader.reset();
@@ -823,8 +823,9 @@ PluginProcessingResult processFileWithPlugins(
         );
     }
 
-    auto analysis
-        = completeRenderedAnalysis(std::move(written->measurements), outputFile, outputBitsPerSample, renderedIdentity);
+    auto analysis = completeRenderedAnalysis(
+        std::move(written->measurements), outputFile, OUTPUT_BITS_PER_SAMPLE, renderedIdentity
+    );
     utils::reportProgress(onProgress, 1.0f);
     // Custom gain has been baked in. Clear it on the new record.
     analysis.customGain.reset();

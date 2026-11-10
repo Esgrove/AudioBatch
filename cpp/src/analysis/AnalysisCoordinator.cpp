@@ -29,13 +29,13 @@ namespace audiobatch
 namespace
 {
 /// How long cancelAndWait waits for running analysis jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds {30'000};
+constexpr int JOB_SHUTDOWN_TIMEOUT_MILLISECONDS {30'000};
 }  // namespace
 
 /// Creates a coordinator with a thread pool sized for the current machine.
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
     cache(analysisCache),
-    runner(workerCount, jobShutdownTimeoutMilliseconds)
+    runner(workerCount, JOB_SHUTDOWN_TIMEOUT_MILLISECONDS)
 {}
 
 /// Cancels any in-flight work and waits for every job without a timeout,
@@ -259,8 +259,8 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(
 
     // The completion callback above stays in place for the whole run, so the run id is not needed.
     static_cast<void>(start(options));
-    constexpr int CANCELLATION_POLL_MILLISECONDS {20};
-    while (!finishedEvent.wait(CANCELLATION_POLL_MILLISECONDS)) {
+    constexpr int cancellationPollMilliseconds {20};
+    while (!finishedEvent.wait(cancellationPollMilliseconds)) {
         if (utils::isCancellationRequested(isCancelled)) {
             cancel();
             // The callbacks borrow this stack frame, so drain every worker before releasing it.

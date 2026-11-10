@@ -63,15 +63,15 @@ inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
     if (channels <= 0 || geometry.waveform.isEmpty() || geometry.amplitudeAxis.isEmpty()) {
         return labels;
     }
-    constexpr std::array DECIBEL_LEVELS {-1.0f, -6.0f};
-    constexpr float AMPLITUDE_DECIBEL_FACTOR {20.0f};
-    constexpr float DECIBEL_LOG_BASE {10.0f};
-    constexpr std::array POLARITIES {1.0f, -1.0f};
+    constexpr std::array decibelLevels {-1.0f, -6.0f};
+    constexpr float amplitudeDecibelFactor {20.0f};
+    constexpr float decibelLogBase {10.0f};
+    constexpr std::array polarities {1.0f, -1.0f};
     // Conversion is invariant across channels and repaints, while label occupancy remains pane-local.
     static const auto MAGNITUDES = [=] {
-        std::array<float, DECIBEL_LEVELS.size()> magnitudes {};
+        std::array<float, decibelLevels.size()> magnitudes {};
         for (std::size_t index = 0; index < magnitudes.size(); ++index) {
-            magnitudes[index] = std::pow(DECIBEL_LOG_BASE, DECIBEL_LEVELS[index] / AMPLITUDE_DECIBEL_FACTOR);
+            magnitudes[index] = std::pow(decibelLogBase, decibelLevels[index] / amplitudeDecibelFactor);
         }
         return magnitudes;
     }();
@@ -109,9 +109,9 @@ inline std::vector<PreviewAmplitudeLabel> previewAmplitudeLabels(
                 .channel = channel,
             });
         };
-        for (std::size_t index = 0; index < DECIBEL_LEVELS.size(); ++index) {
-            for (const auto polarity : POLARITIES) {
-                addLabel(polarity * MAGNITUDES[index], DECIBEL_LEVELS[index]);
+        for (std::size_t index = 0; index < decibelLevels.size(); ++index) {
+            for (const auto polarity : polarities) {
+                addLabel(polarity * MAGNITUDES[index], decibelLevels[index]);
             }
         }
     }
@@ -126,14 +126,14 @@ inline PreviewPlotGeometry previewPlotGeometry(
 )
 {
     PreviewPlotGeometry result;
-    if (bounds.getWidth() <= layout::waveform::contentInset * 2
-        || bounds.getHeight() <= layout::waveform::contentInset * 2)
+    if (bounds.getWidth() <= layout::waveform::CONTENT_INSET * 2
+        || bounds.getHeight() <= layout::waveform::CONTENT_INSET * 2)
     {
         return result;
     }
     bounds = bounds.reduced(
-        std::min(layout::waveform::contentInset, std::max(0, bounds.getWidth() / 2)),
-        std::min(layout::waveform::contentInset, std::max(0, bounds.getHeight() / 2))
+        std::min(layout::waveform::CONTENT_INSET, std::max(0, bounds.getWidth() / 2)),
+        std::min(layout::waveform::CONTENT_INSET, std::max(0, bounds.getHeight() / 2))
     );
     if (bounds.isEmpty()) {
         return result;
@@ -145,20 +145,20 @@ inline PreviewPlotGeometry previewPlotGeometry(
         case PreviewViewMode::spectrogram:
             result.spectrogram = bounds;
             result.sourceWarning = result.spectrogram.removeFromTop(
-                std::min(layout::waveform::sourceWarningHeight, result.spectrogram.getHeight())
+                std::min(layout::waveform::SOURCE_WARNING_HEIGHT, result.spectrogram.getHeight())
             );
             break;
         case PreviewViewMode::sideBySide: {
-            const auto width = std::max(0, bounds.getWidth() - layout::waveform::paneGap) / 2;
+            const auto width = std::max(0, bounds.getWidth() - layout::waveform::PANE_GAP) / 2;
             result.waveform = bounds.removeFromLeft(width);
-            bounds.removeFromLeft(std::min(layout::waveform::paneGap, bounds.getWidth()));
+            bounds.removeFromLeft(std::min(layout::waveform::PANE_GAP, bounds.getWidth()));
             result.spectrogram = bounds;
             break;
         }
         case PreviewViewMode::stacked: {
-            const auto height = std::max(0, bounds.getHeight() - layout::waveform::paneGap) / 2;
+            const auto height = std::max(0, bounds.getHeight() - layout::waveform::PANE_GAP) / 2;
             result.waveform = bounds.removeFromTop(height);
-            bounds.removeFromTop(std::min(layout::waveform::paneGap, bounds.getHeight()));
+            bounds.removeFromTop(std::min(layout::waveform::PANE_GAP, bounds.getHeight()));
             result.spectrogram = bounds;
             break;
         }

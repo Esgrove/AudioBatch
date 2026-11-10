@@ -33,9 +33,9 @@ class AudioPreviewPlayer;
 /// Quiet values become darker and strong values brighter while both palette endpoints remain fixed.
 [[nodiscard]] constexpr float spectrogramDisplayIntensity(const std::uint8_t intensity) noexcept
 {
-    constexpr float SMOOTHSTEP_QUADRATIC_COEFFICIENT {3.0f};
+    constexpr float smoothstepQuadraticCoefficient {3.0f};
     const auto normalized = static_cast<float>(intensity) / 255.0f;
-    return normalized * normalized * (SMOOTHSTEP_QUADRATIC_COEFFICIENT - 2.0f * normalized);
+    return normalized * normalized * (smoothstepQuadraticCoefficient - 2.0f * normalized);
 }
 
 /// Placement of the two arrows that mark one Serato cue on the waveform, in component coordinates.
@@ -96,8 +96,8 @@ struct OverloadMark {
     const bool truePeak
 ) noexcept
 {
-    const auto mask = (sample ? static_cast<unsigned int>(OverloadHistory::sampleOver) : 0u)
-        | (truePeak ? static_cast<unsigned int>(OverloadHistory::truePeakOver) : 0u);
+    const auto mask = (sample ? static_cast<unsigned int>(OverloadHistory::SAMPLE_OVER) : 0u)
+        | (truePeak ? static_cast<unsigned int>(OverloadHistory::TRUE_PEAK_OVER) : 0u);
     return static_cast<std::uint8_t>(static_cast<unsigned int>(flags) & mask);
 }
 
@@ -307,8 +307,8 @@ private:
     /// Display-only true peak cap visibility, independent of retained source histories.
     bool showTruePeakOverloads {true};
     /// Loudness axis limits in LUFS.
-    double loudnessMaximum {AudioPreviewPreferences::defaultLoudnessGraphMaximum};
-    double loudnessMinimum {AudioPreviewPreferences::defaultLoudnessGraphMinimum};
+    double loudnessMaximum {AudioPreviewPreferences::DEFAULT_LOUDNESS_GRAPH_MAXIMUM};
+    double loudnessMinimum {AudioPreviewPreferences::DEFAULT_LOUDNESS_GRAPH_MINIMUM};
     /// Linear display gain reflecting the custom gain.
     float displayGain {1.0f};
 

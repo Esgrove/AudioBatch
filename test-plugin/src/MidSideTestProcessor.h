@@ -12,17 +12,17 @@
 namespace audiobatch::test_plugin
 {
 /// Index and VST3 id of the linear gain parameter, which spans 0 to 2.
-constexpr int gainParameterIndex {0};
+constexpr int GAIN_PARAMETER_INDEX {0};
 /// Index and VST3 id of the stereo width parameter, which spans 0 to 2.
-constexpr int widthParameterIndex {1};
+constexpr int WIDTH_PARAMETER_INDEX {1};
 /// Upper end of both parameter ranges, which start from zero.
-constexpr float parameterMaximum {2.0F};
+constexpr float PARAMETER_MAXIMUM {2.0F};
 /// Default of both parameters, which leaves the signal unchanged.
-constexpr float parameterDefault {1.0F};
+constexpr float PARAMETER_DEFAULT {1.0F};
 /// Index and VST3 id of the latency parameter, in samples.
-constexpr int latencyParameterIndex {2};
+constexpr int LATENCY_PARAMETER_INDEX {2};
 /// Largest latency in samples. A power of two, so whole sample values map to exact normalized values.
-constexpr int latencyMaximum {1024};
+constexpr int LATENCY_MAXIMUM {1024};
 
 /// A mid/side width and gain effect without an editor or tail, with an optional latency.
 /// A stereo input is split into mid and side, the side is scaled by the width,

@@ -12,7 +12,7 @@
 namespace audiobatch::serato
 {
 /// Width in bytes of an RGB colour field.
-inline constexpr std::size_t rgbBytes {3};
+inline constexpr std::size_t RGB_BYTES {3};
 
 /// Reads an unsigned big-endian integer from exactly sizeof(Value) bytes, without alignment assumptions.
 template<std::unsigned_integral Value>

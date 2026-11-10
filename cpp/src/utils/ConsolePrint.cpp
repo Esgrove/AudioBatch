@@ -100,13 +100,13 @@ namespace console
 bool isColorEnabled(std::FILE* stream)
 {
     if (stream == stdout) {
-        static const bool stdoutColorEnabled = computeColorEnabled(stdout);
-        return stdoutColorEnabled;
+        static const bool STDOUT_COLOR_ENABLED = computeColorEnabled(stdout);
+        return STDOUT_COLOR_ENABLED;
     }
 
     if (stream == stderr) {
-        static const bool stderrColorEnabled = computeColorEnabled(stderr);
-        return stderrColorEnabled;
+        static const bool STDERR_COLOR_ENABLED = computeColorEnabled(stderr);
+        return STDERR_COLOR_ENABLED;
     }
 
     return computeColorEnabled(stream);

@@ -24,7 +24,7 @@ std::optional<WaveformGeometry> waveformGeometry(const std::span<const std::byte
     constexpr int maximumDetail {1024};
     constexpr int maximumWaveformSampleRate {768'000};
     constexpr std::int64_t maximumPoints {4'194'304};
-    if (data.size() < headerBytes || data.size() > static_cast<std::size_t>(maximumWaveformBytes)) {
+    if (data.size() < headerBytes || data.size() > static_cast<std::size_t>(MAXIMUM_WAVEFORM_BYTES)) {
         return std::nullopt;
     }
     juce::MemoryInputStream input(data.data(), data.size(), false);

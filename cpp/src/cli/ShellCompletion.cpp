@@ -52,20 +52,20 @@ std::vector<CompletionScope> completionScopes()
     CompletionScope analysis {
         .name = {},
         .description = {},
-        .options = {cli::helpOption, cli::versionOption},
+        .options = {cli::HELP_OPTION, cli::VERSION_OPTION},
         .argumentName = {},
         .argumentValues = {},
     };
-    for (const CliOption& option : cli::analysisOptions) {
+    for (const CliOption& option : cli::ANALYSIS_OPTIONS) {
         analysis.options.push_back(option);
     }
     scopes.push_back(std::move(analysis));
 
-    for (const auto& subcommand : cli::subcommands) {
+    for (const auto& subcommand : cli::SUBCOMMANDS) {
         CompletionScope scope {
             .name = subcommand.name,
             .description = subcommand.description,
-            .options = {cli::helpOption},
+            .options = {cli::HELP_OPTION},
             .argumentName = subcommand.argumentName,
             .argumentValues = subcommand.argumentValues,
         };
@@ -190,7 +190,7 @@ std::string subcommandNames()
 {
     std::string result;
 
-    for (const auto& subcommand : cli::subcommands) {
+    for (const auto& subcommand : cli::SUBCOMMANDS) {
         if (!result.empty()) {
             result += ' ';
         }
@@ -491,7 +491,7 @@ end
         }
     }
 
-    for (const auto& subcommand : cli::subcommands) {
+    for (const auto& subcommand : cli::SUBCOMMANDS) {
         completions += fmt::format(
             "complete -c @COMMAND@ -n __@ID@_at_first_argument -a {} -d '{}'\n",
             subcommand.name,
@@ -620,7 +620,7 @@ Register-ArgumentCompleter -Native -CommandName '@COMMAND@' -ScriptBlock {
     std::string optionEntries;
     std::string argumentEntries;
 
-    for (const auto& subcommand : cli::subcommands) {
+    for (const auto& subcommand : cli::SUBCOMMANDS) {
         subcommandEntries
             += fmt::format("        '{}' = '{}'\n", subcommand.name, escapePowerShell(subcommand.description));
     }

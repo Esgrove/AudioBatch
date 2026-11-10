@@ -20,13 +20,13 @@ namespace audiobatch::tests
 namespace
 {
 /// Settings key under which older versions stored the known-plugins list.
-constexpr auto legacyKnownPluginListKey {"knownPluginList"};
+constexpr auto LEGACY_KNOWN_PLUGIN_LIST_KEY {"knownPluginList"};
 /// Returns the name of the scan lock the tests take, unique to this test process,
 /// so they never contend with a running AudioBatch or another test run on the same machine.
 const juce::String& testLockName()
 {
-    static const juce::String name {"AudioBatchTestsPluginScan-" + juce::Uuid().toDashedString()};
-    return name;
+    static const juce::String NAME {"AudioBatchTestsPluginScan-" + juce::Uuid().toDashedString()};
+    return NAME;
 }
 
 /// A custom scanner that abandons its scan on the first plugin it gets, as the plugin scan does when the lock is busy.
@@ -56,7 +56,7 @@ public:
     LockHolder(const juce::String& lockName, const juce::File& folder) :
         releaseFile(folder.getNonexistentChildFile("release", ".flag"))
     {
-        started = startHelperProcess(process, {scanLockHelperArgument, lockName, releaseFile.getFullPathName()});
+        started = startHelperProcess(process, {SCAN_LOCK_HELPER_ARGUMENT, lockName, releaseFile.getFullPathName()});
     }
 
     /// Releases the lock and waits for the helper to exit, ending it when it does not.
@@ -87,7 +87,7 @@ public:
     /// Waits for the helper to report that it holds the lock, and returns false when it exits without it.
     [[nodiscard]] bool waitUntilHeld()
     {
-        return started && readHelperLine(process) == scanLockHeldLine;
+        return started && readHelperLine(process) == SCAN_LOCK_HELD_LINE;
     }
 
     /// Returns the exit code of the helper, which is 0 after holding the lock and 1 when the lock was busy.
@@ -210,7 +210,7 @@ void PluginScanTests::testKnownPluginListFile()
     {
         const auto legacyXml = saved.createXml();
         expect(legacyXml != nullptr);
-        settings.setValue(legacyKnownPluginListKey, legacyXml.get());
+        settings.setValue(LEGACY_KNOWN_PLUGIN_LIST_KEY, legacyXml.get());
         juce::KnownPluginList legacy;
         loadKnownPluginList(settings, legacy);
         expect(identifiersOf(legacy) == expectedIdentifiers, identifiersOf(legacy).joinIntoString(", "));
@@ -220,7 +220,7 @@ void PluginScanTests::testKnownPluginListFile()
     {
         migrateKnownPluginList(settings);
         expect(listFile.existsAsFile());
-        expect(!settings.containsKey(legacyKnownPluginListKey));
+        expect(!settings.containsKey(LEGACY_KNOWN_PLUGIN_LIST_KEY));
         juce::KnownPluginList migrated;
         loadKnownPluginList(settings, migrated);
         expect(identifiersOf(migrated) == expectedIdentifiers, identifiersOf(migrated).joinIntoString(", "));
@@ -237,9 +237,9 @@ void PluginScanTests::testKnownPluginListFile()
         stale.addType(makeDescription("VST3", "/Stale.vst3", 7));
         const auto staleXml = stale.createXml();
         expect(staleXml != nullptr);
-        settings.setValue(legacyKnownPluginListKey, staleXml.get());
+        settings.setValue(LEGACY_KNOWN_PLUGIN_LIST_KEY, staleXml.get());
         migrateKnownPluginList(settings);
-        expect(!settings.containsKey(legacyKnownPluginListKey));
+        expect(!settings.containsKey(LEGACY_KNOWN_PLUGIN_LIST_KEY));
         juce::KnownPluginList kept;
         loadKnownPluginList(settings, kept);
         expect(identifiersOf(kept) == expectedIdentifiers, identifiersOf(kept).joinIntoString(", "));
@@ -452,11 +452,11 @@ void PluginScanTests::testScanLock()
 void PluginScanTests::testWorkerCommandLine()
 {
     beginTest("Only a command line that starts with the worker argument launches a scan worker");
-    const auto workerArgument = utils::format("--{}:", pluginScanWorkerProcessUid);
+    const auto workerArgument = utils::format("--{}:", PLUGIN_SCAN_WORKER_PROCESS_UID);
     expect(isPluginScanWorkerCommandLine(workerArgument + "pipe_name"));
     expect(isPluginScanWorkerCommandLine("  " + workerArgument + "pipe_name --other"));
     expect(!isPluginScanWorkerCommandLine({}));
-    expect(!isPluginScanWorkerCommandLine(utils::format("--{}", pluginScanWorkerProcessUid)));
+    expect(!isPluginScanWorkerCommandLine(utils::format("--{}", PLUGIN_SCAN_WORKER_PROCESS_UID)));
     expect(!isPluginScanWorkerCommandLine("track.wav " + workerArgument + "pipe_name"));
     expect(!isPluginScanWorkerCommandLine("--other-worker:pipe_name"));
     expect(!isPluginScanWorkerCommandLine(workerArgument.substring(1) + "pipe_name"));

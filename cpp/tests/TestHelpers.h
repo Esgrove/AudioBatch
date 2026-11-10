@@ -21,33 +21,33 @@
 namespace audiobatch::tests
 {
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.
-constexpr double fixturePeakDecibels {-6.0206};
+constexpr double FIXTURE_PEAK_DECIBELS {-6.0206};
 /// Integrated loudness of a fixture tone, in LUFS.
 /// A 1 kHz sine on both channels measures the same as its peak level, as in EBU Tech 3341.
 /// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
-constexpr double fixtureLoudness {fixturePeakDecibels};
+constexpr double FIXTURE_LOUDNESS {FIXTURE_PEAK_DECIBELS};
 /// Sample peak of the intersample fixture, a quarter sample rate sine whose samples fall between its peaks, in dBFS.
 /// Its sample peak, true peak, and loudness all differ, so a measurement reported in the wrong field fails.
-constexpr double intersampleFixturePeakDecibels {-9.03};
+constexpr double INTERSAMPLE_FIXTURE_PEAK_DECIBELS {-9.03};
 /// True peak of the intersample fixture, in dBTP.
-constexpr double intersampleFixtureTruePeakDecibels {-5.92};
+constexpr double INTERSAMPLE_FIXTURE_TRUE_PEAK_DECIBELS {-5.92};
 /// Integrated loudness of the intersample fixture, in LUFS, raised by the K-weighting at 11 kHz.
-constexpr double intersampleFixtureLoudness {-2.67};
+constexpr double INTERSAMPLE_FIXTURE_LOUDNESS {-2.67};
 /// Position of the single click in the click fixtures, in samples.
-constexpr juce::int64 clickFixturePosition {11'025};
+constexpr juce::int64 CLICK_FIXTURE_POSITION {11'025};
 /// Length of the click fixtures in samples, which is half a second at 44.1 kHz.
-constexpr juce::int64 clickFixtureLength {22'050};
+constexpr juce::int64 CLICK_FIXTURE_LENGTH {22'050};
 /// Decoded length of the MP3 tone without the Xing frame:
 /// its 40 frames of 1152 samples without the 529 samples of decoder delay.
-constexpr juce::int64 noXingFixtureLength {(40 * 1152) - 529};
+constexpr juce::int64 NO_XING_FIXTURE_LENGTH {(40 * 1152) - 529};
 
 /// First argument that makes the test executable run the message loop check of runHelperProcess and exit.
-constexpr auto messageLoopHelperArgument {"--message-loop-helper"};
+constexpr auto MESSAGE_LOOP_HELPER_ARGUMENT {"--message-loop-helper"};
 /// First argument that makes the test executable hold a plugin scan lock for runHelperProcess.
 /// It is followed by the lock name and the file whose creation releases the lock.
-constexpr auto scanLockHelperArgument {"--scan-lock-helper"};
+constexpr auto SCAN_LOCK_HELPER_ARGUMENT {"--scan-lock-helper"};
 /// Line a scan lock helper prints once it holds the lock.
-constexpr auto scanLockHeldLine {"held"};
+constexpr auto SCAN_LOCK_HELD_LINE {"held"};
 
 /// Sample format of one file in a null test, as its reader reports it.
 struct NullTestFormat {

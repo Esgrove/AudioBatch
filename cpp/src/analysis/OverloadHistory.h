@@ -49,7 +49,7 @@ private:
 
 /// Source frames the true peak flags extend backwards,
 /// covering the delay of libebur128's interpolation filter, which reports a peak near a block start in the next block.
-inline constexpr std::int64_t truePeakCoverageFrames {32};
+inline constexpr std::int64_t TRUE_PEAK_COVERAGE_FRAMES {32};
 
 [[nodiscard]] juce::MemoryBlock serializeOverloadHistory(const OverloadHistory& history);
 

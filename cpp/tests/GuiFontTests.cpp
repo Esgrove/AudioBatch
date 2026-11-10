@@ -34,7 +34,9 @@ public:
             const auto font = CustomLookAndFeel::getTableHeaderFont(height);
             expect(font.getTypefacePtr() == textTypeface);
             expectWithinAbsoluteError(
-                font.getHeight(), static_cast<float>(height) * layout::theme::tableHeaderFontHeightRatio + 1.0f, 0.001f
+                font.getHeight(),
+                static_cast<float>(height) * layout::theme::TABLE_HEADER_FONT_HEIGHT_RATIO + 1.0f,
+                0.001f
             );
             expect(font.getHeight() < static_cast<float>(height));
         }
@@ -43,17 +45,17 @@ public:
         juce::MenuBarComponent menuBar;
         const auto menuBarFont = lookAndFeel.getMenuBarFont(menuBar, 0, "File");
         expect(menuBarFont.getTypefacePtr() == textTypeface);
-        expectWithinAbsoluteError(menuBarFont.getHeight(), layout::theme::menuBarFontHeight, 0.001f);
+        expectWithinAbsoluteError(menuBarFont.getHeight(), layout::theme::MENU_BAR_FONT_HEIGHT, 0.001f);
         const auto popupFont = lookAndFeel.getPopupMenuFont();
         expect(popupFont.getTypefacePtr() == textTypeface);
-        expectWithinAbsoluteError(popupFont.getHeight(), layout::theme::popupMenuFontHeight, 0.001f);
+        expectWithinAbsoluteError(popupFont.getHeight(), layout::theme::POPUP_MENU_FONT_HEIGHT, 0.001f);
 
         beginTest("Popup rows have extra vertical space without changing separators or explicit heights");
         juce::LookAndFeel_V4 juceLookAndFeel;
         int idealWidth = 0;
         int idealHeight = 0;
         lookAndFeel.getIdealPopupMenuItemSize("Process Selected", false, 0, idealWidth, idealHeight);
-        expectEquals(idealHeight, layout::theme::popupMenuItemHeight);
+        expectEquals(idealHeight, layout::theme::POPUP_MENU_ITEM_HEIGHT);
         expect(static_cast<float>(idealHeight) > popupFont.getHeight());
         expect(idealWidth > 0);
 
@@ -70,9 +72,9 @@ public:
         juce::ComboBox comboBox;
         const auto shortButtonFont = lookAndFeel.getTextButtonFont(button, 20);
         expect(shortButtonFont.getTypefacePtr() == textTypeface);
-        expectWithinAbsoluteError(shortButtonFont.getHeight(), 20.0f * layout::theme::buttonFontHeightRatio, 0.001f);
+        expectWithinAbsoluteError(shortButtonFont.getHeight(), 20.0f * layout::theme::BUTTON_FONT_HEIGHT_RATIO, 0.001f);
         expectWithinAbsoluteError(
-            lookAndFeel.getTextButtonFont(button, 60).getHeight(), layout::theme::maximumButtonFontHeight, 0.001f
+            lookAndFeel.getTextButtonFont(button, 60).getHeight(), layout::theme::MAXIMUM_BUTTON_FONT_HEIGHT, 0.001f
         );
         expect(lookAndFeel.getComboBoxFont(comboBox).getTypefacePtr() == monoTypeface);
     }

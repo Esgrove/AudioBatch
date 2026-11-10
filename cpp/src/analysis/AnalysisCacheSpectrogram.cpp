@@ -63,14 +63,14 @@ std::shared_ptr<const SpectrogramData> AnalysisCache::getSpectrogramData(const j
         )SQL";
         const auto statement = preparedStatements.borrow(connection, sql);
         if (!statement.isValid() || !sqlite::bindText(*statement, 1, identity.path)
-            || !sqlite::bindInt64(*statement, 2, SpectrogramData::algorithmVersion)
-            || !sqlite::bindInt64(*statement, 3, SpectrogramData::serializationVersion)
+            || !sqlite::bindInt64(*statement, 2, SpectrogramData::ALGORITHM_VERSION)
+            || !sqlite::bindInt64(*statement, 3, SpectrogramData::SERIALIZATION_VERSION)
             || !sqlite::bindInt64(*statement, 4, identity.fileSize)
             || !sqlite::bindInt64(*statement, PARAM_MODIFIED_TIME, identity.modifiedTimeMs)
             || !sqlite::bindInt64(
                 *statement, PARAM_LOOKUP_MAXIMUM_BYTES, static_cast<std::int64_t>(MAXIMUM_SPECTROGRAM_BYTES)
             )
-            || !sqlite::bindInt64(*statement, PARAM_LOOKUP_ANALYSIS_VERSION, analysisVersion)
+            || !sqlite::bindInt64(*statement, PARAM_LOOKUP_ANALYSIS_VERSION, ANALYSIS_VERSION)
             || sqlite3_step(statement.get()) != SQLITE_ROW)
         {
             return;
@@ -138,15 +138,15 @@ bool AnalysisCache::storeSpectrogramData(const utils::FileIdentity& identity, co
         )SQL";
         const auto statement = preparedStatements.borrow(connection, sql);
         if (!statement.isValid() || !sqlite::bindText(*statement, 1, identity.path)
-            || !sqlite::bindInt64(*statement, 2, SpectrogramData::algorithmVersion)
-            || !sqlite::bindInt64(*statement, 3, SpectrogramData::serializationVersion)
+            || !sqlite::bindInt64(*statement, 2, SpectrogramData::ALGORITHM_VERSION)
+            || !sqlite::bindInt64(*statement, 3, SpectrogramData::SERIALIZATION_VERSION)
             || !sqlite::bindInt64(*statement, 4, identity.fileSize)
             || !sqlite::bindInt64(*statement, PARAM_MODIFIED_TIME, identity.modifiedTimeMs)
             || !sqlite::bindInt64(*statement, PARAM_STORE_SAMPLE_RATE, spectrogramData.sampleRate)
             || !sqlite::bindInt64(*statement, PARAM_STORE_CHANNEL_COUNT, spectrogramData.channelCount)
             || !sqlite::bindInt64(*statement, 8, spectrogramData.lengthInSamples)
             || !sqlite::bindBlob(*statement, PARAM_STORE_DATA, data)
-            || !sqlite::bindInt64(*statement, PARAM_STORE_ANALYSIS_VERSION, analysisVersion)
+            || !sqlite::bindInt64(*statement, PARAM_STORE_ANALYSIS_VERSION, ANALYSIS_VERSION)
             || !sqlite::stepToCompletion(*statement) || sqlite3_changes(&connection) == 0 || !identity.matches(file))
         {
             return;

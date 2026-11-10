@@ -10,20 +10,20 @@ namespace audiobatch
 /// Opaque ARGB values shared by palette accessors and the default colour scheme.
 namespace palette_argb
 {
-constexpr juce::uint32 blue {0xff76A8DA};
-constexpr juce::uint32 green {0xff69B786};
-constexpr juce::uint32 greyDark {0xff121315};
-constexpr juce::uint32 greyLight {0xffDCE0E5};
-constexpr juce::uint32 greyMedium {0xff30343C};
-constexpr juce::uint32 greyMediumDark {0xff202329};
-constexpr juce::uint32 greyMiddle {0xff686F79};
-constexpr juce::uint32 greyMiddleLight {0xffAAB0B9};
-constexpr juce::uint32 greySemiDark {0xff1A1C20};
-constexpr juce::uint32 greySemiLight {0xff808791};
-constexpr juce::uint32 greySuperLight {0xffF3F5F7};
-constexpr juce::uint32 orange {0xffDD8B65};
-constexpr juce::uint32 red {0xffD66565};
-constexpr juce::uint32 yellow {0xffCEAF6C};
+constexpr juce::uint32 BLUE {0xff76A8DA};
+constexpr juce::uint32 GREEN {0xff69B786};
+constexpr juce::uint32 GREY_DARK {0xff121315};
+constexpr juce::uint32 GREY_LIGHT {0xffDCE0E5};
+constexpr juce::uint32 GREY_MEDIUM {0xff30343C};
+constexpr juce::uint32 GREY_MEDIUM_DARK {0xff202329};
+constexpr juce::uint32 GREY_MIDDLE {0xff686F79};
+constexpr juce::uint32 GREY_MIDDLE_LIGHT {0xffAAB0B9};
+constexpr juce::uint32 GREY_SEMI_DARK {0xff1A1C20};
+constexpr juce::uint32 GREY_SEMI_LIGHT {0xff808791};
+constexpr juce::uint32 GREY_SUPER_LIGHT {0xffF3F5F7};
+constexpr juce::uint32 ORANGE {0xffDD8B65};
+constexpr juce::uint32 RED {0xffD66565};
+constexpr juce::uint32 YELLOW {0xffCEAF6C};
 }  // namespace palette_argb
 
 /// Stateful application theme with the project's fonts, colours and popup styling.
@@ -35,91 +35,91 @@ public:
     /// Palette colour #76A8DA.
     [[nodiscard]] static juce::Colour blue() noexcept
     {
-        return juce::Colour {palette_argb::blue};
+        return juce::Colour {palette_argb::BLUE};
     }
 
     /// Palette colour #69B786.
     [[nodiscard]] static juce::Colour green() noexcept
     {
-        return juce::Colour {palette_argb::green};
+        return juce::Colour {palette_argb::GREEN};
     }
 
     /// Palette colour #121315.
     [[nodiscard]] static juce::Colour greyDark() noexcept
     {
-        return juce::Colour {palette_argb::greyDark};
+        return juce::Colour {palette_argb::GREY_DARK};
     }
 
     /// Palette colour #DCE0E5.
     [[nodiscard]] static juce::Colour greyLight() noexcept
     {
-        return juce::Colour {palette_argb::greyLight};
+        return juce::Colour {palette_argb::GREY_LIGHT};
     }
 
     /// Palette colour #30343C.
     [[nodiscard]] static juce::Colour greyMedium() noexcept
     {
-        return juce::Colour {palette_argb::greyMedium};
+        return juce::Colour {palette_argb::GREY_MEDIUM};
     }
 
     /// Palette colour #202329.
     [[nodiscard]] static juce::Colour greyMediumDark() noexcept
     {
-        return juce::Colour {palette_argb::greyMediumDark};
+        return juce::Colour {palette_argb::GREY_MEDIUM_DARK};
     }
 
     /// Palette colour #686F79.
     [[nodiscard]] static juce::Colour greyMiddle() noexcept
     {
-        return juce::Colour {palette_argb::greyMiddle};
+        return juce::Colour {palette_argb::GREY_MIDDLE};
     }
 
     /// Palette colour #AAB0B9.
     [[nodiscard]] static juce::Colour greyMiddleLight() noexcept
     {
-        return juce::Colour {palette_argb::greyMiddleLight};
+        return juce::Colour {palette_argb::GREY_MIDDLE_LIGHT};
     }
 
     /// Palette colour #1A1C20.
     [[nodiscard]] static juce::Colour greySemiDark() noexcept
     {
-        return juce::Colour {palette_argb::greySemiDark};
+        return juce::Colour {palette_argb::GREY_SEMI_DARK};
     }
 
     /// Palette colour #808791.
     [[nodiscard]] static juce::Colour greySemiLight() noexcept
     {
-        return juce::Colour {palette_argb::greySemiLight};
+        return juce::Colour {palette_argb::GREY_SEMI_LIGHT};
     }
 
     /// Palette colour #F3F5F7.
     [[nodiscard]] static juce::Colour greySuperLight() noexcept
     {
-        return juce::Colour {palette_argb::greySuperLight};
+        return juce::Colour {palette_argb::GREY_SUPER_LIGHT};
     }
 
     /// Palette colour #DD8B65.
     [[nodiscard]] static juce::Colour orange() noexcept
     {
-        return juce::Colour {palette_argb::orange};
+        return juce::Colour {palette_argb::ORANGE};
     }
 
     /// Palette colour #D66565.
     [[nodiscard]] static juce::Colour red() noexcept
     {
-        return juce::Colour {palette_argb::red};
+        return juce::Colour {palette_argb::RED};
     }
 
     /// Palette colour #CEAF6C.
     [[nodiscard]] static juce::Colour yellow() noexcept
     {
-        return juce::Colour {palette_argb::yellow};
+        return juce::Colour {palette_argb::YELLOW};
     }
 
     /// Returns the monospaced font used for tabular values and status text.
     [[nodiscard]] static juce::Font get_mono_font()
     {
-        return getMonoBaseFont().withHeight(layout::theme::monoFontHeight);
+        return getMonoBaseFont().withHeight(layout::theme::MONO_FONT_HEIGHT);
     }
 
     [[nodiscard]] static const juce::Font& getMonoBaseFont();
@@ -210,23 +210,23 @@ public:
 private:
     const ColourScheme customColourScheme {
         // windowBackground
-        palette_argb::greyDark,
+        palette_argb::GREY_DARK,
         // widgetBackground
-        palette_argb::greySemiDark,
+        palette_argb::GREY_SEMI_DARK,
         // menuBackground
-        palette_argb::greyMediumDark,
+        palette_argb::GREY_MEDIUM_DARK,
         // outline
-        palette_argb::greyMedium,
+        palette_argb::GREY_MEDIUM,
         // defaultText
-        palette_argb::greyLight,
+        palette_argb::GREY_LIGHT,
         // defaultFill
-        palette_argb::greyMiddle,
+        palette_argb::GREY_MIDDLE,
         // highlightedText
-        palette_argb::greySuperLight,
+        palette_argb::GREY_SUPER_LIGHT,
         // highlightedFill
-        palette_argb::blue,
+        palette_argb::BLUE,
         // menuText
-        palette_argb::greyLight,
+        palette_argb::GREY_LIGHT,
     };
     /// True for the dark palette variant followed by the window buttons.
     bool darkTheme;

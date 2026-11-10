@@ -180,7 +180,7 @@ void UtilsTests::runCallbackAccessTests()
     }
 
     beginTest("Competing controls and continuous callbacks never overlap mutable renderer access");
-    constexpr int ITERATIONS {256};
+    constexpr int iterations {256};
     std::atomic<int> owners {0};
     std::atomic<bool> overlap {false};
     std::atomic<bool> finished {false};
@@ -197,7 +197,7 @@ void UtilsTests::runCallbackAccessTests()
         }
     });
     const auto mutate = [&] {
-        for (int iteration = 0; iteration < ITERATIONS; ++iteration) {
+        for (int iteration = 0; iteration < iterations; ++iteration) {
             const utils::CallbackControlGuard guard(access);
             if (owners.fetch_add(1) != 0) {
                 overlap.store(true);
@@ -213,22 +213,22 @@ void UtilsTests::runCallbackAccessTests()
     finished.store(true);
     continuous.join();
     expect(!overlap.load());
-    expect(protectedValue >= 42 + ITERATIONS * 2);
+    expect(protectedValue >= 42 + iterations * 2);
 }
 
 /// Checks that simultaneous directory owners cannot select or remove each other's paths.
 void UtilsTests::runConcurrentDirectoryTests()
 {
     beginTest("Concurrent test directories retain separate filesystem ownership");
-    constexpr std::size_t WORKER_COUNT {8};
-    constexpr int ROUND_COUNT {16};
-    for (int round = 0; round < ROUND_COUNT; ++round) {
-        std::latch start(static_cast<std::ptrdiff_t>(WORKER_COUNT));
-        std::array<std::unique_ptr<TemporaryDirectory>, WORKER_COUNT> directories;
+    constexpr std::size_t workerCount {8};
+    constexpr int roundCount {16};
+    for (int round = 0; round < roundCount; ++round) {
+        std::latch start(static_cast<std::ptrdiff_t>(workerCount));
+        std::array<std::unique_ptr<TemporaryDirectory>, workerCount> directories;
         std::atomic<bool> separateOwnership {true};
         std::vector<std::jthread> workers;
-        workers.reserve(WORKER_COUNT);
-        for (std::size_t worker = 0; worker < WORKER_COUNT; ++worker) {
+        workers.reserve(workerCount);
+        for (std::size_t worker = 0; worker < workerCount; ++worker) {
             workers.emplace_back([&, worker] {
                 start.arrive_and_wait();
                 directories[worker] = std::make_unique<TemporaryDirectory>();
@@ -238,7 +238,7 @@ void UtilsTests::runConcurrentDirectoryTests()
             });
         }
         workers.clear();
-        for (std::size_t worker = 0; worker < WORKER_COUNT; ++worker) {
+        for (std::size_t worker = 0; worker < workerCount; ++worker) {
             const auto marker = directories[worker]->getChildFile("owner.txt");
             expectEquals(marker.loadFileAsString(), juce::String(worker));
             for (std::size_t other = 0; other < worker; ++other) {
@@ -675,7 +675,7 @@ void UtilsTests::runTest()
         expectEquals(tracker.getFailedBlockCount(), 1);
         expectEquals(tracker.getNotice(), juce::String("1 audio block(s) failed to decode, first at sample 1024"));
 
-        for (int block = 3; block < 3 + DecodeFailureTracker::maximumConsecutiveFailures - 1; ++block) {
+        for (int block = 3; block < 3 + DecodeFailureTracker::MAXIMUM_CONSECUTIVE_FAILURES - 1; ++block) {
             expect(tracker.recordBlock(false, blockStart(block), blockSize));
         }
 
@@ -749,7 +749,7 @@ void UtilsTests::runFolderGroupingTests(const juce::File& root)
             first.getChildFile("a.wav"),
             first.getChildFile("b.wav"),
         };
-        const auto folders = utils::groupByParentFolder(files, utils::maximumRevealFolders);
+        const auto folders = utils::groupByParentFolder(files, utils::MAXIMUM_REVEAL_FOLDERS);
         expectEquals(static_cast<int>(folders.groups.size()), 2);
         expectEquals(folders.skippedFolders, 0);
         if (folders.groups.size() == 2) {
@@ -758,7 +758,7 @@ void UtilsTests::runFolderGroupingTests(const juce::File& root)
             expect(folders.groups[1].first == second);
             expect(folders.groups[1].second == juce::Array {second.getChildFile("c.wav")});
         }
-        expect(utils::groupByParentFolder({}, utils::maximumRevealFolders).groups.empty());
+        expect(utils::groupByParentFolder({}, utils::MAXIMUM_REVEAL_FOLDERS).groups.empty());
     }
 
     beginTest("Folder grouping stops at the limit and counts the folders left out");
@@ -778,7 +778,7 @@ void UtilsTests::runFolderGroupingTests(const juce::File& root)
             expectEquals(folders.groups[1].second.size(), 2);
         }
         expectEquals(utils::groupByParentFolder(files, 0).skippedFolders, 4);
-        expectEquals(utils::maximumRevealFolders, 10);
+        expectEquals(utils::MAXIMUM_REVEAL_FOLDERS, 10);
     }
 }
 
@@ -1039,7 +1039,7 @@ void UtilsTests::runMessageLoopTest()
 {
     beginTest("The message loop of a console app dispatches messages until it is stopped");
     juce::ChildProcess helper;
-    expect(startHelperProcess(helper, juce::StringArray(messageLoopHelperArgument)));
+    expect(startHelperProcess(helper, juce::StringArray(MESSAGE_LOOP_HELPER_ARGUMENT)));
     const auto finished = helper.waitForProcessToFinish(30'000);
     expect(finished, "the message loop helper did not finish");
     if (!finished) {
@@ -1093,9 +1093,9 @@ void UtilsTests::runMp3TimingTests()
         expect(reader != nullptr);
         if (reader != nullptr) {
             expectEquals(reader->getFormatName(), juce::String("MP3 file"));
-            expectEquals(reader->lengthInSamples, clickFixtureLength);
+            expectEquals(reader->lengthInSamples, CLICK_FIXTURE_LENGTH);
         }
-        expectEquals(peakSamplePosition(click), clickFixturePosition);
+        expectEquals(peakSamplePosition(click), CLICK_FIXTURE_POSITION);
 
         for (const auto* fixtureName :
              {"sine_stereo_44100_320k.mp3", "sine_joint_stereo_44100_192k.mp3", "sine_mono_44100_128k.mp3"})
@@ -1105,7 +1105,7 @@ void UtilsTests::runMp3TimingTests()
         }
 
         const auto noXing = utils::createAudioReader(fixtureFile("sine_stereo_44100_192k_no_xing.mp3"));
-        expect(noXing != nullptr && noXing->lengthInSamples == noXingFixtureLength);
+        expect(noXing != nullptr && noXing->lengthInSamples == NO_XING_FIXTURE_LENGTH);
     }
 
 #if JUCE_MAC

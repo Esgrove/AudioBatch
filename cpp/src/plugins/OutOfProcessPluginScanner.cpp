@@ -28,7 +28,7 @@ struct PluginScanResponse {
 };
 
 /// How often waiting for a worker reply checks whether the scan was cancelled.
-constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
+constexpr auto RESPONSE_POLL_INTERVAL {std::chrono::milliseconds(50)};
 
 /// Adds the plugin descriptions in a worker reply to the scan results, skipping entries that do not parse.
 void addDescriptions(const juce::XmlElement& reply, juce::OwnedArray<juce::PluginDescription>& result)
@@ -64,7 +64,7 @@ public:
         // The worker's stdout and stderr are not read, so do not capture them.
         // An undrained pipe would block the worker once it fills up.
         running = launchWorkerProcess(
-            juce::File::getSpecialLocation(juce::File::currentExecutableFile), pluginScanWorkerProcessUid, 0, 0
+            juce::File::getSpecialLocation(juce::File::currentExecutableFile), PLUGIN_SCAN_WORKER_PROCESS_UID, 0, 0
         );
     }
 
@@ -87,7 +87,7 @@ public:
     {
         std::unique_lock lock(mutex);
 
-        if (!condition.wait_for(lock, responsePollInterval, [this] { return gotResult || connectionLost; })) {
+        if (!condition.wait_for(lock, RESPONSE_POLL_INTERVAL, [this] { return gotResult || connectionLost; })) {
             return {};
         }
 
@@ -210,7 +210,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
         return true;
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + pluginScanTimeout;
+    const auto deadline = std::chrono::steady_clock::now() + PLUGIN_SCAN_TIMEOUT;
 
     for (;;) {
         if (shouldExit()) {
@@ -227,7 +227,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
                     // Skipped instead of blacklisted, so a plugin that was only slow is scanned again next time.
                     utils::logWarn(
                         "Plugin scan timed out after {} seconds, skipping {}",
-                        pluginScanTimeout.count(),
+                        PLUGIN_SCAN_TIMEOUT.count(),
                         fileOrIdentifier.quoted()
                     );
                     timedOutFiles.addIfNotAlreadyThere(fileOrIdentifier);

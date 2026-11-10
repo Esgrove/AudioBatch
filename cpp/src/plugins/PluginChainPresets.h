@@ -40,9 +40,9 @@ struct ChainPresetInfo {
 namespace plugin_presets
 {
 /// File extension of the preset files.
-constexpr auto presetFileExtension {".xml"};
+constexpr auto PRESET_FILE_EXTENSION {".xml"};
 /// Name of the preset folder, which sits next to the application settings file.
-constexpr auto presetFolderName {"Chain Presets"};
+constexpr auto PRESET_FOLDER_NAME {"Chain Presets"};
 
 [[nodiscard]] juce::File getPresetDirectory(const juce::File& settingsFile);
 [[nodiscard]] juce::MemoryBlock decodeState(const juce::String& stateBase64);

@@ -20,12 +20,12 @@ namespace audiobatch
 {
 namespace
 {
-constexpr int editChainMenuItemId {1};
-constexpr int clearChainMenuItemId {2};
-constexpr int scanMenuItemId {3};
+constexpr int EDIT_CHAIN_MENU_ITEM_ID {1};
+constexpr int CLEAR_CHAIN_MENU_ITEM_ID {2};
+constexpr int SCAN_MENU_ITEM_ID {3};
 /// First id of the presets submenu in the chain popup menu, which uses the ids from it upwards.
 /// The Add Plugin submenu ids of juce::KnownPluginList start far above any preset count.
-constexpr int presetsMenuFirstItemId {10};
+constexpr int PRESETS_MENU_FIRST_ITEM_ID {10};
 }  // namespace
 
 /// Pops up the plugin menu anchored to the given component.
@@ -40,8 +40,8 @@ void LiveChain::showMenu(juce::Component& anchor)
         summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
     );
 
-    menu.addItem(editChainMenuItemId, "Edit Chain...");
-    menu.addSubMenu("Presets", createPresetsMenu(presetsMenuFirstItemId));
+    menu.addItem(EDIT_CHAIN_MENU_ITEM_ID, "Edit Chain...");
+    menu.addSubMenu("Presets", createPresetsMenu(PRESETS_MENU_FIRST_ITEM_ID));
     menu.addSeparator();
 
     juce::PopupMenu addSubmenu;
@@ -50,8 +50,8 @@ void LiveChain::showMenu(juce::Component& anchor)
     juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
     menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
 
-    menu.addItem(clearChainMenuItemId, "Clear Chain", !chain.empty());
-    menu.addItem(scanMenuItemId, "Scan for Plugins...");
+    menu.addItem(CLEAR_CHAIN_MENU_ITEM_ID, "Clear Chain", !chain.empty());
+    menu.addItem(SCAN_MENU_ITEM_ID, "Scan for Plugins...");
 
     const juce::WeakReference safeThis(this);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor), [safeThis, types](const int result) {
@@ -60,13 +60,13 @@ void LiveChain::showMenu(juce::Component& anchor)
         }
 
         switch (result) {
-            case editChainMenuItemId:
+            case EDIT_CHAIN_MENU_ITEM_ID:
                 safeThis->showChainEditor();
                 return;
-            case clearChainMenuItemId:
+            case CLEAR_CHAIN_MENU_ITEM_ID:
                 safeThis->clearChain();
                 return;
-            case scanMenuItemId:
+            case SCAN_MENU_ITEM_ID:
                 safeThis->showScanWindow();
                 return;
             default:
@@ -74,7 +74,7 @@ void LiveChain::showMenu(juce::Component& anchor)
         }
 
         const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, result);
-        if (index < 0 && safeThis->handlePresetsMenuItem(result, presetsMenuFirstItemId)) {
+        if (index < 0 && safeThis->handlePresetsMenuItem(result, PRESETS_MENU_FIRST_ITEM_ID)) {
             return;
         }
         if (index < 0 || index >= types.size()) {
@@ -151,7 +151,7 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
         editor = std::make_unique<juce::GenericAudioProcessorEditor>(*currentEntry.instance);
-        editor->setSize(layout::pluginEditor::genericEditorWidth, layout::pluginEditor::genericEditorHeight);
+        editor->setSize(layout::pluginEditor::GENERIC_EDITOR_WIDTH, layout::pluginEditor::GENERIC_EDITOR_HEIGHT);
     }
 
     juce::DialogWindow::LaunchOptions launchOptions;
@@ -204,7 +204,7 @@ void LiveChain::showChainEditor()
     }
 
     auto editor = std::make_unique<PluginChainEditor>(*this);
-    editor->setSize(layout::pluginEditor::chainWindowWidth, layout::pluginEditor::chainWindowHeight);
+    editor->setSize(layout::pluginEditor::CHAIN_WINDOW_WIDTH, layout::pluginEditor::CHAIN_WINDOW_HEIGHT);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Chain";
@@ -235,7 +235,7 @@ void LiveChain::showScanWindow()
     }
 
     auto listComponent = library.createScanComponent();
-    listComponent->setSize(layout::pluginEditor::managerWindowWidth, layout::pluginEditor::managerWindowHeight);
+    listComponent->setSize(layout::pluginEditor::MANAGER_WINDOW_WIDTH, layout::pluginEditor::MANAGER_WINDOW_HEIGHT);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Manager";

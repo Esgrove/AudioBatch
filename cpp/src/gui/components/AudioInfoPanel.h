@@ -230,7 +230,7 @@ private:
     /// Source text is never replaced by the transient model result.
     std::array<juce::String, 2> sourceLoudness;
     /// Unmodified source loudness used only for the integrated presentation fit.
-    double sourceIntegratedLufs {AudioAnalysisRecord::negativeInfinityLoudness};
+    double sourceIntegratedLufs {AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS};
     /// One cancellable worker, joined in the destructor before any request state is destroyed.
     BackgroundRunner loudnessRunner {1, -1};
 

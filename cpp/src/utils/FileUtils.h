@@ -80,7 +80,7 @@ using FileDisposer = std::function<bool(const juce::File&)>;
 
 /// Most folders that revealing the selected files or opening their parent folders opens at once,
 /// so a large selection does not open hundreds of windows. The Rust application uses the same limit.
-inline constexpr int maximumRevealFolders {10};
+inline constexpr int MAXIMUM_REVEAL_FOLDERS {10};
 
 /// Selected files grouped by their parent folder, in the order the folders first appear.
 struct FolderGroups {

@@ -59,7 +59,7 @@ PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
 
     viewport.setViewedComponent(&rowContainer, false);
     viewport.setScrollBarsShown(true, false);
-    viewport.setScrollBarThickness(layout::scrollBarThickness);
+    viewport.setScrollBarThickness(layout::SCROLL_BAR_THICKNESS);
     addAndMakeVisible(viewport);
 
     liveChain.addChangeListener(this);
@@ -76,32 +76,32 @@ PluginChainEditor::~PluginChainEditor()
 /// Lays out the preset row, the hint label, and the scrolling row list with its add and clear buttons.
 void PluginChainEditor::resized()
 {
-    auto area = getLocalBounds().reduced(layout::pluginEditor::margin);
+    auto area = getLocalBounds().reduced(layout::pluginEditor::MARGIN);
 
-    auto presetRow = area.removeFromTop(layout::pluginEditor::presetRowHeight);
-    area.removeFromTop(layout::pluginEditor::margin);
-    presetLabel.setBounds(presetRow.removeFromLeft(layout::pluginEditor::presetLabelWidth));
-    deletePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::presetButtonWidth));
-    presetRow.removeFromRight(layout::pluginEditor::rowPadding);
-    savePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::presetButtonWidth));
-    presetRow.removeFromRight(layout::pluginEditor::rowPadding);
-    updatePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::updatePresetButtonWidth));
-    presetRow.removeFromRight(layout::pluginEditor::rowPadding);
+    auto presetRow = area.removeFromTop(layout::pluginEditor::PRESET_ROW_HEIGHT);
+    area.removeFromTop(layout::pluginEditor::MARGIN);
+    presetLabel.setBounds(presetRow.removeFromLeft(layout::pluginEditor::PRESET_LABEL_WIDTH));
+    deletePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::PRESET_BUTTON_WIDTH));
+    presetRow.removeFromRight(layout::pluginEditor::ROW_PADDING);
+    savePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::PRESET_BUTTON_WIDTH));
+    presetRow.removeFromRight(layout::pluginEditor::ROW_PADDING);
+    updatePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::UPDATE_PRESET_BUTTON_WIDTH));
+    presetRow.removeFromRight(layout::pluginEditor::ROW_PADDING);
     presetBox.setBounds(presetRow);
 
-    auto footer = area.removeFromBottom(layout::pluginEditor::footerHeight);
-    totalLatencyLabel.setBounds(footer.removeFromTop(layout::pluginEditor::footerLineHeight));
+    auto footer = area.removeFromBottom(layout::pluginEditor::FOOTER_HEIGHT);
+    totalLatencyLabel.setBounds(footer.removeFromTop(layout::pluginEditor::FOOTER_LINE_HEIGHT));
     processingRateLabel.setBounds(footer);
 
     viewport.setBounds(area);
     hintLabel.setBounds(area);
 
     // Reserve one extra row of space below the plugin rows for the add button.
-    const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::rowHeight;
-    rowContainer.setSize(viewport.getMaximumVisibleWidth(), rowsHeight + layout::pluginEditor::rowHeight);
+    const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::ROW_HEIGHT;
+    rowContainer.setSize(viewport.getMaximumVisibleWidth(), rowsHeight + layout::pluginEditor::ROW_HEIGHT);
 
     for (const auto& row : rows) {
-        row->setSize(rowContainer.getWidth(), layout::pluginEditor::rowHeight);
+        row->setSize(rowContainer.getWidth(), layout::pluginEditor::ROW_HEIGHT);
     }
 
     layoutRows();
@@ -249,22 +249,22 @@ void PluginChainEditor::layoutRows(const utils::OptionalRef<const PluginChainSlo
             ++visualIndex;
         }
 
-        row->setTopLeftPosition(0, visualIndex * layout::pluginEditor::rowHeight);
+        row->setTopLeftPosition(0, visualIndex * layout::pluginEditor::ROW_HEIGHT);
         ++visualIndex;
     }
 
-    const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::rowHeight;
+    const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::ROW_HEIGHT;
     addButton.setBounds(
-        layout::pluginEditor::rowPadding,
-        rowsHeight + layout::pluginEditor::rowPadding,
-        layout::pluginEditor::addButtonSize,
-        layout::pluginEditor::addButtonSize
+        layout::pluginEditor::ROW_PADDING,
+        rowsHeight + layout::pluginEditor::ROW_PADDING,
+        layout::pluginEditor::ADD_BUTTON_SIZE,
+        layout::pluginEditor::ADD_BUTTON_SIZE
     );
     clearChainButton.setBounds(
-        rowContainer.getWidth() - layout::pluginEditor::rowPadding - layout::pluginEditor::clearChainButtonWidth,
-        rowsHeight + layout::pluginEditor::rowPadding,
-        layout::pluginEditor::clearChainButtonWidth,
-        layout::pluginEditor::addButtonSize
+        rowContainer.getWidth() - layout::pluginEditor::ROW_PADDING - layout::pluginEditor::CLEAR_CHAIN_BUTTON_WIDTH,
+        rowsHeight + layout::pluginEditor::ROW_PADDING,
+        layout::pluginEditor::CLEAR_CHAIN_BUTTON_WIDTH,
+        layout::pluginEditor::ADD_BUTTON_SIZE
     );
 }
 
@@ -291,7 +291,7 @@ void PluginChainEditor::rowDropped(const PluginChainSlotRow& row, const int targ
 int PluginChainEditor::rowIndexForPosition(const int containerY) const
 {
     const auto maxIndex = juce::jmax(0, static_cast<int>(rows.size()) - 1);
-    return juce::jlimit(0, maxIndex, containerY / layout::pluginEditor::rowHeight);
+    return juce::jlimit(0, maxIndex, containerY / layout::pluginEditor::ROW_HEIGHT);
 }
 
 /// Pops up the known-plugins menu and appends the chosen plugin to the chain.

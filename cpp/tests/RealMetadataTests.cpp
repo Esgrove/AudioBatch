@@ -89,8 +89,8 @@ void RealMetadataTests::runTest()
         expectEquals(
             property(metadata, "DATE"), expected["year"].isVoid() ? juce::String() : expected["year"].toString()
         );
-        const auto results = serato::readTags(file, serato::allTagKinds);
-        expectEquals(static_cast<int>(results.size()), static_cast<int>(serato::allTagKinds.size()));
+        const auto results = serato::readTags(file, serato::ALL_TAG_KINDS);
+        expectEquals(static_cast<int>(results.size()), static_cast<int>(serato::ALL_TAG_KINDS.size()));
         for (const auto& result : results) {
             checkTag(result, expected);
             if (result.value) {

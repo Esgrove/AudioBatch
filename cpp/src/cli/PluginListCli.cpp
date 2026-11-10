@@ -31,7 +31,7 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto unknownLabel {"Unknown"};
+constexpr auto UNKNOWN_LABEL {"Unknown"};
 
 /// One column of the plugin listing.
 enum class Column : std::uint8_t { name, manufacturer, type, format, version };
@@ -77,7 +77,7 @@ juce::String columnValue(const juce::PluginDescription& description, const Colum
             return description.name;
         case Column::manufacturer:
             return description.manufacturerName.isNotEmpty() ? description.manufacturerName
-                                                             : juce::String(unknownLabel);
+                                                             : juce::String(UNKNOWN_LABEL);
         case Column::type:
             return typeLabel(description);
         case Column::format:
@@ -255,8 +255,8 @@ void printGroups(const std::vector<juce::PluginDescription>& plugins, const Plug
     }
 
     std::ranges::sort(groups, [](const Group& lhs, const Group& rhs) {
-        const auto lhsUnknown = lhs.label.equalsIgnoreCase(unknownLabel);
-        const auto rhsUnknown = rhs.label.equalsIgnoreCase(unknownLabel);
+        const auto lhsUnknown = lhs.label.equalsIgnoreCase(UNKNOWN_LABEL);
+        const auto rhsUnknown = rhs.label.equalsIgnoreCase(UNKNOWN_LABEL);
 
         if (lhsUnknown != rhsUnknown) {
             return rhsUnknown;
@@ -361,7 +361,7 @@ void rescanPlugins(
     for (const auto& file : customScanner.getTimedOutFiles()) {
         console::printWarn(
             utils::format(
-                "Plugin took longer than {} seconds to scan and was skipped: {}", pluginScanTimeout.count(), file
+                "Plugin took longer than {} seconds to scan and was skipped: {}", PLUGIN_SCAN_TIMEOUT.count(), file
             )
         );
     }
@@ -378,7 +378,7 @@ void rescanPlugins(
 /// Prints the known plugins of the AudioBatch settings, grouped as requested, and returns the process exit code.
 int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
 {
-    return runPluginList(rescan, grouping, utils::createApplicationSettingsOptions(), pluginScanLockName);
+    return runPluginList(rescan, grouping, utils::createApplicationSettingsOptions(), PLUGIN_SCAN_LOCK_NAME);
 }
 
 /// Prints the known plugins stored next to the settings file of the given options, grouped as requested,

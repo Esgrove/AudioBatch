@@ -38,15 +38,15 @@ namespace audiobatch::tests
 namespace
 {
 /// Allowed deviation of a loudness reading, in LU, as in EBU Tech 3341.
-constexpr double loudnessTolerance {0.1};
+constexpr double LOUDNESS_TOLERANCE {0.1};
 /// Allowed true peak reading above the expected level, in dB, as in EBU Tech 3341.
-constexpr double truePeakUpperTolerance {0.2};
+constexpr double TRUE_PEAK_UPPER_TOLERANCE {0.2};
 /// Allowed true peak reading below the expected level, in dB.
-constexpr double truePeakLowerTolerance {0.4};
+constexpr double TRUE_PEAK_LOWER_TOLERANCE {0.4};
 /// Frames per push, unrelated to the meter's block size.
-constexpr int knownAnswerChunkFrames {4096};
+constexpr int KNOWN_ANSWER_CHUNK_FRAMES {4096};
 /// Frequency of the test tone in hertz.
-constexpr double toneFrequency {1000.0};
+constexpr double TONE_FREQUENCY {1000.0};
 
 /// One segment of a conformance signal.
 struct ToneSegment {
@@ -304,8 +304,8 @@ std::optional<AudioAnalysisRecord> MeasurementTests::measureKnownAnswerSignal(
 )
 {
     AudioMeasurement meter(samples.getNumChannels(), sampleRate, samples.getNumSamples());
-    for (int offset = 0; offset < samples.getNumSamples(); offset += knownAnswerChunkFrames) {
-        const auto frames = std::min(knownAnswerChunkFrames, samples.getNumSamples() - offset);
+    for (int offset = 0; offset < samples.getNumSamples(); offset += KNOWN_ANSWER_CHUNK_FRAMES) {
+        const auto frames = std::min(KNOWN_ANSWER_CHUNK_FRAMES, samples.getNumSamples() - offset);
         if (!meter.push(samples, offset, frames)) {
             expect(false, "The meter must accept the known-answer signal");
             return std::nullopt;
@@ -333,7 +333,7 @@ void MeasurementTests::expectKnownAnswer(const KnownAnswerCase& testCase, double
         const auto amplitude = std::pow(10.0, segment.levelDecibels / 20.0);
         const auto segmentEnd = frame + static_cast<int>(std::lround(sampleRate * segment.seconds));
         for (; frame < segmentEnd; ++frame) {
-            const auto phase = 2.0 * std::numbers::pi * toneFrequency * static_cast<double>(frame) / sampleRate;
+            const auto phase = 2.0 * std::numbers::pi * TONE_FREQUENCY * static_cast<double>(frame) / sampleRate;
             const auto value = static_cast<float>(amplitude * std::sin(phase));
             samples.setSample(0, frame, value);
             samples.setSample(1, frame, value);
@@ -344,9 +344,11 @@ void MeasurementTests::expectKnownAnswer(const KnownAnswerCase& testCase, double
         return;
     }
     const auto description = juce::String(testCase.label) + " at " + juce::String(sampleRate) + " Hz";
-    expectWithinAbsoluteError(record->integratedLufs, testCase.integratedLufs, loudnessTolerance, description);
+    expectWithinAbsoluteError(record->integratedLufs, testCase.integratedLufs, LOUDNESS_TOLERANCE, description);
     if (testCase.maxShortTermLufs) {
-        expectWithinAbsoluteError(record->maxShortTermLufs, *testCase.maxShortTermLufs, loudnessTolerance, description);
+        expectWithinAbsoluteError(
+            record->maxShortTermLufs, *testCase.maxShortTermLufs, LOUDNESS_TOLERANCE, description
+        );
     }
 }
 
@@ -427,7 +429,7 @@ void MeasurementTests::runKnownAnswerTests()
             for (const auto truePeak : {record->truePeakLeft, record->truePeakRight}) {
                 const auto decibels = 20.0 * std::log10(truePeak);
                 expect(
-                    decibels >= level - truePeakLowerTolerance && decibels <= level + truePeakUpperTolerance,
+                    decibels >= level - TRUE_PEAK_LOWER_TOLERANCE && decibels <= level + TRUE_PEAK_UPPER_TOLERANCE,
                     "True peak " + juce::String(decibels) + " dBTP, expected " + juce::String(level)
                 );
             }
@@ -552,8 +554,8 @@ void MeasurementTests::runChunkOverloadTests()
         expectAnalysisMeasurementsEqual(*this, *first, *second);
         expectWaveform(*first, *second);
         expectEquals(static_cast<int>(second->shortTermLoudness->values.size()), 3);
-        expect((second->overloads->flagsAt(0, 0) & OverloadHistory::sampleOver) != 0);
-        expect((second->overloads->flagsAt(1, 1) & OverloadHistory::sampleOver) != 0);
+        expect((second->overloads->flagsAt(0, 0) & OverloadHistory::SAMPLE_OVER) != 0);
+        expect((second->overloads->flagsAt(1, 1) & OverloadHistory::SAMPLE_OVER) != 0);
     }
 }
 

@@ -24,14 +24,14 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t cacheHeaderBytes {16};
-constexpr std::uint32_t cacheMagic {0x53544147};
+constexpr std::size_t CACHE_HEADER_BYTES {16};
+constexpr std::uint32_t CACHE_MAGIC {0x53544147};
 
 /// Reads counted cache grid anchors while checking ordering and terminal versus intermediate semantics.
 std::optional<BeatGrid> readCacheGrid(Cursor& input)
 {
     const auto count = input.number();
-    if (!count || *count > maxTagRecords) {
+    if (!count || *count > MAX_TAG_RECORDS) {
         return std::nullopt;
     }
     BeatGrid grid;
@@ -76,25 +76,25 @@ void writeText(juce::MemoryOutputStream& output, const juce::String& value)
 /// Verifies public marker sizes before any serialization allocation.
 bool boundedMarkers(const Markers& markers)
 {
-    if (markers.cues.size() > maxTagRecords || markers.loops.size() > maxTagRecords) {
+    if (markers.cues.size() > MAX_TAG_RECORDS || markers.loops.size() > MAX_TAG_RECORDS) {
         return false;
     }
-    std::size_t total = cacheHeaderBytes;
+    std::size_t total = CACHE_HEADER_BYTES;
     for (const auto& cue : markers.cues) {
         const auto size = cue.name.getNumBytesAsUTF8();
-        if (size > maxTagTextBytes) {
+        if (size > MAX_TAG_TEXT_BYTES) {
             return false;
         }
-        total += size + cueNameOffset;
+        total += size + CUE_NAME_OFFSET;
     }
     for (const auto& loop : markers.loops) {
         const auto size = loop.name.getNumBytesAsUTF8();
-        if (size > maxTagTextBytes) {
+        if (size > MAX_TAG_TEXT_BYTES) {
             return false;
         }
-        total += size + loopNameOffset;
+        total += size + LOOP_NAME_OFFSET;
     }
-    return total <= maxTagPayloadBytes;
+    return total <= MAX_TAG_PAYLOAD_BYTES;
 }
 
 /// Serializes counted marker records with explicit flags for optional track metadata.
@@ -131,7 +131,7 @@ std::optional<Markers> readMarkers(Cursor& input)
 {
     Markers markers;
     const auto cueCount = input.number();
-    if (!cueCount || *cueCount > maxTagRecords) {
+    if (!cueCount || *cueCount > MAX_TAG_RECORDS) {
         return std::nullopt;
     }
     for (std::uint32_t index = 0; index < *cueCount; ++index) {
@@ -147,7 +147,7 @@ std::optional<Markers> readMarkers(Cursor& input)
         );
     }
     const auto loopCount = input.number();
-    if (!loopCount || *loopCount > maxTagRecords) {
+    if (!loopCount || *loopCount > MAX_TAG_RECORDS) {
         return std::nullopt;
     }
     for (std::uint32_t index = 0; index < *loopCount; ++index) {
@@ -240,7 +240,7 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagValue& value)
         }
         case TagKind::beatGrid: {
             const auto& grid = std::get<BeatGrid>(value);
-            if (grid.markers.size() > maxTagRecords) {
+            if (grid.markers.size() > MAX_TAG_RECORDS) {
                 return false;
             }
             payload.writeIntBigEndian(static_cast<int>(grid.markers.size()));
@@ -266,7 +266,7 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagValue& value)
             const auto& info = std::get<TrackInfo>(value);
             const std::array texts {&info.key, &info.album, &info.genre, &info.year, &info.comment};
             if (std::ranges::any_of(
-                    texts, [](const auto* text) { return text->getNumBytesAsUTF8() > maxTagTextBytes; }
+                    texts, [](const auto* text) { return text->getNumBytesAsUTF8() > MAX_TAG_TEXT_BYTES; }
                 ))
             {
                 return false;
@@ -301,11 +301,11 @@ juce::MemoryBlock serializeTag(const TagReadResult& result)
     if (!writeCachePayload(payload, *result.value)) {
         return {};
     }
-    if (payload.getDataSize() > maxTagPayloadBytes) {
+    if (payload.getDataSize() > MAX_TAG_PAYLOAD_BYTES) {
         return {};
     }
     juce::MemoryOutputStream output;
-    output.writeIntBigEndian(static_cast<int>(cacheMagic));
+    output.writeIntBigEndian(static_cast<int>(CACHE_MAGIC));
     output.writeIntBigEndian(std::to_underlying(result.kind));
     output.writeIntBigEndian(static_cast<int>(parserVersion(result.kind)));
     output.writeIntBigEndian(static_cast<int>(payload.getDataSize()));
@@ -323,14 +323,14 @@ std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBloc
         auto overview = Overview::deserialize(bytes);
         return overview ? std::optional(TagReadResult::present(std::move(*overview))) : std::nullopt;
     }
-    if (!supportsTagKind(kind) || bytes.size() < cacheHeaderBytes
-        || bytes.size() > cacheHeaderBytes + maxTagPayloadBytes)
+    if (!supportsTagKind(kind) || bytes.size() < CACHE_HEADER_BYTES
+        || bytes.size() > CACHE_HEADER_BYTES + MAX_TAG_PAYLOAD_BYTES)
     {
         return std::nullopt;
     }
     Cursor input(bytes);
-    if (input.number() != cacheMagic || input.number() != std::to_underlying(kind)
-        || input.number() != parserVersion(kind) || input.number() != bytes.size() - cacheHeaderBytes)
+    if (input.number() != CACHE_MAGIC || input.number() != std::to_underlying(kind)
+        || input.number() != parserVersion(kind) || input.number() != bytes.size() - CACHE_HEADER_BYTES)
     {
         return std::nullopt;
     }

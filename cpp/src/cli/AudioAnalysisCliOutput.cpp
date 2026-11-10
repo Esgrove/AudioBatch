@@ -20,22 +20,22 @@ namespace audiobatch::cli
 namespace
 {
 /// Width in characters of the dBFS sample peak column of the results table.
-constexpr int cliPeakColumnWidth {7};
+constexpr int CLI_PEAK_COLUMN_WIDTH {7};
 /// Width in characters of the dBTP true peak column of the results table.
-constexpr int cliTruePeakColumnWidth {7};
+constexpr int CLI_TRUE_PEAK_COLUMN_WIDTH {7};
 /// Width in characters of the LUFS integrated loudness column of the results table.
-constexpr int cliLoudnessColumnWidth {8};
+constexpr int CLI_LOUDNESS_COLUMN_WIDTH {8};
 /// Most decimals a number has in the CSV and JSON output.
 /// Levels are rounded to two decimals and durations to milliseconds,
 /// and the limit keeps the binary rounding error of those values out of the text.
-constexpr int machineReadableDecimalPlaces {6};
+constexpr int MACHINE_READABLE_DECIMAL_PLACES {6};
 /// Precision used for signed channel means and correlation in machine-readable output.
 constexpr double SOURCE_STATISTIC_SCALE {1'000'000.0};
 
 /// Returns the JSON options that write numbers with at most the machine-readable number of decimals.
 juce::JSON::FormatOptions machineReadableJsonOptions()
 {
-    return juce::JSON::FormatOptions {}.withMaxDecimalPlaces(machineReadableDecimalPlaces);
+    return juce::JSON::FormatOptions {}.withMaxDecimalPlaces(MACHINE_READABLE_DECIMAL_PLACES);
 }
 
 /// Returns the CSV text of one field value, writing a number the same way as the JSON output does.
@@ -49,19 +49,19 @@ juce::String csvFieldText(const juce::var& value)
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
-    return formatPeakCompact(static_cast<double>(record.overallPeak)).paddedLeft(' ', cliPeakColumnWidth);
+    return formatPeakCompact(static_cast<double>(record.overallPeak)).paddedLeft(' ', CLI_PEAK_COLUMN_WIDTH);
 }
 
 /// Formats the true peak value right-aligned to the fixed dBTP column width.
 juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
 {
-    return formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
+    return formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', CLI_TRUE_PEAK_COLUMN_WIDTH);
 }
 
 /// Formats the integrated loudness value right-aligned to the fixed LUFS column width.
 juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
 {
-    return formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
+    return formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', CLI_LOUDNESS_COLUMN_WIDTH);
 }
 
 /// Prints the bold column header line to stdout, matching the widths used by the result rows.
@@ -70,11 +70,11 @@ void printHeaderRow()
     console::printBold(
         "{:>{}}  {:>{}}  {:>{}}  TRACK\n",
         "dBFS",
-        cliPeakColumnWidth,
+        CLI_PEAK_COLUMN_WIDTH,
         "dBTP",
-        cliTruePeakColumnWidth,
+        CLI_TRUE_PEAK_COLUMN_WIDTH,
         "LUFS-I",
-        cliLoudnessColumnWidth
+        CLI_LOUDNESS_COLUMN_WIDTH
     );
 }
 
@@ -115,7 +115,9 @@ juce::var decibelsOrNull(const double amplitude)
         return {};
     }
 
-    return std::round(juce::Decibels::gainToDecibels(amplitude, AudioAnalysisRecord::negativeInfinityLoudness) * 100.0)
+    return std::round(
+               juce::Decibels::gainToDecibels(amplitude, AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS) * 100.0
+           )
         / 100.0;
 }
 
@@ -123,7 +125,7 @@ juce::var decibelsOrNull(const double amplitude)
 /// or returns a void var, which JSON writes as null, for the negative infinity sentinel.
 juce::var loudnessOrNull(const double loudness)
 {
-    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+    if (loudness <= AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS) {
         return {};
     }
 
@@ -143,7 +145,7 @@ juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& record)
     object->setProperty("bitsPerSample", record.bitsPerSample);
     object->setProperty(
         "durationSeconds",
-        std::round(record.durationSeconds * utils::millisecondsPerSecond) / utils::millisecondsPerSecond
+        std::round(record.durationSeconds * utils::MILLISECONDS_PER_SECOND) / utils::MILLISECONDS_PER_SECOND
     );
     object->setProperty("peakDbfs", decibelsOrNull(std::abs(static_cast<double>(record.overallPeak))));
     object->setProperty("truePeakDbtp", decibelsOrNull(record.overallTruePeak));

@@ -28,11 +28,11 @@ namespace audiobatch
 {
 namespace
 {
-constexpr int readAheadBufferSamples {32'768};
-constexpr int readAheadThreadStopTimeoutMilliseconds {2000};
-constexpr juce::uint32 seekBufferTimeoutMilliseconds {2000};
+constexpr int READ_AHEAD_BUFFER_SAMPLES {32'768};
+constexpr int READ_AHEAD_THREAD_STOP_TIMEOUT_MILLISECONDS {2000};
+constexpr juce::uint32 SEEK_BUFFER_TIMEOUT_MILLISECONDS {2000};
 /// Device ownership must not depend on visible waveform refreshes or focused component callbacks.
-constexpr int deviceStatusIntervalMilliseconds {50};
+constexpr int DEVICE_STATUS_INTERVAL_MILLISECONDS {50};
 
 /// Records read failures on the decoding thread rather than silently turning them into successful playback.
 class PreviewReaderSource final : public juce::AudioFormatReaderSource
@@ -147,7 +147,7 @@ AudioPreviewPlayer::AudioPreviewPlayer(const bool allowAudioHardware) : audioHar
     utils::registerAudioFormats(formatManager);
     readAheadThread.startThread(juce::Thread::Priority::high);
     deviceManager.addAudioCallback(this);
-    startTimer(deviceStatusIntervalMilliseconds);
+    startTimer(DEVICE_STATUS_INTERVAL_MILLISECONDS);
 }
 
 /// Disconnects callbacks before destroying file buffers or the read-ahead thread.
@@ -159,7 +159,7 @@ AudioPreviewPlayer::~AudioPreviewPlayer()
     deviceManager.removeAudioCallback(this);
     detachLiveChain();
     release();
-    readAheadThread.stopThread(readAheadThreadStopTimeoutMilliseconds);
+    readAheadThread.stopThread(READ_AHEAD_THREAD_STOP_TIMEOUT_MILLISECONDS);
 }
 
 /// Opens only output channels, retaining a selection or finding a connected ASIO output when none was chosen.
@@ -336,7 +336,7 @@ void AudioPreviewPlayer::prepareInput()
     const auto* reader = readerSource->getAudioFormatReader();
     const auto ratio = reader->sampleRate / sampleRate;
     const auto bufferSamples
-        = juce::jmax(readAheadBufferSamples, static_cast<int>(std::ceil(blockSize * ratio * 8.0)) + 256);
+        = juce::jmax(READ_AHEAD_BUFFER_SAMPLES, static_cast<int>(std::ceil(blockSize * ratio * 8.0)) + 256);
     bufferingSource
         = std::make_unique<PreviewBufferingSource>(*readerSource, readAheadThread, bufferSamples, bufferUnderrun);
     resamplingSource = std::make_unique<juce::ResamplingAudioSource>(bufferingSource.get(), false, 2);
@@ -492,7 +492,9 @@ bool AudioPreviewPlayer::reposition(const double seconds, const bool resume)
         resamplingSource->flushBuffers();
         if (resume) {
             const auto inputSamples = static_cast<int>(std::ceil(blockSize * reader->sampleRate / sampleRate)) + 32;
-            if (bufferingSource->waitForNextAudioBlockReady({nullptr, 0, inputSamples}, seekBufferTimeoutMilliseconds))
+            if (bufferingSource->waitForNextAudioBlockReady(
+                    {nullptr, 0, inputSamples}, SEEK_BUFFER_TIMEOUT_MILLISECONDS
+                ))
             {
                 previewSource.start();
             } else {

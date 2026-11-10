@@ -29,9 +29,9 @@ namespace audiobatch
 namespace
 {
 /// Lowest upper limit for the worker count, used on machines with few cores.
-constexpr int minimumWorkerLimit {64};
+constexpr int MINIMUM_WORKER_LIMIT {64};
 /// Longest worker count text that is parsed, which keeps the number far from the 64-bit limit.
-constexpr int maximumWorkerCountDigits {9};
+constexpr int MAXIMUM_WORKER_COUNT_DIGITS {9};
 
 /// Returns a rejected command line, ready to return from a function whose result is a std::expected.
 std::unexpected<CliParseError> parseError(const CliParseErrorKind kind, juce::String message)
@@ -122,7 +122,7 @@ utils::OptionalRef<const CliOption> findShortOption(const juce::juce_wchar lette
         return option.hasShortName() && juce::String(option.shortName).getLastCharacter() == letter;
     };
 
-    for (const CliOption& option : {std::cref(cli::helpOption), std::cref(cli::versionOption)}) {
+    for (const CliOption& option : {std::cref(cli::HELP_OPTION), std::cref(cli::VERSION_OPTION)}) {
         if (matches(option)) {
             return option;
         }
@@ -130,10 +130,10 @@ utils::OptionalRef<const CliOption> findShortOption(const juce::juce_wchar lette
 
     for (const auto options :
          {
-             CliOptionList(cli::analysisOptions),
-             CliOptionList(cli::processOptions),
-             CliOptionList(cli::listOptions),
-             CliOptionList(cli::completionOptions),
+             CliOptionList(cli::ANALYSIS_OPTIONS),
+             CliOptionList(cli::PROCESS_OPTIONS),
+             CliOptionList(cli::LIST_OPTIONS),
+             CliOptionList(cli::COMPLETION_OPTIONS),
          })
     {
         for (const CliOption& option : options) {
@@ -245,7 +245,7 @@ std::expected<bool, CliParseError> parseDeleteOriginals(
 std::expected<int, CliParseError> parseWorkerCount(const juce::String& value)
 {
     // The thread pool creates every worker up front, so the count is capped well above any useful value.
-    const auto maximumWorkerCount = juce::jmax(minimumWorkerLimit, juce::SystemStats::getNumCpus() * 4);
+    const auto maximumWorkerCount = juce::jmax(MINIMUM_WORKER_LIMIT, juce::SystemStats::getNumCpus() * 4);
     const auto workerCountText = value.trim();
 
     if (workerCountText.isEmpty() || !workerCountText.containsOnly("0123456789")) {
@@ -259,7 +259,7 @@ std::expected<int, CliParseError> parseWorkerCount(const juce::String& value)
     };
 
     // The digit count is checked before parsing, since a longer number would wrap around while it is parsed.
-    if (workerCountText.trimCharactersAtStart("0").length() > maximumWorkerCountDigits) {
+    if (workerCountText.trimCharactersAtStart("0").length() > MAXIMUM_WORKER_COUNT_DIGITS) {
         return tooLarge();
     }
 
@@ -323,8 +323,8 @@ std::expected<AudioNormalizationOptions, CliParseError> parseNormalization(
         const auto target = parseTargetLevel(
             "--peak",
             *peakValue,
-            AudioNormalizationOptions::minimumTargetPeakDbfs,
-            AudioNormalizationOptions::maximumTargetPeakDbfs
+            AudioNormalizationOptions::MINIMUM_TARGET_PEAK_DBFS,
+            AudioNormalizationOptions::MAXIMUM_TARGET_PEAK_DBFS
         );
 
         if (!target) {
@@ -339,8 +339,8 @@ std::expected<AudioNormalizationOptions, CliParseError> parseNormalization(
         const auto target = parseTargetLevel(
             "--lufs",
             *loudnessValue,
-            AudioNormalizationOptions::minimumTargetLufs,
-            AudioNormalizationOptions::maximumTargetLufs
+            AudioNormalizationOptions::MINIMUM_TARGET_LUFS,
+            AudioNormalizationOptions::MAXIMUM_TARGET_LUFS
         );
 
         if (!target) {
@@ -371,16 +371,17 @@ std::expected<void, CliParseError> rejectRemainingOptions(const juce::ArgumentLi
 std::expected<CliCommand, CliParseError> parseListPluginsCommand(juce::ArgumentList& arguments)
 {
     ListPluginsCommand command;
-    command.rescan = arguments.removeOptionIfFound(cli::rescanOption.pattern());
+    command.rescan = arguments.removeOptionIfFound(cli::RESCAN_OPTION.pattern());
 
-    const auto grouping = takeNamedOption(arguments, cli::groupByOption, "Plugin grouping", cli::pluginGroupingNames);
+    const auto grouping
+        = takeNamedOption(arguments, cli::GROUP_BY_OPTION, "Plugin grouping", cli::PLUGIN_GROUPING_NAMES);
     if (!grouping) {
         return std::unexpected(grouping.error());
     }
     command.grouping = grouping->value_or(command.grouping);
 
     if (std::ranges::any_of(
-            cli::analysisOptions,
+            cli::ANALYSIS_OPTIONS,
             [&arguments](const CliOption& option) { return arguments.containsOption(option.pattern()); }
         ))
     {
@@ -403,14 +404,14 @@ std::expected<CliCommand, CliParseError> parseListPluginsCommand(juce::ArgumentL
 std::expected<CliCommand, CliParseError> parseCompletionCommand(juce::ArgumentList& arguments)
 {
     CompletionCommand command;
-    command.install = arguments.removeOptionIfFound(cli::installOption.pattern());
-    command.verbose = arguments.removeOptionIfFound(cli::verboseOption.pattern());
+    command.install = arguments.removeOptionIfFound(cli::INSTALL_OPTION.pattern());
+    command.verbose = arguments.removeOptionIfFound(cli::VERBOSE_OPTION.pattern());
 
     if (auto remaining = rejectRemainingOptions(arguments); !remaining) {
         return std::unexpected(std::move(remaining).error());
     }
 
-    const auto shellNames = joinNames(cli::completionShellNames);
+    const auto shellNames = joinNames(cli::COMPLETION_SHELL_NAMES);
 
     if (arguments.size() == 0) {
         return parseError(
@@ -422,7 +423,7 @@ std::expected<CliCommand, CliParseError> parseCompletionCommand(juce::ArgumentLi
         return parseError(CliParseErrorKind::unexpectedInput, "The completion command takes only one shell");
     }
 
-    const auto shell = parseName(cli::completionShellNames, arguments[0].text);
+    const auto shell = parseName(cli::COMPLETION_SHELL_NAMES, arguments[0].text);
     if (!shell.has_value()) {
         return parseError(CliParseErrorKind::invalidValue, utils::format("Shell must be one of: {}", shellNames));
     }
@@ -449,7 +450,7 @@ std::expected<CliCommand, CliParseError> parseHelpCommand(const juce::ArgumentLi
     const auto subcommand = cli::findSubcommand(arguments);
     if (subcommand == CliSubcommand::none) {
         juce::StringArray names;
-        for (const auto* name : cli::helpCommandValues) {
+        for (const auto* name : cli::HELP_COMMAND_VALUES) {
             names.add(name);
         }
         return parseError(
@@ -494,7 +495,8 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     const utils::OptionalRef<ProcessCommand> processing = std::nullopt
 )
 {
-    if (arguments.containsOption(cli::groupByOption.pattern()) || arguments.containsOption(cli::rescanOption.pattern()))
+    if (arguments.containsOption(cli::GROUP_BY_OPTION.pattern())
+        || arguments.containsOption(cli::RESCAN_OPTION.pattern()))
     {
         return parseError(
             CliParseErrorKind::missingRequiredOption, "--group-by and --rescan can only be used with the list command"
@@ -502,18 +504,18 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
     }
 
     AnalyzeCommand command;
-    command.recursive = arguments.removeOptionIfFound(cli::recurseOption.pattern());
-    command.refresh = arguments.removeOptionIfFound(cli::refreshOption.pattern());
-    command.reverse = arguments.removeOptionIfFound(cli::reverseOption.pattern());
-    const bool normalize = arguments.removeOptionIfFound(cli::normalizeOption.pattern());
-    const bool force = arguments.removeOptionIfFound(cli::forceOption.pattern());
+    command.recursive = arguments.removeOptionIfFound(cli::RECURSE_OPTION.pattern());
+    command.refresh = arguments.removeOptionIfFound(cli::REFRESH_OPTION.pattern());
+    command.reverse = arguments.removeOptionIfFound(cli::REVERSE_OPTION.pattern());
+    const bool normalize = arguments.removeOptionIfFound(cli::NORMALIZE_OPTION.pattern());
+    const bool force = arguments.removeOptionIfFound(cli::FORCE_OPTION.pattern());
     const auto deleteOriginals
-        = parseDeleteOriginals(arguments.removeOptionIfFound(cli::deleteOption.pattern()), deleteEnvironmentValue);
+        = parseDeleteOriginals(arguments.removeOptionIfFound(cli::DELETE_OPTION.pattern()), deleteEnvironmentValue);
     if (!deleteOriginals) {
         return std::unexpected(deleteOriginals.error());
     }
 
-    if (const auto workerCountValue = takeOptionValue(arguments, cli::jobsOption); workerCountValue.has_value()) {
+    if (const auto workerCountValue = takeOptionValue(arguments, cli::JOBS_OPTION); workerCountValue.has_value()) {
         const auto workerCount = parseWorkerCount(*workerCountValue);
 
         if (!workerCount) {
@@ -523,20 +525,20 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
         command.workerCount = *workerCount;
     }
 
-    const auto sortMode = takeNamedOption(arguments, cli::sortOption, "Sort mode", cli::sortModeNames);
+    const auto sortMode = takeNamedOption(arguments, cli::SORT_OPTION, "Sort mode", cli::SORT_MODE_NAMES);
     if (!sortMode) {
         return std::unexpected(sortMode.error());
     }
     command.sortMode = sortMode->value_or(command.sortMode);
 
-    const auto outputFormat = takeNamedOption(arguments, cli::outputOption, "Output format", cli::outputFormatNames);
+    const auto outputFormat = takeNamedOption(arguments, cli::OUTPUT_OPTION, "Output format", cli::OUTPUT_FORMAT_NAMES);
     if (!outputFormat) {
         return std::unexpected(outputFormat.error());
     }
     command.outputFormat = outputFormat->value_or(command.outputFormat);
 
-    const auto peakValue = takeOptionValue(arguments, cli::peakOption);
-    const auto loudnessValue = takeOptionValue(arguments, cli::lufsOption);
+    const auto peakValue = takeOptionValue(arguments, cli::PEAK_OPTION);
+    const auto loudnessValue = takeOptionValue(arguments, cli::LUFS_OPTION);
 
     if (force && !normalize && !processing) {
         return parseError(CliParseErrorKind::missingRequiredOption, "--force can only be used with --normalize");
@@ -584,7 +586,7 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
 /// Returns the subcommand table entry for a subcommand, or nothing for an analysis run.
 std::optional<CliSubcommandInfo> findSubcommandInfo(const CliSubcommand subcommand)
 {
-    for (const auto& info : cli::subcommands) {
+    for (const auto& info : cli::SUBCOMMANDS) {
         if (info.subcommand == subcommand) {
             return info;
         }
@@ -666,7 +668,7 @@ juce::StringArray buildSubcommandUsage(const juce::String& executableName, const
 
     lines.add("");
     lines.add("Options:");
-    lines.add(usageRow(cli::helpOption));
+    lines.add(usageRow(cli::HELP_OPTION));
 
     for (const CliOption& option : subcommand.options) {
         lines.add(usageRow(option));
@@ -696,21 +698,21 @@ juce::String cli::buildUsage(const juce::String& executableName, const CliSubcom
         lines.add(utils::format("{} {}", executableName, version::VERSION_INFO));
         lines.add(buildUsageLine(executableName, subcommand));
 
-        for (const auto& command : subcommands) {
+        for (const auto& command : SUBCOMMANDS) {
             lines.add(utils::format("       {} {} [options]", executableName, subcommandWithArgument(command)));
         }
 
         lines.add("");
         lines.add("Commands:");
-        for (const auto& command : subcommands) {
+        for (const auto& command : SUBCOMMANDS) {
             lines.add(usageRow(command.name, command.description));
         }
 
         lines.add("");
         lines.add("Options:");
-        lines.add(usageRow(helpOption));
-        lines.add(usageRow(versionOption));
-        for (const CliOption& option : analysisOptions) {
+        lines.add(usageRow(HELP_OPTION));
+        lines.add(usageRow(VERSION_OPTION));
+        for (const CliOption& option : ANALYSIS_OPTIONS) {
             lines.add(usageRow(option));
         }
 
@@ -732,7 +734,7 @@ CliSubcommand cli::findSubcommand(const juce::ArgumentList& arguments)
         return CliSubcommand::none;
     }
 
-    for (const auto& command : subcommands) {
+    for (const auto& command : SUBCOMMANDS) {
         if (arguments[0].text == command.name) {
             return command.subcommand;
         }
@@ -794,7 +796,7 @@ std::expected<CliCommand, CliParseError> cli::parseArguments(
     switch (subcommand) {
         case CliSubcommand::process: {
             ProcessCommand processing;
-            const auto preset = takeOptionValue(arguments, presetOption);
+            const auto preset = takeOptionValue(arguments, PRESET_OPTION);
             if (!preset.has_value() || preset->trim().isEmpty()) {
                 return parseError(
                     CliParseErrorKind::missingRequiredOption, "The process command needs --preset <preset>"

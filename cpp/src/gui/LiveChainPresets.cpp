@@ -24,12 +24,12 @@ namespace audiobatch
 namespace
 {
 /// Offsets of the presets submenu items from its first item id.
-constexpr int savePresetMenuOffset {0};
-constexpr int showPresetFolderMenuOffset {1};
-constexpr int firstPresetMenuOffset {2};
+constexpr int SAVE_PRESET_MENU_OFFSET {0};
+constexpr int SHOW_PRESET_FOLDER_MENU_OFFSET {1};
+constexpr int FIRST_PRESET_MENU_OFFSET {2};
 
 /// Name of the text field in the dialog that asks for a preset name.
-constexpr auto presetNameFieldName {"presetName"};
+constexpr auto PRESET_NAME_FIELD_NAME {"presetName"};
 
 /// Tells the user why a preset operation failed.
 void showPresetError(const juce::String& title, const juce::String& message)
@@ -106,8 +106,8 @@ bool LiveChain::isPresetModified() const noexcept
 juce::PopupMenu LiveChain::createPresetsMenu(const int firstItemId) const
 {
     juce::PopupMenu menu;
-    menu.addItem(firstItemId + savePresetMenuOffset, "Save Chain as Preset...", !chain.empty());
-    menu.addItem(firstItemId + showPresetFolderMenuOffset, "Show Presets Folder");
+    menu.addItem(firstItemId + SAVE_PRESET_MENU_OFFSET, "Save Chain as Preset...", !chain.empty());
+    menu.addItem(firstItemId + SHOW_PRESET_FOLDER_MENU_OFFSET, "Show Presets Folder");
 
     const auto presets = getPresets();
     if (!presets.empty()) {
@@ -121,7 +121,7 @@ juce::PopupMenu LiveChain::createPresetsMenu(const int firstItemId) const
     for (std::size_t index = 0; index < presets.size(); ++index) {
         const auto& preset = presets[index];
         menu.addItem(
-            firstItemId + firstPresetMenuOffset + static_cast<int>(index),
+            firstItemId + FIRST_PRESET_MENU_OFFSET + static_cast<int>(index),
             preset.name,
             true,
             currentName.isNotEmpty() && preset.name == currentName
@@ -142,17 +142,17 @@ bool LiveChain::handlePresetsMenuItem(const int itemId, const int firstItemId)
         return false;
     }
 
-    if (offset == savePresetMenuOffset) {
+    if (offset == SAVE_PRESET_MENU_OFFSET) {
         promptSavePreset();
         return true;
     }
 
-    if (offset == showPresetFolderMenuOffset) {
+    if (offset == SHOW_PRESET_FOLDER_MENU_OFFSET) {
         showPresetFolder();
         return true;
     }
 
-    const auto presetIndex = static_cast<std::size_t>(offset - firstPresetMenuOffset);
+    const auto presetIndex = static_cast<std::size_t>(offset - FIRST_PRESET_MENU_OFFSET);
     if (presetIndex >= presetMenuFiles.size()) {
         return false;
     }
@@ -172,7 +172,7 @@ void LiveChain::promptSavePreset()
         "Saves the plugins of the chain, their order, and the settings of each plugin.",
         juce::MessageBoxIconType::NoIcon
     );
-    window->addTextEditor(presetNameFieldName, getCurrentPresetName(), "Preset name:");
+    window->addTextEditor(PRESET_NAME_FIELD_NAME, getCurrentPresetName(), "Preset name:");
     window->addButton("Save", utils::DIALOG_RESULT_OK, juce::KeyPress(juce::KeyPress::returnKey));
     window->addButton("Cancel", utils::DIALOG_RESULT_CANCEL, juce::KeyPress(juce::KeyPress::escapeKey));
 
@@ -186,7 +186,7 @@ void LiveChain::promptSavePreset()
             if (safeThis == nullptr || safeWindow == nullptr || result != utils::DIALOG_RESULT_OK) {
                 return;
             }
-            safeThis->savePresetConfirmingReplace(safeWindow->getTextEditorContents(presetNameFieldName));
+            safeThis->savePresetConfirmingReplace(safeWindow->getTextEditorContents(PRESET_NAME_FIELD_NAME));
         }),
         true
     );

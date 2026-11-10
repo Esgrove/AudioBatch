@@ -82,7 +82,7 @@ NativeWaveformBuilder::NativeWaveformBuilder(const int sourceChannels, const int
     }
     const auto bytes
         = HEADER_BYTES + static_cast<std::size_t>(completePoints + 1) * static_cast<std::size_t>(channels) * 2;
-    if (bytes > static_cast<std::size_t>(maximumWaveformBytes)) {
+    if (bytes > static_cast<std::size_t>(MAXIMUM_WAVEFORM_BYTES)) {
         return;
     }
     data.setSize(bytes, true);

@@ -22,14 +22,14 @@ namespace audiobatch::tests
 namespace
 {
 /// Palette index of pure red in the 6x6x6 colour cube.
-constexpr std::uint8_t redIndex {180};
+constexpr std::uint8_t RED_INDEX {180};
 /// Palette index of pure green in the 6x6x6 colour cube.
-constexpr std::uint8_t greenIndex {30};
+constexpr std::uint8_t GREEN_INDEX {30};
 
 /// Returns a slice whose every cell holds the same palette index.
-std::array<std::uint8_t, serato::Overview::bandCount> uniformSlice(const std::uint8_t paletteIndex)
+std::array<std::uint8_t, serato::Overview::BAND_COUNT> uniformSlice(const std::uint8_t paletteIndex)
 {
-    std::array<std::uint8_t, serato::Overview::bandCount> slice {};
+    std::array<std::uint8_t, serato::Overview::BAND_COUNT> slice {};
     slice.fill(paletteIndex);
     return slice;
 }
@@ -47,7 +47,7 @@ serato::Overview overviewOf(const std::initializer_list<std::uint8_t> paletteInd
 /// Constructs synthetic slices with distinct band bytes and the supported payload header.
 std::vector<std::uint8_t> overviewPayload(std::size_t count)
 {
-    std::vector<std::uint8_t> bytes(2 + count * serato::Overview::bandCount);
+    std::vector<std::uint8_t> bytes(2 + count * serato::Overview::BAND_COUNT);
     bytes[0] = 1;
     bytes[1] = 5;
     for (std::size_t index = 2; index < bytes.size(); ++index) {
@@ -109,21 +109,21 @@ public:
             if (silent) {
                 expect(std::ranges::all_of(silent->slices.front(), [](auto value) { return value == 0; }));
             }
-            const auto maximum = serato::Overview::parse(overviewPayload(serato::Overview::maxSlices));
+            const auto maximum = serato::Overview::parse(overviewPayload(serato::Overview::MAX_SLICES));
             expect(maximum.has_value());
             if (maximum) {
-                expectEquals(maximum->slices.size(), serato::Overview::maxSlices);
+                expectEquals(maximum->slices.size(), serato::Overview::MAX_SLICES);
                 const auto restored = serato::Overview::deserialize(cacheBytes(maximum->serialize()));
                 expect(restored.has_value());
                 if (restored) {
                     expect(restored->slices == maximum->slices);
                 }
             }
-            expect(!serato::Overview::parse(overviewPayload(serato::Overview::maxSlices + 1)));
+            expect(!serato::Overview::parse(overviewPayload(serato::Overview::MAX_SLICES + 1)));
         }
 
         beginTest("Parser-result revision three retains raster format version two");
-        expectEquals(static_cast<int>(serato::overviewParserVersion), 3);
+        expectEquals(static_cast<int>(serato::OVERVIEW_PARSER_VERSION), 3);
 
         beginTest("Cache header has explicit magic, kind, version and big-endian count");
         {
@@ -182,7 +182,7 @@ public:
         {
             serato::Overview overview;
             expectEquals(overview.serialize().getSize(), std::size_t {0});
-            overview.slices.resize(serato::Overview::maxSlices + 1);
+            overview.slices.resize(serato::Overview::MAX_SLICES + 1);
             expectEquals(overview.serialize().getSize(), std::size_t {0});
         }
 
@@ -209,8 +209,8 @@ private:
         expectColour(serato::colourForOverviewSlice(uniformSlice(2), fallback), 0, 0, 102);
         expectColour(serato::colourForOverviewSlice(uniformSlice(43), fallback), 51, 51, 51);
         expectColour(serato::colourForOverviewSlice(uniformSlice(100), fallback), 102, 204, 204);
-        expectColour(serato::colourForOverviewSlice(uniformSlice(redIndex), fallback), 255, 0, 0);
-        expectColour(serato::colourForOverviewSlice(uniformSlice(greenIndex), fallback), 0, 255, 0);
+        expectColour(serato::colourForOverviewSlice(uniformSlice(RED_INDEX), fallback), 255, 0, 0);
+        expectColour(serato::colourForOverviewSlice(uniformSlice(GREEN_INDEX), fallback), 0, 255, 0);
         expectColour(serato::colourForOverviewSlice(uniformSlice(215), fallback), 255, 255, 255);
 
         beginTest("Every palette index matches the integer cube or the opaque fallback");
@@ -255,8 +255,8 @@ private:
 
         beginTest("A slice colour is the mean of its coloured cells, whatever their rows");
         {
-            auto slice = uniformSlice(redIndex);
-            std::ranges::fill(std::span(slice).first(8), greenIndex);
+            auto slice = uniformSlice(RED_INDEX);
+            std::ranges::fill(std::span(slice).first(8), GREEN_INDEX);
             const auto mixed = serato::colourForOverviewSlice(slice, fallback);
             expectColour(mixed, 128, 128, 0);
             std::ranges::reverse(slice);
@@ -268,7 +268,7 @@ private:
 
         beginTest("The gradient spans the waveform and its ends sample the visible times");
         {
-            const auto overview = overviewOf({redIndex, greenIndex});
+            const auto overview = overviewOf({RED_INDEX, GREEN_INDEX});
             const juce::Rectangle bounds(10, 0, 4, 20);
             const auto gradient = serato::makeOverviewGradient(overview, {0.0, 2.0}, 2.0, bounds, fallback);
             expect(gradient.has_value());
@@ -284,7 +284,7 @@ private:
 
         beginTest("At close zoom the colour blends between the centres of adjacent slices");
         {
-            const auto overview = overviewOf({redIndex, greenIndex});
+            const auto overview = overviewOf({RED_INDEX, GREEN_INDEX});
             // Halfway between the slice centres at 0.5 s and 1.5 s.
             const auto gradient
                 = serato::makeOverviewGradient(overview, {0.9, 1.1}, 2.0, juce::Rectangle(0, 0, 1, 20), fallback);
@@ -298,7 +298,7 @@ private:
 
         beginTest("When a pixel spans several slices, each slice counts by its overlap");
         {
-            const auto overview = overviewOf({redIndex, greenIndex, greenIndex, greenIndex});
+            const auto overview = overviewOf({RED_INDEX, GREEN_INDEX, GREEN_INDEX, GREEN_INDEX});
             // The single pixel covers half of the red slice and one and a half green slices.
             const auto gradient
                 = serato::makeOverviewGradient(overview, {0.25, 1.25}, 2.0, juce::Rectangle(0, 0, 1, 20), fallback);
@@ -311,7 +311,7 @@ private:
 
         beginTest("Invalid overviews, lengths, ranges and bounds produce no gradient");
         {
-            const auto overview = overviewOf({redIndex});
+            const auto overview = overviewOf({RED_INDEX});
             const juce::Rectangle bounds(0, 0, 10, 10);
             const auto infinity = std::numeric_limits<double>::infinity();
             const serato::Overview emptyOverview;
@@ -326,11 +326,11 @@ private:
         beginTest("The number of gradient stops is bounded on a very wide waveform");
         {
             const auto gradient = serato::makeOverviewGradient(
-                overviewOf({redIndex, greenIndex}), {0.0, 1.0}, 1.0, juce::Rectangle(0, 0, 100'000, 10), fallback
+                overviewOf({RED_INDEX, GREEN_INDEX}), {0.0, 1.0}, 1.0, juce::Rectangle(0, 0, 100'000, 10), fallback
             );
             expect(gradient.has_value());
             if (gradient) {
-                expectEquals(gradient->getNumColours(), serato::maxWaveformGradientStops);
+                expectEquals(gradient->getNumColours(), serato::MAX_WAVEFORM_GRADIENT_STOPS);
             }
         }
     }

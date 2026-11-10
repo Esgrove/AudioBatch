@@ -17,11 +17,11 @@ namespace audiobatch::console
 namespace
 {
 /// Width of the bar in characters.
-constexpr int barWidth {40};
+constexpr int BAR_WIDTH {40};
 /// Shortest time between two redraws, so a fast run does not flood the terminal.
-constexpr double redrawIntervalMilliseconds {100.0};
-constexpr int secondsPerMinute {60};
-constexpr int secondsPerHour {3600};
+constexpr double REDRAW_INTERVAL_MILLISECONDS {100.0};
+constexpr int SECONDS_PER_MINUTE {60};
+constexpr int SECONDS_PER_HOUR {3600};
 }  // namespace
 
 /// Creates the progress line, which draws only when stderr is a colour terminal.
@@ -81,21 +81,21 @@ void ProgressLine::drawUnlocked(const bool force)
     }
 
     const auto now = juce::Time::getMillisecondCounterHiRes();
-    if (!force && now - lastDrawnAtMilliseconds < redrawIntervalMilliseconds) {
+    if (!force && now - lastDrawnAtMilliseconds < REDRAW_INTERVAL_MILLISECONDS) {
         return;
     }
     lastDrawnAtMilliseconds = now;
 
-    const auto elapsedSeconds = static_cast<int>((now - startedAtMilliseconds) / utils::millisecondsPerSecond);
-    const auto filled = total > 0 ? juce::jlimit(0, barWidth, done * barWidth / total) : 0;
+    const auto elapsedSeconds = static_cast<int>((now - startedAtMilliseconds) / utils::MILLISECONDS_PER_SECOND);
+    const auto filled = total > 0 ? juce::jlimit(0, BAR_WIDTH, done * BAR_WIDTH / total) : 0;
     const auto bar = std::string(static_cast<std::size_t>(filled), '#')
-        + std::string(static_cast<std::size_t>(barWidth - filled), '-');
+        + std::string(static_cast<std::size_t>(BAR_WIDTH - filled), '-');
     fmt::print(
         stderr,
         "\r\033[K[{:02}:{:02}:{:02}] {} {}/{} {}",
-        elapsedSeconds / secondsPerHour,
-        (elapsedSeconds / secondsPerMinute) % secondsPerMinute,
-        elapsedSeconds % secondsPerMinute,
+        elapsedSeconds / SECONDS_PER_HOUR,
+        (elapsedSeconds / SECONDS_PER_MINUTE) % SECONDS_PER_MINUTE,
+        elapsedSeconds % SECONDS_PER_MINUTE,
         bar,
         done,
         total,

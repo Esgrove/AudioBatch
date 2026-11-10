@@ -82,7 +82,7 @@ public:
         beginTest("Loudness formats as LUFS, with the sentinel as -INF");
         {
             expectEquals(formatLoudnessCompact(-14.25), juce::String("-14.25"));
-            expectEquals(formatLoudnessCompact(AudioAnalysisRecord::negativeInfinityLoudness), juce::String("-INF"));
+            expectEquals(formatLoudnessCompact(AudioAnalysisRecord::NEGATIVE_INFINITY_LOUDNESS), juce::String("-INF"));
         }
 
         beginTest("Sample rates format in kHz, with the unit only outside the results table");
