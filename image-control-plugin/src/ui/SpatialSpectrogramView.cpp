@@ -122,7 +122,7 @@ constexpr double CURVE_HOLD_SECONDS {2.5};
 constexpr double CURVE_FADE_SECONDS {0.5};
 /// Level differences with a guide line in the position curve overlay, in dB.
 constexpr std::array<float, 7> CURVE_GUIDE_DIFFERENCES {3.0F, 6.0F, 12.0F, 18.0F, 24.0F, 36.0F, 48.0F};
-/// Level difference at the right edge of the drawn curve, as a multiple of the pan edge setting.
+/// Level difference at the left edge of the drawn curve, as a multiple of the pan edge setting.
 constexpr float CURVE_RANGE_PER_EDGE {1.5F};
 /// Distance between the dB ticks along the centre line of the drawn curve, in dB.
 constexpr float CURVE_TICK_DECIBELS {6.0F};
@@ -138,8 +138,6 @@ constexpr float CURVE_LINE_ALPHA {0.9F};
 constexpr float CURVE_LINE_THICKNESS {2.0F};
 /// Horizontal distance between the points of the drawn curve, in pixels.
 constexpr float CURVE_STEP_PIXELS {2.0F};
-/// Width of the dB labels of the guide lines at the right of the plot, in pixels.
-constexpr float CURVE_LABEL_WIDTH {56.0F};
 
 /// Corner radius of the spectrogram box, matching the band strips, in pixels.
 constexpr float BOX_CORNER_RADIUS {6.0F};
@@ -468,6 +466,36 @@ float SpatialSpectrogramView::positionCurveOpacity() const
     return static_cast<float>(std::max(0.0, 1.0 - (positionCurveAge - CURVE_HOLD_SECONDS) / CURVE_FADE_SECONDS));
 }
 
+/// Keeps guide label pills at the exposed right side, wholly inside the plot even near the channel edges.
+juce::Rectangle<float> SpatialSpectrogramView::positionCurveLabelBounds(
+    const float difference,
+    const bool leftChannel
+) const
+{
+    const auto plot = getPlotBounds().reduced(LABEL_INSET);
+    const auto text = juce::String(juce::roundToInt(difference)) + " dB";
+    const float width = std::min(
+        plot.getWidth(), juce::GlyphArrangement::getStringWidth(textFont(LABEL_FONT_HEIGHT), text) + PILL_PADDING * 2.0F
+    );
+    const float height = std::min(plot.getHeight(), LABEL_FONT_HEIGHT + PILL_PADDING);
+    const float y = positionCurvePoint(difference, leftChannel).y;
+    return juce::Rectangle<float>(plot.getRight() - width, y - height * 0.5F, width, height).constrainedWithin(plot);
+}
+
+/// Projects the mapping overlay independently of frequency: zero difference at the right and rising dB to the left.
+/// Both channels share the horizontal mapping and mirror about the unchanged stereo-position centre line.
+juce::Point<float> SpatialSpectrogramView::positionCurvePoint(const float difference, const bool leftChannel) const
+{
+    const auto plot = getPlotBounds();
+    const float range = positionCurve.edge() * CURVE_RANGE_PER_EDGE;
+    const float share = std::clamp(difference / range, 0.0F, 1.0F);
+    const float position = positionCurve.position(difference);
+    return {
+        plot.getRight() - share * plot.getWidth(),
+        positionToY(static_cast<double>(leftChannel ? position : -position)),
+    };
+}
+
 /// Returns the x coordinate of a frequency in the plot.
 float SpatialSpectrogramView::frequencyToX(const double frequency) const
 {
@@ -756,7 +784,7 @@ void SpatialSpectrogramView::paintGrid(juce::Graphics& graphics) const
 /// Guide lines on both halves mark where common level differences land, labelled in dB at the right,
 /// with the pan midpoint and edge brighter.
 /// The curve itself runs from the centre line towards both edges,
-/// with the level difference along the centre line, from 0 dB at the left to 1.5 times the pan edge at the right.
+/// with the level difference along the centre line, from 0 dB at the right to 1.5 times the pan edge at the left.
 void SpatialSpectrogramView::paintPositionCurve(juce::Graphics& graphics) const
 {
     const float opacity = positionCurveOpacity();
@@ -766,30 +794,26 @@ void SpatialSpectrogramView::paintPositionCurve(juce::Graphics& graphics) const
     const auto plot = getPlotBounds();
     const auto guideColour = juce::Colour(palette::GREY_LIGHT);
     const auto settingColour = juce::Colour(palette::YELLOW);
-    const float labelX = plot.getRight() - LABEL_INSET - CURVE_LABEL_WIDTH * 0.5F;
-    const float labelHeight = LABEL_FONT_HEIGHT + PILL_PADDING;
-
     // The settings are labelled first, so the other guides skip labels that would overlap them.
     const std::array labelledDifferences {positionCurve.midpoint(), positionCurve.edge()};
-    std::vector<float> labelledYs;
+    std::vector<juce::Rectangle<float>> labels;
     const auto paintGuide = [&](const float difference, const bool setting, const bool labelled) {
         const auto colour = setting ? settingColour : guideColour;
         const float alpha = (setting ? CURVE_SETTING_ALPHA : CURVE_GUIDE_ALPHA) * opacity;
-        const float share = positionCurve.position(difference);
-        for (const float sign : {1.0F, -1.0F}) {
-            const float y = positionToY(static_cast<double>(sign * share));
+        for (const bool leftChannel : {true, false}) {
+            const float y = positionCurvePoint(difference, leftChannel).y;
             graphics.setColour(colour.withAlpha(alpha));
             graphics.drawHorizontalLine(juce::roundToInt(y), plot.getX(), plot.getRight());
             if (!labelled) {
                 continue;
             }
-            const bool overlaps = std::ranges::any_of(labelledYs, [y, labelHeight](const float other) {
-                return std::abs(other - y) < labelHeight;
-            });
+            const auto label = positionCurveLabelBounds(difference, leftChannel);
+            const bool overlaps
+                = std::ranges::any_of(labels, [&label](const auto& other) { return label.intersects(other); });
             if (setting || !overlaps) {
-                labelledYs.push_back(y);
+                labels.push_back(label);
                 paintLabelPill(
-                    graphics, juce::String(juce::roundToInt(difference)) + " dB", {labelX, y}, opacity, colour
+                    graphics, juce::String(juce::roundToInt(difference)) + " dB", label.getCentre(), opacity, colour
                 );
             }
         }
@@ -804,17 +828,15 @@ void SpatialSpectrogramView::paintPositionCurve(juce::Graphics& graphics) const
     }
 
     const float range = positionCurve.edge() * CURVE_RANGE_PER_EDGE;
-    const auto differenceAt = [&plot, range](const float x) { return (x - plot.getX()) / plot.getWidth() * range; };
-    for (const float sign : {1.0F, -1.0F}) {
+    for (const bool leftChannel : {true, false}) {
         juce::Path curve;
-        curve.startNewSubPath(plot.getX(), positionToY(0.0));
+        curve.startNewSubPath(positionCurvePoint(0.0F, leftChannel));
         const int steps = static_cast<int>(std::ceil(plot.getWidth() / CURVE_STEP_PIXELS));
-        for (int step = 1; step <= steps; ++step) {
-            const float clamped = std::min(plot.getX() + static_cast<float>(step) * CURVE_STEP_PIXELS, plot.getRight());
-            curve.lineTo(
-                clamped, positionToY(static_cast<double>(sign * positionCurve.position(differenceAt(clamped))))
-            );
+        for (int step = 1; step < steps; ++step) {
+            const float difference = static_cast<float>(step) * CURVE_STEP_PIXELS / plot.getWidth() * range;
+            curve.lineTo(positionCurvePoint(difference, leftChannel));
         }
+        curve.lineTo(positionCurvePoint(range, leftChannel));
         graphics.setColour(settingColour.withAlpha(CURVE_LINE_ALPHA * opacity));
         graphics.strokePath(curve, juce::PathStrokeType(CURVE_LINE_THICKNESS));
     }
@@ -827,7 +849,7 @@ void SpatialSpectrogramView::paintPositionCurve(juce::Graphics& graphics) const
     const float centreY = positionToY(0.0);
     for (int index = 1; static_cast<float>(index) * tick < range; ++index) {
         const float difference = static_cast<float>(index) * tick;
-        const float x = plot.getX() + difference / range * plot.getWidth();
+        const float x = positionCurvePoint(difference, true).x;
         paintLabelPill(graphics, juce::String(juce::roundToInt(difference)), {x, centreY}, opacity, guideColour);
     }
 }

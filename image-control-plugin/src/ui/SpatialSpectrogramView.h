@@ -130,6 +130,8 @@ private:
     [[nodiscard]] Crossovers currentCrossovers() const;
     [[nodiscard]] SpectrogramOverlayState currentOverlayState() const;
     [[nodiscard]] juce::Rectangle<float> framesPerSecondArea() const;
+    [[nodiscard]] juce::Rectangle<float> positionCurveLabelBounds(float difference, bool leftChannel) const;
+    [[nodiscard]] juce::Point<float> positionCurvePoint(float difference, bool leftChannel) const;
     [[nodiscard]] std::array<bool, BAND_COUNT> mutedBands() const;
 
     [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
