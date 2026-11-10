@@ -12,6 +12,7 @@
 #include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
 #include "ui/SpectrogramWorker.h"
+#include <fmt/base.h>
 #include <string_view>
 #include <system_error>
 
@@ -30,7 +31,6 @@
 #include <exception>
 #include <memory>
 #include <optional>
-#include <print>
 #include <random>
 #include <ratio>
 #include <span>
@@ -378,10 +378,10 @@ void printCallbacks(
     const auto ratios = distribution(samples.deadlineRatios);
     const auto repeats = distribution(std::vector<double>(repetitionP99.begin(), repetitionP99.end()));
     const double audioSeconds = static_cast<double>(samples.frames) / sampleRate;
-    std::println(
+    fmt::print(
         "n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} "
         "deadline[x]={:.4f}/{:.4f}/{:.4f}/{:.4f} over={}/{} callback_ms/audio_s={:.3f} rep_p99[min/max]={:.3f}/{:.3f} "
-        "check={:.6f}",
+        "check={:.6f}\n",
         samples.microseconds.size(),
         times.p50,
         times.p95,
@@ -560,7 +560,7 @@ void printProcessor(
 )
 {
     const std::string_view fifo = concurrentAnalysis ? "worker-flood" : "drain";
-    std::print(
+    fmt::print(
         "callback kind={} rate={:.0f} block={} mode={} meter={} fifo={} particles={} ",
         automate ? "paced-crossovers" : "unpaced",
         sampleRate,
@@ -572,7 +572,7 @@ void printProcessor(
     );
     printCallbacks(results.samples, sampleRate, results.repetitionP99, results.checksum);
     if (automate) {
-        std::print(
+        fmt::print(
             "  post-request-window={:.0f}ms requests={} start_late_blocks={} max_start_late_us={:.3f} ",
             POST_REQUEST_SECONDS * MILLISECONDS_PER_SECOND,
             results.requests,
@@ -582,10 +582,10 @@ void printProcessor(
         printCallbacks(results.postRequest, sampleRate, {}, 0.0);
     }
     if (results.truncated) {
-        std::println("  WARNING: {}s workload limit. Counts/repetitions incomplete.", options.maximumWorkloadSeconds);
+        fmt::print("  WARNING: {}s workload limit. Counts/repetitions incomplete.\n", options.maximumWorkloadSeconds);
     }
     if (concurrentAnalysis && particles == 0) {
-        std::println("  WARNING: no particles observed. Concurrent analysis was not confirmed for this workload.");
+        fmt::print("  WARNING: no particles observed. Concurrent analysis was not confirmed for this workload.\n");
     }
 }
 
@@ -723,8 +723,8 @@ void timeProcessorVariants(
 /// Covers every steady mode/rate/block combination and paced shortest-fixed/irregular crossover requests.
 void timeProcessorMatrix(const Options& options)
 {
-    std::println(
-        "\nComplete processor callback matrix (stereo input, normal thread priority, no physical audio device):"
+    fmt::print(
+        "\nComplete processor callback matrix (stereo input, normal thread priority, no physical audio device):\n"
     );
     for (const double sampleRate : SAMPLE_RATES) {
         for (const int blockSize : std::array<int, 5> {32, 64, 256, 512, 0}) {
@@ -733,8 +733,8 @@ void timeProcessorMatrix(const Options& options)
             }
         }
     }
-    std::println(
-        "\nPaced real-time crossover requests (original panned and recovery modes, shortest fixed/irregular):"
+    fmt::print(
+        "\nPaced real-time crossover requests (original panned and recovery modes, shortest fixed/irregular):\n"
     );
     for (const double sampleRate : SAMPLE_RATES) {
         for (const int blockSize : {FIXED_BLOCK_SIZES.front(), 0}) {
@@ -749,7 +749,7 @@ void timeProcessorMatrix(const Options& options)
 void timeFocusedProcessor(const Options& options)
 {
     constexpr double SAMPLE_RATE {48'000.0};
-    std::println("\nFocused steady small callbacks (settled nonneutral gains/pans, meters off, drained FIFO):");
+    fmt::print("\nFocused steady small callbacks (settled nonneutral gains/pans, meters off, drained FIFO):\n");
     for (const int blockSize : {32, 64}) {
         for (const Mode mode : {Mode::panned, Mode::solo, Mode::delta, Mode::soloDelta}) {
             timeProcessor(options, SAMPLE_RATE, {.fixedSize = blockSize}, mode, false, false, false);
@@ -800,9 +800,9 @@ void timeImager(
     }
     imager.release();
     const auto result = distribution(measurements);
-    std::println(
+    fmt::print(
         "imager mode={} rate=48000 block={} copy=included audio_s/rep={:.3f} "
-        "ms/audio_s[min/p50/max]={:.3f}/{:.3f}/{:.3f} check={:.6f}",
+        "ms/audio_s[min/p50/max]={:.3f}/{:.3f}/{:.3f} check={:.6f}\n",
         name,
         MAXIMUM_BLOCK_SIZE,
         audioSeconds,
@@ -860,9 +860,9 @@ void timeImagerSetters(const Options& options)
         }
         imager.release();
         const auto result = distribution(measurements);
-        std::println(
+        fmt::print(
             "imager setters=width+recover targets={} pairs/batch={} n={} "
-            "us/pair[p50/p95/p99/max]={:.6f}/{:.6f}/{:.6f}/{:.6f} process=excluded check={:.6f}",
+            "us/pair[p50/p95/p99/max]={:.6f}/{:.6f}/{:.6f}/{:.6f} process=excluded check={:.6f}\n",
             changing ? "changing" : "steady",
             SETTER_BATCH_SIZE,
             measurements.size(),
@@ -907,8 +907,9 @@ void timeSpectrogramAnalysis(const Options& options)
         }
     }
     const auto result = distribution(measurements);
-    std::println(
-        "analysis+particles rate=48000 refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} particles={}",
+    fmt::print(
+        "analysis+particles rate=48000 refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} "
+        "particles={}\n",
         REFRESH_RATE,
         measurements.size(),
         result.p50,
@@ -955,9 +956,9 @@ void timeSpectrogramAnalyzerOnly(const Options& options)
         }
     }
     const auto result = distribution(measurements);
-    std::println(
+    fmt::print(
         "analyzer-only rate=48000 refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} "
-        "frames={} points={} check={:.6f}",
+        "frames={} points={} check={:.6f}\n",
         REFRESH_RATE,
         measurements.size(),
         result.p50,
@@ -1038,9 +1039,9 @@ void timeSpectrogramParticlesOnly(const Options& options)
         }
     }
     const auto result = distribution(measurements);
-    std::println(
+    fmt::print(
         "particles-only rate=48000 refresh_hz={} captured_refreshes={} n={} "
-        "us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} particles={} check={:.6f}",
+        "us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} particles={} check={:.6f}\n",
         REFRESH_RATE,
         captured.size(),
         measurements.size(),
@@ -1117,8 +1118,8 @@ void timeSpectrogramOverlays(const Options& options, const OverlayHover hover = 
     } else if (hover == OverlayHover::crossover) {
         hoverName = "crossover";
     }
-    std::println(
-        "overlay software={}x{} refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} hover={}",
+    fmt::print(
+        "overlay software={}x{} refresh_hz={} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} hover={}\n",
         VIEW_WIDTH,
         VIEW_HEIGHT,
         REFRESH_RATE,
@@ -1197,9 +1198,9 @@ void timeBandCorrelationMeters(const Options& options, const bool changing, cons
         }
     }
     const auto result = distribution(measurements);
-    std::println(
+    fmt::print(
         "correlation update+paint meters={} readings={} persistence_s={:.3f} software={}x{} refresh_hz={} "
-        "warmup_s/rep={:.3f} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} check={:.6f} pixels={}",
+        "warmup_s/rep={:.3f} n={} us[p50/p95/p99/max]={:.3f}/{:.3f}/{:.3f}/{:.3f} check={:.6f} pixels={}\n",
         BAND_COUNT,
         changing ? "changing" : "steady",
         persistenceSeconds,
@@ -1220,13 +1221,13 @@ void timeBandCorrelationMeters(const Options& options, const bool changing, cons
 /// Prints reproducibility context without pretending runtime detection reveals all compiler/linker flags.
 void printIdentity(const Options& options)
 {
-    std::println(
-        "ImageControl performance observations | label={} | {}",
+    fmt::print(
+        "ImageControl performance observations | label={} | {}\n",
         options.label,
         juce::Time::getCurrentTime().toISO8601(true).toStdString()
     );
-    std::println(
-        "OS={} CPU={} vendor={} physical/logical={}/{} pointer_bits={}",
+    fmt::print(
+        "OS={} CPU={} vendor={} physical/logical={}/{} pointer_bits={}\n",
         juce::SystemStats::getOperatingSystemName().toStdString(),
         juce::SystemStats::getCpuModel().toStdString(),
         juce::SystemStats::getCpuVendor().toStdString(),
@@ -1235,12 +1236,12 @@ void printIdentity(const Options& options)
         sizeof(void*) * 8
     );
 #ifdef __clang__
-    std::println("compiler=Clang {}", __clang_version__);
+    fmt::print("compiler=Clang {}\n", __clang_version__);
 #elifdef _MSC_VER
-    std::println("compiler=MSVC {} full={}", _MSC_VER, _MSC_FULL_VER);
+    fmt::print("compiler=MSVC {} full={}\n", _MSC_VER, _MSC_FULL_VER);
 #endif
-    std::println(
-        "C++={} JUCE={} JUCE_DEBUG={}",
+    fmt::print(
+        "C++={} JUCE={} JUCE_DEBUG={}\n",
         static_cast<long long>(__cplusplus),
         juce::SystemStats::getJUCEVersion().toStdString(),
 #if JUCE_DEBUG
@@ -1250,40 +1251,40 @@ void printIdentity(const Options& options)
 #endif
     );
 #ifdef _LIBCPP_VERSION
-    std::println("stdlib=libc++ {}", _LIBCPP_VERSION);
+    fmt::print("stdlib=libc++ {}\n", _LIBCPP_VERSION);
 #endif
 #ifdef _LIBCPP_HARDENING_MODE
-    std::println("libc++ hardening mode={}", _LIBCPP_HARDENING_MODE);
+    fmt::print("libc++ hardening mode={}\n", _LIBCPP_HARDENING_MODE);
 #endif
 #ifdef _MSVC_STL_VERSION
-    std::println("stdlib=MSVC STL {}", _MSVC_STL_VERSION);
+    fmt::print("stdlib=MSVC STL {}\n", _MSVC_STL_VERSION);
 #endif
 #ifdef _MSVC_STL_HARDENING
-    std::println("MSVC STL hardening={}", _MSVC_STL_HARDENING);
+    fmt::print("MSVC STL hardening={}\n", _MSVC_STL_HARDENING);
 #endif
 #ifdef __AVX2__
-    std::println("compiled ISA: AVX2");
+    fmt::print("compiled ISA: AVX2\n");
 #endif
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
-    std::println("compiled ISA: NEON");
+    fmt::print("compiled ISA: NEON\n");
 #endif
 #ifdef __FMA__
-    std::println("compiled ISA: FMA");
+    fmt::print("compiled ISA: FMA\n");
 #endif
 #if JUCE_DEBUG || !defined(NDEBUG)
-    std::println("WARNING: assertions/Debug are enabled. Use an optimized Release build for performance evidence.");
+    fmt::print("WARNING: assertions/Debug are enabled. Use an optimized Release build for performance evidence.\n");
 #else
-    std::println("NDEBUG=1. Verify CMAKE_BUILD_TYPE/configuration is Release. Non-Debug alone does not prove Release.");
+    fmt::print("NDEBUG=1. Verify CMAKE_BUILD_TYPE/configuration is Release. Non-Debug alone does not prove Release.\n");
 #endif
     const auto executable = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
-    std::println(
-        "binary={} bytes={} modified={}",
+    fmt::print(
+        "binary={} bytes={} modified={}\n",
         executable.getFullPathName().toStdString(),
         executable.getSize(),
         executable.getLastModificationTime().toISO8601(true).toStdString()
     );
-    std::println(
-        "repetitions={} callbacks/steady_rep={} paced_s/rep={:.3f} refreshes/component_rep={} worker={} focused={}",
+    fmt::print(
+        "repetitions={} callbacks/steady_rep={} paced_s/rep={:.3f} refreshes/component_rep={} worker={} focused={}\n",
         options.repetitions,
         options.callbacks,
         options.pacedSeconds,
@@ -1291,7 +1292,7 @@ void printIdentity(const Options& options)
         options.worker,
         options.focused
     );
-    std::println(
+    fmt::print(
         R"(Warmup: callback latency + gain settling + one maximum block per repetition. Components: one second or more.
 Input: independent fixed-seed stereo noise, amplitude +/-.3. Irregular blocks: 1,31,97,255,17,509,64,257.
 Callback timing excludes copying, parameter setters, checksums, FIFO pop, worker wake, and sleep.
@@ -1313,9 +1314,10 @@ No GPU drawing, desktop compositor, audio-device scheduling, or full-editor refr
 Compare identical hardware, power/thermal state, background load, toolchain, flags, and hardening.
 Record source revision with --label. No baseline comparison or arbitrary performance pass/fail limit is applied.
 p99 needs more than --quick for stable tail evidence.)"
+        "\n"
     );
-    std::println(
-        "Safety limit: {} seconds of callback/warmup work per row. Truncated rows retain actual counts and warn.",
+    fmt::print(
+        "Safety limit: {} seconds of callback/warmup work per row. Truncated rows retain actual counts and warn.\n",
         options.maximumWorkloadSeconds
     );
     std::vector<double> clockOverhead;
@@ -1325,7 +1327,7 @@ p99 needs more than --quick for stable tail evidence.)"
         clockOverhead.push_back(Microseconds(Clock::now() - before).count());
     }
     const auto overhead = distribution(clockOverhead);
-    std::println("empty clock pair us[p50/p99/max]={:.3f}/{:.3f}/{:.3f}", overhead.p50, overhead.p99, overhead.max);
+    fmt::print("empty clock pair us[p50/p99/max]={:.3f}/{:.3f}/{:.3f}\n", overhead.p50, overhead.p99, overhead.max);
 }
 
 /// Validates bounded integer overrides rather than silently accepting typos or impractical run sizes.
@@ -1394,7 +1396,8 @@ Options parseOptions(const std::span<const std::string_view> arguments)
 /// Lists workload selection and reproducibility options without initializing JUCE or touching the desktop.
 void printHelp()
 {
-    std::println(R"(Usage: ImageControlBenchmark [--quick] [--callbacks N] [--repetitions N] [--label TEXT]
+    fmt::print(
+        R"(Usage: ImageControlBenchmark [--quick] [--callbacks N] [--repetitions N] [--label TEXT]
                              [--processor-only | --components-only] [--no-worker] [--focused]
   --quick            Shorter runs, retaining the selected coverage (not stable tail evidence)
   --focused          Only small steady solo/delta callbacks and spectrogram component probes
@@ -1404,7 +1407,9 @@ void printHelp()
   --processor-only  Skip isolated component probes
   --components-only Skip callback probes and paced automation
   --no-worker       Skip concurrent analysis rows, retaining the always-drained FIFO reference
-Use Release. Keep hardware, background load, compiler flags, and hardening identical across comparisons.)");
+Use Release. Keep hardware, background load, compiler flags, and hardening identical across comparisons.)"
+        "\n"
+    );
 }
 }  // namespace
 }  // namespace esgrove::image_control::benchmark
@@ -1432,7 +1437,7 @@ int main(const int argc, char* argv[])
             esgrove::image_control::benchmark::timeFocusedProcessor(options);
         }
         if (options.components && !options.focused) {
-            std::println("\nIsolated components (these are not complete callback costs):");
+            fmt::print("\nIsolated components (these are not complete callback costs):\n");
             esgrove::image_control::benchmark::timeImager(
                 options, esgrove::image_control::benchmark::CENTRED_PANS, "centred"
             );
@@ -1468,7 +1473,7 @@ int main(const int argc, char* argv[])
             }
         }
         if (options.components) {
-            std::println("\nFocused spectrogram components (no GPU drawing or full-editor refresh):");
+            fmt::print("\nFocused spectrogram components (no GPU drawing or full-editor refresh):\n");
             if (options.focused) {
                 esgrove::image_control::benchmark::timeSpectrogramAnalysis(options);
                 esgrove::image_control::benchmark::timeSpectrogramOverlays(options);
@@ -1482,13 +1487,13 @@ int main(const int argc, char* argv[])
                 options, esgrove::image_control::benchmark::OverlayHover::crossover
             );
         }
-        std::println(
-            "Elapsed wall seconds: {:.3f}",
+        fmt::print(
+            "Elapsed wall seconds: {:.3f}\n",
             esgrove::image_control::benchmark::Seconds(esgrove::image_control::benchmark::Clock::now() - start).count()
         );
         return 0;
     } catch (const std::exception& error) {
-        std::println(stderr, "ImageControlBenchmark: {}. Use --help for options.", error.what());
+        fmt::print(stderr, "ImageControlBenchmark: {}. Use --help for options.\n", error.what());
         return 1;
     }
 }
