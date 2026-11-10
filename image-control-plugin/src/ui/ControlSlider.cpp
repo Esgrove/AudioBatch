@@ -56,6 +56,7 @@ ControlSlider::ControlSlider()
     setSliderSnapsToMousePosition(false);
     setVelocityModeParameters(FINE_DRAG_SENSITIVITY, FINE_DRAG_THRESHOLD, 0.0, true, juce::ModifierKeys::shiftModifier);
     setWantsKeyboardFocus(true);
+    setHasFocusOutline(true);
     setMouseClickGrabsKeyboardFocus(true);
 }
 
@@ -105,9 +106,17 @@ void ControlSlider::setWheelStep(const double step)
     wheelStep = step;
 }
 
+/// Gives a custom parser the complete original token instead of letting JUCE pre-strip a second unit suffix.
+/// Parameter attachments and settings parsers own their unit validation. Uncustomised sliders retain JUCE's parser.
+double ControlSlider::getValueFromText(const juce::String& text)
+{
+    return valueFromTextFunction != nullptr ? valueFromTextFunction(text) : juce::Slider::getValueFromText(text);
+}
+
 /// Nudges the value with the arrow keys: right and up increase it, left and down decrease it,
-/// a hundredth of the range per press, or a tenth of that with Shift.
-/// Each nudge is its own host gesture, which the slider's attachment passes on.
+/// a hundredth of the range per press, or a tenth of that with Shift, but never less than one legal interval.
+/// Host shortcuts using Command, Control, or Alt are not consumed.
+/// Each accepted nudge is its own host gesture, which the slider's attachment passes on.
 bool ControlSlider::keyPressed(const juce::KeyPress& key)
 {
     if (!isEnabled() || dragStartEvent.has_value()) {
@@ -122,9 +131,14 @@ bool ControlSlider::keyPressed(const juce::KeyPress& key)
     } else {
         return juce::Slider::keyPressed(key);
     }
+    const auto modifiers = key.getModifiers();
+    if (modifiers.isCommandDown() || modifiers.isCtrlDown() || modifiers.isAltDown()) {
+        return false;
+    }
     const juce::Range<double> range {getMinimum(), getMaximum()};
-    const double nudge
-        = range.getLength() / NUDGES_PER_RANGE * (key.getModifiers().isShiftDown() ? FINE_NUDGE_SHARE : 1.0);
+    const double nudge = std::max(
+        range.getLength() / NUDGES_PER_RANGE * (modifiers.isShiftDown() ? FINE_NUDGE_SHARE : 1.0), getInterval()
+    );
     const ScopedDragNotification gesture(*this);
     setValue(std::clamp(getValue() + direction * nudge, range.getStart(), range.getEnd()), juce::sendNotificationSync);
     return true;

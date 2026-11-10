@@ -8,8 +8,8 @@
 
 namespace esgrove::image_control
 {
-/// A horizontal divider that stays invisible until the pointer is over it or it is being dragged.
-/// Dragging reports the vertical movement, so the editor can resize the sections on either side.
+/// A horizontal divider with an understated idle grip and keyboard resizing.
+/// Dragging or arrow keys report vertical movement so the editor can clamp and resize the sections on either side.
 class SplitDivider final : public juce::Component
 {
 public:
@@ -17,6 +17,9 @@ public:
 
     void setDragCallback(std::function<void(int)> callback);
 
+    bool keyPressed(const juce::KeyPress& key) override;
+    void focusGained(juce::Component::FocusChangeType cause) override;
+    void focusLost(juce::Component::FocusChangeType cause) override;
     void paint(juce::Graphics& graphics) override;
     void mouseEnter(const juce::MouseEvent& event) override;
     void mouseExit(const juce::MouseEvent& event) override;

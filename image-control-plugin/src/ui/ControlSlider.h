@@ -35,6 +35,7 @@ public:
     void endDrag();
     void setWheelStep(double step);
 
+    double getValueFromText(const juce::String& text) override;
     bool keyPressed(const juce::KeyPress& key) override;
     void mouseDoubleClick(const juce::MouseEvent& event) override;
     void mouseDown(const juce::MouseEvent& event) override;
