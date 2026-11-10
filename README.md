@@ -60,7 +60,9 @@ Both CLIs handle Ctrl-C and exit with status 130.
 
 ## Development
 
-Run builds and tests from the relevant project directory.
+Run project build and test scripts from their directories.
+Rust Cargo commands also work at the repository root, sharing [workspace dependencies](Cargo.toml) and `rust/target`.
+For example, `cargo check -p audiobatch-cli` or `cargo test -p serato-tags`.
 Read [repository agent instructions](AGENTS.md) and the project's own instructions before making changes.
 Implementation details are in the [C++ architecture](cpp/ARCHITECTURE.md)
 and [Rust architecture](rust/ARCHITECTURE.md).

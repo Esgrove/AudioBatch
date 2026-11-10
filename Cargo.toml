@@ -1,26 +1,26 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["rust/crates/*"]
 # The cargo-fuzz targets build only on nightly, so they are a workspace of their own.
-exclude = ["fuzz"]
+exclude = ["rust/fuzz", "image-control-plugin/rust"]
 
 [workspace.package]
 version = "1.2.0"
 edition = "2024"
 authors = ["Esgrove <esgrove@outlook.com>"]
-license-file = "../LICENSE"
+license-file = "LICENSE"
 repository = "https://github.com/Esgrove/AudioBatch"
 rust-version = "1.99"
 
 [workspace.dependencies]
-audiobatch-core = { path = "crates/core" }
-audiobatch-playback = { path = "crates/playback" }
-audiobatch-plugins = { path = "crates/plugins" }
-audiobatch-test-plugin = { path = "crates/test-plugin" }
-build-info = { path = "crates/build-info" }
-serato-tags = { path = "crates/serato" }
-test-fixtures = { path = "crates/test-fixtures" }
-vst3-host = { path = "crates/vst3-host" }
+audiobatch-core = { path = "rust/crates/core" }
+audiobatch-playback = { path = "rust/crates/playback" }
+audiobatch-plugins = { path = "rust/crates/plugins" }
+audiobatch-test-plugin = { path = "rust/crates/test-plugin" }
+build-info = { path = "rust/crates/build-info" }
+serato-tags = { path = "rust/crates/serato" }
+test-fixtures = { path = "rust/crates/test-fixtures" }
+vst3-host = { path = "rust/crates/vst3-host" }
 
 anyhow = "1.0.104"
 async-channel = "2.5.0"

@@ -7,6 +7,12 @@ on:
     paths:
       - ".gitattributes"
       - ".github/workflows/rust.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "rustfmt.toml"
+      - "image-control-plugin/rust/**"
       - "assets/**"
       - "common.sh"
       - "cpp/JUCE"
@@ -21,6 +27,12 @@ on:
     paths:
       - ".gitattributes"
       - ".github/workflows/rust.yml"
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "rustfmt.toml"
+      - "image-control-plugin/rust/**"
       - "assets/**"
       - "common.sh"
       - "cpp/JUCE"
@@ -43,7 +55,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CLICOLOR_FORCE: "1"
-  # Override target-cpu=native from rust/.cargo/config.toml.
+  # Override target-cpu=native from .cargo/config.toml.
   # Runners have varying CPU capabilities, so native builds can cause illegal instruction errors.
   RUSTFLAGS: ""
 
@@ -114,7 +126,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
@@ -123,6 +135,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           uv run --script ../tests/test_rust_scripts.py
+          uv run --script ../tests/test_rust_workspace.py
           uv run --script ../tests/test_realtime_sanitizer.py
           uv run --script ../tests/test_realtime_scripts.py
 
@@ -262,7 +275,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
           key: miri
 
       - name: Run tests under Miri
@@ -290,7 +303,7 @@ jobs:
           workspaces: rust/fuzz
 
       - name: Check exact decoder panic regressions with overflow checks
-        run: cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions
+        run: cargo test --manifest-path fuzz/Cargo.toml --target-dir fuzz/target --test decoder_regressions
 
       - name: Build fuzz targets
         run: ./fuzz.sh --build-only
@@ -407,7 +420,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
