@@ -1,16 +1,16 @@
 #!/bin/bash
 set -eo pipefail
 
-USAGE="Usage: $0 [cpp|rust] [OPTIONS]
+USAGE="Usage: $0 [cpp|rust|image-control] [OPTIONS]
 
-Format the C++ and Rust projects with their own format.sh scripts.
+Format the C++ and Rust projects with their own format.sh scripts, then the ImageControl plugin.
 Without a project name, also format the shell scripts in the repository root with shfmt
 and the prose outside the projects with slb, when they are installed, and the Python scripts with ruff through uv.
 Without a project name, format tracked and non-ignored new JSON files with jq using two-space indentation.
 Name a project to format only that one.
 
 The options are passed to the format script of each project.
-See cpp/format.sh --help and rust/format.sh --help for them.
+See cpp/format.sh --help, rust/format.sh --help, and image-control-plugin/format.sh --help for them.
 
 OPTIONS: All options are optional
     -h | --help
@@ -30,11 +30,27 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
 
+if [ "$1" = "image-control" ]; then
+    shift
+    for argument in "$@"; do
+        if [ "$argument" = "-h" ] || [ "$argument" = "--help" ]; then
+            "$REPO_ROOT/image-control-plugin/format.sh" --help
+            exit 0
+        fi
+    done
+    print_magenta "Running image-control-plugin/format.sh $*"
+    "$REPO_ROOT/image-control-plugin/format.sh" "$@"
+    exit 0
+fi
+
 run_project_scripts format.sh "$@"
 
 if [ "$1" = "cpp" ] || [ "$1" = "rust" ]; then
     exit 0
 fi
+
+print_magenta "Running image-control-plugin/format.sh $*"
+"$REPO_ROOT/image-control-plugin/format.sh" "$@"
 
 CHECK=false
 for argument in "$@"; do
@@ -97,10 +113,10 @@ fi
 if [ -n "$(command -v slb)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking root prose..."
-        slb --exclude cpp --exclude rust --quiet "$DIR"
+        slb --exclude cpp --exclude rust --exclude image-control-plugin --quiet "$DIR"
     else
         print_magenta "Formatting root prose..."
-        slb --exclude cpp --exclude rust --fix "$DIR"
+        slb --exclude cpp --exclude rust --exclude image-control-plugin --fix "$DIR"
     fi
 fi
 
