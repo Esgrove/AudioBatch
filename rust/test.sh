@@ -4,7 +4,7 @@ set -eo pipefail
 USAGE="Usage: $0 [OPTIONS]
 
 Run a Rust test tier with the same selection and diagnostics as CI.
-Defaults to the workspace unit and service tests.
+Defaults to the application unit and service tests.
 Run ../test-plugin/build.sh first to include the real VST3 tests.
 
 OPTIONS: Choose at most one test tier
@@ -12,7 +12,7 @@ OPTIONS: Choose at most one test tier
         Display these instructions.
 
     --unit
-        Run workspace unit and service tests, excluding GUI integration workflows.
+        Run application unit and service tests, excluding GUI integration workflows.
 
     --gui-integration
         Run nonvisual GUI workflows and save their output to gui.log in the artifacts directory.
@@ -30,7 +30,7 @@ OPTIONS: Choose at most one test tier
     --artifacts DIRECTORY
         Set the diagnostic directory for an integration tier.
         Defaults to target/integration-artifacts for GUI and target/integration-artifacts/cli for CLI.
-        Relative paths are resolved from the Rust workspace.
+        Relative paths are resolved from the rust/ application directory.
 
     -v | --verbose
         Display commands being executed.
@@ -85,7 +85,7 @@ fi
 
 case "$TIER" in
     --unit)
-        cargo nextest run --workspace --no-fail-fast --success-output final -E 'not test(integration_tests::)'
+        cargo nextest run "${APPLICATION_PACKAGE_ARGS[@]}" --no-fail-fast --success-output final -E 'not test(integration_tests::)'
         ;;
     --gui-integration)
         ARTIFACTS="${ARTIFACTS:-target/integration-artifacts}"

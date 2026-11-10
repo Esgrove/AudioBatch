@@ -198,7 +198,7 @@ def initialize(arguments: argparse.Namespace) -> None:
         "build_environment": {
             name: os.environ.get(name) for name in ("RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "CXXFLAGS", "CC", "CXX")
         },
-        "cargo_config": (RUST_DIRECTORY / ".cargo/config.toml").read_text(encoding="utf-8"),
+        "cargo_config": (ROOT_DIRECTORY / ".cargo/config.toml").read_text(encoding="utf-8"),
         "workflow": "--refresh --recurse --jobs N --sort path --output json, normalization also --normalize --delete",
         "normalization_targets": {"peak_dbfs": 0, "integrated_lufs": -14},
         "filesystem_cache": "warm, no OS cache flushing, preparation reads and copies the source audio",

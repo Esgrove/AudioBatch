@@ -3,7 +3,7 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
-Build the Rust binaries and move them to the Rust workspace root. Defaults to release mode.
+Build the Rust application binaries and move them to rust/. Defaults to release mode.
 On macOS, the GUI is packaged as the AudioBatchRs.app bundle with the app icon.
 
 OPTIONS: All options are optional
@@ -70,7 +70,7 @@ if [ "$CLI_ONLY" = true ]; then
     cargo build "${PROFILE_ARGS[@]}" --bin "$CLI_BINARY_NAME"
     executables=$(executable_name "$CLI_BINARY_NAME")
 else
-    cargo build "${PROFILE_ARGS[@]}" --workspace --bins
+    cargo build "${PROFILE_ARGS[@]}" -p audiobatch-cli -p audiobatch-gui --bins
     executables=$(get_rust_executable_names)
 fi
 

@@ -3,7 +3,7 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
-Lint the Rust workspace and the fuzz crate with cargo clippy, denying all warnings.
+Lint the Rust application and the fuzz crate with cargo clippy, denying all warnings.
 Applies the machine-applicable fixes, also in a dirty working tree.
 
 OPTIONS: All options are optional
@@ -53,8 +53,8 @@ if [ "$CHECK" = false ]; then
     FIX_ARGS=(--fix --allow-dirty)
 fi
 
-print_magenta "Running cargo clippy on the workspace..."
-cargo clippy --workspace --all-targets "${FIX_ARGS[@]}" -- -D warnings
+print_magenta "Running cargo clippy on the application packages..."
+cargo clippy "${APPLICATION_PACKAGE_ARGS[@]}" --all-targets "${FIX_ARGS[@]}" -- -D warnings
 
 # The fuzz crate is its own workspace, and its targets build on stable outside cargo-fuzz.
 print_magenta "Running cargo clippy on the fuzz crate..."

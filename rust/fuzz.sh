@@ -116,6 +116,9 @@ require_command cargo-fuzz "cargo-fuzz not found in path, install it with: cargo
 
 cd "$REPO/fuzz"
 
+# The root target-dir setting is shared by the application and ImageControl, not the fuzz workspace.
+export CARGO_TARGET_DIR="$REPO/fuzz/target"
+
 # The native CPU flags of .cargo/config.toml would make the targets depend on the build machine.
 export RUSTFLAGS=""
 

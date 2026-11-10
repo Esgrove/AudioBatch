@@ -6,7 +6,13 @@ USAGE="Usage: $0 [--lcov] [--open] [--verbose]
 Build and run ImageControl's unit tests with Clang source coverage on macOS.
 Reports only image-control-plugin/src/, excluding JUCE, tests, and generated sources.
 The isolated cmake-build-mac-coverage/ workspace builds no AudioBatch application.
---lcov also writes coverage/lcov.info, and --open generates and opens coverage/html/."
+--lcov also writes coverage/lcov.info, and --open generates and opens coverage/html/.
+
+OPTIONS:
+    -h | --help       Display these instructions without building.
+    -l | --lcov       Also write an LCOV report.
+    -o | --open       Generate and open the HTML report.
+    -v | --verbose    Display commands being executed."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh

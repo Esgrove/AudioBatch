@@ -7,7 +7,13 @@ Build and run ImageControl's unit tests on macOS under AddressSanitizer and Unde
 Use --thread for a separate ThreadSanitizer build.
 Use --realtime for callback-only RealtimeSanitizer probes with Homebrew LLVM, including the built VST3.
 Each configuration uses its own cmake-build-mac-asan/, cmake-build-mac-tsan/, or cmake-build-mac-rtsan/ workspace.
-No application target or installed plugin is built or modified."
+No application target or installed plugin is built or modified.
+
+OPTIONS:
+    -h | --help       Display these instructions without building.
+    -t | --thread     Run ThreadSanitizer instead of address/undefined checks.
+    --realtime        Run the separate RealtimeSanitizer callback checks.
+    -v | --verbose    Display commands being executed."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh

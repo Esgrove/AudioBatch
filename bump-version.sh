@@ -3,9 +3,10 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
-Bump the C++ application, Rust workspace, and shared test plugin project versions together.
+Bump the C++ application, Rust application workspace, and shared test plugin project versions together.
+ImageControl keeps its independent versions.
 Default to a patch bump, and reset lower version components for a major or minor bump.
-Run cargo update --workspace from rust/ to refresh the workspace packages in Cargo.lock
+Run cargo update --workspace from the repository root to refresh the workspace packages in Cargo.lock
 without upgrading external dependencies.
 
 OPTIONS: All options are optional
@@ -63,11 +64,11 @@ if [ "$COMMIT" = true ]; then
     require_command git
 fi
 
-VERSION_FILES=(cpp/CMakeLists.txt rust/Cargo.toml rust/Cargo.lock test-plugin/CMakeLists.txt)
+VERSION_FILES=(cpp/CMakeLists.txt Cargo.toml Cargo.lock test-plugin/CMakeLists.txt)
 
 # Validate every declaration before changing any file.
 # Match only project metadata, leaving dependency versions, examples, and fake plugin data untouched.
-perl - "$BUMP" "$DIR/cpp/CMakeLists.txt" "$DIR/rust/Cargo.toml" "$DIR/test-plugin/CMakeLists.txt" << 'PERL'
+perl - "$BUMP" "$DIR/cpp/CMakeLists.txt" "$DIR/Cargo.toml" "$DIR/test-plugin/CMakeLists.txt" << 'PERL'
 use strict;
 use warnings;
 
@@ -111,15 +112,14 @@ for my $index (0 .. $#paths) {
 print "Bumped project versions: $current -> $next\n";
 PERL
 
-cd "$DIR/rust"
+cd "$DIR"
 if ! cargo update --workspace; then
-    print_error_and_exit "Versions were changed, but Cargo.lock could not be refreshed. Run cargo update --workspace in rust/."
+    print_error_and_exit "Versions were changed, but Cargo.lock could not be refreshed. Run cargo update --workspace in the repository root."
 fi
 print_green "Project versions and Rust lockfile updated."
 
 if [ "$COMMIT" = true ]; then
-    VERSION=$(perl -ne 'print $1 if /^version = "([0-9]+\.[0-9]+\.[0-9]+)"/' "$DIR/rust/Cargo.toml")
-    cd "$DIR"
+    VERSION=$(perl -ne 'print $1 if /^version = "([0-9]+\.[0-9]+\.[0-9]+)"/' "$DIR/Cargo.toml")
     git add -- "${VERSION_FILES[@]}"
     git commit --only -m "Version $VERSION" -- "${VERSION_FILES[@]}"
     git tag -a "v$VERSION" -m "Version $VERSION" HEAD

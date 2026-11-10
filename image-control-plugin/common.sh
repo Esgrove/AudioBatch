@@ -5,8 +5,9 @@ set -eo pipefail
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export REPO
 
+# The root helpers define and export REPO_ROOT for all repository-level paths below.
 # shellcheck source=../common.sh
-source "$REPO/../common.sh"
+source "$(dirname "$REPO")/common.sh"
 
 # Prints the CMake build directory for a build type.
 # The first argument is the build type, and the second is "true" for the Windows Ninja workspace,
@@ -76,7 +77,7 @@ plugin_validate_vst3() {
     if ! command -v pluginval > /dev/null 2>&1; then
         require_command cmake
         print_magenta "pluginval not found in PATH, building the pinned version for VST3 validation"
-        cmake "-DSTRICTNESS=$level" "-DPLUGIN=$vst3" -P "$REPO/../cpp/cmake/RunPluginval.cmake"
+        cmake "-DSTRICTNESS=$level" "-DPLUGIN=$vst3" -P "$REPO_ROOT/cpp/cmake/RunPluginval.cmake"
         return
     fi
     print_magenta "Validating the VST3 with pluginval at level $level"

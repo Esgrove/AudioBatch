@@ -19,14 +19,28 @@ OPTIONS:
         Display these instructions.
 "
 
+# Resolve help before checking fixtures or creating snapshot directories.
+# Arguments after -- are literal paths, not help requests.
+case "${1:-}" in
+    save | compare | -h | --help)
+        for argument in "$@"; do
+            case "$argument" in
+                --) break ;;
+                -h | --help)
+                    printf '%s\n' "$USAGE"
+                    exit 0
+                    ;;
+            esac
+        done
+        ;;
+esac
+
 RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-FIXTURES_DIR=$(cd "$RUST_DIR/../fixtures" && pwd)
+# shellcheck source=../common.sh
+source "$RUST_DIR/common.sh"
+FIXTURES_DIR=$(cd "$REPO_ROOT/fixtures" && pwd)
 
 case "$1" in
-    -h | --help)
-        echo "$USAGE"
-        exit 0
-        ;;
     save | compare)
         COMMAND="$1"
         ;;

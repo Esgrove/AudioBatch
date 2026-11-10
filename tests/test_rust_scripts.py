@@ -10,12 +10,17 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+APPLICATION_PACKAGES = sorted(
+    tomllib.loads(manifest.read_text())["package"]["name"] for manifest in (ROOT / "rust/crates").glob("*/Cargo.toml")
+)
+APPLICATION_PACKAGE_ARGS = [argument for package in APPLICATION_PACKAGES for argument in ("-p", package)]
 
 
 class RustScriptContracts(unittest.TestCase):
@@ -28,7 +33,16 @@ class RustScriptContracts(unittest.TestCase):
         self.root = Path(temporary.name).resolve() / "repository with spaces"
         self.project = self.root / "rust"
         self.project.mkdir(parents=True)
-        for relative in ["common.sh", "rust/common.sh", "rust/test.sh", "rust/coverage.sh", "rust/fuzz.sh"]:
+        for relative in [
+            "common.sh",
+            "rust/common.sh",
+            "rust/build.sh",
+            "rust/lint.sh",
+            "rust/format.sh",
+            "rust/test.sh",
+            "rust/coverage.sh",
+            "rust/fuzz.sh",
+        ]:
             destination = self.root / relative
             shutil.copyfile(ROOT / relative, destination)
             destination.chmod(0o755)
@@ -46,7 +60,10 @@ tool=${0##*/}
 printf '%s\\0' "$tool" "$PWD" "${CARGO_LLVM_COV_TARGET_DIR:-unset}" "${RUSTFLAGS:-unset}" \
     "${LLVM_PROFILE_FILE:-unset}" "$@" >> "$COMMAND_LOG"
 printf '\\n' >> "$COMMAND_LOG"
-if [ "$tool" = cargo ] && [ "$1" = build ]; then
+if [ -n "${CARGO_TARGET_ENV_LOG:-}" ]; then
+    printf '%s\\n' "${CARGO_TARGET_DIR:-unset}" >> "$CARGO_TARGET_ENV_LOG"
+fi
+if [ "$tool" = cargo ] && [ "$1" = build ] && [ "$2" = --target-dir ]; then
     mkdir -p "$3/debug"
 fi
 if [ "$tool" = cargo ] && [ "$1" = llvm-cov ] && [ "$2" = show-env ]; then
@@ -119,12 +136,44 @@ fi
             return []
         return [record.removesuffix("\0").split("\0") for record in self.log.read_text().splitlines()]
 
+    def test_build_selects_only_application_binaries(self) -> None:
+        """Packaging must not build or distribute plugin workspace binaries."""
+        result = self.invoke("build.sh", FAIL_MATCH="build")
+        assert result.returncode == 7, result.stdout + result.stderr
+        assert self.commands()[0][5:] == [
+            "build",
+            "--release",
+            "-p",
+            "audiobatch-cli",
+            "-p",
+            "audiobatch-gui",
+            "--bins",
+        ]
+        assert self.commands()[0][1] == str(self.project)
+
+    def test_lint_selection_excludes_plugin_packages(self) -> None:
+        """Application linting includes every app crate and keeps fuzz in its independent workspace."""
+        result = self.invoke("lint.sh", "--check")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [command[5:] for command in self.commands()] == [
+            ["clippy", *APPLICATION_PACKAGE_ARGS, "--all-targets", "--", "-D", "warnings"],
+            ["clippy", "--manifest-path", "fuzz/Cargo.toml", "--all-targets", "--", "-D", "warnings"],
+        ]
+
+    def test_format_selection_excludes_plugin_packages(self) -> None:
+        """Application-only formatting must stop before unrelated shell and prose formatters."""
+        result = self.invoke("format.sh", "--check", FAIL_MATCH="fmt")
+        assert result.returncode == 7, result.stdout + result.stderr
+        assert self.commands()[0][5:] == ["fmt", *APPLICATION_PACKAGE_ARGS, "--check"]
+
     def test_fuzz_default_build_and_replay_include_every_target(self) -> None:
         """Required replay retains the decoder seeds and both shared C++ corpora."""
-        result = self.invoke("fuzz.sh", "--replay")
+        target_log = self.root / "fuzz-target-directory.log"
+        result = self.invoke("fuzz.sh", "--replay", CARGO_TARGET_ENV_LOG=str(target_log))
         assert result.returncode == 0, result.stdout + result.stderr
         commands = self.commands()
         assert commands[0][5:] == ["+nightly", "fuzz", "build"]
+        assert target_log.read_text().splitlines() == [str(self.fuzz / "target")]
         assert [command[0] for command in commands[1:]] == [
             "serato_tags",
             "cli_arguments",
@@ -224,7 +273,7 @@ fi
         assert any(step.get("run") == "./miri.sh" for step in jobs["miri"]["steps"])
         required = [step["run"] for step in jobs["fuzz"]["steps"] if "run" in step]
         assert required == [
-            "cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions",
+            "cargo test --manifest-path fuzz/Cargo.toml --target-dir fuzz/target --test decoder_regressions",
             "./fuzz.sh --build-only",
             "./fuzz.sh --no-build --replay",
             "./fuzz.sh --no-build --fuzz --targets parsers --seconds 60",
@@ -282,7 +331,7 @@ fi
         assert self.commands()[0][5:] == [
             "nextest",
             "run",
-            "--workspace",
+            *APPLICATION_PACKAGE_ARGS,
             "--no-fail-fast",
             "--success-output",
             "final",
@@ -406,9 +455,9 @@ fi
         result = self.invoke("coverage.sh", "--report-only", GITHUB_STEP_SUMMARY=str(summary))
         assert result.returncode == 0, result.stdout + result.stderr
         assert [command[5:] for command in self.commands()] == [
-            ["llvm-cov", "report", "--lcov", "--output-path", "target/llvm-cov/lcov.info"],
-            ["llvm-cov", "report", "--html"],
-            ["llvm-cov", "report", "--summary-only"],
+            ["llvm-cov", "report", *APPLICATION_PACKAGE_ARGS, "--lcov", "--output-path", "target/llvm-cov/lcov.info"],
+            ["llvm-cov", "report", *APPLICATION_PACKAGE_ARGS, "--html", "--output-dir", "target/llvm-cov"],
+            ["llvm-cov", "report", *APPLICATION_PACKAGE_ARGS, "--summary-only"],
         ]
         assert all(command[2] == str(self.project / "target/llvm-cov-target") for command in self.commands())
         assert summary.read_text() == "Existing summary\n## Rust code coverage\n```text\ncoverage summary\n```\n"
@@ -429,7 +478,7 @@ fi
         result = self.invoke("coverage.sh", FAIL_MATCH="nextest")
         assert result.returncode == 7, result.stdout + result.stderr
         commands = self.commands()
-        assert commands[0][5:] == ["llvm-cov", "nextest", "--workspace", "--no-fail-fast", "--no-report"]
+        assert commands[0][5:] == ["llvm-cov", "nextest", *APPLICATION_PACKAGE_ARGS, "--no-fail-fast", "--no-report"]
         assert commands[2][5:] == [
             "build",
             "--target-dir",
@@ -442,7 +491,7 @@ fi
         assert commands[3][3] == "instrumented"
         assert commands[3][4].endswith("/rust-cli-integration-%m-%p.profraw")
         assert commands[3][-1] == "target/integration-artifacts/cli-coverage"
-        assert commands[-1][5:] == ["llvm-cov", "report", "--summary-only"]
+        assert commands[-1][5:] == ["llvm-cov", "report", *APPLICATION_PACKAGE_ARGS, "--summary-only"]
         assert commands[-1][3] == "unset"
 
 

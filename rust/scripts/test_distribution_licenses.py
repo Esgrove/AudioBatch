@@ -12,6 +12,7 @@ Run with uv run --script scripts/test_distribution_licenses.py from rust/.
 """
 
 import os
+import plistlib
 import shutil
 import subprocess
 import tempfile
@@ -39,7 +40,7 @@ class TestDistributionLicenses(unittest.TestCase):
         notice.parent.mkdir(parents=True)
         shutil.copy2(RUST_DIRECTORY / NOTICE_PATH, notice)
         self.write_executable(self.rust / "completions.sh", "exit 0\n")
-        (self.rust / "Cargo.toml").write_text('[workspace.package]\nversion = "1.2.3"\n', encoding="utf-8")
+        (self.root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.2.3"\n', encoding="utf-8")
         for name, binary in (("cli", "audiobatch-rs"), ("gui", "AudioBatchRs")):
             manifest = self.rust / "crates" / name / "Cargo.toml"
             manifest.parent.mkdir(parents=True)
@@ -132,8 +133,12 @@ class TestDistributionLicenses(unittest.TestCase):
             'test -f "${!#}/Contents/Resources/licenses/ebur128.txt"\n',
         )
         self.run_script("build.sh")
-        self.assert_notice(self.rust / "AudioBatchRs.app/Contents/Resources/licenses")
+        bundle = self.rust / "AudioBatchRs.app"
+        self.assert_notice(bundle / "Contents/Resources/licenses")
         self.assert_notice(self.rust / "audiobatch-rs-licenses")
+        metadata = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+        assert metadata["CFBundleShortVersionString"] == "1.2.3"
+        assert metadata["CFBundleVersion"] == "1.2.3"
 
     def test_windows_gui_install_carries_notice(self) -> None:
         """The Windows GUI and the separately installed CLI each receive the notice."""

@@ -11,7 +11,11 @@ The six cases cover mono/stereo, 44.1/48/96 kHz, one/four/eight plugins, and lat
 Each host has one unreported warmup and N measured repetitions, with fresh state before each repetition.
 Alternates which host runs first for each case. Timings have no pass/fail threshold.
 Reports and planar sample exports stay in a unique target/vst3-benchmark directory.
-Builds the Release C++ test executable and Rust example unless --no-build is passed."
+Builds the Release C++ test executable and Rust example unless --no-build is passed.
+
+OPTIONS:
+    -h | --help
+        Display these instructions."
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../common.sh
@@ -112,7 +116,7 @@ for entry in "${CASES[@]}"; do
         fi
     done
     "$RUST" compare "$(native_path "$RESULTS/$NAME-cpp.json")" "$(native_path "$RESULTS/$NAME-rust.json")" |
-           tee "$RESULTS/$NAME-comparison.json" >> "$RESULTS/summary.jsonl"
+        tee "$RESULTS/$NAME-comparison.json" >> "$RESULTS/summary.jsonl"
     printf 'Verified %s\n' "$NAME"
     INDEX=$((INDEX + 1))
 done
