@@ -658,7 +658,7 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
     const auto saved = library.saveAs("Narrow test", sound);
     ASSERT_TRUE(saved.has_value());
     {
-        ProcessingToolbar toolbar(processor, directory);
+        ProcessingToolbar toolbar(processor, directory, PresetDialogPresentation::nonRendering);
         toolbar.setSize(744, PROCESSING_TOOLBAR_HEIGHT);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(toolbar, "preset-selector"));
         ASSERT_NE(selector, nullptr);
@@ -679,7 +679,7 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), 0.0F, 0.001F);
     }
     {
-        ProcessingToolbar reopened(processor, directory);
+        ProcessingToolbar reopened(processor, directory, PresetDialogPresentation::nonRendering);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(reopened, "preset-selector"));
         ASSERT_NE(selector, nullptr);
         EXPECT_EQ(selector->getText(), "Narrow test");
@@ -702,7 +702,7 @@ TEST(EditingWorkflow, HistoryCommandsRejectPendingPresetLoadsWhileCollapsed)
     sound.at(OUTPUT_GAIN_ID) = -6.0F;
     ASSERT_TRUE(processor.loadSoundSnapshot(sound, "Previous edit"));
     {
-        ProcessingToolbar toolbar(processor, directory);
+        ProcessingToolbar toolbar(processor, directory, PresetDialogPresentation::nonRendering);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(toolbar, "preset-selector"));
         auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-library-status"));
         ASSERT_NE(selector, nullptr);

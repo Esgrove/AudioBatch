@@ -4,6 +4,7 @@
 #include "ImageControlProcessor.h"
 #include "ParameterHistory.h"
 #include "ProcessingState.h"
+#include "ui/ProcessingToolbar.h"
 #include "ui/ProcessingToolbarContent.h"
 #include "UserPresets.h"
 
@@ -28,6 +29,52 @@ constexpr int CANCEL_RESULT {0};
 constexpr auto NAME_FIELD {"presetName"};
 /// Rejected-file diagnostics remain bounded even for an unexpectedly large directory.
 constexpr std::size_t MAX_VISIBLE_ISSUES {8};
+
+/// Keeps non-rendering workflow alerts out of desktop activation as well as painting.
+class PresetAlertWindow final : public juce::AlertWindow
+{
+public:
+    /// Production alerts use ordinary JUCE modality. Tests keep alerts hidden without a desktop peer.
+    PresetAlertWindow(
+        const juce::String& title,
+        const juce::String& message,
+        const juce::MessageBoxIconType icon,
+        juce::Component& owner,
+        const PresetDialogPresentation dialogMode
+    ) :
+        AlertWindow(title, message, icon, &owner),
+        presentation(dialogMode)
+    {
+        if (presentation == PresetDialogPresentation::nonRendering) {
+            removeFromDesktop();
+        }
+    }
+
+protected:
+    /// JUCE's default top-level visibility callback activates the window, which a silent test must not do.
+    void visibilityChanged() override
+    {
+        if (presentation == PresetDialogPresentation::visible) {
+            juce::TopLevelWindow::visibilityChanged();
+        }
+    }
+
+private:
+    /// Per-instance presentation is never inherited from environment variables or another plugin instance.
+    const PresetDialogPresentation presentation;
+};
+
+/// Retains invalid name input and describes the correction without stealing focus in non-rendering tests.
+void showNameValidation(juce::AlertWindow& window, const juce::String& instructions, const juce::String& error)
+{
+    window.setMessage(instructions + juce::newLine + juce::newLine + error);
+    if (auto* input = window.getTextEditor(NAME_FIELD)) {
+        input->setDescription(error);
+        if (window.getAlpha() > 0.0F) {
+            input->grabKeyboardFocus();
+        }
+    }
+}
 
 /// Names the actual filesystem work in the existing compact status label, without adding another control.
 juce::String describeProgress(const PresetOperation operation)
@@ -370,6 +417,63 @@ void ProcessingToolbarContent::handleMenuAction(const int action)
     }
 }
 
+/// Keeps workflow alerts hidden and peerless, so native modal-fronting cannot activate them or create taskbar entries.
+void ProcessingToolbarContent::configureDialogPresentation()
+{
+    if (dialogPresentation != PresetDialogPresentation::nonRendering) {
+        return;
+    }
+    dialog->setVisible(false);
+    dialog->removeFromDesktop();
+    dialog->setAlpha(0.0F);
+    dialog->setDropShadowEnabled(false);
+    dialog->setWantsKeyboardFocus(false);
+    dialog->setBroughtToFrontOnMouseClick(false);
+    for (auto* child : dialog->getChildren()) {
+        child->setWantsKeyboardFocus(false);
+    }
+}
+
+/// Presents production dialogs modally, while tests retain actions and asynchronous results without a native peer.
+void ProcessingToolbarContent::beginDialog(std::function<void(int)> completion)
+{
+    configureDialogPresentation();
+    if (dialogPresentation == PresetDialogPresentation::visible) {
+        dialog->enterModalState(true, juce::ModalCallbackFunction::create(std::move(completion)));
+        return;
+    }
+    dialogCompletion = std::move(completion);
+    const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
+    for (int index = 0; index < dialog->getNumButtons(); ++index) {
+        auto* button = dialog->getButton(index);
+        if (button->getComponentID() == "preset-name-accept") {
+            continue;
+        }
+        const int result = index == 0 ? ACCEPT_RESULT : CANCEL_RESULT;
+        button->onClick = [safeThis, result] {
+            if (safeThis != nullptr) {
+                safeThis->finishDialog(result);
+            }
+        };
+    }
+}
+
+/// Ends the same command on either presentation path, never deleting an alert from its own button callback.
+void ProcessingToolbarContent::finishDialog(const int result)
+{
+    if (dialogPresentation == PresetDialogPresentation::visible) {
+        dialog->exitModalState(result);
+        return;
+    }
+    auto pendingCompletion = std::exchange(dialogCompletion, {});
+    const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis, completion = std::move(pendingCompletion), result] {
+        if (safeThis != nullptr && !safeThis->closing && completion) {
+            completion(result);
+        }
+    });
+}
+
 /// Keeps invalid input in the same name dialog with inline feedback until the user corrects it or cancels.
 void ProcessingToolbarContent::promptName(const bool renaming)
 {
@@ -380,8 +484,12 @@ void ProcessingToolbarContent::promptName(const bool renaming)
     const juce::String instructions = renaming
         ? "Choose a new name for the selected user preset."
         : "Save the current sound as a new user preset. Save As never replaces an existing preset.";
-    dialog = std::make_unique<juce::AlertWindow>(
-        renaming ? "Rename Preset" : "Save Preset As", instructions, juce::MessageBoxIconType::NoIcon, this
+    dialog = std::make_unique<PresetAlertWindow>(
+        renaming ? "Rename Preset" : "Save Preset As",
+        instructions,
+        juce::MessageBoxIconType::NoIcon,
+        *this,
+        dialogPresentation
     );
     dialog->setComponentID("preset-name-dialog");
     dialog->setLookAndFeel(&dialogLookAndFeel);
@@ -393,36 +501,30 @@ void ProcessingToolbarContent::promptName(const bool renaming)
     auto* accept = dialog->getButton(0);
     if (accept != nullptr) {
         accept->setComponentID("preset-name-accept");
-        accept->onClick = [safeDialog, instructions] {
-            if (safeDialog == nullptr) {
+        accept->onClick = [safeThis, safeDialog, instructions] {
+            if (safeThis == nullptr || safeDialog == nullptr) {
                 return;
             }
             const auto validation = UserPresets::validateName(safeDialog->getTextEditorContents(NAME_FIELD));
             if (validation.failed()) {
-                safeDialog->setMessage(instructions + juce::newLine + juce::newLine + validation.getErrorMessage());
-                if (auto* input = safeDialog->getTextEditor(NAME_FIELD)) {
-                    input->setDescription(validation.getErrorMessage());
-                    input->grabKeyboardFocus();
-                }
+                showNameValidation(*safeDialog, instructions, validation.getErrorMessage());
                 return;
             }
-            safeDialog->exitModalState(ACCEPT_RESULT);
+            safeThis->finishDialog(ACCEPT_RESULT);
         };
     }
-    dialog->enterModalState(
-        true, juce::ModalCallbackFunction::create([safeThis, safeDialog, request](const int result) mutable {
-            if (safeThis == nullptr || safeThis->closing || safeDialog == nullptr) {
-                return;
-            }
-            const auto name = safeDialog->getTextEditorContents(NAME_FIELD);
-            safeThis->dialog.reset();
-            if (result == ACCEPT_RESULT) {
-                request.name = name;
-                safeThis->queueRequest(std::move(request));
-            }
-            safeThis->refresh();
-        })
-    );
+    beginDialog([safeThis, safeDialog, request](const int result) mutable {
+        if (safeThis == nullptr || safeThis->closing || safeDialog == nullptr) {
+            return;
+        }
+        const auto name = safeDialog->getTextEditorContents(NAME_FIELD);
+        safeThis->dialog.reset();
+        if (result == ACCEPT_RESULT) {
+            request.name = name;
+            safeThis->queueRequest(std::move(request));
+        }
+        safeThis->refresh();
+    });
 }
 
 /// Owns an asynchronous dialog with lifetime-checked callbacks and Cancel as the safe confirmation default.
@@ -438,7 +540,7 @@ void ProcessingToolbarContent::showDialog(
         return;
     }
     const bool confirmation = static_cast<bool>(accepted);
-    dialog = std::make_unique<juce::AlertWindow>(title, message, icon, this);
+    dialog = std::make_unique<PresetAlertWindow>(title, message, icon, *this, dialogPresentation);
     dialog->setComponentID("preset-confirmation-dialog");
     dialog->setLookAndFeel(&dialogLookAndFeel);
     dialog->addButton(
@@ -456,16 +558,16 @@ void ProcessingToolbarContent::showDialog(
         );
     }
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
-    dialog->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, accepted](const int result) {
-                                if (safeThis == nullptr || safeThis->closing) {
-                                    return;
-                                }
-                                safeThis->dialog.reset();
-                                if (result == ACCEPT_RESULT && accepted) {
-                                    accepted();
-                                }
-                                safeThis->refresh();
-                            }));
+    beginDialog([safeThis, accepted](const int result) {
+        if (safeThis == nullptr || safeThis->closing) {
+            return;
+        }
+        safeThis->dialog.reset();
+        if (result == ACCEPT_RESULT && accepted) {
+            accepted();
+        }
+        safeThis->refresh();
+    });
 }
 
 /// Reports failures without implying the active sound or retained preset baseline changed.

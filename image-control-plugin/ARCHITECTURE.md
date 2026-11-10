@@ -147,10 +147,16 @@ then applies completed user commands on the message thread through checked compo
 Undo/redo live in the header as vector curved-arrow buttons, alongside a chevron for the A/B and preset row.
 The persisted `showProcessingToolbar` editor property defaults to true.
 Collapsing that row is immediate and leaves header history actions and asynchronous preset completion handling active.
+Preset confirmations and operation errors use an explicitly owned `ImageControlLookAndFeel`,
+including the plugin palette, embedded fonts, compact actions, and restrained semantic icons.
+Workflow tests inject hidden, peerless alert presentation and invoke its real validation and button actions.
+Their results use the same asynchronous completion handlers without native modal registration or taskbar entries.
+The default production presentation remains visible, and background scan failures stay in status feedback.
 Successful metadata completions wait for active local sound gestures before publication,
 then recheck restore generation, slot, baseline, and bound revision.
 Project recall never reads the preset library.
-An independently versioned `PresetProvenanceState` root sibling stores each slot's optional UUID, name, and sound baseline.
+An independently versioned `PresetProvenanceState` root sibling stores each slot's optional UUID, name,
+and sound baseline.
 It carries no file path, fingerprint, or derived modified flag, and leaves `ComparisonState` v1 unchanged.
 The source baseline stays exact.
 An optional effective baseline tracks the exact parameter representation established by recall,

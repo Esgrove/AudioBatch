@@ -66,9 +66,14 @@ void configureStatus(juce::Label& status, const juce::String& identifier, const 
 }  // namespace
 
 /// Installs controls in keyboard order and starts a non-blocking initial scan without reconnecting restored state.
-ProcessingToolbarContent::ProcessingToolbarContent(ImageControlProcessor& owner, const juce::File& presetDirectory) :
+ProcessingToolbarContent::ProcessingToolbarContent(
+    ImageControlProcessor& owner,
+    const juce::File& presetDirectory,
+    const PresetDialogPresentation dialogs
+) :
     processor(owner),
-    library(owner.getParameters(), presetDirectory)
+    library(owner.getParameters(), presetDirectory),
+    dialogPresentation(dialogs)
 {
     setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
     setTitle("A/B comparison and presets");
@@ -362,8 +367,12 @@ ProcessingToolbar::ProcessingToolbar(ImageControlProcessor& processor) :
 {}
 
 /// Uses explicit library storage for isolated workflows without changing the production directory.
-ProcessingToolbar::ProcessingToolbar(ImageControlProcessor& processor, const juce::File& presetDirectory) :
-    content(std::make_unique<ProcessingToolbarContent>(processor, presetDirectory))
+ProcessingToolbar::ProcessingToolbar(
+    ImageControlProcessor& processor,
+    const juce::File& presetDirectory,
+    const PresetDialogPresentation dialogs
+) :
+    content(std::make_unique<ProcessingToolbarContent>(processor, presetDirectory, dialogs))
 {
     setComponentID("processing-toolbar");
     setTitle("Processing toolbar");

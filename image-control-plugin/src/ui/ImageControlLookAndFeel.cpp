@@ -47,6 +47,16 @@ constexpr float TEXT_EDITOR_HIGHLIGHT_ALPHA {0.24F};
 constexpr float MAX_BUTTON_FONT_HEIGHT {15.0F};
 /// Font height of a text button relative to its height.
 constexpr float BUTTON_FONT_HEIGHT_RATIO {0.55F};
+/// Shared height of alert messages, field labels, and action text in logical component units.
+constexpr float ALERT_FONT_HEIGHT {13.0F};
+/// Height of the bold alert heading in logical component units.
+constexpr float ALERT_TITLE_FONT_HEIGHT {16.0F};
+/// Compact action height shared with the plugin's control rows.
+constexpr int ALERT_BUTTON_HEIGHT {28};
+/// Icon reservation used by JUCE's AlertWindow::updateLayout for every non-empty icon type.
+constexpr int ALERT_ICON_SPACE {80};
+/// Restrained symbol size inside JUCE's reserved icon column, in logical component units.
+constexpr float ALERT_ICON_SIZE {24.0F};
 
 /// Returns the embedded Roboto typeface, created on first use.
 const juce::Typeface::Ptr& textTypeface()
@@ -98,6 +108,9 @@ ImageControlLookAndFeel::ImageControlLookAndFeel()
         palette::GREY_LIGHT,
     });
 
+    setColour(juce::AlertWindow::backgroundColourId, colour(palette::GREY_SEMI_DARK));
+    setColour(juce::AlertWindow::textColourId, colour(palette::GREY_SUPER_LIGHT));
+    setColour(juce::AlertWindow::outlineColourId, colour(palette::GREY_MEDIUM));
     setColour(juce::ResizableWindow::backgroundColourId, colour(palette::GREY_DARK));
     setColour(juce::TextButton::buttonColourId, colour(palette::GREY_MEDIUM));
     setColour(juce::TextButton::buttonOnColourId, colour(palette::BLUE));
@@ -175,9 +188,94 @@ juce::Font ImageControlLookAndFeel::getLabelFont(juce::Label& label)
     return label.getFont();
 }
 
-/// Uses Roboto for text buttons, scaled to the button like AudioBatch's buttons.
-juce::Font ImageControlLookAndFeel::getTextButtonFont(juce::TextButton& /*button*/, const int buttonHeight)
+/// Keeps alert actions at the dialog's control font height and scales ordinary editor buttons to their bounds.
+juce::Font ImageControlLookAndFeel::getTextButtonFont(juce::TextButton& button, const int buttonHeight)
 {
+    if (button.findParentComponentOfClass<juce::AlertWindow>() != nullptr) {
+        return getAlertWindowFont();
+    }
     return textFont(std::min(MAX_BUTTON_FONT_HEIGHT, static_cast<float>(buttonHeight) * BUTTON_FONT_HEIGHT_RATIO));
+}
+
+/// Uses the embedded Roboto for alert field labels and other dialog controls on the message thread.
+juce::Font ImageControlLookAndFeel::getAlertWindowFont()
+{
+    return textFont(ALERT_FONT_HEIGHT);
+}
+
+/// Uses the same compact Roboto size when JUCE measures and paints alert messages and text editors.
+juce::Font ImageControlLookAndFeel::getAlertWindowMessageFont()
+{
+    return textFont(ALERT_FONT_HEIGHT);
+}
+
+/// Gives alert headings a restrained bold Roboto hierarchy without inheriting platform title fonts.
+juce::Font ImageControlLookAndFeel::getAlertWindowTitleFont()
+{
+    return textFont(ALERT_TITLE_FONT_HEIGHT).boldened();
+}
+
+/// Keeps dialog actions consistent with the plugin's compact control rows.
+int ImageControlLookAndFeel::getAlertWindowButtonHeight()
+{
+    return ALERT_BUTTON_HEIGHT;
+}
+
+/// Paints the plugin panel and a small semantic icon on the message thread, preserving JUCE's measured text layout.
+/// The supplied text area includes the icon column and child controls, so only the measured text height is painted.
+void ImageControlLookAndFeel::drawAlertBox(
+    juce::Graphics& graphics,
+    juce::AlertWindow& alert,
+    const juce::Rectangle<int>& textArea,
+    juce::TextLayout& textLayout
+)
+{
+    constexpr float cornerRadius = 6.0F;
+    constexpr float outlineThickness = 1.0F;
+    const auto panel = alert.getLocalBounds().toFloat().reduced(outlineThickness * 0.5F);
+    graphics.setColour(alert.findColour(juce::AlertWindow::backgroundColourId));
+    graphics.fillRoundedRectangle(panel, cornerRadius);
+    graphics.setColour(alert.findColour(juce::AlertWindow::outlineColourId));
+    graphics.drawRoundedRectangle(panel, cornerRadius, outlineThickness);
+
+    auto contentArea = textArea.getIntersection(alert.getLocalBounds()).toFloat();
+    if (alert.getAlertType() != juce::MessageBoxIconType::NoIcon) {
+        const auto iconArea
+            = contentArea.removeFromLeft(std::min(static_cast<float>(ALERT_ICON_SPACE), contentArea.getWidth()));
+        const float iconSize = std::min({ALERT_ICON_SIZE, iconArea.getWidth(), iconArea.getHeight()});
+        const auto iconBounds = juce::Rectangle<float>(iconSize, iconSize)
+                                    .withCentre({iconArea.getCentreX(), iconArea.getY() + iconSize * 0.5F});
+        const bool isWarning = alert.getAlertType() == juce::MessageBoxIconType::WarningIcon;
+        juce::Path icon;
+        if (isWarning) {
+            icon.addTriangle(
+                iconBounds.getCentreX(),
+                iconBounds.getY(),
+                iconBounds.getRight(),
+                iconBounds.getBottom(),
+                iconBounds.getX(),
+                iconBounds.getBottom()
+            );
+            icon = icon.createPathWithRoundedCorners(2.0F);
+        } else {
+            icon.addEllipse(iconBounds);
+        }
+        graphics.setColour(colour(isWarning ? palette::YELLOW : palette::BLUE));
+        graphics.strokePath(icon, juce::PathStrokeType(outlineThickness));
+        graphics.setFont(getAlertWindowTitleFont());
+        const juce::String symbol = isWarning ? "!" : "?";
+        graphics.drawText(
+            alert.getAlertType() == juce::MessageBoxIconType::InfoIcon ? "i" : symbol,
+            iconBounds,
+            juce::Justification::centred,
+            false
+        );
+    }
+
+    const juce::Graphics::ScopedSaveState savedState(graphics);
+    contentArea.setHeight(std::min(contentArea.getHeight(), textLayout.getHeight()));
+    graphics.reduceClipRegion(contentArea.getSmallestIntegerContainer());
+    graphics.setColour(alert.findColour(juce::AlertWindow::textColourId));
+    textLayout.draw(graphics, contentArea);
 }
 }  // namespace esgrove::image_control
