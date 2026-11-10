@@ -792,7 +792,7 @@ void ImageControlProcessor::updateProcessingTargets(const bool bypassed)
     bool widthsChanged = false;
     bool recoveriesChanged = false;
     const auto unchangedScale = [](const float value) { return value; };
-    const auto recoveryScale = [](const float percent) { return percent / RECOVER_MAX_PERCENT; };
+    const auto recoveryScale = [](const float percent) { return percent / PERCENT_PER_UNIT; };
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
         gainsChanged |= updateCachedControl(
             raw.mid[band],

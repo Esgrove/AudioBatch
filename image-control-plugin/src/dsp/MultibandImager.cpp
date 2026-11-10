@@ -465,11 +465,11 @@ void MultibandImager::setWidths(const BandWidths& widths)
     }
 }
 
-/// Sets the fraction of removed Side waveform to recover into Mid, effective only below unity Width.
+/// Sets the linear amount of removed Side waveform to recover into Mid, effective only below unity Width.
 void MultibandImager::setRecoveries(const BandRecoveries& recoveries)
 {
     for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-        const float recovery = std::isfinite(recoveries[band]) ? std::clamp(recoveries[band], 0.0F, 1.0F) : 0.0F;
+        const float recovery = std::isfinite(recoveries[band]) ? std::clamp(recoveries[band], 0.0F, RECOVER_MAX) : 0.0F;
         recoverySmoothers[band].setTargetValue(recovery);
     }
 }

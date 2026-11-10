@@ -130,9 +130,9 @@ private:
     /// Local spectrogram hide action, or its labelled restore handle.
     DisplayDisclosure spectrogramDisclosure {"Spectrogram"};
     /// Local correlation hide action, or its labelled restore handle.
-    DisplayDisclosure correlationDisclosure {"Correlation"};
+    DisplayDisclosure correlationDisclosure {"Correlation", true, true};
     /// Collapses full band strips to values without adding a toolbar row.
-    DisplayDisclosure bandControlsDisclosure {"Band controls", false};
+    DisplayDisclosure bandControlsDisclosure {"Band controls", false, true};
     /// Toggles the bypass parameter.
     juce::TextButton bypassButton {"Bypass"};
     /// Toggles the delta parameter, which outputs only what the processing changes.

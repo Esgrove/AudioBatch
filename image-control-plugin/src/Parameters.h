@@ -50,8 +50,12 @@ constexpr float OUTPUT_GAIN_MAX_DB {12.0F};
 constexpr float PAN_MAX_PERCENT {100.0F};
 /// Highest independent side multiplier, which doubles the trimmed side at its maximum.
 constexpr float WIDTH_MAX {2.0F};
-/// Highest recovery amount in host-facing percent, scaling the full removed Side waveform into the quadrature path.
-constexpr float RECOVER_MAX_PERCENT {100.0F};
+/// Percentage points corresponding to a unity amplitude multiplier, independent of any parameter's upper limit.
+constexpr float PERCENT_PER_UNIT {100.0F};
+/// Highest recovery amount in host-facing percent, doubling the removed Side waveform in the quadrature path.
+constexpr float RECOVER_MAX_PERCENT {200.0F};
+/// Highest linear recovery multiplier supplied to the DSP.
+constexpr float RECOVER_MAX {RECOVER_MAX_PERCENT / PERCENT_PER_UNIT};
 
 /// Hz in one kHz, for formatting frequencies.
 constexpr float HERTZ_PER_KILOHERTZ {1000.0F};
@@ -144,7 +148,7 @@ using BandGains = std::array<float, BAND_COUNT>;
 using BandPans = std::array<float, BAND_COUNT>;
 /// Independent side multipliers per band, from mono at 0 through unchanged at 1 to doubled at WIDTH_MAX.
 using BandWidths = std::array<float, BAND_COUNT>;
-/// Linear recovery amounts per band, from 0 to 1, applied to the Side waveform amplitude removed by narrowing.
+/// Linear recovery amounts per band, from 0 to RECOVER_MAX, applied to Side amplitude removed by narrowing.
 using BandRecoveries = std::array<float, BAND_COUNT>;
 /// Whether each band is soloed, from the lowest band to the highest.
 using BandSolos = std::array<bool, BAND_COUNT>;

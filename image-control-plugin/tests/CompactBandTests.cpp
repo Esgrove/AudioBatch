@@ -1,6 +1,7 @@
 /// Tests compact BandStrip geometry and the production sliders' pointer, wheel, key, and native numeric input.
 /// The same parameter attachments must preserve local history, Link, automation exclusion, and balanced host gestures.
 
+#include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "ParameterHistory.h"
 #include "Parameters.h"
@@ -142,6 +143,41 @@ juce::MouseEvent compactMouse(
         1,
         position != down,
     };
+}
+
+/// Clicks through the real window peer so hit testing, focus, label release, and slider listeners all participate.
+bool clickCompactComponent(juce::Component& root, juce::Component& target)
+{
+    auto* peer = root.getPeer();
+    if (peer == nullptr || !target.isShowing()) {
+        return false;
+    }
+    const auto position = root.getLocalPoint(&target, target.getLocalBounds().getCentre()).toFloat();
+    peer->grabFocus();
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 1000.0;
+    while (!peer->contains(position.roundToInt(), true) && juce::Time::getMillisecondCounterHiRes() < deadline) {
+        dispatchCompactChanges();
+    }
+    if (root.getComponentAt(position) != &target || !peer->contains(position.roundToInt(), true)) {
+        return false;
+    }
+    const juce::ScopedValueSetter<juce::ModifierKeys> restoreModifiers(juce::ModifierKeys::currentModifiers, {});
+    auto eventTime = juce::Time::currentTimeMillis();
+    for (const juce::ModifierKeys modifiers :
+         {juce::ModifierKeys {}, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier), juce::ModifierKeys {}})
+    {
+        juce::ModifierKeys::currentModifiers = modifiers;
+        peer->handleMouseEvent(
+            juce::MouseInputSource::InputSourceType::mouse,
+            position,
+            modifiers,
+            juce::MouseInputSource::defaultPressure,
+            juce::MouseInputSource::defaultOrientation,
+            eventTime
+        );
+        eventTime += 20;
+    }
+    return true;
 }
 
 /// Produces a single positive mouse-wheel notch regardless of platform wheel calibration.
@@ -955,7 +991,7 @@ TEST(CompactBands, NumericEditorKeepsFieldPresentationAndNoneditableSuffixes)
             ASSERT_NE(label, nullptr);
             if (slider->getName() == "Recover") {
                 setParameterInGesture(*processor.getParameters().getParameter(recoverParameterId(0)), 25.0F);
-                EXPECT_EQ(slider->numericValueSuffix(), " %");
+                EXPECT_EQ(slider->numericValueSuffix(), "%");
             }
             const auto bounds = label->getBounds();
             const auto font = label->getLookAndFeel().getLabelFont(*label);
@@ -993,6 +1029,84 @@ TEST(CompactBands, NumericEditorKeepsFieldPresentationAndNoneditableSuffixes)
             EXPECT_EQ(label->getCurrentTextEditor()->getBounds(), editorBounds);
             slider->hideTextBox(true);
         }
+        EXPECT_FALSE(processor.getHistory().canUndo());
+    }
+}
+
+/// Production construction and a compact/full round trip keep Recover's click-opened editor numeric and nudgeable.
+TEST(CompactBands, EditorRecoveryLabelClickKeepsPercentFixedAndArrowGesturesIndependent)
+{
+    for (const bool initiallyCompact : {false, true}) {
+        SCOPED_TRACE(initiallyCompact);
+        ImageControlProcessor processor;
+        auto& state = processor.getEditorState();
+        state.setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+        state.setProperty(COMPACT_BAND_CONTROLS_PROPERTY, initiallyCompact, nullptr);
+        auto& parameter = *processor.getParameters().getParameter(recoverParameterId(0));
+        setParameterInGesture(parameter, 25.0F);
+        const CompactGestureCounter recoveryGestures(parameter);
+        const CompactGestureCounter midGestures(*processor.getParameters().getParameter(midGainParameterId(0)));
+        const CompactGestureCounter sideGestures(*processor.getParameters().getParameter(sideGainParameterId(0)));
+        ImageControlEditor editor(processor);
+        editor.addToDesktop(juce::ComponentPeer::windowIsTemporary);
+        editor.setAlwaysOnTop(true);
+        editor.setVisible(true);
+        editor.setTopLeftPosition(80, 100);
+        editor.toFront(true);
+        dispatchCompactChanges();
+        if (initiallyCompact) {
+            juce::Button* disclosure = nullptr;
+            for (auto* child : editor.getChildren()) {
+                if (child->getComponentID() == "band-controls-disclosure") {
+                    disclosure = dynamic_cast<juce::Button*>(child);
+                }
+            }
+            ASSERT_NE(disclosure, nullptr);
+            disclosure->onClick();
+        }
+        BandStrip* strip = nullptr;
+        for (auto* child : editor.getChildren()) {
+            if (auto* candidate = dynamic_cast<BandStrip*>(child);
+                candidate != nullptr && compactControl<ControlSlider>(*candidate, "Low Recover") != nullptr)
+            {
+                strip = candidate;
+            }
+        }
+        ASSERT_NE(strip, nullptr);
+        auto* slider = compactControl<ControlSlider>(*strip, "Low Recover");
+        ASSERT_NE(slider, nullptr);
+        auto* label = compactValueBox(*slider);
+        ASSERT_NE(label, nullptr);
+        ASSERT_TRUE(slider->isShowing());
+        ASSERT_TRUE(label->isEditableOnSingleClick());
+        ASSERT_TRUE(clickCompactComponent(editor, *label));
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        EXPECT_EQ(label->getCurrentTextEditor()->getText(), "25");
+        EXPECT_EQ(label->getCurrentTextEditor()->getHighlightedText(), "25");
+        EXPECT_EQ(slider->numericValueSuffix(), "%");
+        auto* peer = editor.getPeer();
+        ASSERT_NE(peer, nullptr);
+        EXPECT_TRUE(peer->handleKeyPress(juce::KeyPress(juce::KeyPress::upKey)));
+        EXPECT_NEAR(slider->getValue(), 27.0, 0.0001);
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        EXPECT_EQ(label->getCurrentTextEditor()->getText(), "27");
+        EXPECT_TRUE(
+            peer->handleKeyPress(juce::KeyPress(juce::KeyPress::downKey, juce::ModifierKeys::shiftModifier, 0))
+        );
+        EXPECT_DOUBLE_EQ(slider->getValue(), 26.0);
+        EXPECT_FLOAT_EQ(plainValue(parameter), 26.0F);
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        EXPECT_EQ(label->getCurrentTextEditor()->getText(), "26");
+        EXPECT_TRUE(peer->handleKeyPress(juce::KeyPress(juce::KeyPress::returnKey)));
+        EXPECT_TRUE(waitForCompactEditorClose(*label));
+        EXPECT_EQ(recoveryGestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false}));
+        EXPECT_TRUE(midGestures.gestureBoundaries().empty());
+        EXPECT_TRUE(sideGestures.gestureBoundaries().empty());
+        EXPECT_FALSE(processor.getHistory().isEditing());
+        EXPECT_TRUE(processor.getHistory().undo());
+        EXPECT_NEAR(slider->getValue(), 27.0, 0.0001);
+        EXPECT_TRUE(processor.getHistory().undo());
+        EXPECT_NEAR(slider->getValue(), 25.0, 0.0001);
         EXPECT_FALSE(processor.getHistory().canUndo());
     }
 }
@@ -1069,7 +1183,7 @@ TEST(CompactBands, FrequencyEditorKeepsHertzAndKilohertzFixedWithoutChangingHost
     }
 }
 
-/// Untouched rounded readouts do not quantize parameter values, and recovery retains its explicit Off token.
+/// Untouched rounded readouts retain precision, and legacy recovery Off input displays the numeric zero percentage.
 TEST(CompactBands, NumericEditorPreservesUntouchedPrecisionAndRecoveryOff)
 {
     ImageControlProcessor processor;
@@ -1097,10 +1211,32 @@ TEST(CompactBands, NumericEditorPreservesUntouchedPrecisionAndRecoveryOff)
         if (slider->getName() == "Recover") {
             EXPECT_TRUE(enterCompactValue(*slider, "Off"));
             EXPECT_NEAR(slider->getValue(), 0.0, 0.0001);
-            EXPECT_EQ(slider->numericValueText(), "Off");
-            EXPECT_EQ(slider->numericValueSuffix(), "");
+            EXPECT_EQ(slider->numericValueText(), "0");
+            EXPECT_EQ(slider->numericValueSuffix(), "%");
             EXPECT_TRUE(processor.getHistory().undo());
             EXPECT_DOUBLE_EQ(slider->getValue(), original);
+            EXPECT_DOUBLE_EQ(original, 3.0);
+            EXPECT_TRUE(enterCompactValue(*slider, "37.5"));
+            EXPECT_DOUBLE_EQ(slider->getValue(), 38.0);
+            EXPECT_FLOAT_EQ(plainValue(parameter), 38.0F);
+            EXPECT_EQ(slider->numericValueText(), "38");
+            EXPECT_TRUE(processor.getHistory().undo());
+            EXPECT_DOUBLE_EQ(slider->getValue(), original);
+            EXPECT_TRUE(processor.getHistory().redo());
+            EXPECT_DOUBLE_EQ(slider->getValue(), 38.0);
+            for (const auto* invalid : {"nan", "inf", "37%%", "37 trailing"}) {
+                EXPECT_TRUE(enterCompactValue(*slider, invalid));
+                EXPECT_DOUBLE_EQ(slider->getValue(), 38.0);
+                EXPECT_FLOAT_EQ(plainValue(parameter), 38.0F);
+            }
+            EXPECT_TRUE(enterCompactValue(*slider, "0.1"));
+            EXPECT_DOUBLE_EQ(slider->getValue(), 0.0);
+            EXPECT_EQ(slider->numericValueText(), "0");
+            EXPECT_TRUE(processor.getHistory().undo());
+            EXPECT_DOUBLE_EQ(slider->getValue(), 38.0);
+            EXPECT_TRUE(processor.getHistory().undo());
+            EXPECT_DOUBLE_EQ(slider->getValue(), original);
+            EXPECT_FALSE(processor.getHistory().canUndo());
         }
     }
 }

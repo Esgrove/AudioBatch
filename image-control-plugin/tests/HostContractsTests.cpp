@@ -168,17 +168,17 @@ TEST(HostContracts, WidthRecoveryPreparationAndResetMatchSettledImagerFromTheFir
         processor.setNonRealtime(offline);
         for (const bool resetting : {false, true}) {
             const float width = resetting ? 0.25F : 0.0F;
-            const float recovery = resetting ? 0.8F : 1.0F;
+            const float recovery = resetting ? 1.5F : 2.0F;
             BandWidths widths {};
             widths.fill(width);
             BandRecoveries recoveries {};
             recoveries.fill(recovery);
             for (std::size_t band = 0; band < BAND_COUNT; ++band) {
                 setPlain(processor, widthParameterId(band), width);
-                setPlain(processor, recoverParameterId(band), recovery * RECOVER_MAX_PERCENT);
+                setPlain(processor, recoverParameterId(band), recovery * PERCENT_PER_UNIT);
                 widths[band] = processor.getParameters().getRawParameterValue(widthParameterId(band))->load();
                 recoveries[band] = processor.getParameters().getRawParameterValue(recoverParameterId(band))->load()
-                    / RECOVER_MAX_PERCENT;
+                    / PERCENT_PER_UNIT;
             }
             if (resetting) {
                 processor.reset();
@@ -339,12 +339,12 @@ TEST(HostContracts, WidthAndRecoverAppendAfterEveryExistingParameterWithStableMe
         EXPECT_FLOAT_EQ(width->getNormalisableRange().end, WIDTH_MAX);
         EXPECT_FLOAT_EQ(width->getNormalisableRange().interval, 0.01F);
         EXPECT_FLOAT_EQ(recover->getNormalisableRange().start, 0.0F);
-        EXPECT_FLOAT_EQ(recover->getNormalisableRange().end, RECOVER_MAX_PERCENT);
-        EXPECT_FLOAT_EQ(recover->getNormalisableRange().interval, 0.1F);
+        EXPECT_FLOAT_EQ(recover->getNormalisableRange().end, 200.0F);
+        EXPECT_FLOAT_EQ(recover->getNormalisableRange().interval, 1.0F);
         EXPECT_FLOAT_EQ(width->convertFrom0to1(width->getDefaultValue()), 1.0F);
         EXPECT_FLOAT_EQ(recover->convertFrom0to1(recover->getDefaultValue()), 0.0F);
         EXPECT_EQ(width->getCurrentValueAsText(), "1.00");
-        EXPECT_EQ(recover->getCurrentValueAsText(), "Off");
+        EXPECT_EQ(recover->getCurrentValueAsText(), "0%");
         EXPECT_EQ(recover->getLabel(), "%");
         for (const auto* parameter : {width, recover}) {
             EXPECT_TRUE(parameter->isAutomatable());

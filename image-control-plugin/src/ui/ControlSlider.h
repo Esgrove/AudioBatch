@@ -52,6 +52,7 @@ public:
     void mouseUp(const juce::MouseEvent& event) override;
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void paint(juce::Graphics& graphics) override;
+    void parentHierarchyChanged() override;
     void resized() override;
 
 private:
