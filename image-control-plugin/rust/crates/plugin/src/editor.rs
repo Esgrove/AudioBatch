@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use iced::keyboard::{Key, key::Named};
 use iced::{Element, Point, Size, Subscription, Task, Theme};
 use iced_baseview as iced;
 use image_control_dsp::{AnalysisTap, ColourMode, SharedState};
@@ -927,7 +928,6 @@ fn plot_message(event: plot_overlay::PlotEvent) -> Message {
 
 /// Routes uncaptured plugin commands, leaving ordinary text-input shortcuts with their focused field.
 fn shortcut_message(event: &iced::Event) -> Option<Message> {
-    use iced::keyboard::{Key, key::Named};
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
         return None;
     };

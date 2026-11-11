@@ -215,11 +215,13 @@ pub fn parameter_slider(_: &Theme, status: slider::Status) -> slider::Style {
 
 #[cfg(test)]
 mod tests {
+    use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
+    use iced::advanced::text::Paragraph as _;
+
     use super::*;
 
     #[test]
     fn embedded_faces_resolve_exact_family_and_weight_without_fallback() {
-        use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
         let mut system = font_system().write().expect("font system");
         for bytes in [ROBOTO, ROBOTO_SEMIBOLD, ROBOTO_BOLD, ROBOTO_MONO] {
             system.load_font(bytes.into());
@@ -242,7 +244,6 @@ mod tests {
 
     #[test]
     fn worst_case_values_and_headings_fit_the_minimum_editor_without_font_compression() {
-        use iced::advanced::text::Paragraph as _;
         {
             let mut system = iced::advanced::graphics::text::font_system()
                 .write()

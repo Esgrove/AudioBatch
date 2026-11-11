@@ -8,6 +8,10 @@ use std::collections::{HashSet, hash_map::RandomState};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::hash::BuildHasher;
 use std::io::{self, Read, Write};
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -525,7 +529,6 @@ fn atomic_write(
 fn metadata_is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
         metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }
@@ -541,13 +544,11 @@ fn safe_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     #[cfg(target_os = "macos")]
     {
-        use std::os::unix::fs::OpenOptionsExt;
         const O_NOFOLLOW: i32 = 0x100;
         options.custom_flags(O_NOFOLLOW);
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
         const FILE_SHARE_READ: u32 = 1;
         const FILE_SHARE_WRITE: u32 = 2;
@@ -570,6 +571,9 @@ fn invalid_data(message: impl Into<Box<dyn std::error::Error + Send + Sync>>) ->
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use std::os::unix::fs::symlink;
+
     use super::*;
 
     /// Uses a canonical temporary root so system temporary-directory aliases are not library symlink components.
@@ -960,8 +964,6 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn symlinked_directories_presets_locks_sources_and_destinations_are_rejected() {
-        use std::os::unix::fs::symlink;
-
         let (temporary, library) = isolated();
         let root = temporary.path().canonicalize().expect("root");
         let saved = library.create("Saved", sound()).expect("create");

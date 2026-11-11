@@ -524,6 +524,7 @@ fn child_tree_ref(tree: &tree::Tree) -> &tree::Tree {
 mod tests {
     use iced::advanced::text;
     use iced::advanced::widget::operation;
+    use iced::widget::{Column, Space, Stack, container, mouse_area, pin, slider, text_input};
     use iced::{Color, Font, Point, touch};
 
     use super::*;
@@ -669,8 +670,6 @@ mod tests {
 
     /// Builds the same stack layering as the production callout with native controls in front and behind its barrier.
     fn modal_view(blocked: bool) -> Element<'static, Message, Theme, EventRenderer> {
-        use iced::widget::{Column, Space, Stack, container, mouse_area, pin, slider, text_input};
-
         let background = Column::new()
             .push(parameter_input(GAIN_PARAMETER, 0.5).height(26.0))
             .push(

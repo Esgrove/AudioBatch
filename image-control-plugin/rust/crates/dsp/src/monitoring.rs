@@ -398,6 +398,9 @@ pub const fn select_frame(source: u64, input: [f32; 2], output: [f32; 2]) -> [f3
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+    use serde::de::value::{Error, MapDeserializer};
+
     use super::{DisplayPreferences, GENERATION_STEP};
     use crate::Imager;
     use std::sync::atomic::Ordering;
@@ -423,9 +426,6 @@ mod tests {
 
     #[test]
     fn missing_display_fields_restore_fixed_defaults() {
-        use serde::Deserialize;
-        use serde::de::value::{Error, MapDeserializer};
-
         let legacy =
             MapDeserializer::<_, Error>::new([("persistence_seconds", 0.75_f32), ("contrast", 0.25_f32)].into_iter());
         let preferences = DisplayPreferences::deserialize(legacy).expect("legacy display fields");

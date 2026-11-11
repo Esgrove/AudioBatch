@@ -5,6 +5,11 @@ use std::ptr::NonNull;
 
 use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, WindowHandle};
 
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
 use super::EditorError;
 
 /// A borrowed host parent, used only synchronously while baseview retains its platform parent handle.
@@ -32,9 +37,6 @@ impl NativeParent {
         }
         #[cfg(target_os = "windows")]
         {
-            use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-            use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-
             // SAFETY: The caller supplies a valid HWND. Null asks not to retrieve its process id.
             let parent_thread = unsafe { GetWindowThreadProcessId(pointer.as_ptr(), std::ptr::null_mut()) };
             if parent_thread == 0 {
