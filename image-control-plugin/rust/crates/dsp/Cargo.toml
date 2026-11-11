@@ -1,7 +1,6 @@
 [package]
 name = "image-control-dsp"
 description = "Framework-independent imaging and bounded spatial analysis for ImageControl RS"
-version = "0.1.0"
 workspace = "../../../.."
 edition.workspace = true
 authors.workspace = true

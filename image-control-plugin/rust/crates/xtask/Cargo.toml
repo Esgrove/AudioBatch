@@ -1,6 +1,5 @@
 [package]
 name = "image-control-xtask"
-version = "0.1.0"
 workspace = "../../../.."
 edition.workspace = true
 rust-version.workspace = true
