@@ -3,6 +3,7 @@
 #include "analysis/SpatialAnalyzer.h"
 #include "benchmarks/BenchmarkSupport.h"
 #include "dsp/MultibandImager.h"
+#include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ui/BandStrip.h"
@@ -26,6 +27,43 @@
 
 namespace esgrove::image_control::benchmark
 {
+/// Drives the production settings path without a desktop peer, GL frame, or concurrent analysis work.
+struct ImageControlEditorBenchmarkAccess {
+    /// Detaches callbacks and joins the worker outside every measured interval.
+    explicit ImageControlEditorBenchmarkAccess(ImageControlEditor& observed) : editor(observed)
+    {
+        editor.vblankAttachment = juce::VBlankAttachment {};
+        editor.openGLContext.detach();
+        editor.spectrogramWorker.stop();
+    }
+
+    /// Leaves editor and worker teardown to the probe's owning scope.
+    ~ImageControlEditorBenchmarkAccess() = default;
+
+    ImageControlEditorBenchmarkAccess(const ImageControlEditorBenchmarkAccess&) = delete;
+    ImageControlEditorBenchmarkAccess(ImageControlEditorBenchmarkAccess&&) = delete;
+    ImageControlEditorBenchmarkAccess& operator=(const ImageControlEditorBenchmarkAccess&) = delete;
+    ImageControlEditorBenchmarkAccess& operator=(ImageControlEditorBenchmarkAccess&&) = delete;
+
+    /// Applies real editor settings, including an optional display-property edit, without requesting a GL frame.
+    void apply(const bool changing, const double contrast)
+    {
+        if (changing) {
+            editor.imageControlProcessor.getEditorState().setProperty(CONTRAST_PROPERTY, contrast, nullptr);
+        }
+        editor.applyViewSettings();
+    }
+
+    /// Reads published source state outside timing so work remains observable.
+    [[nodiscard]] double contrast() const
+    {
+        return editor.analysisSettings.contrast;
+    }
+
+    /// Editor owned by the probe and kept alive throughout measurement.
+    ImageControlEditor& editor;
+};
+
 namespace
 {
 /// An analyzer frame copied during untimed capture and replayed by the particle-only probe.
@@ -34,6 +72,55 @@ struct CapturedSpectralFrame {
     std::vector<SpectralPoint> points;
 };
 }  // namespace
+
+/// Isolates the production editor settings refresh with unchanged or alternating contrast, excluding rendering.
+/// Batched calls amortize the clock pair. No desktop peer is created, and the analysis worker stays stopped.
+/// Changing rows include property publication. Ordinary rows include toolbar, history, and visibility polling.
+void timeEditorViewSettings(const Options& options)
+{
+    constexpr int callsPerSample {16};
+    constexpr double lowContrastPercent {25.0};
+    constexpr double highContrastPercent {75.0};
+    for (const bool changing : {false, true}) {
+        ImageControlProcessor processor;
+        ImageControlEditor editor(processor);
+        ImageControlEditorBenchmarkAccess access(editor);
+        const auto publishBatch = [&] {
+            for (int call = 0; call < callsPerSample; ++call) {
+                access.apply(changing, call % 2 == 0 ? lowContrastPercent : highContrastPercent);
+            }
+        };
+        for (int warmup = 0; warmup < REFRESH_RATE; ++warmup) {
+            publishBatch();
+        }
+        std::vector<double> measurements;
+        measurements.reserve(
+            static_cast<std::size_t>(options.refreshes) * static_cast<std::size_t>(options.repetitions)
+        );
+        double checksum = 0.0;
+        for (int repetition = 0; repetition < options.repetitions; ++repetition) {
+            for (int refresh = 0; refresh < options.refreshes; ++refresh) {
+                const auto start = Clock::now();
+                publishBatch();
+                measurements.push_back(Microseconds(Clock::now() - start).count() / callsPerSample);
+                checksum += access.contrast() + static_cast<double>(processor.getAnalyzerFifo().getEpoch());
+            }
+        }
+        const auto result = distribution(measurements);
+        fmt::print(
+            "editor view-settings values={} worker=stopped peer=none calls/sample={} n={} "
+            "us/call[p50/p95/p99/max]={:.6f}/{:.6f}/{:.6f}/{:.6f} check={:.3f}\n",
+            changing ? "changing" : "unchanged",
+            callsPerSample,
+            measurements.size(),
+            result.p50,
+            result.p95,
+            result.p99,
+            result.max,
+            checksum
+        );
+    }
+}
 
 /// Measures centered, panned, and recovery imager variants, including two input copies per block.
 void timeImager(

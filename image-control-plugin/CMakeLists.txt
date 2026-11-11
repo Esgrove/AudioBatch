@@ -31,6 +31,12 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Verification.cmake")
 # and an AVX2 baseline on Windows. macOS builds for the host architecture, which is arm64 with NEON on Apple Silicon.
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/cmake/Optimizations.cmake")
 
+# Visible-editor benchmark telemetry records the plugin's effective build, not the host executable's profile.
+add_compile_definitions(
+    "IMAGE_CONTROL_BUILD_RELEASE=$<IF:$<CONFIG:Release>,1,0>"
+    "IMAGE_CONTROL_BUILD_NATIVE_CPU=$<IF:$<AND:$<CONFIG:Release>,$<BOOL:${use_native}>>,1,0>"
+)
+
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE" JUCE)
 
 # VST3 everywhere, and an Audio Unit on macOS from the same code.
@@ -147,6 +153,7 @@ set(IMAGE_CONTROL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramWorker.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramWorker.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/RenderBenchmark.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SplitDivider.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/TooltipOverlay.cpp"
@@ -583,6 +590,57 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         ImageControlBenchmark
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
+
+    # Isolated renderer benchmark compiles the production passes with optional Release GPU queries.
+    # Its native helper owns a real context, while explicit offscreen batches exclude swap and presentation pacing.
+    juce_add_console_app(ImageControlRenderBenchmark PRODUCT_NAME "ImageControlRenderBenchmark")
+    target_sources(
+        ImageControlRenderBenchmark PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/RenderBenchmark.cpp"
+                                            "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp"
+    )
+    target_include_directories(ImageControlRenderBenchmark PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(
+        ImageControlRenderBenchmark
+        PRIVATE
+            IMAGE_CONTROL_RENDER_BENCHMARK=1
+            JUCE_USE_CURL=0
+            JUCE_WEB_BROWSER=0
+            JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+            JUCE_WIN_PER_MONITOR_DPI_AWARE=1
+    )
+    target_link_libraries(
+        ImageControlRenderBenchmark
+        PRIVATE juce::juce_gui_basics juce::juce_opengl ImageControlAssets fmt::fmt
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
+    )
+    if(IMAGE_CONTROL_HARDENING)
+        if(APPLE)
+            target_compile_definitions(
+                ImageControlRenderBenchmark
+                PRIVATE
+                    _LIBCPP_HARDENING_MODE=$<IF:$<CONFIG:Debug>,_LIBCPP_HARDENING_MODE_EXTENSIVE,_LIBCPP_HARDENING_MODE_FAST>
+            )
+        elseif(MSVC)
+            target_compile_definitions(ImageControlRenderBenchmark PRIVATE _MSVC_STL_HARDENING=1)
+        endif()
+    endif()
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/RenderBenchmark.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/SpectrogramRenderer.cpp" TARGET_DIRECTORY ImageControlRenderBenchmark
+        PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
+    )
+
+    # Record the selected configuration and effective native policy, not the requested cache option alone.
+    # Debug and CI builds still compile these tools for help-only smoke checks, never for measurements.
+    foreach(benchmark_target IN ITEMS ImageControlBenchmark ImageControlRenderBenchmark)
+        target_compile_definitions(
+            ${benchmark_target}
+            PRIVATE
+                IMAGE_CONTROL_BENCHMARK_BUILD_TYPE="$<CONFIG>"
+                IMAGE_CONTROL_BENCHMARK_OPTIMIZED_BUILD=$<CONFIG:Release>
+                IMAGE_CONTROL_BENCHMARK_NATIVE_CPU=$<AND:$<CONFIG:Release>,$<BOOL:${use_native}>>
+        )
+    endforeach()
 
     # Writes AudioBatch chain presets for the installed VST3 and Audio Unit,
     # which benchmarks/compare_formats.py renders and times through the AudioBatch CLI.

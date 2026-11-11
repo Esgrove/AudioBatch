@@ -19,6 +19,10 @@
 namespace esgrove::image_control
 {
 class SpectrogramRenderer;
+namespace test
+{
+struct ImageControlEditorTestAccess;
+}
 
 /// The analysis settings the editor hands to the worker on every display refresh.
 struct SpectrogramAnalysisSettings {
@@ -68,6 +72,8 @@ public:
     void wake();
 
 private:
+    friend struct test::ImageControlEditorTestAccess;
+
     void analyzeCurrentEpoch(std::size_t frames, AnalyzerEpoch epoch);
     void drainQueuedAudio(bool analyze, AnalyzerEpoch epoch);
     void processQueuedAudio();

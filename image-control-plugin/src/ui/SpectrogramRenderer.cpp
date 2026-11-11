@@ -10,6 +10,12 @@
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+#include <type_traits>
+
+#include <iterator>
+#include <string>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -139,7 +145,7 @@ constexpr float SOLID_HIGHLIGHT_START {0.35F};
 constexpr float SOLID_HIGHLIGHT_END {0.75F};
 /// Strength of the glow in the solid mode relative to the particle mode.
 constexpr float SOLID_GLOW_SHARE {0.5F};
-#if JUCE_DEBUG
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
 /// Nanoseconds in a millisecond, for the GPU timer.
 constexpr double NANOSECONDS_PER_MILLISECOND {1.0e6};
 #endif
@@ -414,7 +420,7 @@ void SpectrogramRenderer::newOpenGLContextCreated()
     juce::gl::glBindVertexArray(0);
     juce::gl::glBindBuffer(juce::gl::GL_ARRAY_BUFFER, 0);
 
-#if JUCE_DEBUG
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
     juce::gl::glGenQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
 #endif
     ready = true;
@@ -431,8 +437,17 @@ void SpectrogramRenderer::openGLContextClosing()
 /// and composites the picture into the plot. JUCE paints the editor's components over it afterwards.
 void SpectrogramRenderer::renderOpenGL()
 {
-    renderedFrames.fetch_add(1, std::memory_order_relaxed);
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+// The helper window drives context lifetime only. Explicit offscreen batches own every measured draw.
+#else
+    static_cast<void>(renderFrame(static_cast<float>(openGLContext.getRenderingScale()), std::nullopt));
+#endif
+}
 
+/// Runs the production passes on the current GL thread, returning true only after a composite was encoded.
+/// An explicit physical plot is used only by the offscreen benchmark, independent of native window geometry.
+bool SpectrogramRenderer::renderFrame(const float scale, const std::optional<juce::Rectangle<int>> physicalPlot)
+{
     SpectrogramPendingWork work;
     {
         const std::scoped_lock lock(pendingMutex);
@@ -451,17 +466,16 @@ void SpectrogramRenderer::renderOpenGL()
     juce::gl::glClearColor(background.getFloatRed(), background.getFloatGreen(), background.getFloatBlue(), 1.0F);
     juce::gl::glClear(juce::gl::GL_COLOR_BUFFER_BIT);
 
-    const auto scale = static_cast<float>(openGLContext.getRenderingScale());
-    const auto plot = (work.plotInEditor * scale).getSmallestIntegerContainer();
+    const auto plot = physicalPlot.value_or((work.plotInEditor * scale).getSmallestIntegerContainer());
     if (!ready || work.mode == SpectrogramRenderMode::hidden || plot.isEmpty()) {
-        return;
+        return false;
     }
     const ScopedSpectrogramBindings bindings;
     const auto& viewport = bindings.viewport();
     if (!resizeTargets(plot.getWidth(), plot.getHeight())) {
         unavailable = true;
         releaseResources();
-        return;
+        return false;
     }
 
     measureGpuTimeBegin();
@@ -484,8 +498,10 @@ void SpectrogramRenderer::renderOpenGL()
     const juce::Rectangle<int> plotViewport(
         plot.getX(), viewport[3] - plot.getBottom(), plot.getWidth(), plot.getHeight()
     );
-    drawComposite(plotViewport, drawingParticles ? EXPOSURE : 0.0F, solid);
+    drawComposite(plotViewport, drawingParticles ? EXPOSURE : 0.0F, solid, scale);
     measureGpuTimeEnd();
+    renderedFrames.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 /// Links the shaders and caches their locations, then initializes constants once for this context's programs.
@@ -660,7 +676,12 @@ void SpectrogramRenderer::drawBloom(const bool solid)
 /// Tone maps the accumulated picture and its glow into the plot, over the plot background,
 /// as particles or, when solid, as stacked layers with outlines under the strongest particles.
 /// An exposure of 0 draws only the background.
-void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport, const float exposure, const bool solid)
+void SpectrogramRenderer::drawComposite(
+    const juce::Rectangle<int> plotViewport,
+    const float exposure,
+    const bool solid,
+    const float scale
+)
 {
     juce::gl::glViewport(plotViewport.getX(), plotViewport.getY(), plotViewport.getWidth(), plotViewport.getHeight());
     juce::gl::glBindVertexArray(screenVertexArray);
@@ -671,7 +692,6 @@ void SpectrogramRenderer::drawComposite(const juce::Rectangle<int> plotViewport,
     bindTexture(bloomLevels.front(), juce::gl::GL_TEXTURE1);
     bindTexture(field, juce::gl::GL_TEXTURE2);
 
-    const auto scale = static_cast<float>(openGLContext.getRenderingScale());
     compositeProgram->use();
     compositeUniforms->plotOrigin.set(static_cast<float>(plotViewport.getX()), static_cast<float>(plotViewport.getY()));
     compositeUniforms->plotSize.set(
@@ -728,34 +748,174 @@ void SpectrogramRenderer::fade(const double seconds, const double persistenceSec
     juce::gl::glDrawArrays(juce::gl::GL_TRIANGLES, 0, 3);
 }
 
-/// Starts timing this frame's passes on the GPU, in Debug builds.
+/// Starts a delayed GPU query without reusing a query whose result is still pending.
+/// Release builds execute this only in the isolated renderer benchmark with timing explicitly enabled.
 void SpectrogramRenderer::measureGpuTimeBegin()
 {
-#if JUCE_DEBUG
-    // Read the oldest query, which finished frames ago, before reusing it.
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+    if (!benchmarkGpuTiming) {
+        return;
+    }
+#endif
     const GLuint query = timerQueries.at(nextTimerQuery);
-    if (startedTimerQueries == timerQueries.size()) {
+    if (pendingTimerQueries.at(nextTimerQuery)) {
         GLint available {0};
         juce::gl::glGetQueryObjectiv(query, juce::gl::GL_QUERY_RESULT_AVAILABLE, &available);
-        if (available != 0) {
-            GLuint64 nanoseconds {0};
-            juce::gl::glGetQueryObjectui64v(query, juce::gl::GL_QUERY_RESULT, &nanoseconds);
-            gpuMilliseconds = static_cast<double>(nanoseconds) / NANOSECONDS_PER_MILLISECOND;
+        if (available == 0) {
+            return;
         }
+        GLuint64 nanoseconds {0};
+        juce::gl::glGetQueryObjectui64v(query, juce::gl::GL_QUERY_RESULT, &nanoseconds);
+        gpuMilliseconds = static_cast<double>(nanoseconds) / NANOSECONDS_PER_MILLISECOND;
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+        benchmarkGpuSamples.push_back(
+            {.frameIndex = benchmarkQueryFrames.at(nextTimerQuery), .milliseconds = gpuMilliseconds.load()}
+        );
+#endif
+        pendingTimerQueries.at(nextTimerQuery) = false;
     }
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+    benchmarkQueryFrames.at(nextTimerQuery) = benchmarkFrameIndex;
+#endif
     juce::gl::glBeginQuery(juce::gl::GL_TIME_ELAPSED, query);
+    timerQueryActive = true;
 #endif
 }
 
-/// Stops timing this frame's passes on the GPU, in Debug builds.
+/// Ends only a query that began successfully. Unavailable queries never force a synchronous result read.
 void SpectrogramRenderer::measureGpuTimeEnd()
 {
-#if JUCE_DEBUG
-    juce::gl::glEndQuery(juce::gl::GL_TIME_ELAPSED);
-    nextTimerQuery = (nextTimerQuery + 1) % timerQueries.size();
-    startedTimerQueries = std::min(startedTimerQueries + 1, timerQueries.size());
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
+    if (timerQueryActive) {
+        juce::gl::glEndQuery(juce::gl::GL_TIME_ELAPSED);
+        pendingTimerQueries.at(nextTimerQuery) = true;
+        nextTimerQuery = (nextTimerQuery + 1) % timerQueries.size();
+        timerQueryActive = false;
+    }
 #endif
 }
+
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+/// Reads real driver identity on the owning GL thread, never substituting invented adapter information.
+SpectrogramBenchmarkDevice SpectrogramRenderer::benchmarkDevice()
+{
+    const auto read = [](const GLenum name) {
+        const auto* value = juce::gl::glGetString(name);
+        if (value == nullptr) {
+            return juce::String("unavailable");
+        }
+        std::string text;
+        for (const auto* cursor = value; *cursor != 0; cursor = std::next(cursor)) {
+            text.push_back(static_cast<char>(*cursor));
+        }
+        return juce::String::fromUTF8(text.c_str());
+    };
+    return {
+        .gpu = read(juce::gl::GL_RENDERER),
+        .vendor = read(juce::gl::GL_VENDOR),
+        .driver = read(juce::gl::GL_VERSION),
+    };
+}
+
+/// Allocates an explicit RGBA8 composite target and production intermediate targets before measurement.
+/// Called on the current JUCE GL thread, with no component access or native window-size assumptions.
+bool SpectrogramRenderer::prepareBenchmark(
+    const int physicalWidth,
+    const int physicalHeight,
+    const float scale,
+    const bool gpuTiming
+)
+{
+    if (!ready || physicalWidth <= 0 || physicalHeight <= 0 || !std::isfinite(scale) || scale <= 0.0F) {
+        return false;
+    }
+    const ScopedSpectrogramBindings bindings;
+    benchmarkScale = scale;
+    benchmarkGpuTiming = gpuTiming;
+    benchmarkGpuSamples.clear();
+    benchmarkGpuSamples.reserve(timerQueries.size());
+    benchmarkFrameIndex = 0;
+    if ((benchmarkOutput.width != physicalWidth || benchmarkOutput.height != physicalHeight)
+        && !createTarget(benchmarkOutput, physicalWidth, physicalHeight, static_cast<GLint>(juce::gl::GL_RGBA8)))
+    {
+        return false;
+    }
+    return resizeTargets(physicalWidth, physicalHeight) && juce::gl::glGetError() == juce::gl::GL_NO_ERROR;
+}
+
+/// Encodes exactly one production frame into the explicit offscreen target, never swapping the native surface.
+bool SpectrogramRenderer::drawBenchmarkFrame()
+{
+    if (!ready || benchmarkOutput.framebuffer == 0) {
+        return false;
+    }
+    const ScopedSpectrogramBindings bindings;
+    bindTarget(benchmarkOutput);
+    const bool encoded
+        = renderFrame(benchmarkScale, juce::Rectangle<int>(0, 0, benchmarkOutput.width, benchmarkOutput.height));
+    if (encoded) {
+        ++benchmarkFrameIndex;
+    }
+    return encoded;
+}
+
+/// Waits for one bounded batch fence, not individual frames, and drains only available elapsed-time queries.
+/// Throughput includes this completion wait. A failed or timed-out fence fails the benchmark.
+bool SpectrogramRenderer::finishBenchmarkBatch()
+{
+    const auto releaseFence = [](GLsync sync) { juce::gl::glDeleteSync(sync); };
+    const std::unique_ptr<std::remove_pointer_t<GLsync>, decltype(releaseFence)> fence(
+        juce::gl::glFenceSync(juce::gl::GL_SYNC_GPU_COMMANDS_COMPLETE, 0), releaseFence
+    );
+    if (fence == nullptr) {
+        return false;
+    }
+    constexpr int maximumWaits = 300;
+    constexpr GLuint64 waitNanoseconds = 100'000'000;
+    bool completed = false;
+    juce::gl::glFlush();
+    for (int attempt = 0; attempt < maximumWaits; ++attempt) {
+        const auto status = juce::gl::glClientWaitSync(fence.get(), 0, waitNanoseconds);
+        if (status == juce::gl::GL_ALREADY_SIGNALED || status == juce::gl::GL_CONDITION_SATISFIED) {
+            completed = true;
+            break;
+        }
+        if (status == juce::gl::GL_WAIT_FAILED) {
+            break;
+        }
+    }
+    if (!completed) {
+        return false;
+    }
+    for (std::size_t index = 0; index < timerQueries.size(); ++index) {
+        if (!pendingTimerQueries.at(index)) {
+            continue;
+        }
+        GLint available {0};
+        juce::gl::glGetQueryObjectiv(timerQueries.at(index), juce::gl::GL_QUERY_RESULT_AVAILABLE, &available);
+        if (available != 0) {
+            GLuint64 nanoseconds {0};
+            juce::gl::glGetQueryObjectui64v(timerQueries.at(index), juce::gl::GL_QUERY_RESULT, &nanoseconds);
+            benchmarkGpuSamples.push_back({
+                .frameIndex = benchmarkQueryFrames.at(index),
+                .milliseconds = static_cast<double>(nanoseconds) / NANOSECONDS_PER_MILLISECOND,
+            });
+            pendingTimerQueries.at(index) = false;
+        }
+    }
+    return juce::gl::glGetError() == juce::gl::GL_NO_ERROR;
+}
+
+/// Transfers resolved samples to the harness outside the per-frame CPU timing interval, on the GL thread.
+std::vector<SpectrogramBenchmarkGpuSample> SpectrogramRenderer::takeBenchmarkGpuSamples()
+{
+    auto samples = std::move(benchmarkGpuSamples);
+    benchmarkGpuSamples.clear();
+    benchmarkGpuSamples.reserve(timerQueries.size());
+    return samples;
+}
+#endif
 
 /// Frees cached uniforms before their programs, then buffers, vertex arrays, render targets and timer queries.
 /// Only called on the OpenGL thread with the owning context current. Invalidates the reported GPU time as well.
@@ -787,13 +947,20 @@ void SpectrogramRenderer::releaseResources()
         releaseTarget(level);
     }
     releaseTarget(solidField);
-#if JUCE_DEBUG
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+    releaseTarget(benchmarkOutput);
+    benchmarkGpuSamples.clear();
+    benchmarkFrameIndex = 0;
+    benchmarkGpuTiming = false;
+#endif
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
     if (timerQueries.front() != 0) {
         juce::gl::glDeleteQueries(static_cast<GLsizei>(timerQueries.size()), timerQueries.data());
         timerQueries = {};
     }
     nextTimerQuery = 0;
-    startedTimerQueries = 0;
+    pendingTimerQueries = {};
+    timerQueryActive = false;
 #endif
     gpuMilliseconds = -1.0;
     ready = false;
