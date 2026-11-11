@@ -22,6 +22,7 @@ use serde::Serialize;
 pub use analyzer::{
     ANALYSIS_TIER_COUNT, AnalysisError, SpatialAnalyzer, SpectralFrameInfo, SpectralPoint, StereoPositionCurve,
 };
+pub use crossover::order_crossovers;
 use monitoring::{AnalysisSample, Monitoring};
 pub use monitoring::{AnalysisStatus, AnalysisTap, ColourMode, CorrelationSnapshot, DisplayPreferences};
 pub use multiband::{BandControls, MultibandError, MultibandImager};
@@ -33,8 +34,6 @@ pub use worker::{AnalysisShutdown, AnalysisUpdate, AnalysisWorker};
 
 /// Fixed transport capacity, independent of the host's block size.
 const ANALYZER_CAPACITY: usize = 32_768;
-/// Ramp duration in seconds, matching the production plugin's ordinary control ramps.
-const RAMP_SECONDS: f32 = 0.02;
 
 /// Finite plain-unit controls persisted independently of any GUI or plugin framework.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -291,7 +290,7 @@ impl Imager {
         }
         self.multiband = Some(multiband);
         self.shared.monitoring.set_rate(sample_rate);
-        self.ramp_samples = (sample_rate * RAMP_SECONDS).round() as u32;
+        self.ramp_samples = multiband::ramp_samples(sample_rate);
         self.begin_block();
         self.reset();
         true
@@ -360,6 +359,11 @@ impl Imager {
         self.mono_blend
             .set_target(f32::from(self.shared.mono.load(Ordering::Relaxed)), self.ramp_samples);
         if let Some(multiband) = &mut self.multiband {
+            let _ = multiband.set_output_controls(
+                if bypass { 1.0 } else { parameters.gain },
+                if bypass { 1.0 } else { parameters.width },
+                !bypass && self.shared.delta.load(Ordering::Relaxed),
+            );
             let generation = self.shared.monitoring.correlation_generation.load(Ordering::Acquire);
             if generation != self.correlation_generation {
                 multiband.set_correlation_enabled(false);
@@ -410,26 +414,32 @@ impl Imager {
     )]
     pub fn process_frame(&mut self, frame: [f32; 2]) -> [f32; 2] {
         let source = self.shared.analysis_generation();
-        let (processed, dry) = self.multiband.as_mut().map_or((frame, frame), |imager| {
-            let output = imager.process_frame(frame);
-            (output, imager.dry_reference())
-        });
-        let gain = self.gain.next();
-        let width = self.width.next();
-        let mut output = if gain.to_bits() == 1.0_f32.to_bits() && width.to_bits() == 1.0_f32.to_bits() {
-            processed
+        let mut output = if let Some(imager) = &mut self.multiband {
+            imager.process_frame(frame)
         } else {
-            let [left, right] = processed;
-            let mid = (left + right) * 0.5;
-            let side = (left - right) * (0.5 * width);
-            [(mid + side) * gain, (mid - side) * gain]
-        };
-        let delta = self.delta_blend.next();
-        if delta > 0.0 {
-            for (sample, dry) in output.iter_mut().zip(dry) {
-                *sample = dry.mul_add(-delta, *sample);
+            // The unprepared compatibility path has no partition adapter or FIR latency.
+            let gain = self.gain.next();
+            let width = self.width.next();
+            let mut output = if width.to_bits() == 1.0_f32.to_bits() {
+                if gain.to_bits() == 1.0_f32.to_bits() {
+                    frame
+                } else {
+                    frame.map(|sample| sample * gain)
+                }
+            } else {
+                let [left, right] = frame;
+                let mid = (left + right) * 0.5;
+                let side = (left - right) * (0.5 * width);
+                [(mid + side) * gain, (mid - side) * gain]
+            };
+            let delta = self.delta_blend.next();
+            if delta > 0.0 {
+                for (sample, dry) in output.iter_mut().zip(frame) {
+                    *sample = delta.mul_add(-dry, *sample);
+                }
             }
-        }
+            output
+        };
         let mono = self.mono_blend.next();
         if mono > 0.0 {
             let [left, right] = output;
@@ -498,8 +508,12 @@ impl Ramp {
     /// Retargets only on an exact control change, retaining the original duration across blocks.
     fn set_target(&mut self, value: f32, samples: u32) {
         if self.target.to_bits() != value.to_bits() {
+            if samples == 0 {
+                *self = Self::new(value);
+                return;
+            }
             self.target = value;
-            self.remaining = samples.max(1);
+            self.remaining = samples;
             self.step = (value - self.current) / self.remaining as f32;
         }
     }

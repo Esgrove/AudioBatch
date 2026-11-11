@@ -11,7 +11,12 @@ use crate::kernel_worker::{KernelWorker, design};
 pub use crate::crossover::MultibandError;
 
 /// Linear smoothing time shared by all band controls, in seconds.
-const RAMP_SECONDS: f32 = 0.02;
+const RAMP_SECONDS: f64 = 0.02;
+
+/// Matches the reference smoother's double-precision floor, including rates with fractional ramp lengths.
+pub fn ramp_samples(sample_rate: f32) -> u32 {
+    (f64::from(sample_rate) * RAMP_SECONDS).floor() as u32
+}
 
 /// Validated finite plain-unit controls for one band, independent of global output gain and Width.
 #[derive(Clone, Copy, Debug)]
@@ -33,6 +38,9 @@ pub struct MultibandImager {
     mid_convolver: PartitionedConvolver,
     side_convolver: PartitionedConvolver,
     controls: [BandRamps; 4],
+    output_gain: ControlRamp,
+    output_width: ControlRamp,
+    delta: ControlRamp,
     correlation: BandCorrelation,
     correlation_enabled: bool,
     input: [[f32; 2]; PARTITION_SIZE],
@@ -169,6 +177,9 @@ impl MultibandImager {
             mid_convolver,
             side_convolver,
             controls: [BandRamps::new(); 4],
+            output_gain: ControlRamp::new(1.0),
+            output_width: ControlRamp::new(1.0),
+            delta: ControlRamp::new(0.0),
             correlation: BandCorrelation::new(sample_rate),
             correlation_enabled: false,
             input: [[0.0; 2]; PARTITION_SIZE],
@@ -180,7 +191,7 @@ impl MultibandImager {
             block_position: 0,
             delay_position: 0,
             half_length,
-            ramp_samples: (sample_rate * RAMP_SECONDS).round() as u32,
+            ramp_samples: ramp_samples(sample_rate),
             channels: 2,
             offline: false,
         })
@@ -199,6 +210,20 @@ impl MultibandImager {
                 .audible
                 .set_target(f32::from(!any_solo || control.solo), self.ramp_samples);
         }
+    }
+
+    /// Sets validated output trim, compatibility Width, and Delta targets on the processing owner.
+    /// These ramps advance with band controls while computing the next partition, never on returned old audio.
+    /// Default controls preserve the existing band-only API and its exact-neutral delayed output.
+    /// Returns false for non-finite or out-of-range gain/Width, retaining every previous target.
+    pub fn set_output_controls(&mut self, gain: f32, width: f32, delta: bool) -> bool {
+        if !gain.is_finite() || !width.is_finite() || !(0.0..=16.0).contains(&gain) || !(0.0..=2.0).contains(&width) {
+            return false;
+        }
+        self.output_gain.set_target(gain, self.ramp_samples);
+        self.output_width.set_target(width, self.ramp_samples);
+        self.delta.set_target(f32::from(delta), self.ramp_samples);
+        true
     }
 
     /// Enables observation only while requested by the editor or diagnostics, without changing audio history.
@@ -293,6 +318,9 @@ impl MultibandImager {
         for ramps in &mut self.controls {
             ramps.settle();
         }
+        for ramp in [&mut self.output_gain, &mut self.output_width, &mut self.delta] {
+            *ramp = ControlRamp::new(ramp.target);
+        }
         self.block_position = 0;
         self.delay_position = 0;
     }
@@ -380,7 +408,10 @@ impl MultibandImager {
             .offline_pending
             .take()
             .or_else(|| if self.offline { None } else { self.worker.take_ready() });
-        let neutral = self.controls.iter().all(|ramps| ramps.neutral(stereo));
+        let neutral = self.controls.iter().all(|ramps| ramps.neutral(stereo))
+            && self.output_gain.settled_at(1.0)
+            && (!stereo || self.output_width.settled_at(1.0))
+            && (self.delta.settled_at(0.0) || self.delta.settled_at(1.0));
         let recovering = stereo && self.controls.iter().any(BandRamps::recovering);
         if !neutral || self.correlation_enabled {
             self.convolve_partition(replacement.as_deref(), stereo, recovering);
@@ -400,11 +431,18 @@ impl MultibandImager {
             for ((destination, reference), data) in self.output.iter_mut().zip(&mut self.reference).zip(&self.partition)
             {
                 let [left, right] = data.dry;
-                *destination = [left, if stereo { right } else { left }];
-                *reference = *destination;
+                *reference = [left, if stereo { right } else { left }];
+                *destination = if self.delta.settled_at(1.0) {
+                    [0.0; 2]
+                } else {
+                    *reference
+                };
             }
             for ramps in &mut self.controls {
                 ramps.advance_partition();
+            }
+            for _ in 0..PARTITION_SIZE {
+                self.output_width.next();
             }
         } else {
             self.mix_partition(stereo, recovering);
@@ -535,10 +573,14 @@ impl MultibandImager {
     /// Every control advances exactly once per sample, without allocating or adding convolution history.
     #[expect(
         clippy::manual_midpoint,
-        reason = "The Mid/Side arithmetic order is part of the signal contract"
+        clippy::suboptimal_flops,
+        reason = "Preserve the reference Mid/Side and output-gain/Delta evaluation order"
     )]
     fn mix_partition(&mut self, stereo: bool, recovering: bool) {
         let centered = self.controls.iter().all(|ramps| ramps.pan.settled_at(0.0));
+        let neutral_output = self.output_gain.settled_at(1.0)
+            && (!stereo || self.output_width.settled_at(1.0))
+            && (self.delta.settled_at(0.0) || self.delta.settled_at(1.0));
         for ((destination, reference), data) in self.output.iter_mut().zip(&mut self.reference).zip(&self.partition) {
             let [dry_left, dry_right] = data.dry;
             let dry_mid = if stereo { (dry_left + dry_right) * 0.5 } else { dry_left };
@@ -594,7 +636,10 @@ impl MultibandImager {
                     right_sum += left.mul_add(to_right, right * (1.0 - to_left));
                 }
             }
-            *destination = if unsoloed && self.controls.iter().all(|ramps| ramps.neutral(stereo)) {
+            let gain = self.output_gain.next();
+            let width = self.output_width.next();
+            let delta = self.delta.next();
+            *destination = if neutral_output && unsoloed && self.controls.iter().all(|ramps| ramps.neutral(stereo)) {
                 [dry_left, if stereo { dry_right } else { dry_left }]
             } else if !stereo {
                 [mid_sum; 2]
@@ -611,6 +656,18 @@ impl MultibandImager {
             } else {
                 [reference_mid; 2]
             };
+            // Unity compatibility Width must not introduce another Mid/Side cancellation after band reconstruction.
+            if stereo && width.to_bits() != 1.0_f32.to_bits() {
+                let [left, right] = *destination;
+                let mid = (left + right) * 0.5;
+                let side = (left - right) * (0.5 * width);
+                *destination = [mid + side, mid - side];
+            }
+            if gain.to_bits() != 1.0_f32.to_bits() || delta.to_bits() != 0.0_f32.to_bits() {
+                for (sample, &dry) in destination.iter_mut().zip(reference.iter()) {
+                    *sample = *sample * gain - delta * dry;
+                }
+            }
         }
     }
 }
@@ -681,8 +738,12 @@ impl ControlRamp {
     /// Retargets from the current value only when a finite block target actually changes.
     fn set_target(&mut self, value: f32, samples: u32) {
         if value.to_bits() != self.target.to_bits() {
+            if samples == 0 {
+                *self = Self::new(value);
+                return;
+            }
             self.target = value;
-            self.remaining = samples.max(1);
+            self.remaining = samples;
             self.step = (value - self.current) / self.remaining as f32;
         }
     }
