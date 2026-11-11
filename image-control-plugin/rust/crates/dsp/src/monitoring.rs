@@ -1,11 +1,12 @@
 //! Atomic monitoring configuration, detached display preferences, and generation-tagged audio transport.
 //!
 //! Audio owns only the producer and correlation accumulators. Audio configuration remains atomic,
-//! while coherent display preferences use an off-audio mutex that callbacks never read or acquire.
+//! while immutable display snapshots are loaded and replaced only by non-audio threads.
 
-use std::sync::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
+use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 
 /// Source flag selecting unprocessed input instead of final output.
@@ -134,7 +135,7 @@ pub struct Monitoring {
     pub(crate) claimed: AtomicBool,
     pub(crate) status: AtomicU8,
     pub(crate) status_generation: AtomicU64,
-    preferences: Mutex<DisplayPreferences>,
+    preferences: ArcSwap<DisplayPreferences>,
     pub(crate) correlation_enabled: AtomicBool,
     pub(crate) correlation_generation: AtomicU64,
     pub(crate) correlation_revision: AtomicU64,
@@ -145,7 +146,7 @@ pub struct Monitoring {
 }
 
 impl Monitoring {
-    /// Allocates no storage and starts with optional measurements disabled.
+    /// Allocates the initial immutable display record off audio, with optional measurements disabled.
     pub(crate) fn new() -> Self {
         Self {
             source: AtomicU64::new(0),
@@ -153,7 +154,7 @@ impl Monitoring {
             claimed: AtomicBool::new(false),
             status: AtomicU8::new(AnalysisStatus::Disabled as u8),
             status_generation: AtomicU64::new(0),
-            preferences: Mutex::new(DisplayPreferences::default()),
+            preferences: ArcSwap::from_pointee(DisplayPreferences::default()),
             correlation_enabled: AtomicBool::new(false),
             correlation_generation: AtomicU64::new(0),
             correlation_revision: AtomicU64::new(0),
@@ -208,30 +209,39 @@ impl Monitoring {
         }
     }
 
-    /// Copies one coherent preference record. Only UI, state, and analysis workers may acquire this mutex.
+    /// Copies one coherent preference record. Only UI, state, and analysis workers load these snapshots.
     pub(crate) fn preferences(&self) -> DisplayPreferences {
-        *self
-            .preferences
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        **self.preferences.load()
     }
 
-    /// Publishes a complete validated record, advancing identity before releasing the preference lock.
-    /// A worker reads preferences and then rechecks its source identity before applying them.
-    /// Audio reads only the atomic source token and never acquires this lock.
+    /// Retains a complete immutable record as a worker configuration identity, exclusively off audio.
+    pub(crate) fn preference_snapshot(&self) -> Arc<DisplayPreferences> {
+        self.preferences.load_full()
+    }
+
+    /// Rejects replaced records even between preference publication and the following source-generation increment.
+    /// Retaining the old `Arc` prevents pointer reuse from making a later publication appear unchanged.
+    pub(crate) fn preferences_match(&self, preferences: &Arc<DisplayPreferences>) -> bool {
+        Arc::ptr_eq(preferences, &self.preferences.load())
+    }
+
+    /// Publishes one complete validated record with retry-safe multiwriter compare-and-swap, exclusively off audio.
+    /// Unchanged and invalid values preserve both the snapshot identity and source generation.
+    /// Workers check the retained snapshot identity as well as source, since these publications are independent.
     pub(crate) fn set_preferences(&self, preferences: DisplayPreferences) -> bool {
         if !preferences.is_valid() {
             return false;
         }
-        let mut current = self
-            .preferences
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *current != preferences {
-            *current = preferences;
+        let previous = self.preferences.rcu(|current| {
+            if **current == preferences {
+                Arc::clone(current)
+            } else {
+                Arc::new(preferences)
+            }
+        });
+        if *previous != preferences {
             self.source.fetch_add(GENERATION_STEP, Ordering::AcqRel);
         }
-        drop(current);
         true
     }
 }
@@ -297,7 +307,7 @@ impl crate::SharedState {
     }
 
     /// Publishes validated appearance preferences without host sound-parameter gestures.
-    /// Acquires a short display-only lock. Call only from UI or non-audio state callbacks.
+    /// Allocates and retires immutable display snapshots. Call only from UI or non-audio state callbacks.
     pub fn set_display_preferences(&self, preferences: DisplayPreferences) -> bool {
         self.monitoring.set_preferences(preferences)
     }
@@ -399,11 +409,16 @@ mod tests {
     }
 
     #[test]
-    fn preference_mutex_is_never_needed_by_audio_processing() {
+    fn retained_preference_snapshots_are_independent_of_audio_processing_and_replacement() {
         let mut imager = Imager::new();
         assert!(imager.prepare(48_000.0));
         let shared = imager.shared();
-        let preferences = shared.monitoring.preferences.lock().expect("preference lock");
+        let preferences = shared.monitoring.preferences.load();
+        let retained = shared.monitoring.preference_snapshot();
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            mel_scale: true,
+            ..DisplayPreferences::default()
+        }));
         let (sender, receiver) = std::sync::mpsc::channel();
         let processing = std::thread::spawn(move || {
             imager.begin_block();
@@ -413,43 +428,63 @@ mod tests {
             sender.send(()).expect("processing completion");
         });
         let completed = receiver.recv_timeout(Duration::from_secs(5));
-        drop(preferences);
+        assert_eq!(**preferences, DisplayPreferences::default());
+        assert_eq!(*retained, DisplayPreferences::default());
         processing.join().expect("processing thread");
-        completed.expect("audio must finish while the preference lock remains held");
+        completed.expect("audio must finish while old snapshots remain retained");
     }
 
     #[test]
-    fn source_snapshot_recheck_identifies_the_complete_preference_record() {
+    fn preference_identity_rejects_the_swap_before_source_invalidation() {
         let shared = Imager::new().shared();
-        let initial = shared.analysis_generation();
+        let generation = shared.analysis_generation();
+        let retained = shared.monitoring.preference_snapshot();
+        let replacement = DisplayPreferences {
+            mel_scale: true,
+            ..DisplayPreferences::default()
+        };
+        // Pause the writer at the exact publication boundary, before the source-generation increment.
+        shared.monitoring.preferences.store(std::sync::Arc::new(replacement));
+        assert_eq!(shared.analysis_generation(), generation);
+        assert!(!shared.monitoring.preferences_match(&retained));
+        assert_eq!(shared.display_preferences(), replacement);
+        let current = shared.monitoring.preference_snapshot();
+        assert!(shared.monitoring.preferences_match(&current));
+        shared.monitoring.source.fetch_add(GENERATION_STEP, Ordering::AcqRel);
+        assert_ne!(shared.analysis_generation(), generation);
+        assert!(!shared.monitoring.preferences_match(&retained));
+    }
+
+    #[test]
+    fn concurrent_identical_publications_preserve_snapshot_identity_after_one_change() {
+        let shared = Imager::new().shared();
+        let generation = shared.analysis_generation();
+        let replacement = DisplayPreferences {
+            mel_scale: true,
+            ..DisplayPreferences::default()
+        };
+        let start = std::sync::Barrier::new(4);
         std::thread::scope(|scope| {
-            let shared = &shared;
-            scope.spawn(move || {
-                for index in 1_u32..=2000 {
-                    assert!(shared.set_display_preferences(DisplayPreferences {
-                        contrast: index as f32 / 2000.0,
-                        mel_scale: index.is_multiple_of(2),
-                        solid_rendering: index.is_multiple_of(3),
-                        ..DisplayPreferences::default()
-                    }));
-                }
-            });
-            for _ in 0..4000 {
-                let source = shared.analysis_generation();
-                let preferences = shared.display_preferences();
-                if source == shared.analysis_generation() && source != initial {
-                    let index = (source - initial) / GENERATION_STEP;
-                    assert_eq!(preferences.contrast.to_bits(), (index as f32 / 2000.0).to_bits());
-                    assert_eq!(preferences.mel_scale, index.is_multiple_of(2));
-                    assert_eq!(preferences.solid_rendering, index.is_multiple_of(3));
-                }
+            for _ in 0..4 {
+                let shared = &shared;
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..1024 {
+                        assert!(shared.set_display_preferences(replacement));
+                    }
+                });
             }
         });
-        let preferences = shared.monitoring.preferences.lock().expect("preference lock");
-        assert_eq!(
-            shared.monitoring.source.load(Ordering::Acquire),
-            initial + 2000 * GENERATION_STEP
-        );
-        assert_eq!(preferences.contrast.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(shared.analysis_generation(), generation + GENERATION_STEP);
+        let retained = shared.monitoring.preference_snapshot();
+        assert!(shared.set_display_preferences(replacement));
+        assert!(shared.monitoring.preferences_match(&retained));
+        assert!(!shared.set_display_preferences(DisplayPreferences {
+            contrast: f32::NAN,
+            ..replacement
+        }));
+        assert!(shared.monitoring.preferences_match(&retained));
+        assert_eq!(shared.analysis_generation(), generation + GENERATION_STEP);
     }
 }

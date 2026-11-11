@@ -51,6 +51,7 @@ fn tap_and_preference_changes_never_publish_stale_audio_after_generation_change(
 #[test]
 fn display_records_remain_coherent_under_multiple_non_audio_writers() {
     let shared = Imager::new().shared();
+    let other = Imager::new().shared();
     let first = DisplayPreferences::default();
     let second = DisplayPreferences {
         persistence_seconds: 2.75,
@@ -75,8 +76,16 @@ fn display_records_remain_coherent_under_multiple_non_audio_writers() {
         for _ in 0..4000 {
             let observed = shared.display_preferences();
             assert!(observed == first || observed == second, "preference fields cannot tear");
+            assert_eq!(other.display_preferences(), first, "instances remain independent");
         }
     });
+    let mut detached = shared.display_preferences();
+    detached.show_fps = !detached.show_fps;
+    assert_ne!(
+        shared.display_preferences(),
+        detached,
+        "detached copies cannot modify stored preferences"
+    );
 }
 
 #[test]
