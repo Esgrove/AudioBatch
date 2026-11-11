@@ -14,6 +14,7 @@
 #include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/ProcessingToolbar.h"
+#include "ui/RenderBenchmark.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramRenderer.h"
@@ -34,6 +35,10 @@
 namespace esgrove::image_control
 {
 class ImageControlProcessor;
+namespace benchmark
+{
+struct ImageControlEditorBenchmarkAccess;
+}
 namespace test
 {
 struct ImageControlEditorTestAccess;
@@ -51,7 +56,8 @@ struct ImageControlEditorTestAccess;
 class ImageControlEditor final :
     public juce::AudioProcessorEditor,
     private juce::ComponentMovementWatcher,
-    private juce::KeyListener
+    private juce::KeyListener,
+    private juce::ValueTree::Listener
 {
 public:
     explicit ImageControlEditor(ImageControlProcessor& owner);
@@ -68,6 +74,7 @@ public:
     void resized() override;
 
 private:
+    friend struct benchmark::ImageControlEditorBenchmarkAccess;
     friend struct test::ImageControlEditorTestAccess;
 
     [[nodiscard]] SpectrogramRenderMode renderMode() const;
@@ -77,6 +84,7 @@ private:
     [[nodiscard]] bool synchronizeRestoredLayout();
     [[nodiscard]] double persistenceSeconds() const;
 
+    void applyChangedViewSettings(const juce::ValueTree& editorState);
     void applyLayoutSettings();
     void applySpectrogramHidden(bool hidden);
     void applyViewSettings();
@@ -102,6 +110,8 @@ private:
     void componentMovedOrResized(bool wasMoved, bool wasResized) override;
     void componentPeerChanged() override;
     void componentVisibilityChanged() override;
+
+    void valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& property) override;
 
     /// The processor that owns this editor and outlives it.
     ImageControlProcessor& imageControlProcessor;
@@ -168,12 +178,20 @@ private:
     /// Independent read-only meter row aligned with the four band strips.
     std::array<std::unique_ptr<BandCorrelationMeter>, BAND_COUNT> correlationMeters;
 
+    /// Retains the processor-owned live settings identity and its message-thread invalidation listener.
+    juce::ValueTree observedEditorState;
     /// Latest worker settings, reused when visibility changes without a display refresh.
     SpectrogramAnalysisSettings analysisSettings;
     /// Raw pan settings the cached worker position curve was derived from.
     std::optional<std::array<double, 2>> shownPositionSettings;
     /// Processor lifecycle last accepted by the correlation display history.
     std::optional<std::uint32_t> shownCorrelationGeneration;
+    /// Effective metering request last synchronized, empty until the initial settings application.
+    std::optional<bool> correlationMonitoringEnabled;
+    /// Property-derived controls and worker settings need applying initially and after live-tree changes.
+    bool viewSettingsDirty {true};
+    /// Worker settings need publication initially and after property or sample-rate changes.
+    bool analysisSettingsDirty {true};
 
     /// Crossovers the band ranges were last shown with.
     Crossovers displayedCrossovers {};
@@ -212,6 +230,9 @@ private:
     bool spectrogramHidden {false};
     /// Whether the particles are not analyzed or drawn, while the audio is still processed.
     bool renderingBypassed {false};
+
+    /// Explicit benchmark-only GUI observations, absent in ordinary hosts.
+    std::unique_ptr<RenderBenchmark> renderBenchmark {RenderBenchmark::fromEnvironment()};
 
     /// Time of the previous display refresh, in seconds, or 0 before the first.
     double lastRefreshTimestamp {0.0};

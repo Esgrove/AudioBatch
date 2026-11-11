@@ -13,8 +13,11 @@
 #include "ui/BandStrip.h"
 #include "ui/ControlSlider.h"
 #include "ui/DisplayDisclosure.h"
+#include "ui/ImageControlLookAndFeel.h"
+#include "ui/RenderBenchmark.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
+#include "ui/SpectrogramParticles.h"
 #include "ui/SpectrogramRenderer.h"
 #include "ui/SpectrogramWorker.h"
 #include "ui/SplitDivider.h"
@@ -33,6 +36,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <mutex>
 #include <numbers>
 #include <thread>
 #include <vector>
@@ -89,6 +93,26 @@ struct ImageControlEditorTestAccess {
     void applySettings()
     {
         editor.applyViewSettings();
+    }
+
+    /// Reads the settings actually copied into the worker without becoming another audio FIFO consumer.
+    [[nodiscard]] SpectrogramAnalysisSettings workerSettings()
+    {
+        const std::scoped_lock lock(editor.spectrogramWorker.settingsMutex);
+        return editor.spectrogramWorker.settings;
+    }
+
+    /// Replaces only the worker copy with a sentinel to prove no-op refreshes do not republish settings.
+    void markWorkerCopy(const double contrast)
+    {
+        const std::scoped_lock lock(editor.spectrogramWorker.settingsMutex);
+        editor.spectrogramWorker.settings.contrast = contrast;
+    }
+
+    /// Observes the property invalidation flag without adding production instrumentation.
+    [[nodiscard]] bool settingsDirty() const
+    {
+        return editor.viewSettingsDirty;
     }
 
     /// Applies the range-update path used by display refreshes, without requiring a VBlank or graphics frame.
@@ -163,6 +187,28 @@ void setHeadingCrossovers(ImageControlProcessor& processor, const Crossovers& cr
     }
 }
 }  // namespace
+
+/// The brand title uses the embedded text semibold face at its existing height, independent of host font matching.
+TEST(ImageControlEditorLayout, TitleUsesEmbeddedSemiboldAtExistingHeight)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    juce::Label* title = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (auto* label = dynamic_cast<juce::Label*>(child); label != nullptr && label->getText() == "ImageControl") {
+            title = label;
+        }
+    }
+    ASSERT_NE(title, nullptr);
+    const auto expected = semiboldTextFont(18.0F);
+    EXPECT_EQ(title->getFont(), expected);
+    EXPECT_EQ(title->getLookAndFeel().getLabelFont(*title), expected);
+    EXPECT_NE(expected.getTypefacePtr(), textFont(18.0F).getTypefacePtr());
+    const auto identity = expected.getTypefacePtr()->getName() + " " + expected.getTypefacePtr()->getStyle();
+    EXPECT_TRUE(identity.containsIgnoreCase("SemiBold"));
+}
 
 /// Crossover text changes move every heading together at unchanged editor bounds, including while compacted.
 TEST(ImageControlEditorLayout, CrossoverChangesSynchronizeEveryFrequencyRangeRow)
@@ -292,6 +338,82 @@ TEST(ImageControlEditorLayout, MaximizedSpectrogramIsOptionalPersistentAndIndepe
     EXPECT_FALSE(static_cast<bool>(state.getProperty(MAXIMIZE_SPECTROGRAM_PROPERTY)));
     EXPECT_FALSE(toggle->getToggleState());
     EXPECT_EQ(view->getPlotBounds(), standard);
+}
+
+/// No-op property writes and refreshes do not copy settings into the worker again, but changed values still do.
+TEST(ImageControlEditorLifecycle, UnchangedViewSettingsDoNotRepublishWorkerCopy)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    access.applySettings();
+    EXPECT_FALSE(access.settingsDirty());
+    auto* pre = buttonWithText(editor, "Pre");
+    ASSERT_NE(pre, nullptr);
+    ASSERT_TRUE(pre->isEnabled());
+    pre->setEnabled(false);
+    access.markWorkerCopy(-1.0);
+    ASSERT_TRUE(access.finishPass());
+    const auto epoch = processor.getAnalyzerFifo().getEpoch();
+    auto& state = processor.getEditorState();
+    state.setProperty(CONTRAST_PROPERTY, state.getProperty(CONTRAST_PROPERTY), nullptr);
+    EXPECT_FALSE(access.settingsDirty());
+    for (int refresh = 0; refresh < 32; ++refresh) {
+        access.applySettings();
+    }
+    EXPECT_DOUBLE_EQ(access.workerSettings().contrast, -1.0);
+    EXPECT_FALSE(pre->isEnabled());
+    EXPECT_EQ(processor.getAnalyzerFifo().getEpoch(), epoch);
+    state.setProperty(CONTRAST_PROPERTY, 25.0, nullptr);
+    EXPECT_TRUE(access.settingsDirty());
+    access.applySettings();
+    EXPECT_DOUBLE_EQ(access.workerSettings().contrast, 0.25);
+    EXPECT_TRUE(pre->isEnabled());
+    EXPECT_FALSE(access.settingsDirty());
+    EXPECT_EQ(processor.getAnalyzerFifo().getEpoch(), epoch);
+}
+
+/// Every property used by the worker remains live, including after state recall and processor sample-rate changes.
+TEST(ImageControlEditorLifecycle, CachedViewSettingsFollowPropertiesRestoreAndSampleRate)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    access.applySettings();
+    juce::MemoryBlock original;
+    processor.getStateInformation(original);
+    auto& state = processor.getEditorState();
+    state.setProperty(PERSISTENCE_PROPERTY, 1.25, nullptr);
+    state.setProperty(CONTRAST_PROPERTY, 35.0, nullptr);
+    state.setProperty(PAN_MIDPOINT_PROPERTY, 15.0, nullptr);
+    state.setProperty(PAN_EDGE_PROPERTY, 40.0, nullptr);
+    state.setProperty(MEL_SCALE_PROPERTY, true, nullptr);
+    state.setProperty(PHASE_COLOURS_PROPERTY, true, nullptr);
+    access.applySettings();
+    const auto changed = access.workerSettings();
+    EXPECT_DOUBLE_EQ(changed.persistenceSeconds, 1.25);
+    EXPECT_DOUBLE_EQ(changed.contrast, 0.35);
+    EXPECT_EQ(changed.scale, FrequencyScale::mel);
+    EXPECT_EQ(changed.colours, SpectrogramColours::phase);
+    EXPECT_TRUE(changed.positionCurve == StereoPositionCurve(15.0, 40.0));
+    processor.setStateInformation(original.getData(), static_cast<int>(original.getSize()));
+    access.applySettings();
+    const auto restored = access.workerSettings();
+    EXPECT_DOUBLE_EQ(restored.persistenceSeconds, DEFAULT_PERSISTENCE_SECONDS);
+    EXPECT_DOUBLE_EQ(restored.contrast, DEFAULT_CONTRAST_PERCENT / MAX_CONTRAST_PERCENT);
+    EXPECT_EQ(restored.scale, FrequencyScale::logarithmic);
+    EXPECT_EQ(restored.colours, SpectrogramColours::frequency);
+    EXPECT_TRUE(restored.positionCurve == StereoPositionCurve {});
+    processor.setRateAndBufferSizeDetails(96'000.0, 256);
+    processor.prepareToPlay(96'000.0, 256);
+    access.applySettings();
+    EXPECT_DOUBLE_EQ(access.workerSettings().sampleRate, 96'000.0);
+    access.markWorkerCopy(-1.0);
+    access.applySettings();
+    EXPECT_DOUBLE_EQ(access.workerSettings().contrast, -1.0);
+    processor.releaseResources();
 }
 
 /// Host visibility updates the real worker without a VBlank or a GPU, retaining drain-only behavior while hidden.
@@ -787,5 +909,37 @@ TEST(ImageControlEditor, HiddenAndClosedMetersStopPublishingMeasurements)
     render();
     expectUnavailable();
     processor.releaseResources();
+}
+/// The benchmark drives real editor-state listeners without host restore or sound/analysis reset.
+TEST(ImageControlEditorBenchmark, LiveSweepUsesNormalStateListenersWithoutResettingAnalysis)
+{
+    ImageControlProcessor processor;
+    processor.prepareToPlay(48'000.0, 512);
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    const auto& state = processor.getEditorState();
+    const auto originalEpoch = processor.getAnalyzerFifo().getEpoch();
+    const auto originalSound = processor.getSoundSnapshot();
+    const auto report = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                            .getNonexistentChildFile("image-control-sweep", ".json");
+    RenderBenchmark benchmark(report, true);
+    benchmark.applySweepAt(state, originalEpoch, 0.0);
+    access.applySettings();
+    EXPECT_NEAR(static_cast<double>(state.getProperty(PERSISTENCE_PROPERTY)), 0.1, 1.0e-6);
+    EXPECT_NEAR(static_cast<double>(state.getProperty(CONTRAST_PROPERTY)), 10.0, 1.0e-6);
+    benchmark.applySweepAt(state, processor.getAnalyzerFifo().getEpoch(), 2.0);
+    access.applySettings();
+    EXPECT_NEAR(static_cast<double>(state.getProperty(PERSISTENCE_PROPERTY)), 2.5, 1.0e-6);
+    EXPECT_NEAR(static_cast<double>(state.getProperty(CONTRAST_PROPERTY)), 90.0, 1.0e-6);
+    benchmark.applySweepAt(state, processor.getAnalyzerFifo().getEpoch(), 4.0);
+    access.applySettings();
+    EXPECT_EQ(processor.getAnalyzerFifo().getEpoch(), originalEpoch);
+    EXPECT_EQ(processor.getSoundSnapshot(), originalSound);
+    ASSERT_TRUE(benchmark.flush());
+    const auto sweep = juce::JSON::parse(report.loadFileAsString()).getProperty("appearance_sweep", {});
+    EXPECT_EQ(static_cast<int>(sweep.getProperty("accepted_updates", 0)), 3);
+    EXPECT_EQ(static_cast<int>(sweep.getProperty("generation_changes", -1)), 0);
+    EXPECT_TRUE(report.deleteFile());
 }
 }  // namespace esgrove::image_control::test

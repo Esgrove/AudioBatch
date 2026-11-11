@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -293,6 +294,8 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     resized();
     // After the first size, so hiding the spectrogram can shrink the editor from it.
     // It also hands the worker its first settings before the worker starts.
+    observedEditorState = owner.getEditorState();
+    observedEditorState.addListener(this);
     applyViewSettings();
     spectrogramWorker.start();
 
@@ -312,6 +315,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
 /// then detaches the controls and the look and feel before the components go away.
 ImageControlEditor::~ImageControlEditor()
 {
+    observedEditorState.removeListener(this);
     setKeyboardRouting(false);
     settingsCallout.reset();
     settingsPanel.reset();
@@ -319,6 +323,10 @@ ImageControlEditor::~ImageControlEditor()
     outputSlider.endDrag();
     spectrogramWorker.stop();
     openGLContext.detach();
+    if (renderBenchmark != nullptr) {
+        const bool reportWritten = renderBenchmark->flush();
+        juce::ignoreUnused(reportWritten);
+    }
     bypassAttachment.reset();
     deltaAttachment.reset();
     outputAttachment.reset();
@@ -704,23 +712,16 @@ void ImageControlEditor::applyLayoutSettings()
     }
 }
 
-/// Applies the display settings and the bypass to the analysis worker, the spectrogram, and the band strips.
-/// The settings change through the settings panel or a restored state, so this runs on every refresh.
-/// Changing the tap, the colours, or the scale clears the particles, so the old view does not linger.
-void ImageControlEditor::applyViewSettings()
+/// Updates property-derived controls and analysis values only after a live settings edit or host layout restore.
+/// Runs on the message thread, preserving immediate setting actions and the worker's source-clear boundaries.
+void ImageControlEditor::applyChangedViewSettings(const juce::ValueTree& editorState)
 {
-    // Keep consuming preset completions and observing edits even while the second row is collapsed.
-    processingToolbar.refresh();
-    updateHistoryButtons();
     applyLayoutSettings();
-    updateDisplayDisclosures();
-    const auto& editorState = imageControlProcessor.getEditorState();
     const bool smoothCorrelationReadout
         = static_cast<bool>(editorState.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true));
     for (const auto& meter : correlationMeters) {
         meter->setSmoothedReadout(smoothCorrelationReadout);
     }
-    updateCorrelationMonitoring();
     const bool bypassRendering = booleanSetting(editorState, BYPASS_RENDERING_PROPERTY);
     if (shownRenderingBypassed != bypassRendering) {
         shownRenderingBypassed = bypassRendering;
@@ -760,15 +761,37 @@ void ImageControlEditor::applyViewSettings()
         shownPositionSettings = positionSettings;
         spectrogram.setPositionCurve(analysisSettings.positionCurve);
     }
-
-    const double sampleRate = imageControlProcessor.getSampleRate();
-    analysisSettings.sampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE;
     analysisSettings.persistenceSeconds = persistenceSeconds();
     analysisSettings.contrast
         = static_cast<double>(editorState.getProperty(CONTRAST_PROPERTY, DEFAULT_CONTRAST_PERCENT))
         / MAX_CONTRAST_PERCENT;
     analysisSettings.scale = scale;
     analysisSettings.colours = phaseColours ? SpectrogramColours::phase : SpectrogramColours::frequency;
+    analysisSettingsDirty = true;
+}
+
+/// Applies changed property-derived settings while keeping live host state and presentation polling at VBlank cadence.
+/// Changing the tap, colours, or scale clears particles.
+/// Host restore generation is checked even for unchanged properties.
+void ImageControlEditor::applyViewSettings()
+{
+    // Keep consuming preset completions and observing edits even while the second row is collapsed.
+    processingToolbar.refresh();
+    updateHistoryButtons();
+    // Flush any queued host restore before observing the dirty flag its live-tree callbacks update.
+    const auto& editorState = imageControlProcessor.getEditorState();
+    if (viewSettingsDirty || layoutGeneration != imageControlProcessor.getHistory().generation()) {
+        viewSettingsDirty = false;
+        applyChangedViewSettings(editorState);
+    }
+    updateDisplayDisclosures();
+    updateCorrelationMonitoring();
+    const double sampleRate = imageControlProcessor.getSampleRate();
+    const double effectiveSampleRate = sampleRate > 0.0 ? sampleRate : ANALYZER_DEFAULT_SAMPLE_RATE;
+    if (!juce::exactlyEqual(analysisSettings.sampleRate, effectiveSampleRate)) {
+        analysisSettings.sampleRate = effectiveSampleRate;
+        analysisSettingsDirty = true;
+    }
     updateSpectrogramMonitoring();
 
     if (booleanSetting(editorState, SHOW_FPS_PROPERTY)) {
@@ -814,6 +837,15 @@ void ImageControlEditor::updateDisplayDisclosures()
     }
 }
 
+/// Invalidates property-derived work on the message thread while the processor keeps the live tree identity stable.
+/// The callback only marks pending work, so state restore never applies a partially replaced property set.
+void ImageControlEditor::valueTreePropertyChanged(juce::ValueTree& tree, const juce::Identifier& /*property*/)
+{
+    if (tree == observedEditorState) {
+        viewSettingsDirty = true;
+    }
+}
+
 /// Leaves geometry to resized. The watcher is needed only for peer and ancestor visibility changes.
 void ImageControlEditor::componentMovedOrResized(bool /*wasMoved*/, bool /*wasResized*/) {}
 
@@ -840,7 +872,10 @@ void ImageControlEditor::updateSpectrogramMonitoring()
         && !booleanSetting(editorState, BYPASS_RENDERING_PROPERTY) && !spectrogramRenderer.isUnavailable();
     const bool changed = analysisSettings.analyze != analyze;
     analysisSettings.analyze = analyze;
-    spectrogramWorker.setSettings(analysisSettings);
+    if (analysisSettingsDirty || changed) {
+        spectrogramWorker.setSettings(analysisSettings);
+        analysisSettingsDirty = false;
+    }
     if (changed) {
         spectrogramWorker.wake();
     }
@@ -850,6 +885,10 @@ void ImageControlEditor::updateSpectrogramMonitoring()
 void ImageControlEditor::updateCorrelationMonitoring()
 {
     const bool enabled = correlationShown && isShowing();
+    if (correlationMonitoringEnabled == enabled) {
+        return;
+    }
+    correlationMonitoringEnabled = enabled;
     imageControlProcessor.setCorrelationEnabled(enabled);
     if (!enabled) {
         shownCorrelationGeneration.reset();
@@ -890,9 +929,16 @@ void ImageControlEditor::setAnalyzeOutput(const bool output)
 /// Also follows the crossovers.
 void ImageControlEditor::refreshDisplay(const double timestamp)
 {
+    const auto benchmarkStarted
+        = renderBenchmark != nullptr ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
     const double elapsed = lastRefreshTimestamp > 0.0 ? timestamp - lastRefreshTimestamp : 0.0;
     lastRefreshTimestamp = timestamp;
     measureFramesPerSecond(elapsed);
+    if (renderBenchmark != nullptr) {
+        renderBenchmark->applySweep(
+            imageControlProcessor.getEditorState(), imageControlProcessor.getAnalyzerFifo().getEpoch()
+        );
+    }
 
     applyViewSettings();
     if (correlationShown && isShowing()) {
@@ -904,7 +950,9 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
             shownCorrelationGeneration = snapshot.generation;
         }
         for (std::size_t band = 0; band < BAND_COUNT; ++band) {
-            correlationMeters.at(band)->setCorrelation(snapshot.readings.at(band), elapsed, persistenceSeconds());
+            correlationMeters.at(band)->setCorrelation(
+                snapshot.readings.at(band), elapsed, analysisSettings.persistenceSeconds
+            );
         }
     }
     spectrogramWorker.wake();
@@ -915,7 +963,10 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
         disclosure->advance(step);
     }
     spectrogramRenderer.submitFrame(
-        step, persistenceSeconds(), spectrogram.getPlotBounds() + spectrogram.getPosition().toFloat(), renderMode()
+        step,
+        analysisSettings.persistenceSeconds,
+        spectrogram.getPlotBounds() + spectrogram.getPosition().toFloat(),
+        renderMode()
     );
     openGLContext.triggerRepaint();
 
@@ -923,6 +974,11 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     if (!sameCrossovers(crossovers, displayedCrossovers)) {
         displayedCrossovers = crossovers;
         updateBandRanges();
+    }
+    if (renderBenchmark != nullptr) {
+        renderBenchmark->observe(
+            benchmarkStarted, spectrogramRenderer.renderedFrameCount(), getWidth(), getHeight(), isShowing()
+        );
     }
 }
 

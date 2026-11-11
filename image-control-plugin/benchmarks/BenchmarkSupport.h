@@ -55,6 +55,7 @@ struct Options {
     bool components {true};
     bool focused {false};
     bool processor {true};
+    bool refreshSettingsOnly {false};
     bool worker {true};
 };
 
@@ -97,6 +98,7 @@ void timeImager(
     const BandRecoveries& recoveries = RECOVERY_OFF
 );
 void timeImagerSetters(const Options& options);
+void timeEditorViewSettings(const Options& options);
 void timeSpectrogramAnalysis(const Options& options);
 void timeSpectrogramAnalyzerOnly(const Options& options);
 void timeSpectrogramParticlesOnly(const Options& options);

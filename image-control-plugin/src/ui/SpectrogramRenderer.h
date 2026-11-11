@@ -34,6 +34,14 @@ constexpr std::size_t SPECTROGRAM_BLOOM_LEVEL_COUNT {5};
 /// Most particles kept waiting for the OpenGL thread.
 /// Overflow drops the waiting batches, and an oversized batch retains only its newest particles.
 constexpr std::size_t SPECTROGRAM_MAX_PENDING_PARTICLES {1'000'000};
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
+/// Delayed query storage. The benchmark holds a bounded batch while the editor retains its short debug ring.
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+constexpr std::size_t SPECTROGRAM_TIMER_QUERY_COUNT {32};
+#else
+constexpr std::size_t SPECTROGRAM_TIMER_QUERY_COUNT {4};
+#endif
+#endif
 
 /// Cached locations for the particle program, valid only for that linked program and its context.
 struct SpectrogramParticleUniforms {
@@ -157,6 +165,21 @@ struct SpectrogramPendingWork {
     bool clear {false};
 };
 
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+/// Native device identity queried only while the benchmark's real context is current.
+struct SpectrogramBenchmarkDevice {
+    juce::String gpu;
+    juce::String vendor;
+    juce::String driver;
+};
+
+/// One asynchronously resolved elapsed-time query, indexed within the benchmark phase.
+struct SpectrogramBenchmarkGpuSample {
+    std::size_t frameIndex {0};
+    double milliseconds {0.0};
+};
+#endif
+
 /// Draws the spectrogram particles with OpenGL.
 ///
 /// Every frame it fades the accumulated picture by the time that passed.
@@ -183,6 +206,10 @@ public:
     SpectrogramRenderer& operator=(const SpectrogramRenderer&) = delete;
     SpectrogramRenderer& operator=(SpectrogramRenderer&&) = delete;
 
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+    [[nodiscard]] static SpectrogramBenchmarkDevice benchmarkDevice();
+#endif
+
     [[nodiscard]] std::optional<double> gpuFrameMilliseconds() const;
     [[nodiscard]] bool isUnavailable() const noexcept;
     [[nodiscard]] std::size_t pendingParticleCount();
@@ -196,6 +223,13 @@ public:
     );
     void submitParticles(std::span<const SpectrogramParticle> particles, bool clear);
 
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+    [[nodiscard]] std::vector<SpectrogramBenchmarkGpuSample> takeBenchmarkGpuSamples();
+    [[nodiscard]] bool drawBenchmarkFrame();
+    [[nodiscard]] bool finishBenchmarkBatch();
+    [[nodiscard]] bool prepareBenchmark(int physicalWidth, int physicalHeight, float scale, bool gpuTiming);
+#endif
+
     void newOpenGLContextCreated() override;
     void openGLContextClosing() override;
     void renderOpenGL() override;
@@ -205,9 +239,10 @@ private:
 
     [[nodiscard]] bool createPrograms();
     [[nodiscard]] bool resizeTargets(int width, int height);
+    [[nodiscard]] bool renderFrame(float scale, std::optional<juce::Rectangle<int>> physicalPlot);
 
     void drawBloom(bool solid);
-    void drawComposite(juce::Rectangle<int> plotViewport, float exposure, bool solid);
+    void drawComposite(juce::Rectangle<int> plotViewport, float exposure, bool solid, float scale);
     void drawParticles(float scale);
     void fade(double seconds, double persistenceSeconds);
     void measureGpuTimeBegin();
@@ -262,13 +297,29 @@ private:
     /// Density field of the solid layers, copied from one glow-chain level before adding its smaller levels.
     SpectrogramRenderTarget solidField;
 
-#if JUCE_DEBUG
-    /// GPU timer queries in flight, read a few frames later so reading them never stalls the pipeline.
-    std::array<GLuint, 4> timerQueries {};
+#if defined(JUCE_DEBUG) || defined(IMAGE_CONTROL_RENDER_BENCHMARK)
+    /// GPU timer queries in flight, read later only after availability is confirmed.
+    std::array<GLuint, SPECTROGRAM_TIMER_QUERY_COUNT> timerQueries {};
+    /// Whether each query still has an unread result.
+    std::array<bool, SPECTROGRAM_TIMER_QUERY_COUNT> pendingTimerQueries {};
     /// Next timer query to start.
     std::size_t nextTimerQuery {0};
-    /// Number of timer queries started, up to their count.
-    std::size_t startedTimerQueries {0};
+    /// Whether this frame successfully acquired a free timer query.
+    bool timerQueryActive {false};
+#endif
+#ifdef IMAGE_CONTROL_RENDER_BENCHMARK
+    /// Explicit offscreen composite target, owned and used only on the context's GL thread.
+    SpectrogramRenderTarget benchmarkOutput;
+    /// Completed query values, consumed after a bounded batch completes.
+    std::vector<SpectrogramBenchmarkGpuSample> benchmarkGpuSamples;
+    /// Original frame identity for each pending query.
+    std::array<std::size_t, SPECTROGRAM_TIMER_QUERY_COUNT> benchmarkQueryFrames {};
+    /// Frame index within the current benchmark phase.
+    std::size_t benchmarkFrameIndex {0};
+    /// Physical-to-logical scale independent of the native helper window's display.
+    float benchmarkScale {1.0F};
+    /// Release timing is opt-in for the isolated benchmark executable only.
+    bool benchmarkGpuTiming {false};
 #endif
 
     /// Number of frames drawn, for the frame rate readout.

@@ -34,6 +34,23 @@ constexpr int MAXIMUM_CALLBACKS {16'384};
 /// Back-to-back clock reads estimate measurement overhead separately from callback work.
 constexpr int CLOCK_OVERHEAD_SAMPLES {1024};
 
+/// Rejects unoptimized or non-native measurements before JUCE initialization or workload execution.
+void requireMeasurementBuild()
+{
+#if !IMAGE_CONTROL_BENCHMARK_OPTIMIZED_BUILD || defined(JUCE_DEBUG) || !defined(NDEBUG)
+    throw std::runtime_error(
+        "Measurements require an optimized Release build. Configure with -DCMAKE_BUILD_TYPE=Release and "
+        "-DAUDIOBATCH_NATIVE_CPU=ON, then build with --config Release. --help remains available in every build"
+    );
+#elif !IMAGE_CONTROL_BENCHMARK_NATIVE_CPU
+    throw std::runtime_error(
+        "Measurements require native CPU optimizations. Reconfigure a local Release build with "
+        "-DAUDIOBATCH_NATIVE_CPU=ON and rebuild. Native targeting is disabled in CI, for cross-compilation, "
+        "and for non-host or universal architectures. --help remains available"
+    );
+#endif
+}
+
 /// Prints reproducibility context without pretending runtime detection reveals all compiler/linker flags.
 void printIdentity(const Options& options)
 {
@@ -87,11 +104,12 @@ void printIdentity(const Options& options)
 #ifdef __FMA__
     fmt::print("compiled ISA: FMA\n");
 #endif
-#if JUCE_DEBUG || !defined(NDEBUG)
-    fmt::print("WARNING: assertions/Debug are enabled. Use an optimized Release build for performance evidence.\n");
-#else
-    fmt::print("NDEBUG=1. Verify CMAKE_BUILD_TYPE/configuration is Release. Non-Debug alone does not prove Release.\n");
-#endif
+    fmt::print(
+        "build_type={} optimized_build={} native_cpu_enabled={} NDEBUG=1\n",
+        IMAGE_CONTROL_BENCHMARK_BUILD_TYPE,
+        IMAGE_CONTROL_BENCHMARK_OPTIMIZED_BUILD != 0,
+        IMAGE_CONTROL_BENCHMARK_NATIVE_CPU != 0
+    );
     const auto executable = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
     fmt::print(
         "binary={} bytes={} modified={}\n",
@@ -191,6 +209,8 @@ Options parseOptions(const std::span<const std::string_view> arguments)
             options.label = value();
         } else if (argument == "--focused") {
             options.focused = true;
+        } else if (argument == "--refresh-settings-only") {
+            options.refreshSettingsOnly = true;
         } else if (argument == "--no-worker") {
             options.worker = false;
         } else if (argument == "--processor-only") {
@@ -215,6 +235,7 @@ void printHelp()
     fmt::print(
         R"(Usage: ImageControlBenchmark [--quick] [--callbacks N] [--repetitions N] [--label TEXT]
                              [--processor-only | --components-only] [--no-worker] [--focused]
+                             [--refresh-settings-only]
   --quick            Shorter runs, retaining the selected coverage (not stable tail evidence)
   --focused          Only small steady solo/delta callbacks and spectrogram component probes
   --callbacks N      Measured callbacks per steady repetition, 32..16384 (default 512, quick 128)
@@ -223,7 +244,10 @@ void printHelp()
   --processor-only  Skip isolated component probes
   --components-only Skip callback probes and paced automation
   --no-worker       Skip concurrent analysis rows, retaining the always-drained FIFO reference
-Use Release. Keep hardware, background load, compiler flags, and hardening identical across comparisons.)"
+  --refresh-settings-only
+                    Only peerless editor settings refresh, with the worker stopped
+Measurements require Release with -DAUDIOBATCH_NATIVE_CPU=ON. CI builds support --help only.
+Keep hardware, background load, compiler flags, and hardening identical across comparisons.)"
         "\n"
     );
 }
@@ -243,9 +267,14 @@ int main(const int argc, char* argv[])
             return 0;
         }
         const auto options = esgrove::image_control::benchmark::parseOptions(arguments);
+        esgrove::image_control::benchmark::requireMeasurementBuild();
         const juce::ScopedJuceInitialiser_GUI juce;
         const auto start = esgrove::image_control::benchmark::Clock::now();
         esgrove::image_control::benchmark::printIdentity(options);
+        if (options.refreshSettingsOnly) {
+            esgrove::image_control::benchmark::timeEditorViewSettings(options);
+            return 0;
+        }
         if (options.processor) {
             if (!options.focused) {
                 esgrove::image_control::benchmark::timeProcessorMatrix(options);

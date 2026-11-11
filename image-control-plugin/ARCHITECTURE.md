@@ -489,8 +489,10 @@ The resulting relative display is not an absolute output-level meter.
 ### Message-thread refresh and overlays
 
 `ImageControlEditor` uses `juce::VBlankAttachment` rather than an always-running GL repaint loop.
-Every refresh applies display settings, wakes analysis, advances hover/tooltip animations,
+Every refresh applies changed display settings, wakes analysis, advances hover/tooltip animations,
 updates correlation components, submits plot geometry and elapsed fade time, and requests a GL frame.
+Message-thread ValueTree notifications mark property-derived settings dirty.
+Unchanged frames reuse their derived controls and worker settings, while visibility, bypass, and diagnostics remain live.
 Effective analysis enablement also follows host/ancestor visibility and renderer availability.
 Hidden or unavailable displays keep draining the audio queue without FFT or particle work.
 Unchanged position-curve settings reuse their derived coefficients.
@@ -529,7 +531,9 @@ using the same sliders and attachments.
 Its persisted `compactBandControls` choice defaults to false, leaving legacy projects in the full view.
 Compacting retains the window dimensions and saved full-strip height, releasing the remaining space to the spectrogram.
 A single 28-pixel row uses value suffixes and directional pan text, without band headings.
+Its values and inline editors use embedded Roboto Mono SemiBold, with measured widths for complete signed values.
 Wider columns use full inline control names based on measured text widths, never a separate label row.
+The brand title uses embedded Roboto SemiBold rather than synthetic font weight.
 With the spectrogram hidden, the fixed-height editor instead follows the compact value row.
 A/B and preset controls reuse the same live toolbar when the header's controls and minimum preset width fit.
 The dedicated second row closes automatically while inline and returns only when its saved visibility preference is on.
