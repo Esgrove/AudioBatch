@@ -66,6 +66,7 @@ permissions:
 
 env:
   CLICOLOR_FORCE: "1"
+  RUSTFLAGS: ""
 
 defaults:
   run:
@@ -133,6 +134,155 @@ jobs:
           name: ImageControl-tests-${{ runner.os }}-${{ matrix.build-type }}
           path: image-control-plugin/cmake-build-*/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
+
+  rust-contracts:
+    name: Rust and cross-implementation contracts (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [macos-latest, windows-2025-vs2026]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: image-control-plugin/rust
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Install Ninja
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> rust/target"
+
+      - name: Check Rust formatting and lints
+        run: |
+          ./format.sh --check
+          ./lint.sh --check
+          cargo check -p image-control-plugin-rs --no-default-features
+          cargo test -p image-control-plugin-rs --no-default-features --lib
+
+      - name: Check parity and benchmark runner contracts
+        if: runner.os == 'macOS'
+        working-directory: .
+        run: |
+          uv run --script image-control-plugin/tests/test_parity_runner.py
+          uv run --script image-control-plugin/rust/tests/test_benchmark_script.py
+          uv run --script image-control-plugin/rust/tests/test_install_script.py
+
+      - name: Build and test Debug Rust VST3
+        run: |
+          ./build.sh --debug --test --validate
+          ./test.sh
+
+      - name: Build and test Release Rust VST3
+        run: |
+          ./build.sh --test --validate
+          ./test.sh
+          if [ "$RUNNER_OS" = macOS ]; then
+            cargo run -p image-control-plugin-rs --example editor_reentry -- --bundle \
+              "$(git rev-parse --show-toplevel)/rust/target/bundled/ImageControl RS.vst3"
+          fi
+
+      - name: Build C++ VST3 and parity host
+        working-directory: image-control-plugin
+        run: |
+          ./build.sh --test --build-type Release
+          cmake --build cmake-build-release --config Release --target ImageControlParity
+
+      - name: Compare both packaged implementations
+        run: |
+          repository="$(git rev-parse --show-toplevel)"
+          parity="$repository/image-control-plugin/cmake-build-release/ImageControlParity_artefacts/Release/ImageControlParity"
+          if [ "$RUNNER_OS" = Windows ]; then
+            parity="$parity.exe"
+          fi
+          ./parity.sh \
+            --cpp "$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3" \
+            --executable "$parity"
+
+      - name: Compile Criterion benchmarks
+        run: cargo bench -p image-control-dsp --no-run
+
+      - name: Upload cross-implementation diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-control-parity-${{ runner.os }}
+          path: rust/target/image-control-parity
+          if-no-files-found: ignore
+
+  rust-miri:
+    name: Rust scalar and admission Miri
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: image-control-plugin/rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri,rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> rust/target"
+          key: image-control-miri
+      - run: ./test.sh --miri
+
+  rust-realtime:
+    name: Rust packaged RealtimeSanitizer
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: image-control-plugin/rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install matching native audit prerequisites
+        run: brew install llvm jq ripgrep
+      - name: Build and require clean packaged callbacks
+        run: ./rtsan.sh
+      - name: Upload sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-control-rust-realtime
+          path: image-control-plugin/rust/target/rtsan-own/artifacts
+          if-no-files-found: error
+
+  rust-licenses:
+    name: Rust dependency license audit
+    runs-on: macos-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: image-control-plugin/rust
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: ./test.sh --licenses
 
   lint:
     runs-on: macos-latest
