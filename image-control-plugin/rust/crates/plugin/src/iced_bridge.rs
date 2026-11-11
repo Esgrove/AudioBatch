@@ -247,6 +247,17 @@ impl Editor {
         Ok(())
     }
 
+    /// Changes native visibility outside active Iced callbacks, retaining the child and its owned resources.
+    /// Hidden baseview windows pause rendering and do not require editor reconstruction on show.
+    ///
+    /// # Errors
+    /// Rejects the wrong UI thread, a closed child, or a failed native visibility operation.
+    pub fn set_visible(&self, visible: bool) -> Result<(), EditorError> {
+        // Keep baseview storage alive through visibility callbacks. Its macOS embedded hide is a no-op.
+        let _window = self.window()?;
+        self.child.set_visible(visible)
+    }
+
     /// Checks owner-thread and lifecycle preconditions before touching the native window.
     fn window(&self) -> Result<Rc<Window>, EditorError> {
         if self.owner_thread != std::thread::current().id() {
@@ -315,6 +326,10 @@ impl EditorBinding for LogicalBinding {
 
     fn set_value(&self, id: u32, normalized: f64) {
         self.native.set_value(id, normalized);
+    }
+
+    fn publish_value(&self, parameters: &Parameters, id: u32, normalized: f64) -> bool {
+        self.native.publish_value(parameters, id, normalized)
     }
 
     fn end_edit(&self, id: u32) {

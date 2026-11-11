@@ -151,6 +151,15 @@ pub trait EditorBinding {
     fn begin_edit(&self, id: u32);
     /// Writes one finite normalized value and reports the edit to the host.
     fn set_value(&self, id: u32, normalized: f64);
+    /// Admits transport before authoritative publication.
+    /// Queue-backed adapters may reject overload without changing sound.
+    fn publish_value(&self, parameters: &Parameters, id: u32, normalized: f64) -> bool {
+        if !parameters.set(id, normalized) {
+            return false;
+        }
+        self.set_value(id, normalized);
+        true
+    }
     /// Ends the matching gesture, including interrupted editor teardown.
     fn end_edit(&self, id: u32);
     /// Marks a changed persisted non-sound preference on the UI thread, without a sound gesture.

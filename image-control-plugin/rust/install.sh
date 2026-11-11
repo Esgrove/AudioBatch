@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installs only the independently named Rust effect, never replacing the C++ ImageControl plugin.
+# Installs only independently named Rust formats, never replacing the C++ ImageControl plugins.
 set -eo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -8,13 +8,12 @@ source "$SCRIPT_DIR/common.sh"
 
 USAGE="Usage: $0 [OPTIONS]
 
-Build and install ImageControl RS as a VST3 for use in a real plugin host.
-Release is the default. This is the Rust own-wrapper Iced/wgpu implementation, not the C++ ImageControl plugin.
-No Audio Unit is installed. Close hosts using this Rust plugin before replacing an installed build.
+Build and install ImageControl RS VST3 and CLAP, plus Audio Unit on macOS.
+Release is the default. Close hosts using this Rust plugin before replacing an installed build.
 
 Default installation folders:
-    macOS:   ~/Library/Audio/Plug-Ins/VST3
-    Windows: %LOCALAPPDATA%/Programs/Common/VST3 (per-user, no elevation)
+    macOS:   ~/Library/Audio/Plug-Ins/{VST3,CLAP,Components}
+    Windows: %LOCALAPPDATA%/Programs/Common/{VST3,CLAP} (per-user, no elevation)
 
 OPTIONS:
     -h | --help
@@ -24,21 +23,26 @@ OPTIONS:
         Build and install Debug instead of Release.
 
     -N | --no-build
-        Install the existing primary bundle without rebuilding.
+        Install existing packaged formats without rebuilding.
 
     -D | --destination <dir>
         Install into this VST3 directory instead of the default.
 
+    -C | --clap-destination <dir>
+        Install into this CLAP directory instead of the default.
+
+    -U | --au-destination <dir>
+        Install into this Audio Unit directory instead of the default (macOS only).
+
     -V | --validate
-        Validate the installed VST3 with pluginval at strictness 5.
+        Validate the installed VST3, the byte-identical build-tree CLAP, and on macOS the registered AU with strict auval.
 
     -L | --validation-level <5-10>
         Set pluginval strictness and enable installed validation.
 
-The built bundle is under repository-root rust/target/bundled/ unless CARGO_TARGET_DIR is supplied.
-The installed plugin is named ImageControl RS. Rescan VST3 plugins in the host after installation.
-Local macOS builds use ad-hoc signing, not Developer ID notarization.
-The own VST3 wrapper is checked separately from the abandoned Nice experiment. See docs/rust-evaluation.md.
+Built formats are under repository-root rust/target/bundled/ unless CARGO_TARGET_DIR is supplied.
+The installed plugins are named ImageControl RS, separate from C++ ImageControl.
+macOS installation restarts the Audio Unit registry. Local builds are ad-hoc signed, not Developer ID notarized.
 "
 parse_arguments() {
     BUILD_OPTIONS=()
@@ -46,6 +50,8 @@ parse_arguments() {
     VALIDATE=false
     VALIDATION_LEVEL=5
     DESTINATION=
+    CLAP_DESTINATION=
+    AU_DESTINATION=
     while [ $# -gt 0 ]; do
         case "$1" in
             -h | --help)
@@ -55,9 +61,13 @@ parse_arguments() {
             -d | --debug) BUILD_OPTIONS+=(--debug) ;;
             -N | --no-build) NO_BUILD=true ;;
             -V | --validate) VALIDATE=true ;;
-            -D | --destination)
-                [ $# -ge 2 ] && [ -n "$2" ] || print_error_and_exit "--destination requires a directory. See --help."
-                DESTINATION="$2"
+            -D | --destination | -C | --clap-destination | -U | --au-destination)
+                [ $# -ge 2 ] && [ -n "$2" ] || print_error_and_exit "$1 requires a directory. See --help."
+                case "$1" in
+                    -D | --destination) DESTINATION="$2" ;;
+                    -C | --clap-destination) CLAP_DESTINATION="$2" ;;
+                    -U | --au-destination) AU_DESTINATION="$2" ;;
+                esac
                 shift
                 ;;
             -L | --validation-level)
@@ -73,85 +83,180 @@ parse_arguments() {
     done
 }
 
-resolve_destination() {
+resolve_destinations() {
     case "$BASH_PLATFORM" in
-        mac) DESTINATION="${DESTINATION:-$HOME/Library/Audio/Plug-Ins/VST3}" ;;
+        mac)
+            DESTINATION="${DESTINATION:-$HOME/Library/Audio/Plug-Ins/VST3}"
+            CLAP_DESTINATION="${CLAP_DESTINATION:-$HOME/Library/Audio/Plug-Ins/CLAP}"
+            AU_DESTINATION="${AU_DESTINATION:-$HOME/Library/Audio/Plug-Ins/Components}"
+            ;;
         windows)
-            if [ -z "$DESTINATION" ]; then
-                [ -n "${LOCALAPPDATA:-}" ] || print_error_and_exit "LOCALAPPDATA is unset. Supply --destination."
+            [ -z "$AU_DESTINATION" ] || print_error_and_exit "--au-destination is supported only on macOS."
+            if [ -z "$DESTINATION" ] || [ -z "$CLAP_DESTINATION" ]; then
+                [ -n "${LOCALAPPDATA:-}" ] || print_error_and_exit "LOCALAPPDATA is unset. Supply --destination and --clap-destination."
                 require_command cygpath
-                DESTINATION="$(cygpath -u "$LOCALAPPDATA")/Programs/Common/VST3"
+                local common
+                common="$(cygpath -u "$LOCALAPPDATA")/Programs/Common"
+                DESTINATION="${DESTINATION:-$common/VST3}"
+                CLAP_DESTINATION="${CLAP_DESTINATION:-$common/CLAP}"
             fi
             ;;
         *) print_error_and_exit "Rust ImageControl installation supports macOS and Windows." ;;
     esac
+    SOURCES=("$BUNDLE" "$CLAP_BUNDLE")
+    INSTALLED=("$DESTINATION/ImageControl RS.vst3" "$CLAP_DESTINATION/ImageControl RS.clap")
+    if [ "$BASH_PLATFORM" = mac ]; then
+        SOURCES+=("$AU_BUNDLE")
+        INSTALLED+=("$AU_DESTINATION/ImageControl RS.component")
+    fi
 }
 
-prepare_bundle() {
+prepare_bundles() {
     if [ "$NO_BUILD" = false ]; then
         "$SCRIPT_DIR/build.sh" "${BUILD_OPTIONS[@]}"
     fi
-    [ -d "$BUNDLE/Contents" ] || print_error_and_exit "Built VST3 bundle is missing: $BUNDLE. Run build.sh first."
-    if [ "$BASH_PLATFORM" = mac ]; then
-        require_command codesign
-        codesign --verify --strict "$BUNDLE"
-    fi
-}
-
-# Preserves an old bundle if publication or rollback fails. Never removes the only recoverable copy.
-cleanup_installation() {
-    if [ -d "$STAGING/previous.vst3" ]; then
-        print_error "Previous plugin retained for recovery: $STAGING/previous.vst3"
-    else
-        rm -rf "$STAGING"
-    fi
-}
-
-stage_bundle() {
-    mkdir -p "$DESTINATION"
-    DESTINATION=$(cd "$DESTINATION" && pwd)
-    INSTALLED="$DESTINATION/ImageControl RS.vst3"
-    [ ! -L "$INSTALLED" ] || print_error_and_exit "Refusing to replace a symbolic link: $INSTALLED"
-    [ ! -e "$INSTALLED" ] || [ -d "$INSTALLED" ] || print_error_and_exit "Installed VST3 path is not a bundle directory: $INSTALLED"
-    # EXIT runs after the workflow returns, so its cleanup path must remain in script scope.
-    STAGING=$(mktemp -d "$DESTINATION/.imagecontrol-rs-install.XXXXXX")
-    trap cleanup_installation EXIT
-    cp -R "$BUNDLE" "$STAGING/ImageControl RS.vst3"
-    if [ "$BASH_PLATFORM" = mac ]; then
-        codesign --verify --strict "$STAGING/ImageControl RS.vst3"
-    fi
-}
-
-publish_bundle() {
-    if [ -d "$INSTALLED" ]; then
-        mv "$INSTALLED" "$STAGING/previous.vst3"
-    fi
-    if ! mv "$STAGING/ImageControl RS.vst3" "$INSTALLED"; then
-        if [ -d "$STAGING/previous.vst3" ]; then
-            mv "$STAGING/previous.vst3" "$INSTALLED" || print_error "Rollback failed. The previous plugin remains in $STAGING."
+    image_control_check_bundles "$BUNDLE" "$CLAP_BUNDLE" "$AU_BUNDLE"
+    local index source installed
+    for ((index = 0; index < ${#SOURCES[@]}; index++)); do
+        source="${SOURCES[index]}"
+        installed="${INSTALLED[index]}"
+        [ ! -L "$installed" ] || print_error_and_exit "Refusing to replace a symbolic link: $installed"
+        if [ -e "$installed" ]; then
+            if [ -d "$source" ]; then
+                [ -d "$installed" ] || print_error_and_exit "Installed path is not a bundle directory: $installed"
+            else
+                [ -f "$installed" ] || print_error_and_exit "Installed path is not a plugin file: $installed"
+            fi
         fi
-        print_error_and_exit "Could not publish the installed plugin. Close the host and try again."
-    fi
-    if [ -d "$STAGING/previous.vst3" ]; then
-        rm -rf "$STAGING/previous.vst3"
-    fi
-    print_green "Installed: $INSTALLED"
+        if [ "$BASH_PLATFORM" = mac ]; then
+            require_command codesign
+            codesign --verify --deep --strict "$source"
+        fi
+    done
+}
+
+# Restores every published format on failure and retains the only previous copy if recovery is blocked.
+cleanup_installation() {
+    local status=$? index staging backup installed retain
+    trap - EXIT
+    for ((index = ${#STAGING[@]} - 1; index >= 0; index--)); do
+        staging="${STAGING[index]}"
+        [ -n "$staging" ] || continue
+        backup="$staging/previous.${SOURCES[index]##*.}"
+        installed="${INSTALLED[index]}"
+        retain=false
+        if [ "$COMMITTED" = false ]; then
+            if [ "${PUBLISHED[index]:-false}" = true ]; then
+                if ! rm -rf "$installed"; then
+                    print_error "Could not remove incomplete installation: $installed"
+                    retain=true
+                fi
+            fi
+            if [ -e "$backup" ]; then
+                if [ "$retain" = true ] || ! mv "$backup" "$installed"; then
+                    print_error "Previous plugin retained for recovery: $backup"
+                    retain=true
+                fi
+            fi
+        fi
+        if [ "$retain" = false ]; then
+            rm -rf "$staging" || status=1
+        else
+            status=1
+        fi
+    done
+    exit "$status"
+}
+
+# Stages and verifies every format before moving any installed plugin, including Windows single-file CLAP.
+stage_bundles() {
+    local index source directory staged
+    STAGING=()
+    PUBLISHED=()
+    COMMITTED=false
+    trap cleanup_installation EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    for ((index = 0; index < ${#SOURCES[@]}; index++)); do
+        source="${SOURCES[index]}"
+        directory="${INSTALLED[index]%/*}"
+        mkdir -p "$directory"
+        directory=$(cd "$directory" && pwd)
+        INSTALLED[index]="$directory/${source##*/}"
+        STAGING[index]=$(mktemp -d "$directory/.imagecontrol-rs-install.XXXXXX")
+        staged="${STAGING[index]}/${source##*/}"
+        cp -R "$source" "$staged"
+        diff -r "$source" "$staged"
+        if [ "$BASH_PLATFORM" = mac ]; then
+            codesign --verify --deep --strict "$staged"
+        fi
+    done
+}
+
+publish_bundles() {
+    local index source staging installed
+    for ((index = 0; index < ${#SOURCES[@]}; index++)); do
+        source="${SOURCES[index]}"
+        staging="${STAGING[index]}"
+        installed="${INSTALLED[index]}"
+        if [ -e "$installed" ]; then
+            mv "$installed" "$staging/previous.${source##*.}"
+        fi
+        PUBLISHED[index]=true
+        mv "$staging/${source##*/}" "$installed"
+        diff -r "$source" "$installed"
+        if [ "$BASH_PLATFORM" = mac ]; then
+            codesign --verify --deep --strict "$installed"
+        fi
+    done
+    COMMITTED=true
+    for installed in "${INSTALLED[@]}"; do
+        print_green "Installed: $installed"
+    done
+}
+
+# Polls only the Rust component identity after publication, then requires Apple's strict validation.
+validate_audio_unit() {
+    require_command auval
+    local attempt listing line registered=false
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        if listing=$(auval -a); then
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^[[:space:]]*aufx[[:space:]]+Egir[[:space:]]+Esgr([[:space:]]|$) ]]; then
+                    registered=true
+                    break
+                fi
+            done <<< "$listing"
+        fi
+        [ "$registered" = false ] || break
+        [ "$attempt" -eq 29 ] || sleep 1
+    done
+    [ "$registered" = true ] || print_error_and_exit "The Audio Unit did not register: aufx Egir Esgr"
+    auval -strict -v aufx Egir Esgr
 }
 
 install_plugin() {
     parse_arguments "$@"
     image_control_resolve_target_directory
-    local INSTALLED
-    local TARGET_DIRECTORY="${CARGO_TARGET_DIR:-$REPO_ROOT/rust/target}"
-    local BUNDLE="$TARGET_DIRECTORY/bundled/ImageControl RS.vst3"
-    resolve_destination
-    prepare_bundle
-    stage_bundle
-    publish_bundle
-    if [ "$VALIDATE" = true ]; then
-        plugin_validate_vst3 "$INSTALLED" "$VALIDATION_LEVEL"
+    local BUNDLE="$CARGO_TARGET_DIR/bundled/ImageControl RS.vst3"
+    local CLAP_BUNDLE="$CARGO_TARGET_DIR/bundled/ImageControl RS.clap"
+    local AU_BUNDLE="$CARGO_TARGET_DIR/bundled/ImageControl RS.component"
+    resolve_destinations
+    prepare_bundles
+    stage_bundles
+    publish_bundles
+    if [ "$BASH_PLATFORM" = mac ]; then
+        killall -q AudioComponentRegistrar || true
     fi
-    print_green "Rescan VST3 plugins in your host and select ImageControl RS."
+    if [ "$VALIDATE" = true ]; then
+        plugin_validate_vst3 "${INSTALLED[0]}" "$VALIDATION_LEVEL"
+        # The direct host authorizes build artifacts only. Publication verifies the installed CLAP is byte-identical.
+        image_control_validate_clap "$CLAP_BUNDLE"
+        if [ "$BASH_PLATFORM" = mac ]; then
+            validate_audio_unit
+        fi
+    fi
+    print_green "Rescan plugins in your host and select ImageControl RS."
 }
 
 install_plugin "$@"

@@ -8,15 +8,17 @@ No framework, graphics backend, or permissive license by itself establishes prod
 
 ## Recommendation
 
-- The primary experiment uses **our narrow VST3 layer** on `vst3 0.3.0`,
+- The primary experiment uses **our narrow VST3 layer** on `vst3 0.3.0` and a Clack `0.2.0` CLAP adapter,
   with direct `iced_baseview 0.6.0` native attachment and Iced's wgpu renderer.
+  macOS AUv2 delivery uses a separately identified, self-contained upstream clap-wrapper shell.
+  The own-wrapper VST3 remains unchanged in identity and does not run through CLAP.
   Its name is **ImageControl RS**, with its own class and bundle identities.
   Iced keeps application/widget state and routes messages. It is not egui's immediate-mode control model.
   **egui is excluded from the implementation choice**, as requested.
 - The GPU spectrogram uses custom wgpu shader primitives for instanced particles, half-float persistence,
   bloom, and composition. The selected Iced graph has no `iced_tiny_skia` software backend and no egui dependency.
   macOS selects Metal, while native Windows graphics remain unverified.
-- The own VST3/Iced/wgpu implementation is the single Rust plugin path.
+- The own VST3 and Clack CLAP adapters share one Rust DSP/state/Iced/wgpu implementation.
   The raw VST3/patched-GPUI reference, its vendor patches, and its separate workspace have been removed.
   The primary artifact links no nice-plug, nice-plug-iced, or patched GPUI crate.
   No C++ plugin is replaced, and the Rust plugin does not claim JUCE state compatibility.
@@ -518,23 +520,72 @@ The spike is valuable precisely because it can reject an unsuitable embedding pa
 
 ## Current four-band implementation and Iced frontend
 
-The primary crate is [`image-control-plugin-rs`](../crates/plugin/src/lib.rs), using our own VST3 layer and Iced.
+The primary crate is [`image-control-plugin-rs`](../crates/plugin/src/lib.rs), using our own VST3 layer,
+Clack CLAP, and one shared Iced editor.
 The DSP, plugin frontend, and bundler are members of the [repository-root Cargo workspace](../../../Cargo.toml).
 They reuse shared dependency versions, lints, formatting, and the root lockfile.
 Iced/baseview and the independent bundler remain plugin-local dependencies in their own package manifests.
 Nice-plug and its adapter/bundler are absent from the root lockfile and primary dependency graph.
 `./build.sh --debug --validate` bundles **ImageControl RS** through a small framework-independent packaging task.
-The output is repository-root `rust/target/bundled/ImageControl RS.vst3`. The single Rust build is VST3 only.
-For a real host, run `./install.sh` from `image-control-plugin/rust/` to build Release and install its VST3.
+Outputs are repository-root `rust/target/bundled/ImageControl RS.vst3` and `ImageControl RS.clap`,
+plus `ImageControl RS.component` on macOS.
+The AU statically links the same CLAP implementation, not an installed CLAP dependency.
+For a real host, run `./install.sh` from `image-control-plugin/rust/` to build Release and install the native formats.
 On macOS it uses `~/Library/Audio/Plug-Ins/VST3`, without replacing the C++ `ImageControl.vst3`.
 Select `--no-build` for the current build, `--debug` for Debug, `--destination <dir>` for a custom host folder,
 and `--validate` for installed pluginval validation. Every script supports `-h` and `--help`.
-The installer supplies a per-user Windows destination and does not install an Audio Unit.
+The installer supplies per-user VST3 and CLAP destinations on both platforms and a macOS Audio Unit destination.
+`--clap-destination` and `--au-destination` select their own folders without changing `--destination`'s VST3 meaning.
 Close hosts using the Rust plugin before replacing it, then rescan and select **ImageControl RS**.
 It uses a new class ID and bundle identifier `com.esgrove.imagecontrol-rs-own`.
 Previous Nice projects are not migrated automatically,
 and its installer does not replace `ImageControl RS Nice.vst3`.
 No dependencies or GUI code are imported from AudioBatch's application services into the plugin.
+
+### CLAP and AU delivery boundaries
+
+The Clack adapter reuses the authoritative 31-parameter registry, format-independent instance ownership,
+detached versioned JSON state, DSP, analysis, and native Iced/wgpu bridge.
+CLAP descriptor ID is `com.esgrove.imagecontrol-rs-own`.
+CLAP uses plain-unit values with explicit normalized conversion, preserving block-sampled automation.
+The AU retains numeric parameter addresses and has independent `aufx / Egir / Esgr` registration,
+not C++ `aufx / Egic / Esgr` or its XML state.
+
+The AU integration pins upstream clap-wrapper commit `ddba261acdb421e9963959aa970a10876515aa6a`,
+CLAP SDK commit `195b42a004144fab0b3cf95e9c067187d15365b7`,
+and AudioUnitSDK commit `53a9a2008aae7fb1b0a9f093dd523b9b12f6c0d9`.
+The wrapper pin contains post-v0.17.0 reset forwarding and main-thread native editor teardown fixes.
+There are no local third-party source patches.
+The exact-artifact native host avoids installation and registration.
+Installed strict auval is a separately authorized installer/CI action, not an ordinary build-tree test.
+
+AU support is experimental and carries independent qualification gates.
+The inspected AUv2 wrapper does not establish forwarding of host offline mode to `clap.render`,
+so synchronous deterministic crossover replacement is not assumed for AU offline bounces.
+State initialization order and return-value propagation also need independent AU diagnostics.
+The wrapper uses render try-admission, spin-waiting parameter ingress,
+and bounded preallocated queues with finite capacities.
+Render admission failure can output silence.
+A clean RTSan run would not prove bounded spin waiting or dropout-free contention.
+These dependency limitations must remain explicit instead of borrowing the own-wrapper VST3's clean-callback evidence.
+Windows CLAP does not advertise the custom Iced GUI.
+Its void destroy callback cannot reject a reentrant Win32 teardown until a later UI turn as VST3 removal does.
+Processing, state, automation, and host-provided parameter controls remain available.
+Safe synchronous custom-editor destruction and native Windows runtime validation remain gates.
+The existing upstream widget-cache,
+renderer recovery, accessibility, and module-unload limitations apply to every editor format.
+Native packaged CLAP parameter/state/layout/neutral/reset contracts pass on arm64 macOS.
+`./rtsan.sh --format clap` verifies separate positive allocation and mutex controls,
+then requires clean cold automation, reset, and concurrent state callbacks on fresh processing threads.
+The own-wrapper VST3 callback audit also remains clean after shared-instance extraction.
+These exercised scenarios do not establish every callback, audio deadlines, or arbitrary host compatibility.
+AU runtime diagnostics confirm initialized-state/neutral/reset contracts but retain the dependency blockers above.
+With Rust and the native wrapper instrumented, the fresh-thread AU render reports `malloc`.
+The allocation comes from clap-wrapper's `Clap::Plugin::AlwaysAudioThread` lazy thread-local setup.
+The actual AU reset boundary reports `pthread_mutex_lock` in Apple's SDK `AUEntryGuard` dispatch.
+`./rtsan.sh --format au` fails these required-clean cases.
+`./rtsan.sh --format au --diagnostic` verifies the exact call/stack pairs as **BLOCKED**, not clean callbacks.
+No dependency source or sanitizer suppression changes hide either finding.
 
 ### Implemented band behavior
 

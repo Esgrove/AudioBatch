@@ -88,6 +88,33 @@ impl ChildrenBefore {
 }
 
 impl ChildLease {
+    /// Changes only the captured child view's visibility on its owning native UI thread.
+    /// The parent and retained baseview window remain unchanged, and native callbacks may reenter the binding.
+    #[expect(
+        unsafe_code,
+        reason = "changes visibility of the validated retained native child only"
+    )]
+    pub(super) fn set_visible(&self, visible: bool) -> Result<(), EditorError> {
+        if self.owner_thread != std::thread::current().id() {
+            return Err(EditorError::WrongThread);
+        }
+        if self.detached.get() {
+            return Err(EditorError::Closed);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: The retained object is the validated NSView on its native UI thread.
+            let (): () = unsafe { objc2::msg_send![&*self.child, setHidden: !visible] };
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNA, ShowWindow};
+            // SAFETY: The baseview owner retains this child HWND on its UI thread until editor close.
+            unsafe { ShowWindow(self.child, if visible { SW_SHOWNA } else { SW_HIDE }) };
+        }
+        Ok(())
+    }
+
     /// Synchronously removes this editor child from its host, once, on its owning UI thread.
     /// The lease and baseview window must both remain alive through any reentrant native callbacks.
     /// This does not destroy an active native handler or consume a borrowed baseview window.

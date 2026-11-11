@@ -61,12 +61,29 @@ format_prose() {
     fi
 }
 
+# Checks only first-party AU sources, never fetched wrapper or SDK files.
+format_audio_unit_sources() {
+    local arguments=()
+    if [ "$CHECK" = true ]; then arguments=(--dry-run --Werror); else arguments=(-i); fi
+    if command -v clang-format > /dev/null 2>&1; then
+        clang-format "${arguments[@]}" --style=file au/tests/*.mm
+    fi
+    if command -v cmake-format > /dev/null 2>&1; then
+        if [ "$CHECK" = true ]; then
+            cmake-format --check au/CMakeLists.txt au/realtime.cmake
+        else
+            cmake-format --in-place au/CMakeLists.txt au/realtime.cmake
+        fi
+    fi
+}
+
 format_plugin() {
     parse_arguments "$@"
     cd "$SCRIPT_DIR"
     local PACKAGES=(-p image-control-dsp -p image-control-plugin-rs -p image-control-xtask)
     format_rust
     format_shell_scripts
+    format_audio_unit_sources
     format_prose
 }
 

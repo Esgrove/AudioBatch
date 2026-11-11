@@ -1,6 +1,7 @@
 # ImageControl RS architecture
 
-ImageControl RS is a Rust VST3 effect with framework-independent DSP and an embedded Iced/wgpu editor.
+ImageControl RS is a Rust VST3 and CLAP effect with framework-independent DSP and an embedded Iced/wgpu editor.
+On macOS, a pinned upstream clap-wrapper AUv2 shell statically hosts the same CLAP implementation.
 It is a separate plugin identity, not a binary-compatible replacement for the C++ ImageControl implementation.
 [README.md](README.md) covers capabilities, build commands, installation, and current limitations.
 
@@ -12,10 +13,13 @@ There is one Rust plugin implementation, divided into three packages:
 - [`image-control-dsp`](crates/dsp/src/lib.rs) owns processing, crossover design, correlation,
   spatial analysis, particle projection, and bounded audio-to-editor transport.
   It depends on neither VST3 nor a graphics or GUI framework.
-- [`image-control-plugin-rs`](crates/plugin/src/lib.rs) owns the narrow VST3 ABI adapter,
-  sound-parameter registry, host-state codec, native editor attachment, Iced controls, and wgpu passes.
-- [`image-control-xtask`](crates/xtask/src/main.rs) packages the native library into a separate VST3 bundle.
+- [`image-control-plugin-rs`](crates/plugin/src/lib.rs) owns the narrow VST3 and Clack CLAP adapters,
+  shared instance ownership, sound-parameter registry, state codec,
+  native editor attachment, Iced controls, and wgpu passes.
+- [`image-control-xtask`](crates/xtask/src/main.rs) packages VST3 and CLAP and orchestrates the macOS AU CMake build.
   Packaging does not load the plugin or install it.
+- [`au/CMakeLists.txt`](au/CMakeLists.txt) owns the pinned AU wrapper/SDK build and isolated native contract host.
+  The AU component contains the Rust CLAP implementation, with no separately installed-plugin dependency.
 
 The production plugin does not import AudioBatch's application core, playback engine, GUI, or storage.
 The `vst3-host` package is development-only infrastructure for native host tests and examples.
@@ -25,8 +29,10 @@ There is no nice-plug runtime, GPUI editor, vendored embedding patch, or softwar
 
 ### Host processor and controller
 
-[`host/component.rs`](crates/plugin/src/host/component.rs) implements both interfaces on one COM object.
-It shares authoritative parameter atomics and a stable `SharedState` allocation.
+[`runtime.rs`](crates/plugin/src/runtime.rs) owns the shared parameter atomics, stable `SharedState`,
+logical geometry, and exclusively admitted DSP used by each host adapter.
+Stopped preparation installs saved targets and allocates processing state before callbacks begin.
+[`host/component.rs`](crates/plugin/src/host/component.rs) implements the VST3 interfaces on one COM object.
 The 31 sound-parameter IDs, conversions, defaults, and metadata live in [`params.rs`](crates/plugin/src/params.rs).
 Controller callbacks and host restores never borrow mutable DSP history.
 
@@ -75,7 +81,9 @@ macOS host dimensions remain points, while Windows dimensions convert once betwe
 The default editor is 1000 by 764 logical units, bounded by 760 by 600 and 4096 by 4096.
 
 Native reentrant removal is exercised on macOS.
-Windows rejects removal during an active callback or geometry flush so the host can retry safely.
+Windows VST3 rejects removal during an active callback or geometry flush so the host can retry safely.
+Windows CLAP does not advertise the custom GUI because its void destroy callback cannot support that retry protocol.
+Host-provided CLAP parameter controls remain available, with DSP/state independent of a native editor.
 The host must not destroy the parent or unload the module after rejected removal.
 Complete upstream widget-cache reclamation and arbitrary module unloading remain separate production gates.
 
@@ -249,8 +257,10 @@ Complete renderer/device-loss fallback is not implemented.
 
 ## State and editor preferences
 
-[`host/state.rs`](crates/plugin/src/host/state.rs) reads and writes bounded length-prefixed JSON.
-A four-byte little-endian payload length precedes at most 4096 bytes.
+[`state.rs`](crates/plugin/src/state.rs) validates and serializes detached JSON independently of host transport.
+[`host/state.rs`](crates/plugin/src/host/state.rs) provides VST3 stream transport,
+with a four-byte little-endian payload length preceding at most 4096 bytes.
+CLAP streams use the same bounded codec. The AU wrapper stores the CLAP stream in its host property-list container.
 State version 3 stores normalized sound parameters, detached Pre/Post, persistence, contrast, and palette preferences,
 and the last host-accepted logical window dimensions.
 Versions 1 and 2 remain readable with fixed default dimensions, independently of the instance's current editor choices.
@@ -317,6 +327,12 @@ including cold automation, reset, concurrent state restore, and two-editor lifec
 Build-tree pluginval checks validate the exact packaged format.
 A compile check for Windows does not establish native Windows rendering or lifecycle correctness.
 
-Remaining gates include native Windows qualification, macOS AU delivery, complete accessibility,
+AUv2 has independent wrapper qualification gates:
+offline-mode forwarding, state error propagation and initialization order,
+and automation/render contention. Render try-admission does not establish dropout-free automation,
+and custom spin waits require bounded contention diagnostics beyond RTSan.
+The AU identity `aufx / Egir / Esgr` is distinct from C++ `aufx / Egic / Esgr`.
+
+Remaining gates include native Windows qualification, complete AU host qualification, complete accessibility,
 upstream widget-cache cleanup, device-loss handling, and arbitrary module-unload safety.
 The [evaluation](docs/rust-evaluation.md) separates dependency research and historical evidence from current code.

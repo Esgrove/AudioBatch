@@ -11,7 +11,6 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use image_control_dsp::{Imager, SharedState};
 use vst3::Steinberg::Vst::{
     BusDirections_, BusInfo, BusInfo_::BusFlags_, BusTypes_, IAudioProcessor, IAudioProcessorTrait, IComponent,
     IComponentHandler, IComponentTrait, IEditController, IParamValueQueueTrait as _, IParameterChanges,
@@ -24,11 +23,9 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComRef};
 
-use super::audio::AudioState;
 use super::enums::{to_i32, to_u32};
 use super::state;
-use crate::editor_geometry::EditorGeometry;
-use crate::params::Parameters;
+use crate::runtime::Instance;
 use crate::strings_utf16;
 
 #[cfg(test)]
@@ -40,12 +37,8 @@ const MAXIMUM_PARAMETER_QUEUES: i32 = 1024;
 
 /// One COM object implements both processor and controller with a shared parameter allocation.
 pub(super) struct Component {
-    /// Authoritative sound controls, independent of mutable processing history.
-    pub(super) parameters: Arc<Parameters>,
-    /// DSP targets and analysis transport, never replaced while callbacks run.
-    pub(super) shared: Arc<SharedState>,
-    /// Coherent logical window size survives view destruction, independent of DSP and native ownership.
-    pub(super) geometry: Arc<EditorGeometry>,
+    /// Format-independent sound, monitoring, geometry, and exclusive processing ownership.
+    instance: Instance,
     /// UI-only shared COM owner. Arc copies execute no host reference-count callbacks under the lock.
     /// Installation, replacement, termination, and UI calls release COM owners outside this mutex.
     pub(super) handler: Arc<Mutex<Option<Arc<ComPtr<IComponentHandler>>>>>,
@@ -59,8 +52,15 @@ pub(super) struct Component {
     tail_samples: AtomicU32,
     /// Whether the host activated the audio component.
     active: AtomicBool,
-    /// Exclusively admitted mutable DSP storage.
-    audio: AudioState,
+}
+
+impl std::ops::Deref for Component {
+    type Target = Instance;
+
+    /// Shares format-independent fields without duplicating parameter or DSP ownership.
+    fn deref(&self) -> &Instance {
+        &self.instance
+    }
 }
 
 impl Class for Component {
@@ -75,12 +75,8 @@ impl Class for Component {
 impl Component {
     /// Allocates transport and controls before exposing any COM interface to the host.
     pub(super) fn new() -> Self {
-        let imager = Imager::new();
         Self {
-            parameters: Arc::new(Parameters::new()),
-            shared: imager.shared(),
-            geometry: Arc::new(EditorGeometry::default()),
-            audio: AudioState::new(imager),
+            instance: Instance::new(),
             handler: Arc::new(Mutex::new(None)),
             arrangement: AtomicU64::new(SpeakerArr::kStereo),
             maximum_frames: AtomicI32::new(0),
@@ -297,14 +293,12 @@ impl IAudioProcessorTrait for Component {
             return kResultFalse;
         }
         // Preparation may allocate and design kernels, but occurs before real-time callbacks begin.
-        let Some(Some((latency, tail))) = self.audio.try_with(|imager| {
-            self.parameters.publish(&self.shared);
-            imager.set_channels(self.arrangement.load(Ordering::Relaxed).count_ones() as usize);
-            imager.set_offline(setup.processMode == to_i32(ProcessModes_::kOffline));
-            imager
-                .prepare(setup.sampleRate as f32)
-                .then(|| (imager.latency_samples(), imager.tail_samples()))
-        }) else {
+        let Some((latency, tail)) = self.instance.prepare(
+            setup.sampleRate,
+            self.arrangement.load(Ordering::Relaxed).count_ones() as usize,
+            setup.processMode == to_i32(ProcessModes_::kOffline),
+            setup.maxSamplesPerBlock as u32,
+        ) else {
             return kResultFalse;
         };
         self.latency_samples.store(latency, Ordering::Relaxed);

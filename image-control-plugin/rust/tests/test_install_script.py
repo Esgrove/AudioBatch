@@ -38,18 +38,29 @@ class RustInstallContracts(unittest.TestCase):
         self.tools = self.root / "tools"
         self.tools.mkdir()
         self.log = self.root / "commands.log"
-        for command in ("dirname", "mkdir", "cp", "mv", "rm", "mktemp"):
+        for command in ("dirname", "mkdir", "cp", "mv", "rm", "mktemp", "diff"):
             executable = shutil.which(command)
             assert executable is not None
             (self.tools / command).symlink_to(executable)
         self.tool("uname", 'printf "%s\\n" "${TEST_PLATFORM:-Darwin}"\n', record=False)
         self.tool("codesign", 'exit "${SIGN_STATUS:-0}"\n')
         self.tool("pluginval", 'exit "${VALIDATOR_STATUS:-0}"\n')
+        self.tool("cargo", 'exit "${CLAP_STATUS:-0}"\n')
+        self.tool("killall", "exit 0\n")
+        self.tool("sleep", "exit 0\n")
+        self.tool(
+            "auval",
+            'case "$1" in -a) printf "%s\\n" "${AU_LISTING:-aufx Egir Esgr ImageControl RS}" ;; '
+            '*) exit "${AUVAL_STATUS:-0}" ;; esac\n',
+        )
         self.tool("cygpath", 'printf "%s\\n" "$2"\n')
         self.bundle = self.root / "rust/target/bundled/ImageControl RS.vst3"
-        executable = self.bundle / "Contents/MacOS/ImageControl RS"
-        executable.parent.mkdir(parents=True)
-        executable.write_text("new Rust plugin", encoding="utf-8")
+        self.clap = self.bundle.with_suffix(".clap")
+        self.audio_unit = self.bundle.with_suffix(".component")
+        for bundle in (self.bundle, self.clap, self.audio_unit):
+            executable = bundle / "Contents/MacOS/ImageControl RS"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("new Rust plugin", encoding="utf-8")
         build = self.script.parent / "build.sh"
         build.write_text(
             f'#!{BASH}\nprintf "build %s\\n" "$*" >> "$INSTALL_LOG"\nexit "${{BUILD_STATUS:-0}}"\n',
@@ -254,7 +265,8 @@ class RustInstallContracts(unittest.TestCase):
     def test_relative_external_target_is_resolved_from_invocation_directory(self) -> None:
         """The installer accepts an explicit outside build tree without interpreting it from the script directory."""
         target = self.root.parent / "external artifacts"
-        shutil.copytree(self.bundle, target / "bundled/ImageControl RS.vst3")
+        for bundle in (self.bundle, self.clap, self.audio_unit):
+            shutil.copytree(bundle, target / "bundled" / bundle.name)
         result = self.invoke("--no-build", CARGO_TARGET_DIR="../external artifacts")
         assert result.returncode == 0, result.stdout + result.stderr
         installed = self.home / "Library/Audio/Plug-Ins/VST3/ImageControl RS.vst3"
@@ -275,10 +287,15 @@ class RustInstallContracts(unittest.TestCase):
     def test_windows_uses_user_bundle_directory_without_elevation(self) -> None:
         """Preserve the complete VST3 bundle in the standard per-user Windows directory."""
         local = self.root / "Local AppData"
+        shutil.rmtree(self.clap)
+        self.clap.write_text("Windows CLAP", encoding="utf-8")
         result = self.invoke("--no-build", TEST_PLATFORM="MINGW64_NT", LOCALAPPDATA=str(local))
         assert result.returncode == 0, result.stdout + result.stderr
         assert (local / "Programs/Common/VST3/ImageControl RS.vst3/Contents").is_dir()
+        assert (local / "Programs/Common/CLAP/ImageControl RS.clap").read_text() == "Windows CLAP"
         assert "codesign" not in self.log.read_text()
+        assert "killall" not in self.log.read_text()
+        assert "auval" not in self.log.read_text()
 
     def test_invalid_options_missing_bundles_and_symlink_targets_are_rejected(self) -> None:
         """Reject unsafe or malformed requests before replacing any existing plugin."""
@@ -294,6 +311,189 @@ class RustInstallContracts(unittest.TestCase):
         result = self.invoke("--no-build", "--destination", str(destination))
         assert result.returncode != 0
         assert (destination / "ImageControl RS.vst3").is_symlink()
+
+    def test_each_destination_alias_installs_every_format_and_preserves_cpp_plugins(self) -> None:
+        """Separate explicit destinations support both alias sets without touching their C++ counterparts."""
+        for flags in (("-D", "-C", "-U"), ("--destination", "--clap-destination", "--au-destination")):
+            self.log.unlink(missing_ok=True)
+            arguments = ["--no-build"]
+            destinations = []
+            for flag, source in zip(flags, (self.bundle, self.clap, self.audio_unit), strict=True):
+                destination = self.root / f"custom {source.suffix}"
+                destinations.append(destination)
+                cpp = destination / f"ImageControl{source.suffix}"
+                cpp.mkdir(parents=True, exist_ok=True)
+                (cpp / "keep").write_text("C++", encoding="utf-8")
+                arguments.extend((flag, str(destination)))
+            result = self.invoke(*arguments)
+            assert result.returncode == 0, result.stdout + result.stderr
+            for destination, source in zip(destinations, (self.bundle, self.clap, self.audio_unit), strict=True):
+                assert (destination / source.name / "Contents/MacOS/ImageControl RS").read_text() == "new Rust plugin"
+                assert (destination / f"ImageControl{source.suffix}" / "keep").read_text() == "C++"
+            assert "killall -q AudioComponentRegistrar" in self.log.read_text()
+            assert "auval" not in self.log.read_text()
+            assert "cargo" not in self.log.read_text()
+
+    def test_all_destination_operands_are_required_before_side_effects(self) -> None:
+        """Every destination alias rejects a missing or empty directory before building or staging."""
+        for flag in ("-D", "--destination", "-C", "--clap-destination", "-U", "--au-destination"):
+            for operand in ((), ("",)):
+                with self.subTest(flag=flag, operand=operand):
+                    result = self.invoke(flag, *operand)
+                    assert result.returncode != 0
+                    assert not self.log.exists()
+                    assert not (self.home / "Library").exists()
+
+    def test_missing_later_format_prevents_all_publication(self) -> None:
+        """A missing CLAP or AU rejects the whole installation before touching any destination."""
+        for source in (self.clap, self.audio_unit):
+            with self.subTest(format=source.suffix):
+                hidden = source.with_name(f"hidden{source.suffix}")
+                source.rename(hidden)
+                try:
+                    result = self.invoke("--no-build")
+                    assert result.returncode != 0
+                    assert not self.log.exists()
+                    assert not (self.home / "Library").exists()
+                finally:
+                    hidden.rename(source)
+
+    def test_corrupt_later_staging_copy_preserves_every_previous_format(self) -> None:
+        """Byte verification detects a successful but incomplete copy before the first format is published."""
+        installed = self.old_formats()
+        copy = shutil.which("cp")
+        assert copy is not None
+        (self.tools / "cp").unlink()
+        self.tool(
+            "cp",
+            f'"{copy}" "$@"\n'
+            'case "$*" in *"ImageControl RS.component"*) '
+            'printf broken > "${@: -1}/Contents/MacOS/ImageControl RS" ;; esac\n',
+        )
+        result = self.invoke("--no-build")
+        assert result.returncode != 0
+        for destination in installed:
+            assert (destination / "old").read_text() == "keep"
+            assert not list(destination.parent.glob(".imagecontrol-rs-install.*"))
+        assert "Installed:" not in result.stdout
+        assert "killall" not in self.log.read_text()
+
+    def old_formats(self) -> list[Path]:
+        """Prepare independently recoverable previous installations for all macOS formats."""
+        installed = []
+        for folder, source in zip(
+            ("VST3", "CLAP", "Components"), (self.bundle, self.clap, self.audio_unit), strict=True
+        ):
+            destination = self.home / "Library/Audio/Plug-Ins" / folder / source.name
+            destination.mkdir(parents=True)
+            (destination / "old").write_text("keep", encoding="utf-8")
+            installed.append(destination)
+        return installed
+
+    def test_last_publication_failure_restores_all_previously_published_formats(self) -> None:
+        """An AU publication failure rolls back VST3 and CLAP too, without restarting registration."""
+        installed = self.old_formats()
+        move = shutil.which("mv")
+        assert move is not None
+        (self.tools / "mv").unlink()
+        self.tool(
+            "mv",
+            'case "$1" in *".imagecontrol-rs-install."*/"ImageControl RS.component") exit 36 ;; esac\n'
+            f'exec "{move}" "$@"\n',
+        )
+        result = self.invoke("--no-build")
+        assert result.returncode == 36, result.stdout + result.stderr
+        for destination in installed:
+            assert (destination / "old").read_text() == "keep"
+            assert not list(destination.parent.glob(".imagecontrol-rs-install.*"))
+        assert "Installed:" not in result.stdout
+        assert "killall" not in self.log.read_text()
+
+    def test_post_publish_verification_failure_restores_every_format(self) -> None:
+        """Verification of the final AU path is part of the recoverable publication transaction."""
+        installed = self.old_formats()
+        self.tool(
+            "codesign",
+            'case "$*" in *"Components/ImageControl RS.component") exit 39 ;; esac\n',
+        )
+        result = self.invoke("--no-build")
+        assert result.returncode == 39, result.stdout + result.stderr
+        for destination in installed:
+            assert (destination / "old").read_text() == "keep"
+        assert "killall" not in self.log.read_text()
+
+    def test_strict_auval_failure_is_fatal_after_registration_restart(self) -> None:
+        """Installed validation selects the Rust AU identity and propagates strict validator failure."""
+        result = self.invoke("--no-build", "--validate", AUVAL_STATUS="42")
+        assert result.returncode == 42, result.stdout + result.stderr
+        log = self.log.read_text()
+        assert log.index("killall -q AudioComponentRegistrar") < log.index("auval -a")
+        assert "auval -strict -v aufx Egir Esgr" in log
+        assert "--test clap_contracts" in log
+        assert "Egic" not in log
+        assert "Rescan plugins" not in result.stdout
+
+    def test_au_registration_polling_never_accepts_the_cpp_identity(self) -> None:
+        """Thirty bounded registration checks reject the separate C++ component without running strict auval."""
+        result = self.invoke("--no-build", "--validate", AU_LISTING="aufx Egic Esgr ImageControl")
+        assert result.returncode != 0
+        log = self.log.read_text()
+        assert log.count("auval -a\n") == 30
+        assert log.count("sleep 1\n") == 29
+        assert "auval -strict" not in log
+        assert "did not register: aufx Egir Esgr" in result.stderr
+
+    def test_au_registration_polling_waits_for_the_rust_identity(self) -> None:
+        """A registry restart can briefly list only C++, and validation waits for the Rust component."""
+        counter = self.root / "auval-polls"
+        self.tool(
+            "auval",
+            'if [ "$1" = -a ]; then\n'
+            f'  if [ -f "{counter}" ]; then printf "aufx Egir Esgr ImageControl RS\\n"; '
+            f'else printf first > "{counter}"; printf "aufx Egic Esgr ImageControl\\n"; fi\n'
+            "fi\n",
+        )
+        result = self.invoke("--no-build", "--validate")
+        assert result.returncode == 0, result.stdout + result.stderr
+        log = self.log.read_text()
+        assert log.count("auval -a\n") == 2
+        assert log.count("sleep 1\n") == 1
+        assert "auval -strict -v aufx Egir Esgr" in log
+
+    def test_installer_clap_host_loads_only_verified_build_artifact(self) -> None:
+        """Byte-verified installation does not weaken the direct host's build-artifact authorization boundary."""
+        environment_log = self.root / "clap-artifact.log"
+        self.tool("cargo", 'printf "%s\\n" "$IMAGE_CONTROL_CLAP_BUNDLE" > "$CLAP_ENV_LOG"\n')
+        result = self.invoke("--no-build", "--validate", CLAP_ENV_LOG=str(environment_log))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert environment_log.read_text().strip() == str(self.clap)
+        installed = self.home / "Library/Audio/Plug-Ins/CLAP/ImageControl RS.clap/Contents/MacOS/ImageControl RS"
+        assert installed.read_bytes() == (self.clap / "Contents/MacOS/ImageControl RS").read_bytes()
+
+    def test_clap_validation_failure_is_fatal_without_running_auval(self) -> None:
+        """Installed CLAP contracts cannot fail silently or fall through to a successful AU validation."""
+        result = self.invoke("--no-build", "--validate", CLAP_STATUS="43")
+        assert result.returncode == 43
+        assert "auval" not in self.log.read_text()
+        assert "Rescan plugins" not in result.stdout
+
+    def test_windows_custom_destinations_need_no_localappdata_or_au(self) -> None:
+        """The Windows CLAP remains a file with explicit destinations and never starts AU services."""
+        shutil.rmtree(self.clap)
+        shutil.rmtree(self.audio_unit)
+        self.clap.write_text("Windows CLAP", encoding="utf-8")
+        destination = self.root / "Windows VST3"
+        clap_destination = self.root / "Windows CLAP"
+        result = self.invoke("-N", "-D", str(destination), "-C", str(clap_destination), TEST_PLATFORM="MINGW64_NT")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (clap_destination / self.clap.name).is_file()
+        assert (destination / self.bundle.name / "Contents").is_dir()
+        assert "codesign" not in self.log.read_text()
+        assert "killall" not in self.log.read_text()
+        self.log.unlink()
+        rejected = self.invoke("-N", "-U", "not-supported", TEST_PLATFORM="MINGW64_NT")
+        assert rejected.returncode != 0
+        assert all(line.startswith("cygpath ") for line in self.log.read_text().splitlines())
 
 
 class RustEntryPointContracts(unittest.TestCase):
@@ -327,7 +527,7 @@ class RustEntryPointContracts(unittest.TestCase):
         uname = self.tools / "uname"
         uname.write_text(f'#!{BASH}\nprintf "%s\\n" "${{TEST_PLATFORM:-Darwin}}"\n', encoding="utf-8")
         uname.chmod(0o755)
-        for name in ("cargo", "codesign", "pluginval", "shfmt", "slb"):
+        for name in ("cargo", "codesign", "pluginval", "shfmt", "slb", "cmake", "au-host", "uv"):
             executable = self.tools / name
             executable.write_text(
                 f'#!{BASH}\nprintf "%s\\0" "${{0##*/}}" "$@" >> "$COMMAND_LOG"\nprintf "\\n" >> "$COMMAND_LOG"\n'
@@ -336,8 +536,16 @@ class RustEntryPointContracts(unittest.TestCase):
             )
             executable.chmod(0o755)
         self.bundle = self.root / "rust/target/bundled/ImageControl RS.vst3"
-        (self.bundle / "Contents").mkdir(parents=True)
-        self.environment = {"PATH": str(self.tools), "COMMAND_LOG": str(self.log), "LC_ALL": "C"}
+        self.clap = self.bundle.with_suffix(".clap")
+        self.audio_unit = self.bundle.with_suffix(".component")
+        for bundle in (self.bundle, self.clap, self.audio_unit):
+            (bundle / "Contents").mkdir(parents=True)
+        self.environment = {
+            "PATH": str(self.tools),
+            "COMMAND_LOG": str(self.log),
+            "LC_ALL": "C",
+            "IMAGE_CONTROL_AU_HOST": str(self.tools / "au-host"),
+        }
 
     def invoke(
         self, script: str, *arguments: str, cwd: Path | None = None, **overrides: str
@@ -616,9 +824,14 @@ class RustEntryPointContracts(unittest.TestCase):
                 ]
                 assert self.commands("pluginval") == [["--strictness-level", "5", "--validate", str(self.bundle)]]
                 assert self.commands("codesign") == [
-                    ["--force", "--sign", "-", str(self.bundle)],
-                    ["--verify", "--strict", str(self.bundle)],
+                    command
+                    for bundle in (self.bundle, self.clap, self.audio_unit)
+                    for command in (
+                        ["--force", "--sign", "-", "--timestamp=none", str(bundle)],
+                        ["--verify", "--deep", "--strict", str(bundle)],
+                    )
                 ]
+                assert self.commands("au-host") == [["--bundle", str(self.audio_unit)]]
         self.log.unlink()
         result = self.invoke("build.sh")
         assert result.returncode == 0, result.stdout + result.stderr
@@ -629,7 +842,8 @@ class RustEntryPointContracts(unittest.TestCase):
         """Build and test preserve invocation-relative targets even after their own working-directory changes."""
         target = self.root.parent / "external artifacts"
         bundle = target / "bundled/ImageControl RS.vst3"
-        (bundle / "Contents").mkdir(parents=True)
+        for artifact in (bundle, bundle.with_suffix(".clap"), bundle.with_suffix(".component")):
+            (artifact / "Contents").mkdir(parents=True)
         target_log = self.root / "cargo-targets.log"
         cargo = self.tools / "cargo"
         cargo.write_text(
@@ -653,7 +867,113 @@ class RustEntryPointContracts(unittest.TestCase):
                         Path(path).is_absolute() and Path(path).resolve() == target.resolve() for path in observed
                     )
                     if script == "build.sh":
-                        assert Path(result.stdout.strip()).resolve() == bundle.resolve()
+                        assert [Path(line).resolve() for line in result.stdout.splitlines()] == [
+                            bundle.resolve(),
+                            bundle.with_suffix(".clap").resolve(),
+                            bundle.with_suffix(".component").resolve(),
+                        ]
+
+    def test_validate_without_unit_tests_loads_clap_and_au_packages_directly(self) -> None:
+        """Build validation invokes each exact build-tree format without auval or registry changes."""
+        result = self.invoke("build.sh", "--validate")
+        assert result.returncode == 0, result.stdout + result.stderr
+        cargo = self.commands("cargo")
+        assert len(cargo) == 2
+        assert cargo[1] == [
+            "test",
+            "--manifest-path",
+            str(self.root / "Cargo.toml"),
+            "-p",
+            "image-control-plugin-rs",
+            "--release",
+            "--all-features",
+            "--test",
+            "clap_contracts",
+        ]
+        assert self.commands("au-host") == [["--bundle", str(self.audio_unit)]]
+        assert not self.commands("auval")
+        assert not self.commands("killall")
+        assert not (self.root / "home").exists()
+
+    def test_native_tests_supply_all_explicit_artifacts_to_cargo(self) -> None:
+        """The full test suite receives VST3, CLAP, and AU selections rather than skipping native packages."""
+        environment_log = self.root / "native-package-environment.log"
+        cargo = self.tools / "cargo"
+        cargo.write_text(
+            cargo.read_text() + 'if [ "$1" = test ]; then printf "%s\\n" "$IMAGE_CONTROL_OWN_BUNDLE" '
+            '"$IMAGE_CONTROL_CLAP_BUNDLE" "$IMAGE_CONTROL_AU_BUNDLE" > "$NATIVE_ENV_LOG"; fi\n'
+        )
+        for script, arguments in (("test.sh", ()), ("build.sh", ("--test",))):
+            result = self.invoke(script, *arguments, NATIVE_ENV_LOG=str(environment_log))
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert environment_log.read_text().splitlines() == [str(self.bundle), str(self.clap), str(self.audio_unit)]
+            assert self.commands("au-host")[-1] == ["--bundle", str(self.audio_unit)]
+
+    def test_missing_native_format_stops_tests_before_cargo(self) -> None:
+        """Missing CLAP cannot silently skip its packaged tier while VST3 tests appear successful."""
+        shutil.rmtree(self.clap)
+        result = self.invoke("test.sh")
+        assert result.returncode != 0
+        assert "CLAP bundle is missing" in result.stderr
+        assert not self.commands()
+
+    def test_signing_and_native_host_failures_stop_validation(self) -> None:
+        """Both completed-bundle signing and direct host failures preserve their original failure status."""
+        for tool in ("codesign", "au-host"):
+            self.log.unlink(missing_ok=True)
+            result = self.invoke("build.sh", "--validate", FAIL_TOOL=tool)
+            assert result.returncode == 37, result.stdout + result.stderr
+            assert len(self.commands(tool)) == 1
+            if tool == "codesign":
+                assert not self.commands("pluginval")
+                assert not self.commands("au-host")
+
+    def test_native_au_host_reuses_matching_xtask_build_configuration(self) -> None:
+        """The host target enables tests in the matching architecture/profile tree, never a separate AU build."""
+        uname = self.tools / "uname"
+        uname.write_text(f'#!{BASH}\ncase "$1" in -m) printf arm64 ;; *) printf Darwin ;; esac\n')
+        for arguments, profile in ((("--validate",), "release"), (("--debug", "--validate"), "debug")):
+            self.log.unlink(missing_ok=True)
+            directory = self.root / "rust/target/image-control-au/arm64" / profile
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "CMakeCache.txt").touch()
+            host = directory / "ImageControlRSAUHost"
+            shutil.copy2(self.tools / "au-host", host)
+            result = self.invoke("build.sh", *arguments, IMAGE_CONTROL_AU_HOST="")
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert self.commands("cmake") == [
+                ["-S", str(self.directory / "au"), "-B", str(directory), "-DIMAGE_CONTROL_AU_BUILD_TESTS=ON"],
+                ["--build", str(directory), "--target", "ImageControlRSAUHost"],
+            ]
+            assert self.commands("ImageControlRSAUHost") == [["--bundle", str(self.audio_unit)]]
+
+    def test_standalone_tests_can_qualify_release_au_with_preconfigured_host(self) -> None:
+        """Standalone Cargo tests may use a Release package without requiring an unrelated Debug AU build."""
+        uname = self.tools / "uname"
+        uname.write_text(f'#!{BASH}\ncase "$1" in -m) printf arm64 ;; *) printf Darwin ;; esac\n')
+        directory = self.root / "rust/target/image-control-au/arm64/release"
+        directory.mkdir(parents=True)
+        (directory / "CMakeCache.txt").touch()
+        shutil.copy2(self.tools / "au-host", directory / "ImageControlRSAUHost")
+        result = self.invoke("test.sh", IMAGE_CONTROL_AU_HOST="")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self.commands("cmake")[-1] == ["--build", str(directory), "--target", "ImageControlRSAUHost"]
+        assert self.commands("ImageControlRSAUHost") == [["--bundle", str(self.audio_unit)]]
+
+    def test_windows_build_signs_no_artifact_and_needs_no_au(self) -> None:
+        """Windows packaging and CLAP validation accept only the file form and never launch the AU host."""
+        shutil.rmtree(self.clap)
+        shutil.rmtree(self.audio_unit)
+        self.clap.write_text("Windows CLAP", encoding="utf-8")
+        cygpath = self.tools / "cygpath"
+        cygpath.write_text(f'#!{BASH}\nprintf "%s\\n" "$2"\n')
+        cygpath.chmod(0o755)
+        result = self.invoke("build.sh", "--validate", TEST_PLATFORM="MINGW64_NT")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not self.commands("codesign")
+        assert not self.commands("au-host")
+        assert self.commands("cargo")[-1][-2:] == ["--test", "clap_contracts"]
+        assert result.stdout.splitlines()[-2:] == [str(self.bundle), str(self.clap)]
 
     def test_miri_and_licenses_aliases(self) -> None:
         """Both modes retain their existing package scope and cannot invoke native hosts."""

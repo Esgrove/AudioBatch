@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs the own-wrapper plugin contracts against root-workspace packages and a build-tree VST3.
+# Runs own-wrapper contracts against root-workspace packages and explicitly selected build-tree formats.
 set -eo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -45,10 +45,16 @@ parse_arguments() {
 }
 
 run_native_tests() {
-    local BUNDLE="${IMAGE_CONTROL_OWN_BUNDLE:-${CARGO_TARGET_DIR:-$REPO_ROOT/rust/target}/bundled/ImageControl RS.vst3}"
-    [ -d "$BUNDLE" ] || print_error_and_exit "Build the primary VST3 before native tests: ./build.sh --debug"
-    IMAGE_CONTROL_OWN_BUNDLE="$BUNDLE" cargo test --manifest-path "$ROOT_MANIFEST" "${PACKAGES[@]}" --all-features
+    local BUNDLE="${IMAGE_CONTROL_OWN_BUNDLE:-$CARGO_TARGET_DIR/bundled/ImageControl RS.vst3}"
+    local CLAP_BUNDLE="${IMAGE_CONTROL_CLAP_BUNDLE:-$CARGO_TARGET_DIR/bundled/ImageControl RS.clap}"
+    local AU_BUNDLE="${IMAGE_CONTROL_AU_BUNDLE:-$CARGO_TARGET_DIR/bundled/ImageControl RS.component}"
+    image_control_check_bundles "$BUNDLE" "$CLAP_BUNDLE" "$AU_BUNDLE"
+    IMAGE_CONTROL_OWN_BUNDLE="$BUNDLE" IMAGE_CONTROL_CLAP_BUNDLE="$CLAP_BUNDLE" IMAGE_CONTROL_AU_BUNDLE="$AU_BUNDLE" \
+        cargo test --manifest-path "$ROOT_MANIFEST" "${PACKAGES[@]}" --all-features
     cargo run --manifest-path "$ROOT_MANIFEST" -p image-control-plugin-rs --example realtime_host -- --case native-editor-lifecycle --bundle "$BUNDLE"
+    if [ "$BASH_PLATFORM" = mac ]; then
+        image_control_validate_audio_unit "$AU_BUNDLE"
+    fi
 }
 
 run_miri_tests() {

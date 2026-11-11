@@ -1,4 +1,4 @@
-//! Narrow VST3-only `ImageControl` adapter with independent atomic parameters and exclusive prepared DSP.
+//! Narrow VST3 and CLAP `ImageControl` adapters with shared atomic parameters and exclusive prepared DSP.
 //!
 //! The class identity and versioned state are independent of the C++ and experimental adapters.
 //! Audio processing never enters the editor, calls host UI handlers, or initializes thread-local ownership.
@@ -7,6 +7,8 @@
 // Raising the depth retains the full Send/lifetime analysis instead of disabling its diagnostic.
 #![recursion_limit = "256"]
 
+#[cfg(feature = "clap")]
+mod clap;
 #[cfg(feature = "editor")]
 mod deferred_ui;
 #[cfg(feature = "editor")]
@@ -18,8 +20,10 @@ mod iced_bridge;
 #[cfg(feature = "editor")]
 mod iced_executor;
 pub mod params;
+mod runtime;
 #[cfg(feature = "editor")]
 mod spectrogram;
+mod state;
 
 use vst3::Steinberg::{IPluginFactory, TUID};
 use vst3::{ComPtr, ComWrapper, uid};

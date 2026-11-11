@@ -185,12 +185,12 @@ jobs:
           uv run --script image-control-plugin/rust/tests/test_benchmark_script.py
           uv run --script image-control-plugin/rust/tests/test_install_script.py
 
-      - name: Build and test Debug Rust VST3
+      - name: Build and test Debug Rust VST3, CLAP, and macOS AU
         run: |
           ./build.sh --debug --test --validate
           ./test.sh
 
-      - name: Build and test Release Rust VST3
+      - name: Build and test Release Rust VST3, CLAP, and macOS AU
         run: |
           ./build.sh --test --validate
           ./test.sh
@@ -198,6 +198,27 @@ jobs:
             cargo run -p image-control-plugin-rs --example editor_reentry -- --bundle \
               "$(git rev-parse --show-toplevel)/rust/target/bundled/ImageControl RS.vst3"
           fi
+
+      - name: Qualify native CLAP and AU editors
+        if: runner.os == 'macOS'
+        run: |
+          repository="$(git rev-parse --show-toplevel)"
+          cargo run -p image-control-plugin-rs --example clap_editor -- --bundle \
+            "$repository/rust/target/bundled/ImageControl RS.clap"
+          architecture="$(uname -m)"
+          "$repository/rust/target/image-control-au/$architecture/release/ImageControlRSAUHost" --editor --bundle \
+            "$repository/rust/target/bundled/ImageControl RS.component"
+
+      - name: Install and validate the Rust Audio Unit
+        if: runner.os == 'macOS'
+        run: ./install.sh --no-build --validate
+
+      - name: Upload Rust format bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: ImageControl-RS-${{ runner.os }}
+          path: rust/target/bundled/ImageControl RS.*
+          if-no-files-found: error
 
       - name: Build C++ VST3 and parity host
         working-directory: image-control-plugin
@@ -259,8 +280,12 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
       - name: Install matching native audit prerequisites
         run: brew install llvm jq ripgrep
-      - name: Build and require clean packaged callbacks
-        run: ./rtsan.sh
+      - name: Build and require clean VST3 and CLAP callbacks
+        run: |
+          ./rtsan.sh --format vst3
+          ./rtsan.sh --format clap
+      - name: Verify known AU dependency callback blockers
+        run: ./rtsan.sh --format au --diagnostic
       - name: Upload sanitizer evidence
         if: always()
         uses: actions/upload-artifact@v7

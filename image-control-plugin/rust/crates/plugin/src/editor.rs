@@ -886,13 +886,10 @@ impl EditorState {
         }
     }
 
-    /// Updates the authoritative UI/host atomics before notifying the adapter, never a temporary UI mirror.
+    /// Lets the adapter admit automation transport before changing authoritative values, never a temporary UI mirror.
     fn write(&self, id: u32, value: f64, generation: u64) {
-        if self.binding.is_open()
-            && generation == self.parameters.restore_generation()
-            && self.parameters.set(id, value)
-        {
-            self.binding.set_value(id, value);
+        if self.binding.is_open() && generation == self.parameters.restore_generation() {
+            self.binding.publish_value(&self.parameters, id, value);
         }
     }
 
@@ -1276,6 +1273,32 @@ mod tests {
         }
     }
 
+    /// Rejects automation admission while retaining observable gesture edges and attempted writes.
+    #[derive(Default)]
+    struct RejectingBinding {
+        recorded: RecordingBinding,
+        attempts: RefCell<Vec<(u32, f64)>>,
+    }
+
+    impl EditorBinding for RejectingBinding {
+        fn begin_edit(&self, id: u32) {
+            self.recorded.begin_edit(id);
+        }
+
+        fn set_value(&self, id: u32, value: f64) {
+            self.recorded.set_value(id, value);
+        }
+
+        fn publish_value(&self, _parameters: &Parameters, id: u32, value: f64) -> bool {
+            self.attempts.borrow_mut().push((id, value));
+            false
+        }
+
+        fn end_edit(&self, id: u32) {
+            self.recorded.end_edit(id);
+        }
+    }
+
     /// Exercises the ordinary editor update path without opening the editor-owned analyzer consumer.
     fn editor() -> (EditorState, Rc<RecordingBinding>) {
         let binding = Rc::new(RecordingBinding::default());
@@ -1302,6 +1325,75 @@ mod tests {
             compact_bands: false,
         };
         (state, binding)
+    }
+
+    /// Every user write reaches binding admission before touching authoritative sound parameters.
+    #[test]
+    fn rejected_transport_keeps_slider_numeric_and_toggle_sound_unchanged() {
+        for (id, messages) in [
+            (
+                GAIN_PARAMETER,
+                vec![Message::Change(GAIN_PARAMETER, 0.25), Message::EndGesture],
+            ),
+            (
+                GAIN_PARAMETER,
+                vec![
+                    Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()),
+                    Message::NumericCommit(GAIN_PARAMETER),
+                ],
+            ),
+            (MONO_PARAMETER, vec![Message::Toggle(MONO_PARAMETER)]),
+        ] {
+            let binding = Rc::new(RejectingBinding::default());
+            let parameters = Arc::new(Parameters::new());
+            let before = serde_json::to_vec(&parameters.snapshot()).expect("sound");
+            let mut state = EditorState::for_host_test(
+                Arc::clone(&parameters),
+                image_control_dsp::Imager::new().shared(),
+                binding.clone(),
+            );
+            for message in messages {
+                let _ = state.update(message);
+            }
+            assert_eq!(serde_json::to_vec(&parameters.snapshot()).expect("sound"), before);
+            assert_eq!(binding.attempts.borrow().len(), 1);
+            assert_eq!(binding.attempts.borrow().first().map(|(id, _)| *id), Some(id));
+            assert_eq!(*binding.recorded.events.borrow(), [(id, None, true), (id, None, false)]);
+            assert!(state.gesture.is_none());
+        }
+    }
+
+    /// Rejection applies to both captured Link participants and drop still closes their exact gestures.
+    #[test]
+    fn rejected_transport_keeps_linked_sound_unchanged_and_drop_balances_gestures() {
+        let binding = Rc::new(RejectingBinding::default());
+        let parameters = Arc::new(Parameters::new());
+        let before = serde_json::to_vec(&parameters.snapshot()).expect("sound");
+        let mid = band_parameter_id(0, 0).expect("Mid");
+        let side = band_parameter_id(0, 1).expect("Side");
+        let mut state = EditorState::for_host_test(
+            Arc::clone(&parameters),
+            image_control_dsp::Imager::new().shared(),
+            binding.clone(),
+        );
+        let _ = state.update(Message::Link(0, true));
+        let _ = state.update(Message::Change(mid, 0.75));
+        assert_eq!(serde_json::to_vec(&parameters.snapshot()).expect("sound"), before);
+        assert_eq!(
+            binding.attempts.borrow().iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [mid, side]
+        );
+        drop(state);
+        assert_eq!(
+            *binding.recorded.events.borrow(),
+            [
+                (mid, None, true),
+                (side, None, true),
+                (side, None, false),
+                (mid, None, false)
+            ]
+        );
+        assert_eq!(serde_json::to_vec(&parameters.snapshot()).expect("sound"), before);
     }
 
     #[test]
