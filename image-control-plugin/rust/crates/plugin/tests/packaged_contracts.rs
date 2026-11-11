@@ -12,7 +12,7 @@ use vst3_host::{ClassId, Module, PluginInstance, PluginState, ProcessMode, UiDis
 /// One non-editor UI thread owns every module and component lifecycle in this integration process.
 static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
 /// Independent 48 kHz kernel and partition delay expectation.
-const LATENCY_SAMPLES: usize = 4_352;
+const LATENCY_SAMPLES: usize = 4352;
 /// A non-partition-aligned host size exercises the wrapper's block adapter.
 const BLOCK_FRAMES: usize = 257;
 /// Bounds native module loading, processing, and teardown even if an ABI callback stops returning.
@@ -263,7 +263,7 @@ fn packaged_untrusted_state_is_rejected_without_mutating_parameters() {
                 component: vec![8, 0, 0, 0, b'{'],
                 controller: Vec::new(),
             },
-            state_blob(r#"{"version":2,"parameters":{"gain":0.75}}"#),
+            state_blob(r#"{"version":3,"parameters":{"gain":0.75}}"#),
             state_blob(r#"{"version":1,"parameters":{"gain":1.5}}"#),
             state_blob(r#"{"version":1,"parameters":{"gain":1e999}}"#),
             state_blob(r#"{"version":1,"parameters":{"bands":[{"width":0.25},{"recover":2.0},{},{}]}}"#),

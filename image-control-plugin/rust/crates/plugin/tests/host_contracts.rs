@@ -23,6 +23,7 @@ fn production_in_process_host_contracts() {
     neutral_bits_and_rate_dependent_reports(&ui);
     every_parameter_survives_state_with_fixed_missing_defaults(&ui);
     malformed_state_is_transactional(&ui);
+    display_preferences_roundtrip_without_sound_changes(&ui);
     independent_multiband_automation(&ui);
     cold_callbacks_and_mono_reset(&ui);
 }
@@ -151,7 +152,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
         defaults.pointer("/parameters/width").is_none(),
         "no global width in state"
     );
-    assert_eq!(defaults.get("version").expect("version"), 1);
+    assert_eq!(defaults.get("version").expect("version"), 2);
     assert!(
         (defaults
             .pointer("/parameters/gain")
@@ -201,6 +202,33 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
     assert_eq!(partial.pointer("/parameters/bands/0/width").expect("Width"), 0.5);
 }
 
+/// Drives the production host codec with independently authored appearance state and retains all 31 sound values.
+fn display_preferences_roundtrip_without_sound_changes(ui: &UiThread) {
+    let mut instance = instance(ui, 2, ProcessMode::Offline);
+    instance.deactivate(ui).expect("stop");
+    let before = saved_json(&instance, ui);
+    assert!(restore_json(
+        &mut instance, ui,
+        br#"{"version":2,"parameters":{},"editor":{"tap":"pre","persistence_seconds":1.25,"contrast":0.25,"color_mode":"phase"}}"#,
+    ));
+    let restored = saved_json(&instance, ui);
+    assert_eq!(restored.get("parameters"), before.get("parameters"));
+    assert_eq!(restored.pointer("/editor/tap"), Some(&Value::from("pre")));
+    assert_eq!(
+        restored.pointer("/editor/persistence_seconds"),
+        Some(&Value::from(1.25))
+    );
+    assert_eq!(restored.pointer("/editor/contrast"), Some(&Value::from(0.25)));
+    assert_eq!(restored.pointer("/editor/color_mode"), Some(&Value::from("phase")));
+    let saved = instance.state(ui).expect("v2 capture");
+    assert!(restore_json(&mut instance, ui, br#"{"version":1,"parameters":{}}"#));
+    let legacy = saved_json(&instance, ui);
+    assert_eq!(legacy.pointer("/editor/tap"), Some(&Value::from("post")));
+    assert_eq!(legacy.pointer("/editor/color_mode"), Some(&Value::from("frequency")));
+    assert!(instance.set_state(ui, &saved).expect("v2 recall"));
+    assert_eq!(instance.state(ui).expect("stable v2 serialization"), saved);
+}
+
 /// Rejects malformed, incompatible, truncated, oversized, and semantically invalid states without partial writes.
 fn malformed_state_is_transactional(ui: &UiThread) {
     let mut instance = instance(ui, 2, ProcessMode::Offline);
@@ -210,7 +238,10 @@ fn malformed_state_is_transactional(ui: &UiThread) {
         vec![0, 0, 0],
         vec![0, 0, 0, 0],
         u32::MAX.to_le_bytes().to_vec(),
-        framed(br#"{"version":2,"parameters":{}}"#),
+        framed(br#"{"version":3,"parameters":{}}"#),
+        framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"persistence_seconds":0.0}}"#),
+        framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":1.1}}"#),
+        framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"color_mode":"unknown"}}"#),
         framed(br#"{"version":0,"parameters":{}}"#),
         framed(br#"{"version":1,"parameters":{"gain":2.0}}"#),
         framed(br#"{"version":1,"parameters":{"gain":null}}"#),

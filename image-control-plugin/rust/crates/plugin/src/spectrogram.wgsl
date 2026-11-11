@@ -22,6 +22,11 @@ fn screen_vertex(@builtin(vertex_index) index: u32) -> ScreenVertex {
 }
 
 @fragment
+fn resample_fragment(input: ScreenVertex) -> @location(0) vec4<f32> {
+    return textureSample(source, linear_sampler, input.uv);
+}
+
+@fragment
 fn fade_fragment(input: ScreenVertex) -> @location(0) vec4<f32> {
     let energy = textureSample(source, linear_sampler, input.uv).rgb;
     return vec4<f32>(min(energy * parameters.fade, vec3<f32>(8192.0)), 0.0);
@@ -30,8 +35,8 @@ fn fade_fragment(input: ScreenVertex) -> @location(0) vec4<f32> {
 struct ParticleVertex {
     @builtin(position) position: vec4<f32>,
     @location(0) offset: vec2<f32>,
-    @location(1) @interpolate(flat) core: f32,
-    @location(2) @interpolate(flat) halo: f32,
+    @location(1) @interpolate(flat) core: vec2<f32>,
+    @location(2) @interpolate(flat) halo: vec2<f32>,
     @location(3) @interpolate(flat) color: vec3<f32>,
     @location(4) @interpolate(flat) emphasis: f32,
 };
@@ -40,16 +45,19 @@ struct ParticleVertex {
 fn particle_vertex(
     @builtin(vertex_index) index: u32,
     @location(0) position: vec2<f32>,
-    @location(1) color: vec3<f32>,
-    @location(2) emphasis: f32,
+    @location(1) spread: f32,
+    @location(2) color: vec3<f32>,
+    @location(3) size: f32,
+    @location(4) emphasis: f32,
 ) -> ParticleVertex {
     let corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
         vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
     );
     let scale = max(min(parameters.size.x / 900.0, parameters.size.y / 360.0), 0.6);
-    let core = 1.3 * scale;
-    let halo = (3.0 + emphasis * 2.0) * scale;
+    let radius = 1.3 * max(size, 0.1) * scale;
+    let core = vec2<f32>(max(radius, spread * parameters.size.x), radius);
+    let halo = max(core, vec2<f32>((3.0 + emphasis * 2.0) * max(size, 0.1) * scale));
     let offset = corners[index] * halo * 3.0;
     let point = position * parameters.size + offset;
     let clip = point / parameters.size * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0);
