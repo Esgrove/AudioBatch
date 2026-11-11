@@ -44,11 +44,11 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and add their project specific parts.
 - `build.sh`, `install.sh`, `format.sh`, and `lint.sh` run the scripts of the same name in both applications,
   or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
-  Unqualified `install.sh`, `format.sh`, and `lint.sh` also run the ImageControl script after both applications,
-  and `install.sh` does so even with `--cli-only`.
-  An `image-control` first argument runs only the plugin script.
-  `install.sh image-control` does not forward root installer options,
-  so run `image-control-plugin/install.sh` directly for plugin-specific options.
+ Unqualified `install.sh`, `format.sh`, and `lint.sh` also run the ImageControl script after both applications.
+ `install.sh` then runs `image-control-plugin/rust/install.sh`, including with `--cli-only`.
+ An `image-control` first argument runs only the plugin scripts, both C++ and Rust for `install.sh`.
+ `install.sh image-control` does not forward root installer options,
+ so run `image-control-plugin/install.sh` or `image-control-plugin/rust/install.sh` directly for plugin-specific options.
   `format.sh` also formats the root shell scripts and the prose outside the projects when shfmt and slb are installed,
   runs ruff on the Python scripts through uv,
   and formats tracked and non-ignored new JSON files with jq using two-space indentation.

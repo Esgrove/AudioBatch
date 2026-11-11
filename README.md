@@ -24,7 +24,7 @@ See [Performance](docs/performance.md) for dated measurements and reproduction i
 ## Build And Install
 
 Follow each project's README for prerequisites.
-The root wrappers build both applications and install them alongside ImageControl:
+The root wrappers build both applications and install them alongside C++ ImageControl and Rust ImageControl RS:
 
 ```shell
 ./build.sh

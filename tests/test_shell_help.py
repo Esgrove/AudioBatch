@@ -207,7 +207,7 @@ class ShellHelpContracts(unittest.TestCase):
     def test_root_dispatch_preserves_scope_arguments_and_fail_fast_status(self) -> None:
         """Named scopes retain exact argv and a failed child prevents every later project from running."""
         assert BASH is not None
-        for project in ("cpp", "rust", "image-control-plugin"):
+        for project in ("cpp", "rust", "image-control-plugin", "image-control-plugin/rust"):
             for name in ("build.sh", "install.sh", "format.sh", "lint.sh"):
                 script = self.root / project / name
                 script.write_text(
@@ -224,7 +224,17 @@ class ShellHelpContracts(unittest.TestCase):
             ]
             if name != "build.sh":
                 forwarded = () if name == "install.sh" else ("--check",)
-                cases.append((["image-control", "--check"], [(f"image-control-plugin/{name}", *forwarded)]))
+                expected_plugins = [(f"image-control-plugin/{name}", *forwarded)]
+                if name == "install.sh":
+                    expected_plugins.append(("image-control-plugin/rust/install.sh",))
+                    cases.extend(
+                        (
+                            arguments,
+                            [(f"{project}/{name}", *arguments) for project in ("cpp", "rust")] + expected_plugins,
+                        )
+                        for arguments in ([], ["--cli-only", "--verbose"])
+                    )
+                cases.append((["image-control", "--check"], expected_plugins))
             for arguments, expected in cases:
                 with self.subTest(script=name, arguments=arguments):
                     self.log.unlink(missing_ok=True)
@@ -241,6 +251,8 @@ class ShellHelpContracts(unittest.TestCase):
                     actual = [tuple(line.removesuffix("\0").split("\0")) for line in self.log.read_text().splitlines()]
                     assert actual == expected
             failure_projects = ("cpp", "rust") if name == "build.sh" else ("cpp", "rust", "image-control-plugin")
+            if name == "install.sh":
+                failure_projects += ("image-control-plugin/rust",)
             for failed_project in failure_projects:
                 with self.subTest(script=name, fail=failed_project):
                     self.log.unlink(missing_ok=True)
@@ -255,7 +267,7 @@ class ShellHelpContracts(unittest.TestCase):
                     )
                     assert result.returncode == 47, result.stdout + result.stderr
                     actual = [line.split("\0")[0] for line in self.log.read_text().splitlines()]
-                    projects = ["cpp", "rust", "image-control-plugin"]
+                    projects = ["cpp", "rust", "image-control-plugin", "image-control-plugin/rust"]
                     expected_projects = projects[: projects.index(failed_project) + 1]
                     assert actual == [f"{project}/{name}" for project in expected_projects]
 

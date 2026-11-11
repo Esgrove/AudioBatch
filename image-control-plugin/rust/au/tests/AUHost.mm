@@ -211,7 +211,8 @@ namespace esgrove::image_control::test
 			auto factory = reinterpret_cast<AudioComponentFactoryFunction>(CFBundleGetFunctionPointerForName(bundle, factoryName));
 			require(factory != nullptr, "The exact bundle's factory export is missing");
 			require(CFBundleGetDataPointerForName(bundle, CFSTR("clap_entry")) != nullptr, "Static clap_entry export is missing");
-			// Use the returned local component directly. AudioComponentFindNext could select a different installed artifact.
+			// Use the returned local component directly.
+			// AudioComponentFindNext could select a different installed artifact.
 			auto* component = AudioComponentRegister(&DESCRIPTION, CFSTR("Esgrove: ImageControl RS isolated host"), 256, factory);
 			require(component != nullptr, "Process-local factory registration failed");
 			fmt::print("PASS exact build-tree bundle {} (aufx/Egir/Esgr, {})\n", pathString, IMAGE_CONTROL_VERSION);
@@ -661,7 +662,8 @@ namespace esgrove::image_control::test
 			auto* const component = loadBundle(bundle, bundleOwner);
 			qualify(component, editor);
 			fmt::print("PASS bounded AU functional contracts. BLOCKED upstream state/offline/contention gates remain.\n");
-			// CFBundle is retained by process-local registration until process exit. Arbitrary module unload is not tested.
+			// CFBundle is retained by process-local registration until process exit.
+			// Arbitrary module unload is not tested.
 			[[maybe_unused]] const auto* processLifetimeBundle = bundleOwner.release();
 			return 0;
 		}
