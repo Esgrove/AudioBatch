@@ -474,7 +474,8 @@ TEST(HistoryControls, TeardownClosesLinkedSliderAndSpectrogramGestures)
         SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), history);
         view.setSize(1000, 400);
         const juce::Point<float> start {historyX(view, 60.0), view.getPlotBounds().getCentreY()};
-        const auto modifiers = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::ctrlModifier;
+        const auto modifiers
+            = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier).withFlags(juce::ModifierKeys::ctrlModifier);
         view.mouseDown(historyMouse(view, start, start, modifiers));
         view.mouseDrag(historyMouse(view, start.translated(0.0F, -20.0F), start, modifiers));
         EXPECT_TRUE(history.isEditing());
@@ -821,7 +822,8 @@ TEST(HistoryControls, HostRestoreCancelsStaleSliderAndSpectrogramFrames)
             SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), history);
             view.setSize(1000, 400);
             const juce::Point<float> start {historyX(view, 60.0), view.getPlotBounds().getCentreY()};
-            const auto modifiers = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::ctrlModifier;
+            const auto modifiers = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)
+                                       .withFlags(juce::ModifierKeys::ctrlModifier);
             view.mouseDown(historyMouse(view, start, start, modifiers));
             view.mouseDrag(historyMouse(view, start.translated(0.0F, -20.0F), start, modifiers));
             processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));

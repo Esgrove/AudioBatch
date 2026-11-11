@@ -361,7 +361,10 @@ TEST(SpectrogramView, TeardownClosesAnInterruptedLinkedGainGesture)
         view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
         const juce::Point<float> position {xOf(view, 2000.0), view.getPlotBounds().getCentreY()};
         view.mouseDown(mouseEvent(
-            view, position, position, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::commandModifier
+            view,
+            position,
+            position,
+            juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier).withFlags(juce::ModifierKeys::commandModifier)
         ));
         processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
         EXPECT_EQ(midGestures.events, (std::vector<bool> {true}));

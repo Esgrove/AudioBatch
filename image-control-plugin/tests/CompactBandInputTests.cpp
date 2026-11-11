@@ -260,7 +260,9 @@ TEST(CompactBands, RelativeDragFineAdjustmentAndResetUseExistingSliderGestures)
         slider->endDrag();
         EXPECT_GT(coarse, 0.0);
         EXPECT_TRUE(processor.getHistory().undo());
-        const int fineModifiers = juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier;
+        const int fineModifiers = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)
+                                      .withFlags(juce::ModifierKeys::shiftModifier)
+                                      .getRawFlags();
         slider->mouseDown(compactMouse(*slider, {12.0F, 12.0F}, {12.0F, 12.0F}, fineModifiers));
         slider->mouseDrag(compactMouse(*slider, {52.0F, 12.0F}, {12.0F, 12.0F}, fineModifiers));
         const double fine = slider->getValue() - initial;

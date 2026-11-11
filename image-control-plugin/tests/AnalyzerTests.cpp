@@ -242,11 +242,20 @@ TEST(Analyzer, CachedPowersMatchDirectNeighbourhoodSummationInBinOrder)
         }
         const float level = (std::norm(hannLeft[index]) + std::norm(hannRight[index])) / (256.0F * 256.0F);
         EXPECT_FLOAT_EQ(points[index].level, level);
-        EXPECT_FLOAT_EQ(
-            points[index].position, positionFromMagnitudes(std::sqrt(leftPower), std::sqrt(rightPower), curve)
+        // Position and coherence subtract nearly equal channel powers,
+        // which amplifies the last-bit differences
+        // that fused multiply-add contraction makes between production and this reference.
+        // Measured Release differences stay below 1.0e-7, so the bound stays tight.
+        constexpr float contractionTolerance {1.0e-6F};
+        EXPECT_NEAR(
+            points[index].position,
+            positionFromMagnitudes(std::sqrt(leftPower), std::sqrt(rightPower), curve),
+            contractionTolerance
         );
-        EXPECT_FLOAT_EQ(
-            points[index].coherence, std::clamp(crossPower / std::sqrt(leftPower * rightPower), -1.0F, 1.0F)
+        EXPECT_NEAR(
+            points[index].coherence,
+            std::clamp(crossPower / std::sqrt(leftPower * rightPower), -1.0F, 1.0F),
+            contractionTolerance
         );
     }
 }

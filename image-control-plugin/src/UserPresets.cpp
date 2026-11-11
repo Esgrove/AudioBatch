@@ -8,7 +8,6 @@
 #include <system_error>
 
 #include <algorithm>
-#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -22,6 +21,7 @@
 #else
 #include <sys/file.h>
 
+#include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -62,11 +62,14 @@ class PresetLock final
 {
 public:
     /// Takes the thread gate before the bounded cross-process lock.
-    PresetLock() : threadLock(processMutex())
-    {
+    PresetLock() :
+        threadLock(processMutex())
 #if JUCE_WINDOWS
-        locked = processLock.enter(LOCK_TIMEOUT_MILLISECONDS);
-#else
+        ,
+        locked(processLock.enter(LOCK_TIMEOUT_MILLISECONDS))
+#endif
+    {
+#if !JUCE_WINDOWS
         // flock is tied to the open description, so separate AU/VST3 images in one host exclude each other too.
         const auto lockFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                   .getChildFile("esgrove.ImageControl.UserPresets-v1.lock");

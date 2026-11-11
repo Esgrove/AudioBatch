@@ -918,6 +918,9 @@ TEST(ImageControlEditorBenchmark, LiveSweepUsesNormalStateListenersWithoutResett
     ImageControlEditor editor(processor);
     ImageControlEditorTestAccess access(editor);
     access.disableDisplayCallbacks();
+    // The worker thread discards queued audio and applies the constructor's pending requests on its first passes,
+    // so the baseline epoch is captured only after they finish.
+    ASSERT_TRUE(access.finishPass());
     const auto& state = processor.getEditorState();
     const auto originalEpoch = processor.getAnalyzerFifo().getEpoch();
     const auto originalSound = processor.getSoundSnapshot();
