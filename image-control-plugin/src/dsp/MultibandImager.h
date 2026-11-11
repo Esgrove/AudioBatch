@@ -53,8 +53,8 @@ using SmoothedGain = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linea
 /// Solos mute the bands that are not soloed, unless no band or every band is soloed.
 ///
 /// The latency is the kernel half length plus one partition.
-/// While every gain and Width satisfies settled unity, every pan is at the centre, and no band is muted by a solo,
-/// the output is the input delayed by the latency, bit for bit.
+/// While every audible gain and Width satisfies settled unity, every audible pan is centred, and no band is muted,
+/// the output is the input delayed by the latency, bit for bit. Mono ignores Side, Width, Recover, and Pan.
 /// In delta mode the delayed input is subtracted from the output, so it carries only what the processing changed,
 /// and neutral settings give exact silence.
 /// With solos, delta subtracts only the soloed bands of the delayed input.
@@ -161,7 +161,7 @@ private:
     std::array<SmoothedGain, BAND_COUNT> soloSmoothers;
     /// Independent Side multipliers, with unity retaining the gain-trimmed stereo image.
     std::array<SmoothedGain, BAND_COUNT> widthSmoothers;
-    /// Amount of narrowed Side to phase-rotate into Mid, from zero to one.
+    /// Amount of narrowed Side to phase-rotate into Mid, from zero to RECOVER_MAX.
     std::array<SmoothedGain, BAND_COUNT> recoverySmoothers;
     /// Glide of the output gain.
     SmoothedGain outputGainSmoother;

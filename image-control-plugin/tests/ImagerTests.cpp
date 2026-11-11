@@ -4,6 +4,7 @@
 /// mono processing, band pans that move a band toward one channel after its gains,
 /// solos that keep only the soloed bands and their delta, and crossover moves that switch kernels without a click.
 
+#include "dsp/CrossoverDesign.h"
 #include "dsp/MultibandImager.h"
 #include "Parameters.h"
 #include "tests/TestSignals.h"
@@ -12,9 +13,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <span>
+#include <tuple>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -25,6 +30,73 @@ namespace
 constexpr int LATENCY {4096 + PARTITION_SIZE};
 /// Block sizes cycled through while processing, including ones that do not divide the partition size.
 constexpr std::array<int, 6> BLOCK_SIZES {1, 37, 256, 511, 4097, 64};
+
+/// Nonuniform controls make ordinary and quadrature crossover handoffs observable independently.
+constexpr BandGains HANDOFF_MID_GAINS {0.4F, 1.2F, 0.7F, 1.4F};
+constexpr BandGains HANDOFF_SIDE_GAINS {1.1F, 0.3F, 1.5F, 0.6F};
+constexpr BandWidths HANDOFF_WIDTHS {0.25F, 0.5F, 0.0F, 0.75F};
+
+/// Sparse source events permit direct full-support convolution without another streaming imager as the oracle.
+struct HandoffImpulse {
+    int sample;
+    float mid;
+    float side;
+};
+
+/// Each case covers one recovery, destination, and rendering-mode combination with no worker-timing assumptions.
+class OfflineHandoff : public testing::TestWithParam<std::tuple<bool, bool, bool>>
+{};
+
+/// Builds a fixed-control impulse response from ordinary and quadrature taps, independently of convolution and mixing.
+std::array<std::vector<double>, 2> handoffImpulseResponse(
+    const Crossovers& crossovers,
+    const BandRecoveries& recoveries,
+    const HandoffImpulse& impulse
+)
+{
+    constexpr int halfLength {4096};
+    constexpr std::size_t taps {2 * halfLength + 1};
+    std::array<std::vector<float>, CROSSOVER_COUNT> ordinary;
+    std::array<std::vector<float>, CROSSOVER_COUNT> quadrature;
+    for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+        const auto frequency = static_cast<double>(crossovers[crossover]);
+        ordinary[crossover] = designLowpassKernel(frequency, TEST_SAMPLE_RATE, halfLength);
+        quadrature[crossover] = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength, frequency);
+    }
+    const auto fullQuadrature = designQuadratureKernel(TEST_SAMPLE_RATE, halfLength);
+    std::array<std::vector<double>, 2> result {std::vector<double>(taps), std::vector<double>(taps)};
+    for (std::size_t tap = 0; tap < taps; ++tap) {
+        double mid = 0.0;
+        double side = 0.0;
+        for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+            const double delayed = tap == halfLength ? 1.0 : 0.0;
+            const double upper = band < CROSSOVER_COUNT ? static_cast<double>(ordinary[band][tap]) : delayed;
+            const double lower = band > 0 ? static_cast<double>(ordinary[band - 1][tap]) : 0.0;
+            const auto quadratureUpper
+                = static_cast<double>(band < CROSSOVER_COUNT ? quadrature[band][tap] : fullQuadrature[tap]);
+            const double quadratureLower = band > 0 ? static_cast<double>(quadrature[band - 1][tap]) : 0.0;
+            const auto midGain = static_cast<double>(HANDOFF_MID_GAINS[band]);
+            const auto sideGain = static_cast<double>(HANDOFF_SIDE_GAINS[band]);
+            const auto width = static_cast<double>(HANDOFF_WIDTHS[band]);
+            const auto recovery = static_cast<double>(recoveries[band]);
+            mid += static_cast<double>(impulse.mid) * midGain * (upper - lower)
+                + static_cast<double>(impulse.side) * sideGain * recovery * (1.0 - width)
+                    * (quadratureUpper - quadratureLower);
+            side += static_cast<double>(impulse.side) * sideGain * width * (upper - lower);
+        }
+        result[0][tap] = mid + side;
+        result[1][tap] = mid - side;
+    }
+    return result;
+}
+
+/// Tests request identity without using the editor's approximate crossover comparison.
+bool exactCrossoverValues(const Crossovers& first, const Crossovers& second)
+{
+    return std::ranges::equal(first, second, [](const float left, const float right) {
+        return juce::exactlyEqual(left, right);
+    });
+}
 
 /// Returns gains of the same value for every band.
 BandGains uniformGains(const float gain)
@@ -204,54 +276,114 @@ TEST(Imager, EnteringOfflineDesignsAnUnchangedRealtimeRequestBeforeProcessing)
     EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), moved));
 }
 
-TEST(Imager, ReturningToActiveCrossoversOfflineConsumesAStalePendingSlotAndRestoresTheLatestRequest)
+TEST_P(OfflineHandoff, StalePendingSlotsMatchDirectConvolution)
 {
-    MultibandImager imager;
-    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    constexpr int change {4096};
+    constexpr int samples {15'000};
+    constexpr int partialPartition {37};
+    constexpr std::array impulses {
+        HandoffImpulse {.sample = 19, .mid = 0.25F, .side = -0.5F},
+        HandoffImpulse {.sample = change - 91, .mid = -0.125F, .side = 0.375F},
+        HandoffImpulse {.sample = change + 83, .mid = 0.5F, .side = 0.25F},
+    };
     const Crossovers stale {80.0F, 1800.0F, 8000.0F};
-    // Synchronous design establishes a pending slot deterministically, without relying on background timing.
-    imager.setCrossovers(stale, true);
-    imager.setCrossovers(stale, false);
-    // The first offline request returns to the still-active kernels while the stale slot remains pending.
-    imager.setCrossovers(DEFAULT_CROSSOVERS, true);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), DEFAULT_CROSSOVERS));
-    juce::AudioBuffer<float> block(2, PARTITION_SIZE);
-    block.clear();
-    imager.process(block);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), stale));
-    // Publication must design the latest request immediately, without another setter or host callback.
-    block.clear();
-    imager.process(block);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), DEFAULT_CROSSOVERS));
-    imager.setCrossovers(DEFAULT_CROSSOVERS, true);
-    block.clear();
-    imager.process(block);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), DEFAULT_CROSSOVERS));
+    const Crossovers latest {120.0F, 2400.0F, 9000.0F};
+    const auto [recovering, returnToActive, enterOffline] = GetParam();
+    const BandRecoveries recoveries = recovering ? BandRecoveries {0.25F, 1.5F, 0.75F, 2.0F} : BandRecoveries {};
+    const auto& target = returnToActive ? DEFAULT_CROSSOVERS : latest;
+    juce::AudioBuffer<float> input(2, samples);
+    input.clear();
+    for (const auto& impulse : impulses) {
+        input.setSample(0, impulse.sample, impulse.mid + impulse.side);
+        input.setSample(1, impulse.sample, impulse.mid - impulse.side);
+    }
+    juce::AudioBuffer<float> actual;
+    juce::AudioBuffer<float> reference;
+    actual.makeCopyOf(input);
+    reference.makeCopyOf(input);
+    MultibandImager staged;
+    MultibandImager direct;
+    for (auto* imager : {&staged, &direct}) {
+        imager->setGains(HANDOFF_MID_GAINS, HANDOFF_SIDE_GAINS, 1.0F);
+        imager->setWidths(HANDOFF_WIDTHS);
+        imager->setRecoveries(recoveries);
+        imager->prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
+    }
+    juce::AudioBuffer<float> actualStart(actual.getArrayOfWritePointers(), 2, 0, change + partialPartition);
+    juce::AudioBuffer<float> referenceStart(reference.getArrayOfWritePointers(), 2, 0, change + partialPartition);
+    processInBlocks(staged, actualStart);
+    processInBlocks(direct, referenceStart);
+    // Synchronous design establishes exactly the slot the realtime worker might have published.
+    // No processing consumes it before the latest request takes ownership of offline rendering.
+    staged.setCrossovers(stale, true);
+    if (enterOffline) {
+        staged.setCrossovers(target, false);
+    }
+    staged.setCrossovers(target, true);
+    direct.setCrossovers(target, true);
+    juce::AudioBuffer<float> actualRest(
+        actual.getArrayOfWritePointers(), 2, change + partialPartition, samples - change - partialPartition
+    );
+    juce::AudioBuffer<float> referenceRest(
+        reference.getArrayOfWritePointers(), 2, change + partialPartition, samples - change - partialPartition
+    );
+    processInBlocks(staged, actualRest);
+    processInBlocks(direct, referenceRest);
+    EXPECT_TRUE(sameCrossovers(staged.getActiveCrossovers(), target));
+    for (int channel = 0; channel < 2; ++channel) {
+        std::vector<double> expected(samples, 0.0);
+        for (const auto& impulse : impulses) {
+            const auto previous = handoffImpulseResponse(DEFAULT_CROSSOVERS, recoveries, impulse);
+            const auto replacement = handoffImpulseResponse(target, recoveries, impulse);
+            for (std::size_t tap = 0; tap < previous[0].size(); ++tap) {
+                const int output = impulse.sample + PARTITION_SIZE + static_cast<int>(tap);
+                const double fade
+                    = std::clamp(static_cast<double>(output - change - PARTITION_SIZE + 1) / PARTITION_SIZE, 0.0, 1.0);
+                const auto index = static_cast<std::size_t>(channel);
+                expected[static_cast<std::size_t>(output)]
+                    += previous[index][tap] + (replacement[index][tap] - previous[index][tap]) * fade;
+            }
+        }
+        for (int sample = 0; sample < samples; ++sample) {
+            ASSERT_EQ(actual.getSample(channel, sample), reference.getSample(channel, sample)) << sample;
+            ASSERT_NEAR(actual.getSample(channel, sample), expected[static_cast<std::size_t>(sample)], 2.0e-6)
+                << "channel " << channel << " sample " << sample;
+        }
+    }
 }
 
-TEST(Imager, OfflineTransitionFinishesAnOutstandingUnchangedCrossoverRequest)
+INSTANTIATE_TEST_SUITE_P(
+    PendingSlotScenarios,
+    OfflineHandoff,
+    testing::Combine(testing::Bool(), testing::Bool(), testing::Bool())
+);
+
+TEST(Imager, DistinctAdjacentFloatCrossoverRequestsReachEveryKernelPublication)
 {
-    MultibandImager imager;
-    imager.prepare(TEST_SAMPLE_RATE, 2, DEFAULT_CROSSOVERS);
-    const Crossovers first {80.0F, 1800.0F, 8000.0F};
-    const Crossovers latest {120.0F, 2400.0F, 9000.0F};
-    // Queue two requests before a partition can publish either slot.
-    imager.setCrossovers(first, true);
-    imager.setCrossovers(latest, false);
-    // The raw values do not change, but offline mode must take over outstanding design work.
-    imager.setCrossovers(latest, true);
-    juce::AudioBuffer<float> block(2, PARTITION_SIZE);
-    block.clear();
-    imager.process(block);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), first));
-    block.clear();
-    imager.process(block);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), latest));
-    // Repeated unchanged offline calls must remain harmless after publication.
-    imager.setCrossovers(latest, true);
-    block.clear();
-    imager.process(block);
-    EXPECT_TRUE(sameCrossovers(imager.getActiveCrossovers(), latest));
+    const Crossovers original {100.0F, 1000.0F, 5000.0F};
+    auto moved = original;
+    for (auto& frequency : moved) {
+        frequency = std::nextafter(frequency, std::numeric_limits<float>::infinity());
+    }
+    ASSERT_FALSE(exactCrossoverValues(original, moved));
+    for (const bool offline : {false, true}) {
+        SCOPED_TRACE(offline);
+        MultibandImager imager;
+        imager.prepare(TEST_SAMPLE_RATE, 2, original);
+        imager.setCrossovers(moved, offline);
+        juce::AudioBuffer<float> block(2, PARTITION_SIZE);
+        for (int attempt = 0; attempt < 400 && !exactCrossoverValues(imager.getActiveCrossovers(), moved); ++attempt) {
+            block.clear();
+            imager.process(block);
+            if (!offline) {
+                juce::Thread::sleep(5);
+            }
+        }
+        const auto active = imager.getActiveCrossovers();
+        for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+            EXPECT_EQ(std::bit_cast<std::uint32_t>(active[crossover]), std::bit_cast<std::uint32_t>(moved[crossover]));
+        }
+    }
 }
 
 TEST(Imager, SideOffMakesBothChannelsEqual)
@@ -404,16 +536,84 @@ TEST(Imager, CentringThePansAgainRestoresTheBitExactPassThrough)
     }
 }
 
-TEST(Imager, MonoInputIgnoresPan)
+TEST(Imager, MonoIgnoredStereoControlsPreserveExactNeutralAndDeltaAcrossAutomationAndReset)
 {
-    const auto input = makeNoise(0.8F, 12'000, 36);
+    constexpr int samples {12'000};
+    constexpr int change {5037};
+    const auto input = makeNoise(0.8F, samples, 36);
+    for (const bool delta : {false, true}) {
+        for (const bool metered : {false, true}) {
+            SCOPED_TRACE(delta);
+            SCOPED_TRACE(metered);
+            MultibandImager imager;
+            imager.setGains(uniformGains(1.0F), {0.0F, 0.25F, 2.0F, 0.5F}, 1.0F);
+            imager.setPans({1.0F, -1.0F, 0.25F, -0.5F});
+            imager.setWidths({0.0F, 0.25F, 1.5F, 2.0F});
+            imager.setRecoveries({2.0F, 0.5F, 1.0F, 0.0F});
+            imager.setDelta(delta);
+            imager.prepare(TEST_SAMPLE_RATE, 1, DEFAULT_CROSSOVERS);
+            imager.setCorrelationEnabled(metered);
+            for (const bool resetting : {false, true}) {
+                SCOPED_TRACE(resetting);
+                if (resetting) {
+                    imager.reset();
+                }
+                auto buffer = makeBuffer({input});
+                juce::AudioBuffer<float> first(buffer.getArrayOfWritePointers(), 1, 0, change);
+                processInBlocks(imager, first);
+                imager.setGains(uniformGains(1.0F), {1.5F, 0.0F, 0.5F, 1.25F}, 1.0F);
+                imager.setPans({-0.75F, 0.5F, -1.0F, 1.0F});
+                imager.setWidths({2.0F, 1.0F, 0.0F, 0.5F});
+                imager.setRecoveries({0.25F, 2.0F, 0.75F, 1.5F});
+                imager.setCrossovers({80.0F, 1200.0F, 8000.0F}, true);
+                juce::AudioBuffer<float> rest(buffer.getArrayOfWritePointers(), 1, change, samples - change);
+                processInBlocks(imager, rest);
+                for (int sample = 0; sample < samples; ++sample) {
+                    const float expected
+                        = delta || sample < LATENCY ? 0.0F : input[static_cast<std::size_t>(sample - LATENCY)];
+                    ASSERT_EQ(buffer.getSample(0, sample), expected) << sample;
+                }
+            }
+        }
+    }
+}
+
+TEST(Imager, MonoNeutralShortcutAdvancesIgnoredControlRampsBeforeActiveProcessing)
+{
+    constexpr int change {12'288};
+    constexpr int ignoredRampSamples {2 * PARTITION_SIZE};
+    constexpr int gainRampSamples {1024};
+    constexpr int samples {change + 4096};
+    // At this rate the 20 ms ramp is 1024 samples, making every half-gain step exactly representable.
+    // The expectation measures control timing without accumulated non-dyadic ramp rounding.
+    constexpr double sampleRate {51'200.0};
+    constexpr int latency {8192 + PARTITION_SIZE};
+    const auto input = makeNoise(0.5F, samples, 174);
     auto buffer = makeBuffer({input});
     MultibandImager imager;
-    imager.setPans(uniformPans(1.0F));
-    imager.prepare(TEST_SAMPLE_RATE, 1, DEFAULT_CROSSOVERS);
-    processInBlocks(imager, buffer);
-    for (int sample = LATENCY; sample < buffer.getNumSamples(); ++sample) {
-        ASSERT_NEAR(buffer.getSample(0, sample), input[static_cast<std::size_t>(sample - LATENCY)], 1.0e-5F);
+    imager.prepare(sampleRate, 1, DEFAULT_CROSSOVERS);
+    juce::AudioBuffer<float> warm(buffer.getArrayOfWritePointers(), 1, 0, change - ignoredRampSamples);
+    processInBlocks(imager, warm);
+    imager.setGains(uniformGains(1.0F), {0.0F, 0.5F, 2.0F, 0.25F}, 1.0F);
+    imager.setPans({1.0F, -1.0F, 0.5F, -0.25F});
+    imager.setWidths({0.0F, 2.0F, 0.5F, 1.5F});
+    imager.setRecoveries({2.0F, 0.5F, 1.0F, 1.5F});
+    juce::AudioBuffer<float> ignored(
+        buffer.getArrayOfWritePointers(), 1, change - ignoredRampSamples, ignoredRampSamples
+    );
+    processInBlocks(imager, ignored);
+    imager.setGains(uniformGains(0.5F), {0.0F, 0.5F, 2.0F, 0.25F}, 1.0F);
+    juce::AudioBuffer<float> active(buffer.getArrayOfWritePointers(), 1, change, samples - change);
+    processInBlocks(imager, active);
+    for (int sample = 0; sample < samples; ++sample) {
+        const float progress
+            = std::clamp(static_cast<float>(sample - change - PARTITION_SIZE + 1) / gainRampSamples, 0.0F, 1.0F);
+        const float expected
+            = sample < latency ? 0.0F : input[static_cast<std::size_t>(sample - latency)] * (1.0F - progress * 0.5F);
+        ASSERT_NEAR(buffer.getSample(0, sample), expected, 2.0e-6F) << sample;
+        if (sample < change + PARTITION_SIZE && sample >= latency) {
+            ASSERT_EQ(buffer.getSample(0, sample), expected) << sample;
+        }
     }
 }
 
