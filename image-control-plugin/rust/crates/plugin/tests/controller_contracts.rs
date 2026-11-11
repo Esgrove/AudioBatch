@@ -144,6 +144,23 @@ fn conversions_and_non_finite_validation_use_real_controller() {
             (-24.0_f64).to_bits()
         );
         assert_eq!(controller.normalizedParamToPlain(0, 1.0).to_bits(), 12.0_f64.to_bits());
+        assert_eq!(controller.plainParamToNormalized(0, 0.0), 2.0 / 3.0);
+        assert_eq!(
+            controller.normalizedParamToPlain(0, 2.0 / 3.0).to_bits(),
+            0.0_f64.to_bits()
+        );
+        for (id, default) in [(1, 100.0), (2, 500.0), (3, 5000.0)] {
+            assert_eq!(controller.normalizedParamToPlain(id, 0.0), 20.0);
+            assert_eq!(controller.normalizedParamToPlain(id, 1.0), 20_000.0);
+            assert_eq!(controller.plainParamToNormalized(id, 20.0), 0.0);
+            assert_eq!(controller.plainParamToNormalized(id, 20_000.0), 1.0);
+            let normalized = parameter_spec(id).expect("crossover").default_normalized;
+            assert!((controller.normalizedParamToPlain(id, normalized) / default - 1.0).abs() < 2e-14);
+            for (frequency, normalized) in [(200.0, 1.0 / 3.0), (2000.0, 2.0 / 3.0)] {
+                assert!((controller.normalizedParamToPlain(id, normalized) / frequency - 1.0).abs() < 2e-14);
+                assert!((controller.plainParamToNormalized(id, frequency) - normalized).abs() < 2e-14);
+            }
+        }
         assert_eq!(controller.setParamNormalized(u32::MAX, 0.5), kInvalidArgument);
         assert_eq!(
             controller.getParamStringByValue(0, f64::NAN, std::ptr::null_mut()),
