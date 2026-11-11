@@ -877,7 +877,8 @@ esac
                 prelude = (
                     f"$directory = {literal(directory)}; $source = {literal(source)}; $log = {literal(log)};\n"
                     f"$contractFailure = '{failure}'\n"
-                    """function Move-Item {
+                    """
+function Move-Item {
     param([string]$LiteralPath, [string]$Destination)
     if (($contractFailure -eq 'publish' -or $contractFailure -eq 'recovery') -and
         $LiteralPath.EndsWith('ImageControl.vst3') -and $LiteralPath.Contains('.ImageControl-install.')) {
