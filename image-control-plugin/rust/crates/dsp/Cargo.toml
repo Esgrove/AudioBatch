@@ -12,6 +12,7 @@ publish = false
 
 [dependencies]
 realfft.workspace = true
+rustfft = "6.4.1"
 rtrb.workspace = true
 serde.workspace = true
 thiserror.workspace = true

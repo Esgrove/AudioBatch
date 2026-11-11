@@ -1,54 +1,191 @@
-//! Single-resolution stereo power analysis on a worker thread, independent of graphics and plugin APIs.
+//! Six-tier, packed-stereo spectral analysis with audio-time deadlines and reusable worker-owned storage.
 
 use std::sync::Arc;
 
 use realfft::num_complex::Complex32;
-use realfft::{RealFftPlanner, RealToComplex};
+use rustfft::{Fft, FftPlanner};
 use thiserror::Error;
 
-/// Window length for the intentionally single-tier spike analyzer.
-const WINDOW_LENGTH: usize = 2_048;
-/// Hop length measured in audio frames, independent of host block boundaries.
-const HOP_LENGTH: usize = 512;
+/// Number of independent frequency tiers, ordered from bass to treble.
+pub const ANALYSIS_TIER_COUNT: usize = 6;
+const MIN_FREQUENCY: f64 = 20.0;
+const MAX_FREQUENCY: f64 = 20_000.0;
+const SILENCE_POWER: f32 = 1.0e-12;
+const REFERENCE_RATE: f32 = 48_000.0;
+const POSITION_SMOOTHING_OCTAVES: f64 = 1.0 / 32.0;
+const TIER_LAYOUTS: [TierLayout; ANALYSIS_TIER_COUNT] = [
+    TierLayout {
+        window_length: 32_768,
+        hop: 2048,
+        min_frequency: 0.0,
+        max_frequency: 80.0,
+    },
+    TierLayout {
+        window_length: 16_384,
+        hop: 1024,
+        min_frequency: 80.0,
+        max_frequency: 160.0,
+    },
+    TierLayout {
+        window_length: 8192,
+        hop: 512,
+        min_frequency: 160.0,
+        max_frequency: 320.0,
+    },
+    TierLayout {
+        window_length: 4096,
+        hop: 512,
+        min_frequency: 320.0,
+        max_frequency: 640.0,
+    },
+    TierLayout {
+        window_length: 2048,
+        hop: 512,
+        min_frequency: 640.0,
+        max_frequency: 4000.0,
+    },
+    TierLayout {
+        window_length: 1024,
+        hop: 512,
+        min_frequency: 4000.0,
+        max_frequency: f64::INFINITY,
+    },
+];
 
-/// A validated spectral observation ready for worker-side GPU instance construction.
-#[derive(Clone, Copy, Debug)]
+/// One validated spectral observation. Position is normalized from full left (0) to full right (1).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpectralPoint {
     frequency: f32,
+    reassigned_frequency: f32,
+    spacing: f32,
     position: f32,
     power: f32,
+    coherence: f32,
 }
 
-/// Worker-side setup or transform errors, never formatted in an audio callback.
+/// Audio-time identity of one tier frame, independent of caller block boundaries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpectralFrameInfo {
+    /// Frequency tier index, from zero to five.
+    pub tier_index: usize,
+    /// Duration of this tier's hop in seconds.
+    pub frame_seconds: f64,
+    /// Exclusive audio endpoint since reset, in seconds.
+    pub end_seconds: f64,
+    /// Whether this is the last tier due at the shared audio endpoint.
+    pub last_at_time: bool,
+}
+
+/// Worker-side setup errors, never formatted in an audio callback.
 #[derive(Debug, Error)]
 pub enum AnalysisError {
-    /// An invalid rate must not enter logarithmic frequency projection.
+    /// Rates must be finite and lie between 8 kHz and 768 kHz inclusive.
     #[error("unsupported spatial analyzer sample rate")]
     InvalidRate,
-    /// Transform sizes and scratch are fixed at construction, so this indicates an internal contract failure.
-    #[error("spatial FFT failed: {0}")]
-    Transform(#[from] realfft::FftError),
 }
 
-/// Retained worker-owned history and FFT scratch. Construction allocates, streaming reuses all storage.
-pub struct SpatialAnalyzer {
-    transform: Arc<dyn RealToComplex<f32>>,
-    sample_rate: f32,
-    history: Vec<[f32; 2]>,
-    window: Vec<f32>,
-    input: Vec<f32>,
-    left: Vec<Complex32>,
-    right: Vec<Complex32>,
+/// Validated level-difference curve, matching the reference midpoint and edge controls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StereoPositionCurve {
+    exponent: f32,
+    scale_decibels: f32,
+}
+
+/// Unscaled window geometry and reported frequency range for one analysis tier.
+#[derive(Clone, Copy)]
+struct TierLayout {
+    /// Number of history samples in the base-rate analysis window.
+    window_length: usize,
+    /// Number of base-rate samples between observation deadlines.
+    hop: usize,
+    /// Inclusive lower bound of the tier's reported frequency range in Hz.
+    min_frequency: f64,
+    /// Upper bound of the reported range in Hz, further limited by Nyquist and the display range.
+    max_frequency: f64,
+}
+
+/// One transform and its fixed spectral-neighborhood work storage.
+struct AnalysisTier {
+    transform: Arc<dyn Fft<f32>>,
+    spectrum: Vec<Complex32>,
     scratch: Vec<Complex32>,
+    bins: Vec<AnalyzedBin>,
+    window_length: usize,
+    hop: usize,
+    since_frame: usize,
+    first_bin: usize,
+    bin_width: f64,
+    level_scale: f32,
+}
+
+/// Static bin geometry and dynamic per-frame powers share a preallocated tier-local buffer.
+struct AnalyzedBin {
+    frequency: f32,
+    first_neighbor: usize,
+    last_neighbor: usize,
+    left_power: f32,
+    right_power: f32,
+    cross_power: f32,
+    reassigned_frequency: f32,
+}
+
+/// Worker-owned analyzer. Construction allocates. Streaming and reset reuse all internal storage.
+pub struct SpatialAnalyzer {
+    tiers: Vec<AnalysisTier>,
+    history: Vec<[f32; 2]>,
+    points: Vec<SpectralPoint>,
+    curve: StereoPositionCurve,
+    sample_rate: f64,
     write_index: usize,
-    frames: usize,
+    processed_samples: u64,
 }
 
 impl SpectralPoint {
-    /// Returns frequency in Hz.
+    /// Validates an independently supplied observation before projection or logarithmic level calculations.
+    #[must_use]
+    pub fn new(
+        frequency: f32,
+        reassigned_frequency: f32,
+        spacing: f32,
+        position: f32,
+        power: f32,
+        coherence: f32,
+    ) -> Option<Self> {
+        ([frequency, reassigned_frequency, spacing, position, power, coherence]
+            .into_iter()
+            .all(f32::is_finite)
+            && (20.0..=20_000.0).contains(&frequency)
+            && (20.0..=20_000.0).contains(&reassigned_frequency)
+            && spacing >= 0.0
+            && (0.0..=1.0).contains(&position)
+            && power > 0.0
+            && (-1.0..=1.0).contains(&coherence))
+        .then_some(Self {
+            frequency,
+            reassigned_frequency,
+            spacing,
+            position,
+            power,
+            coherence,
+        })
+    }
+
+    /// Returns the original FFT bin frequency in Hz, used for level tilt and palette lookup.
     #[must_use]
     pub const fn frequency(self) -> f32 {
         self.frequency
+    }
+
+    /// Returns the bounded instantaneous frequency in Hz, used only for horizontal placement.
+    #[must_use]
+    pub const fn reassigned_frequency(self) -> f32 {
+        self.reassigned_frequency
+    }
+
+    /// Returns the zero-padded transform bin spacing in Hz.
+    #[must_use]
+    pub const fn spacing(self) -> f32 {
+        self.spacing
     }
 
     /// Returns top-to-bottom stereo position, zero for Left and one for Right.
@@ -57,177 +194,321 @@ impl SpectralPoint {
         self.position
     }
 
-    /// Returns combined channel power normalized to an equal-channel full-scale interior sine.
+    /// Returns combined channel power, calibrated so a full-scale interior sine in one channel reads one.
     #[must_use]
     pub const fn power(self) -> f32 {
         self.power
     }
+
+    /// Returns neighborhood phase coherence from minus one (opposite polarity) to plus one (in phase).
+    #[must_use]
+    pub const fn coherence(self) -> f32 {
+        self.coherence
+    }
+}
+
+impl Default for StereoPositionCurve {
+    /// Uses the reference 12 dB midpoint and 32 dB edge settings.
+    fn default() -> Self {
+        Self::from_valid_settings(12.0, 32.0)
+    }
+}
+
+impl StereoPositionCurve {
+    /// Validates finite reference setting ranges, including the minimum 3 dB midpoint-to-edge gap.
+    #[must_use]
+    pub fn new(midpoint_decibels: f64, edge_decibels: f64) -> Option<Self> {
+        (midpoint_decibels.is_finite()
+            && edge_decibels.is_finite()
+            && (3.0..=24.0).contains(&midpoint_decibels)
+            && (12.0..=60.0).contains(&edge_decibels)
+            && edge_decibels >= midpoint_decibels + 3.0)
+            .then(|| Self::from_valid_settings(midpoint_decibels, edge_decibels))
+    }
+
+    /// Derives the curve once when settings change, never in repeated bin processing.
+    fn from_valid_settings(midpoint: f64, edge: f64) -> Self {
+        let argument = 0.5_f64.atanh();
+        let exponent = (0.99_f64.atanh() / argument).log(edge / midpoint);
+        Self {
+            exponent: exponent as f32,
+            scale_decibels: (midpoint / argument.powf(1.0 / exponent)) as f32,
+        }
+    }
+
+    /// Converts neighborhood powers to normalized position, retaining exact one-channel edge behavior.
+    fn position(self, left_power: f32, right_power: f32) -> f32 {
+        if right_power <= 0.0 {
+            return if left_power > 0.0 { 0.0 } else { 0.5 };
+        }
+        if left_power <= 0.0 {
+            return 1.0;
+        }
+        let difference = 20.0 * (left_power.sqrt() / right_power.sqrt()).log10();
+        let share = (difference.abs() / self.scale_decibels).powf(self.exponent).tanh();
+        (1.0 - share.copysign(difference)) * 0.5
+    }
 }
 
 impl SpatialAnalyzer {
-    /// Allocates one Hann-windowed FFT tier outside the audio callback.
+    /// Allocates six packed transforms and their reusable scratch outside the audio callback.
     ///
     /// # Errors
-    /// Rejects non-finite or unsupported rates.
+    /// Rejects non-finite rates and rates outside 8 kHz through 768 kHz.
     pub fn new(sample_rate: f32) -> Result<Self, AnalysisError> {
-        if !sample_rate.is_finite() || !(8_000.0..=768_000.0).contains(&sample_rate) {
+        if !sample_rate.is_finite() || !(8000.0..=768_000.0).contains(&sample_rate) {
             return Err(AnalysisError::InvalidRate);
         }
-        let transform = RealFftPlanner::new().plan_fft_forward(WINDOW_LENGTH);
+        let mut scale = 1;
+        for _ in 0..4 {
+            if sample_rate <= REFERENCE_RATE * scale as f32 {
+                break;
+            }
+            scale *= 2;
+        }
+        let mut planner = FftPlanner::new();
+        let tiers: Vec<_> = TIER_LAYOUTS
+            .into_iter()
+            .map(|layout| AnalysisTier::new(layout, scale, f64::from(sample_rate), &mut planner))
+            .collect();
+        let longest = 32_768 * scale;
+        let most_points = tiers.iter().map(|tier| tier.bins.len()).max().unwrap_or_default();
         Ok(Self {
-            sample_rate,
-            history: vec![[0.0; 2]; WINDOW_LENGTH],
-            window: (0..WINDOW_LENGTH)
-                .map(|index| {
-                    (-0.5_f32).mul_add((std::f32::consts::TAU * index as f32 / WINDOW_LENGTH as f32).cos(), 0.5)
-                })
-                .collect(),
-            input: transform.make_input_vec(),
-            left: transform.make_output_vec(),
-            right: transform.make_output_vec(),
-            scratch: transform.make_scratch_vec(),
-            transform,
+            tiers,
+            history: vec![[0.0; 2]; longest],
+            points: Vec::with_capacity(most_points),
+            curve: StereoPositionCurve::default(),
+            sample_rate: f64::from(sample_rate),
             write_index: 0,
-            frames: 0,
+            processed_samples: 0,
         })
     }
 
-    /// Clears worker history at a stream discontinuity without reallocating.
+    /// Clears history and restarts the audio clock without reallocating. First frames arrive at the first hop.
     pub fn reset(&mut self) {
         self.history.fill([0.0; 2]);
+        self.points.clear();
+        for tier in &mut self.tiers {
+            tier.since_frame = 0;
+        }
         self.write_index = 0;
-        self.frames = 0;
+        self.processed_samples = 0;
     }
 
-    /// Appends observations at exact hop endpoints to the caller's reusable worker storage.
-    /// Non-finite input clears history rather than poisoning subsequent frames.
+    /// Updates validated position coefficients without rebuilding transforms or clearing spectral history.
+    pub const fn set_position_curve(&mut self, curve: StereoPositionCurve) {
+        self.curve = curve;
+    }
+
+    /// Appends all observations for compatibility. Streaming clients should use [`Self::push_frames`].
     ///
     /// # Errors
-    /// Returns a transform error if its fixed buffer contract is violated.
+    /// Retains the analyzer's fallible streaming interface for callers sharing setup-error handling.
     pub fn push(&mut self, frames: &[[f32; 2]], points: &mut Vec<SpectralPoint>) -> Result<(), AnalysisError> {
-        for &frame in frames {
-            if !frame.iter().all(|sample| sample.is_finite()) {
-                self.reset();
-                continue;
-            }
-            if let Some(slot) = self.history.get_mut(self.write_index) {
-                *slot = frame;
-            }
-            self.write_index = (self.write_index + 1) % WINDOW_LENGTH;
-            self.frames += 1;
-            if self.frames >= WINDOW_LENGTH && self.frames.is_multiple_of(HOP_LENGTH) {
-                self.analyze(points)?;
-            }
-        }
-        Ok(())
+        self.push_frames(frames, |frame_points, _| points.extend_from_slice(frame_points))
     }
 
-    /// Computes both channel spectra with preallocated scratch on the worker thread.
-    fn analyze(&mut self, points: &mut Vec<SpectralPoint>) -> Result<(), AnalysisError> {
-        for (channel, spectrum) in [(0, &mut self.left), (1, &mut self.right)] {
-            for (index, (destination, &weight)) in self.input.iter_mut().zip(&self.window).enumerate() {
-                let frame = self
-                    .history
-                    .get((self.write_index + index) % WINDOW_LENGTH)
-                    .copied()
-                    .unwrap_or_default();
-                *destination = frame.get(channel).copied().unwrap_or_default() * weight;
+    /// Delivers reused point slices at exact tier endpoints, including silent frames and zero-history startup.
+    /// Simultaneous frames arrive low-to-high. The slice is borrowed only for the callback duration.
+    /// Non-finite input samples become silence in display history without altering the audio timeline.
+    ///
+    /// # Errors
+    /// Retains a fallible interface for worker recovery without formatting errors in audio processing.
+    pub fn push_frames(
+        &mut self,
+        frames: &[[f32; 2]],
+        mut callback: impl FnMut(&[SpectralPoint], SpectralFrameInfo),
+    ) -> Result<(), AnalysisError> {
+        let mut remaining = frames;
+        let mask = self.history.len() - 1;
+        while !remaining.is_empty() {
+            let count = self
+                .tiers
+                .iter()
+                .map(|tier| tier.hop - tier.since_frame)
+                .min()
+                .unwrap_or(remaining.len())
+                .min(remaining.len());
+            let (current, rest) = remaining.split_at(count);
+            for &frame in current {
+                if let Some(slot) = self.history.get_mut(self.write_index) {
+                    *slot = frame.map(|sample| if sample.is_finite() { sample } else { 0.0 });
+                }
+                self.write_index = (self.write_index + 1) & mask;
             }
-            self.transform
-                .process_with_scratch(&mut self.input, spectrum, &mut self.scratch)?;
-        }
-        let normalization = 8.0 / (WINDOW_LENGTH * WINDOW_LENGTH) as f32;
-        for (bin, (left, right)) in self.left.iter().zip(&self.right).enumerate().skip(1) {
-            let frequency = bin as f32 * self.sample_rate / WINDOW_LENGTH as f32;
-            if !(20.0..=20_000.0).contains(&frequency) {
-                continue;
+            self.processed_samples += count as u64;
+            remaining = rest;
+            let mut last_due = None;
+            for (index, tier) in self.tiers.iter_mut().enumerate() {
+                tier.since_frame += count;
+                if tier.since_frame == tier.hop {
+                    last_due = Some(index);
+                }
             }
-            let left_power = left.norm_sqr();
-            let right_power = right.norm_sqr();
-            let power = (left_power + right_power) * normalization;
-            if !power.is_finite() || power < 1.0e-12 {
-                continue;
+            for (index, tier) in self.tiers.iter_mut().enumerate() {
+                if tier.since_frame != tier.hop {
+                    continue;
+                }
+                tier.since_frame = 0;
+                tier.analyze(&self.history, self.write_index, self.curve, &mut self.points);
+                callback(
+                    &self.points,
+                    SpectralFrameInfo {
+                        tier_index: index,
+                        frame_seconds: tier.hop as f64 / self.sample_rate,
+                        end_seconds: self.processed_samples as f64 / self.sample_rate,
+                        last_at_time: Some(index) == last_due,
+                    },
+                );
             }
-            let difference_db = 10.0 * ((right_power + 1.0e-20) / (left_power + 1.0e-20)).log10();
-            let position = 0.5_f32.mul_add((difference_db / 20.0).tanh(), 0.5);
-            points.push(SpectralPoint {
-                frequency,
-                position,
-                power,
-            });
         }
         Ok(())
     }
 }
 
-#[cfg(test)]
-mod test_analysis {
-    use super::SpatialAnalyzer;
-
-    /// Builds a bin-centered stereo sine, avoiding ambiguous frequency expectations.
-    fn signal(left: f32, right: f32) -> Vec<[f32; 2]> {
-        (0..4_096)
+impl AnalysisTier {
+    /// Plans one zero-padded packed transform and precomputes all reported bin geometry.
+    fn new(layout: TierLayout, scale: usize, sample_rate: f64, planner: &mut FftPlanner<f32>) -> Self {
+        let window_length = layout.window_length * scale;
+        let fft_size = window_length * 2;
+        let transform = planner.plan_fft_forward(fft_size);
+        let bin_width = sample_rate / fft_size as f64;
+        let first_bin = ((layout.min_frequency.max(MIN_FREQUENCY) / bin_width).ceil() as usize).max(1);
+        let last_bin = ((layout.max_frequency.min(MAX_FREQUENCY) / bin_width).floor() as usize).min(window_length - 1);
+        let bin_count = (last_bin + 1).saturating_sub(first_bin);
+        let smoothing_ratio = (POSITION_SMOOTHING_OCTAVES * 0.5).exp2() - 1.0;
+        let bins = (0..bin_count)
             .map(|index| {
-                let sine = (std::f32::consts::TAU * 32.0 * index as f32 / 2_048.0).sin();
-                [sine * left, sine * right]
+                let frequency = (first_bin + index) as f64 * bin_width;
+                let reach = (frequency * smoothing_ratio / bin_width).floor() as usize;
+                AnalyzedBin {
+                    frequency: frequency as f32,
+                    first_neighbor: index.saturating_sub(reach),
+                    last_neighbor: (index + reach).min(bin_count - 1),
+                    left_power: 0.0,
+                    right_power: 0.0,
+                    cross_power: 0.0,
+                    reassigned_frequency: frequency as f32,
+                }
             })
-            .collect()
-    }
-
-    #[test]
-    fn mono_and_antiphase_remain_centered() {
-        for right in [1.0, -1.0] {
-            let mut analyzer = SpatialAnalyzer::new(48_000.0).expect("rate");
-            let mut points = Vec::new();
-            analyzer.push(&signal(1.0, right), &mut points).expect("FFT");
-            let peak = points
-                .iter()
-                .max_by(|a, b| a.power().total_cmp(&b.power()))
-                .expect("peak");
-            assert!((peak.frequency() - 750.0).abs() < 0.001);
-            assert!((peak.position() - 0.5).abs() < 0.001);
-            assert!((peak.power() - 1.0).abs() < 0.001);
+            .collect();
+        Self {
+            scratch: vec![Complex32::default(); transform.get_inplace_scratch_len()],
+            spectrum: vec![Complex32::default(); fft_size],
+            transform,
+            bins,
+            window_length,
+            hop: layout.hop * scale,
+            since_frame: 0,
+            first_bin,
+            bin_width,
+            level_scale: (16.0 / (window_length as f64).powi(2)) as f32,
         }
     }
 
-    #[test]
-    fn left_only_maps_to_top() {
-        let mut analyzer = SpatialAnalyzer::new(48_000.0).expect("rate");
-        let mut points = Vec::new();
-        analyzer.push(&signal(1.0, 0.0), &mut points).expect("FFT");
-        let peak = points
-            .iter()
-            .max_by(|a, b| a.power().total_cmp(&b.power()))
-            .expect("peak");
-        assert!(peak.position() < 0.001);
-    }
-
-    #[test]
-    fn hop_endpoints_do_not_depend_on_chunk_sizes() {
-        let frames = signal(0.25, 0.5);
-        let mut whole = SpatialAnalyzer::new(48_000.0).expect("rate");
-        let mut split = SpatialAnalyzer::new(48_000.0).expect("rate");
-        let mut expected = Vec::new();
-        let mut actual = Vec::new();
-        whole.push(&frames, &mut expected).expect("FFT");
-        for chunk in frames.chunks(37) {
-            split.push(chunk, &mut actual).expect("FFT");
+    /// Applies Hann and derivative three-tap spectral filters after a single packed stereo FFT.
+    fn analyze(
+        &mut self,
+        history: &[[f32; 2]],
+        write_index: usize,
+        curve: StereoPositionCurve,
+        points: &mut Vec<SpectralPoint>,
+    ) {
+        let mask = history.len() - 1;
+        let start = (write_index + history.len() - self.window_length) & mask;
+        for (index, destination) in self.spectrum.iter_mut().take(self.window_length).enumerate() {
+            let [left, right] = history.get((start + index) & mask).copied().unwrap_or_default();
+            *destination = Complex32::new(left, right);
         }
-        assert_eq!(expected.len(), actual.len());
-        for (a, b) in expected.iter().zip(actual) {
-            assert_eq!(a.frequency().to_bits(), b.frequency().to_bits());
-            assert_eq!(a.power().to_bits(), b.power().to_bits());
-            assert_eq!(a.position().to_bits(), b.position().to_bits());
+        for destination in self.spectrum.iter_mut().skip(self.window_length) {
+            *destination = Complex32::default();
+        }
+        self.transform
+            .process_with_scratch(&mut self.spectrum, &mut self.scratch);
+        let derivative_scale = (std::f64::consts::PI / self.window_length as f64) as f32;
+        let radians_to_hertz = self.bin_width * self.spectrum.len() as f64 / std::f64::consts::TAU;
+        let lobe_half_width = 4.0 * self.bin_width;
+        let spectrum_mask = self.spectrum.len() - 1;
+        for (index, bin) in self.bins.iter_mut().enumerate() {
+            let center = self.first_bin + index;
+            let (left, right) = separate_channels(&self.spectrum, center);
+            let (low_left, low_right) =
+                separate_channels(&self.spectrum, (center + self.spectrum.len() - 2) & spectrum_mask);
+            let (high_left, high_right) = separate_channels(&self.spectrum, (center + 2) & spectrum_mask);
+            let hann_left = left * 0.5 - (low_left + high_left) * 0.25;
+            let hann_right = right * 0.5 - (low_right + high_right) * 0.25;
+            let difference_left = low_left - high_left;
+            let difference_right = low_right - high_right;
+            let derivative_left =
+                Complex32::new(difference_left.im * 0.5, -difference_left.re * 0.5) * derivative_scale;
+            let derivative_right =
+                Complex32::new(difference_right.im * 0.5, -difference_right.re * 0.5) * derivative_scale;
+            bin.left_power = hann_left.norm_sqr();
+            bin.right_power = hann_right.norm_sqr();
+            bin.cross_power = (hann_left * hann_right.conj()).re;
+            let power = bin.left_power + bin.right_power;
+            let frequency = center as f64 * self.bin_width;
+            let shift = (derivative_left * hann_left.conj()).im + (derivative_right * hann_right.conj()).im;
+            let correction = radians_to_hertz * f64::from(shift / power);
+            let reassigned = if power > 0.0 && correction.abs() <= lobe_half_width {
+                frequency - correction
+            } else {
+                frequency
+            };
+            bin.reassigned_frequency = reassigned.clamp(MIN_FREQUENCY, MAX_FREQUENCY) as f32;
+        }
+        points.clear();
+        for bin in &self.bins {
+            let power = (bin.left_power + bin.right_power) * self.level_scale;
+            if !power.is_finite() || power < SILENCE_POWER {
+                continue;
+            }
+            let mut left_power = 0.0;
+            let mut right_power = 0.0;
+            let mut cross_power = 0.0;
+            for neighbor in self
+                .bins
+                .get(bin.first_neighbor..=bin.last_neighbor)
+                .unwrap_or_default()
+            {
+                left_power += neighbor.left_power;
+                right_power += neighbor.right_power;
+                cross_power += neighbor.cross_power;
+            }
+            let product = left_power * right_power;
+            if ![left_power, right_power, cross_power, product]
+                .into_iter()
+                .all(f32::is_finite)
+            {
+                continue;
+            }
+            let coherence = if product > 0.0 {
+                cross_power / product.sqrt()
+            } else {
+                1.0
+            };
+            if let Some(point) = SpectralPoint::new(
+                bin.frequency,
+                bin.reassigned_frequency,
+                self.bin_width as f32,
+                curve.position(left_power, right_power),
+                power,
+                coherence.clamp(-1.0, 1.0),
+            ) {
+                points.push(point);
+            }
         }
     }
+}
 
-    #[test]
-    fn silence_and_nonfinite_samples_produce_no_invalid_points() {
-        let mut analyzer = SpatialAnalyzer::new(48_000.0).expect("rate");
-        let mut points = Vec::new();
-        analyzer.push(&vec![[0.0, 0.0]; 4_096], &mut points).expect("FFT");
-        analyzer.push(&[[f32::NAN, 0.0]], &mut points).expect("FFT");
-        assert!(points.is_empty());
-        assert!(SpatialAnalyzer::new(f32::INFINITY).is_err());
-    }
+/// Separates real left and right transforms from one packed complex FFT using conjugate symmetry.
+fn separate_channels(spectrum: &[Complex32], bin: usize) -> (Complex32, Complex32) {
+    let packed = spectrum.get(bin).copied().unwrap_or_default();
+    let mirrored = spectrum
+        .get((spectrum.len() - bin) & (spectrum.len() - 1))
+        .copied()
+        .unwrap_or_default()
+        .conj();
+    let difference = (packed - mirrored) * 0.5;
+    ((packed + mirrored) * 0.5, Complex32::new(difference.im, -difference.re))
 }

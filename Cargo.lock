@@ -4574,6 +4574,7 @@ version = "0.1.0"
 dependencies = [
  "realfft",
  "rtrb",
+ "rustfft",
  "serde",
  "thiserror 2.0.21",
 ]
