@@ -426,6 +426,14 @@ fn stale_au_configuration_is_rejected() {
     write_audio_unit(&context);
     let cache_path = context.au_build().join("CMakeCache.txt");
     let original = std::fs::read_to_string(&cache_path).expect("CMake cache");
+    // The archive path uses the platform separator, so both spellings come from the context instead of literals.
+    let valid_library = context.static_library().display().to_string();
+    let stale_library = context
+        .target
+        .join("debug")
+        .join("libimage_control_plugin_rs.a")
+        .display()
+        .to_string();
     for (valid, stale) in [
         ("CMAKE_BUILD_TYPE:STRING=Release", "CMAKE_BUILD_TYPE:STRING=Debug"),
         (
@@ -440,10 +448,7 @@ fn stale_au_configuration_is_rejected() {
             "IMAGE_CONTROL_VERSION:STRING=0.1.0",
             "IMAGE_CONTROL_VERSION:STRING=9.9.9",
         ),
-        (
-            "release/libimage_control_plugin_rs.a",
-            "debug/libimage_control_plugin_rs.a",
-        ),
+        (valid_library.as_str(), stale_library.as_str()),
     ] {
         std::fs::write(&cache_path, original.replace(valid, stale)).expect("stale CMake cache");
         assert!(
