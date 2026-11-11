@@ -65,7 +65,8 @@ format_prose() {
 format_audio_unit_sources() {
     local arguments=()
     if [ "$CHECK" = true ]; then arguments=(--dry-run --Werror); else arguments=(-i); fi
-    if command -v clang-format > /dev/null 2>&1; then
+    # The Objective-C++ host sources are macOS only, and the shared C++ style does not cover Objective-C on Windows.
+    if [ "$BASH_PLATFORM" = "mac" ] && command -v clang-format > /dev/null 2>&1; then
         clang-format "${arguments[@]}" --style=file au/tests/*.mm
     fi
     if command -v cmake-format > /dev/null 2>&1; then
