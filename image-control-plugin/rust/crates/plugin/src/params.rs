@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Stable output gain id, expressed in -24 through +12 dB.
 pub const GAIN_PARAMETER: u32 = 0;
-/// First of three native power-skew crossover ids.
+/// First of three logarithmic crossover ids.
 pub const CROSSOVER_PARAMETER_START: u32 = 1;
 /// First of four six-control band groups.
 pub const BAND_PARAMETER_START: u32 = 4;
@@ -33,12 +33,12 @@ pub const NEUTRAL: f64 = 0.5;
 pub const NEUTRAL_GAIN: f64 = 2.0 / 3.0;
 /// Normalized zero-dB source trim on its -60..12 dB range.
 pub const NEUTRAL_BAND_GAIN: f64 = 5.0 / 6.0;
-/// Crossover range and JUCE float skew, with its geometric centre at sqrt(20 * 20000) Hz.
-const CROSSOVER_MINIMUM: f32 = 20.0;
-const CROSSOVER_MAXIMUM: f32 = 20_000.0;
-// Nearest float to log(0.5f) / log((sqrt(20.f * 20000.f) - 20.f) / (20000.f - 20.f)).
-// Keeping the declared float fixes defaults independently of platform libm and Miri evaluation.
-const CROSSOVER_SKEW: f32 = f32::from_bits(0x3e4b_aad3);
+/// Lower endpoint of the logarithmic crossover range in Hz.
+const CROSSOVER_MINIMUM: f64 = 20.0;
+/// Upper endpoint of the logarithmic crossover range in Hz.
+const CROSSOVER_MAXIMUM: f64 = 20_000.0;
+/// Frequency ratio across the full crossover slider, giving equal travel to equal octave spans.
+const CROSSOVER_RATIO: f64 = CROSSOVER_MAXIMUM / CROSSOVER_MINIMUM;
 
 /// Stable titles in band-major, field-minor order.
 const BAND_TITLES: [&str; 24] = [
@@ -69,13 +69,16 @@ const BAND_TITLES: [&str; 24] = [
 ];
 
 /// Plain-unit mapping shared by host metadata, numeric conversion, and editor controls.
+///
+/// Gains use 0.01 dB editing steps, Width uses 0.01, and Recover/Pan use whole percentage points.
+/// Crossovers are continuous and logarithmic. Midpoint step ties choose the upper plain value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParameterKind {
     /// Output trim in -24..12 dB.
     OutputGain,
     /// Independent band Side multiplier in 0..2.
     Width,
-    /// Native float power-skew frequency in 20..20000 Hz.
+    /// Logarithmic frequency in 20..20000 Hz.
     Crossover,
     /// Source trim in -60..12 dB, with the lower endpoint muted.
     BandGain,
@@ -126,7 +129,7 @@ pub struct BandSnapshot {
 pub struct Snapshot {
     /// Normalized output gain in dB, not a linear multiplier.
     pub gain: f64,
-    /// Native float power-skew normalized crossover frequencies.
+    /// Logarithmically normalized crossover frequencies.
     pub crossovers: [f64; CROSSOVER_COUNT],
     /// Four independent band control groups.
     pub bands: [BandSnapshot; 4],
@@ -257,8 +260,8 @@ pub trait EditorBinding {
 }
 
 impl ParameterSpec {
-    /// Returns the plain range and interval used by JUCE's float `NormalisableRange`.
-    const fn range(self) -> (f32, f32, f32) {
+    /// Returns the plain-unit endpoints and editing step. Crossovers are continuous.
+    const fn range(self) -> (f64, f64, f64) {
         match self.kind {
             ParameterKind::OutputGain => (-24.0, 12.0, 0.01),
             ParameterKind::BandGain => (-60.0, 12.0, 0.01),
@@ -270,57 +273,63 @@ impl ParameterSpec {
         }
     }
 
-    /// Applies the native float grid from the range minimum, with midpoint ties toward the upper step.
-    #[expect(
-        clippy::suboptimal_flops,
-        reason = "preserve the native float NormalisableRange grid operation order"
-    )]
-    fn snap_plain(self, plain: f32) -> f32 {
+    /// Snaps in double precision from the range minimum. Half-step ties choose the upper step.
+    /// Gain's zero-dB step is exactly zero rather than a residual from decimal-step multiplication.
+    fn snap_plain(self, plain: f64) -> f64 {
         let (minimum, maximum, interval) = self.range();
         let plain = plain.clamp(minimum, maximum);
-        if interval > 0.0 {
-            (minimum + interval * ((plain - minimum) / interval + 0.5).floor()).clamp(minimum, maximum)
+        if plain <= minimum || plain >= maximum || interval == 0.0 {
+            return plain;
+        }
+        let step = ((plain - minimum) / interval).round();
+        let snapped = step.mul_add(interval, minimum).clamp(minimum, maximum);
+        if matches!(self.kind, ParameterKind::OutputGain | ParameterKind::BandGain) && snapped.abs() < interval * 0.5 {
+            0.0
         } else {
-            plain
+            snapped
         }
     }
 
-    /// Converts normalized host input to snapped plain units with the native float operation order.
+    /// Converts normalized host input to double-precision plain units, including the declared editing steps.
+    /// Crossover frequency is `20 * 1000^normalized`, so equal slider travel covers equal octave spans.
     #[must_use]
-    #[expect(
-        clippy::suboptimal_flops,
-        reason = "preserve native float skew conversion without fused rounding"
-    )]
     pub fn normalized_to_plain(self, normalized: f64) -> f64 {
-        let mut proportion = normalized.clamp(0.0, 1.0) as f32;
-        if self.kind == ParameterKind::Crossover && proportion > 0.0 {
-            proportion = (proportion.ln() / CROSSOVER_SKEW).exp();
-        }
+        let normalized = normalized.clamp(0.0, 1.0);
         let (minimum, maximum, _) = self.range();
-        f64::from(self.snap_plain(minimum + (maximum - minimum) * proportion))
+        if normalized <= 0.0 {
+            return minimum;
+        }
+        if normalized >= 1.0 {
+            return maximum;
+        }
+        if self.kind == ParameterKind::Crossover {
+            CROSSOVER_MINIMUM * CROSSOVER_RATIO.powf(normalized)
+        } else {
+            self.snap_plain(normalized.mul_add(maximum - minimum, minimum))
+        }
     }
 
-    /// Converts snapped plain units to host units. Linear controls keep exact double neutral representations.
+    /// Clamps and snaps double-precision plain units into normalized host units with exact range endpoints.
+    /// Zero-dB gains use the exact normalized neutral shared by host defaults and DSP publication.
     #[must_use]
     pub fn plain_to_normalized(self, plain: f64) -> f64 {
-        let plain = self.snap_plain(plain as f32);
+        let plain = self.snap_plain(plain);
         let (minimum, maximum, _) = self.range();
+        if plain <= minimum {
+            return 0.0;
+        }
+        if plain >= maximum {
+            return 1.0;
+        }
         if self.kind == ParameterKind::Crossover {
-            f64::from(((plain - minimum) / (maximum - minimum)).powf(CROSSOVER_SKEW))
+            (plain / CROSSOVER_MINIMUM).log(CROSSOVER_RATIO).clamp(0.0, 1.0)
         } else {
-            // The 0 dB grid point must retain the exact neutral used by the linear DSP band protocol.
-            let plain =
-                if matches!(self.kind, ParameterKind::OutputGain | ParameterKind::BandGain) && plain.abs() < 0.005 {
-                    0.0
-                } else {
-                    f64::from(plain)
-                };
-            ((plain - f64::from(minimum)) / f64::from(maximum - minimum)).clamp(0.0, 1.0)
+            ((plain - minimum) / (maximum - minimum)).clamp(0.0, 1.0)
         }
     }
 
     /// Returns the authoritative value accepted from a new host or editor edit.
-    /// Crossovers have no grid, so avoid a redundant skew round trip and its accumulated float error.
+    /// Continuous crossovers retain the normalized input without a redundant logarithmic round trip.
     #[must_use]
     pub fn snap_normalized(self, normalized: f64) -> f64 {
         if self.kind == ParameterKind::Crossover {
@@ -338,14 +347,14 @@ impl ParameterSpec {
             ParameterKind::Switch => if plain >= 0.5 { "On" } else { "Off" }.to_owned(),
             ParameterKind::BandGain if plain <= -60.0 => "-inf dB".to_owned(),
             ParameterKind::OutputGain | ParameterKind::BandGain => {
-                let shown = f64::from((plain as f32 * 10.0).round() / 10.0) + 0.0;
+                let shown = (plain * 10.0).round() / 10.0 + 0.0;
                 format!("{shown:.1} dB")
             }
             ParameterKind::Crossover if plain.round_ties_even() < 1000.0 => {
                 format!("{} Hz", plain.round_ties_even() as u32)
             }
-            ParameterKind::Crossover if plain < 10_000.0 => format!("{:.2} kHz", f64::from(plain as f32 / 1000.0)),
-            ParameterKind::Crossover => format!("{:.1} kHz", f64::from(plain as f32 / 1000.0)),
+            ParameterKind::Crossover if plain < 10_000.0 => format!("{:.2} kHz", plain / 1000.0),
+            ParameterKind::Crossover => format!("{:.1} kHz", plain / 1000.0),
             ParameterKind::Width => format!("{plain:.2}"),
             ParameterKind::Recovery => format!("{plain:.0}%"),
             ParameterKind::Pan if plain.abs() < 0.5 => "C".to_owned(),
@@ -353,11 +362,13 @@ impl ParameterSpec {
         }
     }
 
-    /// Parses native finite text grammar, then clamps and snaps just like a host plain-unit conversion.
+    /// Parses finite double-precision text with optional units, then clamps and snaps like plain-unit conversion.
+    /// Pan accepts signed percentages or L/R direction suffixes, including `35% L`. Band gain accepts `Off` as mute.
+    /// Malformed, non-finite, overflowing, and nonzero-underflowing numeric input is rejected.
     #[must_use]
     pub fn parse(self, text: &str) -> Option<f64> {
         let text = text.trim().to_ascii_lowercase();
-        if (self.kind == ParameterKind::Recovery && text == "off")
+        if (matches!(self.kind, ParameterKind::BandGain | ParameterKind::Recovery) && text == "off")
             || (self.kind == ParameterKind::Switch && matches!(text.as_str(), "off" | "false"))
         {
             return Some(0.0);
@@ -374,16 +385,14 @@ impl ParameterSpec {
                 |number| (number, 1000.0),
             ),
             ParameterKind::OutputGain | ParameterKind::BandGain => (text.strip_suffix("db").unwrap_or(&text), 1.0),
-            ParameterKind::Pan => text.strip_suffix('l').map_or_else(
-                || {
-                    (
-                        text.strip_suffix('r')
-                            .unwrap_or_else(|| text.strip_suffix('%').unwrap_or(&text)),
-                        1.0,
-                    )
-                },
-                |number| (number, -1.0),
-            ),
+            ParameterKind::Pan => {
+                let (number, direction) = text.strip_suffix('l').map_or_else(
+                    || (text.strip_suffix('r').unwrap_or(&text), 1.0),
+                    |number| (number, -1.0),
+                );
+                let number = number.trim();
+                (number.strip_suffix('%').unwrap_or(number), direction)
+            }
             ParameterKind::Width if text.ends_with('%') => (text.strip_suffix('%')?, 0.01),
             ParameterKind::Recovery => (text.strip_suffix('%').unwrap_or(&text), 1.0),
             _ => (text.as_str(), 1.0),
@@ -392,10 +401,10 @@ impl ParameterSpec {
         if matches!(self.kind, ParameterKind::OutputGain | ParameterKind::BandGain)
             && matches!(number, "-inf" | "-infinity")
         {
-            return Some(self.plain_to_normalized(-60.0));
+            return Some(0.0);
         }
-        let mut plain = number.parse::<f32>().ok()?;
-        // C++ from_chars rejects underflow instead of accepting a nonzero token as zero.
+        let mut plain = number.parse::<f64>().ok()?;
+        // Reject nonzero input lost to underflow rather than silently changing its meaning to zero.
         let mantissa = number.split('e').next()?;
         if plain == 0.0 && mantissa.bytes().any(|digit| matches!(digit, b'1'..=b'9')) {
             return None;
@@ -403,8 +412,11 @@ impl ParameterSpec {
         if self.kind == ParameterKind::Pan && (text.ends_with('l') || text.ends_with('r')) {
             plain = plain.abs();
         }
-        plain *= multiplier;
-        plain.is_finite().then(|| self.plain_to_normalized(f64::from(plain)))
+        let scaled = plain * multiplier;
+        if scaled == 0.0 && plain != 0.0 {
+            return None;
+        }
+        scaled.is_finite().then(|| self.plain_to_normalized(scaled))
     }
 }
 
@@ -487,7 +499,7 @@ impl Parameters {
             .map(|slot| f64::from_bits(slot.load(Ordering::Relaxed)))
     }
 
-    /// Rejects unknown ids and non-finite input, then accepts the native plain grid for new edits.
+    /// Rejects unknown ids and non-finite input, then accepts the declared plain-unit editing steps.
     pub fn set(&self, id: u32, value: f64) -> bool {
         let Some(slot) = self.values.get(id as usize).filter(|_| value.is_finite()) else {
             return false;
@@ -524,8 +536,7 @@ impl Parameters {
     }
 
     /// Applies an entirely validated detached state without entering DSP history or UI objects.
-    /// Recalls deliberately retain off-grid normalized bits from RS states, including subsequent saves as v4.
-    /// Only explicit edits snap to the native grid. Snapping recalls would change v1-v3 sound.
+    /// Detached recalls retain their validated normalized values. Only new host/editor edits apply editing steps.
     pub fn restore(&self, snapshot: Snapshot) -> bool {
         if !snapshot.is_valid() {
             return false;
@@ -555,11 +566,8 @@ impl Parameters {
     /// This performs no kernel design, allocation, locks, channels, GUI wakes, or reference-count operations.
     pub fn publish(&self, shared: &SharedState) {
         let snapshot = self.snapshot();
-        // Float-normalized hosts widen their exact zero-dB default before publication.
-        // Recognize only the two neutral representations, retaining every nearby value and the saved normalized bits.
-        let gain = if snapshot.gain.to_bits() == NEUTRAL_GAIN.to_bits()
-            || snapshot.gain.to_bits() == f64::from(NEUTRAL_GAIN as f32).to_bits()
-        {
+        // The normalized zero-dB default publishes exact unity. Other recalled values keep their full precision.
+        let gain = if snapshot.gain.to_bits() == NEUTRAL_GAIN.to_bits() {
             1.0
         } else {
             let gain_db = snapshot.gain.mul_add(36.0, -24.0);
@@ -639,11 +647,12 @@ pub fn parameter_spec(id: u32) -> Option<ParameterSpec> {
     })
 }
 
-/// Returns native float-skew 100, 500, and 5000 Hz defaults independently of platform libm evaluation.
+/// Returns fixed nearest-double `log_1000(frequency / 20)` defaults for 100, 500, and 5000 Hz.
+/// Constants keep fallback state deterministic across platform libm implementations and Miri.
 const fn default_crossovers() -> [f64; CROSSOVER_COUNT] {
     [
-        0.333_542_317_152_023_3,
-        0.476_343_721_151_351_93,
-        0.758_567_452_430_725_1,
+        0.232_990_001_445_339_6,
+        0.465_980_002_890_679_2,
+        0.799_313_336_224_012_5,
     ]
 }

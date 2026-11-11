@@ -47,13 +47,15 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
         (9, 0.0, 0.0, 1.0),
     ] {
         let spec = parameter_spec(id).expect("spec");
-        assert!((spec.normalized_to_plain(0.0) - minimum).abs() < 1e-12);
-        assert!((spec.normalized_to_plain(spec.default_normalized) - default).abs() < 1e-12);
-        assert!((spec.normalized_to_plain(1.0) - maximum).abs() < 1e-12);
+        assert_eq!(spec.normalized_to_plain(0.0), minimum);
+        assert_eq!(spec.normalized_to_plain(spec.default_normalized), default);
+        assert_eq!(spec.normalized_to_plain(1.0), maximum);
+        assert_eq!(spec.plain_to_normalized(minimum), 0.0);
+        assert_eq!(spec.plain_to_normalized(maximum), 1.0);
     }
     for (index, default) in [100.0, 500.0, 5000.0].into_iter().enumerate() {
         let spec = parameter_spec(CROSSOVER_PARAMETER_START + index as u32).expect("crossover");
-        assert!((spec.normalized_to_plain(spec.default_normalized) - default).abs() < 0.003);
+        assert!((spec.normalized_to_plain(spec.default_normalized) - default).abs() < default * 2e-14);
     }
     for (id, text, plain) in [
         (0, "-12 dB", -12.0),
@@ -66,7 +68,7 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
         (8, "C", 0.0),
     ] {
         let spec = parameter_spec(id).expect("spec");
-        assert!((spec.normalized_to_plain(spec.parse(text).expect("valid text")) - plain).abs() < 0.003);
+        assert!((spec.normalized_to_plain(spec.parse(text).expect("valid text")) - plain).abs() < 1e-10);
     }
     for id in 0..PARAMETER_COUNT as u32 {
         let spec = parameter_spec(id).expect("spec");
@@ -104,49 +106,53 @@ fn recover_uses_the_full_200_percent_host_and_numeric_input_domain_for_every_ban
     }
 }
 
-/// Expected plain grid points are independent decimal targets, including asymmetric negative ties.
+/// Decimal targets specify editing precision independently of the implementation's arithmetic.
 #[test]
-fn native_plain_grid_boundaries_apply_to_host_edits_and_text() {
+fn plain_unit_steps_apply_to_host_edits_and_text_with_upper_midpoint_ties() {
     let parameters = Parameters::new();
-    for (id, input, expected, tolerance) in [
-        (0, -0.006, -0.01, 0.000_004),
-        (0, 0.004, 0.0, 0.000_004),
-        (0, 0.006, 0.01, 0.000_004),
-        (4, -13.374, -13.37, 0.000_008),
-        (4, -13.376, -13.38, 0.000_008),
-        (6, 0.504, 0.50, 0.000_001),
-        (6, 0.506, 0.51, 0.000_001),
-        (7, 49.499, 49.0, 0.0),
-        (7, 49.5, 50.0, 0.0),
-        (7, 199.5, 200.0, 0.0),
-        (8, -49.501, -50.0, 0.0),
-        (8, -49.5, -49.0, 0.0),
-        (8, -0.5, 0.0, 0.0),
-        (8, 0.5, 1.0, 0.0),
+    for (id, input, expected) in [
+        (0, -0.006, -0.01),
+        (0, 0.004, 0.0),
+        (0, 0.006, 0.01),
+        (4, -13.374, -13.37),
+        (4, -13.376, -13.38),
+        (6, 0.504, 0.50),
+        (6, 0.506, 0.51),
+        (7, 49.499, 49.0),
+        (7, 49.5, 50.0),
+        (7, 199.5, 200.0),
+        (8, -49.501, -50.0),
+        (8, -49.5, -49.0),
+        (8, -0.5, 0.0),
+        (8, 0.5, 1.0),
     ] {
         let spec = parameter_spec(id).expect("spec");
+        // Exact plain midpoints below test the tie rule directly.
+        // Host normalization may round to either side of a midpoint,
+        // so use an unambiguous request infinitesimally above each independent decimal target.
+        let host_input = input + 1e-9;
         let normalized = match id {
-            0 => (input + 24.0) / 36.0,
-            4 => (input + 60.0) / 72.0,
-            6 => input * 0.5,
-            7 => input / 200.0,
-            _ => (input + 100.0) / 200.0,
+            0 => (host_input + 24.0) / 36.0,
+            4 => (host_input + 60.0) / 72.0,
+            6 => host_input * 0.5,
+            7 => host_input / 200.0,
+            _ => (host_input + 100.0) / 200.0,
         };
         assert!(parameters.set(id, normalized));
         let actual = spec.normalized_to_plain(parameters.get(id).expect("accepted"));
         assert!(
-            (actual - expected).abs() <= tolerance,
+            (actual - expected).abs() < 1e-12,
             "id={id}, input={input}, actual={actual}"
         );
         let parsed = spec.parse(&input.to_string()).expect("numeric input");
-        assert!((spec.normalized_to_plain(parsed) - expected).abs() <= tolerance);
+        assert!((spec.normalized_to_plain(parsed) - expected).abs() < 1e-12);
         let accepted = parameters.get(id).expect("accepted");
         assert!(parameters.set(id, accepted));
         assert_eq!(parameters.get(id), Some(accepted), "quantization is idempotent");
     }
 }
 
-/// Every declared native step remains stable after repeated host publication and plain conversion.
+/// Every decimal editing step remains close to its mathematical value and stable after repeated edits.
 #[test]
 fn complete_plain_grids_are_idempotent_and_preserve_neutral_dsp_band_units() {
     let parameters = Parameters::new();
@@ -162,6 +168,7 @@ fn complete_plain_grids_are_idempotent_and_preserve_neutral_dsp_band_units() {
         for step in 0..=steps {
             let plain = f64::from(step).mul_add(interval, minimum);
             let normalized = spec.plain_to_normalized(plain);
+            assert!((spec.normalized_to_plain(normalized) - plain).abs() < 1e-12);
             assert!(parameters.set(id, normalized));
             assert_eq!(parameters.get(id), Some(normalized), "id={id}, step={step}");
             assert_eq!(spec.snap_normalized(normalized), normalized);
@@ -184,39 +191,61 @@ fn complete_plain_grids_are_idempotent_and_preserve_neutral_dsp_band_units() {
     }
 }
 
-/// Native reference values come from the float `NormalisableRange` expression, not RS conversion output.
+/// Decades, the geometric midpoint, and equal octave spans define the frequency law independently.
 #[test]
-fn crossover_uses_native_float_power_skew_not_an_exponential_mapping() {
-    let spec = parameter_spec(1).expect("crossover");
-    for (normalized, expected) in [
-        (0.0, 20.0),
-        (0.1, 20.187_408_447_265_625),
-        (0.25, 38.773_849_487_304_69),
-        (0.5, 632.455_322_265_625),
-        (0.75, 4723.568_359_375),
-        (0.9, 11_783.472_656_25),
-        (1.0, 20_000.0),
-    ] {
-        assert!((spec.normalized_to_plain(normalized) - expected).abs() < 0.002);
-        let roundtrip = spec.plain_to_normalized(expected);
-        assert!((roundtrip - normalized).abs() < 0.000_002);
+fn crossovers_are_exponential_with_double_precision_roundtrips_and_equal_octave_travel() {
+    let parameters = Parameters::new();
+    for id in 1..=3 {
+        let spec = parameter_spec(id).expect("crossover");
+        for (normalized, expected) in [
+            (0.0, 20.0),
+            (1.0 / 3.0, 200.0),
+            (0.5, 400_000.0_f64.sqrt()),
+            (2.0 / 3.0, 2000.0),
+            (1.0, 20_000.0),
+        ] {
+            assert!((spec.normalized_to_plain(normalized) / expected - 1.0).abs() < 2e-14);
+            assert!((spec.plain_to_normalized(expected) - normalized).abs() < 2e-14);
+        }
+        for step in 0..=1000 {
+            let normalized = f64::from(step) / 1000.0;
+            let frequency = spec.normalized_to_plain(normalized);
+            assert!((spec.plain_to_normalized(frequency) - normalized).abs() < 2e-14);
+            assert!(parameters.set(id, normalized));
+            assert_eq!(
+                parameters.get(id),
+                Some(normalized),
+                "continuous crossover has no editing grid"
+            );
+        }
+        let precise_frequency = 1234.567_890_123;
+        let precise_normalized = spec.parse("1234.567890123 Hz").expect("double-precision frequency");
+        assert!((spec.normalized_to_plain(precise_normalized) - precise_frequency).abs() < 1e-10);
+        let octave_travel = spec.plain_to_normalized(40.0) - spec.plain_to_normalized(20.0);
+        for frequency in [40.0, 100.0, 500.0, 1000.0, 5000.0, 10_000.0] {
+            let travel = spec.plain_to_normalized(frequency * 2.0) - spec.plain_to_normalized(frequency);
+            assert!((travel - octave_travel).abs() < 2e-14);
+        }
+        assert_eq!(spec.normalized_to_plain(-1.0), 20.0);
+        assert_eq!(spec.normalized_to_plain(2.0), 20_000.0);
+        assert_eq!(spec.plain_to_normalized(-1.0), 0.0);
+        assert_eq!(spec.plain_to_normalized(30_000.0), 1.0);
     }
-    assert_eq!(spec.normalized_to_plain(-1.0), 20.0);
-    assert_eq!(spec.normalized_to_plain(2.0), 20_000.0);
-    assert_eq!(spec.plain_to_normalized(-1.0), 0.0);
-    assert_eq!(spec.plain_to_normalized(30_000.0), 1.0);
 }
 
 #[test]
-fn native_text_grammar_and_formatting_cover_units_edges_and_direction() {
+fn finite_text_and_formatting_cover_units_edges_and_direction() {
     for (id, text, expected) in [
         (0, "-0.004 dB", "0.0 dB"),
         (4, "-infinity dB", "-inf dB"),
+        (4, "Off", "-inf dB"),
         (4, "-100 dB", "-inf dB"),
         (6, "150%", "1.50"),
         (7, "Off", "0%"),
         (7, "50.5%", "51%"),
         (8, "-35L", "35L"),
+        (8, "35% L", "35L"),
+        (8, " 35 % r ", "35R"),
         (8, "-35R", "35R"),
         (8, "35%", "35R"),
         (8, "-0.5", "C"),
@@ -234,7 +263,15 @@ fn native_text_grammar_and_formatting_cover_units_edges_and_direction() {
             "{id}: {text}"
         );
     }
-    for (id, text) in [(4, "Off"), (8, "35% L"), (7, "50%%"), (1, "1k"), (0, "--1"), (0, "+-1")] {
+    for (id, text) in [
+        (0, "Off"),
+        (8, "35%% L"),
+        (7, "50%%"),
+        (1, "1k"),
+        (0, "--1"),
+        (0, "+-1"),
+        (1, "1e308 kHz"),
+    ] {
         assert!(parameter_spec(id).expect("spec").parse(text).is_none(), "{id}: {text}");
     }
     for id in 0..PARAMETER_COUNT as u32 {
@@ -319,6 +356,7 @@ fn publication_is_detached_and_never_changes_unrelated_parameter_atomics() {
         shared.parameters().gain()
     );
     assert_eq!(shared.parameters().width().to_bits(), 1.0_f32.to_bits());
+    assert_eq!(shared.crossovers(), [100.0_f32, 500.0, 5000.0]);
     let band = shared.band_parameters(0).expect("band");
     assert_eq!(band[2].to_bits(), 0.0_f32.to_bits());
     assert_eq!(band[3].to_bits(), 0.8_f32.to_bits());
@@ -333,7 +371,7 @@ fn publication_is_detached_and_never_changes_unrelated_parameter_atomics() {
 }
 
 #[test]
-fn output_gain_edits_canonicalize_neutral_but_recall_keeps_legacy_neutral_bits() {
+fn output_gain_edits_canonicalize_zero_db_and_publish_exact_unity() {
     let parameters = Parameters::new();
     let imager = Imager::new();
     let shared = imager.shared();
@@ -347,46 +385,43 @@ fn output_gain_edits_canonicalize_neutral_but_recall_keeps_legacy_neutral_bits()
         );
         assert_eq!(parameters.snapshot().gain.to_bits(), NEUTRAL_GAIN.to_bits());
 
-        assert!(parameters.restore(Snapshot {
-            gain: normalized,
-            ..Snapshot::default()
-        }));
-        parameters.publish(&shared);
-        assert_eq!(shared.parameters().gain().to_bits(), 1.0_f32.to_bits());
-        assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
+        let spec = parameter_spec(GAIN_PARAMETER).expect("gain");
+        assert_eq!(
+            spec.normalized_to_plain(parameters.snapshot().gain).to_bits(),
+            0.0_f64.to_bits()
+        );
     }
 }
 
 #[test]
-fn detached_recall_retains_legacy_output_gain_neighbors_without_snapping() {
+fn output_gain_publication_follows_decibels_without_changing_saved_controls() {
     let parameters = Parameters::new();
     let imager = Imager::new();
     let shared = imager.shared();
-    let double_neutral = 2.0_f64 / 3.0;
-    let float_neutral = 2.0_f32 / 3.0;
-    for (normalized, expected_ordering) in [
-        // These genuine double neighbors remain distinct in state, but round to unity in DSP's f32 domain.
-        (double_neutral.next_down(), std::cmp::Ordering::Equal),
-        (double_neutral.next_up(), std::cmp::Ordering::Equal),
-        // Even the immediate f64 neighbors of the widened float neutral must use the ordinary gain mapping.
-        (f64::from(float_neutral).next_down(), std::cmp::Ordering::Greater),
-        (f64::from(float_neutral).next_up(), std::cmp::Ordering::Greater),
-        (f64::from(float_neutral.next_down()), std::cmp::Ordering::Less),
-        (f64::from(float_neutral.next_up()), std::cmp::Ordering::Greater),
+    for (decibels, expected_gain) in [
+        (-24.0, 0.063_095_734_448_019_33),
+        (-12.0, 0.251_188_643_150_958),
+        (-6.0, 0.501_187_233_627_272_2),
+        (0.0, 1.0),
+        (6.0, 1.995_262_314_968_879_5),
+        (12.0, 3.981_071_705_534_972_2),
     ] {
-        assert!(parameters.restore(Snapshot {
-            gain: normalized,
-            ..Snapshot::default()
-        }));
+        let normalized = (decibels + 24.0) / 36.0;
+        assert!(parameters.set(GAIN_PARAMETER, normalized));
+        let accepted = parameters.snapshot().gain;
         parameters.publish(&shared);
-        assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
-        assert_eq!(
-            shared.parameters().gain().total_cmp(&1.0),
-            expected_ordering,
-            "normalized bits {:016x}",
-            normalized.to_bits()
-        );
+        assert_eq!(parameters.snapshot().gain, accepted);
+        assert!((f64::from(shared.parameters().gain()) / expected_gain - 1.0).abs() < 1e-7);
     }
+    // Detached values retain sound precision even when they do not lie on an editor step.
+    let normalized = (0.003 + 24.0) / 36.0;
+    assert!(parameters.restore(Snapshot {
+        gain: normalized,
+        ..Snapshot::default()
+    }));
+    parameters.publish(&shared);
+    assert_eq!(parameters.snapshot().gain, normalized);
+    assert!((f64::from(shared.parameters().gain()) - 1.000_345_447_327_030_8).abs() < 1e-7);
 }
 
 #[test]
