@@ -1,5 +1,6 @@
 //! Independent layout contracts and native GPU passes without screenshots, raster readback, or FFT-derived input.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use iced_baseview::futures::executor::block_on;
@@ -147,8 +148,6 @@ fn submit_case(
 
 #[test]
 fn preference_publication_before_source_increment_discards_pending_and_prepared_gpu_work() {
-    use std::sync::Arc;
-
     let (device, queue) = super::tests::native_device();
     device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut pipeline = SpectrogramPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba16Float);

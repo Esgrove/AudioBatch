@@ -846,8 +846,17 @@ mod rendering_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{persistence_fade, target_size};
-    use iced_baseview::Rectangle;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use iced_baseview::futures::executor::block_on;
+    use iced_baseview::widget::shader::{Pipeline, Primitive, Viewport};
+    use iced_baseview::{Rectangle, Size, wgpu};
+    use image_control_dsp::{
+        ColorMode, DisplaySettings, FrequencyScale, Imager, ParticleBuilder, SpectralFrameInfo, SpectralPoint,
+    };
+
+    use super::{Spectrogram, SpectrogramPipeline, SpectrogramPrimitive, energy_target, persistence_fade, target_size};
 
     #[test]
     fn gpu_dimensions_are_bounded_and_empty_layout_is_rejected() {
@@ -902,7 +911,6 @@ mod tests {
 
     /// Requests the real platform backend used by the embedded renderer, without a presentation surface.
     pub(super) fn native_device() -> (iced_baseview::wgpu::Device, iced_baseview::wgpu::Queue) {
-        use iced_baseview::{futures::executor::block_on, wgpu};
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: if cfg!(target_os = "macos") {
                 wgpu::Backends::METAL
@@ -924,9 +932,6 @@ mod tests {
         spectrogram: &super::Spectrogram,
         point: image_control_dsp::SpatialParticle,
     ) {
-        use iced_baseview::widget::shader::{Primitive, Viewport};
-        use iced_baseview::{Size, wgpu};
-        use std::time::Duration;
         let bounds = Rectangle {
             x: 0.0,
             y: 0.0,
@@ -1011,9 +1016,6 @@ mod tests {
         queue: &iced_baseview::wgpu::Queue,
         pipeline: &mut super::SpectrogramPipeline,
     ) {
-        use iced_baseview::widget::shader::{Pipeline, Primitive, Viewport};
-        use iced_baseview::{Size, wgpu};
-        use std::time::Duration;
         let imager = image_control_dsp::Imager::new();
         let spectrogram = super::Spectrogram::new(imager.shared()).expect("independent analysis worker");
         let primitive = super::SpectrogramPrimitive {
@@ -1057,16 +1059,6 @@ mod tests {
     /// Exercises the actual wgpu shader and passes with real worker observations, without pixel readback.
     #[test]
     fn native_gpu_executes_particles_fade_bloom_resize_and_separate_histories() {
-        use std::sync::Arc;
-        use std::time::{Duration, Instant};
-
-        use iced_baseview::futures::executor::block_on;
-        use iced_baseview::widget::shader::{Pipeline, Primitive, Viewport};
-        use iced_baseview::{Size, wgpu};
-        use image_control_dsp::Imager;
-
-        use super::{Spectrogram, SpectrogramPipeline, SpectrogramPrimitive, energy_target};
-
         let (device, queue) = native_device();
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut pipeline = SpectrogramPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba16Float);
@@ -1163,9 +1155,6 @@ mod tests {
 
     #[test]
     fn eight_gpu_attributes_preserve_spacing_size_and_energy_above_one() {
-        use image_control_dsp::{
-            ColorMode, DisplaySettings, FrequencyScale, ParticleBuilder, SpectralFrameInfo, SpectralPoint,
-        };
         let mut builder = ParticleBuilder::new();
         builder.set_settings(
             DisplaySettings::new(ColorMode::Phase, FrequencyScale::Logarithmic, 0.05, 0.6).expect("display"),

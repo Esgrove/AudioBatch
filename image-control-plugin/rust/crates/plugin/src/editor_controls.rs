@@ -9,6 +9,7 @@ use iced::{Alignment, Element, Length, Rectangle, Size, Theme};
 use iced_baseview as iced;
 use image_control_dsp::{AnalysisStatus, ColourMode, CorrelationSnapshot, DisplayPreferences};
 
+use super::presets::Action;
 use super::{Message, layout, theme};
 use crate::params::{ParameterKind, ParameterSpec, parameter_spec};
 
@@ -415,7 +416,6 @@ fn stereo_position_settings(display: DisplayPreferences) -> Element<'static, Mes
 
 /// Exposes the independent preset library, explicit destructive confirmation, and portable file paths.
 pub(super) fn preset_panel(presets: &super::presets::PresetEditor) -> Element<'_, Message> {
-    use super::presets::Action;
     let available = !presets.busy();
     let mut content = Column::new()
         .spacing(8.0)

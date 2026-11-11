@@ -23,6 +23,7 @@ use clack_extensions::params::PluginParams;
 use clack_extensions::render::{PluginRender, PluginRenderImpl, RenderMode};
 use clack_extensions::state::PluginState;
 use clack_extensions::tail::{PluginTail, PluginTailImpl, TailLength};
+use clack_plugin::plugin::features::{AUDIO_EFFECT, MONO, STEREO, UTILITY};
 use clack_plugin::prelude::*;
 use clack_plugin::process::audio::ChannelPair;
 use image_control_dsp::Imager;
@@ -100,7 +101,6 @@ impl Plugin for ImageControl {
 impl DefaultPluginFactory for ImageControl {
     /// Allocates immutable discovery metadata outside processing.
     fn get_descriptor() -> PluginDescriptor {
-        use clack_plugin::plugin::features::{AUDIO_EFFECT, MONO, STEREO, UTILITY};
         PluginDescriptor::new(crate::BUNDLE_ID, crate::PLUGIN_NAME)
             .with_vendor(crate::PLUGIN_VENDOR)
             .with_version(crate::PLUGIN_VERSION)

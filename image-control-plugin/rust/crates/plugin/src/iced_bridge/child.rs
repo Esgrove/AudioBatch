@@ -11,6 +11,11 @@ use std::ffi::c_void;
 #[cfg(target_os = "macos")]
 use objc2::{rc::Retained, runtime::AnyObject};
 
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GW_CHILD, GW_HWNDNEXT, GetWindow, HWND_MESSAGE, IsChild, IsWindow, SW_HIDE, SW_SHOWNA, SetParent, ShowWindow,
+};
+
 use super::EditorError;
 
 /// A retained `NSView` on macOS, or a borrowed child `HWND` on Windows.
@@ -108,7 +113,6 @@ impl ChildLease {
         }
         #[cfg(target_os = "windows")]
         {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNA, ShowWindow};
             // SAFETY: The baseview owner retains this child HWND on its UI thread until editor close.
             unsafe { ShowWindow(self.child, if visible { SW_SHOWNA } else { SW_HIDE }) };
         }
@@ -142,10 +146,6 @@ impl ChildLease {
 
         #[cfg(target_os = "windows")]
         {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                HWND_MESSAGE, IsChild, IsWindow, SW_HIDE, SetParent, ShowWindow,
-            };
-
             // SAFETY: The bridge keeps the baseview owner alive through this call on its HWND's UI thread.
             // A native host may already have destroyed the child, in which case nothing remains to detach.
             if unsafe { IsWindow(self.child) } == 0 {
@@ -214,8 +214,6 @@ fn native_children(parent: &NativeChild) -> Vec<NativeChild> {
     reason = "The attachment caller keeps the validated host HWND alive on its owning UI thread"
 )]
 fn native_children(parent: &NativeChild) -> Vec<NativeChild> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GW_CHILD, GW_HWNDNEXT, GetWindow};
-
     let mut children = Vec::new();
     // SAFETY: The validated parent is alive on this UI thread, and GW_CHILD reads its first direct child.
     let mut child = unsafe { GetWindow(*parent, GW_CHILD) };

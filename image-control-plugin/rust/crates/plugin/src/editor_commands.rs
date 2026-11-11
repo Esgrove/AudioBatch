@@ -1,5 +1,6 @@
 //! Local history, comparison, preset, display, and plot command routing for the retained editor.
 
+use super::plot_overlay::PlotEvent;
 use super::{EditorState, Message, PlotGesture, layout, plot_overlay, presets};
 use crate::params::{CROSSOVER_PARAMETERS, band_parameter_id, parameter_spec};
 
@@ -352,7 +353,6 @@ impl EditorState {
 
     /// Adapts plot commands to authoritative writes, local history, and balanced host gesture boundaries.
     pub(super) fn update_plot(&mut self, event: plot_overlay::PlotEvent) {
-        use plot_overlay::PlotEvent;
         match event {
             PlotEvent::Begin(index) => {
                 if self.prepare_command().is_none() {
