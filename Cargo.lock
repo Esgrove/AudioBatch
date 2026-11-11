@@ -4643,6 +4643,7 @@ dependencies = [
  "clack-host",
  "clack-plugin",
  "crossbeam-queue",
+ "dirs 7.0.0",
  "fragile",
  "iced_baseview",
  "iced_program",
