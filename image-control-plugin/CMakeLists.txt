@@ -546,10 +546,21 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     )
 
     # Times the audio processing and the spectrogram rendering. It is not a test, so CTest does not run it.
-    add_executable(ImageControlBenchmark "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp")
+    add_executable(
+        ImageControlBenchmark
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/BenchmarkSupport.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CallbackBenchmarks.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/ComponentBenchmarks.cpp"
+    )
     target_link_libraries(ImageControlBenchmark PRIVATE ImageControl fmt::fmt)
+    target_include_directories(ImageControlBenchmark PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     set_source_files_properties(
-        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp" TARGET_DIRECTORY ImageControlBenchmark
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/Benchmark.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CallbackBenchmarks.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/ComponentBenchmarks.cpp"
+        TARGET_DIRECTORY
+        ImageControlBenchmark
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
 

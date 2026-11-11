@@ -71,8 +71,10 @@ The C++-specific organization, JUCE, and OpenGL instructions below apply to the 
   Processor correlation lifecycle tests live in `CorrelationTests.cpp`,
   and non-finite parameter notification tests live in `HostContractsTests.cpp`.
   Particle projection and band-strip gestures have their own topic suites.
-- `benchmarks/` holds `Benchmark.cpp` for `ImageControlBenchmark`,
-  `PresetWriter.cpp` for `ImageControlPresetWriter`,
+- `benchmarks/` holds `Benchmark.cpp` for the `ImageControlBenchmark` command,
+  `CallbackBenchmarks.cpp` for processor workloads, `ComponentBenchmarks.cpp` for isolated CPU probes,
+  and their shared `BenchmarkSupport.h`.
+  It also holds `PresetWriter.cpp` for `ImageControlPresetWriter`,
   and `compare_formats.py` with its tests, which compare the VST3 and the Audio Unit through the AudioBatch CLI.
 - `test-signals/generate.py` writes reference signals into the ignored `test-signals/output/` directory.
 - `cmake/Verification.cmake` adds the sanitizer and coverage options.
