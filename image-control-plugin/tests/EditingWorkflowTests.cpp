@@ -36,7 +36,7 @@ namespace esgrove::image_control::test
 namespace
 {
 /// First whole-editor width fitting the compact 328-pixel preset group and a usable 190-pixel output slider.
-constexpr int INLINE_PRESET_EDITOR_WIDTH {1114};
+constexpr int INLINE_PRESET_EDITOR_WIDTH {1106};
 
 /// Observes host gesture boundaries and detaches before the processor-owned parameter disappears.
 class EditingGestureCounter final : private juce::AudioProcessorParameter::Listener
@@ -308,6 +308,52 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
     }
 }
 
+/// Wide headers share spare space on both sides of history/presets while monitoring remains right-anchored.
+TEST(EditingWorkflow, WideHeaderExpandsTheGapBetweenPresetsAndMono)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    auto* settings = editingControl(editor, "display-settings");
+    auto* undo = editingControl(editor, "processing-undo");
+    juce::Button* mono = nullptr;
+    juce::Button* post = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (auto* button = dynamic_cast<juce::Button*>(child)) {
+            if (button->getButtonText() == "Mono") {
+                mono = button;
+            } else if (button->getButtonText() == "Post") {
+                post = button;
+            }
+        }
+    }
+    ASSERT_NE(toolbar, nullptr);
+    ASSERT_NE(settings, nullptr);
+    ASSERT_NE(undo, nullptr);
+    ASSERT_NE(mono, nullptr);
+    ASSERT_NE(post, nullptr);
+    int previousTrailingGap = 0;
+    int previousLeadingGap = 0;
+    int previousMonoInset = -1;
+    for (const int width : {1600, 2000, 2400, 4096}) {
+        editor.setSize(width, editor.getHeight());
+        EXPECT_EQ(settings->getX(), 8 + 124 + 8);
+        EXPECT_EQ(toolbar->getWidth(), PROCESSING_TOOLBAR_MAX_WIDTH);
+        const int leadingGap = undo->getX() - post->getRight();
+        const int trailingGap = mono->getX() - toolbar->getRight();
+        EXPECT_GT(leadingGap, previousLeadingGap);
+        EXPECT_GT(trailingGap, previousTrailingGap);
+        EXPECT_LE(std::abs((leadingGap - 8) - (trailingGap - PROCESSING_TOOLBAR_CONTROL_GAP)), 1);
+        const int monoInset = width - mono->getRight();
+        if (previousMonoInset >= 0) {
+            EXPECT_EQ(monoInset, previousMonoInset);
+        }
+        previousLeadingGap = leadingGap;
+        previousTrailingGap = trailingGap;
+        previousMonoInset = monoInset;
+    }
+}
+
 /// Each placement's header edges grow monotonically one pixel at a time and retrace identical geometry.
 TEST(EditingWorkflow, HeaderResizingNeverOscillatesOrChangesButtonWidthsBackwards)
 {
@@ -514,10 +560,11 @@ TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
         EXPECT_LE(selector->getWidth(), 320);
         if (inHeader) {
             EXPECT_EQ(toolbar->getX() - redo->getRight(), 4);
-            EXPECT_EQ(mono->getX() - toolbar->getRight(), 4);
             const int extraWidth = width - INLINE_PRESET_EDITOR_WIDTH;
             const int outputGrowth = std::min(extraWidth, 50);
             const int selectorGrowth = std::min(extraWidth - outputGrowth, 220);
+            const int spareSpace = extraWidth - outputGrowth - selectorGrowth;
+            EXPECT_EQ(mono->getX() - toolbar->getRight(), 4 + spareSpace - spareSpace / 2);
             EXPECT_EQ(toolbar->getWidth(), 328 + selectorGrowth);
             EXPECT_EQ(selector->getWidth(), 100 + selectorGrowth);
             EXPECT_EQ(output->getWidth(), 190 + outputGrowth);
