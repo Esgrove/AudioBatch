@@ -97,6 +97,18 @@ jobs:
         timeout-minutes: 20
         run: ./build.sh --test --build-type "${{ matrix.build-type }}"
 
+      - name: Build and smoke-test renderer benchmark
+        timeout-minutes: 10
+        run: |
+          build_type="${{ matrix.build-type }}"
+          build_dir="cmake-build-$(printf '%s' "$build_type" | tr '[:upper:]' '[:lower:]')"
+          cmake --build "$build_dir" --config "$build_type" --target ImageControlRenderBenchmark
+          benchmark="$build_dir/ImageControlRenderBenchmark_artefacts/$build_type/ImageControlRenderBenchmark"
+          if [ "$RUNNER_OS" = Windows ]; then
+            benchmark="$benchmark.exe"
+          fi
+          "$benchmark" --help
+
       # This target builds the exact pluginval revision pinned in cpp/cmake/Pluginval.cmake.
       # Failure or absence of the validator must fail CI, not silently skip validation.
       - name: Validate VST3 with pinned pluginval
@@ -267,8 +279,14 @@ jobs:
             --cpp "$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3" \
             --executable "$parity"
 
+      - name: Build and smoke-test Rust renderer benchmark
+        timeout-minutes: 5
+        run: cargo run -p image-control-plugin-rs --features render-benchmark --example render_benchmark -- --help
+
       - name: Compile Criterion benchmarks
-        run: cargo bench -p image-control-dsp --no-run
+        run: |
+          cargo bench -p image-control-dsp --no-run
+          cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram --no-run
 
       - name: Upload cross-implementation diagnostics
         if: failure()
@@ -465,8 +483,10 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
 
-      - name: Test format comparison contracts
-        run: uv run --script benchmarks/test_compare_formats.py
+      - name: Test format comparison and renderer benchmark contracts
+        run: |
+          uv run --script benchmarks/test_compare_formats.py
+          uv run --script benchmarks/test_render_benchmark.py
 
       - name: Test build and validation script contracts
         run: uv run --script tests/test_build_scripts.py
