@@ -162,9 +162,11 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
 - The VST3 retains its own class identity and `com.esgrove.imagecontrol-rs-own` bundle identity.
   CLAP uses descriptor ID `com.esgrove.imagecontrol-rs-own`, while the AU has a separate component identity.
   Formats share the Rust state codec, not JUCE ImageControl project compatibility or the removed Nice experiment.
-- AUv2 is an experimental wrapper route, not equivalent qualification to the own-wrapper VST3.
-  Upstream offline-mode forwarding, automation contention, and lifecycle/state behavior have explicit diagnostics.
-  Nonblocking render admission can still produce silence under wrapper contention, which RTSan alone cannot qualify.
+- AUv2 is experimental because of known limitations in the upstream clap-wrapper and Apple AudioUnitSDK dependencies,
+  not the Rust imaging DSP. These affect offline-mode forwarding, state lifecycle/error reporting, and contention.
+  AU realtime diagnostics also detect first-use allocation and reset-entry locking.
+  See [AU dependency limitations](ARCHITECTURE.md#au-dependency-limitations) for ownership, practical effects,
+  and the evidence boundaries. Clean VST3 or direct CLAP checks do not qualify the AU wrapper.
 - Only matching mono-to-mono and stereo-to-stereo main buses and 32-bit floating-point processing are supported.
   Automation is sampled per host block, not sample-accurate within a block.
 - Audio preparation supports actual rates from 1 through 2,822,400 Hz.
