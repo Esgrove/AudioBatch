@@ -1,51 +1,50 @@
-//! Single-attempt admission to audio-owned mutable history without allocation, locking, or thread-local state.
+//! Safe single-attempt admission to exclusively borrowed DSP history.
+//!
+//! The processor is never shared immutably. Atomic borrowing admits one callback without a mutex or allocation.
 
-#![expect(unsafe_code, reason = "atomic admission guards audio-owned UnsafeCell data")]
-
-use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, Ordering};
-
+use atomic_refcell::AtomicRefCell;
 use image_control_dsp::Imager;
+use sync_wrapper::SyncWrapper;
 
-/// Exclusive DSP storage guarded by one bounded compare-exchange attempt.
+/// Only an admitted mutable borrow can access the processor, including lifecycle preparation and reset.
 pub struct AudioState {
-    /// Only the successful admission owner accesses the processor.
-    admitted: AtomicBool,
-    /// Prepared processor state, never accessed by state or editor callbacks.
-    imager: UnsafeCell<Imager>,
+    /// `SyncWrapper` exposes only mutable access, so `Imager` needs `Send` but does not have to be `Sync`.
+    imager: AtomicRefCell<SyncWrapper<Imager>>,
 }
 
-/// Releases admission on every Rust return path.
-struct Admission<'a>(&'a AtomicBool);
-
-// SAFETY: successful Acquire admission excludes all other accesses until the guard's Release store.
-// No reference into the imager can escape the closure's temporary borrow.
-unsafe impl Sync for AudioState {}
-
 impl AudioState {
-    /// Takes sole ownership of a processor before publishing its COM object.
+    /// Takes processor ownership before exposing the instance to host callbacks.
     pub(crate) const fn new(imager: Imager) -> Self {
         Self {
-            admitted: AtomicBool::new(false),
-            imager: UnsafeCell::new(imager),
+            imager: AtomicRefCell::new(SyncWrapper::new(imager)),
         }
     }
 
-    /// Runs an operation with exclusive DSP access, rejecting concurrent calls immediately.
+    /// Attempts one atomic exclusive borrow and rejects overlapping or reentrant host calls immediately.
+    /// The guard releases admission on return or unwinding. No mutable reference can escape this closure.
     pub(crate) fn try_with<R>(&self, operation: impl FnOnce(&mut Imager) -> R) -> Option<R> {
-        self.admitted
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()?;
-        let admission = Admission(&self.admitted);
-        // SAFETY: admission excludes every other mutable or shared access until guard destruction.
-        let result = operation(unsafe { &mut *self.imager.get() });
-        drop(admission);
-        Some(result)
+        let mut imager = self.imager.try_borrow_mut().ok()?;
+        Some(operation(imager.get_mut()))
     }
 }
 
-impl Drop for Admission<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn processor_ownership_returns_after_nested_rejection() {
+        let audio = AudioState::new(Imager::new());
+        let shared = audio
+            .try_with(|imager| {
+                assert!(audio.try_with(|_| ()).is_none());
+                imager.shared()
+            })
+            .expect("first admission");
+        assert!(
+            audio
+                .try_with(|imager| std::sync::Arc::ptr_eq(&shared, &imager.shared()))
+                .expect("returned ownership")
+        );
     }
 }
