@@ -37,9 +37,9 @@ for argument in "$@"; do
     esac
 done
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
-# shellcheck source=../common.sh
-source "$PLUGIN_DIR/common.sh"
+# shellcheck source=./common.sh
+source "$SCRIPT_DIR/common.sh"
+image_control_resolve_target_directory
 BUNDLE="${IMAGE_CONTROL_OWN_BUNDLE:-${CARGO_TARGET_DIR:-$REPO_ROOT/rust/target}/bundled/ImageControl RS.vst3}"
 SKIP_BUILD=false
 while [ $# -gt 0 ]; do
@@ -58,6 +58,7 @@ done
 if [ "$SKIP_BUILD" = false ]; then "$SCRIPT_DIR/build.sh"; fi
 [ -d "$BUNDLE/Contents" ] || print_error_and_exit "Build-tree VST3 is missing: $BUNDLE"
 BUNDLE=$(cd "$BUNDLE" && pwd)
+BUNDLE_TARGET_DIRECTORY="$CARGO_TARGET_DIR"
 TOOLCHAIN=${AUDIOBATCH_RTSAN_TOOLCHAIN:-nightly}
 CLANG=${AUDIOBATCH_RTSAN_CLANG:-$(brew --prefix llvm)/bin/clang}
 RUST_VERSION=$(rustc +"$TOOLCHAIN" --version --verbose)
@@ -82,7 +83,7 @@ EXECUTABLE=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "r
 run_case() {
     local name="$1"
     shift
-    uv run --script "$REPO_ROOT/tests/realtime_sanitizer.py" --executable "$EXECUTABLE" \
+    CARGO_TARGET_DIR="$BUNDLE_TARGET_DIRECTORY" uv run --script "$REPO_ROOT/tests/realtime_sanitizer.py" --executable "$EXECUTABLE" \
         --case "own-vst3-$name" --artifacts "$ARTIFACTS" --timeout 45 \
         --argument=--case --argument="$name" --argument=--bundle --argument="$BUNDLE" "$@"
 }

@@ -30,9 +30,9 @@ for argument in "$@"; do
     esac
 done
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
-# shellcheck source=../common.sh
-source "$PLUGIN_DIR/common.sh"
+# shellcheck source=./common.sh
+source "$SCRIPT_DIR/common.sh"
+image_control_resolve_target_directory
 cd "$SCRIPT_DIR"
 PRIMARY_MANIFEST="$REPO_ROOT/Cargo.toml"
 BUILD_PROFILE=(--release)

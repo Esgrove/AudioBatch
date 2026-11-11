@@ -9,6 +9,9 @@ use anyhow::{Context as _, Result, ensure};
 use image_control_plugin_rs::{COMPONENT_ID, PLUGIN_NAME};
 use vst3_host::{ClassId, Module, PluginInstance, PluginState, ProcessMode, UiDispatcher, UiThread};
 
+#[path = "../examples/support/artifacts.rs"]
+mod artifacts;
+
 /// One non-editor UI thread owns every module and component lifecycle in this integration process.
 static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
 /// Independent 48 kHz kernel and partition delay expectation.
@@ -62,17 +65,8 @@ fn bundle() -> Option<PathBuf> {
         eprintln!("SKIP packaged VST3 contract: set IMAGE_CONTROL_OWN_BUNDLE to an absolute build-tree .vst3 bundle");
         return None;
     };
-    let bundle = PathBuf::from(bundle);
-    assert!(bundle.is_absolute(), "IMAGE_CONTROL_OWN_BUNDLE must be absolute");
-    let bundle = bundle.canonicalize().expect("IMAGE_CONTROL_OWN_BUNDLE must exist");
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../..")
-        .canonicalize()
-        .expect("repository");
-    assert!(
-        bundle.starts_with(repository),
-        "only repository build-tree plugins are allowed"
-    );
+    let bundle = artifacts::checked_artifact(&PathBuf::from(bundle))
+        .expect("IMAGE_CONTROL_OWN_BUNDLE must be an authorized absolute build-tree artifact");
     assert!(
         bundle.extension().is_some_and(|extension| extension == "vst3") && bundle.is_dir(),
         "a real packaged .vst3 directory is required"

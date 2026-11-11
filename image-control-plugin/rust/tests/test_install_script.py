@@ -23,7 +23,12 @@ class RustInstallContracts(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="imagecontrol-rust-installer-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name) / "repository with spaces"
-        for relative in ("common.sh", "image-control-plugin/common.sh", "image-control-plugin/rust/install.sh"):
+        for relative in (
+            "common.sh",
+            "image-control-plugin/common.sh",
+            "image-control-plugin/rust/common.sh",
+            "image-control-plugin/rust/install.sh",
+        ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, destination)
@@ -40,7 +45,7 @@ class RustInstallContracts(unittest.TestCase):
         self.tool("uname", 'printf "%s\\n" "${TEST_PLATFORM:-Darwin}"\n', record=False)
         self.tool("codesign", 'exit "${SIGN_STATUS:-0}"\n')
         self.tool("pluginval", 'exit "${VALIDATOR_STATUS:-0}"\n')
-        self.tool("cygpath", 'printf "%s\\n" "$LOCALAPPDATA"\n')
+        self.tool("cygpath", 'printf "%s\\n" "$2"\n')
         self.bundle = self.root / "rust/target/bundled/ImageControl RS.vst3"
         executable = self.bundle / "Contents/MacOS/ImageControl RS"
         executable.parent.mkdir(parents=True)
@@ -155,6 +160,90 @@ class RustInstallContracts(unittest.TestCase):
         assert (destination / "old").read_text() == "keep"
         assert "codesign" not in self.log.read_text()
 
+    def test_staged_copy_failure_preserves_previous_plugin(self) -> None:
+        """A partially copied staging bundle is disposable, and publication never touches the old plugin."""
+        destination = self.home / "Library/Audio/Plug-Ins/VST3/ImageControl RS.vst3"
+        destination.mkdir(parents=True)
+        (destination / "old").write_text("keep", encoding="utf-8")
+        (self.tools / "cp").unlink()
+        self.tool("cp", 'mkdir -p "${@: -1}"\nexit 31\n')
+        result = self.invoke("--no-build")
+        assert result.returncode == 31, result.stdout + result.stderr
+        assert (destination / "old").read_text() == "keep"
+        assert not list(destination.parent.glob(".imagecontrol-rs-install.*"))
+        assert "Installed:" not in result.stdout
+
+    def test_staged_signature_failure_preserves_previous_plugin(self) -> None:
+        """A source signature can pass while a bad staged copy fails before moving the previous installation."""
+        destination = self.home / "Library/Audio/Plug-Ins/VST3/ImageControl RS.vst3"
+        destination.mkdir(parents=True)
+        (destination / "old").write_text("keep", encoding="utf-8")
+        self.tool("codesign", 'case "$*" in *".imagecontrol-rs-install."*) exit 32 ;; esac\n')
+        result = self.invoke("--no-build")
+        assert result.returncode == 32, result.stdout + result.stderr
+        assert (destination / "old").read_text() == "keep"
+        assert not list(destination.parent.glob(".imagecontrol-rs-install.*"))
+        assert "Installed:" not in result.stdout
+
+    def test_publication_failure_rolls_back_previous_plugin(self) -> None:
+        """A failed publish restores the old installation and cleans the rejected replacement."""
+        self.check_publication_failure(rollback_fails=False)
+
+    def test_failed_rollback_retains_recovery_copy(self) -> None:
+        """If a host or filesystem also blocks rollback, cleanup never destroys the only old bundle."""
+        self.check_publication_failure(rollback_fails=True)
+
+    def check_publication_failure(self, *, rollback_fails: bool) -> None:
+        """Inject failures only in staged publication and optional recovery, forwarding all other moves."""
+        destination = self.home / "Library/Audio/Plug-Ins/VST3/ImageControl RS.vst3"
+        destination.mkdir(parents=True)
+        (destination / "old").write_text("keep", encoding="utf-8")
+        move = shutil.which("mv")
+        assert move is not None
+        (self.tools / "mv").unlink()
+        self.tool(
+            "mv",
+            'case "$1" in\n'
+            '  *".imagecontrol-rs-install."*/"ImageControl RS.vst3") exit 33 ;;\n'
+            '  *".imagecontrol-rs-install."*/previous.vst3)\n'
+            '    [ "${ROLLBACK_FAILS:-0}" = 0 ] || exit 34 ;;\n'
+            f'esac\nexec "{move}" "$@"\n',
+        )
+        result = self.invoke("--no-build", ROLLBACK_FAILS="1" if rollback_fails else "0")
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "Installed:" not in result.stdout
+        recovery = list(destination.parent.glob(".imagecontrol-rs-install.*/previous.vst3"))
+        if rollback_fails:
+            assert not destination.exists()
+            assert len(recovery) == 1
+            assert (recovery[0] / "old").read_text() == "keep"
+            assert str(recovery[0]) in result.stderr
+        else:
+            assert (destination / "old").read_text() == "keep"
+            assert not recovery
+            assert not list(destination.parent.glob(".imagecontrol-rs-install.*"))
+
+    def test_unsigned_source_preserves_previous_plugin(self) -> None:
+        """Reject source signature errors before creating a staging tree or changing the installed bundle."""
+        destination = self.home / "Library/Audio/Plug-Ins/VST3/ImageControl RS.vst3"
+        destination.mkdir(parents=True)
+        (destination / "old").write_text("keep", encoding="utf-8")
+        result = self.invoke("--no-build", SIGN_STATUS="35")
+        assert result.returncode == 35
+        assert (destination / "old").read_text() == "keep"
+        assert not list(destination.parent.glob(".imagecontrol-rs-install.*"))
+        assert "Installed:" not in result.stdout
+
+    def test_relative_external_target_is_resolved_from_invocation_directory(self) -> None:
+        """The installer accepts an explicit outside build tree without interpreting it from the script directory."""
+        target = self.root.parent / "external artifacts"
+        shutil.copytree(self.bundle, target / "bundled/ImageControl RS.vst3")
+        result = self.invoke("--no-build", CARGO_TARGET_DIR="../external artifacts")
+        assert result.returncode == 0, result.stdout + result.stderr
+        installed = self.home / "Library/Audio/Plug-Ins/VST3/ImageControl RS.vst3"
+        assert (installed / "Contents/MacOS/ImageControl RS").read_text() == "new Rust plugin"
+        assert "build " not in self.log.read_text()
+
     def test_existing_build_custom_directory_and_validation_failure(self) -> None:
         """The no-build path uses supplied artifacts and propagates installed validator failures."""
         destination = self.root / "custom VST3"
@@ -204,6 +293,7 @@ class RustEntryPointContracts(unittest.TestCase):
         for relative in (
             "common.sh",
             "image-control-plugin/common.sh",
+            "image-control-plugin/rust/common.sh",
             *(f"image-control-plugin/rust/{script}" for script in self.scripts),
         ):
             destination = self.root / relative
@@ -231,13 +321,15 @@ class RustEntryPointContracts(unittest.TestCase):
         (self.bundle / "Contents").mkdir(parents=True)
         self.environment = {"PATH": str(self.tools), "COMMAND_LOG": str(self.log), "LC_ALL": "C"}
 
-    def invoke(self, script: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def invoke(
+        self, script: str, *arguments: str, cwd: Path | None = None, **overrides: str
+    ) -> subprocess.CompletedProcess[str]:
         """Run the copied script with a bounded timeout and no inherited executable search path."""
         assert BASH is not None
         return subprocess.run(  # noqa: S603
             [BASH, str(self.directory / script), *arguments],
-            cwd=self.directory,
-            env=self.environment,
+            cwd=cwd or self.directory,
+            env=self.environment | overrides,
             capture_output=True,
             text=True,
             timeout=15,
@@ -322,6 +414,36 @@ class RustEntryPointContracts(unittest.TestCase):
         assert result.returncode == 0, result.stdout + result.stderr
         assert self.commands("cargo")[0][-1] == "--release"
         assert not self.commands("pluginval")
+
+    def test_relative_and_absolute_targets_reach_all_nested_cargo_commands(self) -> None:
+        """Build and test preserve invocation-relative targets even after their own working-directory changes."""
+        target = self.root.parent / "external artifacts"
+        bundle = target / "bundled/ImageControl RS.vst3"
+        (bundle / "Contents").mkdir(parents=True)
+        target_log = self.root / "cargo-targets.log"
+        cargo = self.tools / "cargo"
+        cargo.write_text(
+            f'#!{BASH}\nprintf "%s\\n" "$CARGO_TARGET_DIR" >> "$TARGET_LOG"\n',
+            encoding="utf-8",
+        )
+        for selection in ("external artifacts", str(target)):
+            for script in ("build.sh", "test.sh"):
+                with self.subTest(script=script, selection=selection):
+                    target_log.unlink(missing_ok=True)
+                    result = self.invoke(
+                        script,
+                        cwd=self.root.parent,
+                        CARGO_TARGET_DIR=selection,
+                        TARGET_LOG=str(target_log),
+                    )
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    observed = target_log.read_text().splitlines()
+                    assert len(observed) == (1 if script == "build.sh" else 2)
+                    assert all(
+                        Path(path).is_absolute() and Path(path).resolve() == target.resolve() for path in observed
+                    )
+                    if script == "build.sh":
+                        assert Path(result.stdout.strip()).resolve() == bundle.resolve()
 
     def test_miri_and_licenses_aliases(self) -> None:
         """Both modes retain their existing package scope and cannot invoke native hosts."""

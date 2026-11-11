@@ -25,6 +25,8 @@ use objc2_app_kit::{
 use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSPoint};
 use vst3_host::{ClassId, EditorWindow, Module, PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiThread};
 
+#[path = "artifacts.rs"]
+mod artifacts;
 #[path = "state_overlap.rs"]
 mod state_overlap;
 
@@ -316,20 +318,11 @@ IMAGE_CONTROL_OWN_BUNDLE supplies --bundle when omitted. No audio devices or ins
     }))
 }
 
-/// Requires a real absolute build-tree bundle inside this repository,
-/// excluding installed locations and symlink escapes.
+/// Requires a real absolute bundle within the repository or explicitly selected Cargo build root.
+/// Canonical containment excludes symlink escapes and never searches installed locations.
 pub fn checked_bundle(path: &Path) -> Result<PathBuf> {
-    ensure!(path.is_absolute(), "--bundle must be absolute");
-    let path = path
-        .canonicalize()
-        .with_context(|| format!("build-tree bundle is missing: {}", path.display()))?;
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../..")
-        .canonicalize()?;
-    ensure!(
-        path.starts_with(&repository),
-        "only a repository build-tree bundle may be loaded"
-    );
+    let path =
+        artifacts::checked_artifact(path).with_context(|| format!("invalid build-tree bundle: {}", path.display()))?;
     ensure!(
         path.extension().is_some_and(|extension| extension == "vst3"),
         "bundle must end in .vst3"

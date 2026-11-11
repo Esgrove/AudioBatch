@@ -47,9 +47,9 @@ for argument in "$@"; do
 done
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
-# shellcheck source=../common.sh
-source "$PLUGIN_DIR/common.sh"
+# shellcheck source=./common.sh
+source "$SCRIPT_DIR/common.sh"
+image_control_resolve_target_directory
 
 BUILD_OPTIONS=()
 NO_BUILD=false
