@@ -459,9 +459,15 @@ mod test_insert_playback {
         frames: Producer<Frame>,
     }
 
+    /// Callback-owned fake insert with an independent control-side observation handle.
+    struct ProbedInsert {
+        insert: Box<FakeInsert>,
+        probe: Probe,
+    }
+
     impl FakeInsert {
         /// Creates a fake insert with the latency and tail in frames, and the probe that observes it.
-        fn new(latency: usize, tail: usize) -> (Box<Self>, Probe) {
+        fn with_probe(latency: usize, tail: usize) -> ProbedInsert {
             let probe = Probe::default();
             probe.latency.store(latency, Ordering::Relaxed);
             let insert = Self {
@@ -474,7 +480,10 @@ mod test_insert_playback {
                 control_thread: thread::current().id(),
                 probe: probe.clone(),
             };
-            (Box::new(insert), probe)
+            ProbedInsert {
+                insert: Box::new(insert),
+                probe,
+            }
         }
     }
 
@@ -628,7 +637,7 @@ mod test_insert_playback {
         T: cpal::SizedSample + cpal::FromSample<f32> + Send,
         f32: cpal::FromSample<T>,
     {
-        let (insert, _) = FakeInsert::new(0, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(0, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 64, |_| 0.5);
         let renderer = crate::RendererAccess::new(harness.renderer);
@@ -664,7 +673,7 @@ mod test_insert_playback {
         T: cpal::SizedSample + cpal::FromSample<f32> + Send,
         f32: cpal::FromSample<T>,
     {
-        let (insert, _) = FakeInsert::new(0, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(0, 0);
         let harness = Harness::with_insert(insert);
         harness.shared.playing.store(false, Ordering::Relaxed);
         let renderer = crate::RendererAccess::new(harness.renderer);
@@ -706,7 +715,7 @@ mod test_insert_playback {
 
     #[test]
     fn rtsan_full_callback_contended_silence() {
-        let (insert, _) = FakeInsert::new(0, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(0, 0);
         let harness = Harness::with_insert(insert);
         let renderer = crate::RendererAccess::new(harness.renderer);
         let epoch = renderer.advance_epoch();
@@ -725,7 +734,7 @@ mod test_insert_playback {
 
     #[test]
     fn rtsan_full_callback_idle_and_retired_silence() {
-        let (insert, _) = FakeInsert::new(0, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(0, 0);
         let harness = Harness::with_insert(insert);
         harness.shared.playing.store(false, Ordering::Relaxed);
         let renderer = crate::RendererAccess::new(harness.renderer);
@@ -752,7 +761,10 @@ mod test_insert_playback {
     #[cfg(audiobatch_rtsan)]
     #[test]
     fn rtsan_renderer_retirement_and_tail_storage() {
-        let (first, first_probe) = FakeInsert::new(5, 10);
+        let ProbedInsert {
+            insert: first,
+            probe: first_probe,
+        } = FakeInsert::with_probe(5, 10);
         let mut harness = Harness::with_insert(first);
         harness.push(0, 128, |_| 0.5);
         let mut output = [0.0_f32; 64];
@@ -763,7 +775,10 @@ mod test_insert_playback {
                 .expect("callback");
         });
         let first_tail = Arc::downgrade(&harness.renderer.insert.insert.as_ref().expect("insert").tail);
-        let (second, second_probe) = FakeInsert::new(0, 20);
+        let ProbedInsert {
+            insert: second,
+            probe: second_probe,
+        } = FakeInsert::with_probe(0, 20);
         harness.control.set(Some(second)).expect("replacement");
         harness.control.set_tail(30);
         thread::scope(|scope| {
@@ -796,7 +811,7 @@ mod test_insert_playback {
     #[test]
     fn compensation_discards_exactly_the_latency() {
         for latency in [0, 5, 131, 511] {
-            let (insert, _probe) = FakeInsert::new(latency, 0);
+            let ProbedInsert { insert, .. } = FakeInsert::with_probe(latency, 0);
             let mut harness = Harness::with_insert(insert);
             harness.push(0, 1000, ramp);
             let output = harness.render(latency + 200);
@@ -816,7 +831,7 @@ mod test_insert_playback {
     #[test]
     fn the_output_of_a_mono_file_is_folded_to_mono() {
         for source_mono in [false, true] {
-            let (mut insert, _probe) = FakeInsert::new(0, 0);
+            let ProbedInsert { mut insert, .. } = FakeInsert::with_probe(0, 0);
             insert.mutes_right = true;
             let mut harness = Harness::with_insert(insert);
             harness.shared.source_mono.store(source_mono, Ordering::Relaxed);
@@ -832,7 +847,7 @@ mod test_insert_playback {
 
     #[test]
     fn the_playhead_freezes_only_during_the_pre_roll() {
-        let (insert, _probe) = FakeInsert::new(100, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(100, 0);
         let mut harness = Harness::with_insert(insert);
         harness.shared.position.store(1000, Ordering::Relaxed);
         harness.push(1000, 1000, |_| 0.5);
@@ -846,7 +861,7 @@ mod test_insert_playback {
 
     #[test]
     fn the_end_drains_the_latency_and_the_tail() {
-        let (insert, probe) = FakeInsert::new(10, 30);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(10, 30);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 50, |_| 0.5);
         harness.shared.finished_generation.store(1, Ordering::Relaxed);
@@ -864,7 +879,7 @@ mod test_insert_playback {
 
     #[test]
     fn non_finite_output_stops_playback() {
-        let (mut insert, _probe) = FakeInsert::new(0, 0);
+        let ProbedInsert { mut insert, .. } = FakeInsert::with_probe(0, 0);
         insert.non_finite = true;
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 100, |_| 0.5);
@@ -876,7 +891,7 @@ mod test_insert_playback {
 
     #[test]
     fn a_pause_fades_out_and_a_resume_preserves_unheard_input() {
-        let (insert, probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 1000, ramp);
         harness.render(131);
@@ -902,7 +917,7 @@ mod test_insert_playback {
 
     #[test]
     fn pausing_during_pre_roll_preserves_every_unheard_frame() {
-        let (insert, probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 1000, ramp);
         assert!(harness.render(53).iter().all(|sample| sample.abs() < f32::EPSILON));
@@ -921,7 +936,7 @@ mod test_insert_playback {
 
     #[test]
     fn underrun_then_eof_keeps_the_delayed_ramp_contiguous() {
-        let (insert, probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 53, ramp);
         assert!(harness.render(200).iter().all(|sample| sample.abs() < f32::EPSILON));
@@ -942,7 +957,7 @@ mod test_insert_playback {
 
     #[test]
     fn pausing_during_eof_drain_preserves_the_remaining_input() {
-        let (insert, probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 200, ramp);
         harness.shared.finished_generation.store(1, Ordering::Release);
@@ -964,7 +979,7 @@ mod test_insert_playback {
 
     #[test]
     fn an_empty_eof_after_seek_keeps_the_target_position() {
-        let (insert, _probe) = FakeInsert::new(17, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(17, 0);
         let mut harness = Harness::with_insert(insert);
         harness.shared.position.store(500, Ordering::Relaxed);
         harness.shared.finished_generation.store(1, Ordering::Release);
@@ -976,7 +991,7 @@ mod test_insert_playback {
 
     #[test]
     fn a_seek_cancels_unheard_pre_roll_and_resets_at_the_target() {
-        let (insert, probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 1000, ramp);
         harness.render(53);
@@ -995,14 +1010,14 @@ mod test_insert_playback {
     #[test]
     fn swaps_and_compensation_changes_rebuffer_from_the_audible_cursor() {
         for transition in ["swap", "latency", "compensation"] {
-            let (insert, probe) = FakeInsert::new(131, 0);
+            let ProbedInsert { insert, probe } = FakeInsert::with_probe(131, 0);
             let mut harness = Harness::with_insert(insert);
             harness.push(0, 1000, ramp);
             harness.render(231);
             assert_eq!(harness.position(), 100);
             let latency = match transition {
                 "swap" => {
-                    let (next, _probe) = FakeInsert::new(17, 0);
+                    let ProbedInsert { insert: next, .. } = FakeInsert::with_probe(17, 0);
                     harness.control.set(Some(next)).expect("room for replacement");
                     17
                 }
@@ -1035,14 +1050,14 @@ mod test_insert_playback {
 
     #[test]
     fn replacing_a_paused_insert_never_processes_its_stale_input() {
-        let (insert, _probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 1000, ramp);
         harness.render(231);
         harness.shared.playing.store(false, Ordering::Relaxed);
         harness.render(100);
         assert_eq!(harness.position(), 164);
-        let (next, probe) = FakeInsert::new(17, 0);
+        let ProbedInsert { insert: next, probe } = FakeInsert::with_probe(17, 0);
         harness.control.set(Some(next)).expect("room for replacement");
         assert!(harness.render(100).iter().all(|sample| sample.abs() < f32::EPSILON));
         assert_eq!(probe.processed.load(Ordering::Relaxed), 0);
@@ -1058,7 +1073,7 @@ mod test_insert_playback {
 
     #[test]
     fn removing_a_delayed_insert_rebuffers_before_direct_playback() {
-        let (insert, _probe) = FakeInsert::new(131, 0);
+        let ProbedInsert { insert, .. } = FakeInsert::with_probe(131, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 1000, ramp);
         harness.render(231);
@@ -1075,11 +1090,17 @@ mod test_insert_playback {
 
     #[test]
     fn a_swap_retires_the_old_insert_without_dropping_it() {
-        let (first, first_probe) = FakeInsert::new(0, 0);
+        let ProbedInsert {
+            insert: first,
+            probe: first_probe,
+        } = FakeInsert::with_probe(0, 0);
         let mut harness = Harness::with_insert(first);
         harness.push(0, 100, |_| 0.5);
         harness.render(10);
-        let (second, second_probe) = FakeInsert::new(0, 0);
+        let ProbedInsert {
+            insert: second,
+            probe: second_probe,
+        } = FakeInsert::with_probe(0, 0);
         harness.control.set(Some(second)).expect("room for the insert");
         assert!(!harness.control.is_settled());
         harness.render(10);
@@ -1095,14 +1116,17 @@ mod test_insert_playback {
 
     #[test]
     fn a_full_retire_queue_stalls_changes_until_control_thread_collection() {
-        let (first, first_probe) = FakeInsert::new(0, 0);
+        let ProbedInsert {
+            insert: first,
+            probe: first_probe,
+        } = FakeInsert::with_probe(0, 0);
         let mut harness = Harness::with_insert(first);
         harness.shared.playing.store(false, Ordering::Relaxed);
         let retire_capacity = harness.renderer.insert.retired.slots();
         let mut probes = vec![first_probe];
         harness.render_on_callback_thread();
         for _ in 0..retire_capacity {
-            let (next, probe) = FakeInsert::new(0, 0);
+            let ProbedInsert { insert: next, probe } = FakeInsert::with_probe(0, 0);
             probes.push(probe);
             harness.control.set(Some(next)).expect("room for replacement");
             harness.render_on_callback_thread();
@@ -1112,7 +1136,7 @@ mod test_insert_playback {
         assert_eq!(applied, retire_capacity as u64 + 1);
         assert_eq!(harness.renderer.insert.retired.slots(), 0);
 
-        let (next, probe) = FakeInsert::new(0, 0);
+        let ProbedInsert { insert: next, probe } = FakeInsert::with_probe(0, 0);
         probes.push(probe);
         harness.control.set(Some(next)).expect("room for pending replacement");
         harness.control.set(None).expect("room for pending removal");
@@ -1162,11 +1186,14 @@ mod test_insert_playback {
     #[test]
     fn tail_updates_follow_only_the_latest_queued_insert() {
         for already_attached in [false, true] {
-            let (first, _) = FakeInsert::new(0, 30);
+            let ProbedInsert { insert: first, .. } = FakeInsert::with_probe(0, 30);
             let mut harness = Harness::with_insert(first);
             harness.shared.playing.store(false, Ordering::Relaxed);
             harness.render(1);
-            let (second, second_probe) = FakeInsert::new(0, 2);
+            let ProbedInsert {
+                insert: second,
+                probe: second_probe,
+            } = FakeInsert::with_probe(0, 2);
             harness.control.set(Some(second)).expect("room for replacement");
             if already_attached {
                 harness.renderer.apply_insert_changes();
@@ -1187,14 +1214,14 @@ mod test_insert_playback {
     #[test]
     fn blocked_changes_preserve_the_active_inserts_tail() {
         for remove in [false, true] {
-            let (first, _) = FakeInsert::new(0, 30);
+            let ProbedInsert { insert: first, .. } = FakeInsert::with_probe(0, 30);
             let mut harness = Harness::with_insert(first);
             harness.shared.playing.store(false, Ordering::Relaxed);
             harness.render(1);
             let retire_capacity = harness.renderer.insert.retired.slots();
             let mut active_probe = Probe::default();
             for _ in 0..retire_capacity {
-                let (next, probe) = FakeInsert::new(0, 30);
+                let ProbedInsert { insert: next, probe } = FakeInsert::with_probe(0, 30);
                 active_probe = probe;
                 harness.control.set(Some(next)).expect("room for replacement");
                 harness.render(1);
@@ -1203,7 +1230,7 @@ mod test_insert_playback {
             if remove {
                 harness.control.set(None).expect("room for removal");
             } else {
-                let (next, _) = FakeInsert::new(0, 2);
+                let ProbedInsert { insert: next, .. } = FakeInsert::with_probe(0, 2);
                 harness.control.set(Some(next)).expect("room for queued replacement");
                 harness.control.set_tail(7);
             }
@@ -1281,7 +1308,7 @@ mod test_insert_playback {
 
     #[test]
     fn removing_the_insert_returns_to_direct_playback() {
-        let (insert, probe) = FakeInsert::new(0, 0);
+        let ProbedInsert { insert, probe } = FakeInsert::with_probe(0, 0);
         let mut harness = Harness::with_insert(insert);
         harness.push(0, 100, |_| 0.5);
         harness.render(10);

@@ -75,13 +75,11 @@ impl ParamValueQueue {
         }
     }
 
-    /// Returns the last point of the queue.
+    /// Returns the last queued value without reading the unused sample offset.
     #[cfg(test)]
-    fn last(&self) -> Option<(i32, f64)> {
+    fn last_value(&self) -> Option<f64> {
         let index = self.count.load(Ordering::Relaxed).checked_sub(1)?;
-        let offset = self.offsets.get(index)?.load(Ordering::Relaxed);
-        let value = f64::from_bits(self.values.get(index)?.load(Ordering::Relaxed));
-        Some((offset, value))
+        Some(f64::from_bits(self.values.get(index)?.load(Ordering::Relaxed)))
     }
 }
 
@@ -170,9 +168,11 @@ impl ParameterChanges {
     /// Returns the last value of every changed parameter.
     #[cfg(test)]
     pub fn last_values(&self) -> impl Iterator<Item = (ParamID, f64)> + '_ {
-        self.active_queues()
-            .iter()
-            .filter_map(|queue| queue.last().map(|(_, value)| (queue.id.load(Ordering::Relaxed), value)))
+        self.active_queues().iter().filter_map(|queue| {
+            queue
+                .last_value()
+                .map(|value| (queue.id.load(Ordering::Relaxed), value))
+        })
     }
 
     /// Returns the queues in use.

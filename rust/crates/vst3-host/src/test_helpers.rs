@@ -13,6 +13,7 @@ use audiobatch_test_plugin::Kind;
 use crate::factory::ClassId;
 use crate::instance::{PluginInstance, ProcessMode};
 use crate::module::Module;
+use crate::processor::ProcessorHandle;
 use crate::thread::{UiDispatcher, UiThread};
 
 /// Sample rate the tests process at.
@@ -27,6 +28,12 @@ static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
 /// Held by tests that read the call log of the recorder plugins,
 /// which is shared by every test thread when the tests run in one process.
 static RECORDER_LOG: Mutex<()> = Mutex::new(());
+
+/// Processing handle with its owning plugin instance retained until the test has finished.
+pub struct ProcessingFixture {
+    pub instance: PluginInstance,
+    pub processor: ProcessorHandle,
+}
 
 /// Returns exclusive use of the recorder call log until the guard is dropped.
 pub fn lock_recorder_log() -> MutexGuard<'static, ()> {

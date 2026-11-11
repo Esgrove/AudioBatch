@@ -134,6 +134,12 @@ pub struct Module {
     _library: Option<platform::Library>,
 }
 
+/// Factory returned by a platform loader with the library that keeps its code mapped.
+struct LoadedFactory {
+    library: platform::Library,
+    factory: ComPtr<IPluginFactory>,
+}
+
 impl Module {
     /// Loads the module at a bundle path, or returns it when it is already loaded.
     ///
@@ -145,7 +151,7 @@ impl Module {
         if let Some(module) = modules.lock().unwrap_or_else(PoisonError::into_inner).get(path) {
             return Ok(Arc::clone(module));
         }
-        let (library, factory) = platform::load(path)?;
+        let LoadedFactory { library, factory } = platform::load(path)?;
         let module = Arc::new(Self::with_factory(ui, path.to_path_buf(), factory, Some(library)));
         modules
             .lock()
@@ -261,10 +267,8 @@ mod platform {
     use std::path::Path;
 
     use objc2_core_foundation::{CFBundle, CFRetained, CFString, CFURL};
-    use vst3::ComPtr;
-    use vst3::Steinberg::IPluginFactory;
 
-    use super::{GetFactoryFunction, ModuleError, take_factory};
+    use super::{GetFactoryFunction, LoadedFactory, ModuleError, take_factory};
 
     /// Signature of `bundleEntry`.
     type BundleEntryFunction = unsafe extern "system" fn(*mut c_void) -> bool;
@@ -283,7 +287,7 @@ mod platform {
     unsafe impl Sync for Library {}
 
     /// Loads a bundle and returns it with its factory.
-    pub(super) fn load(path: &Path) -> Result<(Library, ComPtr<IPluginFactory>), ModuleError> {
+    pub(super) fn load(path: &Path) -> Result<LoadedFactory, ModuleError> {
         let Some(url) = CFURL::from_directory_path(path) else {
             return Err(ModuleError::InvalidDirectoryPath {
                 path: path.to_path_buf(),
@@ -318,7 +322,10 @@ mod platform {
         let get_factory = unsafe { std::mem::transmute::<*mut c_void, GetFactoryFunction>(get_factory) };
         // SAFETY: the function is the factory export of the loaded bundle.
         let factory = unsafe { take_factory(get_factory) }?;
-        Ok((Library { _bundle: bundle }, factory))
+        Ok(LoadedFactory {
+            library: Library { _bundle: bundle },
+            factory,
+        })
     }
 
     /// Returns an exported function of a loaded bundle.
@@ -333,10 +340,7 @@ mod platform {
 mod platform {
     use std::path::{Path, PathBuf};
 
-    use vst3::ComPtr;
-    use vst3::Steinberg::IPluginFactory;
-
-    use super::{GetFactoryFunction, ModuleError, take_factory};
+    use super::{GetFactoryFunction, LoadedFactory, ModuleError, take_factory};
 
     /// Signature of `InitDll`.
     type InitFunction = unsafe extern "system" fn() -> bool;
@@ -360,7 +364,7 @@ mod platform {
     }
 
     /// Loads the library of a bundle and returns it with its factory.
-    pub(super) fn load(path: &Path) -> Result<(Library, ComPtr<IPluginFactory>), ModuleError> {
+    pub(super) fn load(path: &Path) -> Result<LoadedFactory, ModuleError> {
         let library_path = library_path(path)?;
         // SAFETY: loading a plugin library runs its initializers, which is what hosting a plugin means.
         let library =
@@ -380,7 +384,10 @@ mod platform {
             .map_err(|source| ModuleError::FactoryExport { source })?;
         // SAFETY: the function is the factory export of the loaded library.
         let factory = unsafe { take_factory(*get_factory) }?;
-        Ok((Library { _library: library }, factory))
+        Ok(LoadedFactory {
+            library: Library { _library: library },
+            factory,
+        })
     }
 
     /// Returns the library inside a bundle folder, or the path itself for a single-file plugin.
@@ -405,16 +412,13 @@ mod platform {
 mod platform {
     use std::path::Path;
 
-    use vst3::ComPtr;
-    use vst3::Steinberg::IPluginFactory;
-
-    use super::ModuleError;
+    use super::{LoadedFactory, ModuleError};
 
     /// Placeholder for platforms without plugin loading.
     pub(super) struct Library;
 
     /// Plugin loading is only supported on macOS and Windows.
-    pub(super) fn load(_path: &Path) -> Result<(Library, ComPtr<IPluginFactory>), ModuleError> {
+    pub(super) fn load(_path: &Path) -> Result<LoadedFactory, ModuleError> {
         Err(ModuleError::UnsupportedPlatform)
     }
 }
@@ -426,6 +430,14 @@ mod test_module_loading {
     use super::*;
     use crate::instance::{PluginInstance, ProcessMode};
     use crate::test_helpers::{class_id, on_ui};
+
+    /// Factory metadata read on the UI thread and asserted after returning to the test thread.
+    #[derive(Debug, PartialEq, Eq)]
+    struct FactorySummary {
+        vendor: String,
+        effects: Vec<String>,
+        class_count: usize,
+    }
 
     #[test]
     #[cfg_attr(miri, ignore = "loads a native plugin bundle from disk, which Miri cannot run")]
@@ -440,12 +452,23 @@ mod test_module_loading {
                     .filter(|class| class.is_audio_effect())
                     .map(|class| class.name.clone())
                     .collect();
-                (module.factory_info().vendor.clone(), effects, module.classes().len())
+                FactorySummary {
+                    vendor: module.factory_info().vendor.clone(),
+                    effects,
+                    class_count: module.classes().len(),
+                }
             })
         })
         .expect("bundle loads");
         let names: Vec<String> = Kind::ALL.iter().map(|kind| kind.name().to_owned()).collect();
-        assert_eq!(summary, (VENDOR.to_owned(), names, Kind::ALL.len() + 2));
+        assert_eq!(
+            summary,
+            FactorySummary {
+                vendor: VENDOR.to_owned(),
+                effects: names,
+                class_count: Kind::ALL.len() + 2
+            }
+        );
     }
 
     #[test]

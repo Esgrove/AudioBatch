@@ -458,23 +458,27 @@ mod test_in_place_processing {
     use audiobatch_test_plugin::{GAIN_PARAMETER, Kind};
 
     use super::*;
+    #[cfg(audiobatch_rtsan)]
     use crate::instance::PluginInstance;
-    use crate::test_helpers::{MAX_BLOCK, active_instance, on_ui};
+    use crate::test_helpers::{MAX_BLOCK, ProcessingFixture, active_instance, on_ui};
 
     /// Creates a half-gain plugin and its handle, keeping the instance alive for processing.
-    fn processor(kind: Kind) -> (PluginInstance, ProcessorHandle) {
+    fn processor(kind: Kind) -> ProcessingFixture {
         on_ui(move |ui| {
             let instance = active_instance(ui, kind, 2).expect("active test plugin");
             instance.set_parameter(ui, GAIN_PARAMETER, 0.5).expect("test gain");
             let processor = instance.processor(ui).expect("processor");
-            (instance, processor)
+            ProcessingFixture { instance, processor }
         })
     }
 
     #[cfg(audiobatch_rtsan)]
     #[test]
     fn rtsan_gain_owned_and_borrowed_automation_reset() {
-        let (instance, mut processor) = on_ui(|ui| {
+        let ProcessingFixture {
+            instance,
+            mut processor,
+        } = on_ui(|ui| {
             let module = crate::test_helpers::test_module(ui);
             let mut instance = PluginInstance::create(
                 ui,
@@ -497,7 +501,7 @@ mod test_in_place_processing {
                 .set_parameter(ui, GAIN_PARAMETER, 0.5)
                 .expect("first automation");
             let processor = instance.processor(ui).expect("realtime processor");
-            (instance, processor)
+            ProcessingFixture { instance, processor }
         });
         assert_eq!(processor.setup.mode, crate::ProcessMode::Realtime);
         let mut left = [0.5; MAX_BLOCK];
@@ -524,8 +528,14 @@ mod test_in_place_processing {
     #[test]
     fn in_place_matches_buffered_gain_delay_and_echo() {
         for kind in [Kind::Gain, Kind::Delay, Kind::Echo] {
-            let (_buffered_instance, mut buffered) = processor(kind);
-            let (_borrowed_instance, mut borrowed) = processor(kind);
+            let ProcessingFixture {
+                instance: _buffered_instance,
+                processor: mut buffered,
+            } = processor(kind);
+            let ProcessingFixture {
+                instance: _borrowed_instance,
+                processor: mut borrowed,
+            } = processor(kind);
             buffered.reset(17);
             borrowed.reset(17);
             for block in 0..3 {
@@ -552,7 +562,10 @@ mod test_in_place_processing {
 
     #[test]
     fn short_blocks_preserve_suffixes_and_owned_buffers() {
-        let (_instance, mut processor) = processor(Kind::Echo);
+        let ProcessingFixture {
+            instance: _instance,
+            mut processor,
+        } = processor(Kind::Echo);
         for bus in &mut processor.inputs {
             for channel in &mut bus.channels {
                 channel.fill(0.75);
@@ -586,7 +599,10 @@ mod test_in_place_processing {
 
     #[test]
     fn invalid_buffers_are_rejected_without_touching_audio() {
-        let (_instance, mut processor) = processor(Kind::Gain);
+        let ProcessingFixture {
+            instance: _instance,
+            mut processor,
+        } = processor(Kind::Gain);
         let mut left = [0.5; 4];
         let mut right = [-0.25; 2];
         assert_eq!(
@@ -610,7 +626,10 @@ mod test_in_place_processing {
 
     #[test]
     fn failed_processing_restores_owned_bus_descriptions() {
-        let (_instance, mut processor) = processor(Kind::Failing);
+        let ProcessingFixture {
+            instance: _instance,
+            mut processor,
+        } = processor(Kind::Failing);
         // SAFETY: the host initializes these descriptions with binary32 channel pointer arrays.
         let (input, output) = unsafe {
             (

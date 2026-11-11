@@ -302,7 +302,7 @@ impl Player {
     /// or the decode thread cannot start.
     pub fn with_config(output: &OutputConfig) -> Result<Self, PlayerError> {
         let device = find_device(output.device.as_deref())?;
-        let (config, sample_format) = stream_config(&device, output)?;
+        let device::SelectedStreamConfig { config, sample_format } = stream_config(&device, output)?;
         let output_rate = config.sample_rate;
         let buffer_size = match config.buffer_size {
             BufferSize::Fixed(frames) => Some(frames),

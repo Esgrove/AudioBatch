@@ -61,6 +61,12 @@ pub struct NativeFixture {
 /// The production preview chain presented through the plugin-independent playback trait.
 struct NativeInsert(PreviewChain);
 
+/// Native fixture lifetime owner and the insert transferred to the audio callback.
+pub struct PreparedNativeFixture {
+    pub fixture: NativeFixture,
+    pub insert: Box<dyn PreviewInsert>,
+}
+
 impl NativeFixture {
     /// Creates an explicitly requested native wet fixture and its callback-owned insert without timing setup.
     /// The returned insert must be retired and disposed before `finish` is called.
@@ -73,7 +79,7 @@ impl NativeFixture {
     /// # Panics
     ///
     /// Panics if a different thread already owns VST3 UI registration or the dedicated thread cannot start.
-    pub fn new(sample_rate: u32, block_frames: usize) -> Result<(Self, Box<dyn PreviewInsert>)> {
+    pub fn prepare(sample_rate: u32, block_frames: usize) -> Result<PreparedNativeFixture> {
         ensure!(
             sample_rate > 0 && block_frames > 0,
             "Native callback geometry must be nonzero"
@@ -113,16 +119,16 @@ impl NativeFixture {
             )
             .context("Native callback setup UI job failed")??;
         let failure = chain.failure();
-        Ok((
-            Self {
+        Ok(PreparedNativeFixture {
+            fixture: Self {
                 dispatcher,
                 instance,
                 failure,
                 bundle,
                 binary_checksum,
             },
-            Box::new(NativeInsert(chain)),
-        ))
+            insert: Box::new(NativeInsert(chain)),
+        })
     }
 
     /// Returns the canonical first-party bundle path for serialization outside callback timing.
@@ -213,7 +219,7 @@ impl PreviewInsert for NativeInsert {
 #[test]
 #[ignore = "explicit native build-tree setup and correctness contract, not a performance measurement"]
 fn native_preview_setup_processing_and_teardown() {
-    let (fixture, mut insert) = NativeFixture::new(48_000, 63).expect("native setup");
+    let PreparedNativeFixture { fixture, mut insert } = NativeFixture::prepare(48_000, 63).expect("native setup");
     let mut left = [0.5_f32; 63];
     let mut right = [-0.25_f32; 63];
     thread::scope(|scope| {
