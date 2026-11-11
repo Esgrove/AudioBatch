@@ -1,11 +1,76 @@
 //! Font-independent C++ header symbols, contextual section disclosures, divider, and captured resize grip.
 
+use std::time::Instant;
+
+use iced::advanced::graphics::geometry;
 use iced::advanced::widget::{Id, Operation, operation::Focusable, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, renderer};
-use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, keyboard, mouse};
+use iced::widget::canvas::{Frame, LineCap, LineJoin, Path, Stroke, path};
+use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard, mouse};
 use iced_baseview as iced;
 
 use super::{Message, theme};
+
+/// Section disclosures share the native editor's centered artwork, proximity, and finite fade durations.
+const DISCLOSURE_SIZE: Size = Size::new(36.0, 8.0);
+const DISCLOSURE_PROXIMITY: Size = Size::new(72.0, 20.0);
+const DISCLOSURE_ALPHA: f32 = 0.18;
+const DISCLOSURE_PRESSED_ALPHA: f32 = 0.3;
+const DISCLOSURE_FADE_IN_SECONDS: f32 = 0.14;
+const DISCLOSURE_FADE_OUT_SECONDS: f32 = 0.1;
+
+/// Retained display-only fade advances on Iced redraws without timers or application messages.
+#[derive(Default)]
+struct DisclosureReveal {
+    revealed: bool,
+    progress: f32,
+    last_frame: Option<Instant>,
+}
+
+impl DisclosureReveal {
+    /// Immediately changes the proximity target while preserving a partially completed fade.
+    const fn retarget(&mut self, revealed: bool, now: Instant) {
+        if self.revealed != revealed {
+            self.revealed = revealed;
+            self.last_frame = Some(now);
+        }
+    }
+
+    /// Advances the bounded linear progress using elapsed time, including the full exit duration.
+    fn advance(&mut self, now: Instant) {
+        if let Some(previous) = self.last_frame {
+            let elapsed = now.saturating_duration_since(previous).as_secs_f32();
+            let step = elapsed
+                / if self.revealed {
+                    DISCLOSURE_FADE_IN_SECONDS
+                } else {
+                    DISCLOSURE_FADE_OUT_SECONDS
+                };
+            self.progress = (self.progress + if self.revealed { step } else { -step }).clamp(0.0, 1.0);
+        }
+        self.last_frame = Some(now);
+    }
+
+    /// Requests frames only while the finite transition has not reached its current endpoint.
+    fn animating(&self) -> bool {
+        if self.revealed {
+            self.progress < 1.0
+        } else {
+            self.progress > 0.0
+        }
+    }
+
+    /// Applies the native smoothstep easing independently of pointer-acquired or keyboard focus.
+    fn opacity(&self, pressed: bool) -> f32 {
+        let eased = self.progress * self.progress * 2.0_f32.mul_add(-self.progress, 3.0);
+        eased
+            * if pressed {
+                DISCLOSURE_PRESSED_ALPHA
+            } else {
+                DISCLOSURE_ALPHA
+            }
+    }
+}
 
 /// Vector glyphs use the same small paths and logical targets as the C++ editor.
 #[derive(Clone, Copy)]
@@ -36,6 +101,7 @@ struct Interaction {
     focused: bool,
     keyboard_focus: bool,
     window_inactive: bool,
+    disclosure: DisclosureReveal,
 }
 
 impl Focusable for Interaction {
@@ -93,7 +159,7 @@ impl Chrome {
     }
 }
 
-impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Chrome {
+impl<Renderer: geometry::Renderer> Widget<Message, Theme, Renderer> for Chrome {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<Interaction>()
     }
@@ -155,6 +221,7 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.pressed => {
                 state.pressed = false;
+                shell.request_redraw();
                 if matches!(self.symbol, Symbol::Resize | Symbol::Divider) {
                     shell.publish(Message::EndGesture);
                 } else if cursor.is_over(layout.bounds())
@@ -207,7 +274,26 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
                 state.window_inactive = false;
                 shell.request_redraw();
             }
+            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft) => {
+                shell.request_redraw();
+            }
             _ => {}
+        }
+        if matches!(self.symbol, Symbol::Disclosure(_)) {
+            let now = if let Event::Window(iced::window::Event::RedrawRequested(now)) = event {
+                state.disclosure.advance(*now);
+                *now
+            } else {
+                Instant::now()
+            };
+            let revealed = !state.window_inactive
+                && !matches!(event, Event::Mouse(mouse::Event::CursorLeft))
+                && cursor.is_over(disclosure_proximity(layout.bounds()));
+            let changed = state.disclosure.revealed != revealed;
+            state.disclosure.retarget(revealed, now);
+            if changed || state.disclosure.animating() {
+                shell.request_redraw();
+            }
         }
     }
     fn mouse_interaction(
@@ -244,6 +330,14 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
         let state = tree.state.downcast_ref::<Interaction>();
         let focused = self.focusable() && state.focused && state.keyboard_focus && !state.window_inactive;
         let hovered = cursor.is_over(bounds) || state.pressed || focused;
+        if matches!(self.symbol, Symbol::Undo | Symbol::Redo) {
+            quad(
+                renderer,
+                bounds.shrink(1.0),
+                history_background(self.message.is_some(), hovered, state.pressed),
+                3.0,
+            );
+        }
         if focused {
             renderer.fill_quad(
                 renderer::Quad {
@@ -267,163 +361,188 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
         } else {
             theme::GREY_MIDDLE_LIGHT
         };
-        draw_symbol(renderer, self.symbol, bounds, color, hovered);
+        draw_symbol(
+            renderer,
+            self.symbol,
+            bounds,
+            color,
+            hovered,
+            state.disclosure.opacity(state.pressed),
+        );
     }
 }
 
-/// Draws one vector glyph independently of focus and interaction presentation.
-fn draw_symbol(
-    renderer: &mut impl iced::advanced::Renderer,
+/// Draws smooth local canvas paths while leaving focus and hit geometry in the retained widget.
+fn draw_symbol<Renderer: geometry::Renderer>(
+    renderer: &mut Renderer,
     symbol: Symbol,
     bounds: Rectangle,
     color: Color,
     hovered: bool,
+    disclosure_opacity: f32,
 ) {
-    let center = bounds.center();
+    if bounds.width <= 0.0 || bounds.height <= 0.0 {
+        return;
+    }
+    let mut frame = Frame::new(renderer, bounds.size());
+    let center = Point::new(bounds.width * 0.5, bounds.height * 0.5);
     match symbol {
-        Symbol::Settings => settings_icon(renderer, center, color),
-        Symbol::Undo | Symbol::Redo => history_icon(renderer, center, color, matches!(symbol, Symbol::Redo)),
+        Symbol::Settings => {
+            frame.stroke(&settings_path(center), icon_stroke(color, 1.5));
+            frame.stroke(&Path::circle(center, 3.0), icon_stroke(color, 1.5));
+        }
+        Symbol::Undo | Symbol::Redo => {
+            frame.stroke(
+                &history_path(center, matches!(symbol, Symbol::Redo)),
+                icon_stroke(color, 1.5),
+            );
+        }
         Symbol::Chevron(expanded) => {
             let sign: f32 = if expanded { -1.0 } else { 1.0 };
-            let tip = Point::new(center.x, sign.mul_add(1.5, center.y));
-            stroke(
-                renderer,
-                Point::new(center.x - 3.5, sign.mul_add(-1.5, center.y)),
-                tip,
-                1.0,
-                color,
-            );
-            stroke(
-                renderer,
-                tip,
-                Point::new(center.x + 3.5, sign.mul_add(-1.5, center.y)),
-                1.0,
-                color,
-            );
+            let path = Path::new(|path| {
+                path.move_to(Point::new(center.x - 3.5, sign.mul_add(-1.5, center.y)));
+                path.line_to(Point::new(center.x, sign.mul_add(1.5, center.y)));
+                path.line_to(Point::new(center.x + 3.5, sign.mul_add(-1.5, center.y)));
+            });
+            frame.stroke(&path, icon_stroke(color, 1.0));
         }
         Symbol::Headphones => {
             let radius = bounds.height * 0.29;
-            let mut previous = Point::new(center.x - radius, center.y + 1.0);
-            for step in 1..=20 {
-                let angle = std::f32::consts::PI + step as f32 * std::f32::consts::PI / 20.0;
-                let next = Point::new(
-                    radius.mul_add(angle.cos(), center.x),
-                    radius.mul_add(angle.sin(), center.y + 1.0),
-                );
-                stroke(renderer, previous, next, 1.5, color);
-                previous = next;
-            }
+            let headband = Path::new(|path| {
+                path.arc(path::Arc {
+                    center: Point::new(center.x, center.y + 1.0),
+                    radius,
+                    start_angle: std::f32::consts::PI.into(),
+                    end_angle: std::f32::consts::TAU.into(),
+                });
+            });
+            frame.stroke(&headband, icon_stroke(color, 1.5));
             for x in [center.x - radius - 0.7, center.x + radius - 2.9] {
-                quad(
-                    renderer,
-                    Rectangle::new(Point::new(x, center.y), Size::new(3.6, 6.2)),
+                frame.fill(
+                    &Path::rounded_rectangle(Point::new(x, center.y), Size::new(3.6, 6.2), 1.2.into()),
                     color,
-                    1.2,
                 );
             }
         }
-        Symbol::Disclosure(down) if hovered => disclosure_icon(renderer, center, down),
+        Symbol::Disclosure(down) if disclosure_opacity > 0.0 => {
+            frame.fill(
+                &disclosure_path(center, down),
+                theme::GREY_LIGHT.scale_alpha(disclosure_opacity),
+            );
+        }
         Symbol::Divider if hovered => {
-            quad(
-                renderer,
-                Rectangle::new(Point::new(center.x - 18.0, center.y - 1.0), Size::new(36.0, 2.0)),
+            frame.fill(
+                &Path::rounded_rectangle(
+                    Point::new(center.x - 18.0, center.y - 1.0),
+                    Size::new(36.0, 2.0),
+                    1.0.into(),
+                ),
                 theme::GREY_MIDDLE_LIGHT.scale_alpha(0.5),
-                1.0,
             );
         }
         Symbol::Resize => {
-            for offset in [4.0, 8.0, 12.0] {
-                stroke(
-                    renderer,
-                    Point::new(bounds.x + bounds.width - offset, bounds.y + bounds.height - 2.0),
-                    Point::new(bounds.x + bounds.width - 2.0, bounds.y + bounds.height - offset),
-                    1.0,
-                    color.scale_alpha(if hovered { 0.8 } else { 0.3 }),
-                );
-            }
+            let path = Path::new(|path| {
+                for offset in [4.0, 8.0, 12.0] {
+                    path.move_to(Point::new(bounds.width - offset, bounds.height - 2.0));
+                    path.line_to(Point::new(bounds.width - 2.0, bounds.height - offset));
+                }
+            });
+            frame.stroke(
+                &path,
+                icon_stroke(color.scale_alpha(if hovered { 0.8 } else { 0.3 }), 1.0),
+            );
         }
-        Symbol::Disclosure(_) | Symbol::Divider => {}
+        Symbol::Disclosure(_) | Symbol::Divider => return,
     }
+    let geometry = frame.into_geometry();
+    renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+        renderer.draw_geometry(geometry);
+    });
 }
 
-impl<'a, Renderer: iced::advanced::Renderer + 'a> From<Chrome> for Element<'a, Message, Theme, Renderer> {
+impl<'a, Renderer: geometry::Renderer + 'a> From<Chrome> for Element<'a, Message, Theme, Renderer> {
     fn from(chrome: Chrome) -> Self {
         Self::new(chrome)
     }
 }
 
-/// Keeps collapsed and expanded disclosure triangles centered on the corresponding section border.
-fn disclosure_icon(renderer: &mut impl iced::advanced::Renderer, center: Point, down: bool) {
-    for row in 0..8 {
-        let share = if down { 1.0 - row as f32 / 8.0 } else { row as f32 / 8.0 };
-        quad(
-            renderer,
-            Rectangle::new(
-                Point::new(share.mul_add(-18.0, center.x), center.y - 4.0 + row as f32),
-                Size::new(share * 36.0, 1.0),
-            ),
-            theme::GREY_LIGHT.scale_alpha(0.18),
-            0.0,
-        );
+/// Keeps a disclosure's narrow reveal neighbourhood independent of its unchanged pointer hit target.
+fn disclosure_proximity(bounds: Rectangle) -> Rectangle {
+    Rectangle::new(
+        Point::new(
+            DISCLOSURE_PROXIMITY.width.mul_add(-0.5, bounds.center_x()),
+            DISCLOSURE_PROXIMITY.height.mul_add(-0.5, bounds.center_y()),
+        ),
+        DISCLOSURE_PROXIMITY,
+    )
+}
+
+/// Gives history actions restrained boxes without adding selected-state or layout changes.
+fn history_background(enabled: bool, hovered: bool, pressed: bool) -> Color {
+    if !enabled {
+        theme::GREY_MEDIUM_DARK.scale_alpha(0.5)
+    } else if pressed {
+        theme::GREY_MIDDLE.scale_alpha(0.3)
+    } else if hovered {
+        theme::GREY_MEDIUM
+    } else {
+        theme::GREY_MEDIUM_DARK
     }
 }
 
-/// Reuses the C++ gear polygon and central circular cutout without relying on a Unicode font glyph.
-fn settings_icon(renderer: &mut impl iced::advanced::Renderer, center: Point, color: Color) {
-    for point in 0..32 {
-        let angle = point as f32 * std::f32::consts::TAU / 32.0;
-        let next = (point + 1) as f32 * std::f32::consts::TAU / 32.0;
-        let radius: f32 = if point % 4 < 2 { 8.0 } else { 6.5 };
-        let next_radius: f32 = if (point + 1) % 4 < 2 { 8.0 } else { 6.5 };
-        stroke(
-            renderer,
-            Point::new(
+/// Rounded joins and caps keep small vector symbols continuous at fractional backing scales.
+fn icon_stroke(color: Color, width: f32) -> Stroke<'static> {
+    Stroke::default()
+        .with_color(color)
+        .with_width(width)
+        .with_line_cap(LineCap::Round)
+        .with_line_join(LineJoin::Round)
+}
+
+/// Builds one filled triangle centered on the section border rather than a stack of opaque strips.
+fn disclosure_path(center: Point, down: bool) -> Path {
+    let half_width = DISCLOSURE_SIZE.width * 0.5;
+    let half_height = DISCLOSURE_SIZE.height * 0.5;
+    let tip_offset = if down { half_height } else { -half_height };
+    Path::new(|path| {
+        path.move_to(Point::new(center.x - half_width, center.y - tip_offset));
+        path.line_to(Point::new(center.x, center.y + tip_offset));
+        path.line_to(Point::new(center.x + half_width, center.y - tip_offset));
+        path.close();
+    })
+}
+
+/// Retains the native eight-tooth polygon as a single closed outline.
+fn settings_path(center: Point) -> Path {
+    Path::new(|path| {
+        for point in 0..32 {
+            let angle = point as f32 * std::f32::consts::TAU / 32.0;
+            let radius: f32 = if point % 4 < 2 { 8.0 } else { 6.5 };
+            let position = Point::new(
                 radius.mul_add(angle.cos(), center.x),
                 radius.mul_add(angle.sin(), center.y),
-            ),
-            Point::new(
-                next_radius.mul_add(next.cos(), center.x),
-                next_radius.mul_add(next.sin(), center.y),
-            ),
-            1.5,
-            color,
-        );
-    }
-    circle_outline(renderer, center, 3.0, 1.5, color);
+            );
+            if point == 0 {
+                path.move_to(position);
+            } else {
+                path.line_to(position);
+            }
+        }
+        path.close();
+    })
 }
 
-/// Samples the native curved-arrow Bézier, mirroring the same geometry for Redo.
-fn history_icon(renderer: &mut impl iced::advanced::Renderer, center: Point, color: Color, redo: bool) {
+/// Preserves the native cubic and open arrowhead, with exact horizontal reflection for Redo.
+fn history_path(center: Point, redo: bool) -> Path {
     let direction = if redo { -1.0 } else { 1.0 };
-    let origin = Point::new(7.0_f32.mul_add(-direction, center.x), center.y - 5.0);
-    let mut previous = Point::new(12.0_f32.mul_add(direction, origin.x), origin.y + 11.0);
-    for step in 1..=20 {
-        let progress = step as f32 / 20.0;
-        let remaining = 1.0 - progress;
-        let first = 3.0 * remaining.powi(2) * progress;
-        let second = 3.0 * remaining * progress.powi(2);
-        let x = second.mul_add(7.0, first.mul_add(15.0, remaining.powi(3) * 12.0)) + progress.powi(3);
-        let y = progress
-            .powi(3)
-            .mul_add(6.0, first.mul_add(4.0, remaining.powi(3) * 11.0));
-        let next = Point::new(x.mul_add(direction, origin.x), origin.y + y);
-        stroke(renderer, previous, next, 1.5, color);
-        previous = next;
-    }
-    stroke(
-        renderer,
-        Point::new(origin.x + direction, origin.y + 2.0),
-        previous,
-        1.5,
-        color,
-    );
-    stroke(
-        renderer,
-        previous,
-        Point::new(5.0_f32.mul_add(direction, origin.x), origin.y + 6.0),
-        1.5,
-        color,
-    );
+    let point = |x: f32, y: f32| Point::new((x - 7.0).mul_add(direction, center.x), center.y - 5.0 + y);
+    Path::new(|path| {
+        path.move_to(point(12.0, 11.0));
+        path.bezier_curve_to(point(15.0, 4.0), point(7.0, 0.0), point(1.0, 6.0));
+        path.move_to(point(1.0, 2.0));
+        path.line_to(point(1.0, 6.0));
+        path.line_to(point(5.0, 6.0));
+    })
 }
 
 /// Fills a rounded chrome rectangle through the editor's retained renderer.
@@ -441,48 +560,134 @@ fn quad(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, color: 
     );
 }
 
-/// Draws a vector segment with the requested thickness for resolution-independent chrome.
-fn stroke(renderer: &mut impl iced::advanced::Renderer, start: Point, end: Point, width: f32, color: Color) {
-    let delta = end - start;
-    let steps = (delta.x.hypot(delta.y) * 2.0).ceil().max(1.0) as u32;
-    for step in 0..=steps {
-        let share = step as f32 / steps as f32;
-        quad(
-            renderer,
-            Rectangle::new(
-                Point::new(
-                    width.mul_add(-0.5, delta.x.mul_add(share, start.x)),
-                    width.mul_add(-0.5, delta.y.mul_add(share, start.y)),
-                ),
-                Size::new(width, width),
-            ),
-            color,
-            width * 0.5,
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use path::lyon_path::Event as PathEvent;
+
+    /// Checks the continuous cubic path independently of renderer tessellation or pixels.
+    #[test]
+    fn history_is_one_cubic_with_a_separate_open_arrowhead() {
+        let center = Point::new(12.0, 12.0);
+        let events: Vec<_> = history_path(center, false).raw().iter().collect();
+        let [
+            PathEvent::Begin { .. },
+            PathEvent::Cubic { from, ctrl1, ctrl2, to },
+            PathEvent::End { close: false, .. },
+            PathEvent::Begin { .. },
+            PathEvent::Line { .. },
+            PathEvent::Line { .. },
+            PathEvent::End { close: false, .. },
+        ] = events.as_slice()
+        else {
+            unreachable!("history path must preserve the cubic and open arrowhead");
+        };
+        assert_eq!(*from, path::lyon_path::math::point(17.0, 18.0));
+        assert_eq!(*ctrl1, path::lyon_path::math::point(20.0, 11.0));
+        assert_eq!(*ctrl2, path::lyon_path::math::point(12.0, 7.0));
+        assert_eq!(*to, path::lyon_path::math::point(6.0, 13.0));
+        let redo: Vec<_> = history_path(center, true).raw().iter().collect();
+        let PathEvent::Cubic {
+            from: redo_from,
+            ctrl1: redo_first,
+            ctrl2: redo_second,
+            to: redo_to,
+        } = redo.get(1).expect("redo cubic")
+        else {
+            unreachable!("redo must preserve the cubic");
+        };
+        for (undo, redo) in [
+            (from, redo_from),
+            (ctrl1, redo_first),
+            (ctrl2, redo_second),
+            (to, redo_to),
+        ] {
+            assert!(center.x.mul_add(-2.0, undo.x + redo.x).abs() < f32::EPSILON);
+            assert!((undo.y - redo.y).abs() < f32::EPSILON);
+        }
+    }
+
+    /// Filled disclosure triangles have precisely three edges and reverse their tip without moving.
+    #[test]
+    fn disclosure_is_a_centered_closed_triangle_in_each_direction() {
+        let center = Point::new(50.0, 10.0);
+        for (down, expected_tip) in [(true, 14.0), (false, 6.0)] {
+            let events: Vec<_> = disclosure_path(center, down).raw().iter().collect();
+            let [
+                PathEvent::Begin { .. },
+                PathEvent::Line { to, .. },
+                PathEvent::Line { .. },
+                PathEvent::End { close: true, .. },
+            ] = events.as_slice()
+            else {
+                unreachable!("disclosure must have one closed triangle");
+            };
+            assert_eq!(*to, path::lyon_path::math::point(center.x, expected_tip));
+        }
+    }
+
+    /// Proximity follows the small native reveal region, not an arbitrary full-width action target.
+    #[test]
+    fn disclosure_reveal_proximity_is_independent_of_hit_target_width() {
+        let bounds = Rectangle::new(Point::new(100.0, 200.0), Size::new(800.0, 20.0));
+        let proximity = disclosure_proximity(bounds);
+        assert_eq!(proximity.size(), Size::new(72.0, 20.0));
+        assert_eq!(proximity.center(), bounds.center());
+        assert!(proximity.contains(bounds.center()));
+        assert!(!proximity.contains(Point::new(bounds.x + 10.0, bounds.center_y())));
+    }
+
+    /// Native smoothstep fades finish within 140 ms in and 100 ms out, with no delayed release tail.
+    #[test]
+    fn disclosure_fade_uses_eased_alpha_and_bounded_exit() {
+        let start = Instant::now();
+        let mut reveal = DisclosureReveal::default();
+        reveal.retarget(true, start);
+        reveal.advance(start + Duration::from_millis(70));
+        assert!((reveal.opacity(false) - 0.09).abs() < 0.000_001);
+        assert!((reveal.opacity(true) - 0.15).abs() < 0.000_001);
+        reveal.advance(start + Duration::from_millis(140));
+        assert!((reveal.opacity(false) - 0.18).abs() < 0.000_001);
+        assert!(!reveal.animating());
+        reveal.retarget(false, start + Duration::from_millis(150));
+        reveal.advance(start + Duration::from_millis(200));
+        assert!((reveal.opacity(false) - 0.09).abs() < 0.000_001);
+        reveal.advance(start + Duration::from_millis(250));
+        assert!(reveal.opacity(false).abs() < f32::EPSILON);
+        assert!(!reveal.animating());
+    }
+
+    /// Interrupted fades reverse immediately from their current progress instead of restarting.
+    #[test]
+    fn disclosure_fade_retargets_without_extending_the_exit_bound() {
+        let start = Instant::now();
+        let mut reveal = DisclosureReveal::default();
+        reveal.retarget(true, start);
+        reveal.advance(start + Duration::from_millis(35));
+        let opacity = reveal.opacity(false);
+        reveal.retarget(false, start + Duration::from_millis(40));
+        assert!((reveal.opacity(false) - opacity).abs() < f32::EPSILON);
+        reveal.advance(start + Duration::from_millis(140));
+        assert!(reveal.opacity(false).abs() < f32::EPSILON);
+        assert!(!reveal.animating());
+    }
+
+    /// Disabled history controls retain their box without adopting hover or pressed feedback.
+    #[test]
+    fn disabled_history_background_ignores_hover_and_press() {
+        assert_eq!(
+            history_background(false, true, true),
+            history_background(false, false, false)
+        );
+        assert_ne!(
+            history_background(true, false, false),
+            history_background(true, true, false)
+        );
+        assert_ne!(
+            history_background(true, true, false),
+            history_background(true, true, true)
         );
     }
-}
-
-/// Approximates a circular icon outline with connected vector segments.
-fn circle_outline(
-    renderer: &mut impl iced::advanced::Renderer,
-    center: Point,
-    radius: f32,
-    thickness: f32,
-    color: Color,
-) {
-    renderer.fill_quad(
-        renderer::Quad {
-            bounds: Rectangle::new(
-                Point::new(center.x - radius, center.y - radius),
-                Size::new(radius * 2.0, radius * 2.0),
-            ),
-            border: iced::Border {
-                color,
-                width: thickness,
-                radius: radius.into(),
-            },
-            ..renderer::Quad::default()
-        },
-        Color::TRANSPARENT,
-    );
 }

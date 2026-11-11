@@ -1,12 +1,30 @@
 //! Production-widget event and semantic drawing tests without GPU resources or pixel assertions.
 
 use super::*;
+use iced_widget::graphics::geometry;
 
 /// Records GPU primitives and text while exercising the production generic Widget implementation.
 #[derive(Default)]
 struct EventRenderer {
     quads: Vec<(Rectangle, iced::Background)>,
     labels: Vec<String>,
+    geometry_count: usize,
+    frame_builds: std::cell::Cell<usize>,
+}
+
+/// Tessellates production paths with the GPU backend's CPU frame, without creating a device or surface.
+impl geometry::Renderer for EventRenderer {
+    type Geometry = <iced::Renderer as geometry::Renderer>::Geometry;
+    type Frame = <iced::Renderer as geometry::Renderer>::Frame;
+
+    fn new_frame(&self, bounds: Rectangle) -> Self::Frame {
+        self.frame_builds.set(self.frame_builds.get() + 1);
+        iced_widget::renderer::wgpu::geometry::Frame::new(bounds)
+    }
+
+    fn draw_geometry(&mut self, _: Self::Geometry) {
+        self.geometry_count += 1;
+    }
 }
 
 impl iced::advanced::Renderer for EventRenderer {
@@ -52,6 +70,12 @@ impl text::Renderer for EventRenderer {
     }
 }
 
+/// Records production messages and redraw demand without introducing a native scheduler.
+struct EventOutcome {
+    messages: Vec<PlotEvent>,
+    redraw: iced::window::RedrawRequest,
+}
+
 /// Reconciles the actual widget between events to exercise retained drag and restore cancellation.
 struct Driver {
     element: iced::core::Element<'static, PlotEvent, Theme, EventRenderer>,
@@ -77,7 +101,13 @@ impl Driver {
     }
     /// Delivers a real input event and returns commands other than incidental hover updates.
     fn send(&mut self, event: &Event, cursor: mouse::Cursor) -> Vec<PlotEvent> {
+        self.dispatch(event, cursor).messages
+    }
+
+    /// Exposes the widget's own redraw request for deterministic frame-local animation tests.
+    fn dispatch(&mut self, event: &Event, cursor: mouse::Cursor) -> EventOutcome {
         let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
         self.element.as_widget_mut().update(
             &mut self.tree,
             event,
@@ -85,13 +115,39 @@ impl Driver {
             cursor,
             &EventRenderer::default(),
             &mut iced::advanced::clipboard::Null,
-            &mut Shell::new(&mut messages),
+            &mut shell,
             &Rectangle::with_size(self.node.size()),
         );
-        messages
-            .into_iter()
-            .filter(|event| !matches!(event, PlotEvent::HoverBand(_)))
-            .collect()
+        let redraw = shell.redraw_request();
+        EventOutcome {
+            messages: messages
+                .into_iter()
+                .filter(|event| !matches!(event, PlotEvent::HoverBand(_)))
+                .collect(),
+            redraw,
+        }
+    }
+
+    /// Settles a hover using supplied redraw timestamps while keeping path drawing separate from animation.
+    fn settle_hover(&mut self, cursor: mouse::Cursor, now: Instant) {
+        for frame in 0..=6 {
+            self.send(
+                &Event::Window(iced::window::Event::RedrawRequested(
+                    now + std::time::Duration::from_millis(frame * 100),
+                )),
+                cursor,
+            );
+        }
+    }
+
+    /// Reads the same frame-local highlights used by response fills and region tints.
+    fn highlights(&self) -> [f32; 4] {
+        self.tree
+            .state
+            .downcast_ref::<PlotState<EventRenderer>>()
+            .responses
+            .borrow()
+            .highlights()
     }
 }
 
@@ -247,6 +303,153 @@ fn real_widget_modifier_gain_wheel_and_double_click_follow_public_event_contract
 }
 
 #[test]
+fn hover_advances_only_on_redraw_and_stops_requesting_frames_after_fade_out() {
+    let mut driver = Driver::new(overlay(), Size::new(932.0, 340.0));
+    let cursor = mouse::Cursor::Available(Point::new(300.0, 100.0));
+    let now = Instant::now();
+    let first = driver.dispatch(&Event::Window(iced::window::Event::RedrawRequested(now)), cursor);
+    assert_eq!(first.redraw, iced::window::RedrawRequest::NextFrame);
+    assert_eq!(first.messages, []);
+    assert_eq!(driver.highlights(), [0.0; 4]);
+    let next = driver.dispatch(
+        &Event::Window(iced::window::Event::RedrawRequested(
+            now + std::time::Duration::from_millis(80),
+        )),
+        cursor,
+    );
+    assert_eq!(next.redraw, iced::window::RedrawRequest::NextFrame);
+    let before = driver.highlights();
+    assert!(
+        before
+            .get(1)
+            .is_some_and(|highlight| *highlight > 0.63 && *highlight < 0.64)
+    );
+    let moved = driver.dispatch(
+        &Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(600.0, 100.0),
+        }),
+        mouse::Cursor::Unavailable,
+    );
+    assert_eq!(moved.redraw, iced::window::RedrawRequest::NextFrame);
+    assert_eq!(driver.highlights(), before);
+    let neighbor = mouse::Cursor::Available(Point::new(600.0, 100.0));
+    driver.settle_hover(neighbor, now + std::time::Duration::from_millis(80));
+    assert_eq!(driver.highlights(), [0.0, 0.0, 1.0, 0.0]);
+    let settled = driver.dispatch(
+        &Event::Window(iced::window::Event::RedrawRequested(
+            now + std::time::Duration::from_millis(780),
+        )),
+        neighbor,
+    );
+    assert_eq!(settled.redraw, iced::window::RedrawRequest::Wait);
+    driver.rebuild(overlay().enabled(false));
+    let fading = driver.dispatch(
+        &Event::Window(iced::window::Event::RedrawRequested(
+            now + std::time::Duration::from_millis(880),
+        )),
+        neighbor,
+    );
+    assert_eq!(fading.redraw, iced::window::RedrawRequest::NextFrame);
+    assert_eq!(driver.highlights(), [0.0, 0.0, 1.0, 0.0]);
+    driver.settle_hover(neighbor, now + std::time::Duration::from_millis(880));
+    assert_eq!(driver.highlights(), [0.0; 4]);
+    let settled = driver.dispatch(
+        &Event::Window(iced::window::Event::RedrawRequested(
+            now + std::time::Duration::from_secs(2),
+        )),
+        neighbor,
+    );
+    assert_eq!(settled.redraw, iced::window::RedrawRequest::Wait);
+}
+
+#[test]
+fn animated_response_recolors_one_transient_cache_without_resampling_paths() {
+    let cache = RefCell::new(responses::ResponseCache::<EventRenderer>::default());
+    let bounds = Rectangle::new(Point::new(28.0, 40.0), Size::new(701.5, 200.0));
+    let now = Instant::now();
+    cache.borrow_mut().observe_hover(Some(1), now);
+    let mut renderer = EventRenderer::default();
+    let draw = |renderer: &mut EventRenderer| {
+        responses::draw_bands(
+            renderer,
+            &cache,
+            bounds,
+            [100.0, 500.0, 5000.0],
+            FrequencyScale::Mel,
+            [false; 4],
+        );
+    };
+    draw(&mut renderer);
+    assert_eq!(renderer.frame_builds.get(), 0);
+    cache
+        .borrow_mut()
+        .advance_hover(Some(1), now + std::time::Duration::from_millis(80));
+    draw(&mut renderer);
+    draw(&mut renderer);
+    assert_eq!(renderer.frame_builds.get(), 1);
+    assert_eq!(cache.borrow().builds, 1);
+    let highlight = cache.borrow().highlights().get(1).copied().expect("highlighted band");
+    assert!(renderer.quads.iter().any(|(_, background)| {
+        matches!(background, iced::Background::Gradient(iced::Gradient::Linear(gradient))
+            if gradient.stops.first().copied().flatten().is_some_and(|stop| 0.14_f32.mul_add(-highlight, stop.color.a).abs() < 1.0e-6))
+    }));
+    cache
+        .borrow_mut()
+        .advance_hover(Some(1), now + std::time::Duration::from_millis(160));
+    draw(&mut renderer);
+    assert_eq!(renderer.frame_builds.get(), 2);
+    assert_eq!(cache.borrow().builds, 1);
+    cache
+        .borrow_mut()
+        .observe_hover(None, now + std::time::Duration::from_millis(160));
+    cache
+        .borrow_mut()
+        .advance_hover(None, now + std::time::Duration::from_millis(240));
+    draw(&mut renderer);
+    assert_eq!(renderer.frame_builds.get(), 3);
+    assert_eq!(cache.borrow().builds, 1);
+}
+
+#[test]
+fn position_geometry_reuses_hold_frames_and_only_recolors_paths_during_fade() {
+    tests::load_annotation_font();
+    let overlay = RefCell::new(responses::PositionOverlay::<EventRenderer>::default());
+    let bounds = Rectangle::new(Point::new(28.0, 40.0), Size::new(701.5, 200.0));
+    let now = Instant::now();
+    overlay.borrow_mut().observe(Some((12.0, 32.0)), now);
+    overlay.borrow_mut().observe(Some((10.0, 32.0)), now);
+    let mut renderer = EventRenderer::default();
+    for milliseconds in [0, 1000, 2000] {
+        responses::draw_position_curve(
+            &mut renderer,
+            &overlay,
+            Some((10.0, 32.0)),
+            bounds,
+            &bounds,
+            now + std::time::Duration::from_millis(milliseconds),
+        );
+    }
+    assert_eq!(renderer.geometry_count, 3);
+    assert_eq!(renderer.frame_builds.get(), 1);
+    let fading = now + std::time::Duration::from_millis(2750);
+    for _ in 0..2 {
+        responses::draw_position_curve(&mut renderer, &overlay, Some((10.0, 32.0)), bounds, &bounds, fading);
+    }
+    assert_eq!(renderer.geometry_count, 5);
+    assert_eq!(renderer.frame_builds.get(), 2);
+    responses::draw_position_curve(
+        &mut renderer,
+        &overlay,
+        Some((10.0, 32.0)),
+        bounds,
+        &bounds,
+        now + std::time::Duration::from_millis(3000),
+    );
+    assert_eq!(renderer.geometry_count, 5);
+    assert_eq!(renderer.frame_builds.get(), 2);
+}
+
+#[test]
 fn real_widget_draws_solo_veil_width_and_response_without_pixel_assertions() {
     tests::load_annotation_font();
     let mut snapshot = Snapshot::default();
@@ -255,7 +458,9 @@ fn real_widget_draws_solo_veil_width_and_response_without_pixel_assertions() {
     let size = Size::new(932.0, 340.0);
     let bounds = plot_bounds(Rectangle::with_size(size));
     let cursor = mouse::Cursor::Available(Point::new(frequency_x(250.0, bounds, FrequencyScale::Mel), 100.0));
-    let driver = Driver::new(overlay().display(true, snapshot), size);
+    let mut driver = Driver::new(overlay().display(true, snapshot), size);
+    let now = Instant::now();
+    driver.settle_hover(cursor, now);
     let mut renderer = EventRenderer::default();
     driver.element.as_widget().draw(
         &driver.tree,
@@ -268,9 +473,65 @@ fn real_widget_draws_solo_veil_width_and_response_without_pixel_assertions() {
     );
     assert!(renderer.labels.iter().any(|label| label == "Width 1.50"));
     assert!(renderer.quads.iter().any(|(_, background)| matches!(background, iced::Background::Color(colour) if *colour == theme::GREY_DARK.scale_alpha(0.55))));
-    assert!(renderer.quads.len() > 100);
+    assert!(renderer.quads.len() < 100);
+    assert_eq!(renderer.geometry_count, 1);
+    assert_eq!(renderer.frame_builds.get(), 1);
     assert_eq!(
-        driver.tree.state.downcast_ref::<PlotState>().responses.borrow().builds,
+        driver
+            .tree
+            .state
+            .downcast_ref::<PlotState<EventRenderer>>()
+            .responses
+            .borrow()
+            .builds,
+        1
+    );
+    driver.element.as_widget().draw(
+        &driver.tree,
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style::default(),
+        Layout::new(&driver.node),
+        cursor,
+        &Rectangle::with_size(size),
+    );
+    assert_eq!(renderer.geometry_count, 2);
+    assert_eq!(renderer.frame_builds.get(), 1);
+    let neighbor = mouse::Cursor::Available(Point::new(frequency_x(8000.0, bounds, FrequencyScale::Mel), 100.0));
+    for (index, cursor) in [neighbor, cursor].into_iter().enumerate() {
+        driver.settle_hover(cursor, now + std::time::Duration::from_secs(index as u64 + 1));
+        driver.element.as_widget().draw(
+            &driver.tree,
+            &mut renderer,
+            &Theme::Dark,
+            &renderer::Style::default(),
+            Layout::new(&driver.node),
+            cursor,
+            &Rectangle::with_size(size),
+        );
+    }
+    assert_eq!(renderer.frame_builds.get(), 2);
+    snapshot.bands[1].width = 0.5;
+    snapshot.bands[0].solo = 0.0;
+    driver.rebuild(overlay().display(true, snapshot));
+    driver.element.as_widget().draw(
+        &driver.tree,
+        &mut renderer,
+        &Theme::Dark,
+        &renderer::Style::default(),
+        Layout::new(&driver.node),
+        cursor,
+        &Rectangle::with_size(size),
+    );
+    assert_eq!(renderer.frame_builds.get(), 2);
+    assert_eq!(
+        driver
+            .tree
+            .state
+            .downcast_ref::<PlotState<EventRenderer>>()
+            .responses
+            .borrow()
+            .builds,
         1
     );
 }

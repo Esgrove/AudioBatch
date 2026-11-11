@@ -1,4 +1,4 @@
-//! Logical-pixel geometry transcribed from the current C++ editor, without renderer-dependent measurements.
+//! Logical-pixel editor geometry with measured band headings and responsive processing-header allocation.
 
 use iced_baseview::{Point, Rectangle, Size};
 
@@ -27,6 +27,14 @@ pub const MIN_BAND_HEIGHT: f32 = 280.0;
 pub const MIN_PLOT_HEIGHT: f32 = 160.0;
 pub const BAND_INSET: f32 = 10.0;
 pub const BAND_HEADER_HEIGHT: f32 = 20.0;
+pub const BAND_SOLO_SIZE: f32 = 24.0;
+pub const BAND_HEADING_GAP: f32 = 6.0;
+pub const PRESET_FIELD_MAX_WIDTH: f32 = 320.0;
+pub const PRESET_FIELD_MIN_WIDTH: f32 = 120.0;
+/// A/B, Copy, Presets, and their deliberate inter-group spacing.
+pub const PROCESSING_TOOLBAR_FIXED_WIDTH: f32 = 232.0;
+pub const PROCESSING_TOOLBAR_MIN_WIDTH: f32 = PROCESSING_TOOLBAR_FIXED_WIDTH + PRESET_FIELD_MIN_WIDTH;
+pub const PROCESSING_TOOLBAR_MAX_WIDTH: f32 = PROCESSING_TOOLBAR_FIXED_WIDTH + PRESET_FIELD_MAX_WIDTH;
 pub const SLIDER_LABEL_HEIGHT: f32 = 18.0;
 pub const SLIDER_HEIGHT: f32 = 26.0;
 pub const VALUE_WIDTH: f32 = 78.0;
@@ -34,7 +42,7 @@ pub const PLOT_INSETS: [f32; 4] = [11.5, 16.0, 18.0, 16.0];
 pub const BAND_NAMES: [&str; 4] = ["Low", "Low Mid", "High Mid", "High"];
 pub const FIELD_NAMES: [&str; 5] = ["Mid", "Side", "Width", "Recover", "Pan"];
 
-/// Absolute header targets keep Output immediately before the final toolbar chevron.
+/// Absolute header targets anchor Output to the right edge or the visible toolbar chevron.
 #[derive(Clone, Copy, Debug)]
 pub struct Header {
     pub title: Rectangle,
@@ -49,6 +57,7 @@ pub struct Header {
     pub output_label: Rectangle,
     pub output: Rectangle,
     pub toolbar: Rectangle,
+    pub processing_toolbar: Option<Rectangle>,
 }
 
 /// Section bounds include the separate twelve-pixel controls-disclosure margin.
@@ -112,7 +121,7 @@ impl Header {
             x += width as f32;
             bounds
         };
-        Self {
+        let mut header = Self {
             title: take(identity[0], 0),
             settings: take(24, 0),
             pre: take(taps[0], group_gaps[0]),
@@ -125,11 +134,75 @@ impl Header {
             output_label: take(label[0], group_gaps[5]),
             output: take(output.min(240), 0),
             toolbar: take(24, icon_gaps[1]),
+            processing_toolbar: None,
+        };
+        let reclaimed = header.toolbar.width + icon_gaps[1] as f32;
+        let processing_x = header.redo.x + header.redo.width + GAP;
+        let available = header.mono.x + reclaimed - GAP - processing_x;
+        if available >= PROCESSING_TOOLBAR_MIN_WIDTH {
+            header.processing_toolbar = Some(rect(
+                processing_x,
+                GAP - 2.0,
+                available.min(PROCESSING_TOOLBAR_MAX_WIDTH),
+                TOOLBAR_HEIGHT,
+            ));
+            for target in [
+                &mut header.mono,
+                &mut header.delta,
+                &mut header.bypass,
+                &mut header.output_label,
+                &mut header.output,
+            ] {
+                target.x += reclaimed;
+            }
+        }
+        header
+    }
+}
+
+/// One measured decision keeps every band's frequency label on the same row.
+#[derive(Clone, Copy, Debug)]
+pub struct BandHeadings {
+    pub inline: bool,
+    pub link_width: f32,
+}
+
+impl BandHeadings {
+    /// Uses the rendered strings and faces, so crossover changes can affect fit without editing sound or drafts.
+    pub fn new(strip_width: f32, ranges: &[String; 4]) -> Self {
+        let link_width = super::theme::CHECKBOX_SIZE
+            + BAND_HEADING_GAP
+            + super::theme::text_width("Link", super::theme::TEXT, super::theme::BAND_LINK_SIZE);
+        let available = BAND_INSET.mul_add(-2.0, strip_width);
+        let inline = BAND_NAMES.iter().zip(ranges).all(|(name, range)| {
+            let title = super::theme::text_width(name, super::theme::SEMIBOLD, super::theme::BAND_TITLE_SIZE);
+            let frequency = super::theme::text_width(range, super::theme::TEXT, super::theme::LABEL_SIZE);
+            BAND_HEADING_GAP.mul_add(3.0, title + frequency + BAND_SOLO_SIZE + link_width) <= available
+        });
+        Self { inline, link_width }
+    }
+
+    /// A single-row heading returns its released row to the parameter controls.
+    pub const fn height(self) -> f32 {
+        if self.inline {
+            BAND_SOLO_SIZE
+        } else {
+            BAND_HEADER_HEIGHT * 2.0
         }
     }
 }
 
 impl Sections {
+    /// Allocates complete slider rows from the actual synchronized heading height.
+    pub fn with_band_headings(mut self, headings: BandHeadings) -> Self {
+        let inner = BAND_INSET.mul_add(-2.0, self.band) - headings.height();
+        self.band_header_gap = 5.0_f32
+            .mul_add(-(SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT), inner)
+            .clamp(0.0, 8.0);
+        self.band_row = ((inner - self.band_header_gap) / 5.0).floor();
+        self
+    }
+
     /// Resolves current C++ section allocation, retaining full-strip height while compact values release plot space.
     #[cfg(test)]
     pub fn new(size: Size, toolbar: bool, correlation: bool, requested_band_height: f32, compact: bool) -> Self {
@@ -145,7 +218,8 @@ impl Sections {
         compact: bool,
         hidden: bool,
     ) -> Self {
-        let top = GAP + HEADER_HEIGHT + GAP + if toolbar { TOOLBAR_HEIGHT + GAP } else { 0.0 };
+        let toolbar_row = toolbar && Header::new(size.width).processing_toolbar.is_none();
+        let top = GAP + HEADER_HEIGHT + GAP + if toolbar_row { TOOLBAR_HEIGHT + GAP } else { 0.0 };
         let correlation_height = if correlation {
             CORRELATION_HEIGHT
         } else {
@@ -227,6 +301,58 @@ mod tests {
             assert_eq!(header.toolbar.x + 24.0, width as f32 - 8.0);
             assert!((190.0..=240.0).contains(&header.output.width));
             assert!(header.output_label.x >= header.bypass.x + header.bypass.width);
+            let output_right = header.output.x + header.output.width;
+            if header.processing_toolbar.is_some() {
+                assert_eq!(output_right, width as f32 - GAP);
+            } else {
+                assert!((2.0..=4.0).contains(&(header.toolbar.x - output_right)));
+            }
+            if let Some(processing) = header.processing_toolbar {
+                assert_eq!(processing.x, header.redo.x + header.redo.width + GAP);
+                assert!(processing.x + processing.width + GAP <= header.mono.x);
+                assert!((PROCESSING_TOOLBAR_MIN_WIDTH..=PROCESSING_TOOLBAR_MAX_WIDTH).contains(&processing.width));
+            }
+        }
+    }
+
+    #[test]
+    fn inline_toolbar_reclaims_only_the_automatic_second_row() {
+        let first_inline = (760..=4096)
+            .find(|width| Header::new(*width as f32).processing_toolbar.is_some())
+            .expect("supported widths allow an inline toolbar");
+        assert!(first_inline > 1000);
+        let narrow = Size::new((first_inline - 1) as f32, 764.0);
+        let wide = Size::new(first_inline as f32, 764.0);
+        assert!(Header::new(narrow.width).processing_toolbar.is_none());
+        for compact in [false, true] {
+            let shown = Sections::new(narrow, true, true, BAND_HEIGHT, compact);
+            let hidden = Sections::new(narrow, false, true, BAND_HEIGHT, compact);
+            assert_eq!(shown.plot.y - hidden.plot.y, TOOLBAR_HEIGHT + GAP);
+            let inline_shown = Sections::new(wide, true, true, BAND_HEIGHT, compact);
+            let inline_hidden = Sections::new(wide, false, true, BAND_HEIGHT, compact);
+            assert_eq!(inline_shown.plot, inline_hidden.plot);
+            assert_eq!(inline_shown.plot.y, hidden.plot.y);
+            assert_eq!(inline_shown.bands.y, shown.bands.y);
+            assert_eq!(inline_shown.bands.height, shown.bands.height);
+        }
+    }
+
+    #[test]
+    fn inline_heading_row_releases_space_without_moving_the_band_panel() {
+        let sections = Sections::new(Size::new(1600.0, 764.0), true, true, BAND_HEIGHT, false);
+        let stacked = sections.with_band_headings(BandHeadings {
+            inline: false,
+            link_width: 48.0,
+        });
+        let inline = sections.with_band_headings(BandHeadings {
+            inline: true,
+            link_width: 48.0,
+        });
+        assert_eq!(stacked.bands, inline.bands);
+        assert_eq!(stacked.band_row, 47.0);
+        assert_eq!(inline.band_row, 50.0);
+        for resolved in [stacked, inline] {
+            assert!(resolved.band_row >= SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT);
         }
     }
 }

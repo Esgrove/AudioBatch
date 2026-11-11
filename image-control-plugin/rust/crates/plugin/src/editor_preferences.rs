@@ -27,6 +27,8 @@ pub struct LayoutPreferences {
     pub spectrogram_hidden: bool,
     /// User choice to stop analysis, independent of temporary editor or renderer availability.
     pub analysis_stopped: bool,
+    /// Expands the plot to the panel inset and overlays its axes without hiding controls.
+    pub maximize_spectrogram: bool,
 }
 
 impl LayoutPreferences {
@@ -47,6 +49,7 @@ impl Default for LayoutPreferences {
             band_height: DEFAULT_BAND_HEIGHT,
             spectrogram_hidden: false,
             analysis_stopped: false,
+            maximize_spectrogram: false,
         }
     }
 }
@@ -65,6 +68,7 @@ mod tests {
         assert_eq!(preferences.band_height.to_bits(), 304.0_f32.to_bits());
         assert!(!preferences.spectrogram_hidden);
         assert!(!preferences.analysis_stopped);
+        assert!(!preferences.maximize_spectrogram);
         assert!(preferences.is_valid());
     }
 
@@ -99,6 +103,7 @@ mod tests {
             band_height: 304.125,
             spectrogram_hidden: true,
             analysis_stopped: true,
+            maximize_spectrogram: true,
         };
         let bytes = serde_json::to_vec(&preferences).expect("serialize layout preferences");
         assert_eq!(
@@ -120,6 +125,8 @@ mod tests {
             r#"{"band_height":"304"}"#,
             r#"{"spectrogram_hidden":0}"#,
             r#"{"analysis_stopped":[]}"#,
+            r#"{"maximize_spectrogram":null}"#,
+            r#"{"maximize_spectrogram":1}"#,
         ] {
             assert!(
                 serde_json::from_str::<LayoutPreferences>(document).is_err(),

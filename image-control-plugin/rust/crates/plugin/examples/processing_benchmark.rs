@@ -397,6 +397,7 @@ fn run(options: Options) -> Result<Report> {
 /// Reports success only after checked native work, without initializing application storage or an audio device.
 fn main() -> Result<()> {
     if let Some(options) = options()? {
+        image_control_plugin_rs::benchmark_build::require_optimized_native().map_err(anyhow::Error::msg)?;
         println!("{}", serde_json::to_string_pretty(&run(options)?)?);
     }
     Ok(())

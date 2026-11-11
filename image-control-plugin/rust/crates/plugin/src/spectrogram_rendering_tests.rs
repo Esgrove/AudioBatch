@@ -146,6 +146,37 @@ fn submit_case(
         .expect("native reference pass completion");
 }
 
+/// Queues independent, already-weighted observations without involving the asynchronous analyzer.
+fn queue_continuity_particles(spectrogram: &Spectrogram, points: &[image_control_dsp::SpatialParticle]) {
+    spectrogram
+        .program
+        .pending
+        .lock()
+        .expect("pending")
+        .points
+        .extend_from_slice(points);
+}
+
+/// Keeps native continuity cases on identical physical bounds without a window or a pixel expectation.
+fn continuity_bounds() -> Rectangle {
+    Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 200.0,
+        height: 100.0,
+    }
+}
+
+/// Uses the same bounded scissor for each continuity case.
+fn continuity_clip() -> Rectangle<u32> {
+    Rectangle {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+    }
+}
+
 #[test]
 fn preference_publication_before_source_increment_discards_pending_and_prepared_gpu_work() {
     let (device, queue) = super::tests::native_device();
@@ -156,26 +187,19 @@ fn preference_publication_before_source_increment_discards_pending_and_prepared_
     let shared = &spectrogram.program.shared;
     let generation = shared.analysis_generation();
     let original = shared.display_preferences_snapshot();
-    let replacement = Arc::new(DisplayPreferences {
-        mel_scale: !original.mel_scale,
-        ..*original
-    });
+    let replacement = Arc::new(
+        image_control_dsp::DisplayConfiguration::new(DisplayPreferences {
+            mel_scale: !original.mel_scale,
+            ..**original
+        })
+        .expect("valid replacement"),
+    );
     let points = independent_particles(FrequencyScale::Logarithmic, ColorMode::Frequency);
     let primitive = SpectrogramPrimitive {
         program: spectrogram.program.clone(),
     };
-    let bounds = Rectangle {
-        x: 0.0,
-        y: 0.0,
-        width: 200.0,
-        height: 100.0,
-    };
-    let clip = Rectangle {
-        x: 0,
-        y: 0,
-        width: 200,
-        height: 100,
-    };
+    let bounds = continuity_bounds();
+    let clip = continuity_clip();
     let viewport = Viewport::with_physical_size(Size::new(1024, 512), 1.0);
     let target = output_target(&device, wgpu::TextureFormat::Rgba16Float);
     {
@@ -231,6 +255,22 @@ fn preference_publication_before_source_increment_discards_pending_and_prepared_
     );
     assert!(!history.update_pending.load(super::Ordering::Acquire));
     assert!(!history.resize_pending.load(super::Ordering::Acquire));
+    queue.submit([encoder.finish()]);
+    // A-to-B-to-A has equal values but a fresh epoch, including before any audio-source increment.
+    let returned =
+        Arc::new(image_control_dsp::DisplayConfiguration::new(**original).expect("valid returned projection"));
+    assert!(!returned.analysis_matches(&original));
+    assert!(!history.prepared_matches(generation, &returned));
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    primitive.render_configuration(
+        &pipeline,
+        &mut encoder,
+        &target,
+        &clip,
+        (generation, Arc::clone(&returned)),
+    );
+    assert!(history.configuration_matches(generation, &returned));
+    assert_eq!(history.current.load(super::Ordering::Acquire), 0);
     let submission = queue.submit([encoder.finish()]);
     device
         .poll(wgpu::PollType::Wait {
@@ -238,6 +278,111 @@ fn preference_publication_before_source_increment_discards_pending_and_prepared_
             timeout: Some(Duration::from_secs(10)),
         })
         .expect("preference-only invalidation passes");
+    assert!(block_on(device.pop_error_scope()).is_none(), "native GPU validation");
+}
+
+#[test]
+fn compatible_live_edits_preserve_native_gpu_history_pending_energy_and_prepared_uploads() {
+    let (device, queue) = super::tests::native_device();
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut pipeline = SpectrogramPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba16Float);
+    let imager = Imager::new();
+    let spectrogram = Spectrogram::new(imager.shared()).expect("analysis owner");
+    let shared = &spectrogram.program.shared;
+    let generation = shared.analysis_generation();
+    let original = shared.display_preferences_snapshot();
+    let points = independent_particles(FrequencyScale::Logarithmic, ColorMode::Frequency);
+    let primitive = SpectrogramPrimitive {
+        program: spectrogram.program.clone(),
+    };
+    let bounds = continuity_bounds();
+    let clip = continuity_clip();
+    let viewport = Viewport::with_physical_size(Size::new(1024, 512), 1.0);
+    let target = output_target(&device, wgpu::TextureFormat::Rgba16Float);
+    queue_continuity_particles(&spectrogram, &points);
+    primitive.prepare(&mut pipeline, &device, &queue, &bounds, &viewport);
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    primitive.render(&pipeline, &mut encoder, &target, &clip);
+    queue.submit([encoder.finish()]);
+    assert_eq!(
+        pipeline
+            .widgets
+            .get(&spectrogram.program.id)
+            .expect("history")
+            .current
+            .load(super::Ordering::Acquire),
+        1
+    );
+
+    // Compatible changes before prepare retain original particle energy, then changes after prepare accept that upload.
+    for index in 0..8 {
+        let before = shared.display_preferences();
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            persistence_seconds: if index % 2 == 0 { 0.1 } else { 1.2 },
+            contrast: index as f32 * 0.1,
+            pan_midpoint_db: 6.0,
+            pan_edge_db: 18.0,
+            solid_rendering: index % 2 == 0,
+            smooth_correlation: index % 2 == 0,
+            show_fps: index % 2 != 0,
+            ..before
+        }));
+        let current = shared.display_preferences_snapshot();
+        assert_eq!(shared.analysis_generation(), generation);
+        assert!(current.analysis_matches(&original));
+        {
+            let mut pending = spectrogram.program.pending.lock().expect("pending");
+            pending.points.extend_from_slice(&points);
+            pending.synchronize(generation, &current);
+            assert_eq!(
+                pending.points, points,
+                "compatible settings do not reweight queued energy"
+            );
+        }
+        primitive.prepare(&mut pipeline, &device, &queue, &bounds, &viewport);
+        let history = pipeline.widgets.get(&spectrogram.program.id).expect("prepared history");
+        let previous = history.current.load(super::Ordering::Acquire);
+        let upload = history.upload.clone();
+        assert_eq!(history.particle_count, 3);
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            persistence_seconds: 2.0,
+            contrast: 0.99,
+            show_fps: !current.show_fps,
+            ..**current
+        }));
+        let latest = shared.display_preferences_snapshot();
+        assert!(history.configuration_matches(generation, &latest));
+        assert!(history.prepared_matches(generation, &latest));
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        primitive.render(&pipeline, &mut encoder, &target, &clip);
+        assert_eq!(
+            history.current.load(super::Ordering::Acquire),
+            1 - previous,
+            "compatible edits must execute fade/add without a history clear"
+        );
+        assert_eq!(
+            history.upload, upload,
+            "retained energy is never retroactively rescaled"
+        );
+        queue.submit([encoder.finish()]);
+    }
+    let resized = Rectangle { width: 199.0, ..bounds };
+    primitive.prepare(&mut pipeline, &device, &queue, &resized, &viewport);
+    let history = pipeline.widgets.get(&spectrogram.program.id).expect("resized history");
+    assert!(
+        history.resize_source.is_some(),
+        "compatible settings preserve resize energy"
+    );
+    assert!(history.resize_pending.load(super::Ordering::Acquire));
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    primitive.render(&pipeline, &mut encoder, &target, &clip);
+    let submission = queue.submit([encoder.finish()]);
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("compatible appearance passes");
     assert!(block_on(device.pop_error_scope()).is_none(), "native GPU validation");
 }
 

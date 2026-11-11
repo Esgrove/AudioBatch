@@ -7,6 +7,7 @@
 // Raising the depth retains the full Send/lifetime analysis instead of disabling its diagnostic.
 #![recursion_limit = "256"]
 
+pub mod benchmark_build;
 #[cfg(feature = "clap")]
 mod clap;
 #[cfg(feature = "editor")]
@@ -24,6 +25,8 @@ mod iced_bridge;
 #[cfg(feature = "editor")]
 mod iced_executor;
 pub mod params;
+#[cfg(feature = "render-benchmark")]
+pub mod render_benchmark;
 mod runtime;
 #[cfg(feature = "editor")]
 mod spectrogram;

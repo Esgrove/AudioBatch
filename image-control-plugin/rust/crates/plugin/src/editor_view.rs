@@ -35,15 +35,11 @@ impl EditorState {
         );
         let mut plot = stack![
             container(plot_content)
-                .padding(iced::Padding {
-                    top: layout::PLOT_INSETS[0],
-                    right: layout::PLOT_INSETS[1],
-                    bottom: layout::PLOT_INSETS[2],
-                    left: layout::PLOT_INSETS[3],
-                })
+                .padding(plot_overlay::plot_padding(self.maximize_spectrogram))
                 .width(Length::Fill)
                 .height(Length::Fill),
             plot_overlay::PlotOverlay::new(self.crossovers(), plot_message)
+                .maximized(self.maximize_spectrogram)
                 .display(self.shared.display_preferences().mel_scale, self.parameters.snapshot())
                 .interaction_epoch(self.parameters.with_editing(|editing, _| editing.interaction_epoch()))
                 .enabled(!self.settings_shown && !self.presets.shown)
@@ -60,11 +56,13 @@ impl EditorState {
         if self.shared.display_preferences().show_fps {
             plot = plot.push(
                 container(
-                    text(format!("{:.0} fps", self.refresh_rate))
+                    text(format!("{:.0} FPS", self.refresh_rate))
+                        .font(theme::MONO)
                         .size(11)
                         .color(theme::GREY_MIDDLE_LIGHT),
                 )
-                .padding(16.0),
+                .align_right(Length::Fill)
+                .padding(8.0),
             );
         }
         container(plot)
@@ -79,23 +77,29 @@ impl EditorState {
     pub fn view(&self) -> Element<'_, Message> {
         let size = self.size();
         let sections = self.sections(size);
+        let ranges = self.band_frequency_ranges();
+        let headings = layout::BandHeadings::new(sections.strip_width, &ranges);
+        let sections = sections.with_band_headings(headings);
         let mut content = stack![
             at(self.header(size.width), layout::rect(0.0, 0.0, size.width, 36.0)),
             at(self.plot_section(sections.plot.width), sections.plot),
         ]
         .width(Length::Fill)
         .height(Length::Fill);
-        if self.toolbar_shown {
-            content = content.push(at(
-                processing_toolbar(
-                    self.parameters
-                        .with_editing(|editing, snapshot| editing.comparison(snapshot))
-                        .active,
-                    self.preset_label(),
-                ),
-                layout::rect(8.0, 44.0, size.width - 16.0, 32.0),
-            ));
-        }
+        let inline_toolbar = layout::Header::new(size.width).processing_toolbar;
+        let toolbar_bounds = inline_toolbar.unwrap_or_else(|| layout::rect(8.0, 44.0, size.width - 16.0, 32.0));
+        // Retaining this stack slot prevents a responsive toolbar move from replacing focused parameter trees.
+        let toolbar = if inline_toolbar.is_some() || self.toolbar_shown {
+            processing_toolbar(
+                self.parameters
+                    .with_editing(|editing, snapshot| editing.comparison(snapshot))
+                    .active,
+                self.preset_label(),
+            )
+        } else {
+            Space::new().into()
+        };
+        content = content.push(at(toolbar, toolbar_bounds));
         if !self.compact_bands && !self.spectrogram_hidden {
             content = content.push(at(
                 Chrome::new(Symbol::Divider, sections.divider.size(), Some(Message::Ignore), false),
@@ -106,10 +110,7 @@ impl EditorState {
             let x = (band as f32).mul_add(sections.strip_width + layout::GAP, sections.bands.x);
             if self.correlation_shown {
                 content = content.push(at(
-                    correlation_meter(
-                        &self.correlation_history.get(band).expect("fixed band").snapshot(),
-                        self.shared.display_preferences().smooth_correlation,
-                    ),
+                    correlation_meter(std::sync::Arc::clone(&self.shared), band),
                     layout::rect(
                         x,
                         sections.correlation.y,
@@ -119,7 +120,7 @@ impl EditorState {
                 ));
             }
             content = content.push(at(
-                self.band_strip(band, sections),
+                self.band_strip(band, sections, headings, ranges.get(band).expect("fixed band range")),
                 layout::rect(x, sections.bands.y, sections.strip_width, sections.band),
             ));
         }
@@ -231,6 +232,7 @@ impl EditorState {
                         self.correlation_shown,
                         self.spectrogram_hidden,
                         self.analysis_stopped,
+                        self.maximize_spectrogram,
                     )
                 })
                 .on_press(Message::Ignore),
@@ -309,13 +311,6 @@ impl EditorState {
                 "redo",
                 "Redo",
             ),
-            (
-                Symbol::Chevron(self.toolbar_shown),
-                bounds.toolbar,
-                Some(Message::Toolbar),
-                "processing-toolbar-disclosure",
-                "Processing toolbar",
-            ),
         ] {
             header = header.push(at(
                 chrome_action(
@@ -325,6 +320,8 @@ impl EditorState {
                 target,
             ));
         }
+        // Keep the chevron slot even while inline, preserving the Output field's retained native focus.
+        header = header.push(at(self.toolbar_disclosure(bounds), bounds.toolbar));
         for (label, target, tap) in [
             ("Pre", bounds.pre, AnalysisTap::Pre),
             ("Post", bounds.post, AnalysisTap::Post),
@@ -368,48 +365,28 @@ impl EditorState {
             .into()
     }
 
-    /// Builds one quiet band surface with Solo/Link in its heading, followed by five stacked labelled rows.
-    fn band_strip(&self, band: usize, sections: layout::Sections) -> Element<'_, Message> {
-        if self.compact_bands {
-            return self.compact_band(band, sections.strip_width);
-        }
-        let solo = band_parameter_id(band, 5).expect("fixed band Solo id");
-        let heading = Row::new()
-            .push(
-                text(*layout::BAND_NAMES.get(band).expect("fixed band name"))
-                    .font(theme::SEMIBOLD)
-                    .size(theme::BAND_TITLE_SIZE)
-                    .line_height(theme::LINE_HEIGHT)
-                    .color(theme::GREY_SUPER_LIGHT),
-            )
-            .push(Space::new().width(Length::Fill))
-            .push(chrome_action(
+    /// Hides only the inline toolbar's disclosure, without changing the saved narrow-layout preference.
+    fn toolbar_disclosure(&self, bounds: layout::Header) -> Element<'static, Message> {
+        if bounds.processing_toolbar.is_some() {
+            Space::new().into()
+        } else {
+            chrome_action(
                 Chrome::new(
-                    Symbol::Headphones,
-                    Size::new(20.0, 20.0),
-                    Some(Message::Toggle(solo)),
-                    self.parameters.get(solo).is_some_and(|value| value >= 0.5),
+                    Symbol::Chevron(self.toolbar_shown),
+                    bounds.toolbar.size(),
+                    Some(Message::Toolbar),
+                    false,
                 )
-                .id(format!("band-{band}-solo")),
-                "Solo band",
-            ))
-            .push(Space::new().width(6.0))
-            .push(
-                container(
-                    checkbox(self.linked.get(band).copied().unwrap_or(false))
-                        .label("Link")
-                        .text_size(theme::LABEL_SIZE)
-                        .size(theme::CHECKBOX_SIZE)
-                        .spacing(6.0)
-                        .style(theme::check)
-                        .on_toggle(move |value| Message::Link(band, value)),
-                )
-                .width(60.0),
+                .id("header-processing-toolbar-disclosure"),
+                "Processing toolbar",
             )
-            .height(layout::BAND_HEADER_HEIGHT)
-            .align_y(Alignment::Center);
+        }
+    }
+
+    /// Formats ordered crossover boundaries once for the shared four-band heading fit decision.
+    fn band_frequency_ranges(&self) -> [String; 4] {
         let crossovers = self.crossovers();
-        let range = match band {
+        std::array::from_fn(|band| match band {
             0 => format!("Below {}", format_frequency(crossovers[0])),
             3 => format!("Above {}", format_frequency(crossovers[2])),
             _ => format!(
@@ -417,17 +394,81 @@ impl EditorState {
                 format_frequency(*crossovers.get(band - 1).expect("middle band lower edge")),
                 format_frequency(*crossovers.get(band).expect("middle band upper edge"))
             ),
+        })
+    }
+
+    /// Moves frequency annotations without changing child identities or replacing a focused parameter tree.
+    fn band_strip(
+        &self,
+        band: usize,
+        sections: layout::Sections,
+        headings: layout::BandHeadings,
+        range: &str,
+    ) -> Element<'_, Message> {
+        if self.compact_bands {
+            return self.compact_band(band, sections.strip_width);
+        }
+        let solo = band_parameter_id(band, 5).expect("fixed band Solo id");
+        let name = *layout::BAND_NAMES.get(band).expect("fixed band name");
+        let title_width = theme::text_width(name, theme::SEMIBOLD, theme::BAND_TITLE_SIZE);
+        let inner_width = layout::BAND_INSET.mul_add(-2.0, sections.strip_width);
+        let action_width = layout::BAND_SOLO_SIZE + layout::BAND_HEADING_GAP + headings.link_width;
+        let first_row_height = if headings.inline {
+            layout::BAND_SOLO_SIZE
+        } else {
+            layout::BAND_HEADER_HEIGHT
         };
-        let mut controls = Column::new()
-            .push(heading)
-            .push(
-                text(range)
+        let frequency_x = if headings.inline {
+            title_width + layout::BAND_HEADING_GAP
+        } else {
+            0.0
+        };
+        let frequency_y = if headings.inline {
+            0.0
+        } else {
+            layout::BAND_HEADER_HEIGHT
+        };
+        let frequency_width = if headings.inline {
+            inner_width - frequency_x - action_width - layout::BAND_HEADING_GAP
+        } else {
+            inner_width
+        };
+        let actions = self.band_heading_actions(band, solo, headings.link_width);
+        let heading = stack![
+            at(
+                text(name)
+                    .font(theme::SEMIBOLD)
+                    .size(theme::BAND_TITLE_SIZE)
+                    .line_height(theme::LINE_HEIGHT)
+                    .height(Length::Fill)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .color(theme::GREY_SUPER_LIGHT),
+                layout::rect(0.0, 0.0, title_width, first_row_height),
+            ),
+            at(
+                text(range.to_owned())
                     .size(theme::LABEL_SIZE)
                     .line_height(theme::LINE_HEIGHT)
-                    .color(theme::GREY_MIDDLE_LIGHT)
-                    .height(layout::BAND_HEADER_HEIGHT)
-                    .align_y(iced::alignment::Vertical::Center),
-            )
+                    .wrapping(iced::advanced::text::Wrapping::None)
+                    .height(Length::Fill)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .color(theme::GREY_MIDDLE_LIGHT),
+                layout::rect(frequency_x, frequency_y, frequency_width, first_row_height),
+            ),
+            at(
+                actions,
+                layout::rect(
+                    inner_width - action_width,
+                    (first_row_height - layout::BAND_SOLO_SIZE) * 0.5,
+                    action_width,
+                    layout::BAND_SOLO_SIZE,
+                ),
+            ),
+        ]
+        .width(Length::Fill)
+        .height(headings.height());
+        let mut controls = Column::new()
+            .push(heading)
             .push(Space::new().height(sections.band_header_gap));
         for (field, label) in layout::FIELD_NAMES.into_iter().enumerate() {
             let id = band_parameter_id(band, field).expect("fixed band field id");
@@ -450,6 +491,36 @@ impl EditorState {
             .style(theme::panel)
             .height(sections.band)
             .width(Length::FillPortion(1))
+            .into()
+    }
+
+    /// Gives Solo a larger vector target and measures Link independently from the smaller frequency annotation.
+    fn band_heading_actions(&self, band: usize, solo: u32, link_width: f32) -> Element<'_, Message> {
+        Row::new()
+            .push(chrome_action(
+                Chrome::new(
+                    Symbol::Headphones,
+                    Size::new(layout::BAND_SOLO_SIZE, layout::BAND_SOLO_SIZE),
+                    Some(Message::Toggle(solo)),
+                    self.parameters.get(solo).is_some_and(|value| value >= 0.5),
+                )
+                .id(format!("band-{band}-solo")),
+                "Solo band",
+            ))
+            .push(Space::new().width(layout::BAND_HEADING_GAP))
+            .push(
+                container(
+                    checkbox(self.linked.get(band).copied().unwrap_or(false))
+                        .label("Link")
+                        .text_size(theme::BAND_LINK_SIZE)
+                        .size(theme::CHECKBOX_SIZE)
+                        .spacing(layout::BAND_HEADING_GAP)
+                        .style(theme::check)
+                        .on_toggle(move |value| Message::Link(band, value)),
+                )
+                .width(link_width),
+            )
+            .align_y(Alignment::Center)
             .into()
     }
 
@@ -577,4 +648,171 @@ impl EditorState {
 /// Names custom vector actions without changing their retained focus or pointer behavior.
 fn chrome_action(chrome: Chrome, action: &'static str) -> Element<'static, Message> {
     tooltip(chrome, text(action).size(theme::LABEL_SIZE), tooltip::Position::Bottom).into()
+}
+
+#[cfg(test)]
+mod responsive_tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use iced::advanced::widget::{Tree, tree};
+
+    use super::*;
+    use crate::params::{EditorBinding, Parameters};
+
+    /// Counts any accidental host edit while responsive view trees are reconciled.
+    #[derive(Default)]
+    struct Binding {
+        edits: Cell<usize>,
+    }
+
+    impl EditorBinding for Binding {
+        fn begin_edit(&self, _: u32) {
+            self.edits.set(self.edits.get() + 1);
+        }
+        fn set_value(&self, _: u32, _: f64) {
+            self.edits.set(self.edits.get() + 1);
+        }
+        fn end_edit(&self, _: u32) {
+            self.edits.set(self.edits.get() + 1);
+        }
+    }
+
+    type NativeInputState =
+        iced::widget::text_input::State<<iced::Renderer as iced::advanced::text::Renderer>::Paragraph>;
+
+    /// Focuses native fields directly, without a device or replacing production widget state.
+    fn focus_native_inputs(tree: &mut Tree) -> usize {
+        let own = usize::from(tree.tag == tree::Tag::of::<NativeInputState>());
+        if own > 0 {
+            tree.state.downcast_mut::<NativeInputState>().focus();
+        }
+        own + tree.children.iter_mut().map(focus_native_inputs).sum::<usize>()
+    }
+
+    /// Counts retained native focus after Iced reconciles a breakpoint-dependent production view.
+    fn focused_native_inputs(tree: &Tree) -> usize {
+        let own = usize::from(
+            tree.tag == tree::Tag::of::<NativeInputState>()
+                && tree.state.downcast_ref::<NativeInputState>().is_focused(),
+        );
+        own + tree.children.iter().map(focused_native_inputs).sum::<usize>()
+    }
+
+    #[test]
+    fn responsive_header_retains_output_focus_and_the_saved_toolbar_preference() {
+        let binding = Rc::new(Binding::default());
+        let mut state = EditorState::for_host_test(
+            Arc::new(Parameters::default()),
+            image_control_dsp::Imager::new().shared(),
+            binding.clone(),
+        );
+        state.toolbar_shown = false;
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+        let mut tree = Tree::new(state.header(1000.0).as_widget());
+        assert_eq!(focus_native_inputs(&mut tree), 1);
+        for width in [1600.0, 760.0, 4096.0, 1000.0] {
+            tree.diff(state.header(width).as_widget());
+            assert_eq!(focused_native_inputs(&tree), 1, "header width {width}");
+            assert!(!state.toolbar_shown);
+        }
+        let _ = state.update(Message::Resize);
+        assert_eq!(state.numeric_draft.as_ref().expect("retained draft").text, "6 dB");
+        assert_eq!(binding.edits.get(), 0);
+    }
+
+    #[test]
+    fn responsive_band_heading_retains_native_fields_when_width_and_crossovers_change() {
+        {
+            let mut system = iced::advanced::graphics::text::font_system()
+                .write()
+                .expect("font system");
+            for bytes in [theme::ROBOTO, theme::ROBOTO_SEMIBOLD] {
+                system.load_font(bytes.into());
+            }
+        }
+        let binding = Rc::new(Binding::default());
+        let mut state = EditorState::for_host_test(
+            Arc::new(Parameters::default()),
+            image_control_dsp::Imager::new().shared(),
+            binding.clone(),
+        );
+        let id = band_parameter_id(0, 0).expect("band Mid");
+        let _ = state.update(Message::NumericDraft(id, "6 dB".into()));
+        let ranges = state.band_frequency_ranges();
+        let sections = state.sections(Size::new(1000.0, 764.0));
+        let headings = layout::BandHeadings::new(sections.strip_width, &ranges);
+        assert!(!headings.inline);
+        let mut tree = Tree::new(
+            state
+                .band_strip(
+                    0,
+                    sections.with_band_headings(headings),
+                    headings,
+                    ranges.first().expect("first band range"),
+                )
+                .as_widget(),
+        );
+        assert_eq!(focus_native_inputs(&mut tree), 5);
+        for width in [1600.0, 760.0, 4096.0, 1000.0] {
+            let sections = state.sections(Size::new(width, 764.0));
+            let headings = layout::BandHeadings::new(sections.strip_width, &ranges);
+            tree.diff(
+                state
+                    .band_strip(
+                        0,
+                        sections.with_band_headings(headings),
+                        headings,
+                        ranges.first().expect("first band range"),
+                    )
+                    .as_widget(),
+            );
+            assert_eq!(focused_native_inputs(&tree), 5, "band width {width}");
+        }
+        let threshold = (760..=4096)
+            .find(|width| {
+                let sections = state.sections(Size::new(*width as f32, 764.0));
+                layout::BandHeadings::new(sections.strip_width, &ranges).inline
+            })
+            .expect("headings fit a supported width");
+        let sections = state.sections(Size::new(threshold as f32, 764.0));
+        let headings = layout::BandHeadings::new(sections.strip_width, &ranges);
+        assert!(headings.inline);
+        tree.diff(
+            state
+                .band_strip(
+                    0,
+                    sections.with_band_headings(headings),
+                    headings,
+                    ranges.first().expect("first band range"),
+                )
+                .as_widget(),
+        );
+        for (id, frequency) in crate::params::CROSSOVER_PARAMETERS
+            .into_iter()
+            .zip([1000.0, 4000.0, 15_000.0])
+        {
+            let spec = parameter_spec(id).expect("crossover");
+            state.parameters.set(id, spec.plain_to_normalized(frequency));
+        }
+        let ranges = state.band_frequency_ranges();
+        let sections = state.sections(Size::new(threshold as f32, 764.0));
+        let headings = layout::BandHeadings::new(sections.strip_width, &ranges);
+        assert!(!headings.inline);
+        tree.diff(
+            state
+                .band_strip(
+                    0,
+                    sections.with_band_headings(headings),
+                    headings,
+                    ranges.first().expect("first band range"),
+                )
+                .as_widget(),
+        );
+        assert_eq!(focused_native_inputs(&tree), 5);
+        let _ = state.update(Message::Refresh);
+        assert_eq!(state.numeric_draft.as_ref().expect("retained draft").text, "6 dB");
+        assert_eq!(binding.edits.get(), 0);
+    }
 }

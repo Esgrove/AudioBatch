@@ -1,10 +1,11 @@
 //! Retained parameter widgets, settings callout, and value presentation for the Iced editor.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::advanced::text::Paragraph as _;
 
-use iced::widget::{Column, Row, Space, button, checkbox, container, pick_list, pin, scrollable, slider, stack, text};
+use iced::widget::{Column, Row, Space, button, checkbox, container, pick_list, pin, scrollable, slider, text};
 use iced::{Alignment, Element, Length, Rectangle, Size, Theme};
 use iced_baseview as iced;
 use image_control_dsp::{AnalysisStatus, ColourMode, CorrelationSnapshot, DisplayPreferences};
@@ -13,6 +14,8 @@ use super::presets::Action;
 use super::{Message, layout, theme};
 use crate::params::{ParameterKind, ParameterSpec, parameter_spec};
 
+#[path = "correlation_widget.rs"]
+mod correlation_widget;
 #[path = "editor_interaction.rs"]
 pub(super) mod interaction;
 use interaction::FocusSafeSlider;
@@ -78,77 +81,9 @@ pub(super) const fn analysis_status_text(status: AnalysisStatus) -> Option<&'sta
     }
 }
 
-/// Displays real processed-band readings, with no marker or invented number while unavailable.
-pub(super) fn correlation_meter<'a>(
-    snapshot: &crate::correlation_display::MeterReading,
-    smoothed: bool,
-) -> Element<'a, Message> {
-    let reading = snapshot.live;
-    let number = snapshot.value(smoothed);
-    let label = Row::new()
-        .push(text("Correlation").size(11))
-        .push(Space::new().width(Length::Fill))
-        .push(
-            text(number.map_or_else(String::new, |value| format!("{value:+.2}")))
-                .font(theme::MONO)
-                .size(11),
-        )
-        .height(17.0);
-    let mut track = stack![
-        container(Space::new().height(5.0))
-            .width(Length::Fill)
-            .style(|_| container::Style::default().background(theme::GREY_MEDIUM)),
-    ];
-    let mut field = Row::new();
-    for intensity in snapshot.range_intensity {
-        field = field.push(
-            container(Space::new().height(5.0))
-                .width(Length::FillPortion(1))
-                .style(move |_| container::Style::default().background(theme::BLUE.scale_alpha(intensity * 0.35))),
-        );
-    }
-    track = track.push(field);
-    if let Some(value) = snapshot.trend {
-        let position = ((value + 1.0) * 500.0).round() as u16;
-        track = track.push(
-            Row::new()
-                .push(Space::new().width(Length::FillPortion(position.max(1))))
-                .push(
-                    container(Space::new().width(9.0).height(5.0))
-                        .style(|_| container::Style::default().background(theme::YELLOW.scale_alpha(0.6))),
-                )
-                .push(Space::new().width(Length::FillPortion((1000 - position).max(1)))),
-        );
-    }
-    if let Some(value) = reading {
-        let position = ((value + 1.0) * 500.0).round() as u16;
-        track = track.push(
-            Row::new()
-                .push(Space::new().width(Length::FillPortion(position.max(1))))
-                .push(container(Space::new().width(3.0).height(5.0)).style(move |_| {
-                    container::Style::default().background(if value < 0.0 { theme::ORANGE } else { theme::BLUE })
-                }))
-                .push(Space::new().width(Length::FillPortion((1000 - position).max(1)))),
-        );
-    }
-    let scale = Row::new()
-        .push(text("-1").size(11))
-        .push(Space::new().width(Length::Fill))
-        .push(text("0").size(11))
-        .push(Space::new().width(Length::Fill))
-        .push(text("+1").size(11));
-    container(
-        Column::new()
-            .push(label)
-            .push(track)
-            .push(Space::new().height(2.0))
-            .push(scale),
-    )
-    .padding([2.0, 10.0])
-    .width(Length::FillPortion(1))
-    .height(layout::CORRELATION_HEIGHT)
-    .style(|_| container::Style::default().color(theme::GREY_MIDDLE_LIGHT))
-    .into()
+/// Retains native-frame presentation locally without rebuilding ordinary controls or publishing editor messages.
+pub(super) fn correlation_meter(shared: Arc<image_control_dsp::SharedState>, band: usize) -> Element<'static, Message> {
+    correlation_widget::CorrelationMeter::new(shared, band).into()
 }
 
 /// Builds the same retained parameter widget for production views and hardware-free event tests.
@@ -237,14 +172,17 @@ pub(super) fn processing_toolbar<'a>(active: usize, preset_name: String) -> Elem
                     text(preset_name)
                         .size(theme::LABEL_SIZE)
                         .line_height(theme::LINE_HEIGHT)
+                        .wrapping(iced::advanced::text::Wrapping::None)
                         .color(theme::GREY_MIDDLE),
                 )
                 .padding([3.0, 8.0])
                 .width(Length::Fill)
+                .max_width(layout::PRESET_FIELD_MAX_WIDTH)
                 .height(24.0)
+                .clip(true)
                 .style(theme::value),
             )
-            .push(Space::new().width(160.0))
+            .push(Space::new().width(8.0))
             .push(control("Presets", 72.0, Some(Message::Presets), false, theme::BLUE))
             .height(24.0)
             .align_y(Alignment::Center),
@@ -268,6 +206,7 @@ pub(super) fn settings(
     correlation_shown: bool,
     hidden: bool,
     stopped: bool,
+    maximized: bool,
 ) -> Element<'static, Message> {
     let preferences = Column::new()
         .push(appearance_settings(display))
@@ -299,6 +238,11 @@ pub(super) fn settings(
             0.01,
             Message::Persistence,
             format!("{:.2} s", display.persistence_seconds),
+        ))
+        .push(settings_check(
+            "Maximize spectrogram",
+            maximized,
+            Some(Message::MaximizeSpectrogram),
         ))
         .push(settings_check(
             "Hide spectrogram",

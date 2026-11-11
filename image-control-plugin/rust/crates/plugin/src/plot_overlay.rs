@@ -26,9 +26,36 @@ const LABEL_GAP: f32 = 4.0;
 const PILL_BOTTOM_INSET: f32 = 7.5;
 const GRID_ALPHA: f32 = 0.04;
 const CENTER_GRID_ALPHA: f32 = 0.1;
-const GRID_FREQUENCIES: [f64; 10] = [
-    20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0,
+const LOG_GRID_FREQUENCIES: [f64; 12] = [
+    20.0, 30.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 16_000.0, 20_000.0,
 ];
+const MEL_GRID_FREQUENCIES: [f64; 16] = [
+    20.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 3000.0, 4000.0, 6000.0, 8000.0, 10_000.0, 12_000.0, 14_000.0, 16_000.0,
+    18_000.0, 20_000.0,
+];
+const MAXIMIZED_INSET: f32 = 2.0;
+
+/// Uses the reference tick density for each horizontal projection.
+const fn grid_frequencies(scale: FrequencyScale) -> &'static [f64] {
+    match scale {
+        FrequencyScale::Logarithmic => &LOG_GRID_FREQUENCIES,
+        FrequencyScale::Mel => &MEL_GRID_FREQUENCIES,
+    }
+}
+
+/// Keeps GPU padding and overlay/input geometry on the same plot rectangle.
+pub(super) const fn plot_padding(maximized: bool) -> iced::Padding {
+    if maximized {
+        iced::Padding::new(MAXIMIZED_INSET)
+    } else {
+        iced::Padding {
+            top: PLOT_INSETS[0],
+            right: PLOT_INSETS[1],
+            bottom: PLOT_INSETS[2],
+            left: PLOT_INSETS[3],
+        }
+    }
+}
 
 /// Plain-unit editor commands. Every `Begin`/`BeginBand`/`BeginGain` is balanced by `End`.
 /// `Change` and `ChangeBand` carry plain Hz targets. `BeginGain`/`ChangeGain`'s bool is true for Mid, false for Side.
@@ -56,16 +83,28 @@ pub(super) struct PlotOverlay<Message> {
     scale: FrequencyScale,
     epoch: u64,
     enabled: bool,
+    maximized: bool,
     position_curve: Option<(f64, f64)>,
     on_event: fn(PlotEvent) -> Message,
 }
 
 /// Geometry caches and interaction ownership survive ordinary view rebuilding.
-#[derive(Default)]
-struct PlotState {
+struct PlotState<Renderer: responses::PlotRenderer = iced::Renderer> {
+    maximized: bool,
     input: Interaction,
-    responses: RefCell<responses::ResponseCache>,
-    position_curve: RefCell<responses::PositionOverlay>,
+    responses: RefCell<responses::ResponseCache<Renderer>>,
+    position_curve: RefCell<responses::PositionOverlay<Renderer>>,
+}
+
+impl<Renderer: responses::PlotRenderer> Default for PlotState<Renderer> {
+    fn default() -> Self {
+        Self {
+            maximized: false,
+            input: Interaction::default(),
+            responses: RefCell::default(),
+            position_curve: RefCell::default(),
+        }
+    }
 }
 
 impl<Message> PlotOverlay<Message> {
@@ -78,9 +117,16 @@ impl<Message> PlotOverlay<Message> {
             scale: FrequencyScale::Logarithmic,
             epoch: 0,
             enabled: true,
+            maximized: false,
             position_curve: None,
             on_event,
         }
+    }
+
+    /// Expands the plot and moves axes inside it without changing gesture coordinates independently.
+    pub(super) const fn maximized(mut self, maximized: bool) -> Self {
+        self.maximized = maximized;
+        self
     }
 
     /// Projects every guide and gesture on the particle axis and reads independent Width and Solo targets.
@@ -221,14 +267,26 @@ impl<Message> PlotOverlay<Message> {
 
 impl<Message, Renderer> Widget<Message, Theme, Renderer> for PlotOverlay<Message>
 where
-    Renderer: text::Renderer<Font = iced::Font>,
+    Renderer: responses::PlotRenderer + 'static,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<PlotState>()
+        tree::Tag::of::<PlotState<Renderer>>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(PlotState::default())
+        tree::State::new(PlotState::<Renderer> {
+            maximized: self.maximized,
+            ..PlotState::default()
+        })
+    }
+
+    /// Discards pointer origins when switching axis gutters after the editor closes the host gesture.
+    fn diff(&self, tree: &mut tree::Tree) {
+        let state = tree.state.downcast_mut::<PlotState<Renderer>>();
+        if state.maximized != self.maximized {
+            state.maximized = self.maximized;
+            state.input = Interaction::default();
+        }
     }
 
     fn size(&self) -> Size<Length> {
@@ -250,8 +308,8 @@ where
         shell: &mut Shell<'_, Message>,
         _: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<PlotState>();
-        let bounds = plot_bounds(layout.bounds());
+        let state = tree.state.downcast_mut::<PlotState<Renderer>>();
+        let bounds = plot_bounds_with_layout(layout.bounds(), self.maximized);
         let result = state.input.update(
             event,
             cursor,
@@ -269,6 +327,31 @@ where
         }
         for event in result.events {
             shell.publish((self.on_event)(event));
+        }
+        let hover_cursor = match event {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => mouse::Cursor::Available(*position),
+            Event::Mouse(mouse::Event::CursorLeft) | Event::Window(iced::window::Event::Unfocused) => {
+                mouse::Cursor::Unavailable
+            }
+            _ => cursor,
+        };
+        let hovered = self
+            .enabled
+            .then(|| {
+                state
+                    .input
+                    .hover(hover_cursor, bounds, self.crossovers, self.scale, self.epoch)
+                    .band
+            })
+            .flatten();
+        let mut responses = state.responses.borrow_mut();
+        let animating = if let Event::Window(iced::window::Event::RedrawRequested(now)) = event {
+            responses.advance_hover(hovered, *now)
+        } else {
+            responses.observe_hover(hovered, Instant::now())
+        };
+        if animating {
+            shell.request_redraw();
         }
         if state
             .position_curve
@@ -290,9 +373,9 @@ where
         if !self.enabled {
             return mouse::Interaction::None;
         }
-        tree.state.downcast_ref::<PlotState>().input.cursor(
+        tree.state.downcast_ref::<PlotState<Renderer>>().input.cursor(
             cursor,
-            plot_bounds(layout.bounds()),
+            plot_bounds_with_layout(layout.bounds(), self.maximized),
             self.crossovers,
             self.scale,
             self.epoch,
@@ -310,11 +393,11 @@ where
         viewport: &Rectangle,
     ) {
         let outer = layout.bounds();
-        let bounds = plot_bounds(outer);
+        let bounds = plot_bounds_with_layout(outer, self.maximized);
         if bounds.width <= 0.0 || bounds.height <= 0.0 {
             return;
         }
-        let state = tree.state.downcast_ref::<PlotState>();
+        let state = tree.state.downcast_ref::<PlotState<Renderer>>();
         let hovered = if self.enabled {
             state
                 .input
@@ -329,9 +412,8 @@ where
             self.crossovers,
             self.scale,
             self.soloed,
-            hovered.band,
         );
-        for frequency in GRID_FREQUENCIES {
+        for &frequency in grid_frequencies(self.scale) {
             line(
                 renderer,
                 Rectangle::new(
@@ -342,9 +424,16 @@ where
                 theme::GREY_LIGHT.scale_alpha(GRID_ALPHA),
             );
         }
-        let frequency_labels = frequency_labels(bounds, outer, self.scale);
+        let frequency_labels = if self.maximized {
+            maximized_frequency_labels(bounds, self.scale)
+        } else {
+            frequency_labels(bounds, outer, self.scale)
+        };
         let mut occupied = frequency_labels.iter().map(|(_, bounds)| *bounds).collect::<Vec<_>>();
         for (label, label_bounds) in frequency_labels {
+            if self.maximized {
+                axis_pill(renderer, label_bounds);
+            }
             label_at(
                 renderer,
                 label,
@@ -361,10 +450,17 @@ where
                 bounds,
                 theme::GREY_LIGHT.scale_alpha(if label == "C" { CENTER_GRID_ALPHA } else { GRID_ALPHA }),
             );
+            let label_bounds = if self.maximized {
+                maximized_position_label_bounds(y, bounds, label_size(label))
+            } else {
+                position_label_bounds(y, bounds, outer, label_size(label))
+            };
             if !label.is_empty()
-                && let Some(label_bounds) = position_label_bounds(y, bounds, outer, label_size(label))
-                    .filter(|candidate| !overlaps_labels(*candidate, &occupied))
+                && let Some(label_bounds) = label_bounds.filter(|candidate| !overlaps_labels(*candidate, &occupied))
             {
+                if self.maximized {
+                    axis_pill(renderer, label_bounds);
+                }
                 label_at(renderer, label.into(), label_bounds, theme::GREY_MIDDLE_LIGHT, viewport);
                 occupied.push(label_bounds);
             }
@@ -384,7 +480,7 @@ where
 
 impl<'a, Message: 'a, Renderer> From<PlotOverlay<Message>> for Element<'a, Message, Theme, Renderer>
 where
-    Renderer: text::Renderer<Font = iced::Font> + 'a,
+    Renderer: responses::PlotRenderer + 'static,
 {
     fn from(overlay: PlotOverlay<Message>) -> Self {
         Self::new(overlay)
@@ -392,12 +488,19 @@ where
 }
 
 /// Returns the same inner bounds used to inset the GPU shader behind these guides.
+#[cfg(test)]
 fn plot_bounds(bounds: Rectangle) -> Rectangle {
+    plot_bounds_with_layout(bounds, false)
+}
+
+/// Applies the same selected padding as the shader's container.
+fn plot_bounds_with_layout(bounds: Rectangle, maximized: bool) -> Rectangle {
+    let padding = plot_padding(maximized);
     Rectangle {
-        x: bounds.x + PLOT_INSETS[3],
-        y: bounds.y + PLOT_INSETS[0],
-        width: (bounds.width - PLOT_INSETS[1] - PLOT_INSETS[3]).max(0.0),
-        height: (bounds.height - PLOT_INSETS[0] - PLOT_INSETS[2]).max(0.0),
+        x: bounds.x + padding.left,
+        y: bounds.y + padding.top,
+        width: (bounds.width - padding.left - padding.right).max(0.0),
+        height: (bounds.height - padding.top - padding.bottom).max(0.0),
     }
 }
 
@@ -507,8 +610,9 @@ fn frequency_labels(plot: Rectangle, outer: Rectangle, scale: FrequencyScale) ->
     let mut occupied = Vec::new();
     let endpoints = [MIN_FREQUENCY, MAX_FREQUENCY];
     for frequency in endpoints.into_iter().chain(
-        GRID_FREQUENCIES
-            .into_iter()
+        grid_frequencies(scale)
+            .iter()
+            .copied()
             .filter(|frequency| *frequency > MIN_FREQUENCY && *frequency < MAX_FREQUENCY),
     ) {
         let label = if frequency >= 1000.0 {
@@ -524,6 +628,68 @@ fn frequency_labels(plot: Rectangle, outer: Rectangle, scale: FrequencyScale) ->
         }
     }
     labels
+}
+
+/// Reserves the position-axis column while fitting endpoint-first tick pills inside an expanded plot.
+fn maximized_frequency_labels(plot: Rectangle, scale: FrequencyScale) -> Vec<(String, Rectangle)> {
+    let area = Rectangle::new(
+        Point::new(plot.x + 28.0, plot.y + plot.height - 22.0),
+        Size::new((plot.width - 32.0).max(0.0), 18.0),
+    );
+    let mut labels = Vec::new();
+    let mut occupied = Vec::new();
+    for frequency in [MIN_FREQUENCY, MAX_FREQUENCY].into_iter().chain(
+        grid_frequencies(scale)
+            .iter()
+            .copied()
+            .filter(|frequency| *frequency > MIN_FREQUENCY && *frequency < MAX_FREQUENCY),
+    ) {
+        let label = if frequency >= 1000.0 {
+            format!("{:.0}k", frequency * 0.001)
+        } else {
+            format!("{frequency:.0}")
+        };
+        let text = label_size(&label);
+        if let Some(bounds) = contained_label(
+            Point::new(frequency_x(frequency, plot, scale), area.center_y()),
+            Size::new(text.width + 8.0, text.height + 4.0),
+            area,
+        )
+        .filter(|candidate| !overlaps_labels(*candidate, &occupied))
+        {
+            occupied.push(bounds);
+            labels.push((label, bounds));
+        }
+    }
+    labels
+}
+
+/// Places L/C/R inside the expanded plot, away from the frequency pills.
+fn maximized_position_label_bounds(y: f32, plot: Rectangle, size: Size) -> Option<Rectangle> {
+    let area = Rectangle::new(
+        Point::new(plot.x + LABEL_GAP, plot.y + LABEL_GAP),
+        Size::new(20.0_f32.min((plot.width - 8.0).max(0.0)), (plot.height - 8.0).max(0.0)),
+    );
+    contained_label(
+        Point::new(area.center_x(), y),
+        Size::new(size.width + 8.0, size.height + 4.0),
+        area,
+    )
+}
+
+/// Provides a quiet readable background for labels over the live spectrum.
+fn axis_pill(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle) {
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds,
+            border: iced::Border {
+                radius: 3.0.into(),
+                ..iced::Border::default()
+            },
+            ..renderer::Quad::default()
+        },
+        theme::GREY_DARK.scale_alpha(0.7),
+    );
 }
 
 /// Anchors ticks to their frequency and turns endpoint labels inward, leaving the stereo-letter gutter clear.
@@ -734,7 +900,7 @@ mod tests {
                 occupied.push(*bounds);
             }
             if width < 100.0 {
-                assert!(labels.len() < GRID_FREQUENCIES.len());
+                assert!(labels.len() < LOG_GRID_FREQUENCIES.len());
             }
         }
         let outer = Rectangle::new(Point::new(8.0, 84.0), Size::new(744.0, 160.0));
@@ -832,11 +998,77 @@ mod tests {
         }
     }
 
+    /// Rebuilding in the other axis layout must not reuse a pointer origin from the previous plot rectangle.
+    #[test]
+    fn maximized_plot_discards_retained_pointer_drag_origins() {
+        let crossovers = [100.0, 500.0, 5000.0];
+        let make_overlay = || PlotOverlay::new(crossovers, std::convert::identity::<PlotEvent>);
+        let element: Element<'_, PlotEvent> = make_overlay().into();
+        let mut tree = tree::Tree::new(&element);
+        let size = Size::new(932.0, 340.0);
+        let bounds = plot_bounds(Rectangle::with_size(size));
+        let point = Point::new(
+            frequency_x(500.0, bounds, FrequencyScale::Logarithmic),
+            bounds.center_y(),
+        );
+        let outcome = tree.state.downcast_mut::<PlotState>().input.update(
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            mouse::Cursor::Available(point),
+            bounds,
+            crossovers,
+            FrequencyScale::Logarithmic,
+            0,
+            true,
+        );
+        assert_eq!(outcome.events.first(), Some(&PlotEvent::Begin(1)));
+        let replacement: Element<'_, PlotEvent> = make_overlay().maximized(true).into();
+        tree.diff(replacement.as_widget());
+        let outcome = tree.state.downcast_mut::<PlotState>().input.update(
+            &Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(point.x + 50.0, point.y),
+            }),
+            mouse::Cursor::Unavailable,
+            plot_bounds_with_layout(Rectangle::with_size(size), true),
+            crossovers,
+            FrequencyScale::Logarithmic,
+            0,
+            true,
+        );
+        assert!(
+            outcome
+                .events
+                .iter()
+                .all(|event| matches!(event, PlotEvent::HoverBand(_)))
+        );
+    }
+
+    #[test]
+    fn maximized_plot_uses_shader_padding_and_keeps_axes_inside() {
+        let outer = Rectangle::new(Point::new(8.0, 44.0), Size::new(984.0, 560.0));
+        let plot = plot_bounds_with_layout(outer, true);
+        assert_eq!(plot, Rectangle::new(Point::new(10.0, 46.0), Size::new(980.0, 556.0)));
+        for scale in [FrequencyScale::Logarithmic, FrequencyScale::Mel] {
+            let labels = maximized_frequency_labels(plot, scale);
+            assert!(labels.iter().any(|(label, _)| label == "20"));
+            assert!(labels.iter().any(|(label, _)| label == "20k"));
+            let mut occupied = Vec::new();
+            for (_, bounds) in labels {
+                assert!(plot.contains(bounds.position()));
+                assert!(bounds.x + bounds.width <= plot.x + plot.width);
+                assert!(bounds.y + bounds.height <= plot.y + plot.height);
+                assert!(!overlaps_labels(bounds, &occupied));
+                occupied.push(bounds);
+            }
+        }
+        assert_eq!(grid_frequencies(FrequencyScale::Logarithmic), LOG_GRID_FREQUENCIES);
+        assert_eq!(grid_frequencies(FrequencyScale::Mel), MEL_GRID_FREQUENCIES);
+    }
+
     #[test]
     fn logarithmic_and_mel_axes_roundtrip_frequency_and_share_hit_geometry() {
         let bounds = Rectangle::new(Point::new(28.0, 10.0), Size::new(900.0, 300.0));
         for scale in [FrequencyScale::Logarithmic, FrequencyScale::Mel] {
-            for frequency in GRID_FREQUENCIES {
+            for &frequency in grid_frequencies(scale) {
                 let x = frequency_x(frequency, bounds, scale);
                 assert!((x_frequency(x, bounds, scale) - frequency).abs() < frequency * 0.000_01);
             }

@@ -33,6 +33,7 @@ pub const ROBOTO_MONO: &[u8] = include_bytes!("../../../../../assets/RobotoMono-
 /// Typography is measured in Iced em units, not JUCE ascent-plus-descent heights.
 pub const TITLE_SIZE: f32 = 16.0;
 pub const BAND_TITLE_SIZE: f32 = 13.0;
+pub const BAND_LINK_SIZE: f32 = 13.0;
 pub const LABEL_SIZE: f32 = 12.0;
 pub const VALUE_SIZE: f32 = 12.0;
 pub const ANNOTATION_SIZE: f32 = 10.0;
@@ -43,6 +44,25 @@ pub const PANEL_RADIUS: f32 = 8.0;
 pub const CONTROL_RADIUS: f32 = 6.0;
 pub const FIELD_RADIUS: f32 = 4.0;
 pub const CHECKBOX_SIZE: f32 = 16.0;
+
+/// Measures the same embedded face, shaping, and Iced em size used by production labels.
+pub fn text_width(content: &str, font: Font, size: f32) -> f32 {
+    use iced::advanced::text::Paragraph as _;
+
+    let paragraph =
+        <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(iced::advanced::text::Text {
+            content,
+            bounds: iced::Size::new(f32::INFINITY, size),
+            size: size.into(),
+            line_height: iced::advanced::text::LineHeight::Relative(LINE_HEIGHT),
+            font,
+            align_x: iced::advanced::text::Alignment::Left,
+            align_y: iced::alignment::Vertical::Center,
+            shaping: iced::advanced::text::Shaping::Basic,
+            wrapping: iced::advanced::text::Wrapping::None,
+        });
+    paragraph.min_width().ceil()
+}
 
 /// Native inputs retain the palette while exposing focus and rejected drafts clearly.
 pub fn numeric_input(status: text_input::Status, invalid: bool) -> text_input::Style {
@@ -215,10 +235,8 @@ pub fn parameter_slider(_: &Theme, status: slider::Status) -> slider::Style {
 
 #[cfg(test)]
 mod tests {
-    use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
-    use iced::advanced::text::Paragraph as _;
-
     use super::*;
+    use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
 
     #[test]
     fn embedded_faces_resolve_exact_family_and_weight_without_fallback() {
@@ -252,21 +270,7 @@ mod tests {
                 system.load_font(bytes.into());
             }
         }
-        let width = |content: &str, font, size: f32| {
-            let paragraph =
-                <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(iced::advanced::text::Text {
-                    content,
-                    bounds: iced::Size::new(f32::INFINITY, size),
-                    size: size.into(),
-                    line_height: iced::advanced::text::LineHeight::Relative(LINE_HEIGHT),
-                    font,
-                    align_x: iced::advanced::text::Alignment::Left,
-                    align_y: iced::alignment::Vertical::Center,
-                    shaping: iced::advanced::text::Shaping::Basic,
-                    wrapping: iced::advanced::text::Wrapping::None,
-                });
-            paragraph.min_width()
-        };
+        let width = text_width;
         assert!(width("ImageControl", BOLD, TITLE_SIZE) <= 112.0);
         for value in ["-60.0 dB", "12.0 dB", "-inf dB", "100%", "100L", "2.00"] {
             assert!(
@@ -274,13 +278,71 @@ mod tests {
                 "{value}"
             );
         }
+        let link_width = CHECKBOX_SIZE + 6.0 + width("Link", TEXT, BAND_LINK_SIZE);
         for name in super::super::layout::BAND_NAMES {
             assert!(
-                width(name, SEMIBOLD, BAND_TITLE_SIZE) + 20.0 + 6.0 + 60.0 <= 160.0,
+                width(name, SEMIBOLD, BAND_TITLE_SIZE) + super::super::layout::BAND_SOLO_SIZE + 6.0 + link_width
+                    <= 160.0,
                 "{name}"
             );
         }
+        assert!(width("Link", TEXT, BAND_LINK_SIZE) > width("Link", TEXT, LABEL_SIZE));
+        const {
+            assert!(super::super::layout::BAND_SOLO_SIZE > 20.0);
+        }
         assert!(width("100 Hz to 20.0 kHz", TEXT, LABEL_SIZE) <= 160.0);
+    }
+
+    #[test]
+    fn band_heading_breakpoint_uses_all_four_real_labels_and_the_rendered_em_sizes() {
+        use super::super::layout::{self, BandHeadings};
+
+        {
+            let mut system = font_system().write().expect("font system");
+            for bytes in [ROBOTO, ROBOTO_SEMIBOLD] {
+                system.load_font(bytes.into());
+            }
+        }
+        let ranges = [
+            "Below 100 Hz",
+            "100 Hz to 500 Hz",
+            "500 Hz to 5.00 kHz",
+            "Above 5.00 kHz",
+        ]
+        .map(str::to_owned);
+        let link_width = CHECKBOX_SIZE + layout::BAND_HEADING_GAP + text_width("Link", TEXT, BAND_LINK_SIZE);
+        let required = layout::BAND_NAMES
+            .iter()
+            .zip(&ranges)
+            .map(|(name, range)| {
+                layout::BAND_INSET.mul_add(
+                    2.0,
+                    layout::BAND_HEADING_GAP.mul_add(
+                        3.0,
+                        text_width(name, SEMIBOLD, BAND_TITLE_SIZE)
+                            + text_width(range, TEXT, LABEL_SIZE)
+                            + layout::BAND_SOLO_SIZE
+                            + link_width,
+                    ),
+                )
+            })
+            .fold(0.0_f32, f32::max);
+        assert!(!BandHeadings::new(required - 1.0, &ranges).inline);
+        assert!(BandHeadings::new(required, &ranges).inline);
+        assert_eq!(BandHeadings::new(required, &ranges).link_width, link_width);
+        assert!(!BandHeadings::new(180.0, &ranges).inline);
+        assert!(BandHeadings::new(400.0, &ranges).inline);
+
+        let short = ["Below 20 Hz", "20 Hz to 30 Hz", "30 Hz to 40 Hz", "Above 40 Hz"].map(str::to_owned);
+        let changed = [
+            "Below 100 Hz",
+            "100 Hz to 1.00 kHz",
+            "1.00 kHz to 10.0 kHz",
+            "Above 10.0 kHz",
+        ]
+        .map(str::to_owned);
+        assert!(BandHeadings::new(required, &short).inline);
+        assert!(!BandHeadings::new(required, &changed).inline);
     }
 
     #[test]

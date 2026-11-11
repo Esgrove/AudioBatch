@@ -91,6 +91,11 @@ gpui-pre-platform = { version = "=0.3.12", features = ["test-support"] }
 # Keep both applications on the same SDK version.
 vst3 = "=0.3.0"
 
+# Opt-in native frame scheduling, keeping the upstream package and license identity.
+# Windows stays on timer-driven compatibility scheduling until its backend supports native pacing.
+[patch.crates-io]
+iced_baseview = { git = "https://github.com/Esgrove/iced_baseview.git", rev = "c7b466323a8ffd18282739d61073fa0f88b06c25" }
+
 [profile.dev]
 incremental = true
 
@@ -103,8 +108,17 @@ opt-level = 2
 opt-level = 3
 
 [profile.release]
+opt-level = 3
 lto = true
 codegen-units = 1
+
+# Criterion uses the same optimized, native-targeted code as Release, not development settings.
+[profile.bench]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+debug-assertions = false
 
 # Release with debug symbols for a sampling profiler such as samply.
 # Build with: cargo build --profile profiling --bin audiobatch-rs

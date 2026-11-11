@@ -257,6 +257,7 @@ mod tests {
             band_height: 350.5,
             spectrogram_hidden: true,
             analysis_stopped: true,
+            maximize_spectrogram: true,
         };
         assert!(source.parameters.layout.publish_preferences(preferences));
         let bytes = save_bytes(&source.parameters, &source.shared, &source.geometry).expect("project capture");
@@ -315,6 +316,7 @@ mod tests {
                 serde_json::json!({"id":"", "name":"Invalid", "baseline":base["comparison"]["slots"][0]}),
             ),
             ("/layout/band_height", serde_json::json!(0)),
+            ("/layout/maximize_spectrogram", serde_json::json!(1)),
             ("/display/pan_edge_db", serde_json::json!(12)),
         ];
         for (pointer, value) in invalid_fields {

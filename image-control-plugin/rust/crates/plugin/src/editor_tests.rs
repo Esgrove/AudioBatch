@@ -94,6 +94,8 @@ struct RecordingBinding {
     resizes: RefCell<Vec<Size>>,
     closed: std::cell::Cell<bool>,
     close_on_begin: std::cell::Cell<bool>,
+    dirty_notifications: std::cell::Cell<usize>,
+    on_end: RefCell<Option<Box<dyn FnOnce()>>>,
 }
 
 impl EditorBinding for RecordingBinding {
@@ -111,6 +113,13 @@ impl EditorBinding for RecordingBinding {
     }
     fn end_edit(&self, id: u32) {
         self.events.borrow_mut().push((id, None, false));
+        let callback = self.on_end.borrow_mut().take();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+    fn mark_dirty(&self) {
+        self.dirty_notifications.set(self.dirty_notifications.get() + 1);
     }
     fn request_resize(&self, width: u32, height: u32) -> bool {
         self.resizes.borrow_mut().push(Size::new(width as f32, height as f32));
@@ -149,8 +158,6 @@ fn editor() -> (EditorState, Rc<RecordingBinding>) {
         parameters: Arc::new(Parameters::default()),
         shared: image_control_dsp::Imager::new().shared(),
         settings_shown: false,
-        correlation: CorrelationObservation::default(),
-        correlation_history: std::array::from_fn(|_| crate::correlation_display::MeterHistory::default()),
         binding: binding.clone(),
         spectrogram: Err(std::io::Error::other("headless interaction test")),
         window_size: None,
@@ -169,11 +176,14 @@ fn editor() -> (EditorState, Rc<RecordingBinding>) {
         compact_bands: false,
         spectrogram_hidden: false,
         analysis_stopped: false,
+        maximize_spectrogram: false,
         shortcuts_shown: false,
         plot_band: None,
         plot_gesture: None,
-        last_refresh: Instant::now(),
         refresh_rate: 0.0,
+        frame_rate_started: Instant::now(),
+        measured_frames: 0,
+        editor_render_telemetry: None,
     };
     (state, binding)
 }
@@ -553,6 +563,17 @@ fn invalid_changes_and_automated_readback_do_not_create_host_gestures() {
 /// It is never selected by the editor, and does not rasterize or generate any image.
 struct EventRenderer;
 
+impl iced_widget::graphics::geometry::Renderer for EventRenderer {
+    type Geometry = <iced::Renderer as iced_widget::graphics::geometry::Renderer>::Geometry;
+    type Frame = <iced::Renderer as iced_widget::graphics::geometry::Renderer>::Frame;
+
+    fn new_frame(&self, bounds: iced::Rectangle) -> Self::Frame {
+        iced_widget::renderer::wgpu::geometry::Frame::new(bounds)
+    }
+
+    fn draw_geometry(&mut self, _: Self::Geometry) {}
+}
+
 impl iced::advanced::Renderer for EventRenderer {
     fn start_layer(&mut self, _: iced::Rectangle) {}
     fn end_layer(&mut self) {}
@@ -795,6 +816,139 @@ fn real_preference_buttons_select_shared_state_without_sound_gestures() {
     let _ = state.update(Message::Refresh);
     assert_eq!(state.shared.analysis_tap(), AnalysisTap::Post);
     assert_eq!(state.shared.display_preferences().color_mode, ColourMode::Frequency);
+}
+
+#[test]
+fn maximized_plot_persists_without_changing_sound_geometry_or_analysis() {
+    let (mut state, binding) = editor();
+    let before = state.parameters.snapshot();
+    let geometry = state.parameters.layout.snapshot();
+    let source = state.shared.analysis_generation();
+    let _ = state.update(Message::MaximizeSpectrogram);
+    assert!(state.maximize_spectrogram);
+    assert!(state.parameters.layout.preferences().maximize_spectrogram);
+    assert_eq!(
+        serde_json::to_vec(&state.parameters.snapshot()).expect("sound"),
+        serde_json::to_vec(&before).expect("sound")
+    );
+    assert_eq!(state.parameters.layout.snapshot(), geometry);
+    assert_eq!(state.shared.analysis_generation(), source);
+    assert!(binding.events.borrow().is_empty());
+    assert_eq!(binding.dirty_notifications.get(), 1);
+    let _ = state.update(Message::Refresh);
+    assert_eq!(binding.dirty_notifications.get(), 1);
+    let parameters = Arc::clone(&state.parameters);
+    let shared = Arc::clone(&state.shared);
+    drop(state);
+    let mut state = EditorState::for_host_test(parameters, shared, binding.clone());
+    assert!(state.maximize_spectrogram);
+    let _ = state.update(Message::ResetAppearance);
+    assert!(state.parameters.layout.preferences().maximize_spectrogram);
+    let _ = state.update(Message::MaximizeSpectrogram);
+    assert!(!state.parameters.layout.preferences().maximize_spectrogram);
+    assert_eq!(binding.dirty_notifications.get(), 2);
+}
+
+/// Geometry changes close every captured parameter exactly once and preserve the accepted numeric edit.
+#[test]
+fn maximize_resolves_numeric_drafts_and_balances_linked_and_band_gestures() {
+    let (mut state, binding) = editor();
+    let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+    let _ = state.update(Message::MaximizeSpectrogram);
+    assert!(state.numeric_draft.is_none());
+    assert!(state.gesture.is_none());
+    assert!((state.plain(GAIN_PARAMETER) - 6.0).abs() < 0.000_001);
+    for event in [
+        plot_overlay::PlotEvent::BeginGain(0, true),
+        plot_overlay::PlotEvent::BeginBand(1),
+    ] {
+        let _ = state.update(Message::Link(0, true));
+        let _ = state.update(Message::Plot(event));
+        assert!(state.plot_gesture.is_some());
+        let _ = state.update(Message::MaximizeSpectrogram);
+        assert!(state.gesture.is_none());
+        assert!(state.plot_gesture.is_none());
+        let callbacks = binding.events.borrow();
+        for id in [GAIN_PARAMETER, 1, 2, 4, 5] {
+            assert_eq!(
+                callbacks
+                    .iter()
+                    .filter(|(parameter, value, begin)| *parameter == id && value.is_none() && *begin)
+                    .count(),
+                callbacks
+                    .iter()
+                    .filter(|(parameter, value, begin)| *parameter == id && value.is_none() && !*begin)
+                    .count()
+            );
+        }
+    }
+}
+
+/// Reentrant host recall or removal during a gesture end cancels the pending layout operation.
+#[test]
+fn maximize_does_not_overwrite_reentrant_restore_or_continue_after_close() {
+    for restore in [true, false] {
+        let (mut state, binding) = editor();
+        let _ = state.update(Message::Begin(GAIN_PARAMETER));
+        let dirty_notifications = binding.dirty_notifications.get();
+        if restore {
+            let parameters = Arc::clone(&state.parameters);
+            *binding.on_end.borrow_mut() = Some(Box::new(move || {
+                assert!(parameters.restore(crate::params::Snapshot::default()));
+            }));
+        } else {
+            let captured = Rc::clone(&binding);
+            *binding.on_end.borrow_mut() = Some(Box::new(move || captured.closed.set(true)));
+        }
+        let _ = state.update(Message::MaximizeSpectrogram);
+        assert!(!state.maximize_spectrogram);
+        assert!(!state.parameters.layout.preferences().maximize_spectrogram);
+        assert_eq!(binding.dirty_notifications.get(), dirty_notifications);
+        assert!(state.gesture.is_none());
+    }
+}
+
+/// Missing current-schema layout properties reset a live maximized editor to fixed defaults.
+#[test]
+fn maximize_follows_project_recall_and_missing_property_defaults() {
+    let (mut state, _) = editor();
+    let document = serde_json::json!({
+        "version": crate::state::STATE_VERSION,
+        "parameters": {},
+        "layout": { "maximize_spectrogram": true }
+    });
+    let bytes = serde_json::to_vec(&document).expect("project");
+    crate::state::restore_bytes(&bytes, &state.parameters, &state.shared, &state.parameters.layout).expect("recall");
+    let _ = state.update(Message::Refresh);
+    assert!(state.maximize_spectrogram);
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "version": crate::state::STATE_VERSION,
+        "parameters": {},
+        "layout": { "compact_bands": true }
+    }))
+    .expect("sparse project");
+    crate::state::restore_bytes(&bytes, &state.parameters, &state.shared, &state.parameters.layout).expect("recall");
+    let _ = state.update(Message::Refresh);
+    assert!(!state.maximize_spectrogram);
+    assert!(state.compact_bands);
+}
+
+/// A timer cadence cannot manufacture frames, while equal frame deltas produce the same measured rate.
+#[test]
+fn frame_rate_samples_encoded_composites_and_expires_when_rendering_stops() {
+    let (mut state, _) = editor();
+    let started = state.frame_rate_started;
+    state.observe_frame_rate(started + FRAME_RATE_WINDOW * 2, 60);
+    assert!((state.refresh_rate - 60.0).abs() < f32::EPSILON);
+    state.observe_frame_rate(started + FRAME_RATE_WINDOW * 2 + Duration::from_millis(499), 90);
+    assert!((state.refresh_rate - 60.0).abs() < f32::EPSILON);
+    assert_eq!(state.measured_frames, 60);
+    state.observe_frame_rate(started + FRAME_RATE_WINDOW * 3, 90);
+    assert!((state.refresh_rate - 60.0).abs() < f32::EPSILON);
+    state.observe_frame_rate(started + FRAME_RATE_WINDOW * 4, 90);
+    assert!(state.refresh_rate.abs() < f32::EPSILON);
+    state.observe_frame_rate(started + FRAME_RATE_WINDOW * 6, 0);
+    assert!(state.refresh_rate.abs() < f32::EPSILON);
 }
 
 #[test]
