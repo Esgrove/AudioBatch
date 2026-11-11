@@ -329,6 +329,12 @@ mod tests {
         }
     }
 
+    /// Editor messages and native capture from one event sent directly to the numeric input.
+    struct InputOutcome {
+        messages: Vec<Message>,
+        captured: bool,
+    }
+
     /// Retains the production wrapper and native tree while tests send actual Iced events and operations.
     struct Driver {
         input: NumericInput<'static, EventRenderer>,
@@ -361,7 +367,7 @@ mod tests {
         }
 
         /// Forwards a real event and returns native event capture along with editor messages.
-        fn send(&mut self, event: &Event, cursor: mouse::Cursor) -> (Vec<Message>, bool) {
+        fn send(&mut self, event: &Event, cursor: mouse::Cursor) -> InputOutcome {
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);
             self.input.update(
@@ -375,12 +381,12 @@ mod tests {
                 &Rectangle::with_size(Size::new(200.0, 100.0)),
             );
             let captured = shell.is_event_captured();
-            (messages, captured)
+            InputOutcome { messages, captured }
         }
 
         /// Sends keyboard and window events without inventing a pointer position.
         fn event(&mut self, event: &Event) -> Vec<Message> {
-            self.send(event, mouse::Cursor::Unavailable).0
+            self.send(event, mouse::Cursor::Unavailable).messages
         }
 
         /// Sends native press/release events so focus and caret hit testing follow the production path.
@@ -388,7 +394,7 @@ mod tests {
             let cursor = mouse::Cursor::Available(Point::new(x, 11.0));
             let messages = self
                 .send(&Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), cursor)
-                .0;
+                .messages;
             let _ = self.send(&Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), cursor);
             messages
         }
@@ -406,6 +412,12 @@ mod tests {
                 .downcast_ref::<text_input::State<<EventRenderer as text::Renderer>::Paragraph>>()
                 .is_focused()
         }
+    }
+
+    /// Editor messages and native dispatch statuses from one event sent through the retained stack.
+    struct StackOutcome {
+        messages: Vec<Message>,
+        statuses: Vec<iced::event::Status>,
     }
 
     /// Real absolute stack layers reproduce the editor's early return when an upper control captures an event.
@@ -468,7 +480,7 @@ mod tests {
         }
 
         /// Sends real events through stack dispatch instead of calling a numeric child directly.
-        fn send(&mut self, event: Event, cursor: mouse::Cursor) -> (Vec<Message>, Vec<iced::event::Status>) {
+        fn send(&mut self, event: Event, cursor: mouse::Cursor) -> StackOutcome {
             let mut messages = Vec::new();
             let (_, statuses) = self.interface.as_mut().expect("retained stack interface").update(
                 &[event],
@@ -477,15 +489,17 @@ mod tests {
                 &mut self.clipboard,
                 &mut messages,
             );
-            (messages, statuses)
+            StackOutcome { messages, statuses }
         }
 
         /// Drives native button press and release while retaining the exact stack capture behavior.
         fn click(&mut self, x: f32) -> Vec<Message> {
             let cursor = mouse::Cursor::Available(Point::new(x, 11.0));
-            let (mut messages, _) = self.send(Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), cursor);
-            let (released, _) = self.send(Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), cursor);
-            messages.extend(released);
+            let mut messages = self
+                .send(Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), cursor)
+                .messages;
+            let released = self.send(Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), cursor);
+            messages.extend(released.messages);
             messages
         }
 
@@ -562,7 +576,7 @@ mod tests {
             Some("3"),
         ));
         assert!(matches!(messages.as_slice(), [Message::NumericDraft(7, value)] if value == "312"));
-        let (messages, captured) = driver.send(
+        let InputOutcome { messages, captured } = driver.send(
             &named(keyboard::key::Named::Enter, keyboard::key::Code::Enter),
             mouse::Cursor::Unavailable,
         );
@@ -617,7 +631,7 @@ mod tests {
     fn escape_cancels_without_blur_and_stops_following_native_text() {
         let mut driver = Driver::new("12");
         let _ = driver.click(4.0);
-        let (messages, captured) = driver.send(
+        let InputOutcome { messages, captured } = driver.send(
             &named(keyboard::key::Named::Escape, keyboard::key::Code::Escape),
             mouse::Cursor::Unavailable,
         );
@@ -670,7 +684,7 @@ mod tests {
         assert!(!driver.focused(7));
         assert!(driver.focused(8));
 
-        let (messages, _) = driver.send(
+        let StackOutcome { messages, .. } = driver.send(
             key(
                 keyboard::Key::Character("3".into()),
                 keyboard::key::Code::Digit3,
@@ -680,13 +694,13 @@ mod tests {
         );
         assert!(matches!(messages.as_slice(), [Message::NumericDraft(8, value)] if value == "312"));
         driver.rebuild(Some(8));
-        let (messages, _) = driver.send(
+        let StackOutcome { messages, .. } = driver.send(
             named(keyboard::key::Named::Escape, keyboard::key::Code::Escape),
             mouse::Cursor::Unavailable,
         );
         assert!(matches!(messages.as_slice(), [Message::NumericCancel(8)]));
         driver.rebuild(None);
-        let (messages, _) = driver.send(
+        let StackOutcome { messages, .. } = driver.send(
             key(
                 keyboard::Key::Character("3".into()),
                 keyboard::key::Code::Digit3,
@@ -716,7 +730,7 @@ mod tests {
             ),
             named(keyboard::key::Named::Enter, keyboard::key::Code::Enter),
         ] {
-            assert!(driver.send(event, mouse::Cursor::Unavailable).0.is_empty());
+            assert!(driver.send(event, mouse::Cursor::Unavailable).messages.is_empty());
         }
     }
 
@@ -725,7 +739,7 @@ mod tests {
         let mut driver = StackDriver::new();
         let _ = driver.click(4.0);
         driver.rebuild(Some(7));
-        let (messages, statuses) = driver.send(
+        let StackOutcome { messages, statuses } = driver.send(
             named(keyboard::key::Named::Tab, keyboard::key::Code::Tab),
             mouse::Cursor::Unavailable,
         );
@@ -739,7 +753,7 @@ mod tests {
         // The target's focus has not yet produced an editor message, so active still identifies the old draft.
         driver.rebuild(Some(7));
         assert!(driver.focused(8));
-        let (messages, _) = driver.send(
+        let StackOutcome { messages, .. } = driver.send(
             key(
                 keyboard::Key::Character("3".into()),
                 keyboard::key::Code::Digit3,
@@ -753,7 +767,7 @@ mod tests {
         driver.rebuild(Some(8));
         driver.operate(Box::new(operation::focusable::focus_previous::<()>()));
         driver.rebuild(Some(8));
-        let (messages, _) = driver.send(
+        let StackOutcome { messages, .. } = driver.send(
             Event::Window(iced::window::Event::RedrawRequested(iced::core::time::Instant::now())),
             mouse::Cursor::Unavailable,
         );
@@ -779,7 +793,7 @@ mod tests {
             matches!(messages.as_slice(), [Message::NumericFocus(7), Message::NumericDraft(7, value)] if value == "123")
         );
 
-        let (messages, captured) = driver.send(
+        let InputOutcome { messages, captured } = driver.send(
             &named(keyboard::key::Named::Tab, keyboard::key::Code::Tab),
             mouse::Cursor::Unavailable,
         );
