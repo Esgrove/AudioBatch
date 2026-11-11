@@ -533,6 +533,9 @@ Module boundaries:
 ## Code Style and Conventions
 
 - Rust 2024 edition, with clippy pedantic and nursery lints denied.
+- Follow the repository-wide [Rust return-value guidelines](../AGENTS.md#rust-return-values).
+  Return domain-specific structs with named fields for multi-value results, especially three or more distinct values,
+  instead of raw tuples or tuple aliases.
 - Group decimal integer parts with underscores only when they have five or more digits.
   Write `4000` and `4000.0`, but `40_000` and `40_000.0`, grouping larger integer parts in threes from the right.
   Fractional groups remain allowed independently, such as `1681.974_450_955_533`.
