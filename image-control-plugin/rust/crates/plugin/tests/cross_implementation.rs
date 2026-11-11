@@ -25,6 +25,26 @@ fn artifact(value: std::ffi::OsString, name: &str) -> PathBuf {
     artifacts::checked_artifact(&path).expect("selected parity artifact must be inside an authorized build root")
 }
 
+/// Requires an actual accepted 200% endpoint, not a silently clamped or relabeled 100% render.
+fn assert_recover_endpoint(report: &serde_json::Value) {
+    assert_eq!(report["recover_common_max_percent"], 200.0);
+    assert_eq!(report["capability_differences"], serde_json::json!([]));
+    assert!(report["cases"].as_array().is_some_and(|cases| cases.iter().any(|case| {
+        case["scenario"] == "recover_200"
+            && case
+                .pointer("/rust/parameters")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|parameters| {
+                    parameters.iter().any(|parameter| {
+                        parameter["parameter"] == "Band 1 Recover"
+                            && parameter["requested"] == 200.0
+                            && parameter["normalized"] == 1.0
+                            && parameter["accepted"] == true
+                    })
+                })
+    })));
+}
+
 /// Runs actual packaged processing when the paired fixtures are selected and makes absent local fixtures explicit.
 #[test]
 fn packaged_plugins_match_independent_signal_contracts() {
@@ -98,9 +118,7 @@ fn packaged_plugins_match_independent_signal_contracts() {
     let text = std::fs::read_to_string(&report).expect("parity host must emit its per-case report");
     let report: serde_json::Value = serde_json::from_str(&text).expect("valid parity report JSON");
     assert_eq!(report["schema_version"], 1);
-    assert_eq!(report["recover_common_max_percent"], 100.0);
-    assert_eq!(report["capability_differences"][0]["cpp_max_percent"], 200.0);
-    assert_eq!(report["capability_differences"][0]["rust_max_percent"], 100.0);
+    assert_recover_endpoint(&report);
     assert_eq!(report["quick"], false, "integration must execute the full matrix");
     assert!(report["cases"].as_array().is_some_and(|cases| !cases.is_empty()));
     let failures: Vec<_> = report["cases"]

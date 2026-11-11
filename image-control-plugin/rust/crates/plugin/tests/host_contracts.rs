@@ -144,6 +144,11 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
             .set_parameter(ui, id, f64::from(id + 1) / 32.0)
             .expect("distinct parameter edit");
     }
+    for band in 0..4 {
+        instance
+            .set_parameter(ui, BAND_PARAMETER_START + band * 6 + 3, 1.0)
+            .expect("save Recover 200% endpoint");
+    }
     let saved = instance.state(ui).expect("all parameter capture");
     assert!(saved.component.len() < 4096);
     instance.deactivate(ui).expect("inactive restore");
@@ -317,7 +322,7 @@ fn settled_constant(processor: &mut ProcessorHandle, input: [f32; 2]) -> [f32; 2
 }
 
 /// Checks full recovery against a pure-Side sine with independently known mean-square power.
-fn fullband_recovery_energy(processor: &mut ProcessorHandle) {
+fn fullband_recovery_energy(processor: &mut ProcessorHandle, recover: f64) {
     let mut energy = 0.0;
     for block in 0..8 {
         for channel in 0..2 {
@@ -345,9 +350,11 @@ fn fullband_recovery_energy(processor: &mut ProcessorHandle) {
             }
         }
     }
+    let expected = 0.125 * recover.powi(2);
     assert!(
-        (energy / 4096.0 - 0.125).abs() < 0.001,
-        "known fullband sine recovery power"
+        (energy / 4096.0 - expected).abs() < 0.001,
+        "known fullband sine recovery power at {}%",
+        recover * 100.0
     );
 }
 
@@ -380,12 +387,14 @@ fn independent_multiband_automation(ui: &UiThread) {
         for sample in settled_constant(&mut processor, [0.5, -0.5]) {
             assert!(sample.abs() < 1e-6);
         }
-        for band in 0..4 {
-            instance
-                .set_parameter(ui, BAND_PARAMETER_START + band * 6 + 3, 1.0)
-                .expect("Recover full");
+        for recover in [1.0, 2.0, 0.0] {
+            for band in 0..4 {
+                instance
+                    .set_parameter(ui, BAND_PARAMETER_START + band * 6 + 3, recover * 0.5)
+                    .expect("Recover automation");
+            }
+            fullband_recovery_energy(&mut processor, recover);
         }
-        fullband_recovery_energy(&mut processor);
         for band in 0..4 {
             let base = BAND_PARAMETER_START + band * 6;
             instance.set_parameter(ui, base + 2, 0.5).expect("Width unity");

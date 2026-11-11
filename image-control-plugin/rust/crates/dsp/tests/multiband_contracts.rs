@@ -175,34 +175,37 @@ fn mono_ignores_stereo_only_controls_and_reset_settles_targets() {
 
 #[test]
 fn fullband_recovery_matches_independent_cotangent_impulse_and_has_finite_tail() {
-    let mut imager = MultibandImager::new(48_000.0).expect("rate");
-    imager.set_controls([control(0.0, 1.0, 0.0, 1.0, 0.0, false); 4]);
-    imager.reset();
-    let half_length = imager.tail_samples();
-    let fft_size = half_length * 4;
-    let support_end = 256 + half_length * 2;
-    for sample in 0..support_end + 768 {
-        let actual = imager.process_frame(if sample == 0 { [1.0, -1.0] } else { [0.0; 2] });
-        let expected = sample
-            .checked_sub(256)
-            .filter(|&tap| tap <= half_length * 2)
-            .map_or(0.0, |tap| {
-                let offset = tap as f64 - half_length as f64;
-                if tap % 2 == 0 {
-                    0.0
-                } else {
-                    let phase = std::f64::consts::TAU * tap as f64 / (half_length * 2) as f64;
-                    let window = (-0.488_29_f64).mul_add(phase.cos(), 0.358_75);
-                    let window = 0.141_28_f64.mul_add((phase * 2.0).cos(), window);
-                    let window = (-0.011_68_f64).mul_add((phase * 3.0).cos(), window);
-                    (2.0 / fft_size as f64) / (std::f64::consts::PI * offset / fft_size as f64).tan() * window
-                }
-            });
-        for channel in actual {
-            assert!(
-                (f64::from(channel) - expected).abs() < 2.0e-7,
-                "sample {sample}: {channel} vs {expected}"
-            );
+    for recover in [0.5, 1.0, 1.5, 2.0] {
+        let mut imager = MultibandImager::new(48_000.0).expect("rate");
+        imager.set_controls([control(0.0, 1.0, 0.0, recover, 0.0, false); 4]);
+        imager.reset();
+        let half_length = imager.tail_samples();
+        let fft_size = half_length * 4;
+        let support_end = 256 + half_length * 2;
+        for sample in 0..support_end + 768 {
+            let actual = imager.process_frame(if sample == 0 { [1.0, -1.0] } else { [0.0; 2] });
+            let expected = sample
+                .checked_sub(256)
+                .filter(|&tap| tap <= half_length * 2)
+                .map_or(0.0, |tap| {
+                    let offset = tap as f64 - half_length as f64;
+                    if tap % 2 == 0 {
+                        0.0
+                    } else {
+                        let phase = std::f64::consts::TAU * tap as f64 / (half_length * 2) as f64;
+                        let window = (-0.488_29_f64).mul_add(phase.cos(), 0.358_75);
+                        let window = 0.141_28_f64.mul_add((phase * 2.0).cos(), window);
+                        let window = (-0.011_68_f64).mul_add((phase * 3.0).cos(), window);
+                        (2.0 / fft_size as f64) / (std::f64::consts::PI * offset / fft_size as f64).tan() * window
+                    }
+                })
+                * f64::from(recover);
+            for channel in actual {
+                assert!(
+                    (f64::from(channel) - expected).abs() < 2.0e-7,
+                    "Recover {recover}, sample {sample}: {channel} vs {expected}"
+                );
+            }
         }
     }
 }

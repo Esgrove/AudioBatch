@@ -101,6 +101,17 @@ fn crossover_ordering_retains_minimum_third_octave_spacing() {
 }
 
 #[test]
+fn recovery_accepts_finite_amplitude_multipliers_through_two() {
+    for recover in [0.0, 0.5, 1.0, 1.5, 2.0] {
+        let controls = BandControls::new(1.0, 1.0, 0.0, recover, 0.0, false).expect("Recover in range");
+        assert_eq!(controls.recover(), recover);
+    }
+    for recover in [-0.01, 2.0_f32.next_up(), f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert!(BandControls::new(1.0, 1.0, 0.0, recover, 0.0, false).is_none());
+    }
+}
+
+#[test]
 fn private_module_public_api_supports_warm_processing_and_offline_replacement() {
     let mut imager = MultibandImager::new(48_000.0).expect("rate");
     let controls = BandControls::new(0.7, 0.8, 0.4, 0.9, 0.2, false).expect("controls");

@@ -580,7 +580,7 @@ It neither links either implementation's DSP nor searches installed plugins.
 Parameter titles are mapped to independently specified plain-unit domains, and readback validates accepted values.
 The deterministic signal combines seeded broadband noise, multitone content, boundary impulses, silence,
 anti-phase content, polarity inversion, and swapped channels.
-The 240-case matrix covers mono/stereo, 44.1/48/96/192 kHz, 32/256/512-sample and irregular blocks,
+The 264-case matrix covers mono/stereo, 44.1/48/96/192 kHz, 32/256/512-sample and irregular blocks,
 static band controls, custom crossovers, automation, Solo/Delta, bypass, latency, and complete tail drains.
 Independent exact delayed-neutral and silent-Delta expectations accompany analytical gain, pan, and Mono checks.
 
@@ -588,18 +588,18 @@ Acceptance is absolute, with digital full scale equal to one: peak residual at m
 and RMS residual at most `1e-6` FS (-120 dBFS).
 These conservative low residuals are below ordinary audible differences for the bounded test signals.
 They are not a universal psychoacoustic guarantee or permission to weaken exact-neutral contracts.
-On arm64 macOS, the reviewed Release bundles passed all 240 cases on 11 November 2026.
-The largest peak residual was `1.043081283569336e-7` FS, in 192 kHz anti-phase recovery.
-The largest RMS residual was `1.493745398325301e-8` FS, in 44.1 kHz anti-phase recovery.
+On arm64 macOS, the reviewed Release bundles passed all 264 cases on 11 November 2026.
+The largest peak residual was `2.086162567138672e-7` FS, in 192 kHz anti-phase recovery at 200%.
+The largest RMS residual was `2.987490796650603e-8` FS, in 44.1 kHz anti-phase recovery at 200%.
 Reports retain input checksums, actual parameter readbacks, individual oracle errors, and the worst residual location.
 Every active render also checks the last two post-support partitions independently against silence at `1e-6` FS.
 A mutation control proves matching persistent ringing cannot pass merely because both outputs null together.
 Native Windows measurements remain a separate CI/runtime gate.
 
-Recover is an explicit capability difference: RS retains 0–100% to preserve its normalized saved automation,
-while C++ supports 0–200%.
-Parity compares 0–100% plain values and records the additional C++ endpoint as unsupported by RS.
-It never substitutes a clamped 100% render for a 200% request.
+Recover uses the same 0–200% plain-unit domain in RS and C++.
+Normalized RS automation and saved values map 0–1 linearly onto a 0–2 recovery amplitude multiplier,
+without compatibility migration.
+Parity includes 100%, 150%, 200%, and automation to and from 200% without clamping requests.
 State identities and formats remain independent.
 
 Criterion benchmarks exercise the production Imager over fixed and irregular host blocks,
