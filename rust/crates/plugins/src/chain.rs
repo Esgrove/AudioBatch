@@ -1,26 +1,28 @@
 //! The saved plugin chain: which plugins process files, in which order, and with which settings.
 //!
 //! The chain is saved as `plugin-chain.json` in the data directory, replaced atomically.
-//! Each slot keeps the plugin's description and its component and controller state,
+//! Each slot keeps the plugin's description and its format-specific opaque state streams,
 //! stored as base64 text, so the settings come back with the chain on the next start.
 
 use std::fs;
 use std::path::Path;
 
+use crate::host::HostState;
+use crate::identity::PluginFormat;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use vst3_host::PluginState;
 
 use crate::library::{
     PluginDataError, PluginDescription, RecoveredData, load_recovering, read_versioned_json, write_versioned_json,
 };
 
 /// Format version of `plugin-chain.json`, raised when a change cannot be read by older versions.
-const CHAIN_FORMAT_VERSION: u32 = 1;
+const CHAIN_FORMAT_VERSION: u32 = 2;
 
 /// One plugin of the chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ChainSlotFields")]
 pub struct ChainSlot {
     /// The plugin.
     pub plugin: PluginDescription,
@@ -40,6 +42,35 @@ pub struct ChainSlot {
         deserialize_with = "deserialize_base64"
     )]
     pub controller_state: Vec<u8>,
+    /// Saved opaque CLAP state, separate from the VST3 component and controller streams.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_base64",
+        deserialize_with = "deserialize_base64"
+    )]
+    pub clap_state: Vec<u8>,
+}
+
+/// State that does not belong to the slot's declared plugin format.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("The saved state does not belong to this slot's {format} plugin")]
+pub struct StateFormatError {
+    /// Format that owns this slot's state.
+    pub format: PluginFormat,
+}
+
+/// Decoded fields validated together before they can become a saved slot.
+#[derive(Deserialize)]
+struct ChainSlotFields {
+    plugin: PluginDescription,
+    enabled: bool,
+    #[serde(default, deserialize_with = "deserialize_base64")]
+    component_state: Vec<u8>,
+    #[serde(default, deserialize_with = "deserialize_base64")]
+    controller_state: Vec<u8>,
+    #[serde(default, deserialize_with = "deserialize_base64")]
+    clap_state: Vec<u8>,
 }
 
 /// The plugins files are processed with, in order.
@@ -48,6 +79,29 @@ pub struct PluginChain {
     /// The slots, in processing order. A damaged slot is skipped when the chain is read.
     #[serde(default, deserialize_with = "deserialize_slots_skipping_damaged")]
     pub slots: Vec<ChainSlot>,
+}
+
+impl TryFrom<ChainSlotFields> for ChainSlot {
+    type Error = StateFormatError;
+
+    fn try_from(fields: ChainSlotFields) -> Result<Self, Self::Error> {
+        let foreign = match fields.plugin.format {
+            PluginFormat::Vst3 => !fields.clap_state.is_empty(),
+            PluginFormat::Clap => !fields.component_state.is_empty() || !fields.controller_state.is_empty(),
+        };
+        if foreign {
+            return Err(StateFormatError {
+                format: fields.plugin.format,
+            });
+        }
+        Ok(Self {
+            plugin: fields.plugin,
+            enabled: fields.enabled,
+            component_state: fields.component_state,
+            controller_state: fields.controller_state,
+            clap_state: fields.clap_state,
+        })
+    }
 }
 
 impl ChainSlot {
@@ -59,22 +113,50 @@ impl ChainSlot {
             enabled: true,
             component_state: Vec::new(),
             controller_state: Vec::new(),
+            clap_state: Vec::new(),
         }
     }
 
     /// Returns the saved settings as a plugin state.
     #[must_use]
-    pub fn state(&self) -> PluginState {
-        PluginState {
-            component: self.component_state.clone(),
-            controller: self.controller_state.clone(),
+    pub fn state(&self) -> HostState {
+        match self.plugin.format {
+            PluginFormat::Vst3 => HostState::Vst3(vst3_host::PluginState {
+                component: self.component_state.clone(),
+                controller: self.controller_state.clone(),
+            }),
+            PluginFormat::Clap => HostState::Clap(self.clap_state.clone()),
         }
     }
 
-    /// Replaces the saved settings.
-    pub fn set_state(&mut self, state: PluginState) {
-        self.component_state = state.component;
-        self.controller_state = state.controller;
+    /// Replaces settings only when the opaque stream belongs to the slot's declared format.
+    /// A mismatched stream leaves the last valid state unchanged.
+    ///
+    /// # Errors
+    /// Returns a format mismatch before changing any saved stream.
+    pub fn set_state(&mut self, state: impl Into<HostState>) -> Result<(), StateFormatError> {
+        let state = state.into();
+        if !matches!(
+            (&state, self.plugin.format),
+            (HostState::Vst3(_), PluginFormat::Vst3) | (HostState::Clap(_), PluginFormat::Clap)
+        ) {
+            return Err(StateFormatError {
+                format: self.plugin.format,
+            });
+        }
+        match state {
+            HostState::Vst3(state) => {
+                self.component_state = state.component;
+                self.controller_state = state.controller;
+                self.clap_state.clear();
+            }
+            HostState::Clap(state) => {
+                self.clap_state = state;
+                self.component_state.clear();
+                self.controller_state.clear();
+            }
+        }
+        Ok(())
     }
 }
 
@@ -163,7 +245,7 @@ mod test_plugin_chain {
     use std::path::PathBuf;
 
     use tempfile::TempDir;
-    use vst3_host::ClassId;
+    use vst3_host::{ClassId, PluginState};
 
     use super::*;
 
@@ -174,7 +256,8 @@ mod test_plugin_chain {
             vendor: "Vendor".to_owned(),
             version: "1.0".to_owned(),
             category: "Fx".to_owned(),
-            class_id: ClassId([3; 16]),
+            class_id: ClassId([3; 16]).into(),
+            format: PluginFormat::Vst3,
             sdk_version: "VST 3.8.0".to_owned(),
             bundle: PathBuf::from("/plugins/Effect.vst3"),
             bundle_modified_ms: 0,
@@ -189,10 +272,12 @@ mod test_plugin_chain {
         let folder = TempDir::new().expect("temp dir");
         let path = folder.path().join("nested").join("plugin-chain.json");
         let mut first = ChainSlot::new(description("First"));
-        first.set_state(PluginState {
-            component: vec![0, 1, 2, 255, 128],
-            controller: b"controller".to_vec(),
-        });
+        first
+            .set_state(PluginState {
+                component: vec![0, 1, 2, 255, 128],
+                controller: b"controller".to_vec(),
+            })
+            .expect("matching VST3 state");
         let mut second = ChainSlot::new(description("Second"));
         second.enabled = false;
         let chain = PluginChain {
@@ -281,6 +366,65 @@ mod test_plugin_chain {
         assert!(chain.has_enabled_slots());
         chain.slots.pop();
         assert!(!chain.has_enabled_slots());
+    }
+
+    #[test]
+    fn foreign_state_is_rejected_without_mutating_valid_saved_settings() {
+        let mut vst3 = ChainSlot::new(description("VST3"));
+        vst3.set_state(PluginState {
+            component: vec![1, 2],
+            controller: vec![3],
+        })
+        .expect("matching VST3 state");
+        let saved = vst3.clone();
+        assert!(vst3.set_state(HostState::Clap(vec![4])).is_err());
+        assert_eq!(vst3, saved);
+        let mut json = serde_json::to_value(&vst3).expect("VST3 slot");
+        json["clap_state"] = "BA==".into();
+        assert!(serde_json::from_value::<ChainSlot>(json).is_err());
+
+        let mut plugin = description("CLAP");
+        plugin.format = PluginFormat::Clap;
+        plugin.class_id = crate::PluginId::Clap("org.example.effect".to_owned());
+        let mut clap = ChainSlot::new(plugin);
+        clap.set_state(HostState::Clap(vec![4])).expect("matching CLAP state");
+        let saved = clap.clone();
+        assert!(
+            clap.set_state(PluginState {
+                component: vec![1],
+                controller: Vec::new()
+            })
+            .is_err()
+        );
+        assert_eq!(clap, saved);
+        for field in ["component_state", "controller_state"] {
+            let mut json = serde_json::to_value(&clap).expect("CLAP slot");
+            json[field] = "AQ==".into();
+            assert!(serde_json::from_value::<ChainSlot>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn clap_stream_round_trips_without_vst3_state_and_legacy_slots_keep_defaults() {
+        let mut plugin = description("CLAP effect");
+        plugin.format = PluginFormat::Clap;
+        plugin.class_id = crate::PluginId::Clap("org.example.effect".to_owned());
+        let mut slot = ChainSlot::new(plugin);
+        slot.set_state(HostState::Clap(vec![0, 255, 128]))
+            .expect("matching CLAP state");
+        let json = serde_json::to_value(&slot).expect("CLAP slot");
+        assert_eq!(json["clap_state"], "AP+A");
+        assert_eq!(json["plugin"]["format"], "CLAP");
+        assert_eq!(json["plugin"]["class_id"], "org.example.effect");
+        assert_eq!(serde_json::from_value::<ChainSlot>(json).expect("CLAP slot"), slot);
+        assert!(slot.component_state.is_empty() && slot.controller_state.is_empty());
+
+        let mut legacy = serde_json::to_value(ChainSlot::new(description("Legacy"))).expect("VST3 slot");
+        legacy["plugin"].as_object_mut().expect("description").remove("format");
+        legacy.as_object_mut().expect("slot").remove("clap_state");
+        let slot: ChainSlot = serde_json::from_value(legacy).expect("legacy slot");
+        assert_eq!(slot.plugin.format, PluginFormat::Vst3);
+        assert!(matches!(slot.state(), HostState::Vst3(_)));
     }
 
     #[test]

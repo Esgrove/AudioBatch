@@ -540,7 +540,7 @@ impl Render for ChainView {
                     .label(if self.snapshot.scanning {
                         "Scanning…"
                     } else {
-                        "Rescan VST plugins"
+                        "Rescan VST3 and CLAP plugins"
                     })
                     .small()
                     .disabled(self.snapshot.scanning)
@@ -557,7 +557,7 @@ impl Render for ChainView {
             .snapshot
             .plugin_groups
             .is_empty()
-            .then(|| hint("No effects are known yet. Rescan VST plugins to find effects."));
+            .then(|| hint("No effects are known yet. Rescan VST3 and CLAP plugins to find effects."));
         let footer = div()
             .flex()
             .flex_col()
@@ -604,9 +604,11 @@ fn vendor_submenu(submenu: PopupMenu, plugins: &[PluginDescription], view: &Weak
     plugins.iter().fold(submenu, |submenu, plugin| {
         let plugin = plugin.clone();
         let view = view.clone();
-        submenu.item(PopupMenuItem::new(plugin.name.clone()).on_click(move |_, _, cx| {
-            let _ = view.update(cx, |_, cx| cx.emit(ChainEvent::Add(plugin.clone())));
-        }))
+        submenu.item(
+            PopupMenuItem::new(format!("{} ({})", plugin.name, plugin.format)).on_click(move |_, _, cx| {
+                let _ = view.update(cx, |_, cx| cx.emit(ChainEvent::Add(plugin.clone())));
+            }),
+        )
     })
 }
 

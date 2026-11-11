@@ -2,7 +2,7 @@
 //!
 //! The scan group starts and cancels a scan and shows its progress and the summary of the last one.
 //! The folder group lists the folders a scan searches.
-//! Without custom folders those are the platform's default VST3 folders,
+//! Without custom folders those are the platform's default VST3 and CLAP folders,
 //! and adding or removing a folder switches to a custom list that starts from the folders shown.
 //! The plugin list shows the known effects by vendor, each with a button that adds it to the chain.
 //! The last group lists the bundles that crashed a scan,
@@ -18,7 +18,7 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::{
     Context, Div, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 
 use super::labels::VendorGroup;
@@ -36,7 +36,7 @@ pub const MANAGER_WIDTH: f32 = 720.0;
 pub const MANAGER_HEIGHT: f32 = 640.0;
 
 /// Tooltip of the Scan button.
-const SCAN_TOOLTIP: &str = "Search the folders for new and changed VST3 plugins. \
+const SCAN_TOOLTIP: &str = "Search the folders for new and changed VST3 and CLAP plugins. \
      Each plugin is loaded in a separate process, so a plugin that crashes cannot take down AudioBatchRs.";
 
 /// Something the user did in the plugin manager.
@@ -173,9 +173,8 @@ impl ManagerView {
         let count: usize = self.snapshot.groups.iter().map(|group| group.plugins.len()).sum();
         let mut list = panel(format!("Effects ({count})"));
         if count == 0 {
-            list = list.child(hint("No effects are known yet."));
+            list = list.child(hint("No effects are known yet. Scan for VST3 and CLAP plugins."));
         }
-        let mut index = 0_usize;
         for group in &self.snapshot.groups {
             list = list.child(
                 div()
@@ -186,15 +185,17 @@ impl ManagerView {
             );
             for plugin in &group.plugins {
                 let added = plugin.clone();
-                let detail = [plugin.version.as_str(), plugin.category.as_str()]
-                    .iter()
-                    .filter(|part| !part.is_empty())
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let identity = plugin_control_id(plugin);
+                let mut detail = plugin.format.to_string();
+                for part in [&plugin.version, &plugin.category] {
+                    if !part.is_empty() {
+                        detail.push_str(", ");
+                        detail.push_str(part);
+                    }
+                }
                 list = list.child(
                     div()
-                        .id(("plugin", index))
+                        .id(SharedString::from(format!("plugin-{identity}")))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -209,16 +210,10 @@ impl ManagerView {
                                 .text_color(color(palette::GREY_MIDDLE_LIGHT))
                                 .child(detail),
                         )
-                        .child(
-                            Button::new(("plugin-add", index))
-                                .label("Add to Chain")
-                                .small()
-                                .on_click(
-                                    cx.listener(move |_, _, _, cx| cx.emit(ManagerEvent::AddToChain(added.clone()))),
-                                ),
-                        ),
+                        .child(Button::new(identity).label("Add to Chain").small().on_click(
+                            cx.listener(move |_, _, _, cx| cx.emit(ManagerEvent::AddToChain(added.clone()))),
+                        )),
                 );
-                index += 1;
             }
         }
         if self.snapshot.instrument_count > 0 {
@@ -308,6 +303,21 @@ impl Render for ManagerView {
             .child(self.render_plugins(cx))
             .child(self.render_problems(cx))
     }
+}
+
+/// Returns a stable, format-qualified control identity, including the bundle for duplicate installations.
+#[must_use]
+pub fn plugin_control_id(plugin: &PluginDescription) -> SharedString {
+    format!(
+        "plugin-add-{}",
+        serde_json::to_string(&(
+            plugin.format.to_string(),
+            plugin.class_id.to_string(),
+            plugin.bundle.to_string_lossy()
+        ))
+        .expect("plugin identity strings serialize")
+    )
+    .into()
 }
 
 /// Renders a row with a path, its full text as the tooltip, and a button.

@@ -1165,6 +1165,139 @@ fn integration_primary_shortcut_opens_plugin_chain(cx: &mut TestAppContext) {
     });
 }
 
+/// Adds an isolated CLAP fixture through the real manager, toggles its chain slot, and renders a preview block.
+/// The headless workflow runs on the registered plugin thread and never opens an audio device or native editor.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the complete manager, chain, preview, and persistence workflow stays together"
+)]
+#[test]
+fn integration_clap_manager_to_chain_to_preview() {
+    plugin_dispatcher()
+        .call(
+            |ui| {
+                let dispatcher = gpui_kit::TestDispatcher::new(0);
+                let scheduler = Arc::clone(dispatcher.scheduler());
+                let mut cx = TestAppContext::build(dispatcher, Some("integration_clap_manager_to_chain_to_preview"));
+                let workflow = Workflow::new(&mut cx);
+                let library = audiobatch_test_clap_plugin::module_library_path().expect("fixture library path");
+                if !library.is_file() {
+                    assert!(
+                        std::env::var_os("CI").is_none(),
+                        "Build the CLAP test fixture module: {}",
+                        library.display()
+                    );
+                    cx.quit();
+                    scheduler.end_test();
+                    return;
+                }
+                let bundle = audiobatch_test_clap_plugin::create_bundle(workflow.directory.path(), "ManagerPreview")
+                    .expect("isolated CLAP fixture");
+                let mut plugin = crate::test_helpers::effect("AudioBatch Tests", "AudioBatch Test MS CLAP");
+                plugin.format = audiobatch_plugins::PluginFormat::Clap;
+                plugin.class_id = audiobatch_plugins::PluginId::Clap(
+                    audiobatch_test_clap_plugin::PLUGIN_ID
+                        .to_str()
+                        .expect("fixture id")
+                        .to_owned(),
+                );
+                plugin.bundle = bundle;
+                let add_id = crate::plugins::manager_window::plugin_control_id(&plugin);
+                cx.update(|cx| {
+                    workflow.view.update(cx, |view, cx| {
+                        view.plugins.known.plugins = vec![plugin.clone()];
+                        view.plugins.known.custom_folders = vec![workflow.directory.path().to_path_buf()];
+                        view.refresh_plugin_views(cx);
+                    });
+                });
+                workflow.dispatch(crate::menus::OpenPluginManager, &mut cx);
+                let manager = cx.read(|cx| {
+                    workflow
+                        .view
+                        .read(cx)
+                        .manager_window
+                        .as_ref()
+                        .expect("manager opened")
+                        .handle()
+                });
+                cx.update_window(manager, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.click(add_id, cx);
+                })
+                .expect("click real manager Add to Chain");
+                cx.run_until_parked();
+                cx.read(|cx| {
+                    let view = workflow.view.read(cx);
+                    assert_eq!(view.plugins.chain.len(), 1);
+                    let slot = view.plugins.chain.slots().first().expect("CLAP slot");
+                    assert!(slot.is_ready());
+                    assert_eq!(slot.plugin(), &plugin);
+                });
+                workflow.dispatch(crate::menus::OpenPluginChain, &mut cx);
+                let chain = cx.read(|cx| {
+                    workflow
+                        .view
+                        .read(cx)
+                        .chain_window
+                        .as_ref()
+                        .expect("chain opened")
+                        .handle()
+                });
+                cx.read(|cx| {
+                    let view = workflow.view.read(cx);
+                    let mut preview = view
+                        .plugins
+                        .chain
+                        .preview_chain(ui)
+                        .expect("CLAP preview")
+                        .expect("enabled slot");
+                    let mut left = [0.25_f32; 32];
+                    let mut right = [-0.125_f32; 32];
+                    assert!(preview.process(&mut left, &mut right));
+                    assert!(preview.failure().message().is_none());
+                    assert!(left.iter().all(|sample| (*sample - 0.25).abs() < f32::EPSILON));
+                    assert!(right.iter().all(|sample| (*sample + 0.125).abs() < f32::EPSILON));
+                    assert!(matches!(
+                        view.plugins
+                            .chain
+                            .chain()
+                            .slots
+                            .first()
+                            .expect("saved CLAP slot")
+                            .state(),
+                        audiobatch_plugins::HostState::Clap(_)
+                    ));
+                });
+                cx.update_window(chain, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.click(("chain-enabled", 0_usize), cx);
+                })
+                .expect("bypass CLAP slot through real checkbox");
+                cx.run_until_parked();
+                cx.read(|cx| {
+                    let view = workflow.view.read(cx);
+                    assert_eq!(view.plugins.chain.enabled_count(), 0);
+                    assert!(
+                        view.plugins
+                            .chain
+                            .preview_chain(ui)
+                            .expect("bypassed preview")
+                            .is_none()
+                    );
+                });
+                let path = cx.read(|cx| workflow.view.read(cx).plugins.paths.chain.clone());
+                let saved = audiobatch_plugins::PluginChain::load_from(&path).expect("persisted format-aware chain");
+                let saved = saved.slots.first().expect("persisted CLAP slot");
+                assert_eq!(saved.plugin, plugin);
+                assert!(!saved.enabled);
+                cx.quit();
+                scheduler.end_test();
+            },
+            &|| false,
+        )
+        .expect("plugin-thread GUI workflow");
+}
+
 /// Hides Path once when saved column choices predate the Folder column, then keeps the migrated revision.
 #[gpui_kit::test]
 fn integration_old_column_choices_hide_path_once(cx: &mut TestAppContext) {

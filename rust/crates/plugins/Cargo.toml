@@ -1,6 +1,6 @@
 [package]
 name = "audiobatch-plugins"
-description = "VST3 plugin scanning, plugin chains, offline processing, and the live preview chain of AudioBatch"
+description = "VST3 and CLAP scanning, plugin chains, offline processing, and live preview for AudioBatch"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,7 +8,13 @@ license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+editor = ["vst3-host/editor", "clap-host/editor", "dep:raw-window-handle"]
+
 [dependencies]
+clap-host = { path = "../clap-host" }
+raw-window-handle = { workspace = true, optional = true }
 audiobatch-core.workspace = true
 base64.workspace = true
 crossbeam-channel.workspace = true
@@ -24,6 +30,8 @@ vst3-host.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 audiobatch-test-plugin.workspace = true
+audiobatch-test-clap-plugin.workspace = true
+clack-host = { workspace = true, features = ["clack-plugin"] }
 test-fixtures.workspace = true
 
 [lints]

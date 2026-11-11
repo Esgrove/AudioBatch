@@ -3,14 +3,14 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use audiobatch_plugins::PluginDescription;
+use audiobatch_plugins::{PluginDescription, PluginFormat};
 use vst3_host::{ClassId, UiDispatcher, UiThread};
 
-/// Shares the one legal VST3 lifecycle thread between unit tests and nonvisual GUI workflows.
+/// Shares the one legal plugin lifecycle thread between unit tests and nonvisual GUI workflows.
 pub fn plugin_dispatcher() -> UiDispatcher {
     static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
     DISPATCHER
-        .get_or_init(|| UiThread::spawn_dedicated().expect("test VST3 UI thread"))
+        .get_or_init(|| UiThread::spawn_dedicated().expect("test plugin UI thread"))
         .clone()
 }
 
@@ -21,7 +21,8 @@ pub fn effect(vendor: &str, name: &str) -> PluginDescription {
         vendor: vendor.to_string(),
         version: String::from("1.0"),
         category: String::from("Fx"),
-        class_id: ClassId([1; 16]),
+        class_id: ClassId([1; 16]).into(),
+        format: PluginFormat::Vst3,
         sdk_version: String::new(),
         bundle: PathBuf::from(format!("/plugins/{name}.vst3")),
         bundle_modified_ms: 0,

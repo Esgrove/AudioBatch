@@ -1,6 +1,6 @@
-//! The VST3 plugin features of `AudioBatch`: scanning, plugin chains, offline processing, and the live preview chain.
+//! Plugin scanning, mixed-format chains, offline processing, and live preview for `AudioBatch`.
 //!
-//! Plugin hosting itself is in the `vst3-host` crate, so this crate contains no unsafe code.
+//! Native VST3 and CLAP hosting lives in the format host crates, so this crate contains no unsafe code.
 //! Scans load plugins only in a separate worker process, so a crashing plugin cannot take the application down.
 //! Fallible control APIs expose domain errors with concrete causes.
 //! Scan replies, saved-data recovery warnings, and operation results convert errors to text at their reporting boundary.
@@ -12,6 +12,8 @@
 pub mod benchmark;
 pub mod chain;
 mod chain_signal;
+pub mod host;
+pub mod identity;
 pub mod library;
 pub mod presets;
 pub mod preview_chain;
@@ -26,8 +28,13 @@ pub mod scanner;
 mod test_helpers;
 
 pub use chain::{ChainSlot, PluginChain};
+pub use clap_host::service_main_thread as service_plugin_callbacks;
+#[cfg(feature = "editor")]
+pub use host::{HostEditor, HostEditorError};
+pub use host::{HostError, HostInstance, HostProcessError, HostProcessor, HostState};
+pub use identity::{PluginFormat, PluginId};
 pub use library::{
-    FORMAT_NAME, KnownPlugins, PluginDataError, PluginDataPaths, PluginDescription, RecoveredData, VersionedJsonError,
+    KnownPlugins, PluginDataError, PluginDataPaths, PluginDescription, RecoveredData, VersionedJsonError,
 };
 pub use presets::{ChainPreset, PresetError, PresetInfo, PresetStore, sanitize_preset_name};
 pub use preview_chain::{

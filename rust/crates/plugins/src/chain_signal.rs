@@ -9,7 +9,7 @@
 //! After each plugin the signal has as many channels as the plugin's main output, limited to mono or stereo.
 //! Mono/stereo main buses borrow the signal in place, while wider buses use the host's owned buffers.
 
-use vst3_host::{ProcessError, ProcessorHandle};
+use crate::host::{HostProcessError as ProcessError, HostProcessor as ProcessorHandle};
 
 /// Most channels the signal carries.
 const MAXIMUM_SIGNAL_CHANNELS: usize = 2;
