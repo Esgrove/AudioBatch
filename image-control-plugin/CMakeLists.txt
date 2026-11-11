@@ -282,7 +282,14 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     # The independent parity host compiles its own JUCE modules. Production plugin targets never host plugins.
     get_filename_component(IMAGE_CONTROL_PARITY_REPOSITORY "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
     juce_add_console_app(ImageControlParity PRODUCT_NAME "ImageControlParity")
-    target_sources(ImageControlParity PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp")
+    target_sources(
+        ImageControlParity
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParityScenarios.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParityScenarios.h"
+    )
+    target_include_directories(ImageControlParity PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(
         ImageControlParity
         PRIVATE
@@ -298,7 +305,8 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
     )
     set_source_files_properties(
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp" TARGET_DIRECTORY ImageControlParity
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParityScenarios.cpp" TARGET_DIRECTORY ImageControlParity
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
     if(NOT IMAGE_CONTROL_SANITIZE AND NOT IMAGE_CONTROL_COVERAGE)

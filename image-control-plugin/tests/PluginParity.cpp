@@ -3,6 +3,7 @@
 /// Neither implementation supplies expected PCM. DSP mismatches and unsupported common-domain values fail.
 /// Recover is compared across the shared 0..200% domain, including its upper endpoint and automation ramps.
 
+#include "tests/PluginParityScenarios.h"
 #include <fmt/base.h>
 #include <fmt/format.h>
 #include <initializer_list>
@@ -38,65 +39,11 @@ constexpr double MAX_RESIDUAL_FS {1.0e-5};
 constexpr double RMS_RESIDUAL_FS {1.0e-6};
 /// Independent post-support silence is stricter than pairwise peak parity and permits only FFT roundoff.
 constexpr double DRAIN_MAX_FS {1.0e-6};
-/// Both implementations map normalized automation onto the same Recover percentage range.
-constexpr double RECOVER_COMMON_MAX_PERCENT {200.0};
 /// Independent FIR/adapter timing constants, not copied from either loaded plugin's report.
 constexpr int PARTITION_FRAMES {256};
-constexpr int PARAMETER_COUNT {31};
-constexpr int OUTPUT_GAIN {27};
-constexpr int BYPASS {28};
-constexpr int DELTA {29};
-constexpr int MONO {30};
 /// Deterministic broadband sequence identity, with independent state for each channel.
 constexpr std::uint32_t NOISE_SEED {0x243f6a88U};
 
-/// The independently specified shared plain-unit parameter domain.
-enum class Kind : std::uint8_t { frequency, gain, width, recover, pan, toggle };
-/// Independent expected output laws, deliberately separate from production DSP code.
-enum class Oracle : std::uint8_t { none, delayed, silence, gain, panLeft, panRight, mono };
-/// Input transforms cover polarity consistency and distinct channel ordering without assuming recovery symmetry.
-enum class Signal : std::uint8_t { ordinary, inverted, swapped, antiPhase, impulse, silence };
-
-/// One semantic parameter maps differing host-visible names without relying on either host index order.
-struct ParameterSpec {
-    std::string cppName;
-    std::string rustName;
-    Kind kind {Kind::gain};
-    double neutral {0.0};
-};
-/// One plain-unit target is converted through the actual hosted controller's text interface.
-struct Setting {
-    int parameter {0};
-    double value {0.0};
-};
-/// Block-sampled automation is delivered at identical absolute input-frame boundaries in both hosts.
-struct Event {
-    int frame {0};
-    std::vector<Setting> settings;
-};
-/// A bounded workload includes an independent oracle where the fullband law is known analytically.
-struct Scenario {
-    /// Owns one case's explicit controls and events, leaving omitted controls at independently specified neutrality.
-    Scenario(
-        std::string caseName,
-        std::vector<Setting> controls,
-        std::vector<Event> automation = {},
-        Oracle expectation = Oracle::none,
-        Signal source = Signal::ordinary
-    ) :
-        name(std::move(caseName)),
-        settings(std::move(controls)),
-        events(std::move(automation)),
-        oracle(expectation),
-        signal(source)
-    {}
-
-    std::string name;
-    std::vector<Setting> settings;
-    std::vector<Event> events;
-    Oracle oracle {Oracle::none};
-    Signal signal {Signal::ordinary};
-};
 /// Command-line paths are explicit. No installed plugin search or application storage is used.
 struct Options {
     juce::File cpp;
@@ -142,181 +89,6 @@ juce::var object(std::initializer_list<std::pair<juce::Identifier, juce::var>> p
         result->setProperty(name, value);
     }
     return {result.release()};
-}
-
-/// Defines all 31 semantic controls independently of production parameter registries.
-std::vector<ParameterSpec> parameterSpecs()
-{
-    std::vector<ParameterSpec> result;
-    result.reserve(PARAMETER_COUNT);
-    constexpr std::array cppCrossovers {"Low Crossover", "Mid Crossover", "High Crossover"};
-    constexpr std::array frequencies {120.0, 1000.0, 6000.0};
-    for (int index = 0; index < 3; ++index) {
-        result.push_back({
-            .cppName = cppCrossovers.at(static_cast<std::size_t>(index)),
-            .rustName = fmt::format("Crossover {}", index + 1),
-            .kind = Kind::frequency,
-            .neutral = frequencies.at(static_cast<std::size_t>(index)),
-        });
-    }
-    constexpr std::array bands {"Low", "Low Mid", "High Mid", "High"};
-    constexpr std::array fields {"Mid", "Side", "Width", "Recover", "Pan", "Solo"};
-    constexpr std::array kinds {Kind::gain, Kind::gain, Kind::width, Kind::recover, Kind::pan, Kind::toggle};
-    for (std::size_t band = 0; band < bands.size(); ++band) {
-        for (std::size_t field = 0; field < fields.size(); ++field) {
-            result.push_back({
-                .cppName = fmt::format("{}: {}", bands[band], fields[field]),
-                .rustName = fmt::format("Band {} {}", band + 1, fields[field]),
-                .kind = kinds[field],
-                .neutral = field == 2 ? 1.0 : 0.0,
-            });
-        }
-    }
-    result.push_back({.cppName = "Output Gain", .rustName = "Output Gain", .kind = Kind::gain, .neutral = 0.0});
-    result.push_back({.cppName = "Bypass", .rustName = "Bypass", .kind = Kind::toggle, .neutral = 0.0});
-    result.push_back({.cppName = "Delta", .rustName = "Delta", .kind = Kind::toggle, .neutral = 0.0});
-    result.push_back({.cppName = "Mono", .rustName = "Mono", .kind = Kind::toggle, .neutral = 0.0});
-    require(result.size() == PARAMETER_COUNT, "Internal semantic parameter count must be 31");
-    return result;
-}
-
-/// Returns the semantic band field index without using either plugin's exposed host indices.
-constexpr int bandParameter(const int band, const int field)
-{
-    return 3 + band * 6 + field;
-}
-
-/// Specifies matching per-band controls within the explicitly reported shared plain-unit domain.
-std::vector<Setting> allBands(const int field, const double value)
-{
-    std::vector<Setting> result;
-    result.reserve(4);
-    for (int band = 0; band < 4; ++band) {
-        result.push_back({.parameter = bandParameter(band, field), .value = value});
-    }
-    return result;
-}
-
-/// Appends related plain-unit controls to a scenario without changing their explicit values.
-void append(std::vector<Setting>& destination, const std::vector<Setting>& source)
-{
-    destination.insert(destination.end(), source.begin(), source.end());
-}
-
-/// Generates both fast smoke cases and the extended fixed-control and automation contracts.
-std::vector<Scenario> scenarios()
-{
-    std::vector<Scenario> result {
-        {"neutral", {}, {}, Oracle::delayed},
-        {
-            "active",
-            {
-                {.parameter = 0, .value = 180.0},
-                {.parameter = 1, .value = 1200.0},
-                {.parameter = 2, .value = 6500.0},
-                {.parameter = 3, .value = -3.0},
-                {.parameter = 4, .value = 2.0},
-                {.parameter = 11, .value = 0.4},
-                {.parameter = 12, .value = 75.0},
-                {.parameter = 19, .value = -45.0},
-                {.parameter = 26, .value = 1.0},
-                {.parameter = OUTPUT_GAIN, .value = -2.0},
-            },
-        },
-        {
-            "automation",
-            {},
-            {
-                {.frame = 4096,
-                 .settings
-                 = {{.parameter = 5, .value = 0.25},
-                    {.parameter = 6, .value = 100.0},
-                    {.parameter = 19, .value = 35.0},
-                    {.parameter = OUTPUT_GAIN, .value = -3.0},},},
-                {.frame = 8192,
-                 .settings
-                 = {{.parameter = 0, .value = 240.0},
-                    {.parameter = 1, .value = 1800.0},
-                    {.parameter = 2, .value = 8000.0},
-                    {.parameter = 20, .value = 1.0},
-                    {.parameter = DELTA, .value = 1.0},},},
-                {.frame = 12'288, .settings = {{.parameter = BYPASS, .value = 1.0}, {.parameter = MONO, .value = 1.0}}},
-                {.frame = 16'384,
-                 .settings
-                 = {{.parameter = BYPASS, .value = 0.0},
-                    {.parameter = DELTA, .value = 0.0},
-                    {.parameter = MONO, .value = 0.0},
-                    {.parameter = 5, .value = 1.0},
-                    {.parameter = 20, .value = 0.0},},},
-            },
-        },
-        {"output_gain", {{.parameter = OUTPUT_GAIN, .value = -6.0}}, {}, Oracle::gain},
-        {"pan_left", allBands(4, -100.0), {}, Oracle::panLeft},
-        {"pan_right", allBands(4, 100.0), {}, Oracle::panRight},
-        {"final_mono", {{.parameter = MONO, .value = 1.0}}, {}, Oracle::mono},
-        {"neutral_delta", {{.parameter = DELTA, .value = 1.0}}, {}, Oracle::silence},
-        {"neutral_impulse", {}, {}, Oracle::delayed, Signal::impulse},
-        {"neutral_silence", {}, {}, Oracle::delayed, Signal::silence},
-        {"width_zero", allBands(2, 0.0)},
-        {"width_double", allBands(2, 2.0)},
-        {"recover_100", allBands(2, 0.25)},
-        {"recover_150", allBands(2, 0.25)},
-        {"recover_200", allBands(2, 0.25)},
-        {"recovery_automation_200",
-         allBands(2, 0.0),
-         {{.frame = 4096, .settings = allBands(3, 100.0)},
-          {.frame = 8192, .settings = allBands(3, RECOVER_COMMON_MAX_PERCENT)},
-          {.frame = 12'288, .settings = allBands(3, 0.0)},},
-         Oracle::none,
-         Signal::antiPhase,},
-        {"recover_anti_phase", allBands(2, 0.0), {}, Oracle::none, Signal::antiPhase},
-        {"recover_inverted", allBands(2, 0.4), {}, Oracle::none, Signal::inverted},
-        {"recover_swapped", allBands(2, 0.4), {}, Oracle::none, Signal::swapped},
-        {"mid_off_recovery", allBands(0, -60.0)},
-        {"side_off_recovery", allBands(1, -60.0)},
-        {
-            "solo_delta",
-            {
-                {.parameter = bandParameter(1, 5), .value = 1.0},
-                {.parameter = bandParameter(2, 5), .value = 1.0},
-                {.parameter = bandParameter(1, 2), .value = 0.5},
-                {.parameter = bandParameter(1, 3), .value = 100.0},
-                {.parameter = DELTA, .value = 1.0},
-            },
-        },
-        {
-            "bypass_active",
-            {{.parameter = bandParameter(0, 2), .value = 0.0},
-             {.parameter = bandParameter(0, 3), .value = 100.0},
-             {.parameter = OUTPUT_GAIN, .value = -12.0},
-             {.parameter = DELTA, .value = 1.0},
-             {.parameter = BYPASS, .value = 1.0},},
-            {},
-            Oracle::delayed,
-        },
-        {"custom_crossovers",
-         {{.parameter = 0, .value = 70.0},
-          {.parameter = 1, .value = 850.0},
-          {.parameter = 2, .value = 10'000.0},
-          {.parameter = 5, .value = 0.2},
-          {.parameter = 6, .value = 100.0},
-          {.parameter = 19, .value = -35.0},},},
-    };
-    for (auto& scenario : result) {
-        if (scenario.name.starts_with("recover_") || scenario.name.ends_with("_off_recovery")) {
-            auto recovery = RECOVER_COMMON_MAX_PERCENT;
-            if (scenario.name == "recover_100") {
-                recovery = 100.0;
-            } else if (scenario.name == "recover_150") {
-                recovery = 150.0;
-            }
-            append(scenario.settings, allBands(3, recovery));
-        }
-        if (scenario.name.ends_with("_off_recovery")) {
-            append(scenario.settings, allBands(2, 0.0));
-        }
-    }
-    return result;
 }
 
 /// Compares canonical path components rather than string prefixes, rejecting sibling names and symlink escapes.
