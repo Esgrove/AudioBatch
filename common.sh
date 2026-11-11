@@ -150,30 +150,53 @@ load_msvc_environment() {
     fi
 }
 
-# Run a script of both projects, or of the one project named by the first argument, "cpp" or "rust".
-# The first argument is the script name, and the remaining arguments are passed to each project script.
-# Help options without a project name print the calling script's USAGE text instead.
-run_project_scripts() {
-    local script="$1"
-    shift
-    local projects=(cpp rust)
-    case "$1" in
+# Parse root wrapper scope and help once, leaving project-specific options intact for their own parsers.
+# The first two arguments select the child script and whether the wrapper exposes the independent plugin.
+# Parsed output variables are consumed by the root wrapper that sources this library.
+# shellcheck disable=SC2034
+parse_project_arguments() {
+    local script="$1" allow_plugin="$2" argument
+    shift 2
+    PROJECT_SCOPE=all
+    PROJECTS=(cpp rust)
+    case "${1:-}" in
         cpp | rust)
-            projects=("$1")
+            PROJECT_SCOPE="$1"
+            PROJECTS=("$1")
             shift
             ;;
-        *)
-            local argument
-            for argument in "$@"; do
-                if [ "$argument" = "-h" ] || [ "$argument" = "--help" ]; then
-                    print_usage_and_exit 0
-                fi
-            done
+        image-control)
+            if [ "$allow_plugin" = true ]; then
+                PROJECT_SCOPE=image-control
+                PROJECTS=()
+                shift
+            fi
             ;;
     esac
+    PROJECT_ARGUMENTS=("$@")
+    PROJECT_CHECK=false
+    for argument in "$@"; do
+        case "$argument" in
+            -c | --check)
+                PROJECT_CHECK=true
+                ;;
+            -h | --help)
+                case "$PROJECT_SCOPE" in
+                    all) print_usage_and_exit 0 ;;
+                    image-control) "$REPO_ROOT/image-control-plugin/$script" --help ;;
+                    *) "$REPO_ROOT/$PROJECT_SCOPE/$script" "$@" ;;
+                esac
+                exit 0
+                ;;
+        esac
+    done
+}
 
-    local project
-    for project in "${projects[@]}"; do
+# Execute the selected applications after parsing, stopping at the first failed child script.
+run_project_scripts() {
+    local script="$1" project
+    shift
+    for project in "${PROJECTS[@]}"; do
         print_magenta "Running $project/$script $*"
         "$REPO_ROOT/$project/$script" "$@"
     done

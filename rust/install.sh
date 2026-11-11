@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Install the Rust CLI to the Cargo bin directory and its shell completions.
@@ -26,48 +30,34 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Resolve help before loading platform helpers or checking installation tools.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-    esac
-done
+parse_arguments() {
+    CLI_ONLY=false
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-CLI_ONLY=false
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -l | --cli-only)
-            CLI_ONLY=true
-            ;;
-        -c | --clean)
-            # Only the C++ project has a CMake build directory to clean.
-            ;;
-        -v | --verbose)
-            set -x
-            ;;
-        -r | --reuse)
-            # Ignored here, for compatibility with cpp/install.sh
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            print_usage_and_exit
-            ;;
-    esac
-    shift
-done
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -l | --cli-only)
+                CLI_ONLY=true
+                ;;
+            -c | --clean)
+                # Only the C++ project has a CMake build directory to clean.
+                ;;
+            -v | --verbose)
+                set -x
+                ;;
+            -r | --reuse)
+                # Ignored here, for compatibility with cpp/install.sh
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage_and_exit
+                ;;
+        esac
+        shift
+    done
+}
 
 install_windows_gui_app() {
     if [ -z "${LOCALAPPDATA:-}" ] || [ -z "${APPDATA:-}" ]; then
@@ -114,39 +104,44 @@ install_windows_gui_app() {
     echo "Created Start Menu shortcut at: $windows_shortcut_destination"
 }
 
-require_command cargo "Cargo not found in path. Maybe install rustup?"
+install_application() {
+    parse_arguments "$@"
+    require_command cargo "Cargo not found in path. Maybe install rustup?"
 
-cd "$REPO"
+    cd "$REPO"
 
-APP_DESTINATION="/Applications/$GUI_APP_BUNDLE"
+    APP_DESTINATION="/Applications/$GUI_APP_BUNDLE"
 
-print_magenta "Installing binaries..."
-cargo install --force --locked --path crates/cli
-require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
-copy_third_party_licenses "$(dirname "$(command -v "$CLI_BINARY_NAME")")/audiobatch-rs-licenses"
+    print_magenta "Installing binaries..."
+    cargo install --force --locked --path crates/cli
+    require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
+    copy_third_party_licenses "$(dirname "$(command -v "$CLI_BINARY_NAME")")/audiobatch-rs-licenses"
 
-if [ "$CLI_ONLY" = false ]; then
-    cargo build --release --locked --bin "$GUI_BINARY_NAME"
-    if [ "$BASH_PLATFORM" = "mac" ]; then
-        create_mac_app_bundle ./target/release/"$GUI_BINARY_NAME" "$APP_DESTINATION"
-    elif [ "$BASH_PLATFORM" = "windows" ]; then
-        install_windows_gui_app
+    if [ "$CLI_ONLY" = false ]; then
+        cargo build --release --locked --bin "$GUI_BINARY_NAME"
+        if [ "$BASH_PLATFORM" = "mac" ]; then
+            create_mac_app_bundle ./target/release/"$GUI_BINARY_NAME" "$APP_DESTINATION"
+        elif [ "$BASH_PLATFORM" = "windows" ]; then
+            install_windows_gui_app
+        fi
     fi
-fi
-echo ""
+    echo ""
 
-print_green "Installed binaries:"
-require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
-echo "$("$CLI_BINARY_NAME" --version) from $(command -v "$CLI_BINARY_NAME")"
-if [ "$CLI_ONLY" = false ]; then
-    if [ "$BASH_PLATFORM" = "mac" ]; then
-        echo "$("$APP_DESTINATION/Contents/MacOS/$GUI_BINARY_NAME" --version) in $APP_DESTINATION"
-    elif [ "$BASH_PLATFORM" = "windows" ]; then
-        cygpath -w "$APP_DESTINATION"
-    else
-        echo "$("$GUI_BINARY_NAME" --version) from $(command -v "$GUI_BINARY_NAME")"
+    print_green "Installed binaries:"
+    require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
+    echo "$("$CLI_BINARY_NAME" --version) from $(command -v "$CLI_BINARY_NAME")"
+    if [ "$CLI_ONLY" = false ]; then
+        if [ "$BASH_PLATFORM" = "mac" ]; then
+            echo "$("$APP_DESTINATION/Contents/MacOS/$GUI_BINARY_NAME" --version) in $APP_DESTINATION"
+        elif [ "$BASH_PLATFORM" = "windows" ]; then
+            cygpath -w "$APP_DESTINATION"
+        else
+            echo "$("$GUI_BINARY_NAME" --version) from $(command -v "$GUI_BINARY_NAME")"
+        fi
     fi
-fi
-echo ""
+    echo ""
 
-"$DIR/completions.sh" --silent
+    "$DIR/completions.sh" --silent
+}
+
+install_application "$@"

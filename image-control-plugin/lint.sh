@@ -1,6 +1,11 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+ROOT="$REPO_ROOT"
+
 # Lints the ImageControl sources and tests with clang-tidy,
 # using the AudioBatch C++ configuration and the compile database of the Debug build in cmake-build-debug/.
 # Builds the unit tests and benchmark of the Debug build first, which configures it when it is missing,
@@ -43,22 +48,7 @@ OPTIONS: All options are optional
 
 Arguments after -- are passed to clang-tidy as is."
 
-for argument in "$@"; do
-    case "$argument" in
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-        --) break ;;
-    esac
-done
-
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=$(cd "$DIR/.." && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-init_options() {
+parse_arguments() {
     CHECK=false
     # Which sources to lint: all, changed, or staged.
     FILE_SELECTION="all"
@@ -168,63 +158,67 @@ collect_sources() {
     fi
 }
 
-init_options "$@"
-
-CLANG_TIDY=$(command -v clang-tidy || true)
-if [ -z "$CLANG_TIDY" ] && [ "$BASH_PLATFORM" = "mac" ] && [ -n "$(command -v brew)" ]; then
-    LLVM_PREFIX=$(brew --prefix llvm 2> /dev/null || true)
-    if [ -x "$LLVM_PREFIX/bin/clang-tidy" ]; then
-        CLANG_TIDY="$LLVM_PREFIX/bin/clang-tidy"
-    fi
-fi
-if [ -z "$CLANG_TIDY" ]; then
-    print_error_and_exit "clang-tidy not found. Install LLVM (brew install llvm on macOS) or add its bin directory to PATH."
-fi
-
-# The clang-tidy and clang-format configuration files here are symlinks to the C++ project's files.
-# When they are plain text files containing a path, clang-tidy fails to parse them.
-for config_link in .clang-tidy .clang-format tests/.clang-tidy; do
-    if [ ! -L "$DIR/$config_link" ]; then
-        print_error "image-control-plugin/$config_link is not a symlink, so clang-tidy cannot read it."
-        if [ "$BASH_PLATFORM" = "windows" ]; then
-            print_error "Symlinks need Windows Developer Mode (Settings > System > For developers) and git config core.symlinks true."
-            print_error "Then check the links out again from the repository root:"
-            print_error "  git ls-files -s | awk '\$1 == \"120000\" {print \$4}' | xargs -I{} sh -c 'rm \"{}\" && git checkout -- \"{}\"'"
-        else
-            print_error "Check it out again with: git checkout -- image-control-plugin/$config_link"
+# Resolves clang-tidy and checks the shared configuration links before building.
+prepare_lint_tools() {
+    CLANG_TIDY=$(command -v clang-tidy || true)
+    if [ -z "$CLANG_TIDY" ] && [ "$BASH_PLATFORM" = "mac" ] && [ -n "$(command -v brew)" ]; then
+        LLVM_PREFIX=$(brew --prefix llvm 2> /dev/null || true)
+        if [ -x "$LLVM_PREFIX/bin/clang-tidy" ]; then
+            CLANG_TIDY="$LLVM_PREFIX/bin/clang-tidy"
         fi
-        exit 1
     fi
-done
+    if [ -z "$CLANG_TIDY" ]; then
+        print_error_and_exit "clang-tidy not found. Install LLVM (brew install llvm on macOS) or add its bin directory to PATH."
+    fi
 
-USE_NINJA=false
-if [ "$BASH_PLATFORM" = "windows" ]; then
-    USE_NINJA=true
-fi
-BUILD_DIR="${REQUESTED_BUILD_DIR:-$(plugin_build_dir Debug "$USE_NINJA")}"
-require_command cmake
-if [ ! -d "$DIR/../cpp/JUCE/modules" ]; then
-    print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
-fi
-if [ "$USE_NINJA" = true ]; then
-    load_msvc_environment
-fi
-if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
-    print_magenta "Configuring the Debug build in $BUILD_DIR"
-    plugin_configure "$BUILD_DIR" Debug "$USE_NINJA" ON
-else
-    # Keep the cached generator, compiler, and configuration, but ensure every linted target exists.
-    # An ordinary plugin build configures IMAGE_CONTROL_BUILD_TESTS=OFF in this same workspace.
-    print_magenta "Enabling the tests and benchmark in $BUILD_DIR"
-    cmake -S "$DIR" -B "$BUILD_DIR" -DIMAGE_CONTROL_BUILD_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-fi
-# The build is incremental, so it does little when the database and headers are current.
-# Ninja reruns CMake first when a CMake file is newer than the generated build files.
-print_magenta "Updating the compile database and generated headers"
-cmake --build "$BUILD_DIR" --target ImageControlTests ImageControlBenchmark ImageControlPresetWriter ImageControlParity
-if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
-    print_error_and_exit "$BUILD_DIR has no compile_commands.json, which needs a Ninja build directory."
-fi
+    # The clang-tidy and clang-format configuration files here are symlinks to the C++ project's files.
+    # When they are plain text files containing a path, clang-tidy fails to parse them.
+    for config_link in .clang-tidy .clang-format tests/.clang-tidy; do
+        if [ ! -L "$DIR/$config_link" ]; then
+            print_error "image-control-plugin/$config_link is not a symlink, so clang-tidy cannot read it."
+            if [ "$BASH_PLATFORM" = "windows" ]; then
+                print_error "Symlinks need Windows Developer Mode (Settings > System > For developers) and git config core.symlinks true."
+                print_error "Then check the links out again from the repository root:"
+                print_error "  git ls-files -s | awk '\$1 == \"120000\" {print \$4}' | xargs -I{} sh -c 'rm \"{}\" && git checkout -- \"{}\"'"
+            else
+                print_error "Check it out again with: git checkout -- image-control-plugin/$config_link"
+            fi
+            exit 1
+        fi
+    done
+}
+
+# Enables linted targets while retaining the selected workspace's cached toolchain.
+prepare_lint_workspace() {
+    USE_NINJA=false
+    if [ "$BASH_PLATFORM" = "windows" ]; then
+        USE_NINJA=true
+    fi
+    BUILD_DIR="${REQUESTED_BUILD_DIR:-$(plugin_build_dir Debug "$USE_NINJA")}"
+    require_command cmake
+    if [ ! -d "$DIR/../cpp/JUCE/modules" ]; then
+        print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
+    fi
+    if [ "$USE_NINJA" = true ]; then
+        load_msvc_environment
+    fi
+    if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+        print_magenta "Configuring the Debug build in $BUILD_DIR"
+        plugin_configure "$BUILD_DIR" Debug "$USE_NINJA" ON
+    else
+        # Keep the cached generator, compiler, and configuration, but ensure every linted target exists.
+        # An ordinary plugin build configures IMAGE_CONTROL_BUILD_TESTS=OFF in this same workspace.
+        print_magenta "Enabling the tests and benchmark in $BUILD_DIR"
+        cmake -S "$DIR" -B "$BUILD_DIR" -DIMAGE_CONTROL_BUILD_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    fi
+    # The build is incremental, so it does little when the database and headers are current.
+    # Ninja reruns CMake first when a CMake file is newer than the generated build files.
+    print_magenta "Updating the compile database and generated headers"
+    cmake --build "$BUILD_DIR" --target ImageControlTests ImageControlBenchmark ImageControlPresetWriter ImageControlParity
+    if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+        print_error_and_exit "$BUILD_DIR has no compile_commands.json, which needs a Ninja build directory."
+    fi
+}
 
 # Accept only a configured RTSan workspace with an explicit entry for the guarded callback probes.
 # Never infer ordinary flags for this file or weaken its compile-time instrumentation requirements.
@@ -239,41 +233,46 @@ has_realtime_compile_database() {
 # clang-tidy prints its diagnostics to stdout and fails with an error, such as a compile error,
 # which fails the run even without --check.
 # Ordinary sources missing from the database retain the existing neighbouring-flag inference.
-PROJECT_SOURCES=()
-TEST_SOURCES=()
-REALTIME_SOURCES=()
-REALTIME_BUILD_DIR=""
-if has_realtime_compile_database "$BUILD_DIR"; then
-    REALTIME_BUILD_DIR="$BUILD_DIR"
-elif [ "$BASH_PLATFORM" = mac ] && has_realtime_compile_database "$DIR/cmake-build-mac-rtsan"; then
-    REALTIME_BUILD_DIR="$DIR/cmake-build-mac-rtsan"
-fi
-while IFS= read -r source; do
-    case "$source" in
-        "$DIR/tests/RealtimeTests.cpp")
-            if [ -n "$REALTIME_BUILD_DIR" ]; then
-                REALTIME_SOURCES+=("$source")
-            else
-                print_yellow "Skipping RTSan-only RealtimeTests.cpp: no instrumented database. Prepare it with ./sanitize.sh --realtime."
-            fi
-            ;;
-        "$DIR/tests/"*)
-            TEST_SOURCES+=("$source")
-            ;;
-        *)
-            PROJECT_SOURCES+=("$source")
-            ;;
-    esac
-done < <(collect_sources)
+prepare_lint_sources() {
+    PROJECT_SOURCES=()
+    TEST_SOURCES=()
+    REALTIME_SOURCES=()
+    REALTIME_BUILD_DIR=""
+    if has_realtime_compile_database "$BUILD_DIR"; then
+        REALTIME_BUILD_DIR="$BUILD_DIR"
+    elif [ "$BASH_PLATFORM" = mac ] && has_realtime_compile_database "$DIR/cmake-build-mac-rtsan"; then
+        REALTIME_BUILD_DIR="$DIR/cmake-build-mac-rtsan"
+    fi
+    while IFS= read -r source; do
+        case "$source" in
+            "$DIR/tests/RealtimeTests.cpp")
+                if [ -n "$REALTIME_BUILD_DIR" ]; then
+                    REALTIME_SOURCES+=("$source")
+                else
+                    print_yellow "Skipping RTSan-only RealtimeTests.cpp: no instrumented database. Prepare it with ./sanitize.sh --realtime."
+                fi
+                ;;
+            "$DIR/tests/"*)
+                TEST_SOURCES+=("$source")
+                ;;
+            *)
+                PROJECT_SOURCES+=("$source")
+                ;;
+        esac
+    done < <(collect_sources)
 
-if [ "${#PROJECT_SOURCES[@]}" -eq 0 ] && [ "${#TEST_SOURCES[@]}" -eq 0 ] && [ "${#REALTIME_SOURCES[@]}" -eq 0 ]; then
-    print_green "No $FILE_SELECTION C++ sources to lint (0 warnings)"
-    exit 0
-fi
+    if [ "${#PROJECT_SOURCES[@]}" -eq 0 ] && [ "${#TEST_SOURCES[@]}" -eq 0 ] && [ "${#REALTIME_SOURCES[@]}" -eq 0 ]; then
+        print_green "No $FILE_SELECTION C++ sources to lint (0 warnings)"
+        exit 0
+    fi
+}
 
-OUTPUT=$(mktemp)
-ERRORS=$(mktemp)
-trap 'rm -f "$OUTPUT" "$ERRORS"' EXIT
+# Cleanup paths remain global until the EXIT trap runs after the workflow returns.
+prepare_lint_logs() {
+    OUTPUT=$(mktemp)
+    ERRORS=$(mktemp)
+    trap 'rm -f "$OUTPUT" "$ERRORS"' EXIT
+}
 
 # Lints the sources given after their compilation database and configuration file, up to JOBS at a time.
 run_clang_tidy() {
@@ -288,28 +287,44 @@ run_clang_tidy() {
             --extra-arg=-Wno-unused-command-line-argument "${CLANG_TIDY_ARGS[@]}" >> "$OUTPUT" 2>> "$ERRORS"
 }
 
-print_magenta "Running clang-tidy on $((${#PROJECT_SOURCES[@]} + ${#TEST_SOURCES[@]} + ${#REALTIME_SOURCES[@]})) source files with up to $JOBS parallel jobs..."
-TIDY_STATUS=0
-run_clang_tidy "$BUILD_DIR" "$ROOT/cpp/.clang-tidy" "${PROJECT_SOURCES[@]}" || TIDY_STATUS=1
-run_clang_tidy "$BUILD_DIR" "$ROOT/cpp/tests/.clang-tidy" "${TEST_SOURCES[@]}" || TIDY_STATUS=1
-if [ "${#REALTIME_SOURCES[@]}" -gt 0 ]; then
-    print_magenta "Linting RTSan-only callback probes with $REALTIME_BUILD_DIR"
-    run_clang_tidy "$REALTIME_BUILD_DIR" "$ROOT/cpp/tests/.clang-tidy" "${REALTIME_SOURCES[@]}" || TIDY_STATUS=1
-fi
-
-if [ "$TIDY_STATUS" -ne 0 ]; then
-    cat "$OUTPUT"
-    grep -vE "^[0-9]+ warnings? generated\.$" "$ERRORS" || true
-    print_error_and_exit "clang-tidy failed on at least one source"
-fi
-
-WARNINGS=$(grep -cE "(warning|error):" "$OUTPUT" || true)
-if [ "$WARNINGS" -gt 0 ]; then
-    cat "$OUTPUT"
-    print_yellow "clang-tidy reported $WARNINGS warnings"
-    if [ "$CHECK" = true ]; then
-        exit 1
+run_lint_checks() {
+    print_magenta "Running clang-tidy on $((${#PROJECT_SOURCES[@]} + ${#TEST_SOURCES[@]} + ${#REALTIME_SOURCES[@]})) source files with up to $JOBS parallel jobs..."
+    TIDY_STATUS=0
+    run_clang_tidy "$BUILD_DIR" "$ROOT/cpp/.clang-tidy" "${PROJECT_SOURCES[@]}" || TIDY_STATUS=1
+    run_clang_tidy "$BUILD_DIR" "$ROOT/cpp/tests/.clang-tidy" "${TEST_SOURCES[@]}" || TIDY_STATUS=1
+    if [ "${#REALTIME_SOURCES[@]}" -gt 0 ]; then
+        print_magenta "Linting RTSan-only callback probes with $REALTIME_BUILD_DIR"
+        run_clang_tidy "$REALTIME_BUILD_DIR" "$ROOT/cpp/tests/.clang-tidy" "${REALTIME_SOURCES[@]}" || TIDY_STATUS=1
     fi
-else
-    print_green "No clang-tidy warnings"
-fi
+}
+
+report_lint_results() {
+    if [ "$TIDY_STATUS" -ne 0 ]; then
+        cat "$OUTPUT"
+        grep -vE "^[0-9]+ warnings? generated\.$" "$ERRORS" || true
+        print_error_and_exit "clang-tidy failed on at least one source"
+    fi
+
+    WARNINGS=$(grep -cE "(warning|error):" "$OUTPUT" || true)
+    if [ "$WARNINGS" -gt 0 ]; then
+        cat "$OUTPUT"
+        print_yellow "clang-tidy reported $WARNINGS warnings"
+        if [ "$CHECK" = true ]; then
+            exit 1
+        fi
+    else
+        print_green "No clang-tidy warnings"
+    fi
+}
+
+lint_plugin() {
+    parse_arguments "$@"
+    prepare_lint_tools
+    prepare_lint_workspace
+    prepare_lint_sources
+    prepare_lint_logs
+    run_lint_checks
+    report_lint_results
+}
+
+lint_plugin "$@"

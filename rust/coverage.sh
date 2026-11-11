@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Run the Rust application tests with code coverage using cargo-llvm-cov and cargo-nextest.
@@ -28,96 +32,88 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Resolve help before loading platform helpers or checking coverage tools.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-    esac
-done
+parse_arguments() {
+    CLEAN=false
+    LCOV=false
+    OPEN=false
+    REPORT_ONLY=false
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -c | --clean)
+                CLEAN=true
+                ;;
+            -l | --lcov)
+                LCOV=true
+                ;;
+            -o | --open)
+                OPEN=true
+                ;;
+            -r | --report-only)
+                REPORT_ONLY=true
+                ;;
+            -v | --verbose)
+                set -x
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage_and_exit
+                ;;
+        esac
+        shift
+    done
 
-CLEAN=false
-LCOV=false
-OPEN=false
-REPORT_ONLY=false
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -c | --clean)
-            CLEAN=true
-            ;;
-        -l | --lcov)
-            LCOV=true
-            ;;
-        -o | --open)
-            OPEN=true
-            ;;
-        -r | --report-only)
-            REPORT_ONLY=true
-            ;;
-        -v | --verbose)
-            set -x
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            print_usage_and_exit
-            ;;
-    esac
-    shift
-done
-
-if [ "$REPORT_ONLY" = true ] && [ "$CLEAN" = true ]; then
-    print_error_and_exit "--report-only cannot be combined with --clean."
-fi
-
-require_command cargo "Cargo not found in path. Maybe install rustup?"
-require_command cargo-llvm-cov "cargo-llvm-cov not found. Install it with: cargo install --locked cargo-llvm-cov"
-
-cd "$REPO"
-
-# Use one directory for test mappings, the executable build, subprocess profiles, and all reports.
-export CARGO_LLVM_COV_TARGET_DIR="$REPO/target/llvm-cov-target"
-
-if [ "$REPORT_ONLY" = true ]; then
-    mkdir -p target/llvm-cov
-    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --lcov --output-path target/llvm-cov/lcov.info
-    html_options=()
-    if [ "$OPEN" = true ]; then
-        html_options=(--open)
+    if [ "$REPORT_ONLY" = true ] && [ "$CLEAN" = true ]; then
+        print_error_and_exit "--report-only cannot be combined with --clean."
     fi
-    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --html --output-dir target/llvm-cov "${html_options[@]}"
-    # Capture first so a failed report cannot be hidden by the closing Markdown fence.
-    summary=$(cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --summary-only)
-    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-        # shellcheck disable=SC2016
-        printf '## Rust code coverage\n```text\n%s\n```\n' "$summary" | tee -a "$GITHUB_STEP_SUMMARY"
-    else
-        printf '%s\n' "$summary"
+}
+
+run_coverage() {
+    parse_arguments "$@"
+    require_command cargo "Cargo not found in path. Maybe install rustup?"
+    require_command cargo-llvm-cov "cargo-llvm-cov not found. Install it with: cargo install --locked cargo-llvm-cov"
+
+    cd "$REPO"
+
+    # Use one directory for test mappings, the executable build, subprocess profiles, and all reports.
+    export CARGO_LLVM_COV_TARGET_DIR="$REPO/target/llvm-cov-target"
+
+    if [ "$REPORT_ONLY" = true ]; then
+        mkdir -p target/llvm-cov
+        cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --lcov --output-path target/llvm-cov/lcov.info
+        html_options=()
+        if [ "$OPEN" = true ]; then
+            html_options=(--open)
+        fi
+        cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --html --output-dir target/llvm-cov "${html_options[@]}"
+        # Capture first so a failed report cannot be hidden by the closing Markdown fence.
+        summary=$(cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --summary-only)
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            # shellcheck disable=SC2016
+            printf '## Rust code coverage\n```text\n%s\n```\n' "$summary" | tee -a "$GITHUB_STEP_SUMMARY"
+        else
+            printf '%s\n' "$summary"
+        fi
+        exit 0
     fi
-    exit 0
-fi
 
-require_command cargo-nextest "cargo-nextest not found. Install it with: cargo install --locked cargo-nextest"
+    require_command cargo-nextest "cargo-nextest not found. Install it with: cargo install --locked cargo-nextest"
 
-if [ "$CLEAN" = true ]; then
-    print_magenta "Removing previous coverage data..."
-    cargo llvm-cov clean --workspace
-fi
+    if [ "$CLEAN" = true ]; then
+        print_magenta "Removing previous coverage data..."
+        cargo llvm-cov clean --workspace
+    fi
 
-print_magenta "Running tests with coverage..."
-TEST_STATUS=0
-cargo llvm-cov nextest "${APPLICATION_PACKAGE_ARGS[@]}" --no-fail-fast --no-report || TEST_STATUS=$?
+    print_magenta "Running tests with coverage..."
+    TEST_STATUS=0
+    cargo llvm-cov nextest "${APPLICATION_PACKAGE_ARGS[@]}" --no-fail-fast --no-report || TEST_STATUS=$?
+
+    (run_cli_coverage) || TEST_STATUS=$?
+    report_coverage
+}
 
 # Build and run the real CLI with the same instrumentation as nextest.
 # The shared suite preserves LLVM_PROFILE_FILE in every child environment.
@@ -130,22 +126,25 @@ run_cli_coverage() {
     CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR" "$REPO/test.sh" --cli-integration \
         --artifacts target/integration-artifacts/cli-coverage
 }
-(run_cli_coverage) || TEST_STATUS=$?
 
-cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --summary-only
+report_coverage() {
+    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --summary-only
 
-if [ "$LCOV" = true ]; then
-    mkdir -p target/llvm-cov
-    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --lcov --output-path target/llvm-cov/lcov.info
-    print_green "LCOV report: $REPO/target/llvm-cov/lcov.info"
-fi
+    if [ "$LCOV" = true ]; then
+        mkdir -p target/llvm-cov
+        cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --lcov --output-path target/llvm-cov/lcov.info
+        print_green "LCOV report: $REPO/target/llvm-cov/lcov.info"
+    fi
 
-if [ "$OPEN" = true ]; then
-    cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --html --output-dir target/llvm-cov --open
-    print_green "HTML report: $REPO/target/llvm-cov/html/index.html"
-fi
+    if [ "$OPEN" = true ]; then
+        cargo llvm-cov report "${APPLICATION_PACKAGE_ARGS[@]}" --html --output-dir target/llvm-cov --open
+        print_green "HTML report: $REPO/target/llvm-cov/html/index.html"
+    fi
 
-if [ "$TEST_STATUS" -ne 0 ]; then
-    print_error "Tests failed, the report includes only the code they reached."
-    exit "$TEST_STATUS"
-fi
+    if [ "$TEST_STATUS" -ne 0 ]; then
+        print_error "Tests failed, the report includes only the code they reached."
+        exit "$TEST_STATUS"
+    fi
+}
+
+run_coverage "$@"

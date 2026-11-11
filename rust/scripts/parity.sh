@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=../common.sh
+source "$RUST_DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS] [--] <paths...>
 
 Compare the analysis results of the Rust and the C++ AudioBatch CLI.
@@ -45,189 +49,182 @@ OPTIONS: All options are optional
         Build and run the Rust CLI in release mode, which is faster on large folders.
 "
 
-# Resolve help before loading platform helpers or checking input paths.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-    esac
-done
+parse_arguments() {
+    TOLERANCE="0.05"
+    RECURSE=()
+    NORMALIZE=()
+    TARGET=(--peak 0)
+    PROFILE="debug"
+    PATHS=()
 
-RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=../common.sh
-source "$RUST_DIR/common.sh"
-
-TOLERANCE="0.05"
-RECURSE=()
-NORMALIZE=()
-TARGET=(--peak 0)
-PROFILE="debug"
-PATHS=()
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            echo "$USAGE"
-            exit 0
-            ;;
-        -r | --recurse)
-            RECURSE=(--recurse)
-            ;;
-        -t | --tolerance)
-            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == -* ]]; then
-                print_error_and_exit "$1 requires a tolerance."
-            fi
-            TOLERANCE="$2"
-            shift
-            ;;
-        -n | --normalize)
-            NORMALIZE=(--normalize)
-            ;;
-        -p | --peak)
-            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
-                print_error_and_exit "$1 requires a sample peak."
-            fi
-            TARGET=(--peak "$2")
-            shift
-            ;;
-        -l | --lufs)
-            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
-                print_error_and_exit "$1 requires a loudness."
-            fi
-            TARGET=(--lufs "$2")
-            shift
-            ;;
-        -R | --release)
-            PROFILE="release"
-            ;;
-        --)
-            shift
-            for path in "$@"; do
-                # Keep option-looking literal paths unambiguous for the CLIs and Python helpers.
-                if [[ "$path" == -* ]]; then path="./$path"; fi
-                PATHS+=("$path")
-            done
-            break
-            ;;
-        -*)
-            echo "Unknown option: $1" >&2
-            echo "$USAGE"
-            exit 1
-            ;;
-        *)
-            PATHS+=("$1")
-            ;;
-    esac
-    shift
-done
-
-if [ "$BASH_PLATFORM" = windows ]; then
-    SUPPORTED_PATHS=()
-    for path in "${PATHS[@]}"; do
-        DEPTH=()
-        if [ ${#RECURSE[@]} -eq 0 ]; then DEPTH=(-maxdepth 1); fi
-        while IFS= read -r -d '' input; do
-            case "${input,,}" in
-                *.aac | *.m4a | *.mp4 | *.alac)
-                    print_yellow "Skipping unsupported JUCE Windows codec: $input" >&2
-                    ;;
-                *) SUPPORTED_PATHS+=("$input") ;;
-            esac
-        done < <(if [ -d "$path" ]; then
-            find -L "$path" "${DEPTH[@]}" -type f -print0
-        else
-            printf '%s\0' "$path"
-        fi)
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                echo "$USAGE"
+                exit 0
+                ;;
+            -r | --recurse)
+                RECURSE=(--recurse)
+                ;;
+            -t | --tolerance)
+                if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == -* ]]; then
+                    print_error_and_exit "$1 requires a tolerance."
+                fi
+                TOLERANCE="$2"
+                shift
+                ;;
+            -n | --normalize)
+                NORMALIZE=(--normalize)
+                ;;
+            -p | --peak)
+                if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+                    print_error_and_exit "$1 requires a sample peak."
+                fi
+                TARGET=(--peak "$2")
+                shift
+                ;;
+            -l | --lufs)
+                if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+                    print_error_and_exit "$1 requires a loudness."
+                fi
+                TARGET=(--lufs "$2")
+                shift
+                ;;
+            -R | --release)
+                PROFILE="release"
+                ;;
+            --)
+                shift
+                for path in "$@"; do
+                    # Keep option-looking literal paths unambiguous for the CLIs and Python helpers.
+                    if [[ "$path" == -* ]]; then path="./$path"; fi
+                    PATHS+=("$path")
+                done
+                break
+                ;;
+            -*)
+                echo "Unknown option: $1" >&2
+                echo "$USAGE"
+                exit 1
+                ;;
+            *)
+                PATHS+=("$1")
+                ;;
+        esac
+        shift
     done
-    PATHS=("${SUPPORTED_PATHS[@]}")
-fi
+}
 
-if [ ${#PATHS[@]} -eq 0 ]; then
-    echo "$USAGE"
-    exit 1
-fi
+run_parity() {
+    parse_arguments "$@"
+    if [ "$BASH_PLATFORM" = windows ]; then
+        SUPPORTED_PATHS=()
+        for path in "${PATHS[@]}"; do
+            DEPTH=()
+            if [ ${#RECURSE[@]} -eq 0 ]; then DEPTH=(-maxdepth 1); fi
+            while IFS= read -r -d '' input; do
+                case "$input" in
+                    *.[aA][aA][cC] | *.[mM]4[aA] | *.[mM][pP]4 | *.[aA][lL][aA][cC])
+                        print_yellow "Skipping unsupported JUCE Windows codec: $input" >&2
+                        ;;
+                    *) SUPPORTED_PATHS+=("$input") ;;
+                esac
+            done < <(if [ -d "$path" ]; then
+                find -L "$path" "${DEPTH[@]}" -type f -print0
+            else
+                printf '%s\0' "$path"
+            fi)
+        done
+        PATHS=("${SUPPORTED_PATHS[@]}")
+    fi
 
-require_command uv "uv is required to run the parity oracles. Install it from https://docs.astral.sh/uv/."
-require_command cargo "Cargo is required to build the Rust CLI."
-CPP_PROFILE=any
-if [ "$PROFILE" = release ]; then
-    CPP_PROFILE=release
-else
-    print_yellow "Warning: debug Rust parity timings are diagnostic only, not a release performance comparison." >&2
-fi
-CPP_CLI=$(find_cpp_cli "$CPP_PROFILE")
-if [ "$(cpp_cli_build_type "$CPP_CLI")" != release ]; then
-    print_yellow "Warning: C++ CLI is debug or its build type is unknown. Do not use these timings as a release baseline." >&2
-fi
+    if [ ${#PATHS[@]} -eq 0 ]; then
+        echo "$USAGE"
+        exit 1
+    fi
 
-CARGO_PROFILE=()
-if [ "$PROFILE" = "release" ]; then
-    CARGO_PROFILE=(--release)
-fi
-(cd "$RUST_DIR" && cargo build --quiet "${CARGO_PROFILE[@]}" --bin audiobatch-rs)
-RUST_CLI="$RUST_DIR/target/$PROFILE/$(executable_name audiobatch-rs)"
+    require_command uv "uv is required to run the parity oracles. Install it from https://docs.astral.sh/uv/."
+    require_command cargo "Cargo is required to build the Rust CLI."
+    CPP_PROFILE=any
+    if [ "$PROFILE" = release ]; then
+        CPP_PROFILE=release
+    else
+        print_yellow "Warning: debug Rust parity timings are diagnostic only, not a release performance comparison." >&2
+    fi
+    CPP_CLI=$(find_cpp_cli "$CPP_PROFILE")
+    if [ "$(cpp_cli_build_type "$CPP_CLI")" != release ]; then
+        print_yellow "Warning: C++ CLI is debug or its build type is unknown. Do not use these timings as a release baseline." >&2
+    fi
 
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
-# Parity runs never populate the user's shared cache, logs, or plugin data.
-export AUDIOBATCH_DATA_ROOT="$WORK_DIR/storage"
+    CARGO_PROFILE=()
+    if [ "$PROFILE" = "release" ]; then
+        CARGO_PROFILE=(--release)
+    fi
+    (cd "$RUST_DIR" && cargo build --quiet "${CARGO_PROFILE[@]}" --bin audiobatch-rs)
+    RUST_CLI="$RUST_DIR/target/$PROFILE/$(executable_name audiobatch-rs)"
 
-echo "C++ CLI:  $CPP_CLI"
-echo "Rust CLI: $RUST_CLI"
+    # Keep trap state global so it survives the workflow returning.
+    WORK_DIR=$(mktemp -d)
+    trap 'rm -rf "$WORK_DIR"' EXIT
+    # Parity runs never populate the user's shared cache, logs, or plugin data.
+    export AUDIOBATCH_DATA_ROOT="$WORK_DIR/storage"
 
-CPP_PATHS=("${PATHS[@]}")
-RUST_PATHS=("${PATHS[@]}")
-CPP_BASE=""
-RUST_BASE=""
-if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    NORMALIZE+=(--delete)
-    # Each CLI normalizes its own copy, since normalizing replaces and permanently deletes the inputs.
-    # Every path gets a numbered folder, so paths with the same base name do not overwrite each other.
-    CPP_BASE="$WORK_DIR/cpp"
-    RUST_BASE="$WORK_DIR/rust"
-    mkdir -p "$CPP_BASE" "$RUST_BASE"
-    index=0
-    for path in "${PATHS[@]}"; do
-        index=$((index + 1))
-        mkdir -p "$CPP_BASE/$index" "$RUST_BASE/$index"
-        # Dereference symlinks while copying, so --delete cannot follow a copied link back to a user file.
-        cp -RL "${path%/}" "$CPP_BASE/$index/"
-        cp -RL "${path%/}" "$RUST_BASE/$index/"
-    done
-    # The lossy sources tell compare_outputs.py which outputs may differ by the tolerance,
-    # and are listed now, since normalizing deletes the replaced sources.
-    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" --list-lossy "$CPP_BASE" > "$WORK_DIR/lossy.txt"
-    CPP_PATHS=("$CPP_BASE")
-    RUST_PATHS=("$RUST_BASE")
-    RECURSE=(--recurse)
-fi
+    echo "C++ CLI:  $CPP_CLI"
+    echo "Rust CLI: $RUST_CLI"
 
-# Capture expected paths and fixture outcomes before either implementation can remove a source.
-EXPECT_OPTIONS=()
-if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    EXPECT_OPTIONS=(--base "$CPP_BASE" "${TARGET[@]}")
-fi
-uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" \
-    --write-expectations "$WORK_DIR/expectations.json" "${RECURSE[@]}" "${EXPECT_OPTIONS[@]}" \
-    --inputs "${CPP_PATHS[@]}"
-if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    for implementation in cpp rust; do
-        uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" \
-            --snapshot "$WORK_DIR/$implementation" --expectations "$WORK_DIR/expectations.json" \
-            > "$WORK_DIR/$implementation-before.json"
-    done
-fi
+    CPP_PATHS=("${PATHS[@]}")
+    RUST_PATHS=("${PATHS[@]}")
+    CPP_BASE=""
+    RUST_BASE=""
+    if [ ${#NORMALIZE[@]} -gt 0 ]; then
+        NORMALIZE+=(--delete)
+        # Each CLI normalizes its own copy, since normalizing replaces and permanently deletes the inputs.
+        # Every path gets a numbered folder, so paths with the same base name do not overwrite each other.
+        CPP_BASE="$WORK_DIR/cpp"
+        RUST_BASE="$WORK_DIR/rust"
+        mkdir -p "$CPP_BASE" "$RUST_BASE"
+        index=0
+        for path in "${PATHS[@]}"; do
+            index=$((index + 1))
+            mkdir -p "$CPP_BASE/$index" "$RUST_BASE/$index"
+            # Dereference symlinks while copying, so --delete cannot follow a copied link back to a user file.
+            cp -RL "${path%/}" "$CPP_BASE/$index/"
+            cp -RL "${path%/}" "$RUST_BASE/$index/"
+        done
+        # The lossy sources tell compare_outputs.py which outputs may differ by the tolerance,
+        # and are listed now, since normalizing deletes the replaced sources.
+        uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" --list-lossy "$CPP_BASE" > "$WORK_DIR/lossy.txt"
+        CPP_PATHS=("$CPP_BASE")
+        RUST_PATHS=("$RUST_BASE")
+        RECURSE=(--recurse)
+    fi
 
-# Both CLIs exit with code 2 when a file fails, which the comparison reports per file instead.
-TARGET_OPTIONS=()
-COMPARE_OPTIONS=()
-if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    TARGET_OPTIONS=("${TARGET[@]}")
-    COMPARE_OPTIONS=(--folders "$CPP_BASE" "$RUST_BASE" "${TARGET[@]}")
-fi
+    # Capture expected paths and fixture outcomes before either implementation can remove a source.
+    EXPECT_OPTIONS=()
+    if [ ${#NORMALIZE[@]} -gt 0 ]; then
+        EXPECT_OPTIONS=(--base "$CPP_BASE" "${TARGET[@]}")
+    fi
+    uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" \
+        --write-expectations "$WORK_DIR/expectations.json" "${RECURSE[@]}" "${EXPECT_OPTIONS[@]}" \
+        --inputs "${CPP_PATHS[@]}"
+    if [ ${#NORMALIZE[@]} -gt 0 ]; then
+        for implementation in cpp rust; do
+            uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" \
+                --snapshot "$WORK_DIR/$implementation" --expectations "$WORK_DIR/expectations.json" \
+                > "$WORK_DIR/$implementation-before.json"
+        done
+    fi
+
+    # Both CLIs exit with code 2 when a file fails, which the comparison reports per file instead.
+    TARGET_OPTIONS=()
+    COMPARE_OPTIONS=()
+    if [ ${#NORMALIZE[@]} -gt 0 ]; then
+        TARGET_OPTIONS=("${TARGET[@]}")
+        COMPARE_OPTIONS=(--folders "$CPP_BASE" "$RUST_BASE" "${TARGET[@]}")
+    fi
+
+    compare_results
+}
 
 # Bash's time keyword measures only the CLI, not the Python startup or the comparison oracles.
 # The inner redirection keeps the CLI's stderr separate from the wall time.
@@ -240,36 +237,40 @@ run_timed_cli() {
     printf '%s\n' "$cli_status" > "$WORK_DIR/$implementation.status"
 }
 
-TIMEFORMAT='%R'
-export LC_NUMERIC=C
-run_timed_cli cpp "$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" \
-    --output json "${CPP_PATHS[@]}"
-run_timed_cli rust "$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" \
-    --output json "${RUST_PATHS[@]}"
-awk 'NR == 1 { cpp = $1; next } { printf "Wall time: C++ %.3f s, Rust %.3f s", cpp, $1;
+compare_results() {
+    TIMEFORMAT='%R'
+    export LC_NUMERIC=C
+    run_timed_cli cpp "$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" \
+        --output json "${CPP_PATHS[@]}"
+    run_timed_cli rust "$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" \
+        --output json "${RUST_PATHS[@]}"
+    awk 'NR == 1 { cpp = $1; next } { printf "Wall time: C++ %.3f s, Rust %.3f s", cpp, $1;
     if (cpp > 0 && $1 > 0) printf ", Rust/C++ %.3fx (C++/Rust %.3fx)", $1 / cpp, cpp / $1;
     print "" }' "$WORK_DIR/cpp.time" "$WORK_DIR/rust.time"
 
-STATUS=0
-for implementation in cpp rust; do
-    cli_status=$(< "$WORK_DIR/$implementation.status")
-    if [ "$cli_status" != 0 ] && [ "$cli_status" != 2 ]; then
-        print_error "$implementation CLI exited with unexpected status $cli_status"
-        STATUS=1
-    fi
-    if [ "$cli_status" != 0 ]; then
-        while IFS= read -r line; do printf '%s\n' "$line" >&2; done < "$WORK_DIR/$implementation.log"
-    fi
-done
-uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" \
-    --tolerance "$TOLERANCE" --expectations "$WORK_DIR/expectations.json" "${COMPARE_OPTIONS[@]}" || STATUS=1
+    STATUS=0
+    for implementation in cpp rust; do
+        cli_status=$(< "$WORK_DIR/$implementation.status")
+        if [ "$cli_status" != 0 ] && [ "$cli_status" != 2 ]; then
+            print_error "$implementation CLI exited with unexpected status $cli_status"
+            STATUS=1
+        fi
+        if [ "$cli_status" != 0 ]; then
+            while IFS= read -r line; do printf '%s\n' "$line" >&2; done < "$WORK_DIR/$implementation.log"
+        fi
+    done
+    uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" \
+        --tolerance "$TOLERANCE" --expectations "$WORK_DIR/expectations.json" "${COMPARE_OPTIONS[@]}" || STATUS=1
 
-if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    MODE=peak
-    if [ "${TARGET[0]}" = --lufs ]; then
-        MODE=lufs
+    if [ ${#NORMALIZE[@]} -gt 0 ]; then
+        MODE=peak
+        if [ "${TARGET[0]}" = --lufs ]; then
+            MODE=lufs
+        fi
+        uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" --mode "$MODE" \
+            --lossy "$WORK_DIR/lossy.txt" --snapshots "$WORK_DIR/cpp-before.json" "$WORK_DIR/rust-before.json" || STATUS=1
     fi
-    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" --mode "$MODE" \
-        --lossy "$WORK_DIR/lossy.txt" --snapshots "$WORK_DIR/cpp-before.json" "$WORK_DIR/rust-before.json" || STATUS=1
-fi
-exit "$STATUS"
+    exit "$STATUS"
+}
+
+run_parity "$@"

@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Format the ImageControl plugin: C++ code with ClangFormat, CMake files with cmake-format,
@@ -19,22 +23,7 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-for argument in "$@"; do
-    case "$argument" in
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-        --) break ;;
-    esac
-done
-
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-init_options() {
+parse_arguments() {
     CHECK=false
 
     while [ $# -gt 0 ]; do
@@ -57,90 +46,109 @@ init_options() {
     done
 }
 
-init_options "$@"
+# Formats plugin sources with the shared explicit style file.
+format_cpp_sources() {
+    require_command clang-format
 
-cd "$REPO"
-
-require_command clang-format
-
-# The style file is passed explicitly instead of relying on the configuration symlink.
-STYLE_FILE="$REPO/.clang-format"
-if [ "$BASH_PLATFORM" = windows ]; then
-    require_command cygpath "Git Bash with cygpath is required for Windows formatting."
-    # MSYS does not convert paths embedded after the "file:" style prefix.
-    STYLE_FILE=$(cygpath -m "$STYLE_FILE")
-fi
-
-# Paths are relative to the plugin directory, so that the clang-format output is short.
-CPP_FILES=()
-while IFS= read -r file; do
-    CPP_FILES+=("$file")
-done < <(find src tests benchmarks -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
-
-if [ "$CHECK" = true ]; then
-    print_magenta "Checking C++ formatting..."
-    clang-format --verbose --style="file:$STYLE_FILE" --dry-run --Werror "${CPP_FILES[@]}"
-else
-    print_magenta "Formatting C++ files..."
-    clang-format -i --verbose --style="file:$STYLE_FILE" "${CPP_FILES[@]}"
-fi
-
-# Use an installed cmake-format, or fetch it on demand with uvx.
-# PyYAML is needed to read .cmake-format.yaml.
-if [ -n "$(command -v cmake-format)" ]; then
-    CMAKE_FORMAT=(cmake-format)
-elif [ -n "$(command -v uvx)" ]; then
-    # cmakelang's token scanner is incompatible with Python 3.15.
-    CMAKE_FORMAT=(uvx --python 3.14 --from cmakelang --with pyyaml cmake-format)
-else
-    CMAKE_FORMAT=()
-    print_yellow "cmake-format and uvx not found, skipping CMake formatting"
-fi
-
-if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
-    CMAKE_FILES=(CMakeLists.txt cmake/*.cmake)
-    if [ "$CHECK" = true ]; then
-        print_magenta "Checking CMake formatting..."
-        print_file_list Checking "${CMAKE_FILES[@]}"
-        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --check "${CMAKE_FILES[@]}"
-    else
-        print_magenta "Formatting CMake files..."
-        print_file_list Formatting "${CMAKE_FILES[@]}"
-        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --in-place "${CMAKE_FILES[@]}"
+    # The style file is passed explicitly instead of relying on the configuration symlink.
+    STYLE_FILE="$REPO/.clang-format"
+    if [ "$BASH_PLATFORM" = windows ]; then
+        require_command cygpath "Git Bash with cygpath is required for Windows formatting."
+        # MSYS does not convert paths embedded after the "file:" style prefix.
+        STYLE_FILE=$(cygpath -m "$STYLE_FILE")
     fi
-fi
 
-if [ -n "$(command -v shfmt)" ]; then
-    SHELL_FILES=(./*.sh)
+    # Paths are relative to the plugin directory, so that the clang-format output is short.
+    CPP_FILES=()
+    while IFS= read -r file; do
+        CPP_FILES+=("$file")
+    done < <(find src tests benchmarks -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+
     if [ "$CHECK" = true ]; then
-        print_magenta "Checking shell script formatting..."
-        print_file_list Checking "${SHELL_FILES[@]}"
-        shfmt --diff "${SHELL_FILES[@]}"
+        print_magenta "Checking C++ formatting..."
+        clang-format --verbose --style="file:$STYLE_FILE" --dry-run --Werror "${CPP_FILES[@]}"
     else
-        print_magenta "Formatting shell scripts..."
-        print_file_list Formatting "${SHELL_FILES[@]}"
-        shfmt --list --write "${SHELL_FILES[@]}"
+        print_magenta "Formatting C++ files..."
+        clang-format -i --verbose --style="file:$STYLE_FILE" "${CPP_FILES[@]}"
     fi
-fi
+}
+
+format_cmake_files() {
+    # Use an installed cmake-format, or fetch it on demand with uvx.
+    # PyYAML is needed to read .cmake-format.yaml.
+    if [ -n "$(command -v cmake-format)" ]; then
+        CMAKE_FORMAT=(cmake-format)
+    elif [ -n "$(command -v uvx)" ]; then
+        # cmakelang's token scanner is incompatible with Python 3.15.
+        CMAKE_FORMAT=(uvx --python 3.14 --from cmakelang --with pyyaml cmake-format)
+    else
+        CMAKE_FORMAT=()
+        print_yellow "cmake-format and uvx not found, skipping CMake formatting"
+    fi
+
+    if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
+        CMAKE_FILES=(CMakeLists.txt cmake/*.cmake)
+        if [ "$CHECK" = true ]; then
+            print_magenta "Checking CMake formatting..."
+            print_file_list Checking "${CMAKE_FILES[@]}"
+            "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --check "${CMAKE_FILES[@]}"
+        else
+            print_magenta "Formatting CMake files..."
+            print_file_list Formatting "${CMAKE_FILES[@]}"
+            "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --in-place "${CMAKE_FILES[@]}"
+        fi
+    fi
+}
+
+format_shell_scripts() {
+    if [ -n "$(command -v shfmt)" ]; then
+        SHELL_FILES=(./*.sh)
+        if [ "$CHECK" = true ]; then
+            print_magenta "Checking shell script formatting..."
+            print_file_list Checking "${SHELL_FILES[@]}"
+            shfmt --diff "${SHELL_FILES[@]}"
+        else
+            print_magenta "Formatting shell scripts..."
+            print_file_list Formatting "${SHELL_FILES[@]}"
+            shfmt --list --write "${SHELL_FILES[@]}"
+        fi
+    fi
+}
 
 # ruff runs from the repository root, so it reads the shared pyproject.toml settings and lock file.
-require_command uv "uv not found in path, it runs ruff for the Python scripts"
-if [ "$CHECK" = true ]; then
-    print_magenta "Checking Python formatting..."
-    (cd "$REPO_ROOT" && uv run --frozen ruff format --check image-control-plugin)
-    (cd "$REPO_ROOT" && uv run --frozen ruff check image-control-plugin)
-else
-    print_magenta "Formatting Python scripts..."
-    (cd "$REPO_ROOT" && uv run --frozen ruff format image-control-plugin)
-    (cd "$REPO_ROOT" && uv run --frozen ruff check --fix image-control-plugin)
-fi
-
-if [ -n "$(command -v slb)" ]; then
+format_python_scripts() {
+    require_command uv "uv not found in path, it runs ruff for the Python scripts"
     if [ "$CHECK" = true ]; then
-        print_magenta "Checking prose..."
-        slb --quiet "$REPO"
+        print_magenta "Checking Python formatting..."
+        (cd "$REPO_ROOT" && uv run --frozen ruff format --check image-control-plugin)
+        (cd "$REPO_ROOT" && uv run --frozen ruff check image-control-plugin)
     else
-        print_magenta "Formatting prose..."
-        slb --fix "$REPO"
+        print_magenta "Formatting Python scripts..."
+        (cd "$REPO_ROOT" && uv run --frozen ruff format image-control-plugin)
+        (cd "$REPO_ROOT" && uv run --frozen ruff check --fix image-control-plugin)
     fi
-fi
+}
+
+format_prose() {
+    if [ -n "$(command -v slb)" ]; then
+        if [ "$CHECK" = true ]; then
+            print_magenta "Checking prose..."
+            slb --quiet "$REPO"
+        else
+            print_magenta "Formatting prose..."
+            slb --fix "$REPO"
+        fi
+    fi
+}
+
+format_plugin() {
+    parse_arguments "$@"
+    cd "$REPO"
+    format_cpp_sources
+    format_cmake_files
+    format_shell_scripts
+    format_python_scripts
+    format_prose
+}
+
+format_plugin "$@"

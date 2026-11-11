@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 # Builds ImageControl with build.sh and installs the bundles into the user's plugin folders.
 # Optionally validates the installed plugins with pluginval and, on macOS, auval.
 
@@ -44,21 +48,7 @@ OPTIONS: All options are optional
     -v | --verbose
         Display commands being executed."
 
-for argument in "$@"; do
-    case "$argument" in
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-        --) break ;;
-    esac
-done
-
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-init_options() {
+parse_arguments() {
     VALIDATE=false
     VALIDATION_LEVEL=5
     # Passed on to build.sh, which validates the combinations.
@@ -294,30 +284,33 @@ validate_audio_unit() {
     auval -strict -v aufx Egic Esgr
 }
 
-init_options "$@"
-
-if [ "$BASH_PLATFORM" != "mac" ] && [ "$BASH_PLATFORM" != "windows" ]; then
-    print_error_and_exit "Platform is not supported yet"
-fi
-
-print_magenta "Running build.sh ${BUILD_OPTIONS[*]}"
-"$DIR/build.sh" "${BUILD_OPTIONS[@]}"
-
-# The build script resolves the bundle path for the selected build type.
-# The Audio Unit is built next to the VST3 in the same artefacts folder.
-BUNDLE=$("$DIR/build.sh" --print "${BUILD_OPTIONS[@]}")
-AU_BUNDLE="$(dirname "$(dirname "$BUNDLE")")/AU/ImageControl.component"
-
-install_vst3
-if [ "$BASH_PLATFORM" = "mac" ]; then
-    install_audio_unit
-fi
-
-if [ "$VALIDATE" = true ]; then
-    if [ "$BASH_PLATFORM" = "mac" ]; then
-        validate_audio_unit
+install_plugin() {
+    parse_arguments "$@"
+    if [ "$BASH_PLATFORM" != "mac" ] && [ "$BASH_PLATFORM" != "windows" ]; then
+        print_error_and_exit "Platform is not supported yet"
     fi
-    plugin_validate_vst3 "$VST3_DIR/ImageControl.vst3" "$VALIDATION_LEVEL"
-fi
 
-print_green "Installation complete"
+    print_magenta "Running build.sh ${BUILD_OPTIONS[*]}"
+    "$DIR/build.sh" "${BUILD_OPTIONS[@]}"
+
+    # The build script resolves the bundle path for the selected build type.
+    # The Audio Unit is built next to the VST3 in the same artefacts folder.
+    BUNDLE=$("$DIR/build.sh" --print "${BUILD_OPTIONS[@]}")
+    AU_BUNDLE="$(dirname "$(dirname "$BUNDLE")")/AU/ImageControl.component"
+
+    install_vst3
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        install_audio_unit
+    fi
+
+    if [ "$VALIDATE" = true ]; then
+        if [ "$BASH_PLATFORM" = "mac" ]; then
+            validate_audio_unit
+        fi
+        plugin_validate_vst3 "$VST3_DIR/ImageControl.vst3" "$VALIDATION_LEVEL"
+    fi
+
+    print_green "Installation complete"
+}
+
+install_plugin "$@"

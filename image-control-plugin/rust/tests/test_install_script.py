@@ -86,13 +86,30 @@ class RustInstallContracts(unittest.TestCase):
     def test_help_never_builds_signs_or_installs(self) -> None:
         """Both help aliases exit before touching build tools or installation folders."""
         for flag in ("-h", "--help"):
-            for prefix in ((), ("--unknown",), ("--validation-level",)):
+            for prefix in ((), ("--debug",)):
                 result = self.invoke(*prefix, flag, "--unknown")
                 assert result.returncode == 0, result.stderr
                 for option in ("-N | --no-build", "-D | --destination", "-L | --validation-level"):
                     assert option in result.stdout
                 assert not self.log.exists()
                 assert not (self.home / "Library").exists()
+
+    def test_invalid_arguments_before_help_are_not_overridden(self) -> None:
+        """Sequential parsing rejects earlier errors and treats value-position help as an operand."""
+        for flag in ("-h", "--help"):
+            for arguments in (
+                ("--unknown", flag),
+                ("--validation-level", flag),
+                ("--validation-level", "4", flag),
+                ("--destination", "", flag),
+                ("--", flag),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = self.invoke(*arguments)
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    assert "Usage:" not in result.stdout
+                    assert not self.log.exists()
+                    assert not (self.home / "Library").exists()
 
     def test_default_mac_install_is_separate_and_replaces_only_rust_bundle(self) -> None:
         """A staged replacement preserves the separate C++ plugin and forwards build/validation options."""
@@ -282,7 +299,7 @@ class RustInstallContracts(unittest.TestCase):
 class RustEntryPointContracts(unittest.TestCase):
     """Exercise every other production Rust script against recording tools in a disposable workspace."""
 
-    scripts = ("build.sh", "test.sh", "lint.sh", "format.sh", "rtsan.sh")
+    scripts = ("build.sh", "test.sh", "lint.sh", "format.sh", "parity.sh", "rtsan.sh")
 
     def setUp(self) -> None:
         """Keep all Cargo, formatting, signing, and native host execution inside fake tools."""
@@ -308,12 +325,13 @@ class RustEntryPointContracts(unittest.TestCase):
             assert executable is not None
             (self.tools / command).symlink_to(executable)
         uname = self.tools / "uname"
-        uname.write_text(f'#!{BASH}\nprintf "Darwin\\n"\n', encoding="utf-8")
+        uname.write_text(f'#!{BASH}\nprintf "%s\\n" "${{TEST_PLATFORM:-Darwin}}"\n', encoding="utf-8")
         uname.chmod(0o755)
         for name in ("cargo", "codesign", "pluginval", "shfmt", "slb"):
             executable = self.tools / name
             executable.write_text(
-                f'#!{BASH}\nprintf "%s\\0" "${{0##*/}}" "$@" >> "$COMMAND_LOG"\nprintf "\\n" >> "$COMMAND_LOG"\n',
+                f'#!{BASH}\nprintf "%s\\0" "${{0##*/}}" "$@" >> "$COMMAND_LOG"\nprintf "\\n" >> "$COMMAND_LOG"\n'
+                'if [ "${FAIL_TOOL:-}" = "${0##*/}" ]; then exit 37; fi\n',
                 encoding="utf-8",
             )
             executable.chmod(0o755)
@@ -343,16 +361,34 @@ class RustEntryPointContracts(unittest.TestCase):
         commands = [line.removesuffix("\0").split("\0") for line in self.log.read_text().splitlines()]
         return commands if name is None else [command[1:] for command in commands if command[0] == name]
 
-    def test_help_aliases_anywhere_precede_errors_and_tools(self) -> None:
-        """Both help forms exit before invalid options, missing operands, or dependency checks."""
+    def test_help_aliases_precede_tools_but_not_earlier_errors(self) -> None:
+        """Help exits when reached, while earlier invalid arguments remain errors without invoking tools."""
+        selections = {
+            "build.sh": ("-d",),
+            "test.sh": ("-l",),
+            "lint.sh": ("-c",),
+            "format.sh": ("-c",),
+            "parity.sh": ("-C", "missing"),
+            "rtsan.sh": ("-N",),
+        }
         for script in self.scripts:
             for flag in ("-h", "--help"):
-                for prefix in ((), ("--unknown",), ("--bundle",)):
+                for prefix in ((), selections[script]):
                     with self.subTest(script=script, flag=flag, prefix=prefix):
                         result = self.invoke(script, *prefix, flag, "--unknown")
                         assert result.returncode == 0, result.stdout + result.stderr
                         assert "Usage:" in result.stdout
                         assert not self.commands()
+                for prefix in (("--unknown",), ("--",)):
+                    with self.subTest(script=script, flag=flag, prefix=prefix):
+                        result = self.invoke(script, *prefix, flag)
+                        assert result.returncode != 0, result.stdout + result.stderr
+                        assert "Usage:" not in result.stdout
+                        assert not self.commands()
+        result = self.invoke("test.sh", "-m", "-l", "--help")
+        assert result.returncode != 0
+        assert "Choose at most one verification mode" in result.stderr
+        assert not self.commands()
 
     def test_unknown_and_trailing_options_fail_before_tools(self) -> None:
         """No entry point silently ignores extra arguments or performs work before rejecting them."""
@@ -361,6 +397,7 @@ class RustEntryPointContracts(unittest.TestCase):
             "test.sh": "-l",
             "lint.sh": "-c",
             "format.sh": "-c",
+            "parity.sh": "-C",
             "rtsan.sh": "-N",
         }
         for script, selection in selections.items():
@@ -373,6 +410,179 @@ class RustEntryPointContracts(unittest.TestCase):
             result = self.invoke("test.sh", *arguments)
             assert result.returncode != 0
             assert not self.commands()
+
+    def test_definitions_load_before_workflow_execution(self) -> None:
+        """Bootstrap libraries first, but defer every workflow until all functions have been parsed."""
+        for name in (*self.scripts, "install.sh", "benchmark.sh"):
+            with self.subTest(script=name):
+                source = (ROOT / "image-control-plugin/rust" / name).read_text()
+                assert source.count("parse_arguments() {") == 1
+                assert "main()" not in source
+                assert "show_help_if_requested" not in source
+                assert source.index('source "$') < source.index("parse_arguments() {")
+                lines = source.rstrip().splitlines()
+                workflow, arguments = lines[-1].split(" ", 1)
+                assert arguments == '"$@"'
+                assert f"{workflow}() {{" in source
+                definitions = self.directory / "definitions.sh"
+                definitions.write_text("\n".join(lines[:-1]) + "\n")
+                result = self.invoke(definitions.name)
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert not self.commands()
+                assert not (self.directory / "target").exists()
+
+    def test_failures_stop_nested_workflows_with_original_status(self) -> None:
+        """A descriptive workflow call must not disable errexit or continue with stale output."""
+        for script, arguments, tool, count in (
+            ("build.sh", ("-t", "-V"), "cargo", 1),
+            ("build.sh", ("-t", "-V"), "codesign", 2),
+            ("test.sh", (), "cargo", 1),
+            ("test.sh", ("-m",), "cargo", 1),
+            ("lint.sh", ("-c",), "cargo", 1),
+            ("format.sh", ("-c",), "cargo", 1),
+            ("format.sh", ("-c",), "shfmt", 2),
+        ):
+            with self.subTest(script=script, tool=tool):
+                self.log.unlink(missing_ok=True)
+                result = self.invoke(script, *arguments, FAIL_TOOL=tool)
+                assert result.returncode == 37, result.stdout + result.stderr
+                assert len(self.commands()) == count
+
+    def test_parity_aliases_preserve_explicit_paths_and_failure_status(self) -> None:
+        """Only existing explicit build-tree artifacts authorize the cross-implementation test process."""
+        cpp = self.root / "C++ build.vst3"
+        (cpp / "Contents").mkdir(parents=True)
+        executable = self.root / "ImageControlParity"
+        executable.touch()
+        environment_log = self.root / "parity-environment.log"
+        cargo = self.tools / "cargo"
+        cargo.write_text(
+            cargo.read_text() + 'printf "%s\\n" "$IMAGE_CONTROL_CPP_BUNDLE" "$IMAGE_CONTROL_OWN_BUNDLE" '
+            '"$IMAGE_CONTROL_PARITY_EXECUTABLE" "$CARGO_TARGET_DIR" > "$PARITY_ENV_LOG"\n'
+        )
+        expected = None
+        for cpp_flag, rust_flag, executable_flag in (
+            ("-C", "-r", "-e"),
+            ("--cpp", "--rust", "--executable"),
+        ):
+            self.log.unlink(missing_ok=True)
+            result = self.invoke(
+                "parity.sh",
+                cpp_flag,
+                str(cpp),
+                rust_flag,
+                str(self.bundle),
+                executable_flag,
+                str(executable),
+                PARITY_ENV_LOG=str(environment_log),
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert environment_log.read_text().splitlines() == [
+                str(cpp),
+                str(self.bundle),
+                str(executable),
+                str(self.root / "rust/target"),
+            ]
+            commands = self.commands("cargo")
+            assert commands == [
+                [
+                    "test",
+                    "--manifest-path",
+                    str(self.root / "Cargo.toml"),
+                    "-p",
+                    "image-control-plugin-rs",
+                    "--test",
+                    "cross_implementation",
+                    "--",
+                    "--nocapture",
+                ]
+            ]
+            if expected is not None:
+                assert commands == expected
+            expected = commands
+        self.log.unlink()
+        result = self.invoke(
+            "parity.sh",
+            IMAGE_CONTROL_CPP_BUNDLE=str(cpp),
+            IMAGE_CONTROL_OWN_BUNDLE=str(self.bundle),
+            IMAGE_CONTROL_PARITY_EXECUTABLE=str(executable),
+            FAIL_TOOL="cargo",
+        )
+        assert result.returncode == 37, result.stdout + result.stderr
+        assert len(self.commands()) == 1
+
+    def test_parity_rejects_missing_paths_before_cargo(self) -> None:
+        """Missing operands, required selections, and artifacts cannot launch a native parity process."""
+        for arguments in (("-C",), ("-r",), ("-e",), (), ("-C", "missing", "-e", "missing")):
+            with self.subTest(arguments=arguments):
+                result = self.invoke("parity.sh", *arguments)
+                assert result.returncode != 0, result.stdout + result.stderr
+                assert not self.commands()
+
+    def test_rtsan_cases_keep_bundle_target_and_fail_fast(self) -> None:
+        """Native audits use isolated instrumented output while each bounded case receives the original bundle root."""
+        for name in ("cut", "rg"):
+            executable = shutil.which(name)
+            assert executable is not None
+            (self.tools / name).symlink_to(executable)
+        runtime = self.root / "rtsan-runtime.dylib"
+        runtime.touch()
+        clang = self.tools / "clang"
+        clang.write_text(
+            f'#!{BASH}\ncase "$1" in\n'
+            '  --version) printf "clang version 22.1.0\\n" ;;\n'
+            f'  --print-file-name=*) printf "%s\\n" "{runtime}" ;;\nesac\n'
+        )
+        clang.chmod(0o755)
+        rustc = self.tools / "rustc"
+        rustc.write_text(f'#!{BASH}\nprintf "host: aarch64-apple-darwin\\nLLVM version: 22.1.0\\n"\n')
+        rustc.chmod(0o755)
+        jq = self.tools / "jq"
+        jq.write_text(f'#!{BASH}\nprintf "%s\\n" "{self.tools / "cargo"}"\n')
+        jq.chmod(0o755)
+        uv = self.tools / "uv"
+        uv.write_text(
+            f'#!{BASH}\nprintf "%s\\0" uv "$@" >> "$COMMAND_LOG"\nprintf "\\n" >> "$COMMAND_LOG"\n'
+            'printf "%s\\n" "$CARGO_TARGET_DIR" >> "$TARGET_LOG"\n'
+            'case " $* " in *" $FAIL_CASE "*) exit 38 ;; esac\n'
+        )
+        uv.chmod(0o755)
+        target_log = self.root / "realtime-targets.log"
+        cases = [
+            "clean-control",
+            "allocation-control",
+            "mutex-control",
+            "native-cold-automation",
+            "native-reset",
+            "native-state-interaction",
+            "native-editor-lifecycle",
+        ]
+        for failed_case, count, status in (("none", 7, 0), ("own-vst3-native-reset", 5, 38)):
+            self.log.unlink(missing_ok=True)
+            target_log.unlink(missing_ok=True)
+            result = self.invoke(
+                "rtsan.sh",
+                "-N",
+                AUDIOBATCH_RTSAN_CLANG=str(clang),
+                TARGET_LOG=str(target_log),
+                FAIL_CASE=failed_case,
+            )
+            assert result.returncode == status, result.stdout + result.stderr
+            observed = self.commands("uv")
+            assert len(observed) == count
+            assert [command[command.index("--case") + 1] for command in observed] == [
+                f"own-vst3-{case}" for case in cases[:count]
+            ]
+            assert target_log.read_text().splitlines() == [str(self.root / "rust/target")] * count
+            for command in observed:
+                assert f"--argument={self.bundle}" in command
+                assert command[command.index("--timeout") + 1] == "45"
+                assert command[command.index("--artifacts") + 1] == str(self.directory / "target/rtsan-own/artifacts")
+        self.log.unlink()
+        result = self.invoke("rtsan.sh", "-N", "-b", "")
+        assert result.returncode != 0
+        assert "Build-tree VST3 is missing: " in result.stderr
+        assert not self.commands()
 
     def test_build_aliases_preserve_primary_workspace_packaging(self) -> None:
         """Both alias sets package the primary root-workspace plugin, test it, and validate its bundle."""

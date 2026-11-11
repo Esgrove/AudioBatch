@@ -298,14 +298,26 @@ for argument in "$@"; do last="$argument"; done
         )
 
     def test_help_precedes_tools_builds_and_artifacts(self) -> None:
-        """Help aliases work despite malformed adjacent arguments and an empty external tool path."""
+        """Help aliases exit when reached without querying build tools or creating benchmark artifacts."""
         for flag in ("-h", "--help"):
-            result = self.invoke("--unknown", flag, "--frames", PATH="")
-            assert result.returncode == 0, result.stderr
-            for option in ("-N | --no-build", "-A | --artifacts", "-C | --case", "-r | --runs"):
-                assert option in result.stdout
-            assert not self.log.exists()
-            assert not (self.script.parent / "target").exists()
+            for prefix in ((), ("--no-build",)):
+                result = self.invoke(*prefix, flag, "--frames")
+                assert result.returncode == 0, result.stderr
+                for option in ("-N | --no-build", "-A | --artifacts", "-C | --case", "-r | --runs"):
+                    assert option in result.stdout
+                assert not self.log.exists()
+                assert not (self.script.parent / "target").exists()
+
+    def test_earlier_errors_and_value_operands_do_not_trigger_help(self) -> None:
+        """Sequential options reject earlier errors and consume help in value positions as ordinary operands."""
+        for flag in ("-h", "--help"):
+            for arguments in (("--unknown", flag), ("--frames", flag), ("--frames", "", flag), ("--", flag)):
+                with self.subTest(arguments=arguments):
+                    result = self.invoke(*arguments)
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    assert "Usage:" not in result.stdout
+                    assert not self.log.exists()
+                    assert not (self.script.parent / "target").exists()
 
     def test_invalid_options_fail_before_builds_and_artifacts(self) -> None:
         """Bounds and value-taking options cannot start a build or create a result directory on malformed input."""

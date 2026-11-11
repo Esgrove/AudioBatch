@@ -187,6 +187,114 @@ class ShellHelpContracts(unittest.TestCase):
                     assert not self.log.exists(), self.log.read_text() if self.log.exists() else ""
                     assert not (self.root / "home").exists(), f"{relative}: help created user storage"
 
+    def test_entry_points_load_common_before_their_single_argument_parser(self) -> None:
+        """Keep bootstrap at file scope, parsing together with help, and descriptive workflow calls last."""
+        for relative in entry_points():
+            with self.subTest(script=str(relative)):
+                source = (ROOT / relative).read_text(encoding="utf-8")
+                assert re.search(r"^main\s*\(", source, re.MULTILINE) is None
+                bootstrap = re.search(r"^source .*/common\.sh\"?$", source, re.MULTILINE)
+                assert bootstrap is not None, f"{relative}: common must load at top level"
+                first_function = re.search(r"^[a-zA-Z_][a-zA-Z_0-9]*\(\)\s*\{", source, re.MULTILINE)
+                assert first_function is not None
+                assert bootstrap.start() < first_function.start(), f"{relative}: bootstrap follows a function"
+                parsers = re.findall(r"^parse_arguments\(\)", source, re.MULTILINE)
+                assert len(parsers) == 1, f"{relative}: expected exactly one argument parser"
+                assert first_function.group().startswith("parse_arguments()"), f"{relative}: parser must come first"
+                assert source.index("USAGE=") < first_function.start(), f"{relative}: usage must precede its parser"
+                assert re.search(r'^[a-zA-Z_][a-zA-Z_0-9]* "\$@"$', source.rstrip().splitlines()[-1])
+
+    def test_root_dispatch_preserves_scope_arguments_and_fail_fast_status(self) -> None:
+        """Named scopes retain exact argv and a failed child prevents every later project from running."""
+        assert BASH is not None
+        for project in ("cpp", "rust", "image-control-plugin"):
+            for name in ("build.sh", "install.sh", "format.sh", "lint.sh"):
+                script = self.root / project / name
+                script.write_text(
+                    f'#!{BASH}\nprintf "%s\\0" "{project}/{name}" "$@" >> "$HELP_TOOL_LOG"\n'
+                    f'printf "\\n" >> "$HELP_TOOL_LOG"\n'
+                    f'if [ "${{FAIL_PROJECT:-}}" = "{project}" ]; then exit 47; fi\n',
+                    encoding="utf-8",
+                )
+                script.chmod(0o755)
+        for name in ("build.sh", "install.sh", "format.sh", "lint.sh"):
+            cases = [
+                (["cpp", "--unknown", "a value"], [(f"cpp/{name}", "--unknown", "a value")]),
+                (["rust", "--", "a value"], [(f"rust/{name}", "--", "a value")]),
+            ]
+            if name != "build.sh":
+                forwarded = () if name == "install.sh" else ("--check",)
+                cases.append((["image-control", "--check"], [(f"image-control-plugin/{name}", *forwarded)]))
+            for arguments, expected in cases:
+                with self.subTest(script=name, arguments=arguments):
+                    self.log.unlink(missing_ok=True)
+                    result = subprocess.run(  # noqa: S603
+                        [BASH, str(self.root / name), *arguments],
+                        cwd=self.root,
+                        env=self.environment,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    actual = [tuple(line.removesuffix("\0").split("\0")) for line in self.log.read_text().splitlines()]
+                    assert actual == expected
+            failure_projects = ("cpp", "rust") if name == "build.sh" else ("cpp", "rust", "image-control-plugin")
+            for failed_project in failure_projects:
+                with self.subTest(script=name, fail=failed_project):
+                    self.log.unlink(missing_ok=True)
+                    result = subprocess.run(  # noqa: S603
+                        [BASH, str(self.root / name)],
+                        cwd=self.root,
+                        env={**self.environment, "FAIL_PROJECT": failed_project},
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                    assert result.returncode == 47, result.stdout + result.stderr
+                    actual = [line.split("\0")[0] for line in self.log.read_text().splitlines()]
+                    projects = ["cpp", "rust", "image-control-plugin"]
+                    expected_projects = projects[: projects.index(failed_project) + 1]
+                    assert actual == [f"{project}/{name}" for project in expected_projects]
+
+    def test_version_workflow_updates_only_coordinated_declarations_and_propagates_lock_failure(self) -> None:
+        """Exercise the real version editor in disposable files with a recording Cargo command."""
+        assert BASH is not None
+        perl = shutil.which("perl")
+        assert perl is not None
+        (self.tools / "perl").symlink_to(perl)
+        declarations = {
+            "cpp/CMakeLists.txt": 'project(\n  "AudioBatch"\n  VERSION 1.2.3\n)\n',
+            "Cargo.toml": '[workspace.package]\nversion = "1.2.3"\n',
+            "test-plugin/CMakeLists.txt": 'project(\n  "AudioBatchTestPlugin"\n  VERSION 1.2.3\n)\n',
+        }
+        (self.tools / "cargo").write_text(
+            f'#!{BASH}\nprintf "%s\\n" "$*" >> "$HELP_TOOL_LOG"\nexit "${{CARGO_STATUS:-0}}"\n',
+            encoding="utf-8",
+        )
+        for arguments, expected, cargo_status in [([], "1.2.4", 0), (["--minor"], "1.3.0", 0), (["-m"], "2.0.0", 48)]:
+            with self.subTest(arguments=arguments, cargo_status=cargo_status):
+                self.log.unlink(missing_ok=True)
+                for relative, content in declarations.items():
+                    (self.root / relative).write_text(content, encoding="utf-8")
+                result = subprocess.run(  # noqa: S603
+                    [BASH, str(self.root / "bump-version.sh"), *arguments],
+                    cwd=self.root,
+                    env={**self.environment, "CARGO_STATUS": str(cargo_status)},
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                assert (result.returncode == 0) == (cargo_status == 0), result.stdout + result.stderr
+                assert self.log.read_text() == "update --workspace\n"
+                for relative, content in declarations.items():
+                    assert (self.root / relative).read_text() == content.replace("1.2.3", expected)
+                if cargo_status:
+                    assert "Cargo.lock could not be refreshed" in result.stderr
+
     def test_rust_plugin_rejects_removed_frontend_flags_before_building(self) -> None:
         """Removed prototype choices fail explicitly instead of silently selecting another implementation."""
         assert BASH is not None

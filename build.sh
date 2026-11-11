@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [cpp|rust] [OPTIONS]
 
 Build the binaries of the C++ and Rust projects with their own build.sh scripts. Defaults to release mode.
@@ -30,9 +34,14 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
+parse_arguments() {
+    parse_project_arguments build.sh false "$@"
+}
 
-run_project_scripts build.sh "$@"
+# Dispatch only after Bash has parsed the complete entry point.
+build_projects() {
+    parse_arguments "$@"
+    run_project_scripts build.sh "${PROJECT_ARGUMENTS[@]}"
+}
+
+build_projects "$@"

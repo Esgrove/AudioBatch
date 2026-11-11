@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=../common.sh
+source "$DIR/../common.sh"
+
 # Builds the AudioBatch Test MS VST3 plugin, defaulting to Release mode in test-plugin/cmake-build-release,
 # and prints the path of the bundle for the AUDIOBATCH_TEST_VST3 variable that the Rust tests read.
 # The C++ tests build their own copy as part of the C++ project.
@@ -20,70 +24,64 @@ OPTIONS: All options are optional
     -d | --debug
         Build Debug into cmake-build-debug/ instead of Release into cmake-build-release/."
 
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=../common.sh
-source "$DIR/../common.sh"
+parse_arguments() {
+    PRINT_ONLY=false
+    BUILD_TYPE="Release"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -p | --print)
+                PRINT_ONLY=true
+                ;;
+            -d | --debug)
+                BUILD_TYPE="Debug"
+                ;;
+            *)
+                print_error_and_exit "Unknown option: $1"
+                ;;
+        esac
+        shift
+    done
 
-# Help takes precedence over parsing and validation, but not over downstream arguments after --.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help) print_usage_and_exit 0 ;;
-    esac
-done
+    BUILD_DIR="$DIR/cmake-build-release"
+    if [ "$BUILD_TYPE" = "Debug" ]; then
+        BUILD_DIR="$DIR/cmake-build-debug"
+    fi
+    BUNDLE="$BUILD_DIR/AudioBatchTestPlugin_artefacts/$BUILD_TYPE/VST3/AudioBatch Test MS.vst3"
+}
 
-PRINT_ONLY=false
-BUILD_TYPE="Release"
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -p | --print)
-            PRINT_ONLY=true
-            ;;
-        -d | --debug)
-            BUILD_TYPE="Debug"
-            ;;
-        *)
-            print_error_and_exit "Unknown option: $1"
-            ;;
-    esac
-    shift
-done
+build_test_plugin() {
+    parse_arguments "$@"
+    if [ "$PRINT_ONLY" = true ]; then
+        echo "$BUNDLE"
+        return 0
+    fi
+    require_command cmake
+    if [ ! -f "$DIR/../cpp/JUCE/CMakeLists.txt" ]; then
+        print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
+    fi
 
-BUILD_DIR="$DIR/cmake-build-release"
-if [ "$BUILD_TYPE" = "Debug" ]; then
-    BUILD_DIR="$DIR/cmake-build-debug"
-fi
-BUNDLE="$BUILD_DIR/AudioBatchTestPlugin_artefacts/$BUILD_TYPE/VST3/AudioBatch Test MS.vst3"
+    GENERATOR_ARGS=()
+    if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ninja)" ]; then
+        GENERATOR_ARGS=(-G Ninja)
+    fi
 
-if [ "$PRINT_ONLY" = true ]; then
+    LAUNCHER_ARGS=()
+    if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ccache)" ]; then
+        LAUNCHER_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+    fi
+
+    print_magenta "Building the test plugin into $BUILD_DIR"
+    cmake -S "$DIR" -B "$BUILD_DIR" "${GENERATOR_ARGS[@]}" "${LAUNCHER_ARGS[@]}" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" --target AudioBatchTestPlugin_VST3
+
+    if [ ! -d "$BUNDLE" ]; then
+        print_error_and_exit "Bundle not found after the build: $BUNDLE"
+    fi
+    print_green "Built: $BUNDLE"
     echo "$BUNDLE"
-    exit 0
-fi
+}
 
-require_command cmake
-if [ ! -f "$DIR/../cpp/JUCE/CMakeLists.txt" ]; then
-    print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
-fi
-
-GENERATOR_ARGS=()
-if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ninja)" ]; then
-    GENERATOR_ARGS=(-G Ninja)
-fi
-
-LAUNCHER_ARGS=()
-if [ "$BASH_PLATFORM" != "windows" ] && [ -n "$(command -v ccache)" ]; then
-    LAUNCHER_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
-fi
-
-print_magenta "Building the test plugin into $BUILD_DIR"
-cmake -S "$DIR" -B "$BUILD_DIR" "${GENERATOR_ARGS[@]}" "${LAUNCHER_ARGS[@]}" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
-cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" --target AudioBatchTestPlugin_VST3
-
-if [ ! -d "$BUNDLE" ]; then
-    print_error_and_exit "Bundle not found after the build: $BUNDLE"
-fi
-print_green "Built: $BUNDLE"
-echo "$BUNDLE"
+build_test_plugin "$@"

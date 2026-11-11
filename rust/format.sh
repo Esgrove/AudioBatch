@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Format Rust code with rustfmt, shell scripts with shfmt, and prose with slb, when shfmt and slb are installed.
@@ -17,77 +21,68 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Resolve help before loading platform helpers or checking formatters.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-    esac
-done
+parse_arguments() {
+    CHECK=false
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -c | --check)
+                CHECK=true
+                ;;
+            -v | --verbose)
+                set -x
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage_and_exit
+                ;;
+        esac
+        shift
+    done
+}
 
-CHECK=false
+format_sources() {
+    parse_arguments "$@"
+    require_command cargo "Cargo not found in path. Maybe install rustup?"
 
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -c | --check)
-            CHECK=true
-            ;;
-        -v | --verbose)
-            set -x
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            print_usage_and_exit
-            ;;
-    esac
-    shift
-done
+    cd "$REPO"
 
-require_command cargo "Cargo not found in path. Maybe install rustup?"
-
-cd "$REPO"
-
-# The fuzz crate is its own workspace, so it is formatted through its own manifest.
-if [ "$CHECK" = true ]; then
-    print_magenta "Checking Rust formatting..."
-    cargo fmt "${APPLICATION_PACKAGE_ARGS[@]}" --check
-    cargo fmt --manifest-path fuzz/Cargo.toml --check
-else
-    print_magenta "Formatting Rust files..."
-    cargo fmt "${APPLICATION_PACKAGE_ARGS[@]}"
-    cargo fmt --manifest-path fuzz/Cargo.toml
-fi
-
-if [ -n "$(command -v shfmt)" ]; then
-    SHELL_FILES=(./*.sh scripts/*.sh)
+    # The fuzz crate is its own workspace, so it is formatted through its own manifest.
     if [ "$CHECK" = true ]; then
-        print_magenta "Checking shell script formatting..."
-        print_file_list Checking "${SHELL_FILES[@]}"
-        shfmt --diff "${SHELL_FILES[@]}"
+        print_magenta "Checking Rust formatting..."
+        cargo fmt "${APPLICATION_PACKAGE_ARGS[@]}" --check
+        cargo fmt --manifest-path fuzz/Cargo.toml --check
     else
-        print_magenta "Formatting shell scripts..."
-        print_file_list Formatting "${SHELL_FILES[@]}"
-        shfmt --list --write "${SHELL_FILES[@]}"
+        print_magenta "Formatting Rust files..."
+        cargo fmt "${APPLICATION_PACKAGE_ARGS[@]}"
+        cargo fmt --manifest-path fuzz/Cargo.toml
     fi
-fi
 
-if [ -n "$(command -v slb)" ]; then
-    if [ "$CHECK" = true ]; then
-        print_magenta "Checking prose..."
-        slb --quiet "$REPO"
-    else
-        print_magenta "Formatting prose..."
-        slb --fix "$REPO"
+    if [ -n "$(command -v shfmt)" ]; then
+        SHELL_FILES=(./*.sh scripts/*.sh)
+        if [ "$CHECK" = true ]; then
+            print_magenta "Checking shell script formatting..."
+            print_file_list Checking "${SHELL_FILES[@]}"
+            shfmt --diff "${SHELL_FILES[@]}"
+        else
+            print_magenta "Formatting shell scripts..."
+            print_file_list Formatting "${SHELL_FILES[@]}"
+            shfmt --list --write "${SHELL_FILES[@]}"
+        fi
     fi
-fi
+
+    if [ -n "$(command -v slb)" ]; then
+        if [ "$CHECK" = true ]; then
+            print_magenta "Checking prose..."
+            slb --quiet "$REPO"
+        else
+            print_magenta "Formatting prose..."
+            slb --fix "$REPO"
+        fi
+    fi
+}
+
+format_sources "$@"

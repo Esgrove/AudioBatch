@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 # Builds the ImageControl VST3 plugin, and on macOS its Audio Unit, defaulting to Release mode in image-control-plugin/cmake-build-release.
 # Optionally runs unit tests and validates the built VST3 with pluginval. install.sh installs and validates bundles.
 # Needs the JUCE submodule in cpp/JUCE: git submodule update --init cpp/JUCE
@@ -51,21 +55,7 @@ OPTIONS: All options are optional
     -v | --verbose
         Display commands being executed."
 
-for argument in "$@"; do
-    case "$argument" in
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-        --) break ;;
-    esac
-done
-
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-init_options() {
+parse_arguments() {
     PRINT_ONLY=false
     USE_NINJA=false
     REUSE_BUILD_DIR=false
@@ -144,66 +134,77 @@ init_options() {
     AU_BUNDLE="$BUILD_DIR/ImageControl_artefacts/$BUILD_TYPE/AU/ImageControl.component"
 }
 
-init_options "$@"
-
-if [ "$PRINT_ONLY" = true ]; then
-    echo "$BUNDLE"
-    exit 0
-fi
-
-require_command cmake
-if [ ! -f "$DIR/../cpp/JUCE/CMakeLists.txt" ]; then
-    print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
-fi
-
-TARGETS=(--target ImageControl_VST3)
-if [ "$BASH_PLATFORM" = "mac" ]; then
-    TARGETS+=(ImageControl_AUSign)
-fi
-if [ "$RUN_TESTS" = true ]; then
-    TARGETS+=(ImageControlTests ImageControlParity)
-fi
-
-if [ "$CLEAN_BUILD_DIR" = true ]; then
-    print_yellow "Deleting $BUILD_DIR"
-    rm -rf "${BUILD_DIR:?}"
-fi
-
-print_magenta "Building ImageControl into $BUILD_DIR"
-if [ "$REUSE_BUILD_DIR" = true ]; then
-    if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
-        print_error_and_exit "No CMake build directory to reuse at $BUILD_DIR"
+# Prepares the selected targets and preserves configure/reuse/clean ordering.
+prepare_plugin_build() {
+    require_command cmake
+    if [ ! -f "$DIR/../cpp/JUCE/CMakeLists.txt" ]; then
+        print_error_and_exit "JUCE submodule not found, run: git submodule update --init cpp/JUCE"
     fi
-else
-    BUILD_TESTS=OFF
+
+    TARGETS=(--target ImageControl_VST3)
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        TARGETS+=(ImageControl_AUSign)
+    fi
     if [ "$RUN_TESTS" = true ]; then
-        BUILD_TESTS=ON
+        TARGETS+=(ImageControlTests ImageControlParity)
     fi
-    plugin_configure "$BUILD_DIR" "$BUILD_TYPE" "$USE_NINJA" "$BUILD_TESTS"
-fi
-if [ "$USE_NINJA" = true ]; then
-    load_msvc_environment
-fi
-cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" "${TARGETS[@]}"
 
-if [ ! -d "$BUNDLE" ]; then
-    print_error_and_exit "Bundle not found after the build: $BUNDLE"
-fi
-print_green "Built: $BUNDLE"
-if [ "$BASH_PLATFORM" = "mac" ]; then
-    if [ ! -d "$AU_BUNDLE" ]; then
-        print_error_and_exit "Audio Unit not found after the build: $AU_BUNDLE"
+    if [ "$CLEAN_BUILD_DIR" = true ]; then
+        print_yellow "Deleting $BUILD_DIR"
+        rm -rf "${BUILD_DIR:?}"
     fi
-    print_green "Built: $AU_BUNDLE"
-fi
 
-if [ "$RUN_TESTS" = true ]; then
-    print_magenta "Running the unit tests"
-    plugin_run_tests "$BUILD_DIR" "$BUILD_TYPE"
-fi
+    print_magenta "Building ImageControl into $BUILD_DIR"
+    if [ "$REUSE_BUILD_DIR" = true ]; then
+        if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+            print_error_and_exit "No CMake build directory to reuse at $BUILD_DIR"
+        fi
+    else
+        BUILD_TESTS=OFF
+        if [ "$RUN_TESTS" = true ]; then
+            BUILD_TESTS=ON
+        fi
+        plugin_configure "$BUILD_DIR" "$BUILD_TYPE" "$USE_NINJA" "$BUILD_TESTS"
+    fi
+    if [ "$USE_NINJA" = true ]; then
+        load_msvc_environment
+    fi
+}
 
-if [ "$VALIDATE" = true ]; then
-    plugin_validate_vst3 "$BUNDLE" "$VALIDATION_LEVEL"
-fi
+# Builds the selected formats and checks that every requested bundle exists.
+build_plugin_formats() {
+    cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" "${TARGETS[@]}"
 
-echo "$BUNDLE"
+    if [ ! -d "$BUNDLE" ]; then
+        print_error_and_exit "Bundle not found after the build: $BUNDLE"
+    fi
+    print_green "Built: $BUNDLE"
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        if [ ! -d "$AU_BUNDLE" ]; then
+            print_error_and_exit "Audio Unit not found after the build: $AU_BUNDLE"
+        fi
+        print_green "Built: $AU_BUNDLE"
+    fi
+}
+
+build_plugin() {
+    parse_arguments "$@"
+    if [ "$PRINT_ONLY" = true ]; then
+        echo "$BUNDLE"
+        return 0
+    fi
+    prepare_plugin_build
+    build_plugin_formats
+    if [ "$RUN_TESTS" = true ]; then
+        print_magenta "Running the unit tests"
+        plugin_run_tests "$BUILD_DIR" "$BUILD_TYPE"
+    fi
+
+    if [ "$VALIDATE" = true ]; then
+        plugin_validate_vst3 "$BUNDLE" "$VALIDATION_LEVEL"
+    fi
+
+    echo "$BUNDLE"
+}
+
+build_plugin "$@"

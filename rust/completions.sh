@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Install shell completions for the audiobatch-rs CLI.
@@ -20,43 +24,34 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Resolve help before loading platform helpers or checking the installed CLI.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-    esac
-done
+parse_arguments() {
+    SILENT=false
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -s | --silent)
+                SILENT=true
+                ;;
+            -v | --verbose)
+                set -x
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage_and_exit
+                ;;
+        esac
+        shift
+    done
+}
 
-SILENT=false
+install_completions() {
+    parse_arguments "$@"
+    require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found in path. Run install.sh first."
 
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -s | --silent)
-            SILENT=true
-            ;;
-        -v | --verbose)
-            set -x
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            print_usage_and_exit
-            ;;
-    esac
-    shift
-done
+    install_shell_completions "$CLI_BINARY_NAME" "$SILENT"
+}
 
-require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found in path. Run install.sh first."
-
-install_shell_completions "$CLI_BINARY_NAME" "$SILENT"
+install_completions "$@"

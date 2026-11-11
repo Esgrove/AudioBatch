@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Install AudioBatch.
@@ -34,20 +38,7 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-# Help takes precedence over parsing and validation, but not over downstream arguments after --.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help) print_usage_and_exit 0 ;;
-    esac
-done
-
-init_options() {
+parse_arguments() {
     INSTALL_CLI=true
     INSTALL_APP=true
     REUSE_BUILD_DIR=false
@@ -194,6 +185,8 @@ install_windows_gui_app() {
     mkdir -p "$app_install_dir" "$start_menu_dir"
     cp -f "$app_source" "$app_destination"
 
+    # PowerShell expands its own environment references, not Bash variables.
+    # shellcheck disable=SC2016
     AUDIOBATCH_TARGET_PATH="$windows_app_destination" \
         AUDIOBATCH_SHORTCUT_PATH="$windows_shortcut_destination" \
         powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command '
@@ -229,38 +222,47 @@ install_gui_app() {
     echo "Installed GUI app to /Applications/$GUI_APP_BUNDLE"
 }
 
-init_options "$@"
-
-if [ "$BASH_PLATFORM" != "mac" ] && [ "$BASH_PLATFORM" != "windows" ]; then
-    print_error_and_exit "Platform is not supported yet"
-fi
-
-cd "$REPO"
-
-# Build release artifacts first
-print_magenta "Running release build..."
-BUILD_OPTIONS=()
-if [ "$INSTALL_APP" != true ]; then
-    BUILD_OPTIONS+=(--cli-only)
-fi
-if [ "$REUSE_BUILD_DIR" = true ]; then
-    BUILD_OPTIONS+=(--reuse)
-fi
-if [ "$CLEAN_BUILD_DIR" = true ]; then
-    BUILD_OPTIONS+=(--clean)
-fi
-"$DIR/build.sh" -b Release "${BUILD_OPTIONS[@]}"
-
-if [ "$INSTALL_CLI" = true ]; then
-    install_cli
-fi
-
-if [ "$INSTALL_APP" = true ]; then
-    if [ "$BASH_PLATFORM" = "windows" ]; then
-        install_windows_gui_app
-    else
-        install_gui_app
+# Builds release artifacts with the installer's selected scope and workspace policy.
+build_release_artifacts() {
+    print_magenta "Running release build..."
+    BUILD_OPTIONS=()
+    if [ "$INSTALL_APP" != true ]; then
+        BUILD_OPTIONS+=(--cli-only)
     fi
-fi
+    if [ "$REUSE_BUILD_DIR" = true ]; then
+        BUILD_OPTIONS+=(--reuse)
+    fi
+    if [ "$CLEAN_BUILD_DIR" = true ]; then
+        BUILD_OPTIONS+=(--clean)
+    fi
+    "$DIR/build.sh" -b Release "${BUILD_OPTIONS[@]}"
+}
 
-print_green "Installation complete"
+# Publishes the requested CLI and GUI artifacts after a successful build.
+install_artifacts() {
+    if [ "$INSTALL_CLI" = true ]; then
+        install_cli
+    fi
+
+    if [ "$INSTALL_APP" = true ]; then
+        if [ "$BASH_PLATFORM" = "windows" ]; then
+            install_windows_gui_app
+        else
+            install_gui_app
+        fi
+    fi
+
+    print_green "Installation complete"
+}
+
+install_project() {
+    parse_arguments "$@"
+    if [ "$BASH_PLATFORM" != mac ] && [ "$BASH_PLATFORM" != windows ]; then
+        print_error_and_exit "Platform is not supported yet"
+    fi
+    cd "$REPO"
+    build_release_artifacts
+    install_artifacts
+}
+
+install_project "$@"

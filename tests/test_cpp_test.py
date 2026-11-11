@@ -105,8 +105,8 @@ exit "${TEST_CTEST_STATUS:-0}"
         )
         return path
 
-    def test_help_precedes_invalid_options_and_value_parsing(self) -> None:
-        """Show help anywhere before tool checks, validation, installations, or builds."""
+    def test_help_is_handled_by_the_parser_before_tool_checks(self) -> None:
+        """Help exits after bootstrap without starting tools, and malformed earlier options still fail."""
         for script in [
             "build.sh",
             "completions.sh",
@@ -120,12 +120,15 @@ exit "${TEST_CTEST_STATUS:-0}"
             "../test-plugin/build.sh",
         ]:
             for help_option in ["-h", "--help"]:
-                for preceding in [("--unknown",), ("--build-type", "--unknown")]:
-                    with self.subTest(script=script, help_option=help_option, preceding=preceding):
-                        result = self.invoke(*preceding, help_option, TEST_SCRIPT=script)
-                        assert result.returncode == 0, result.stdout + result.stderr
-                        assert "Usage:" in result.stdout
-                        assert not self.log.exists()
+                with self.subTest(script=script, help_option=help_option):
+                    result = self.invoke(help_option, TEST_SCRIPT=script)
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    assert "Usage:" in result.stdout
+                    assert not self.log.exists()
+                with self.subTest(script=script, invalid_before_help=help_option):
+                    result = self.invoke("--unknown", help_option, TEST_SCRIPT=script)
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    assert not self.log.exists()
 
     def test_short_test_options_select_canonical_tiers_and_values(self) -> None:
         """Short and long repeated selections retain tier names and whitespace in option values."""

@@ -69,7 +69,10 @@ class BuildScriptContracts(unittest.TestCase):
         self.write_tool("uname", 'printf "%s\\n" "$TEST_PLATFORM"\n', record=False)
         self.write_tool(
             "cmake",
-            """if [[ "$1" == -DSTRICTNESS=* ]]; then
+            """if [ -n "${REWRITE_SCRIPT:-}" ]; then
+    printf 'invalid shell after workflow started\\n' > "$REWRITE_SCRIPT"
+fi
+if [[ "$1" == -DSTRICTNESS=* ]]; then
     exit "${PLUGINVAL_SETUP_STATUS:-0}"
 elif [ "$1" = --build ]; then
     build_dir="$2"
@@ -228,15 +231,25 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                     assert "auval" in result.stdout
                 assert not self.commands()
 
-    def test_all_help_aliases_exit_before_argument_errors_or_tools(self) -> None:
-        """Help anywhere before a passthrough separator wins over malformed options and values."""
+    def test_all_help_aliases_exit_before_later_arguments_or_tools(self) -> None:
+        """A sequential parser handles help before later errors without a separate help scan."""
         for script in ALL_SCRIPTS:
             for flag in ("-h", "--help"):
-                for prefix in ((), ("--unknown",), ("--validation-level",)):
+                with self.subTest(script=script, flag=flag):
+                    result = self.invoke(script, flag, "--unknown")
+                    self.assert_success(result)
+                    assert "Usage:" in result.stdout
+                    assert not self.commands()
+                    assert not (self.home / "Library").exists()
+
+    def test_earlier_argument_errors_are_not_overridden_by_later_help(self) -> None:
+        """Unknown options and invalid option values fail where encountered in the normal parser."""
+        for script in ALL_SCRIPTS:
+            for flag in ("-h", "--help"):
+                for prefix in (("--unknown",), ("--validation-level",)):
                     with self.subTest(script=script, flag=flag, prefix=prefix):
-                        result = self.invoke(script, *prefix, flag, "--unknown")
-                        self.assert_success(result)
-                        assert "Usage:" in result.stdout
+                        result = self.invoke(script, *prefix, flag)
+                        assert result.returncode != 0, result.stdout + result.stderr
                         assert not self.commands()
                         assert not (self.home / "Library").exists()
 
@@ -251,7 +264,7 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 assert not (self.home / "Library").exists()
 
     def test_lint_preserves_help_after_passthrough_separator(self) -> None:
-        """A clang-tidy help argument is not consumed by the wrapper's early help scan."""
+        """A clang-tidy help argument belongs to the downstream tool after the separator."""
         result = self.invoke("lint.sh", "--", "--help")
         assert result.returncode != 0
         assert "clang-tidy not found" in result.stderr
@@ -445,6 +458,14 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                         assert not self.commands(), self.commands()
                         for marker in (built_marker, installed_marker):
                             assert marker.read_text() == "do not replace"
+
+    def test_build_workflow_is_parsed_before_external_commands_run(self) -> None:
+        """Editing the entry point during configuration cannot replace the active build workflow."""
+        result = self.invoke("build.sh", "--test", "--validate", REWRITE_SCRIPT=str(self.plugin / "build.sh"))
+        self.assert_success(result)
+        self.assert_validation("build.sh", 5)
+        assert [command[0] for command in self.commands()] == ["cmake", "cmake", "ctest", "pluginval"]
+        assert (self.plugin / "build.sh").read_text() == "invalid shell after workflow started\n"
 
     def test_build_validation_follows_build_and_unit_tests(self) -> None:
         """Validate the selected nondefault build only after CTest succeeds."""
