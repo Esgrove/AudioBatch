@@ -14,6 +14,11 @@ use image_control_dsp::{AnalysisShutdown, AnalysisStatus, AnalysisWorker, Shared
 const MAX_PARTICLES: usize = 65_536;
 const PARTICLE_STRIDE: u64 = 32;
 const MAX_TEXTURE_DIMENSION: u32 = 4096;
+/// Each level contributes one blurred copy, shared by the reference's total 0.8 glow strength.
+const BLOOM_LEVEL_COUNT: usize = 5;
+const UNIFORM_BYTES: u64 = 32;
+/// The reference caps an individual editor refresh so a hidden or stalled view does not erase its whole history.
+const MAX_REFRESH_STEP_SECONDS: f32 = 0.1;
 const ENERGY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -63,7 +68,8 @@ struct SpectrogramPipeline {
     fade: wgpu::RenderPipeline,
     resample: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
-    bloom: wgpu::RenderPipeline,
+    downsample: wgpu::RenderPipeline,
+    upsample: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
     encode_output: bool,
     widgets: HashMap<u64, GpuHistory>,
@@ -73,7 +79,7 @@ struct SpectrogramPipeline {
 struct GpuHistory {
     owner: Weak<Mutex<PendingParticles>>,
     accumulation: [wgpu::TextureView; 2],
-    bloom: wgpu::TextureView,
+    bloom: [BloomLevel; BLOOM_LEVEL_COUNT],
     accumulation_inputs: [wgpu::BindGroup; 2],
     composite_inputs: [wgpu::BindGroup; 2],
     uniform_buffer: wgpu::Buffer,
@@ -90,6 +96,12 @@ struct GpuHistory {
     prepared_generation: u64,
     resize_source: Option<wgpu::BindGroup>,
     resize_pending: AtomicBool,
+}
+
+/// One independently sampled glow target. Additive upsampling never samples the active attachment.
+struct BloomLevel {
+    target: wgpu::TextureView,
+    input: wgpu::BindGroup,
 }
 
 impl Spectrogram {
@@ -196,12 +208,7 @@ impl shader::Primitive for SpectrogramPrimitive {
         viewport: &shader::Viewport,
     ) {
         let scale = viewport.scale_factor();
-        let physical_bounds = Rectangle {
-            x: bounds.x * scale,
-            y: bounds.y * scale,
-            width: bounds.width * scale,
-            height: bounds.height * scale,
-        };
+        let physical_bounds = physical_plot_bounds(*bounds, scale);
         let Some(size) = target_size(physical_bounds, device.limits().max_texture_dimension_2d) else {
             pipeline.widgets.remove(&self.program.id);
             return;
@@ -269,8 +276,17 @@ impl shader::Primitive for SpectrogramPrimitive {
         );
         history.last_frame = now;
         let [width, height] = size;
-        let parameters = [width as f32, height as f32, fade, f32::from(pipeline.encode_output)];
-        let mut bytes = [0_u8; 16];
+        let parameters = [
+            width as f32,
+            height as f32,
+            fade,
+            f32::from(pipeline.encode_output),
+            scale,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        let mut bytes = [0_u8; UNIFORM_BYTES as usize];
         for (destination, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(parameters) {
             destination.copy_from_slice(&value.to_ne_bytes());
         }
@@ -324,11 +340,7 @@ impl shader::Primitive for SpectrogramPrimitive {
                     }
                 }
                 if let Some(input) = history.accumulation_inputs.get(destination) {
-                    let mut pass = begin_pass(encoder, &history.bloom, "ImageControl bloom", true);
-                    pass.set_pipeline(&pipeline.bloom);
-                    pass.set_bind_group(0, &history.uniform_group, &[]);
-                    pass.set_bind_group(1, input, &[]);
-                    pass.draw(0..3, 0..1);
+                    history.draw_bloom(pipeline, encoder, input);
                 }
                 history.current.store(destination, Ordering::Release);
             }
@@ -367,7 +379,7 @@ impl shader::Pipeline for SpectrogramPipeline {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(16),
+                    min_binding_size: wgpu::BufferSize::new(UNIFORM_BYTES),
                 },
                 count: None,
             }],
@@ -407,7 +419,8 @@ impl shader::Pipeline for SpectrogramPipeline {
         let fade = render_pipeline(device, &layout, &module, "fade_fragment", ENERGY_FORMAT, false);
         let resample = render_pipeline(device, &layout, &module, "resample_fragment", ENERGY_FORMAT, false);
         let particles = render_pipeline(device, &layout, &module, "particle_fragment", ENERGY_FORMAT, true);
-        let bloom = render_pipeline(device, &layout, &module, "bloom_fragment", ENERGY_FORMAT, false);
+        let downsample = render_pipeline(device, &layout, &module, "downsample_fragment", ENERGY_FORMAT, false);
+        let upsample = render_pipeline(device, &layout, &module, "upsample_fragment", ENERGY_FORMAT, false);
         let composite = render_pipeline(device, &layout, &module, "composite_fragment", format, false);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ImageControl linear clamp"),
@@ -422,7 +435,8 @@ impl shader::Pipeline for SpectrogramPipeline {
             fade,
             resample,
             particles,
-            bloom,
+            downsample,
+            upsample,
             composite,
             encode_output: !format.is_srgb(),
             widgets: HashMap::new(),
@@ -444,17 +458,22 @@ impl GpuHistory {
         size: [u32; 2],
     ) -> Self {
         let accumulation = [energy_target(device, size), energy_target(device, size)];
-        let bloom = energy_target(device, [size[0].div_ceil(4), size[1].div_ceil(4)]);
-        // Fade and bloom do not sample binding 1. Bind the source again rather than the active attachment.
+        let bloom = bloom_sizes(size).map(|size| {
+            let target = energy_target(device, size);
+            let input = texture_group(device, pipeline, &target, &target);
+            BloomLevel { target, input }
+        });
+        // Intermediate passes do not sample binding 1. Never bind the active attachment as an input.
         let accumulation_inputs = accumulation
             .each_ref()
             .map(|view| texture_group(device, pipeline, view, view));
+        let [first_bloom, ..] = &bloom;
         let composite_inputs = accumulation
             .each_ref()
-            .map(|view| texture_group(device, pipeline, view, &bloom));
+            .map(|view| texture_group(device, pipeline, view, &first_bloom.target));
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ImageControl parameters"),
-            size: 16,
+            size: UNIFORM_BYTES,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -495,12 +514,43 @@ impl GpuHistory {
         }
     }
 
-    /// Clears both ping-pong images and bloom even when the invalidating frame contains no particles.
+    /// Rebuilds every glow level before adding the smaller levels back into their larger neighbors.
+    /// Each pass samples a different texture from its attachment, including at one-pixel sizes.
+    fn draw_bloom(
+        &self,
+        pipeline: &SpectrogramPipeline,
+        encoder: &mut wgpu::CommandEncoder,
+        accumulation: &wgpu::BindGroup,
+    ) {
+        let mut source = accumulation;
+        for level in &self.bloom {
+            let mut pass = begin_pass(encoder, &level.target, "ImageControl bloom downsample", true);
+            pass.set_pipeline(&pipeline.downsample);
+            pass.set_bind_group(0, &self.uniform_group, &[]);
+            pass.set_bind_group(1, source, &[]);
+            pass.draw(0..3, 0..1);
+            source = &level.input;
+        }
+        for pair in self.bloom.windows(2).rev() {
+            let [larger, smaller] = pair else {
+                continue;
+            };
+            let mut pass = begin_pass(encoder, &larger.target, "ImageControl bloom additive upsample", false);
+            pass.set_pipeline(&pipeline.upsample);
+            pass.set_bind_group(0, &self.uniform_group, &[]);
+            pass.set_bind_group(1, &smaller.input, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Clears both ping-pong images and every bloom level even when the invalidating frame contains no particles.
     fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
         for target in &self.accumulation {
             drop(begin_pass(encoder, target, "ImageControl generation clear", true));
         }
-        drop(begin_pass(encoder, &self.bloom, "ImageControl bloom clear", true));
+        for level in &self.bloom {
+            drop(begin_pass(encoder, &level.target, "ImageControl bloom clear", true));
+        }
         self.current.store(0, Ordering::Release);
     }
 }
@@ -517,6 +567,21 @@ fn particle_attributes(point: SpatialParticle) -> Option<[f32; 8]> {
         && [x, y, emphasis].iter().all(|value| (0.0..=1.0).contains(value))
         && [spread, red, green, blue, size].iter().all(|value| *value >= 0.0))
     .then_some(values)
+}
+
+/// Encloses the logical plot in physical pixels exactly as the reference's smallest integer container.
+fn physical_plot_bounds(bounds: Rectangle, scale: f32) -> Rectangle {
+    if !scale.is_finite() || scale <= 0.0 || target_size(bounds, MAX_TEXTURE_DIMENSION).is_none() {
+        return Rectangle::default();
+    }
+    let left = (bounds.x * scale).floor();
+    let top = (bounds.y * scale).floor();
+    Rectangle {
+        x: left,
+        y: top,
+        width: ((bounds.x + bounds.width) * scale).ceil() - left,
+        height: ((bounds.y + bounds.height) * scale).ceil() - top,
+    }
 }
 
 /// Rejects empty or non-finite layout and bounds GPU allocation independently of window dimensions.
@@ -536,9 +601,17 @@ fn target_size(bounds: Rectangle, device_limit: u32) -> Option<[u32; 2]> {
     ])
 }
 
-/// Uses wall-clock decay so persistence does not depend on the host's editor refresh frequency.
+/// Matches the reference's five successively halved targets, using floor division even for odd plot sizes.
+fn bloom_sizes(mut size: [u32; 2]) -> [[u32; 2]; BLOOM_LEVEL_COUNT] {
+    std::array::from_fn(|_| {
+        size = size.map(|dimension| (dimension / 2).max(1));
+        size
+    })
+}
+
+/// Uses the reference's capped wall-clock step and exponential persistence, independent of ordinary refresh frequency.
 fn persistence_fade(elapsed: f32, persistence_seconds: f32) -> f32 {
-    (-elapsed.max(0.0) / persistence_seconds.clamp(0.05, 3.0)).exp()
+    (-elapsed.clamp(0.0, MAX_REFRESH_STEP_SECONDS) / persistence_seconds.clamp(0.05, 3.0)).exp()
 }
 
 /// Makes one float texture view. wgpu retains its texture through the view and clears first use safely.
@@ -626,10 +699,16 @@ fn render_pipeline(
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: particles.then_some(wgpu::BlendState {
-                    color: additive,
-                    alpha: additive,
-                }),
+                blend: if particles || fragment == "upsample_fragment" {
+                    Some(wgpu::BlendState {
+                        color: additive,
+                        alpha: additive,
+                    })
+                } else if fragment == "composite_fragment" {
+                    Some(wgpu::BlendState::ALPHA_BLENDING)
+                } else {
+                    None
+                },
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -663,6 +742,10 @@ fn begin_pass<'a>(
         ..wgpu::RenderPassDescriptor::default()
     })
 }
+
+#[cfg(test)]
+#[path = "spectrogram_rendering_tests.rs"]
+mod rendering_tests;
 
 #[cfg(test)]
 mod tests {
@@ -721,7 +804,7 @@ mod tests {
     }
 
     /// Requests the real platform backend used by the embedded renderer, without a presentation surface.
-    fn native_device() -> (iced_baseview::wgpu::Device, iced_baseview::wgpu::Queue) {
+    pub(super) fn native_device() -> (iced_baseview::wgpu::Device, iced_baseview::wgpu::Queue) {
         use iced_baseview::{futures::executor::block_on, wgpu};
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: if cfg!(target_os = "macos") {
@@ -1024,10 +1107,11 @@ mod tests {
     #[test]
     fn persistence_is_independent_of_display_refresh_rate() {
         let persistence = 0.3;
-        let whole = persistence_fade(persistence, persistence);
-        let quarters = persistence_fade(persistence * 0.25, persistence).powi(4);
-        assert!((whole - (-1.0_f32).exp()).abs() < 1.0e-6);
+        let elapsed = 0.08;
+        let whole = persistence_fade(elapsed, persistence);
+        let quarters = persistence_fade(elapsed * 0.25, persistence).powi(4);
+        assert!((whole - (-elapsed / persistence).exp()).abs() < 1.0e-6);
         assert!((whole - quarters).abs() < 1.0e-6);
-        assert!(persistence_fade(60.0, persistence) < 1.0e-30);
+        assert_eq!(persistence_fade(60.0, persistence), persistence_fade(0.1, persistence));
     }
 }
