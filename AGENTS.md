@@ -266,6 +266,18 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   Compilers often already optimize division by two and common subexpressions,
   so distinguish clearer source code from demonstrated performance improvements.
 
+### Shader sources
+
+- Keep first-party shader programs in dedicated files with their native language and stage extensions,
+  such as `.vert`, `.frag`, `.glsl`, `.wgsl`, or `.metal`, rather than inline strings in host-language code.
+  Keep them beside the owning renderer or in its shader directory so editors and shader tools can parse them directly.
+- Embed shader files at build time, using generated resources in C++ and `include_str!` in Rust.
+  Packaged applications and plugins must not depend on source-tree paths or runtime shader file reads.
+  Register every shader as a build input so edits rebuild its embedded resource.
+- Include shader sources in the applicable formatting and validation checks.
+  Preserve shader arithmetic, precision, interfaces, and rendering behavior during extraction or formatting.
+  Generated embedding code is a build artifact, not a second maintained copy of the shader.
+
 ### Repository work
 
 - The repository-root `Cargo.toml` and `Cargo.lock` define the shared Rust workspace for AudioBatch

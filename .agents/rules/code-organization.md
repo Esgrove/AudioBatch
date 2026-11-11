@@ -113,6 +113,15 @@ Keep dependency-sensitive order and explain non-obvious requirements in a short 
   Fold a tiny header or source into the file of the closest topic,
   or merge small related files into one.
 
+## Shader sources
+
+- Keep shader programs in native shader files, not C++ or Rust inline strings.
+  Use stage-specific `.vert` and `.frag` files for GLSL, and `.wgsl` or `.metal` for those languages.
+- Embed the files during the build and track them as build inputs.
+  Do not introduce runtime source-tree file dependencies or manually maintained generated string copies.
+- Keep the shader files in their renderer's domain and include them in applicable formatting and validation checks.
+  Preserve shader arithmetic and rendering behavior when moving or formatting them.
+
 ## Documentation placement
 
 - When a `.cpp` file exists for a header, document each function on its definition in the `.cpp`.
