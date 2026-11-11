@@ -335,6 +335,11 @@ fi
                 cases = [command[5:] for command in commands if command[0] == "uv"]
                 assert cases
                 assert all("--artifacts" in command for command in cases)
+                for clap_case in ["cold_automation", "reset", "retirement"]:
+                    matching = [command for command in cases if f"rust-preview_clap_{clap_case}" in command]
+                    assert len(matching) == 1
+                    assert "--diagnostic" not in matching[0]
+                    assert "--expect" not in matching[0]
                 assert sum("--diagnostic" in command for command in cases) == (5 if short_mode == "-G" else 0)
                 assert any("rust-preview_native_first_automation" in command for command in cases) == (
                     short_mode == "-G"
@@ -579,7 +584,8 @@ fi
         """Keep GUI workflows out of the default unit and service tier."""
         result = self.invoke("test.sh")
         assert result.returncode == 0, result.stdout + result.stderr
-        assert self.commands()[0][5:] == [
+        assert self.commands()[0][5:] == ["build", "-p", "audiobatch-test-clap-plugin", "--example", "clap_module"]
+        assert self.commands()[1][5:] == [
             "nextest",
             "run",
             *APPLICATION_PACKAGE_ARGS,
@@ -590,6 +596,30 @@ fi
             "not test(integration_tests::)",
         ]
         assert self.commands()[0][1] == str(self.project)
+
+    def test_clap_module_build_failure_stops_unit_tests(self) -> None:
+        """Never run packaged CLAP contracts against a stale or absent fixture module."""
+        result = self.invoke("test.sh", "--unit", FAIL_MATCH="clap_module")
+        assert result.returncode == 7, result.stdout + result.stderr
+        assert len(self.commands()) == 1
+        assert "nextest" not in self.commands()[0]
+
+    def test_clap_verification_is_required_in_ci_and_miri(self) -> None:
+        """Build the fixture for native coverage while keeping CLAP Miri entirely in process."""
+        jobs = self.workflow_jobs()
+        coverage = [step["run"] for step in jobs["coverage"]["steps"] if "run" in step]
+        fixture_build = (
+            "CARGO_TARGET_DIR=target/llvm-cov-target cargo build -p audiobatch-test-clap-plugin --example clap_module"
+        )
+        assert fixture_build in coverage
+        assert coverage.index(fixture_build) < coverage.index("./coverage.sh --lcov")
+        miri = (ROOT / "rust/miri.sh").read_text()
+        for package in ["clap-host", "plugin-host-core", "audiobatch-test-clap-plugin"]:
+            assert f"-p {package}" in miri
+        assert "-p audiobatch-test-clap-plugin --test contracts" in miri
+        assert "-p clap-host --test contracts --test request_delivery" in miri
+        assert "--example clap_module" not in miri
+        assert "--test clap_test_plugin" not in miri
 
     def test_gui_log_preserves_test_failure(self) -> None:
         """A successful tee must not mask a failed nextest process."""

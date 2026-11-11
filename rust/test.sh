@@ -9,6 +9,7 @@ USAGE="Usage: $0 [OPTIONS]
 
 Run a Rust test tier with the same selection and diagnostics as CI.
 Defaults to the application unit and service tests.
+The unit tier builds its CLAP fixture module before testing.
 Run ../test-plugin/build.sh first to include the real VST3 tests.
 
 OPTIONS: Choose at most one test tier
@@ -95,6 +96,7 @@ run_tests() {
 
     case "$TIER" in
         --unit)
+            cargo build -p audiobatch-test-clap-plugin --example clap_module
             cargo nextest run "${APPLICATION_PACKAGE_ARGS[@]}" --no-fail-fast --success-output final -E 'not test(integration_tests::)'
             ;;
         --gui-integration)

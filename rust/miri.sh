@@ -7,8 +7,8 @@ source "$DIR/common.sh"
 
 USAGE="Usage: $0 [OPTIONS]
 
-Run the unsafe VST3 hosting code, the test plugin, the Serato tag parsers,
-and the analysis cache blob readers under Miri, which detects undefined behaviour.
+Run the unsafe VST3 and CLAP hosting code, the shared host core, the test plugins,
+the Serato tag parsers, and the analysis cache blob readers under Miri, which detects undefined behaviour.
 Requires the nightly toolchain with the miri component and cargo-nextest.
 Tests that need the file system, plugin bundles, or minutes of interpretation are ignored under Miri.
 
@@ -69,14 +69,23 @@ run_miri() {
     UI_THREAD_TESTS='test(/^instance::/) | test(/^processor::test_in_place_processing::(failed_processing_restores_owned_bus_descriptions|in_place_matches_buffered_gain_delay_and_echo|invalid_buffers_are_rejected_without_touching_audio|short_blocks_preserve_suffixes_and_owned_buffers)$/) | test(/^ui_bound::/) | test(/^thread::test_dispatcher::(another_thread_cannot_register_as_the_ui_thread|call_returns_the_result_from_the_ui_thread|post_runs_jobs_in_order)$/)'
 
     print_magenta "Running the host objects and parsers under Miri with leak checking..."
-    cargo +nightly miri nextest run --no-fail-fast -p vst3-host -p audiobatch-test-plugin -p serato-tags --lib \
+    cargo +nightly miri nextest run --no-fail-fast -p vst3-host -p plugin-host-core -p audiobatch-test-plugin -p serato-tags --lib \
         -E "not ($UI_THREAD_TESTS)"
 
     # These tests leave the dedicated UI thread alive at process exit.
     # This flag also disables allocation leak detection, but does not relax pointer or aliasing checks.
     print_magenta "Running the process-lifetime VST3 UI thread tests under Miri..."
     MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-ignore-leaks" \
-        cargo +nightly miri nextest run --no-fail-fast -p vst3-host --lib -E "$UI_THREAD_TESTS"
+        cargo +nightly miri nextest run --no-fail-fast -p vst3-host -p plugin-host-core --lib -E "$UI_THREAD_TESTS"
+
+    # In-process CLAP lifecycle tests use the same process-lifetime UI dispatcher.
+    # Native module loading tests are explicitly ignored under Miri, never dynamically loaded here.
+    print_magenta "Running in-process CLAP fixture contracts under Miri..."
+    cargo +nightly miri nextest run --no-fail-fast -p audiobatch-test-clap-plugin --test contracts
+
+    print_magenta "Running in-process CLAP host contracts under Miri..."
+    MIRIFLAGS="${MIRIFLAGS:+$MIRIFLAGS }-Zmiri-ignore-leaks" \
+        cargo +nightly miri nextest run --no-fail-fast -p clap-host --test contracts --test request_delivery
 
     # Only the core modules that decode cache blobs run, because the rest of the core decodes audio files,
     # uses SQLite, or runs minutes of DSP, none of which Miri can interpret in reasonable time.

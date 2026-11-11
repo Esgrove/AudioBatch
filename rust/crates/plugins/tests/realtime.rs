@@ -1,12 +1,13 @@
 //! Native `RTSan` contracts for the complete preview chain, with plugin lifecycle on its UI thread.
 
 #![cfg(audiobatch_rtsan)]
+#![cfg_attr(audiobatch_rtsan, feature(sanitize))]
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::thread;
 
-use audiobatch_plugins::{PreviewChain, prepare_for_preview};
+use audiobatch_plugins::{HostInstance, PreviewChain, prepare_for_preview};
 use audiobatch_test_plugin::{GAIN_PARAMETER, Kind};
 use vst3_host::{ClassId, Module, PluginInstance, UiDispatcher, UiThread};
 
@@ -76,7 +77,7 @@ fn dispatcher() -> &'static UiDispatcher {
 
 /// Live chain paired with its owning instance until callback retirement on the UI thread.
 struct ChainFixture {
-    instance: PluginInstance,
+    instance: HostInstance,
     chain: PreviewChain,
 }
 
@@ -113,8 +114,8 @@ fn chain(kind: Option<Kind>) -> ChainFixture {
                     },
                     |kind| ClassId::from_tuid(&kind.class_id()),
                 );
-                let mut instance =
-                    PluginInstance::create(ui, &module, id, Some(dispatcher().clone())).expect("instance");
+                let instance = PluginInstance::create(ui, &module, id, Some(dispatcher().clone())).expect("instance");
+                let mut instance = HostInstance::from(instance);
                 prepare_for_preview(ui, &mut instance, 48_000.0, BLOCK).expect("realtime setup");
                 let chain = PreviewChain::new(ui, &[("RTSan fixture", &instance)]).expect("preview chain");
                 instance
@@ -175,6 +176,144 @@ fn process_case(kind: Option<Kind>, reset: bool) {
             &|| false,
         )
         .expect("UI teardown");
+}
+
+/// Builds only the deterministic first-party CLAP effect, with no native loading or callback prewarming.
+fn clap_chain(latency: u32) -> ChainFixture {
+    dispatcher()
+        .call(
+            move |ui| {
+                let module = clap_host::Module::from_entry(
+                    ui,
+                    "RTSan CLAP fixture",
+                    audiobatch_test_clap_plugin::entry().expect("in-process CLAP entry"),
+                )
+                .expect("in-process CLAP module");
+                let instance = clap_host::PluginInstance::create(
+                    ui,
+                    &module,
+                    audiobatch_test_clap_plugin::PLUGIN_ID.to_str().expect("fixture id"),
+                    Some(dispatcher().clone()),
+                )
+                .expect("CLAP instance");
+                let mut instance = HostInstance::Clap(instance);
+                instance
+                    .set_parameter(
+                        ui,
+                        audiobatch_test_clap_plugin::LATENCY_PARAMETER.get(),
+                        f64::from(latency),
+                    )
+                    .expect("plain latency before activation");
+                let _ = instance.state(ui).expect("flush inactive latency");
+                prepare_for_preview(ui, &mut instance, 48_000.0, BLOCK).expect("CLAP realtime setup");
+                let chain = PreviewChain::new(ui, &[("RTSan CLAP fixture", &instance)]).expect("CLAP preview");
+                instance
+                    .set_parameter(ui, audiobatch_test_clap_plugin::GAIN_PARAMETER.get(), 0.25)
+                    .expect("first plain automation");
+                ChainFixture { instance, chain }
+            },
+            &|| false,
+        )
+        .expect("UI CLAP setup")
+}
+
+/// Moves an active preview into retired ownership without destroying callback-owned storage.
+#[sanitize(realtime = "nonblocking")]
+fn retire_preview(active: &mut Option<PreviewChain>) -> Option<PreviewChain> {
+    active.take()
+}
+
+/// Exercises the complete preview adapter on a cold audio thread before control-thread retirement.
+/// This contract applies only to the in-process fixture, not arbitrary CLAP implementations.
+fn process_clap_case(reset: bool, retire_on_audio_thread: bool) {
+    let latency = if reset { 17 } else { 0 };
+    let ChainFixture { instance, chain } = clap_chain(latency);
+    assert_eq!(chain.latency_frames(), latency as usize);
+    let mut left = [0.5_f32; BLOCK];
+    let mut right = [-0.25_f32; BLOCK];
+    let mut chain = thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let mut chain = chain;
+                if reset {
+                    chain.reset(1234);
+                }
+                assert!(chain.process(&mut left, &mut right));
+                let delay = latency as usize;
+                assert!(
+                    left[..delay]
+                        .iter()
+                        .chain(&right[..delay])
+                        .all(|sample| sample.abs() < f32::EPSILON)
+                );
+                assert!(
+                    left[delay..]
+                        .iter()
+                        .all(|sample| (*sample - 0.125).abs() < f32::EPSILON)
+                );
+                assert!(
+                    right[delay..]
+                        .iter()
+                        .all(|sample| (*sample + 0.0625).abs() < f32::EPSILON)
+                );
+                // Moving the owned chain out of the callback is the retirement operation.
+                // Destruction of its vectors and native processor remains on the UI thread.
+                if retire_on_audio_thread {
+                    let mut active = Some(chain);
+                    let retired = retire_preview(&mut active);
+                    assert!(active.is_none());
+                    return retired.expect("callback transfers ownership");
+                }
+                chain
+            })
+            .join()
+            .expect("cold CLAP callback thread")
+    });
+    assert!(chain.failure().message().is_none());
+    if reset {
+        // Reset again after the first block to exercise a running processor's reset path.
+        thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    chain.reset(0);
+                    left.fill(0.0);
+                    right.fill(0.0);
+                    assert!(chain.process(&mut left, &mut right));
+                    assert!(left.iter().chain(&right).all(|sample| sample.abs() < f32::EPSILON));
+                })
+                .join()
+                .expect("reset CLAP callback thread");
+        });
+    }
+    dispatcher()
+        .call(
+            move |ui| {
+                assert!(instance.has_processor_handles());
+                drop(chain);
+                assert!(!instance.has_processor_handles());
+                let mut instance = instance;
+                instance.deactivate(ui).expect("CLAP retirement deactivation");
+                drop(instance);
+                clap_host::service_main_thread(ui);
+            },
+            &|| false,
+        )
+        .expect("UI CLAP retirement");
+}
+
+#[test]
+fn preview_clap_cold_automation() {
+    process_clap_case(false, false);
+}
+
+#[test]
+fn preview_clap_reset() {
+    process_clap_case(true, false);
+}
+
+#[test]
+fn preview_clap_retirement() {
+    process_clap_case(false, true);
 }
 
 #[test]
