@@ -205,36 +205,36 @@ mod native {
     /// Matches Win32's minimum timer interval and bounds repeated deferrals during nested dispatch.
     const DEFER_MILLISECONDS: u32 = 10;
     /// Every timer has a private window, so it needs only one window-local timer identifier.
-    const TIMER_ID: usize = 1;
+    pub(super) const TIMER_ID: usize = 1;
     /// Class names are unique across editors and threads without thread-local storage or destructor registration.
     static NEXT_CLASS_ID: AtomicU64 = AtomicU64::new(0);
 
     /// An owning box keeps this address stable until its private window has finished destruction.
-    struct Registration {
+    pub(super) struct Registration {
         /// The window borrows this weak reference rather than retaining editor state.
         state: Weak<State<Timer>>,
         /// Identifies the outstanding request within its state.
         generation: u64,
         /// A queued message for a reused HWND cannot deliver a new request before its own delay.
-        not_before: Instant,
+        pub(super) not_before: Instant,
     }
 
     /// A private class whose procedure must be unregistered before the plugin can unload.
-    struct WindowClass {
+    pub(super) struct WindowClass {
         /// Null-terminated name includes the procedure address and a module-local monotonic id.
-        name: Vec<u16>,
+        pub(super) name: Vec<u16>,
         /// The loaded module containing the procedure. The host owns its lifetime through cancellation.
-        instance: HINSTANCE,
+        pub(super) instance: HINSTANCE,
     }
 
     /// Owns a message-only window, its callback data, and its uniquely registered window class on the UI thread.
     pub struct Timer {
         /// Destroyed synchronously before either the class or borrowed registration can be released.
-        window: HWND,
+        pub(super) window: HWND,
         /// Outlives all window messages, including reentrant destruction during the firing callback.
-        registration: Box<Registration>,
+        pub(super) registration: Box<Registration>,
         /// The class remains registered until the window has been destroyed.
-        class: WindowClass,
+        pub(super) class: WindowClass,
     }
 
     impl WindowClass {
@@ -397,102 +397,103 @@ mod native {
             }
         }
     }
+}
 
-    #[cfg(test)]
-    mod tests {
-        use std::cell::Cell;
-        use std::rc::Rc;
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
 
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, GetClassInfoW, IsWindow, MSG, WM_TIMER, WNDCLASSW,
-        };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetClassInfoW, IsWindow, MSG, WM_TIMER, WNDCLASSW,
+    };
 
-        use super::{State, TIMER_ID, schedule};
+    use super::State;
+    use super::native::{TIMER_ID, Timer, schedule};
 
-        /// Native firing destroys its target before user code, which can immediately create another private timer.
-        #[test]
-        #[expect(
-            unsafe_code,
-            reason = "Delivers a due window timer message synchronously without polling or sleeping"
-        )]
-        fn firing_destroys_window_before_recursive_scheduling() {
-            let calls = Rc::new(Cell::new(0));
-            let previous_window = Rc::new(Cell::new(std::ptr::null_mut()));
-            let state: Rc<State<super::Timer>> = Rc::new_cyclic(|weak: &std::rc::Weak<State<super::Timer>>| {
-                State::new({
-                    let weak = weak.clone();
-                    let calls = Rc::clone(&calls);
-                    let previous_window = Rc::clone(&previous_window);
-                    move || {
-                        // SAFETY: IsWindow accepts the handle of the just-destroyed private timer window.
-                        assert_eq!(unsafe { IsWindow(previous_window.get()) }, 0);
-                        calls.set(calls.get() + 1);
-                        weak.upgrade()
-                            .expect("callback state remains owned")
-                            .schedule_with(schedule)
-                            .expect("recursive native timer schedules");
-                    }
-                })
-            });
-            state.schedule_with(schedule).expect("first native timer schedules");
-            let window = {
-                let mut pending = state.pending.borrow_mut();
-                let (_, timer) = pending.as_mut().expect("timer remains pending");
-                // Make this specific registration due without waiting for time to pass.
-                timer.registration.not_before = std::time::Instant::now();
-                timer.window
-            };
-            previous_window.set(window);
-            let message = MSG {
-                hwnd: window,
-                message: WM_TIMER,
-                wParam: TIMER_ID,
-                lParam: 0,
-                ..MSG::default()
-            };
-            // SAFETY: This models a due ordinary WM_TIMER message for the live timer's private window.
-            unsafe { DispatchMessageW(&raw const message) };
-            assert_eq!(calls.get(), 1);
-            assert!(state.pending.borrow().is_some());
-            state.cancel();
-        }
-
-        /// Pending native messages have no callback pointer and teardown removes their window and class.
-        #[test]
-        #[expect(
-            unsafe_code,
-            reason = "Tests the owned native window's destruction without waiting or polling"
-        )]
-        fn cancellation_removes_window_and_class_before_stale_dispatch() {
-            let calls = Rc::new(Cell::new(0));
-            let state = Rc::new(State::new({
+    /// Native firing destroys its target before user code, which can immediately create another private timer.
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "Delivers a due window timer message synchronously without polling or sleeping"
+    )]
+    fn firing_destroys_window_before_recursive_scheduling() {
+        let calls = Rc::new(Cell::new(0));
+        let previous_window = Rc::new(Cell::new(std::ptr::null_mut()));
+        let state: Rc<State<Timer>> = Rc::new_cyclic(|weak: &std::rc::Weak<State<Timer>>| {
+            State::new({
+                let weak = weak.clone();
                 let calls = Rc::clone(&calls);
-                move || calls.set(calls.get() + 1)
-            }));
-            let timer = schedule(Rc::downgrade(&state), 1).expect("private timer schedules");
-            let window = timer.window;
-            let name = timer.class.name.clone();
-            let instance = timer.class.instance;
-            let queued_message = MSG {
-                hwnd: window,
-                message: WM_TIMER,
-                wParam: TIMER_ID,
-                lParam: 0,
-                ..MSG::default()
-            };
-            // SAFETY: The timer owns this live window on the current thread.
-            assert_ne!(unsafe { IsWindow(window) }, 0);
-            drop(timer);
-            // SAFETY: IsWindow accepts stale handles and GetClassInfoW receives an owned terminated class name.
-            assert_eq!(unsafe { IsWindow(window) }, 0);
-            let mut class = WNDCLASSW::default();
-            // SAFETY: The output class structure and terminated input name are valid for this synchronous query.
-            assert_eq!(unsafe { GetClassInfoW(instance, name.as_ptr(), &raw mut class) }, 0);
-            // SAFETY: This faithfully models an already retrieved ordinary timer message, with no TIMERPROC.
-            // DispatchMessageW handles its destroyed target without calling the unregistered plugin procedure.
-            unsafe { DispatchMessageW(&raw const queued_message) };
-            assert_eq!(calls.get(), 0);
-        }
+                let previous_window = Rc::clone(&previous_window);
+                move || {
+                    // SAFETY: IsWindow accepts the handle of the just-destroyed private timer window.
+                    assert_eq!(unsafe { IsWindow(previous_window.get()) }, 0);
+                    calls.set(calls.get() + 1);
+                    weak.upgrade()
+                        .expect("callback state remains owned")
+                        .schedule_with(schedule)
+                        .expect("recursive native timer schedules");
+                }
+            })
+        });
+        state.schedule_with(schedule).expect("first native timer schedules");
+        let window = {
+            let mut pending = state.pending.borrow_mut();
+            let (_, timer) = pending.as_mut().expect("timer remains pending");
+            // Make this specific registration due without waiting for time to pass.
+            timer.registration.not_before = std::time::Instant::now();
+            timer.window
+        };
+        previous_window.set(window);
+        let message = MSG {
+            hwnd: window,
+            message: WM_TIMER,
+            wParam: TIMER_ID,
+            lParam: 0,
+            ..MSG::default()
+        };
+        // SAFETY: This models a due ordinary WM_TIMER message for the live timer's private window.
+        unsafe { DispatchMessageW(&raw const message) };
+        assert_eq!(calls.get(), 1);
+        assert!(state.pending.borrow().is_some());
+        state.cancel();
+    }
+
+    /// Pending native messages have no callback pointer and teardown removes their window and class.
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "Tests the owned native window's destruction without waiting or polling"
+    )]
+    fn cancellation_removes_window_and_class_before_stale_dispatch() {
+        let calls = Rc::new(Cell::new(0));
+        let state = Rc::new(State::new({
+            let calls = Rc::clone(&calls);
+            move || calls.set(calls.get() + 1)
+        }));
+        let timer = schedule(Rc::downgrade(&state), 1).expect("private timer schedules");
+        let window = timer.window;
+        let name = timer.class.name.clone();
+        let instance = timer.class.instance;
+        let queued_message = MSG {
+            hwnd: window,
+            message: WM_TIMER,
+            wParam: TIMER_ID,
+            lParam: 0,
+            ..MSG::default()
+        };
+        // SAFETY: The timer owns this live window on the current thread.
+        assert_ne!(unsafe { IsWindow(window) }, 0);
+        drop(timer);
+        // SAFETY: IsWindow accepts stale handles and GetClassInfoW receives an owned terminated class name.
+        assert_eq!(unsafe { IsWindow(window) }, 0);
+        let mut class = WNDCLASSW::default();
+        // SAFETY: The output class structure and terminated input name are valid for this synchronous query.
+        assert_eq!(unsafe { GetClassInfoW(instance, name.as_ptr(), &raw mut class) }, 0);
+        // SAFETY: This faithfully models an already retrieved ordinary timer message, with no TIMERPROC.
+        // DispatchMessageW handles its destroyed target without calling the unregistered plugin procedure.
+        unsafe { DispatchMessageW(&raw const queued_message) };
+        assert_eq!(calls.get(), 0);
     }
 }
 
