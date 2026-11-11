@@ -37,7 +37,7 @@ parse_arguments() {
 format_json_file() {
     local check="$1" file="$2" temporary
     temporary=$(mktemp)
-    if ! jq --indent 2 . "$file" > "$temporary"; then
+    if ! jq --binary --indent 2 . "$file" > "$temporary"; then
         rm -- "$temporary"
         print_error_and_exit "Failed to parse JSON: $file"
     fi

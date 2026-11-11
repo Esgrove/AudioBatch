@@ -167,7 +167,7 @@ def main() -> None:
         message = "jq not found in path, it formats the expected JSON like format.sh"
         raise SystemExit(message)
     text = subprocess.run(  # noqa: S603
-        [jq, "--indent", "2", "."],
+        [jq, "--binary", "--indent", "2", "."],
         input=json.dumps(expected(), indent=2, allow_nan=False),
         text=True,
         capture_output=True,

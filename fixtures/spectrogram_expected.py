@@ -230,7 +230,7 @@ def jq_formatted(text: str) -> bytes:
     jq = shutil.which("jq")
     if jq is None:
         sys.exit("jq not found in path, it formats the expected JSON like format.sh")
-    command = [jq, "--indent", "2", "."]
+    command = [jq, "--binary", "--indent", "2", "."]
     return subprocess.run(command, input=text.encode(), capture_output=True, check=True).stdout  # noqa: S603
 
 
