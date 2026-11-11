@@ -171,7 +171,8 @@ namespace esgrove::image_control::realtime
 			return storage.data();
 		}
 
-		/// Loads and registers only the explicit factory. No installation, registry service, or component discovery is used.
+		/// Loads and registers only the explicit factory.
+		/// No installation, registry service, or component discovery is used.
 		/// A successful registration retains its CFBundle for process life, including exceptional instance teardown.
 		AudioComponent loadBundle(const std::filesystem::path& path)
 		{
@@ -486,7 +487,8 @@ namespace esgrove::image_control::realtime
 			}
 		}
 
-		/// Delivers an audible gain change and verifies settled samples, rather than trusting wrapper-only parameter readback.
+		/// Delivers an audible gain change and verifies settled samples,
+		/// rather than trusting wrapper-only parameter readback.
 		void renderAutomation(AudioUnit unit, Input& input)
 		{
 			constexpr float gainDb = -6.0F;
@@ -536,8 +538,10 @@ namespace esgrove::image_control::realtime
 			require(checked == input.channels * (SIGNAL_FRAMES - settlingFrames), "Incomplete settled automated audio check");
 		}
 
-		/// Seeds nonzero delay history on the setup thread solely to isolate reset's first operation on a fresh callback thread.
-		/// This is not a cold-render probe. Cold render is independently marked in au-cold-automation without processing warmup.
+		/// Seeds nonzero delay history on the setup thread solely to
+		/// isolate reset's first operation on a fresh callback thread.
+		/// This is not a cold-render probe.
+		/// Cold render is independently marked in au-cold-automation without processing warmup.
 		void seedResetHistory(AudioUnit unit, Input& input)
 		{
 			std::array<std::array<float, BLOCK_FRAMES>, 2> output{};
@@ -553,7 +557,8 @@ namespace esgrove::image_control::realtime
 			);
 		}
 
-		/// Audits mono and stereo in separate native instances, with setup and teardown serialized off callback threads.
+		/// Audits mono and stereo in separate native instances,
+		/// with setup and teardown serialized off callback threads.
 		void runNative(AudioComponent component, bool reset)
 		{
 			for (UInt32 channels = 1; channels <= 2; ++channels)

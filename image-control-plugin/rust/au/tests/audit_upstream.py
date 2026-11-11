@@ -2,7 +2,8 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Qualify pinned upstream AU lifecycle limitations without changing third-party code.
+"""
+Qualify pinned upstream AU lifecycle limitations without changing third-party code.
 
 This is an executable source audit, not a realtime-safety or behavioral test.
 Expected BLOCKED findings remain blockers even when every source assertion passes.
