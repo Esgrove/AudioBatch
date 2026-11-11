@@ -60,7 +60,10 @@ Capture enablement and the exclusive consumer claim are separate controls.
 [`iced_bridge.rs`](crates/plugin/src/iced_bridge.rs) attaches a baseview child to the host-owned `NSView` or `HWND`.
 It does not create an unrelated standalone application window or replace the host's event loop.
 Ordinary parameter gestures call the retained host handler only on the UI thread,
-with handler locks released before invoking host code.
+with handler locks released before invoking host code, including COM reference-count methods.
+Handler slots retain an `Arc` around the COM reference, so cloning under the lock cannot reenter a host `AddRef`.
+UI-only `IComponentHandler2::setDirty` notifications cover persistent display choices and accepted size changes
+without inventing sound-parameter gestures.
 
 [`host/view_deferred.rs`](crates/plugin/src/host/view_deferred.rs) coalesces host geometry changes.
 Cancellable native UI work applies them outside active Iced update borrows.
@@ -102,8 +105,15 @@ Bypass supplies neutral effective imaging controls and disables Delta through th
 without changing saved controls, FIR latency, or the independent final Mono choice.
 
 Gain, Width, Recover, Pan, Solo, output, Delta, and Mono transitions use 20 ms linear ramps.
+Their length is the floor of the double-precision sample-rate/time product, matching the native reference.
+Output trim and Delta advance while computing the next partition, alongside the band controls.
+Mono remains a final fold on returned samples. Unity compatibility Width never adds a redundant Mid/Side round trip.
 Preparation and reset settle current saved targets before the first audible FIR pre-ring.
 Host automation is block-sampled, with band processing advancing at partition boundaries.
+Bus arrangements may arrive before or after setup while inactive, and immediately update the prepared DSP channel mode.
+Exact zero-dB Output accepts both the native double-normalized value and its exact float-normalized host representation,
+without epsilon snapping nearby nonneutral automation.
+The editor projects crossover boundaries through the same ordering helper as audio processing.
 
 ### Transparency, latency, and replacement
 
@@ -255,13 +265,18 @@ Rejected resize requests do not change it.
 Restoring state affects subsequent views without synchronously resizing an open editor.
 Unrelated new instances retain the fixed default size.
 Live analyzer history, particles, GPU energy, correlation history, Link, and section layout choices are not serialized.
+Successful sound restores advance a generation observed by open editors.
+Pending numeric drafts and gesture participants are cancelled, with generation checks after every reentrant host callback.
+A continuing UI operation cannot overwrite a newer recall, including a restore invoked by `beginEdit` or `performEdit`.
 The independent state format does not imply C++ project migration.
 
 [`editor.rs`](crates/plugin/src/editor.rs) composes ordinary controls and polls atomics and completed analysis.
 Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
 Vector icons, hover disclosures, a separate controls margin, and compact band values replace text-symbol approximations.
 Settings appears as a modal callout without reallocating the plot or moving the parameter controls.
-Background numeric fields are excluded from focus operations and keyboard input while it is open.
+The complete background widget tree is excluded from focus operations and pointer, wheel, keyboard, and touch input
+while it is open.
+Ordinary Iced sliders synthesize their own release on window focus loss, clearing native drag capture before return.
 Pre/Post and appearance settings are functional without creating host sound-parameter gestures.
 Embedded Regular, SemiBold, Bold, and Mono faces provide deterministic typography with explicit Iced line metrics.
 Band headings and value fields share consistent insets and alignment, and Solo artwork retains its larger click target.
@@ -283,6 +298,14 @@ queue overflow, stale generations, unsupported-rate recovery, and bounded shutdo
 
 Plugin tests exercise actual in-process and packaged VST3 interfaces,
 transactional state validation, stable metadata, automation, native UI events, and editor close/reopen.
+The separate C++ `ImageControlParity` host loads both packaged plugins with explicit plain-unit mappings,
+seeded signals, analytical expectations, full latency/tail drains, and a fixed 240-case offline matrix.
+Absolute limits are `1e-5` FS peak residual and `1e-6` FS RMS, while exact neutral and null contracts stay exact.
+Recover compares the common 0–100% domain, explicitly recording C++'s additional 200% capability.
+An opt-in Rust integration tier and `parity.sh` require complete counterpart selection
+and preserve per-case JSON reports.
+Criterion and hyperfine measure preallocated DSP and actual packaged processing separately from functional validation.
+
 Native GPU tests execute real particle, fade, bloom, generation-clear, and resize passes with independent histories.
 They establish resource and pass contracts, not screenshot or pixel-golden equivalence.
 

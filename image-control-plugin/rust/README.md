@@ -17,9 +17,11 @@ The C++ plugin remains the supported implementation.
 - Background crossover-kernel design for realtime use and synchronous deterministic design for offline rendering.
 - Six-tier spatial spectral analysis with frequency reassignment, stereo position, and phase coherence.
 - GPU particles, persistent energy, five-level bloom, and history-preserving resize, with frequency or phase coloring.
-- C++-aligned header and band geometry, compact band controls, modal display settings, and an embedded resize grip.
+- Consistent Iced controls and embedded font weights,
+  editable numeric values, compact bands, and modal display settings.
+- An embedded resize grip with host-approved logical window sizes retained across close/reopen and saved projects.
 - Functional Pre/Post analysis, persistence and contrast settings, and processed-band correlation meters.
-- Thirty-one stable automatable sound parameters and independent versioned host state containing display preferences.
+- Thirty-one stable automatable sound parameters and independent versioned state for sound, display, and window geometry.
 
 At 48 kHz, processing latency is 4352 samples and the conservative tail beyond compensation is 4096 samples.
 Long bass-analysis windows affect display responsiveness, not the reported audio latency.
@@ -59,7 +61,8 @@ Build-tree validation can build the repository-pinned pluginval when it is not o
 
 The default bundle is `rust/target/bundled/ImageControl RS.vst3` relative to the repository root,
 not this directory's ignored `target/`.
-`CARGO_TARGET_DIR` overrides the artifact location.
+`CARGO_TARGET_DIR` overrides the artifact location, resolved from the invocation directory before scripts change directories.
+Explicit external target roots are allowed, with canonical path checks rejecting symlink escapes.
 Debug and Release packaging use the same bundle path, so the last build selects its contents.
 `./test.sh` requires an existing build-tree bundle.
 Every script provides `-h` and `--help`.
@@ -67,6 +70,37 @@ Every script provides `-h` and `--help`.
 The packaged realtime checks require macOS, nightly Rust, uv, jq, and a matching Homebrew LLVM runtime.
 They verify allocation and mutex detector controls separately from required-clean callback cases.
 Passing these exercised scenarios does not establish audio deadlines or arbitrary host compatibility.
+
+## Cross-implementation tests and benchmarks
+
+The packaged parity host compares both actual VST3s with deterministic signals and independent neutral,
+gain, pan, mono, latency, and tail expectations.
+It uses plain-unit parameter mappings, not shared normalized IDs or project-state migration.
+
+```shell
+# Build C++ once with tests, then its independent packaged-plugin comparison host.
+../build.sh --test
+cmake --build ../cmake-build-release --config Release --target ImageControlParity
+./build.sh
+./parity.sh --cpp "$PWD/../cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3" \
+    --executable "$PWD/../cmake-build-release/ImageControlParity_artefacts/Release/ImageControlParity"
+
+# Preallocated production DSP/analysis benchmarks, with preparation measured separately.
+cargo bench -p image-control-dsp --bench dsp -- --quick
+
+# Complete-process hyperfine runs with separate warmed-callback diagnostics.
+./benchmark.sh --case recover --frames 960000 --runs 5 --warmup 1
+```
+
+Use the `.exe` parity host on Windows.
+`parity.sh` rejects incomplete setup rather than skipping a missing counterpart.
+The Rust integration test is optional without counterpart selection, and CI supplies both build-tree bundles.
+Peak residual must stay below `1e-5` full scale and RMS residual below `1e-6`, with exact neutral checks retained.
+Reports live under the shared target's `image-control-parity/` directory.
+Benchmark artifacts include exact binary hashes, compiler/source identity, workload, checksums, and machine metadata.
+Run timings with other builds idle. There is no implied speedup without a matched baseline.
+See [the evaluation](docs/rust-evaluation.md#cross-implementation-and-performance-evidence) for measured scope
+and limitations.
 
 ## Install
 
@@ -92,6 +126,8 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
   Automation is sampled per host block, not sample-accurate within a block.
 - Audio preparation supports actual rates from 1 through 2,822,400 Hz.
   Spatial analysis supports 8 through 768 kHz, reporting unavailable outside that range without disabling audio.
+- Recover retains its independent normalized 0–100% range. C++ also supports 200%.
+  Shared tests cover the common plain-unit range without clamping or changing existing RS automation semantics.
 - Undo/Redo, A/B, and presets remain visibly unavailable.
   Link and layout choices are local editor state, not part of the persisted display-preference snapshot.
 - Full Iced device-loss recovery, native accessibility qualification, safe arbitrary module unloading,

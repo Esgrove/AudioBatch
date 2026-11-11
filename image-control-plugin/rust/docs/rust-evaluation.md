@@ -1,6 +1,6 @@
 # Rust ImageControl evaluation
 
-Source inspection date: **10 November 2026**.
+Source inspection date: **11 November 2026**.
 This is a feasibility and dependency evaluation for macOS and Windows, not a production rewrite approval.
 The C++ plugin remains the supported implementation.
 The Rust experiment includes four-band FIR processing and a native GPU editor, but not C++ project-state compatibility.
@@ -38,8 +38,8 @@ No framework, graphics backend, or permissive license by itself establishes prod
 ## Scope, evidence, and version baseline
 
 Repository sources inspected include [the architecture](../ARCHITECTURE.md),
-[parameter definitions](../src/Parameters.h), [processing state](../src/ProcessingState.cpp),
-[preset storage](../src/UserPresets.cpp), and [Rust workspace dependencies](../../Cargo.toml).
+[parameter definitions](../../src/Parameters.h), [processing state](../../src/ProcessingState.cpp),
+[preset storage](../../src/UserPresets.cpp), and [Rust workspace dependencies](../../../Cargo.toml).
 The application workspace currently declares Rust 1.99, GPUI Kit 0.9.1, GPUI snapshots 0.3.12,
 `vst3` 0.3.0, `realfft` 3.5.1, and `rtrb` 0.4.1.
 Its lockfile resolves RustFFT 6.4.1 and wgpu 30.0.1.
@@ -369,9 +369,10 @@ The isolated spike deliberately avoids that compatibility promise.
 There are three different meanings of reuse:
 
 - **Existing crates as development/test dependencies.**
-  [`vst3-host`](../../rust/crates/vst3-host/Cargo.toml) can exercise processing and native editor callbacks.
-  [`audiobatch-test-plugin`](../../rust/crates/test-plugin/Cargo.toml) demonstrates raw COM factories and test bundling.
-  [`test-fixtures`](../../rust/crates/test-fixtures/Cargo.toml) provides fixture discovery and null-test support.
+  [`vst3-host`](../../../rust/crates/vst3-host/Cargo.toml) can exercise processing and native editor callbacks.
+  [`audiobatch-test-plugin`](../../../rust/crates/test-plugin/Cargo.toml) demonstrates raw COM factories
+  and test bundling.
+  [`test-fixtures`](../../../rust/crates/test-fixtures/Cargo.toml) provides fixture discovery and null-test support.
   These are useful test infrastructure, not a complete production plugin SDK.
   Do not link a VST3 host or AudioBatch's application GUI into the production effect merely to reuse helpers.
 - **Concepts and narrow algorithms.**
@@ -391,8 +392,8 @@ Keep plugin identities and package naming independent of AudioBatch.
 
 ## 9. Licensing and commercial distribution
 
-The repository's [top-level LICENSE](../../LICENSE) is **GPL version 3**,
-and the inspected Rust crate manifests inherit `license-file = "../LICENSE"` through workspace metadata.
+The repository's [top-level LICENSE](../../../LICENSE) is **GPL version 3**,
+and the Rust crate manifests inherit `license-file = "LICENSE"` from the repository-root workspace metadata.
 Moving or translating existing repository code into a Rust effect does not automatically make that code permissive.
 Nor does putting it in a separate workspace remove copyright or distribution obligations.
 The existing plugin also remains subject to its actual JUCE and third-party licensing.
@@ -517,8 +518,8 @@ The spike is valuable precisely because it can reject an unsuitable embedding pa
 
 ## Current four-band implementation and Iced frontend
 
-The primary crate is [`image-control-plugin-rs`](../rust/crates/plugin/src/lib.rs), using our own VST3 layer and Iced.
-The DSP, plugin frontend, and bundler are members of the [repository-root Cargo workspace](../../Cargo.toml).
+The primary crate is [`image-control-plugin-rs`](../crates/plugin/src/lib.rs), using our own VST3 layer and Iced.
+The DSP, plugin frontend, and bundler are members of the [repository-root Cargo workspace](../../../Cargo.toml).
 They reuse shared dependency versions, lints, formatting, and the root lockfile.
 Iced/baseview and the independent bundler remain plugin-local dependencies in their own package manifests.
 Nice-plug and its adapter/bundler are absent from the root lockfile and primary dependency graph.
@@ -562,8 +563,73 @@ No dependencies or GUI code are imported from AudioBatch's application services 
 - The retained editor follows C++ geometry: compact header with Output, optional processing toolbar,
   dominant GPU plot with draggable crossover markers and axes, resizable divider, correlation row, and four band strips.
   Mid, Side, Width, Recover, Pan, Solo, Link, and their host gestures are functional.
-  Settings, Pre/Post selection, Undo/Redo, A/B, and preset commands remain visibly disabled rather than simulating support.
-  Correlation displays unavailable placeholders, not invented readings.
+  Settings and Pre/Post selection update real display preferences without creating sound-parameter gestures.
+  Correlation displays measured processed-band values with explicit stale/silent unavailability.
+  Expanded numeric fields use native Iced editing with validated commits,
+  modal focus exclusion, and balanced Link gestures.
+  Exact Regular, SemiBold, Bold, and Mono faces are embedded
+  rather than relying on synthetic weights or system fallback.
+  Accepted logical window dimensions survive view recreation and saved-state restoration.
+  State version 3 loads versions 1 and 2 with fixed legacy geometry defaults.
+  Undo/Redo, A/B, and preset commands remain visibly disabled rather than simulating support.
+
+### Cross-implementation and performance evidence
+
+`ImageControlParity` is a separate JUCE console host that loads two explicit build-tree VST3 bundles.
+It neither links either implementation's DSP nor searches installed plugins.
+Parameter titles are mapped to independently specified plain-unit domains, and readback validates accepted values.
+The deterministic signal combines seeded broadband noise, multitone content, boundary impulses, silence,
+anti-phase content, polarity inversion, and swapped channels.
+The 240-case matrix covers mono/stereo, 44.1/48/96/192 kHz, 32/256/512-sample and irregular blocks,
+static band controls, custom crossovers, automation, Solo/Delta, bypass, latency, and complete tail drains.
+Independent exact delayed-neutral and silent-Delta expectations accompany analytical gain, pan, and Mono checks.
+
+Acceptance is absolute, with digital full scale equal to one: peak residual at most `1e-5` FS (-100 dBFS),
+and RMS residual at most `1e-6` FS (-120 dBFS).
+These conservative low residuals are below ordinary audible differences for the bounded test signals.
+They are not a universal psychoacoustic guarantee or permission to weaken exact-neutral contracts.
+On arm64 macOS, the reviewed Release bundles passed all 240 cases on 11 November 2026.
+The largest peak residual was `1.043081283569336e-7` FS, in 192 kHz anti-phase recovery.
+The largest RMS residual was `1.493745398325301e-8` FS, in 44.1 kHz anti-phase recovery.
+Reports retain input checksums, actual parameter readbacks, individual oracle errors, and the worst residual location.
+Every active render also checks the last two post-support partitions independently against silence at `1e-6` FS.
+A mutation control proves matching persistent ringing cannot pass merely because both outputs null together.
+Native Windows measurements remain a separate CI/runtime gate.
+
+Recover is an explicit capability difference: RS retains 0–100% to preserve its normalized saved automation,
+while C++ supports 0–200%.
+Parity compares 0–100% plain values and records the additional C++ endpoint as unsupported by RS.
+It never substitutes a clamped 100% render for a 200% request.
+State identities and formats remain independent.
+
+Criterion benchmarks exercise the production Imager over fixed and irregular host blocks,
+with preparation separated from preallocated warmed callback work, plus spatial analysis throughput.
+The hyperfine runner measures complete packaged-plugin process wall time and separately reports warmed callback time,
+finite output counts, energy, and deterministic checksums.
+Complete-process time includes module loading, preparation, warmup, copies, checks, and teardown.
+Neither a checksum nor a timing is a correctness oracle, and neither proves a realtime deadline.
+Machine, compiler, source, and exact binary identities accompany every packaged benchmark artifact.
+Only matched workload/build comparisons establish performance changes.
+
+An idle-machine smoke measurement on Apple M3 Max, arm64 macOS 27.2.1, Rust 1.99.1/LLVM 23.1.1,
+with the repository Release/native-CPU configuration on 11 November 2026 recorded:
+
+- Criterion `--quick`, 4096 frames per iteration, irregular blocks: 48 kHz neutral `69.934 µs`,
+  48 kHz Recover `679.26 µs`, and 192 kHz Recover `2.0590 ms` point estimates.
+- Six-tier 48 kHz analyzer throughput: `1.3365 ms` per 4096 input frames.
+- Hyperfine, 960000 frames at 48 kHz, irregular blocks, five runs after one warmup:
+  Recover `214.2 ± 8.0 ms`, neutral `81.7 ± 10.5 ms`, and mono input `102.7 ± 3.9 ms` complete-process wall time.
+  The Recover run's separate last-run warmed callback total was `160.26 ms` across 4888 process calls.
+
+These are representative smoke observations, not a full statistical baseline or a C++ speed comparison.
+Criterion quick-mode confidence and occasional process-startup outliers limit their precision.
+The three retained packaged artifact sets are timestamped 03:00:14, 03:00:42, and 03:00:44
+UTC under this directory's ignored `target/benchmark/`.
+Criterion estimates remain in the shared `rust/target/criterion/` directory relative to the repository root.
+The packaged library SHA-256 was `5b007706b68a4d723a689c00bb27af4fee93f26f95185dffebd4f79a793dcf0e`.
+The benchmark host SHA-256 was `a12891288310240d3a79782774d5c54342f133e0303525fcaa309f82f090044c`.
+Both binaries were built with Release commands before the `--no-build` measurements.
+Artifacts explicitly record that they were reused rather than claiming the benchmark runner built them.
 
 ### Evidence and boundaries
 
@@ -574,10 +640,13 @@ Actual packaged own-wrapper tests verify a bit-exact delayed neutral impulse, re
 band automation, all-band mute recall, missing-state defaults, and transactional malformed-state rejection.
 The editor-enabled own VST3 passes pluginval strictness 5 in Debug and Release, strictness 10 in Release,
 and repeated native two-editor open/close/reopen.
-An x86-64 Windows MSVC `cargo check --all-targets` also passes.
-Windows execution and graphics remain unverified.
-Production Iced slider and crossover tests drive pointer/key events
-and verify balanced host gestures and marker constraints.
+An x86-64 Windows MSVC production `--lib --bins` cross-check passes after the review fixes.
+The expanded all-target check is blocked locally by Criterion's `alloca` C dependency needing Windows SDK headers.
+Native Windows CI compiles those benchmark targets with its MSVC toolchain.
+Windows execution and graphics remain unverified until that native job runs.
+Production Iced slider, crossover, and numeric-input tests drive pointer, key, clipboard, focus, and traversal events.
+They verify balanced host gestures, marker constraints, modal focus exclusion, draft cancellation,
+unchanged-text automation protection, and reentrant-removal rejection before publication.
 A native wgpu test executes particle, fade, bloom, resize, and independent-view GPU histories with actual worker observations.
 The selected native graph contains wgpu 27.0.1 and no egui or Iced software renderer.
 
@@ -600,6 +669,8 @@ A callback-depth guard keeps nested host run loops from applying geometry while 
 The native `editor_reentry` example drives actual pointer events
 and reenters `onSize` and scale callbacks from both `beginEdit` and `performEdit`,
 then checks deferred child geometry, balanced gestures, and no late callbacks.
+It also verifies grip and host-border resizing, host rejection, per-component reopen geometry,
+and saved-state restoration into a fresh component.
 It also removes the view from inside `performEdit` and a native frame-change notification,
 requiring the child to detach before each callback returns and accepting recursive removal without another timer turn.
 These native reentrant-removal results apply to macOS only.
