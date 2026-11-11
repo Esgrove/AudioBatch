@@ -12,8 +12,16 @@ use crate::record::{AnalysisError, AnalysisRecord, AnalysisStatus, same_custom_g
 use crate::tags::SeratoOverviewState;
 use crate::test_helpers::{analyze_fixture_copy, temporary_cache};
 
+/// Independent cache payloads compared byte for byte across measurement refills.
+#[derive(Debug, PartialEq, Eq)]
+struct UnchangedBlobs {
+    loudness: Vec<u8>,
+    waveform: Vec<u8>,
+    serato: Vec<u8>,
+}
+
 /// Reads the independent loudness, waveform, and Serato blobs without interpreting or rewriting them.
-fn unchanged_blobs(cache: &AnalysisCache, path: &Path) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn unchanged_blobs(cache: &AnalysisCache, path: &Path) -> UnchangedBlobs {
     cache
         .with_connection(|connection| {
             Ok(connection.query_row(
@@ -23,7 +31,13 @@ fn unchanged_blobs(cache: &AnalysisCache, path: &Path) -> (Vec<u8>, Vec<u8>, Vec
                  JOIN rust_waveform_cache AS preview ON preview.file_path = analysis.file_path
                  WHERE analysis.file_path = ?1",
                 params![path_key(path)],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok(UnchangedBlobs {
+                        loudness: row.get(0)?,
+                        waveform: row.get(1)?,
+                        serato: row.get(2)?,
+                    })
+                },
             )?)
         })
         .expect("reads unchanged blobs")

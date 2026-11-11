@@ -37,6 +37,18 @@ const PLATFORM_DIRECTORY: Option<&str> = if cfg!(all(target_os = "windows", targ
     None
 };
 
+/// Parameters of one diagnostic signal, preserving the corpus order and exact duration.
+pub struct DiagnosticSignal {
+    /// Generated waveform family.
+    pub kind: SignalKind,
+    /// Sample rate in hertz.
+    pub sample_rate: u32,
+    /// Number of generated channels.
+    pub channels: usize,
+    /// Signal duration in seconds.
+    pub seconds: f64,
+}
+
 /// Builds the text of one golden file, a line per value.
 #[derive(Default)]
 pub struct GoldenText {
@@ -301,14 +313,21 @@ pub fn write_diagnostic_report(name: &str, text: &GoldenText) {
 }
 
 /// The two differing DC tails and the 192 kHz channel-count corpus, without interpolation.
-pub fn diagnostic_signals() -> impl Iterator<Item = (SignalKind, u32, usize, f64)> {
-    [(SignalKind::Dc, 88_200, 2, 3.1), (SignalKind::Dc, 192_000, 2, 3.1)]
+pub fn diagnostic_signals() -> impl Iterator<Item = DiagnosticSignal> {
+    [88_200, 192_000]
         .into_iter()
-        .chain(
-            [1, 2, 3, 4, 6, 8]
-                .into_iter()
-                .map(|channels| (SignalKind::MusicLike, 192_000, channels, 0.45)),
-        )
+        .map(|sample_rate| DiagnosticSignal {
+            kind: SignalKind::Dc,
+            sample_rate,
+            channels: 2,
+            seconds: 3.1,
+        })
+        .chain([1, 2, 3, 4, 6, 8].into_iter().map(|channels| DiagnosticSignal {
+            kind: SignalKind::MusicLike,
+            sample_rate: 192_000,
+            channels,
+            seconds: 0.45,
+        }))
 }
 
 #[cfg(test)]

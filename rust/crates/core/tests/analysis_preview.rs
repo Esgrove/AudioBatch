@@ -272,7 +272,7 @@ mod test_artifact_persistence {
         let path = test_fixtures::fixture("sine_stereo_44100_16.wav");
         let normalized_path = normalize_path(&path);
         coordinator.select_preview(Some(&path), 7);
-        let (_, receiver) = coordinator.start(AnalysisOptions {
+        let audiobatch_core::coordinator::AnalysisRun { receiver, .. } = coordinator.start(AnalysisOptions {
             input_paths: vec![path],
             refresh: true,
             ..AnalysisOptions::default()

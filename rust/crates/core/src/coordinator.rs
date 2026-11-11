@@ -137,6 +137,14 @@ struct RunContext {
     preview: Arc<Mutex<PreviewSlot>>,
 }
 
+/// Started analysis run and the event stream that belongs to it.
+pub struct AnalysisRun {
+    /// Generation used to reject events from superseded runs.
+    pub run_id: u64,
+    /// Events until all jobs finish or the caller stops listening.
+    pub receiver: Receiver<AnalysisEvent>,
+}
+
 impl AnalysisEvent {
     /// Returns the run the event belongs to.
     #[must_use]
@@ -240,7 +248,10 @@ impl AnalysisCoordinator {
     pub fn select_preview(&self, path: Option<&Path>, generation: u64) {
         let selected = path.map(normalize_path).and_then(|path| {
             let source_identity = SourceIdentity::capture(&path).ok()?;
-            let (file_size, modified_time_ms) = file_identity(&path)?;
+            let crate::record::FileIdentity {
+                file_size,
+                modified_time_ms,
+            } = file_identity(&path)?;
             Some(PreviewSelection {
                 path,
                 generation,
@@ -281,7 +292,7 @@ impl AnalysisCoordinator {
     /// so the caller never waits for the file system.
     /// The receiver disconnects once every job of the run has finished.
     #[must_use]
-    pub fn start(&self, options: AnalysisOptions) -> (u64, Receiver<AnalysisEvent>) {
+    pub fn start(&self, options: AnalysisOptions) -> AnalysisRun {
         let run_id = self.current_run.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut slot) = self.preview.lock() {
             slot.latest = None;
@@ -296,7 +307,7 @@ impl AnalysisCoordinator {
         });
         let pool = Arc::clone(&self.pool);
         self.pool.spawn(move || plan_run(&pool, &context, &options));
-        (run_id, receiver)
+        AnalysisRun { run_id, receiver }
     }
 
     /// Cancels the current run. Jobs that are already decoding stop at their next packet.
@@ -317,7 +328,7 @@ impl AnalysisCoordinator {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn analyze_blocking(&self, options: AnalysisOptions) -> Vec<AnalysisRecord> {
-        let (_, receiver) = self.start(options);
+        let AnalysisRun { receiver, .. } = self.start(options);
         let mut records = Vec::new();
         for event in receiver {
             match event {
@@ -666,7 +677,7 @@ mod test_previews {
         harness.progress.last_preview = None;
         harness.publish();
         assert!(harness.coordinator.take_preview().is_none());
-        let (_, receiver) = harness.coordinator.start(AnalysisOptions::default());
+        let AnalysisRun { receiver, .. } = harness.coordinator.start(AnalysisOptions::default());
         harness.publish();
         assert!(harness.coordinator.take_preview().is_none());
         loop {
@@ -798,7 +809,7 @@ mod test_coordinator {
         let directory = TempDir::new().expect("temp dir");
         let folder = fixture_folder(&directory);
         let coordinator = coordinator(&directory);
-        let (run_id, receiver) = coordinator.start(options(&folder, false));
+        let AnalysisRun { run_id, receiver } = coordinator.start(options(&folder, false));
         let events: Vec<AnalysisEvent> = receiver.iter().collect();
         assert!(events.iter().all(|event| event.run_id() == run_id));
         assert!(matches!(
@@ -822,7 +833,7 @@ mod test_coordinator {
         let empty = directory.path().join("empty");
         std::fs::create_dir_all(&empty).expect("create folder");
         let coordinator = coordinator(&directory);
-        let (_, receiver) = coordinator.start(options(&empty, false));
+        let AnalysisRun { receiver, .. } = coordinator.start(options(&empty, false));
         let events: Vec<AnalysisEvent> = receiver.iter().collect();
         assert!(matches!(
             events.last(),
@@ -836,7 +847,7 @@ mod test_coordinator {
         let folder = fixture_folder(&directory);
         let coordinator = coordinator(&directory);
         let release = block_pool(&coordinator.pool);
-        let (run_id, receiver) = coordinator.start(options(&folder, false));
+        let AnalysisRun { run_id, receiver } = coordinator.start(options(&folder, false));
         coordinator.cancel();
         drop(release);
         assert!(!coordinator.is_current(run_id));
@@ -853,8 +864,14 @@ mod test_coordinator {
         let folder = fixture_folder(&directory);
         let coordinator = coordinator(&directory);
         let release = block_pool(&coordinator.pool);
-        let (first_id, first) = coordinator.start(options(&folder, false));
-        let (second_id, second) = coordinator.start(options(&folder, false));
+        let AnalysisRun {
+            run_id: first_id,
+            receiver: first,
+        } = coordinator.start(options(&folder, false));
+        let AnalysisRun {
+            run_id: second_id,
+            receiver: second,
+        } = coordinator.start(options(&folder, false));
         drop(release);
         assert!(!coordinator.is_current(first_id));
         assert!(coordinator.is_current(second_id));

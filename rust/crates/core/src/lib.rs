@@ -46,10 +46,12 @@ pub mod waveform;
 
 pub use analysis::analyze_file;
 pub use cache::AnalysisCache;
-pub use coordinator::{AnalysisCoordinator, AnalysisEvent};
-pub use normalize_coordinator::{NormalizeCoordinator, NormalizeEvent};
+pub use coordinator::{AnalysisCoordinator, AnalysisEvent, AnalysisRun};
+pub use normalize_coordinator::{NormalizeCoordinator, NormalizeEvent, NormalizeRun};
 pub use operation::{OperationOutcome, OperationResult};
-pub use record::{AnalysisOptions, AnalysisRecord, AnalysisStatus, MeasurementProducer, ShortTermLoudnessHistory};
+pub use record::{
+    AnalysisOptions, AnalysisRecord, AnalysisStatus, FileIdentity, MeasurementProducer, ShortTermLoudnessHistory,
+};
 pub use serato_tags;
 pub use sorting::SortMode;
 pub use tags::{FileTags, SeratoOverviewState, read_tags};

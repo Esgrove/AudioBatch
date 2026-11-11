@@ -101,6 +101,12 @@ struct History<const TAPS: usize> {
     small_samples: u32,
 }
 
+/// Contiguous interpolation history and its arithmetic-underflow requirement.
+struct HistoryView<'a, const TAPS: usize> {
+    samples: &'a [f32; TAPS],
+    underflow_possible: bool,
+}
+
 impl TruePeak {
     /// Creates an empty meter for a fixed channel count and sample rate in hertz.
     ///
@@ -273,7 +279,7 @@ impl<const TAPS: usize> History<TAPS> {
         reason = "the position stays below TAPS and the buffer holds two histories"
     )]
     #[inline(always)]
-    fn push_front(&mut self, sample: f32, minimum_fast_sample: f32) -> (&[f32; TAPS], bool) {
+    fn push_front(&mut self, sample: f32, minimum_fast_sample: f32) -> HistoryView<'_, TAPS> {
         self.position = if self.position == 0 {
             TAPS - 1
         } else {
@@ -288,12 +294,12 @@ impl<const TAPS: usize> History<TAPS> {
         }
         self.samples[self.position] = sample;
         self.samples[self.position + TAPS] = sample;
-        (
-            self.samples[self.position..]
+        HistoryView {
+            samples: self.samples[self.position..]
                 .first_chunk::<TAPS>()
                 .expect("the doubled buffer always contains a complete history"),
-            self.small_samples != 0,
-        )
+            underflow_possible: self.small_samples != 0,
+        }
     }
 }
 
@@ -347,7 +353,10 @@ fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
             if magnitude > block_peak {
                 block_peak = magnitude;
             }
-            let (recent, underflow_possible) = history.push_front(sample, minimum_fast_sample);
+            let HistoryView {
+                samples: recent,
+                underflow_possible,
+            } = history.push_front(sample, minimum_fast_sample);
             let output = if underflow_possible {
                 interpolate_underflow(simd, recent, scalar_coefficients)
             } else {

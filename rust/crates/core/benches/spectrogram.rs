@@ -374,8 +374,14 @@ fn bench_codec(criterion: &mut Criterion) {
     group.finish();
 }
 
+/// Bounded preview artifacts decoded together outside measurement-only cache reads.
+struct DecodedPreviews {
+    waveform: Arc<WaveformOverview>,
+    spectrogram: Arc<SpectrogramData>,
+}
+
 /// Streams one source through production preview builders, retaining only the current decoder packet and bounded grids.
-fn decode_previews(path: &Path) -> (Arc<WaveformOverview>, Arc<SpectrogramData>) {
+fn decode_previews(path: &Path) -> DecodedPreviews {
     let mut decoder = AudioFileDecoder::open(path).expect("opens backfill source");
     let info = decoder.info().clone();
     let channels = info.channels as usize;
@@ -392,10 +398,10 @@ fn decode_previews(path: &Path) -> (Arc<WaveformOverview>, Arc<SpectrogramData>)
         spectrogram.push(chunk);
     }
     let frames = decoder.position();
-    (
-        waveform.finish(info.sample_rate, frames),
-        spectrogram.finish().expect("valid backfill spectrogram"),
-    )
+    DecodedPreviews {
+        waveform: waveform.finish(info.sample_rate, frames),
+        spectrogram: spectrogram.finish().expect("valid backfill spectrogram"),
+    }
 }
 
 /// Clears only optional artifacts outside timing so every measured publication fills a real cache miss.
@@ -425,7 +431,7 @@ fn bench_backfill(criterion: &mut Criterion) {
         assert!(record.is_ready(), "{name}: {}", record.error_message);
         let expected_waveform = record.waveform.take().expect("analyzed waveform");
         let expected_spectrogram = record.spectrogram.take().expect("analyzed spectrogram");
-        let (waveform, spectrogram) = decode_previews(&path);
+        let DecodedPreviews { waveform, spectrogram } = decode_previews(&path);
         assert_eq!(
             waveform, expected_waveform,
             "{name}: waveform must match same-pass analysis"
@@ -474,7 +480,7 @@ fn bench_backfill(criterion: &mut Criterion) {
             bencher.iter_batched(
                 || clear_previews(&reset, &record),
                 |()| {
-                    let (waveform, spectrogram) = decode_previews(black_box(&path));
+                    let DecodedPreviews { waveform, spectrogram } = decode_previews(black_box(&path));
                     let waveform_stored = cache.store_waveform(&record, &waveform).expect("publishes waveform");
                     let spectrum_stored = cache
                         .store_spectrogram(&record, &spectrogram)

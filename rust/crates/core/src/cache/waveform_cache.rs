@@ -14,7 +14,7 @@ impl AnalysisCache {
     /// Corrupt previews miss independently of the measurement cache.
     #[must_use]
     pub fn get_waveform(&self, path: &Path) -> Option<Arc<WaveformOverview>> {
-        let (size, modified) = file_identity(path)?;
+        let identity = file_identity(path)?;
         self.with_connection(|connection| {
             Ok(connection
                 .prepare_cached(
@@ -30,8 +30,8 @@ impl AnalysisCache {
                 .query_row(
                     params![
                         path_key(path),
-                        i64::try_from(size).unwrap_or(-1),
-                        modified,
+                        i64::try_from(identity.file_size).unwrap_or(-1),
+                        identity.modified_time_ms,
                         SERIALIZATION_VERSION
                     ],
                     |row| {

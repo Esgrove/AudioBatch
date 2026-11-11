@@ -881,8 +881,14 @@ mod test_normalize_file {
     /// Files disposed of during a test, by file name.
     type Disposed = Arc<Mutex<Vec<String>>>;
 
+    /// Normalization options and the shared record of files their disposer deletes.
+    struct DisposingOptions {
+        options: NormalizationOptions,
+        disposed: Disposed,
+    }
+
     /// Options with a disposer that deletes files and records their names.
-    fn options(mode: NormalizationMode) -> (NormalizationOptions, Disposed) {
+    fn options(mode: NormalizationMode) -> DisposingOptions {
         let disposed: Disposed = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&disposed);
         let options = NormalizationOptions {
@@ -896,7 +902,7 @@ mod test_normalize_file {
             }),
             ..NormalizationOptions::default()
         };
-        (options, disposed)
+        DisposingOptions { options, disposed }
     }
 
     /// Normalizes without cancellation or progress.
@@ -918,7 +924,7 @@ mod test_normalize_file {
     fn peak_normalizes_a_wav_file_to_aiff() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let (options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, disposed } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
 
@@ -947,7 +953,7 @@ mod test_normalize_file {
     fn loudness_normalizes_to_the_target() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_48000_24.flac", "song.flac");
-        let (options, _) = options(NormalizationMode::Loudness);
+        let DisposingOptions { options, .. } = options(NormalizationMode::Loudness);
 
         let result = normalize(&record, &options);
 
@@ -975,7 +981,7 @@ mod test_normalize_file {
                 record.length_in_samples = 4410;
                 record.bits_per_sample = 32;
                 record.overall_peak = 0.5;
-                let (options, _) = options(NormalizationMode::Peak);
+                let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
                 let result = normalize(&record, &options);
                 assert_eq!(result.error(), Some("Non-finite decoded sample"));
                 assert_eq!(fs::read(&source).expect("retained"), original);
@@ -988,7 +994,7 @@ mod test_normalize_file {
     fn float_source_is_written_as_24_bit() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_32f.wav", "song.wav");
-        let (options, _) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
 
@@ -999,7 +1005,7 @@ mod test_normalize_file {
     fn mp3_source_keeps_its_length_and_is_written_as_16_bit() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_320k.mp3", "song.mp3");
-        let (options, _) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
 
@@ -1012,7 +1018,7 @@ mod test_normalize_file {
     fn tags_are_copied_to_the_output() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "tagged_stereo_44100_16.flac", "song.flac");
-        let (options, _) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
 
@@ -1025,7 +1031,7 @@ mod test_normalize_file {
     fn aiff_source_is_rewritten_in_place_with_a_copy_disposed_of() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
-        let (options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, disposed } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
 
@@ -1040,7 +1046,7 @@ mod test_normalize_file {
     fn file_already_at_target_is_left_unchanged() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
-        let (options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, disposed } = options(NormalizationMode::Peak);
         let normalized = normalize(&record, &options).output().expect("has output").clone();
         let contents = fs::read(&normalized.path).expect("reads");
         disposed.lock().expect("lock").clear();
@@ -1058,7 +1064,7 @@ mod test_normalize_file {
         let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
         record.overall_peak = 32_767.0 / 32_768.0;
         let contents = fs::read(&record.path).expect("reads");
-        let (options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, disposed } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
 
@@ -1075,7 +1081,7 @@ mod test_normalize_file {
             let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
             record.measurement_producer = MeasurementProducer::Cpp;
             record.overall_peak = bogus_peak;
-            let (options, _) = options(NormalizationMode::Peak);
+            let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
             let result = normalize(&record, &options);
             let output = result
                 .output()
@@ -1090,7 +1096,7 @@ mod test_normalize_file {
     fn foreign_at_target_no_op_retains_gain_and_reports_native_measurements() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
-        let (options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, disposed } = options(NormalizationMode::Peak);
         let mut foreign = normalize(&record, &options).output().expect("normalizes").clone();
         foreign.measurement_producer = MeasurementProducer::Cpp;
         foreign.custom_gain_db = Some(2.0);
@@ -1113,7 +1119,7 @@ mod test_normalize_file {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         fs::write(directory.path().join("song.aif"), b"existing").expect("writes");
-        let (mut options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { mut options, disposed } = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
         assert_eq!(
@@ -1136,7 +1142,7 @@ mod test_normalize_file {
         let directory = tempfile::tempdir().expect("creates directory");
         let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         record.status = AnalysisStatus::Pending;
-        let (options, _) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
 
         assert_eq!(
             normalize(&record, &options).error(),
@@ -1148,7 +1154,7 @@ mod test_normalize_file {
     fn cancelled_normalization_leaves_the_original() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let (options, disposed) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, disposed } = options(NormalizationMode::Peak);
 
         let result = normalize_file(&record, &options, &|| true, &mut |_| {});
 
@@ -1166,7 +1172,7 @@ mod test_normalize_file {
             if output != record.path {
                 fs::write(&output, b"existing").expect("output");
             }
-            let (mut options, disposed) = options(NormalizationMode::Peak);
+            let DisposingOptions { mut options, disposed } = options(NormalizationMode::Peak);
             options.overwrite_existing = true;
             let mut replaced = false;
             let result = normalize_file(&record, &options, &|| false, &mut |fraction| {
@@ -1196,7 +1202,7 @@ mod test_normalize_file {
     fn progress_reaches_the_end() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let (options, _) = options(NormalizationMode::Peak);
+        let DisposingOptions { options, .. } = options(NormalizationMode::Peak);
         let mut reported = Vec::new();
 
         let result = normalize_file(&record, &options, &|| false, &mut |fraction| reported.push(fraction));

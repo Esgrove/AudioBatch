@@ -129,14 +129,20 @@ fn energy_to_loudness(energy: f64) -> f64 {
 #[cfg(test)]
 mod test_gates {
     use super::*;
-    use crate::golden::{GoldenText, diagnostic_signals, write_diagnostic_report};
+    use crate::golden::{DiagnosticSignal, GoldenText, diagnostic_signals, write_diagnostic_report};
     use crate::signals::generate;
 
     #[test]
     #[ignore = "writes cross-platform gate diagnostics; run explicitly with --ignored"]
     fn numerical_diagnostics_gating() {
         let mut text = GoldenText::default();
-        for (kind, rate, channels, seconds) in diagnostic_signals() {
+        for DiagnosticSignal {
+            kind,
+            sample_rate: rate,
+            channels,
+            seconds,
+        } in diagnostic_signals()
+        {
             let key = format!("{}_{rate}_{channels}ch", kind.name());
             let planes = generate(kind, rate, channels, (f64::from(rate) * seconds) as usize);
             text.value(&format!("{key}.pcm_sha256"), test_fixtures::pcm_sha256(rate, &planes));

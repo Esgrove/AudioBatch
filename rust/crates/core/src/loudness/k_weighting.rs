@@ -27,13 +27,20 @@ pub(super) struct KWeighting {
     channels: usize,
 }
 
-/// Numerator and denominator of the combined fourth order filter.
+/// Feedforward and feedback coefficients of a fixed-order filter.
 #[derive(Debug, Clone, Copy)]
-struct Coefficients {
+struct Coefficients<const LENGTH: usize = 5> {
     /// Feedforward coefficients in increasing delay order.
-    numerator: [f64; 5],
+    numerator: [f64; LENGTH],
     /// Feedback coefficients in increasing delay order, with a unit leading coefficient.
-    denominator: [f64; 5],
+    denominator: [f64; LENGTH],
+}
+
+/// Prefix and uninterrupted complete-block energies from one filter pass.
+#[cfg(test)]
+pub(super) struct SplitEnergy {
+    pub prefix: f64,
+    pub total: f64,
 }
 
 impl KWeighting {
@@ -87,7 +94,7 @@ impl KWeighting {
     /// Panics if the number of planes differs from the configured channel count or plane lengths differ.
     #[cfg(test)]
     pub(super) fn energy(&mut self, planes: &[&[f32]]) -> f64 {
-        self.energy_split(planes, 0).1
+        self.energy_split(planes, 0).total
     }
 
     /// Filters a block and retains channel-weighted energy per frame for an exact partial-window boundary.
@@ -129,7 +136,7 @@ impl KWeighting {
     /// plane lengths differ, or the split exceeds the frame count.
     #[cfg(test)]
     #[expect(clippy::suboptimal_flops, reason = "separate operations retain reference rounding")]
-    pub(super) fn energy_split(&mut self, planes: &[&[f32]], split: usize) -> (f64, f64) {
+    pub(super) fn energy_split(&mut self, planes: &[&[f32]], split: usize) -> SplitEnergy {
         assert_eq!(planes.len(), self.channels, "K weighting channel count changed");
         let frames = planes.first().map_or(0, |plane| plane.len());
         assert!(
@@ -155,7 +162,10 @@ impl KWeighting {
                 }
             }
         }
-        (prefix_energy, total_energy)
+        SplitEnergy {
+            prefix: prefix_energy,
+            total: total_energy,
+        }
     }
 }
 
@@ -193,8 +203,14 @@ fn filter_energy(samples: &[f32], coefficients: &Coefficients, state: &mut [f64;
     reason = "separate multiplication and addition preserve the reference coefficient rounding"
 )]
 fn filter_coefficients(rate: f64) -> Coefficients {
-    let (shelf_numerator, shelf_denominator) = shelving_coefficients(rate);
-    let (high_pass_numerator, high_pass_denominator) = high_pass_coefficients(rate);
+    let Coefficients {
+        numerator: shelf_numerator,
+        denominator: shelf_denominator,
+    } = shelving_coefficients(rate);
+    let Coefficients {
+        numerator: high_pass_numerator,
+        denominator: high_pass_denominator,
+    } = high_pass_coefficients(rate);
     Coefficients {
         numerator: [
             shelf_numerator[0] * high_pass_numerator[0],
@@ -222,7 +238,7 @@ fn filter_coefficients(rate: f64) -> Coefficients {
     clippy::suboptimal_flops,
     reason = "separate multiplication and addition preserve the reference coefficient rounding"
 )]
-fn shelving_coefficients(rate: f64) -> ([f64; 3], [f64; 3]) {
+fn shelving_coefficients(rate: f64) -> Coefficients<3> {
     let frequency = 1681.974_450_955_533;
     let gain = 3.999_843_853_973_347;
     let quality = 0.707_175_236_955_419_6;
@@ -230,18 +246,18 @@ fn shelving_coefficients(rate: f64) -> ([f64; 3], [f64; 3]) {
     let high_gain = f64::powf(10.0, gain / 20.0);
     let band_gain = f64::powf(high_gain, 0.499_666_774_154_541_6);
     let normalization = 1.0 + tangent / quality + tangent * tangent;
-    (
-        [
+    Coefficients {
+        numerator: [
             (high_gain + band_gain * tangent / quality + tangent * tangent) / normalization,
             2.0 * (tangent * tangent - high_gain) / normalization,
             (high_gain - band_gain * tangent / quality + tangent * tangent) / normalization,
         ],
-        [
+        denominator: [
             1.0,
             2.0 * (tangent * tangent - 1.0) / normalization,
             (1.0 - tangent / quality + tangent * tangent) / normalization,
         ],
-    )
+    }
 }
 
 /// Calculates the BS.1770 RLB high-pass biquad numerator and denominator.
@@ -249,23 +265,23 @@ fn shelving_coefficients(rate: f64) -> ([f64; 3], [f64; 3]) {
     clippy::suboptimal_flops,
     reason = "separate multiplication and addition preserve the reference coefficient rounding"
 )]
-fn high_pass_coefficients(rate: f64) -> ([f64; 3], [f64; 3]) {
+fn high_pass_coefficients(rate: f64) -> Coefficients<3> {
     let frequency = 38.135_470_876_024_44;
     let quality = 0.500_327_037_323_877_3;
     let tangent = f64::tan(PI * frequency / rate);
-    (
-        [1.0, -2.0, 1.0],
-        [
+    Coefficients {
+        numerator: [1.0, -2.0, 1.0],
+        denominator: [
             1.0,
             2.0 * (tangent * tangent - 1.0) / (1.0 + tangent / quality + tangent * tangent),
             (1.0 - tangent / quality + tangent * tangent) / (1.0 + tangent / quality + tangent * tangent),
         ],
-    )
+    }
 }
 
 #[cfg(test)]
 mod test_coefficients {
-    use super::{filter_coefficients, high_pass_coefficients, shelving_coefficients};
+    use super::{Coefficients, filter_coefficients, high_pass_coefficients, shelving_coefficients};
 
     /// Checks each coefficient against the 48 kHz BS.1770-5 table value.
     fn assert_coefficients(actual: &[f64], expected: &[f64]) {
@@ -277,7 +293,7 @@ mod test_coefficients {
     /// The shelving stage matches BS.1770-5 table 1.
     #[test]
     fn shelf_matches_standard_at_48_khz() {
-        let (numerator, denominator) = shelving_coefficients(48_000.0);
+        let Coefficients { numerator, denominator } = shelving_coefficients(48_000.0);
         assert_coefficients(
             &numerator,
             &[1.535_124_859_586_97, -2.691_696_189_406_38, 1.198_392_810_852_85],
@@ -288,7 +304,7 @@ mod test_coefficients {
     /// The RLB stage matches BS.1770-5 table 2 without normalizing its numerator.
     #[test]
     fn high_pass_matches_standard_at_48_khz() {
-        let (numerator, denominator) = high_pass_coefficients(48_000.0);
+        let Coefficients { numerator, denominator } = high_pass_coefficients(48_000.0);
         assert_coefficients(&numerator, &[1.0, -2.0, 1.0]);
         assert_coefficients(&denominator, &[1.0, -1.990_047_454_833_98, 0.990_072_250_366_21]);
     }
@@ -296,8 +312,14 @@ mod test_coefficients {
     /// Combining the stages is polynomial convolution, with no coefficient renormalization.
     #[test]
     fn combined_coefficients_match_convolution() {
-        let (shelf_numerator, shelf_denominator) = shelving_coefficients(48_000.0);
-        let (high_pass_numerator, high_pass_denominator) = high_pass_coefficients(48_000.0);
+        let Coefficients {
+            numerator: shelf_numerator,
+            denominator: shelf_denominator,
+        } = shelving_coefficients(48_000.0);
+        let Coefficients {
+            numerator: high_pass_numerator,
+            denominator: high_pass_denominator,
+        } = high_pass_coefficients(48_000.0);
         let combined = filter_coefficients(48_000.0);
         for ((first, second), actual) in [
             ((shelf_numerator, high_pass_numerator), combined.numerator),
@@ -320,15 +342,21 @@ mod test_coefficients {
 
 #[cfg(test)]
 mod test_filter {
-    use super::{Coefficients, KWeighting, filter_coefficients};
-    use crate::golden::{GoldenText, diagnostic_signals, write_diagnostic_report};
+    use super::{Coefficients, KWeighting, SplitEnergy, filter_coefficients};
+    use crate::golden::{DiagnosticSignal, GoldenText, diagnostic_signals, write_diagnostic_report};
     use crate::signals::generate;
 
     #[test]
     #[ignore = "writes cross-platform filter diagnostics; run explicitly with --ignored"]
     fn numerical_diagnostics_k_weighting() {
         let mut text = GoldenText::default();
-        for (kind, rate, channels, seconds) in diagnostic_signals() {
+        for DiagnosticSignal {
+            kind,
+            sample_rate: rate,
+            channels,
+            seconds,
+        } in diagnostic_signals()
+        {
             let key = format!("{}_{rate}_{channels}ch", kind.name());
             let planes = generate(kind, rate, channels, (f64::from(rate) * seconds) as usize);
             text.value(&format!("{key}.pcm_sha256"), test_fixtures::pcm_sha256(rate, &planes));
@@ -433,7 +461,7 @@ mod test_filter {
             let mut whole_filter = KWeighting::new(2, 44_100);
             let whole = whole_filter.energy(&[&samples, &other]);
             let mut split_filter = KWeighting::new(2, 44_100);
-            let (prefix, total) = split_filter.energy_split(&[&samples, &other], split);
+            let SplitEnergy { prefix, total } = split_filter.energy_split(&[&samples, &other], split);
             let mut prefix_filter = KWeighting::new(2, 44_100);
             let expected_prefix = prefix_filter.energy(&[samples.split_at(split).0, other.split_at(split).0]);
             assert_eq!(prefix.to_bits(), expected_prefix.to_bits());
@@ -475,7 +503,7 @@ mod test_filter {
     fn processed_subnormal_history_is_flushed() {
         let mut filter = KWeighting::new(1, 48_000);
         filter.state[0] = [f64::from_bits(1); 5];
-        let (prefix, total) = filter.energy_split(&[&[0.0, 0.0]], 1);
+        let SplitEnergy { prefix, total } = filter.energy_split(&[&[0.0, 0.0]], 1);
         assert!(prefix.abs() < f64::MIN_POSITIVE);
         assert!(total.abs() < f64::MIN_POSITIVE);
         assert!(filter.state[0].iter().all(|value| value.to_bits() == 0));
@@ -502,7 +530,7 @@ mod test_filter {
 
 #[cfg(test)]
 mod test_channels {
-    use super::{KWeighting, MAX_CHANNELS};
+    use super::{KWeighting, MAX_CHANNELS, SplitEnergy};
 
     /// Default maps include the four- and five-channel exceptions and ignore channels after the sixth.
     #[test]
@@ -572,7 +600,7 @@ mod test_channels {
         let silence = [0.0; 8];
         let ignored = [f32::NAN; 8];
         let mut filter = KWeighting::new(8, 48_000);
-        let (prefix, total) = filter.energy_split(
+        let SplitEnergy { prefix, total } = filter.energy_split(
             &[
                 &silence, &silence, &silence, &ignored, &silence, &silence, &ignored, &ignored,
             ],

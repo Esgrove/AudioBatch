@@ -113,7 +113,9 @@ fn bench_end_to_end(criterion: &mut Criterion) {
                         fs::copy(&path, &copy).expect("copies the file");
                         let mut record = source_record.clone();
                         record.path.clone_from(&copy);
-                        (record.file_size, record.modified_time_ms) = file_identity(&copy).expect("the copy exists");
+                        let identity = file_identity(&copy).expect("the copy exists");
+                        record.file_size = identity.file_size;
+                        record.modified_time_ms = identity.modified_time_ms;
                         (directory, record)
                     },
                     |(directory, record)| {

@@ -18,7 +18,7 @@ use rusqlite::{OptionalExtension, params};
 use serato_tags::{OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview};
 
 use super::{AnalysisCache, CacheError, Result, now_ms, path_key};
-use crate::record::{AnalysisRecord, file_identity};
+use crate::record::{AnalysisRecord, FileIdentity, file_identity};
 use crate::tags::SeratoOverviewState;
 
 /// Schema of the Serato tag table.
@@ -51,7 +51,10 @@ impl AnalysisCache {
     /// the row is from another parser version, or the stored overview is invalid.
     #[must_use]
     pub fn get_serato_overview(&self, path: &Path) -> Option<SeratoOverviewState> {
-        let (file_size, modified_time_ms) = file_identity(path)?;
+        let FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path)?;
         self.with_connection(|connection| {
             Ok(connection
                 .query_row(
@@ -99,7 +102,10 @@ impl AnalysisCache {
     /// Returns an error when the file cannot be read, the overview has no cache representation,
     /// or the database write fails.
     pub fn store_serato_overview(&self, path: &Path, state: &SeratoOverviewState) -> Result<()> {
-        let (file_size, modified_time_ms) = file_identity(path).ok_or_else(|| CacheError::MissingSeratoFile {
+        let FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path).ok_or_else(|| CacheError::MissingSeratoFile {
             path: path.to_path_buf(),
         })?;
         self.store_serato_overview_for_record(
