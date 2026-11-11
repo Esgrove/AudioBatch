@@ -255,7 +255,7 @@ jobs:
           if-no-files-found: error
 
   miri:
-    # Checks the unsafe VST3 hosting code, the test plugin, the Serato parsers,
+    # Checks the unsafe VST3 and CLAP hosts, shared host core, test plugins, Serato parsers,
     # and the cache blob readers for undefined behaviour.
     # Needs no JUCE or test plugin bundle, since Miri cannot load native libraries.
     runs-on: macos-latest
@@ -424,6 +424,10 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
+
+      # Coverage invokes nextest directly, so build its test-only CLAP module explicitly.
+      - name: Build CLAP test module
+        run: CARGO_TARGET_DIR=target/llvm-cov-target cargo build -p audiobatch-test-clap-plugin --example clap_module
 
       - name: Run tests and CLI subprocesses with coverage
         timeout-minutes: 30

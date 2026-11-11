@@ -152,6 +152,10 @@ run_contracts() {
     run_case "$HOST_TESTS" processor::test_in_place_processing::rtsan_gain_owned_and_borrowed_automation_reset
     run_case "$PREVIEW" preview_gain_first_automation
     run_case "$PREVIEW" preview_gain_reset
+    # These clean contracts cover only the deterministic in-process CLAP fixture, not arbitrary plugins.
+    run_case "$PREVIEW" preview_clap_cold_automation
+    run_case "$PREVIEW" preview_clap_reset
+    run_case "$PREVIEW" preview_clap_retirement
     run_case "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_clean_all_formats
     run_case "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_silence_all_formats
     run_case "$PLAYBACK" output::insert::test_insert_playback::rtsan_full_callback_idle_and_retired_silence

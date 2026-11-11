@@ -13,8 +13,11 @@ APPLICATION_PACKAGE_ARGS=(
     -p audiobatch-gui
     -p audiobatch-playback
     -p audiobatch-plugins
+    -p audiobatch-test-clap-plugin
     -p audiobatch-test-plugin
     -p build-info
+    -p clap-host
+    -p plugin-host-core
     -p serato-tags
     -p test-fixtures
     -p vst3-host
