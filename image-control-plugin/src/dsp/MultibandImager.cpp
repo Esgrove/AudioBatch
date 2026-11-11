@@ -412,18 +412,9 @@ void MultibandImager::setCrossovers(const Crossovers& crossovers, const bool off
             requestSequence.store(sequence + 2, std::memory_order_release);
         }
     }
-    // Entering offline rendering must join any design already inside the mutex,
-    // even if the latest request matches the active slot.
-    // That designer may still publish a stale pending slot before it finishes.
-    if (offline && modeChanged) {
-        designRequestedKernels(false);
-        return;
-    }
-    // A pending slot is consumed first. Its publication then checks whether the latest request still needs design.
-    if (offline && requestChanged
-        && !sameCrossovers(crossoverRequest, slotCrossovers[static_cast<std::size_t>(activeSlot)])
-        && !switchPending.load(std::memory_order_acquire))
-    {
+    // Offline ownership joins an in-flight designer and supersedes any stale pending slot before processing.
+    // This also handles a return to the active kernels, where no replacement should be heard.
+    if (offline && (modeChanged || requestChanged)) {
         designRequestedKernels(false);
     }
 }
@@ -549,13 +540,15 @@ bool MultibandImager::isDeltaSettled(const float target) const
     return !deltaSmoother.isSmoothing() && juce::exactlyEqual(deltaSmoother.getCurrentValue(), target);
 }
 
-/// Returns whether gains and stereo Width are neutral, every pan centred, and every band heard.
-/// Recover has no contribution at settled unity Width, so its amount does not prevent exact pass-through.
+/// Returns whether every audible control is neutral, ignoring Side, Width, Recover, and Pan for mono input.
+/// Recover has no contribution at settled unity Width, so its amount does not prevent exact stereo pass-through.
 bool MultibandImager::isNeutral() const
 {
-    return std::ranges::all_of(midGainSmoothers, isSettledAtUnity)
-        && std::ranges::all_of(sideGainSmoothers, isSettledAtUnity) && isSettledAtUnity(outputGainSmoother)
-        && (channelCount == 1 || std::ranges::all_of(widthSmoothers, isSettledAtUnity)) && isCentred() && isUnsoloed();
+    return std::ranges::all_of(midGainSmoothers, isSettledAtUnity) && isSettledAtUnity(outputGainSmoother)
+        && isUnsoloed()
+        && (channelCount == 1
+            || (std::ranges::all_of(sideGainSmoothers, isSettledAtUnity)
+                && std::ranges::all_of(widthSmoothers, isSettledAtUnity) && isCentred()));
 }
 
 /// Reports whether any current or target ramp can inject recovered Side during this partition.
@@ -577,27 +570,35 @@ bool MultibandImager::isRecoveryActive() const
     return false;
 }
 
-/// Designs kernels for the requested crossovers into the spare slot when they differ from the active ones
-/// and no designed slot is waiting to be switched to.
-/// Runs on the design thread during real-time playback, and on the audio thread during offline rendering,
-/// when the design thread leaves it alone.
+/// Designs a requested replacement into the spare slot, retaining an unconsumed publication during real-time playback.
+/// Offline processing owns the same mutex and supersedes stale publications before its next partition.
+/// The offline caller may allocate and destroy spare kernels. Real-time callbacks never call this function.
 void MultibandImager::designRequestedKernels(const bool fromDesignThread)
 {
     const std::scoped_lock lock(designMutex);
     if (fromDesignThread && offlineRendering.load(std::memory_order_acquire)) {
         return;
     }
-    if (switchPending.load(std::memory_order_acquire)) {
+    const bool pending = switchPending.load(std::memory_order_acquire);
+    if (fromDesignThread && pending) {
         return;
     }
 
     const Crossovers requested = readRequestedCrossovers();
     const auto active = static_cast<std::size_t>(publishedActiveSlot.load(std::memory_order_acquire));
-    if (sameCrossovers(requested, slotCrossovers.at(active))) {
+    if (exactCrossovers(requested, slotCrossovers.at(active))) {
+        if (!fromDesignThread) {
+            // Only the processing owner can consume the slot, and the mutex excludes an in-flight designer.
+            // Keep its allocation in place until a later design or stopped lifecycle can replace it.
+            switchPending.store(false, std::memory_order_release);
+        }
         return;
     }
 
     const std::size_t spare = 1 - active;
+    if (pending && exactCrossovers(requested, slotCrossovers.at(spare))) {
+        return;
+    }
     kernelSlots.at(spare) = designKernelSpectra(requested, sampleRate, halfLength);
     slotCrossovers.at(spare) = requested;
     switchPending.store(true, std::memory_order_release);
@@ -779,9 +780,17 @@ void MultibandImager::convolvePartition(const bool stereo, const bool crossfade)
     }
 }
 
-/// Copies neutral delayed output or clears settled Delta, advancing inactive Width and Recover glides.
+/// Copies neutral delayed output or clears settled Delta, advancing every ineffective control glide.
 void MultibandImager::copyNeutralPartition()
 {
+    if (channelCount == 1) {
+        for (auto& side : sideGainSmoothers) {
+            side.skip(PARTITION_SIZE);
+        }
+        for (auto& pan : panSmoothers) {
+            pan.skip(PARTITION_SIZE);
+        }
+    }
     for (auto& recovery : recoverySmoothers) {
         recovery.skip(PARTITION_SIZE);
     }
@@ -845,13 +854,6 @@ void MultibandImager::processPartition()
         activeSlot = 1 - activeSlot;
         publishedActiveSlot.store(activeSlot, std::memory_order_release);
         switchPending.store(false, std::memory_order_release);
-        // Publish even when neutral output skipped the crossfade arithmetic.
-        // A newer offline request must be designed for the next partition, independently of host block boundaries.
-        if (lastOfflineRendering
-            && !sameCrossovers(crossoverRequest, slotCrossovers[static_cast<std::size_t>(activeSlot)]))
-        {
-            designRequestedKernels(false);
-        }
     }
 
     // At neutral settings the processed output is the delayed input itself,
