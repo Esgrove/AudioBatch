@@ -19,10 +19,28 @@ enum class PresetDialogPresentation : std::uint8_t { visible, nonRendering };
 
 /// Height of the processing row, including its vertical control insets, in logical pixels.
 inline constexpr int PROCESSING_TOOLBAR_HEIGHT {32};
-/// Smallest inline allocation that preserves every action, status, and a readable preset name.
-inline constexpr int PROCESSING_TOOLBAR_INLINE_MIN_WIDTH {560};
+/// Shared action widths and gaps keep editor packing identical to the toolbar's own layout.
+inline constexpr int PROCESSING_TOOLBAR_SLOT_WIDTH {32};
+inline constexpr int PROCESSING_TOOLBAR_COPY_WIDTH {72};
+inline constexpr int PROCESSING_TOOLBAR_MENU_WIDTH {72};
+inline constexpr int PROCESSING_TOOLBAR_CONTROL_GAP {4};
+inline constexpr int PROCESSING_TOOLBAR_GROUP_GAP {12};
+/// Preset names retain a usable minimum and stay bounded in either placement.
+inline constexpr int PROCESSING_TOOLBAR_MIN_SELECTOR_WIDTH {100};
+inline constexpr int PROCESSING_TOOLBAR_MAX_SELECTOR_WIDTH {320};
+/// Fixed actions and their adjacent gaps, excluding the flexible preset selector.
+inline constexpr int PROCESSING_TOOLBAR_FIXED_WIDTH {
+    PROCESSING_TOOLBAR_SLOT_WIDTH * 2 + PROCESSING_TOOLBAR_CONTROL_GAP + PROCESSING_TOOLBAR_COPY_WIDTH
+        + PROCESSING_TOOLBAR_GROUP_GAP + PROCESSING_TOOLBAR_CONTROL_GAP + PROCESSING_TOOLBAR_MENU_WIDTH,
+};
+/// Smallest inline allocation that preserves every action and a readable preset name.
+inline constexpr int PROCESSING_TOOLBAR_INLINE_MIN_WIDTH {
+    PROCESSING_TOOLBAR_FIXED_WIDTH + PROCESSING_TOOLBAR_MIN_SELECTOR_WIDTH,
+};
 /// Maximum allocation bounds the preset name field even in very wide headers.
-inline constexpr int PROCESSING_TOOLBAR_MAX_WIDTH {700};
+inline constexpr int PROCESSING_TOOLBAR_MAX_WIDTH {
+    PROCESSING_TOOLBAR_FIXED_WIDTH + PROCESSING_TOOLBAR_MAX_SELECTOR_WIDTH,
+};
 
 /// A processor-backed toolbar whose refresh is driven by the editor's existing VBlank callback.
 /// The processor outlives this component. Destruction joins only independent filesystem work, never a UI callback.
@@ -43,6 +61,7 @@ public:
     ProcessingToolbar& operator=(const ProcessingToolbar&) = delete;
     ProcessingToolbar& operator=(ProcessingToolbar&&) = delete;
 
+    void focusControls();
     void redo();
     void refresh();
     void undo();

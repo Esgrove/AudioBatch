@@ -595,9 +595,22 @@ std::expected<UserPreset, juce::String> UserPresets::importPreset(
 }
 
 /// Replaces the selected revision's sound while retaining its identity and name.
-/// The caller confirms replacing user work before scheduling this operation.
+/// Delegates locking and validation to the combined update.
+/// The caller explicitly requests replacement before scheduling this non-realtime operation.
 std::expected<UserPreset, juce::String> UserPresets::update(
     const UserPreset& selection,
+    const ProcessingSnapshot& snapshot
+) const
+{
+    return update(selection, selection.name, snapshot);
+}
+
+/// Replaces the selected revision's name and sound in one atomic publication, retaining its identity and file.
+/// Serializes revision, name, collision, and sound validation with cooperating writers before any replacement.
+/// The caller captures the sound and explicitly requests replacement before scheduling this non-realtime operation.
+std::expected<UserPreset, juce::String> UserPresets::update(
+    const UserPreset& selection,
+    const juce::String& name,
     const ProcessingSnapshot& snapshot
 ) const
 {
@@ -605,11 +618,17 @@ std::expected<UserPreset, juce::String> UserPresets::update(
     if (!lock.isLocked()) {
         return std::unexpected("The preset library is busy or its lock is unavailable.");
     }
+    if (const auto result = validateName(name); result.failed()) {
+        return std::unexpected(result.getErrorMessage());
+    }
     const auto current = selectedPreset(directory, selection, parameters);
     if (!current) {
         return std::unexpected(current.error());
     }
-    const auto text = serializePreset(current->id, current->name, snapshot, parameters);
+    if (const auto result = checkCollision(directory, name, current->file, parameters); result.failed()) {
+        return std::unexpected(result.getErrorMessage());
+    }
+    const auto text = serializePreset(current->id, name, snapshot, parameters);
     if (!text) {
         return std::unexpected(text.error());
     }

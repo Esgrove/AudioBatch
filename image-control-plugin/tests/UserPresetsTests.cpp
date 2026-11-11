@@ -186,6 +186,9 @@ TEST_F(UserPresetsTest, UpdateRenameAndDeleteRequireTheExactRevision)
     const auto updated = other.update(*original, changed);
     ASSERT_TRUE(updated.has_value());
     EXPECT_EQ(updated->id, original->id);
+    EXPECT_EQ(updated->file, original->file);
+    EXPECT_EQ(updated->name, original->name);
+    EXPECT_TRUE(sameProcessingState(updated->snapshot, changed));
     EXPECT_NE(updated->fingerprint, original->fingerprint);
     EXPECT_FALSE(library.load(*original).has_value());
     EXPECT_FALSE(library.update(*original, sound()).has_value());
@@ -201,6 +204,130 @@ TEST_F(UserPresetsTest, UpdateRenameAndDeleteRequireTheExactRevision)
     EXPECT_FALSE(original->file.exists());
     EXPECT_TRUE(library.remove(*renamed).failed());
     EXPECT_FALSE(library.load(*renamed).has_value());
+}
+
+TEST_F(UserPresetsTest, CombinedUpdateReplacesNameAndSoundWhilePreservingIdentityAndFile)
+{
+    const auto saved = library.saveAs("Original", sound());
+    ASSERT_TRUE(saved.has_value());
+    auto changed = saved->snapshot;
+    changed.at(OUTPUT_GAIN_ID) = -9.0F;
+    changed.at(MONO_ID) = 1.0F;
+    const auto updated = library.update(*saved, "Updated", changed);
+    ASSERT_TRUE(updated.has_value());
+    EXPECT_EQ(updated->id, saved->id);
+    EXPECT_EQ(updated->file, saved->file);
+    EXPECT_EQ(updated->name, "Updated");
+    EXPECT_NE(updated->fingerprint, saved->fingerprint);
+    EXPECT_TRUE(sameProcessingState(updated->snapshot, changed));
+    EXPECT_FALSE(library.load(*saved).has_value());
+    const auto loaded = library.load(*updated);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->id, saved->id);
+    EXPECT_EQ(loaded->file, saved->file);
+    EXPECT_EQ(loaded->name, "Updated");
+    EXPECT_EQ(loaded->fingerprint, updated->fingerprint);
+    EXPECT_TRUE(sameProcessingState(loaded->snapshot, changed));
+    const auto listing = library.list();
+    ASSERT_TRUE(listing.has_value());
+    ASSERT_EQ(listing->presets.size(), 1U);
+    EXPECT_TRUE(listing->rejectedFiles.empty());
+    EXPECT_EQ(listing->presets.front().fingerprint, updated->fingerprint);
+    EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 1);
+    const auto xml = juce::parseXML(updated->file);
+    ASSERT_NE(xml, nullptr);
+    EXPECT_EQ(xml->getStringAttribute("version"), "1");
+    EXPECT_TRUE(sameProcessingState(sound(), saved->snapshot));
+}
+
+TEST_F(UserPresetsTest, CombinedUpdateAllowsCaseOnlyRenameWithChangedSound)
+{
+    const auto saved = library.saveAs("Warm", sound());
+    ASSERT_TRUE(saved.has_value());
+    auto changed = saved->snapshot;
+    changed.at(OUTPUT_GAIN_ID) = -6.0F;
+    const auto updated = library.update(*saved, "WARM", changed);
+    ASSERT_TRUE(updated.has_value());
+    EXPECT_EQ(updated->name, "WARM");
+    EXPECT_EQ(updated->id, saved->id);
+    EXPECT_EQ(updated->file, saved->file);
+    EXPECT_NE(updated->fingerprint, saved->fingerprint);
+    EXPECT_TRUE(sameProcessingState(updated->snapshot, changed));
+    EXPECT_TRUE(library.load(*updated).has_value());
+    EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 1);
+}
+
+TEST_F(UserPresetsTest, CombinedUpdateNameFailuresLeaveNameSoundAndRevisionUntouched)
+{
+    const auto saved = library.saveAs("Original", sound());
+    ASSERT_TRUE(saved.has_value());
+    const auto occupied = library.saveAs("Occupied", sound());
+    ASSERT_TRUE(occupied.has_value());
+    const auto before = saved->file.loadFileAsString();
+    const auto occupiedBefore = occupied->file.loadFileAsString();
+    ASSERT_TRUE(directory.getChildFile("Blocked.XML").replaceWithText("not XML"));
+    auto changed = saved->snapshot;
+    changed.at(OUTPUT_GAIN_ID) = -9.0F;
+    const juce::StringArray rejectedNames {"oCCUPIED", "blocked", "", " Leading", "../escape", "CON", "trailing."};
+    for (const auto& name : rejectedNames) {
+        SCOPED_TRACE(name.toStdString());
+        EXPECT_FALSE(library.update(*saved, name, changed).has_value());
+        EXPECT_EQ(saved->file.loadFileAsString(), before);
+        const auto loaded = library.load(*saved);
+        ASSERT_TRUE(loaded.has_value());
+        EXPECT_EQ(loaded->name, saved->name);
+        EXPECT_EQ(loaded->fingerprint, saved->fingerprint);
+        EXPECT_TRUE(sameProcessingState(loaded->snapshot, saved->snapshot));
+    }
+    EXPECT_EQ(occupied->file.loadFileAsString(), occupiedBefore);
+    EXPECT_EQ(directory.getChildFile("Blocked.XML").loadFileAsString(), "not XML");
+    EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 3);
+}
+
+TEST_F(UserPresetsTest, CombinedUpdateRejectsStaleRevisionEvenWhenNameAndSoundAreIdentical)
+{
+    const auto saved = library.saveAs("Original", sound());
+    ASSERT_TRUE(saved.has_value());
+    const UserPresets other(processor.getParameters(), directory);
+    const auto refreshed = other.update(*saved, saved->name, saved->snapshot);
+    ASSERT_TRUE(refreshed.has_value());
+    EXPECT_NE(refreshed->fingerprint, saved->fingerprint);
+    const auto before = refreshed->file.loadFileAsString();
+    auto changed = saved->snapshot;
+    changed.at(OUTPUT_GAIN_ID) = -9.0F;
+    EXPECT_FALSE(library.update(*saved, "Stale replacement", changed).has_value());
+    EXPECT_EQ(refreshed->file.loadFileAsString(), before);
+    const auto loaded = library.load(*refreshed);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->name, saved->name);
+    EXPECT_EQ(loaded->fingerprint, refreshed->fingerprint);
+    EXPECT_TRUE(sameProcessingState(loaded->snapshot, saved->snapshot));
+    EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 1);
+}
+
+TEST_F(UserPresetsTest, CombinedUpdateSnapshotValidationFailuresDoNotCommitTheName)
+{
+    const auto saved = library.saveAs("Original", sound());
+    ASSERT_TRUE(saved.has_value());
+    const auto before = saved->file.loadFileAsString();
+    std::array<ProcessingSnapshot, 6> invalid;
+    invalid.fill(saved->snapshot);
+    invalid[0].at(OUTPUT_GAIN_ID) = std::numeric_limits<float>::infinity();
+    invalid[1].at(OUTPUT_GAIN_ID) = 1000.0F;
+    invalid[2]["editorWidth"] = 1200.0F;
+    invalid[3][BYPASS_ID] = 1.0F;
+    invalid[4].erase(OUTPUT_GAIN_ID);
+    invalid[5].clear();
+    for (const auto& snapshot : invalid) {
+        EXPECT_FALSE(library.update(*saved, "Updated", snapshot).has_value());
+        EXPECT_EQ(saved->file.loadFileAsString(), before);
+        const auto loaded = library.load(*saved);
+        ASSERT_TRUE(loaded.has_value());
+        EXPECT_EQ(loaded->name, saved->name);
+        EXPECT_EQ(loaded->fingerprint, saved->fingerprint);
+        EXPECT_TRUE(sameProcessingState(loaded->snapshot, saved->snapshot));
+    }
+    EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 1);
 }
 
 TEST_F(UserPresetsTest, IdenticalUpdateStillInvalidatesOldSelection)
@@ -223,6 +350,8 @@ TEST_F(UserPresetsTest, ExternalSameLengthModificationAndRecreatedIdentityReject
     EXPECT_TRUE(saved->file.replaceWithText(bytes.replace("Original", "Modified")));
     EXPECT_TRUE(saved->file.setLastModificationTime(time));
     EXPECT_FALSE(library.load(*saved).has_value());
+    EXPECT_FALSE(library.update(*saved, "Stale replacement", sound()).has_value());
+    EXPECT_EQ(saved->file.loadFileAsString(), bytes.replace("Original", "Modified"));
     EXPECT_TRUE(library.remove(*saved).failed());
     EXPECT_TRUE(saved->file.replaceWithText(bytes));
     const auto restored = library.load(*saved);
@@ -456,9 +585,11 @@ TEST_F(UserPresetsTest, FilesystemWriteFailuresRetainTheSelectedPreset)
     const auto saved = library.saveAs("Retained", sound());
     ASSERT_TRUE(saved.has_value());
     const auto before = saved->file.loadFileAsString();
+    auto changed = saved->snapshot;
+    changed.at(OUTPUT_GAIN_ID) = -9.0F;
 #if JUCE_WINDOWS
     ASSERT_TRUE(saved->file.setReadOnly(true));
-    const auto updated = library.update(*saved, sound());
+    const auto updated = library.update(*saved, "Cannot update", changed);
     const auto renamed = library.rename(*saved, "Cannot rename");
     EXPECT_TRUE(saved->file.setReadOnly(false));
 #else
@@ -467,7 +598,7 @@ TEST_F(UserPresetsTest, FilesystemWriteFailuresRetainTheSelectedPreset)
         EXPECT_TRUE(directory.setReadOnly(false, false));
         GTEST_SKIP() << "This test account bypasses directory write permissions.";
     }
-    const auto updated = library.update(*saved, sound());
+    const auto updated = library.update(*saved, "Cannot update", changed);
     const auto renamed = library.rename(*saved, "Cannot rename");
     EXPECT_TRUE(directory.setReadOnly(false, false));
 #endif
@@ -504,17 +635,21 @@ TEST_F(UserPresetsTest, TwoInstancesSerializeConflictingCreatesAndRevisionUpdate
     ASSERT_TRUE(listing.has_value());
     ASSERT_EQ(listing->presets.size(), 1U);
     const auto selected = listing->presets.front();
+    auto firstSound = snapshot;
+    firstSound.at(OUTPUT_GAIN_ID) = -6.0F;
+    auto secondSound = snapshot;
+    secondSound.at(OUTPUT_GAIN_ID) = -9.0F;
     successes.store(0);
     std::latch updateStart(1);
     std::thread firstUpdate([&] {
         updateStart.wait();
-        if (library.update(selected, snapshot)) {
+        if (library.update(selected, "First update", firstSound)) {
             ++successes;
         }
     });
     std::thread secondUpdate([&] {
         updateStart.wait();
-        if (other.update(selected, snapshot)) {
+        if (other.update(selected, "Second update", secondSound)) {
             ++successes;
         }
     });
@@ -522,7 +657,70 @@ TEST_F(UserPresetsTest, TwoInstancesSerializeConflictingCreatesAndRevisionUpdate
     firstUpdate.join();
     secondUpdate.join();
     EXPECT_EQ(successes.load(), 1);
+    const auto updatedListing = library.list();
+    ASSERT_TRUE(updatedListing.has_value());
+    ASSERT_EQ(updatedListing->presets.size(), 1U);
+    EXPECT_TRUE(updatedListing->rejectedFiles.empty());
+    const auto& updated = updatedListing->presets.front();
+    EXPECT_EQ(updated.id, selected.id);
+    EXPECT_EQ(updated.file, selected.file);
+    EXPECT_NE(updated.fingerprint, selected.fingerprint);
+    ASSERT_TRUE(updated.name == "First update" || updated.name == "Second update");
+    EXPECT_TRUE(sameProcessingState(updated.snapshot, updated.name == "First update" ? firstSound : secondSound));
     EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 1);
+}
+
+TEST_F(UserPresetsTest, TwoInstancesSerializeCombinedUpdateNameCollisions)
+{
+    const auto firstPreset = library.saveAs("First", sound());
+    ASSERT_TRUE(firstPreset.has_value());
+    const auto secondPreset = library.saveAs("Second", sound());
+    ASSERT_TRUE(secondPreset.has_value());
+    const auto firstBefore = firstPreset->file.loadFileAsString();
+    const auto secondBefore = secondPreset->file.loadFileAsString();
+    auto firstSound = firstPreset->snapshot;
+    firstSound.at(OUTPUT_GAIN_ID) = -6.0F;
+    auto secondSound = secondPreset->snapshot;
+    secondSound.at(OUTPUT_GAIN_ID) = -9.0F;
+    const UserPresets other(processor.getParameters(), directory);
+    std::atomic<int> successes {0};
+    std::latch start(1);
+    std::thread first([&] {
+        start.wait();
+        if (library.update(*firstPreset, "Shared", firstSound)) {
+            ++successes;
+        }
+    });
+    std::thread second([&] {
+        start.wait();
+        if (other.update(*secondPreset, "shared", secondSound)) {
+            ++successes;
+        }
+    });
+    start.count_down();
+    first.join();
+    second.join();
+    EXPECT_EQ(successes.load(), 1);
+    const auto listing = library.list();
+    ASSERT_TRUE(listing.has_value());
+    ASSERT_EQ(listing->presets.size(), 2U);
+    EXPECT_TRUE(listing->rejectedFiles.empty());
+    for (const auto& preset : listing->presets) {
+        const bool isFirst = preset.id == firstPreset->id;
+        const auto& original = isFirst ? *firstPreset : *secondPreset;
+        EXPECT_EQ(preset.file, original.file);
+        if (preset.name.equalsIgnoreCase("shared")) {
+            EXPECT_EQ(preset.name, isFirst ? "Shared" : "shared");
+            EXPECT_NE(preset.fingerprint, original.fingerprint);
+            EXPECT_TRUE(sameProcessingState(preset.snapshot, isFirst ? firstSound : secondSound));
+        } else {
+            EXPECT_EQ(preset.name, original.name);
+            EXPECT_EQ(preset.fingerprint, original.fingerprint);
+            EXPECT_TRUE(sameProcessingState(preset.snapshot, original.snapshot));
+            EXPECT_EQ(preset.file.loadFileAsString(), isFirst ? firstBefore : secondBefore);
+        }
+    }
+    EXPECT_EQ(directory.findChildFiles(juce::File::findFiles, false).size(), 2);
 }
 }  // namespace
 }  // namespace esgrove::image_control::test

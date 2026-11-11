@@ -98,6 +98,42 @@ struct PresetMailbox final {
     std::optional<PresetCompletion> completion;
 };
 
+/// Message-thread actions belong to the containing toolbar, which outlives its selector.
+struct PresetNameCallbacks final {
+    /// Starts ordinary inline naming.
+    std::function<void()> edit;
+    /// Accepts the current inline input.
+    std::function<void()> accept;
+    /// Discards the current inline draft.
+    std::function<void()> cancel;
+    /// Updates the undecorated name draft.
+    std::function<void(const juce::String&)> change;
+};
+
+/// Edits a raw preset name separately from ComboBox selection and its modified-name decoration.
+class PresetNameSelector final : public juce::ComboBox
+{
+public:
+    PresetNameSelector();
+
+    [[nodiscard]] juce::String getNameText() const;
+    [[nodiscard]] bool isNameEditing() const;
+    void beginNameEdit(const juce::String& name);
+    void endNameEdit();
+    void setNameCallbacks(PresetNameCallbacks actions);
+    void setNameFeedback(const juce::String& feedback);
+
+    bool keyPressed(const juce::KeyPress& key) override;
+    void mouseDown(const juce::MouseEvent& event) override;
+    void resized() override;
+
+private:
+    /// Overlay retains input and caret when library items or toolbar bounds change.
+    juce::TextEditor nameEditor;
+    /// Callbacks never outlive the containing toolbar.
+    PresetNameCallbacks callbacks;
+};
+
 /// Owns the toolbar's message-thread controls and dialogs. The processor outlives this component.
 class ProcessingToolbarContent final : public juce::Component
 {
@@ -125,25 +161,31 @@ private:
     friend struct test::PresetWorkflowTestAccess;
 
     [[nodiscard]] PresetRequest makeRequest(PresetOperation operation) const;
+    [[nodiscard]] juce::PopupMenu buildPresetMenu() const;
+    [[nodiscard]] juce::String currentPresetName() const;
+    [[nodiscard]] juce::String libraryFeedback() const;
     [[nodiscard]] bool canInteract() const;
+    [[nodiscard]] bool canSave() const;
     [[nodiscard]] bool requestIsCurrent(const PresetRequest& request) const;
 
     void acceptCompletion(PresetCompletion completion);
     void acceptPresetResult(const PresetRequest& request, UserPreset preset);
     void applyListing(UserPresetListing listing);
     void beginDialog(std::function<void(int)> completion);
+    void beginNameEdit(bool saveAs);
+    void cancelNameEdit();
     void chooseExport();
     void chooseImport();
+    void commitNameEdit();
     void confirmDelete();
     void confirmReconnect();
-    void confirmUpdate();
     void configureDialogPresentation();
     void finishDialog(int result);
     void handleMenuAction(int action);
     void loadSelectedPreset();
     void observePendingLoad();
-    void promptName(bool renaming);
     void queueRequest(PresetRequest request);
+    void savePreset();
     void showDialog(
         const juce::String& title,
         const juce::String& message,
@@ -166,12 +208,8 @@ private:
     juce::TextButton slotBButton {"B"};
     /// Copies the current live sound to the inactive comparison slot.
     juce::TextButton copyButton;
-    /// Lists validated presets and presents only the active slot's persistent preset name.
-    juce::ComboBox presetSelector;
-    /// Read-only sound status, independent of filesystem progress or library diagnostics.
-    juce::Label presetStatus;
-    /// Read-only library status with reachable diagnostic tooltip.
-    juce::Label libraryStatus;
+    /// Lists validated presets and edits the active slot's name without recalling by typed text.
+    PresetNameSelector presetSelector;
     /// Opens explicit library commands without changing processing.
     juce::TextButton presetMenuButton {"Presets"};
 
@@ -200,6 +238,14 @@ private:
     juce::String pendingOperation;
     /// Last programmatically displayed selector text, preserving pending user selection notifications.
     std::optional<juce::String> shownPresetText;
+    /// Captured processor identity prevents drafts from leaking across recall or comparison transitions.
+    std::optional<PresetRequest> nameEditContext;
+    /// Raw input never contains the presentation-only modified marker.
+    juce::String draftName;
+    /// Reachable inline validation or save failure, retained with the draft.
+    juce::String nameError;
+    /// Explicit Save As intent creates a new identity rather than updating the current binding.
+    bool savingAs {false};
     /// A load is cancelled logically once an observed edit or slot transition supersedes its captured sound.
     std::optional<ProcessingSnapshot> pendingLoadSound;
     /// Slot captured when the outstanding preset load began.

@@ -94,7 +94,6 @@ private:
     void updateDisplayDisclosures();
     void updateHistoryButtons();
     void updateSettingsBounds();
-    void updatePresetIdentity();
     void updateSpectrogramMonitoring();
 
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
@@ -126,8 +125,6 @@ private:
 
     /// The plugin name in the header.
     juce::Label titleLabel;
-    /// Named preset feedback confined to the title area while the preset row is collapsed.
-    juce::Label presetLabel;
     /// Local spectrogram hide action, or its labelled restore handle.
     DisplayDisclosure spectrogramDisclosure {"Spectrogram"};
     /// Local correlation hide action, or its labelled restore handle.

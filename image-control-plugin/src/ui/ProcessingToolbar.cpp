@@ -1,4 +1,4 @@
-/// Implements A/B controls and independent sound identity, modified status, and library-status presentation.
+/// Implements A/B controls, inline preset naming, modified markers, and library feedback.
 /// Filesystem workflows live in ProcessingToolbarPresets.cpp and publish detached worker completions.
 
 #include "ui/ProcessingToolbar.h"
@@ -21,19 +21,11 @@ namespace esgrove::image_control
 {
 namespace
 {
-/// Compact controls preserve a flexible preset selector at the editor's 760-pixel minimum width.
+/// Vertical breathing room matches the compact header actions.
 constexpr int CONTROL_INSET {4};
-constexpr int CONTROL_GAP {4};
-constexpr int GROUP_GAP {12};
-constexpr int SLOT_WIDTH {32};
-constexpr int COPY_WIDTH {72};
-constexpr int MENU_WIDTH {72};
-constexpr int STATUS_WIDTH {64};
-constexpr int LIBRARY_STATUS_WIDTH {84};
-/// Preset names stay bounded while the actions and independent status fields remain adjacent.
-constexpr int MAX_PRESET_SELECTOR_WIDTH {320};
-/// Status text remains legible without competing with the compact preset selector.
-constexpr float STATUS_FONT_HEIGHT {12.0F};
+/// Keep the selector's dropdown arrow available beside its inline editor.
+constexpr int PRESET_ARROW_WIDTH {30};
+constexpr float PRESET_NAME_FONT_HEIGHT {13.0F};
 /// Stable left-to-right traversal is independent of the controls' dependency-safe declaration order.
 constexpr int SLOT_A_FOCUS_ORDER {1};
 constexpr int SLOT_B_FOCUS_ORDER {2};
@@ -56,16 +48,111 @@ void identifyControl(
     control.setExplicitFocusOrder(focusOrder);
 }
 
-/// Configures a readable status label that can actually receive tooltip hit testing.
-void configureStatus(juce::Label& status, const juce::String& identifier, const juce::String& title)
-{
-    status.setComponentID(identifier);
-    status.setTitle(title);
-    status.setFont(textFont(STATUS_FONT_HEIGHT));
-    status.setJustificationType(juce::Justification::centredRight);
-    status.setInterceptsMouseClicks(true, false);
-}
 }  // namespace
+
+/// Keeps naming local to the selector rather than using a modal JUCE label editor.
+PresetNameSelector::PresetNameSelector()
+{
+    nameEditor.setComponentID("preset-name-input");
+    nameEditor.setTitle("Preset name");
+    nameEditor.setMultiLine(false);
+    nameEditor.setFont(textFont(PRESET_NAME_FONT_HEIGHT));
+    nameEditor.onTextChange = [this] {
+        if (callbacks.change) {
+            callbacks.change(nameEditor.getText());
+        }
+    };
+    nameEditor.onReturnKey = [this] {
+        if (callbacks.change) {
+            callbacks.change(nameEditor.getText());
+        }
+        if (callbacks.accept) {
+            callbacks.accept();
+        }
+    };
+    nameEditor.onEscapeKey = [this] {
+        if (callbacks.cancel) {
+            callbacks.cancel();
+        }
+    };
+    addChildComponent(nameEditor);
+}
+
+/// Installs the containing toolbar's lifetime-bounded message-thread actions.
+void PresetNameSelector::setNameCallbacks(PresetNameCallbacks actions)
+{
+    callbacks = std::move(actions);
+}
+
+/// Starts or resumes raw name input without changing the ComboBox's library selection.
+void PresetNameSelector::beginNameEdit(const juce::String& name)
+{
+    nameEditor.setText(name, false);
+    nameEditor.setVisible(true);
+    nameEditor.toFront(false);
+    resized();
+    if (isShowing()) {
+        nameEditor.grabKeyboardFocus();
+    }
+    nameEditor.selectAll();
+}
+
+/// Ends inline input without an asynchronous ComboBox text-change notification.
+void PresetNameSelector::endNameEdit()
+{
+    nameEditor.setVisible(false);
+}
+
+/// Makes inline validation and Save As instructions reachable while the input covers the selector.
+void PresetNameSelector::setNameFeedback(const juce::String& feedback)
+{
+    nameEditor.setDescription(feedback);
+    nameEditor.setTooltip(feedback);
+}
+
+/// Reads input synchronously so Save cannot race a pending TextEditor notification.
+juce::String PresetNameSelector::getNameText() const
+{
+    return nameEditor.getText();
+}
+
+/// Reports whether the overlay owns the raw name draft.
+bool PresetNameSelector::isNameEditing() const
+{
+    return nameEditor.isVisible();
+}
+
+/// F2 enters naming while arrow keys and Return retain ordinary preset-picker navigation.
+bool PresetNameSelector::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::F2Key && callbacks.edit) {
+        callbacks.edit();
+        return true;
+    }
+    return juce::ComboBox::keyPressed(key);
+}
+
+/// Clicking the name edits it, while the dropdown arrow continues to open the preset list.
+void PresetNameSelector::mouseDown(const juce::MouseEvent& event)
+{
+    const auto local = event.getEventRelativeTo(this);
+    if (event.originalComponent != &nameEditor && !nameEditor.isParentOf(event.originalComponent)
+        && local.x < getWidth() - PRESET_ARROW_WIDTH && event.mods.isLeftButtonDown() && callbacks.edit)
+    {
+        callbacks.edit();
+        return;
+    }
+    if (event.eventComponent == this) {
+        juce::ComboBox::mouseDown(event);
+    }
+}
+
+/// Preserves input focus and caret while the toolbar moves between header and second row.
+void PresetNameSelector::resized()
+{
+    juce::ComboBox::resized();
+    nameEditor.setBounds(getLocalBounds().reduced(1).withTrimmedRight(PRESET_ARROW_WIDTH));
+}
 
 /// Installs controls in keyboard order and starts a non-blocking initial scan without reconnecting restored state.
 ProcessingToolbarContent::ProcessingToolbarContent(
@@ -84,8 +171,6 @@ ProcessingToolbarContent::ProcessingToolbarContent(
     identifyControl(copyButton, "comparison-copy", "Copy active comparison to the other slot", COPY_FOCUS_ORDER);
     identifyControl(presetSelector, "preset-selector", "User preset", PRESET_SELECTOR_FOCUS_ORDER);
     identifyControl(presetMenuButton, "preset-menu", "Preset actions", PRESET_MENU_FOCUS_ORDER);
-    configureStatus(presetStatus, "preset-status", "Preset sound status");
-    configureStatus(libraryStatus, "preset-library-status", "Preset library status");
     slotAButton.setConnectedEdges(juce::Button::ConnectedOnRight);
     slotBButton.setConnectedEdges(juce::Button::ConnectedOnLeft);
     slotAButton.setToggleable(true);
@@ -93,12 +178,23 @@ ProcessingToolbarContent::ProcessingToolbarContent(
     slotAButton.setTooltip("Recall processing slot A. Display settings and audition controls are unchanged");
     slotBButton.setTooltip("Recall processing slot B. Display settings and audition controls are unchanged");
     presetSelector.setEditableText(false);
-    presetSelector.setTextWhenNothingSelected("Unsaved sound");
+    presetSelector.setTextWhenNothingSelected("Unsaved");
+    presetSelector.setNameCallbacks({
+        .edit = [this] { beginNameEdit(false); },
+        .accept = [this] { commitNameEdit(); },
+        .cancel = [this] { cancelNameEdit(); },
+        .change =
+            [this](const juce::String& name) {
+                if (!nameEditContext || busy) {
+                    return;
+                }
+                draftName = name;
+                nameError.clear();
+                updatePresetSelector();
+            },
+    });
     presetSelector.setTextWhenNoChoicesAvailable("No user presets. Choose Save As from Presets");
-    presetMenuButton.setTooltip(
-        "Save As, confirm Update, reconnect a restored preset, Rename, Delete, Import to Library, and Export Saved "
-        "Preset"
-    );
+    presetMenuButton.setTooltip("Save, Save As, Rename, Delete, Import, Export, and Reconnect presets");
     slotAButton.onClick = [this] {
         if (processor.selectComparisonSlot(0)) {
             pendingLoadChanged = pendingLoadSound.has_value();
@@ -124,8 +220,6 @@ ProcessingToolbarContent::ProcessingToolbarContent(
              &slotBButton,
              &copyButton,
              &presetSelector,
-             &presetStatus,
-             &libraryStatus,
              &presetMenuButton,
          })
     {
@@ -194,27 +288,26 @@ bool ProcessingToolbarContent::requestIsCurrent(const PresetRequest& request) co
                 && selected->fingerprint == request.binding->fingerprint));
 }
 
-/// Keeps independently hit-testable sound and library statuses next to the flexible name-only selector.
+/// Packs the selector directly beside its actions using the same dimensions as header admission.
 void ProcessingToolbarContent::resized()
 {
     constexpr int controlHeight {24};
     const int inset = std::min(CONTROL_INSET, std::max(0, (getHeight() - controlHeight) / 2));
     auto area = getLocalBounds().reduced(0, inset);
-    slotAButton.setBounds(area.removeFromLeft(SLOT_WIDTH));
-    slotBButton.setBounds(area.removeFromLeft(SLOT_WIDTH));
-    area.removeFromLeft(CONTROL_GAP);
-    copyButton.setBounds(area.removeFromLeft(COPY_WIDTH));
-    area.removeFromLeft(GROUP_GAP);
-    constexpr int trailingWidth {MENU_WIDTH + LIBRARY_STATUS_WIDTH + STATUS_WIDTH + CONTROL_GAP * 3};
-    presetSelector.setBounds(
-        area.removeFromLeft(std::clamp(area.getWidth() - trailingWidth, 1, MAX_PRESET_SELECTOR_WIDTH))
-    );
-    area.removeFromLeft(CONTROL_GAP);
-    presetStatus.setBounds(area.removeFromLeft(STATUS_WIDTH));
-    area.removeFromLeft(CONTROL_GAP);
-    libraryStatus.setBounds(area.removeFromLeft(LIBRARY_STATUS_WIDTH));
-    area.removeFromLeft(CONTROL_GAP);
-    presetMenuButton.setBounds(area.removeFromLeft(MENU_WIDTH));
+    slotAButton.setBounds(area.removeFromLeft(PROCESSING_TOOLBAR_SLOT_WIDTH));
+    slotBButton.setBounds(area.removeFromLeft(PROCESSING_TOOLBAR_SLOT_WIDTH));
+    area.removeFromLeft(PROCESSING_TOOLBAR_CONTROL_GAP);
+    copyButton.setBounds(area.removeFromLeft(PROCESSING_TOOLBAR_COPY_WIDTH));
+    area.removeFromLeft(PROCESSING_TOOLBAR_GROUP_GAP);
+    presetSelector.setBounds(area.removeFromLeft(
+        std::clamp(
+            area.getWidth() - PROCESSING_TOOLBAR_MENU_WIDTH - PROCESSING_TOOLBAR_CONTROL_GAP,
+            PROCESSING_TOOLBAR_MIN_SELECTOR_WIDTH,
+            PROCESSING_TOOLBAR_MAX_SELECTOR_WIDTH
+        )
+    ));
+    area.removeFromLeft(PROCESSING_TOOLBAR_CONTROL_GAP);
+    presetMenuButton.setBounds(area.removeFromLeft(PROCESSING_TOOLBAR_MENU_WIDTH));
 }
 
 /// Replays history and invalidates a pending load even when another action restores the same sound.
@@ -265,6 +358,9 @@ void ProcessingToolbarContent::refresh()
             pendingLoadSound.reset();
         }
     }
+    if (nameEditContext && !requestIsCurrent(*nameEditContext)) {
+        cancelNameEdit();
+    }
     const auto& history = processor.getHistory();
     const bool slotA = processor.getActiveComparisonSlot() == 0;
     slotAButton.setToggleState(slotA, juce::dontSendNotification);
@@ -288,73 +384,82 @@ void ProcessingToolbarContent::updatePresetSelector()
 {
     const auto presentation = processor.getPresetPresentation();
     const auto& provenance = presentation.provenance;
-    const auto& selection = presentation.selection;
-    const bool modified = presentation.modified;
-    const auto name = provenance ? provenance->name : juce::String("Unsaved sound");
-    // Preserve a newly chosen ComboBox item until its asynchronous onChange callback is delivered.
-    if (!shownPresetText || *shownPresetText != name) {
-        presetSelector.setText(name, juce::dontSendNotification);
-        shownPresetText = name;
+    const bool modified = presentation.modified || (nameEditContext && draftName != nameEditContext->provenanceName);
+    auto name = provenance ? provenance->name : juce::String("Unsaved");
+    if (nameEditContext) {
+        name = draftName;
     }
-    juce::String soundStatus {"Saved"};
+    const auto displayName = name + (modified && provenance ? " *" : "");
+    // Preserve a newly chosen ComboBox item until its asynchronous onChange callback is delivered.
+    if (!shownPresetText || *shownPresetText != displayName) {
+        presetSelector.setText(displayName, juce::dontSendNotification);
+        shownPresetText = displayName;
+    }
     juce::String soundDescription = "The active sound matches the stored baseline for " + name.quoted();
     if (!provenance) {
-        soundStatus = "Unsaved";
         soundDescription = "The active sound has no saved preset baseline. Use Save As.";
     } else if (modified) {
-        soundStatus = "Modified";
         soundDescription = "The active sound differs from the stored baseline for " + name.quoted();
     }
     presetSelector.setTitle("User preset: " + name);
     presetSelector.setDescription(soundDescription);
+    const auto feedback = libraryFeedback();
+    presetSelector.setNameFeedback(feedback);
     presetSelector.setTooltip(
-        name + juce::newLine + soundDescription + juce::newLine
-        + (provenance ? "Preset UUID: " + provenance->id + juce::newLine : juce::String())
-        + "Choose a library preset to load its sound into the active slot."
+        name + juce::newLine + soundDescription + juce::newLine + feedback + juce::newLine
+        + "Click the name to edit. Use the arrow to load a preset."
     );
-    presetStatus.setText(soundStatus, juce::dontSendNotification);
-    presetStatus.setColour(
-        juce::Label::textColourId, juce::Colour(provenance && !modified ? palette::GREY_MIDDLE_LIGHT : palette::YELLOW)
+    presetMenuButton.setTooltip("Save and manage presets" + juce::String(juce::newLine) + feedback);
+    presetSelector.setDescription(soundDescription + juce::String(juce::newLine) + feedback);
+    presetSelector.setColour(
+        juce::ComboBox::outlineColourId, juce::Colour(nameError.isEmpty() ? palette::GREY_MEDIUM : palette::YELLOW)
     );
-    presetStatus.setTooltip(soundDescription);
-    presetStatus.setDescription(soundDescription);
+}
 
-    juce::String status;
-    juce::String explanation;
+/// Keeps operation progress, naming feedback, and library diagnostics separate from the modified marker.
+juce::String ProcessingToolbarContent::libraryFeedback() const
+{
+    if (nameError.isNotEmpty()) {
+        return nameError;
+    }
     if (busy) {
-        status = pendingOperation;
-        explanation = pendingOperation + " The preset sound status remains independent.";
-    } else if (listingError.isNotEmpty()) {
-        status = "Scan failed";
-        explanation = listingError;
-    } else if (!issues.empty()) {
-        status = juce::String(static_cast<int>(issues.size())) + " invalid";
-        explanation = "Some preset files were rejected. Choose Presets > Preset file errors for details.";
-    } else if (provenance && !selection) {
-        status = "Unlinked";
-        explanation = "The stored preset name and baseline are retained independently of the library. "
-                      "Choose Reconnect by UUID in Presets to bind the current saved revision without loading audio, "
-                      "or Save As to create a new preset.";
-    } else if (selection) {
+        return pendingOperation;
+    }
+    if (savingAs) {
+        return "Enter a new preset name. Press Enter to save, or Escape to cancel.";
+    }
+    if (listingError.isNotEmpty()) {
+        return "Scan failed: " + listingError;
+    }
+    if (!issues.empty()) {
+        return juce::String(static_cast<int>(issues.size()))
+            + " invalid: Some preset files were rejected. Choose Presets > Preset file errors for details.";
+    }
+    const auto presentation = processor.getPresetPresentation();
+    const auto& selection = presentation.selection;
+    if (presentation.provenance && !selection) {
+        return "Unlinked: Choose Reconnect to link the saved preset, or Save As to create a new preset.";
+    }
+    if (selection) {
         const auto candidate = std::ranges::find(presets, selection->id, &UserPreset::id);
         if (candidate == presets.end()) {
-            status = "Missing file";
-            explanation = "The bound library file is unavailable or invalid. The stored preset name and baseline "
-                          "are retained. Restore the file, explicitly reconnect by UUID, or use Save As.";
-        } else if (candidate->file != selection->file || candidate->fingerprint != selection->fingerprint) {
-            status = "File changed";
-            explanation = "The library revision changed. The bound fingerprint and stored baseline are unchanged. "
-                          "Explicitly reconnect by UUID to target the current revision without loading its sound.";
-        } else {
-            explanation = "The preset library is available. Scans never change the saved sound baseline.";
+            return "Missing file: The preset file is unavailable. Restore it, choose Reconnect, or use Save As.";
         }
-    } else {
-        explanation = "The preset library is available. Scans never change the saved sound baseline.";
+        if (candidate->file != selection->file || candidate->fingerprint != selection->fingerprint) {
+            return "File changed: The preset file changed. Choose Reconnect before saving changes.";
+        }
     }
-    libraryStatus.setText(status, juce::dontSendNotification);
-    libraryStatus.setColour(juce::Label::textColourId, juce::Colour(busy ? palette::BLUE : palette::YELLOW));
-    libraryStatus.setTooltip(explanation);
-    libraryStatus.setDescription(explanation);
+    return "The preset library is available. Scans never change the saved sound baseline.";
+}
+
+/// Reads a raw draft synchronously without deriving identity from the displayed ComboBox text.
+juce::String ProcessingToolbarContent::currentPresetName() const
+{
+    if (nameEditContext) {
+        return presetSelector.getNameText();
+    }
+    const auto provenance = processor.getPresetProvenance();
+    return provenance ? provenance->name : juce::String();
 }
 
 /// Remembers observed edits and transitions even when an undo or A/B round trip restores the captured sound.
@@ -389,6 +494,16 @@ ProcessingToolbar::ProcessingToolbar(
 
 /// Releases dialogs and finishes disk work before the processor reference can become invalid.
 ProcessingToolbar::~ProcessingToolbar() = default;
+
+/// Enters the implementation's nested focus container rather than falling back to a header sibling.
+void ProcessingToolbar::focusControls()
+{
+    if (auto traverser = content->createKeyboardFocusTraverser()) {
+        if (auto* first = traverser->getDefaultComponent(content.get())) {
+            first->grabKeyboardFocus();
+        }
+    }
+}
 
 /// Routes header and keyboard redo through the pending-load guard on the message thread.
 void ProcessingToolbar::redo()

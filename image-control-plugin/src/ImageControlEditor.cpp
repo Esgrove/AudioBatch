@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 namespace esgrove::image_control
 {
 namespace
@@ -79,10 +80,6 @@ constexpr int VALUE_BOX_HEIGHT {20};
 constexpr float BYPASSED_STRIP_ALPHA {0.72F};
 /// Height retained by a hidden display's labelled restore handle.
 constexpr int RESTORE_HANDLE_HEIGHT {18};
-/// Quiet identity typography fits a preset subtitle within the ordinary header height.
-constexpr float PRESET_FONT_HEIGHT {11.0F};
-constexpr float COMPACT_BRAND_FONT_HEIGHT {14.0F};
-constexpr int COMPACT_BRAND_HEIGHT {15};
 /// The local row action reserves only the header portion of the meter column.
 constexpr int CORRELATION_ACTION_HEIGHT {20};
 /// A full-height hover target separates correlation from the controls without covering either.
@@ -92,6 +89,24 @@ constexpr int SECTION_ACTION_WIDTH {48};
 bool booleanSetting(const juce::ValueTree& editorState, const char* property)
 {
     return static_cast<bool>(editorState.getProperty(property));
+}
+
+/// Distributes narrow-header pressure in whole pixels without rounding any slot backwards during resizing.
+void compressHeaderWidths(const std::span<int> widths, const int minimum, int& pressure)
+{
+    while (pressure > 0) {
+        bool changed = false;
+        for (auto& width : widths) {
+            if (width > minimum && pressure > 0) {
+                --width;
+                --pressure;
+                changed = true;
+            }
+        }
+        if (!changed) {
+            break;
+        }
+    }
 }
 }  // namespace
 
@@ -117,12 +132,6 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
-    presetLabel.setComponentID("header-preset-name");
-    presetLabel.setTitle("Current preset");
-    presetLabel.setFont(textFont(PRESET_FONT_HEIGHT));
-    presetLabel.setBorderSize({});
-    presetLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
-    addChildComponent(presetLabel);
     spectrogramDisclosure.setComponentID("spectrogram-disclosure");
     correlationDisclosure.setComponentID("correlation-disclosure");
     bandControlsDisclosure.setComponentID("band-controls-disclosure");
@@ -333,6 +342,7 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     constexpr int groupGapCount {6};
     constexpr int iconGapCount {2};
     constexpr int minimumGap {2};
+    constexpr int presetGap {PROCESSING_TOOLBAR_CONTROL_GAP};
     constexpr int preferredButtonWidth {60};
     constexpr int preferredTapWidth {42};
     constexpr int preferredIdentityWidth {TITLE_WIDTH + 16};
@@ -345,23 +355,16 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
         preferredIdentityWidth + fixedIconWidth + preferredTapWidth * 2 + preferredButtonWidth * 3 + OUTPUT_LABEL_WIDTH
             + OUTPUT_SLIDER_WIDTH + groupGapCount * GAP + iconGapCount * ICON_BUTTON_GAP,
     };
-    int pressure = std::max(0, preferredWidth - header.getWidth());
-    // Each extra window pixel restores exactly one slot pixel. No fractional boundary can round backwards.
-    const auto compress = [&pressure](auto& widths, const int minimum) {
-        while (pressure > 0) {
-            bool changed = false;
-            for (auto& width : widths) {
-                if (width > minimum && pressure > 0) {
-                    --width;
-                    --pressure;
-                    changed = true;
-                }
-            }
-            if (!changed) {
-                break;
-            }
-        }
+    // Inline packing spends the disclosure's entire allocation on the preset group and keeps the output usable.
+    constexpr int inlineMinimumWidth {
+        preferredWidth - ICON_BUTTON_WIDTH - ICON_BUTTON_GAP - GAP + presetGap * 2
+            + PROCESSING_TOOLBAR_INLINE_MIN_WIDTH,
     };
+    processingToolbarInline = header.getWidth() >= inlineMinimumWidth;
+    // Revealing and resizing the toolbar can move focus before the disclosure's empty bounds are applied.
+    const bool focusInlineToolbar
+        = processingToolbarInline && processingToolbarButton.hasKeyboardFocus(false) && isShowing();
+    int pressure = processingToolbarInline ? 0 : std::max(0, preferredWidth - header.getWidth());
     std::array<int, groupGapCount> groupGaps {};
     groupGaps.fill(GAP);
     std::array<int, iconGapCount> iconGaps {};
@@ -370,12 +373,12 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     std::array buttonWidths {preferredButtonWidth, preferredButtonWidth, preferredButtonWidth};
     std::array tapWidths {preferredTapWidth, preferredTapWidth};
     std::array outputLabelWidths {OUTPUT_LABEL_WIDTH};
-    compress(groupGaps, minimumGap);
-    compress(iconGaps, minimumGap);
-    compress(identityWidths, minimumIdentityWidth);
-    compress(buttonWidths, minimumButtonWidth);
-    compress(tapWidths, minimumTapWidth);
-    compress(outputLabelWidths, minimumOutputLabelWidth);
+    compressHeaderWidths(groupGaps, minimumGap, pressure);
+    compressHeaderWidths(iconGaps, minimumGap, pressure);
+    compressHeaderWidths(identityWidths, minimumIdentityWidth, pressure);
+    compressHeaderWidths(buttonWidths, minimumButtonWidth, pressure);
+    compressHeaderWidths(tapWidths, minimumTapWidth, pressure);
+    compressHeaderWidths(outputLabelWidths, minimumOutputLabelWidth, pressure);
     const auto sum = [](const auto& widths) {
         int total = 0;
         for (const int width : widths) {
@@ -383,33 +386,30 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
         }
         return total;
     };
-    const int outputWidth = header.getWidth() - sum(identityWidths) - fixedIconWidth - sum(tapWidths)
-        - sum(buttonWidths) - sum(outputLabelWidths) - sum(groupGaps) - sum(iconGaps);
+    const int inlineExtraWidth = std::max(0, header.getWidth() - inlineMinimumWidth);
+    const int outputWidth = processingToolbarInline
+        ? std::min(OUTPUT_SLIDER_WIDTH + inlineExtraWidth, MAX_OUTPUT_SLIDER_WIDTH)
+        : header.getWidth() - sum(identityWidths) - fixedIconWidth - sum(tapWidths) - sum(buttonWidths)
+            - sum(outputLabelWidths) - sum(groupGaps) - sum(iconGaps);
+    const int inlinePresetSpace
+        = PROCESSING_TOOLBAR_INLINE_MIN_WIDTH + inlineExtraWidth - (outputWidth - OUTPUT_SLIDER_WIDTH);
     int headerX = header.getX();
     const auto takeHeader = [&headerX, &header](const int width) {
         const int left = headerX;
         headerX += width;
         return juce::Rectangle<int>(left, header.getY(), width, header.getHeight());
     };
-    auto identity = takeHeader(identityWidths.front());
-    if (presetLabel.isVisible()) {
-        titleLabel.setBounds(identity.removeFromTop(COMPACT_BRAND_HEIGHT));
-        presetLabel.setBounds(identity);
-    } else {
-        titleLabel.setBounds(identity);
-        presetLabel.setBounds({});
-    }
+    titleLabel.setBounds(takeHeader(identityWidths.front()));
     settingsButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     headerX += groupGaps.at(0);
     preButton.setBounds(takeHeader(tapWidths.at(0)).reduced(0, BUTTON_INSET));
     postButton.setBounds(takeHeader(tapWidths.at(1)).reduced(0, BUTTON_INSET));
-    headerX += groupGaps.at(1);
+    // Unused wide-header space stays before history, keeping the preset group's two adjacent gaps compact.
+    headerX += groupGaps.at(1)
+        + (processingToolbarInline ? std::max(0, inlinePresetSpace - PROCESSING_TOOLBAR_MAX_WIDTH) : 0);
     undoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     headerX += iconGaps.at(0);
     redoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    // The responsive preset group uses only spare space, preserving the right-anchored monitoring controls.
-    const int spareWidth = std::max(0, outputWidth - MAX_OUTPUT_SLIDER_WIDTH);
-    processingToolbarInline = spareWidth >= PROCESSING_TOOLBAR_INLINE_MIN_WIDTH + GAP;
     if (!processingToolbarInline && !processingToolbarShown && processingToolbar.hasKeyboardFocus(true) && isShowing())
     {
         processingToolbarButton.setVisible(true);
@@ -417,14 +417,14 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     }
     processingToolbar.setVisible(processingToolbarInline || processingToolbarShown);
     if (processingToolbarInline) {
+        headerX += presetGap;
         processingToolbar.setBounds(
-            headerX + groupGaps.at(2),
-            header.getY(),
-            std::min(spareWidth - GAP, PROCESSING_TOOLBAR_MAX_WIDTH),
-            header.getHeight()
+            headerX, header.getY(), std::min(inlinePresetSpace, PROCESSING_TOOLBAR_MAX_WIDTH), header.getHeight()
         );
+        headerX += processingToolbar.getWidth() + presetGap;
+    } else {
+        headerX += groupGaps.at(2) + std::max(0, outputWidth - MAX_OUTPUT_SLIDER_WIDTH);
     }
-    headerX += groupGaps.at(2) + spareWidth;
     monoButton.setBounds(takeHeader(buttonWidths.at(0)).reduced(0, BUTTON_INSET));
     headerX += groupGaps.at(3);
     deltaButton.setBounds(takeHeader(buttonWidths.at(1)).reduced(0, BUTTON_INSET));
@@ -433,10 +433,14 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     headerX += groupGaps.back();
     outputLabel.setBounds(takeHeader(outputLabelWidths.front()));
     outputSlider.setBounds(takeHeader(std::min(outputWidth, MAX_OUTPUT_SLIDER_WIDTH)));
-    headerX += iconGaps.at(1);
-    processingToolbarButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    if (processingToolbarInline && processingToolbarButton.hasKeyboardFocus(false) && isShowing()) {
-        processingToolbar.grabKeyboardFocus();
+    if (processingToolbarInline) {
+        processingToolbarButton.setBounds({});
+    } else {
+        headerX += iconGaps.at(1);
+        processingToolbarButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    }
+    if (focusInlineToolbar) {
+        processingToolbar.focusControls();
     }
     processingToolbarButton.setVisible(!processingToolbarInline);
 }
@@ -519,7 +523,6 @@ void ImageControlEditor::resized()
         correlationArea.removeFromLeft(GAP);
     }
     layoutBandControlsDisclosure();
-    updatePresetIdentity();
     updateSettingsBounds();
 
     if (!layoutRestored || layoutTransition) {
@@ -702,7 +705,6 @@ void ImageControlEditor::applyViewSettings()
     updateHistoryButtons();
     applyLayoutSettings();
     updateDisplayDisclosures();
-    updatePresetIdentity();
     const auto& editorState = imageControlProcessor.getEditorState();
     const bool smoothCorrelationReadout
         = static_cast<bool>(editorState.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true));
@@ -800,28 +802,6 @@ void ImageControlEditor::updateDisplayDisclosures()
         } else {
             disclosure->setRevealed(false);
         }
-    }
-}
-
-/// Shows named preset feedback only where the expanded selector is not already showing it.
-void ImageControlEditor::updatePresetIdentity()
-{
-    const auto presentation = imageControlProcessor.getPresetPresentation();
-    const auto& provenance = presentation.provenance;
-    const bool show = !processingToolbar.isVisible() && provenance.has_value();
-    juce::String text;
-    if (provenance.has_value()) {
-        text = provenance->name + (presentation.modified ? " *" : "");
-    }
-    const bool visibilityChanged = presetLabel.isVisible() != show;
-    presetLabel.setText(text, juce::dontSendNotification);
-    const auto description = text.isEmpty() ? text : text + " · Slot " + (presentation.comparisonSlot == 0 ? "A" : "B");
-    presetLabel.setTooltip(description);
-    presetLabel.setDescription(description);
-    presetLabel.setVisible(show);
-    titleLabel.setFont(textFont(show ? COMPACT_BRAND_FONT_HEIGHT : TITLE_FONT_HEIGHT).boldened());
-    if (visibilityChanged) {
-        layoutHeader(getLocalBounds().reduced(GAP).removeFromTop(HEADER_HEIGHT - GAP));
     }
 }
 
