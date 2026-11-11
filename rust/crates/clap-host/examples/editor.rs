@@ -1,6 +1,6 @@
 //! Bounded, hardware-free qualification of a trusted build-tree CLAP native editor.
 //!
-//! Run `cargo run -p clap-host --features editor --example clap_editor -- /absolute/plugin.clap`.
+//! Run `cargo run -p clap-host --features editor --example clap_host_editor -- /absolute/plugin.clap`.
 //! The bundle is executed in process, never discovered or installed, and no application storage is opened.
 //! Native window structure, not screenshots or pixels, establishes attachment and cleanup.
 
@@ -21,7 +21,7 @@ const MAX_DURATION_MS: u64 = 60_000;
 const SERVICE_INTERVAL: Duration = Duration::from_millis(10);
 /// Command help is handled before UI registration, native initialization, or bundle loading.
 const HELP: &str = "Qualify a trusted build-tree CLAP native editor without audio hardware.\n\n\
-Usage: clap_editor <ABSOLUTE_BUNDLE.clap> [-d|--duration-ms <MILLISECONDS>]\n\n\
+Usage: clap_host_editor <ABSOLUTE_BUNDLE.clap> [-d|--duration-ms <MILLISECONDS>]\n\n\
   -d, --duration-ms <MILLISECONDS>  Automatic close after 1..=60000 ms [default: 250]\n\
   -h, --help                        Print help without loading native code\n\n\
 Pass only an explicitly authorized build-tree bundle. Native plugin code executes\n\

@@ -25,7 +25,7 @@ audiobatch-test-clap-plugin = { path = "../test-clap-plugin" }
 tempfile.workspace = true
 
 [[example]]
-name = "clap_editor"
+name = "clap_host_editor"
 path = "examples/editor.rs"
 required-features = ["editor"]
 
