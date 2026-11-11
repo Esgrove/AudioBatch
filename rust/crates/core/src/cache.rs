@@ -13,7 +13,8 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::overload::OverloadHistory;
 use crate::record::{
-    AnalysisError, AnalysisRecord, AnalysisStatus, MeasurementProducer, ShortTermLoudnessHistory, file_identity,
+    AnalysisError, AnalysisRecord, AnalysisStatus, FileIdentity, MeasurementProducer, ShortTermLoudnessHistory,
+    file_identity,
 };
 
 mod schema;
@@ -120,6 +121,19 @@ pub struct AnalysisCache {
     connection: Mutex<Option<Connection>>,
 }
 
+/// Stored source version retained while pruning without holding the database connection lock.
+struct CachedFileVersion {
+    path: PathBuf,
+    file_size: i64,
+    modified_time_ms: i64,
+}
+
+/// Required measurement histories serialized before taking the cache write lock.
+struct MeasurementPayloads {
+    loudness: Option<Vec<u8>>,
+    overloads: Option<Vec<u8>>,
+}
+
 /// The custom gain column of a cached row, which is empty when the user has not set a gain for the file.
 struct StoredGain {
     custom_gain_db: Option<f32>,
@@ -173,7 +187,10 @@ impl AnalysisCache {
     /// Invalid measurements miss independently of preview data, and failures are reusable only from Rust.
     #[must_use]
     pub fn get_analysis(&self, path: &Path) -> Option<AnalysisRecord> {
-        let (file_size, modified_time_ms) = file_identity(path)?;
+        let FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path)?;
         let mut record = AnalysisRecord {
             path: path.to_path_buf(),
             file_size,
@@ -265,7 +282,10 @@ impl AnalysisCache {
         if !record.matches_file_on_disk() {
             return Ok(());
         }
-        let (history, overload_history) = measurement_payloads(record)?;
+        let MeasurementPayloads {
+            loudness: history,
+            overloads: overload_history,
+        } = measurement_payloads(record)?;
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
             // Taking the write lock up front keeps a concurrent writer from failing the upgrade from the read.
@@ -275,7 +295,7 @@ impl AnalysisCache {
             }
             let current_identity = stored_identity(&transaction, &record.path)?;
             if current_identity != observed_identity
-                && current_identity != Some((record.file_size, record.modified_time_ms))
+                && current_identity != Some(FileIdentity { file_size: record.file_size, modified_time_ms: record.modified_time_ms })
             {
                 return Ok(());
             }
@@ -357,7 +377,11 @@ impl AnalysisCache {
     ///
     /// Returns an error when the database write fails.
     pub fn store_custom_gain(&self, path: &Path, custom_gain_db: Option<f32>) -> Result<bool> {
-        let Some((file_size, modified_time_ms)) = file_identity(path) else {
+        let Some(FileIdentity {
+            file_size,
+            modified_time_ms,
+        }) = file_identity(path)
+        else {
             return Ok(false);
         };
         self.store_custom_gain_for_record(
@@ -411,8 +435,8 @@ impl AnalysisCache {
             file_identity(path).or(self.with_connection(|connection| Ok(stored_identity(connection, path)?))?);
         self.with_connection(|connection| {
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let removed = identity.map_or(Ok(0), |(size, modified)| {
-                remove_identity(&transaction, path, size, modified)
+            let removed = identity.map_or(Ok(0), |identity| {
+                remove_identity(&transaction, path, identity.file_size, identity.modified_time_ms)
             })?;
             transaction.commit()?;
             Ok(removed > 0)
@@ -451,8 +475,8 @@ impl AnalysisCache {
         self.with_connection(|connection| {
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             for (path, identity) in identities {
-                if let Some((size, modified)) = identity {
-                    remove_identity(&transaction, path, size, modified)?;
+                if let Some(identity) = identity {
+                    remove_identity(&transaction, path, identity.file_size, identity.modified_time_ms)?;
                 }
             }
             transaction.commit()?;
@@ -484,16 +508,21 @@ impl AnalysisCache {
                     AND typeof(modified_time_ms) = 'integer'",
             )?;
             let rows = statement.query_map([], |row| {
-                Ok((
-                    PathBuf::from(row.get::<_, String>(0)?),
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
+                Ok(CachedFileVersion {
+                    path: PathBuf::from(row.get::<_, String>(0)?),
+                    file_size: row.get(1)?,
+                    modified_time_ms: row.get(2)?,
+                })
             })?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })?;
         let mut removed = 0;
-        for (path, size, modified) in versions {
+        for CachedFileVersion {
+            path,
+            file_size: size,
+            modified_time_ms: modified,
+        } in versions
+        {
             if should_stop() {
                 break;
             }
@@ -748,7 +777,7 @@ fn stored_custom_gain(
 }
 
 /// Reads a stored source identity when a removed file no longer has filesystem metadata.
-fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Option<(u64, i64)>> {
+fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Option<FileIdentity>> {
     connection
         .query_row(
             "SELECT file_size, modified_time_ms FROM file_analysis WHERE file_path = ?1
@@ -756,7 +785,12 @@ fn stored_identity(connection: &Connection, path: &Path) -> rusqlite::Result<Opt
          UNION ALL SELECT file_size, modified_time_ms FROM rust_waveform_cache WHERE file_path = ?1
          UNION ALL SELECT file_size, modified_time_ms FROM spectrogram_cache WHERE file_path = ?1 LIMIT 1",
             [path_key(path)],
-            |row| Ok((read_nonnegative_integer(row, 0)?, row.get(1)?)),
+            |row| {
+                Ok(FileIdentity {
+                    file_size: read_nonnegative_integer(row, 0)?,
+                    modified_time_ms: row.get(1)?,
+                })
+            },
         )
         .optional()
 }
@@ -841,13 +875,12 @@ const fn producer_name(producer: MeasurementProducer) -> &'static str {
 }
 
 /// Validates and serializes required histories before taking the measurement write lock.
-#[expect(
-    clippy::type_complexity,
-    reason = "The pair contains the required loudness and source-overload blobs"
-)]
-fn measurement_payloads(record: &AnalysisRecord) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+fn measurement_payloads(record: &AnalysisRecord) -> Result<MeasurementPayloads> {
     if record.has_error() {
-        return Ok((None, None));
+        return Ok(MeasurementPayloads {
+            loudness: None,
+            overloads: None,
+        });
     }
     let overloads = record
         .overloads
@@ -863,7 +896,10 @@ fn measurement_payloads(record: &AnalysisRecord) -> Result<(Option<Vec<u8>>, Opt
     if !valid_measurements(record) {
         return Err(CacheError::InvalidHistory);
     }
-    Ok((Some(history), Some(overloads)))
+    Ok(MeasurementPayloads {
+        loudness: Some(history),
+        overloads: Some(overloads),
+    })
 }
 
 /// Rejects invalid geometry and nonfinite measurements without confusing digital silence with corruption.
@@ -1248,8 +1284,14 @@ mod test_custom_gain {
 mod test_history_serialization {
     use super::*;
 
-    /// Returns an analyzed record with a short-term loudness history of the values, and that history.
-    fn record_with_history(values: Vec<f32>) -> (AnalysisRecord, ShortTermLoudnessHistory) {
+    /// Measurement geometry and independently encoded loudness history used by serialization tests.
+    struct HistoryFixture {
+        record: AnalysisRecord,
+        history: ShortTermLoudnessHistory,
+    }
+
+    /// Returns measurement geometry with a short-term loudness history of the values.
+    fn record_with_history(values: Vec<f32>) -> HistoryFixture {
         let history = ShortTermLoudnessHistory {
             values,
             sample_rate: 44_100.0,
@@ -1261,12 +1303,12 @@ mod test_history_serialization {
             length_in_samples: 8820,
             ..Default::default()
         };
-        (record, history)
+        HistoryFixture { record, history }
     }
 
     #[test]
     fn history_round_trips() {
-        let (record, history) = record_with_history(vec![-20.0, -10.0]);
+        let HistoryFixture { record, history } = record_with_history(vec![-20.0, -10.0]);
         let bytes = serialize_history(&history, &record).expect("serializes");
         assert_eq!(bytes.len(), HISTORY_HEADER_BYTES + 8);
         assert_eq!(deserialize_history(&bytes, &record), Some(history));
@@ -1275,7 +1317,7 @@ mod test_history_serialization {
     /// Verifies history encoding against independent literal bytes rather than only a round trip.
     #[test]
     fn independent_shared_history_bytes_decode_and_serialize_exactly() {
-        let (record, history) = record_with_history(vec![-20.0, -10.0]);
+        let HistoryFixture { record, history } = record_with_history(vec![-20.0, -10.0]);
         let bytes = [
             b'L', b'U', b'F', b'S', 1, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x88, 0xe5, 0x40, 0x74, 0x22, 0, 0, 0, 0, 0, 0, 0x3a,
             0x11, 0, 0, 2, 0, 0, 0, 0, 0, 0xa0, 0xc1, 0, 0, 0x20, 0xc1,
@@ -1286,19 +1328,19 @@ mod test_history_serialization {
 
     #[test]
     fn wrong_count_is_rejected() {
-        let (record, history) = record_with_history(vec![-20.0]);
+        let HistoryFixture { record, history } = record_with_history(vec![-20.0]);
         assert!(serialize_history(&history, &record).is_none());
     }
 
     #[test]
     fn invalid_values_are_rejected() {
-        let (record, history) = record_with_history(vec![f32::NAN, -10.0]);
+        let HistoryFixture { record, history } = record_with_history(vec![f32::NAN, -10.0]);
         assert!(serialize_history(&history, &record).is_none());
     }
 
     #[test]
     fn truncated_blob_is_rejected() {
-        let (record, history) = record_with_history(vec![-20.0, -10.0]);
+        let HistoryFixture { record, history } = record_with_history(vec![-20.0, -10.0]);
         let mut bytes = serialize_history(&history, &record).expect("serializes");
         bytes.pop();
         assert!(deserialize_history(&bytes, &record).is_none());

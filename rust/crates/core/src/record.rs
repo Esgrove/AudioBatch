@@ -94,6 +94,16 @@ pub struct ShortTermLoudnessHistory {
     pub samples_per_point: u32,
 }
 
+/// Persisted source version identified by file size and modification time.
+/// This lightweight cache identity does not replace the stronger native `SourceIdentity` receipt.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FileIdentity {
+    /// File size in bytes.
+    pub file_size: u64,
+    /// Modification time in milliseconds since the Unix epoch.
+    pub modified_time_ms: i64,
+}
+
 /// Analysis metadata and derived peak information for a single audio file.
 #[derive(Debug, Default, Clone)]
 pub struct AnalysisRecord {
@@ -206,7 +216,10 @@ impl AnalysisRecord {
     /// Builds a baseline record from file system metadata before analysis begins.
     #[must_use]
     pub(crate) fn from_path(path: &Path) -> Self {
-        let (file_size, modified_time_ms) = file_identity(path).unwrap_or_default();
+        let FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path).unwrap_or_default();
         Self {
             path: path.to_path_buf(),
             file_name: path
@@ -250,7 +263,11 @@ impl AnalysisRecord {
     /// Cache-loaded records without a transient receipt use the persisted size and modification-time contract.
     #[must_use]
     pub fn matches_file_on_disk(&self) -> bool {
-        file_identity(&self.path) == Some((self.file_size, self.modified_time_ms))
+        file_identity(&self.path)
+            == Some(FileIdentity {
+                file_size: self.file_size,
+                modified_time_ms: self.modified_time_ms,
+            })
             && self
                 .source_identity
                 .as_ref()
@@ -308,7 +325,7 @@ pub fn same_custom_gain(first: Option<f32>, second: Option<f32>) -> bool {
 /// Returns the size in bytes and the modification time in milliseconds of an existing file.
 /// These two values identify the version of the file that a cached record describes.
 #[must_use]
-pub fn file_identity(path: &Path) -> Option<(u64, i64)> {
+pub fn file_identity(path: &Path) -> Option<FileIdentity> {
     let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() {
         return None;
@@ -319,7 +336,10 @@ pub fn file_identity(path: &Path) -> Option<(u64, i64)> {
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
         .unwrap_or_default();
-    Some((metadata.len(), modified_time_ms))
+    Some(FileIdentity {
+        file_size: metadata.len(),
+        modified_time_ms,
+    })
 }
 
 /// Clamps non-finite or silent loudness readings to the shared negative infinity sentinel.

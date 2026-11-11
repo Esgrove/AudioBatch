@@ -60,7 +60,9 @@ fn bench_cache(criterion: &mut Criterion) {
         fs::copy(&fixture, &path).expect("copies the fixture");
         let mut record = template.clone();
         record.path.clone_from(&path);
-        (record.file_size, record.modified_time_ms) = file_identity(&path).expect("the copy exists");
+        let identity = file_identity(&path).expect("the copy exists");
+        record.file_size = identity.file_size;
+        record.modified_time_ms = identity.modified_time_ms;
         cache.store_analysis(&record).expect("stores the record");
         paths.push(path);
     }
@@ -266,7 +268,9 @@ fn bench_shared_cache(criterion: &mut Criterion) {
         let mut record = template.clone();
         record.path = directory.path().join(format!("{index}.wav"));
         fs::copy(&fixture, &record.path).expect("copies fixture");
-        (record.file_size, record.modified_time_ms) = file_identity(&record.path).expect("copy identity");
+        let identity = file_identity(&record.path).expect("copy identity");
+        record.file_size = identity.file_size;
+        record.modified_time_ms = identity.modified_time_ms;
         cache.store_analysis(&record).expect("stores representative record");
         record.waveform = None;
         records.push(record);

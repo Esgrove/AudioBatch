@@ -85,6 +85,14 @@ struct RunContext {
     total_files: usize,
 }
 
+/// Started normalization run and the event stream that belongs to it.
+pub struct NormalizeRun {
+    /// Generation used to reject events from superseded runs.
+    pub run_id: u64,
+    /// Events until all jobs finish or the caller stops listening.
+    pub receiver: Receiver<NormalizeEvent>,
+}
+
 impl NormalizeEvent {
     /// Returns the run the event belongs to.
     #[must_use]
@@ -123,11 +131,7 @@ impl NormalizeCoordinator {
     /// The records must be analyzed, and the receiver disconnects once every job of the run has finished.
     /// A file listed more than once is normalized once.
     #[must_use]
-    pub fn start(
-        &self,
-        mut records: Vec<AnalysisRecord>,
-        options: NormalizationOptions,
-    ) -> (u64, Receiver<NormalizeEvent>) {
+    pub fn start(&self, mut records: Vec<AnalysisRecord>, options: NormalizationOptions) -> NormalizeRun {
         let mut seen = HashSet::new();
         records.retain(|record| seen.insert(record.path.clone()));
         let run_id = self.current_run.fetch_add(1, Ordering::SeqCst) + 1;
@@ -150,7 +154,7 @@ impl NormalizeCoordinator {
             let conflicting = conflicts.contains(&record.path);
             self.pool.spawn(move || normalize_job(&record, conflicting, &context));
         }
-        (run_id, receiver)
+        NormalizeRun { run_id, receiver }
     }
 
     /// Cancels the current run. Files being rendered stop at their next block and keep their originals.
@@ -308,7 +312,7 @@ mod test_normalize_coordinator {
         let setup = setup(&directory);
         setup.cache.store_analysis(&first).expect("stores");
 
-        let (run_id, receiver) = setup.coordinator.start(vec![first.clone(), second], setup.options);
+        let NormalizeRun { run_id, receiver } = setup.coordinator.start(vec![first.clone(), second], setup.options);
         let events = collect(&receiver);
         assert!(events.iter().all(|event| event.run_id() == run_id));
         assert!(matches!(
@@ -331,7 +335,7 @@ mod test_normalize_coordinator {
         let directory = TempDir::new().expect("temp dir");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let setup = setup(&directory);
-        let (_, receiver) = setup.coordinator.start(vec![record], setup.options);
+        let NormalizeRun { receiver, .. } = setup.coordinator.start(vec![record], setup.options);
         let events = collect(&receiver);
         let started = events
             .iter()
@@ -353,7 +357,7 @@ mod test_normalize_coordinator {
         let wav = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let flac = ready_fixture_copy(&directory, "sine_stereo_44100_16.flac", "song.flac");
         let setup = setup(&directory);
-        let (_, receiver) = setup.coordinator.start(vec![wav, flac], setup.options);
+        let NormalizeRun { receiver, .. } = setup.coordinator.start(vec![wav, flac], setup.options);
         let events = collect(&receiver);
         let failed: Vec<&OperationResult> = results(&events)
             .into_iter()
@@ -373,7 +377,7 @@ mod test_normalize_coordinator {
     fn empty_run_completes_immediately() {
         let directory = TempDir::new().expect("temp dir");
         let setup = setup(&directory);
-        let (_, receiver) = setup.coordinator.start(Vec::new(), setup.options);
+        let NormalizeRun { receiver, .. } = setup.coordinator.start(Vec::new(), setup.options);
         let events = collect(&receiver);
         assert!(matches!(
             events.as_slice(),
@@ -388,7 +392,7 @@ mod test_normalize_coordinator {
         let second = ready_fixture_copy(&directory, "sine_mono_44100_16.wav", "second.wav");
         let setup = setup(&directory);
         let release = block_pool(&setup.coordinator.pool);
-        let (run_id, receiver) = setup
+        let NormalizeRun { run_id, receiver } = setup
             .coordinator
             .start(vec![first.clone(), second.clone()], setup.options);
         setup.coordinator.cancel();
@@ -420,7 +424,7 @@ mod test_normalize_coordinator {
             ..NormalizationOptions::default()
         };
 
-        let (run_id, receiver) = coordinator.start(vec![first.clone(), second.clone()], options);
+        let NormalizeRun { run_id, receiver } = coordinator.start(vec![first.clone(), second.clone()], options);
         let events: Vec<NormalizeEvent> = receiver.iter().collect();
 
         assert!(!coordinator.is_current(run_id));

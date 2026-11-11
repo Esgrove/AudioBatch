@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use super::{ANALYSIS_VERSION, AnalysisCache, Result, path_key, read_nonnegative_integer};
 use crate::output_file::SourceIdentity;
-use crate::record::{AnalysisRecord, file_identity};
+use crate::record::{AnalysisRecord, FileIdentity, file_identity};
 use crate::spectrogram::{ALGORITHM_VERSION, SERIALIZATION_VERSION, SpectrogramData};
 
 /// SQLite's signed integer form of the largest intensity grid plus a bounded allowance for its header.
@@ -77,7 +77,10 @@ impl AnalysisCache {
     #[must_use]
     pub fn get_spectrogram(&self, path: &Path) -> Option<Arc<SpectrogramData>> {
         let identity = SourceIdentity::capture(path).ok()?;
-        let (file_size, modified_time_ms) = file_identity(path)?;
+        let FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path)?;
         let file_size = i64::try_from(file_size).ok()?;
         let result = self
             .with_connection(|connection| {

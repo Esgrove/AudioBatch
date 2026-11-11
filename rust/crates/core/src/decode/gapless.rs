@@ -33,13 +33,26 @@ struct BoxHeader {
     body_end: u64,
 }
 
+/// First playable edit, with duration in movie units and start time in media units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MediaEdit {
+    segment_duration: u64,
+    media_time: i64,
+}
+
+/// Media header timing before conversion to the audio sample rate.
+struct MediaHeader {
+    timescale: u32,
+    duration: u64,
+}
+
 /// The parts of one track that matter for its gapless information.
 #[derive(Debug, Default)]
 struct TrackBoxes {
     is_audio: bool,
     media_timescale: u32,
     media_duration: u64,
-    first_edit: Option<(u64, i64)>,
+    first_edit: Option<MediaEdit>,
 }
 
 /// Reads the gapless information of the first audio track of an MP4 file,
@@ -79,7 +92,10 @@ pub(super) fn read_mp4_gapless(path: &Path, sample_rate: u32) -> Option<Gapless>
 /// Converts the first edit of an audio track into gapless information,
 /// or `None` when the edit plays the whole stream from its start.
 fn edit_list_gapless(track: &TrackBoxes, movie_timescale: u32, sample_rate: u32) -> Option<Gapless> {
-    let (segment_duration, media_time) = track.first_edit?;
+    let MediaEdit {
+        segment_duration,
+        media_time,
+    } = track.first_edit?;
     if track.media_timescale == 0 || movie_timescale == 0 {
         return None;
     }
@@ -119,7 +135,7 @@ fn read_track(file: &mut File, track: BoxHeader) -> TrackBoxes {
                                 read_body(file, child).is_some_and(|body| body.get(8..12) == Some(b"soun".as_slice()));
                         }
                         b"mdhd" => {
-                            if let Some((timescale, duration)) =
+                            if let Some(MediaHeader { timescale, duration }) =
                                 read_body(file, child).and_then(|body| media_header(&body))
                             {
                                 boxes.media_timescale = timescale;
@@ -191,7 +207,7 @@ fn parse_itunes_smpb(value: &str) -> Option<Gapless> {
 }
 
 /// Returns the duration and media time of the first edit that plays media, skipping empty edits.
-fn first_edit(body: &[u8]) -> Option<(u64, i64)> {
+fn first_edit(body: &[u8]) -> Option<MediaEdit> {
     let (&version, rest) = body.split_first()?;
     let count = u32::from_be_bytes(*rest.get(3..7)?.first_chunk()?);
     let entries = rest.get(7..)?;
@@ -201,19 +217,19 @@ fn first_edit(body: &[u8]) -> Option<(u64, i64)> {
         .map(|entry| {
             if version == 1 {
                 let (duration, time) = entry.split_at(8);
-                Some((
-                    u64::from_be_bytes(*duration.first_chunk()?),
-                    i64::from_be_bytes(*time.first_chunk()?),
-                ))
+                Some(MediaEdit {
+                    segment_duration: u64::from_be_bytes(*duration.first_chunk()?),
+                    media_time: i64::from_be_bytes(*time.first_chunk()?),
+                })
             } else {
                 let (duration, time) = entry.split_at(4);
-                Some((
-                    u64::from(u32::from_be_bytes(*duration.first_chunk()?)),
-                    i64::from(i32::from_be_bytes(*time.first_chunk()?)),
-                ))
+                Some(MediaEdit {
+                    segment_duration: u64::from(u32::from_be_bytes(*duration.first_chunk()?)),
+                    media_time: i64::from(i32::from_be_bytes(*time.first_chunk()?)),
+                })
             }
         })
-        .find(|edit| edit.is_none_or(|(_, media_time)| media_time != EMPTY_EDIT_MEDIA_TIME))
+        .find(|edit| edit.is_none_or(|edit| edit.media_time != EMPTY_EDIT_MEDIA_TIME))
         .flatten()
 }
 
@@ -224,15 +240,18 @@ fn movie_header_timescale(body: &[u8]) -> Option<u32> {
 }
 
 /// Returns the timescale and duration of a media header box body.
-fn media_header(body: &[u8]) -> Option<(u32, u64)> {
+fn media_header(body: &[u8]) -> Option<MediaHeader> {
     if body.first() == Some(&1) {
         let timescale = u32::from_be_bytes(*body.get(20..)?.first_chunk()?);
         let duration = u64::from_be_bytes(*body.get(24..)?.first_chunk()?);
-        Some((timescale, duration))
+        Some(MediaHeader { timescale, duration })
     } else {
         let timescale = u32::from_be_bytes(*body.get(12..)?.first_chunk()?);
         let duration = u32::from_be_bytes(*body.get(16..)?.first_chunk()?);
-        Some((timescale, u64::from(duration)))
+        Some(MediaHeader {
+            timescale,
+            duration: u64::from(duration),
+        })
     }
 }
 
@@ -316,7 +335,10 @@ mod test_mp4_gapless {
             is_audio: true,
             media_timescale: 48_000,
             media_duration: 96_000,
-            first_edit: Some((2000, 0)),
+            first_edit: Some(MediaEdit {
+                segment_duration: 2000,
+                media_time: 0,
+            }),
         };
         assert_eq!(edit_list_gapless(&track, 1000, 48_000), None);
     }
@@ -327,7 +349,10 @@ mod test_mp4_gapless {
             is_audio: true,
             media_timescale: 44_100,
             media_duration: 44_100 + 2112 + 7,
-            first_edit: Some((1000, 2112)),
+            first_edit: Some(MediaEdit {
+                segment_duration: 1000,
+                media_time: 2112,
+            }),
         };
         assert_eq!(
             edit_list_gapless(&track, 1000, 44_100),
@@ -347,7 +372,13 @@ mod test_mp4_gapless {
         body.extend_from_slice(&1000_u32.to_be_bytes());
         body.extend_from_slice(&1024_i32.to_be_bytes());
         body.extend_from_slice(&[0, 1, 0, 0]);
-        assert_eq!(first_edit(&body), Some((1000, 1024)));
+        assert_eq!(
+            first_edit(&body),
+            Some(MediaEdit {
+                segment_duration: 1000,
+                media_time: 1024
+            })
+        );
     }
 
     #[test]
