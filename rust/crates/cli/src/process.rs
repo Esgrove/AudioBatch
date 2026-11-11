@@ -143,7 +143,7 @@ pub fn process_records(
         is_interrupted,
     )??;
     let coordinator = ProcessingCoordinator::new(cache, context.workers)?;
-    let (_, receiver) = coordinator.start(analyzed, context.options.clone(), chains);
+    let receiver = coordinator.start(analyzed, context.options.clone(), chains).receiver;
     let mut results = HashMap::new();
     loop {
         if is_interrupted() {

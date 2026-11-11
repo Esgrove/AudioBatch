@@ -74,8 +74,14 @@ fn dispatcher() -> &'static UiDispatcher {
     DISPATCHER.get_or_init(|| UiThread::spawn_dedicated().expect("native UI thread"))
 }
 
+/// Live chain paired with its owning instance until callback retirement on the UI thread.
+struct ChainFixture {
+    instance: PluginInstance,
+    chain: PreviewChain,
+}
+
 /// Builds a preview chain without processing or prewarming it, and queues its first automation edit.
-fn chain(kind: Option<Kind>) -> (PluginInstance, PreviewChain) {
+fn chain(kind: Option<Kind>) -> ChainFixture {
     dispatcher()
         .call(
             move |ui| {
@@ -114,7 +120,7 @@ fn chain(kind: Option<Kind>) -> (PluginInstance, PreviewChain) {
                 instance
                     .set_parameter(ui, GAIN_PARAMETER, 0.25)
                     .expect("first unflushed automation");
-                (instance, chain)
+                ChainFixture { instance, chain }
             },
             &|| false,
         )
@@ -125,7 +131,7 @@ fn chain(kind: Option<Kind>) -> (PluginInstance, PreviewChain) {
 fn process_case(kind: Option<Kind>, reset: bool) {
     #[cfg(target_os = "macos")]
     loaded_runtime::verify("before-plugin");
-    let (instance, mut chain) = chain(kind);
+    let ChainFixture { instance, mut chain } = chain(kind);
     #[cfg(target_os = "macos")]
     loaded_runtime::verify("after-plugin");
     let mut left = [0.5_f32; BLOCK];
@@ -185,7 +191,7 @@ fn preview_gain_reset() {
 #[test]
 fn preview_native_loaded_runtime_identity() {
     loaded_runtime::verify("before-plugin");
-    let (instance, chain) = chain(None);
+    let ChainFixture { instance, chain } = chain(None);
     loaded_runtime::verify("after-plugin");
     dispatcher()
         .call(

@@ -120,6 +120,14 @@ struct RunContext {
     total_files: usize,
 }
 
+/// Started processing run and the event stream that belongs to it.
+pub struct ProcessingRun {
+    /// Generation used to reject events from superseded runs.
+    pub run_id: u64,
+    /// Events until all jobs finish or the caller stops listening.
+    pub receiver: Receiver<ProcessingEvent>,
+}
+
 impl ProcessingEvent {
     /// Returns the run the event belongs to.
     #[must_use]
@@ -178,7 +186,7 @@ impl ProcessingCoordinator {
         mut records: Vec<AnalysisRecord>,
         options: ProcessingOptions,
         chains: Vec<ProcessingChain>,
-    ) -> (u64, Receiver<ProcessingEvent>) {
+    ) -> ProcessingRun {
         let mut seen = HashSet::new();
         records.retain(|record| seen.insert(record.path.clone()));
         let run_id = self.current_run.fetch_add(1, Ordering::SeqCst) + 1;
@@ -212,7 +220,7 @@ impl ProcessingCoordinator {
             };
             self.pool.spawn(move || processing_job(&record, refusal, &context));
         }
-        (run_id, receiver)
+        ProcessingRun { run_id, receiver }
     }
 
     /// Cancels the current run. Files being rendered stop at their next block and keep their originals.
@@ -381,13 +389,19 @@ mod test_processing_coordinator {
     use super::*;
     use crate::test_helpers::{deleting_options, gain_state, ready_fixture_copy, test_chain};
 
+    /// Processing workers and their independently inspectable temporary cache.
+    struct CoordinatorFixture {
+        coordinator: ProcessingCoordinator,
+        cache: Arc<AnalysisCache>,
+    }
+
     /// Returns a coordinator with `workers` workers whose cache lives in its own subfolder.
-    fn coordinator(directory: &TempDir, workers: usize) -> (ProcessingCoordinator, Arc<AnalysisCache>) {
+    fn coordinator(directory: &TempDir, workers: usize) -> CoordinatorFixture {
         let cache_folder = directory.path().join("cache");
         fs::create_dir_all(&cache_folder).expect("creates cache folder");
         let cache = Arc::new(AnalysisCache::with_path(cache_folder.join("analysis.db")));
         let coordinator = ProcessingCoordinator::new(Arc::clone(&cache), workers).expect("pool");
-        (coordinator, cache)
+        CoordinatorFixture { coordinator, cache }
     }
 
     /// Returns `count` chains of one unity gain plugin.
@@ -427,11 +441,11 @@ mod test_processing_coordinator {
         let records: Vec<AnalysisRecord> = (0..3)
             .map(|index| ready_fixture_copy(&directory, "sine_mono_44100_16.wav", &format!("song{index}.wav")))
             .collect();
-        let (coordinator, cache) = coordinator(&directory, 2);
+        let CoordinatorFixture { coordinator, cache } = coordinator(&directory, 2);
         cache.store_analysis(&records[0]).expect("stores");
         assert_eq!(coordinator.chains_needed(records.len()), 2);
 
-        let (run_id, receiver) = coordinator.start(records.clone(), deleting_options(), gain_chains(1));
+        let ProcessingRun { run_id, receiver } = coordinator.start(records.clone(), deleting_options(), gain_chains(1));
         let events = collect(&receiver);
         assert!(events.iter().all(|event| event.run_id() == run_id));
         assert!(matches!(
@@ -452,8 +466,11 @@ mod test_processing_coordinator {
     fn each_file_starts_before_it_finishes_and_reaches_full_progress() {
         let directory = TempDir::new().expect("temp dir");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let (coordinator, _cache) = coordinator(&directory, 1);
-        let (_, receiver) = coordinator.start(vec![record], deleting_options(), gain_chains(1));
+        let CoordinatorFixture {
+            coordinator,
+            cache: _cache,
+        } = coordinator(&directory, 1);
+        let ProcessingRun { receiver, .. } = coordinator.start(vec![record], deleting_options(), gain_chains(1));
         let events = collect(&receiver);
         let started = events
             .iter()
@@ -474,9 +491,13 @@ mod test_processing_coordinator {
         let directory = TempDir::new().expect("temp dir");
         let wav = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let flac = ready_fixture_copy(&directory, "sine_stereo_44100_16.flac", "song.flac");
-        let (coordinator, _cache) = coordinator(&directory, 2);
+        let CoordinatorFixture {
+            coordinator,
+            cache: _cache,
+        } = coordinator(&directory, 2);
 
-        let (_, receiver) = coordinator.start(vec![wav.clone(), flac.clone()], deleting_options(), Vec::new());
+        let ProcessingRun { receiver, .. } =
+            coordinator.start(vec![wav.clone(), flac.clone()], deleting_options(), Vec::new());
         let events = collect(&receiver);
         let refused = results(&events);
         assert_eq!(refused.len(), 2);
@@ -486,7 +507,7 @@ mod test_processing_coordinator {
                 .all(|result| result.error() == Some("Plugin chain instances are not available"))
         );
 
-        let (_, receiver) = coordinator.start(vec![wav, flac], deleting_options(), gain_chains(2));
+        let ProcessingRun { receiver, .. } = coordinator.start(vec![wav, flac], deleting_options(), gain_chains(2));
         let events = collect(&receiver);
         let failed: Vec<&OperationResult> = results(&events)
             .into_iter()
@@ -502,8 +523,11 @@ mod test_processing_coordinator {
         let records: Vec<AnalysisRecord> = (0..4)
             .map(|index| ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", &format!("song{index}.wav")))
             .collect();
-        let (coordinator, _cache) = coordinator(&directory, 2);
-        let (run_id, receiver) = coordinator.start(records, deleting_options(), gain_chains(1));
+        let CoordinatorFixture {
+            coordinator,
+            cache: _cache,
+        } = coordinator(&directory, 2);
+        let ProcessingRun { run_id, receiver } = coordinator.start(records, deleting_options(), gain_chains(1));
         coordinator.cancel();
         assert!(!coordinator.is_current(run_id));
         let events: Vec<ProcessingEvent> = receiver.iter().collect();
@@ -530,7 +554,7 @@ mod test_processing_coordinator {
             .iter()
             .map(|record| fs::read(&record.path).expect("source bytes"))
             .collect();
-        let (coordinator, cache) = coordinator(&directory, 1);
+        let CoordinatorFixture { coordinator, cache } = coordinator(&directory, 1);
         for record in &records {
             cache.store_analysis(record).expect("stores source");
         }
@@ -548,7 +572,7 @@ mod test_processing_coordinator {
             ..deleting_options()
         };
 
-        let (run_id, receiver) = coordinator.start(records.clone(), options, gain_chains(1));
+        let ProcessingRun { run_id, receiver } = coordinator.start(records.clone(), options, gain_chains(1));
         let events: Vec<ProcessingEvent> = receiver.iter().collect();
 
         assert!(!coordinator.is_current(run_id));

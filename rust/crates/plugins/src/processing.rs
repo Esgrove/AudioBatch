@@ -151,6 +151,19 @@ pub struct ProcessingOptions {
     pub dispose: FileDisposer,
 }
 
+/// Gain selected before the chain and a notice explaining any skipped normalization.
+struct InputGain {
+    linear: f32,
+    notice: Option<String>,
+}
+
+/// Quantized PCM sample and whether the original value exceeded its representable range.
+#[derive(Debug, PartialEq, Eq)]
+struct QuantizedSample {
+    value: i32,
+    saturated: bool,
+}
+
 /// What rendering through the chain produced.
 struct RenderedAudio {
     /// The rendered samples, interleaved native endian `f32`.
@@ -341,7 +354,10 @@ fn try_process_file(
             message: record.error_message,
         });
     }
-    let (gain, gain_notice) = input_gain(&record, options);
+    let InputGain {
+        linear: gain,
+        notice: gain_notice,
+    } = input_gain(&record, options);
     let mut decoder = AudioFileDecoder::open(source).map_err(ProcessingError::OpenSource)?;
     let channels = decoder.info().channels;
     if !(1..=MAXIMUM_CHANNELS).contains(&channels) {
@@ -463,16 +479,28 @@ fn refresh_if_needed(
 /// Returns the linear gain applied before the first plugin, and a notice when normalization was skipped.
 /// A custom gain wins, otherwise the file is normalized when the options ask for it, and otherwise left unchanged.
 /// A file the normalization refuses, such as silence, is processed at unity gain, and the notice says why.
-fn input_gain(record: &AnalysisRecord, options: &ProcessingOptions) -> (f32, Option<String>) {
+fn input_gain(record: &AnalysisRecord, options: &ProcessingOptions) -> InputGain {
     if record.custom_gain_db.is_some() {
-        return (record.custom_gain_linear(), None);
+        return InputGain {
+            linear: record.custom_gain_linear(),
+            notice: None,
+        };
     }
     let Some(normalization) = &options.normalize_before_plugins else {
-        return (1.0, None);
+        return InputGain {
+            linear: 1.0,
+            notice: None,
+        };
     };
     match normalization_gain(record, normalization) {
-        Ok(gain) => (gain, None),
-        Err(reason) => (1.0, Some(format!("Not normalized before the plugins: {reason}"))),
+        Ok(gain) => InputGain {
+            linear: gain,
+            notice: None,
+        },
+        Err(reason) => InputGain {
+            linear: 1.0,
+            notice: Some(format!("Not normalized before the plugins: {reason}")),
+        },
     }
 }
 
@@ -655,7 +683,7 @@ fn write_final_output(
         }
         for (index, sample_bytes) in block.as_chunks::<SAMPLE_BYTES>().0.iter().enumerate() {
             let sample = f32::from_ne_bytes(*sample_bytes);
-            let (value, saturated) = quantize(sample);
+            let QuantizedSample { value, saturated } = quantize(sample);
             clipped |= saturated;
             if let Some(plane) = planes.get_mut(index % channels) {
                 plane.push(value);
@@ -671,14 +699,17 @@ fn write_final_output(
 }
 
 /// Converts a sample to a 16-bit value by flooring, and returns whether it was outside the 16-bit range.
-fn quantize(sample: f32) -> (i32, bool) {
+fn quantize(sample: f32) -> QuantizedSample {
     let minimum = -OUTPUT_PCM_SCALE;
     let maximum = OUTPUT_PCM_SCALE - 1.0;
     let scaled = sample * OUTPUT_PCM_SCALE;
     // Values between the largest step and the next one round down to the largest step,
     // so only values from the next step on are cut off.
     let saturated = !(minimum..OUTPUT_PCM_SCALE).contains(&scaled);
-    (scaled.clamp(minimum, maximum).floor() as i32, saturated)
+    QuantizedSample {
+        value: scaled.clamp(minimum, maximum).floor() as i32,
+        saturated,
+    }
 }
 
 #[cfg(test)]
@@ -689,15 +720,19 @@ mod test_quantize {
 
     #[test]
     fn floors_without_dither_and_saturates_out_of_range_samples() {
-        assert_eq!(quantize(0.0), (0, false));
-        assert_eq!(quantize(0.5), (16_384, false));
-        assert_eq!(quantize(-0.5), (-16_384, false));
-        assert_eq!(quantize(1.0 / 32_768.0 * 1.75), (1, false));
-        assert_eq!(quantize(-1.0 / 32_768.0 * 0.25), (-1, false));
-        assert_eq!(quantize(-1.0), (-32_768, false));
-        assert_eq!(quantize(32_767.5 / 32_768.0), (32_767, false));
-        assert_eq!(quantize(1.0), (32_767, true));
-        assert_eq!(quantize(-1.5), (-32_768, true));
+        for (sample, value, saturated) in [
+            (0.0, 0, false),
+            (0.5, 16_384, false),
+            (-0.5, -16_384, false),
+            (1.0 / 32_768.0 * 1.75, 1, false),
+            (-1.0 / 32_768.0 * 0.25, -1, false),
+            (-1.0, -32_768, false),
+            (32_767.5 / 32_768.0, 32_767, false),
+            (1.0, 32_767, true),
+            (-1.5, -32_768, true),
+        ] {
+            assert_eq!(quantize(sample), QuantizedSample { value, saturated });
+        }
     }
 
     #[test]
@@ -751,12 +786,16 @@ mod test_process_file_output {
         DecodedAudio, decode, deleting_options, file_names, gain_state, ready_fixture_copy, test_chain,
     };
 
-    /// Processes a fixture copy through a chain and returns the result, the decoded source, and the decoded output.
-    fn process_fixture(
-        fixture: &str,
-        chain: &ProcessingChain,
-        options: &ProcessingOptions,
-    ) -> (TempDir, OperationResult, DecodedAudio, Option<DecodedAudio>) {
+    /// Keeps processed fixture files alive alongside the operation and decoded audio used by assertions.
+    struct ProcessedFixture {
+        directory: TempDir,
+        result: OperationResult,
+        source: DecodedAudio,
+        output: Option<DecodedAudio>,
+    }
+
+    /// Processes a fixture copy through a chain and retains the result and decoded audio.
+    fn process_fixture(fixture: &str, chain: &ProcessingChain, options: &ProcessingOptions) -> ProcessedFixture {
         let directory = TempDir::new().expect("temp dir");
         let extension = Path::new(fixture)
             .extension()
@@ -766,14 +805,23 @@ mod test_process_file_output {
         let source = decode(&record.path);
         let result = process_file(&record, options, chain, &|| false, &mut |_| {});
         let output = result.output().map(|output| decode(&output.path));
-        (directory, result, source, output)
+        ProcessedFixture {
+            directory,
+            result,
+            source,
+            output,
+        }
     }
 
     #[test]
     fn a_unity_chain_writes_the_source_samples_as_16_bit_aiff() {
         let chain = test_chain(&[(Kind::Gain, gain_state(1.0))]);
-        let (directory, result, source, output) =
-            process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
+        let ProcessedFixture {
+            directory,
+            result,
+            source,
+            output,
+        } = process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
         assert_eq!(result.error(), None);
         let record = result.output().expect("committed");
         assert_eq!(record.path, directory.path().join("song.aif"));
@@ -815,8 +863,12 @@ mod test_process_file_output {
     fn the_saved_state_is_restored_for_every_file() {
         let chain = test_chain(&[(Kind::Gain, gain_state(0.5))]);
         for _ in 0..2 {
-            let (_directory, result, source, output) =
-                process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
+            let ProcessedFixture {
+                directory: _directory,
+                result,
+                source,
+                output,
+            } = process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
             assert_eq!(result.error(), None);
             let output = output.expect("decoded");
             assert!(source.peak().mul_add(-0.5, output.peak()).abs() < 2.0 / OUTPUT_PCM_SCALE);
@@ -826,8 +878,12 @@ mod test_process_file_output {
     #[test]
     fn the_chain_latency_is_removed_from_the_start() {
         let chain = test_chain(&[(Kind::Delay, gain_state(1.0)), (Kind::Delay, gain_state(1.0))]);
-        let (_directory, result, source, output) =
-            process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
+        let ProcessedFixture {
+            directory: _directory,
+            result,
+            source,
+            output,
+        } = process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
         assert_eq!(result.error(), None);
         assert_eq!(output.expect("decoded").samples, source.samples);
     }
@@ -835,16 +891,24 @@ mod test_process_file_output {
     #[test]
     fn the_tail_is_rendered_and_trailing_silence_is_trimmed() {
         let echo = test_chain(&[(Kind::Echo, gain_state(1.0))]);
-        let (_directory, result, source, output) =
-            process_fixture("sine_mono_44100_16.wav", &echo, &deleting_options());
+        let ProcessedFixture {
+            directory: _directory,
+            result,
+            source,
+            output,
+        } = process_fixture("sine_mono_44100_16.wav", &echo, &deleting_options());
         assert_eq!(result.error(), None);
         let output = output.expect("decoded");
         assert!(output.frames() > source.frames());
         assert!(output.frames() <= source.frames() + ECHO_DELAY as usize);
 
         let silent = test_chain(&[(Kind::Echo, gain_state(0.0))]);
-        let (_directory, result, source, output) =
-            process_fixture("sine_mono_44100_16.wav", &silent, &deleting_options());
+        let ProcessedFixture {
+            directory: _directory,
+            result,
+            source,
+            output,
+        } = process_fixture("sine_mono_44100_16.wav", &silent, &deleting_options());
         assert_eq!(result.error(), None);
         assert_eq!(output.expect("decoded").frames(), source.frames());
     }
@@ -852,8 +916,12 @@ mod test_process_file_output {
     #[test]
     fn a_mono_file_runs_through_a_stereo_plugin_and_stays_mono() {
         let chain = test_chain(&[(Kind::StereoOnly, gain_state(1.0))]);
-        let (_directory, result, source, output) =
-            process_fixture("sine_mono_44100_16.wav", &chain, &deleting_options());
+        let ProcessedFixture {
+            directory: _directory,
+            result,
+            source,
+            output,
+        } = process_fixture("sine_mono_44100_16.wav", &chain, &deleting_options());
         assert_eq!(result.error(), None);
         let output = output.expect("decoded");
         assert_eq!(output.channels, 1);
@@ -863,8 +931,12 @@ mod test_process_file_output {
     #[test]
     fn samples_beyond_the_16_bit_range_saturate_and_are_reported() {
         let chain = test_chain(&[(Kind::Gain, gain_state(4.0))]);
-        let (_directory, result, _source, output) =
-            process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
+        let ProcessedFixture {
+            directory: _directory,
+            result,
+            output,
+            ..
+        } = process_fixture("sine_stereo_44100_16.wav", &chain, &deleting_options());
         let OperationOutcome::Succeeded { notice, .. } = &result.outcome else {
             panic!("processing failed: {:?}", result.error());
         };
@@ -887,7 +959,7 @@ mod test_process_file_output {
             ..ProcessingOptions::default()
         };
         let chain = test_chain(&[(Kind::Gain, gain_state(0.5))]);
-        let (directory, result, _source, _output) = process_fixture("sine_stereo_44100_16.aif", &chain, &options);
+        let ProcessedFixture { directory, result, .. } = process_fixture("sine_stereo_44100_16.aif", &chain, &options);
         assert_eq!(result.error(), None);
         assert_eq!(
             result.output().map(|output| output.path.clone()),

@@ -12,3 +12,23 @@ pub mod output;
 pub mod plugin_list;
 pub mod process;
 pub mod run;
+
+/// Captured output of an in-process CLI command, with text decoded only at the test boundary.
+#[cfg(test)]
+pub(crate) struct CommandOutput {
+    pub exit_code: u8,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[cfg(test)]
+impl CommandOutput {
+    /// Decodes the output buffers returned by a command invocation.
+    fn new(exit_code: u8, stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
+        Self {
+            exit_code,
+            stdout: String::from_utf8(stdout).expect("UTF-8 stdout"),
+            stderr: String::from_utf8(stderr).expect("UTF-8 stderr"),
+        }
+    }
+}

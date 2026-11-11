@@ -218,7 +218,7 @@ fn normalize_records(
     let conflicts = find_batch_output_conflicts(&analyzed);
     let progress = ProgressBar::with_draw_target(Some(analyzed.len() as u64), progress_target);
     let coordinator = NormalizeCoordinator::new(cache, worker_count)?;
-    let (_, receiver) = coordinator.start(analyzed, options.clone());
+    let receiver = coordinator.start(analyzed, options.clone()).receiver;
     let mut results: HashMap<PathBuf, OperationResult> = HashMap::new();
     loop {
         if is_interrupted() {
@@ -346,7 +346,7 @@ fn analyze_with_progress(
             .unwrap_or_else(|_| ProgressStyle::default_bar()),
     );
 
-    let (_, receiver) = coordinator.start(options);
+    let receiver = coordinator.start(options).receiver;
     let mut records = Vec::new();
     loop {
         if is_interrupted() {
@@ -388,8 +388,10 @@ mod test_run_analysis {
     use clap::Parser;
     use tempfile::TempDir;
 
-    /// Runs the CLI with the arguments and a cache in the directory, and returns the exit code, stdout, and stderr.
-    fn run(arguments: &[&str], directory: &TempDir) -> (u8, String, String) {
+    use crate::CommandOutput;
+
+    /// Runs the CLI with the arguments and a cache in the directory, capturing the exit code and output.
+    fn run(arguments: &[&str], directory: &TempDir) -> CommandOutput {
         let args = CliArgs::try_parse_from(std::iter::once("audiobatch-rs").chain(arguments.iter().copied()))
             .expect("arguments parse");
         let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
@@ -406,11 +408,7 @@ mod test_run_analysis {
             &|| false,
         )
         .expect("run succeeds");
-        (
-            code,
-            String::from_utf8(output).expect("utf-8"),
-            String::from_utf8(log).expect("utf-8"),
-        )
+        CommandOutput::new(code, output, log)
     }
 
     /// Returns the path of a shared fixture as text, for an argument.
@@ -465,7 +463,11 @@ mod test_run_analysis {
         std::fs::write(&hidden, b"data").expect("writes hidden file");
         let missing = directory.path().join("music").join("missing.wav");
         let paths = [&notes, &hidden, &missing].map(|path| path.to_string_lossy().into_owned());
-        let (code, output, log) = run(&["-o", "json", &tone, &paths[0], &paths[1], &paths[2]], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&["-o", "json", &tone, &paths[0], &paths[1], &paths[2]], &directory);
         assert_eq!(code, EXIT_FAILURES, "{log}");
         assert!(log.contains("Not a supported audio file"), "{log}");
         assert!(log.contains("Hidden files are not analyzed"), "{log}");
@@ -510,7 +512,11 @@ mod test_run_analysis {
         copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
         std::fs::write(directory.path().join("music/notes.txt"), b"text").expect("writes notes");
         let folder = directory.path().join("music").to_string_lossy().into_owned();
-        let (code, _, log) = run(&[&folder], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stderr: log,
+            ..
+        } = run(&[&folder], &directory);
         assert_eq!(code, EXIT_SUCCESS, "{log}");
     }
 
@@ -518,7 +524,11 @@ mod test_run_analysis {
     fn normalize_writes_aiff_and_reports_the_output() {
         let directory = TempDir::new().expect("temp dir");
         let source = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let (code, output, log) = run(&["-n", "-o", "json", &source], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&["-n", "-o", "json", &source], &directory);
         assert_eq!(code, EXIT_SUCCESS, "{log}");
         let rows: Vec<serde_json::Value> = serde_json::from_str(&output).expect("valid json");
         assert_eq!(rows.len(), 1);
@@ -566,7 +576,11 @@ mod test_run_analysis {
             copy_fixture(&directory, fixture_name, name);
         }
         let folder = directory.path().join("music").to_string_lossy().into_owned();
-        let (code, output, log) = run(&["-n", "-j", "3", "-o", "json", &folder], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&["-n", "-j", "3", "-o", "json", &folder], &directory);
         assert_eq!(code, EXIT_SUCCESS, "{log}");
         let rows: Vec<serde_json::Value> = serde_json::from_str(&output).expect("valid json");
         let mut names: Vec<&str> = rows.iter().filter_map(|row| row["name"].as_str()).collect();
@@ -584,7 +598,11 @@ mod test_run_analysis {
     fn normalize_table_shows_full_paths() {
         let directory = TempDir::new().expect("temp dir");
         let source = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let (code, output, _) = run(&["-n", "--lufs", "-14", &source], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            ..
+        } = run(&["-n", "--lufs", "-14", &source], &directory);
         assert_eq!(code, EXIT_SUCCESS);
         let expected = directory.path().join("music").join("song.aif");
         assert!(output.contains(expected.to_string_lossy().as_ref()), "{output}");
@@ -597,7 +615,11 @@ mod test_run_analysis {
         copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
         copy_fixture(&directory, "sine_stereo_44100_16.flac", "song.flac");
         let folder = directory.path().join("music").to_string_lossy().into_owned();
-        let (code, output, log) = run(&["-n", "-o", "json", &folder], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&["-n", "-o", "json", &folder], &directory);
         assert_eq!(code, EXIT_FAILURES);
         assert!(log.contains("Normalization output conflict"), "{log}");
         let rows: Vec<serde_json::Value> = serde_json::from_str(&output).expect("valid json");
@@ -612,17 +634,29 @@ mod test_run_analysis {
         let directory = TempDir::new().expect("temp dir");
         let source = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
         std::fs::write(directory.path().join("music").join("song.aif"), b"existing").expect("writes");
-        let (code, _, log) = run(&["-n", &source], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stderr: log,
+            ..
+        } = run(&["-n", &source], &directory);
         assert_eq!(code, EXIT_FAILURES);
         assert!(log.contains("already exists"), "{log}");
-        let (code, _, log) = run(&["-n", "-F", &source], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stderr: log,
+            ..
+        } = run(&["-n", "-F", &source], &directory);
         assert_eq!(code, EXIT_SUCCESS, "{log}");
     }
 
     #[test]
     fn normalize_options_without_normalize_are_usage_errors() {
         let directory = TempDir::new().expect("temp dir");
-        let (code, output, log) = run(&["--force", &fixture("sine_mono_44100_16.wav")], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&["--force", &fixture("sine_mono_44100_16.wav")], &directory);
         assert_eq!(code, EXIT_USAGE_ERROR);
         assert_eq!(output, "");
         assert!(log.contains("--force can only be used with --normalize"), "{log}");
@@ -631,7 +665,11 @@ mod test_run_analysis {
     #[test]
     fn table_reports_the_tone_level() {
         let directory = TempDir::new().expect("temp dir");
-        let (code, output, log) = run(&[&fixture("sine_stereo_44100_16.wav")], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&[&fixture("sine_stereo_44100_16.wav")], &directory);
         assert_eq!(code, EXIT_SUCCESS);
         assert!(output.contains("-6.02"), "{output}");
         assert!(output.contains("sine_stereo_44100_16.wav"), "{output}");
@@ -641,7 +679,11 @@ mod test_run_analysis {
     #[test]
     fn broken_file_exits_with_failures() {
         let directory = TempDir::new().expect("temp dir");
-        let (code, output, log) = run(&[&fixture("broken.wav")], &directory);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = run(&[&fixture("broken.wav")], &directory);
         assert_eq!(code, EXIT_FAILURES);
         assert!(!output.contains("broken.wav"), "{output}");
         assert!(log.contains("Analysis failed"), "{log}");
@@ -650,7 +692,11 @@ mod test_run_analysis {
     #[test]
     fn json_lists_failures_too() {
         let directory = TempDir::new().expect("temp dir");
-        let (code, output, _) = run(
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            ..
+        } = run(
             &["-o", "json", &fixture("broken.wav"), &fixture("sine_mono_44100_16.wav")],
             &directory,
         );

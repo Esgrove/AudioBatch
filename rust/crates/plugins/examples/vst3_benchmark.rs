@@ -26,8 +26,14 @@ struct FileReport {
     output_file: PathBuf,
 }
 
+/// Bounded planar benchmark input with its source sample rate.
+struct DecodedInput {
+    planes: Vec<Vec<f32>>,
+    sample_rate: u32,
+}
+
 /// Loads a bounded decoded input, then repeats it in memory to amortize timer overhead.
-fn decode(path: &Path, repeats: usize) -> Result<(Vec<Vec<f32>>, u32)> {
+fn decode(path: &Path, repeats: usize) -> Result<DecodedInput> {
     ensure!((1..=1000).contains(&repeats), "Repeat count must be 1..1000");
     let mut decoder = AudioFileDecoder::open(path)?;
     let info = decoder.info();
@@ -46,7 +52,10 @@ fn decode(path: &Path, repeats: usize) -> Result<(Vec<Vec<f32>>, u32)> {
             plane.extend_from_slice(chunk);
         }
     }
-    Ok((planes.into_iter().map(|plane| plane.repeat(repeats)).collect(), rate))
+    Ok(DecodedInput {
+        planes: planes.into_iter().map(|plane| plane.repeat(repeats)).collect(),
+        sample_rate: rate,
+    })
 }
 
 /// Parses a complete integer option without defaulting malformed values.
@@ -95,7 +104,10 @@ fn run(arguments: &[OsString]) -> Result<()> {
         latency: u32::try_from(integer(latency)?)?,
         iterations: integer(iterations)?,
     };
-    let (planes, rate) = decode(Path::new(input), integer(repeats)?)?;
+    let DecodedInput {
+        planes,
+        sample_rate: rate,
+    } = decode(Path::new(input), integer(repeats)?)?;
     let dispatcher = UiThread::spawn_dedicated()?;
     let output = benchmark(&dispatcher, Path::new(bundle), &planes, rate, options)?;
     let input_file = output_path(Path::new(prefix), ".input.f32")?;
