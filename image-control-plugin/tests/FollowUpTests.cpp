@@ -12,6 +12,7 @@
 #include "ProcessingState.h"
 #include "ui/BandStrip.h"
 #include "ui/DisplayDisclosure.h"
+#include "ui/ImageControlLookAndFeel.h"
 #include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
@@ -31,6 +32,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -53,6 +55,12 @@ struct SpectrogramViewTestAccess {
     const SpectrogramBandResponses& responses()
     {
         return view.bandResponses(view.currentCrossovers());
+    }
+
+    /// Reads the same scale-specific frequencies used by the production grid and axis labels.
+    [[nodiscard]] std::span<const double> gridFrequencies() const
+    {
+        return view.gridFrequencies();
     }
 
     /// Reads the production frequency-axis overlay geometry without rendering pixels.
@@ -461,7 +469,8 @@ TEST(SpectrogramLayout, MaximizedAxesStayInsideTheExpandedPlotWithoutCornerOrCro
         EXPECT_FALSE(access.frameRateLabel().intersects(left));
         for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
             view.setFrequencyScale(scale);
-            for (const double frequency : {20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10'000.0, 20'000.0})
+            for (const double frequency :
+                 {20.0, 30.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10'000.0, 20'000.0})
             {
                 const auto label = access.frequencyAxisLabel(frequency);
                 EXPECT_TRUE(plot.contains(label));
@@ -477,6 +486,91 @@ TEST(SpectrogramLayout, MaximizedAxesStayInsideTheExpandedPlotWithoutCornerOrCro
         EXPECT_FALSE(standard.intersects(access.frequencyAxisLabel(1000.0)));
         EXPECT_FALSE(standard.intersects(access.positionAxisLabel(0.0)));
     }
+}
+
+/// FPS stays right-anchored in either layout, and maximized endpoint pills keep only their measured text padding.
+TEST(SpectrogramLayout, FrameRateUsesTopRightAndMaximizedFrequencyLabelsFitTheirGlyphs)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    const SpectrogramViewTestAccess access(view);
+    for (const bool maximized : {false, true}) {
+        view.setMaximized(maximized);
+        for (const int width : {300, 760, 1000}) {
+            view.setSize(width, 200);
+            const auto plot = view.getPlotBounds();
+            const auto fps = access.frameRateLabel();
+            EXPECT_TRUE(plot.contains(fps));
+            EXPECT_FLOAT_EQ(fps.getRight(), plot.getRight() - 4.0F);
+            EXPECT_FLOAT_EQ(fps.getY(), plot.getY() + 4.0F);
+            const auto endpoint = access.frequencyAxisLabel(20'000.0);
+            if (maximized) {
+                const float textWidth = juce::GlyphArrangement::getStringWidth(textFont(11.0F), "20k");
+                EXPECT_FLOAT_EQ(endpoint.getWidth(), textWidth + 8.0F);
+                EXPECT_FLOAT_EQ(endpoint.getRight(), plot.getRight() - 4.0F);
+                EXPECT_GT(endpoint.getCentreX(), plot.getRight() - 24.0F);
+            } else {
+                EXPECT_FLOAT_EQ(endpoint.getWidth(), 40.0F);
+            }
+        }
+    }
+    view.setSize(1000, 200);
+    view.setMaximized(true);
+    const auto plot = view.getPlotBounds();
+    const auto thirtyHertz = access.frequencyAxisLabel(30.0);
+    const float expectedX
+        = plot.getX() + static_cast<float>(frequencyToShare(30.0, FrequencyScale::logarithmic)) * plot.getWidth();
+    EXPECT_NEAR(thirtyHertz.getCentreX(), expectedX, 0.0001F);
+    EXPECT_FALSE(thirtyHertz.intersects(access.frequencyAxisLabel(20.0)));
+    EXPECT_FALSE(thirtyHertz.intersects(access.frequencyAxisLabel(50.0)));
+}
+
+/// Each projection uses deliberate reference ticks, retaining 16 kHz and adding finer upper-frequency detail for Mel.
+TEST(SpectrogramLayout, FrequencyGridUsesScaleSpecificTicksWithSixteenKilohertzInBoth)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    view.setSize(1000, 300);
+    const SpectrogramViewTestAccess access(view);
+    const std::vector<double> logarithmic {20, 30, 50, 100, 200, 500, 1000, 2000, 5000, 10'000, 16'000, 20'000};
+    const std::vector<double> mel {
+        20,
+        100,
+        200,
+        500,
+        1000,
+        2000,
+        3000,
+        4000,
+        6000,
+        8000,
+        10'000,
+        12'000,
+        14'000,
+        16'000,
+        18'000,
+        20'000,
+    };
+    for (const bool maximized : {false, true}) {
+        view.setMaximized(maximized);
+        for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel, FrequencyScale::logarithmic}) {
+            view.setFrequencyScale(scale);
+            const auto frequencies = access.gridFrequencies();
+            const auto& expected = scale == FrequencyScale::mel ? mel : logarithmic;
+            EXPECT_EQ(std::vector<double>(frequencies.begin(), frequencies.end()), expected);
+            EXPECT_TRUE(std::ranges::is_sorted(frequencies));
+            EXPECT_EQ(std::ranges::count(frequencies, 16'000.0), 1);
+            EXPECT_EQ(std::ranges::count(frequencies, 30.0), scale == FrequencyScale::mel ? 0 : 1);
+            const auto highTicks
+                = std::ranges::count_if(frequencies, [](const double frequency) { return frequency >= 2000.0; });
+            EXPECT_EQ(highTicks, scale == FrequencyScale::mel ? 11 : 5);
+            const auto plot = view.getPlotBounds();
+            const float expectedX
+                = plot.getX() + static_cast<float>(frequencyToShare(16'000.0, scale)) * plot.getWidth();
+            EXPECT_NEAR(access.frequencyAxisLabel(16'000.0).getCentreX(), expectedX, 0.0001F);
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
 }
 
 /// Geometry toggles rebuild response paths on demand, without modifying audio or window dimensions.

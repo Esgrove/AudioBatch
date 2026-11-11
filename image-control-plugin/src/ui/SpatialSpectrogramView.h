@@ -25,6 +25,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <span>
 
 namespace esgrove::image_control
 {
@@ -139,6 +140,7 @@ private:
     [[nodiscard]] juce::Rectangle<float> positionCurveLabelBounds(float difference, bool leftChannel) const;
     [[nodiscard]] juce::Point<float> positionCurvePoint(float difference, bool leftChannel) const;
     [[nodiscard]] std::array<bool, BAND_COUNT> mutedBands() const;
+    [[nodiscard]] std::span<const double> gridFrequencies() const;
 
     [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
     [[nodiscard]] std::optional<std::size_t> crossoverNear(float x) const;
@@ -213,7 +215,7 @@ private:
     std::optional<std::size_t> hoveredBand;
     /// Crossover under the pointer, if any.
     std::optional<std::size_t> hoveredCrossover;
-    /// Display refresh rate shown in the top-left corner, or empty when the readout is off.
+    /// Display refresh rate shown in the top-right corner, or empty when the readout is off.
     std::optional<double> framesPerSecond;
     /// GPU time of one frame shown next to the refresh rate, in milliseconds, or empty when it is not measured.
     std::optional<double> gpuFrameMilliseconds;
