@@ -306,6 +306,13 @@ impl crate::SharedState {
         self.monitoring.preferences()
     }
 
+    /// Retains immutable display preferences as a configuration identity. Call only off the audio thread.
+    /// Compare retained snapshots with `Arc::ptr_eq`, independently of the audio source generation.
+    #[must_use]
+    pub fn display_preferences_snapshot(&self) -> Arc<DisplayPreferences> {
+        self.monitoring.preference_snapshot()
+    }
+
     /// Publishes validated appearance preferences without host sound-parameter gestures.
     /// Allocates and retires immutable display snapshots. Call only from UI or non-audio state callbacks.
     pub fn set_display_preferences(&self, preferences: DisplayPreferences) -> bool {
@@ -448,8 +455,15 @@ mod tests {
         assert_eq!(shared.analysis_generation(), generation);
         assert!(!shared.monitoring.preferences_match(&retained));
         assert_eq!(shared.display_preferences(), replacement);
-        let current = shared.monitoring.preference_snapshot();
+        let current = shared.display_preferences_snapshot();
         assert!(shared.monitoring.preferences_match(&current));
+        let update = crate::AnalysisUpdate {
+            generation,
+            status: crate::AnalysisStatus::Waiting,
+            preferences: std::sync::Arc::clone(&current),
+        };
+        assert!(update.matches(generation, &current));
+        assert!(!update.matches(generation, &retained));
         shared.monitoring.source.fetch_add(GENERATION_STEP, Ordering::AcqRel);
         assert_ne!(shared.analysis_generation(), generation);
         assert!(!shared.monitoring.preferences_match(&retained));
