@@ -10,10 +10,14 @@
 #[cfg(feature = "clap")]
 mod clap;
 #[cfg(feature = "editor")]
+mod correlation_display;
+#[cfg(feature = "editor")]
 mod deferred_ui;
+mod editing;
 #[cfg(feature = "editor")]
 mod editor;
 mod editor_geometry;
+mod editor_preferences;
 mod host;
 #[cfg(feature = "editor")]
 mod iced_bridge;
@@ -24,6 +28,8 @@ mod runtime;
 #[cfg(feature = "editor")]
 mod spectrogram;
 mod state;
+#[cfg(feature = "editor")]
+mod user_presets;
 
 use vst3::Steinberg::{IPluginFactory, TUID};
 use vst3::{ComPtr, ComWrapper, uid};

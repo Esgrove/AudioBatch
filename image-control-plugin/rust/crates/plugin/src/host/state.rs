@@ -108,13 +108,14 @@ mod tests {
             persistence_seconds: 1.25,
             contrast: 0.2,
             color_mode: ColourMode::Phase,
+            ..DisplayPreferences::default()
         };
         assert!(shared.set_display_preferences(display));
         let remembered = LogicalSize::default().acknowledged(1501, 1201, 1.5);
         geometry.publish(remembered);
         let bytes = save_bytes(&parameters, &shared, &geometry).expect("save");
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("v4 JSON");
-        assert_eq!(json.get("version"), Some(&serde_json::Value::from(4)));
+        assert_eq!(json.get("version"), Some(&serde_json::Value::from(5)));
         shared.set_analysis_tap(AnalysisTap::Post);
         geometry.publish(LogicalSize::default());
         assert!(shared.set_display_preferences(DisplayPreferences::default()));
@@ -146,6 +147,7 @@ mod tests {
                 persistence_seconds: 2.0,
                 contrast: 0.1,
                 color_mode: ColourMode::Phase,
+                ..DisplayPreferences::default()
             }));
             restore_bytes(bytes, &parameters, &shared, &geometry).expect("fixed missing defaults");
             assert_eq!(shared.analysis_tap(), AnalysisTap::Post);
@@ -184,7 +186,7 @@ mod tests {
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":null}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"unknown":true}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":2},"editor":{"tap":"pre"}}"#.as_slice(),
-            br#"{"version":5,"parameters":{"gain":0.25}}"#.as_slice(),
+            br#"{"version":99,"parameters":{"gain":0.25}}"#.as_slice(),
         ] {
             assert!(restore_bytes(bytes, &parameters, &shared, &geometry).is_err());
             assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);

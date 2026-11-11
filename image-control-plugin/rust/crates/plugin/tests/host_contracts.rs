@@ -158,7 +158,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
         defaults.pointer("/parameters/width").is_none(),
         "no global width in state"
     );
-    assert_eq!(defaults.get("version").expect("version"), 4);
+    assert_eq!(defaults.get("version").expect("version"), 5);
     assert!(
         (defaults
             .pointer("/parameters/gain")
@@ -272,7 +272,7 @@ fn malformed_state_is_transactional(ui: &UiThread) {
         vec![0, 0, 0],
         vec![0, 0, 0, 0],
         u32::MAX.to_le_bytes().to_vec(),
-        framed(br#"{"version":5,"parameters":{}}"#),
+        framed(br#"{"version":99,"parameters":{}}"#),
         framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
         framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
         framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
