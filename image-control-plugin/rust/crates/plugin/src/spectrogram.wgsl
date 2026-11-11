@@ -1,10 +1,10 @@
-// Reference linear-energy particles, five-level bloom, and rounded sRGB composition, entirely on the GPU.
+// Reference linear-energy particles, density contours, five-level bloom, and rounded sRGB composition on the GPU.
 struct Parameters {
     size: vec2<f32>,
     fade: f32,
     encode_output: f32,
     display_scale: f32,
-    padding0: f32,
+    solid_rendering: f32,
     padding1: f32,
     padding2: f32,
 };
@@ -21,11 +21,20 @@ const HIGHLIGHT_START: f32 = 2.0;
 const HIGHLIGHT_END: f32 = 8.0;
 const HIGHLIGHT_MIX: f32 = 0.6;
 const CORNER_RADIUS_PIXELS: f32 = 6.0;
+const SOLID_FIELD_GAIN: f32 = 1.5;
+const SOLID_LAYER_LEVELS = array<f32, 4>(0.06, 0.18, 0.38, 0.62);
+const SOLID_LAYER_ALPHAS = array<f32, 4>(0.16, 0.26, 0.38, 0.52);
+const SOLID_OUTLINE_STRENGTHS = array<f32, 4>(0.25, 0.4, 0.6, 0.85);
+const SOLID_OUTLINE_PIXELS: f32 = 1.25;
+const SOLID_HIGHLIGHT_START: f32 = 0.35;
+const SOLID_HIGHLIGHT_END: f32 = 0.75;
+const SOLID_GLOW_SHARE: f32 = 0.5;
 
 @group(0) @binding(0) var<uniform> parameters: Parameters;
 @group(1) @binding(0) var source: texture_2d<f32>;
 @group(1) @binding(1) var bloom: texture_2d<f32>;
 @group(1) @binding(2) var linear_sampler: sampler;
+@group(1) @binding(3) var field: texture_2d<f32>;
 
 struct ScreenVertex {
     @builtin(position) position: vec4<f32>,
@@ -147,12 +156,66 @@ fn tone_map(energy: vec3<f32>) -> vec3<f32> {
         vec3<f32>(0.0), peak <= 0.000001);
 }
 
+// Four bilinear samples evaluate the reference's separable bicubic B-spline without bilinear contour kinks.
+fn bicubic_field(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(field));
+    let position = uv * size - 0.5;
+    let cell = floor(position);
+    let fraction = position - cell;
+    let squared = fraction * fraction;
+    let cubed = squared * fraction;
+    let weight0 = (1.0 - 3.0 * fraction + 3.0 * squared - cubed) / 6.0;
+    let weight1 = (4.0 - 6.0 * squared + 3.0 * cubed) / 6.0;
+    let weight2 = (1.0 + 3.0 * fraction + 3.0 * squared - 3.0 * cubed) / 6.0;
+    let weight3 = cubed / 6.0;
+    let group0 = weight0 + weight1;
+    let group1 = weight2 + weight3;
+    let coordinate0 = (cell - 0.5 + weight1 / group0) / size;
+    let coordinate1 = (cell + 1.5 + weight3 / group1) / size;
+    return group0.y * (
+        group0.x * textureSampleLevel(field, linear_sampler, vec2<f32>(coordinate0.x, coordinate0.y), 0.0).rgb
+        + group1.x * textureSampleLevel(field, linear_sampler, vec2<f32>(coordinate1.x, coordinate0.y), 0.0).rgb
+    ) + group1.y * (
+        group0.x * textureSampleLevel(field, linear_sampler, vec2<f32>(coordinate0.x, coordinate1.y), 0.0).rgb
+        + group1.x * textureSampleLevel(field, linear_sampler, vec2<f32>(coordinate1.x, coordinate1.y), 0.0).rgb
+    );
+}
+
+// The copied quarter-size field excludes the broad energy added by the glow upsample passes.
+fn solid_layers(uv: vec2<f32>) -> vec3<f32> {
+    let energy = EXPOSURE * SOLID_FIELD_GAIN * max(bicubic_field(uv), vec3<f32>(0.0));
+    let peak = max(max(energy.r, energy.g), energy.b);
+    let hue = energy / max(peak, 0.000001);
+    let density = 1.0 - exp(-peak);
+    // Keep derivatives outside signal-dependent control flow, including an entirely silent field.
+    let field_step = max(fwidth(density), 0.00001);
+    let outline_width = SOLID_OUTLINE_PIXELS * parameters.display_scale;
+    var result = vec3<f32>(0.0);
+    for (var layer = 0u; layer < 4u; layer += 1u) {
+        let level = SOLID_LAYER_LEVELS[layer];
+        let inside = smoothstep(level - field_step, level + field_step, density);
+        let shade = 0.35 + 0.65 * f32(layer) / 3.0;
+        result = mix(result, hue * shade, inside * SOLID_LAYER_ALPHAS[layer]);
+        let distance = abs(density - level) / field_step;
+        let line = 1.0 - smoothstep(outline_width * 0.5 - 0.5, outline_width * 0.5 + 0.5, distance);
+        result += hue * line * SOLID_OUTLINE_STRENGTHS[layer];
+    }
+    return select(result, vec3<f32>(0.0), peak <= 0.000001);
+}
+
 @fragment
 fn composite_fragment(input: ScreenVertex) -> @location(0) vec4<f32> {
-    let energy = textureSample(source, linear_sampler, input.uv).rgb
-        + GLOW_PER_LEVEL * textureSample(bloom, linear_sampler, input.uv).rgb;
+    let sharp_energy = textureSample(source, linear_sampler, input.uv).rgb;
+    let glow_energy = GLOW_PER_LEVEL * textureSample(bloom, linear_sampler, input.uv).rgb;
     // Exposure also controls highlight whitening, not only the exponential tone curve.
-    let mapped = tone_map(EXPOSURE * energy);
+    var mapped = tone_map(EXPOSURE * (sharp_energy + glow_energy));
+    if parameters.solid_rendering > 0.5 {
+        let sharp = tone_map(EXPOSURE * sharp_energy);
+        let sharp_peak = max(max(sharp.r, sharp.g), sharp.b);
+        let glow = tone_map(EXPOSURE * SOLID_GLOW_SHARE * glow_energy);
+        let layers = solid_layers(input.uv);
+        mapped = min(layers + glow + sharp * smoothstep(SOLID_HIGHLIGHT_START, SOLID_HIGHLIGHT_END, sharp_peak), vec3<f32>(1.0));
+    }
     let background = srgb_to_linear(vec3<f32>(5.0, 6.0, 8.0) / 255.0);
     let linear = clamp(background + mapped * (vec3<f32>(1.0) - background), vec3<f32>(0.0), vec3<f32>(1.0));
     let noise = fract(sin(dot(input.position.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);

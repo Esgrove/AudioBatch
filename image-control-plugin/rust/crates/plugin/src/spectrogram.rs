@@ -16,6 +16,8 @@ const PARTICLE_STRIDE: u64 = 32;
 const MAX_TEXTURE_DIMENSION: u32 = 4096;
 /// Each level contributes one blurred copy, shared by the reference's total 0.8 glow strength.
 const BLOOM_LEVEL_COUNT: usize = 5;
+/// Quarter-size downsample copied before additive upsampling broadens the glow chain.
+const SOLID_FIELD_LEVEL: usize = 1;
 const UNIFORM_BYTES: u64 = 32;
 /// The reference caps an individual editor refresh so a hidden or stalled view does not erase its whole history.
 const MAX_REFRESH_STEP_SECONDS: f32 = 0.1;
@@ -80,6 +82,8 @@ struct GpuHistory {
     owner: Weak<Mutex<PendingParticles>>,
     accumulation: [wgpu::TextureView; 2],
     bloom: [BloomLevel; BLOOM_LEVEL_COUNT],
+    solid_field: wgpu::TextureView,
+    solid_rendering: bool,
     accumulation_inputs: [wgpu::BindGroup; 2],
     composite_inputs: [wgpu::BindGroup; 2],
     uniform_buffer: wgpu::Buffer,
@@ -227,7 +231,7 @@ impl shader::Primitive for SpectrogramPrimitive {
                     history.resize_source = if previous.resize_pending.load(Ordering::Acquire) {
                         previous.resize_source.clone()
                     } else {
-                        Some(texture_group(device, pipeline, source, source))
+                        Some(texture_group(device, pipeline, source, source, source))
                     };
                     history.resize_pending.store(true, Ordering::Release);
                     history
@@ -242,7 +246,13 @@ impl shader::Primitive for SpectrogramPrimitive {
             return;
         };
         history.bounds = physical_bounds;
-        history.prepared_generation = self.program.shared.analysis_generation();
+        let prepared_generation = self.program.shared.analysis_generation();
+        let preferences = self.program.shared.display_preferences();
+        if prepared_generation != self.program.shared.analysis_generation() {
+            return;
+        }
+        history.prepared_generation = prepared_generation;
+        history.solid_rendering = preferences.solid_rendering;
         history.upload.clear();
         if !history.resize_pending.load(Ordering::Acquire) {
             history.resize_source = None;
@@ -272,7 +282,7 @@ impl shader::Primitive for SpectrogramPrimitive {
         let now = Instant::now();
         let fade = persistence_fade(
             now.saturating_duration_since(history.last_frame).as_secs_f32(),
-            self.program.shared.display_preferences().persistence_seconds,
+            preferences.persistence_seconds,
         );
         history.last_frame = now;
         let [width, height] = size;
@@ -282,7 +292,7 @@ impl shader::Primitive for SpectrogramPrimitive {
             fade,
             f32::from(pipeline.encode_output),
             scale,
-            0.0,
+            f32::from(preferences.solid_rendering),
             0.0,
             0.0,
         ];
@@ -399,6 +409,7 @@ impl shader::Pipeline for SpectrogramPipeline {
             entries: &[
                 texture_entry(0),
                 texture_entry(1),
+                texture_entry(3),
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -460,17 +471,19 @@ impl GpuHistory {
         let accumulation = [energy_target(device, size), energy_target(device, size)];
         let bloom = bloom_sizes(size).map(|size| {
             let target = energy_target(device, size);
-            let input = texture_group(device, pipeline, &target, &target);
+            let input = texture_group(device, pipeline, &target, &target, &target);
             BloomLevel { target, input }
         });
-        // Intermediate passes do not sample binding 1. Never bind the active attachment as an input.
+        let solid_field = energy_target(device, solid_field_size(size));
+        // Every texture in an intermediate group is its source, never the active attachment.
+        // Binding unused textures to an output still creates a wgpu feedback hazard.
         let accumulation_inputs = accumulation
             .each_ref()
-            .map(|view| texture_group(device, pipeline, view, view));
+            .map(|view| texture_group(device, pipeline, view, view, view));
         let [first_bloom, ..] = &bloom;
         let composite_inputs = accumulation
             .each_ref()
-            .map(|view| texture_group(device, pipeline, view, &first_bloom.target));
+            .map(|view| texture_group(device, pipeline, view, &first_bloom.target, &solid_field));
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ImageControl parameters"),
             size: UNIFORM_BYTES,
@@ -495,6 +508,8 @@ impl GpuHistory {
             owner: Arc::downgrade(&program.pending),
             accumulation,
             bloom,
+            solid_field,
+            solid_rendering: false,
             accumulation_inputs,
             composite_inputs,
             uniform_buffer,
@@ -531,6 +546,16 @@ impl GpuHistory {
             pass.draw(0..3, 0..1);
             source = &level.input;
         }
+        // Preserve only the quarter-size level's own blur. Additive upsampling must not alter density.
+        if self.solid_rendering
+            && let Some(field_level) = self.bloom.get(SOLID_FIELD_LEVEL)
+        {
+            let mut pass = begin_pass(encoder, &self.solid_field, "ImageControl solid density copy", true);
+            pass.set_pipeline(&pipeline.resample);
+            pass.set_bind_group(0, &self.uniform_group, &[]);
+            pass.set_bind_group(1, &field_level.input, &[]);
+            pass.draw(0..3, 0..1);
+        }
         for pair in self.bloom.windows(2).rev() {
             let [larger, smaller] = pair else {
                 continue;
@@ -551,6 +576,12 @@ impl GpuHistory {
         for level in &self.bloom {
             drop(begin_pass(encoder, &level.target, "ImageControl bloom clear", true));
         }
+        drop(begin_pass(
+            encoder,
+            &self.solid_field,
+            "ImageControl solid density clear",
+            true,
+        ));
         self.current.store(0, Ordering::Release);
     }
 }
@@ -609,6 +640,11 @@ fn bloom_sizes(mut size: [u32; 2]) -> [[u32; 2]; BLOOM_LEVEL_COUNT] {
     })
 }
 
+/// Retains the quarter-size field even when floor-halving reaches the one-pixel minimum.
+fn solid_field_size(size: [u32; 2]) -> [u32; 2] {
+    bloom_sizes(size).get(SOLID_FIELD_LEVEL).copied().unwrap_or([1; 2])
+}
+
 /// Uses the reference's capped wall-clock step and exponential persistence, independent of ordinary refresh frequency.
 fn persistence_fade(elapsed: f32, persistence_seconds: f32) -> f32 {
     (-elapsed.clamp(0.0, MAX_REFRESH_STEP_SECONDS) / persistence_seconds.clamp(0.05, 3.0)).exp()
@@ -640,6 +676,7 @@ fn texture_group(
     pipeline: &SpectrogramPipeline,
     source: &wgpu::TextureView,
     bloom: &wgpu::TextureView,
+    field: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ImageControl sampled energy"),
@@ -656,6 +693,10 @@ fn texture_group(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(field),
             },
         ],
     })

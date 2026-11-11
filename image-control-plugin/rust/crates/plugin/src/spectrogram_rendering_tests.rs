@@ -6,11 +6,13 @@ use iced_baseview::futures::executor::block_on;
 use iced_baseview::widget::shader::{Pipeline, Primitive, Viewport};
 use iced_baseview::{Rectangle, Size, wgpu};
 use image_control_dsp::{
-    ColorMode, DisplaySettings, FrequencyScale, Imager, ParticleBuilder, SpectralFrameInfo, SpectralPoint,
+    ColorMode, DisplayPreferences, DisplaySettings, FrequencyScale, Imager, ParticleBuilder, SpectralFrameInfo,
+    SpectralPoint,
 };
 
 use super::{
-    BLOOM_LEVEL_COUNT, Spectrogram, SpectrogramPipeline, SpectrogramPrimitive, bloom_sizes, physical_plot_bounds,
+    BLOOM_LEVEL_COUNT, SOLID_FIELD_LEVEL, Spectrogram, SpectrogramPipeline, SpectrogramPrimitive, bloom_sizes,
+    physical_plot_bounds, solid_field_size,
 };
 
 /// Keeps physical viewport, scale, and fractional logical placement explicit at each resource transition.
@@ -55,6 +57,9 @@ fn glow_chain_uses_five_floor_halvings_with_one_pixel_minimum() {
         [[200, 101], [100, 50], [50, 25], [25, 12], [12, 6]]
     );
     assert_eq!(bloom_sizes([3, 1]), [[1, 1]; 5]);
+    assert_eq!(SOLID_FIELD_LEVEL, 1);
+    assert_eq!(solid_field_size([401, 203]), [100, 50]);
+    assert_eq!(solid_field_size([3, 1]), [1, 1]);
 }
 
 /// Supplies independent bass/treble, left/right, coherent/anti-phase, and wide/narrow-spacing observations.
@@ -115,10 +120,12 @@ fn submit_case(
     let viewport = Viewport::with_physical_size(Size::new(1024, 512), case.scale);
     primitive.prepare(pipeline, device, queue, &case.bounds, &viewport);
     if case.invalidate_after_prepare {
-        spectrogram
-            .program
-            .shared
-            .set_analysis_tap(image_control_dsp::AnalysisTap::Pre);
+        let shared = &spectrogram.program.shared;
+        let preferences = shared.display_preferences();
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            solid_rendering: !preferences.solid_rendering,
+            ..preferences
+        }));
     }
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     // A partially clipped plot must keep its own viewport and rounded local coordinates.
@@ -139,7 +146,7 @@ fn submit_case(
 }
 
 #[test]
-fn native_gpu_runs_reference_bloom_at_dpi_odd_and_tiny_sizes_in_both_output_encodings() {
+fn native_gpu_runs_particles_and_solid_density_at_dpi_odd_and_tiny_sizes_in_both_encodings() {
     let (device, queue) = super::tests::native_device();
     device.push_error_scope(wgpu::ErrorFilter::Validation);
     for format in [wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Bgra8UnormSrgb] {
@@ -180,30 +187,53 @@ fn native_gpu_runs_reference_bloom_at_dpi_odd_and_tiny_sizes_in_both_output_enco
                 invalidate_after_prepare: true,
             },
         ];
-        for (case, (scale, color)) in cases.into_iter().zip([
-            (FrequencyScale::Logarithmic, ColorMode::Frequency),
-            (FrequencyScale::Mel, ColorMode::Phase),
-            (FrequencyScale::Logarithmic, ColorMode::Frequency),
-        ]) {
-            let mut pending = spectrogram.program.pending.lock().expect("pending inputs");
-            pending.generation = spectrogram.program.shared.analysis_generation();
-            pending.points.extend(independent_particles(scale, color));
-            drop(pending);
-            submit_case(&device, &queue, &mut pipeline, &spectrogram, &target, case);
-            let history = pipeline.widgets.get(&spectrogram.program.id).expect("history");
-            assert_eq!(history.bloom.len(), 5);
-            assert_eq!(history.particle_count, 3);
-            assert_eq!(
-                history.generation.load(super::Ordering::Acquire),
-                spectrogram.program.shared.analysis_generation()
-            );
-            assert!(!history.resize_pending.load(super::Ordering::Acquire));
+        for solid_rendering in [false, true] {
+            for (case, (scale, color)) in cases.into_iter().zip([
+                (FrequencyScale::Logarithmic, ColorMode::Frequency),
+                (FrequencyScale::Mel, ColorMode::Phase),
+                (FrequencyScale::Logarithmic, ColorMode::Frequency),
+            ]) {
+                let shared = &spectrogram.program.shared;
+                assert!(shared.set_display_preferences(DisplayPreferences {
+                    mel_scale: scale == FrequencyScale::Mel,
+                    solid_rendering,
+                    ..shared.display_preferences()
+                }));
+                let mut pending = spectrogram.program.pending.lock().expect("pending inputs");
+                pending.generation = spectrogram.program.shared.analysis_generation();
+                pending.points.extend(independent_particles(scale, color));
+                drop(pending);
+                submit_case(&device, &queue, &mut pipeline, &spectrogram, &target, case);
+                let history = pipeline.widgets.get(&spectrogram.program.id).expect("history");
+                assert_eq!(history.bloom.len(), 5);
+                assert_eq!(history.solid_rendering, solid_rendering);
+                assert_eq!(history.particle_count, 3);
+                assert_eq!(
+                    history.generation.load(super::Ordering::Acquire),
+                    spectrogram.program.shared.analysis_generation()
+                );
+                assert!(!history.resize_pending.load(super::Ordering::Acquire));
+                if !case.invalidate_after_prepare {
+                    let resized = RenderCase {
+                        bounds: Rectangle {
+                            width: case.bounds.width - 1.0,
+                            ..case.bounds
+                        },
+                        ..case
+                    };
+                    submit_case(&device, &queue, &mut pipeline, &spectrogram, &target, resized);
+                    let history = pipeline.widgets.get(&spectrogram.program.id).expect("resized history");
+                    assert!(
+                        history.resize_source.is_some(),
+                        "same-generation resize retains GPU energy"
+                    );
+                    assert_eq!(history.particle_count, 0, "resize must not replay input instances");
+                    assert_eq!(history.solid_rendering, solid_rendering);
+                }
+            }
         }
         // Invalidation plus resize must discard the retained source even when the next frame has no input.
-        spectrogram
-            .program
-            .shared
-            .set_analysis_tap(image_control_dsp::AnalysisTap::Post);
+        spectrogram.program.shared.invalidate_monitoring();
         let [first_case, ..] = cases;
         submit_case(&device, &queue, &mut pipeline, &spectrogram, &target, first_case);
         let history = pipeline.widgets.get(&spectrogram.program.id).expect("empty history");
