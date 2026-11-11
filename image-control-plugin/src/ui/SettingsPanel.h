@@ -54,7 +54,6 @@ private:
     juce::Label colourLabel;
     juce::Label contrastLabel;
     juce::Label correlationLabel;
-    juce::Label descriptionLabel;
     juce::Label displayLabel;
     juce::Label frequencyLabel;
     juce::Label panEdgeLabel;
@@ -62,8 +61,6 @@ private:
     juce::Label persistenceLabel;
     juce::Label renderingLabel;
     juce::Label stereoPositionLabel;
-    juce::Label titleLabel;
-
     juce::ComboBox colourChoice;
     juce::ComboBox frequencyChoice;
     juce::ComboBox renderingChoice;

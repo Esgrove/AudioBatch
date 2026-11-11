@@ -520,21 +520,17 @@ TEST(SettingsPanel, SubmenuBackKeysLeavePreferenceDismissalToOwner)
     }
 }
 
-/// Larger title and group fonts retain a separate descriptive size and full accessible control titles.
+/// Large section headings replace introductory copy and retain compact top space and explicit following gaps.
 TEST(SettingsPanel, DisplayOnlyGroupsHaveReadableTypographyAndFullAccessibleControlTitles)
 {
     ImageControlProcessor processor;
     const SettingsPanel panel(processor.getEditorState());
-    auto* title = settingsControl<juce::Label>(panel, "displaySettingsTitle");
-    auto* description = settingsControl<juce::Label>(panel, "displaySettingsDescription");
-    ASSERT_NE(title, nullptr);
-    ASSERT_NE(description, nullptr);
-    EXPECT_FLOAT_EQ(title->getFont().getHeight(), 20.0F);
-    EXPECT_TRUE(title->getFont().isBold());
-    EXPECT_FLOAT_EQ(description->getFont().getHeight(), 12.0F);
-    EXPECT_GE(static_cast<float>(title->getHeight()), title->getFont().getHeight());
-    EXPECT_GE(static_cast<float>(description->getHeight()), description->getFont().getHeight());
-    EXPECT_LE(title->getBottom(), description->getY());
+    EXPECT_EQ(settingsControl<juce::Label>(panel, "displaySettingsTitle"), nullptr);
+    EXPECT_EQ(settingsControl<juce::Label>(panel, "displaySettingsDescription"), nullptr);
+    const auto* viewport = childOfType<juce::Viewport>(panel);
+    ASSERT_NE(viewport, nullptr);
+    const auto* content = viewport->getViewedComponent();
+    ASSERT_NE(content, nullptr);
     const std::array groups {
         std::pair {"displayAppearanceSection", "Appearance"},
         std::pair {"displayStereoPositionSection", "Stereo position"},
@@ -546,11 +542,31 @@ TEST(SettingsPanel, DisplayOnlyGroupsHaveReadableTypographyAndFullAccessibleCont
         auto* heading = settingsControl<juce::Label>(panel, identifier);
         ASSERT_NE(heading, nullptr);
         EXPECT_EQ(heading->getText(), text);
-        EXPECT_FLOAT_EQ(heading->getFont().getHeight(), 14.0F);
+        EXPECT_FLOAT_EQ(heading->getFont().getHeight(), 18.0F);
         EXPECT_TRUE(heading->getFont().isBold());
-        EXPECT_GT(heading->getFont().getHeight(), description->getFont().getHeight());
+        EXPECT_EQ(heading->getJustificationType(), juce::Justification(juce::Justification::centredLeft));
         EXPECT_GE(static_cast<float>(heading->getHeight()), heading->getFont().getHeight());
         EXPECT_GT(heading->getY(), previousY);
+        if (previousY == 0) {
+            EXPECT_EQ(heading->getY(), 4);
+        }
+        int firstRowY = content->getHeight();
+        int previousBottom = 0;
+        for (const auto* child : content->getChildren()) {
+            if (child == heading) {
+                continue;
+            }
+            if (child->getY() >= heading->getBottom()) {
+                firstRowY = std::min(firstRowY, child->getY());
+            } else if (child->getBottom() <= heading->getY()) {
+                previousBottom = std::max(previousBottom, child->getBottom());
+            }
+        }
+        EXPECT_GE(firstRowY - heading->getBottom(), 8);
+        EXPECT_LE(firstRowY - heading->getBottom(), 10);
+        if (previousY != 0) {
+            EXPECT_GE(heading->getY() - previousBottom, 12);
+        }
         previousY = heading->getY();
     }
     const auto* midpoint = settingsControl<ControlSlider>(panel, PAN_MIDPOINT_PROPERTY);

@@ -1299,6 +1299,130 @@ TEST(CompactBands, NumericEditorArrowsReuseSliderNudgesAndLinkedHistory)
     }
 }
 
+/// Wheel input delivered through the native peer keeps numeric focus, slider steps, Link, and one undo per notch.
+TEST(CompactBands, FocusedNumericEditorWheelUsesSliderStepsAndLinkedHistory)
+{
+    for (const bool compact : {false, true}) {
+        ImageControlProcessor processor;
+        ImageControlLookAndFeel lookAndFeel;
+        auto& history = processor.getHistory();
+        processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
+        auto& midParameter = *processor.getParameters().getParameter(midGainParameterId(0));
+        auto& sideParameter = *processor.getParameters().getParameter(sideGainParameterId(0));
+        setParameterInGesture(midParameter, -6.0F);
+        setParameterInGesture(sideParameter, -6.0F);
+        const CompactGestureCounter midGestures(midParameter);
+        const CompactGestureCounter sideGestures(sideParameter);
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+        strip.setLookAndFeel(&lookAndFeel);
+        strip.setCompact(compact);
+        strip.setSize(240, compact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
+        strip.addToDesktop(juce::ComponentPeer::windowIsTemporary);
+        strip.setAlwaysOnTop(true);
+        strip.setTopLeftPosition(80, 100);
+        strip.setVisible(true);
+        strip.toFront(true);
+        auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
+        ASSERT_NE(mid, nullptr);
+        ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        auto* label = compactValueBox(*mid);
+        auto* peer = strip.getPeer();
+        ASSERT_NE(label, nullptr);
+        ASSERT_NE(peer, nullptr);
+        const juce::ScopedValueSetter<juce::ModifierKeys> restoreModifiers(juce::ModifierKeys::currentModifiers, {});
+        for (const bool fine : {false, true}) {
+            auto* editor = label->getCurrentTextEditor();
+            ASSERT_NE(editor, nullptr);
+            EXPECT_TRUE(editor->hasKeyboardFocus(true));
+            const auto position = strip.getLocalPoint(editor, editor->getLocalBounds().getCentre()).toFloat();
+            const auto modifiers = juce::ModifierKeys(fine ? juce::ModifierKeys::shiftModifier : 0);
+            juce::ModifierKeys::currentModifiers = modifiers;
+            peer->handleMouseEvent(
+                juce::MouseInputSource::InputSourceType::mouse,
+                position,
+                modifiers,
+                juce::MouseInputSource::defaultPressure,
+                juce::MouseInputSource::defaultOrientation,
+                juce::Time::currentTimeMillis()
+            );
+            auto wheel = compactNotch();
+            if (fine) {
+                wheel.deltaY = -wheel.deltaY;
+            }
+            peer->handleMouseWheel(
+                juce::MouseInputSource::InputSourceType::mouse, position, juce::Time::currentTimeMillis(), wheel
+            );
+            EXPECT_NEAR(mid->getValue(), fine ? -5.91 : -5.9, 0.0001);
+            EXPECT_NEAR(sideParameter.convertFrom0to1(sideParameter.getValue()), mid->getValue(), 0.0001);
+            ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+            EXPECT_TRUE(label->getCurrentTextEditor()->hasKeyboardFocus(true));
+            EXPECT_EQ(label->getCurrentTextEditor()->getText(), mid->numericValueText());
+        }
+        mid->hideTextBox(true);
+        EXPECT_EQ(midGestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false}));
+        EXPECT_EQ(sideGestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false}));
+        EXPECT_FALSE(history.isEditing());
+        EXPECT_TRUE(history.undo());
+        EXPECT_NEAR(mid->getValue(), -5.9, 0.0001);
+        EXPECT_TRUE(history.undo());
+        EXPECT_NEAR(mid->getValue(), -6.0, 0.0001);
+        EXPECT_FALSE(history.canUndo());
+    }
+}
+
+/// Smooth substeps and clamped wheel events retain the same native editor and uncommitted draft.
+TEST(CompactBands, NumericEditorWheelPreservesDraftForSubstepsAndClamps)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    auto& parameter = *processor.getParameters().getParameter(recoverParameterId(0));
+    const CompactGestureCounter gestures(parameter);
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+    strip.addToDesktop(0);
+    strip.setVisible(true);
+    auto* recovery = compactControl<ControlSlider>(strip, "Low Recover");
+    ASSERT_NE(recovery, nullptr);
+    ASSERT_TRUE(recovery->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    auto* label = compactValueBox(*recovery);
+    ASSERT_NE(label, nullptr);
+    auto* editor = label->getCurrentTextEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->setText("123", false);
+    auto wheel = compactNotch();
+    wheel.isSmooth = true;
+    wheel.deltaY = 0.02F;
+    for (int step = 0; step < 2; ++step) {
+        editor->mouseWheelMove(compactMouse(*editor, {}, {}, {}), wheel);
+        EXPECT_EQ(label->getCurrentTextEditor(), editor);
+        EXPECT_EQ(editor->getText(), "123");
+        EXPECT_DOUBLE_EQ(recovery->getValue(), 0.0);
+        EXPECT_FALSE(processor.getHistory().canUndo());
+    }
+    editor->mouseWheelMove(compactMouse(*editor, {}, {}, juce::ModifierKeys::shiftModifier), wheel);
+    EXPECT_DOUBLE_EQ(recovery->getValue(), 1.0);
+    ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+    EXPECT_EQ(label->getCurrentTextEditor()->getText(), "1");
+    EXPECT_EQ(recovery->numericValueSuffix(), "%");
+    recovery->hideTextBox(true);
+    EXPECT_TRUE(processor.getHistory().undo());
+    ASSERT_TRUE(recovery->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    editor = label->getCurrentTextEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->setText("123", false);
+    wheel = compactNotch();
+    wheel.deltaY = -wheel.deltaY;
+    editor->mouseWheelMove(compactMouse(*editor, {}, {}, {}), wheel);
+    EXPECT_EQ(label->getCurrentTextEditor(), editor);
+    EXPECT_EQ(editor->getText(), "123");
+    EXPECT_TRUE(processor.getHistory().canRedo());
+    EXPECT_FALSE(processor.getHistory().canUndo());
+    EXPECT_FALSE(processor.getHistory().isEditing());
+    recovery->hideTextBox(true);
+    EXPECT_EQ(gestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false, true, false}));
+}
+
 /// Escape discards a draft, focus loss commits it, and automation closes stale text without becoming a local edit.
 TEST(CompactBands, NumericEditorCancelFocusLossAndAutomationPreserveNativeLifecycle)
 {

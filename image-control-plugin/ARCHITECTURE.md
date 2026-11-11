@@ -515,7 +515,11 @@ Wider columns use full inline control names based on measured text widths, never
 With the spectrogram hidden, the fixed-height editor instead follows the compact value row.
 The preset name occupies the existing title area only when its selector row is collapsed.
 `ControlSlider` separates numeric text from fixed display units in its plugin-local value label.
-The inline editor shares the readout's font and placement, and Up/Down uses the slider's ordinary fine/coarse nudge path.
+The inline editor shares the readout's font and placement.
+Up/Down uses the slider's ordinary fine/coarse nudge path.
+Wheel input over the focused numeric editor uses the slider's wheel accumulation and Shift steps,
+with the same host and history gestures.
+It retains numeric editing after a changed value. Substep and clamped events preserve the uncommitted text.
 `SettingsPanel` uses natural content height up to the editor's available bottom edge,
 bounds any remaining scrolling content to that space, keeps focused controls visible,
 validates numeric tokens, and scopes appearance reset separately from sound, visibility, and geometry.

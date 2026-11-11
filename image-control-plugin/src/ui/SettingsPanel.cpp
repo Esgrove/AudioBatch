@@ -27,8 +27,10 @@ constexpr int PANEL_WIDTH {390};
 /// Insets and compact row sizes keep the complete settings comfortably readable.
 constexpr int MARGIN {12};
 constexpr int ROW_HEIGHT {28};
-constexpr int TITLE_HEIGHT {32};
-constexpr int SECTION_HEIGHT {30};
+constexpr int TOP_INSET {4};
+constexpr int SECTION_HEIGHT {24};
+constexpr int SECTION_TOP_GAP {12};
+constexpr int SECTION_BOTTOM_GAP {8};
 constexpr int SLIDER_LABEL_HEIGHT {18};
 constexpr int FOOTER_GAP {8};
 /// Value boxes leave enough room for the explicit units.
@@ -37,10 +39,8 @@ constexpr int VALUE_BOX_HEIGHT {22};
 /// Choice captions align while preserving space for both full option names.
 constexpr int CHOICE_LABEL_WIDTH {112};
 /// Display typography follows the ordinary editor controls.
-constexpr float TITLE_FONT_HEIGHT {20.0F};
 constexpr float LABEL_FONT_HEIGHT {14.0F};
-constexpr float SECTION_FONT_HEIGHT {14.0F};
-constexpr float DESCRIPTION_FONT_HEIGHT {12.0F};
+constexpr float SECTION_FONT_HEIGHT {18.0F};
 /// Settings use their persisted precision rather than arbitrary keyboard-only increments.
 constexpr double PERSISTENCE_STEP {0.01};
 constexpr double CONTRAST_STEP_PERCENT {1.0};
@@ -63,7 +63,7 @@ void configureLabel(juce::Label& label, const juce::String& text, const bool hea
         label.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     }
     label.setBorderSize({});
-    label.setJustificationType(juce::Justification::bottomLeft);
+    label.setJustificationType(heading ? juce::Justification::centredLeft : juce::Justification::bottomLeft);
 }
 
 /// Accepts a finite, full numeric token and at most one matching optional suffix.
@@ -140,13 +140,6 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
     viewport.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::never);
     addAndMakeVisible(viewport);
 
-    configureLabel(titleLabel, "Display settings");
-    identifyControl(titleLabel, "displaySettingsTitle", "Display settings");
-    titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
-    configureLabel(descriptionLabel, "Display only. Audio processing is unchanged.");
-    identifyControl(descriptionLabel, "displaySettingsDescription", "Display only. Audio processing is unchanged.");
-    descriptionLabel.setFont(textFont(DESCRIPTION_FONT_HEIGHT));
-    descriptionLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     configureLabel(appearanceLabel, "Appearance", true);
     configureLabel(stereoPositionLabel, "Stereo position", true);
     configureLabel(correlationLabel, "Correlation", true);
@@ -164,8 +157,6 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
     configureLabel(renderingLabel, "Rendering");
     for (auto* label :
          {
-             &titleLabel,
-             &descriptionLabel,
              &appearanceLabel,
              &stereoPositionLabel,
              &correlationLabel,
@@ -453,15 +444,20 @@ void SettingsPanel::resized()
 /// Positions each preference row once, leaving the final footer bounds as the source of natural content height.
 void SettingsPanel::layoutPreferences(const int width)
 {
-    int nextY = MARGIN;
+    int nextY = TOP_INSET;
     const auto takeRow = [width, &nextY](const int height) {
         const juce::Rectangle<int> row(MARGIN, nextY, std::max(1, width - MARGIN * 2), height);
         nextY += height;
         return row;
     };
-    titleLabel.setBounds(takeRow(TITLE_HEIGHT));
-    descriptionLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
-    appearanceLabel.setBounds(takeRow(SECTION_HEIGHT));
+    const auto placeHeading = [&nextY, &takeRow](juce::Label& heading) {
+        if (nextY != TOP_INSET) {
+            nextY += SECTION_TOP_GAP;
+        }
+        heading.setBounds(takeRow(SECTION_HEIGHT));
+        nextY += SECTION_BOTTOM_GAP;
+    };
+    placeHeading(appearanceLabel);
     for (const auto& [label, choice] :
          std::array {
              std::pair<juce::Label*, juce::ComboBox*> {&colourLabel, &colourChoice},
@@ -475,15 +471,15 @@ void SettingsPanel::layoutPreferences(const int width)
     }
     contrastLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
     contrastSlider.setBounds(takeRow(ROW_HEIGHT));
-    stereoPositionLabel.setBounds(takeRow(SECTION_HEIGHT));
+    placeHeading(stereoPositionLabel);
     panMidpointLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
     panMidpointSlider.setBounds(takeRow(ROW_HEIGHT));
     panEdgeLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
     panEdgeSlider.setBounds(takeRow(ROW_HEIGHT));
-    correlationLabel.setBounds(takeRow(SECTION_HEIGHT));
+    placeHeading(correlationLabel);
     showBandCorrelationButton.setBounds(takeRow(ROW_HEIGHT));
     smoothCorrelationReadoutButton.setBounds(takeRow(ROW_HEIGHT));
-    displayLabel.setBounds(takeRow(SECTION_HEIGHT));
+    placeHeading(displayLabel);
     persistenceLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
     persistenceSlider.setBounds(takeRow(ROW_HEIGHT));
     hideSpectrogramButton.setBounds(takeRow(ROW_HEIGHT));

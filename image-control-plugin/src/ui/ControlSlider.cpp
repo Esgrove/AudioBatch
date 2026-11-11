@@ -63,6 +63,23 @@ public:
         return juce::TextEditor::keyPressed(key);
     }
 
+    /// Uses the slider's wheel accumulator, fine steps, and gestures while retaining focused numeric entry.
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override
+    {
+        const auto owner = slider;
+        if (owner == nullptr) {
+            return;
+        }
+        const bool focused = hasKeyboardFocus(true);
+        const juce::Component::SafePointer<NumericValueEditor> editor(this);
+        const auto sliderEvent = event.getEventRelativeTo(owner.getComponent());
+        // A value notification may synchronously delete this editor. Only safe local observers survive the write.
+        owner->mouseWheelMove(sliderEvent, wheel);
+        if (focused && owner != nullptr && editor == nullptr) {
+            owner->showTextBox();
+        }
+    }
+
     /// Leaves the label's existing background and outline visible without JUCE's focused editor bevel.
     void paint(juce::Graphics& /*graphics*/) override {}
 
