@@ -297,6 +297,8 @@ fn changed_persisted_preferences_dirty_the_host_without_sound_gestures_or_restor
     let before = evidence.dirty.get();
     let _ = editor.update(Message::Contrast(f32::NAN));
     let _ = editor.update(Message::Correlation);
+    assert_eq!(evidence.dirty.get(), before + 1);
+    let before = evidence.dirty.get();
     std::thread::scope(|scope| {
         let component = &*component;
         scope

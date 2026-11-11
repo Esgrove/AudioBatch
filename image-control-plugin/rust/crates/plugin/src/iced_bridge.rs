@@ -109,6 +109,8 @@ pub struct Editor {
     owner_thread: std::thread::ThreadId,
     /// Cancels and joins every subscription task after native runtime destruction.
     executor: RefCell<crate::iced_executor::Shutdown>,
+    /// Joins detached file operations even during reentrant removal while Iced state remains borrowed.
+    shutdowns: Rc<RefCell<Vec<crate::params::EditorShutdown>>>,
 }
 
 impl Editor {
@@ -145,6 +147,8 @@ impl Editor {
         // SAFETY: NativeParent validated the same host pointer and UI thread above.
         let children = unsafe { child::ChildrenBefore::capture(parent)? };
         let analysis = Rc::new(RefCell::new(None));
+        let shutdowns = Rc::new(RefCell::new(Vec::new()));
+        let editor_shutdowns = Rc::clone(&shutdowns);
         let open = Rc::new(Cell::new(true));
         let notifier = PollSubNotifier::new();
         let settings = IcedWindowSettings::new()
@@ -171,7 +175,7 @@ impl Editor {
         // Baseview constructs the handler on this same thread on macOS and Windows.
         // Fragile supplies a checked boundary instead of an unsafe Send implementation for Rc.
         // Both successful extraction and early-error destruction occur on the owner thread.
-        let ui_binding = Fragile::new((Rc::clone(&binding), Rc::clone(&analysis)));
+        let ui_binding = Fragile::new((Rc::clone(&binding), Rc::clone(&analysis), shutdowns));
         let build_notifier = notifier.clone();
         let editor_shared = Arc::clone(&shared);
         let executor = crate::iced_executor::Shutdown::new().map_err(EditorError::Executor)?;
@@ -180,10 +184,11 @@ impl Editor {
                 settings,
                 notifier,
                 move |shared_window_size| {
-                    let (binding, analysis) = ui_binding.into_inner();
+                    let (binding, analysis, shutdowns) = ui_binding.into_inner();
                     let binding = Rc::new(LogicalBinding {
                         native: binding,
                         window_size: shared_window_size.clone(),
+                        shutdowns,
                     });
                     Ok(crate::editor::create_program_with_notifier(
                         parameters,
@@ -208,6 +213,7 @@ impl Editor {
             closing: Cell::new(false),
             owner_thread: std::thread::current().id(),
             executor: RefCell::new(executor),
+            shutdowns: editor_shutdowns,
         };
         editor.window()?.show()?;
         Ok(editor)
@@ -283,6 +289,10 @@ impl Editor {
         self.shared.set_analysis_enabled(false);
         let detached = self.child.detach();
         self.binding.close();
+        let shutdowns = std::mem::take(&mut *self.shutdowns.borrow_mut());
+        for shutdown in shutdowns {
+            shutdown.shutdown();
+        }
         let analysis = self.analysis.borrow_mut().take();
         if let Some(analysis) = analysis {
             analysis.shutdown();
@@ -313,9 +323,18 @@ struct LogicalBinding {
     native: Rc<dyn EditorBinding>,
     /// Native DPI follows the live child, rather than an unrelated host fallback or backing-pixel guess.
     window_size: iced_baseview::shell::SharedWindowSize,
+    /// Independent file-worker joins are retired without waiting for program-state destruction.
+    shutdowns: Rc<RefCell<Vec<crate::params::EditorShutdown>>>,
 }
 
 impl EditorBinding for LogicalBinding {
+    fn register_shutdown(&self, shutdown: crate::params::EditorShutdown) {
+        let old = std::mem::replace(&mut *self.shutdowns.borrow_mut(), vec![shutdown]);
+        for shutdown in old {
+            shutdown.shutdown();
+        }
+    }
+
     fn is_open(&self) -> bool {
         self.native.is_open()
     }

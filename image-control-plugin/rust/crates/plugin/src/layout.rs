@@ -20,6 +20,7 @@ pub const TOOLBAR_HEIGHT: f32 = 32.0;
 pub const CORRELATION_HEIGHT: f32 = 48.0;
 pub const CONTROLS_ACTION_HEIGHT: f32 = 12.0;
 pub const RESTORE_HEIGHT: f32 = 18.0;
+#[cfg(test)]
 pub const BAND_HEIGHT: f32 = 304.0;
 pub const COMPACT_BAND_HEIGHT: f32 = 28.0;
 pub const MIN_BAND_HEIGHT: f32 = 280.0;
@@ -130,7 +131,20 @@ impl Header {
 
 impl Sections {
     /// Resolves current C++ section allocation, retaining full-strip height while compact values release plot space.
+    #[cfg(test)]
     pub fn new(size: Size, toolbar: bool, correlation: bool, requested_band_height: f32, compact: bool) -> Self {
+        Self::with_visibility(size, toolbar, correlation, requested_band_height, compact, false)
+    }
+
+    /// A hidden plot keeps a full-width restore row and releases its allocation to the sound controls.
+    pub fn with_visibility(
+        size: Size,
+        toolbar: bool,
+        correlation: bool,
+        requested_band_height: f32,
+        compact: bool,
+        hidden: bool,
+    ) -> Self {
         let top = GAP + HEADER_HEIGHT + GAP + if toolbar { TOOLBAR_HEIGHT + GAP } else { 0.0 };
         let correlation_height = if correlation {
             CORRELATION_HEIGHT
@@ -141,6 +155,9 @@ impl Sections {
             .max(MIN_BAND_HEIGHT);
         let band = if compact {
             COMPACT_BAND_HEIGHT
+        } else if hidden {
+            (size.height - GAP - top - RESTORE_HEIGHT - GAP - correlation_height - CONTROLS_ACTION_HEIGHT)
+                .max(MIN_BAND_HEIGHT)
         } else {
             requested_band_height.clamp(MIN_BAND_HEIGHT, maximum)
         };
