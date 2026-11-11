@@ -86,6 +86,15 @@ const juce::Typeface::Ptr& monoTypeface()
     return typeface;
 }
 
+/// Returns the embedded Roboto Mono SemiBold face without host font matching or synthetic weight.
+const juce::Typeface::Ptr& semiboldMonoTypeface()
+{
+    static const juce::Typeface::Ptr typeface = juce::Typeface::createSystemTypefaceFor(
+        ImageControlBinaryData::RobotoMonoSemiBold_ttf, ImageControlBinaryData::RobotoMonoSemiBold_ttfSize
+    );
+    return typeface;
+}
+
 /// Returns a colour of the palette.
 juce::Colour colour(const juce::uint32 argb)
 {
@@ -193,6 +202,12 @@ juce::Font monoFont(const float height)
     return juce::Font(juce::FontOptions(monoTypeface())).withHeight(height);
 }
 
+/// Returns the embedded Roboto Mono SemiBold at an explicit height for compact numeric values.
+juce::Font semiboldMonoFont(const float height)
+{
+    return juce::Font(juce::FontOptions(semiboldMonoTypeface())).withHeight(height);
+}
+
 /// Returns the embedded Roboto SemiBold at an explicit height without synthesizing a heavier regular face.
 juce::Font semiboldTextFont(const float height)
 {
@@ -205,12 +220,15 @@ juce::Font textFont(const float height)
     return juce::Font(juce::FontOptions(textTypeface())).withHeight(height);
 }
 
-/// Uses Roboto Mono for the value boxes of sliders, so their numbers line up, and Roboto for other labels.
+/// Preserves ControlSlider's explicit numeric face so painting, measurement, and editing use the same weight.
+/// Other JUCE slider labels keep regular Roboto Mono, and ordinary labels retain their chosen text font.
 juce::Font ImageControlLookAndFeel::getLabelFont(juce::Label& label)
 {
-    const float height = label.getFont().getHeight();
+    if (dynamic_cast<ControlSlider*>(label.getParentComponent()) != nullptr) {
+        return label.getFont();
+    }
     if (dynamic_cast<juce::Slider*>(label.getParentComponent()) != nullptr) {
-        return monoFont(height);
+        return monoFont(label.getFont().getHeight());
     }
     return label.getFont();
 }

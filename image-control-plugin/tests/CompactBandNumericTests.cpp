@@ -222,6 +222,7 @@ TEST(CompactBands, NumericEditorKeepsFieldPresentationAndNoneditableSuffixes)
             }
             const auto bounds = label->getBounds();
             const auto font = label->getLookAndFeel().getLabelFont(*label);
+            EXPECT_EQ(font, compact ? semiboldMonoFont(12.0F) : monoFont(font.getHeight()));
             const auto number = slider->numericValueText();
             const auto suffix = slider->numericValueSuffix();
             ASSERT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
@@ -258,6 +259,48 @@ TEST(CompactBands, NumericEditorKeepsFieldPresentationAndNoneditableSuffixes)
         }
         EXPECT_FALSE(processor.getHistory().canUndo());
     }
+}
+
+/// Minimum compact columns keep signed gain, suffix, width, and directional pan glyphs intact during numeric entry.
+TEST(CompactBands, MinimumWidthSemiboldValuesFitNumericEditorsAndSuffixes)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setCompact(true);
+    strip.setSize(180, BAND_STRIP_COMPACT_HEIGHT);
+    strip.addToDesktop(0);
+    strip.setVisible(true);
+    const auto font = semiboldMonoFont(12.0F);
+    for (const auto* title : {"Low Mid", "Low Side", "Low Width", "Low Pan"}) {
+        SCOPED_TRACE(title);
+        auto* slider = compactControl<ControlSlider>(strip, title);
+        ASSERT_NE(slider, nullptr);
+        auto* label = compactValueBox(*slider);
+        ASSERT_NE(label, nullptr);
+        for (const double value :
+             {slider->getMinimum(), slider->getMinimum() + slider->getInterval(), slider->getMaximum()})
+        {
+            slider->setValue(value, juce::dontSendNotification);
+            ASSERT_TRUE(slider->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+            auto* editor = label->getCurrentTextEditor();
+            ASSERT_NE(editor, nullptr);
+            EXPECT_EQ(editor->getFont(), font);
+            EXPECT_EQ(label->getLookAndFeel().getLabelFont(*label), font);
+            const auto area = label->getBorderSize().subtractedFrom(label->getLocalBounds());
+            const int numberWidth
+                = static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, slider->numericValueText())));
+            const int suffixWidth = static_cast<int>(
+                std::ceil(juce::GlyphArrangement::getStringWidth(font, slider->numericValueSuffix()))
+            );
+            EXPECT_LE(numberWidth + suffixWidth, area.getWidth());
+            EXPECT_EQ(editor->getWidth(), numberWidth);
+            EXPECT_LE(editor->getRight() + suffixWidth, area.getRight());
+            slider->hideTextBox(true);
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
 }
 
 /// Production construction and a compact/full round trip keep Recover's click-opened editor numeric and nudgeable.

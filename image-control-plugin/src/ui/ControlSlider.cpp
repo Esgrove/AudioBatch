@@ -27,7 +27,7 @@ constexpr float WHEEL_NOTCH_DELTA {60.0F / 256.0F};
 /// Smooth wheel movement, such as from a trackpad, that takes one step.
 constexpr float SMOOTH_WHEEL_DELTA_PER_STEP {0.05F};
 /// Readable mono text that fits signed gain suffixes in a 49-pixel field and 100L/100R in a 32-pixel field.
-constexpr float COMPACT_FONT_HEIGHT {11.0F};
+constexpr float COMPACT_FONT_HEIGHT {12.0F};
 /// Padding around each compact value, in pixels.
 constexpr int COMPACT_VALUE_PADDING {2};
 /// Restrained selection opacity shared with the editor's ordinary text fields.
@@ -330,6 +330,7 @@ void ControlSlider::endDrag()
 std::unique_ptr<juce::Label> ControlSlider::createValueBox()
 {
     auto label = std::make_unique<NumericValueLabel>(*this);
+    label->setFont(monoFont(label->getFont().getHeight()));
     label->setJustificationType(juce::Justification::centred);
     label->setKeyboardType(juce::TextInputTarget::decimalKeyboard);
     label->setColour(juce::Label::textColourId, findColour(juce::Slider::textBoxTextColourId));
@@ -383,7 +384,7 @@ juce::String ControlSlider::compactValueText()
 /// Measures worst-case glyphs with the painted font and padding, independent of the current automated value.
 int ControlSlider::compactValueRequiredWidth(const bool fullNames) const
 {
-    const auto font = monoFont(COMPACT_FONT_HEIGHT);
+    const auto font = semiboldMonoFont(COMPACT_FONT_HEIGHT);
     const auto suffix = compactValueSuffix(compactIdentity, fullNames);
     const auto widthFor = [&font, &suffix](const juce::String& value) {
         return juce::GlyphArrangement::getStringWidth(font, value + suffix);
@@ -473,7 +474,7 @@ void ControlSlider::paint(juce::Graphics& graphics)
         }
     }
     graphics.setColour(findColour(juce::Slider::textBoxTextColourId).withMultipliedAlpha(isEnabled() ? 1.0F : 0.5F));
-    graphics.setFont(monoFont(COMPACT_FONT_HEIGHT));
+    graphics.setFont(semiboldMonoFont(COMPACT_FONT_HEIGHT));
     graphics.drawText(
         compactValueText(), getLocalBounds().reduced(COMPACT_VALUE_PADDING, 0), juce::Justification::centred
     );
@@ -505,7 +506,7 @@ void ControlSlider::resized()
     for (auto* child : getChildren()) {
         if (auto* label = dynamic_cast<juce::Label*>(child)) {
             label->setBounds(getLocalBounds());
-            label->setFont(monoFont(COMPACT_FONT_HEIGHT));
+            label->setFont(semiboldMonoFont(COMPACT_FONT_HEIGHT));
             label->setBorderSize({0, COMPACT_VALUE_PADDING, 0, COMPACT_VALUE_PADDING});
             label->setColour(juce::Label::textColourId, juce::Colours::transparentBlack);
             label->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);

@@ -129,7 +129,7 @@ ImageControlEditor::ImageControlEditor(ImageControlProcessor& owner) :
     auto& editorState = owner.getEditorState();
     auto& parameters = owner.getParameters();
     titleLabel.setText("ImageControl", juce::dontSendNotification);
-    titleLabel.setFont(textFont(TITLE_FONT_HEIGHT).boldened());
+    titleLabel.setFont(semiboldTextFont(TITLE_FONT_HEIGHT));
     titleLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     addAndMakeVisible(titleLabel);
     spectrogramDisclosure.setComponentID("spectrogram-disclosure");
