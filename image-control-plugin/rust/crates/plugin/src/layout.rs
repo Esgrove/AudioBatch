@@ -2,9 +2,18 @@
 
 use iced_baseview::{Point, Rectangle, Size};
 
-pub const DEFAULT_SIZE: (f32, f32) = (1000.0, 764.0);
-pub const MIN_SIZE: (f32, f32) = (760.0, 600.0);
-pub const MAX_SIZE: (f32, f32) = (4096.0, 4096.0);
+pub const DEFAULT_SIZE: (f32, f32) = (
+    crate::editor_geometry::DEFAULT_EDITOR_SIZE.0 as f32,
+    crate::editor_geometry::DEFAULT_EDITOR_SIZE.1 as f32,
+);
+pub const MIN_SIZE: (f32, f32) = (
+    crate::editor_geometry::MIN_EDITOR_SIZE.0 as f32,
+    crate::editor_geometry::MIN_EDITOR_SIZE.1 as f32,
+);
+pub const MAX_SIZE: (f32, f32) = (
+    crate::editor_geometry::MAX_EDITOR_SIZE.0 as f32,
+    crate::editor_geometry::MAX_EDITOR_SIZE.1 as f32,
+);
 pub const GAP: f32 = 8.0;
 pub const HEADER_HEIGHT: f32 = 28.0;
 pub const TOOLBAR_HEIGHT: f32 = 32.0;
@@ -141,7 +150,7 @@ impl Sections {
         let inner = BAND_HEADER_HEIGHT.mul_add(-2.0, BAND_INSET.mul_add(-2.0, band));
         let band_header_gap = 5.0_f32
             .mul_add(-(SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT), inner)
-            .clamp(0.0, 16.0);
+            .clamp(0.0, 8.0);
         Self {
             plot: rect(GAP, top, width, (correlation_y - GAP - top).max(0.0)),
             divider: rect(GAP, correlation_y - GAP - 4.0, width, GAP + 8.0),
@@ -166,8 +175,8 @@ mod tests {
         assert_eq!(sections.correlation, rect(8.0, 392.0, 984.0, 48.0));
         assert_eq!(sections.bands, rect(8.0, 452.0, 984.0, 304.0));
         assert_eq!(sections.strip_width, 240.0);
-        assert_eq!(sections.band_row, 45.0);
-        assert_eq!(sections.band_header_gap, 16.0);
+        assert_eq!(sections.band_row, 47.0);
+        assert_eq!(sections.band_header_gap, 8.0);
         let header = Header::new(1000.0);
         assert_eq!(header.settings, rect(148.0, 8.0, 24.0, 28.0));
         assert_eq!(header.mono, rect(468.0, 8.0, 60.0, 28.0));

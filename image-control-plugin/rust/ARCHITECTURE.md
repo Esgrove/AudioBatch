@@ -239,22 +239,38 @@ Complete renderer/device-loss fallback is not implemented.
 
 [`host/state.rs`](crates/plugin/src/host/state.rs) reads and writes bounded length-prefixed JSON.
 A four-byte little-endian payload length precedes at most 4096 bytes.
-State version 2 stores normalized sound parameters and detached Pre/Post, persistence, contrast, and palette preferences.
-Version 1 remains readable with fixed default preferences, independently of the instance's current editor choices.
+State version 3 stores normalized sound parameters, detached Pre/Post, persistence, contrast, and palette preferences,
+and the last host-accepted logical window dimensions.
+Versions 1 and 2 remain readable with fixed default dimensions, independently of the instance's current editor choices.
+Version 1 also supplies fixed default display preferences.
 Unknown versions, malformed fields, invalid values, and impossible stream progress are rejected.
 The complete detached document is validated before publishing any live sound or display values.
 
 State save/restore belongs off the audio thread and does not dispatch to or wait for the GUI.
 Publication uses atomics and does not mutate convolution history.
 It is not a sample-atomic transaction across all parameters during concurrent automation.
-Live analyzer history, particles, GPU energy, correlation history, Link, and layout state are not serialized.
+Component-owned geometry survives native view destruction and is captured without waiting for GUI work.
+New views use that logical size for host negotiation and attachment, with explicit host dimensions taking precedence.
+Rejected resize requests do not change it.
+Restoring state affects subsequent views without synchronously resizing an open editor.
+Unrelated new instances retain the fixed default size.
+Live analyzer history, particles, GPU energy, correlation history, Link, and section layout choices are not serialized.
 The independent state format does not imply C++ project migration.
 
 [`editor.rs`](crates/plugin/src/editor.rs) composes ordinary controls and polls atomics and completed analysis.
 Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
 Vector icons, hover disclosures, a separate controls margin, and compact band values replace text-symbol approximations.
 Settings appears as a modal callout without reallocating the plot or moving the parameter controls.
+Background numeric fields are excluded from focus operations and keyboard input while it is open.
 Pre/Post and appearance settings are functional without creating host sound-parameter gestures.
+Embedded Regular, SemiBold, Bold, and Mono faces provide deterministic typography with explicit Iced line metrics.
+Band headings and value fields share consistent insets and alignment, and Solo artwork retains its larger click target.
+Expanded values and Output use ordinary Iced text inputs beside sliders.
+Drafts remain local during typing and incoming automation. Enter commits one balanced host gesture, Escape cancels,
+and focus loss commits valid text or discards invalid text.
+Unchanged drafts and typing reverted to its starting text never overwrite newer automation.
+The editor rechecks binding lifetime after reentrant host callbacks before publishing any parameter changes.
+Units, muted gain, and centered pan use the registry domains without admitting non-finite parameter values.
 The 31 sound parameters retain balanced host gestures, including linked source-trim gestures and interrupted teardown.
 Undo/Redo, A/B, and preset commands remain disabled rather than simulating missing services.
 

@@ -8,12 +8,13 @@ use thiserror::Error;
 use vst3::ComRef;
 use vst3::Steinberg::{IBStream, IBStreamTrait as _, kResultOk};
 
+use crate::editor_geometry::{EditorGeometry, LogicalSize};
 use crate::params::{Parameters, Snapshot};
 
 /// Largest accepted payload regardless of a hostile host's length prefix.
 const MAXIMUM_STATE_BYTES: usize = 4096;
-/// Editor preferences extend this component identity's sound-only first generation.
-const STATE_VERSION: u32 = 2;
+/// Logical geometry extends the sound and display-preference generations.
+const STATE_VERSION: u32 = 3;
 
 /// Failure to decode or transfer a bounded state, always outside the audio callback.
 #[derive(Debug, Error)]
@@ -40,6 +41,9 @@ struct State {
     /// Detached preferences. Legacy states supply fixed defaults rather than retaining live choices.
     #[serde(default)]
     editor: EditorPreferences,
+    /// Logical units never depend on the state thread's platform DPI or a currently attached editor.
+    #[serde(default)]
+    geometry: LogicalSize,
 }
 
 /// Versioned plain preferences keep serde and host state concerns outside the DSP crate.
@@ -118,10 +122,15 @@ impl Default for EditorPreferences {
     }
 }
 
-/// Validates the complete detached document before publishing either parameters or preferences.
-fn restore_bytes(bytes: &[u8], parameters: &Parameters, shared: &SharedState) -> Result<(), StateError> {
+/// Validates the complete detached document before publishing parameters, preferences, or logical geometry.
+fn restore_bytes(
+    bytes: &[u8],
+    parameters: &Parameters,
+    shared: &SharedState,
+    geometry: &EditorGeometry,
+) -> Result<(), StateError> {
     let state: State = serde_json::from_slice(bytes)?;
-    if ![1, STATE_VERSION].contains(&state.version) || !state.parameters.is_valid() {
+    if ![1, 2, STATE_VERSION].contains(&state.version) || !state.parameters.is_valid() || !state.geometry.is_valid() {
         return Err(StateError::Invalid);
     }
     let display = state.editor.display().ok_or(StateError::Invalid)?;
@@ -133,16 +142,22 @@ fn restore_bytes(bytes: &[u8], parameters: &Parameters, shared: &SharedState) ->
         Tap::Post => AnalysisTap::Post,
     });
     parameters.restore(state.parameters);
+    geometry.publish(if state.version < STATE_VERSION {
+        LogicalSize::default()
+    } else {
+        state.geometry
+    });
     shared.invalidate_monitoring();
     Ok(())
 }
 
-/// Serializes detached authoritative atomics without waiting for GUI work.
-fn save_bytes(parameters: &Parameters, shared: &SharedState) -> Result<Vec<u8>, StateError> {
+/// Serializes detached authoritative sound/display values and one coherent geometry pair without GUI work.
+fn save_bytes(parameters: &Parameters, shared: &SharedState, geometry: &EditorGeometry) -> Result<Vec<u8>, StateError> {
     Ok(serde_json::to_vec(&State {
         version: STATE_VERSION,
         parameters: parameters.snapshot(),
         editor: EditorPreferences::capture(shared),
+        geometry: geometry.snapshot(),
     })?)
 }
 
@@ -155,6 +170,7 @@ pub(super) unsafe fn restore(
     stream: *mut IBStream,
     parameters: &Parameters,
     shared: &SharedState,
+    geometry: &EditorGeometry,
 ) -> Result<(), StateError> {
     // SAFETY: caller guarantees a valid stream or null, rejected here.
     let stream = unsafe { ComRef::from_raw(stream) }.ok_or(StateError::Stream)?;
@@ -166,10 +182,10 @@ pub(super) unsafe fn restore(
     }
     let mut bytes = vec![0; length];
     transfer_read(&stream, &mut bytes)?;
-    restore_bytes(&bytes, parameters, shared)
+    restore_bytes(&bytes, parameters, shared, geometry)
 }
 
-/// Serializes an independent atomic snapshot on a non-audio state thread.
+/// Serializes an independent snapshot on a non-audio state thread, using only short geometry locking.
 ///
 /// # Safety
 ///
@@ -178,10 +194,11 @@ pub(super) unsafe fn save(
     stream: *mut IBStream,
     parameters: &Parameters,
     shared: &SharedState,
+    geometry: &EditorGeometry,
 ) -> Result<(), StateError> {
     // SAFETY: caller guarantees a valid stream or null, rejected here.
     let stream = unsafe { ComRef::from_raw(stream) }.ok_or(StateError::Stream)?;
-    let mut bytes = save_bytes(parameters, shared)?;
+    let mut bytes = save_bytes(parameters, shared, geometry)?;
     if bytes.len() > MAXIMUM_STATE_BYTES {
         return Err(StateError::Invalid);
     }
@@ -226,13 +243,14 @@ fn transfer_write(stream: &ComRef<'_, IBStream>, mut bytes: &mut [u8]) -> Result
 mod tests {
     use image_control_dsp::{AnalysisTap, ColourMode, DisplayPreferences, Imager};
 
-    use super::{Parameters, restore_bytes, save_bytes};
+    use super::{EditorGeometry, LogicalSize, Parameters, restore_bytes, save_bytes};
 
     #[test]
-    fn version_two_roundtrips_preferences_without_sound_changes() {
+    fn version_three_roundtrips_preferences_and_fractional_logical_geometry() {
         let imager = Imager::new();
         let shared = imager.shared();
         let parameters = Parameters::default();
+        let geometry = EditorGeometry::default();
         let sound = serde_json::to_vec(&parameters.snapshot()).expect("sound snapshot");
         shared.set_analysis_tap(AnalysisTap::Pre);
         let display = DisplayPreferences {
@@ -241,39 +259,72 @@ mod tests {
             color_mode: ColourMode::Phase,
         };
         assert!(shared.set_display_preferences(display));
-        let bytes = save_bytes(&parameters, &shared).expect("save");
+        let remembered = LogicalSize::default().acknowledged(1501, 1201, 1.5);
+        geometry.publish(remembered);
+        let bytes = save_bytes(&parameters, &shared, &geometry).expect("save");
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("v3 JSON");
+        assert_eq!(json.get("version"), Some(&serde_json::Value::from(3)));
         shared.set_analysis_tap(AnalysisTap::Post);
+        geometry.publish(LogicalSize::default());
         assert!(shared.set_display_preferences(DisplayPreferences::default()));
-        restore_bytes(&bytes, &parameters, &shared).expect("restore v2");
+        restore_bytes(&bytes, &parameters, &shared, &geometry).expect("restore v3");
         assert_eq!(shared.analysis_tap(), AnalysisTap::Pre);
         assert_eq!(shared.display_preferences(), display);
+        assert_eq!(geometry.snapshot(), remembered);
         assert_eq!(serde_json::to_vec(&parameters.snapshot()).expect("sound"), sound);
-        assert_eq!(save_bytes(&parameters, &shared).expect("recapture"), bytes);
+        assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("recapture"), bytes);
     }
 
     #[test]
-    fn legacy_state_restores_fixed_display_defaults_not_previous_choices() {
+    fn legacy_versions_restore_fixed_geometry_not_previous_instance_choices() {
         let imager = Imager::new();
         let shared = imager.shared();
         let parameters = Parameters::default();
-        shared.set_analysis_tap(AnalysisTap::Pre);
-        assert!(shared.set_display_preferences(DisplayPreferences {
-            persistence_seconds: 2.0,
-            contrast: 0.1,
-            color_mode: ColourMode::Phase
-        }));
-        restore_bytes(br#"{"version":1,"parameters":{"gain":0.25}}"#, &parameters, &shared).expect("v1");
-        assert_eq!(shared.analysis_tap(), AnalysisTap::Post);
-        assert_eq!(shared.display_preferences(), DisplayPreferences::default());
-        assert_eq!(parameters.get(0), Some(0.25));
+        let geometry = EditorGeometry::default();
+        for bytes in [
+            br#"{"version":1,"parameters":{"gain":0.25}}"#.as_slice(),
+            br#"{"version":2,"parameters":{"gain":0.25}}"#.as_slice(),
+            br#"{"version":3,"parameters":{"gain":0.25}}"#.as_slice(),
+        ] {
+            geometry.publish(LogicalSize {
+                width: 1200.0,
+                height: 900.0,
+            });
+            shared.set_analysis_tap(AnalysisTap::Pre);
+            assert!(shared.set_display_preferences(DisplayPreferences {
+                persistence_seconds: 2.0,
+                contrast: 0.1,
+                color_mode: ColourMode::Phase,
+            }));
+            restore_bytes(bytes, &parameters, &shared, &geometry).expect("fixed missing defaults");
+            assert_eq!(shared.analysis_tap(), AnalysisTap::Post);
+            assert_eq!(shared.display_preferences(), DisplayPreferences::default());
+            assert_eq!(geometry.snapshot(), LogicalSize::default());
+            assert_eq!(parameters.get(0), Some(0.25));
+        }
+        restore_bytes(
+            br#"{"version":2,"parameters":{},"editor":{"tap":"pre","contrast":0.25,"color_mode":"phase"}}"#,
+            &parameters,
+            &shared,
+            &geometry,
+        )
+        .expect("version two preferences");
+        assert_eq!(shared.analysis_tap(), AnalysisTap::Pre);
+        assert_eq!(shared.display_preferences().color_mode, ColourMode::Phase);
+        assert_eq!(geometry.snapshot(), LogicalSize::default());
     }
 
     #[test]
-    fn malformed_editor_state_never_publishes_valid_sound_or_preferences() {
+    fn malformed_editor_state_never_publishes_sound_preferences_or_geometry() {
         let imager = Imager::new();
         let shared = imager.shared();
         let parameters = Parameters::default();
-        let before = save_bytes(&parameters, &shared).expect("capture");
+        let geometry = EditorGeometry::default();
+        geometry.publish(LogicalSize {
+            width: 1280.0,
+            height: 960.0,
+        });
+        let before = save_bytes(&parameters, &shared, &geometry).expect("capture");
         for bytes in [
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"persistence_seconds":0}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":1.01}}"#.as_slice(),
@@ -282,9 +333,30 @@ mod tests {
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":null}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"unknown":true}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":2},"editor":{"tap":"pre"}}"#.as_slice(),
+            br#"{"version":4,"parameters":{"gain":0.25}}"#.as_slice(),
         ] {
-            assert!(restore_bytes(bytes, &parameters, &shared).is_err());
-            assert_eq!(save_bytes(&parameters, &shared).expect("unchanged"), before);
+            assert!(restore_bytes(bytes, &parameters, &shared, &geometry).is_err());
+            assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);
+        }
+        for version in [1, 2, 3] {
+            for invalid in [
+                "null",
+                "{}",
+                r#"{"width":1200}"#,
+                r#"{"width":1200,"height":null}"#,
+                r#"{"width":0,"height":900}"#,
+                r#"{"width":1200,"height":599}"#,
+                r#"{"width":4097,"height":900}"#,
+                r#"{"width":1200,"height":4097}"#,
+                r#"{"width":1e999,"height":900}"#,
+                r#"{"width":1200,"height":900,"unknown":0}"#,
+            ] {
+                let bytes = format!(
+                    r#"{{"version":{version},"parameters":{{"gain":0.25}},"editor":{{"tap":"pre"}},"geometry":{invalid}}}"#
+                );
+                assert!(restore_bytes(bytes.as_bytes(), &parameters, &shared, &geometry).is_err());
+                assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);
+            }
         }
     }
 
@@ -293,20 +365,36 @@ mod tests {
         let mut imager = Imager::new();
         let shared = imager.shared();
         let parameters = std::sync::Arc::new(Parameters::default());
+        let geometry = std::sync::Arc::new(EditorGeometry::default());
         let state_parameters = std::sync::Arc::clone(&parameters);
+        let state_geometry = std::sync::Arc::clone(&geometry);
         let state_thread = std::thread::spawn(move || {
             restore_bytes(
-                br#"{"version":2,"parameters":{"gain":0.25},"editor":{"tap":"pre"}}"#,
+                br#"{"version":3,"parameters":{"gain":0.25},"editor":{"tap":"pre"},"geometry":{"width":1200,"height":900}}"#,
                 &state_parameters,
                 &shared,
+                &state_geometry,
             )
             .expect("off-thread state");
+            save_bytes(&state_parameters, &shared, &state_geometry).expect("off-thread capture")
         });
         imager.begin_block();
         for _ in 0..64 {
             let _ = imager.process_frame([0.0; 2]);
         }
-        state_thread.join().expect("bounded state completion without GUI");
+        let saved = state_thread.join().expect("bounded state completion without GUI");
         assert_eq!(parameters.get(0), Some(0.25));
+        assert_eq!(
+            geometry.snapshot(),
+            LogicalSize {
+                width: 1200.0,
+                height: 900.0
+            }
+        );
+        let other_imager = Imager::new();
+        let other_parameters = Parameters::default();
+        let other_geometry = EditorGeometry::default();
+        restore_bytes(&saved, &other_parameters, &other_imager.shared(), &other_geometry).expect("new component");
+        assert_eq!(other_geometry.snapshot(), geometry.snapshot());
     }
 }

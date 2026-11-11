@@ -1,6 +1,7 @@
 //! Single-component VST3 lifecycle, block-rate automation, and alias-safe raw host sample access.
 //!
-//! Mutable DSP has exclusive atomic admission. State and controller callbacks access independent atomics only.
+//! Mutable DSP has exclusive atomic admission. Sound state uses independent atomics,
+//! and detached window geometry uses a separate short lock that audio processing never enters.
 
 #![expect(
     unsafe_code,
@@ -26,6 +27,7 @@ use vst3::{Class, ComPtr, ComRef};
 use super::audio::AudioState;
 use super::enums::{to_i32, to_u32};
 use super::state;
+use crate::editor_geometry::EditorGeometry;
 use crate::params::Parameters;
 use crate::strings_utf16;
 
@@ -42,6 +44,8 @@ pub(super) struct Component {
     pub(super) parameters: Arc<Parameters>,
     /// DSP targets and analysis transport, never replaced while callbacks run.
     pub(super) shared: Arc<SharedState>,
+    /// Coherent logical window size survives view destruction, independent of DSP and native ownership.
+    pub(super) geometry: Arc<EditorGeometry>,
     /// UI-only host callbacks. Never read or locked by audio processing.
     pub(super) handler: Arc<Mutex<Option<ComPtr<IComponentHandler>>>>,
     /// Matching main input/output arrangement.
@@ -74,6 +78,7 @@ impl Component {
         Self {
             parameters: Arc::new(Parameters::new()),
             shared: imager.shared(),
+            geometry: Arc::new(EditorGeometry::default()),
             audio: AudioState::new(imager),
             handler: Arc::new(Mutex::new(None)),
             arrangement: AtomicU64::new(SpeakerArr::kStereo),
@@ -204,7 +209,7 @@ impl IComponentTrait for Component {
 
     unsafe fn setState(&self, stream: *mut IBStream) -> tresult {
         // SAFETY: the host supplies a live stream for this non-audio callback, or null.
-        if unsafe { state::restore(stream, &self.parameters, &self.shared) }.is_ok() {
+        if unsafe { state::restore(stream, &self.parameters, &self.shared, &self.geometry) }.is_ok() {
             kResultOk
         } else {
             kResultFalse
@@ -213,7 +218,7 @@ impl IComponentTrait for Component {
 
     unsafe fn getState(&self, stream: *mut IBStream) -> tresult {
         // SAFETY: the host supplies a writable stream for this non-audio callback, or null.
-        if unsafe { state::save(stream, &self.parameters, &self.shared) }.is_ok() {
+        if unsafe { state::save(stream, &self.parameters, &self.shared, &self.geometry) }.is_ok() {
             kResultOk
         } else {
             kResultFalse

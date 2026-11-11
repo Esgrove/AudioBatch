@@ -89,7 +89,7 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
                 if matches!(self.symbol, Symbol::Resize | Symbol::Divider) {
                     shell.publish(Message::EndGesture);
                 } else if cursor.is_over(layout.bounds())
-                    && let Some(message) = self.message
+                    && let Some(message) = self.message.clone()
                 {
                     shell.publish(message);
                 }
@@ -163,7 +163,7 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
                 );
             }
             Symbol::Headphones => {
-                let radius = bounds.height * 0.33;
+                let radius = bounds.height * 0.29;
                 let mut previous = Point::new(center.x - radius, center.y + 1.0);
                 for step in 1..=20 {
                     let angle = std::f32::consts::PI + step as f32 * std::f32::consts::PI / 20.0;
@@ -171,13 +171,13 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
                         radius.mul_add(angle.cos(), center.x),
                         radius.mul_add(angle.sin(), center.y + 1.0),
                     );
-                    stroke(renderer, previous, next, 1.7, color);
+                    stroke(renderer, previous, next, 1.5, color);
                     previous = next;
                 }
-                for x in [center.x - radius - 0.8, center.x + radius - 3.3] {
+                for x in [center.x - radius - 0.7, center.x + radius - 2.9] {
                     quad(
                         renderer,
-                        Rectangle::new(Point::new(x, center.y), Size::new(4.1, 7.1)),
+                        Rectangle::new(Point::new(x, center.y), Size::new(3.6, 6.2)),
                         color,
                         1.2,
                     );

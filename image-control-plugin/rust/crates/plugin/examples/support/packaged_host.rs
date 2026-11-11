@@ -638,7 +638,16 @@ fn exercise_monitoring_taps(ui: &UiThread, instance: &PluginInstance, worker: &C
             let _: () = msg_send![&*target, mouseUp: &*up];
         }
         run_stage(ui, worker, 2)?;
-        let state = instance.live_state(ui)?;
+        let deadline = Instant::now() + STAGE_DURATION;
+        let state = loop {
+            match instance.live_state(ui) {
+                Ok(state) => break state,
+                Err(vst3_host::InstanceError::EditsPending) if Instant::now() < deadline => {
+                    handle_events(ui, EVENT_WAIT);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
         let bytes = state.component;
         let payload = bytes.get(4..).context("bounded state envelope")?;
         let decoded: serde_json::Value = serde_json::from_slice(payload)?;

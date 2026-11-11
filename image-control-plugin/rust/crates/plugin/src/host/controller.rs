@@ -26,7 +26,7 @@ use crate::strings_utf16;
 impl IEditControllerTrait for Component {
     unsafe fn setComponentState(&self, stream: *mut IBStream) -> tresult {
         // SAFETY: the host supplies a stream live throughout this non-audio callback, or null.
-        if unsafe { state::restore(stream, &self.parameters, &self.shared) }.is_ok() {
+        if unsafe { state::restore(stream, &self.parameters, &self.shared, &self.geometry) }.is_ok() {
             kResultOk
         } else {
             kResultFalse
@@ -149,6 +149,7 @@ impl IEditControllerTrait for Component {
                     Arc::clone(&self.parameters),
                     Arc::clone(&self.shared),
                     Arc::clone(&self.handler),
+                    Arc::clone(&self.geometry),
                 );
             }
         }
