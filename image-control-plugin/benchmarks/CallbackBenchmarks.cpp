@@ -66,7 +66,11 @@ constexpr std::array<Mode, 10> MODES {
 
 /// A zero fixed size selects the irregular block sequence.
 struct BlockPattern {
-    int fixedSize {0};
+    /// Keeps the output machine-readable while identifying the variable-size sequence.
+    [[nodiscard]] std::string name() const
+    {
+        return fixedSize > 0 ? std::to_string(fixedSize) : "irregular";
+    }
 
     /// Returns the next host block size without allocating inside the measurement loop.
     [[nodiscard]] int at(const std::size_t index) const
@@ -74,28 +78,11 @@ struct BlockPattern {
         return fixedSize > 0 ? fixedSize : IRREGULAR_BLOCK_SIZES[index % IRREGULAR_BLOCK_SIZES.size()];
     }
 
-    /// Keeps the output machine-readable while identifying the variable-size sequence.
-    [[nodiscard]] std::string name() const
-    {
-        return fixedSize > 0 ? std::to_string(fixedSize) : "irregular";
-    }
+    int fixedSize {0};
 };
 
 /// Callback durations are paired with their own block's deadline before percentiles are computed.
 struct Samples {
-    std::vector<double> microseconds;
-    std::vector<double> deadlineRatios;
-    std::uint64_t frames {0};
-    double totalMicroseconds {0.0};
-    std::size_t overDeadline {0};
-
-    /// Reserves storage before the measured loop so recording results cannot reallocate.
-    void reserve(const std::size_t count)
-    {
-        microseconds.reserve(count);
-        deadlineRatios.reserve(count);
-    }
-
     /// Records only callback execution, excluding input copies, automation setters, and pacing sleeps.
     void add(const double elapsed, const int blockSize, const double sampleRate)
     {
@@ -108,6 +95,19 @@ struct Samples {
             ++overDeadline;
         }
     }
+
+    /// Reserves storage before the measured loop so recording results cannot reallocate.
+    void reserve(const std::size_t count)
+    {
+        microseconds.reserve(count);
+        deadlineRatios.reserve(count);
+    }
+
+    std::vector<double> microseconds;
+    std::vector<double> deadlineRatios;
+    std::uint64_t frames {0};
+    double totalMicroseconds {0.0};
+    std::size_t overDeadline {0};
 };
 
 /// Accumulates callback observations across warmed repetitions, excluding setup and scheduling work.
