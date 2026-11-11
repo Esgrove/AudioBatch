@@ -1,7 +1,8 @@
 //! Component-owned logical geometry and layout preferences, independent of DSP, native windows, and the editor feature.
 
-use std::sync::Mutex;
+use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 
 use crate::editor_preferences::LayoutPreferences;
@@ -69,30 +70,29 @@ impl Default for LogicalSize {
 #[derive(Default)]
 pub struct EditorGeometry {
     /// Last host-accepted logical dimensions, independent of section layout choices.
-    size: Mutex<LogicalSize>,
+    size: ArcSwap<LogicalSize>,
     /// Last validated section layout and interaction choices, independent of native view lifetime.
-    preferences: Mutex<LayoutPreferences>,
+    preferences: ArcSwap<LayoutPreferences>,
 }
 
 impl EditorGeometry {
-    /// Captures both dimensions under one short lock, without touching GUI ownership or dispatch.
+    /// Copies both dimensions from one immutable non-audio snapshot, without touching GUI ownership or dispatch.
     pub fn snapshot(&self) -> LogicalSize {
-        *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        **self.size.load()
     }
 
     /// Publishes a complete validated pair without resizing or waiting for any native window.
+    /// Invalid input leaves the last accepted dimensions untouched, including in release builds.
     pub fn publish(&self, size: LogicalSize) {
-        debug_assert!(size.is_valid());
-        *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = size;
+        if size.is_valid() {
+            self.size.store(Arc::new(size));
+        }
     }
 
-    /// Captures one complete layout under a short non-audio lock, independently of the logical size.
+    /// Copies one immutable non-audio layout snapshot, independently of the logical size.
     #[must_use]
     pub fn preferences(&self) -> LayoutPreferences {
-        *self
-            .preferences
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        **self.preferences.load()
     }
 
     /// Publishes validated layout choices without resizing or dispatching to a native editor.
@@ -101,10 +101,7 @@ impl EditorGeometry {
         if !preferences.is_valid() {
             return false;
         }
-        *self
-            .preferences
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = preferences;
+        self.preferences.store(Arc::new(preferences));
         true
     }
 }
@@ -156,6 +153,75 @@ mod tests {
             }
         });
         assert_eq!(other.snapshot(), LogicalSize::default());
+    }
+
+    #[test]
+    fn invalid_size_publication_preserves_exact_fractional_dimensions() {
+        let geometry = EditorGeometry::default();
+        let retained = LogicalSize {
+            width: 1500.125,
+            height: 1100.0625,
+        };
+        geometry.publish(retained);
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, 4096.0_f64.next_up()] {
+            geometry.publish(LogicalSize {
+                width: invalid,
+                ..retained
+            });
+            assert_eq!(geometry.snapshot(), retained);
+            geometry.publish(LogicalSize {
+                height: invalid,
+                ..retained
+            });
+            assert_eq!(geometry.snapshot(), retained);
+        }
+    }
+
+    #[test]
+    fn retained_immutable_size_and_layout_records_survive_multiwriter_replacement() {
+        let geometry = EditorGeometry::default();
+        let retained_size = geometry.size.load_full();
+        let retained_preferences = geometry.preferences.load_full();
+        let sizes = [
+            LogicalSize::default(),
+            LogicalSize {
+                width: 1500.125,
+                height: 1100.0625,
+            },
+        ];
+        let preferences = [
+            LayoutPreferences::default(),
+            LayoutPreferences {
+                linked: [false, true, false, true],
+                toolbar_shown: false,
+                correlation_shown: false,
+                compact_bands: true,
+                band_height: 900.125,
+                spectrogram_hidden: true,
+                analysis_stopped: true,
+            },
+        ];
+        let start = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            for (size, preferences) in sizes.into_iter().zip(preferences) {
+                let geometry = &geometry;
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..1024 {
+                        geometry.publish(size);
+                        assert!(geometry.publish_preferences(preferences));
+                    }
+                });
+            }
+            start.wait();
+            for _ in 0..2048 {
+                assert!(sizes.contains(&geometry.snapshot()));
+                assert!(preferences.contains(&geometry.preferences()));
+                assert_eq!(*retained_size, LogicalSize::default());
+                assert_eq!(*retained_preferences, LayoutPreferences::default());
+            }
+        });
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::monitoring::{AnalysisSample, capture_enabled};
 use crate::particles::ParticleBuilder;
-use crate::{AnalysisStatus, SharedState, SpatialAnalyzer, SpatialParticle};
+use crate::{AnalysisStatus, DisplayPreferences, SharedState, SpatialAnalyzer, SpatialParticle};
 
 /// Hard upper bound on pending instances independently of producer or refresh speed.
 const MAXIMUM_POINTS: usize = 65_536;
@@ -31,6 +31,7 @@ pub struct AnalysisUpdate {
 struct PendingBatch {
     points: Vec<SpatialParticle>,
     update: AnalysisUpdate,
+    preferences: Arc<DisplayPreferences>,
 }
 
 /// Owns the sole queue consumer. Construction and destruction belong off the audio thread.
@@ -86,6 +87,7 @@ impl AnalysisWorker {
                 generation: shared.analysis_generation(),
                 status: AnalysisStatus::Waiting,
             },
+            preferences: shared.monitoring.preference_snapshot(),
         }));
         let shutdown = AnalysisShutdown {
             state: Arc::new(AnalysisShutdownState {
@@ -138,12 +140,13 @@ impl AnalysisWorker {
         let generation = shared.analysis_generation();
         let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         destination.clear();
-        if pending.update.generation != generation {
+        if pending.update.generation != generation || !shared.monitoring.preferences_match(&pending.preferences) {
             pending.points.clear();
             pending.update = AnalysisUpdate {
                 generation,
                 status: shared.analysis_status(),
             };
+            pending.preferences = shared.monitoring.preference_snapshot();
         }
         std::mem::swap(destination, &mut pending.points);
         pending.update
@@ -169,19 +172,19 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
     let mut rate_bits = 0;
     let mut analyzer: Option<SpatialAnalyzer> = None;
     let mut builder = ParticleBuilder::default();
+    let mut preferences = shared.monitoring.preference_snapshot();
     while !stop.load(Ordering::Acquire) {
         let Some((source, rate)) = shared.monitoring.configuration() else {
             thread::park_timeout(POLL_INTERVAL);
             continue;
         };
-        if source != generation {
-            // The preference setter advances source before unlocking.
-            // A second source read rejects settings published after the stable rate/source snapshot above.
-            let preferences = shared.display_preferences();
-            if source != shared.analysis_generation() {
+        if source != generation || !shared.monitoring.preferences_match(&preferences) {
+            // Source and immutable preferences publish independently. Retain and recheck both identities,
+            // including the interval after a preference swap but before its source-generation increment.
+            let next_preferences = shared.monitoring.preference_snapshot();
+            if !configuration_matches(shared, source, &next_preferences) {
                 continue;
             }
-            generation = source;
             if rate.to_bits() != rate_bits {
                 analyzer = SpatialAnalyzer::new(rate).ok();
                 rate_bits = rate.to_bits();
@@ -189,11 +192,13 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
                 analyzer.reset();
             }
             builder.reset();
-            if source != shared.analysis_generation() {
+            if !configuration_matches(shared, source, &next_preferences) {
                 continue;
             }
-            // Settings are sampled only at stream boundaries, never half-way through a tier deadline.
-            apply_settings(&mut builder, analyzer.as_mut(), preferences);
+            // Settings are sampled only at configuration boundaries, never half-way through a tier deadline.
+            apply_settings(&mut builder, analyzer.as_mut(), *next_preferences);
+            preferences = next_preferences;
+            generation = source;
             let status = if !capture_enabled(source) {
                 AnalysisStatus::Disabled
             } else if analyzer.is_none() {
@@ -201,10 +206,10 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             } else {
                 AnalysisStatus::Waiting
             };
-            publish(shared, pending, source, status, &[]);
+            publish(shared, pending, source, &preferences, status, &[]);
         }
         for _ in 0..CHUNKS_PER_PASS {
-            if stop.load(Ordering::Acquire) || source != shared.analysis_generation() {
+            if stop.load(Ordering::Acquire) || !configuration_matches(shared, source, &preferences) {
                 break;
             }
             shared.drain_analysis(&mut queued);
@@ -230,13 +235,20 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             {
                 analyzer.reset();
                 builder.reset();
-                publish(shared, pending, source, AnalysisStatus::Failed, &[]);
+                publish(shared, pending, source, &preferences, AnalysisStatus::Failed, &[]);
                 break;
             }
-            if source != shared.analysis_generation() {
+            if !configuration_matches(shared, source, &preferences) {
                 break;
             }
-            publish(shared, pending, source, AnalysisStatus::Running, builder.particles());
+            publish(
+                shared,
+                pending,
+                source,
+                &preferences,
+                AnalysisStatus::Running,
+                builder.particles(),
+            );
             builder.clear();
         }
         thread::park_timeout(POLL_INTERVAL);
@@ -276,22 +288,29 @@ fn apply_settings(
     }
 }
 
+/// Validates both independent configuration identities using only non-audio preference loads.
+fn configuration_matches(shared: &SharedState, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
+    generation == shared.analysis_generation() && shared.monitoring.preferences_match(preferences)
+}
+
 /// Rejects stale completion and retains newest bounded work. This mutex is never touched by audio.
 fn publish(
     shared: &SharedState,
     pending: &Mutex<PendingBatch>,
     generation: u64,
+    preferences: &Arc<DisplayPreferences>,
     status: AnalysisStatus,
     points: &[SpatialParticle],
 ) {
     let mut pending = pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if generation != shared.analysis_generation() {
+    if !configuration_matches(shared, generation, preferences) {
         return;
     }
-    if pending.update.generation != generation {
+    if pending.update.generation != generation || !Arc::ptr_eq(&pending.preferences, preferences) {
         pending.points.clear();
     }
     pending.update = AnalysisUpdate { generation, status };
+    pending.preferences = Arc::clone(preferences);
     let incoming = points
         .get(points.len().saturating_sub(MAXIMUM_POINTS)..)
         .unwrap_or_default();
@@ -307,10 +326,50 @@ fn publish(
 
 #[cfg(test)]
 mod test_worker {
-    use super::AnalysisWorker;
-    use crate::Imager;
+    use super::{AnalysisUpdate, AnalysisWorker, PendingBatch, configuration_matches, publish};
+    use crate::{AnalysisStatus, DisplayPreferences, Imager};
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn replaced_preference_identity_rejects_completion_even_with_the_current_source_generation() {
+        let shared = Imager::new().shared();
+        let stale = shared.monitoring.preference_snapshot();
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            mel_scale: true,
+            ..DisplayPreferences::default()
+        }));
+        // Pair stale preferences with the current source, exercising the independent preference check.
+        let generation = shared.analysis_generation();
+        let current = shared.monitoring.preference_snapshot();
+        assert!(!configuration_matches(&shared, generation, &stale));
+        assert!(configuration_matches(&shared, generation, &current));
+        let pending = Mutex::new(PendingBatch {
+            points: Vec::new(),
+            update: AnalysisUpdate {
+                generation,
+                status: AnalysisStatus::Waiting,
+            },
+            preferences: Arc::clone(&current),
+        });
+        publish(&shared, &pending, generation, &stale, AnalysisStatus::Running, &[]);
+        assert_eq!(
+            pending.lock().expect("pending batch").update.status,
+            AnalysisStatus::Waiting
+        );
+        publish(&shared, &pending, generation, &current, AnalysisStatus::Running, &[]);
+        assert_eq!(
+            pending.lock().expect("pending batch").update.status,
+            AnalysisStatus::Running
+        );
+
+        assert!(shared.set_display_preferences(*stale));
+        assert!(
+            !shared.monitoring.preferences_match(&stale),
+            "equal values cannot reuse an old identity"
+        );
+    }
 
     #[test]
     fn disabled_capture_does_not_release_consumer_ownership() {
