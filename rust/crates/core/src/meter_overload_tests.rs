@@ -27,7 +27,7 @@ fn sample_thresholds_are_strict_on_both_signs_and_channels() {
 
 #[test]
 fn true_peak_only_overs_do_not_claim_sample_overs() {
-    let planes = generate(SignalKind::Square, 48_000, 1, 4_800);
+    let planes = generate(SignalKind::Square, 48_000, 1, 4800);
     let output = measure_signal(&planes, 48_000, 4096);
     assert_eq!(output.overloads.channels, 1);
     assert_eq!(output.overloads.flags, vec![TRUE_PEAK_OVER]);
@@ -35,7 +35,7 @@ fn true_peak_only_overs_do_not_claim_sample_overs() {
 
 #[test]
 fn overload_does_not_stick_to_later_silent_blocks() {
-    let block = 4_800;
+    let block = 4800;
     let mut plane = vec![0.0; block * 4 + 7];
     plane[100] = 2.0;
     plane[block * 3 + 100] = 1.25;
@@ -50,7 +50,7 @@ fn overload_does_not_stick_to_later_silent_blocks() {
 
 #[test]
 fn boundary_interpolation_uses_continuous_state_without_an_eof_flush() {
-    let block = 4_800;
+    let block = 4800;
     let mut plane = vec![0.0; block + 24];
     plane[block - 2] = 0.9;
     plane[block - 1] = 0.9;

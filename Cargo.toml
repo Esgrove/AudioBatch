@@ -114,6 +114,8 @@ unsafe_code = "deny"
 
 [workspace.lints.clippy]
 # https://rust-lang.github.io/rust-clippy/master/index.html
+# Four-digit integer parts stay ungrouped even when long fractional parts use separators for readability.
+inconsistent_digit_grouping = "allow"
 fn_params_excessive_bools = "allow"
 struct_excessive_bools = "allow"
 cast_possible_truncation = "allow"

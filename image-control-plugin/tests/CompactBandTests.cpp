@@ -1159,8 +1159,8 @@ TEST(CompactBands, FrequencyEditorKeepsHertzAndKilohertzFixedWithoutChangingHost
     for (const auto& [value, number, suffix, entry, expected] :
          std::array {
              std::tuple {800.0F, "800", " Hz", "850", 850.0F},
-             std::tuple {1'500.0F, "1.50", " kHz", "1.75", 1'750.0F},
-             std::tuple {1'500.0F, "1.50", " kHz", "900 Hz", 900.0F},
+             std::tuple {1500.0F, "1.50", " kHz", "1.75", 1750.0F},
+             std::tuple {1500.0F, "1.50", " kHz", "900 Hz", 900.0F},
          })
     {
         setParameterInGesture(parameter, value);
@@ -1175,7 +1175,7 @@ TEST(CompactBands, FrequencyEditorKeepsHertzAndKilohertzFixedWithoutChangingHost
         EXPECT_NEAR(slider.getValue(), expected, 0.01);
     }
     EXPECT_NEAR(slider.getValueFromText("1.75"), MIN_FREQUENCY, 0.01);
-    EXPECT_NEAR(slider.getValueFromText("1.75 kHz"), 1'750.0, 0.01);
+    EXPECT_NEAR(slider.getValueFromText("1.75 kHz"), 1750.0, 0.01);
     const double accepted = slider.getValue();
     for (const auto* malformed : {"1 kHz kHz", "1 Hz Hz", "1.5junk", "", "nan", "inf"}) {
         ASSERT_TRUE(enterCompactValue(slider, malformed));

@@ -103,7 +103,7 @@ fn wave(format: u16, channels: u16, bits: u16, extension: &[u8]) -> Vec<u8> {
     body.extend_from_slice(&format.to_le_bytes());
     body.extend_from_slice(&channels.to_le_bytes());
     body.extend_from_slice(&8000_u32.to_le_bytes());
-    body.extend_from_slice(&16000_u32.to_le_bytes());
+    body.extend_from_slice(&16_000_u32.to_le_bytes());
     body.extend_from_slice(&2_u16.to_le_bytes());
     body.extend_from_slice(&bits.to_le_bytes());
     body.extend_from_slice(extension);
@@ -122,7 +122,7 @@ fn wave_with_divergent_cursor() -> Vec<u8> {
     let mut extension = Vec::from([2, 0, 1, 0]);
     extension.extend_from_slice(b"fmt ");
     extension.extend_from_slice(&16_u32.to_le_bytes());
-    let overflowing = wave(1, 32768, 16, &[]);
+    let overflowing = wave(1, 32_768, 16, &[]);
     extension.extend_from_slice(overflowing.get(20..36).expect("PCM format fields"));
     extension.extend_from_slice(&[0; 32]);
     let mut file = wave(0x11, 1, 4, &extension);

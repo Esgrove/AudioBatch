@@ -30,7 +30,7 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 const SECONDS: usize = 10;
 
 /// Frames per chunk, like a decoder packet.
-const CHUNK_FRAMES: usize = 4_096;
+const CHUNK_FRAMES: usize = 4096;
 
 /// Gain the render applies, about -3 dB.
 const GAIN: f32 = 0.707;

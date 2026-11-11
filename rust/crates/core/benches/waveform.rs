@@ -23,7 +23,7 @@ const SAMPLE_RATE: u32 = 44_100;
 const SECONDS: usize = 240;
 
 /// Frames per chunk, like a decoder packet.
-const CHUNK_FRAMES: usize = 4_096;
+const CHUNK_FRAMES: usize = 4096;
 
 /// Builds the overview of the planes chunk by chunk, as the analysis does.
 fn build(planes: &[Vec<f32>]) -> Arc<WaveformOverview> {

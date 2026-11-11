@@ -21,13 +21,13 @@ mod test_golden_signals {
     const CHANNEL_SECONDS: f64 = 0.45;
 
     /// Frames per chunk, like a decoder packet, and not a multiple of the block size.
-    const CHUNK_FRAMES: usize = 1_000;
+    const CHUNK_FRAMES: usize = 1000;
 
     #[test]
     fn generated_inputs_have_shared_identities() {
         let mut text = GoldenText::default();
         text.value("pcm.encoding", 1);
-        for rate in [8_000, 22_050, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000] {
+        for rate in [8000, 22_050, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000] {
             for kind in SignalKind::ALL {
                 let frames = (f64::from(rate) * SECONDS) as usize;
                 let planes = generate(kind, rate, 2, frames);
@@ -53,7 +53,7 @@ mod test_golden_signals {
                 );
             }
         }
-        for frames in [1, 4_799, 4_800, 4_801, 19_199, 19_200] {
+        for frames in [1, 4799, 4800, 4801, 19_199, 19_200] {
             let planes = generate(SignalKind::Noise, 48_000, 2, frames);
             text.value(&format!("short/noise_48000_{frames}"), pcm_sha256(48_000, &planes));
         }
@@ -95,7 +95,7 @@ mod test_golden_signals {
 
     #[test]
     fn signals_at_8000() {
-        every_signal_in_stereo(8_000);
+        every_signal_in_stereo(8000);
     }
 
     #[test]
@@ -154,9 +154,9 @@ mod test_golden_signals {
         let rate = 48_000;
         for (name, frames) in [
             ("one_frame", 1),
-            ("under_one_block", 4_799),
-            ("one_block", 4_800),
-            ("one_block_and_one_frame", 4_801),
+            ("under_one_block", 4799),
+            ("one_block", 4800),
+            ("one_block_and_one_frame", 4801),
             ("under_gating_block", 19_199),
             ("one_gating_block", 19_200),
         ] {

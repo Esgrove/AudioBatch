@@ -40,7 +40,7 @@ def result(*, status: str = "analyzed", duration: float = 1.0, frames: int | Non
     """Builds a CLI-shaped result with independently adjustable status and stream length."""
     row = {
         "status": status,
-        "sampleRate": 44100,
+        "sampleRate": 44_100,
         "channels": 1,
         "bitsPerSample": 16,
         "durationSeconds": duration,
@@ -113,9 +113,9 @@ class TestLevelOracle(unittest.TestCase):
 
     def test_duration_and_exposed_frame_count_differences_fail(self) -> None:
         """Stream lengths are checked separately from level tolerance."""
-        expected = {"tone.aif": {"status": "analyzed", "durationSeconds": 1.0, "frameCount": 44100}}
-        correct = {"tone.aif": result(frames=44100)}
-        shortened = {"tone.aif": result(duration=0.9, frames=44099)}
+        expected = {"tone.aif": {"status": "analyzed", "durationSeconds": 1.0, "frameCount": 44_100}}
+        correct = {"tone.aif": result(frames=44_100)}
+        shortened = {"tone.aif": result(duration=0.9, frames=44_099)}
         assert levels.compare_results(correct, shortened, expected, 0.05)
         assert levels.compare_results(shortened, shortened, expected, 0.05)
         assert levels.compare_results(correct, correct, expected, 0.05) == []
@@ -146,7 +146,7 @@ class TestLevelOracle(unittest.TestCase):
     def test_spectrogram_silence_cannot_be_normalized(self) -> None:
         """The independent spectral manifest identifies silence at every committed sample rate."""
         root = Path("/fixtures/spectrogram_expected")
-        sources = [root / f"silence_{rate}.wav" for rate in (44100, 48000, 96000)]
+        sources = [root / f"silence_{rate}.wav" for rate in (44_100, 48_000, 96_000)]
         analyzed = levels.expected_results(sources, root)
         for source in sources:
             assert analyzed[source.name]["status"] == "analyzed"
@@ -252,7 +252,7 @@ class TestOutputOracle(unittest.TestCase):
         source = Path("/temporary/1/sine_stereo_44100_16.wav")
         expected = levels.expected_results([source], peak=-1)
         row = next(iter(expected.values()))
-        assert row["frameCount"] == 44100
+        assert row["frameCount"] == 44_100
         assert row["status"] == "analyzed"
         failed = levels.expected_results([Path("/temporary/1/broken.wav")])
         assert next(iter(failed.values()))["status"] == "failed"
@@ -271,7 +271,7 @@ class TestOutputOracle(unittest.TestCase):
             os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
             assert outputs.check_preservation(folder, snapshot)
             source.write_bytes(b"original metadata and audio")
-            os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 10000000))
+            os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 10_000_000))
             assert outputs.check_preservation(folder, snapshot)
 
     def test_source_length_and_metadata_snapshot_rejects_shared_loss(self) -> None:

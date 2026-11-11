@@ -5,7 +5,7 @@ const MAXIMUM_DISPLAY_SECONDS: f64 = 999_999_999.0;
 /// Seconds in one displayed minute.
 const SECONDS_PER_MINUTE: u64 = 60;
 /// Seconds at which both displayed clocks gain an hours field.
-const SECONDS_PER_HOUR: u64 = 3_600;
+const SECONDS_PER_HOUR: u64 = 3600;
 
 /// Formats elapsed and total source time, using hours for both when the total reaches one hour.
 #[must_use]

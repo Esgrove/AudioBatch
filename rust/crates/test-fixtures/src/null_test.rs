@@ -164,7 +164,7 @@ mod test_null_test {
 
     #[test]
     fn identical_signals_cancel() {
-        let audio = signal(2_000);
+        let audio = signal(2000);
         let result = null_test(&audio, &audio);
         assert!(result.cancels(), "{result}");
         assert_eq!(result.best_lag, 0);
@@ -172,7 +172,7 @@ mod test_null_test {
 
     #[test]
     fn a_single_step_is_reported_with_its_level() {
-        let expected = signal(2_000);
+        let expected = signal(2000);
         let mut actual = expected.clone();
         actual[1][500] += 1.0 / PCM16_SCALE;
         let result = null_test(&expected, &actual);
@@ -185,7 +185,7 @@ mod test_null_test {
 
     #[test]
     fn a_delayed_signal_reports_its_lag() {
-        let expected = signal(2_000);
+        let expected = signal(2000);
         let delayed: Vec<Vec<f32>> = expected
             .iter()
             .map(|channel| {
@@ -201,7 +201,7 @@ mod test_null_test {
 
     #[test]
     fn different_layouts_and_lengths_do_not_cancel() {
-        let stereo = signal(1_000);
+        let stereo = signal(1000);
         let mono = vec![stereo[0].clone()];
         assert!(!null_test(&stereo, &mono).cancels());
         let shorter: Vec<Vec<f32>> = stereo.iter().map(|channel| channel[..999].to_vec()).collect();

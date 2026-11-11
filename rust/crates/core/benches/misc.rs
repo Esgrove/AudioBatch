@@ -34,7 +34,7 @@ use rusqlite::Connection;
 const CACHED_ROWS: usize = 500;
 
 /// Number of records sorted.
-const SORTED_RECORDS: usize = 5_000;
+const SORTED_RECORDS: usize = 5000;
 
 /// Returns a varied file name, with numbers so the natural order differs from the byte order.
 fn file_name(index: usize) -> String {

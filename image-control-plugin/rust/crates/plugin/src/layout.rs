@@ -1,7 +1,7 @@
 //! Shared editor geometry, preserving the header, analysis, and five-row band-control arrangement.
 
 /// Initial logical size of a newly opened editor.
-pub const DEFAULT_SIZE: (f32, f32) = (1_000.0, 764.0);
+pub const DEFAULT_SIZE: (f32, f32) = (1000.0, 764.0);
 /// Smallest logical size that keeps the analysis and full control rows usable.
 pub const MIN_SIZE: (f32, f32) = (760.0, 600.0);
 /// Outer inset and section spacing in logical pixels.
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn compact_header_controls_do_not_overlap() {
-        for width in [MIN_SIZE.0, 939.0, 940.0, DEFAULT_SIZE.0, 1_600.0] {
+        for width in [MIN_SIZE.0, 939.0, 940.0, DEFAULT_SIZE.0, 1600.0] {
             let header = Header::new(width);
             let fixed: f32 = [
                 header.identity,
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(BAND_NAMES, ["Low", "Low Mid", "High Mid", "High"]);
         assert_eq!(FIELD_NAMES, ["Mid", "Side", "Width", "Recover", "Pan"]);
         for height in [MIN_BAND_HEIGHT, BAND_HEIGHT, 520.0] {
-            let sections = Sections::new(1_200.0, true, true, height);
+            let sections = Sections::new(1200.0, true, true, height);
             let occupied: f32 = [
                 (BAND_INSET + BAND_HEADER_HEIGHT) * 2.0,
                 sections.band_header_gap,

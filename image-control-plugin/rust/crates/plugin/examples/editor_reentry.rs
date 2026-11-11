@@ -49,11 +49,11 @@ mod native {
     /// Allows deferred geometry, window teardown, and timer callbacks to run without screenshots.
     const SETTLE_TIME: Duration = Duration::from_millis(180);
     /// Different native dimensions requested synchronously from the two parameter callbacks.
-    const BEGIN_SIZE: (i32, i32) = (1_072, 800);
+    const BEGIN_SIZE: (i32, i32) = (1072, 800);
     /// The final parameter callback must supersede geometry queued by beginEdit.
-    const PERFORM_SIZE: (i32, i32) = (1_120, 832);
+    const PERFORM_SIZE: (i32, i32) = (1120, 832);
     /// Geometry deliberately queued immediately before destroying the native child.
-    const PENDING_SIZE: (i32, i32) = (1_184, 864);
+    const PENDING_SIZE: (i32, i32) = (1184, 864);
     /// Header output slider position in the packaged editor's initial logical coordinates.
     const OUTPUT_POINT: (f64, f64) = (850.0, 22.0);
 
@@ -334,7 +334,7 @@ mod native {
     impl Host {
         /// Creates a real host window and parent `NSView` on `AppKit`'s main thread.
         fn create(marker: MainThreadMarker) -> Rc<Self> {
-            let rectangle = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1_000.0, 764.0));
+            let rectangle = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1000.0, 764.0));
             // SAFETY: the frame and style are valid and construction runs on the main thread.
             let window = unsafe {
                 NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -355,7 +355,7 @@ mod native {
                 window,
                 parent,
                 view: Cell::new(std::ptr::null_mut()),
-                latest: Cell::new((1_000, 764)),
+                latest: Cell::new((1000, 764)),
                 closed: Cell::new(false),
             })
         }

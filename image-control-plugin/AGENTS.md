@@ -163,8 +163,11 @@ Treat a change to any of them as a deliberate compatibility decision, and test i
   Constants inside a function, including `constexpr` locals, are local variables and use camelCase.
 - Prefer named constants over unexplained numeric literals for domain concepts, protocol fields,
   policy limits, and reused values. Keep self-evident arithmetic and conventional values inline.
-- Use apostrophe digit separators in decimal literals with more than four integer digits, such as `48'000`,
-  and the uppercase `F` suffix on float literals, as the existing code does.
+- Group decimal integer parts only when they have five or more digits.
+  Leave four or fewer integer digits ungrouped, such as `4000` and `4000.0`.
+  Use apostrophes in C++, such as `48'000`, and underscores in Rust, such as `48_000`.
+  Fractional groups remain allowed independently, such as Rust `1681.974_450_955_533`.
+  C++ float literals use the uppercase `F` suffix.
 - Every source and header file begins with a `///` file comment, before `#pragma once` and the includes,
   that names its main types or functions and their role in the plugin.
 - Every function has a `///` docstring that explains what it does and why,

@@ -238,6 +238,11 @@ Keep exceptions narrow, and revisit them when their technical constraints change
 
 ### Numeric calculations and performance
 
+- Group decimal integer parts only when they have five or more digits.
+  Leave four or fewer integer digits ungrouped, such as `4000` and `4000.0`.
+  Use groups of three from the right for larger integer parts, such as Rust/Python `40_000` and C++ `40'000`.
+  Fractional groups remain allowed independently, such as `1681.974_450_955_533`.
+  Preserve radix literals, fractional precision, identifiers, and serialized or user-facing formats.
 - Prefer multiplication by one half over division by two for floating-point calculations,
   such as `value * 0.5f` for C++ `float` and `value * 0.5` for `double` or inferred Rust floating-point values.
   Leave integer division unchanged.

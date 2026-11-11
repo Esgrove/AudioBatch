@@ -926,8 +926,8 @@ mod test_artifact_presentation {
 
     /// Supplies a small overview whose source duration permits a nonzero viewport.
     fn record() -> AnalysisRecord {
-        let mut builder = WaveformBuilder::new(1, Some(4_800));
-        let samples = vec![0.25; 4_800];
+        let mut builder = WaveformBuilder::new(1, Some(4800));
+        let samples = vec![0.25; 4800];
         builder.push(&[&samples]);
         AnalysisRecord {
             path: "preview.wav".into(),
@@ -936,9 +936,9 @@ mod test_artifact_presentation {
             status: AnalysisStatus::Cached,
             sample_rate: 48_000,
             channels: 1,
-            length_in_samples: 4_800,
+            length_in_samples: 4800,
             duration_seconds: 0.1,
-            waveform: Some(builder.finish(48_000, 4_800)),
+            waveform: Some(builder.finish(48_000, 4800)),
             ..AnalysisRecord::default()
         }
     }
@@ -1002,7 +1002,7 @@ mod test_artifact_presentation {
         assert!(view.overview.is_none());
         assert!((view.duration_seconds() - 0.1).abs() < f64::EPSILON);
         assert_eq!(view.source_rate, 48_000);
-        assert_eq!(view.source_frames, 4_800);
+        assert_eq!(view.source_frames, 4800);
         assert_eq!(view.source_channels, 1);
     }
 

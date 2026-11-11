@@ -230,7 +230,7 @@ mod test_gates {
     fn empty_and_silent_windows_have_no_loudness() {
         let mut meter = LoudnessMeter::new(1, 48_000, None);
         assert_eq!(meter.integrated(), f64::NEG_INFINITY);
-        let silence = vec![0.0; 4_800];
+        let silence = vec![0.0; 4800];
         for _ in 0..31 {
             assert_eq!(meter.push(&[&silence]), f64::NEG_INFINITY);
         }
@@ -239,12 +239,12 @@ mod test_gates {
 
     #[test]
     fn absolute_gate_rejects_quiet_blocks_and_relative_gate_rejects_quiet_sections() {
-        let mut meter = LoudnessMeter::new(2, 8_000, None);
+        let mut meter = LoudnessMeter::new(2, 8000, None);
         meter.integrated = vec![1.0, 0.001, 1.0];
         meter.admitted_sum = 2.001;
         assert!((meter.integrated() + 0.691).abs() < 1e-12);
         let quiet = vec![0.000_001; 800];
-        let mut meter = LoudnessMeter::new(1, 8_000, None);
+        let mut meter = LoudnessMeter::new(1, 8000, None);
         for _ in 0..5 {
             meter.push(&[&quiet]);
         }
@@ -255,8 +255,8 @@ mod test_gates {
     fn uniform_gain_shifts_integrated_loudness_one_lu_per_db_with_unchanged_gates() {
         for gain_db in [-6.0, 1.0, 6.0] {
             let gain = crate::record::decibels_to_gain(gain_db) as f32;
-            let mut source = LoudnessMeter::new(1, 8_000, None);
-            let mut adjusted = LoudnessMeter::new(1, 8_000, None);
+            let mut source = LoudnessMeter::new(1, 8000, None);
+            let mut adjusted = LoudnessMeter::new(1, 8000, None);
             for block in 0..60 {
                 let amplitude = if block < 30 { 0.1 } else { 0.001 };
                 let samples: Vec<f32> = (0..800)
@@ -272,7 +272,7 @@ mod test_gates {
 
     #[test]
     fn partial_window_retains_a_quiet_suffix_after_a_loud_prefix_expires() {
-        let mut meter = LoudnessMeter::new(1, 8_000, None);
+        let mut meter = LoudnessMeter::new(1, 8000, None);
         meter.energies[0] = 1e20;
         meter.boundary_energy[0] = 1e20;
         meter.boundary_energy[1] = 1.0;
@@ -283,7 +283,7 @@ mod test_gates {
 
     #[test]
     fn ring_wraps_do_not_accumulate_running_sum_drift() {
-        let mut meter = LoudnessMeter::new(1, 8_000, Some(80_000));
+        let mut meter = LoudnessMeter::new(1, 8000, Some(80_000));
         let tone: Vec<_> = (0..800).map(|index| if index % 2 == 0 { 0.5 } else { -0.5 }).collect();
         for _ in 0..100 {
             let measured = meter.push(&[&tone]);

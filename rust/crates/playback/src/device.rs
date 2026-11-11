@@ -337,7 +337,7 @@ mod test_capabilities {
             vec![44_100, 48_000]
         );
         assert_eq!(
-            supported_sample_rates(&[(8_000, 192_000)], 48_000),
+            supported_sample_rates(&[(8000, 192_000)], 48_000),
             vec![44_100, 48_000, 88_200, 96_000, 176_400, 192_000]
         );
     }
