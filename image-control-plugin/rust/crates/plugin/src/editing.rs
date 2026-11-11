@@ -449,7 +449,7 @@ impl EditingState {
                             *sound = *target_sound;
                         }
                     }
-                    if before.origins.get(slot) != after.origins.get(slot) {
+                    if before.active == after.active && before.origins.get(slot) != after.origins.get(slot) {
                         target_comparison
                             .origins
                             .get_mut(slot)?
@@ -472,18 +472,24 @@ impl EditingState {
                         .collect();
                 }
             }
-            let source = target_comparison.slots.get(target_comparison.active).copied();
             let effective_source = command
                 .metadata
                 .as_ref()
                 .filter(|_| !command.changes.is_empty())
-                .and_then(|_| {
+                .and_then(|(before, after)| {
+                    let target = if undo { before } else { after };
+                    // A switch recalls its retained destination, while other commands own only their historical ids.
+                    let source = if before.active == after.active {
+                        target.slots.get(target.active)
+                    } else {
+                        target_comparison.slots.get(target_comparison.active)
+                    };
                     target_comparison
                         .origins
                         .get(target_comparison.active)
                         .and_then(Option::as_ref)
                         .map(|origin| origin.effective.unwrap_or(origin.baseline))
-                        .filter(|effective| Some(*effective) == source)
+                        .filter(|effective| Some(effective) == source)
                 });
             ReplayTicket {
                 undo,

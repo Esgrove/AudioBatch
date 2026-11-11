@@ -250,10 +250,11 @@ fn accepted_readback_updates_only_replayed_ids_and_preserves_modified_status() {
         changes: vec![(0, initial.gain, target.gain)],
         metadata: Some((before, after)),
     });
+    snapshot.mono = 1.0;
     let requested = state.begin_replay(false, snapshot).expect("redo preset");
     apply(&requested, false, &mut snapshot);
     snapshot.gain = 0.251;
-    snapshot.mono = 1.0;
+    snapshot.bands.first_mut().expect("first band").pan = 0.75;
     state.complete_replay(false, snapshot, true);
     let comparison = state.comparison(snapshot);
     let origin = comparison
