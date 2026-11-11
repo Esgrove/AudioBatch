@@ -100,6 +100,15 @@ pub enum VersionedJsonError {
     },
 }
 
+/// Loaded plugin data and an optional warning when malformed saved data was preserved separately.
+#[derive(Debug)]
+pub struct RecoveredData<T> {
+    /// Loaded value, or the default after a recoverable parse failure.
+    pub value: T,
+    /// User-facing explanation of where malformed data was moved.
+    pub warning: Option<String>,
+}
+
 /// One plugin class found in a bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginDescription {
@@ -225,7 +234,7 @@ impl KnownPlugins {
     /// # Errors
     ///
     /// Returns an error when the file exists but cannot be read.
-    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>), PluginDataError> {
+    pub fn load_recovering(path: &Path) -> Result<RecoveredData<Self>, PluginDataError> {
         load_recovering(path, Self::load_from, "plugin list")
     }
 
@@ -319,9 +328,9 @@ pub(crate) fn load_recovering<T: Default>(
     path: &Path,
     load: impl Fn(&Path) -> Result<T, PluginDataError>,
     description: &'static str,
-) -> Result<(T, Option<String>), PluginDataError> {
+) -> Result<RecoveredData<T>, PluginDataError> {
     match load(path) {
-        Ok(value) => Ok((value, None)),
+        Ok(value) => Ok(RecoveredData { value, warning: None }),
         Err(
             error @ PluginDataError::Invalid {
                 source: VersionedJsonError::Json(_),
@@ -344,7 +353,10 @@ pub(crate) fn load_recovering<T: Default>(
                     });
                 }
             };
-            Ok((T::default(), Some(message)))
+            Ok(RecoveredData {
+                value: T::default(),
+                warning: Some(message),
+            })
         }
         Err(error) => Err(error),
     }
@@ -471,7 +483,10 @@ mod test_known_plugins {
                 .source()
                 .is_some_and(|source| source.downcast_ref::<VersionedJsonError>().is_some())
         );
-        let (recovered, message) = KnownPlugins::load_recovering(&path).expect("recovers");
+        let RecoveredData {
+            value: recovered,
+            warning: message,
+        } = KnownPlugins::load_recovering(&path).expect("recovers");
         assert_eq!(recovered, KnownPlugins::default());
         let message = message.expect("recovery warning");
         assert!(message.contains(&error_chain(&error)), "{message}");

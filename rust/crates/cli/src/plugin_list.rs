@@ -112,7 +112,10 @@ pub fn run_plugin_list(
     } else {
         None
     };
-    let (mut known, message) = KnownPlugins::load_recovering(&paths.known_plugins)
+    let audiobatch_plugins::RecoveredData {
+        value: mut known,
+        warning: message,
+    } = KnownPlugins::load_recovering(&paths.known_plugins)
         .with_context(|| format!("Could not read the plugin list {}", paths.known_plugins.display()))?;
     if let Some(message) = message {
         write_warning!(log, "{message}")?;
@@ -494,6 +497,8 @@ mod test_run_plugin_list {
 
     use super::*;
 
+    use crate::CommandOutput;
+
     /// A private data folder for the known plugins and the scan files.
     struct Setup {
         /// The data folder.
@@ -519,7 +524,7 @@ mod test_run_plugin_list {
         }
 
         /// Runs the listing and returns the exit code, stdout, and stderr.
-        fn run(&self, rescan: bool) -> (u8, String, String) {
+        fn run(&self, rescan: bool) -> CommandOutput {
             let mut output = Vec::new();
             let mut log = Vec::new();
             let listing = PluginListing {
@@ -527,11 +532,7 @@ mod test_run_plugin_list {
                 grouping: PluginGrouping::Name,
             };
             let code = run_plugin_list(listing, &self.context, &mut output, &mut log).expect("listing runs");
-            (
-                code,
-                String::from_utf8(output).expect("utf-8"),
-                String::from_utf8(log).expect("utf-8"),
-            )
+            CommandOutput::new(code, output, log)
         }
     }
 
@@ -556,7 +557,11 @@ mod test_run_plugin_list {
             ..KnownPlugins::default()
         };
         known.save_to(&setup.context.data_paths.known_plugins).expect("saved");
-        let (code, output, log) = setup.run(false);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = setup.run(false);
         assert_eq!(code, EXIT_SUCCESS);
         assert!(output.contains("Saved  Studio        EQ    VST3    2.1"), "{output}");
         assert!(log.contains("1 plugins"), "{log}");
@@ -564,7 +569,11 @@ mod test_run_plugin_list {
 
     #[test]
     fn an_empty_list_suggests_a_rescan() {
-        let (code, output, log) = Setup::new().run(false);
+        let CommandOutput {
+            exit_code: code,
+            stdout: output,
+            stderr: log,
+        } = Setup::new().run(false);
         assert_eq!(code, EXIT_SUCCESS);
         assert_eq!(output, "");
         assert!(log.contains("No plugins found. Run with --rescan, or scan for plugins in the GUI."));
@@ -580,7 +589,11 @@ mod test_run_plugin_list {
             ..KnownPlugins::default()
         };
         known.save_to(&setup.context.data_paths.known_plugins).expect("saved");
-        let (code, _, log) = setup.run(true);
+        let CommandOutput {
+            exit_code: code,
+            stderr: log,
+            ..
+        } = setup.run(true);
         assert_eq!(code, EXIT_SUCCESS);
         assert!(
             log.contains(&format!("Scanning VST3 plugins in {}", folder.display())),
@@ -596,10 +609,14 @@ mod test_run_plugin_list {
         let _held = ScanLock::try_acquire(&setup.context.data_paths.scan_lock)
             .expect("lock file")
             .expect("free lock");
-        let (code, _, log) = setup.run(true);
+        let CommandOutput {
+            exit_code: code,
+            stderr: log,
+            ..
+        } = setup.run(true);
         assert_eq!(code, EXIT_USAGE_ERROR);
         assert!(log.contains(SCAN_BUSY_MESSAGE), "{log}");
-        let (code, _, _) = setup.run(false);
+        let CommandOutput { exit_code: code, .. } = setup.run(false);
         assert_eq!(code, EXIT_SUCCESS);
     }
 

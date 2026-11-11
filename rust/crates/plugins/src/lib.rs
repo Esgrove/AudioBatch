@@ -26,7 +26,9 @@ pub mod scanner;
 mod test_helpers;
 
 pub use chain::{ChainSlot, PluginChain};
-pub use library::{FORMAT_NAME, KnownPlugins, PluginDataError, PluginDataPaths, PluginDescription, VersionedJsonError};
+pub use library::{
+    FORMAT_NAME, KnownPlugins, PluginDataError, PluginDataPaths, PluginDescription, RecoveredData, VersionedJsonError,
+};
 pub use presets::{ChainPreset, PresetError, PresetInfo, PresetStore, sanitize_preset_name};
 pub use preview_chain::{
     PreviewChain, PreviewChainError, PreviewFailure, chain_tail_frames, prepare_for_preview, reload_for_preview,
@@ -34,7 +36,7 @@ pub use preview_chain::{
 pub use processing::{ProcessingOptions, process_file};
 pub use processing_chain::{ChainPlugin, ProcessingChain, ProcessingChainError};
 pub use processing_coordinator::{
-    ProcessingCoordinator, ProcessingCoordinatorError, ProcessingEvent, default_worker_count,
+    ProcessingCoordinator, ProcessingCoordinatorError, ProcessingEvent, ProcessingRun, default_worker_count,
 };
 pub use scan_protocol::WORKER_FLAG;
 pub use scan_worker::{is_scan_worker_invocation, run_scan_worker};

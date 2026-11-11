@@ -12,7 +12,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use vst3_host::PluginState;
 
-use crate::library::{PluginDataError, PluginDescription, load_recovering, read_versioned_json, write_versioned_json};
+use crate::library::{
+    PluginDataError, PluginDescription, RecoveredData, load_recovering, read_versioned_json, write_versioned_json,
+};
 
 /// Format version of `plugin-chain.json`, raised when a change cannot be read by older versions.
 const CHAIN_FORMAT_VERSION: u32 = 1;
@@ -107,7 +109,7 @@ impl PluginChain {
     /// # Errors
     ///
     /// Returns an error when the file exists but cannot be read.
-    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>), PluginDataError> {
+    pub fn load_recovering(path: &Path) -> Result<RecoveredData<Self>, PluginDataError> {
         load_recovering(path, Self::load_from, "plugin chain")
     }
 
@@ -234,7 +236,10 @@ mod test_plugin_chain {
         let path = folder.path().join("plugin-chain.json");
         fs::write(&path, b"{ not json").expect("written");
 
-        let (chain, message) = PluginChain::load_recovering(&path).expect("recovers");
+        let RecoveredData {
+            value: chain,
+            warning: message,
+        } = PluginChain::load_recovering(&path).expect("recovers");
 
         assert_eq!(chain, PluginChain::default());
         let moved = folder.path().join("plugin-chain.invalid.json");
