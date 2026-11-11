@@ -14,15 +14,21 @@ namespace
 {
 /// One explicit action and gesture, independent of processor state and host shortcut registration.
 struct Shortcut final {
+    /// Non-null, non-owning JUCE text-boundary pointer to a static-lifetime identifier string literal.
     const char* identifier;
+    /// Non-null, non-owning JUCE text-boundary pointer to a static-lifetime action string literal.
     const char* action;
+    /// Non-null, non-owning JUCE text-boundary pointer to a static-lifetime gesture string literal.
     const char* keys;
 };
 
 /// One heading and its contiguous rows, used to keep reading and visual order identical.
 struct ShortcutGroup final {
+    /// Non-null, non-owning JUCE text-boundary pointer to a static-lifetime identifier string literal.
     const char* identifier;
+    /// Non-null, non-owning JUCE text-boundary pointer to a static-lifetime heading string literal.
     const char* title;
+    /// Number of contiguous shortcut rows belonging to this heading.
     std::size_t rows;
 };
 
