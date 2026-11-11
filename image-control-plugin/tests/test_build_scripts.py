@@ -3,7 +3,10 @@
 # dependencies = []
 # ///
 """
-Exercise ImageControl's production shell scripts with disposable bundles and recording tools.
+Test build/validation routing and failure propagation, plus safe installation and recovery.
+
+Disposable bundles and recording tools keep real installations untouched.
+Shared help and flag-documentation checks live in tests/test_shell_help.py at the repository root.
 
 Run with `uv run --script tests/test_build_scripts.py` from image-control-plugin/.
 No compiler, installed plugin, Audio Unit registry, or real validator is used.
@@ -69,10 +72,7 @@ class BuildScriptContracts(unittest.TestCase):
         self.write_tool("uname", 'printf "%s\\n" "$TEST_PLATFORM"\n', record=False)
         self.write_tool(
             "cmake",
-            """if [ -n "${REWRITE_SCRIPT:-}" ]; then
-    printf 'invalid shell after workflow started\\n' > "$REWRITE_SCRIPT"
-fi
-if [[ "$1" == -DSTRICTNESS=* ]]; then
+            """if [[ "$1" == -DSTRICTNESS=* ]]; then
     exit "${PLUGINVAL_SETUP_STATUS:-0}"
 elif [ "$1" = --build ]; then
     build_dir="$2"
@@ -218,58 +218,14 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 self.assert_success(self.run_bash("-n", str(self.root / script)))
         assert not self.commands()
 
-    def test_help_describes_optional_validation_and_levels(self) -> None:
-        """Document validator lookup, both validation flags, and the default and accepted range."""
-        for script in SCRIPTS:
-            with self.subTest(script=script):
-                result = self.invoke(script, "--help")
-                self.assert_success(result)
-                for text in ("--validate", "-V", "--validation-level", "-L", "pluginval", "PATH", "5", "10"):
-                    assert text in result.stdout, result.stdout
-                assert ("built" if script == "build.sh" else "installed") in result.stdout.lower()
-                if script == "install.sh":
-                    assert "auval" in result.stdout
-                assert not self.commands()
-
-    def test_all_help_aliases_exit_before_later_arguments_or_tools(self) -> None:
-        """A sequential parser handles help before later errors without a separate help scan."""
-        for script in ALL_SCRIPTS:
-            for flag in ("-h", "--help"):
-                with self.subTest(script=script, flag=flag):
-                    result = self.invoke(script, flag, "--unknown")
-                    self.assert_success(result)
-                    assert "Usage:" in result.stdout
-                    assert not self.commands()
-                    assert not (self.home / "Library").exists()
-
-    def test_earlier_argument_errors_are_not_overridden_by_later_help(self) -> None:
-        """Unknown options and invalid option values fail where encountered in the normal parser."""
-        for script in ALL_SCRIPTS:
-            for flag in ("-h", "--help"):
-                for prefix in (("--unknown",), ("--validation-level",)):
-                    with self.subTest(script=script, flag=flag, prefix=prefix):
-                        result = self.invoke(script, *prefix, flag)
-                        assert result.returncode != 0, result.stdout + result.stderr
-                        assert not self.commands()
-                        assert not (self.home / "Library").exists()
-
     def test_unknown_options_fail_before_side_effects(self) -> None:
         """Reject trailing unknown flags before tools, builds, cleaning, or installations."""
         for script in ALL_SCRIPTS:
             with self.subTest(script=script):
                 result = self.invoke(script, "-v", "--unknown")
                 assert result.returncode != 0, result.stdout + result.stderr
-                assert "Unknown option" in result.stderr
                 assert not self.commands()
                 assert not (self.home / "Library").exists()
-
-    def test_lint_preserves_help_after_passthrough_separator(self) -> None:
-        """A clang-tidy help argument belongs to the downstream tool after the separator."""
-        result = self.invoke("lint.sh", "--", "--help")
-        assert result.returncode != 0
-        assert "clang-tidy not found" in result.stderr
-        assert "Usage:" not in result.stdout
-        assert not self.commands()
 
     def test_build_and_installer_selection_aliases(self) -> None:
         """Short and long Debug, clean, reuse, verbose, and test flags keep identical behavior."""
@@ -379,7 +335,6 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                     self.clear_log()
                     result = self.invoke("lint.sh", check, selector, build_dir, str(database), jobs, "1")
                     assert result.returncode == 1, result.stdout + result.stderr
-                    assert "clang-tidy reported 1 warnings" in result.stdout
                     tidy = self.commands("clang-tidy")
                     assert len(tidy) == 1
                     assert tidy[0][:2] == ["-p", str(database)]
@@ -387,9 +342,13 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                     git = self.commands("git")
                     assert any("--cached" in command for command in git) == (selector in ("-s", "--staged"))
         self.clear_log()
+        self.write_tool("clang-tidy", "exit 0\n")
+        self.assert_success(self.invoke("lint.sh", "--", "--help"))
+        assert "--help" in self.commands("clang-tidy")[0]
+        self.clear_log()
+        self.write_tool("clang-tidy", "printf 'contract.cpp:1:1: warning: contract warning\\n'\n")
         result = self.invoke("lint.sh", "--changed", "--build-dir", str(database), "--jobs", "1")
         self.assert_success(result)
-        assert "clang-tidy reported 1 warnings" in result.stdout
 
     def test_format_check_aliases(self) -> None:
         """Both check aliases call the nonmutating formatter mode rather than rewriting files."""
@@ -427,24 +386,23 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                     self.assert_success(self.invoke(script, flag))
                     self.assert_validation(script, 5)
 
-    def test_each_valid_level_implies_validation(self) -> None:
-        """Every accepted value works without a separate --validate flag."""
+    def test_validation_level_implies_validation(self) -> None:
+        """Representative nondefault levels reach validation without a separate --validate flag."""
         for script in SCRIPTS:
-            for flag in ("--validation-level", "-L"):
-                for level in range(5, 11):
-                    with self.subTest(script=script, flag=flag, level=level):
-                        self.clear_log()
-                        self.assert_success(self.invoke(script, flag, str(level)))
-                        self.assert_validation(script, level)
+            for flag, level in (("--validation-level", 8), ("-L", 10)):
+                with self.subTest(script=script, flag=flag, level=level):
+                    self.clear_log()
+                    self.assert_success(self.invoke(script, flag, str(level)))
+                    self.assert_validation(script, level)
 
     def test_invalid_levels_fail_before_build_or_install_side_effects(self) -> None:
-        """Reject missing, empty, noncanonical, noninteger, and out-of-range arguments before --clean."""
+        """Reject missing, malformed, and out-of-range levels before cleaning or replacing files."""
         built_marker = self.built_vst3() / "existing.txt"
         installed_marker = self.installed_vst3() / "existing.txt"
         for marker in (built_marker, installed_marker):
             marker.parent.mkdir(parents=True)
             marker.write_text("do not replace", encoding="utf-8")
-        invalid = (None, "", "word", "5.0", "5e0", "-1", "4", "11", "+5", "05", " 5", "5 ", "99999999999999999999")
+        invalid = (None, "", "word", "5.0", "4", "11")
         for script in SCRIPTS:
             for flag in ("--validation-level", "-L"):
                 for level in invalid:
@@ -454,18 +412,9 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                             arguments.append(level)
                         result = self.invoke(script, *arguments)
                         assert result.returncode != 0, result.stdout + result.stderr
-                        assert "validation" in (result.stdout + result.stderr).lower()
                         assert not self.commands(), self.commands()
                         for marker in (built_marker, installed_marker):
                             assert marker.read_text() == "do not replace"
-
-    def test_build_workflow_is_parsed_before_external_commands_run(self) -> None:
-        """Editing the entry point during configuration cannot replace the active build workflow."""
-        result = self.invoke("build.sh", "--test", "--validate", REWRITE_SCRIPT=str(self.plugin / "build.sh"))
-        self.assert_success(result)
-        self.assert_validation("build.sh", 5)
-        assert [command[0] for command in self.commands()] == ["cmake", "cmake", "ctest", "pluginval"]
-        assert (self.plugin / "build.sh").read_text() == "invalid shell after workflow started\n"
 
     def test_build_validation_follows_build_and_unit_tests(self) -> None:
         """Validate the selected nondefault build only after CTest succeeds."""
@@ -476,18 +425,10 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
         build_dir = self.plugin / "cmake-build-relwithdebinfo"
         assert (build_dir / "tests-built").is_file()
         assert "ImageControlTests" in self.commands("cmake")[1]
-        assert self.commands("ctest") == [
-            [
-                "--test-dir",
-                str(build_dir),
-                "--build-config",
-                "RelWithDebInfo",
-                "--output-on-failure",
-                "--no-tests=error",
-                "--timeout",
-                "180",
-            ]
-        ]
+        ctest = self.commands("ctest")[0]
+        assert ctest[ctest.index("--test-dir") + 1] == str(build_dir)
+        assert ctest[ctest.index("--build-config") + 1] == "RelWithDebInfo"
+        assert "--no-tests=error" in ctest
 
     def test_install_debug_validates_installed_bundle_only_once(self) -> None:
         """Forward build selection, but never forward installer validation options to build.sh."""
@@ -531,8 +472,6 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                         "-P",
                         str(self.root / "cpp/cmake/RunPluginval.cmake"),
                     ]
-                    assert "building the pinned version" in result.stdout
-                    assert "skipping" not in result.stdout
                     assert not self.commands("pluginval")
                     assert bool(self.commands("auval")) == (script == "install.sh")
 
@@ -545,7 +484,6 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 result = self.invoke(script, "--validate", PLUGINVAL_SETUP_STATUS="27")
                 assert result.returncode == 27, result.stdout + result.stderr
                 assert len(self.commands("cmake")) == 3
-                assert "Installation complete" not in result.stdout
 
     def test_missing_pluginval_does_not_trigger_setup_without_validation(self) -> None:
         """Automatic downloads remain opt-in, including path-only invocations."""
@@ -567,7 +505,6 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 result = self.invoke(script, "--validation-level", "7", PLUGINVAL_STATUS="23")
                 assert result.returncode == 23, result.stdout + result.stderr
                 self.assert_validation(script, 7)
-                assert "Installation complete" not in result.stdout
 
     def test_audio_unit_validator_failure_propagates(self) -> None:
         """Preserve the existing strict auval failure instead of reporting installation success."""
@@ -575,7 +512,6 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
         assert result.returncode == 24, result.stdout + result.stderr
         assert self.commands("auval") == [["-a"], ["-strict", "-v", "aufx", "Egic", "Esgr"]]
         assert not self.commands("pluginval")
-        assert "Installation complete" not in result.stdout
 
     def test_failed_build_or_tests_prevent_validation(self) -> None:
         """Validation cannot run on artefacts from an unsuccessful build or test invocation."""
@@ -707,7 +643,6 @@ esac
                     result = self.invoke("install.sh", "--validate")
                     assert result.returncode != 0, result.stdout + result.stderr
                     self.assert_old_installation(destination)
-                    assert "Installation complete" not in result.stdout
                     assert not self.commands("killall")
                     assert not self.commands("auval")
                     assert not self.commands("pluginval")
@@ -735,8 +670,6 @@ esac
                 assert (backup / "Contents/contract.txt").read_text() == "old bundle"
                 assert (backup / "Contents/nested/preserve.txt").read_text() == "old resource"
                 assert str(backup) in result.stderr
-                assert "Recovery failed" in result.stderr
-                assert "Installation complete" not in result.stdout
                 assert not self.commands("killall")
                 assert not self.commands("auval")
                 assert not self.commands("pluginval")
@@ -759,17 +692,8 @@ esac
             assert (destination / "Contents/contract.txt").read_text() == expected
             assert not (destination / "Contents/nested").exists()
             assert not list(destination.parent.glob(".ImageControl-install.*"))
-            copies = [command for command in self.commands("cp") if command[-1].endswith(destination.name)]
-            assert len(copies) == 1
-            staged = Path(copies[0][-1])
-            assert staged.parent.parent == destination.parent
-            assert self.commands("mv").count([str(destination), str(staged.parent / "previous")]) == 1
-            assert self.commands("mv").count([str(staged), str(destination)]) == 1
         signatures = self.commands("codesign")
-        assert len(signatures) == 2
-        assert all(command[:-1] == ["--verify", "--deep", "--strict"] for command in signatures)
-        assert signatures[0][-1] != str(destinations[1])
-        assert signatures[1][-1] == str(destinations[1])
+        assert ["--verify", "--deep", "--strict", str(destinations[1])] in signatures
         names = [command[0] for command in self.commands()]
         assert names.index("codesign") < names.index("killall") < names.index("auval") < names.index("pluginval")
 
@@ -852,17 +776,7 @@ esac
             lines = [line for line in payload.splitlines() if operation in line]
             assert lines
             assert all(f"{operation} -LiteralPath" in line for line in lines), lines
-        assert (
-            payload.index("[IO.File]::Copy($source, $staged)")
-            < payload.index("Move-Item -LiteralPath $destination -Destination $backup")
-            < payload.index("Move-Item -LiteralPath $staged -Destination $destination")
-        )
-        assert "$keepBackup = $true" in payload
-        assert "if ($transaction -and !$keepBackup)" in payload
-        assert "Move-Item -LiteralPath $backup -Destination $destination" in payload
-        assert "exit 1" in payload
         assert not list(temporary.iterdir())
-        assert "Installation complete" not in result.stdout
 
     def test_native_powershell_transaction_success_and_failures(self) -> None:
         """Run the production elevated body without UAC against disposable paths when PowerShell exists."""

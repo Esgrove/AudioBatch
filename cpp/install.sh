@@ -251,8 +251,6 @@ install_artifacts() {
             install_gui_app
         fi
     fi
-
-    print_green "Installation complete"
 }
 
 install_project() {

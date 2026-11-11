@@ -222,7 +222,7 @@ fi
                     [long_mode, "--targets", "decoder", "--seconds", "3"],
                     [short_mode, "-T", "decoder", "-s", "3"],
                 )
-                assert commands[0][5:] == ["+nightly", "fuzz", "build", "decode_audio"]
+                assert commands[0][5:] == ["+nightly", "fuzz", "build", "--fuzz-dir", str(self.fuzz), "decode_audio"]
         commands = self.assert_equivalent_commands(
             "fuzz.sh", ["--no-build", "--replay", "--replay"], ["-N", "-r", "--replay"]
         )
@@ -420,7 +420,10 @@ fi
         result = self.invoke("fuzz.sh", "--replay", CARGO_TARGET_ENV_LOG=str(target_log))
         assert result.returncode == 0, result.stdout + result.stderr
         commands = self.commands()
-        assert commands[0][5:] == ["+nightly", "fuzz", "build"]
+        assert commands[0][5:] == ["+nightly", "fuzz", "build", "--fuzz-dir", str(self.fuzz)]
+        # Cargo resolves the shared virtual workspace root, so implicit fuzz discovery selects the wrong directory.
+        assert Path(commands[0][-1]).is_absolute()
+        assert Path(commands[0][-1]) == self.fuzz
         assert target_log.read_text().splitlines() == [str(self.fuzz / "target")]
         assert [command[0] for command in commands[1:]] == [
             "serato_tags",
@@ -471,7 +474,7 @@ fi
                     assert result.returncode == 0, result.stdout + result.stderr
                     commands = self.commands()
                     assert [command[5:] for command in commands[: len(targets)]] == [
-                        ["+nightly", "fuzz", "build", target] for target in targets
+                        ["+nightly", "fuzz", "build", "--fuzz-dir", str(self.fuzz), target] for target in targets
                     ]
                     runs = commands[len(targets) :]
                     assert [command[0] for command in runs] == ([] if mode == "--build-only" else targets)

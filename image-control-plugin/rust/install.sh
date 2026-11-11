@@ -256,7 +256,6 @@ install_plugin() {
             validate_audio_unit
         fi
     fi
-    print_green "Rescan plugins in your host and select ImageControl RS."
 }
 
 install_plugin "$@"

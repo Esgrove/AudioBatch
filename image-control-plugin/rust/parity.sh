@@ -32,14 +32,18 @@ parse_arguments() {
                 ;;
             -C | --cpp | -r | --rust | -e | --executable)
                 [ $# -ge 2 ] || print_error_and_exit "$1 requires a path. See --help."
-                case "$1" in
-                    -C | --cpp) CPP_BUNDLE="$2" ;;
-                    -r | --rust)
-                        RUST_BUNDLE="$2"
-                        USE_DEFAULT_RUST_BUNDLE=false
-                        ;;
-                    -e | --executable) EXECUTABLE="$2" ;;
-                esac
+                if [ "$2" = -h ] || [ "$2" = --help ]; then
+                    shift
+                    continue
+                fi
+                if [ "$1" = -C ] || [ "$1" = --cpp ]; then
+                    CPP_BUNDLE="$2"
+                elif [ "$1" = -r ] || [ "$1" = --rust ]; then
+                    RUST_BUNDLE="$2"
+                    USE_DEFAULT_RUST_BUNDLE=false
+                else
+                    EXECUTABLE="$2"
+                fi
                 shift
                 ;;
             *) print_error_and_exit "Unknown argument: $1. See --help." ;;

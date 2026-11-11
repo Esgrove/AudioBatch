@@ -309,8 +309,6 @@ install_plugin() {
         fi
         plugin_validate_vst3 "$VST3_DIR/ImageControl.vst3" "$VALIDATION_LEVEL"
     fi
-
-    print_green "Installation complete"
 }
 
 install_plugin "$@"
