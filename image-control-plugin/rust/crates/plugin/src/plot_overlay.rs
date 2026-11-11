@@ -1,12 +1,22 @@
-//! GPU-rendered plot guides and real crossover hit testing over the persistent spectrogram shader.
+//! GPU-rendered plot guides, response overlays, and retained gestures over the persistent spectrogram shader.
 
-use iced::advanced::Renderer as _;
-use iced::advanced::text::{Paragraph as _, Renderer as _};
+use std::cell::RefCell;
+use std::time::Instant;
+
+use iced::advanced::text::Paragraph as _;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, renderer, text, widget::tree};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, mouse};
 use iced_baseview as iced;
+use image_control_dsp::FrequencyScale;
 
 use super::{layout::PLOT_INSETS, theme};
+use crate::params::{Snapshot, band_parameter_id, parameter_spec};
+
+#[path = "plot_input.rs"]
+mod input;
+#[path = "plot_responses.rs"]
+mod responses;
+use input::Interaction;
 
 /// Bounds shared by the logarithmic axis, hit testing, and DSP crossover controls.
 const MIN_FREQUENCY: f64 = 20.0;
@@ -20,48 +30,212 @@ const GRID_FREQUENCIES: [f64; 10] = [
     20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0,
 ];
 
-/// Editor messages retain only an index and a plain frequency, not references to renderer state.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum PlotEvent {
+/// Plain-unit editor commands. Every `Begin`/`BeginBand`/`BeginGain` is balanced by `End`.
+/// `Change` and `ChangeBand` carry plain Hz targets. `BeginGain`/`ChangeGain`'s bool is true for Mid, false for Side.
+/// `ChangeGain` is an absolute dB delta from the values captured by `BeginGain`, not an incremental write.
+/// The editor captures Link and gain baselines at `BeginGain`, clamps gains, and closes those exact host ids at `End`.
+/// `Reset` is one self-contained default-frequency transaction. `HoverBand` never opens a parameter edit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlotEvent {
     Begin(usize),
     Change(usize, f64),
+    BeginBand(usize),
+    ChangeBand([f64; 3]),
+    BeginGain(usize, bool),
+    ChangeGain(usize, bool, f64),
+    Reset(usize),
+    HoverBand(Option<usize>),
     End,
 }
 
 /// A foreground guide widget has no image data and leaves analysis entirely in the shader beneath it.
 pub(super) struct PlotOverlay<Message> {
     crossovers: [f64; 3],
+    widths: [f64; 4],
+    soloed: [bool; 4],
+    scale: FrequencyScale,
+    epoch: u64,
+    enabled: bool,
+    position_curve: Option<(f64, f64)>,
     on_event: fn(PlotEvent) -> Message,
 }
 
-/// Pointer ownership survives view rebuilding and releases even when the pointer leaves the plot.
+/// Geometry caches and interaction ownership survive ordinary view rebuilding.
 #[derive(Default)]
-struct Interaction {
-    dragging: Option<usize>,
-    selected: Option<usize>,
+struct PlotState {
+    input: Interaction,
+    responses: RefCell<responses::ResponseCache>,
+    position_curve: RefCell<responses::PositionOverlay>,
 }
 
 impl<Message> PlotOverlay<Message> {
-    /// Uses authoritative crossover readback for every new view.
+    /// Uses ordered authoritative plain-Hz crossover readback for every new view.
     pub(super) const fn new(crossovers: [f64; 3], on_event: fn(PlotEvent) -> Message) -> Self {
-        Self { crossovers, on_event }
+        Self {
+            crossovers,
+            widths: [1.0; 4],
+            soloed: [false; 4],
+            scale: FrequencyScale::Logarithmic,
+            epoch: 0,
+            enabled: true,
+            position_curve: None,
+            on_event,
+        }
+    }
+
+    /// Projects every guide and gesture on the particle axis and reads independent Width and Solo targets.
+    /// Snapshot crossovers are normalized and are deliberately not used in place of new's plain-Hz readback.
+    pub(super) fn display(mut self, mel_scale: bool, snapshot: Snapshot) -> Self {
+        self.scale = if mel_scale {
+            FrequencyScale::Mel
+        } else {
+            FrequencyScale::Logarithmic
+        };
+        self.widths = std::array::from_fn(|band| {
+            band_parameter_id(band, 2)
+                .and_then(parameter_spec)
+                .zip(snapshot.bands.get(band))
+                .map_or(1.0, |(spec, controls)| spec.normalized_to_plain(controls.width))
+        });
+        self.soloed = snapshot.bands.map(|band| band.solo >= 0.5);
+        self
+    }
+
+    /// Draws measured band names and independent Width readouts without colliding with existing axis labels.
+    fn draw_band_labels(
+        &self,
+        renderer: &mut impl text::Renderer<Font = iced::Font>,
+        bounds: Rectangle,
+        hovered: Option<usize>,
+        occupied: &mut Vec<Rectangle>,
+        viewport: &Rectangle,
+    ) {
+        let mut left = bounds.x;
+        for (band, name) in super::layout::BAND_NAMES.into_iter().enumerate() {
+            let right = self.crossovers.get(band).map_or(bounds.x + bounds.width, |frequency| {
+                frequency_x(*frequency, bounds, self.scale)
+            });
+            if let Some(label_bounds) = band_label_bounds(left, right, bounds, label_size(name))
+                .filter(|candidate| !overlaps_labels(*candidate, occupied))
+            {
+                label_at(
+                    renderer,
+                    name.into(),
+                    label_bounds,
+                    theme::GREY_LIGHT.scale_alpha(0.7),
+                    viewport,
+                );
+                occupied.push(label_bounds);
+                if hovered == Some(band) {
+                    let label = format!("Width {:.2}", self.widths.get(band).copied().unwrap_or(1.0));
+                    if let Some(pill) = width_label_bounds(left, right, label_bounds, bounds, label_size(&label))
+                        .filter(|candidate| !overlaps_labels(*candidate, occupied))
+                    {
+                        crossover_label(renderer, label, pill, true, viewport);
+                        occupied.push(pill);
+                    }
+                }
+            }
+            left = right;
+        }
+    }
+
+    /// Draws markers and their collision-aware pills, prioritizing the captured marker's annotation.
+    fn draw_crossovers(
+        &self,
+        renderer: &mut impl text::Renderer<Font = iced::Font>,
+        bounds: Rectangle,
+        hovered: Option<usize>,
+        interaction: &Interaction,
+        occupied: &mut Vec<Rectangle>,
+        viewport: &Rectangle,
+    ) {
+        for (index, frequency) in self.crossovers.into_iter().enumerate() {
+            let active = hovered == Some(index) || interaction.band_edge_active(index, self.epoch);
+            let x = frequency_x(frequency, bounds, self.scale);
+            if active {
+                for layer in 1..=4 {
+                    let share = layer as f32 * 0.25;
+                    let thickness = 16.0 * share;
+                    line(
+                        renderer,
+                        Rectangle::new(
+                            Point::new(thickness.mul_add(-0.5, x), bounds.y),
+                            Size::new(thickness, bounds.height),
+                        ),
+                        bounds,
+                        theme::YELLOW.scale_alpha(0.3 * (1.0 - share)),
+                    );
+                }
+            }
+            line(
+                renderer,
+                Rectangle::new(
+                    Point::new(x, bounds.y),
+                    Size::new(if active { 2.2 } else { 1.0 }, bounds.height),
+                ),
+                bounds,
+                theme::YELLOW.scale_alpha(if active { 0.9 } else { 0.4 }),
+            );
+        }
+        let mut indices = [0, 1, 2];
+        indices.sort_by_key(|index| hovered != Some(*index));
+        for index in indices {
+            let Some(frequency) = self.crossovers.get(index).copied() else {
+                continue;
+            };
+            let label = super::format_frequency(frequency);
+            if let Some(pill) = crossover_label_bounds(
+                frequency_x(frequency, bounds, self.scale),
+                bounds,
+                label_size(&label),
+                occupied,
+            ) {
+                crossover_label(renderer, label, pill, hovered == Some(index), viewport);
+                occupied.push(pill);
+            }
+        }
+    }
+
+    /// Invalidates captured origins after restore, comparison, undo/redo, or another forced interaction cancel.
+    /// The owner must close its outstanding host gesture immediately when advancing this token.
+    /// The next widget event emits End for any retained old drag, with no stale Change before it.
+    pub(super) const fn interaction_epoch(mut self, epoch: u64) -> Self {
+        self.epoch = epoch;
+        self
+    }
+
+    /// Rejects input while preserving display, and cancels a captured drag on the next widget event.
+    pub(super) const fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Shows the stereo mapping for 2.5 seconds after a validated setting changes, then fades for 0.5 seconds.
+    /// Initial construction seeds the settings without displaying an unsolicited overlay.
+    pub(super) fn position_curve(mut self, midpoint_db: f64, edge_db: f64) -> Self {
+        self.position_curve = responses::valid_position_curve(midpoint_db, edge_db).then_some((midpoint_db, edge_db));
+        self
     }
 }
 
-impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
+impl<Message, Renderer> Widget<Message, Theme, Renderer> for PlotOverlay<Message>
+where
+    Renderer: text::Renderer<Font = iced::Font>,
+{
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<Interaction>()
+        tree::Tag::of::<PlotState>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(Interaction::default())
+        tree::State::new(PlotState::default())
     }
 
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fill)
     }
 
-    fn layout(&mut self, _: &mut tree::Tree, _: &iced::Renderer, limits: &layout::Limits) -> layout::Node {
+    fn layout(&mut self, _: &mut tree::Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
         layout::Node::new(limits.resolve(Length::Fill, Length::Fill, Size::ZERO))
     }
 
@@ -71,19 +245,37 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        _: &iced::Renderer,
+        _: &Renderer,
         _: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _: &Rectangle,
     ) {
-        let interaction = tree.state.downcast_mut::<Interaction>();
+        let state = tree.state.downcast_mut::<PlotState>();
         let bounds = plot_bounds(layout.bounds());
-        let events = interaction.update(event, cursor, bounds, self.crossovers);
-        if !events.is_empty() {
+        let result = state.input.update(
+            event,
+            cursor,
+            bounds,
+            self.crossovers,
+            self.scale,
+            self.epoch,
+            self.enabled,
+        );
+        if result.capture {
             shell.capture_event();
-            for event in events {
-                shell.publish((self.on_event)(event));
-            }
+        }
+        if result.redraw {
+            shell.request_redraw();
+        }
+        for event in result.events {
+            shell.publish((self.on_event)(event));
+        }
+        if state
+            .position_curve
+            .borrow_mut()
+            .observe(self.position_curve, Instant::now())
+        {
+            shell.request_redraw();
         }
     }
 
@@ -93,20 +285,24 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _: &Rectangle,
-        _: &iced::Renderer,
+        _: &Renderer,
     ) -> mouse::Interaction {
-        let interaction = tree.state.downcast_ref::<Interaction>();
-        if interaction.dragging.is_some() || hit_test(cursor, plot_bounds(layout.bounds()), self.crossovers).is_some() {
-            mouse::Interaction::ResizingHorizontally
-        } else {
-            mouse::Interaction::None
+        if !self.enabled {
+            return mouse::Interaction::None;
         }
+        tree.state.downcast_ref::<PlotState>().input.cursor(
+            cursor,
+            plot_bounds(layout.bounds()),
+            self.crossovers,
+            self.scale,
+            self.epoch,
+        )
     }
 
     fn draw(
         &self,
         tree: &tree::Tree,
-        renderer: &mut iced::Renderer,
+        renderer: &mut Renderer,
         _: &Theme,
         _: &renderer::Style,
         layout: Layout<'_>,
@@ -118,22 +314,35 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
         if bounds.width <= 0.0 || bounds.height <= 0.0 {
             return;
         }
-        let interaction = tree.state.downcast_ref::<Interaction>();
-        let hovered = interaction
-            .dragging
-            .or_else(|| hit_test(cursor, bounds, self.crossovers));
+        let state = tree.state.downcast_ref::<PlotState>();
+        let (hovered, hovered_band) = if self.enabled {
+            state
+                .input
+                .hover(cursor, bounds, self.crossovers, self.scale, self.epoch)
+        } else {
+            (None, None)
+        };
+        responses::draw_bands(
+            renderer,
+            &state.responses,
+            bounds,
+            self.crossovers,
+            self.scale,
+            self.soloed,
+            hovered_band,
+        );
         for frequency in GRID_FREQUENCIES {
             line(
                 renderer,
                 Rectangle::new(
-                    Point::new(frequency_x(frequency, bounds), bounds.y),
+                    Point::new(frequency_x(frequency, bounds, self.scale), bounds.y),
                     Size::new(1.0, bounds.height),
                 ),
                 bounds,
                 theme::GREY_LIGHT.scale_alpha(GRID_ALPHA),
             );
         }
-        let frequency_labels = frequency_labels(bounds, outer);
+        let frequency_labels = frequency_labels(bounds, outer, self.scale);
         let mut occupied = frequency_labels.iter().map(|(_, bounds)| *bounds).collect::<Vec<_>>();
         for (label, label_bounds) in frequency_labels {
             label_at(
@@ -160,108 +369,25 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
                 occupied.push(label_bounds);
             }
         }
-        let mut left = bounds.x;
-        for (band, name) in super::layout::BAND_NAMES.into_iter().enumerate() {
-            let right = self
-                .crossovers
-                .get(band)
-                .map_or(bounds.x + bounds.width, |frequency| frequency_x(*frequency, bounds));
-            if let Some(label_bounds) = band_label_bounds(left, right, bounds, label_size(name))
-                .filter(|candidate| !overlaps_labels(*candidate, &occupied))
-            {
-                label_at(
-                    renderer,
-                    name.into(),
-                    label_bounds,
-                    theme::GREY_LIGHT.scale_alpha(0.7),
-                    viewport,
-                );
-                occupied.push(label_bounds);
-            }
-            left = right;
-        }
-        for (index, frequency) in self.crossovers.into_iter().enumerate() {
-            let active = hovered == Some(index);
-            line(
-                renderer,
-                Rectangle::new(
-                    Point::new(frequency_x(frequency, bounds), bounds.y),
-                    Size::new(if active { 2.0 } else { 1.0 }, bounds.height),
-                ),
-                bounds,
-                theme::YELLOW.scale_alpha(if active { 0.9 } else { 0.4 }),
-            );
-        }
-        // The captured marker's pill wins when adjacent crossovers leave room for only one annotation.
-        let mut indices = [0, 1, 2];
-        indices.sort_by_key(|index| hovered != Some(*index));
-        for index in indices {
-            let Some(frequency) = self.crossovers.get(index).copied() else {
-                continue;
-            };
-            let label = super::format_frequency(frequency);
-            if let Some(pill) =
-                crossover_label_bounds(frequency_x(frequency, bounds), bounds, label_size(&label), &occupied)
-            {
-                crossover_label(renderer, label, pill, hovered == Some(index), viewport);
-                occupied.push(pill);
-            }
-        }
+        self.draw_band_labels(renderer, bounds, hovered_band, &mut occupied, viewport);
+        self.draw_crossovers(renderer, bounds, hovered, &state.input, &mut occupied, viewport);
+        responses::draw_position_curve(
+            renderer,
+            &state.position_curve,
+            self.position_curve,
+            bounds,
+            viewport,
+            Instant::now(),
+        );
     }
 }
 
-impl<'a, Message: 'a> From<PlotOverlay<Message>> for Element<'a, Message> {
+impl<'a, Message: 'a, Renderer> From<PlotOverlay<Message>> for Element<'a, Message, Theme, Renderer>
+where
+    Renderer: text::Renderer<Font = iced::Font> + 'a,
+{
     fn from(overlay: PlotOverlay<Message>) -> Self {
         Self::new(overlay)
-    }
-}
-
-impl Interaction {
-    /// Routes pointer and keyboard edits through exactly the same begin/change/end messages.
-    fn update(
-        &mut self,
-        event: &Event,
-        cursor: mouse::Cursor,
-        bounds: Rectangle,
-        crossovers: [f64; 3],
-    ) -> Vec<PlotEvent> {
-        match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                self.selected = hit_test(cursor, bounds, crossovers);
-                self.dragging = self.selected;
-                self.dragging
-                    .map_or_else(Vec::new, |index| vec![PlotEvent::Begin(index)])
-            }
-            Event::Mouse(mouse::Event::CursorMoved { position }) => self.dragging.map_or_else(Vec::new, |index| {
-                vec![PlotEvent::Change(index, x_frequency(position.x, bounds))]
-            }),
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-            | Event::Window(iced::window::Event::Unfocused) => {
-                if self.dragging.take().is_some() {
-                    vec![PlotEvent::End]
-                } else {
-                    Vec::new()
-                }
-            }
-            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) if cursor.is_over(bounds) => {
-                let direction: f64 = match key {
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => -1.0,
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => 1.0,
-                    _ => return Vec::new(),
-                };
-                let Some(index) = self.selected else { return Vec::new() };
-                let frequency = crossovers.get(index).copied().unwrap_or(MIN_FREQUENCY);
-                let step = (frequency * if modifiers.shift() { 0.01 } else { 0.1 }).clamp(1.0, 1000.0);
-                vec![
-                    PlotEvent::Begin(index),
-                    PlotEvent::Change(index, direction.mul_add(step, frequency)),
-                ]
-            }
-            Event::Keyboard(iced::keyboard::Event::KeyReleased { .. }) if self.selected.is_some() => {
-                vec![PlotEvent::End]
-            }
-            _ => Vec::new(),
-        }
     }
 }
 
@@ -276,24 +402,29 @@ fn plot_bounds(bounds: Rectangle) -> Rectangle {
 }
 
 /// Projects frequency without conflating the host's skewed normalized value with logarithmic screen position.
-fn frequency_x(frequency: f64, bounds: Rectangle) -> f32 {
-    let share =
-        (frequency.clamp(MIN_FREQUENCY, MAX_FREQUENCY) / MIN_FREQUENCY).log(MAX_FREQUENCY / MIN_FREQUENCY) as f32;
-    share.mul_add(bounds.width, bounds.x)
+fn frequency_x(frequency: f64, bounds: Rectangle, scale: FrequencyScale) -> f32 {
+    (scale.normalized(frequency.clamp(MIN_FREQUENCY, MAX_FREQUENCY)) as f32).mul_add(bounds.width, bounds.x)
 }
 
 /// Clamps out-of-bounds pointer motion so a captured marker remains editable outside the plot.
-fn x_frequency(x: f32, bounds: Rectangle) -> f64 {
-    let share = f64::from(((x - bounds.x) / bounds.width.max(1.0)).clamp(0.0, 1.0));
-    MIN_FREQUENCY * (MAX_FREQUENCY / MIN_FREQUENCY).powf(share)
+fn x_frequency(x: f32, bounds: Rectangle, scale: FrequencyScale) -> f64 {
+    let share = f64::from(((x - bounds.x) / bounds.width.max(f32::EPSILON)).clamp(0.0, 1.0));
+    scale.frequency(share).clamp(MIN_FREQUENCY, MAX_FREQUENCY)
 }
 
-/// Restricts marker ownership to the narrow existing crossover target rather than adding a separate control row.
-fn hit_test(cursor: mouse::Cursor, bounds: Rectangle, crossovers: [f64; 3]) -> Option<usize> {
+/// Chooses the nearest marker, with the later marker winning exact ties like the reference view.
+fn hit_test(cursor: mouse::Cursor, bounds: Rectangle, crossovers: [f64; 3], scale: FrequencyScale) -> Option<usize> {
     let position = cursor.position().filter(|point| bounds.contains(*point))?;
-    crossovers.into_iter().enumerate().find_map(|(index, frequency)| {
-        ((position.x - frequency_x(frequency, bounds)).abs() <= GRAB_DISTANCE).then_some(index)
-    })
+    let mut nearest = None;
+    let mut distance = GRAB_DISTANCE;
+    for (index, frequency) in crossovers.into_iter().enumerate() {
+        let candidate = (position.x - frequency_x(frequency, bounds, scale)).abs();
+        if candidate <= distance {
+            nearest = Some(index);
+            distance = candidate;
+        }
+    }
+    nearest
 }
 
 /// Shares annotation shaping and alignment between measured geometry and the production GPU text call.
@@ -354,8 +485,24 @@ fn band_label_bounds(left: f32, right: f32, plot: Rectangle, size: Size) -> Opti
     )
 }
 
+/// Positions the complete width pill beneath its band name, hiding it when the band cannot contain it.
+fn width_label_bounds(left: f32, right: f32, name: Rectangle, plot: Rectangle, size: Size) -> Option<Rectangle> {
+    let area = Rectangle::new(
+        Point::new(left + LABEL_GAP, name.y + name.height + LABEL_GAP),
+        Size::new(
+            LABEL_GAP.mul_add(-2.0, right - left).max(0.0),
+            (plot.y + plot.height - name.y - name.height - LABEL_GAP).max(0.0),
+        ),
+    );
+    contained_label(
+        Point::new(left.midpoint(right), size.height.mul_add(0.5, area.y) + LABEL_GAP),
+        Size::new(LABEL_GAP.mul_add(2.0, size.width), size.height + LABEL_GAP),
+        area,
+    )
+}
+
 /// Keeps both endpoints readable before admitting non-overlapping interior ticks on compressed axes.
-fn frequency_labels(plot: Rectangle, outer: Rectangle) -> Vec<(String, Rectangle)> {
+fn frequency_labels(plot: Rectangle, outer: Rectangle, scale: FrequencyScale) -> Vec<(String, Rectangle)> {
     let mut labels = Vec::new();
     let mut occupied = Vec::new();
     let endpoints = [MIN_FREQUENCY, MAX_FREQUENCY];
@@ -369,7 +516,7 @@ fn frequency_labels(plot: Rectangle, outer: Rectangle) -> Vec<(String, Rectangle
         } else {
             format!("{frequency:.0}")
         };
-        if let Some(bounds) = frequency_label_bounds(frequency, plot, outer, label_size(&label))
+        if let Some(bounds) = frequency_label_bounds(frequency, plot, outer, label_size(&label), scale)
             .filter(|candidate| !overlaps_labels(*candidate, &occupied))
         {
             occupied.push(bounds);
@@ -380,12 +527,22 @@ fn frequency_labels(plot: Rectangle, outer: Rectangle) -> Vec<(String, Rectangle
 }
 
 /// Anchors ticks to their frequency and turns endpoint labels inward, leaving the stereo-letter gutter clear.
-fn frequency_label_bounds(frequency: f64, plot: Rectangle, outer: Rectangle, size: Size) -> Option<Rectangle> {
+fn frequency_label_bounds(
+    frequency: f64,
+    plot: Rectangle,
+    outer: Rectangle,
+    size: Size,
+    scale: FrequencyScale,
+) -> Option<Rectangle> {
     let area = Rectangle::new(
         Point::new(plot.x, plot.y + plot.height),
         Size::new(plot.width, (outer.y + outer.height - plot.y - plot.height).max(0.0)),
     );
-    contained_label(Point::new(frequency_x(frequency, plot), area.center_y()), size, area)
+    contained_label(
+        Point::new(frequency_x(frequency, plot, scale), area.center_y()),
+        size,
+        area,
+    )
 }
 
 /// Right-aligns L/C/R to a common gutter edge and keeps endpoint letters within the widget.
@@ -425,7 +582,13 @@ fn crossover_label_bounds(line_x: f32, plot: Rectangle, text_size: Size, occupie
 }
 
 /// Draws a complete, measured crossover pill without changing its marker's pointer target.
-fn crossover_label(renderer: &mut iced::Renderer, label: String, pill: Rectangle, active: bool, viewport: &Rectangle) {
+fn crossover_label(
+    renderer: &mut impl text::Renderer<Font = iced::Font>,
+    label: String,
+    pill: Rectangle,
+    active: bool,
+    viewport: &Rectangle,
+) {
     renderer.fill_quad(
         renderer::Quad {
             bounds: pill,
@@ -435,7 +598,7 @@ fn crossover_label(renderer: &mut iced::Renderer, label: String, pill: Rectangle
             },
             ..renderer::Quad::default()
         },
-        theme::GREY_DARK.scale_alpha(0.8),
+        theme::GREY_DARK.scale_alpha(0.7),
     );
     label_at(
         renderer,
@@ -459,7 +622,7 @@ fn guide_bounds(guide: Rectangle, plot: Rectangle) -> Rectangle {
 }
 
 /// Emits only a contained geometric quad into Iced's renderer, never a CPU-generated pixel buffer.
-fn line(renderer: &mut iced::Renderer, bounds: Rectangle, plot: Rectangle, color: Color) {
+fn line(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, plot: Rectangle, color: Color) {
     renderer.fill_quad(
         renderer::Quad {
             bounds: guide_bounds(bounds, plot),
@@ -475,17 +638,27 @@ fn label_placement(content: String, bounds: Rectangle) -> (text::Text, Point) {
 }
 
 /// Draws center-aligned text from its rectangle's center, as required by Iced's renderer anchor contract.
-fn label_at(renderer: &mut iced::Renderer, content: String, bounds: Rectangle, color: Color, viewport: &Rectangle) {
+fn label_at(
+    renderer: &mut impl text::Renderer<Font = iced::Font>,
+    content: String,
+    bounds: Rectangle,
+    color: Color,
+    viewport: &Rectangle,
+) {
     let (label, anchor) = label_placement(content, bounds);
     renderer.fill_text(label, anchor, color, *viewport);
 }
+
+#[cfg(test)]
+#[path = "plot_widget_tests.rs"]
+mod widget_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Loads production font bytes into the renderer's shared shaper without a GPU or desktop window.
-    fn load_annotation_font() {
+    pub(super) fn load_annotation_font() {
         static LOADED: std::sync::Once = std::sync::Once::new();
         LOADED.call_once(|| {
             iced::advanced::graphics::text::font_system()
@@ -540,7 +713,7 @@ mod tests {
         for width in [80.0, 160.0, 744.0, 984.0] {
             let outer = Rectangle::new(Point::new(8.0, 84.0), Size::new(width, 160.0));
             let plot = plot_bounds(outer);
-            let labels = frequency_labels(plot, outer);
+            let labels = frequency_labels(plot, outer, FrequencyScale::Logarithmic);
             assert!(labels.iter().any(|(label, _)| label == "20"));
             assert!(labels.iter().any(|(label, _)| label == "20k"));
             let mut occupied = Vec::new();
@@ -558,11 +731,18 @@ mod tests {
         let outer = Rectangle::new(Point::new(8.0, 84.0), Size::new(744.0, 160.0));
         let plot = plot_bounds(outer);
         for frequency in [MIN_FREQUENCY, MAX_FREQUENCY] {
-            let bounds = frequency_label_bounds(frequency, plot, outer, Size::new(40.0, 10.0)).expect("endpoint");
+            let bounds = frequency_label_bounds(
+                frequency,
+                plot,
+                outer,
+                Size::new(40.0, 10.0),
+                FrequencyScale::Logarithmic,
+            )
+            .expect("endpoint");
             assert_contained(bounds, outer);
         }
         let empty = Rectangle::with_size(Size::ZERO);
-        assert_eq!(frequency_labels(empty, empty), Vec::new());
+        assert_eq!(frequency_labels(empty, empty, FrequencyScale::Logarithmic), Vec::new());
     }
 
     #[test]
@@ -644,118 +824,18 @@ mod tests {
     }
 
     #[test]
-    fn pointer_drag_captures_only_a_marker_and_releases_outside_plot() {
+    fn logarithmic_and_mel_axes_roundtrip_frequency_and_share_hit_geometry() {
         let bounds = Rectangle::new(Point::new(28.0, 10.0), Size::new(900.0, 300.0));
-        let crossovers = [100.0, 500.0, 5000.0];
-        let mut interaction = Interaction::default();
-        let cursor = mouse::Cursor::Available(Point::new(frequency_x(500.0, bounds), 100.0));
-        let events = interaction.update(
-            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-            cursor,
-            bounds,
-            crossovers,
-        );
-        assert!(matches!(events.as_slice(), [PlotEvent::Begin(1)]));
-        let events = interaction.update(
-            &Event::Mouse(mouse::Event::CursorMoved {
-                position: Point::new(2000.0, 900.0),
-            }),
-            cursor,
-            bounds,
-            crossovers,
-        );
-        assert!(
-            matches!(events.as_slice(), [PlotEvent::Change(1, frequency)] if (*frequency - MAX_FREQUENCY).abs() < 0.001)
-        );
-        let events = interaction.update(
-            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-            mouse::Cursor::Unavailable,
-            bounds,
-            crossovers,
-        );
-        assert!(matches!(events.as_slice(), [PlotEvent::End]));
-        assert!(interaction.dragging.is_none());
-    }
-
-    #[test]
-    fn empty_plot_click_does_not_open_parameter_edit() {
-        let bounds = Rectangle::with_size(Size::new(900.0, 300.0));
-        let mut interaction = Interaction::default();
-        let cursor = mouse::Cursor::Available(Point::new(50.0, 100.0));
-        assert!(
-            interaction
-                .update(
-                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                    cursor,
-                    bounds,
-                    [100.0, 500.0, 5000.0]
-                )
-                .is_empty()
-        );
-        assert!(interaction.dragging.is_none());
-    }
-
-    #[test]
-    fn hidden_narrow_pills_keep_marker_selection_and_keyboard_gestures() {
-        let bounds = Rectangle::new(Point::new(28.0, 30.0), Size::new(32.0, 200.0));
-        let crossovers = [100.0, 500.0, 5000.0];
-        assert!(crossover_label_bounds(frequency_x(500.0, bounds), bounds, Size::new(32.0, 10.0), &[]).is_none());
-        let cursor = mouse::Cursor::Available(Point::new(frequency_x(500.0, bounds), bounds.center_y()));
-        let mut interaction = Interaction::default();
-        assert!(matches!(
-            interaction
-                .update(
-                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                    cursor,
-                    bounds,
-                    crossovers
-                )
-                .as_slice(),
-            [PlotEvent::Begin(1)]
-        ));
-        let _ = interaction.update(
-            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-            cursor,
-            bounds,
-            crossovers,
-        );
-        let key = iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight);
-        for (modifiers, expected) in [
-            (iced::keyboard::Modifiers::default(), 550.0),
-            (iced::keyboard::Modifiers::SHIFT, 505.0),
-        ] {
-            let press = Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                key: key.clone(),
-                modified_key: key.clone(),
-                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::ArrowRight),
-                location: iced::keyboard::Location::Standard,
-                modifiers,
-                text: None,
-                repeat: false,
-            });
-            assert!(matches!(
-                interaction.update(&press, cursor, bounds, crossovers).as_slice(),
-                [PlotEvent::Begin(1), PlotEvent::Change(1, frequency)] if (*frequency - expected).abs() < 0.0001
-            ));
-        }
-        let release = Event::Keyboard(iced::keyboard::Event::KeyReleased {
-            key: key.clone(),
-            modified_key: key,
-            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::ArrowRight),
-            location: iced::keyboard::Location::Standard,
-            modifiers: iced::keyboard::Modifiers::default(),
-        });
-        assert!(matches!(
-            interaction.update(&release, cursor, bounds, crossovers).as_slice(),
-            [PlotEvent::End]
-        ));
-    }
-
-    #[test]
-    fn logarithmic_axis_roundtrips_frequency() {
-        let bounds = Rectangle::new(Point::new(28.0, 10.0), Size::new(900.0, 300.0));
-        for frequency in GRID_FREQUENCIES {
-            assert!((x_frequency(frequency_x(frequency, bounds), bounds) - frequency).abs() < frequency * 0.000_001);
+        for scale in [FrequencyScale::Logarithmic, FrequencyScale::Mel] {
+            for frequency in GRID_FREQUENCIES {
+                let x = frequency_x(frequency, bounds, scale);
+                assert!((x_frequency(x, bounds, scale) - frequency).abs() < frequency * 0.000_01);
+            }
+            for (index, frequency) in [100.0, 500.0, 5000.0].into_iter().enumerate() {
+                let cursor =
+                    mouse::Cursor::Available(Point::new(frequency_x(frequency, bounds, scale), bounds.center_y()));
+                assert_eq!(hit_test(cursor, bounds, [100.0, 500.0, 5000.0], scale), Some(index));
+            }
         }
     }
 }
