@@ -174,7 +174,8 @@ impl EditorShutdown {
     }
 
     /// Starts and retains a worker atomically with admission, without invoking UI or host callbacks.
-    /// Returns false when retirement closed admission or an operation is still retained. Errors retain no detached worker.
+    /// Returns false when retirement closed admission or an operation is still retained.
+    /// Errors retain no detached worker.
     pub(crate) fn spawn(&self, operation: impl FnOnce() + Send + 'static) -> std::io::Result<bool> {
         let mut worker = self.0.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.is_closed() || worker.is_some() {

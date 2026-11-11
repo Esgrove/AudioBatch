@@ -4,7 +4,8 @@ use super::{EditorState, Message, PlotGesture, layout, plot_overlay, presets};
 use crate::params::{CROSSOVER_PARAMETERS, band_parameter_id, parameter_spec};
 
 impl EditorState {
-    /// Captures command identity before resolving drafts or gestures that can synchronously restore or close the editor.
+    /// Captures command identity before resolving drafts or gestures,
+    /// which can synchronously restore or close the editor.
     fn prepare_command(&mut self) -> Option<u64> {
         let generation = self.parameters.restore_generation();
         if !self.binding.is_open() {
