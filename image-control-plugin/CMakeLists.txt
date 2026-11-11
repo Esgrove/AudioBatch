@@ -279,6 +279,44 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     set(FMT_MODULE OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(fmt)
 
+    # The independent parity host compiles its own JUCE modules. Production plugin targets never host plugins.
+    get_filename_component(IMAGE_CONTROL_PARITY_REPOSITORY "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+    juce_add_console_app(ImageControlParity PRODUCT_NAME "ImageControlParity")
+    target_sources(ImageControlParity PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp")
+    target_compile_definitions(
+        ImageControlParity
+        PRIVATE
+            JUCE_PLUGINHOST_VST3=1
+            JUCE_USE_CURL=0
+            JUCE_WEB_BROWSER=0
+            JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+            IMAGE_CONTROL_PARITY_REPOSITORY="${IMAGE_CONTROL_PARITY_REPOSITORY}"
+    )
+    target_link_libraries(
+        ImageControlParity
+        PRIVATE juce::juce_audio_processors juce::juce_audio_utils fmt::fmt
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
+    )
+    set_source_files_properties(
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParity.cpp" TARGET_DIRECTORY ImageControlParity
+        PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
+    )
+    if(NOT IMAGE_CONTROL_SANITIZE AND NOT IMAGE_CONTROL_COVERAGE)
+        add_test(NAME ImageControlParity.Help COMMAND ImageControlParity --help)
+        set_tests_properties(ImageControlParity.Help PROPERTIES LABELS "parity;tooling" TIMEOUT 10)
+    endif()
+    set(IMAGE_CONTROL_PARITY_RUST_BUNDLE "" CACHE PATH
+                                                  "Explicit Rust build-tree VST3 for CTest cross-implementation parity"
+    )
+    if(IMAGE_CONTROL_PARITY_RUST_BUNDLE)
+        add_test(
+            NAME ImageControlParity.Plugins
+            COMMAND ImageControlParity --cpp "$<TARGET_BUNDLE_DIR:ImageControl_VST3>" --rust
+                    "${IMAGE_CONTROL_PARITY_RUST_BUNDLE}" --report "${CMAKE_CURRENT_BINARY_DIR}/plugin-parity.json"
+        )
+        set_tests_properties(ImageControlParity.Plugins PROPERTIES LABELS "parity;integration" TIMEOUT 300)
+    endif()
+
     if(IMAGE_CONTROL_SANITIZE STREQUAL "realtime")
         # This process hosts the instrumented build-tree bundle with the same startup-linked RTSan runtime.
         add_executable(ImageControlRealtimeTests "${CMAKE_CURRENT_SOURCE_DIR}/tests/RealtimeTests.cpp")
