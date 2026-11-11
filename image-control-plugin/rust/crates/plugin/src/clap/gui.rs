@@ -220,6 +220,9 @@ impl EditorBinding for Binding {
 
     /// Releases all plugin borrows before reentrant host resize requests and defers native geometry.
     fn request_resize(&self, width: u32, height: u32) -> bool {
+        if !self.is_open() {
+            return false;
+        }
         let Some(ui) = self.ui.upgrade().filter(|ui| ui.created.get()) else {
             return false;
         };
@@ -655,28 +658,70 @@ impl PluginGuiImpl for MainThread<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clack_extensions::gui::HostGuiImpl;
     use clack_plugin::events::io::EventBuffer;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// In-process Clack host keeps transport tests independent of native windows and installed plugins.
     struct QueueHost;
 
+    /// Counts host entry before resize rejection without creating a native window.
+    #[derive(Clone, Default)]
+    struct HostCalls {
+        /// Every extension lookup crosses the host lifetime boundary, even without a resize callback.
+        extension_queries: Arc<AtomicUsize>,
+        /// Live bindings reach the advertised GUI extension, which declines geometry changes.
+        resize_requests: Arc<AtomicUsize>,
+    }
+
     impl clack_host::host::HostHandlers for QueueHost {
-        type Shared<'a> = ();
+        type Shared<'a> = HostCalls;
         type MainThread<'a> = ();
         type AudioProcessor<'a> = ();
+
+        fn declare_extensions(builder: &mut clack_host::host::HostExtensions<Self>, shared: &Self::Shared<'_>) {
+            shared.extension_queries.fetch_add(1, Ordering::Relaxed);
+            builder.register::<HostGui>();
+        }
+    }
+
+    impl clack_host::host::SharedHandler<'_> for HostCalls {
+        fn request_restart(&self) {}
+        fn request_process(&self) {}
+        fn request_callback(&self) {}
+    }
+
+    impl HostGuiImpl for HostCalls {
+        fn resize_hints_changed(&self) {}
+
+        fn request_resize(&self, _new_size: GuiSize) -> Result<(), clack_host::host::HostError> {
+            self.resize_requests.fetch_add(1, Ordering::Relaxed);
+            Err(clack_host::host::HostError::Message("test host declines resizing"))
+        }
+
+        fn request_show(&self) -> Result<(), clack_host::host::HostError> {
+            Err(clack_host::host::HostError::Message("test host has no native window"))
+        }
+
+        fn request_hide(&self) -> Result<(), clack_host::host::HostError> {
+            Err(clack_host::host::HostError::Message("test host has no native window"))
+        }
+
+        fn closed(&self, _was_destroyed: bool) {}
     }
 
     /// Executes the production binding with Clack-owned host lifetime and an unattached GUI.
-    fn with_binding(test: impl FnOnce(&Rc<Binding>, &Shared)) {
+    fn with_binding(test: impl FnOnce(&Rc<Binding>, &MainThread<'_>, &Shared, &HostCalls)) {
         let entry = clack_host::entry::PluginEntry::load_from_clack::<SinglePluginEntry<super::super::ImageControl>>(
             c"image-control-queue-test",
         )
         .expect("in-process entry");
         let host = clack_host::host::HostInfo::new("Queue test", "ImageControl", "https://example.invalid", "1")
             .expect("host metadata");
+        let calls = HostCalls::default();
         let mut instance = clack_host::plugin::PluginInstance::<QueueHost>::new(
-            |()| (),
-            |()| (),
+            |()| calls.clone(),
+            |_| (),
             &entry,
             c"com.esgrove.imagecontrol-rs-own",
             &host,
@@ -695,7 +740,7 @@ mod tests {
                     })
                     .expect("unattached GUI lifetime");
                     let binding = main.gui.ui.binding.borrow().clone().expect("live binding");
-                    test(&binding, plugin.shared());
+                    test(&binding, main, plugin.shared(), &calls);
                     main.destroy();
                     Ok(())
                 },
@@ -704,10 +749,55 @@ mod tests {
         .expect("valid plugin wrapper");
     }
 
+    /// Retained bindings reject resize before extension lookup across close and destroy/recreate.
+    #[test]
+    fn retained_binding_resize_never_queries_host_after_close_or_recreate() {
+        with_binding(|binding, main, _, calls| {
+            // Clack keeps the host alive throughout. This checks admission, not the unsafe lifetime-erasure boundary.
+            let ui = binding.ui.upgrade().expect("owning GUI state");
+            let size = ui.size.get();
+            let initial_queries = calls.extension_queries.load(Ordering::Relaxed);
+            assert!(binding.is_open());
+            assert!(!binding.request_resize(size.width, size.height));
+            let live_queries = calls.extension_queries.load(Ordering::Relaxed);
+            assert!(live_queries > initial_queries);
+            assert_eq!(calls.resize_requests.load(Ordering::Relaxed), 1);
+
+            binding.close();
+            assert!(ui.created.get());
+            assert!(!binding.is_open());
+            assert!(!binding.request_resize(size.width, size.height));
+            assert_eq!(calls.extension_queries.load(Ordering::Relaxed), live_queries);
+            assert_eq!(calls.resize_requests.load(Ordering::Relaxed), 1);
+
+            main.destroy();
+            assert!(!binding.request_resize(size.width, size.height));
+            main.create(GuiConfiguration {
+                api_type: native_api(),
+                is_floating: false,
+            })
+            .expect("recreated unattached GUI");
+            let replacement = main.gui.ui.binding.borrow().clone().expect("replacement binding");
+            assert!(Rc::ptr_eq(&ui, &main.gui.ui));
+            assert_ne!(binding.generation, replacement.generation);
+            assert!(replacement.is_open());
+            assert!(!binding.is_open());
+            assert!(!binding.request_resize(size.width, size.height));
+            assert_eq!(calls.extension_queries.load(Ordering::Relaxed), live_queries);
+            assert_eq!(calls.resize_requests.load(Ordering::Relaxed), 1);
+            assert_eq!(ui.size.get(), size);
+            assert_eq!(ui.pending_size.get(), None);
+
+            assert!(!replacement.request_resize(size.width, size.height));
+            assert!(calls.extension_queries.load(Ordering::Relaxed) > live_queries);
+            assert_eq!(calls.resize_requests.load(Ordering::Relaxed), 2);
+        });
+    }
+
     /// Saturating automation cannot consume any of the 31 simultaneously open gestures' end slots.
     #[test]
     fn saturation_rejects_sound_publication_and_reserves_every_parameter_end() {
-        with_binding(|binding, shared| {
+        with_binding(|binding, _, shared, _| {
             let parameters = &shared.instance.parameters;
             let accepted_limit = EDIT_CAPACITY - PARAMETER_COUNT;
             for id in 0..PARAMETER_COUNT as u32 {
@@ -771,7 +861,7 @@ mod tests {
     /// The real editor cannot bypass saturated CLAP admission by publishing its own optimistic sound value.
     #[test]
     fn editor_updates_leave_sound_unchanged_when_clap_queue_is_saturated() {
-        with_binding(|binding, shared| {
+        with_binding(|binding, _, shared, _| {
             let parameters = Arc::clone(&shared.instance.parameters);
             let mut editor = crate::editor::EditorState::for_host_test(
                 Arc::clone(&parameters),
