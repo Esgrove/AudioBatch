@@ -1465,7 +1465,7 @@ mod tests {
     #[test]
     fn invalid_cancelled_and_clean_drafts_never_overwrite_automation() {
         let (mut state, binding) = editor();
-        for draft in ["NaN", "inf", "1000 dB", "garbage", ""] {
+        for draft in ["NaN", "inf", "1e999 dB", "garbage", ""] {
             let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, draft.into()));
             let _ = state.update(Message::NumericCommit(GAIN_PARAMETER));
             assert!(state.numeric_draft.as_ref().expect("invalid draft").invalid);
@@ -1962,6 +1962,9 @@ mod tests {
             panic!("change message")
         };
         assert_eq!(id, CROSSOVER_PARAMETERS[1]);
-        assert!((parameter_spec(id).expect("crossover").normalized_to_plain(normalized) - 2000.0).abs() < 0.000_001);
+        let spec = parameter_spec(id).expect("crossover");
+        assert_eq!(normalized.to_bits(), spec.plain_to_normalized(2000.0).to_bits());
+        // The native float-skew round trip has float precision, not a double-precision frequency contract.
+        assert!((spec.normalized_to_plain(normalized) - 2000.0).abs() <= 2000.0 * f64::from(f32::EPSILON) * 8.0);
     }
 }

@@ -151,7 +151,7 @@ impl EditorBinding for Binding {
         if self.edits.queue.len() >= EDIT_CAPACITY - PARAMETER_COUNT {
             return;
         }
-        let normalized = normalized.clamp(0.0, 1.0);
+        let normalized = spec.snap_normalized(normalized);
         if self
             .edits
             .queue
