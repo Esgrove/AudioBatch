@@ -533,9 +533,6 @@ Module boundaries:
 ## Code Style and Conventions
 
 - Rust 2024 edition, with clippy pedantic and nursery lints denied.
-- Follow the repository-wide [Rust return-value guidelines](../AGENTS.md#rust-return-values).
-  Return domain-specific structs with named fields for multi-value results, especially three or more distinct values,
-  instead of raw tuples or tuple aliases.
 - Group decimal integer parts with underscores only when they have five or more digits.
   Write `4000` and `4000.0`, but `40_000` and `40_000.0`, grouping larger integer parts in threes from the right.
   Fractional groups remain allowed independently, such as `1681.974_450_955_533`.
@@ -570,6 +567,19 @@ Module boundaries:
 - The audio callback in `crates/playback` must not allocate, lock, or block,
   and neither may the `PreviewInsert` it runs, such as `PreviewChain`.
   Anything the callback replaces goes back to the UI thread to be dropped there.
+
+### Return values
+
+These guidelines also apply to test helpers, benchmarks, examples, and fuzz targets.
+
+- Prefer a small domain-specific struct with named fields when returning several values with distinct meanings.
+  Do not use raw tuples as result records, especially tuples with three or more elements.
+  For example, return `ParameterRange { minimum, maximum, step }` instead of `(f64, f64, f64)`.
+- Use named records for ambiguous two-value results too, such as a value together with a warning or status.
+  A tuple type alias does not provide named fields and is not a substitute for a struct.
+- Keep tuples where their positional meaning is conventional and clear, such as coordinates, homogeneous bounds,
+  key-value iterator items, or channel endpoints, and where an external trait requires a tuple return type.
+  Preserve external interfaces and serialized formats when improving internal return types.
 
 ### Comments and documentation formatting
 

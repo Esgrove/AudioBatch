@@ -266,20 +266,6 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   Compilers often already optimize division by two and common subexpressions,
   so distinguish clearer source code from demonstrated performance improvements.
 
-### Rust return values
-
-These API guidelines apply to all first-party Rust code in this repository, including AudioBatch, ImageControl,
-test helpers, benchmarks, examples, and fuzz targets.
-
-- Prefer a small domain-specific struct with named fields when returning several values with distinct meanings.
-  Do not use raw tuples as result records, especially tuples with three or more elements.
-  For example, return `ParameterRange { minimum, maximum, step }` instead of `(f64, f64, f64)`.
-- Use named records for ambiguous two-value results too, such as a value together with a warning or status.
-  A tuple type alias does not provide named fields and is not a substitute for a struct.
-- Keep tuples where their positional meaning is conventional and clear, such as coordinates, homogeneous bounds,
-  key-value iterator items, or channel endpoints, and where an external trait requires a tuple return type.
-  Preserve external interfaces and serialized formats when improving internal return types.
-
 ### Repository work
 
 - The repository-root `Cargo.toml` and `Cargo.lock` define the shared Rust workspace for AudioBatch

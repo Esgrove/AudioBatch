@@ -36,8 +36,14 @@ There is no plugin-local GPUI workspace, vendored embedding patch, or nice-plug 
 AudioBatch's application GPUI dependencies remain separate.
 Run `build.sh`, `test.sh`, `lint.sh --check`, and `format.sh --check` from `rust/` for this experiment.
 Use root Rust lints and formatting, narrow documented unsafe ABI boundaries, and the plugin realtime contracts below.
-Follow the repository-wide [Rust return-value guidelines](../AGENTS.md#rust-return-values),
-using domain-specific structs with named fields instead of ambiguous tuple results.
+For all Rust plugin code, including test helpers, benchmarks, and examples,
+return domain-specific structs with named fields for values with distinct meanings instead of raw tuples,
+especially three or more values or ambiguous two-value results.
+For example, use `ParameterRange { minimum, maximum, step }` instead of `(f64, f64, f64)`.
+Tuple aliases are not a substitute for named fields.
+Keep conventional coordinates, homogeneous bounds, key-value iterator items, channel endpoints,
+and tuples required by external traits when their positional meaning is clear.
+Preserve external interfaces and serialized formats when improving internal return types.
 Treat Rust state/class identities separately from the C++ persistence contracts.
 Cross-implementation state migration is not implied.
 The evaluation
