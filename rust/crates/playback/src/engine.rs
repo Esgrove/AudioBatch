@@ -67,6 +67,12 @@ pub enum PlayerEvent {
     Ended,
 }
 
+/// Decoder pipeline paired with the path used when reporting its events.
+struct OpenPipeline {
+    path: PathBuf,
+    pipeline: FramePipeline,
+}
+
 /// Runs the decode loop until a shutdown command arrives or the player is dropped.
 pub fn run_decode_thread(
     mut producer: Producer<Frame>,
@@ -75,7 +81,7 @@ pub fn run_decode_thread(
     shared: &Arc<SharedState>,
     output_rate: u32,
 ) {
-    let mut pipeline: Option<(PathBuf, FramePipeline)> = None;
+    let mut pipeline: Option<OpenPipeline> = None;
     let mut pending: Vec<Frame> = Vec::with_capacity(16_384);
     let mut cursor = 0;
     // The end is published only once the last frames are in the ring buffer,
@@ -84,7 +90,7 @@ pub fn run_decode_thread(
 
     loop {
         let has_pending = cursor < pending.len();
-        let decoding = pipeline.as_ref().is_some_and(|(_, current)| !current.is_finished());
+        let decoding = pipeline.as_ref().is_some_and(|current| !current.pipeline.is_finished());
         let command = if has_pending || decoding {
             let wait = if producer.slots() == 0 {
                 FULL_BUFFER_WAIT
@@ -152,16 +158,16 @@ pub fn run_decode_thread(
         if cursor >= pending.len() {
             pending.clear();
             cursor = 0;
-            if let Some((path, current)) = &mut pipeline {
-                match current.produce(&mut pending) {
+            if let Some(current) = &mut pipeline {
+                match current.pipeline.produce(&mut pending) {
                     Ok(true) => {}
-                    Ok(false) => finish_after_pending = Some(current.generation()),
+                    Ok(false) => finish_after_pending = Some(current.pipeline.generation()),
                     Err(error) => {
                         let _ = events.send(PlayerEvent::Error {
-                            path: Some(path.clone()),
+                            path: Some(current.path.clone()),
                             message: error.message(),
                         });
-                        finish_after_pending = Some(current.generation());
+                        finish_after_pending = Some(current.pipeline.generation());
                         pipeline = None;
                     }
                 }
@@ -192,7 +198,7 @@ fn open_pipeline(
     output_rate: u32,
     events: &Sender<PlayerEvent>,
     shared: &SharedState,
-) -> Option<(PathBuf, FramePipeline)> {
+) -> Option<OpenPipeline> {
     let is_current = || shared.load_generation.load(Ordering::Acquire) == generation;
     if !is_current() {
         return None;
@@ -215,7 +221,7 @@ fn open_pipeline(
                 sample_rate: info.sample_rate,
                 duration_seconds: (frames > 0).then(|| frames as f64 / f64::from(info.sample_rate)),
             });
-            Some((path, pipeline))
+            Some(OpenPipeline { path, pipeline })
         }
         Err(error) => {
             shared.playing.store(false, Ordering::Relaxed);
@@ -233,13 +239,17 @@ fn open_pipeline(
 /// A failed seek, or a seek without an open file, finishes the generation and stops playback,
 /// so the player does not wait forever for frames that never come.
 fn seek_pipeline(
-    pipeline: Option<(PathBuf, FramePipeline)>,
+    pipeline: Option<OpenPipeline>,
     seconds: f64,
     generation: u32,
     events: &Sender<PlayerEvent>,
     shared: &SharedState,
-) -> Option<(PathBuf, FramePipeline)> {
-    let Some((path, mut current)) = pipeline else {
+) -> Option<OpenPipeline> {
+    let Some(OpenPipeline {
+        path,
+        pipeline: mut current,
+    }) = pipeline
+    else {
         shared.finished_generation.store(generation, Ordering::Release);
         return None;
     };
@@ -249,7 +259,10 @@ fn seek_pipeline(
                 let target = (seconds.max(0.0) * f64::from(current.info().sample_rate)).round() as u64;
                 shared.position.store(target, Ordering::Relaxed);
             }
-            Some((path, current))
+            Some(OpenPipeline {
+                path,
+                pipeline: current,
+            })
         }
         Err(error) => {
             shared.playing.store(false, Ordering::Relaxed);

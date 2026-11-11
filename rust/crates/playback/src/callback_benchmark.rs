@@ -461,7 +461,8 @@ impl Harness {
         }
         let native = if options.workload == Workload::NativeWet {
             let block = options.blocks.iter().copied().max().expect("nonempty blocks");
-            let (fixture, insert) = NativeFixture::new(options.rate, block).expect("native callback fixture setup");
+            let crate::callback_benchmark_native::PreparedNativeFixture { fixture, insert } =
+                NativeFixture::prepare(options.rate, block).expect("native callback fixture setup");
             control.set(Some(insert)).expect("initial native insert capacity");
             Some(fixture)
         } else {

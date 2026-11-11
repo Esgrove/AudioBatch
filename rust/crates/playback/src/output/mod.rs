@@ -256,8 +256,14 @@ mod test_output_renderer {
         }
     }
 
+    /// Callback renderer and the control-side state used to drive it without hardware.
+    struct RendererFixture {
+        renderer: OutputRenderer,
+        shared: Arc<SharedState>,
+    }
+
     /// Creates a renderer for a device with the channel count, with the frames queued, and its shared state.
-    fn renderer(frames: &[Frame], channels: usize) -> (OutputRenderer, Arc<SharedState>) {
+    fn renderer(frames: &[Frame], channels: usize) -> RendererFixture {
         let (mut producer, consumer) = RingBuffer::new(64);
         for &value in frames {
             producer.push(value).expect("capacity");
@@ -265,10 +271,10 @@ mod test_output_renderer {
         let shared = Arc::new(SharedState::new());
         let (_control, insert) = insert_channel(Arc::clone(&shared));
         let device = DeviceFormat { channels, rate: 48_000 };
-        (
-            OutputRenderer::new(Arc::clone(&shared), consumer, device, insert),
+        RendererFixture {
+            renderer: OutputRenderer::new(Arc::clone(&shared), consumer, device, insert),
             shared,
-        )
+        }
     }
 
     /// Invokes the marked renderer with controller-owned output on a fresh callback thread in sanitizer builds.
@@ -286,7 +292,7 @@ mod test_output_renderer {
 
     #[test]
     fn paused_output_is_silent() {
-        let (mut renderer, shared) = renderer(&[frame(1, 0, 0.5)], 2);
+        let RendererFixture { mut renderer, shared } = renderer(&[frame(1, 0, 0.5)], 2);
         shared.generation.store(1, Ordering::Relaxed);
         let mut output = [1.0_f32; 4];
         render_output(&mut renderer, &mut output);
@@ -295,7 +301,8 @@ mod test_output_renderer {
 
     #[test]
     fn stale_frames_are_skipped_and_the_insert_gain_is_left_to_the_insert() {
-        let (mut renderer, shared) = renderer(&[frame(1, 0, 0.9), frame(2, 100, 0.5), frame(2, 101, 0.25)], 2);
+        let RendererFixture { mut renderer, shared } =
+            renderer(&[frame(1, 0, 0.9), frame(2, 100, 0.5), frame(2, 101, 0.25)], 2);
         shared.generation.store(2, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
         shared.insert_gain_bits.store(0.5_f32.to_bits(), Ordering::Relaxed);
@@ -307,7 +314,7 @@ mod test_output_renderer {
 
     #[test]
     fn end_of_file_stops_playback() {
-        let (mut renderer, shared) = renderer(&[frame(3, 0, 0.5)], 2);
+        let RendererFixture { mut renderer, shared } = renderer(&[frame(3, 0, 0.5)], 2);
         shared.generation.store(3, Ordering::Relaxed);
         shared.finished_generation.store(3, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
@@ -320,7 +327,8 @@ mod test_output_renderer {
 
     #[test]
     fn paused_output_drops_stale_frames_and_keeps_current_ones() {
-        let (mut renderer, shared) = renderer(&[frame(1, 0, 0.9), frame(1, 1, 0.9), frame(2, 50, 0.5)], 2);
+        let RendererFixture { mut renderer, shared } =
+            renderer(&[frame(1, 0, 0.9), frame(1, 1, 0.9), frame(2, 50, 0.5)], 2);
         shared.generation.store(2, Ordering::Relaxed);
         let mut output = [0.0_f32; 2];
         render_output(&mut renderer, &mut output);
@@ -333,7 +341,7 @@ mod test_output_renderer {
 
     #[test]
     fn empty_buffer_before_the_end_counts_an_underrun() {
-        let (mut renderer, shared) = renderer(&[], 2);
+        let RendererFixture { mut renderer, shared } = renderer(&[], 2);
         shared.generation.store(1, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
         let mut output = [0.0_f32; 4];

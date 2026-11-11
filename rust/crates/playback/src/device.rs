@@ -97,6 +97,14 @@ pub struct DeviceCapabilities {
     pub buffer_sizes: Vec<u32>,
 }
 
+/// Stream settings and sample representation selected together for one output device.
+pub struct SelectedStreamConfig {
+    /// Channels, rate, and buffer size passed to the device stream.
+    pub config: StreamConfig,
+    /// Sample representation required by that stream.
+    pub sample_format: SampleFormat,
+}
+
 /// Returns the supported sample rates and buffer sizes of the named device, or of the default device.
 ///
 /// # Errors
@@ -179,7 +187,7 @@ pub fn device_display_name(device: &Device) -> String {
 ///
 /// # Errors
 /// Returns an error when the device has no configuration or does not support the requested sample rate.
-pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamConfig, SampleFormat), DeviceError> {
+pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<SelectedStreamConfig, DeviceError> {
     let default = default_output_config(device)?;
     let supported = match config.sample_rate {
         Some(rate) if rate != default.sample_rate() => device
@@ -197,7 +205,10 @@ pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamCo
     {
         stream_config.buffer_size = BufferSize::Fixed(frames);
     }
-    Ok((stream_config, supported.sample_format()))
+    Ok(SelectedStreamConfig {
+        config: stream_config,
+        sample_format: supported.sample_format(),
+    })
 }
 
 /// Reads the preferred output configuration, choosing a supported rate if the driver reports an unknown rate.

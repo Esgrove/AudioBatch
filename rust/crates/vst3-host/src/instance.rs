@@ -210,7 +210,7 @@ struct InstanceParts {
     /// Whether the controller is a separate object that this host initialized.
     separate_controller: bool,
     /// The connection points of the component and the controller, when they were connected.
-    connection: Option<(ComPtr<IConnectionPoint>, ComPtr<IConnectionPoint>)>,
+    connection: Option<ConnectedPoints>,
     /// The component handler given to the controller.
     handler: ComWrapper<ComponentHandler>,
     /// The host context the component and controller were initialized with.
@@ -229,6 +229,12 @@ pub struct PluginInstance {
     layout: Option<BusLayout>,
     /// The setup after `setup`.
     setup: Option<ProcessingSetup>,
+}
+
+/// Paired component and controller connection endpoints retained until teardown.
+struct ConnectedPoints {
+    component: ComPtr<IConnectionPoint>,
+    controller: ComPtr<IConnectionPoint>,
 }
 
 impl BusDirection {
@@ -328,9 +334,9 @@ impl InstanceParts {
                 self.processor.setProcessing(0);
                 self.component.setActive(0);
             }
-            if let Some((component_point, controller_point)) = &self.connection {
-                component_point.disconnect(controller_point.as_ptr());
-                controller_point.disconnect(component_point.as_ptr());
+            if let Some(ConnectedPoints { component, controller }) = &self.connection {
+                component.disconnect(controller.as_ptr());
+                controller.disconnect(component.as_ptr());
             }
             if let Some(controller) = &self.controller {
                 controller.setComponentHandler(std::ptr::null_mut());
@@ -1038,10 +1044,7 @@ fn create_controller(
 }
 
 /// Connects the connection points of a component and its separate controller.
-fn connect(
-    component: &ComPtr<IComponent>,
-    controller: &ComPtr<IEditController>,
-) -> Option<(ComPtr<IConnectionPoint>, ComPtr<IConnectionPoint>)> {
+fn connect(component: &ComPtr<IComponent>, controller: &ComPtr<IEditController>) -> Option<ConnectedPoints> {
     let component_point = component.cast::<IConnectionPoint>()?;
     let controller_point = controller.cast::<IConnectionPoint>()?;
     // SAFETY: both connection points are valid, and each takes its own reference to the other.
@@ -1049,7 +1052,10 @@ fn connect(
         component_point.connect(controller_point.as_ptr());
         controller_point.connect(component_point.as_ptr());
     }
-    Some((component_point, controller_point))
+    Some(ConnectedPoints {
+        component: component_point,
+        controller: controller_point,
+    })
 }
 
 #[cfg(test)]
@@ -1245,15 +1251,18 @@ mod test_plugin_failures {
 
     use super::*;
     use crate::processor::ProcessError;
-    use crate::test_helpers::{MAX_BLOCK, active_instance, on_ui};
+    use crate::test_helpers::{MAX_BLOCK, ProcessingFixture, active_instance, on_ui};
 
     #[test]
     fn a_failing_process_call_returns_the_result_of_the_plugin() {
         assert_eq!(size_of::<ProcessError>(), size_of::<i32>());
-        let (_instance, mut processor) = on_ui(|ui| {
+        let ProcessingFixture {
+            instance: _instance,
+            mut processor,
+        } = on_ui(|ui| {
             let instance = active_instance(ui, Kind::Failing, 2).map_err(|error| error.to_string())?;
             let processor = instance.processor(ui).map_err(|error| error.to_string())?;
-            Ok::<_, String>((instance, processor))
+            Ok::<_, String>(ProcessingFixture { instance, processor })
         })
         .expect("failing instance with a processor");
         let error = processor.process(MAX_BLOCK).expect_err("process fails");
@@ -1316,6 +1325,12 @@ mod test_plugin_failures {
         assert_eq!(state.controller, INITIAL_CONTROLLER_STATE);
     }
 
+    /// State application outcome and readback of the settings that remain active.
+    struct StateApplication {
+        result: Result<bool, String>,
+        state: PluginState,
+    }
+
     #[test]
     fn a_refused_state_keeps_the_current_settings() {
         let results = on_ui(|ui| {
@@ -1338,10 +1353,28 @@ mod test_plugin_failures {
             let failing_result = failing.set_state(ui, &full).map_err(|error| error.to_string());
             let failing_state = failing.state(ui).map_err(|error| error.to_string())?;
             failing.activate(ui).map_err(|error| error.to_string())?;
-            Ok::<_, String>((gain_result, gain_state, failing_result, failing_state))
+            Ok::<_, String>([
+                StateApplication {
+                    result: gain_result,
+                    state: gain_state,
+                },
+                StateApplication {
+                    result: failing_result,
+                    state: failing_state,
+                },
+            ])
         })
         .expect("instances that refuse a state");
-        let (gain_result, gain_state, failing_result, failing_state) = results;
+        let [
+            StateApplication {
+                result: gain_result,
+                state: gain_state,
+            },
+            StateApplication {
+                result: failing_result,
+                state: failing_state,
+            },
+        ] = results;
         assert_eq!(gain_result, Ok(false));
         assert_eq!(gain_state.component, 1.0_f64.to_le_bytes());
         assert_eq!(failing_result, Ok(false));
@@ -1637,7 +1670,14 @@ mod test_processing {
     };
 
     use super::*;
-    use crate::test_helpers::{MAX_BLOCK, active_instance, on_ui};
+    use crate::test_helpers::{MAX_BLOCK, ProcessingFixture, active_instance, on_ui};
+
+    /// State snapshots and the live processing fixture retained for the round-trip assertions.
+    struct StateRoundTrip {
+        default_state: PluginState,
+        restored: PluginState,
+        processing: ProcessingFixture,
+    }
 
     /// Processes one block holding an impulse through every input channel, and returns the main output channels.
     fn process_impulse(processor: &mut ProcessorHandle, frames: usize) -> Vec<Vec<f32>> {
@@ -1676,11 +1716,11 @@ mod test_processing {
     }
 
     /// Creates an active instance and a processor handle for it.
-    fn instance_and_processor(kind: Kind, channels: usize) -> (PluginInstance, ProcessorHandle) {
+    fn instance_and_processor(kind: Kind, channels: usize) -> ProcessingFixture {
         on_ui(move |ui| {
             let instance = active_instance(ui, kind, channels).map_err(|error| error.to_string())?;
             let processor = instance.processor(ui).map_err(|error| error.to_string())?;
-            Ok::<_, String>((instance, processor))
+            Ok::<_, String>(ProcessingFixture { instance, processor })
         })
         .expect("active instance with a processor")
     }
@@ -1692,7 +1732,15 @@ mod test_processing {
             controller: b"saved".to_vec(),
         };
         let expected = gain_state.clone();
-        let (default_state, restored, _instance, mut processor) = on_ui(move |ui| {
+        let StateRoundTrip {
+            default_state,
+            restored,
+            processing:
+                ProcessingFixture {
+                    instance: _instance,
+                    mut processor,
+                },
+        } = on_ui(move |ui| {
             let mut instance = active_instance(ui, Kind::Gain, 2).map_err(|error| error.to_string())?;
             let default_state = instance.state(ui).map_err(|error| error.to_string())?;
             instance.deactivate(ui).map_err(|error| error.to_string())?;
@@ -1700,7 +1748,11 @@ mod test_processing {
             instance.activate(ui).map_err(|error| error.to_string())?;
             let restored = instance.state(ui).map_err(|error| error.to_string())?;
             let processor = instance.processor(ui).map_err(|error| error.to_string())?;
-            Ok::<_, String>((default_state, restored, instance, processor))
+            Ok::<_, String>(StateRoundTrip {
+                default_state,
+                restored,
+                processing: ProcessingFixture { instance, processor },
+            })
         })
         .expect("state round trip");
         assert_eq!(default_state.component, 1.0_f64.to_le_bytes());
@@ -1712,7 +1764,10 @@ mod test_processing {
 
     #[test]
     fn delay_reports_its_latency_and_delays_the_signal() {
-        let (instance, mut processor) = instance_and_processor(Kind::Delay, 1);
+        let ProcessingFixture {
+            instance,
+            mut processor,
+        } = instance_and_processor(Kind::Delay, 1);
         let latency = on_ui(move |ui| (instance.latency_samples(ui), instance));
         assert_eq!(latency.0, DELAY_LATENCY);
         let frames = DELAY_LATENCY as usize + 1;
@@ -1726,7 +1781,10 @@ mod test_processing {
 
     #[test]
     fn echo_reports_its_tail_and_its_sidechain_gets_silence() {
-        let (instance, mut processor) = instance_and_processor(Kind::Echo, 2);
+        let ProcessingFixture {
+            instance,
+            mut processor,
+        } = instance_and_processor(Kind::Echo, 2);
         let tail = on_ui(move |ui| (instance.tail_samples(ui), instance));
         assert_eq!(tail.0, ECHO_DELAY);
         let frames = ECHO_DELAY as usize + 1;
@@ -1742,7 +1800,10 @@ mod test_processing {
 
     #[test]
     fn controller_edits_reach_the_next_block() {
-        let (instance, mut processor) = instance_and_processor(Kind::Gain, 1);
+        let ProcessingFixture {
+            instance,
+            mut processor,
+        } = instance_and_processor(Kind::Gain, 1);
         let (instance, dirty) = on_ui(move |_| {
             if let Some(controller) = instance.core().controller() {
                 // SAFETY: the controller is valid and this runs on the UI thread.
@@ -1788,7 +1849,10 @@ mod test_processing {
 
     #[test]
     fn a_host_parameter_change_reaches_the_next_block_and_is_clamped() {
-        let (instance, mut processor) = instance_and_processor(Kind::Gain, 1);
+        let ProcessingFixture {
+            instance,
+            mut processor,
+        } = instance_and_processor(Kind::Gain, 1);
         let (instance, result) = on_ui(move |ui| {
             let result = instance
                 .set_parameter(ui, GAIN_PARAMETER, 1.5)
@@ -1804,7 +1868,10 @@ mod test_processing {
 
     #[test]
     fn non_finite_output_and_oversized_blocks_pass_through() {
-        let (_instance, mut processor) = instance_and_processor(Kind::NotFinite, 2);
+        let ProcessingFixture {
+            instance: _instance,
+            mut processor,
+        } = instance_and_processor(Kind::NotFinite, 2);
         assert_eq!(processor.max_block_frames(), MAX_BLOCK);
         let output = process_impulse(&mut processor, MAX_BLOCK * 4);
         assert_eq!(output.len(), 2);
