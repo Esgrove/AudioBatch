@@ -58,6 +58,8 @@ constexpr float DECIBELS_PER_AMPLITUDE_DECADE {20.0F};
 /// Weight of the spectrum two bins to each side of a bin in the periodic Hann window,
 /// applied to a transform zero padded to twice the window length: H[k] = X[k] / 2 − (X[k − 2] + X[k + 2]) / 4.
 constexpr float HANN_SIDE_WEIGHT {0.25F};
+/// Transform-bin reach of the periodic Hann spectral filters after twofold zero padding.
+constexpr int HANN_FILTER_BIN_REACH {2};
 
 /// Builds a tier for a layout at a sample rate: its FFT, spectra, and level scale.
 AnalysisTier makeTier(const TierLayout& layout, const int doublings)
@@ -209,8 +211,8 @@ void SpatialAnalyzer::prepare(const double newSampleRate)
     rightHistory.assign(longestWindow, 0.0F);
     // A tier reports at most half its transform, its window length, and the spectrum filters reach two bins further.
     points.reserve(mostPoints);
-    rawLeft.reserve(mostPoints + 4);
-    rawRight.reserve(mostPoints + 4);
+    rawLeft.reserve(mostPoints + static_cast<std::size_t>(2 * HANN_FILTER_BIN_REACH));
+    rawRight.reserve(mostPoints + static_cast<std::size_t>(2 * HANN_FILTER_BIN_REACH));
     hannLeft.reserve(mostPoints);
     hannRight.reserve(mostPoints);
     crossPowers.reserve(mostPoints);
@@ -325,10 +327,12 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier, const SpectralFrameInfo& f
     points.clear();
     if (lastBin >= firstBin) {
         const auto binCount = static_cast<std::size_t>(lastBin - firstBin) + 1;
-        rawLeft.resize(binCount + 4);
-        rawRight.resize(binCount + 4);
-        for (std::size_t offset = 0; offset < binCount + 4; ++offset) {
-            const auto [left, right] = separateChannels(tier.spectrum, firstBin - 2 + static_cast<int>(offset));
+        rawLeft.resize(binCount + static_cast<std::size_t>(2 * HANN_FILTER_BIN_REACH));
+        rawRight.resize(binCount + static_cast<std::size_t>(2 * HANN_FILTER_BIN_REACH));
+        for (std::size_t offset = 0; offset < binCount + static_cast<std::size_t>(2 * HANN_FILTER_BIN_REACH); ++offset)
+        {
+            const auto [left, right]
+                = separateChannels(tier.spectrum, firstBin - HANN_FILTER_BIN_REACH + static_cast<int>(offset));
             rawLeft[offset] = left;
             rawRight[offset] = right;
         }
@@ -345,14 +349,19 @@ void SpatialAnalyzer::analyzeTier(AnalysisTier& tier, const SpectralFrameInfo& f
         // The main lobe of the Hann window reaches two of its own bins, four transform bins, to each side.
         const double lobeHalfWidth = 4.0 * binWidth;
         for (std::size_t index = 0; index < binCount; ++index) {
-            const std::size_t centre = index + 2;
-            hannLeft[index] = rawLeft[centre] * 0.5F - (rawLeft[centre - 2] + rawLeft[centre + 2]) * HANN_SIDE_WEIGHT;
-            hannRight[index]
-                = rawRight[centre] * 0.5F - (rawRight[centre - 2] + rawRight[centre + 2]) * HANN_SIDE_WEIGHT;
+            const std::size_t centre = index + HANN_FILTER_BIN_REACH;
+            hannLeft[index] = rawLeft[centre] * 0.5F
+                - (rawLeft[centre - HANN_FILTER_BIN_REACH] + rawLeft[centre + HANN_FILTER_BIN_REACH])
+                    * HANN_SIDE_WEIGHT;
+            hannRight[index] = rawRight[centre] * 0.5F
+                - (rawRight[centre - HANN_FILTER_BIN_REACH] + rawRight[centre + HANN_FILTER_BIN_REACH])
+                    * HANN_SIDE_WEIGHT;
             const std::complex<float> derivativeLeft
-                = divideByTwoI(rawLeft[centre - 2] - rawLeft[centre + 2]) * derivativeScale;
+                = divideByTwoI(rawLeft[centre - HANN_FILTER_BIN_REACH] - rawLeft[centre + HANN_FILTER_BIN_REACH])
+                * derivativeScale;
             const std::complex<float> derivativeRight
-                = divideByTwoI(rawRight[centre - 2] - rawRight[centre + 2]) * derivativeScale;
+                = divideByTwoI(rawRight[centre - HANN_FILTER_BIN_REACH] - rawRight[centre + HANN_FILTER_BIN_REACH])
+                * derivativeScale;
             leftPowers[index] = std::norm(hannLeft[index]);
             rightPowers[index] = std::norm(hannRight[index]);
             crossPowers[index] = (hannLeft[index] * std::conj(hannRight[index])).real();

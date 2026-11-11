@@ -34,6 +34,9 @@ constexpr int COMPARISON_STATE_VERSION {1};
 constexpr auto PRESET_PROVENANCE_STATE_TAG {"PresetProvenanceState"};
 constexpr int PRESET_PROVENANCE_STATE_VERSION {1};
 constexpr int UUID_HEX_CHARACTER_COUNT {32};
+/// Comparison slots carry only their index, while provenance slots also carry preset identity and name.
+constexpr int COMPARISON_SLOT_ATTRIBUTE_COUNT {1};
+constexpr int PROVENANCE_SLOT_ATTRIBUTE_COUNT {3};
 
 /// Finds exactly one root sibling, rejecting duplicates rather than choosing an arbitrary metadata revision.
 const juce::XmlElement* uniqueChild(const juce::XmlElement& root, const juce::String& tag)
@@ -211,8 +214,8 @@ std::optional<ComparisonState> comparisonStateFromXml(
     for (const auto* child : comparison->getChildIterator()) {
         const auto index = slotIndex(*child);
         const auto* sound = child->getFirstChildElement();
-        if (!child->hasTagName("Slot") || child->getNumAttributes() != 1 || !index || seen.at(*index)
-            || sound == nullptr || sound->getNextElement() != nullptr)
+        if (!child->hasTagName("Slot") || child->getNumAttributes() != COMPARISON_SLOT_ATTRIBUTE_COUNT || !index
+            || seen.at(*index) || sound == nullptr || sound->getNextElement() != nullptr)
         {
             return std::nullopt;
         }
@@ -266,8 +269,8 @@ PresetProvenanceSlots presetProvenanceStateFromXml(
     for (const auto* child : metadata->getChildIterator()) {
         const auto index = slotIndex(*child);
         const auto* sound = child->getFirstChildElement();
-        if (!child->hasTagName("Slot") || child->getNumAttributes() != 3 || !index || result.at(*index)
-            || sound == nullptr)
+        if (!child->hasTagName("Slot") || child->getNumAttributes() != PROVENANCE_SLOT_ATTRIBUTE_COUNT || !index
+            || result.at(*index) || sound == nullptr)
         {
             return {};
         }

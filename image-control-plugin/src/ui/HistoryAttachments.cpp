@@ -12,6 +12,9 @@ namespace esgrove::image_control
 {
 namespace
 {
+/// Maximum parameter-name length used for local history descriptions.
+constexpr int HISTORY_PARAMETER_NAME_LENGTH {128};
+
 /// Copies JUCE SliderParameterAttachment's range adapter, including custom mappings and snapping.
 void configureSliderRange(juce::Slider& slider, juce::RangedAudioParameter& parameter)
 {
@@ -95,7 +98,7 @@ void HistorySliderAttachment::sliderDragStarted(juce::Slider* /*changed*/)
     }
     gestureActive = true;
     gestureGeneration = history.generation();
-    history.beginEdit(parameter.getName(128));
+    history.beginEdit(parameter.getName(HISTORY_PARAMETER_NAME_LENGTH));
     attachment.beginGesture();
 }
 
@@ -125,7 +128,7 @@ void HistorySliderAttachment::sliderValueChanged(juce::Slider* /*changed*/)
     const bool complete = !gestureActive;
     const auto generation = history.generation();
     if (complete) {
-        history.beginEdit(parameter.getName(128));
+        history.beginEdit(parameter.getName(HISTORY_PARAMETER_NAME_LENGTH));
     }
     history.touch(id);
     const auto value = static_cast<float>(slider.getValue());
@@ -183,7 +186,7 @@ void HistoryButtonAttachment::buttonClicked(juce::Button* /*changed*/)
         return;
     }
     const auto generation = history.generation();
-    history.beginEdit(parameter.getName(128));
+    history.beginEdit(parameter.getName(HISTORY_PARAMETER_NAME_LENGTH));
     history.touch(id);
     const float value = button.getToggleState() ? 1.0F : 0.0F;
     attachment.beginGesture();
