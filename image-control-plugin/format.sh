@@ -7,7 +7,7 @@ source "$DIR/common.sh"
 
 USAGE="Usage: $0 [OPTIONS]
 
-Format the ImageControl plugin: C++ code with ClangFormat, CMake files with cmake-format,
+Format the ImageControl plugin: C++ code and GLSL shaders with ClangFormat, CMake files with cmake-format,
 shell scripts with shfmt and prose with slb when they are installed, and Python scripts with ruff through uv.
 cmake-format is run through uvx when it is not installed.
 
@@ -62,13 +62,13 @@ format_cpp_sources() {
     CPP_FILES=()
     while IFS= read -r file; do
         CPP_FILES+=("$file")
-    done < <(find src tests benchmarks -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+    done < <(find src tests benchmarks -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.vert" -o -name "*.frag" -o -name "*.glsl" \) | sort)
 
     if [ "$CHECK" = true ]; then
-        print_magenta "Checking C++ formatting..."
+        print_magenta "Checking C++ and GLSL formatting..."
         clang-format --verbose --style="file:$STYLE_FILE" --dry-run --Werror "${CPP_FILES[@]}"
     else
-        print_magenta "Formatting C++ files..."
+        print_magenta "Formatting C++ and GLSL files..."
         clang-format -i --verbose --style="file:$STYLE_FILE" "${CPP_FILES[@]}"
     fi
 }
