@@ -4,7 +4,12 @@ Source inspection date: **11 November 2026**.
 This is a feasibility and dependency evaluation for macOS and Windows, not a production rewrite approval.
 The C++ plugin remains the supported implementation.
 The Rust experiment includes four-band FIR processing and a native GPU editor, but not C++ project-state compatibility.
+C++ is the feature, close user-experience, and audio reference, not an exact internal implementation blueprint.
+Compatibility with older RS state or normalized automation is not required.
 No framework, graphics backend, or permissive license by itself establishes production readiness.
+
+The dated parity-completion and benchmark results retained below describe earlier reviewed artifacts.
+The Rust-native cleanup checks are recorded separately and do not imply a performance improvement.
 
 ## Recommendation
 
@@ -26,10 +31,13 @@ No framework, graphics backend, or permissive license by itself establishes prod
 - Nice-plug was replaced after its packaged cold callback exposed GUI wakeup locks and a state-channel mutex/allocation.
   The replacement samples parameter atomics, transfers kernel ownership through bounded SPSC queues,
   and polls display work from the UI without audio-thread GUI notifications.
-  Reviewed packaged cold automation, reset, concurrent state restore, and two-editor lifecycle artifacts passed RTSan,
+  Historical reviewed packaged artifacts passed RTSan before the current cleanup.
+  Coverage included cold automation, reset, concurrent state restore, and two-editor lifecycle,
   with positive allocation and mutex detector controls.
   This is bounded evidence, not proof of every callback or deadline.
-- Preserve the existing DSP, parameter, state, and realtime contracts explicitly.
+- Preserve the intended features, close user experience, audio behavior, and realtime contracts,
+  while choosing idiomatic Rust ownership and state rather than mirroring C++ internals.
+  Older RS persistence and normalized automation are outside the compatibility scope.
   Begin with RustFFT/RealFFT and preallocated scratch, then compare against native FFT performance before optimizing.
   Exact neutral transparency must remain bit-exact. General processed-output equality requires numerical tests,
   not an assumption that a language or FFT substitution produces identical bits.
@@ -95,7 +103,7 @@ latency/tail notification, bus negotiation, and exception-free FFI failure paths
 Do not let Rust panics unwind through a COM or C ABI boundary.
 A panic strategy must be deliberate. Aborting terminates the host, while catching a panic is not DSP recovery.
 
-**Recommendation:** use this for the bounded spike, and retain it as the compatibility-first production fallback.
+**Recommendation:** use this for the bounded spike, retaining explicit control of RS identity and host lifecycle.
 Do not grow the spike into a second framework before measuring whether editor attachment works.
 
 ### nice-plug and NIH-plug
@@ -158,9 +166,7 @@ There are three credible choices, each needing separate compatibility and host v
 **Recommendation:** retain AUv2 as an explicit production requirement.
 Experimental AU delivery does not establish complete replacement qualification.
 If removing JUCE is mandatory, investigate clap-wrapper AUv2 before commissioning a custom AU wrapper.
-Preserve the existing `aufx` type, `Esgr` manufacturer, `Egic` subtype,
-and version-hint ordering only after compatibility tests demonstrate a valid replacement.
-The spike must use different identities.
+Retain the independent RS `aufx / Egir / Esgr` identity, not C++ `Egic` or its project-state contract.
 
 ## 3. Native editor embedding and controls
 
@@ -323,16 +329,14 @@ RTSan clean scenarios and verified dependency blockers must remain distinct, and
 
 ## 7. Parameters, saved state, editing, and presets
 
-A framework substitution must preserve more than parameter labels:
+The C++ reference defines intended features and audio behavior, not an internal schema or normalization blueprint:
 
-- Preserve stable string IDs, host ordering, version hints, ranges, defaults, step counts, normalization/skew,
-  display/text parsing, units, finite-value rejection, and balanced begin/perform/end gestures.
-  VST3 numeric parameter IDs and component/controller class IDs must match the shipped JUCE mapping,
-  not a new framework's default string hash.
-  AU addresses and ordering need a separate compatibility check.
-- Keep current block-sampled automation and partition-boundary smoothing semantics.
-  Opting into sample-accurate framework automation changes behavior and workload and is not a neutral improvement.
-  Test controller and processor state synchronization with the editor closed.
+- Retain the RS plugin identities and stable parameter IDs, useful ranges/defaults, units, finite-value rejection,
+  and balanced begin/perform/end gestures. Matching JUCE's class IDs or float rounding is not required.
+  Crossovers use a true logarithmic `f64` mapping. Stepped controls snap in plain units.
+  Older RS normalized automation is not a compatibility promise.
+- Keep block-sampled automation and partition-boundary smoothing semantics.
+  Test controller and processor synchronization with the editor closed.
 - Keep sound settings distinct from audition controls and editor preferences.
   Presets include crossovers, Mid/Side, Width, Recover, Pan, output gain, and Mono.
   Solo, Delta, and Bypass remain live audition controls.
@@ -341,30 +345,14 @@ A framework substitution must preserve more than parameter labels:
   Undo history remains transient and host automation does not enter it.
   Host restores invalidate pending local transactions and do not synchronously wait for message dispatch.
 
-There are two sensible codec choices:
-
-- **Explicit XML compatibility codec, recommended.**
-  Use [quick-xml 0.42.0][quick-xml], MIT, for bounded reading/writing,
-  or [roxmltree 0.21.2][roxmltree], MIT OR Apache-2.0, for strict tree inspection plus an explicit writer.
-  These are parsing tools, not schema compatibility implementations.
-  Preserve JUCE's binary-XML framing around the `ImageControl` tree as well as its XML content.
-  Preserve `EditorState`, `SoundState` v1, `ComparisonState` v1, and `PresetProvenanceState` v1.
-  Portable `.xml` presets use `ImageControlPreset` v1, plugin identity, UUID, revision, name, and sound data.
-  Preserve round-trippable float values, duplicate rejection, complete sound-set validation, range checks,
-  deterministic missing-property defaults, and existing malformed-provenance fallback behavior.
-- **New native schema with an importer.**
-  Serde JSON or a framework's native state representation can simplify a genuinely new plugin product.
-  It does not make old DAW projects load automatically and does not preserve old-plugin readback without an exporter.
-  This requires a deliberate new identity or explicit migration decision, not an incidental rewrite consequence.
-
-**Recommendation:** treat state compatibility as an independent acceptance gate.
-Test C++ write/Rust read, Rust write/C++ read, old states restored onto already-edited instances,
-missing Width/Recover defaults, malformed streams, bounds/length overflows, truncated input, and unknown versions.
-Keep host state and user preset files as separate contracts.
-Do not assume whole `.vstpreset` files and inner processor state are the same format.
-Capture actual class and parameter IDs from the shipped wrapper and compare host-visible metadata
-before attempting a drop-in identity.
-The isolated spike deliberately avoids that compatibility promise.
+**Recommendation:** use the independent RS JSON codec with schema 6 only.
+Serialize `Snapshot`, `AnalysisTap`, and `DisplayPreferences` directly instead of duplicate mirrors or migration layers.
+Older and unknown schemas reject transactionally, leaving all live values and restore identity untouched.
+Use fixed defaults for absent current-schema fields and validate the complete detached document before publication.
+Test malformed streams, length bounds, truncation, invalid values, and rejected schemas.
+Test precise current-schema round trips independently.
+Host state and user preset files remain separate contracts.
+Neither a C++ XML importer nor compatibility with earlier RS projects is required.
 
 ## 8. What AudioBatch can reuse
 
@@ -486,7 +474,7 @@ correlation, analyzer, state-threading, undo/A-B/preset, and interaction contrac
 Use independent analytical expectations and the C++ implementation as separate comparisons.
 Preserve current tolerances unless a measured, explained numerical change is approved.
 
-Highest risks are host-owned GUI lifecycle, compatibility of framework-generated IDs and state,
+Highest risks are host-owned GUI lifecycle, correct independent IDs and transactional state,
 last-owner destruction on realtime threads, macOS AU host qualification, and matching FFT-based performance.
 A fast standalone renderer resolves none of the host-lifecycle risks by itself.
 
@@ -507,7 +495,7 @@ Ranges overlap and are not additive without a separate implementation breakdown.
 - DSP, analyzer, realtime ownership, and independent numerical test translation:
   **4 to 8 weeks**, plus performance investigation if RustFFT does not meet the matched baseline.
   An Accelerate backend comparison and audited scratch/scale integration may add **1 to 2 weeks**.
-- Full editor interactions, history/A-B/presets, XML compatibility, and host integration:
+- Full editor interactions, history/A-B/presets, independent state, and host integration:
   **5 to 10 weeks**, depending on reuse and accessibility requirements.
 - AUv2 wrapper feasibility and validation: **1 to 3 weeks** using an existing wrapper,
   or **4 to 8 weeks** for a custom native bridge before broad host hardening.
@@ -515,7 +503,8 @@ Ranges overlap and are not additive without a separate implementation breakdown.
   **2 to 4 weeks**, with certificate procurement and external review excluded.
 
 A production replacement is plausibly **3 to 6 engineer-months** after a successful bounded spike,
-with longer schedules credible if exact legacy-project compatibility or custom GUI embedding requires upstream work.
+with longer schedules credible if custom GUI embedding requires upstream work.
+Exact legacy-project compatibility is outside the clarified RS scope.
 The spike is valuable precisely because it can reject an unsuitable embedding path before that investment.
 
 ## Current four-band implementation and Iced frontend
@@ -574,11 +563,11 @@ Processing, state, automation, and host-provided parameter controls remain avail
 Safe synchronous custom-editor destruction and native Windows runtime validation remain gates.
 The existing upstream widget-cache,
 renderer recovery, accessibility, and module-unload limitations apply to every editor format.
-Native packaged CLAP parameter/state/layout/neutral/reset contracts pass on arm64 macOS.
+Historical packaged CLAP parameter/state/layout/neutral/reset contracts passed on arm64 macOS before this cleanup.
 `./rtsan.sh --format clap` verifies separate positive allocation and mutex controls,
 then requires clean cold automation, reset, and concurrent state callbacks on fresh processing threads.
-The own-wrapper VST3 callback audit also remains clean after shared-instance extraction.
-These exercised scenarios do not establish every callback, audio deadlines, or arbitrary host compatibility.
+The historical own-wrapper VST3 callback audit was also clean after shared-instance extraction.
+These results do not qualify the current cleanup or establish every callback, audio deadlines, or host compatibility.
 AU runtime diagnostics confirm initialized-state/neutral/reset contracts but retain the dependency blockers above.
 With Rust and the native wrapper instrumented, the fresh-thread AU render reports `malloc`.
 The allocation comes from clap-wrapper's `Clap::Plugin::AlwaysAudioThread` lazy thread-local setup.
@@ -586,6 +575,37 @@ The actual AU reset boundary reports `pthread_mutex_lock` in Apple's SDK `AUEntr
 `./rtsan.sh --format au` fails these required-clean cases.
 `./rtsan.sh --format au --diagnostic` verifies the exact call/stack pairs as **BLOCKED**, not clean callbacks.
 No dependency source or sanitizer suppression changes hide either finding.
+
+### Current cleanup ownership and publication
+
+`AudioState` owns `AtomicRefCell<SyncWrapper<Imager>>` through the external crates' safe APIs.
+A single-CAS `try_borrow_mut` rejects overlap without waiting, heap work, or final-owner destruction on the callback.
+There is no custom `UnsafeCell` or `unsafe Sync` implementation for this admission boundary.
+The host view uses safe `UiOwner<T>(Option<T>)` automatic ownership instead of unsafe `ManuallyDrop` cleanup.
+Invalid off-thread or reentrant foreign final release deliberately leaks retained UI resources.
+That containment does not qualify module unloading or resolve the separate upstream widget-cache limitation.
+
+Full immutable `ArcSwap` snapshots carry display preferences, layout preferences, and logical geometry off audio.
+They replace read-mostly mutexes, not every lock.
+Compound editing transactions, worker joins and condition variables, completed-batch handoff,
+and preset file locks retain justified non-audio synchronization.
+The analysis worker retains the preference `Arc` identity as well as the source token and checks both
+before applying settings, publishing completions, draining UI batches, and preparing or rendering GPU work.
+The pending instances and retained GPU energy carry that identity too.
+This covers the preference-swap/source-invalidation race and prevents stale mixed old/new frames.
+
+The Rust-native cleanup was checked on arm64 macOS on 11 November 2026:
+
+- 253 plugin unit tests, the complete DSP suite, strict all-target Clippy, formatting, and strict no-editor compilation pass.
+- Miri passes the parameter/controller checks and safe atomic admission, including nested rejection and unwinding.
+- Packaged VST3 and CLAP realtime scenarios pass with separate positive allocation and mutex detector controls.
+- The natural logarithmic mapping passes all 264 packaged offline audio-comparison cases at the existing residual bounds.
+- Pinned Release pluginval strictness 10 passes. The dependency license audit passes.
+
+These are bounded functional and safety checks, not a speed comparison or complete platform/host qualification.
+The final `./build.sh --test --validate` passes after the GPU snapshot-identity and stale-CLAP binding tests.
+It checks all exact Release formats without installation, while AU functional diagnostics retain their explicit blockers.
+AU wrapper, native Windows, accessibility, device-loss, widget-cache, and unload gates remain independent.
 
 ### Implemented band behavior
 
@@ -609,14 +629,12 @@ No dependency source or sanitizer suppression changes hide either finding.
   Saved crossover targets are installed during preparation before the first audible FIR pre-ring.
 - The own wrapper publishes exactly 31 stable numeric parameters: output trim, three crossovers,
   six controls per band, bypass, Delta, and Mono. There is no global Width parameter or slider.
-  New host/editor edits use C++ float power-skew crossover conversion and plain-unit snapping.
-  Version 4 introduces that frequency mapping. Versions 1–3 migrate stored crossovers through their original Hz values,
-  retaining non-crossover off-grid bits across recalls and later saves.
-  This migrates plugin state blobs only, not external DAW-stored normalized frequency automation.
-  Such automation needs external remapping to retain its original Hz values.
-- Independent JSON project state is version 5 with a 16 KiB payload limit.
-  It validates sound, A/B sounds and preset origins, complete layout, extended display preferences,
-  and host-accepted logical geometry before publication. Versions 1–4 remain readable with fixed missing-field defaults.
+  Crossovers use true logarithmic `f64` conversion, with useful plain-unit snapping for stepped controls,
+  not JUCE float emulation. Parameter IDs stay stable, but older RS normalized automation is not promised compatibility.
+- Independent JSON project state accepts schema 6 only, with a 16 KiB payload limit.
+  It directly serializes `Snapshot`, `AnalysisTap`, and `DisplayPreferences`, without duplicate mirrors or migration.
+  Sound, A/B sounds and preset origins, layout, display, and logical geometry validate before publication.
+  Older and unknown schemas reject transactionally. Missing current-schema fields use fixed defaults.
   Controller/state callbacks never borrow mutable convolution history or wait for GUI dispatch.
   VST3 latency changes issue coalesced `restartComponent(kLatencyChanged)` notifications from SDK-defined
   UI-thread setup/handler callbacks, outside plugin locks and DSP admission, with bounded reentrant follow-up.
@@ -647,12 +665,13 @@ No dependency source or sanitizer suppression changes hide either finding.
   Project origins retain identity, name, and a sound baseline, not filesystem revision permission.
   Reconnect accepts a current library revision without recalling sound or replacing the project baseline.
 
-### Current parity completion verification
+### Historical parity-completion verification
 
-The 11 November 2026 macOS arm64 verification of the parity-completion work passed:
+The 11 November 2026 macOS arm64 parity-completion verification predates the current cleanup.
+Its reviewed artifacts passed:
 
 - Debug and Release `./build.sh --test --validate`, including native VST3 and CLAP packaged contracts.
-  AU functional contracts pass their bounded scope while explicitly reporting upstream state/offline/contention blockers.
+  AU functional contracts passed their bounded scope while reporting upstream state/offline/contention blockers.
 - Pinned Release pluginval strictness 10, plus ordinary build-tree strictness 5.
 - All 264 packaged C++/Rust offline audio-comparison cases,
   without changing their `1e-5` FS peak or `1e-6` FS RMS limits.
@@ -669,7 +688,8 @@ The 11 November 2026 macOS arm64 verification of the parity-completion work pass
 No installed plugin was replaced and no Audio Unit registration was changed for this verification.
 These results do not establish native Windows or representative-DAW qualification, native accessibility,
 upstream widget-cache reclamation, device-loss recovery, arbitrary module unloading, or clean AU callbacks.
-Normalized DAW automation remains outside the state-blob migration contract.
+Those artifacts do not verify the current schema-6-only codec, logarithmic mapping, or ownership cleanup.
+No new passing cleanup evidence is claimed.
 
 ### Cross-implementation and performance evidence
 
@@ -687,7 +707,7 @@ and RMS residual at most `1e-6` FS (-120 dBFS).
 These conservative low residuals are below ordinary audible differences for the bounded test signals.
 They are not a universal psychoacoustic guarantee or permission to weaken exact-neutral contracts.
 On arm64 macOS, the older reviewed Release artifacts passed all 264 cases on 11 November 2026.
-This records those artifacts, not a fresh packaged run of the current parameter, state, and editor implementation.
+Those artifacts predate the current cleanup, not a fresh packaged run of its parameter, state, or editor implementation.
 The largest peak residual was `2.086162567138672e-7` FS, in 192 kHz anti-phase recovery at 200%.
 The largest RMS residual was `2.987490796650603e-8` FS, in 44.1 kHz anti-phase recovery at 200%.
 Reports retain input checksums, actual parameter readbacks, individual oracle errors, and the worst residual location.
@@ -720,7 +740,7 @@ with the repository Release/native-CPU configuration on 11 November 2026 recorde
   Recover `214.2 ± 8.0 ms`, neutral `81.7 ± 10.5 ms`, and mono input `102.7 ± 3.9 ms` complete-process wall time.
   The Recover run's separate last-run warmed callback total was `160.26 ms` across 4888 process calls.
 
-These are older reviewed-artifact smoke observations, not measurements of the current implementation,
+These reviewed-artifact smoke observations predate the current cleanup. They are not measurements of its implementation,
 a full statistical baseline, or a C++ speed comparison.
 Criterion quick-mode confidence and occasional process-startup outliers limit their precision.
 The three retained packaged artifact sets are timestamped 03:00:14, 03:00:42, and 03:00:44
@@ -731,19 +751,20 @@ The benchmark host SHA-256 was `a12891288310240d3a79782774d5c54342f133e0303525fc
 Both binaries were built with Release commands before the `--no-build` measurements.
 Artifacts explicitly record that they were reused rather than claiming the benchmark runner built them.
 
-### Evidence and boundaries
+### Historical evidence and current boundaries
 
-Passing results in this section describe the reviewed artifacts, not a fresh qualification of all current changes.
-Implemented source contracts and retained measurement evidence are distinct.
+Passing results in this section describe reviewed artifacts that predate the current cleanup,
+not a fresh qualification of the schema, mapping, admission, UI ownership, or snapshot changes.
+Implemented source contracts and retained measurement evidence are distinct. No new measurements are claimed.
 
 Native tests cover complementary direct-convolution expectations, FFT convolution, exact delayed neutral samples,
 frequency isolation, gains/Width/Pan/Solo, quadrature response/recovery, finite tails, reset, chunk invariance,
 warm history, real-time handoff, and offline crossover replacement.
 Actual packaged own-wrapper tests verify a bit-exact delayed neutral impulse, reported latency/tail,
 band automation, all-band mute recall, missing-state defaults, and transactional malformed-state rejection.
-The editor-enabled own VST3 passes pluginval strictness 5 in Debug and Release, strictness 10 in Release,
-and repeated native two-editor open/close/reopen.
-An x86-64 Windows MSVC production `--lib --bins` cross-check passes after the review fixes.
+The historical editor-enabled own VST3 passed pluginval strictness 5 in Debug and Release, strictness 10 in Release,
+and repeated native two-editor open/close/reopen before the current cleanup.
+An x86-64 Windows MSVC production `--lib --bins` cross-check passed for those reviewed sources.
 The expanded all-target check is blocked locally by Criterion's `alloca` C dependency needing Windows SDK headers.
 Native Windows CI compiles those benchmark targets with its MSVC toolchain.
 Windows execution and graphics remain unverified until that native job runs.
@@ -810,7 +831,7 @@ An upstream regression should use destructor counters or weak references around 
 then exercise ordinary close, host-forced close, repeated reopen, and reentrant removal without screenshot assertions.
 Until a verified upstream release is available,
 keep the limitation explicit and do not patch registry or vendored sources.
-The primary wrapper passes bounded Miri parameter/controller, atomic-publication, and admission-unwind tests.
+The pre-cleanup primary wrapper passed bounded Miri parameter/controller, atomic-publication, and admission-unwind tests.
 Historical Miri coverage of the removed raw adapter is not substituted for those checks.
 Full FIR and native-library scenarios are native tests, not interpreted Miri coverage.
 
