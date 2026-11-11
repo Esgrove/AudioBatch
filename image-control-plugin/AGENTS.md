@@ -71,6 +71,9 @@ The C++-specific organization, JUCE, and OpenGL instructions below apply to the 
   Processor correlation lifecycle tests live in `CorrelationTests.cpp`,
   and non-finite parameter notification tests live in `HostContractsTests.cpp`.
   Particle projection and band-strip gestures have their own topic suites.
+  Compact band geometry and input, compact editing workflows, processor state, and preset results have separate files,
+  with shared test support headers for helpers used across those files.
+  `PluginParity.cpp` hosts cross-implementation workloads from `PluginParityScenarios.*`.
 - `benchmarks/` holds `Benchmark.cpp` for the `ImageControlBenchmark` command,
   `CallbackBenchmarks.cpp` for processor workloads, `ComponentBenchmarks.cpp` for isolated CPU probes,
   and their shared `BenchmarkSupport.h`.

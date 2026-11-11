@@ -635,10 +635,10 @@ The current unit environment exercises little of the renderer's actual GPU drawi
 
 `ImageControlBenchmark` measures full callbacks and isolated imager, analysis, particle, and overlay costs.
 It varies rates, block sizes, processing modes, correlation, analysis load, and paced crossover requests.
-The original workloads explicitly set Width 1 and Recover Off.
+The baseline workloads explicitly set Width 1 and Recover Off.
 Matched narrowed workloads compare recovery Off, selected bands, and all bands,
 with correlation and analysis variants and paced moving-crossovers cases.
-Direct imager probes retain the original centered/panned workloads and add the same recovery comparisons.
+Direct imager probes cover centered/panned workloads and the same recovery comparisons.
 An isolated batched setter probe measures unchanged and changing `setWidths`/`setRecoveries` pairs,
 excluding the untimed processing used to advance ramps and observe results.
 Separate analyzer and captured-frame particle probes isolate worker-side costs.
