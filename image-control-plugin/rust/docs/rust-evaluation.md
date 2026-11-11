@@ -26,7 +26,7 @@ No framework, graphics backend, or permissive license by itself establishes prod
 - Nice-plug was replaced after its packaged cold callback exposed GUI wakeup locks and a state-channel mutex/allocation.
   The replacement samples parameter atomics, transfers kernel ownership through bounded SPSC queues,
   and polls display work from the UI without audio-thread GUI notifications.
-  Actual packaged cold automation, reset, concurrent state restore, and two-editor lifecycle scenarios now pass RTSan,
+  Reviewed packaged cold automation, reset, concurrent state restore, and two-editor lifecycle artifacts passed RTSan,
   with positive allocation and mutex detector controls.
   This is bounded evidence, not proof of every callback or deadline.
 - Preserve the existing DSP, parameter, state, and realtime contracts explicitly.
@@ -156,7 +156,7 @@ There are three credible choices, each needing separate compatibility and host v
   AudioToolbox bindings alone do not implement a production AU component or its editor.
 
 **Recommendation:** retain AUv2 as an explicit production requirement.
-Do not call the VST3-only editor spike a complete replacement.
+Experimental AU delivery does not establish complete replacement qualification.
 If removing JUCE is mandatory, investigate clap-wrapper AUv2 before commissioning a custom AU wrapper.
 Preserve the existing `aufx` type, `Esgr` manufacturer, `Egic` subtype,
 and version-hint ordering only after compatibility tests demonstrate a valid replacement.
@@ -460,7 +460,7 @@ Avoid unintentional local-CPU tuning in distributed binaries and match the exist
 
 Run the repository-pinned pluginval against the exact build-tree VST3, with missing tooling reported as failure.
 Also use Steinberg's validator where appropriate for interface diagnostics.
-For AU, run auval and real macOS-host tests once the AU artifact exists.
+For the experimental AU artifact, retain independent auval and real macOS-host qualification.
 Installed-format validation and registration are separate actions requiring explicit installation approval.
 A successful Cargo build, factory scan, or headless validator does not establish GPU correctness or editor usability.
 
@@ -487,7 +487,7 @@ Use independent analytical expectations and the C++ implementation as separate c
 Preserve current tolerances unless a measured, explained numerical change is approved.
 
 Highest risks are host-owned GUI lifecycle, compatibility of framework-generated IDs and state,
-last-owner destruction on realtime threads, macOS AU delivery, and matching FFT-based performance.
+last-owner destruction on realtime threads, macOS AU host qualification, and matching FFT-based performance.
 A fast standalone renderer resolves none of the host-lifecycle risks by itself.
 
 ## 12. Approximate effort ranges
@@ -609,20 +609,67 @@ No dependency source or sanitizer suppression changes hide either finding.
   Saved crossover targets are installed during preparation before the first audible FIR pre-ring.
 - The own wrapper publishes exactly 31 stable numeric parameters: output trim, three crossovers,
   six controls per band, bypass, Delta, and Mono. There is no global Width parameter or slider.
-  The independent, bounded versioned JSON state validates a complete detached snapshot before publication.
-  Controller/state callbacks touch atomics, not mutable convolution history.
+  New host/editor edits use C++ float power-skew crossover conversion and plain-unit snapping.
+  Version 4 introduces that frequency mapping. Versions 1–3 migrate stored crossovers through their original Hz values,
+  retaining non-crossover off-grid bits across recalls and later saves.
+  This migrates plugin state blobs only, not external DAW-stored normalized frequency automation.
+  Such automation needs external remapping to retain its original Hz values.
+- Independent JSON project state is version 5 with a 16 KiB payload limit.
+  It validates sound, A/B sounds and preset origins, complete layout, extended display preferences,
+  and host-accepted logical geometry before publication. Versions 1–4 remain readable with fixed missing-field defaults.
+  Controller/state callbacks never borrow mutable convolution history or wait for GUI dispatch.
+  VST3 latency changes issue coalesced `restartComponent(kLatencyChanged)` notifications from SDK-defined
+  UI-thread setup/handler callbacks, outside plugin locks and DSP admission, with bounded reentrant follow-up.
 - The retained editor follows C++ geometry: compact header with Output, optional processing toolbar,
-  dominant GPU plot with draggable crossover markers and axes, resizable divider, correlation row, and four band strips.
+  dominant GPU plot, resizable divider, correlation row, and four band strips.
   Mid, Side, Width, Recover, Pan, Solo, Link, and their host gestures are functional.
-  Settings and Pre/Post selection update real display preferences without creating sound-parameter gestures.
-  Correlation displays measured processed-band values with explicit stale/silent unavailability.
-  Expanded numeric fields use native Iced editing with validated commits,
-  modal focus exclusion, and balanced Link gestures.
+  The plot supports crossover and proportional whole-band movement, modifier source-gain drags/wheel edits,
+  reset gestures, and keyboard shortcuts.
+  Expanded numeric fields and compact exact-value overlays use validated commits and balanced Link gestures.
+  Right-click, focused Enter, and compact-value double-click open exact entry. Slider/crossover double-click resets.
+  Modal focus exclusion and retained custom-chrome Tab/keyboard focus do not establish native accessibility support.
   Exact Regular, SemiBold, Bold, and Mono faces are embedded
   rather than relying on synthetic weights or system fallback.
-  Accepted logical window dimensions survive view recreation and saved-state restoration.
-  State version 3 loads versions 1 and 2 with fixed legacy geometry defaults.
-  Undo/Redo, A/B, and preset commands remain visibly disabled rather than simulating support.
+- Display controls include Logarithmic/Mel axes, frequency/phase palettes, adjustable stereo-position curves,
+  persistence/contrast, and particle or solid rendering.
+  Solid contours sample a preserved quarter-size field before glow upsampling, with bicubic reconstruction,
+  layered outlines, and separate glow/highlights.
+  Correlation includes measured processed-band values, optional trend-smoothed numbers, recent extrema,
+  and a fading range field, with explicit stale/silent unavailability.
+  Hide spectrogram, stop analysis, FPS diagnostics, and shortcut help are functional non-sound preferences.
+- Local chronological Undo/Redo, independent A/B selection/copy, and preset commands are functional.
+  Sound snapshots exclude Solo, Delta, and Bypass. History is transient, and host automation never enters it.
+  The per-user RS preset library uses independent JSON, not C++ XML imports or C++ project migration.
+  A modal callout supports load, Save/Save As, rename, delete, refresh, reconnect, and absolute-path import/export.
+  File work is asynchronous, and native close joins its worker independently of retained Iced widget state.
+  Mutations/export validate both accepted revisions and exact bytes under fail-fast process/thread locking,
+  with atomic file replacement and explicit stale-selection errors.
+  Project origins retain identity, name, and a sound baseline, not filesystem revision permission.
+  Reconnect accepts a current library revision without recalling sound or replacing the project baseline.
+
+### Current parity completion verification
+
+The 11 November 2026 macOS arm64 verification of the parity-completion work passed:
+
+- Debug and Release `./build.sh --test --validate`, including native VST3 and CLAP packaged contracts.
+  AU functional contracts pass their bounded scope while explicitly reporting upstream state/offline/contention blockers.
+- Pinned Release pluginval strictness 10, plus ordinary build-tree strictness 5.
+- All 264 packaged C++/Rust offline audio-comparison cases,
+  without changing their `1e-5` FS peak or `1e-6` FS RMS limits.
+- 244 retained-editor, history, preset, state, native-GPU, and lifecycle unit tests,
+  strict all-target Clippy, formatting, no-editor compilation, Miri scalar/admission checks, and the license audit.
+- Native VST3 repeated-editor and reentrant-removal contracts, CLAP show/hide/resize/reopen,
+  and the AU host's bounded editor open/close checks.
+- Required-clean packaged VST3 and CLAP RealtimeSanitizer scenarios with independent positive detector controls.
+  CLAP recall additionally fences callback progress inside actual state-stream reads
+  and checks accepted parameter readback.
+- AU diagnostic RealtimeSanitizer checks retain the verified allocation
+  and reset-mutex findings as `BLOCKED`, not clean.
+
+No installed plugin was replaced and no Audio Unit registration was changed for this verification.
+These results do not establish native Windows or representative-DAW qualification, native accessibility,
+upstream widget-cache reclamation, device-loss recovery, arbitrary module unloading, or clean AU callbacks.
+Normalized DAW automation remains outside the state-blob migration contract.
 
 ### Cross-implementation and performance evidence
 
@@ -639,7 +686,8 @@ Acceptance is absolute, with digital full scale equal to one: peak residual at m
 and RMS residual at most `1e-6` FS (-120 dBFS).
 These conservative low residuals are below ordinary audible differences for the bounded test signals.
 They are not a universal psychoacoustic guarantee or permission to weaken exact-neutral contracts.
-On arm64 macOS, the reviewed Release bundles passed all 264 cases on 11 November 2026.
+On arm64 macOS, the older reviewed Release artifacts passed all 264 cases on 11 November 2026.
+This records those artifacts, not a fresh packaged run of the current parameter, state, and editor implementation.
 The largest peak residual was `2.086162567138672e-7` FS, in 192 kHz anti-phase recovery at 200%.
 The largest RMS residual was `2.987490796650603e-8` FS, in 44.1 kHz anti-phase recovery at 200%.
 Reports retain input checksums, actual parameter readbacks, individual oracle errors, and the worst residual location.
@@ -672,7 +720,8 @@ with the repository Release/native-CPU configuration on 11 November 2026 recorde
   Recover `214.2 ± 8.0 ms`, neutral `81.7 ± 10.5 ms`, and mono input `102.7 ± 3.9 ms` complete-process wall time.
   The Recover run's separate last-run warmed callback total was `160.26 ms` across 4888 process calls.
 
-These are representative smoke observations, not a full statistical baseline or a C++ speed comparison.
+These are older reviewed-artifact smoke observations, not measurements of the current implementation,
+a full statistical baseline, or a C++ speed comparison.
 Criterion quick-mode confidence and occasional process-startup outliers limit their precision.
 The three retained packaged artifact sets are timestamped 03:00:14, 03:00:42, and 03:00:44
 UTC under this directory's ignored `target/benchmark/`.
@@ -683,6 +732,9 @@ Both binaries were built with Release commands before the `--no-build` measureme
 Artifacts explicitly record that they were reused rather than claiming the benchmark runner built them.
 
 ### Evidence and boundaries
+
+Passing results in this section describe the reviewed artifacts, not a fresh qualification of all current changes.
+Implemented source contracts and retained measurement evidence are distinct.
 
 Native tests cover complementary direct-convolution expectations, FFT convolution, exact delayed neutral samples,
 frequency isolation, gains/Width/Pan/Solo, quadrature response/recovery, finite tails, reset, chunk invariance,
@@ -762,8 +814,9 @@ The primary wrapper passes bounded Miri parameter/controller, atomic-publication
 Historical Miri coverage of the removed raw adapter is not substituted for those checks.
 Full FIR and native-library scenarios are native tests, not interpreted Miri coverage.
 
-This establishes a functional multiband Rust plugin, not full output parity with the C++ plugin,
-AU delivery, native Windows qualification, complete native accessibility, or preserved JUCE projects.
+This establishes a functional multiband Rust plugin with experimental AU delivery,
+not full output parity with the C++ plugin, complete AU host qualification,
+native Windows qualification, complete native accessibility, or preserved JUCE projects.
 The older GPUI measurements below are historical reference measurements, not Iced performance measurements.
 The Iced adapter carries the upstream `block 0.1.6` future-compatibility warning, which needs tracking before production.
 

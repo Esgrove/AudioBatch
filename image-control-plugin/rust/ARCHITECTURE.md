@@ -34,6 +34,9 @@ logical geometry, and exclusively admitted DSP used by each host adapter.
 Stopped preparation installs saved targets and allocates processing state before callbacks begin.
 [`host/component.rs`](crates/plugin/src/host/component.rs) implements the VST3 interfaces on one COM object.
 The 31 sound-parameter IDs, conversions, defaults, and metadata live in [`params.rs`](crates/plugin/src/params.rs).
+New host/editor edits use the C++ float `NormalisableRange` power skew and plain-unit snapping.
+Gain steps are 0.01 dB, Width steps are 0.01, and Recover/Pan steps are one percentage point.
+Crossovers have no grid. Detached recalls preserve legacy off-grid normalized values until explicitly edited.
 Controller callbacks and host restores never borrow mutable DSP history.
 
 [`AudioState`](crates/plugin/src/host/audio.rs) admits mutable DSP access through one atomic compare-exchange attempt.
@@ -57,6 +60,8 @@ Stopped destruction joins the worker.
 Each open editor owns one [analysis worker](crates/dsp/src/worker.rs).
 It also owns one cancellable [Iced executor](crates/plugin/src/iced_executor.rs).
 Both have independent shutdown ownership so native removal can join them even while retained editor state is borrowed.
+Preset filesystem operations use a separate caller-owned worker with detached request/completion values.
+Native close joins that worker independently of Iced program-state destruction.
 No process-global detached executor is created for an editor.
 The analysis worker is the sole consumer of the instance's audio queue.
 Capture enablement and the exclusive consumer claim are separate controls.
@@ -68,8 +73,13 @@ It does not create an unrelated standalone application window or replace the hos
 Ordinary parameter gestures call the retained host handler only on the UI thread,
 with handler locks released before invoking host code, including COM reference-count methods.
 Handler slots retain an `Arc` around the COM reference, so cloning under the lock cannot reenter a host `AddRef`.
-UI-only `IComponentHandler2::setDirty` notifications cover persistent display choices and accepted size changes
+UI-only `IComponentHandler2::setDirty` notifications cover persistent non-sound choices and accepted size changes
 without inventing sound-parameter gestures.
+[`host/notifications.rs`](crates/plugin/src/host/notifications.rs) coalesces VST3 latency changes
+into `restartComponent(kLatencyChanged)` calls from SDK-defined UI-thread `setupProcessing`
+and `setComponentHandler` entries.
+Delivery retains pending work without a handler, releases all plugin locks and DSP admission before calling the host,
+and bounds reentrant follow-up delivery. It does not rely on an editor or the component construction thread.
 
 [`host/view_deferred.rs`](crates/plugin/src/host/view_deferred.rs) coalesces host geometry changes.
 Cancellable native UI work applies them outside active Iced update borrows.
@@ -161,7 +171,9 @@ Measurement is optional and disabled offline, when its row is hidden, and on edi
 The editor expires stale readings using observed publication progress and a UI-side clock,
 with an allowance of at least 250 ms or two prepared maximum host blocks.
 There is no audio-thread clock call.
-Correlation presentation history is transient.
+[`correlation_display.rs`](crates/plugin/src/correlation_display.rs) owns transient display-only trend smoothing,
+recent extrema, and a fading range field. Numeric smoothing is optional and does not change measurement or audio.
+Correlation presentation history is not serialized.
 
 ## Analyzer transport and stream identity
 
@@ -234,8 +246,8 @@ Release is independent of tier count, arrival order, input chunking, and UI refr
 
 Projection supplies normalized position, bin-spacing-derived spread, linear-light weighted color, size, and emphasis.
 Frequency colors or phase-coherence colors share duration weighting and persistence compensation.
-The current editor uses logarithmic frequency projection and the default position curve.
-Pure projection helpers also support mel, but there is no editor mel control.
+The editor selects logarithmic or Mel frequency projection, shared by particles, axes, and crossover interaction.
+Validated midpoint/edge level-difference preferences configure the stereo-position curve.
 
 [`spectrogram.rs`](crates/plugin/src/spectrogram.rs) owns the Iced shader primitive and per-widget GPU history.
 [`spectrogram.wgsl`](crates/plugin/src/spectrogram.wgsl) implements the rendering passes:
@@ -244,8 +256,11 @@ Pure projection helpers also support mel, but there is no editor mel control.
 2. On ordinary resize, resample the previous current accumulation into the replacement GPU target.
 3. Fade retained linear energy exponentially using elapsed display time and the selected persistence.
 4. Add instanced Gaussian cores and halos with spacing-aware horizontal spread and weighted energy.
-5. Downsample through five reduced-resolution glow levels with a normalized 13-tap filter,
-   then tent-upsample additively and composite tone-mapped energy with the rounded plot background.
+5. Downsample through five reduced-resolution glow levels with a normalized 13-tap filter.
+   Copy the actual quarter-size field before additive glow upsampling for solid density contours.
+6. Tent-upsample glow additively and composite tone-mapped energy with the rounded plot background.
+   Solid mode uses bicubic reconstruction of that preserved field for layered contours,
+   with separate glow and sharp highlights rather than thresholding the accumulated bloom.
 
 Accumulation uses half-float textures and ping-pong targets.
 Zero-sized or invalid layouts allocate no history, and target dimensions are bounded by device limits and 4096 pixels.
@@ -259,14 +274,23 @@ Complete renderer/device-loss fallback is not implemented.
 
 [`state.rs`](crates/plugin/src/state.rs) validates and serializes detached JSON independently of host transport.
 [`host/state.rs`](crates/plugin/src/host/state.rs) provides VST3 stream transport,
-with a four-byte little-endian payload length preceding at most 4096 bytes.
+with a four-byte little-endian payload length preceding at most 16 KiB.
 CLAP streams use the same bounded codec. The AU wrapper stores the CLAP stream in its host property-list container.
-State version 3 stores normalized sound parameters, detached Pre/Post, persistence, contrast, and palette preferences,
-and the last host-accepted logical window dimensions.
-Versions 1 and 2 remain readable with fixed default dimensions, independently of the instance's current editor choices.
-Version 1 also supplies fixed default display preferences.
+State version 5 stores normalized parameters, A/B sounds and preset origins, complete layout preferences,
+extended display settings, and the last host-accepted logical window dimensions.
+Layout includes Link, toolbar/correlation visibility, compact bands, retained band height, spectrogram hiding,
+and the independent stop-analysis choice.
+Display includes Pre/Post, persistence, contrast, palette, Mel/solid modes, stereo-position curve,
+correlation numeric smoothing, and frame-rate visibility.
+Versions 1–4 remain readable. Versions 1 and 2 use fixed default geometry,
+and absent editor/layout fields use fixed defaults rather than the current instance's choices.
+Version 4 introduces native float-skew crossover normalization.
+Versions 1–3 convert their stored exponential-normalized crossovers through the original Hz domain,
+with float-precision bounds, while retaining non-crossover off-grid bits across recall and subsequent saves.
+This migration covers plugin state blobs only. It cannot translate external DAW-stored normalized frequency automation,
+which requires external remapping to preserve its original Hz values.
 Unknown versions, malformed fields, invalid values, and impossible stream progress are rejected.
-The complete detached document is validated before publishing any live sound or display values.
+The complete detached document, including comparisons and origins, is validated before publishing live values.
 
 State save/restore belongs off the audio thread and does not dispatch to or wait for the GUI.
 Publication uses atomics and does not mutate convolution history.
@@ -276,11 +300,30 @@ New views use that logical size for host negotiation and attachment, with explic
 Rejected resize requests do not change it.
 Restoring state affects subsequent views without synchronously resizing an open editor.
 Unrelated new instances retain the fixed default size.
-Live analyzer history, particles, GPU energy, correlation history, Link, and section layout choices are not serialized.
-Successful sound restores advance a generation observed by open editors.
+Live analyzer history, particles, GPU energy, correlation history, and Undo/Redo history are not serialized.
+[`editing.rs`](crates/plugin/src/editing.rs) owns bounded chronological local history
+and persistent A/B metadata behind a short non-audio mutex.
+Host automation never enters history or takes that mutex.
+Sound snapshots contain 25 controls, including Mono but excluding Solo, Delta, and Bypass audition settings.
+A/B selection, copy, and preset recall are local history commands,
+and active-slot capture samples authoritative atomics.
+Each preset origin stores identity, name, and the recalled sound baseline, not a filesystem path or accepted revision.
+Successful sound restores advance a generation observed by open editors and clear transient history/library bindings.
 Pending numeric drafts and gesture participants are cancelled, with generation checks after every reentrant host callback.
 A continuing UI operation cannot overwrite a newer recall, including a restore invoked by `beginEdit` or `performEdit`.
 The independent state format does not imply C++ project migration.
+
+[`user_presets.rs`](crates/plugin/src/user_presets.rs) owns the independent, bounded RS JSON preset codec and library.
+Rust formats share per-user application-data storage under `esgrove/ImageControl RS/Presets`, not the C++ XML library.
+The modal callout supports loading, Save/Save As, rename, delete, refresh, reconnect, and absolute-path import/export.
+Operations run off the UI/audio threads, and completion checks reject changed project, slot, or sound identities.
+Mutations and export revalidate the accepted revision and exact original bytes under a fail-fast process/thread lock.
+Writes use temporary files and atomic replacement, with no silent overwrite of stale selections.
+Import creates a fresh local identity without recalling sound. Export writes accepted saved bytes, not current edits,
+and refuses an existing destination.
+Project origins grant no mutation permission.
+Reconnect explicitly accepts a current library revision without recalling sound or replacing the project's baseline.
+No preset files are read during host state restore.
 
 [`editor.rs`](crates/plugin/src/editor.rs) composes ordinary controls and polls atomics and completed analysis.
 Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
@@ -293,13 +336,21 @@ Pre/Post and appearance settings are functional without creating host sound-para
 Embedded Regular, SemiBold, Bold, and Mono faces provide deterministic typography with explicit Iced line metrics.
 Band headings and value fields share consistent insets and alignment, and Solo artwork retains its larger click target.
 Expanded values and Output use ordinary Iced text inputs beside sliders.
+Compact values open an exact-value overlay through right-click, Enter on a focused control, or value double-click.
+Slider and crossover double-clicks reset their controls.
+Plot interaction supports individual crossovers, proportional whole-band movement, modifier gain drags and wheel edits,
+with linked source trims and fine adjustment.
+Shortcut help documents Undo/Redo, bypass/Delta, hover Solo, and navigation.
+Custom chrome exposes retained Tab focus and keyboard activation, including divider arrow adjustment.
+These input contracts do not establish native accessibility qualification.
 Drafts remain local during typing and incoming automation. Enter commits one balanced host gesture, Escape cancels,
 and focus loss commits valid text or discards invalid text.
 Unchanged drafts and typing reverted to its starting text never overwrite newer automation.
 The editor rechecks binding lifetime after reentrant host callbacks before publishing any parameter changes.
 Units, muted gain, and centered pan use the registry domains without admitting non-finite parameter values.
 The 31 sound parameters retain balanced host gestures, including linked source-trim gestures and interrupted teardown.
-Undo/Redo, A/B, and preset commands remain disabled rather than simulating missing services.
+Undo/Redo, A/B selection/copy, and preset commands use the shared non-audio editing service.
+Display settings expose analysis hiding/stopping, frame-rate diagnostics, and modal shortcut help.
 
 ## Verification and limits
 
@@ -333,6 +384,6 @@ and automation/render contention. Render try-admission does not establish dropou
 and custom spin waits require bounded contention diagnostics beyond RTSan.
 The AU identity `aufx / Egir / Esgr` is distinct from C++ `aufx / Egic / Esgr`.
 
-Remaining gates include native Windows qualification, complete AU host qualification, complete accessibility,
+Remaining gates include native Windows qualification, complete AU host qualification, native accessibility qualification,
 upstream widget-cache cleanup, device-loss handling, and arbitrary module-unload safety.
 The [evaluation](docs/rust-evaluation.md) separates dependency research and historical evidence from current code.
