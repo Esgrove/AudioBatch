@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -64,8 +65,40 @@ constexpr float LABEL_FONT_HEIGHT {11.0F};
 constexpr float LABEL_INSET {4.0F};
 /// Width of a frequency axis label, in pixels.
 constexpr float FREQUENCY_LABEL_WIDTH {40.0F};
-/// Frequencies with a grid line and a label.
-constexpr std::array<double, 10> GRID_FREQUENCIES {20, 50, 100, 200, 500, 1000, 2000, 5000, 10'000, 20'000};
+/// Logarithmic ticks retain bass detail and familiar high-frequency reference points.
+constexpr std::array<double, 12> LOG_GRID_FREQUENCIES {
+    20,
+    30,
+    50,
+    100,
+    200,
+    500,
+    1000,
+    2000,
+    5000,
+    10'000,
+    16'000,
+    20'000,
+};
+/// Mel ticks reduce crowded bass subdivisions and use the extra room above 1 kHz for finer reference lines.
+constexpr std::array<double, 16> MEL_GRID_FREQUENCIES {
+    20,
+    100,
+    200,
+    500,
+    1000,
+    2000,
+    3000,
+    4000,
+    6000,
+    8000,
+    10'000,
+    12'000,
+    14'000,
+    16'000,
+    18'000,
+    20'000,
+};
 /// Stereo positions with a grid line, from full left to full right.
 constexpr std::array<double, 5> GRID_POSITIONS {1.0, 0.5, 0.0, -0.5, -1.0};
 /// Labels of the grid positions.
@@ -322,7 +355,7 @@ void SpatialSpectrogramView::setPositionCurve(const StereoPositionCurve& curve)
     positionCurveSet = true;
 }
 
-/// Sets the display refresh rate and the GPU time per frame to show in the top-left corner, or hides them.
+/// Sets the display refresh rate and the GPU time per frame to show in the top-right corner, or hides them.
 /// Only the readout is repainted, and only when its text changes.
 void SpatialSpectrogramView::setFrameStatistics(
     const std::optional<double> rate,
@@ -460,14 +493,12 @@ std::array<bool, BAND_COUNT> SpatialSpectrogramView::mutedBands() const
     return muted;
 }
 
-/// Returns the area of the frame rate readout in the top-left corner of the plot.
+/// Returns the right-anchored frame rate readout area inside the plot's top-right corner.
 juce::Rectangle<float> SpatialSpectrogramView::framesPerSecondArea() const
 {
-    const auto plot = getPlotBounds();
-    const float positionLabelSpace = maximized ? POSITION_AXIS_LABEL_WIDTH + LABEL_INSET : 0.0F;
-    return {
-        plot.getX() + LABEL_INSET + positionLabelSpace, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT
-    };
+    const auto plot = getPlotBounds().reduced(LABEL_INSET);
+    const float width = std::min(FPS_LABEL_WIDTH, std::max(0.0F, plot.getWidth()));
+    return {plot.getRight() - width, plot.getY(), width, LABEL_FONT_HEIGHT};
 }
 
 /// Returns the band's independent Width target, regardless of its source trims.
@@ -735,13 +766,30 @@ void SpatialSpectrogramView::paintCrossovers(juce::Graphics& graphics, const Cro
     }
 }
 
+/// Selects immutable scale-specific ticks shared by grid lines and axis labels without changing frequency projection.
+std::span<const double> SpatialSpectrogramView::gridFrequencies() const
+{
+    switch (scale) {
+        case FrequencyScale::logarithmic:
+            return LOG_GRID_FREQUENCIES;
+        case FrequencyScale::mel:
+            return MEL_GRID_FREQUENCIES;
+    }
+    return LOG_GRID_FREQUENCIES;
+}
+
 /// Keeps outside frequency labels in their original gutter, or inside pills clear of the position-axis corner.
 juce::Rectangle<float> SpatialSpectrogramView::frequencyAxisLabelBounds(const double frequency) const
 {
     const auto plot = getPlotBounds();
     const float left = maximized ? plot.getX() + LABEL_INSET * 2.0F + POSITION_AXIS_LABEL_WIDTH : 0.0F;
     const float right = maximized ? plot.getRight() - LABEL_INSET : static_cast<float>(getWidth());
-    const float width = std::min(FREQUENCY_LABEL_WIDTH, std::max(0.0F, right - left));
+    // Inside pills use their actual text width so endpoint glyphs can sit close to the plot edge.
+    const float preferredWidth = maximized
+        ? juce::GlyphArrangement::getStringWidth(textFont(LABEL_FONT_HEIGHT), formatGridFrequency(frequency))
+            + PILL_PADDING * 2.0F
+        : FREQUENCY_LABEL_WIDTH;
+    const float width = std::min(preferredWidth, std::max(0.0F, right - left));
     const float height = maximized ? LABEL_FONT_HEIGHT + PILL_PADDING : FREQUENCY_GUTTER;
     const float top = maximized ? plot.getBottom() - LABEL_INSET - height : plot.getBottom();
     return {
@@ -773,19 +821,20 @@ void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
     graphics.setFont(textFont(LABEL_FONT_HEIGHT));
     graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(AXIS_LABEL_ALPHA));
     std::optional<juce::Rectangle<float>> previousLabel;
-    const auto lastLabel = frequencyAxisLabelBounds(GRID_FREQUENCIES.back());
-    for (const double frequency : GRID_FREQUENCIES) {
+    const auto frequencies = gridFrequencies();
+    const auto lastLabel = frequencyAxisLabelBounds(frequencies.back());
+    for (const double frequency : frequencies) {
         const auto text = formatGridFrequency(frequency);
         const auto label = frequencyAxisLabelBounds(frequency);
+        // Keep all grid lines but omit crowded labels in either layout, reserving space for the upper endpoint.
+        const auto spacedLabel = label.expanded(LABEL_INSET, 0.0F);
+        if ((previousLabel.has_value() && spacedLabel.intersects(*previousLabel))
+            || (frequency < frequencies.back() && spacedLabel.intersects(lastLabel)))
+        {
+            continue;
+        }
+        previousLabel = label;
         if (maximized) {
-            // Mel's low-frequency ticks can bunch together. Retain both endpoints without overlapping glyphs.
-            const auto spacedLabel = label.expanded(LABEL_INSET, 0.0F);
-            if ((previousLabel.has_value() && spacedLabel.intersects(*previousLabel))
-                || (frequency < GRID_FREQUENCIES.back() && spacedLabel.intersects(lastLabel)))
-            {
-                continue;
-            }
-            previousLabel = label;
             paintLabelPill(graphics, text, label.getCentre(), AXIS_LABEL_ALPHA);
         } else {
             graphics.drawText(text, label, juce::Justification::centred);
@@ -805,7 +854,7 @@ void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
     }
 }
 
-/// Paints the display refresh rate in the top-left corner of the plot when it is shown,
+/// Paints the display refresh rate in the top-right corner of the plot when it is shown,
 /// small and monospaced like a game's frame rate overlay, with the GPU time per frame when it is measured.
 void SpatialSpectrogramView::paintFramesPerSecond(juce::Graphics& graphics) const
 {
@@ -818,7 +867,7 @@ void SpatialSpectrogramView::paintFramesPerSecond(juce::Graphics& graphics) cons
     if (gpuFrameMilliseconds.has_value()) {
         text << " | " << juce::String(*gpuFrameMilliseconds, 1) << " ms GPU";
     }
-    graphics.drawText(text, framesPerSecondArea(), juce::Justification::centredLeft);
+    graphics.drawText(text, framesPerSecondArea(), juce::Justification::centredRight);
 }
 
 /// Says in the middle of the plot why no particles are drawn: rendering is bypassed, or the GPU renderer failed.
@@ -839,7 +888,7 @@ void SpatialSpectrogramView::paintGrid(juce::Graphics& graphics) const
     const auto plot = getPlotBounds();
     const auto lineColour = juce::Colour(palette::GREY_LIGHT);
     graphics.setColour(lineColour.withAlpha(GRID_ALPHA));
-    for (const double frequency : GRID_FREQUENCIES) {
+    for (const double frequency : gridFrequencies()) {
         graphics.drawVerticalLine(juce::roundToInt(frequencyToX(frequency)), plot.getY(), plot.getBottom());
     }
     for (std::size_t index = 0; index < GRID_POSITIONS.size(); ++index) {
