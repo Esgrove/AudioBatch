@@ -518,6 +518,7 @@ unsafe fn reference_handler<'a>(this: *mut FUnknown) -> &'a ReferenceHandler {
     unsafe { &*this.cast::<ReferenceHandler>() }
 }
 
+/// Rejects unsupported interface queries without retaining or exposing another fixture interface.
 unsafe extern "system" fn reference_query(_: *mut FUnknown, _: *const TUID, output: *mut *mut c_void) -> tresult {
     if !output.is_null() {
         // SAFETY: queryInterface provides a writable output slot.
@@ -525,6 +526,7 @@ unsafe extern "system" fn reference_query(_: *mut FUnknown, _: *const TUID, outp
     }
     kResultFalse
 }
+/// Counts a host retain and probes reentrant handler replacement without holding plugin locks.
 unsafe extern "system" fn reference_add(this: *mut FUnknown) -> u32 {
     // SAFETY: this interface belongs to the live raw fixture.
     let host = unsafe { reference_handler(this) };
@@ -533,6 +535,7 @@ unsafe extern "system" fn reference_add(this: *mut FUnknown) -> u32 {
     host.reenter();
     host.references.get()
 }
+/// Balances a host retain and probes replacement while the test still owns the fixture storage.
 unsafe extern "system" fn reference_release(this: *mut FUnknown) -> u32 {
     // SAFETY: this interface belongs to the live raw fixture.
     let host = unsafe { reference_handler(this) };
@@ -540,12 +543,15 @@ unsafe extern "system" fn reference_release(this: *mut FUnknown) -> u32 {
     host.reenter();
     host.references.get()
 }
+/// Accepts balanced gesture boundaries without affecting the reference-count reentry scenario.
 unsafe extern "system" fn reference_edit(_: *mut IComponentHandler, _: u32) -> tresult {
     kResultOk
 }
+/// Accepts parameter updates while keeping the fixture focused on reference-count callbacks.
 unsafe extern "system" fn reference_perform(_: *mut IComponentHandler, _: u32, _: f64) -> tresult {
     kResultOk
 }
+/// Accepts restart requests without introducing unrelated host behavior into the fixture.
 unsafe extern "system" fn reference_restart(_: *mut IComponentHandler, _: i32) -> tresult {
     kResultOk
 }

@@ -545,12 +545,13 @@ pub(super) fn shortcuts() -> Element<'static, Message> {
     .into()
 }
 
+/// Builds a display preference toggle without creating a sound-parameter gesture.
 fn settings_check(label: &str, checked: bool, message: Option<Message>) -> Element<'_, Message> {
     container(
         checkbox(checked)
             .label(label)
             .text_size(theme::LABEL_SIZE)
-            .size(16)
+            .size(theme::CHECKBOX_SIZE)
             .style(theme::check)
             .on_toggle_maybe(message.map(|message| move |_| message.clone())),
     )
@@ -558,6 +559,7 @@ fn settings_check(label: &str, checked: bool, message: Option<Message>) -> Eleme
     .into()
 }
 
+/// Separates settings groups with a shared heading baseline and following gap.
 fn settings_heading(label: &str) -> Element<'_, Message> {
     Column::new()
         .push(
@@ -630,6 +632,7 @@ fn preference_choice<'a>(
         .into()
 }
 
+/// Pairs a display preference slider with its formatted value without host sound automation.
 fn setting_slider(
     value: f32,
     range: std::ops::RangeInclusive<f32>,

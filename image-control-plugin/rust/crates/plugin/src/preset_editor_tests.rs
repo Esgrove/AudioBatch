@@ -10,6 +10,7 @@ use crate::editing::SoundSnapshot;
 use crate::editor::{EditorState, Message};
 use crate::params::{EditorBinding, EditorShutdown, GAIN_PARAMETER, Parameters, Snapshot};
 
+/// Simulates reentrant host close and restore callbacks while tracking preset worker ownership and writes.
 #[derive(Default)]
 struct Binding {
     shutdowns: RefCell<Vec<EditorShutdown>>,
