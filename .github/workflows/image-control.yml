@@ -185,19 +185,55 @@ jobs:
           uv run --script image-control-plugin/rust/tests/test_benchmark_script.py
           uv run --script image-control-plugin/rust/tests/test_install_script.py
 
+      # Build the shared pinned validator before either Rust profile, regardless of runner PATH contents.
+      - name: Build C++ parity host and pinned pluginval
+        working-directory: image-control-plugin
+        run: |
+          ./build.sh --test --build-type Release
+          cmake -S . -B cmake-build-release -DAUDIOBATCH_PLUGINVAL=ON
+          cmake --build cmake-build-release --config Release --target ImageControlParity ImageControl_pluginval
+          repository="$(git rev-parse --show-toplevel)"
+          validator_directory="$repository/.deps/pluginval-build/pluginval_artefacts/Release"
+          if [ "$RUNNER_OS" = macOS ]; then
+            validator_directory="$validator_directory/pluginval.app/Contents/MacOS"
+            validator="$validator_directory/pluginval"
+          else
+            validator="$validator_directory/pluginval.exe"
+          fi
+          test -x "$validator"
+          printf '%s\n' "$validator_directory" >> "$GITHUB_PATH"
+
       - name: Build and test Debug Rust VST3, CLAP, and macOS AU
         run: |
           ./build.sh --debug --test --validate
           ./test.sh
+          cargo test -p image-control-plugin-rs --example clap_host
+          cargo run -p image-control-plugin-rs --example clap_host -- --case clap-state-interaction --bundle \
+            "$(git rev-parse --show-toplevel)/rust/target/bundled/ImageControl RS.clap"
 
       - name: Build and test Release Rust VST3, CLAP, and macOS AU
         run: |
           ./build.sh --test --validate
           ./test.sh
+          cargo test -p image-control-plugin-rs --release --example clap_host
+          cargo run -p image-control-plugin-rs --release --example clap_host -- --case clap-state-interaction --bundle \
+            "$(git rev-parse --show-toplevel)/rust/target/bundled/ImageControl RS.clap"
           if [ "$RUNNER_OS" = macOS ]; then
             cargo run -p image-control-plugin-rs --example editor_reentry -- --bundle \
               "$(git rev-parse --show-toplevel)/rust/target/bundled/ImageControl RS.vst3"
           fi
+
+      # Invoke the exact pinned build directly. Do not accept an unrelated validator found on PATH.
+      - name: Gate Release VST3 with pinned pluginval strictness 10
+        timeout-minutes: 10
+        run: |
+          repository="$(git rev-parse --show-toplevel)"
+          validator="$repository/.deps/pluginval-build/pluginval_artefacts/Release/pluginval.app/Contents/MacOS/pluginval"
+          if [ "$RUNNER_OS" = Windows ]; then
+            validator="$repository/.deps/pluginval-build/pluginval_artefacts/Release/pluginval.exe"
+          fi
+          test -x "$validator"
+          "$validator" validate --strictness-level 10 "$repository/rust/target/bundled/ImageControl RS.vst3"
 
       - name: Qualify native CLAP and AU editors
         if: runner.os == 'macOS'
@@ -219,12 +255,6 @@ jobs:
           name: ImageControl-RS-${{ runner.os }}
           path: rust/target/bundled/ImageControl RS.*
           if-no-files-found: error
-
-      - name: Build C++ VST3 and parity host
-        working-directory: image-control-plugin
-        run: |
-          ./build.sh --test --build-type Release
-          cmake --build cmake-build-release --config Release --target ImageControlParity
 
       - name: Compare both packaged implementations
         run: |
