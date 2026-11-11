@@ -95,6 +95,13 @@ impl Default for DisplayPreferences {
 }
 
 impl DisplayPreferences {
+    /// Reports whether already-projected points may decay alongside points using these settings.
+    /// Live energy, contrast, position-curve, and presentation edits affect future work without reprojecting history.
+    #[must_use]
+    pub fn analysis_compatible(self, other: Self) -> bool {
+        self.color_mode == other.color_mode && self.mel_scale == other.mel_scale
+    }
+
     /// Rejects malformed preferences before any state publication occurs.
     #[must_use]
     pub fn is_valid(self) -> bool {
@@ -107,6 +114,42 @@ impl DisplayPreferences {
             && self.pan_edge_db.is_finite()
             && (12.0..=60.0).contains(&self.pan_edge_db)
             && f64::from(self.pan_edge_db) >= f64::from(self.pan_midpoint_db) + 3.0
+    }
+}
+
+/// Coherently published live preferences and a retained projection epoch, loaded exclusively off audio.
+///
+/// Compatible edits share the epoch. Every incompatible transition creates a fresh retained token,
+/// so an A-to-B-to-A projection change cannot revive stale completions through value equality or pointer reuse.
+#[derive(Debug)]
+pub struct DisplayConfiguration {
+    preferences: DisplayPreferences,
+    projection_epoch: Arc<()>,
+}
+
+impl DisplayConfiguration {
+    /// Creates an independent validated projection history for non-audio render clients.
+    #[must_use]
+    pub fn new(preferences: DisplayPreferences) -> Option<Self> {
+        preferences.is_valid().then(|| Self {
+            preferences,
+            projection_epoch: Arc::new(()),
+        })
+    }
+
+    /// Compares retained compatibility epochs rather than live values or replaceable snapshot pointers.
+    #[must_use]
+    pub fn analysis_matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.projection_epoch, &other.projection_epoch)
+    }
+}
+
+impl std::ops::Deref for DisplayConfiguration {
+    type Target = DisplayPreferences;
+
+    /// Borrows the complete immutable settings associated with this epoch.
+    fn deref(&self) -> &Self::Target {
+        &self.preferences
     }
 }
 
@@ -144,7 +187,7 @@ pub struct Monitoring {
     pub(crate) claimed: AtomicBool,
     pub(crate) status: AtomicU8,
     pub(crate) status_generation: AtomicU64,
-    preferences: ArcSwap<DisplayPreferences>,
+    preferences: ArcSwap<DisplayConfiguration>,
     pub(crate) correlation_enabled: AtomicBool,
     pub(crate) correlation_generation: AtomicU64,
     pub(crate) correlation_revision: AtomicU64,
@@ -163,7 +206,9 @@ impl Monitoring {
             claimed: AtomicBool::new(false),
             status: AtomicU8::new(AnalysisStatus::Disabled as u8),
             status_generation: AtomicU64::new(0),
-            preferences: ArcSwap::from_pointee(DisplayPreferences::default()),
+            preferences: ArcSwap::from_pointee(
+                DisplayConfiguration::new(DisplayPreferences::default()).expect("valid default preferences"),
+            ),
             correlation_enabled: AtomicBool::new(false),
             correlation_generation: AtomicU64::new(0),
             correlation_revision: AtomicU64::new(0),
@@ -223,38 +268,51 @@ impl Monitoring {
 
     /// Copies one coherent preference record. Only UI, state, and analysis workers load these snapshots.
     pub(crate) fn preferences(&self) -> DisplayPreferences {
-        **self.preferences.load()
+        self.preferences.load().preferences
     }
 
-    /// Retains a complete immutable record as a worker configuration identity, exclusively off audio.
-    pub(crate) fn preference_snapshot(&self) -> Arc<DisplayPreferences> {
+    /// Retains settings and their projection epoch in one atomic publication, exclusively off audio.
+    pub(crate) fn preference_snapshot(&self) -> Arc<DisplayConfiguration> {
         self.preferences.load_full()
     }
 
-    /// Rejects replaced records even between preference publication and the following source-generation increment.
-    /// Retaining the old `Arc` prevents pointer reuse from making a later publication appear unchanged.
-    pub(crate) fn preferences_match(&self, preferences: &Arc<DisplayPreferences>) -> bool {
-        Arc::ptr_eq(preferences, &self.preferences.load())
+    /// Rejects incompatible records even between publication and the following source-generation increment.
+    pub(crate) fn preferences_match(&self, preferences: &Arc<DisplayConfiguration>) -> bool {
+        preferences.analysis_matches(&self.preferences.load())
     }
 
     /// Publishes one complete validated record with retry-safe multiwriter compare-and-swap, exclusively off audio.
-    /// Unchanged and invalid values preserve both the snapshot identity and source generation.
-    /// Workers check the retained snapshot identity as well as source, since these publications are independent.
+    /// Epoch selection is recomputed against the actual CAS predecessor on every RCU retry.
+    /// Invalid and unchanged values preserve the snapshot.
+    /// Compatible live edits preserve the projection epoch and source.
     pub(crate) fn set_preferences(&self, preferences: DisplayPreferences) -> bool {
         if !preferences.is_valid() {
             return false;
         }
-        let previous = self.preferences.rcu(|current| {
-            if **current == preferences {
-                Arc::clone(current)
-            } else {
-                Arc::new(preferences)
-            }
-        });
-        if *previous != preferences {
+        if self.publish_preferences(preferences) {
             self.source.fetch_add(GENERATION_STEP, Ordering::AcqRel);
         }
         true
+    }
+
+    /// Atomically couples preferences and epoch. The caller separately invalidates audio for incompatible transitions.
+    /// Splitting that boundary allows deterministic tests of readers during an unfinished publication.
+    fn publish_preferences(&self, preferences: DisplayPreferences) -> bool {
+        let previous = self.preferences.rcu(|current| {
+            if current.preferences == preferences {
+                Arc::clone(current)
+            } else {
+                Arc::new(DisplayConfiguration {
+                    preferences,
+                    projection_epoch: if current.preferences.analysis_compatible(preferences) {
+                        Arc::clone(&current.projection_epoch)
+                    } else {
+                        Arc::new(())
+                    },
+                })
+            }
+        });
+        !previous.preferences.analysis_compatible(preferences)
     }
 }
 
@@ -318,10 +376,10 @@ impl crate::SharedState {
         self.monitoring.preferences()
     }
 
-    /// Retains immutable display preferences as a configuration identity. Call only off the audio thread.
-    /// Compare retained snapshots with `Arc::ptr_eq`, independently of the audio source generation.
+    /// Retains coherent live settings and their compatibility epoch. Call only off the audio thread.
+    /// Compare projection epochs with `DisplayConfiguration::analysis_matches`, alongside the source generation.
     #[must_use]
-    pub fn display_preferences_snapshot(&self) -> Arc<DisplayPreferences> {
+    pub fn display_preferences_snapshot(&self) -> Arc<DisplayConfiguration> {
         self.monitoring.preference_snapshot()
     }
 
@@ -465,8 +523,8 @@ mod tests {
             sender.send(()).expect("processing completion");
         });
         let completed = receiver.recv_timeout(Duration::from_secs(5));
-        assert_eq!(**preferences, DisplayPreferences::default());
-        assert_eq!(*retained, DisplayPreferences::default());
+        assert_eq!(***preferences, DisplayPreferences::default());
+        assert_eq!(**retained, DisplayPreferences::default());
         processing.join().expect("processing thread");
         completed.expect("audio must finish while old snapshots remain retained");
     }
@@ -481,7 +539,7 @@ mod tests {
             ..DisplayPreferences::default()
         };
         // Pause the writer at the exact publication boundary, before the source-generation increment.
-        shared.monitoring.preferences.store(std::sync::Arc::new(replacement));
+        assert!(shared.monitoring.publish_preferences(replacement));
         assert_eq!(shared.analysis_generation(), generation);
         assert!(!shared.monitoring.preferences_match(&retained));
         assert_eq!(shared.display_preferences(), replacement);
@@ -497,6 +555,100 @@ mod tests {
         shared.monitoring.source.fetch_add(GENERATION_STEP, Ordering::AcqRel);
         assert_ne!(shared.analysis_generation(), generation);
         assert!(!shared.monitoring.preferences_match(&retained));
+    }
+
+    #[test]
+    fn compatible_live_edits_preserve_epoch_and_invalid_values_preserve_snapshot() {
+        let shared = Imager::new().shared();
+        let generation = shared.analysis_generation();
+        let original = shared.display_preferences_snapshot();
+        let replacement = DisplayPreferences {
+            persistence_seconds: 1.25,
+            contrast: 0.875,
+            solid_rendering: true,
+            pan_midpoint_db: 6.0,
+            pan_edge_db: 18.0,
+            smooth_correlation: false,
+            show_fps: true,
+            ..**original
+        };
+        assert!(shared.set_display_preferences(replacement));
+        let current = shared.display_preferences_snapshot();
+        assert!(!std::sync::Arc::ptr_eq(&current, &original));
+        assert!(current.analysis_matches(&original));
+        assert_eq!(shared.analysis_generation(), generation);
+        assert_eq!(**current, replacement);
+        assert!(shared.set_display_preferences(replacement));
+        assert!(std::sync::Arc::ptr_eq(&current, &shared.display_preferences_snapshot()));
+        assert!(!shared.set_display_preferences(DisplayPreferences {
+            contrast: f32::NAN,
+            ..replacement
+        }));
+        assert!(std::sync::Arc::ptr_eq(&current, &shared.display_preferences_snapshot()));
+        assert_eq!(shared.analysis_generation(), generation);
+    }
+
+    #[test]
+    fn projection_roundtrip_rejects_old_epoch_before_any_source_increment() {
+        let shared = Imager::new().shared();
+        let generation = shared.analysis_generation();
+        let original = shared.display_preferences_snapshot();
+        let projection = DisplayPreferences {
+            mel_scale: true,
+            ..**original
+        };
+        assert!(shared.monitoring.publish_preferences(projection));
+        let intermediate = shared.display_preferences_snapshot();
+        assert!(!intermediate.analysis_matches(&original));
+        assert!(shared.monitoring.publish_preferences(**original));
+        let returned = shared.display_preferences_snapshot();
+        assert_eq!(**returned, **original);
+        assert_eq!(shared.analysis_generation(), generation);
+        assert!(
+            !returned.analysis_matches(&original),
+            "A-to-B-to-A must not revive retained A work"
+        );
+        assert!(!returned.analysis_matches(&intermediate));
+        assert!(!shared.monitoring.preferences_match(&original));
+    }
+
+    #[test]
+    fn concurrent_compatible_writers_share_one_coherent_epoch() {
+        let shared = Imager::new().shared();
+        let generation = shared.analysis_generation();
+        let original = shared.display_preferences_snapshot();
+        let first = DisplayPreferences {
+            persistence_seconds: 2.5,
+            contrast: 0.25,
+            ..**original
+        };
+        let second = DisplayPreferences {
+            persistence_seconds: 0.1,
+            contrast: 0.9,
+            show_fps: true,
+            ..**original
+        };
+        let start = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            for preferences in [first, second] {
+                let shared = &shared;
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    for _ in 0..2000 {
+                        assert!(shared.set_display_preferences(preferences));
+                    }
+                });
+            }
+            start.wait();
+            for _ in 0..4000 {
+                let snapshot = shared.display_preferences_snapshot();
+                assert!(snapshot.analysis_matches(&original));
+                assert!(**snapshot == **original || **snapshot == first || **snapshot == second);
+                assert_eq!(shared.analysis_generation(), generation);
+            }
+        });
+        assert_eq!(shared.analysis_generation(), generation);
     }
 
     #[test]

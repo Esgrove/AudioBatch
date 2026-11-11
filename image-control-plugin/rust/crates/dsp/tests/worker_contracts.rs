@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use image_control_dsp::{AnalysisTap, AnalysisWorker, DisplayPreferences, FrequencyScale, Imager};
 
 #[test]
-fn worker_applies_mel_projection_and_stereo_curve_after_preference_generation_changes() {
+fn worker_applies_projection_discontinuities_and_compatible_live_stereo_curve_edits() {
     let mut imager = Imager::new();
     assert!(imager.prepare(48_000.0));
     let shared = imager.shared();
@@ -17,16 +17,23 @@ fn worker_applies_mel_projection_and_stereo_curve_after_preference_generation_ch
         (true, 6.0, 18.0, 18.0, 0.005),
         (false, 24.0, 60.0, 24.0, 0.25),
     ] {
-        assert!(shared.set_display_preferences(DisplayPreferences {
+        let previous = shared.display_preferences();
+        let previous_generation = shared.analysis_generation();
+        let preferences = DisplayPreferences {
             mel_scale,
             pan_midpoint_db: midpoint,
             pan_edge_db: edge,
             ..DisplayPreferences::default()
-        }));
+        };
+        assert!(shared.set_display_preferences(preferences));
         let generation = shared.analysis_generation();
+        let compatible = previous.analysis_compatible(preferences);
+        assert_eq!(generation == previous_generation, compatible);
         let mut discarded = Vec::new();
         assert_eq!(worker.drain_batch(&mut discarded).generation, generation);
-        assert!(discarded.is_empty(), "old generation cannot survive preference changes");
+        if !compatible {
+            assert!(discarded.is_empty(), "old generation cannot survive projection changes");
+        }
         let quiet = 10.0_f32.powf(-difference / 20.0);
         imager.begin_block();
         for index in 0..4096 {
