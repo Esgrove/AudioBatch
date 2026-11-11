@@ -1,6 +1,6 @@
 //! Native slider interruption and modal background barriers preserve Iced's production widget behavior.
 
-use iced::advanced::widget::{Operation, tree};
+use iced::advanced::widget::{Id, Operation, operation::Focusable, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, renderer};
 use iced::widget::slider::{self, Slider};
 use iced::{Element, Event, Length, Pixels, Rectangle, Size, Theme, Vector, keyboard, mouse};
@@ -152,12 +152,136 @@ impl<Message, Renderer: iced::advanced::Renderer> Widget<Message, Theme, Rendere
 /// Native layout, pointer hit testing, keyboard increments, wheel steps, drawing, and operations remain authoritative.
 pub struct FocusSafeSlider<'a, Value, Message> {
     child: Slider<'a, Value, Message>,
+    id: Option<Id>,
+    on_release: Option<Message>,
+    on_numeric: Option<Message>,
+}
+
+/// Retains only adapter input state. The native child remains authoritative for values, defaults, and dragging.
+#[derive(Default)]
+struct SliderInteraction {
+    modifiers: keyboard::Modifiers,
+    last_click: Option<iced::advanced::mouse::Click>,
+    reset_pending: bool,
+    focused: bool,
+    keyboard_focus: bool,
+    window_inactive: bool,
+}
+
+/// Selects native event adaptations without reading or mirroring the slider's private state.
+#[derive(Default)]
+struct SliderDispatch {
+    modifiers: Option<keyboard::Modifiers>,
+    finish_reset: bool,
+    interrupt: bool,
+    numeric: bool,
+}
+
+impl SliderInteraction {
+    /// Tracks adapter-only input and chooses transient native modifiers for the current event.
+    fn prepare(
+        &mut self,
+        event: &Event,
+        cursor: mouse::Cursor,
+        bounds: Rectangle,
+        focusable: bool,
+        reset_enabled: bool,
+        numeric_enabled: bool,
+    ) -> SliderDispatch {
+        let mut dispatch = SliderDispatch::default();
+        let hovered = cursor.is_over(bounds);
+        match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => self.modifiers = *modifiers,
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if hovered => {
+                self.focused = focusable;
+                self.keyboard_focus = false;
+                if let Some(position) = cursor.position() {
+                    let click = iced::advanced::mouse::Click::new(position, mouse::Button::Left, self.last_click);
+                    self.last_click = Some(click);
+                    // Native defaults are private. Completion configuration marks reset-capable parameter sliders.
+                    let double = reset_enabled && matches!(click.kind(), iced::advanced::mouse::click::Kind::Double);
+                    self.reset_pending = double || self.modifiers.command();
+                    if double {
+                        dispatch.modifiers = Some(self.modifiers | keyboard::Modifiers::COMMAND);
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) if hovered && numeric_enabled => {
+                dispatch.numeric = true;
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(_)) => self.unfocus(),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                dispatch.finish_reset = std::mem::take(&mut self.reset_pending);
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { .. }) if hovered => {
+                dispatch.modifiers = Some(self.modifiers | keyboard::Modifiers::CTRL);
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key, modifiers, repeat, ..
+            }) if self.focused
+                && !self.window_inactive
+                && numeric_enabled
+                && !modifiers
+                    .intersects(keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT | keyboard::Modifiers::LOGO)
+                && matches!(
+                    key,
+                    keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space)
+                ) =>
+            {
+                dispatch.numeric = !repeat;
+            }
+            Event::Window(iced::window::Event::Unfocused) => {
+                dispatch.interrupt = true;
+                dispatch.finish_reset = std::mem::take(&mut self.reset_pending);
+                self.modifiers = keyboard::Modifiers::NONE;
+                self.last_click = None;
+                self.window_inactive = true;
+            }
+            Event::Window(iced::window::Event::Focused) => self.window_inactive = false,
+            _ => {}
+        }
+        dispatch
+    }
+}
+
+impl Focusable for SliderInteraction {
+    fn is_focused(&self) -> bool {
+        self.focused
+    }
+
+    fn focus(&mut self) {
+        self.focused = true;
+        self.keyboard_focus = true;
+    }
+
+    fn unfocus(&mut self) {
+        self.focused = false;
+        self.keyboard_focus = false;
+    }
 }
 
 impl<'a, Value: Copy + From<u8> + PartialOrd, Message: Clone> FocusSafeSlider<'a, Value, Message> {
     /// Adopts a fully configured native slider without introducing another value or gesture model.
     pub const fn new(child: Slider<'a, Value, Message>) -> Self {
-        Self { child }
+        Self {
+            child,
+            id: None,
+            on_release: None,
+            on_numeric: None,
+        }
+    }
+
+    /// Exposes an ordinary native-operation focus target without replacing the slider's input state.
+    pub fn id(mut self, id: impl Into<Id>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Gives native drag releases and synthesized default resets the same gesture completion message.
+    pub fn on_release(mut self, message: Message) -> Self {
+        self.child = self.child.on_release(message.clone());
+        self.on_release = Some(message);
+        self
     }
 
     /// Keeps the compact and expanded production builders' native height customization available.
@@ -173,19 +297,43 @@ impl<'a, Value: Copy + From<u8> + PartialOrd, Message: Clone> FocusSafeSlider<'a
     }
 }
 
-impl<'a, Value, Message, Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer>
+impl<Value: Copy + From<u8> + PartialOrd> FocusSafeSlider<'_, Value, crate::editor::Message> {
+    /// Lets compact controls request the parent's ordinary numeric overlay using its stable parameter id.
+    pub fn on_numeric(mut self, id: u32) -> Self {
+        self.on_numeric = Some(crate::editor::Message::NumericFocus(id));
+        if self.id.is_none() {
+            self.id = Some(format!("parameter-slider-{id}").into());
+        }
+        self
+    }
+}
+
+impl<'a, Value, Message: Clone, Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer>
     for FocusSafeSlider<'a, Value, Message>
 where
     Slider<'a, Value, Message>: Widget<Message, Theme, Renderer>,
 {
-    /// Uses exactly the native retained-state tag, without mirroring its private drag flags.
+    /// Separates adapter focus and click tracking from the native child's private drag state.
     fn tag(&self) -> tree::Tag {
-        Widget::<Message, Theme, Renderer>::tag(&self.child)
+        tree::Tag::of::<SliderInteraction>()
     }
 
-    /// Lets the native slider allocate its own private input state.
+    /// Retains adapter bookkeeping without copying private native slider fields.
     fn state(&self) -> tree::State {
-        Widget::<Message, Theme, Renderer>::state(&self.child)
+        tree::State::new(SliderInteraction::default())
+    }
+
+    /// Leaves native value and drag state in one unchanged child tree.
+    fn children(&self) -> Vec<tree::Tree> {
+        vec![tree::Tree::new(&self.child as &dyn Widget<Message, Theme, Renderer>)]
+    }
+
+    /// Preserves both native interaction and adapter focus through ordinary view rebuilds.
+    fn diff(&self, tree: &mut tree::Tree) {
+        tree.diff_children(&[&self.child as &dyn Widget<Message, Theme, Renderer>]);
+        if self.id.is_none() {
+            tree.state.downcast_mut::<SliderInteraction>().unfocus();
+        }
     }
 
     /// Preserves the native slider's size request.
@@ -200,7 +348,7 @@ where
 
     /// Returns the native slider bounds without inserting another layout node.
     fn layout(&mut self, tree: &mut tree::Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
-        self.child.layout(tree, renderer, limits)
+        self.child.layout(child_tree(tree), renderer, limits)
     }
 
     /// Preserves native widget operations instead of replacing the slider with a custom interaction model.
@@ -211,11 +359,19 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        self.child.operate(tree, layout, renderer, operation);
+        if let Some(id) = &self.id {
+            operation.focusable(
+                Some(id),
+                layout.bounds(),
+                tree.state.downcast_mut::<SliderInteraction>(),
+            );
+        }
+        self.child.operate(child_tree(tree), layout, renderer, operation);
     }
 
-    /// Sends the native release path on deactivation so later motion cannot restart a host gesture.
-    /// Clearing native modifier state also prevents a missed key-up from retaining fine-step or wheel modifiers.
+    /// Adapts ordinary wheel and double-click reset into native modifier-driven paths, restoring modifiers afterwards.
+    /// Keyboard focus routes native arrow increments without requiring the pointer to remain over the rail.
+    /// Deactivation releases native dragging and clears missed modifier releases.
     fn update(
         &mut self,
         tree: &mut tree::Tree,
@@ -227,25 +383,72 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        if matches!(event, Event::Window(iced::window::Event::Unfocused)) {
-            for interruption in [
-                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-                Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::NONE)),
-            ] {
-                self.child.update(
-                    tree,
-                    &interruption,
-                    layout,
-                    mouse::Cursor::Unavailable,
-                    renderer,
-                    clipboard,
-                    shell,
-                    viewport,
-                );
-            }
+        let state = tree.state.downcast_mut::<SliderInteraction>();
+        let focus_before = (state.focused, state.keyboard_focus, state.window_inactive);
+        let dispatch = state.prepare(
+            event,
+            cursor,
+            layout.bounds(),
+            self.id.is_some(),
+            self.on_release.is_some(),
+            self.on_numeric.is_some(),
+        );
+        if focus_before != (state.focused, state.keyboard_focus, state.window_inactive) {
+            shell.request_redraw();
         }
-        self.child
-            .update(tree, event, layout, cursor, renderer, clipboard, shell, viewport);
+        if dispatch.numeric
+            && let Some(message) = self.on_numeric.clone()
+        {
+            shell.publish(message);
+            shell.capture_event();
+            return;
+        }
+        let modifiers = state.modifiers;
+        let cursor = if dispatch.interrupt {
+            mouse::Cursor::Unavailable
+        } else if state.focused
+            && !state.window_inactive
+            && matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { .. }))
+        {
+            mouse::Cursor::Available(layout.bounds().center())
+        } else {
+            cursor
+        };
+        // Synthesized modifiers live only for this native dispatch. Shift remains authoritative for fine steps.
+        for adapted in [
+            dispatch
+                .interrupt
+                .then_some(Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))),
+            (dispatch.interrupt || dispatch.modifiers.is_some()).then(|| {
+                Event::Keyboard(keyboard::Event::ModifiersChanged(
+                    dispatch.modifiers.unwrap_or(modifiers),
+                ))
+            }),
+            Some(event.clone()),
+            dispatch
+                .modifiers
+                .map(|_| Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers))),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.child.update(
+                child_tree(tree),
+                &adapted,
+                layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
+        // Native command-click ends its drag immediately, so its default-reset path does not emit on_release itself.
+        if dispatch.finish_reset
+            && let Some(message) = self.on_release.clone()
+        {
+            shell.publish(message);
+        }
     }
 
     /// Draws the real native slider with its ordinary theme and retained state.
@@ -259,7 +462,23 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.child.draw(tree, renderer, theme, style, layout, cursor, viewport);
+        self.child
+            .draw(child_tree_ref(tree), renderer, theme, style, layout, cursor, viewport);
+        let state = tree.state.downcast_ref::<SliderInteraction>();
+        if state.focused && state.keyboard_focus && !state.window_inactive {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: layout.bounds().shrink(1.0),
+                    border: iced::Border {
+                        color: crate::editor::theme::GREY_MIDDLE_LIGHT.scale_alpha(0.55),
+                        width: 1.0,
+                        radius: 3.0.into(),
+                    },
+                    ..renderer::Quad::default()
+                },
+                iced::Color::TRANSPARENT,
+            );
+        }
     }
 
     /// Uses the native slider's pointer feedback after interrupted drags have been released.
@@ -271,12 +490,13 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.child.mouse_interaction(tree, layout, cursor, viewport, renderer)
+        self.child
+            .mouse_interaction(child_tree_ref(tree), layout, cursor, viewport, renderer)
     }
 }
 
-impl<'a, Value: 'a, Message: 'a, Renderer: iced::advanced::Renderer + 'a> From<FocusSafeSlider<'a, Value, Message>>
-    for Element<'a, Message, Theme, Renderer>
+impl<'a, Value: 'a, Message: Clone + 'a, Renderer: iced::advanced::Renderer + 'a>
+    From<FocusSafeSlider<'a, Value, Message>> for Element<'a, Message, Theme, Renderer>
 where
     Slider<'a, Value, Message>: Widget<Message, Theme, Renderer>,
 {
@@ -286,18 +506,18 @@ where
     }
 }
 
-/// Borrows the barrier's sole retained background child without changing its coordinate system.
+/// Borrows the retained native child without changing its coordinate system.
 fn child_tree(tree: &mut tree::Tree) -> &mut tree::Tree {
     tree.children
         .first_mut()
-        .expect("modal barrier retains one background child")
+        .expect("interaction wrapper retains one native child")
 }
 
-/// Borrows the barrier's sole child for unchanged native drawing and pointer queries.
+/// Borrows the retained child for unchanged native drawing and pointer queries.
 fn child_tree_ref(tree: &tree::Tree) -> &tree::Tree {
     tree.children
         .first()
-        .expect("modal barrier retains one background child")
+        .expect("interaction wrapper retains one native child")
 }
 
 #[cfg(test)]
@@ -517,6 +737,250 @@ mod tests {
         )
     }
 
+    /// Reuses the production parameter widget while testing its adapter's explicit completion and focus builders.
+    fn configured_slider(value: f64) -> FocusSafeSlider<'static, f64, Message> {
+        parameter_input(GAIN_PARAMETER, value)
+            .id("test-parameter-slider")
+            .on_release(Message::EndGesture)
+            .height(26.0)
+    }
+
+    #[test]
+    fn ordinary_and_shift_wheel_use_native_steps_without_retaining_synthetic_reset_modifiers() {
+        let mut driver = Driver::new(configured_slider(0.5).into());
+        let cursor = mouse::Cursor::Available(Point::new(100.0, 13.0));
+        let wheel = Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+        });
+        assert!(matches!(
+            driver.send(wheel.clone(), cursor).as_slice(),
+            [Message::Change(GAIN_PARAMETER, value)] if (*value - 0.501).abs() < f64::EPSILON
+        ));
+        let _ = driver.send(
+            Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::SHIFT)),
+            cursor,
+        );
+        assert!(matches!(
+            driver.send(wheel, cursor).as_slice(),
+            [Message::Change(GAIN_PARAMETER, value)] if (*value - 0.5011).abs() < f64::EPSILON
+        ));
+        // A normal click after wheel adaptation must position the rail, not take native command-click reset.
+        assert!(matches!(
+            driver.click(Point::new(300.0, 13.0)).as_slice(),
+            [Message::Change(GAIN_PARAMETER, value), Message::EndGesture] if (*value - 0.75).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn double_click_resets_native_default_and_closes_once_without_resuming_a_drag() {
+        let mut driver = Driver::new(configured_slider(0.5).into());
+        let position = Point::new(300.0, 13.0);
+        assert!(matches!(
+            driver.click(position).as_slice(),
+            [Message::Change(GAIN_PARAMETER, _), Message::EndGesture]
+        ));
+        let expected = crate::params::parameter_spec(GAIN_PARAMETER)
+            .expect("output registry metadata")
+            .default_normalized;
+        let messages = driver.click(position);
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::Change(GAIN_PARAMETER, value), Message::EndGesture] if (*value - expected).abs() < f64::EPSILON
+        ));
+        assert!(
+            driver
+                .send(
+                    Event::Mouse(mouse::Event::CursorMoved {
+                        position: Point::new(200.0, 13.0)
+                    }),
+                    mouse::Cursor::Available(Point::new(200.0, 13.0)),
+                )
+                .is_empty()
+        );
+        assert!(
+            driver
+                .send(
+                    Event::Window(iced::window::Event::Unfocused),
+                    mouse::Cursor::Unavailable,
+                )
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn command_reset_interruption_closes_once_and_slider_focus_routes_arrows_and_numeric_requests() {
+        let mut driver = Driver::new(configured_slider(0.5).on_numeric(GAIN_PARAMETER).into());
+        let cursor = mouse::Cursor::Available(Point::new(100.0, 13.0));
+        let _ = driver.send(
+            Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::COMMAND)),
+            cursor,
+        );
+        assert!(matches!(
+            driver
+                .send(Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)), cursor)
+                .as_slice(),
+            [Message::Change(GAIN_PARAMETER, _)]
+        ));
+        assert!(matches!(
+            driver
+                .send(
+                    Event::Window(iced::window::Event::Unfocused),
+                    mouse::Cursor::Unavailable
+                )
+                .as_slice(),
+            [Message::EndGesture]
+        ));
+        assert!(
+            driver
+                .send(Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)), cursor,)
+                .is_empty()
+        );
+        let _ = driver.send(Event::Window(iced::window::Event::Focused), mouse::Cursor::Unavailable);
+        driver.operate(Box::new(operation::focusable::focus("test-parameter-slider".into())));
+        assert!(driver.focused("test-parameter-slider"));
+        assert!(matches!(
+            driver.send(arrow_up(), mouse::Cursor::Unavailable).as_slice(),
+            [Message::Change(GAIN_PARAMETER, _)]
+        ));
+        for event in [
+            key(
+                keyboard::Key::Named(keyboard::key::Named::Enter),
+                keyboard::key::Code::Enter,
+                None,
+            ),
+            key(
+                keyboard::Key::Named(keyboard::key::Named::Space),
+                keyboard::key::Code::Space,
+                None,
+            ),
+        ] {
+            assert!(matches!(
+                driver.send(event, mouse::Cursor::Unavailable).as_slice(),
+                [Message::NumericFocus(GAIN_PARAMETER)]
+            ));
+        }
+        assert!(matches!(
+            driver
+                .send(Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)), cursor)
+                .as_slice(),
+            [Message::NumericFocus(GAIN_PARAMETER)]
+        ));
+    }
+
+    #[test]
+    fn chrome_native_traversal_stable_ids_skip_disabled_and_pointer_resize_and_activate_from_keyboard() {
+        let view = iced::widget::Column::new()
+            .push(Chrome::new(
+                Symbol::Settings,
+                Size::new(24.0, 24.0),
+                Some(Message::Settings),
+                false,
+            ))
+            .push(Chrome::new(Symbol::Undo, Size::new(24.0, 24.0), None, false))
+            .push(Chrome::new(
+                Symbol::Resize,
+                Size::new(24.0, 24.0),
+                Some(Message::Ignore),
+                false,
+            ))
+            .push(
+                Chrome::new(
+                    Symbol::Disclosure(false),
+                    Size::new(72.0, 20.0),
+                    Some(Message::Correlation),
+                    false,
+                )
+                .id("correlation-disclosure"),
+            )
+            .push(
+                Chrome::new(
+                    Symbol::Disclosure(true),
+                    Size::new(72.0, 20.0),
+                    Some(Message::CompactBands),
+                    false,
+                )
+                .id("band-controls-disclosure"),
+            );
+        let mut driver = Driver::new(view.into());
+        driver.operate(Box::new(operation::focusable::focus_next::<()>()));
+        assert!(driver.focused("settings"));
+        let enter = key(
+            keyboard::Key::Named(keyboard::key::Named::Enter),
+            keyboard::key::Code::Enter,
+            None,
+        );
+        assert!(matches!(
+            driver.send(enter, mouse::Cursor::Unavailable).as_slice(),
+            [Message::Settings]
+        ));
+        let tab = key(
+            keyboard::Key::Named(keyboard::key::Named::Tab),
+            keyboard::key::Code::Tab,
+            None,
+        );
+        assert!(driver.send(tab, mouse::Cursor::Unavailable).is_empty());
+        driver.operate(Box::new(operation::focusable::focus_next::<()>()));
+        assert!(driver.focused("correlation-disclosure"));
+        let space = key(
+            keyboard::Key::Named(keyboard::key::Named::Space),
+            keyboard::key::Code::Space,
+            None,
+        );
+        assert!(matches!(
+            driver.send(space, mouse::Cursor::Unavailable).as_slice(),
+            [Message::Correlation]
+        ));
+        driver.operate(Box::new(operation::focusable::focus_next::<()>()));
+        assert!(driver.focused("band-controls-disclosure"));
+        driver.operate(Box::new(operation::focusable::focus_previous::<()>()));
+        assert!(driver.focused("correlation-disclosure"));
+        assert!(!driver.focused("band-controls-disclosure"));
+        assert!(!driver.focused("undo"));
+        assert!(!driver.focused("resize-grip"));
+    }
+
+    #[test]
+    fn focused_divider_uses_screen_space_steps_and_preserves_host_modifier_shortcuts() {
+        let mut driver =
+            Driver::new(Chrome::new(Symbol::Divider, Size::new(200.0, 10.0), Some(Message::Ignore), false).into());
+        assert!(driver.send(arrow_up(), mouse::Cursor::Unavailable).is_empty());
+        driver.operate(Box::new(operation::focusable::focus("split-divider".into())));
+        for (named, code, expected) in [
+            (keyboard::key::Named::ArrowUp, keyboard::key::Code::ArrowUp, -8.0),
+            (keyboard::key::Named::ArrowDown, keyboard::key::Code::ArrowDown, 8.0),
+        ] {
+            let event = key(keyboard::Key::Named(named), code, None);
+            assert!(matches!(
+                driver.send(event.clone(), mouse::Cursor::Unavailable).as_slice(),
+                [Message::DividerNudge(delta)] if (*delta - expected).abs() < f32::EPSILON
+            ));
+            let mut fine = event.clone();
+            if let Event::Keyboard(keyboard::Event::KeyPressed { modifiers, .. }) = &mut fine {
+                *modifiers = keyboard::Modifiers::SHIFT;
+            }
+            assert!(matches!(
+                driver.send(fine, mouse::Cursor::Unavailable).as_slice(),
+                [Message::DividerNudge(delta)] if (*delta - expected.signum()).abs() < f32::EPSILON
+            ));
+            for modifier in [
+                keyboard::Modifiers::CTRL,
+                keyboard::Modifiers::ALT,
+                keyboard::Modifiers::LOGO,
+            ] {
+                let mut shortcut = event.clone();
+                if let Event::Keyboard(keyboard::Event::KeyPressed { modifiers, .. }) = &mut shortcut {
+                    *modifiers = modifier;
+                }
+                assert!(driver.send(shortcut, mouse::Cursor::Unavailable).is_empty());
+            }
+        }
+        let _ = driver.send(
+            Event::Window(iced::window::Event::Unfocused),
+            mouse::Cursor::Unavailable,
+        );
+        assert!(driver.send(arrow_up(), mouse::Cursor::Unavailable).is_empty());
+    }
+
     #[test]
     fn production_slider_deactivation_releases_mouse_and_touch_drags_before_any_following_motion() {
         for compact in [false, true] {
@@ -601,10 +1065,13 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert!(driver.send(wheel, cursor).is_empty());
+        assert!(matches!(
+            driver.send(wheel, cursor).as_slice(),
+            [Message::Change(GAIN_PARAMETER, value)] if (*value - 0.502).abs() < f64::EPSILON
+        ));
         assert!(matches!(
             driver.send(arrow_up(), cursor).as_slice(),
-            [Message::Change(GAIN_PARAMETER, value)] if (*value - 0.502).abs() < f64::EPSILON
+            [Message::Change(GAIN_PARAMETER, value)] if (*value - 0.503).abs() < f64::EPSILON
         ));
     }
 
