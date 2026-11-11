@@ -496,6 +496,8 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/EditingWorkflowTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CompactEditingWorkflowTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/PresetWorkflowTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PresetResultTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/PresetWorkflowTestSupport.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ControlLayoutTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ControlLayoutTestSupport.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/BandStripTests.cpp"
