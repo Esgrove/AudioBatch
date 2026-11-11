@@ -128,6 +128,15 @@ pub struct AnalysisSample {
     pub(crate) generation: u64,
 }
 
+/// Coherent source identity and sample rate accepted by one analysis-worker pass.
+#[derive(Clone, Copy, Debug)]
+pub struct MonitoringConfiguration {
+    /// Generation and capture flags sampled before choosing the analysis input.
+    pub(crate) source: u64,
+    /// Prepared sample rate in hertz for the same source identity.
+    pub(crate) sample_rate: f32,
+}
+
 /// Atomic audio configuration and off-audio preference storage, without callback-owned GUI references.
 pub struct Monitoring {
     pub(crate) source: AtomicU64,
@@ -166,13 +175,16 @@ impl Monitoring {
     }
 
     /// Returns one stable source/rate snapshot, or skips this pass during concurrent publication.
-    pub(crate) fn configuration(&self) -> Option<(u64, f32)> {
+    pub(crate) fn configuration(&self) -> Option<MonitoringConfiguration> {
         let before = self.source.load(Ordering::Acquire);
         if before & RATE_UNSTABLE_FLAG != 0 {
             return None;
         }
-        let rate = f32::from_bits(self.rate.load(Ordering::Acquire));
-        (before == self.source.load(Ordering::Acquire)).then_some((before, rate))
+        let sample_rate = f32::from_bits(self.rate.load(Ordering::Acquire));
+        (before == self.source.load(Ordering::Acquire)).then_some(MonitoringConfiguration {
+            source: before,
+            sample_rate,
+        })
     }
 
     /// Publishes rate on the serialized preparation owner, never concurrently with audio processing.
@@ -390,6 +402,24 @@ mod tests {
     use crate::Imager;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
+
+    /// A worker snapshot couples the exact prepared rate with its source and rejects an incomplete publication.
+    #[test]
+    fn configuration_reports_stable_source_and_sample_rate() {
+        let monitoring = super::Monitoring::new();
+        let initial = monitoring.configuration().expect("initial stable configuration");
+        assert_eq!(initial.source, monitoring.source.load(Ordering::Acquire));
+        assert_eq!(initial.sample_rate.to_bits(), 48_000.0_f32.to_bits());
+
+        monitoring.set_rate(96_000.0);
+        let prepared = monitoring.configuration().expect("prepared stable configuration");
+        assert_eq!(prepared.source, monitoring.source.load(Ordering::Acquire));
+        assert_ne!(prepared.source, initial.source);
+        assert_eq!(prepared.sample_rate.to_bits(), 96_000.0_f32.to_bits());
+
+        monitoring.source.fetch_or(super::RATE_UNSTABLE_FLAG, Ordering::AcqRel);
+        assert!(monitoring.configuration().is_none());
+    }
 
     #[test]
     fn missing_display_fields_restore_fixed_defaults() {

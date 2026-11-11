@@ -53,10 +53,12 @@ fn prepared_audio_is_bit_exact_in_both_buffer_modes() {
         .collect();
     for in_place in [false, true] {
         let instance = Instance::new();
-        let (latency, tail) = instance
+        let prepared = instance
             .prepare(48_000.0, 2, true, frames as u32)
             .expect("valid contract setup");
-        assert_eq!((latency, tail), (4352, 4096));
+        assert_eq!(prepared.latency_samples, 4352);
+        assert_eq!(prepared.tail_samples, 4096);
+        let latency = prepared.latency_samples;
         let mut left = if in_place {
             input_left.clone()
         } else {

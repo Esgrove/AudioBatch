@@ -310,7 +310,7 @@ impl IAudioProcessorTrait for Component {
             return kResultFalse;
         }
         // Preparation may allocate and design kernels, but occurs before real-time callbacks begin.
-        let Some((latency, tail)) = self.instance.prepare(
+        let Some(prepared) = self.instance.prepare(
             setup.sampleRate,
             self.arrangement.load(Ordering::Relaxed).count_ones() as usize,
             setup.processMode == to_i32(ProcessModes_::kOffline),
@@ -318,13 +318,13 @@ impl IAudioProcessorTrait for Component {
         ) else {
             return kResultFalse;
         };
-        let previous_latency = self.latency_samples.swap(latency, Ordering::Relaxed);
-        self.tail_samples.store(tail, Ordering::Relaxed);
+        let previous_latency = self.latency_samples.swap(prepared.latency_samples, Ordering::Relaxed);
+        self.tail_samples.store(prepared.tail_samples, Ordering::Relaxed);
         self.maximum_frames.store(setup.maxSamplesPerBlock, Ordering::Relaxed);
         self.shared.set_maximum_block_frames(setup.maxSamplesPerBlock as u32);
         self.shared.set_processing_active(false);
         self.shared.invalidate_monitoring();
-        if previous_latency != latency {
+        if previous_latency != prepared.latency_samples {
             self.latency_notifications.request();
         }
         // SAFETY: ivstaudioprocessor.h annotates setupProcessing as UI-thread, matching restartComponent.

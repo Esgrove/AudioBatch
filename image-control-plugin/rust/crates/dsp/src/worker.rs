@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::monitoring::{AnalysisSample, capture_enabled};
+use crate::monitoring::{AnalysisSample, MonitoringConfiguration, capture_enabled};
 use crate::particles::ParticleBuilder;
 use crate::{AnalysisStatus, DisplayPreferences, SharedState, SpatialAnalyzer, SpatialParticle};
 
@@ -184,7 +184,11 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
     let mut builder = ParticleBuilder::default();
     let mut preferences = shared.monitoring.preference_snapshot();
     while !stop.load(Ordering::Acquire) {
-        let Some((source, rate)) = shared.monitoring.configuration() else {
+        let Some(MonitoringConfiguration {
+            source,
+            sample_rate: rate,
+        }) = shared.monitoring.configuration()
+        else {
             thread::park_timeout(POLL_INTERVAL);
             continue;
         };

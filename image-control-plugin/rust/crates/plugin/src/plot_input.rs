@@ -45,6 +45,13 @@ pub(super) struct Interaction {
     epoch: u64,
 }
 
+/// Crossover marker or whole band owning hover, including a retained drag beyond the plot.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct HoverTarget {
+    pub(super) marker: Option<usize>,
+    pub(super) band: Option<usize>,
+}
+
 /// Separates hover notifications from capture, so passive motion does not block global shortcuts.
 #[derive(Default)]
 pub(super) struct Outcome {
@@ -125,8 +132,8 @@ impl Interaction {
             Event::Mouse(mouse::Event::CursorMoved { position }) => mouse::Cursor::Available(*position),
             _ => cursor,
         };
-        let (_, band) = self.hover(hover_cursor, bounds, crossovers, scale, epoch);
-        self.publish_hover(band, &mut result);
+        let hovered = self.hover(hover_cursor, bounds, crossovers, scale, epoch);
+        self.publish_hover(hovered.band, &mut result);
         result
     }
 
@@ -314,13 +321,19 @@ impl Interaction {
         crossovers: [f64; 3],
         scale: FrequencyScale,
         epoch: u64,
-    ) -> (Option<usize>, Option<usize>) {
+    ) -> HoverTarget {
         if self.epoch == epoch
             && let Some(drag) = self.drag
         {
             return match drag.kind {
-                DragKind::Crossover(index) => (Some(index), None),
-                DragKind::Band(band) | DragKind::Gain(band, _) => (None, Some(band)),
+                DragKind::Crossover(index) => HoverTarget {
+                    marker: Some(index),
+                    band: None,
+                },
+                DragKind::Band(band) | DragKind::Gain(band, _) => HoverTarget {
+                    marker: None,
+                    band: Some(band),
+                },
             };
         }
         let crossover = hit_test(cursor, bounds, crossovers, scale);
@@ -331,7 +344,10 @@ impl Interaction {
         } else {
             None
         };
-        (crossover, band)
+        HoverTarget {
+            marker: crossover,
+            band,
+        }
     }
 
     /// Mirrors reference cursor priority: marker resize, gain resize, then whole-band hand.
@@ -343,14 +359,14 @@ impl Interaction {
         scale: FrequencyScale,
         epoch: u64,
     ) -> mouse::Interaction {
-        let (marker, band) = self.hover(cursor, bounds, crossovers, scale, epoch);
-        if marker.is_some() {
+        let hovered = self.hover(cursor, bounds, crossovers, scale, epoch);
+        if hovered.marker.is_some() {
             mouse::Interaction::ResizingHorizontally
         } else if self.epoch == epoch && self.drag.is_some_and(|drag| matches!(drag.kind, DragKind::Gain(..)))
-            || (band.is_some() && (mid_modifier(self.modifiers) || self.modifiers.alt()))
+            || (hovered.band.is_some() && (mid_modifier(self.modifiers) || self.modifiers.alt()))
         {
             mouse::Interaction::ResizingVertically
-        } else if band.is_some() {
+        } else if hovered.band.is_some() {
             if self.drag.is_some() {
                 mouse::Interaction::Grabbing
             } else {

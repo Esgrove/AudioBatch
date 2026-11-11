@@ -144,7 +144,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for AudioProcessor<'a>
             return Err(PluginError::Message("Invalid CLAP block-size range"));
         }
         let channels = main_thread.channels.get();
-        let (latency, tail) = shared
+        let prepared = shared
             .instance
             .prepare(
                 config.sample_rate,
@@ -153,7 +153,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for AudioProcessor<'a>
                 config.max_frames_count,
             )
             .ok_or(PluginError::Message("Could not prepare ImageControl audio"))?;
-        shared.latency.store(latency, Ordering::Relaxed);
+        shared.latency.store(prepared.latency_samples, Ordering::Relaxed);
         shared.active.store(true, Ordering::Release);
         if let Some(extension) = main_thread.host.get_extension::<HostLatency>() {
             extension.changed(&main_thread.host);
@@ -162,7 +162,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for AudioProcessor<'a>
             shared,
             channels,
             maximum_frames: config.max_frames_count,
-            tail,
+            tail: prepared.tail_samples,
         })
     }
 
