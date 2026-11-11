@@ -41,6 +41,8 @@ The DSP uses JUCE buffers, FFTs, smoothers, and threads, but does not access com
 `SpatialAnalyzer` knows neither the editor nor the renderer.
 `SpectrogramParticleBuilder` converts analysis into graphics data without a component or graphics context.
 Only `SpectrogramRenderer` implements the OpenGL backend.
+Its GLSL programs live in `src/ui/shaders/` with stage-specific extensions.
+`ImageControlAssets` embeds those files during the build, so the renderer needs no runtime shader files.
 Shader uniform locations are cached for each linked program and rebuilt with the context.
 Band-response overlay geometry is cached by plot bounds, frequency scale, and ordered crossovers,
 so hover opacity changes reuse the paths.

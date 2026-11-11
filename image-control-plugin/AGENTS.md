@@ -154,6 +154,10 @@ Treat a change to any of them as a deliberate compatibility decision, and test i
   instead of SFINAE or `std::enable_if`.
 - Keep the DSP independent of components and OpenGL,
   `SpatialAnalyzer` independent of the editor and the renderer, and OpenGL code in `SpectrogramRenderer` only.
+- Keep GLSL programs in `src/ui/shaders/` as `.vert` and `.frag` files, embedded by `ImageControlAssets` at build time.
+  Keep Rust WGSL in its own `.wgsl` file and load it with `include_str!`.
+  Never maintain shader programs as inline C++ or Rust strings or read them from disk at runtime.
+  Follow the root shader-source rules and include GLSL in the plugin's clang-format checks.
 - Keep shared helpers in `Parameters.*` or the file of their topic rather than duplicating them in components.
 - Preserve DSP operation order, precision, and rounding when optimizing.
   Do not substitute approximate constants, reciprocals, or fast math without verification.
