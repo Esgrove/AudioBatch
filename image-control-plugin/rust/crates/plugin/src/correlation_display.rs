@@ -1,11 +1,6 @@
 //! UI-owned correlation history matching C++ `BandCorrelationMeter`'s trend, extrema, and soft range field.
 //! All storage is fixed and updates allocate nothing or acquire locks. Audio publication stays outside this module.
 
-#![allow(
-    clippy::suboptimal_flops,
-    reason = "Keep C++ BandCorrelationMeter evaluation order, precision, and independent analytical expectations"
-)]
-
 /// Fixed spatial resolution, from signed correlation -1 through +1 inclusive.
 pub const RANGE_INTENSITY_SAMPLES: usize = 129;
 /// Shortest supported trend time constant and recent-range window, in seconds.
@@ -167,6 +162,10 @@ impl MeterHistory {
     }
 
     /// Records every valid refresh, retaining same-bucket extrema and selecting the requested range window.
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Preserves the reference meter's trend evaluation order and precision"
+    )]
     fn advance_history(&mut self, value: f32, elapsed_seconds: f64, persistence_seconds: f64) {
         self.history_seconds += elapsed_seconds;
         self.reading.trend = Some(self.reading.trend.map_or(value, |trend| {
@@ -233,6 +232,10 @@ impl MeterHistory {
 
     /// Rebuilds the C++ field from newest to oldest with its covered-interval pruning and feather constant.
     /// Independent extreme timestamps avoid bucket-boundary opacity steps or a release tail beyond Persistence.
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Preserves the reference meter's opacity and feather evaluation order"
+    )]
     fn update_range_intensity(&mut self, live: f32, persistence_seconds: f64) {
         let mut field = [0.0_f32; RANGE_INTENSITY_SAMPLES];
         let mut minimum_covered = live;
@@ -326,6 +329,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn analytical_time_constant_and_half_life() {
         let persistence = 0.6;
         let mut meter = MeterHistory::default();
@@ -341,6 +348,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn held_response_is_refresh_invariant_including_irregular_steps() {
         let persistence = 0.6;
         let duration = 1.2_f64;
@@ -400,6 +411,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Preserves the independently chosen bucket-boundary timing"
+    )]
     fn extrema_expiry_is_never_early_and_at_most_one_bucket_late() {
         let persistence = 0.1;
         for phase in [0.125, 0.375, 0.625, 0.875] {
@@ -462,6 +477,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn range_field_fades_analytically_to_zero_without_a_release_tail() {
         let mut meter = MeterHistory::default();
         meter.update(Some(-1.0), 0.0, 0.8);
@@ -489,6 +508,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn fading_edges_are_independent_and_match_cpp_spatial_feather() {
         let mut meter = MeterHistory::default();
         meter.update(Some(-1.0), 0.0, 1.0);
@@ -519,6 +542,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn persistence_is_clamped_or_defaults_when_nonfinite() {
         for (supplied, effective) in [
             (-100.0, 0.05),
@@ -598,6 +625,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn zero_and_exactly_three_seconds_are_valid_elapsed_endpoints() {
         for elapsed in [0.0, -0.0, 3.0] {
             let mut meter = MeterHistory::default();
@@ -608,6 +639,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn finite_out_of_range_readings_are_clamped_before_history() {
         for sign in [-1.0, 1.0] {
             let mut meter = MeterHistory::default();
@@ -678,6 +713,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::suboptimal_flops,
+        reason = "Keeps independent analytical expectations in unfused arithmetic"
+    )]
     fn range_field_matches_independent_coverage_over_repeated_ring_wraps() {
         let mut meter = MeterHistory::default();
         let mut observations = VecDeque::new();
