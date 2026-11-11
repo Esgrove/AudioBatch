@@ -123,6 +123,9 @@ cmake --build ../cmake-build-release --config Release --target ImageControlParit
 # Preallocated production DSP/analysis benchmarks, with preparation measured separately.
 cargo bench -p image-control-dsp --bench dsp -- --quick
 
+# Production GPU spectrogram: packing, submission, and completed-work Criterion groups.
+cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram
+
 # Complete-process hyperfine runs with separate warmed-callback diagnostics.
 ./benchmark.sh --case recover --frames 960000 --runs 5 --warmup 1
 ```
@@ -134,6 +137,12 @@ Peak residual must stay below `1e-5` full scale and RMS residual below `1e-6`, w
 Reports live under the shared target's `image-control-parity/` directory.
 Benchmark artifacts include exact binary hashes, compiler/source identity, workload, checksums, and machine metadata.
 Run timings with other builds idle. There is no implied speedup without a matched baseline.
+The `spectrogram` Criterion target uses the native GPU without a host window.
+Cargo's bench profile inherits Release with full optimization, LTO, and one codegen unit.
+The repository enables `target-cpu=native`.
+Measured entry points reject development, non-opt-level-3, or non-native artifacts.
+Its completed-work group includes bounded batch completion, not physical display FPS or exclusive GPU timestamps.
+Filter it with `-- 'completed_gpu_work/1280x720/particles/4096$' --quick` for a short single-case run.
 See [the evaluation](docs/rust-evaluation.md#cross-implementation-and-performance-evidence) for measured scope
 and limitations.
 

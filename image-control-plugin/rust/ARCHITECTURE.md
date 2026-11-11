@@ -200,11 +200,13 @@ No control thread resets FIFO indices or becomes a second consumer.
 
 The worker examines at most one queue capacity per pass in 4096-frame chunks,
 checking cancellation and source identity between chunks.
-It retains the `Arc<DisplayPreferences>` identity as well as the source token,
-rechecking both before applying settings, publishing completions, and draining batches into the UI.
-A preference swap can precede source invalidation, so source generation alone cannot reject mixed old/new frames.
-Retaining the `Arc` also prevents pointer reuse from disguising a replaced configuration.
-Old frames are discarded, and a configuration change clears analyzer, reference, and pending-particle history.
+It retains a coherently published `DisplayConfiguration` with the source token.
+A retained projection epoch changes for incompatible frequency-scale or palette edits,
+including A-to-B-to-A transitions.
+The worker and GPU recheck that epoch before accepting completed work, independently of stream generation publication.
+Compatible Persistence, Contrast, stereo-position, Solid, and diagnostic edits retain the epoch and existing energy.
+They apply at coherent worker boundaries without resetting FFT history, its clock, or the adaptive level reference.
+Source discontinuities and incompatible projection changes discard old work and clear the appropriate history.
 Completed batches carry generation and availability even when empty, allowing silent GPU clears.
 Display overflow retains the newest bounded tail, with at most 65536 particles per publication/upload stage.
 
@@ -294,7 +296,9 @@ Its detached envelope uses `Snapshot` for normalized parameters,
 `AnalysisTap` for Pre/Post, and `DisplayPreferences` directly, without duplicate mirrors or migration codecs.
 It also stores A/B sounds and preset origins, complete layout preferences, and host-accepted logical window dimensions.
 Layout includes Link, toolbar/correlation visibility, compact bands, retained band height, spectrogram hiding,
-and the independent stop-analysis choice.
+the independent stop-analysis choice, and maximized plot geometry.
+Maximizing uses the two-unit panel inset with inside-axis labels,
+without changing control visibility or window dimensions.
 Display includes persistence, contrast, palette, Mel/solid modes, stereo-position curve,
 correlation numeric smoothing, and frame-rate visibility.
 Absent current-schema fields use fixed defaults rather than the current instance's choices.
@@ -343,9 +347,21 @@ Project origins grant no mutation permission.
 Reconnect explicitly accepts a current library revision without recalling sound or replacing the project's baseline.
 No preset files are read during host state restore.
 
-[`editor.rs`](crates/plugin/src/editor.rs) composes ordinary controls and polls atomics and completed analysis.
+[`editor.rs`](crates/plugin/src/editor.rs) composes ordinary controls
+and observes external changes through [`editor_refresh.rs`](crates/plugin/src/editor_refresh.rs).
+Ordinary polling emits application updates only for changed values, active preset/gesture work, or diagnostic windows.
+The retained spectrogram drains completed analysis directly on native redraws,
+and retained correlation widgets sample publications and advance history without rebuilding the control tree.
+The worker wakes from the display cadence with bounded fallback draining when frames pause.
+On macOS, the pinned Iced/baseview integration forwards redraw requests to baseview's existing view-bound display link.
+Polling and resize request native frames rather than presenting through a competing timer.
+Windows retains compatibility scheduling until its backend's fixed redraw timer is separately qualified.
 Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
-Vector icons, hover disclosures, a separate controls margin, and compact band values replace text-symbol approximations.
+The comparison/preset toolbar moves into available header space without changing its saved narrow-layout visibility choice.
+All frequency ranges share the band-title row only when every measured heading fits, otherwise all use a second row.
+Antialiased vector paths draw response guides, continuous under-curve fills, and control icons.
+Response geometry is cached by plot bounds, scale, and crossovers, with tessellation retained for hover choices.
+Hover disclosures, a separate controls margin, and compact band values preserve quiet interaction targets.
 Settings appears as a modal callout without reallocating the plot or moving the parameter controls.
 The complete background widget tree is excluded from focus operations and pointer, wheel, keyboard, and touch input
 while it is open.
@@ -369,6 +385,8 @@ Units, muted gain, and centered pan use the registry domains without admitting n
 The 31 sound parameters retain balanced host gestures, including linked source-trim gestures and interrupted teardown.
 Undo/Redo, A/B selection/copy, and preset commands use the shared non-audio editing service.
 Display settings expose analysis hiding/stopping, frame-rate diagnostics, and modal shortcut help.
+The top-right FPS number counts successful spectrum command encoding over a half-second window.
+It is neither GPU-completion timing nor physical presentation evidence.
 
 ## Verification and limits
 
@@ -389,6 +407,11 @@ Recover compares the shared 0–200% domain, including the 200% endpoint and aut
 An opt-in Rust integration tier and `parity.sh` require complete counterpart selection
 and preserve per-case JSON reports.
 Criterion and hyperfine measure preallocated DSP and actual packaged processing separately from functional validation.
+The plugin's `spectrogram` Criterion target reuses warmed production GPU resources through `PreparedRenderer`.
+It separates particle packing, CPU submission, and completed offscreen work, with completion bounded to 32-frame batches.
+Device setup, shader compilation, immutable workload generation, and validation are outside measured intervals.
+It disables timestamp instrumentation, so native timestamp capability does not determine whether Criterion can run.
+Neither submission timing nor completed offscreen work establishes physical presentation cadence.
 
 Native GPU tests execute real particle, fade, bloom, generation-clear, and resize passes with independent histories.
 They establish resource and pass contracts, not screenshot or pixel-golden equivalence.
