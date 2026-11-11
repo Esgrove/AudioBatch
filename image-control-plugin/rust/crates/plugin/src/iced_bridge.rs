@@ -166,7 +166,10 @@ impl Editor {
                 f64::from(crate::editor_geometry::MAX_EDITOR_SIZE.1),
             )))
             .with_poll_interval(DISPLAY_INTERVAL)
-            .with_always_redraw(true);
+            // macOS uses baseview's existing NSView display link.
+            // Windows keeps compatibility scheduling because baseview's native redraw source is a fixed 15 ms timer.
+            .with_native_frame_scheduling(cfg!(target_os = "macos"))
+            .with_always_redraw(!cfg!(target_os = "macos"));
         let host = Host::new().with_callbacks(EditorHost {
             binding: Rc::clone(&binding),
             open: Rc::clone(&open),

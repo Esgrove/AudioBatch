@@ -15,6 +15,16 @@ default = ["editor", "vst3", "clap"]
 clap = ["dep:clack-plugin", "dep:clack-extensions", "dep:crossbeam-queue"]
 editor = ["dep:iced_baseview", "dep:iced_program", "dep:iced_widget", "dep:baseview", "dep:fragile"]
 vst3 = []
+render-benchmark = ["editor", "dep:sha2"]
+
+[[example]]
+name = "render_benchmark"
+required-features = ["render-benchmark"]
+
+[[bench]]
+name = "spectrogram"
+harness = false
+required-features = ["render-benchmark"]
 
 [dependencies]
 arc-swap = "1.9.5"
@@ -25,13 +35,14 @@ clack-plugin = { workspace = true, optional = true }
 crossbeam-queue = { workspace = true, optional = true }
 dirs.workspace = true
 fragile = { version = "3.0.0", optional = true }
-iced_baseview = { version = "0.6.0", optional = true, default-features = false, features = ["app-builder", "wgpu", "advanced", "thread-pool", "fira-sans", "tracing"] }
+iced_baseview = { version = "0.6.0", optional = true, default-features = false, features = ["app-builder", "wgpu", "advanced", "canvas", "thread-pool", "fira-sans", "tracing"] }
 iced_program = { version = "0.14.0", optional = true }
 iced_widget = { version = "0.14.2", optional = true, default-features = false, features = ["wgpu"] }
 image-control-dsp = { path = "../dsp" }
 raw-window-handle.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde.workspace = true
+sha2 = { workspace = true, optional = true }
 sync_wrapper = "1.0.2"
 tempfile.workspace = true
 thiserror.workspace = true
@@ -48,6 +59,7 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphic
 
 [dev-dependencies]
 anyhow.workspace = true
+criterion.workspace = true
 clack-host = { workspace = true, features = ["clack-plugin"] }
 clack-extensions = { workspace = true, features = ["clack-host"] }
 libloading.workspace = true

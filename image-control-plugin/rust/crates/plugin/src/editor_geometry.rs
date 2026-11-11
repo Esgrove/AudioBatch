@@ -199,6 +199,7 @@ mod tests {
                 band_height: 900.125,
                 spectrogram_hidden: true,
                 analysis_stopped: true,
+                maximize_spectrogram: true,
             },
         ];
         let start = std::sync::Barrier::new(3);
@@ -243,6 +244,7 @@ mod tests {
             band_height: 512.25,
             spectrogram_hidden: true,
             analysis_stopped: true,
+            maximize_spectrogram: true,
         };
         assert!(geometry.publish_preferences(preferences));
         assert_eq!(geometry.preferences(), preferences);
@@ -286,6 +288,7 @@ mod tests {
             band_height: 700.25,
             spectrogram_hidden: true,
             analysis_stopped: true,
+            maximize_spectrogram: true,
         };
         let resized = LogicalSize {
             width: 1500.5,
@@ -327,6 +330,7 @@ mod tests {
             band_height: 4096.0,
             spectrogram_hidden: true,
             analysis_stopped: true,
+            maximize_spectrogram: true,
         };
         let resized = LogicalSize {
             width: 1300.5,

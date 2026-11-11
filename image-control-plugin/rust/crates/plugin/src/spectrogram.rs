@@ -10,8 +10,10 @@ use std::time::Instant;
 use arc_swap::ArcSwap;
 use iced_baseview::widget::{Shader, shader};
 use iced_baseview::{Element, Length, Rectangle, mouse, wgpu};
+#[cfg(feature = "render-benchmark")]
+use image_control_dsp::DisplayPreferences;
 use image_control_dsp::{
-    AnalysisShutdown, AnalysisStatus, AnalysisWorker, DisplayPreferences, SharedState, SpatialParticle,
+    AnalysisShutdown, AnalysisStatus, AnalysisWorker, DisplayConfiguration, SharedState, SpatialParticle,
 };
 
 const MAX_PARTICLES: usize = 65_536;
@@ -30,8 +32,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Owns exactly one analysis consumer for an open editor and publishes only bounded GPU instance work.
 /// Construct, tick, and destroy this on the editor thread, never in a processing callback.
 pub struct Spectrogram {
-    worker: AnalysisWorker,
-    scratch: Vec<SpatialParticle>,
+    worker: Arc<AnalysisWorker>,
     program: SpectrogramProgram,
 }
 
@@ -40,17 +41,17 @@ pub struct Spectrogram {
 struct PendingParticles {
     points: Vec<SpatialParticle>,
     generation: u64,
-    preferences: Arc<DisplayPreferences>,
+    preferences: Arc<DisplayConfiguration>,
 }
 
 impl PendingParticles {
-    /// Discards observations whenever either independently published configuration identity changes.
-    fn synchronize(&mut self, generation: u64, preferences: &Arc<DisplayPreferences>) {
-        if self.generation != generation || !Arc::ptr_eq(&self.preferences, preferences) {
+    /// Retains compatible particles at their original energy and discards only discontinuous projection epochs.
+    fn synchronize(&mut self, generation: u64, preferences: &Arc<DisplayConfiguration>) {
+        if self.generation != generation || !self.preferences.analysis_matches(preferences) {
             self.points.clear();
-            self.generation = generation;
-            self.preferences = Arc::clone(preferences);
         }
+        self.generation = generation;
+        self.preferences = Arc::clone(preferences);
     }
 }
 
@@ -60,6 +61,13 @@ struct SpectrogramProgram {
     id: u64,
     pending: Arc<Mutex<PendingParticles>>,
     shared: Arc<SharedState>,
+    /// A cached widget never retains the analysis owner after the editor closes.
+    worker: Weak<AnalysisWorker>,
+    scratch: Arc<Mutex<Vec<SpatialParticle>>>,
+    /// Successfully encoded spectrum composites, not GPU completion or physical presentation.
+    rendered_frames: Arc<AtomicU64>,
+    /// The editor alone retains bounded native encoding observations. Cached primitives cannot extend that lifetime.
+    frame_telemetry: Option<Weak<Mutex<crate::editor::editor_render_telemetry::FrameSamples>>>,
 }
 
 impl std::fmt::Debug for SpectrogramProgram {
@@ -112,11 +120,20 @@ struct GpuHistory {
     update_pending: AtomicBool,
     last_frame: Instant,
     generation: AtomicU64,
-    preferences: ArcSwap<DisplayPreferences>,
+    preferences: ArcSwap<DisplayConfiguration>,
     prepared_generation: u64,
-    prepared_preferences: Arc<DisplayPreferences>,
+    prepared_preferences: Arc<DisplayConfiguration>,
     resize_source: Option<wgpu::BindGroup>,
     resize_pending: AtomicBool,
+}
+
+/// One immutable source identity and optional benchmark-only native pass timestamps.
+#[derive(Clone, Copy)]
+struct RenderConfiguration<'a> {
+    generation: u64,
+    preferences: &'a Arc<DisplayConfiguration>,
+    #[cfg(feature = "render-benchmark")]
+    timestamps: Option<&'a wgpu::QuerySet>,
 }
 
 /// One independently sampled glow target. Additive upsampling never samples the active attachment.
@@ -131,9 +148,10 @@ impl Spectrogram {
     /// # Errors
     /// Returns the worker creation error, including an already-owned analysis consumer.
     pub fn new(shared: Arc<SharedState>) -> Result<Self, std::io::Error> {
+        let worker = Arc::new(AnalysisWorker::new(Arc::clone(&shared))?);
+        let scratch = Arc::new(Mutex::new(Vec::with_capacity(MAX_PARTICLES)));
         Ok(Self {
-            worker: AnalysisWorker::new(Arc::clone(&shared))?,
-            scratch: Vec::with_capacity(MAX_PARTICLES),
+            worker: Arc::clone(&worker),
             program: SpectrogramProgram {
                 id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
                 pending: Arc::new(Mutex::new(PendingParticles {
@@ -142,6 +160,10 @@ impl Spectrogram {
                     preferences: shared.display_preferences_snapshot(),
                 })),
                 shared,
+                worker: Arc::downgrade(&worker),
+                scratch,
+                rendered_frames: Arc::new(AtomicU64::new(0)),
+                frame_telemetry: None,
             },
         })
     }
@@ -155,25 +177,20 @@ impl Spectrogram {
         self.worker.shutdown_handle()
     }
 
-    /// Drains already-projected worker results on an editor timer, without FFTs or CPU image generation.
-    /// Returns true because even silent frames must redraw to fade retained GPU energy.
-    pub fn tick(&mut self) -> bool {
-        let update = self.worker.drain_batch(&mut self.scratch);
-        let generation = self.program.shared.analysis_generation();
-        let preferences = self.program.shared.display_preferences_snapshot();
-        let mut pending = self
-            .program
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        pending.synchronize(generation, &preferences);
-        if update.matches(generation, &preferences) {
-            if pending.points.len() + self.scratch.len() > MAX_PARTICLES {
-                pending.points.clear();
-            }
-            pending.points.extend(self.scratch.iter().take(MAX_PARTICLES).copied());
-        }
+    /// Exercises the same frame-local drain without a native window in analysis handoff tests.
+    #[cfg(test)]
+    pub fn tick(&self) -> bool {
+        self.program.drain_particles();
         true
+    }
+
+    /// Attaches opt-in native encoding telemetry before creating any cached shader view.
+    /// Only the editor owns its storage, and neither analysis nor audio receives this weak reference.
+    pub(crate) fn set_frame_telemetry(
+        &mut self,
+        samples: Weak<Mutex<crate::editor::editor_render_telemetry::FrameSamples>>,
+    ) {
+        self.program.frame_telemetry = Some(samples);
     }
 
     /// Reads the shared worker status without treating missing observations as a processing failure.
@@ -182,12 +199,38 @@ impl Spectrogram {
         self.program.shared.analysis_status()
     }
 
+    /// Counts completed command encoding, without claiming GPU completion or display presentation.
+    #[must_use]
+    pub fn rendered_frame_count(&self) -> u64 {
+        self.program.rendered_frames.load(Ordering::Relaxed)
+    }
+
     /// Returns a real Iced shader widget. The surrounding editor owns axes, labels, and refresh scheduling.
     pub fn view<'a, Message: 'a>(&'a self) -> Element<'a, Message> {
         Shader::new(self.program.clone())
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+}
+
+impl SpectrogramProgram {
+    /// Consumes completed analysis directly on the UI redraw path without rebuilding the application view.
+    fn drain_particles(&self) {
+        let Some(worker) = self.worker.upgrade() else { return };
+        worker.wake();
+        let mut scratch = self.scratch.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let update = worker.drain_batch(&mut scratch);
+        let generation = self.shared.analysis_generation();
+        let preferences = self.shared.display_preferences_snapshot();
+        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        pending.synchronize(generation, &preferences);
+        if update.matches(generation, &preferences) {
+            if pending.points.len() + scratch.len() > MAX_PARTICLES {
+                pending.points.clear();
+            }
+            pending.points.extend(scratch.iter().take(MAX_PARTICLES).copied());
+        }
     }
 }
 
@@ -202,12 +245,42 @@ impl Drop for Spectrogram {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         pending.points = Vec::new();
+        drop(pending);
+        *self
+            .program
+            .scratch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Vec::new();
     }
 }
 
 impl<Message> shader::Program<Message> for SpectrogramProgram {
     type State = ();
     type Primitive = SpectrogramPrimitive;
+
+    /// Drains current analysis on a native redraw without publishing an application message or relaying layout.
+    fn update(
+        &self,
+        _state: &mut Self::State,
+        event: &iced_baseview::Event,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Option<shader::Action<Message>> {
+        if matches!(
+            event,
+            iced_baseview::Event::Window(iced_baseview::window::Event::RedrawRequested(_))
+        ) {
+            if let Some(samples) = self.frame_telemetry.as_ref().and_then(Weak::upgrade) {
+                samples
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .sweep(&self.shared);
+            }
+            self.drain_particles();
+            return Some(shader::Action::request_redraw());
+        }
+        None
+    }
 
     /// Publishes the stable GPU input identity without copying particle batches into the widget tree.
     fn draw(&self, _state: &Self::State, _cursor: mouse::Cursor, _bounds: Rectangle) -> Self::Primitive {
@@ -269,7 +342,7 @@ impl shader::Primitive for SpectrogramPrimitive {
         let prepared_generation = self.program.shared.analysis_generation();
         let preferences = self.program.shared.display_preferences_snapshot();
         if prepared_generation != self.program.shared.analysis_generation()
-            || !Arc::ptr_eq(&preferences, &self.program.shared.display_preferences_snapshot())
+            || !preferences.analysis_matches(&self.program.shared.display_preferences_snapshot())
         {
             return;
         }
@@ -354,18 +427,62 @@ impl SpectrogramPrimitive {
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
-        (generation, preferences): (u64, Arc<DisplayPreferences>),
+        (generation, preferences): (u64, Arc<DisplayConfiguration>),
     ) {
         let Some(history) = pipeline.widgets.get(&self.program.id) else {
             return;
         };
-        if !history.configuration_matches(generation, &preferences) {
+        let telemetry_started = self.program.frame_telemetry.as_ref().map(|_| Instant::now());
+        if history.render_configuration(
+            pipeline,
+            encoder,
+            target,
+            clip_bounds,
+            RenderConfiguration {
+                generation,
+                preferences: &preferences,
+                #[cfg(feature = "render-benchmark")]
+                timestamps: None,
+            },
+        ) {
+            let successful_frames = self.program.rendered_frames.fetch_add(1, Ordering::Relaxed) + 1;
+            if let (Some(samples), Some(started)) = (
+                self.program.frame_telemetry.as_ref().and_then(Weak::upgrade),
+                telemetry_started,
+            ) {
+                samples
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .observe(started, successful_frames, history.size);
+            }
+        }
+    }
+}
+
+impl GpuHistory {
+    /// Encodes the production pass sequence against an explicit immutable configuration.
+    fn render_configuration(
+        &self,
+        pipeline: &SpectrogramPipeline,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        clip_bounds: &Rectangle<u32>,
+        configuration: RenderConfiguration<'_>,
+    ) -> bool {
+        let RenderConfiguration {
+            generation,
+            preferences,
+            #[cfg(feature = "render-benchmark")]
+            timestamps,
+        } = configuration;
+        let history = self;
+        if !history.configuration_matches(generation, preferences) {
             history.clear(encoder);
             history.generation.store(generation, Ordering::Release);
-            history.preferences.store(Arc::clone(&preferences));
+            history.preferences.store(Arc::clone(preferences));
             history.resize_pending.store(false, Ordering::Release);
         }
-        if history.update_pending.swap(false, Ordering::AcqRel) && history.prepared_matches(generation, &preferences) {
+        if history.update_pending.swap(false, Ordering::AcqRel) && history.prepared_matches(generation, preferences) {
             let source = history.current.load(Ordering::Acquire);
             if history.resize_pending.swap(false, Ordering::AcqRel)
                 && let (Some(input), Some(output)) = (&history.resize_source, history.accumulation.get(source))
@@ -382,7 +499,21 @@ impl SpectrogramPrimitive {
                 history.accumulation.get(destination),
             ) {
                 {
-                    let mut pass = begin_pass(encoder, output, "ImageControl fade and particles", true);
+                    #[cfg(feature = "render-benchmark")]
+                    let timestamp_writes = timestamps.map(|query_set| wgpu::RenderPassTimestampWrites {
+                        query_set,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: None,
+                    });
+                    #[cfg(not(feature = "render-benchmark"))]
+                    let timestamp_writes = None;
+                    let mut pass = begin_pass_with_timestamps(
+                        encoder,
+                        output,
+                        "ImageControl fade and particles",
+                        true,
+                        timestamp_writes,
+                    );
                     pass.set_bind_group(0, &history.uniform_group, &[]);
                     pass.set_bind_group(1, input, &[]);
                     pass.set_pipeline(&pipeline.fade);
@@ -400,12 +531,20 @@ impl SpectrogramPrimitive {
             }
         }
         let Some(input) = history.composite_inputs.get(history.current.load(Ordering::Acquire)) else {
-            return;
+            return false;
         };
         if clip_bounds.width == 0 || clip_bounds.height == 0 {
-            return;
+            return false;
         }
-        let mut pass = begin_pass(encoder, target, "ImageControl composite", false);
+        #[cfg(feature = "render-benchmark")]
+        let timestamp_writes = timestamps.map(|query_set| wgpu::RenderPassTimestampWrites {
+            query_set,
+            beginning_of_pass_write_index: None,
+            end_of_pass_write_index: Some(1),
+        });
+        #[cfg(not(feature = "render-benchmark"))]
+        let timestamp_writes = None;
+        let mut pass = begin_pass_with_timestamps(encoder, target, "ImageControl composite", false, timestamp_writes);
         pass.set_pipeline(&pipeline.composite);
         pass.set_bind_group(0, &history.uniform_group, &[]);
         pass.set_bind_group(1, input, &[]);
@@ -419,6 +558,8 @@ impl SpectrogramPrimitive {
         );
         pass.set_scissor_rect(clip_bounds.x, clip_bounds.y, clip_bounds.width, clip_bounds.height);
         pass.draw(0..3, 0..1);
+        drop(pass);
+        true
     }
 }
 
@@ -512,6 +653,25 @@ impl GpuHistory {
         program: &SpectrogramProgram,
         size: [u32; 2],
     ) -> Self {
+        Self::new_configuration(
+            device,
+            pipeline,
+            Arc::downgrade(&program.pending),
+            program.shared.analysis_generation(),
+            program.shared.display_preferences_snapshot(),
+            size,
+        )
+    }
+
+    /// Allocates the same history for an explicit owner and configuration without constructing audio DSP.
+    fn new_configuration(
+        device: &wgpu::Device,
+        pipeline: &SpectrogramPipeline,
+        owner: Weak<Mutex<PendingParticles>>,
+        generation: u64,
+        preferences: Arc<DisplayConfiguration>,
+        size: [u32; 2],
+    ) -> Self {
         let accumulation = [energy_target(device, size), energy_target(device, size)];
         let bloom = bloom_sizes(size).map(|size| {
             let target = energy_target(device, size);
@@ -549,7 +709,7 @@ impl GpuHistory {
             mapped_at_creation: false,
         });
         Self {
-            owner: Arc::downgrade(&program.pending),
+            owner,
             accumulation,
             bloom,
             solid_field,
@@ -567,22 +727,22 @@ impl GpuHistory {
             update_pending: AtomicBool::new(false),
             last_frame: Instant::now(),
             generation: AtomicU64::new(u64::MAX),
-            preferences: ArcSwap::from(program.shared.display_preferences_snapshot()),
-            prepared_generation: program.shared.analysis_generation(),
-            prepared_preferences: program.shared.display_preferences_snapshot(),
+            preferences: ArcSwap::from(Arc::clone(&preferences)),
+            prepared_generation: generation,
+            prepared_preferences: preferences,
             resize_source: None,
             resize_pending: AtomicBool::new(false),
         }
     }
 
-    /// Checks the exact stream and projection identities whose energy is retained in the GPU textures.
-    fn configuration_matches(&self, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
-        self.generation.load(Ordering::Acquire) == generation && Arc::ptr_eq(&self.preferences.load(), preferences)
+    /// Checks stream and projection epochs, allowing compatible edits to preserve accumulated linear energy.
+    fn configuration_matches(&self, generation: u64, preferences: &Arc<DisplayConfiguration>) -> bool {
+        self.generation.load(Ordering::Acquire) == generation && self.preferences.load().analysis_matches(preferences)
     }
 
-    /// Rejects uploads prepared with different preferences even before the source generation advances.
-    fn prepared_matches(&self, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
-        self.prepared_generation == generation && Arc::ptr_eq(&self.prepared_preferences, preferences)
+    /// Rejects incompatible uploads even before source invalidation, without discarding compatible in-flight energy.
+    fn prepared_matches(&self, generation: u64, preferences: &Arc<DisplayConfiguration>) -> bool {
+        self.prepared_generation == generation && self.prepared_preferences.analysis_matches(preferences)
     }
 
     /// Rebuilds every glow level before adding the smaller levels back into their larger neighbors.
@@ -821,6 +981,17 @@ fn begin_pass<'a>(
     label: &'a str,
     clear: bool,
 ) -> wgpu::RenderPass<'a> {
+    begin_pass_with_timestamps(encoder, target, label, clear, None)
+}
+
+/// Creates the same production pass with optional benchmark-only timestamps at native render-stage boundaries.
+fn begin_pass_with_timestamps<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    target: &'a wgpu::TextureView,
+    label: &'a str,
+    clear: bool,
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'a>>,
+) -> wgpu::RenderPass<'a> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -836,8 +1007,126 @@ fn begin_pass<'a>(
                 store: wgpu::StoreOp::Store,
             },
         })],
+        timestamp_writes,
         ..wgpu::RenderPassDescriptor::default()
     })
+}
+
+/// Benchmark-only ownership of the production pipelines and one history, without an analyzer or audio processor.
+#[cfg(feature = "render-benchmark")]
+pub struct BenchmarkRenderer {
+    pipeline: SpectrogramPipeline,
+    history: GpuHistory,
+    scale: f32,
+}
+
+#[cfg(feature = "render-benchmark")]
+impl BenchmarkRenderer {
+    /// Allocates the actual widget resources at the same bounded physical dimensions as production.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        physical_size: [u32; 2],
+        scale: f32,
+        preferences: DisplayPreferences,
+    ) -> Self {
+        use shader::Pipeline;
+        let pipeline = SpectrogramPipeline::new(device, queue, format);
+        let size = physical_size.map(|dimension| {
+            dimension
+                .min(device.limits().max_texture_dimension_2d)
+                .min(MAX_TEXTURE_DIMENSION)
+        });
+        let configuration = DisplayConfiguration::new(preferences)
+            .expect("benchmark preferences are validated before GPU initialization");
+        let mut history =
+            GpuHistory::new_configuration(device, &pipeline, Weak::new(), 0, Arc::new(configuration), size);
+        history.bounds = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: physical_size[0] as f32,
+            height: physical_size[1] as f32,
+        };
+        Self {
+            pipeline,
+            history,
+            scale,
+        }
+    }
+
+    /// Serializes already validated normalized attributes without widening the DSP particle API.
+    pub(crate) fn prepare(&mut self, particles: &[[f32; 8]]) {
+        self.history.upload.clear();
+        for attributes in particles {
+            for value in attributes {
+                self.history.upload.extend_from_slice(&value.to_ne_bytes());
+            }
+        }
+        self.history.particle_count = particles.len() as u32;
+    }
+
+    /// Uploads instances and production uniform arithmetic with a benchmark-only explicit elapsed step.
+    pub(crate) fn upload(&mut self, queue: &wgpu::Queue, elapsed_seconds: f32) {
+        let history = &mut self.history;
+        let preferences = &history.prepared_preferences;
+        history.solid_rendering = preferences.solid_rendering;
+        if !history.upload.is_empty() {
+            queue.write_buffer(&history.particle_buffer, 0, &history.upload);
+        }
+        let [width, height] = history.size;
+        let parameters = [
+            width as f32,
+            height as f32,
+            persistence_fade(elapsed_seconds, preferences.persistence_seconds),
+            f32::from(self.pipeline.encode_output),
+            self.scale,
+            f32::from(preferences.solid_rendering),
+            0.0,
+            0.0,
+        ];
+        let mut bytes = [0_u8; UNIFORM_BYTES as usize];
+        for (destination, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(parameters) {
+            destination.copy_from_slice(&value.to_ne_bytes());
+        }
+        queue.write_buffer(&history.uniform_buffer, 0, &bytes);
+        history.update_pending.store(true, Ordering::Release);
+    }
+
+    /// Encodes the production fade, particle, bloom, solid-field, and composite passes without pixel readback.
+    pub(crate) fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        output_size: [u32; 2],
+        timestamps: Option<&wgpu::QuerySet>,
+    ) {
+        self.history.render_configuration(
+            &self.pipeline,
+            encoder,
+            target,
+            &Rectangle {
+                x: 0,
+                y: 0,
+                width: output_size[0],
+                height: output_size[1],
+            },
+            RenderConfiguration {
+                generation: 0,
+                preferences: &self.history.prepared_preferences,
+                timestamps,
+            },
+        );
+    }
+
+    /// Reports actual production target sizes rather than inferring them from requested logical dimensions.
+    pub(crate) fn target_sizes(&self) -> crate::render_benchmark::TargetSizes {
+        crate::render_benchmark::TargetSizes {
+            accumulation: self.history.size,
+            bloom: bloom_sizes(self.history.size),
+            solid_field: solid_field_size(self.history.size),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1064,7 +1353,7 @@ mod tests {
         let mut pipeline = SpectrogramPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba16Float);
         let mut imager = Imager::new();
         assert!(imager.prepare(48_000.0));
-        let mut spectrogram = Spectrogram::new(imager.shared()).expect("analysis worker");
+        let spectrogram = Spectrogram::new(imager.shared()).expect("analysis worker");
         imager.begin_block();
         for index in 0..8192 {
             let sine = (std::f32::consts::TAU * 750.0 * index as f32 / 48_000.0).sin() * 0.5;

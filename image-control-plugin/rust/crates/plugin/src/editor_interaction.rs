@@ -68,7 +68,7 @@ impl<Message, Renderer: iced::advanced::Renderer> Widget<Message, Theme, Rendere
         }
     }
 
-    /// Rejects all background events without capturing outside clicks before the callout's dismissal shield sees them.
+    /// Rejects background input while forwarding frame and lifecycle events so live monitoring never freezes.
     fn update(
         &mut self,
         tree: &mut tree::Tree,
@@ -80,7 +80,7 @@ impl<Message, Renderer: iced::advanced::Renderer> Widget<Message, Theme, Rendere
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        if self.blocked {
+        if self.blocked && !matches!(event, Event::Window(_)) {
             return;
         }
         self.content.as_widget_mut().update(
@@ -535,6 +535,17 @@ mod tests {
 
     /// Runs real native widget layout and event dispatch without a GPU, native window, or pixel assertions.
     struct EventRenderer;
+
+    impl iced_widget::graphics::geometry::Renderer for EventRenderer {
+        type Geometry = <iced::Renderer as iced_widget::graphics::geometry::Renderer>::Geometry;
+        type Frame = <iced::Renderer as iced_widget::graphics::geometry::Renderer>::Frame;
+
+        fn new_frame(&self, bounds: Rectangle) -> Self::Frame {
+            iced_widget::renderer::wgpu::geometry::Frame::new(bounds)
+        }
+
+        fn draw_geometry(&mut self, _: Self::Geometry) {}
+    }
 
     impl iced::advanced::Renderer for EventRenderer {
         /// Keeps layer setup inert because event tests never rasterize a widget.
@@ -1092,6 +1103,14 @@ mod tests {
             [Message::Change(GAIN_PARAMETER, _)]
         ));
         driver.rebuild(modal_view(true));
+        assert!(
+            driver
+                .send(
+                    Event::Window(iced::window::Event::RedrawRequested(std::time::Instant::now())),
+                    cursor,
+                )
+                .is_empty()
+        );
         // Retained native modifiers prove that wheel suppression comes from the barrier, not a fresh slider state.
         for event in [
             arrow_up(),

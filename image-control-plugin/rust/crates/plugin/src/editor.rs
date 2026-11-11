@@ -15,6 +15,8 @@ mod chrome;
 mod commands;
 #[path = "editor_controls.rs"]
 mod controls;
+#[path = "editor_render_telemetry.rs"]
+pub mod editor_render_telemetry;
 #[path = "layout.rs"]
 mod layout;
 #[path = "numeric_input.rs"]
@@ -23,6 +25,8 @@ mod numeric_input;
 mod plot_overlay;
 #[path = "preset_editor.rs"]
 mod presets;
+#[path = "editor_refresh.rs"]
+mod refresh;
 #[cfg(test)]
 #[path = "editor_tests.rs"]
 mod tests;
@@ -36,7 +40,9 @@ use crate::params::{
     band_parameter_id, parameter_spec,
 };
 use crate::spectrogram;
-use controls::{CorrelationObservation, format_frequency, format_value};
+#[cfg(test)]
+use controls::CorrelationObservation;
+use controls::{format_frequency, format_value};
 
 /// Initial window size, shared with the native bridge.
 pub const EDITOR_SIZE: (f32, f32) = layout::DEFAULT_SIZE;
@@ -44,6 +50,8 @@ pub const EDITOR_SIZE: (f32, f32) = layout::DEFAULT_SIZE;
 pub const MIN_EDITOR_SIZE: (f32, f32) = layout::MIN_SIZE;
 /// Wheel edits have no release event, so their host gesture closes after a bounded idle period.
 const GESTURE_IDLE: Duration = Duration::from_millis(200);
+/// Encoded spectrum composites are sampled over a stable window, independently of GUI timer frequency.
+const FRAME_RATE_WINDOW: Duration = Duration::from_millis(500);
 
 pub use crate::params::EditorBinding;
 
@@ -72,6 +80,7 @@ pub enum Message {
     SmoothCorrelation,
     ShowFps,
     HideSpectrogram,
+    MaximizeSpectrogram,
     StopAnalysis,
     Shortcuts,
     NumericFocus(u32),
@@ -151,8 +160,6 @@ pub struct EditorState {
     parameters: Arc<Parameters>,
     shared: Arc<SharedState>,
     settings_shown: bool,
-    correlation: CorrelationObservation,
-    correlation_history: [crate::correlation_display::MeterHistory; 4],
     binding: Rc<dyn EditorBinding>,
     spectrogram: Result<spectrogram::Spectrogram, std::io::Error>,
     window_size: Option<iced::shell::SharedWindowSize>,
@@ -170,12 +177,15 @@ pub struct EditorState {
     resize_drag: Option<GeometryDrag>,
     compact_bands: bool,
     spectrogram_hidden: bool,
+    maximize_spectrogram: bool,
     analysis_stopped: bool,
     shortcuts_shown: bool,
     plot_band: Option<usize>,
     plot_gesture: Option<PlotGesture>,
-    last_refresh: Instant,
     refresh_rate: f32,
+    frame_rate_started: Instant,
+    measured_frames: u64,
+    editor_render_telemetry: Option<editor_render_telemetry::Recorder>,
 }
 
 impl iced_program::Program for EditorProgram {
@@ -218,7 +228,11 @@ impl iced_program::Program for EditorProgram {
         }
         let preferences = self.parameters.layout.preferences();
         self.shared.set_correlation_enabled(preferences.correlation_shown);
-        let spectrogram = spectrogram::Spectrogram::new(Arc::clone(&self.shared));
+        let editor_render_telemetry = editor_render_telemetry::Recorder::from_environment();
+        let mut spectrogram = spectrogram::Spectrogram::new(Arc::clone(&self.shared));
+        if let (Some(recorder), Ok(spectrogram)) = (&editor_render_telemetry, &mut spectrogram) {
+            spectrogram.set_frame_telemetry(recorder.frame_samples());
+        }
         if let Ok(spectrogram) = &spectrogram {
             *self.analysis.borrow_mut() = Some(spectrogram.shutdown_handle());
         }
@@ -230,8 +244,6 @@ impl iced_program::Program for EditorProgram {
                 parameters: Arc::clone(&self.parameters),
                 shared: Arc::clone(&self.shared),
                 settings_shown: false,
-                correlation: CorrelationObservation::default(),
-                correlation_history: std::array::from_fn(|_| crate::correlation_display::MeterHistory::default()),
                 binding: Rc::clone(&self.binding),
                 spectrogram,
                 window_size: Some(self.window_size.clone()),
@@ -249,12 +261,15 @@ impl iced_program::Program for EditorProgram {
                 resize_drag: None,
                 compact_bands: preferences.compact_bands,
                 spectrogram_hidden: preferences.spectrogram_hidden,
+                maximize_spectrogram: preferences.maximize_spectrogram,
                 analysis_stopped: preferences.analysis_stopped,
                 shortcuts_shown: false,
                 plot_band: None,
                 plot_gesture: None,
-                last_refresh: Instant::now(),
                 refresh_rate: 0.0,
+                frame_rate_started: Instant::now(),
+                measured_frames: 0,
+                editor_render_telemetry,
             },
             Task::none(),
         )
@@ -266,8 +281,16 @@ impl iced_program::Program for EditorProgram {
     fn view<'a>(&self, state: &'a EditorState, _: iced::window::Id) -> Element<'a, Message> {
         state.view()
     }
-    fn subscription(&self, _: &EditorState) -> Subscription<Message> {
-        EditorState::subscription()
+    fn subscription(&self, state: &EditorState) -> Subscription<Message> {
+        Subscription::batch([
+            refresh::subscription(
+                Arc::clone(&state.parameters),
+                Arc::clone(&state.shared),
+                state.presets.busy() || state.gesture.is_some(),
+                state.notifier.clone(),
+            ),
+            EditorState::subscription(),
+        ])
     }
     fn theme(&self, _: &EditorState, _: iced::window::Id) -> Option<Theme> {
         Some(Theme::Dark)
@@ -291,8 +314,6 @@ impl EditorState {
             parameters,
             shared,
             settings_shown: false,
-            correlation: CorrelationObservation::default(),
-            correlation_history: std::array::from_fn(|_| crate::correlation_display::MeterHistory::default()),
             binding,
             spectrogram: Err(std::io::Error::other("headless host interaction test")),
             window_size: None,
@@ -310,12 +331,15 @@ impl EditorState {
             resize_drag: None,
             compact_bands: preferences.compact_bands,
             spectrogram_hidden: preferences.spectrogram_hidden,
+            maximize_spectrogram: preferences.maximize_spectrogram,
             analysis_stopped: preferences.analysis_stopped,
             shortcuts_shown: false,
             plot_band: None,
             plot_gesture: None,
-            last_refresh: Instant::now(),
             refresh_rate: 0.0,
+            frame_rate_started: Instant::now(),
+            measured_frames: 0,
+            editor_render_telemetry: None,
         }
     }
 
@@ -353,6 +377,7 @@ impl EditorState {
             | Message::ResetAppearance => self.update_display(&message),
             Message::DividerNudge(_)
             | Message::HideSpectrogram
+            | Message::MaximizeSpectrogram
             | Message::StopAnalysis
             | Message::Shortcuts
             | Message::CompactBands
@@ -434,6 +459,7 @@ impl EditorState {
             compact_bands: self.compact_bands,
             band_height: self.band_height.clamp(layout::MIN_BAND_HEIGHT, 4096.0),
             spectrogram_hidden: self.spectrogram_hidden,
+            maximize_spectrogram: self.maximize_spectrogram,
             analysis_stopped: self.analysis_stopped,
         };
         if preferences != self.parameters.layout.preferences()
@@ -519,6 +545,7 @@ impl EditorState {
         self.compact_bands = preferences.compact_bands;
         self.band_height = preferences.band_height;
         self.spectrogram_hidden = preferences.spectrogram_hidden;
+        self.maximize_spectrogram = preferences.maximize_spectrogram;
         self.analysis_stopped = preferences.analysis_stopped;
         self.shared.set_correlation_enabled(self.correlation_shown);
         self.shared
@@ -534,31 +561,16 @@ impl EditorState {
 
     /// Polls observational state without fabricating parameter gestures. Recalls discard unfinished numeric drafts.
     fn refresh(&mut self) {
+        let benchmark_started = self.editor_render_telemetry.as_ref().map(|_| Instant::now());
         if self.gesture.is_none() && self.plot_gesture.is_none() {
             self.poll_presets();
         }
         let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.last_refresh).as_secs_f32();
-        if elapsed > 0.0 {
-            self.refresh_rate = 1.0 / elapsed;
-        }
-        self.last_refresh = now;
-        if self.correlation_shown {
-            self.correlation.observe(self.shared.correlation_snapshot(), now);
-            let readings = self
-                .correlation
-                .readings(now, Duration::from_secs_f32(self.shared.correlation_expiry_seconds()));
-            for (history, reading) in self.correlation_history.iter_mut().zip(readings) {
-                history.update(
-                    reading,
-                    f64::from(elapsed),
-                    f64::from(self.shared.display_preferences().persistence_seconds),
-                );
-            }
-        }
-        if let Ok(spectrogram) = &mut self.spectrogram {
-            spectrogram.tick();
-        }
+        let rendered = self
+            .spectrogram
+            .as_ref()
+            .map_or(0, spectrogram::Spectrogram::rendered_frame_count);
+        self.observe_frame_rate(now, rendered);
         if !self.input_held
             && self
                 .gesture
@@ -570,12 +582,27 @@ impl EditorState {
         if let Some(notifier) = &self.notifier {
             notifier.notify();
         }
+        let benchmark_size = self.editor_render_telemetry.as_ref().map(|_| self.size());
+        if let (Some(recorder), Some(started), Some(size)) =
+            (&mut self.editor_render_telemetry, benchmark_started, benchmark_size)
+        {
+            recorder.observe(started, rendered, size);
+        }
+    }
+
+    /// Samples completed spectrum command encoding, never timer callbacks or physical display presentation.
+    fn observe_frame_rate(&mut self, now: Instant, rendered: u64) {
+        let window = now.saturating_duration_since(self.frame_rate_started);
+        if window >= FRAME_RATE_WINDOW {
+            self.refresh_rate = rendered.saturating_sub(self.measured_frames) as f32 / window.as_secs_f32();
+            self.measured_frames = rendered;
+            self.frame_rate_started = now;
+        }
     }
 
     /// Subscribes to the bridge's timer and raw releases, including events already handled by a child widget.
     pub fn subscription() -> Subscription<Message> {
         Subscription::batch([
-            iced::poll_events().map(|()| Message::Refresh),
             iced::window_resized().map(|()| Message::Resize),
             iced::event::listen_raw(|event, status, _| {
                 if status == iced::event::Status::Ignored
@@ -888,6 +915,10 @@ impl Drop for EditorState {
     /// Ends host edits before releasing the analysis worker and GPU identity on the GUI thread.
     fn drop(&mut self) {
         self.end_gesture();
+        if let Some(recorder) = &self.editor_render_telemetry {
+            // Missing or failed telemetry is reported by the dedicated host, never logged by a plugin callback.
+            let _ = recorder.flush();
+        }
     }
 }
 

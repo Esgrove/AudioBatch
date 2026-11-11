@@ -94,6 +94,12 @@ impl EditorState {
                 self.shared
                     .set_analysis_enabled(!self.analysis_stopped && !self.spectrogram_hidden);
             }
+            Message::MaximizeSpectrogram => {
+                if self.prepare_command().is_none() {
+                    return;
+                }
+                self.maximize_spectrogram = !self.maximize_spectrogram;
+            }
             Message::StopAnalysis => {
                 self.analysis_stopped = !self.analysis_stopped;
                 self.shared
@@ -132,10 +138,6 @@ impl EditorState {
             Message::Correlation => {
                 self.correlation_shown = !self.correlation_shown;
                 self.shared.set_correlation_enabled(self.correlation_shown);
-                self.correlation = super::CorrelationObservation::default();
-                for history in &mut self.correlation_history {
-                    history.clear();
-                }
             }
             Message::Settings => {
                 if self.prepare_command().is_none() {

@@ -10,6 +10,8 @@ use std::time::Instant;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use image_control_dsp::{Imager, Parameters, SpatialAnalyzer};
 
+#[path = "../../../benchmarks/require_build.rs"]
+mod require_build;
 #[path = "../../../benchmarks/workload.rs"]
 mod workload;
 
@@ -68,6 +70,7 @@ fn process_blocks(imager: &mut Imager, input: &[[f32; 2]], output: &mut [[f32; 2
 /// Measures setup separately, including the production prepare allocation and kernel worker creation.
 /// Criterion excludes destruction of the returned prepared imager from this timing.
 fn preparation(criterion: &mut Criterion) {
+    require_build::require_release_native();
     let mut group = criterion.benchmark_group("imager_prepare");
     for sample_rate in SAMPLE_RATES {
         group.bench_with_input(
@@ -90,6 +93,7 @@ fn preparation(criterion: &mut Criterion) {
 
 /// Measures only the warmed production callback path, with identical deterministic initialization per timed batch.
 fn warm_imager(criterion: &mut Criterion) {
+    require_build::require_release_native();
     let mut group = criterion.benchmark_group("imager_warm");
     group.throughput(Throughput::Elements(ITERATION_FRAMES as u64));
     for sample_rate in SAMPLE_RATES {
@@ -127,6 +131,7 @@ fn warm_imager(criterion: &mut Criterion) {
 
 /// Measures public worker-side six-tier FFT analysis without exposing private crossover or convolver APIs.
 fn spatial_analysis(criterion: &mut Criterion) {
+    require_build::require_release_native();
     let mut group = criterion.benchmark_group("analyzer_warm");
     group.throughput(Throughput::Elements(ITERATION_FRAMES as u64));
     for sample_rate in SAMPLE_RATES {
