@@ -46,8 +46,9 @@ pub(super) struct Component {
     pub(super) shared: Arc<SharedState>,
     /// Coherent logical window size survives view destruction, independent of DSP and native ownership.
     pub(super) geometry: Arc<EditorGeometry>,
-    /// UI-only host callbacks. Never read or locked by audio processing.
-    pub(super) handler: Arc<Mutex<Option<ComPtr<IComponentHandler>>>>,
+    /// UI-only shared COM owner. Arc copies execute no host reference-count callbacks under the lock.
+    /// Installation, replacement, termination, and UI calls release COM owners outside this mutex.
+    pub(super) handler: Arc<Mutex<Option<Arc<ComPtr<IComponentHandler>>>>>,
     /// Matching main input/output arrangement.
     arrangement: AtomicU64,
     /// Largest accepted host block, zero before setup.
@@ -245,6 +246,10 @@ impl IAudioProcessorTrait for Component {
         // SAFETY: the host provides one readable arrangement in each non-null array.
         let (input, output) = unsafe { (inputs.read(), outputs.read()) };
         if input != output || ![SpeakerArr::kMono, SpeakerArr::kStereo].contains(&input) {
+            return kResultFalse;
+        }
+        let channels = input.count_ones() as usize;
+        if self.audio.try_with(|imager| imager.set_channels(channels)).is_none() {
             return kResultFalse;
         }
         self.arrangement.store(input, Ordering::Relaxed);

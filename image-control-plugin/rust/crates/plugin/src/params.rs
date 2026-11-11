@@ -137,6 +137,8 @@ pub struct Snapshot {
 pub struct Parameters {
     /// Independent values prevent unrelated UI and automation edits from overwriting each other.
     values: [AtomicU64; PARAMETER_COUNT],
+    /// Successful detached recalls invalidate precomputed UI writes without changing ordinary automation semantics.
+    restore_generation: AtomicU64,
 }
 
 /// UI-only automation seam. Implementations release any host-handler lock before invoking host code.
@@ -151,6 +153,8 @@ pub trait EditorBinding {
     fn set_value(&self, id: u32, normalized: f64);
     /// Ends the matching gesture, including interrupted editor teardown.
     fn end_edit(&self, id: u32);
+    /// Marks a changed persisted non-sound preference on the UI thread, without a sound gesture.
+    fn mark_dirty(&self) {}
     /// Balances remaining gestures synchronously when the native editor is removed.
     fn close(&self) {}
     /// Negotiates an editor-originated logical size through the retained host frame.
@@ -321,6 +325,7 @@ impl Parameters {
             values: Snapshot::default()
                 .values()
                 .map(|value| AtomicU64::new(value.to_bits())),
+            restore_generation: AtomicU64::new(0),
         }
     }
 
@@ -373,15 +378,31 @@ impl Parameters {
         for (slot, value) in self.values.iter().zip(snapshot.values()) {
             slot.store(value.to_bits(), Ordering::Relaxed);
         }
+        self.restore_generation.fetch_add(1, Ordering::Release);
         true
+    }
+
+    /// Reads successful recall publication, independent of automation and without entering DSP or GUI state.
+    #[must_use]
+    pub fn restore_generation(&self) -> u64 {
+        self.restore_generation.load(Ordering::Acquire)
     }
 
     /// Samples authoritative atomics into DSP targets. Call only while holding exclusive audio ownership.
     /// This performs no kernel design, allocation, locks, channels, GUI wakes, or reference-count operations.
     pub fn publish(&self, shared: &SharedState) {
         let snapshot = self.snapshot();
-        let gain_db = snapshot.gain.mul_add(36.0, -24.0);
-        if let Some(parameters) = DspParameters::new(10.0_f64.powf(gain_db / 20.0) as f32, 1.0) {
+        // Float-normalized hosts widen their exact zero-dB default before publication.
+        // Recognize only the two neutral representations, retaining every nearby value and the saved normalized bits.
+        let gain = if snapshot.gain.to_bits() == NEUTRAL_GAIN.to_bits()
+            || snapshot.gain.to_bits() == f64::from(NEUTRAL_GAIN as f32).to_bits()
+        {
+            1.0
+        } else {
+            let gain_db = snapshot.gain.mul_add(36.0, -24.0);
+            10.0_f64.powf(gain_db / 20.0) as f32
+        };
+        if let Some(parameters) = DspParameters::new(gain, 1.0) {
             shared.set_parameters(parameters);
         }
         for (band, controls) in snapshot.bands.into_iter().enumerate() {

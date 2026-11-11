@@ -8,7 +8,6 @@
 #[cfg(feature = "editor")]
 use std::ffi::CStr;
 use std::ffi::c_char;
-#[cfg(feature = "editor")]
 use std::sync::Arc;
 
 use vst3::ComRef;
@@ -130,7 +129,7 @@ impl IEditControllerTrait for Component {
 
     unsafe fn setComponentHandler(&self, handler: *mut IComponentHandler) -> tresult {
         // SAFETY: the host supplies a live handler or null. The retained COM reference owns its lifetime.
-        let handler = unsafe { ComRef::from_raw(handler) }.map(|handler| handler.to_com_ptr());
+        let handler = unsafe { ComRef::from_raw(handler) }.map(|handler| Arc::new(handler.to_com_ptr()));
         // Dropping the old handler after unlocking permits its release callback to reenter this controller.
         let old = std::mem::replace(
             &mut *self.handler.lock().unwrap_or_else(std::sync::PoisonError::into_inner),

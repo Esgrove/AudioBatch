@@ -321,6 +321,10 @@ impl EditorBinding for LogicalBinding {
         self.native.end_edit(id);
     }
 
+    fn mark_dirty(&self) {
+        self.native.mark_dirty();
+    }
+
     fn close(&self) {
         self.native.close();
     }

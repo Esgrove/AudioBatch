@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use iced::advanced::text::Paragraph as _;
+
 use iced::widget::{Column, Row, Space, button, checkbox, container, pick_list, pin, scrollable, slider, stack, text};
 use iced::{Alignment, Element, Length, Rectangle, Size, Theme};
 use iced_baseview as iced;
@@ -10,6 +12,10 @@ use image_control_dsp::{AnalysisStatus, ColourMode, CorrelationSnapshot, Display
 use super::chrome::{Chrome, Symbol};
 use super::{Message, layout, theme};
 use crate::params::{ParameterKind, ParameterSpec, parameter_spec};
+
+#[path = "editor_interaction.rs"]
+pub(super) mod interaction;
+use interaction::FocusSafeSlider;
 
 /// Tracks the last observed publication on the UI thread, without audio-thread clock calls.
 pub(super) struct CorrelationObservation {
@@ -20,6 +26,7 @@ pub(super) struct CorrelationObservation {
 }
 
 impl Default for CorrelationObservation {
+    /// Starts without an audio publication so inactive meters cannot fabricate a correlation reading.
     fn default() -> Self {
         Self {
             readings: [f32::NAN; 4],
@@ -119,15 +126,17 @@ pub(super) fn correlation_meter<'a>(reading: Option<f32>) -> Element<'a, Message
 }
 
 /// Builds the same retained parameter widget for production views and hardware-free event tests.
-pub(super) fn parameter_input(id: u32, value: f64) -> slider::Slider<'static, f64, Message> {
+pub(super) fn parameter_input(id: u32, value: f64) -> FocusSafeSlider<'static, f64, Message> {
     let spec = parameter_spec(id).expect("visible control has registry metadata");
-    slider(0.0..=1.0, value, move |value| Message::Change(id, value))
-        .step(0.001_f64)
-        .shift_step(0.0001_f64)
-        .default(spec.default_normalized)
-        .on_release(Message::EndGesture)
-        .height(layout::SLIDER_HEIGHT)
-        .style(theme::parameter_slider)
+    FocusSafeSlider::new(
+        slider(0.0..=1.0, value, move |value| Message::Change(id, value))
+            .step(0.001_f64)
+            .shift_step(0.0001_f64)
+            .default(spec.default_normalized)
+            .on_release(Message::EndGesture)
+            .height(layout::SLIDER_HEIGHT)
+            .style(theme::parameter_slider),
+    )
 }
 
 /// Gives every button a compact, fixed target and disables unavailable features rather than simulating them.
@@ -421,9 +430,11 @@ fn setting_slider(
 ) -> Element<'static, Message> {
     Row::new()
         .push(
-            container(slider(range, value, change).step(step).style(theme::parameter_slider))
-                .padding([0.0, 6.0])
-                .width(Length::Fill),
+            container(FocusSafeSlider::new(
+                slider(range, value, change).step(step).style(theme::parameter_slider),
+            ))
+            .padding([0.0, 6.0])
+            .width(Length::Fill),
         )
         .push(
             container(
@@ -445,7 +456,6 @@ fn setting_slider(
 
 /// Measures worst-case numeric glyphs once per view so compact full names never depend on the current value.
 pub(super) fn compact_text_width(content: &str) -> f32 {
-    use iced::advanced::text::Paragraph as _;
     let paragraph =
         <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(iced::advanced::text::Text {
             content,

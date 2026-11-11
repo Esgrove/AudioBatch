@@ -123,7 +123,14 @@ fn publication_is_detached_and_never_changes_unrelated_parameter_atomics() {
     parameters.set(6, 0.0);
     parameters.set(7, 0.8);
     parameters.publish(&shared);
-    assert!((shared.parameters().gain() - 10.0_f32.powf(12.0 / 20.0)).abs() < 1e-6);
+    // Independent 10^(12/20), rounded once to the published f32 domain.
+    // Avoid comparing separate platform-dependent powf implementations under Miri.
+    let expected = 3.981_071_705_534_972_2_f64 as f32;
+    assert!(
+        (shared.parameters().gain() - expected).abs() < 1e-6,
+        "published gain {} expected {expected}",
+        shared.parameters().gain()
+    );
     assert_eq!(shared.parameters().width().to_bits(), 1.0_f32.to_bits());
     let band = shared.band_parameters(0).expect("band");
     assert_eq!(band[2].to_bits(), 0.0_f32.to_bits());
@@ -136,6 +143,157 @@ fn publication_is_detached_and_never_changes_unrelated_parameter_atomics() {
         parameters.get(12).expect("unrelated width").to_bits(),
         0.5_f64.to_bits()
     );
+}
+
+#[test]
+fn output_gain_neutral_host_representations_publish_exact_unity_without_rewriting_state() {
+    let parameters = Parameters::new();
+    let imager = Imager::new();
+    let shared = imager.shared();
+    for normalized in [2.0_f64 / 3.0, f64::from(2.0_f32 / 3.0)] {
+        assert!(parameters.set(GAIN_PARAMETER, normalized));
+        parameters.publish(&shared);
+        assert_eq!(shared.parameters().gain().to_bits(), 1.0_f32.to_bits());
+        assert_eq!(
+            parameters.get(GAIN_PARAMETER).expect("gain").to_bits(),
+            normalized.to_bits()
+        );
+        assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
+
+        assert!(parameters.restore(Snapshot {
+            gain: normalized,
+            ..Snapshot::default()
+        }));
+        parameters.publish(&shared);
+        assert_eq!(shared.parameters().gain().to_bits(), 1.0_f32.to_bits());
+        assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
+    }
+}
+
+#[test]
+fn output_gain_neighbors_are_not_snapped_to_a_neutral_host_representation() {
+    let parameters = Parameters::new();
+    let imager = Imager::new();
+    let shared = imager.shared();
+    let double_neutral = 2.0_f64 / 3.0;
+    let float_neutral = 2.0_f32 / 3.0;
+    for (normalized, expected_ordering) in [
+        // These genuine double neighbors remain distinct in state, but round to unity in DSP's f32 domain.
+        (double_neutral.next_down(), std::cmp::Ordering::Equal),
+        (double_neutral.next_up(), std::cmp::Ordering::Equal),
+        // Even the immediate f64 neighbors of the widened float neutral must use the ordinary gain mapping.
+        (f64::from(float_neutral).next_down(), std::cmp::Ordering::Greater),
+        (f64::from(float_neutral).next_up(), std::cmp::Ordering::Greater),
+        (f64::from(float_neutral.next_down()), std::cmp::Ordering::Less),
+        (f64::from(float_neutral.next_up()), std::cmp::Ordering::Greater),
+    ] {
+        assert!(parameters.set(GAIN_PARAMETER, normalized));
+        parameters.publish(&shared);
+        assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
+        assert_eq!(
+            shared.parameters().gain().total_cmp(&1.0),
+            expected_ordering,
+            "normalized bits {:016x}",
+            normalized.to_bits()
+        );
+    }
+}
+
+#[test]
+fn neutral_host_values_preserve_unprepared_callback_bits_cold_and_after_settling() {
+    for normalized in [2.0_f64 / 3.0, f64::from(2.0_f32 / 3.0)] {
+        let parameters = Parameters::new();
+        let mut imager = Imager::new();
+        let shared = imager.shared();
+        assert!(parameters.set(GAIN_PARAMETER, normalized));
+        parameters.publish(&shared);
+        imager.reset();
+        for settled in [false, true] {
+            if settled {
+                assert!(parameters.set(GAIN_PARAMETER, 0.25));
+                parameters.publish(&shared);
+                imager.reset();
+                assert!(parameters.set(GAIN_PARAMETER, normalized));
+                parameters.publish(&shared);
+                imager.begin_block();
+                for _ in 0..960 {
+                    let _ = imager.process_frame([0.0; 2]);
+                }
+            }
+            for frame in [
+                [-0.0, 0.0],
+                [0.0, -0.0],
+                [0.1, -0.3],
+                [f32::from_bits(0x3f80_0001), -0.25],
+            ] {
+                assert_eq!(imager.process_frame(frame).map(f32::to_bits), frame.map(f32::to_bits));
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "full partitioned FIR preparation is verified natively")]
+fn neutral_host_values_preserve_prepared_callback_bits_cold_and_after_settling() {
+    for float_host in [false, true] {
+        let parameters = Parameters::new();
+        for id in 0..PARAMETER_COUNT as u32 {
+            let normalized = parameter_spec(id).expect("known parameter").default_normalized;
+            assert!(parameters.set(
+                id,
+                if float_host {
+                    f64::from(normalized as f32)
+                } else {
+                    normalized
+                }
+            ));
+        }
+        let mut imager = Imager::new();
+        imager.set_offline(true);
+        let shared = imager.shared();
+        parameters.publish(&shared);
+        assert!(imager.prepare(48_000.0));
+        let latency = imager.latency_samples() as usize;
+        assert_eq!(latency, 4352);
+        let normalized = parameters.get(GAIN_PARAMETER).expect("gain");
+        let frames = [
+            [-0.0, 0.0],
+            [0.0, -0.0],
+            [0.1, -0.3],
+            [f32::from_bits(0x3f80_0001), -0.25],
+        ];
+        for settled in [false, true] {
+            if settled {
+                assert!(parameters.set(GAIN_PARAMETER, 0.25));
+                parameters.publish(&shared);
+                imager.begin_block();
+                for _ in 0..latency + 960 {
+                    let _ = imager.process_frame([0.0; 2]);
+                }
+                assert!(parameters.set(GAIN_PARAMETER, normalized));
+                parameters.publish(&shared);
+                imager.begin_block();
+                for _ in 0..latency + 960 {
+                    let _ = imager.process_frame([0.0; 2]);
+                }
+            }
+            imager.begin_block();
+            for index in 0..latency + 1024 {
+                let frame = *frames.get(index % frames.len()).expect("wrapped input frame");
+                let output = imager.process_frame(frame);
+                if index >= latency {
+                    let expected = *frames
+                        .get((index - latency) % frames.len())
+                        .expect("delayed input frame");
+                    assert_eq!(
+                        output.map(f32::to_bits),
+                        expected.map(f32::to_bits),
+                        "float_host={float_host}, settled={settled}, frame={index}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
