@@ -161,7 +161,7 @@ if [ "$BASH_PLATFORM" = "mac" ]; then
     TARGETS+=(ImageControl_AUSign)
 fi
 if [ "$RUN_TESTS" = true ]; then
-    TARGETS+=(ImageControlTests)
+    TARGETS+=(ImageControlTests ImageControlParity)
 fi
 
 if [ "$CLEAN_BUILD_DIR" = true ]; then

@@ -1,0 +1,58 @@
+#!/bin/bash
+# Requires both explicit build-tree plugins and runs their shared audio contract in a bounded test process.
+set -eo pipefail
+
+USAGE="Usage: $0 [OPTIONS]
+
+Compare the packaged C++ and Rust ImageControl plugins without installation or audio hardware.
+Build both plugins and the ImageControlParity target first.
+
+OPTIONS:
+    -h | --help                 Display instructions without checking tools or building.
+    -C | --cpp <path>           C++ build-tree VST3 bundle, required.
+    -r | --rust <path>          Rust build-tree VST3 bundle, defaults to the last packaged build.
+    -e | --executable <path>    Built ImageControlParity executable, required.
+"
+for argument in "$@"; do
+    case "$argument" in
+        -h | --help)
+            printf '%s\n' "$USAGE"
+            exit 0
+            ;;
+        --) break ;;
+    esac
+done
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$SCRIPT_DIR/common.sh"
+image_control_resolve_target_directory
+cd "$SCRIPT_DIR"
+CPP_BUNDLE="${IMAGE_CONTROL_CPP_BUNDLE:-}"
+RUST_BUNDLE="${IMAGE_CONTROL_OWN_BUNDLE:-${CARGO_TARGET_DIR:-$REPO_ROOT/rust/target}/bundled/ImageControl RS.vst3}"
+EXECUTABLE="${IMAGE_CONTROL_PARITY_EXECUTABLE:-}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -C | --cpp | -r | --rust | -e | --executable)
+            [ $# -ge 2 ] || print_error_and_exit "$1 requires a path. See --help."
+            option="$1"
+            shift
+            case "$option" in
+                -C | --cpp) CPP_BUNDLE="$1" ;;
+                -r | --rust) RUST_BUNDLE="$1" ;;
+                -e | --executable) EXECUTABLE="$1" ;;
+            esac
+            ;;
+        *) print_error_and_exit "Unknown argument: $1. See --help." ;;
+    esac
+    shift
+done
+[ -n "$CPP_BUNDLE" ] || print_error_and_exit "Give --cpp <build-tree.vst3>."
+[ -n "$EXECUTABLE" ] || print_error_and_exit "Give --executable <ImageControlParity>."
+[ -d "$CPP_BUNDLE/Contents" ] || print_error_and_exit "C++ build-tree VST3 is missing: $CPP_BUNDLE"
+[ -d "$RUST_BUNDLE/Contents" ] || print_error_and_exit "Rust build-tree VST3 is missing: $RUST_BUNDLE"
+[ -f "$EXECUTABLE" ] || print_error_and_exit "Parity executable is missing: $EXECUTABLE"
+export IMAGE_CONTROL_CPP_BUNDLE="$CPP_BUNDLE"
+export IMAGE_CONTROL_OWN_BUNDLE="$RUST_BUNDLE"
+export IMAGE_CONTROL_PARITY_EXECUTABLE="$EXECUTABLE"
+cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p image-control-plugin-rs \
+    --test cross_implementation -- --nocapture
