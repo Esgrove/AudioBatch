@@ -3,6 +3,8 @@
 ImageControl RS is a Rust VST3 and CLAP effect with framework-independent DSP and an embedded Iced/wgpu editor.
 On macOS, a pinned upstream clap-wrapper AUv2 shell statically hosts the same CLAP implementation.
 It is a separate plugin identity, not a binary-compatible replacement for the C++ ImageControl implementation.
+C++ is the feature, close user-experience, and audio reference, not an exact internal implementation blueprint.
+Older RS project-state and normalized-automation compatibility are not requirements.
 [README.md](README.md) covers capabilities, build commands, installation, and current limitations.
 
 ## Workspace and boundaries
@@ -34,14 +36,18 @@ logical geometry, and exclusively admitted DSP used by each host adapter.
 Stopped preparation installs saved targets and allocates processing state before callbacks begin.
 [`host/component.rs`](crates/plugin/src/host/component.rs) implements the VST3 interfaces on one COM object.
 The 31 sound-parameter IDs, conversions, defaults, and metadata live in [`params.rs`](crates/plugin/src/params.rs).
-New host/editor edits use the C++ float `NormalisableRange` power skew and plain-unit snapping.
+Crossovers use a true logarithmic `f64` mapping, `20 * 1000^normalized`, without a frequency grid.
+Stepped controls use useful plain-unit snapping, not JUCE float emulation.
 Gain steps are 0.01 dB, Width steps are 0.01, and Recover/Pan steps are one percentage point.
-Crossovers have no grid. Detached recalls preserve legacy off-grid normalized values until explicitly edited.
+Current-schema recalls preserve accepted off-grid normalized bits until explicitly edited.
+Parameter IDs remain stable, but older RS normalized-automation compatibility is not promised.
 Controller callbacks and host restores never borrow mutable DSP history.
 
-[`AudioState`](crates/plugin/src/host/audio.rs) admits mutable DSP access through one atomic compare-exchange attempt.
+[`AudioState`](crates/plugin/src/host/audio.rs) owns `AtomicRefCell<SyncWrapper<Imager>>`.
+The external crates' safe APIs admit exclusive access through one CAS in `try_borrow_mut`,
+without a custom `UnsafeCell` or `unsafe Sync` implementation.
 An overlapping lifecycle or processing call is rejected rather than waiting.
-The admission guard releases ownership on normal returns and Rust unwinding.
+The borrow guard releases admission on normal returns and Rust unwinding, with no heap work or final-owner destruction.
 Raw sample-buffer access stays at the ABI boundary and supports legal in-place bus and channel-array aliasing.
 
 The host serializes preparation and destruction against processing.
@@ -95,6 +101,9 @@ Windows VST3 rejects removal during an active callback or geometry flush so the 
 Windows CLAP does not advertise the custom GUI because its void destroy callback cannot support that retry protocol.
 Host-provided CLAP parameter controls remain available, with DSP/state independent of a native editor.
 The host must not destroy the parent or unload the module after rejected removal.
+The view's safe `UiOwner<T>(Option<T>)` uses ordinary automatic drops rather than unsafe `ManuallyDrop` cleanup.
+Invalid off-thread or reentrant foreign final release deliberately forgets retained UI resources.
+This is leak containment, not module-unload qualification.
 Complete upstream widget-cache reclamation and arbitrary module unloading remain separate production gates.
 
 ## Audio signal flow
@@ -191,7 +200,11 @@ No control thread resets FIFO indices or becomes a second consumer.
 
 The worker examines at most one queue capacity per pass in 4096-frame chunks,
 checking cancellation and source identity between chunks.
-Old frames are discarded, and a source change clears analyzer, reference, and pending-particle history.
+It retains the `Arc<DisplayPreferences>` identity as well as the source token,
+rechecking both before applying settings, publishing completions, and draining batches into the UI.
+A preference swap can precede source invalidation, so source generation alone cannot reject mixed old/new frames.
+Retaining the `Arc` also prevents pointer reuse from disguising a replaced configuration.
+Old frames are discarded, and a configuration change clears analyzer, reference, and pending-particle history.
 Completed batches carry generation and availability even when empty, allowing silent GPU clears.
 Display overflow retains the newest bounded tail, with at most 65536 particles per publication/upload stage.
 
@@ -276,25 +289,23 @@ Complete renderer/device-loss fallback is not implemented.
 [`host/state.rs`](crates/plugin/src/host/state.rs) provides VST3 stream transport,
 with a four-byte little-endian payload length preceding at most 16 KiB.
 CLAP streams use the same bounded codec. The AU wrapper stores the CLAP stream in its host property-list container.
-State version 5 stores normalized parameters, A/B sounds and preset origins, complete layout preferences,
-extended display settings, and the last host-accepted logical window dimensions.
+Only schema 6 is accepted. Its detached envelope uses `Snapshot` for normalized parameters,
+`AnalysisTap` for Pre/Post, and `DisplayPreferences` directly, without duplicate mirrors or migration codecs.
+It also stores A/B sounds and preset origins, complete layout preferences, and host-accepted logical window dimensions.
 Layout includes Link, toolbar/correlation visibility, compact bands, retained band height, spectrogram hiding,
 and the independent stop-analysis choice.
-Display includes Pre/Post, persistence, contrast, palette, Mel/solid modes, stereo-position curve,
+Display includes persistence, contrast, palette, Mel/solid modes, stereo-position curve,
 correlation numeric smoothing, and frame-rate visibility.
-Versions 1–4 remain readable. Versions 1 and 2 use fixed default geometry,
-and absent editor/layout fields use fixed defaults rather than the current instance's choices.
-Version 4 introduces native float-skew crossover normalization.
-Versions 1–3 convert their stored exponential-normalized crossovers through the original Hz domain,
-with float-precision bounds, while retaining non-crossover off-grid bits across recall and subsequent saves.
-This migration covers plugin state blobs only. It cannot translate external DAW-stored normalized frequency automation,
-which requires external remapping to preserve its original Hz values.
-Unknown versions, malformed fields, invalid values, and impossible stream progress are rejected.
+Absent current-schema fields use fixed defaults rather than the current instance's choices.
+Older and unknown schemas, malformed fields, invalid values, and impossible stream progress are rejected.
 The complete detached document, including comparisons and origins, is validated before publishing live values.
+Rejected restores leave parameters, preferences, geometry, comparisons, and restore identity unchanged.
 
 State save/restore belongs off the audio thread and does not dispatch to or wait for the GUI.
-Publication uses atomics and does not mutate convolution history.
-It is not a sample-atomic transaction across all parameters during concurrent automation.
+Publication does not mutate convolution history and is not sample-atomic across concurrent parameter automation.
+Display preferences, layout preferences, and logical geometry use full immutable `ArcSwap` snapshots,
+not read-mostly mutexes. Snapshot loads, replacement allocation, and retired-owner drops all stay off audio.
+The records are individually coherent, not one aggregate transaction across every setting.
 Component-owned geometry survives native view destruction and is captured without waiting for GUI work.
 New views use that logical size for host negotiation and attachment, with explicit host dimensions taking precedence.
 Rejected resize requests do not change it.
@@ -304,6 +315,9 @@ Live analyzer history, particles, GPU energy, correlation history, and Undo/Redo
 [`editing.rs`](crates/plugin/src/editing.rs) owns bounded chronological local history
 and persistent A/B metadata behind a short non-audio mutex.
 Host automation never enters history or takes that mutex.
+The compound editing transaction mutex, worker join/condition-variable synchronization,
+completed-batch handoff, and preset file locks remain justified off-audio ownership boundaries.
+This is not a blanket replacement of mutexes with atomics.
 Sound snapshots contain 25 controls, including Mono but excluding Solo, Delta, and Bypass audition settings.
 A/B selection, copy, and preset recall are local history commands,
 and active-slot capture samples authoritative atomics.
@@ -314,6 +328,7 @@ A continuing UI operation cannot overwrite a newer recall, including a restore i
 The independent state format does not imply C++ project migration.
 
 [`user_presets.rs`](crates/plugin/src/user_presets.rs) owns the independent, bounded RS JSON preset codec and library.
+Preset schema 2 uses the logarithmic parameter mapping and rejects older preset documents without migration.
 Rust formats share per-user application-data storage under `esgrove/ImageControl RS/Presets`, not the C++ XML library.
 The modal callout supports loading, Save/Save As, rename, delete, refresh, reconnect, and absolute-path import/export.
 Operations run off the UI/audio threads, and completion checks reject changed project, slot, or sound identities.
@@ -353,6 +368,9 @@ Undo/Redo, A/B selection/copy, and preset commands use the shared non-audio edit
 Display settings expose analysis hiding/stopping, frame-rate diagnostics, and modal shortcut help.
 
 ## Verification and limits
+
+The following describes test coverage and verification commands, not new passing evidence for this cleanup.
+Retained passing results and performance observations predate it. Current cleanup verification is in progress.
 
 The DSP tests use analytical signals, direct convolution, explicit Hann/derivative DFT expectations,
 calibrated stereo cases, exact delayed-neutral bits, and monitoring-on/off PCM comparisons.

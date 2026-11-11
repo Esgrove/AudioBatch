@@ -4,10 +4,13 @@ ImageControl RS is an independent Rust multiband stereo-imaging plugin with a na
 It provides VST3 and CLAP on macOS and Windows, and an experimental self-contained AUv2 on macOS.
 It shares the repository's Cargo workspace, but does not use AudioBatch's application services or GUI.
 It installs alongside the C++ ImageControl plugin rather than replacing it.
+C++ is the feature, close user-experience, and audio reference, not an exact internal implementation blueprint.
+Compatibility with older RS state or normalized automation is not required.
 
 The implementation targets macOS and Windows.
-Native macOS processing, editor, and GPU tests are exercised locally.
-Windows MSVC cross-checks pass, but native Windows execution and graphics remain unverified.
+Historical local verification covers native macOS processing, editor, GPU tests, and Windows MSVC cross-checks.
+That evidence predates the current cleanup. New verification is in progress, with no new measurements asserted here.
+Native Windows execution and graphics remain unverified.
 The C++ plugin remains the supported implementation.
 
 ## Features
@@ -42,10 +45,11 @@ The Presets callout supports load, Save/Save As, rename, delete, reconnect, and 
 Filesystem work runs asynchronously and is joined on native editor close.
 Stale selections are rejected rather than silently overwriting another instance's changes.
 
-New host and editor edits use C++-compatible float skew and plain-unit snapping.
-State versions 1–3 migrate stored crossover frequencies through Hz while retaining off-grid non-crossover values.
-This migrates plugin state blobs only, not normalized automation stored separately by a DAW.
-Older RS normalized frequency automation must be remapped externally to preserve its original Hz values.
+Crossovers use a true logarithmic `f64` mapping, with useful plain-unit snapping for stepped controls,
+not JUCE float emulation. Parameter IDs remain stable, but older RS normalized automation is not promised compatibility.
+Only project-state schema 6 and preset schema 2 are accepted.
+Older schemas are rejected without changing live state, not migrated.
+The detached codec uses `Snapshot`, `AnalysisTap`, and `DisplayPreferences` directly, without duplicate state mirrors.
 
 ## Build and test
 
@@ -167,6 +171,7 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
 - Full Iced device-loss recovery, native accessibility qualification, safe arbitrary module unloading,
   and complete upstream widget-cache reclamation are not established.
   Windows reentrant removal may be rejected until the host retries outside an active callback.
+  Invalid off-thread or reentrant final release retains UI resources as leak containment, not unload qualification.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, DSP, analysis, rendering, state, and verification contracts.
 The bounded `editor_compare` example hosts explicit C++ and Rust build-tree bundles with the same stereo comb.
