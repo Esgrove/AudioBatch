@@ -26,7 +26,7 @@ use crate::strings_utf16;
 impl IEditControllerTrait for Component {
     unsafe fn setComponentState(&self, stream: *mut IBStream) -> tresult {
         // SAFETY: the host supplies a stream live throughout this non-audio callback, or null.
-        if unsafe { state::restore(stream, &self.parameters) }.is_ok() {
+        if unsafe { state::restore(stream, &self.parameters, &self.shared) }.is_ok() {
             kResultOk
         } else {
             kResultFalse

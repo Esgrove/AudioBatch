@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use iced::widget::{Column, Row, Space, button, checkbox, container, mouse_area, rule, slider, stack, text};
 use iced::{Alignment, Element, Length, Subscription, Task, Theme};
 use iced_baseview as iced;
-use image_control_dsp::SharedState;
+use image_control_dsp::{AnalysisStatus, AnalysisTap, ColourMode, CorrelationSnapshot, SharedState};
 
 use crate::params::{
     BYPASS_PARAMETER, CROSSOVER_PARAMETERS, DELTA_PARAMETER, GAIN_PARAMETER, MONO_PARAMETER, ParameterKind,
@@ -41,6 +41,11 @@ pub enum Message {
     Link(usize, bool),
     Toolbar,
     Correlation,
+    Settings,
+    Tap(AnalysisTap),
+    Persistence(f32),
+    Contrast(f32),
+    Colour(ColourMode),
     Refresh,
     Resize,
     Hold,
@@ -68,6 +73,9 @@ struct EditorProgram {
 /// Window-owned state keeps parameter atomics authoritative and never holds mutable audio-processing state.
 pub struct EditorState {
     parameters: Arc<Parameters>,
+    shared: Arc<SharedState>,
+    settings_shown: bool,
+    correlation: CorrelationObservation,
     binding: Rc<dyn EditorBinding>,
     spectrogram: Result<spectrogram::Spectrogram, std::io::Error>,
     window_size: Option<iced::shell::SharedWindowSize>,
@@ -115,6 +123,7 @@ impl iced_program::Program for EditorProgram {
         if let Some(notifier) = &self.notifier {
             notifier.notify();
         }
+        self.shared.set_correlation_enabled(true);
         let spectrogram = spectrogram::Spectrogram::new(Arc::clone(&self.shared));
         if let Ok(spectrogram) = &spectrogram {
             *self.analysis.borrow_mut() = Some(spectrogram.shutdown_handle());
@@ -122,6 +131,9 @@ impl iced_program::Program for EditorProgram {
         (
             EditorState {
                 parameters: Arc::clone(&self.parameters),
+                shared: Arc::clone(&self.shared),
+                settings_shown: false,
+                correlation: CorrelationObservation::default(),
                 binding: Rc::clone(&self.binding),
                 spectrogram,
                 window_size: Some(self.window_size.clone()),
@@ -208,8 +220,33 @@ impl EditorState {
                 self.end_gesture();
                 self.toolbar_shown = !self.toolbar_shown;
             }
-            Message::Correlation => self.correlation_shown = !self.correlation_shown,
+            Message::Correlation => {
+                self.correlation_shown = !self.correlation_shown;
+                self.shared.set_correlation_enabled(self.correlation_shown);
+                self.correlation = CorrelationObservation::default();
+            }
+            Message::Settings => self.settings_shown = !self.settings_shown,
+            Message::Tap(tap) => self.shared.set_analysis_tap(tap),
+            Message::Persistence(persistence_seconds) => {
+                let mut display = self.shared.display_preferences();
+                display.persistence_seconds = persistence_seconds;
+                self.shared.set_display_preferences(display);
+            }
+            Message::Contrast(contrast) => {
+                let mut display = self.shared.display_preferences();
+                display.contrast = contrast;
+                self.shared.set_display_preferences(display);
+            }
+            Message::Colour(color_mode) => {
+                let mut display = self.shared.display_preferences();
+                display.color_mode = color_mode;
+                self.shared.set_display_preferences(display);
+            }
             Message::Refresh => {
+                if self.correlation_shown {
+                    self.correlation
+                        .observe(self.shared.correlation_snapshot(), Instant::now());
+                }
                 if let Ok(spectrogram) = &mut self.spectrogram {
                     spectrogram.tick();
                 }
@@ -266,7 +303,7 @@ impl EditorState {
             },
             spectrogram::Spectrogram::view::<Message>,
         );
-        let plot = stack![
+        let mut plot = stack![
             container(plot_content)
                 .padding(iced::Padding {
                     top: layout::PLOT_INSETS[0],
@@ -278,6 +315,18 @@ impl EditorState {
                 .height(Length::Fill),
             plot_overlay::PlotOverlay::new(self.crossovers(), plot_message),
         ];
+        if let Ok(spectrogram) = &self.spectrogram
+            && let Some(status) = analysis_status_text(spectrogram.status())
+        {
+            plot = plot.push(
+                container(text(status).size(13).color(theme::GREY_MIDDLE_LIGHT))
+                    .padding(12.0)
+                    .align_bottom(Length::Fill),
+            );
+        }
+        if self.settings_shown {
+            plot = plot.push(container(self.settings()).padding(8.0).align_right(Length::Fill));
+        }
         let divider = mouse_area(container(rule::horizontal(1)).center_y(layout::GAP).width(Length::Fill))
             .on_press(Message::Divider)
             .interaction(iced::mouse::Interaction::ResizingVertically);
@@ -292,7 +341,15 @@ impl EditorState {
             .height(Length::Fill),
         );
         let correlation = if self.correlation_shown {
-            let columns = (0..4).fold(Row::new().spacing(layout::GAP), |row, _| row.push(correlation_meter()));
+            let readings = self.correlation.readings(
+                Instant::now(),
+                Duration::from_secs_f32(self.shared.correlation_expiry_seconds()),
+            );
+            let columns = readings
+                .into_iter()
+                .fold(Row::new().spacing(layout::GAP), |row, reading| {
+                    row.push(correlation_meter(reading))
+                });
             stack![
                 columns,
                 container(control("⌄", 24.0, Some(Message::Correlation), false, theme::BLUE)).align_right(Length::Fill)
@@ -423,10 +480,28 @@ impl EditorState {
         .center_y(Length::Fill);
         let row = Row::new()
             .push(title)
-            .push(control("⚙", 24.0, None, false, theme::BLUE))
+            .push(control(
+                "⚙",
+                24.0,
+                Some(Message::Settings),
+                self.settings_shown,
+                theme::BLUE,
+            ))
             .push(Space::new().width(layout::GAP))
-            .push(control("Pre", widths.tap, None, false, theme::BLUE))
-            .push(control("Post", widths.tap, None, true, theme::BLUE))
+            .push(control(
+                "Pre",
+                widths.tap,
+                Some(Message::Tap(AnalysisTap::Pre)),
+                self.shared.analysis_tap() == AnalysisTap::Pre,
+                theme::BLUE,
+            ))
+            .push(control(
+                "Post",
+                widths.tap,
+                Some(Message::Tap(AnalysisTap::Post)),
+                self.shared.analysis_tap() == AnalysisTap::Post,
+                theme::BLUE,
+            ))
             .push(Space::new().width(layout::GAP))
             .push(control("↶", 24.0, None, false, theme::BLUE))
             .push(Space::new().width(4.0))
@@ -451,6 +526,42 @@ impl EditorState {
             .height(layout::HEADER_HEIGHT)
             .align_y(Alignment::Center);
         row.into()
+    }
+
+    /// Offers observational preferences in a compact existing-style surface, never host sound parameters.
+    fn settings(&self) -> Element<'_, Message> {
+        let display = self.shared.display_preferences();
+        container(
+            Column::new()
+                .spacing(8.0)
+                .push(text("Display settings").font(theme::BOLD).size(14))
+                .push(text(format!("Persistence  {:.2} s", display.persistence_seconds)).size(12))
+                .push(slider(0.05..=3.0, display.persistence_seconds, Message::Persistence).step(0.01_f32))
+                .push(text(format!("Contrast  {:.0}%", display.contrast * 100.0)).size(12))
+                .push(slider(0.0..=1.0, display.contrast, Message::Contrast).step(0.01_f32))
+                .push(
+                    Row::new()
+                        .spacing(6.0)
+                        .push(control(
+                            "Frequency",
+                            100.0,
+                            Some(Message::Colour(ColourMode::Frequency)),
+                            display.color_mode == ColourMode::Frequency,
+                            theme::BLUE,
+                        ))
+                        .push(control(
+                            "Phase",
+                            80.0,
+                            Some(Message::Colour(ColourMode::Phase)),
+                            display.color_mode == ColourMode::Phase,
+                            theme::BLUE,
+                        )),
+                ),
+        )
+        .width(240.0)
+        .padding(12.0)
+        .style(theme::panel)
+        .into()
     }
 
     /// Builds one quiet band surface with Solo/Link in its heading, followed by five stacked labelled rows.
@@ -653,13 +764,40 @@ fn control(
     active: bool,
     accent: iced::Color,
 ) -> Element<'_, Message> {
-    button(text(label).size(13).align_x(iced::alignment::Horizontal::Center))
+    control_button(label, width, message, active, accent).into()
+}
+
+/// Shares the production button with event-only tests rather than simulating its messages.
+fn control_button(
+    label: &str,
+    width: f32,
+    message: Option<Message>,
+    active: bool,
+    accent: iced::Color,
+) -> button::Button<'_, Message> {
+    control_input(
+        text(label).size(13).align_x(iced::alignment::Horizontal::Center),
+        width,
+        message,
+        active,
+        accent,
+    )
+}
+
+/// Retains production click and selected styling behavior independently of glyph rasterization.
+fn control_input<'a, Renderer: iced::advanced::Renderer>(
+    content: impl Into<iced::core::Element<'a, Message, Theme, Renderer>>,
+    width: f32,
+    message: Option<Message>,
+    active: bool,
+    accent: iced::Color,
+) -> button::Button<'a, Message, Theme, Renderer> {
+    button(content)
         .width(width)
         .height(24.0)
         .padding(0)
         .on_press_maybe(message)
         .style(move |_, status| theme::control(status, active, accent))
-        .into()
 }
 
 /// Preserves the actual comparison/preset row positions while absent history and library services remain disabled.
@@ -684,16 +822,94 @@ fn processing_toolbar<'a>() -> Element<'a, Message> {
         .into()
 }
 
-/// Displays unavailable correlation honestly, without invented values or a synthetic moving meter.
-fn correlation_meter<'a>() -> Element<'a, Message> {
+/// Tracks the last observed publication on the UI thread, without audio-thread clock calls.
+struct CorrelationObservation {
+    readings: [f32; 4],
+    generation: u64,
+    revision: u64,
+    updated: Option<Instant>,
+}
+
+impl Default for CorrelationObservation {
+    fn default() -> Self {
+        Self {
+            readings: [f32::NAN; 4],
+            generation: u64::MAX,
+            revision: 0,
+            updated: None,
+        }
+    }
+}
+
+impl CorrelationObservation {
+    /// Only a fresh audio publication restarts expiry. GUI refreshes never fabricate meter activity.
+    const fn observe(&mut self, snapshot: CorrelationSnapshot, now: Instant) {
+        if snapshot.generation != self.generation {
+            self.readings = [f32::NAN; 4];
+            self.updated = None;
+            self.generation = snapshot.generation;
+            self.revision = snapshot.revision;
+            return;
+        }
+        if snapshot.revision != self.revision {
+            self.readings = snapshot.readings;
+            self.revision = snapshot.revision;
+            self.updated = Some(now);
+        }
+    }
+
+    /// Returns unavailable values after two maximum host blocks, with a 250 ms minimum.
+    fn readings(&self, now: Instant, expiry: Duration) -> [Option<f32>; 4] {
+        if self
+            .updated
+            .is_none_or(|updated| now.saturating_duration_since(updated) >= expiry.max(Duration::from_millis(250)))
+        {
+            return [None; 4];
+        }
+        self.readings
+            .map(|value| value.is_finite().then(|| value.clamp(-1.0, 1.0)))
+    }
+}
+
+/// Explains analysis-only limitations while all ordinary processing controls remain available.
+const fn analysis_status_text(status: AnalysisStatus) -> Option<&'static str> {
+    match status {
+        AnalysisStatus::Waiting => Some("Waiting for audio"),
+        AnalysisStatus::UnsupportedRate => Some("Spatial analysis unavailable at this sample rate"),
+        AnalysisStatus::Failed => Some("Spatial analysis failed"),
+        AnalysisStatus::Disabled => Some("Spatial analysis disabled"),
+        AnalysisStatus::Running => None,
+    }
+}
+
+/// Displays real processed-band readings, with no marker or invented number while unavailable.
+fn correlation_meter<'a>(reading: Option<f32>) -> Element<'a, Message> {
     let label = Row::new()
         .push(text("Correlation").size(11))
         .push(Space::new().width(Length::Fill))
-        .push(text("—").font(theme::MONO).size(11))
+        .push(
+            text(reading.map_or_else(|| "—".into(), |value| format!("{value:+.2}")))
+                .font(theme::MONO)
+                .size(11),
+        )
         .push(Space::new().width(16.0));
-    let track = container(Space::new().height(5.0))
-        .width(Length::Fill)
-        .style(|_| container::Style::default().background(theme::GREY_MEDIUM));
+    let mut track = stack![
+        container(Space::new().height(5.0))
+            .width(Length::Fill)
+            .style(|_| container::Style::default().background(theme::GREY_MEDIUM)),
+    ];
+    if let Some(value) = reading {
+        let position = ((value + 1.0) * 500.0).round() as u16;
+        track = track.push(
+            Row::new()
+                .push(Space::new().width(Length::FillPortion(position.max(1))))
+                .push(
+                    container(Space::new().width(2.0).height(5.0))
+                        .style(|_| container::Style::default().background(theme::YELLOW)),
+                )
+                .push(Space::new().width(Length::FillPortion((1000 - position).max(1)))),
+        );
+    }
     let scale = Row::new()
         .push(text("-1").size(11))
         .push(Space::new().width(Length::Fill))
@@ -735,7 +951,7 @@ fn format_value(spec: ParameterSpec, normalized: f64) -> String {
 
 /// Formats the visible frequency ranges and marker labels without redundant trailing precision.
 fn format_frequency(frequency: f64) -> String {
-    if frequency >= 1_000.0 {
+    if frequency >= 1000.0 {
         format!("{:.1} kHz", frequency * 0.001)
     } else {
         format!("{frequency:.0} Hz")
@@ -771,6 +987,9 @@ mod tests {
         let binding = Rc::new(RecordingBinding::default());
         let state = EditorState {
             parameters: Arc::new(Parameters::default()),
+            shared: image_control_dsp::Imager::new().shared(),
+            settings_shown: false,
+            correlation: CorrelationObservation::default(),
             binding: binding.clone(),
             spectrogram: Err(std::io::Error::other("headless interaction test")),
             window_size: None,
@@ -854,9 +1073,9 @@ mod tests {
         let (mut state, binding) = editor();
         let id = CROSSOVER_PARAMETERS[1];
         let _ = state.update(Message::Change(id, 1.0));
-        assert!((state.plain(id) - 5_000.0 / f64::from(1.259_921_1_f32)).abs() < 0.001);
+        assert!((state.plain(id) - 5000.0 / f64::from(1.259_921_1_f32)).abs() < 0.001);
         assert!((state.plain(CROSSOVER_PARAMETERS[0]) - 100.0).abs() < 0.001);
-        assert!((state.plain(CROSSOVER_PARAMETERS[2]) - 5_000.0).abs() < 0.001);
+        assert!((state.plain(CROSSOVER_PARAMETERS[2]) - 5000.0).abs() < 0.001);
         let _ = state.update(Message::EndGesture);
         assert!(binding.events.borrow().iter().all(|(changed, _, _)| *changed == id));
     }
@@ -982,6 +1201,116 @@ mod tests {
     }
 
     #[test]
+    fn real_preference_buttons_select_shared_state_without_sound_gestures() {
+        let (mut state, binding) = editor();
+        let before = serde_json::to_vec(&state.parameters.snapshot()).expect("sound");
+        for message in [
+            Message::Tap(AnalysisTap::Pre),
+            Message::Settings,
+            Message::Colour(ColourMode::Phase),
+        ] {
+            let content: iced::core::Element<'_, Message, Theme, EventRenderer> = Space::new().into();
+            let mut element: iced::core::Element<'_, Message, Theme, EventRenderer> =
+                control_input(content, 80.0, Some(message), false, theme::BLUE).into();
+            let mut tree = iced::advanced::widget::Tree::new(&element);
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &EventRenderer,
+                &iced::advanced::layout::Limits::new(iced::Size::ZERO, iced::Size::new(80.0, 24.0)),
+            );
+            let bounds = iced::Rectangle::with_size(iced::Size::new(80.0, 24.0));
+            for event in [
+                iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)),
+            ] {
+                let mut messages = Vec::new();
+                element.as_widget_mut().update(
+                    &mut tree,
+                    &event,
+                    iced::advanced::Layout::new(&node),
+                    iced::mouse::Cursor::Available(iced::Point::new(40.0, 12.0)),
+                    &EventRenderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut iced::advanced::Shell::new(&mut messages),
+                    &bounds,
+                );
+                for message in messages {
+                    let _ = state.update(message);
+                }
+            }
+        }
+        assert_eq!(state.shared.analysis_tap(), AnalysisTap::Pre);
+        assert_eq!(state.shared.display_preferences().color_mode, ColourMode::Phase);
+        assert!(state.settings_shown);
+        assert!(binding.events.borrow().is_empty());
+        assert_eq!(serde_json::to_vec(&state.parameters.snapshot()).expect("sound"), before);
+        assert!(
+            state
+                .shared
+                .set_display_preferences(image_control_dsp::DisplayPreferences::default())
+        );
+        state.shared.set_analysis_tap(AnalysisTap::Post);
+        let _ = state.update(Message::Refresh);
+        assert_eq!(state.shared.analysis_tap(), AnalysisTap::Post);
+        assert_eq!(state.shared.display_preferences().color_mode, ColourMode::Frequency);
+    }
+
+    #[test]
+    fn revision_expiry_and_generation_changes_remove_real_meter_readings() {
+        let now = Instant::now();
+        let mut meter = CorrelationObservation::default();
+        meter.observe(
+            CorrelationSnapshot {
+                readings: [1.0; 4],
+                generation: 1,
+                revision: 1,
+            },
+            now,
+        );
+        assert_eq!(meter.readings(now, Duration::ZERO), [None; 4]);
+        meter.observe(
+            CorrelationSnapshot {
+                readings: [-0.5; 4],
+                generation: 1,
+                revision: 2,
+            },
+            now,
+        );
+        assert_eq!(meter.readings(now, Duration::ZERO), [Some(-0.5); 4]);
+        assert_eq!(
+            meter.readings(now + Duration::from_millis(250), Duration::ZERO),
+            [None; 4]
+        );
+        assert_eq!(
+            meter.readings(now + Duration::from_millis(300), Duration::from_secs(1)),
+            [Some(-0.5); 4]
+        );
+        meter.observe(
+            CorrelationSnapshot {
+                readings: [1.0; 4],
+                generation: 2,
+                revision: 3,
+            },
+            now,
+        );
+        assert_eq!(meter.readings(now, Duration::from_secs(1)), [None; 4]);
+    }
+
+    #[test]
+    fn analysis_status_is_explicit_and_preference_validation_keeps_sound_unchanged() {
+        assert_eq!(analysis_status_text(AnalysisStatus::Waiting), Some("Waiting for audio"));
+        assert!(analysis_status_text(AnalysisStatus::UnsupportedRate).is_some());
+        assert!(analysis_status_text(AnalysisStatus::Failed).is_some());
+        assert!(analysis_status_text(AnalysisStatus::Running).is_none());
+        let (mut state, binding) = editor();
+        let display = state.shared.display_preferences();
+        let _ = state.update(Message::Persistence(f32::NAN));
+        let _ = state.update(Message::Contrast(2.0));
+        assert_eq!(state.shared.display_preferences(), display);
+        assert!(binding.events.borrow().is_empty());
+    }
+
+    #[test]
     fn value_readouts_follow_independent_parameter_domains() {
         for (id, normalized, expected) in [
             (GAIN_PARAMETER, 2.0 / 3.0, "0.0 dB"),
@@ -1011,10 +1340,10 @@ mod tests {
 
     #[test]
     fn marker_messages_use_registry_conversions_not_screen_units() {
-        let Message::Change(id, normalized) = plot_message(plot_overlay::PlotEvent::Change(1, 2_000.0)) else {
+        let Message::Change(id, normalized) = plot_message(plot_overlay::PlotEvent::Change(1, 2000.0)) else {
             panic!("change message")
         };
         assert_eq!(id, CROSSOVER_PARAMETERS[1]);
-        assert!((parameter_spec(id).expect("crossover").normalized_to_plain(normalized) - 2_000.0).abs() < 0.000_001);
+        assert!((parameter_spec(id).expect("crossover").normalized_to_plain(normalized) - 2000.0).abs() < 0.000_001);
     }
 }

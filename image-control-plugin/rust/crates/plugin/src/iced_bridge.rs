@@ -97,6 +97,8 @@ pub struct Editor {
     binding: Rc<dyn EditorBinding>,
     /// Joins analysis independently of a still-active Iced program update.
     analysis: Rc<RefCell<Option<image_control_dsp::AnalysisShutdown>>>,
+    /// Disables observation independently of any active Iced callback retaining its editor state.
+    shared: Arc<SharedState>,
     /// Retains the typed message endpoint without exposing UI messages or channels to audio callbacks.
     message_sender: RefCell<Option<IcedMessageSender<crate::editor::Message>>>,
     /// Authoritative lifecycle, independent of platform-specific `Window::is_open` behavior.
@@ -159,6 +161,7 @@ impl Editor {
         // Both successful extraction and early-error destruction occur on the owner thread.
         let ui_binding = Fragile::new((Rc::clone(&binding), Rc::clone(&analysis)));
         let build_notifier = notifier.clone();
+        let editor_shared = Arc::clone(&shared);
         let executor = crate::iced_executor::Shutdown::new().map_err(EditorError::Executor)?;
         let (window, message_sender) = crate::iced_executor::with_executor(&executor, || {
             iced_baseview::create_window(
@@ -183,6 +186,7 @@ impl Editor {
             child: children.finish()?,
             binding,
             analysis,
+            shared: editor_shared,
             message_sender: RefCell::new(Some(message_sender)),
             open,
             closing: Cell::new(false),
@@ -238,6 +242,8 @@ impl Editor {
             return Ok(());
         }
         self.open.set(false);
+        self.shared.set_correlation_enabled(false);
+        self.shared.set_analysis_enabled(false);
         let detached = self.child.detach();
         self.binding.close();
         let analysis = self.analysis.borrow_mut().take();
@@ -369,10 +375,10 @@ mod tests {
 
     #[test]
     fn native_dimensions_reject_zero_and_signed_overflow() {
-        for (width, height) in [(0, 760), (1_000, 0), (u32::MAX, 760), (1_000, u32::MAX)] {
+        for (width, height) in [(0, 760), (1000, 0), (u32::MAX, 760), (1000, u32::MAX)] {
             assert!(matches!(validate_size(width, height), Err(EditorError::InvalidSize)));
         }
-        assert!(validate_size(1_000, 760).is_ok());
+        assert!(validate_size(1000, 760).is_ok());
         assert!(validate_size(i32::MAX as u32, i32::MAX as u32).is_ok());
     }
 

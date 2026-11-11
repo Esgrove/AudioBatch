@@ -15,11 +15,14 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, bail, ensure};
 use image_control_plugin_rs::{COMPONENT_ID, PARAMETER_COUNT, PLUGIN_NAME};
 #[cfg(target_os = "macos")]
-use objc2::{MainThreadMarker, rc::Retained, runtime::ProtocolObject};
+use objc2::{MainThreadMarker, msg_send, rc::Retained, runtime::ProtocolObject};
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEventMask};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSEvent, NSEventMask, NSEventModifierFlags,
+    NSEventType,
+};
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
+use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSPoint};
 use vst3_host::{ClassId, EditorWindow, Module, PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiThread};
 
 #[path = "state_overlap.rs"]
@@ -467,7 +470,7 @@ fn callback_loop(processors: &mut [ProcessorHandle], signals: &Signals, reset: b
                 for (frame, sample) in samples.iter_mut().enumerate() {
                     let phase = ((block * BLOCK_FRAMES + frame) % 48_000) as f32 / 48_000.0;
                     let side = if channel == 0 { 0.025 } else { -0.025 };
-                    *sample = (phase * std::f32::consts::TAU * 1_100.0)
+                    *sample = (phase * std::f32::consts::TAU * 1100.0)
                         .sin()
                         .mul_add(side, (phase * std::f32::consts::TAU * 440.0).sin() * 0.1);
                 }
@@ -566,6 +569,8 @@ fn editor_lifecycle(
     let second_editor = EditorWindow::open(ui, second, "ImageControl RS packaged host B", None, None)?;
     application.verify_delegate()?;
     run_stage(ui, worker, 2)?;
+    #[cfg(target_os = "macos")]
+    exercise_monitoring_taps(ui, first, worker)?;
     ensure!(
         !first_editor.is_closed() && !second_editor.is_closed(),
         "editor closed before lifecycle observation"
@@ -591,6 +596,60 @@ fn editor_lifecycle(
         drop(first_editor);
         run_stage(ui, worker, 2)?;
         application.verify_delegate()?;
+    }
+    Ok(())
+}
+
+/// Switches actual packaged tap buttons while marked callbacks and correlation continue, then verifies saved readback.
+#[cfg(target_os = "macos")]
+fn exercise_monitoring_taps(ui: &UiThread, instance: &PluginInstance, worker: &CallbackWorker) -> Result<()> {
+    let marker = MainThreadMarker::new().context("monitoring input requires the host UI thread")?;
+    let application = NSApplication::sharedApplication(marker);
+    let windows = application.windows();
+    let window = windows
+        .iter()
+        .find(|window| window.title().to_string() == "ImageControl RS packaged host A")
+        .context("owned monitoring test window")?;
+    let parent = window.contentView().context("host content view")?;
+    for (x, expected) in [(210.0, "pre"), (252.0, "post")] {
+        let bounds = parent.bounds();
+        let local = NSPoint::new(
+            x,
+            if parent.isFlipped() {
+                22.0
+            } else {
+                bounds.size.height - 22.0
+            },
+        );
+        let position = parent.convertPoint_toView(local, None);
+        let target = parent.hitTest(local).context("native tap target")?;
+        let make_event = |kind, pressure| {
+            NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind, position, NSEventModifierFlags::empty(), 0.0, window.windowNumber(), None, 1, 1, pressure,
+            ).context("native tap mouse event")
+        };
+        let moved = make_event(NSEventType::MouseMoved, 0.0)?;
+        let down = make_event(NSEventType::LeftMouseDown, 1.0)?;
+        let up = make_event(NSEventType::LeftMouseUp, 0.0)?;
+        // SAFETY: hit testing retains the actual live responder in this owned host window on the UI thread.
+        unsafe {
+            let _: () = msg_send![&*target, mouseMoved: &*moved];
+            let _: () = msg_send![&*target, mouseDown: &*down];
+            let _: () = msg_send![&*target, mouseUp: &*up];
+        }
+        run_stage(ui, worker, 2)?;
+        let state = instance.live_state(ui)?;
+        let bytes = state.component;
+        let payload = bytes.get(4..).context("bounded state envelope")?;
+        let decoded: serde_json::Value = serde_json::from_slice(payload)?;
+        ensure!(
+            decoded
+                .get("editor")
+                .and_then(|editor| editor.get("tap"))
+                .and_then(serde_json::Value::as_str)
+                == Some(expected),
+            "native tap click did not publish {expected}"
+        );
     }
     Ok(())
 }

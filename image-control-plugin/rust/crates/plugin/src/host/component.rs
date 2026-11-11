@@ -125,7 +125,9 @@ impl IPluginBaseTrait for Component {
     }
 
     unsafe fn terminate(&self) -> tresult {
-        self.active.store(false, Ordering::Relaxed);
+        self.active.store(false, Ordering::Release);
+        self.shared.set_processing_active(false);
+        self.shared.invalidate_monitoring();
         let old = self
             .handler
             .lock()
@@ -192,13 +194,17 @@ impl IComponentTrait for Component {
         {
             return kResultFalse;
         }
-        self.active.store(state != 0, Ordering::Relaxed);
+        self.active.store(state != 0, Ordering::Release);
+        if state == 0 {
+            self.shared.set_processing_active(false);
+        }
+        self.shared.invalidate_monitoring();
         kResultOk
     }
 
     unsafe fn setState(&self, stream: *mut IBStream) -> tresult {
         // SAFETY: the host supplies a live stream for this non-audio callback, or null.
-        if unsafe { state::restore(stream, &self.parameters) }.is_ok() {
+        if unsafe { state::restore(stream, &self.parameters, &self.shared) }.is_ok() {
             kResultOk
         } else {
             kResultFalse
@@ -207,7 +213,7 @@ impl IComponentTrait for Component {
 
     unsafe fn getState(&self, stream: *mut IBStream) -> tresult {
         // SAFETY: the host supplies a writable stream for this non-audio callback, or null.
-        if unsafe { state::save(stream, &self.parameters) }.is_ok() {
+        if unsafe { state::save(stream, &self.parameters, &self.shared) }.is_ok() {
             kResultOk
         } else {
             kResultFalse
@@ -294,6 +300,9 @@ impl IAudioProcessorTrait for Component {
         self.latency_samples.store(latency, Ordering::Relaxed);
         self.tail_samples.store(tail, Ordering::Relaxed);
         self.maximum_frames.store(setup.maxSamplesPerBlock, Ordering::Relaxed);
+        self.shared.set_maximum_block_frames(setup.maxSamplesPerBlock as u32);
+        self.shared.set_processing_active(false);
+        self.shared.invalidate_monitoring();
         kResultOk
     }
 
@@ -309,6 +318,8 @@ impl IAudioProcessorTrait for Component {
             })
             .is_some()
         {
+            self.shared.set_processing_active(state != 0);
+            self.shared.invalidate_monitoring();
             kResultOk
         } else {
             kResultFalse
