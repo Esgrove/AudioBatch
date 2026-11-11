@@ -135,6 +135,34 @@ void sanitizeParameterState(juce::ValueTree state, const juce::AudioProcessorVal
     }
 }
 
+/// Predicts APVTS's accepted raw values without writing any live parameter or sending host notifications.
+/// Keep this detached publication separate from the requested tree: skew conversions can round on each recall.
+juce::ValueTree acceptedParameterState(
+    const juce::ValueTree& requested,
+    const juce::AudioProcessorValueTreeState& parameters
+)
+{
+    auto accepted = requested.createCopy();
+    for (auto child : accepted) {
+        const auto parameterId = child.getProperty("id").toString();
+        if (const auto* parameter = parameters.getParameter(parameterId)) {
+            const auto current = parameters.getRawParameterValue(parameterId)->load(std::memory_order_relaxed);
+            const auto requestedValue = static_cast<float>(child.getProperty("value"));
+            auto readback = current;
+            // APVTS skips approximately equal writes and retains its existing atomic readback on equal notifications.
+            if (!juce::approximatelyEqual(requestedValue, current)) {
+                const auto stored = parameter->convertFrom0to1(parameter->convertTo0to1(requestedValue));
+                const auto converted = parameter->convertFrom0to1(parameter->convertTo0to1(stored));
+                if (!juce::approximatelyEqual(converted, current)) {
+                    readback = converted;
+                }
+            }
+            child.setProperty("value", static_cast<double>(readback), nullptr);
+        }
+    }
+    return accepted;
+}
+
 /// Converts an effective raw control only when its exact value changes, retaining audio-thread-owned targets.
 template<typename Convert>
 bool updateCachedControl(const float raw, float& previousRaw, float& target, const bool initialized, Convert convert)
@@ -945,7 +973,8 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
     {
         const std::scoped_lock stateLock(stateInformationMutex);
         sanitizeParameterState(restoredParameters, parameters);
-        const auto restoredSound = soundFromParameterTree(restoredParameters, parameters);
+        const auto acceptedParameters = acceptedParameterState(restoredParameters, parameters);
+        const auto restoredSound = soundFromParameterTree(acceptedParameters, parameters);
         if (!comparison) {
             comparison = ComparisonState {};
             comparison->slots.fill(restoredSound);
@@ -956,7 +985,9 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
         presetProvenance = std::move(provenance);
         auto& activeProvenance = presetProvenance.at(static_cast<std::size_t>(activeComparisonSlot));
         if (activeProvenance) {
-            advancePresetRecallBaseline(*activeProvenance, restoredSound, parameters);
+            advancePresetRecallBaseline(
+                *activeProvenance, soundFromParameterTree(restoredParameters, parameters), parameters
+            );
         }
         selectedUserPresets = {};
         // Only atomic history invalidation runs here. Message-thread use later reclaims local command storage.
@@ -967,17 +998,20 @@ void ImageControlProcessor::setStateInformation(const void* data, const int size
             editorStatePending = true;
             analyzerFifo.setTap(static_cast<bool>(restoredEditor.getProperty(ANALYZE_OUTPUT_PROPERTY, true)));
         }
-        restoredParameterTarget = restoredParameters.createCopy();
+        restoredParameterRequest = restoredParameters.createCopy();
+        restoredParameterTarget = acceptedParameters;
         if (!applyingParameterRestore) {
             const juce::ScopedValueSetter<bool> guard(applyingParameterRestore, true);
             auto generation = history.generation();
             parameters.replaceState(restoredParameters);
             // APVTS must finish reconnecting one tree before starting another connection pass.
-            // A nested restore publishes its complete target, which saves already observe above.
+            // A nested restore publishes accepted readback, while replay applies its unconverted request only once.
             while (generation != history.generation()) {
                 generation = history.generation();
-                parameters.replaceState(restoredParameterTarget.createCopy());
+                restoredParameterTarget = acceptedParameterState(restoredParameterRequest, parameters);
+                parameters.replaceState(restoredParameterRequest.createCopy());
             }
+            comparisonSlots.at(static_cast<std::size_t>(activeComparisonSlot)) = captureProcessingState(parameters);
         }
     }
     if (isMessageThread() && !restoringState) {

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 
 namespace esgrove::image_control
 {
@@ -166,8 +167,11 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     /// Message-thread-only settings, kept in one tree so the editor's bindings survive state restores.
     juce::ValueTree editorState;
-    /// Detached latest accepted host parameter target, retained to finish a reentrant restore authoritatively.
+    /// Detached latest requested parameter tree, retained to finish a reentrant restore authoritatively.
     /// Protected by stateInformationMutex and never shared with the APVTS-owned tree.
+    juce::ValueTree restoredParameterRequest;
+    /// Detached accepted raw readback of the complete restore, published before live parameter notifications.
+    /// Kept separate from the request so saving cannot add another skew conversion to the applied parameter values.
     juce::ValueTree restoredParameterTarget;
     /// Detached binary editor settings, copied under editorStateMutex and never shared as a live tree.
     juce::MemoryBlock editorStateSnapshot;

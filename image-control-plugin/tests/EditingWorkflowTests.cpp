@@ -35,6 +35,49 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Observes host gesture boundaries and detaches before the processor-owned parameter disappears.
+class EditingGestureCounter final : private juce::AudioProcessorParameter::Listener
+{
+public:
+    /// Observes a parameter that outlives this temporary test listener.
+    explicit EditingGestureCounter(juce::RangedAudioParameter& observed) : parameter(observed)
+    {
+        parameter.addListener(this);
+    }
+
+    /// Removes the listener even when an assertion exits the test early.
+    ~EditingGestureCounter() override
+    {
+        parameter.removeListener(this);
+    }
+
+    EditingGestureCounter(const EditingGestureCounter&) = delete;
+    EditingGestureCounter(EditingGestureCounter&&) = delete;
+    EditingGestureCounter& operator=(const EditingGestureCounter&) = delete;
+    EditingGestureCounter& operator=(EditingGestureCounter&&) = delete;
+
+    /// Returns host begin and end notifications in their delivery order.
+    [[nodiscard]] const std::vector<bool>& gestureBoundaries() const
+    {
+        return boundaries;
+    }
+
+private:
+    /// Values are checked directly through the production parameter and slider.
+    void parameterValueChanged(int /*index*/, float /*value*/) override {}
+
+    /// Records each boundary without inspecting history during synchronous host callbacks.
+    void parameterGestureChanged(int /*index*/, const bool beginning) override
+    {
+        boundaries.push_back(beginning);
+    }
+
+    /// Processor-owned parameter that stays alive until this listener detaches.
+    juce::RangedAudioParameter& parameter;
+    /// Ordered host begin and end notifications.
+    mutable std::vector<bool> boundaries;
+};
+
 /// Returns an editor-owned direct child, or null while that component type is absent.
 /// Check the result before use. It remains valid only while the parent retains that child.
 template<typename Child>
@@ -1082,6 +1125,73 @@ TEST(EditingWorkflow, RestoredPresetIdentityAppearsOnceAndFitsLongNames)
     EXPECT_FALSE(identity->isVisible());
     disclosure->onClick();
     EXPECT_TRUE(identity->isVisible());
+}
+
+/// Same-value host recall discards Output's native numeric draft without adding gestures or blocking fresh edits.
+TEST(EditingWorkflow, HostRestoreDiscardsUnchangedOutputText)
+{
+    for (const bool compact : {false, true}) {
+        SCOPED_TRACE(compact);
+        ImageControlProcessor source;
+        source.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+        source.getEditorState().setProperty(COMPACT_BAND_CONTROLS_PROPERTY, compact, nullptr);
+        juce::MemoryBlock saved;
+        source.getStateInformation(saved);
+        ImageControlProcessor processor;
+        processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
+        ImageControlEditor editor(processor);
+        editor.addToDesktop(0);
+        editor.setVisible(true);
+        auto* output = editingChild<ControlSlider>(editor);
+        auto* toolbar = editingChild<ProcessingToolbar>(editor);
+        auto* strip = editingChild<BandStrip>(editor);
+        ASSERT_NE(output, nullptr);
+        ASSERT_NE(toolbar, nullptr);
+        ASSERT_NE(strip, nullptr);
+        auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
+        const EditingGestureCounter gestures(parameter);
+        const auto original = plainValue(parameter);
+        output->grabKeyboardFocus();
+        ASSERT_TRUE(output->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        auto* label = editingChild<juce::Label>(*output);
+        ASSERT_NE(label, nullptr);
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        label->getCurrentTextEditor()->setText("-3.25", false);
+        EXPECT_FLOAT_EQ(plainValue(parameter), original);
+        processor.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        // Route through the production settings path without requiring a display refresh.
+        for (auto* child : editor.getChildren()) {
+            if (const auto* button = dynamic_cast<juce::Button*>(child);
+                button != nullptr && button->getButtonText() == "Post")
+            {
+                button->onClick();
+            }
+        }
+        ASSERT_EQ(label->getCurrentTextEditor(), nullptr);
+        EXPECT_EQ(strip->getHeight() == BAND_STRIP_COMPACT_HEIGHT, compact);
+        EXPECT_FLOAT_EQ(plainValue(parameter), original);
+        EXPECT_NEAR(output->getValue(), static_cast<double>(original), 0.0001);
+        EXPECT_FALSE(processor.getHistory().canUndo());
+        EXPECT_FALSE(processor.getHistory().canRedo());
+        EXPECT_FALSE(processor.getHistory().isEditing());
+        EXPECT_TRUE(gestures.gestureBoundaries().empty());
+
+        output->grabKeyboardFocus();
+        ASSERT_TRUE(output->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        ASSERT_NE(label->getCurrentTextEditor(), nullptr);
+        label->getCurrentTextEditor()->setText("-6.5", false);
+        ASSERT_TRUE(label->getCurrentTextEditor()->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+        pumpEditing(*toolbar, [&] { return label->getCurrentTextEditor() == nullptr; });
+        EXPECT_NEAR(plainValue(parameter), -6.5F, 0.0001F);
+        EXPECT_TRUE(processor.getHistory().canUndo());
+        EXPECT_FALSE(processor.getHistory().isEditing());
+        EXPECT_EQ(gestures.gestureBoundaries(), (std::vector<bool> {true, false}));
+        EXPECT_TRUE(processor.getHistory().undo());
+        EXPECT_FLOAT_EQ(plainValue(parameter), original);
+        EXPECT_TRUE(processor.getHistory().redo());
+        EXPECT_NEAR(plainValue(parameter), -6.5F, 0.0001F);
+        EXPECT_EQ(gestures.gestureBoundaries(), (std::vector<bool> {true, false, true, false, true, false}));
+    }
 }
 
 /// A recalled sound reaches the same production DSP path with the editor closed and different host block sizes.

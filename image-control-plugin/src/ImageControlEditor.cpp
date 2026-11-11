@@ -620,7 +620,7 @@ void ImageControlEditor::applySpectrogramHidden(const bool hidden)
     repaint();
 }
 
-/// Accepts restored strip geometry and cancels unfinished text before a restored mode can relayout controls.
+/// Accepts restored strip geometry and cancels unfinished control edits before restored settings relayout controls.
 bool ImageControlEditor::synchronizeRestoredLayout()
 {
     const auto generation = imageControlProcessor.getHistory().generation();
@@ -629,6 +629,8 @@ bool ImageControlEditor::synchronizeRestoredLayout()
     }
     layoutGeneration = generation;
     divider.cancelDrag();
+    outputSlider.hideTextBox(true);
+    outputSlider.endDrag();
     for (const auto& strip : bandStrips) {
         strip->discardPendingEdits();
     }
