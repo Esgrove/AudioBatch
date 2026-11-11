@@ -345,7 +345,7 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     constexpr int presetGap {PROCESSING_TOOLBAR_CONTROL_GAP};
     constexpr int preferredButtonWidth {60};
     constexpr int preferredTapWidth {42};
-    constexpr int preferredIdentityWidth {TITLE_WIDTH + 16};
+    constexpr int preferredIdentityWidth {TITLE_WIDTH + 8};
     constexpr int minimumIdentityWidth {112};
     constexpr int minimumButtonWidth {48};
     constexpr int minimumTapWidth {34};
@@ -404,9 +404,11 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     headerX += groupGaps.at(0);
     preButton.setBounds(takeHeader(tapWidths.at(0)).reduced(0, BUTTON_INSET));
     postButton.setBounds(takeHeader(tapWidths.at(1)).reduced(0, BUTTON_INSET));
-    // Unused wide-header space stays before history, keeping the preset group's two adjacent gaps compact.
-    headerX += groupGaps.at(1)
-        + (processingToolbarInline ? std::max(0, inlinePresetSpace - PROCESSING_TOOLBAR_MAX_WIDTH) : 0);
+    // Split space beyond the preset selector's cap around the history/preset group.
+    const int inlineSpareSpace
+        = processingToolbarInline ? std::max(0, inlinePresetSpace - PROCESSING_TOOLBAR_MAX_WIDTH) : 0;
+    const int leadingSpareSpace = inlineSpareSpace / 2;
+    headerX += groupGaps.at(1) + leadingSpareSpace;
     undoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     headerX += iconGaps.at(0);
     redoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
@@ -421,7 +423,7 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
         processingToolbar.setBounds(
             headerX, header.getY(), std::min(inlinePresetSpace, PROCESSING_TOOLBAR_MAX_WIDTH), header.getHeight()
         );
-        headerX += processingToolbar.getWidth() + presetGap;
+        headerX += processingToolbar.getWidth() + presetGap + inlineSpareSpace - leadingSpareSpace;
     } else {
         headerX += groupGaps.at(2) + std::max(0, outputWidth - MAX_OUTPUT_SLIDER_WIDTH);
     }
