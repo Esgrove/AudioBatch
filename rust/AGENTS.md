@@ -51,12 +51,14 @@ The Rust version covers the key features of the C++ application:
 - Normalize files from the CLI and the GUI to a sample peak or loudness target,
   written as AIFF with tags and Serato data.
   Lossless sources produce identical samples in peak mode and differ by at most one PCM step in loudness mode.
-- Scan for VST3 plugins in a worker process and list them in the CLI and the GUI.
-- Process files in the GUI or the CLI's `process --preset` subcommand through a chain of VST3 effects,
+- Scan for VST3 and CLAP plugins in a worker process and list them in the CLI and the GUI.
+- Process files in the GUI or the CLI's `process --preset` subcommand through mixed VST3 and CLAP effect chains,
   written as 16-bit AIFF with tags and Serato data.
-- Show plugin editors in native windows, and play the preview through the plugin chain.
+- Show plugin-provided editors in native windows, and play the preview through the plugin chain.
+  There is no generic parameter editor for a plugin without a supported GUI.
 
-Plugin hosting covers VST3 on macOS and Windows.
+Plugin hosting covers VST3 and CLAP on macOS and Windows.
+CLAP hosting is Rust-only because the bundled JUCE has no CLAP host.
 Audio Unit plugins are only hosted by the C++ application.
 
 ## Workspace Layout
@@ -76,7 +78,7 @@ The excluded `fuzz/` workspace declares its own dependencies.
 Write ordinary versions as full `major.minor.patch` versions, so compatible updates are picked up.
 Possible breaking changes are not a reason to add an exact pin.
 Preserve the existing exact pins for `gpui-pre` and `gpui-pre-platform` snapshot support,
-and the coordinated `vst3` SDK pin described below.
+and the coordinated `vst3` and Clack pins described below.
 
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
@@ -147,21 +149,30 @@ and the coordinated `vst3` SDK pin described below.
   and `realtime_tests.rs` the RealtimeSanitizer controls, which only the nightly `rtsan.sh` configuration enables.
   The ignored, hardware-free callback benchmark is in `callback_benchmark.rs`,
   with its CPU accounting in `callback_benchmark_cpu.rs` and its native insert in `callback_benchmark_native.rs`.
+- `crates/plugin-host-core` (`plugin-host-core`): format-neutral UI-thread lifecycle support and native windows.
+  `thread.rs` holds `UiThread`, `UiDispatcher`, and `UiJobs`, `ui_bound.rs` owns UI-only values across threads,
+  and `platform_events.rs` pumps native events outside a GUI framework.
+  The `editor` feature adds Cocoa and Win32 `NativeWindow` backends in `editor/`, through `EditorCallbacks`.
+  It depends on neither plugin SDK nor the application's GUI framework.
 - `crates/vst3-host` (`vst3-host`): VST3 hosting on top of the raw `vst3` bindings.
   `module.rs` loads bundles, `factory.rs` lists their classes,
   `instance.rs` holds the plugin lifecycle and the host side parameter changes of `set_parameter`,
   `processor.rs` runs audio processing on preallocated buffers, and `host_objects/` implements the host's COM objects.
-  `thread.rs` holds the UI thread token and the dispatcher, and `ui_bound.rs` a value only the UI thread may use.
-  The `editor` feature adds the native editor windows in `editor/`, with an AppKit and a Win32 backend,
-  in `editor/macos.rs` and `editor/windows.rs`, with `editor/unsupported.rs` for the other platforms,
+  `thread.rs` and `ui_bound.rs` re-export the shared lifecycle types from `plugin-host-core`.
+  The `editor` feature attaches VST3 views to the shared native windows,
   and `editor/plug_frame.rs` passes the size requests of a view to its window.
   `host_objects/` holds the host application, the attribute lists and messages, the component handler,
   the parameter changes, and the memory stream, one file each.
   `discovery.rs` finds bundles on disk, `module_info.rs` reads their `moduleinfo.json` without loading them,
-  `platform_events.rs` runs the platform event loop in a process without a GUI framework,
+  `platform_events.rs` re-exports the shared native event pump,
   `strings.rs` converts the fixed-size string fields of the VST3 structs, and `enums.rs` the enum constants.
   It holds the unsafe code of VST3 hosting.
+- `crates/clap-host` (`clap-host`): CLAP effect hosting through `clack-host` and `clack-extensions`.
+  `discovery.rs` finds `.clap` bundles, and `module.rs` loads entries and copies their descriptors.
+  Lifecycle, preallocated processing, host extensions, and optional native editors stay behind its safe interface.
 - `crates/plugins` (`audiobatch-plugins`): the plugin features, in safe code only.
+  `identity.rs` defines `PluginFormat` and `PluginId`,
+  and `host.rs` dispatches mixed-format lifecycle, processing, state, and editors through enums.
   `scanner.rs` scans out of process through `scan_worker.rs`, `library.rs` keeps the known plugins,
   `chain.rs` the saved chain, `presets.rs` the named chain presets,
   `processing.rs` renders one file through a chain,
@@ -177,6 +188,9 @@ and the coordinated `vst3` SDK pin described below.
   `factory()` serves them inside the test process, and the `module` example builds them into a library
   that `bundle.rs` wraps in a `.vst3` bundle, found under `target/<profile>/examples`.
   `factory.rs`, `controller.rs`, and `processor.rs` implement the COM interfaces of the fake plugins.
+- `crates/test-clap-plugin` (`audiobatch-test-clap-plugin`): a dev-only deterministic CLAP effect.
+  Gain and mid/side width use plain values from 0 through 2, and latency uses integer samples from 0 through 1024.
+  The in-process entry and `clap_module` library example support tests without installed plugins.
 - `crates/serato` (`serato-tags`): parsers for the Serato GEOB tags, extracted from the track-rename project.
   They take raw frame bytes and do no terminal printing, so any tag library and front end can use them.
   `overview.rs` parses the Overview tag strictly and defines its cache representation,
@@ -283,24 +297,29 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Preserve same-identity custom gains, including explicit clears, and compatible previews when refilling measurements.
   Keep ebur128 as a development dependency only.
 
-## VST3 Hosting
+## Plugin Hosting
 
-- **The UI thread rule.** VST3 requires loading modules, creating, setting up, activating, and destroying instances,
-  their state, and their editors on the thread that runs the event loop.
-  Only `process` and `setProcessing` may run elsewhere.
+- **The UI thread rule.** Both hosts use `plugin-host-core` for the registered UI thread and native windows.
+  Loading modules, creating, setting up, activating, and destroying instances,
+  accessing state, and managing editors belong on the thread that runs the event loop.
+  VST3 permits `process` and `setProcessing` elsewhere.
+  CLAP processing and reset use an exclusive audio lease.
+  Start and stop run in an audio-thread scope during UI preparation and teardown, with no lease held.
+  Main-thread callbacks and timers stay outside the audio callback.
   Methods that need the UI thread take a `&UiThread`, a token that only exists there and is not `Send`.
   Other threads reach the UI thread through `UiDispatcher`, and the GUI drains its `UiJobs` on the foreground executor.
   A worker that waits on the UI thread passes its cancellation check, so it never blocks a UI thread waiting on it.
 - **Unsafe code.** The workspace denies `unsafe_code`,
   and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`, kept as narrow as possible.
-  Mostly this is in `vst3-host` and the test plugin,
+  Hosting boundaries are in `plugin-host-core`, `vst3-host`, `clap-host`, and the dev test plugins,
   plus the Windows file drag in `crates/gui/src/file_drag/windows.rs`,
   the Core Audio AAC bridge in `crates/core/src/decode/native_aac.rs`,
   the callback admission in `crates/playback/src/callback_access.rs`,
   and the test-only RealtimeSanitizer and CPU accounting code in `crates/playback/src/realtime_tests.rs`,
   `crates/playback/src/callback_benchmark_cpu.rs`, and `crates/plugins/tests/realtime.rs`.
   Every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
-  Keep COM pointers inside `vst3-host`, so the crates above it stay safe.
+  Keep COM pointers inside `vst3-host`, CLAP ABI ownership inside `clap-host`,
+  and native window ownership inside `plugin-host-core`, so `audiobatch-plugins` and the front ends stay safe.
   Run `./miri.sh` after changing unsafe code in its covered modules,
   and keep new tests runnable under Miri where possible.
   The script does not exercise the native Core Audio AAC bridge, which needs native validation.
@@ -308,6 +327,21 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   the SDK that JUCE bundles in the C++ application.
   Keep both applications on the same SDK version, and upgrade them together.
   The bindings are pre-generated, so building needs no SDK or extra toolchain.
+  `clack-host`, `clack-plugin`, and `clack-extensions` use coordinated exact `=0.2.0` pins in the root workspace.
+  Upgrade the host, deterministic test plugin, and ImageControl's Clack adapter together.
+- **Format and state.** `HostInstance`, `HostProcessor`, and `HostState` dispatch VST3 and CLAP in safe code.
+  ABI pointers remain inside the host crates.
+  `PluginFormat` serializes as `VST3` or `CLAP`, defaulting to VST3 for legacy descriptions.
+  `PluginId::Vst3(ClassId)` and `PluginId::Clap(String)` remain distinct, even for hexadecimal-looking CLAP ids.
+  Description JSON keeps `class_id` as the original string, with `format` authoritative.
+  Chain slots keep base64 `clap_state` separate from VST3 `component_state` and `controller_state`.
+  Never interpret one format's state or parameter value domain as the other's.
+- **Discovery and editors.** `.clap` bundles use the same isolated worker and scan policies as VST3.
+  Default roots combine native VST3 and CLAP folders with `VST3_PATH` and `CLAP_PATH`.
+  Custom folders replace those defaults.
+  CLAP editors use the GUI and timer extensions with Cocoa or Win32 parents.
+  Plugins without a supported native GUI have no editor, not a generic parameter window.
+  This includes ImageControl RS's direct Windows CLAP, which does not expose its custom GUI.
 - **Crashes.** Only scanning is isolated in a worker process.
   A plugin that crashes while processing, previewing, or showing its editor takes the GUI down.
 - **Data files** in the `AudioBatch-rs` data directory:
@@ -324,8 +358,8 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   `analyze_file`, `normalize_file`, and `process_file` open a span with the file path,
   so messages from worker threads name their file.
   Never hold a stderr lock across a run, since worker threads log to stderr, and never log from the audio callback.
-- **Tests** use the fake plugins of the test plugin crate and the JUCE `AudioBatch Test MS` VST3 in `../test-plugin/`,
-  never installed plugins.
+- **Tests** use the fake VST3 plugins, the deterministic CLAP effect in `crates/test-clap-plugin`,
+  and the JUCE `AudioBatch Test MS` VST3 in `../test-plugin/`, never installed plugins.
   `crates/plugins/tests/juce_test_plugin.rs` saves its settings in a preset, loads it back, processes a fixture,
   and requires the output to cancel against the expected file that `../fixtures/plugin_expected.py` computes.
   These tests skip when the bundle has not been built with `../test-plugin/build.sh`, and fail in CI.
@@ -412,7 +446,7 @@ Other commands:
 # Cover only Rust workspace tests, without the Python CLI contracts
 cargo llvm-cov nextest --workspace
 
-# Run the unsafe VST3 code, the Serato parsers, the callback admission, and the cache blob readers under Miri on nightly
+# Run host lifecycle, in-process VST3/CLAP, parsers, callback admission, and cache blobs under Miri on nightly
 ./miri.sh
 
 # Build the cargo-fuzz targets, replay their corpus, and fuzz each for 60 seconds, add --replay to only replay
@@ -651,16 +685,21 @@ Mention the C++ application only when it matters for the implementation:
   Avoid one-test modules by merging them into a related module,
   but a file with only a few tests can keep them in a single module.
   Split a module that grows past a few hundred lines by area.
-- `miri.sh` runs the tests of `vst3-host`, `audiobatch-test-plugin`, `serato-tags`,
+- `miri.sh` runs `plugin-host-core`, `vst3-host`, the in-process contracts of `clap-host`,
+  `audiobatch-test-plugin`, `audiobatch-test-clap-plugin`, and `serato-tags`,
   the callback admission, lifecycle, and transport tests of `audiobatch-playback`,
   and the waveform, overload, and spectrogram blob readers of the core under Miri with Stacked Borrows.
   In those crates, mark a test that needs the file system, a plugin bundle, an audio device, or SQLite,
   or that takes minutes under Miri, with `#[cfg_attr(miri, ignore = "reason")]`.
   Fix undefined behaviour that Miri finds instead of ignoring the test.
+  Clack 0.2.0's output-event adapters currently block the CLAP lifecycle contracts under strict Stacked Borrows.
+  Keep those contracts enabled, and do not relax the borrow model or report a clean CLAP Miri result.
+  The CLAP architecture section describes the dependency boundary.
 - `rtsan.sh` builds and runs the RealtimeSanitizer contracts on macOS with an installed nightly Rust
   and the matching Homebrew LLVM runtime, each scenario in its own process.
   `--skip-native` requires clean first-party callbacks, including admission and guard destruction,
-  without the native VST3 cases.
+  plus the deterministic in-process CLAP preview cases, without the native VST3 cases.
+  CLAP checks cover cold automation, reset, and retirement of the dev fixture, not arbitrary third-party plugins.
   `--diagnostic` also verifies the known native plugin and stream-error disposal blockers as `BLOCKED` audits,
   which are not clean results.
   The build and diagnostics stay in `target/rtsan/`, and `--artifacts <directory>` selects where reports go.

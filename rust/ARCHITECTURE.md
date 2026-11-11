@@ -3,7 +3,7 @@
 This document describes how the Rust version of AudioBatch is put together, for a developer new to the code.
 AudioBatch analyzes audio files for sample peak, true peak, and EBU R128 loudness, and draws a waveform overview.
 It normalizes files to a peak or loudness target as AIFF,
-processes them through a chain of VST3 effects, and previews them through the live plugins.
+processes them through mixed VST3 and CLAP effect chains, and previews them through the live plugins.
 `README.md` describes what the tools do, and `AGENTS.md` lists the rules for changing them.
 
 ## Crates
@@ -17,10 +17,13 @@ flowchart LR
     gui["gui: AudioBatchRs"]
     plugins["plugins"]
     playback["playback"]
+    hostcore["plugin-host-core"]
     vst3host["vst3-host"]
+    claphost["clap-host"]
     core["core"]
     serato["serato: serato-tags"]
     testplugin["test-plugin"]
+    testclap["test-clap-plugin"]
     fixtures["test-fixtures"]
     buildinfo["build-info"]
 
@@ -28,13 +31,14 @@ flowchart LR
     cli -->|build| buildinfo
     gui -->|build| buildinfo
     gui --> core & playback & plugins & vst3host
-    plugins --> core & vst3host
+    plugins --> core & vst3host & claphost
+    vst3host & claphost --> hostcore
     testplugin --> vst3host
     playback --> core
     core --> serato
 
     cli -.-> testplugin & fixtures
-    plugins -.-> testplugin & fixtures
+    plugins -.-> testplugin & testclap & fixtures
     vst3host -.-> testplugin
     core -.-> fixtures
     playback -.-> fixtures
@@ -43,26 +47,32 @@ flowchart LR
 - `core` decodes, analyzes, caches, and normalizes files, and sets up the log file of both binaries.
 - `serato` parses the Serato `GEOB` tags from raw frame bytes, and computes the colours of the Overview tag.
 - `playback` is the preview engine: a decode thread, a ring buffer, and the `cpal` output callback.
+- `plugin-host-core` owns the shared UI-thread token, dispatch, UI-bound lifetimes, event pump, and native windows.
+  It depends on neither plugin SDK nor the application's GUI framework.
 - `vst3-host` wraps the raw `vst3` bindings in a safe interface,
-  and its `editor` feature adds the native editor windows.
+  and its `editor` feature attaches VST3 views to the shared native windows.
+- `clap-host` wraps `clack-host` and `clack-extensions` for CLAP discovery, lifecycle, processing, state, and editors.
 - `plugins` builds scanning, the saved chain and presets, offline processing, and the preview chain in safe code.
+  Its `HostInstance`, `HostProcessor`, and `HostState` enums dispatch between the format hosts.
 - `cli` and `gui` are the front ends, and only `gui` depends on gpui-kit.
-- `test-plugin` serves fake VST3 plugins to the tests,
-  and `test-fixtures` locates the shared fixtures in `../fixtures` and the JUCE test plugin.
+- `test-plugin` serves fake VST3 plugins, and `test-clap-plugin` supplies the deterministic CLAP gain/width/delay effect.
+  Both are development fixtures, not installed dependencies.
+  `test-fixtures` locates the shared fixtures in `../fixtures` and the JUCE test plugin.
 
 `core` and `playback` have no GUI dependency, so the GUI framework can be replaced without touching them.
 They have no plugin code either.
 The preview engine knows plugins only through the `PreviewInsert` trait,
 which the GUI implements with `ChainInsert`, a wrapper of the `PreviewChain` from `plugins`.
 The workspace lints deny unsafe code, and a module that needs it opts in with `#![expect(unsafe_code, reason = "...")]`.
-These are mostly modules of `vst3-host` and `test-plugin`,
+Hosting boundaries are in `plugin-host-core`, `vst3-host`, `clap-host`, and the dev test plugins,
 plus the Windows file drag in `crates/gui/src/file_drag/windows.rs`
 and the Core Audio AAC bridge in `crates/core/src/decode/native_aac.rs`.
 
 Two checks look past the tests for memory errors and untrusted input.
-`miri.sh` runs the tests of `vst3-host`, `test-plugin`, `serato`, and the cache blob readers of `core` under Miri,
-which reports undefined behaviour in the COM pointer handling and the byte parsers.
-It does not exercise the native Core Audio AAC bridge.
+`miri.sh` runs the shared host lifecycle, VST3 and in-process CLAP host contracts, both dev test plugins,
+the Serato parsers, callback admission and retirement, and the core cache blob readers under Miri.
+It checks unsafe pointer and ownership boundaries without native plugin loading or editor windows.
+The native Core Audio AAC bridge also needs separate native validation.
 The `fuzz` directory is a separate workspace of cargo-fuzz targets,
 which feed libFuzzer input to the Serato tag parsers, the CLI argument parser, the cache blob readers, and the decoder.
 They reach these only through the public interfaces that the CLI and the cache already use.
@@ -91,22 +101,27 @@ flowchart LR
 ```
 
 **The UI thread.**
-VST3 requires module loading and the whole instance lifecycle to run on the thread of the event loop.
-Only `process` and `setProcessing` may run elsewhere.
+Both format hosts share `plugin-host-core`'s UI thread for module loading, instance setup, state, and editor lifecycle.
+VST3 permits only `process` and `setProcessing` elsewhere.
+CLAP processing and reset use an exclusive audio lease.
+Start and stop run in an audio-thread scope during UI preparation and teardown, with no lease held.
+Main-thread callbacks and timers are serviced from the event loop, never by waking it from the audio callback.
 `UiThread` is a token that proves the current thread is that thread.
 `UiThread::register_current` creates it, and it is neither `Send` nor `Sync`,
 so a method that takes `&UiThread` can only be called there.
 The GUI registers its main thread in `start_plugin_jobs` before the main window opens,
-and tests start a dedicated `vst3-ui` thread with `UiThread::spawn_dedicated`.
+and tests start a dedicated `plugin-ui` thread with `UiThread::spawn_dedicated`.
 
 **`UiDispatcher` and `UiJobs`.**
-`ui_channel` in `crates/vst3-host/src/thread.rs` connects the two.
+`ui_channel` in `crates/plugin-host-core/src/thread.rs` connects the two.
+The format hosts re-export these same types, rather than registering separate UI threads.
 `UiDispatcher::post` queues a job, and `UiDispatcher::call` waits for its result.
 While it waits, `call` polls the caller's cancellation check and abandons a job that has not started,
 so the UI thread can cancel a run and wait for its workers without a deadlock.
 The GUI runs the jobs from a foreground task, one by one as `UiJobs::recv` returns them.
 The CLI's `process --preset` subcommand registers its main thread as the UI thread
-and alternates `UiJobs::drain_pending` with `pump_platform_events`, while a scoped worker runs the workflow.
+and alternates `UiJobs::drain_pending`, plugin callback service, and `pump_platform_events`,
+while a scoped worker runs the workflow.
 It creates `min(files, workers)` reusable chains and renders with the GUI's `ProcessingCoordinator`.
 The UI queue is dropped only after the worker has finished, so plugin teardown always runs on the main thread.
 `UiBound` holds a value that any thread may own but only the UI thread may reach or drop,
@@ -160,7 +175,7 @@ Their variants distinguish failures without parsing messages and retain concrete
 such as I/O, decoder, database, or plugin host errors.
 Existing standard error types remain in use where they already describe the operation.
 The analysis classification in `AnalysisError` still determines which failed records the cache can retain.
-VST3 processing and dispatcher errors stay lightweight,
+Format-tagged processing and dispatcher errors stay lightweight,
 and error handling does not allocate or log inside the audio callback.
 
 The CLI and GUI use `anyhow` to combine library failures with application context.
@@ -278,7 +293,8 @@ The Audio Settings, Plugin Chain, and Plugin Manager windows are gpui windows,
 held in `SettingsWindow` and `PluginWindow`.
 Each shows a snapshot of the state `AppView` owns and sends what the user does back as an event,
 and `AppView` applies it and shows the window a new snapshot.
-Plugin editors are native windows of `vst3-host` instead, see [VST3 hosting](#vst3-hosting).
+Plugin-provided editors use the native windows of `plugin-host-core`, through their format adapters.
+See [Plugin hosting](#plugin-hosting).
 
 Work that waits runs as `cx.spawn` tasks on the foreground executor, which is the main thread.
 Each run gets a drain task that owns the run's crossbeam receiver.
@@ -558,9 +574,10 @@ after checking cancellation and validating that the source identity still matche
 The worker's `ProcessingChain` asks the UI thread to prepare every plugin for the file:
 restore its saved settings, configure the main buses for the file's channels,
 set up offline processing in blocks of `PROCESSING_BLOCK_FRAMES`, and activate it.
-`ChainSignal` passes every block through the chain's `ProcessorHandle`s.
-Mono/stereo main buses borrow the signal buffers in place, without per-stage audio transfers.
-Wider main buses use the owned-buffer adapter.
+`ChainSignal` passes every block through the chain's `HostProcessor`s, preserving mixed-format slot order.
+VST3 mono/stereo main buses borrow signal buffers in place, without per-stage audio transfers.
+CLAP uses preallocated disjoint port buffers, so plugins need not advertise in-place support.
+Wider VST3 main buses use the owned-buffer adapter.
 It copies a mono signal to both channels of a stereo input and folds a stereo signal to the average for a mono input,
 so the order of the plugins never drops a channel.
 After the source, `render_blocks` renders the plugins' latencies and tails, each tail at most 20 seconds,
@@ -601,8 +618,10 @@ created on the UI thread before the run starts.
 Each job leases a free chain and restores the file's setup,
 so a chain is only ever used by one worker at a time.
 
-**`ProcessorHandle`.**
-`PluginInstance::processor` returns a handle that owns a buffer for every channel of every bus,
+**Processor dispatch.**
+`HostInstance::processor` returns a `HostProcessor::Vst3` or `HostProcessor::Clap`.
+Both keep prepared audio resources behind an allocation-free processing interface used offline and in live preview.
+The VST3 `ProcessorHandle` owns a buffer for every channel of every bus,
 sized for the largest block, together with the parameter change objects and the process context.
 The caller fills the main inputs, calls `process`, and reads the main outputs.
 Alternatively, `process_in_place` borrows mono/stereo main channels for one call.
@@ -706,14 +725,27 @@ Removing renderer mutex operations does not reconcile these policies.
 The opt-in `rtsan.sh` tier uses native nightly sanitizer annotations and a matching startup-linked Clang runtime.
 It checks prepared renderer/insert processing separately from the full typed callback, including guard destruction.
 Detector controls prove Rust/native allocation, deallocation, and mutex interception before clean results are trusted.
-Native preview tests load only build-tree bundles and keep plugin lifecycle work on the UI thread.
+CLAP preview checks use the deterministic in-process test effect for cold automation, reset, and retirement.
+Native VST3 preview tests load only build-tree bundles and keep plugin lifecycle work on the UI thread.
 Owned stream-error disposal and native-plugin findings are recorded as `BLOCKED` audits with constrained diagnostics,
 rather than suppressions.
 Cold-thread processing, automation, reset, and insert/tail retirement remain explicit test cases.
 The runtime and executable linkage are recorded under `target/rtsan/artifacts/`.
 These checks do not establish scheduling deadlines, safe arbitrary third-party plugins, or absence of spinning.
 
-## VST3 hosting
+## Plugin hosting
+
+**Format and persistence.**
+`PluginFormat` distinguishes `VST3` and `CLAP`, defaulting to VST3 when a legacy description omits `format`.
+`PluginId::Vst3(ClassId)` and `PluginId::Clap(String)` occupy separate namespaces.
+Description JSON retains `class_id` as the original string, with `format` selecting its interpretation.
+A hexadecimal-looking CLAP id is still an opaque, case-sensitive CLAP string.
+Standalone `PluginId` serialization prefixes CLAP ids with `clap:`, but description strings do not add that prefix.
+`HostState::Vst3` carries component and controller streams, and `HostState::Clap` carries one opaque state stream.
+Chain and preset slots encode it as base64 `clap_state`, separate from `component_state` and `controller_state`.
+An absent `clap_state` is empty, so VST3-only JSON remains readable.
+
+### VST3
 
 **Lifecycle.**
 `Module::load` loads a bundle and gets its plugin factory, through `CFBundle` on macOS.
@@ -735,7 +767,8 @@ and `ParameterChanges` delivers values to `process`.
 None of them lock or allocate in the calls a plugin makes from its processing thread.
 
 **Editors.**
-`EditorWindow` in `editor/` shows an editor in an `NSWindow` on macOS or a Win32 window on Windows,
+`EditorWindow` in `vst3-host` attaches its view to a `plugin-host-core::NativeWindow`,
+an `NSWindow` on macOS or a Win32 window on Windows,
 because gpui draws its Windows content on top of child windows, which would hide the plugin's window.
 `PlugFrame` receives the editor's resize requests.
 Closing the window only hides it, so the next tick destroys it and `LiveChain` captures the settings.
@@ -745,18 +778,52 @@ once the processor has received every queued edit, so closing an editor does not
 **Unsafe code.**
 Each module of `vst3-host` that needs unsafe code opts in with `#![expect(unsafe_code, reason = "...")]`,
 and every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
-VST3 COM pointers never leave `vst3-host`, so `plugins` and the front ends stay safe.
-The one unsafe module of the GUI, the Windows file drag,
-holds its own OLE objects and depends on nothing in `vst3-host`.
+VST3 COM pointers never leave `vst3-host`, CLAP ABI ownership stays in `clap-host`,
+and native window ownership stays in `plugin-host-core`, so `plugins` and the front ends stay safe.
+The GUI's Windows file drag holds its own OLE objects and depends on nothing in `vst3-host`.
 The separate unsafe Core Audio bridge owns native AAC callbacks and handles,
 in `crates/core/src/decode/native_aac.rs`.
 It is not exercised by `miri.sh`.
 The `vst3` crate is pinned to `=0.3.0`, whose bindings come from VST SDK 3.8.0, the SDK that JUCE bundles.
 
-**Scanning.**
+### CLAP
+
+`Module` loads a `.clap` entry through Clack and copies owned factory descriptors, preserving their original ids.
+Entries stay loaded for the process lifetime.
+The instance interface keeps main-thread lifecycle and opaque state separate from exclusive audio processing.
+Audio port configuration negotiates mono or stereo main buses, and the render extension selects offline processing.
+The host delivers parameter values in CLAP's plain units, not VST3's normalized units.
+Latency and tail reports feed the same chain compensation, bounded tail rendering, and preview pre-roll as VST3.
+Host requests defer restart and main-thread work instead of allocating or blocking in the audio callback.
+
+With the `editor` feature, the CLAP GUI extension embeds a Cocoa or Win32 child in the shared native window.
+Plugins that reject embedding can use their own floating editor, without host-managed position restoration.
+The GUI and timer extensions are serviced on the registered UI thread.
+Paused preview inserts retire their exclusive audio leases before pending plugin audio requests are serviced.
+Accepted host parameter edits carry completion sequences, so live state never acknowledges an undelivered edit.
+There is no generic parameter editor for plugins without a supported native GUI.
+`clack-host`, `clack-plugin`, and `clack-extensions` have coordinated exact `=0.2.0` workspace pins,
+shared with the deterministic test effect and ImageControl's Clack adapter.
+
+Strict Stacked Borrows Miri remains blocked in Clack 0.2.0's output-event adapters.
+The event adapters derive mutable event buffers from a shared pointer supplied by `clack-host/src/process.rs`.
+The affected adapters are `clack-extensions/src/params/plugin.rs` and `clack-plugin/src/process.rs`.
+These findings occur before the fixture's flush or processing implementation runs.
+The fixture owns shared parameter state through `Arc`, avoiding wrapper self-references,
+but that ownership does not repair the dependency's event-buffer provenance.
+The Miri runner keeps the failing contracts enabled, without relaxed borrow checking or dependency patches.
+Native tests and clean exercised RealtimeSanitizer cases do not qualify this Miri boundary.
+
+### Scanning
+
 `scan_plugins` in `crates/plugins/src/scanner.rs` runs while its caller holds the cross-process `ScanLock`.
-It skips unchanged and blacklisted bundles, and describes a bundle from its `moduleinfo.json` when it has one.
-Other bundles go to the worker as JSON lines on stdin,
+Default roots combine the platform's VST3 and CLAP folders with `VST3_PATH` and `CLAP_PATH`.
+CLAP roots are `~/Library/Audio/Plug-Ins/CLAP` and `/Library/Audio/Plug-Ins/CLAP` on macOS,
+and `%LOCALAPPDATA%/Programs/Common/CLAP` and `%COMMONPROGRAMFILES%/CLAP` on Windows.
+Custom roots replace the combined defaults.
+The scan skips unchanged and blacklisted bundles,
+and describes VST3 bundles from `moduleinfo.json` without loading when it is available.
+Other VST3 bundles and all `.clap` entries go to the same worker as format-tagged JSON lines on stdin,
 and replies come back on stdout behind a marker, because plugins print to stdout too.
 A crash blacklists the bundle, and one that takes longer than `SCAN_TIMEOUT` is skipped.
 The result goes to `plugins.json`, which the CLI and the GUI share.
@@ -766,14 +833,16 @@ The result goes to `plugins.json`, which the CLI and the GUI share.
 The C++ application in `../cpp` is the reference implementation.
 The Rust version differs from it on purpose in these points:
 
-- It hosts VST3 plugins only, on macOS and Windows, and no Audio Units.
+- It hosts VST3 and CLAP plugins on macOS and Windows, with mixed-format chains in the GUI and CLI.
+  CLAP hosting is Rust-only because the bundled JUCE has no CLAP host.
+  Audio Unit hosting remains C++-only on macOS.
 - It shares measurements and compatible Serato outcomes with the C++ application in `AudioBatch/analysis.db`.
   Logs, settings, plugin list, chain, and presets remain in its own `AudioBatch-rs` folders,
   with plugin data as JSON, because the chain state and plugin ids that JUCE saves are specific to JUCE.
 - It decodes audio with Symphonia rather than JUCE, except for AAC-LC MP4 on macOS, which uses Core Audio.
   Lossy PCM can differ, so parity checks use a separate -72 dBFS sample-difference tolerance for lossy sources,
   not the exact peak-mode or one-step loudness-mode contract for lossless sources.
-- The GUI is built on gpui-kit, and plugin editors open in native windows that `vst3-host` creates.
+- The GUI is built on gpui-kit, and plugin-provided editors open in shared native windows from `plugin-host-core`.
 - The CLI generates its shell completions with clap, which adds elvish.
 
 The root [compatibility overview](../README.md#formats-and-compatibility) summarizes user-facing differences.

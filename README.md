@@ -10,7 +10,7 @@ Both applications provide a GUI with waveform and spectrogram previews, artwork,
 - [`cpp/`](cpp/README.md): the C++23 and JUCE reference application, `AudioBatch` and `audiobatch`.
   Hosts VST3 effects and, on macOS, Audio Units.
 - [`rust/`](rust/README.md): the Rust application, `AudioBatchRs` and `audiobatch-rs`, built on gpui-kit.
-  Hosts VST3 effects on both supported platforms.
+  Hosts VST3 and CLAP effects on both supported platforms.
 - [`image-control-plugin/`](image-control-plugin/README.md): ImageControl, an independent four-band stereo imaging effect.
   Available as VST3 and, on macOS, an Audio Unit.
 
@@ -46,6 +46,9 @@ See the project READMEs for format boundaries.
 Lossless normalization is sample-exact between implementations in peak mode
 and differs by at most one PCM step in loudness mode.
 Lossy decoding can differ.
+Rust supports mixed VST3 and CLAP chains on macOS and Windows.
+CLAP hosting is Rust-only because the bundled JUCE has no CLAP host.
+Audio Unit hosting remains C++-only on macOS.
 Plugin chains and presets are implementation-specific and cannot be shared.
 Only plugin scanning is isolated in a worker process.
 A plugin crash or hang during processing, playback, or editing can still affect the application.
