@@ -19,10 +19,10 @@
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -132,6 +132,12 @@ struct ImageControlEditorTestAccess {
         editor.applyViewSettings();
     }
 
+    /// Applies the range-update path used by display refreshes, without requiring a VBlank or graphics frame.
+    void updateBandRanges()
+    {
+        editor.updateBandRanges();
+    }
+
     /// Editor under observation, which outlives this accessor.
     ImageControlEditor& editor;
 };
@@ -153,38 +159,11 @@ public:
     void parameterGestureChanged(int /*index*/, bool /*starting*/) override {}
 
     /// Number of value notifications received.
-    /// Applies the range-update path used by display refreshes, without requiring a VBlank or graphics frame.
-    void updateBandRanges()
-    {
-        editor.updateBandRanges();
-    }
-
     int notifications {0};
     /// Whether all received payloads were finite.
     bool allFinite {true};
 };
 
-/// Fills and processes a coherent stereo high-frequency signal that yields a valid High-band reading.
-void publishCorrelation(ImageControlProcessor& processor)
-{
-    juce::AudioBuffer<float> block(2, 256);
-    juce::MidiBuffer midi;
-    for (int pass = 0; pass < 64; ++pass) {
-        for (int sample = 0; sample < 256; ++sample) {
-            const float value = sample % 2 == 0 ? 0.25F : -0.25F;
-            block.setSample(0, sample, value);
-            block.setSample(1, sample, value);
-        }
-        processor.processBlock(block, midi);
-    }
-}
-
-/// Checks the explicit unavailable state without treating NaN as a numeric correlation.
-void expectUnavailable(const BandCorrelations& readings)
-{
-    for (const float value : readings) {
-        EXPECT_TRUE(std::isnan(value));
-    }
 /// Measures the widest actual expanded heading independently of its responsive layout decision.
 int widestBandHeading(const ImageControlEditor& editor)
 {
@@ -245,6 +224,27 @@ void setHeadingCrossovers(ImageControlProcessor& processor, const Crossovers& cr
     }
 }
 
+/// Fills and processes a coherent stereo high-frequency signal that yields a valid High-band reading.
+void publishCorrelation(ImageControlProcessor& processor)
+{
+    juce::AudioBuffer<float> block(2, 256);
+    juce::MidiBuffer midi;
+    for (int pass = 0; pass < 64; ++pass) {
+        for (int sample = 0; sample < 256; ++sample) {
+            const float value = sample % 2 == 0 ? 0.25F : -0.25F;
+            block.setSample(0, sample, value);
+            block.setSample(1, sample, value);
+        }
+        processor.processBlock(block, midi);
+    }
+}
+
+/// Checks the explicit unavailable state without treating NaN as a numeric correlation.
+void expectUnavailable(const BandCorrelations& readings)
+{
+    for (const float value : readings) {
+        EXPECT_TRUE(std::isnan(value));
+    }
 }
 }  // namespace
 
@@ -634,6 +634,57 @@ TEST(SpectrogramOverlayCache, ResponsesMatchTheLowpassesAndReachTheExactRightEnd
     }
 }
 
+/// Crossover text changes move every heading together at unchanged editor bounds, including while compacted.
+TEST(ImageControlEditorLayout, CrossoverChangesSynchronizeEveryFrequencyRangeRow)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    const Crossovers shortRanges {80.0F, 120.0F, 800.0F};
+    const Crossovers longRanges {1250.0F, 10'000.0F, 16'000.0F};
+    setHeadingCrossovers(processor, shortRanges);
+    access.updateBandRanges();
+    const int requiredWidth = widestBandHeading(editor);
+    int stripSpace = 0;
+    for (const auto* child : editor.getChildren()) {
+        if (dynamic_cast<const BandStrip*>(child) != nullptr) {
+            stripSpace += child->getWidth();
+        }
+    }
+    editor.setSize(editor.getWidth() - stripSpace + static_cast<int>(BAND_COUNT) * requiredWidth, editor.getHeight());
+    juce::Button* toggle = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (child->getComponentID() == "band-controls-disclosure") {
+            toggle = dynamic_cast<juce::Button*>(child);
+        }
+    }
+    ASSERT_NE(toggle, nullptr);
+    const auto bounds = editor.getBounds();
+    for (const bool compact : {false, true}) {
+        if (compact) {
+            toggle->onClick();
+        }
+        for (const bool longText : {false, true, false}) {
+            const auto& crossovers = longText ? longRanges : shortRanges;
+            setHeadingCrossovers(processor, crossovers);
+            access.updateBandRanges();
+            EXPECT_EQ(editor.getBounds(), bounds);
+            if (compact) {
+                toggle->onClick();
+            }
+            expectBandRangeRow(editor, longText ? 30 : 10);
+            if (compact) {
+                toggle->onClick();
+            }
+        }
+        if (compact) {
+            toggle->onClick();
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
 /// Host visibility updates the real worker without a VBlank or a GPU, retaining drain-only behavior while hidden.
 TEST(ImageControlEditorLifecycle, VisibilityDisablesAndReenablesAnalysisWithoutDisplayRefreshes)
 {
@@ -722,57 +773,6 @@ TEST(ImageControlEditorLifecycle, VisibilityCannotOverrideHiddenOrBypassedAnalys
         editor.setVisible(true);
         EXPECT_TRUE(access.analyzes());
         access.applySettings();
-/// Crossover text changes move every heading together at unchanged editor bounds, including while compacted.
-TEST(ImageControlEditorLayout, CrossoverChangesSynchronizeEveryFrequencyRangeRow)
-{
-    ImageControlProcessor processor;
-    ImageControlEditor editor(processor);
-    ImageControlEditorTestAccess access(editor);
-    access.disableDisplayCallbacks();
-    const Crossovers shortRanges {80.0F, 120.0F, 800.0F};
-    const Crossovers longRanges {1250.0F, 10'000.0F, 16'000.0F};
-    setHeadingCrossovers(processor, shortRanges);
-    access.updateBandRanges();
-    const int requiredWidth = widestBandHeading(editor);
-    int stripSpace = 0;
-    for (const auto* child : editor.getChildren()) {
-        if (dynamic_cast<const BandStrip*>(child) != nullptr) {
-            stripSpace += child->getWidth();
-        }
-    }
-    editor.setSize(editor.getWidth() - stripSpace + static_cast<int>(BAND_COUNT) * requiredWidth, editor.getHeight());
-    juce::Button* toggle = nullptr;
-    for (auto* child : editor.getChildren()) {
-        if (child->getComponentID() == "band-controls-disclosure") {
-            toggle = dynamic_cast<juce::Button*>(child);
-        }
-    }
-    ASSERT_NE(toggle, nullptr);
-    const auto bounds = editor.getBounds();
-    for (const bool compact : {false, true}) {
-        if (compact) {
-            toggle->onClick();
-        }
-        for (const bool longText : {false, true, false}) {
-            const auto& crossovers = longText ? longRanges : shortRanges;
-            setHeadingCrossovers(processor, crossovers);
-            access.updateBandRanges();
-            EXPECT_EQ(editor.getBounds(), bounds);
-            if (compact) {
-                toggle->onClick();
-            }
-            expectBandRangeRow(editor, longText ? 30 : 10);
-            if (compact) {
-                toggle->onClick();
-            }
-        }
-        if (compact) {
-            toggle->onClick();
-        }
-    }
-    EXPECT_FALSE(processor.getHistory().canUndo());
-}
-
         EXPECT_TRUE(access.analyzes());
         processor.getEditorState().setProperty(property, true, nullptr);
         access.applySettings();
