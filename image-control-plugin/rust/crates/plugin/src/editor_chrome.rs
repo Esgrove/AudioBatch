@@ -398,12 +398,14 @@ fn history_icon(renderer: &mut impl iced::advanced::Renderer, center: Point, col
     let origin = Point::new(7.0_f32.mul_add(-direction, center.x), center.y - 5.0);
     let mut previous = Point::new(12.0_f32.mul_add(direction, origin.x), origin.y + 11.0);
     for step in 1..=20 {
-        let t = step as f32 / 20.0;
-        let u = 1.0 - t;
-        let first = 3.0 * u.powi(2) * t;
-        let second = 3.0 * u * t.powi(2);
-        let x = second.mul_add(7.0, first.mul_add(15.0, u.powi(3) * 12.0)) + t.powi(3);
-        let y = t.powi(3).mul_add(6.0, first.mul_add(4.0, u.powi(3) * 11.0));
+        let progress = step as f32 / 20.0;
+        let remaining = 1.0 - progress;
+        let first = 3.0 * remaining.powi(2) * progress;
+        let second = 3.0 * remaining * progress.powi(2);
+        let x = second.mul_add(7.0, first.mul_add(15.0, remaining.powi(3) * 12.0)) + progress.powi(3);
+        let y = progress
+            .powi(3)
+            .mul_add(6.0, first.mul_add(4.0, remaining.powi(3) * 11.0));
         let next = Point::new(x.mul_add(direction, origin.x), origin.y + y);
         stroke(renderer, previous, next, 1.5, color);
         previous = next;
@@ -424,6 +426,7 @@ fn history_icon(renderer: &mut impl iced::advanced::Renderer, center: Point, col
     );
 }
 
+/// Fills a rounded chrome rectangle through the editor's retained renderer.
 fn quad(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, color: Color, radius: f32) {
     renderer.fill_quad(
         renderer::Quad {
@@ -438,6 +441,7 @@ fn quad(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, color: 
     );
 }
 
+/// Draws a vector segment with the requested thickness for resolution-independent chrome.
 fn stroke(renderer: &mut impl iced::advanced::Renderer, start: Point, end: Point, width: f32, color: Color) {
     let delta = end - start;
     let steps = (delta.x.hypot(delta.y) * 2.0).ceil().max(1.0) as u32;
@@ -458,6 +462,7 @@ fn stroke(renderer: &mut impl iced::advanced::Renderer, start: Point, end: Point
     }
 }
 
+/// Approximates a circular icon outline with connected vector segments.
 fn circle_outline(
     renderer: &mut impl iced::advanced::Renderer,
     center: Point,

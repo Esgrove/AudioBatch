@@ -153,7 +153,7 @@ fn all_tiers_match_independent_hann_dft_power_and_derivative_reassignment() {
             .expect("tier");
         let peak = points
             .iter()
-            .max_by(|a, b| a.power().total_cmp(&b.power()))
+            .max_by(|left, right| left.power().total_cmp(&right.power()))
             .expect("peak");
         let channels = direct_dft(
             &input,
@@ -199,7 +199,7 @@ fn leading_zero_history_matches_startup_dft_without_waiting_for_a_full_window() 
     assert!((frame.end_seconds - 512.0 / 48_000.0).abs() < f64::EPSILON);
     let peak = points
         .iter()
-        .max_by(|a, b| a.power().total_cmp(&b.power()))
+        .max_by(|left, right| left.power().total_cmp(&right.power()))
         .expect("startup peak");
     let spectrum = direct_dft(&input, 512, 1024, f64::from(peak.frequency()), 48_000.0, false);
     let expected = spectrum.iter().map(Complex64::norm_sqr).sum::<f64>() * 16.0 / 1_048_576.0;
@@ -224,7 +224,7 @@ fn single_channel_calibration_and_stereo_coherence_have_analytical_values() {
             .expect("mids");
         let peak = points
             .iter()
-            .max_by(|a, b| a.power().total_cmp(&b.power()))
+            .max_by(|left, right| left.power().total_cmp(&right.power()))
             .expect("peak");
         assert!((peak.power() - expected_power).abs() < 1.0e-5);
         assert!((peak.position() - position).abs() < 1.0e-5);
@@ -256,10 +256,10 @@ fn neighborhood_coherence_and_position_match_explicit_dft_sums_but_power_stays_l
         .expect("highs");
     let point = points
         .iter()
-        .min_by(|a, b| {
-            (a.frequency() - 11_040.0)
+        .min_by(|left, right| {
+            (left.frequency() - 11_040.0)
                 .abs()
-                .total_cmp(&(b.frequency() - 11_040.0).abs())
+                .total_cmp(&(right.frequency() - 11_040.0).abs())
         })
         .expect("bin");
     let spacing = 48_000.0 / 2048.0;

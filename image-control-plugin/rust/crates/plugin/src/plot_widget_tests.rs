@@ -60,6 +60,7 @@ struct Driver {
 }
 
 impl Driver {
+    /// Creates retained widget state at a fixed logical size without a native window.
     fn new(overlay: PlotOverlay<PlotEvent>, size: Size) -> Self {
         let element = overlay.into();
         let tree = tree::Tree::new(&element);
@@ -69,10 +70,12 @@ impl Driver {
             node: layout::Node::new(size),
         }
     }
+    /// Reconciles production widget state so tests exercise retention across view updates.
     fn rebuild(&mut self, overlay: PlotOverlay<PlotEvent>) {
         self.element = overlay.into();
         self.tree.diff(self.element.as_widget());
     }
+    /// Delivers a real input event and returns commands other than incidental hover updates.
     fn send(&mut self, event: &Event, cursor: mouse::Cursor) -> Vec<PlotEvent> {
         let mut messages = Vec::new();
         self.element.as_widget_mut().update(
@@ -92,15 +95,19 @@ impl Driver {
     }
 }
 
+/// Constructs the production overlay with representative crossovers and unchanged event messages.
 fn overlay() -> PlotOverlay<PlotEvent> {
     PlotOverlay::new([100.0, 500.0, 5000.0], std::convert::identity)
 }
+/// Supplies the primary-button press that begins production pointer gestures.
 fn press() -> Event {
     Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
 }
+/// Supplies the primary-button release that ends retained pointer gestures.
 fn release() -> Event {
     Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
 }
+/// Supplies a right-arrow key press with explicit modifiers for coarse and fine crossover edits.
 fn arrow(modifiers: iced::keyboard::Modifiers) -> Event {
     let key = iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight);
     Event::Keyboard(iced::keyboard::Event::KeyPressed {

@@ -529,7 +529,7 @@ fn band_drag_target(
     ratio_target(before, band, scale.frequency(share) / reference)
 }
 
-/// Plain-Hz ten-percent/one-percent keyboard changes retain the reference 1–1000 Hz bounds.
+/// Plain-Hz ten-percent/one-percent keyboard changes retain the reference 1 through 1000 Hz bounds.
 fn key_change(reference: f64, direction: f64, fine: bool) -> f64 {
     direction * (reference * if fine { 0.01 } else { 0.1 }).clamp(1.0, 1000.0)
 }

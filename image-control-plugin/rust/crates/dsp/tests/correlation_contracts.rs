@@ -173,7 +173,13 @@ fn analytical_correlation(mid: f64, side: f64, width: f64, recover: f64, pan: f6
         mid.mul_add(to_right, mid * (1.0 - to_left)),
         side.mul_add(to_right, -side * (1.0 - to_left)),
     ];
-    let dot = |first: [f64; 2], second: [f64; 2]| first.into_iter().zip(second).map(|(a, b)| a * b).sum::<f64>();
+    let dot = |first: [f64; 2], second: [f64; 2]| {
+        first
+            .into_iter()
+            .zip(second)
+            .map(|(left, right)| left * right)
+            .sum::<f64>()
+    };
     dot(left, right) / (dot(left, left) * dot(right, right)).sqrt()
 }
 
