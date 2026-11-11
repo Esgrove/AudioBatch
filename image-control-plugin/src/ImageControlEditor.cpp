@@ -458,7 +458,8 @@ void ImageControlEditor::resized()
         spectrogramDisclosure.setBounds(area.withSizeKeepingCentre(SECTION_ACTION_WIDTH, CORRELATION_ACTION_HEIGHT));
         const float plotTop = static_cast<float>(spectrogram.getY()) + spectrogram.getPlotBounds().getY();
         spectrogramDisclosure.setTopLeftPosition(
-            spectrogramDisclosure.getX(), juce::roundToInt(plotTop - spectrogramDisclosure.getIndicatorBounds().getY())
+            spectrogramDisclosure.getX(),
+            juce::roundToInt(plotTop - spectrogramDisclosure.getIndicatorBounds().getCentreY())
         );
         area = bandArea;
     }
@@ -497,12 +498,12 @@ void ImageControlEditor::resized()
     editorState.setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandSectionHeight, nullptr);
 }
 
-/// Centers the controls action in a dedicated gap, clear of every band value and analysis readout.
+/// Centers the triangle on the band-box top border while keeping its pointer target clear of editable values.
 void ImageControlEditor::layoutBandControlsDisclosure()
 {
     bandControlsDisclosure.setBounds(
         (getWidth() - SECTION_ACTION_WIDTH) / 2,
-        bandStrips.front()->getY() - CONTROLS_ACTION_HEIGHT,
+        bandStrips.front()->getY() - (compactBandControls ? CONTROLS_ACTION_HEIGHT : CONTROLS_ACTION_HEIGHT / 2),
         SECTION_ACTION_WIDTH,
         CONTROLS_ACTION_HEIGHT
     );
@@ -737,7 +738,7 @@ void ImageControlEditor::applyViewSettings()
     }
 }
 
-/// Keeps local disclosure targets available to keyboard users and reveals triangles over their display.
+/// Keeps actions keyboard-accessible while revealing triangles only within their small local proximity regions.
 void ImageControlEditor::updateDisplayDisclosures()
 {
     spectrogramDisclosure.setExpanded(!spectrogramHidden);
@@ -753,22 +754,15 @@ void ImageControlEditor::updateDisplayDisclosures()
         bandControlsDisclosure.setTooltip(bandAction);
     }
     const auto pointer = getMouseXYRelative();
-    spectrogramDisclosure.setRevealed(spectrogram.getBounds().contains(pointer));
-    bool overCorrelation = false;
-    for (const auto& meter : correlationMeters) {
-        overCorrelation = overCorrelation || (meter->isVisible() && meter->getBounds().contains(pointer));
+    const bool available
+        = isShowing() && getLocalBounds().contains(pointer) && juce::Component::getNumCurrentlyModalComponents() == 0;
+    for (auto* disclosure : {&spectrogramDisclosure, &correlationDisclosure, &bandControlsDisclosure}) {
+        if (available) {
+            disclosure->setPointerPosition(disclosure->getLocalPoint(this, pointer).toFloat());
+        } else {
+            disclosure->setRevealed(false);
+        }
     }
-    correlationDisclosure.setRevealed(overCorrelation);
-    bool overControls = false;
-    for (const auto& strip : bandStrips) {
-        overControls = overControls || strip->getBounds().contains(pointer);
-    }
-    bandControlsDisclosure.setRevealed(
-        overControls || bandControlsDisclosure.getBounds().contains(pointer)
-        || (!spectrogramHidden && divider.getBounds().contains(pointer))
-        || (spectrogramHidden && pointer.y >= spectrogramDisclosure.getY()
-            && pointer.y < spectrogramDisclosure.getBottom())
-    );
 }
 
 /// Shows named preset feedback only where the expanded selector is not already showing it.
@@ -890,6 +884,9 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     const double step = std::clamp(elapsed, 0.0, MAX_REFRESH_STEP_SECONDS);
     spectrogram.advance(step);
     tooltips.advance(step);
+    for (auto* disclosure : {&spectrogramDisclosure, &correlationDisclosure, &bandControlsDisclosure}) {
+        disclosure->advance(step);
+    }
     spectrogramRenderer.submitFrame(
         step, persistenceSeconds(), spectrogram.getPlotBounds() + spectrogram.getPosition().toFloat(), renderMode()
     );

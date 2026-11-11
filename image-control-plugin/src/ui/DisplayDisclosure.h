@@ -18,10 +18,14 @@ public:
         bool closesDownwards = false
     );
 
+    [[nodiscard]] juce::Rectangle<float> getActivationBounds() const;
     [[nodiscard]] juce::Rectangle<float> getIndicatorBounds() const;
     [[nodiscard]] bool isIndicatorPointingDown() const;
     [[nodiscard]] bool isIndicatorVisible() const;
+    [[nodiscard]] float getIndicatorOpacity() const;
+    void advance(double seconds);
     void setExpanded(bool expanded);
+    void setPointerPosition(juce::Point<float> position);
     void setRevealed(bool shouldReveal);
 
 protected:
@@ -38,7 +42,9 @@ private:
     const bool collapseDownwards;
     /// Whether Tab traversal acquired focus rather than a pointer action.
     bool keyboardFocus {false};
-    /// Whether the associated display currently contains the pointer.
+    /// Whether the pointer is inside the local activation region.
     bool revealed {false};
+    /// Linear fade progress, eased before painting for smooth entry and exit.
+    float revealProgress {0.0F};
 };
 }  // namespace esgrove::image_control
