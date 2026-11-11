@@ -2,6 +2,8 @@
 
 #[path = "../src/convolver.rs"]
 mod convolver;
+#[path = "../src/correlation.rs"]
+mod correlation;
 #[path = "../src/crossover.rs"]
 mod crossover;
 #[path = "../src/kernel_worker.rs"]
@@ -14,8 +16,19 @@ use crossover::{DEFAULT_CROSSOVERS, PARTITION_SIZE, design_kernels, half_length,
 use multiband::{BandControls, MultibandImager};
 
 #[test]
+fn low_level_monitoring_api_publishes_unavailable_until_power_exists() {
+    let mut imager = MultibandImager::new(48_000.0).expect("imager");
+    imager.set_correlation_enabled(true);
+    for _ in 0..256 {
+        let _ = imager.process_frame([0.0; 2]);
+    }
+    assert!(imager.correlation_readings().iter().all(|value| value.is_nan()));
+    assert!(imager.correlation_revision() > 0);
+}
+
+#[test]
 fn partitioned_overlap_save_matches_independent_direct_convolution() {
-    let taps: Vec<_> = (0..1_027)
+    let taps: Vec<_> = (0..1027)
         .map(|sample| (sample as f32 * 0.071).cos() * (-0.006 * sample as f32).exp() * 0.01)
         .collect();
     let input: Vec<_> = (0..768).map(|sample| (sample as f32 * 0.037).sin()).collect();
@@ -100,12 +113,12 @@ fn private_module_public_api_supports_warm_processing_and_offline_replacement() 
     imager.set_controls([controls; 4]);
     imager.reset();
     imager.set_offline(true).expect("offline");
-    assert!(imager.set_crossovers([80.0, 800.0, 8_000.0]));
+    assert!(imager.set_crossovers([80.0, 800.0, 8000.0]));
     for _ in 0..imager.latency_samples() + imager.tail_samples() {
         assert!(imager.process_frame([0.5, -0.25]).into_iter().all(f32::is_finite));
         assert!(imager.dry_reference().into_iter().all(f32::is_finite));
     }
-    assert_eq!(imager.active_crossovers(), [80.0, 800.0, 8_000.0]);
+    assert_eq!(imager.active_crossovers(), [80.0, 800.0, 8000.0]);
     assert!(!imager.kernel_worker_failed());
     assert!(imager.set_channels(1));
     assert!(imager.process_mono(0.5).is_finite());

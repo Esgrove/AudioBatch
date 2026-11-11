@@ -4,6 +4,7 @@
 //! lock, wake a worker, or destroy heap-backed kernels. Explicit offline mode permits synchronous kernel design.
 
 use crate::convolver::{KernelSpectra, PartitionedConvolver};
+use crate::correlation::BandCorrelation;
 use crate::crossover::{DEFAULT_CROSSOVERS, PARTITION_SIZE, half_length, order_crossovers, same_crossovers};
 use crate::kernel_worker::{KernelWorker, design};
 
@@ -32,6 +33,8 @@ pub struct MultibandImager {
     mid_convolver: PartitionedConvolver,
     side_convolver: PartitionedConvolver,
     controls: [BandRamps; 4],
+    correlation: BandCorrelation,
+    correlation_enabled: bool,
     input: [[f32; 2]; PARTITION_SIZE],
     output: [[f32; 2]; PARTITION_SIZE],
     reference: [[f32; 2]; PARTITION_SIZE],
@@ -166,6 +169,8 @@ impl MultibandImager {
             mid_convolver,
             side_convolver,
             controls: [BandRamps::new(); 4],
+            correlation: BandCorrelation::new(sample_rate),
+            correlation_enabled: false,
             input: [[0.0; 2]; PARTITION_SIZE],
             output: [[0.0; 2]; PARTITION_SIZE],
             reference: [[0.0; 2]; PARTITION_SIZE],
@@ -194,6 +199,30 @@ impl MultibandImager {
                 .audible
                 .set_target(f32::from(!any_solo || control.solo), self.ramp_samples);
         }
+    }
+
+    /// Enables observation only while requested by the editor or diagnostics, without changing audio history.
+    /// Every enablement change invalidates meter history. Repeating the same request preserves accumulation.
+    /// Only the processing owner calls this allocation-free setter, serialized against processing and reset.
+    pub fn set_correlation_enabled(&mut self, enabled: bool) {
+        if self.correlation_enabled != enabled {
+            self.correlation_enabled = enabled;
+            self.correlation.reset();
+        }
+    }
+
+    /// Returns the latest partition's processed-band correlations, with NaN for unavailable channels.
+    /// Reads processing-thread-owned state, independent of the analyzer tap and global Delta or Mono controls.
+    #[must_use]
+    pub const fn correlation_readings(&self) -> [f32; 4] {
+        self.correlation.readings()
+    }
+
+    /// Returns a wrapping revision advanced on each measured partition and lifecycle invalidation.
+    /// The processing owner can use this to publish shared atomics once per partition rather than once per frame.
+    #[must_use]
+    pub const fn correlation_revision(&self) -> u64 {
+        self.correlation.revision()
     }
 
     /// Orders and publishes a finite request with no real-time allocation or callback-side waiting.
@@ -260,6 +289,7 @@ impl MultibandImager {
         self.partition.fill(BandSample::default());
         self.mid_convolver.reset();
         self.side_convolver.reset();
+        self.correlation.reset();
         for ramps in &mut self.controls {
             ramps.settle();
         }
@@ -352,8 +382,11 @@ impl MultibandImager {
             .or_else(|| if self.offline { None } else { self.worker.take_ready() });
         let neutral = self.controls.iter().all(|ramps| ramps.neutral(stereo));
         let recovering = stereo && self.controls.iter().any(BandRamps::recovering);
-        if !neutral {
+        if !neutral || self.correlation_enabled {
             self.convolve_partition(replacement.as_deref(), stereo, recovering);
+        }
+        if self.correlation_enabled {
+            self.observe_correlation(stereo, recovering);
         }
         if let Some(replacement) = replacement {
             let retired = std::mem::replace(&mut self.kernels, replacement);
@@ -440,6 +473,61 @@ impl MultibandImager {
                 data.quadrature_full = value;
             }
         }
+    }
+
+    /// Observes existing filter outputs with copied control ramps, leaving the audio path's arithmetic untouched.
+    /// Neutral monitoring still computes band outputs, but exact delayed PCM and ramp advancement remain independent.
+    #[expect(
+        clippy::manual_midpoint,
+        reason = "The meter observes the audio path's Mid/Side arithmetic order"
+    )]
+    fn observe_correlation(&mut self, stereo: bool, recovering: bool) {
+        let mut controls = self.controls;
+        for data in &self.partition {
+            let [dry_left, dry_right] = data.dry;
+            let dry_mid = if stereo { (dry_left + dry_right) * 0.5 } else { dry_left };
+            let dry_side = if stereo { (dry_left - dry_right) * 0.5 } else { 0.0 };
+            for (band, ramps) in controls.iter_mut().enumerate() {
+                let mut mid_gain = ramps.mid.next();
+                let source_side = ramps.side.next();
+                let width = ramps.width.next();
+                let recover = ramps.recover.next();
+                let pan = ramps.pan.next();
+                let audible = ramps.audible.next();
+                let ordinary_mid = band_sample(data.mid, dry_mid, band);
+                let ordinary_side = if stereo {
+                    band_sample(data.side, dry_side, band)
+                } else {
+                    0.0
+                };
+                let mut side_gain = source_side * width;
+                let mut recovery_gain = source_side * recover * (1.0 - width).max(0.0);
+                mid_gain *= audible;
+                side_gain *= audible;
+                recovery_gain *= audible;
+                let mid = mid_gain * ordinary_mid;
+                let side = if stereo { side_gain * ordinary_side } else { 0.0 };
+                let recovered = if recovering {
+                    recovery_gain * band_sample(data.quadrature, data.quadrature_full, band)
+                } else {
+                    0.0
+                };
+                let [left, right] = if stereo {
+                    let left = (mid + recovered) + side;
+                    let right = (mid + recovered) - side;
+                    let to_right = pan.max(0.0);
+                    let to_left = (-pan).max(0.0);
+                    [
+                        right.mul_add(to_left, left * (1.0 - to_right)),
+                        left.mul_add(to_right, right * (1.0 - to_left)),
+                    ]
+                } else {
+                    [mid; 2]
+                };
+                self.correlation.push(band, left, right);
+            }
+        }
+        self.correlation.publish();
     }
 
     /// Mixes processed bands and their ordinary Solo-only dry reference from the same convolved partition.

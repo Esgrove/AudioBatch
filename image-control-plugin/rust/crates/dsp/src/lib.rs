@@ -5,9 +5,12 @@
 
 mod analyzer;
 mod convolver;
+mod correlation;
 mod crossover;
 mod kernel_worker;
+mod monitoring;
 mod multiband;
+mod particles;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -16,9 +19,17 @@ use std::sync::{Arc, Mutex};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 
-pub use analyzer::{AnalysisError, SpatialAnalyzer, SpectralPoint};
+pub use analyzer::{
+    ANALYSIS_TIER_COUNT, AnalysisError, SpatialAnalyzer, SpectralFrameInfo, SpectralPoint, StereoPositionCurve,
+};
+use monitoring::{AnalysisSample, Monitoring};
+pub use monitoring::{AnalysisStatus, AnalysisTap, ColourMode, CorrelationSnapshot, DisplayPreferences};
 pub use multiband::{BandControls, MultibandError, MultibandImager};
-pub use worker::{AnalysisShutdown, AnalysisWorker, SpatialParticle};
+pub use particles::SpatialParticle;
+pub use particles::{
+    ColorMode, DisplaySettings, FrequencyScale, ParticleBuilder, contrast_curve, frequency_to_share, share_to_frequency,
+};
+pub use worker::{AnalysisShutdown, AnalysisUpdate, AnalysisWorker};
 
 /// Fixed transport capacity, independent of the host's block size.
 const ANALYZER_CAPACITY: usize = 32_768;
@@ -44,15 +55,16 @@ pub struct SharedState {
     bypass: AtomicBool,
     delta: AtomicBool,
     mono: AtomicBool,
-    sample_rate: AtomicU32,
-    analysis_enabled: AtomicBool,
-    consumer: Mutex<Consumer<[f32; 2]>>,
+    monitoring: Monitoring,
+    consumer: Mutex<Consumer<AnalysisSample>>,
 }
 
 /// Mutable audio-thread processor with allocation-free finite ramps and a bounded analyzer producer.
 pub struct Imager {
     shared: Arc<SharedState>,
-    producer: Producer<[f32; 2]>,
+    producer: Producer<AnalysisSample>,
+    correlation_generation: u64,
+    correlation_revision: u64,
     gain: Ramp,
     width: Ramp,
     ramp_samples: u32,
@@ -170,25 +182,43 @@ impl SharedState {
         })
     }
 
-    /// Enables audio capture only while an editor or diagnostic consumer needs analysis.
-    pub fn set_analysis_enabled(&self, enabled: bool) {
-        self.analysis_enabled.store(enabled, Ordering::Relaxed);
-    }
-
     /// Returns the most recently prepared sample rate for worker-side FFT geometry.
     #[must_use]
     pub fn sample_rate(&self) -> f32 {
-        f32::from_bits(self.sample_rate.load(Ordering::Relaxed))
+        f32::from_bits(self.monitoring.rate.load(Ordering::Acquire))
     }
 
-    /// Drains at most one queue capacity into reusable worker storage, never from the audio callback.
+    /// Drains diagnostic audio only when no analysis worker owns the consumer.
+    /// This bounded compatibility API never permits a diagnostic caller to steal a live worker's samples.
     pub fn drain_audio(&self, destination: &mut Vec<[f32; 2]>) {
         destination.clear();
+        if self
+            .monitoring
+            .claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
         let mut consumer = self.consumer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for _ in 0..ANALYZER_CAPACITY {
             let Ok(frame) = consumer.pop() else {
                 break;
             };
+            if frame.generation == self.analysis_generation() {
+                destination.push(frame.frame);
+            }
+        }
+        drop(consumer);
+        self.monitoring.claimed.store(false, Ordering::Release);
+    }
+
+    /// Drains one bounded worker chunk while preserving source tokens. Only the claimed worker calls this.
+    fn drain_analysis(&self, destination: &mut Vec<AnalysisSample>) {
+        destination.clear();
+        let mut consumer = self.consumer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for _ in 0..4096 {
+            let Ok(frame) = consumer.pop() else { break };
             destination.push(frame);
         }
         drop(consumer);
@@ -211,11 +241,12 @@ impl Imager {
                 bypass: AtomicBool::new(false),
                 delta: AtomicBool::new(false),
                 mono: AtomicBool::new(false),
-                sample_rate: AtomicU32::new(48_000.0_f32.to_bits()),
-                analysis_enabled: AtomicBool::new(false),
+                monitoring: Monitoring::new(),
                 consumer: Mutex::new(consumer),
             }),
             producer,
+            correlation_generation: 0,
+            correlation_revision: 0,
             gain: Ramp::new(1.0),
             width: Ramp::new(1.0),
             ramp_samples: 960,
@@ -259,7 +290,7 @@ impl Imager {
             return false;
         }
         self.multiband = Some(multiband);
-        self.shared.sample_rate.store(sample_rate.to_bits(), Ordering::Relaxed);
+        self.shared.monitoring.set_rate(sample_rate);
         self.ramp_samples = (sample_rate * RAMP_SECONDS).round() as u32;
         self.begin_block();
         self.reset();
@@ -268,6 +299,7 @@ impl Imager {
 
     /// Settles controls without allocating. Hosts serialize reset against processing.
     pub fn reset(&mut self) {
+        self.shared.invalidate_monitoring();
         self.begin_block();
         self.gain = Ramp::new(self.gain.target);
         self.width = Ramp::new(self.width.target);
@@ -280,6 +312,9 @@ impl Imager {
 
     /// Sets host offline rendering policy. Any synchronous design happens only on the processing owner.
     pub fn set_offline(&mut self, offline: bool) {
+        if self.offline != offline {
+            self.shared.invalidate_monitoring();
+        }
         self.offline = offline;
         if let Some(multiband) = &mut self.multiband {
             let _ = multiband.set_offline(offline);
@@ -325,6 +360,14 @@ impl Imager {
         self.mono_blend
             .set_target(f32::from(self.shared.mono.load(Ordering::Relaxed)), self.ramp_samples);
         if let Some(multiband) = &mut self.multiband {
+            let generation = self.shared.monitoring.correlation_generation.load(Ordering::Acquire);
+            if generation != self.correlation_generation {
+                multiband.set_correlation_enabled(false);
+                self.correlation_generation = generation;
+            }
+            multiband.set_correlation_enabled(
+                !self.offline && self.shared.monitoring.correlation_enabled.load(Ordering::Acquire),
+            );
             let controls = std::array::from_fn(|band| {
                 if bypass {
                     return BandControls::default();
@@ -366,6 +409,7 @@ impl Imager {
         reason = "Preserve the production plugin's mid/side operation order"
     )]
     pub fn process_frame(&mut self, frame: [f32; 2]) -> [f32; 2] {
+        let source = self.shared.analysis_generation();
         let (processed, dry) = self.multiband.as_mut().map_or((frame, frame), |imager| {
             let output = imager.process_frame(frame);
             (output, imager.dry_reference())
@@ -398,8 +442,37 @@ impl Imager {
                 }
             }
         }
-        if self.shared.analysis_enabled.load(Ordering::Relaxed) {
-            let _ = self.producer.push(output);
+        if !self.offline && monitoring::capture_enabled(source) {
+            let _ = self.producer.push(AnalysisSample {
+                frame: monitoring::select_frame(source, frame, output),
+                generation: source,
+            });
+        }
+        if let Some(multiband) = &self.multiband {
+            let revision = multiband.correlation_revision();
+            if revision != self.correlation_revision {
+                self.correlation_revision = revision;
+                if self.correlation_generation == self.shared.monitoring.correlation_generation.load(Ordering::Acquire)
+                {
+                    for (slot, reading) in self
+                        .shared
+                        .monitoring
+                        .readings
+                        .iter()
+                        .zip(multiband.correlation_readings())
+                    {
+                        slot.store(reading.to_bits(), Ordering::Relaxed);
+                    }
+                    self.shared
+                        .monitoring
+                        .correlation_published_generation
+                        .store(self.correlation_generation, Ordering::Release);
+                    self.shared
+                        .monitoring
+                        .correlation_revision
+                        .fetch_add(1, Ordering::Release);
+                }
+            }
         }
         output
     }
@@ -500,7 +573,7 @@ mod test_processing {
                 .set_parameters(Parameters::new(0.5, 0.0).expect("valid"));
             imager.begin_block();
         }
-        for sample in 0..2_000 {
+        for sample in 0..2000 {
             if sample % 17 == 0 {
                 split.begin_block();
             }
