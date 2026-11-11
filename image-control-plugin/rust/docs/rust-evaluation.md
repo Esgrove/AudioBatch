@@ -551,7 +551,8 @@ Installed strict auval is a separately authorized installer/CI action, not an or
 AU support is experimental and carries independent qualification gates.
 The inspected AUv2 wrapper does not establish forwarding of host offline mode to `clap.render`,
 so synchronous deterministic crossover replacement is not assumed for AU offline bounces.
-State initialization order and return-value propagation also need independent AU diagnostics.
+The pinned clap-wrapper rejects state save/restore before initialization and ignores the CLAP loader's Boolean result.
+This affects lifecycle compatibility and restore failure reporting, not every initialized recall.
 The wrapper uses render try-admission, spin-waiting parameter ingress,
 and bounded preallocated queues with finite capacities.
 Render admission failure can output silence.
@@ -575,6 +576,12 @@ The actual AU reset boundary reports `pthread_mutex_lock` in Apple's SDK `AUEntr
 `./rtsan.sh --format au` fails these required-clean cases.
 `./rtsan.sh --format au --diagnostic` verifies the exact call/stack pairs as **BLOCKED**, not clean callbacks.
 No dependency source or sanitizer suppression changes hide either finding.
+These findings belong to clap-wrapper and Apple's AudioUnitSDK, not our Rust imaging algorithm.
+The reset-entry mutex finding is separate from ordinary processing and its host threading contract.
+We own the integration and qualification of the shipped AU component.
+See [AU dependency limitations](../ARCHITECTURE.md#au-dependency-limitations)
+for practical effects, remediation ownership,
+and the distinction between passing bounded checks and clean qualification.
 
 ### Current cleanup ownership and publication
 

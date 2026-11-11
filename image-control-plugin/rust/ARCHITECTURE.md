@@ -399,12 +399,49 @@ including cold automation, reset, concurrent state restore, and two-editor lifec
 Build-tree pluginval checks validate the exact packaged format.
 A compile check for Windows does not establish native Windows rendering or lifecycle correctness.
 
-AUv2 has independent wrapper qualification gates:
-offline-mode forwarding, state error propagation and initialization order,
-and automation/render contention. Render try-admission does not establish dropout-free automation,
-and custom spin waits require bounded contention diagnostics beyond RTSan.
-The AU identity `aufx / Egir / Esgr` is distinct from C++ `aufx / Egic / Esgr`.
-
 Remaining gates include native Windows qualification, complete AU host qualification, native accessibility qualification,
 upstream widget-cache cleanup, device-loss handling, and arbitrary module-unload safety.
 The [evaluation](docs/rust-evaluation.md) separates dependency research and historical evidence from current code.
+
+### AU dependency limitations
+
+The macOS AU component statically hosts our Rust CLAP plugin.
+Its translation layer uses upstream [clap-wrapper](https://github.com/free-audio/clap-wrapper)
+and Apple's [AudioUnitSDK](https://github.com/apple/AudioUnitSDK).
+The own-wrapper VST3 and direct CLAP artifacts do not use this AU translation layer.
+The AU identity `aufx / Egir / Esgr` is distinct from C++ `aufx / Egic / Esgr`.
+
+These are known dependency limitations and qualification blockers, not defects in our imaging algorithm:
+
+- **Offline mode, clap-wrapper:** the pinned AU implementation does not forward `OfflineRender` to `clap.render`.
+  Our Rust adapter supports offline mode, but the AU route does not activate it.
+  Deterministic synchronous crossover replacement is therefore not established for AU bounces,
+  particularly when crossovers change during rendering.
+- **State lifecycle and errors, clap-wrapper:** save and restore reject access before initialization,
+  and restore ignores the Boolean result of the CLAP state loader.
+  Hosts using that initialization order or relying on restore failure reporting need independent qualification.
+  Bounded initialized-state round trips pass. This is not a claim that ordinary state recall always fails.
+- **Contention, clap-wrapper:** render try-admission can output a silent block when processing admission fails.
+  Parameter ingress and reset use an unbounded spin wait.
+  These are risks under concurrent calls, not evidence that every host session drops audio.
+  A clean sanitizer run alone would not establish bounded waiting or dropout-free automation.
+- **First-use allocation, clap-wrapper:** the exercised fresh-thread AU render allocates.
+  RTSan attributes `malloc` to `Clap::Plugin::AlwaysAudioThread` lazy thread-local initialization.
+- **Reset-entry locking, Apple AudioUnitSDK:** the exercised AU reset entry locks.
+  RTSan attributes `pthread_mutex_lock` to `AUEntryGuard`.
+  This requires separate consideration of the host's reset-thread contract.
+  It does not establish that every ordinary processing callback locks.
+
+We own the AU build configuration, immutable dependency pins, and diagnostic hosts/tests,
+and remain responsible for the component we distribute.
+Remediation requires an upstream dependency fix/update or a different AU integration,
+followed by exact-artifact validation, rather than a DSP rewrite.
+There are no local third-party source patches.
+
+[`au/tests/audit_upstream.py`](au/tests/audit_upstream.py) checks the pinned wrapper's source identities
+and state/offline/contention paths.
+[`au/tests/AUHost.mm`](au/tests/AUHost.mm) exercises bounded functional contracts.
+`./rtsan.sh --format au --diagnostic` verifies the known allocation and reset-lock reports as `BLOCKED`, not clean.
+Passing these audits, bounded checks, or auval does not establish clean AU callbacks.
+Separate VST3/CLAP realtime results do not qualify the AU dependency layer either.
+None establishes audio deadline guarantees or complete AU host qualification.
