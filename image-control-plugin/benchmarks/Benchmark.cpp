@@ -299,7 +299,7 @@ std::string_view modeName(const Mode mode)
     throw std::logic_error("Unknown processing mode");
 }
 
-/// Keeps every original workload at unity width, with narrowing only in the added recovery comparisons.
+/// Keeps baseline workloads at unity width and narrows only the recovery-comparison modes.
 const BandWidths& modeWidths(const Mode mode)
 {
     if (mode == Mode::narrowed || mode == Mode::recoveryPartial || mode == Mode::recoveryAll) {
@@ -765,7 +765,7 @@ void timeFocusedProcessor(const Options& options)
     }
 }
 
-/// Retains the original direct imager probe and adds recovery variants, including two input copies per block.
+/// Measures centered, panned, and recovery imager variants, including two input copies per block.
 void timeImager(
     const Options& options,
     const BandPans& pans,
