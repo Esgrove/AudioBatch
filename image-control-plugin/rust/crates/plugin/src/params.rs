@@ -90,6 +90,17 @@ pub enum ParameterKind {
     Switch,
 }
 
+/// Plain-unit endpoints and editing precision for one parameter domain.
+#[derive(Clone, Copy, Debug)]
+struct ParameterRange {
+    /// Lowest accepted plain value.
+    minimum: f64,
+    /// Highest accepted plain value.
+    maximum: f64,
+    /// Editing increment, or zero for continuous values.
+    step: f64,
+}
+
 /// Immutable metadata and conversion for one stable numeric parameter id.
 #[derive(Clone, Copy, Debug)]
 pub struct ParameterSpec {
@@ -261,29 +272,60 @@ pub trait EditorBinding {
 
 impl ParameterSpec {
     /// Returns the plain-unit endpoints and editing step. Crossovers are continuous.
-    const fn range(self) -> (f64, f64, f64) {
+    const fn range(self) -> ParameterRange {
         match self.kind {
-            ParameterKind::OutputGain => (-24.0, 12.0, 0.01),
-            ParameterKind::BandGain => (-60.0, 12.0, 0.01),
-            ParameterKind::Width => (0.0, 2.0, 0.01),
-            ParameterKind::Recovery => (0.0, 200.0, 1.0),
-            ParameterKind::Pan => (-100.0, 100.0, 1.0),
-            ParameterKind::Switch => (0.0, 1.0, 1.0),
-            ParameterKind::Crossover => (CROSSOVER_MINIMUM, CROSSOVER_MAXIMUM, 0.0),
+            ParameterKind::OutputGain => ParameterRange {
+                minimum: -24.0,
+                maximum: 12.0,
+                step: 0.01,
+            },
+            ParameterKind::BandGain => ParameterRange {
+                minimum: -60.0,
+                maximum: 12.0,
+                step: 0.01,
+            },
+            ParameterKind::Width => ParameterRange {
+                minimum: 0.0,
+                maximum: 2.0,
+                step: 0.01,
+            },
+            ParameterKind::Recovery => ParameterRange {
+                minimum: 0.0,
+                maximum: 200.0,
+                step: 1.0,
+            },
+            ParameterKind::Pan => ParameterRange {
+                minimum: -100.0,
+                maximum: 100.0,
+                step: 1.0,
+            },
+            ParameterKind::Switch => ParameterRange {
+                minimum: 0.0,
+                maximum: 1.0,
+                step: 1.0,
+            },
+            ParameterKind::Crossover => ParameterRange {
+                minimum: CROSSOVER_MINIMUM,
+                maximum: CROSSOVER_MAXIMUM,
+                step: 0.0,
+            },
         }
     }
 
     /// Snaps in double precision from the range minimum. Half-step ties choose the upper step.
     /// Gain's zero-dB step is exactly zero rather than a residual from decimal-step multiplication.
     fn snap_plain(self, plain: f64) -> f64 {
-        let (minimum, maximum, interval) = self.range();
-        let plain = plain.clamp(minimum, maximum);
-        if plain <= minimum || plain >= maximum || interval == 0.0 {
+        let range = self.range();
+        let plain = plain.clamp(range.minimum, range.maximum);
+        if plain <= range.minimum || plain >= range.maximum || range.step == 0.0 {
             return plain;
         }
-        let step = ((plain - minimum) / interval).round();
-        let snapped = step.mul_add(interval, minimum).clamp(minimum, maximum);
-        if matches!(self.kind, ParameterKind::OutputGain | ParameterKind::BandGain) && snapped.abs() < interval * 0.5 {
+        let step = ((plain - range.minimum) / range.step).round();
+        let snapped = step
+            .mul_add(range.step, range.minimum)
+            .clamp(range.minimum, range.maximum);
+        if matches!(self.kind, ParameterKind::OutputGain | ParameterKind::BandGain) && snapped.abs() < range.step * 0.5
+        {
             0.0
         } else {
             snapped
@@ -295,17 +337,17 @@ impl ParameterSpec {
     #[must_use]
     pub fn normalized_to_plain(self, normalized: f64) -> f64 {
         let normalized = normalized.clamp(0.0, 1.0);
-        let (minimum, maximum, _) = self.range();
+        let range = self.range();
         if normalized <= 0.0 {
-            return minimum;
+            return range.minimum;
         }
         if normalized >= 1.0 {
-            return maximum;
+            return range.maximum;
         }
         if self.kind == ParameterKind::Crossover {
             CROSSOVER_MINIMUM * CROSSOVER_RATIO.powf(normalized)
         } else {
-            self.snap_plain(normalized.mul_add(maximum - minimum, minimum))
+            self.snap_plain(normalized.mul_add(range.maximum - range.minimum, range.minimum))
         }
     }
 
@@ -314,17 +356,17 @@ impl ParameterSpec {
     #[must_use]
     pub fn plain_to_normalized(self, plain: f64) -> f64 {
         let plain = self.snap_plain(plain);
-        let (minimum, maximum, _) = self.range();
-        if plain <= minimum {
+        let range = self.range();
+        if plain <= range.minimum {
             return 0.0;
         }
-        if plain >= maximum {
+        if plain >= range.maximum {
             return 1.0;
         }
         if self.kind == ParameterKind::Crossover {
             (plain / CROSSOVER_MINIMUM).log(CROSSOVER_RATIO).clamp(0.0, 1.0)
         } else {
-            ((plain - minimum) / (maximum - minimum)).clamp(0.0, 1.0)
+            ((plain - range.minimum) / (range.maximum - range.minimum)).clamp(0.0, 1.0)
         }
     }
 
