@@ -299,8 +299,15 @@ TEST(EditingWorkflow, DisclosureDirectionsAndSpectrumBorderFollowLayout)
             EXPECT_FLOAT_EQ(disclosure->getIndicatorBounds().getWidth(), 36.0F);
         }
         const float plotTop = static_cast<float>(view->getY()) + view->getPlotBounds().getY();
-        const float triangleTop = static_cast<float>(spectrum->getY()) + spectrum->getIndicatorBounds().getY();
-        EXPECT_NEAR(triangleTop, plotTop, 0.5F);
+        const float triangleCentre = static_cast<float>(spectrum->getY()) + spectrum->getIndicatorBounds().getCentreY();
+        EXPECT_NEAR(triangleCentre, plotTop, 0.5F);
+        const auto* strip = editingChild<BandStrip>(editor);
+        ASSERT_NE(strip, nullptr);
+        EXPECT_NEAR(
+            static_cast<float>(controls->getY()) + controls->getIndicatorBounds().getCentreY(),
+            static_cast<float>(strip->getY()),
+            0.5F
+        );
         for (const auto* disclosure : {correlation, controls}) {
             EXPECT_TRUE(disclosure->isIndicatorPointingDown());
             disclosure->onClick();
@@ -311,6 +318,57 @@ TEST(EditingWorkflow, DisclosureDirectionsAndSpectrumBorderFollowLayout)
     }
     spectrum->onClick();
     EXPECT_TRUE(spectrum->isIndicatorPointingDown());
+}
+
+/// A small local proximity region controls a bounded eased fade without a whole-section hover or lingering tail.
+TEST(EditingWorkflow, DisclosureProximityAndFadeStayLocalAndBounded)
+{
+    DisplayDisclosure disclosure("Spectrogram");
+    disclosure.setVisible(true);
+    disclosure.setSize(48, 20);
+    const auto activation = disclosure.getActivationBounds();
+    EXPECT_FLOAT_EQ(activation.getWidth(), 72.0F);
+    EXPECT_FLOAT_EQ(activation.getHeight(), 20.0F);
+    EXPECT_FLOAT_EQ(disclosure.getIndicatorOpacity(), 0.0F);
+    disclosure.setPointerPosition(disclosure.getIndicatorBounds().getCentre());
+    EXPECT_TRUE(disclosure.isIndicatorVisible());
+    EXPECT_FLOAT_EQ(disclosure.getIndicatorOpacity(), 0.0F);
+    disclosure.advance(0.035);
+    const float first = disclosure.getIndicatorOpacity();
+    EXPECT_GT(first, 0.0F);
+    disclosure.advance(0.035);
+    EXPECT_GT(disclosure.getIndicatorOpacity(), first);
+    EXPECT_LT(disclosure.getIndicatorOpacity(), 0.18F);
+    disclosure.advance(0.07);
+    EXPECT_NEAR(disclosure.getIndicatorOpacity(), 0.18F, 0.0001F);
+    for (const auto position :
+         {
+             juce::Point<float>(activation.getCentreX(), activation.getBottom() + 1.0F),
+             juce::Point<float>(activation.getRight() + 1.0F, activation.getCentreY()),
+         })
+    {
+        disclosure.setPointerPosition(position);
+        EXPECT_FALSE(disclosure.isIndicatorVisible());
+        disclosure.advance(0.05);
+        EXPECT_GT(disclosure.getIndicatorOpacity(), 0.0F);
+        EXPECT_LT(disclosure.getIndicatorOpacity(), 0.18F);
+        disclosure.advance(0.05);
+        EXPECT_FLOAT_EQ(disclosure.getIndicatorOpacity(), 0.0F);
+        disclosure.setPointerPosition(activation.getCentre());
+        disclosure.advance(0.14);
+    }
+    disclosure.setSize(1000, 18);
+    disclosure.setPointerPosition({20.0F, 9.0F});
+    EXPECT_FALSE(disclosure.isIndicatorVisible());
+    disclosure.advance(0.1);
+    EXPECT_FLOAT_EQ(disclosure.getIndicatorOpacity(), 0.0F);
+    disclosure.setPointerPosition(disclosure.getIndicatorBounds().getCentre());
+    EXPECT_TRUE(disclosure.isIndicatorVisible());
+    disclosure.advance(0.14);
+    disclosure.setPointerPosition({500.0F, 80.0F});
+    EXPECT_FALSE(disclosure.isIndicatorVisible());
+    disclosure.advance(0.1);
+    EXPECT_FLOAT_EQ(disclosure.getIndicatorOpacity(), 0.0F);
 }
 
 /// Divider visibility follows interaction rather than an always-visible resize handle.

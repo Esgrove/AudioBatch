@@ -496,10 +496,12 @@ The plot itself is left unpainted so the GPU image beneath the components remain
 and gain-only Link gesture behavior.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
-`DisplayDisclosure` shows a centered translucent triangle while its optional section is hovered.
+`DisplayDisclosure` fades a centered translucent triangle in only near its section-border action.
+A narrow vertical proximity region retargets the fade immediately, with a bounded 100 ms fade-out after exit.
 Hidden sections retain full-width labelled restore rows, without adding a display toolbar.
 Pointer-acquired focus stays quiet, while keyboard traversal has a local neutral outline.
-The band controls' action occupies the gap above the strips, separate from analysis controls.
+The spectrum and expanded band-controls triangles are centered on their corresponding top borders.
+The controls target occupies only the border and upper margin, clear of editable values.
 The divider grip is hidden until hover, dragging, or keyboard focus.
 Spectrum Left/Right keys move a hovered crossover or proportionally move a whole band.
 Ordinary steps use ten percent of the crossover or geometric band-centre frequency, and Shift uses one percent,
