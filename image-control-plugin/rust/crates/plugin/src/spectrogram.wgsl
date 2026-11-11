@@ -20,7 +20,7 @@ const GLOW_PER_LEVEL: f32 = 0.16;
 const HIGHLIGHT_START: f32 = 2.0;
 const HIGHLIGHT_END: f32 = 8.0;
 const HIGHLIGHT_MIX: f32 = 0.6;
-const CORNER_RADIUS_PIXELS: f32 = 4.0;
+const CORNER_RADIUS_PIXELS: f32 = 6.0;
 
 @group(0) @binding(0) var<uniform> parameters: Parameters;
 @group(1) @binding(0) var source: texture_2d<f32>;

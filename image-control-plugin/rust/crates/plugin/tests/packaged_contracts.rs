@@ -263,7 +263,10 @@ fn packaged_untrusted_state_is_rejected_without_mutating_parameters() {
                 component: vec![8, 0, 0, 0, b'{'],
                 controller: Vec::new(),
             },
-            state_blob(r#"{"version":3,"parameters":{"gain":0.75}}"#),
+            state_blob(r#"{"version":4,"parameters":{"gain":0.75}}"#),
+            state_blob(r#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#),
+            state_blob(r#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":4097,"height":900}}"#),
+            state_blob(r#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":null}}"#),
             state_blob(r#"{"version":1,"parameters":{"gain":1.5}}"#),
             state_blob(r#"{"version":1,"parameters":{"gain":1e999}}"#),
             state_blob(r#"{"version":1,"parameters":{"bands":[{"width":0.25},{"recover":2.0},{},{}]}}"#),
@@ -275,6 +278,39 @@ fn packaged_untrusted_state_is_rejected_without_mutating_parameters() {
                 instance.state(ui)?.component == before,
                 "rejected state partially changed authoritative controls"
             );
+        }
+        Ok(())
+    });
+}
+
+/// The packaged codec persists logical geometry across new components without needing native editor dispatch.
+#[test]
+#[cfg_attr(miri, ignore = "loads a native build-tree VST3")]
+fn packaged_geometry_roundtrips_with_independent_instance_and_legacy_defaults() {
+    let Some(bundle) = bundle() else {
+        return;
+    };
+    let _deadline = NativeDeadline::start();
+    on_ui(move |ui| {
+        let mut source = instance(ui, &bundle)?;
+        let mut destination = instance(ui, &bundle)?;
+        let defaults = destination.state(ui)?;
+        let geometry = state_blob(
+            r#"{"version":3,"parameters":{"gain":0.25},"editor":{"tap":"pre"},"geometry":{"width":1200.5,"height":900.25}}"#,
+        );
+        ensure!(source.set_state(ui, &geometry)?, "v3 geometry restore");
+        let saved = source.state(ui)?;
+        ensure!(destination.state(ui)? == defaults, "geometry leaked between components");
+        ensure!(destination.set_state(ui, &saved)?, "new component geometry restore");
+        ensure!(destination.state(ui)? == saved, "geometry did not roundtrip");
+        for version in [1, 2] {
+            let legacy = state_blob(&format!(r#"{{"version":{version},"parameters":{{}}}}"#));
+            ensure!(destination.set_state(ui, &legacy)?, "legacy geometry default restore");
+            ensure!(
+                destination.state(ui)? == defaults,
+                "legacy did not use fixed geometry defaults"
+            );
+            ensure!(source.state(ui)? == saved, "legacy restore changed another component");
         }
         Ok(())
     });

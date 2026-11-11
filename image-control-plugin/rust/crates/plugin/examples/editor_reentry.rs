@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 mod native {
     use std::cell::{Cell, RefCell};
     use std::ffi::c_void;
+    use std::io::{Cursor, Read as _, Seek as _, SeekFrom, Write as _};
     use std::path::Path;
     use std::ptr::NonNull;
     use std::rc::{Rc, Weak};
@@ -33,12 +34,13 @@ mod native {
         NSString,
     };
     use vst3::Steinberg::Vst::{
-        IComponent, IComponentHandler, IComponentHandlerTrait, IEditController, IEditControllerTrait as _,
+        IComponent, IComponentHandler, IComponentHandlerTrait, IComponentTrait as _, IEditController,
+        IEditControllerTrait as _,
     };
     use vst3::Steinberg::{
-        IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewContentScaleSupport, IPlugViewContentScaleSupportTrait as _,
-        IPlugViewTrait as _, IPluginBaseTrait as _, IPluginFactory, IPluginFactoryTrait as _, ViewRect,
-        kInvalidArgument, kResultFalse, kResultOk, tresult,
+        IBStream, IBStreamTrait, IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewContentScaleSupport,
+        IPlugViewContentScaleSupportTrait as _, IPlugViewTrait as _, IPluginBaseTrait as _, IPluginFactory,
+        IPluginFactoryTrait as _, ViewRect, kInvalidArgument, kResultFalse, kResultOk, tresult,
     };
     use vst3::{Class, ComPtr, ComRef, ComWrapper, Interface};
 
@@ -56,6 +58,8 @@ mod native {
     const PENDING_SIZE: (i32, i32) = (1184, 864);
     /// Header output slider position in the packaged editor's initial logical coordinates.
     const OUTPUT_POINT: (f64, f64) = (850.0, 22.0);
+    /// Maximum component payload and its four-byte length prefix.
+    const MAXIMUM_STATE_STREAM_BYTES: usize = 4100;
 
     /// Selects which real native callback removes the child, if any.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +90,10 @@ mod native {
         /// Same-object controller used for handler installation and independent parameter readback.
         controller: ComPtr<IEditController>,
     }
+
+    /// Bounded private state stream for exercising the packaged component's actual geometry codec.
+    #[derive(Default)]
+    struct StateStream(RefCell<Cursor<Vec<u8>>>);
 
     /// Observations remain live after destroying the host so late calls cannot masquerade as success.
     #[derive(Default)]
@@ -271,6 +279,26 @@ mod native {
             Ok(Self { component, controller })
         }
 
+        /// Captures the actual detached host state without touching the native child or pumping its event loop.
+        fn save(&self) -> Result<Vec<u8>> {
+            let stream = ComWrapper::new(StateStream::default());
+            let interface = stream.to_com_ptr::<IBStream>().context("state stream")?;
+            // SAFETY: the initialized component and writable stream remain owned on this non-audio thread.
+            let result = unsafe { self.component.getState(interface.as_ptr()) };
+            ensure!(result == kResultOk, "save geometry");
+            Ok(stream.0.borrow().get_ref().clone())
+        }
+
+        /// Restores detached state through the packaged ABI, without making a GUI resize call.
+        fn restore(&self, bytes: Vec<u8>) -> Result<()> {
+            let stream = ComWrapper::new(StateStream(RefCell::new(Cursor::new(bytes))));
+            let interface = stream.to_com_ptr::<IBStream>().context("state stream")?;
+            // SAFETY: the initialized component and readable stream remain owned throughout this state call.
+            let result = unsafe { self.component.setState(interface.as_ptr()) };
+            ensure!(result == kResultOk, "restore geometry");
+            Ok(())
+        }
+
         /// Reads authoritative controller state independently of the UI callback's value argument.
         fn gain(&self) -> f64 {
             // SAFETY: the same-object controller is initialized and read only on its UI owner.
@@ -285,6 +313,86 @@ mod native {
                 let _ = self.controller.setComponentHandler(std::ptr::null_mut());
                 let _ = self.component.terminate();
             }
+        }
+    }
+
+    impl Class for StateStream {
+        type Interfaces = (IBStream,);
+    }
+
+    impl IBStreamTrait for StateStream {
+        unsafe fn read(&self, buffer: *mut c_void, count: i32, transferred: *mut i32) -> tresult {
+            let Ok(count) = usize::try_from(count) else {
+                return kInvalidArgument;
+            };
+            if buffer.is_null() || count > MAXIMUM_STATE_STREAM_BYTES {
+                return kInvalidArgument;
+            }
+            // SAFETY: the component supplies count writable bytes and this private stream bounds the count.
+            let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.cast::<u8>(), count) };
+            let Ok(read) = self.0.borrow_mut().read(bytes) else {
+                return kResultFalse;
+            };
+            if !transferred.is_null() {
+                // SAFETY: the optional transferred slot is writable and read is bounded by count.
+                unsafe { transferred.write(i32::try_from(read).unwrap_or_default()) };
+            }
+            kResultOk
+        }
+
+        unsafe fn write(&self, buffer: *mut c_void, count: i32, transferred: *mut i32) -> tresult {
+            let Ok(count) = usize::try_from(count) else {
+                return kInvalidArgument;
+            };
+            let mut stream = self.0.borrow_mut();
+            if buffer.is_null() || stream.position().saturating_add(count as u64) > MAXIMUM_STATE_STREAM_BYTES as u64 {
+                return kInvalidArgument;
+            }
+            // SAFETY: the component supplies count readable bytes and this private stream bounds the count.
+            let bytes = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), count) };
+            if stream.write_all(bytes).is_err() {
+                return kResultFalse;
+            }
+            if !transferred.is_null() {
+                // SAFETY: the optional transferred slot is writable and count is bounded by the stream limit.
+                unsafe { transferred.write(i32::try_from(count).unwrap_or_default()) };
+            }
+            kResultOk
+        }
+
+        unsafe fn seek(&self, offset: i64, mode: i32, result: *mut i64) -> tresult {
+            let origin = match mode {
+                0 => match u64::try_from(offset) {
+                    Ok(offset) => SeekFrom::Start(offset),
+                    Err(_) => return kInvalidArgument,
+                },
+                1 => SeekFrom::Current(offset),
+                2 => SeekFrom::End(offset),
+                _ => return kInvalidArgument,
+            };
+            let mut stream = self.0.borrow_mut();
+            let previous = stream.position();
+            let Ok(position) = stream.seek(origin) else {
+                return kResultFalse;
+            };
+            if position > MAXIMUM_STATE_STREAM_BYTES as u64 {
+                stream.set_position(previous);
+                return kResultFalse;
+            }
+            if !result.is_null() {
+                // SAFETY: the optional result is writable and every stream position is bounded.
+                unsafe { result.write(i64::try_from(position).unwrap_or_default()) };
+            }
+            kResultOk
+        }
+
+        unsafe fn tell(&self, result: *mut i64) -> tresult {
+            if result.is_null() {
+                return kInvalidArgument;
+            }
+            // SAFETY: the non-null result is writable and every private stream position is bounded.
+            unsafe { result.write(i64::try_from(self.0.borrow().position()).unwrap_or_default()) };
+            kResultOk
         }
     }
 
@@ -741,7 +849,19 @@ mod native {
         // SAFETY: only the explicit packaged primary VST3 is loaded and it outlives all COM/native resources.
         let library = unsafe { libloading::Library::new(executable) }.context("load packaged ImageControl VST3")?;
         let component = Component::create(&library)?;
-        exercise_user_resize(&application, &component, marker)?;
+        exercise_user_resize(&application, &component, &library, marker)?;
+        let independent = Component::create(&library)?;
+        let independent_evidence = Rc::new(Evidence::default());
+        let mut independent_editor = Editor::open(&independent, marker, &independent_evidence, false)?;
+        application.settle();
+        ensure!(
+            independent_editor.host.latest.get() == (1000, 764)
+                && close_size(independent_editor.host.child_size()?, (1000, 764)),
+            "resizing one component changed a new component's default geometry"
+        );
+        independent_editor.close()?;
+        drop(independent_editor);
+        drop(independent);
         for (iteration, mode) in [
             Mode::Resize,
             Mode::Resize,
@@ -766,7 +886,12 @@ mod native {
     }
 
     /// Exercises the embedded grip with native pointer events, host rejection, constraints, DPI, and host border geometry.
-    fn exercise_user_resize(application: &Application, component: &Component, marker: MainThreadMarker) -> Result<()> {
+    fn exercise_user_resize(
+        application: &Application,
+        component: &Component,
+        library: &libloading::Library,
+        marker: MainThreadMarker,
+    ) -> Result<()> {
         let evidence = Rc::new(Evidence::default());
         let mut editor = Editor::open(component, marker, &evidence, false)?;
         application.settle();
@@ -795,6 +920,7 @@ mod native {
             "grip did not resize host"
         );
 
+        let accepted_state = component.save()?;
         editor.host.reject_resize.set(true);
         let calls = evidence.frame.get();
         native_resize_drag(application, &editor.host, (40.0, 32.0))?;
@@ -809,6 +935,10 @@ mod native {
             "rejected resize changed native child"
         );
         editor.host.verify_size()?;
+        ensure!(
+            component.save()? == accepted_state,
+            "rejected native resize changed saved geometry"
+        );
         editor.host.reject_resize.set(false);
 
         // The host's content-scale suggestion must not double macOS point geometry on a Retina display.
@@ -847,14 +977,64 @@ mod native {
         );
         evidence.verify()?;
         editor.close()?;
+        let saved = component.save()?;
         let counts = evidence.counts();
         drop(editor);
         application.settle();
         ensure!(counts == evidence.counts(), "late callbacks after grip teardown");
         evidence.verify()?;
+        verify_reopened_geometry(application, component, library, marker, border, &saved)?;
         println!(
             "native-editor-user-resize initial={initial:?} grip={enlarged:?} dpi={scaled:?} border={border:?} rejection=preserved"
         );
+        Ok(())
+    }
+
+    /// Requires remembered and serialized logical geometry to control native attachment across distinct view lifetimes.
+    fn verify_reopened_geometry(
+        application: &Application,
+        component: &Component,
+        library: &libloading::Library,
+        marker: MainThreadMarker,
+        border: (i32, i32),
+        saved: &[u8],
+    ) -> Result<()> {
+        let reopened_evidence = Rc::new(Evidence::default());
+        let mut reopened = Editor::open(component, marker, &reopened_evidence, false)?;
+        application.settle();
+        ensure!(
+            reopened.host.latest.get() == border,
+            "new COM view forgot the host-accepted geometry"
+        );
+        ensure!(
+            close_size(reopened.host.child_size()?, border),
+            "native attachment ignored the component's remembered logical size"
+        );
+        reopened.close()?;
+        drop(reopened);
+        application.settle();
+        reopened_evidence.verify()?;
+        let restored = Component::create(library)?;
+        restored.restore(saved.to_owned())?;
+        ensure!(
+            restored.save()? == saved,
+            "new component did not preserve saved logical geometry"
+        );
+        let restored_evidence = Rc::new(Evidence::default());
+        let mut restored_editor = Editor::open(&restored, marker, &restored_evidence, false)?;
+        application.settle();
+        ensure!(
+            restored_editor.host.latest.get() == border,
+            "restored COM view forgot logical geometry"
+        );
+        ensure!(
+            close_size(restored_editor.host.child_size()?, border),
+            "restored native editor did not attach at the saved logical size"
+        );
+        restored_editor.close()?;
+        drop(restored_editor);
+        application.settle();
+        restored_evidence.verify()?;
         Ok(())
     }
 
@@ -958,6 +1138,17 @@ mod native {
         let host_identity = Rc::downgrade(&editor.host);
         application.settle();
         evidence.verify()?;
+        let stage = i32::try_from(iteration)?;
+        let baseline = (1000 + stage * 16, 764 + stage * 8);
+        editor
+            .host
+            .window
+            .setContentSize(NSSize::new(f64::from(baseline.0), f64::from(baseline.1)));
+        editor.host.reenter(baseline, 1.0)?;
+        application.until(
+            || editor.host.child_size().is_ok_and(|size| close_size(size, baseline)),
+            "distinct native reentry baseline",
+        )?;
         let initial_size = editor.host.child_size()?;
         let initial_gain = component.gain();
         let observer = if mode == Mode::RemoveDuringResize {
@@ -1082,7 +1273,7 @@ mod native {
         mode: Mode,
     ) -> Result<()> {
         let bounds = host.parent.bounds();
-        let x = OUTPUT_POINT.0
+        let x = bounds.size.width - (1000.0 - OUTPUT_POINT.0)
             + match iteration {
                 0 => 0.0,
                 1 => -30.0,

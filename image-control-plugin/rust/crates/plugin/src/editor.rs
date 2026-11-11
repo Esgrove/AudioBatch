@@ -4,16 +4,26 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{
-    Column, Row, Space, button, checkbox, container, mouse_area, pick_list, pin, scrollable, slider, stack, text,
-};
-use iced::{Alignment, Element, Length, Point, Rectangle, Size, Subscription, Task, Theme};
+use iced::widget::{Column, Row, Space, checkbox, container, mouse_area, stack, text};
+use iced::{Alignment, Element, Length, Point, Size, Subscription, Task, Theme};
 
 #[path = "editor_chrome.rs"]
 mod chrome;
+#[path = "editor_controls.rs"]
+mod controls;
 use chrome::{Chrome, Symbol};
+#[cfg(test)]
+use controls::control_input;
+use controls::{
+    CorrelationObservation, analysis_status_text, at, compact_text_width, control, control_button, correlation_meter,
+    format_compact_value, format_frequency, format_value, parameter_input, processing_toolbar, settings,
+};
+#[cfg(test)]
+use iced::Rectangle;
 use iced_baseview as iced;
-use image_control_dsp::{AnalysisStatus, AnalysisTap, ColourMode, CorrelationSnapshot, SharedState};
+#[cfg(test)]
+use image_control_dsp::{AnalysisStatus, CorrelationSnapshot};
+use image_control_dsp::{AnalysisTap, ColourMode, SharedState};
 
 use crate::params::{
     BYPASS_PARAMETER, CROSSOVER_PARAMETERS, DELTA_PARAMETER, GAIN_PARAMETER, MONO_PARAMETER, ParameterKind,
@@ -23,6 +33,8 @@ use crate::spectrogram;
 
 #[path = "layout.rs"]
 mod layout;
+#[path = "numeric_input.rs"]
+mod numeric_input;
 #[path = "plot_overlay.rs"]
 mod plot_overlay;
 #[path = "theme.rs"]
@@ -38,8 +50,14 @@ const GESTURE_IDLE: Duration = Duration::from_millis(200);
 pub use crate::params::EditorBinding;
 
 /// Messages carry stable parameter ids instead of borrowed widget or host objects.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Message {
+    NumericFocus(u32),
+    NumericDraft(u32, String),
+    NumericCommit(u32),
+    NumericBlur(u32),
+    NumericCancel(u32),
+    FocusNext(bool),
     Change(u32, f64),
     Begin(u32),
     EndGesture,
@@ -62,6 +80,15 @@ pub enum Message {
     CloseSettings,
     ResetAppearance,
     Ignore,
+}
+
+/// Uncommitted text is GUI-owned and never published by refreshes or incoming automation.
+struct NumericDraft {
+    id: u32,
+    text: String,
+    baseline: String,
+    invalid: bool,
+    dirty: bool,
 }
 
 /// Captured drag origin is independent of host-accepted resize updates during raw pointer motion.
@@ -98,6 +125,7 @@ pub struct EditorState {
     window_size: Option<iced::shell::SharedWindowSize>,
     notifier: Option<iced::PollSubNotifier>,
     gesture: Option<Gesture>,
+    numeric_draft: Option<NumericDraft>,
     linked: [bool; 4],
     toolbar_shown: bool,
     correlation_shown: bool,
@@ -121,9 +149,14 @@ impl iced_program::Program for EditorProgram {
 
     fn settings(&self) -> iced::Settings {
         iced::Settings {
-            fonts: vec![theme::ROBOTO.into(), theme::ROBOTO_MONO.into()],
+            fonts: vec![
+                theme::ROBOTO.into(),
+                theme::ROBOTO_SEMIBOLD.into(),
+                theme::ROBOTO_BOLD.into(),
+                theme::ROBOTO_MONO.into(),
+            ],
             default_font: theme::TEXT,
-            default_text_size: 14.0.into(),
+            default_text_size: theme::LABEL_SIZE.into(),
             vsync: false,
             ..iced::Settings::default()
         }
@@ -157,6 +190,7 @@ impl iced_program::Program for EditorProgram {
                 window_size: Some(self.window_size.clone()),
                 notifier: self.notifier.clone(),
                 gesture: None,
+                numeric_draft: None,
                 linked: [false; 4],
                 toolbar_shown: true,
                 correlation_shown: true,
@@ -195,7 +229,30 @@ impl EditorState {
     /// Applies only local user messages, leaving host automation as atomics read directly by each view.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::FocusNext(backwards) => {
+                if self.settings_shown {
+                    return Task::none();
+                }
+                if let Some(id) = self.numeric_draft.as_ref().map(|draft| draft.id) {
+                    self.commit_numeric(id, false);
+                }
+                return if backwards {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                };
+            }
+            Message::NumericFocus(id) => self.focus_numeric(id),
+            Message::NumericDraft(id, text) => self.edit_numeric(id, text),
+            Message::NumericCommit(id) => self.commit_numeric(id, false),
+            Message::NumericBlur(id) => self.commit_numeric(id, true),
+            Message::NumericCancel(id) => {
+                if self.numeric_draft.as_ref().is_some_and(|draft| draft.id == id) {
+                    self.numeric_draft = None;
+                }
+            }
             Message::Begin(id) => {
+                self.finish_numeric();
                 self.input_held = true;
                 self.begin_gesture(id);
             }
@@ -203,7 +260,10 @@ impl EditorState {
             Message::DividerStart(pointer) => self.start_divider(pointer),
             Message::ResizeStart(pointer) => self.start_resize(pointer),
             Message::Pointer(pointer) => self.move_pointer(pointer),
-            Message::Change(id, value) => self.change(id, value),
+            Message::Change(id, value) => {
+                self.finish_numeric();
+                self.change(id, value);
+            }
             Message::EndGesture => {
                 self.divider_drag = None;
                 self.resize_drag = None;
@@ -215,6 +275,7 @@ impl EditorState {
                 self.end_gesture();
             }
             Message::CompactBands => {
+                self.finish_numeric();
                 self.end_gesture();
                 self.divider_drag = None;
                 self.compact_bands = !self.compact_bands;
@@ -225,20 +286,14 @@ impl EditorState {
                     .set_display_preferences(image_control_dsp::DisplayPreferences::default());
             }
             Message::Ignore => {}
-            Message::Toggle(id) => {
-                self.end_gesture();
-                if let Some(value) = self.parameters.get(id) {
-                    self.binding.begin_edit(id);
-                    self.write(id, f64::from(value < 0.5));
-                    self.binding.end_edit(id);
-                }
-            }
+            Message::Toggle(id) => self.toggle_parameter(id),
             Message::Link(band, linked) => {
                 if let Some(value) = self.linked.get_mut(band) {
                     *value = linked;
                 }
             }
             Message::Toolbar => {
+                self.finish_numeric();
                 self.end_gesture();
                 self.toolbar_shown = !self.toolbar_shown;
             }
@@ -247,7 +302,10 @@ impl EditorState {
                 self.shared.set_correlation_enabled(self.correlation_shown);
                 self.correlation = CorrelationObservation::default();
             }
-            Message::Settings => self.settings_shown = !self.settings_shown,
+            Message::Settings => {
+                self.finish_numeric();
+                self.settings_shown = !self.settings_shown;
+            }
             Message::Tap(tap) => self.shared.set_analysis_tap(tap),
             Message::Persistence(persistence_seconds) => {
                 let mut display = self.shared.display_preferences();
@@ -264,28 +322,31 @@ impl EditorState {
                 display.color_mode = color_mode;
                 self.shared.set_display_preferences(display);
             }
-            Message::Refresh => {
-                if self.correlation_shown {
-                    self.correlation
-                        .observe(self.shared.correlation_snapshot(), Instant::now());
-                }
-                if let Ok(spectrogram) = &mut self.spectrogram {
-                    spectrogram.tick();
-                }
-                if !self.input_held
-                    && self
-                        .gesture
-                        .as_ref()
-                        .is_some_and(|gesture| gesture.last_change.elapsed() > GESTURE_IDLE)
-                {
-                    self.end_gesture();
-                }
-                if let Some(notifier) = &self.notifier {
-                    notifier.notify();
-                }
-            }
+            Message::Refresh => self.refresh(),
         }
         Task::none()
+    }
+
+    /// Polls observational state without touching numeric drafts or fabricating parameter gestures.
+    fn refresh(&mut self) {
+        if self.correlation_shown {
+            self.correlation
+                .observe(self.shared.correlation_snapshot(), Instant::now());
+        }
+        if let Ok(spectrogram) = &mut self.spectrogram {
+            spectrogram.tick();
+        }
+        if !self.input_held
+            && self
+                .gesture
+                .as_ref()
+                .is_some_and(|gesture| gesture.last_change.elapsed() > GESTURE_IDLE)
+        {
+            self.end_gesture();
+        }
+        if let Some(notifier) = &self.notifier {
+            notifier.notify();
+        }
     }
 
     /// Subscribes to the bridge's timer and raw releases, including events already handled by a child widget.
@@ -293,11 +354,24 @@ impl EditorState {
         Subscription::batch([
             iced::poll_events().map(|()| Message::Refresh),
             iced::window_resized().map(|()| Message::Resize),
-            iced::event::listen_raw(|event, _, _| release_message(&event)),
+            iced::event::listen_raw(|event, status, _| {
+                if status == iced::event::Status::Ignored
+                    && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                        modifiers,
+                        ..
+                    }) = &event
+                {
+                    Some(Message::FocusNext(modifiers.shift()))
+                } else {
+                    release_message(&event)
+                }
+            }),
         ])
     }
 
     fn start_divider(&mut self, pointer: Point) {
+        self.finish_numeric();
         self.end_gesture();
         let size = self.size();
         self.band_height = self.sections(size).band;
@@ -308,6 +382,7 @@ impl EditorState {
     }
 
     fn start_resize(&mut self, pointer: Point) {
+        self.finish_numeric();
         self.end_gesture();
         self.resize_drag = Some(GeometryDrag {
             pointer,
@@ -358,7 +433,8 @@ impl EditorState {
             |_| {
                 container(
                     text("Spatial analysis unavailable")
-                        .size(14)
+                        .size(theme::LABEL_SIZE)
+                        .line_height(theme::LINE_HEIGHT)
                         .color(theme::GREY_MIDDLE_LIGHT),
                 )
                 .center(Length::Fill)
@@ -489,7 +565,11 @@ impl EditorState {
                 mouse_area(container(Space::new()).width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CloseSettings),
             );
-            content = content.push(at(mouse_area(self.settings()).on_press(Message::Ignore), callout));
+            content = content.push(at(
+                mouse_area(settings(self.shared.display_preferences(), self.correlation_shown))
+                    .on_press(Message::Ignore),
+                callout,
+            ));
             content = content.push(at(
                 Chrome::new(Symbol::Settings, header.settings.size(), Some(Message::Settings), true),
                 header.settings,
@@ -502,13 +582,97 @@ impl EditorState {
             .into()
     }
 
+    /// Toggles a switch using one host gesture after any pending numeric entry is resolved.
+    fn toggle_parameter(&mut self, id: u32) {
+        self.finish_numeric();
+        self.end_gesture();
+        if let Some(value) = self.parameters.get(id) {
+            self.binding.begin_edit(id);
+            self.write(id, f64::from(value < 0.5));
+            self.binding.end_edit(id);
+        }
+    }
+
+    /// Stores native typing without touching authoritative parameters until a commit.
+    fn edit_numeric(&mut self, id: u32, text: String) {
+        self.focus_numeric(id);
+        if let Some(draft) = &mut self.numeric_draft {
+            draft.dirty = text != draft.baseline;
+            draft.text = text;
+            draft.invalid = false;
+        }
+    }
+
+    /// Starts a local draft without claiming a sound gesture or replacing unfinished typing on refresh.
+    fn focus_numeric(&mut self, id: u32) {
+        if self.settings_shown {
+            return;
+        }
+        if self.numeric_draft.as_ref().is_some_and(|draft| draft.id == id) || parameter_spec(id).is_none() {
+            return;
+        }
+        if let Some(previous) = self.numeric_draft.as_ref().map(|draft| draft.id) {
+            self.commit_numeric(previous, true);
+        }
+        self.end_gesture();
+        let spec = parameter_spec(id).expect("validated numeric parameter");
+        let value = self.parameters.get(id).unwrap_or(spec.default_normalized);
+        self.numeric_draft = Some(NumericDraft {
+            id,
+            text: format_value(spec, value),
+            baseline: format_value(spec, value),
+            invalid: false,
+            dirty: false,
+        });
+    }
+
+    /// Ends numeric entry before another control hides it or changes the same parameter.
+    fn finish_numeric(&mut self) {
+        if let Some(id) = self.numeric_draft.as_ref().map(|draft| draft.id) {
+            self.commit_numeric(id, true);
+        }
+    }
+
+    /// Publishes a valid draft as one balanced host edit. Invalid blur cancels, while Enter keeps the error visible.
+    fn commit_numeric(&mut self, id: u32, blur: bool) {
+        let Some(mut draft) = self.numeric_draft.take() else {
+            return;
+        };
+        if draft.id != id {
+            self.numeric_draft = Some(draft);
+            return;
+        }
+        if !draft.dirty {
+            if !blur {
+                self.numeric_draft = Some(draft);
+            }
+            return;
+        }
+        let spec = parameter_spec(id).expect("numeric parameter metadata");
+        let value = parse_numeric(spec, &draft.text);
+        if let Some(value) = value {
+            self.change(id, value);
+            self.end_gesture();
+            if !blur {
+                draft.text = format_value(spec, self.parameters.get(id).unwrap_or(spec.default_normalized));
+                draft.baseline.clone_from(&draft.text);
+                draft.dirty = false;
+                draft.invalid = false;
+                self.numeric_draft = Some(draft);
+            }
+        } else if !blur {
+            draft.invalid = true;
+            self.numeric_draft = Some(draft);
+        }
+    }
+
     /// Captures linked source trims once, so incoming automation never recursively drives Link.
     fn begin_gesture(&mut self, id: u32) {
         if self.gesture.as_ref().is_some_and(|gesture| gesture.id == id) {
             return;
         }
         self.end_gesture();
-        if parameter_spec(id).is_none() {
+        if parameter_spec(id).is_none() || !self.binding.is_open() {
             return;
         }
         let linked = (0..4).find_map(|band| {
@@ -519,8 +683,17 @@ impl EditorState {
             Some((side, self.plain(id), self.plain(side)))
         });
         self.binding.begin_edit(id);
+        if !self.binding.is_open() {
+            self.binding.end_edit(id);
+            return;
+        }
         if let Some((side, _, _)) = linked {
             self.binding.begin_edit(side);
+            if !self.binding.is_open() {
+                self.binding.end_edit(side);
+                self.binding.end_edit(id);
+                return;
+            }
         }
         self.gesture = Some(Gesture {
             id,
@@ -578,7 +751,7 @@ impl EditorState {
 
     /// Updates the authoritative UI/host atomics before notifying the adapter, never a temporary UI mirror.
     fn write(&self, id: u32, value: f64) {
-        if self.parameters.set(id, value) {
+        if self.binding.is_open() && self.parameters.set(id, value) {
             self.binding.set_value(id, value);
         }
     }
@@ -602,7 +775,8 @@ impl EditorState {
             container(
                 text("ImageControl")
                     .font(theme::BOLD)
-                    .size(18)
+                    .size(theme::TITLE_SIZE)
+                    .line_height(theme::LINE_HEIGHT)
                     .color(theme::GREY_SUPER_LIGHT)
             )
             .center_y(Length::Fill),
@@ -627,13 +801,22 @@ impl EditorState {
             ("Post", bounds.post, AnalysisTap::Post),
         ] {
             header = header.push(at(
-                control(
+                control_button(
                     label,
                     target.width,
                     Some(Message::Tap(tap)),
                     self.shared.analysis_tap() == tap,
                     theme::BLUE,
-                ),
+                )
+                .style(move |_, status| {
+                    let mut style = theme::control(status, self.shared.analysis_tap() == tap, theme::BLUE);
+                    style.border.radius = if tap == AnalysisTap::Pre {
+                        iced::border::left(theme::CONTROL_RADIUS)
+                    } else {
+                        iced::border::right(theme::CONTROL_RADIUS)
+                    };
+                    style
+                }),
                 layout::rect(target.x, target.y + 2.0, target.width, 24.0),
             ));
         }
@@ -648,99 +831,12 @@ impl EditorState {
             ));
         }
         header = header.push(at(
-            container(text("Output").size(14)).center_y(Length::Fill),
+            container(text("Output").size(theme::LABEL_SIZE).line_height(theme::LINE_HEIGHT)).center_y(Length::Fill),
             bounds.output_label,
         ));
         header
             .push(at(self.parameter_slider(GAIN_PARAMETER, 70.0), bounds.output))
             .into()
-    }
-
-    /// Matches the C++ callout's preference order. Unsupported renderer settings retain disabled native controls.
-    fn settings(&self) -> Element<'_, Message> {
-        let display = self.shared.display_preferences();
-        let colour = if display.color_mode == ColourMode::Frequency {
-            "Frequency"
-        } else {
-            "Phase coherence"
-        };
-        let choice = Row::new()
-            .push(text("Colour").size(14).width(112.0))
-            .push(
-                pick_list(["Frequency", "Phase coherence"], Some(colour), |value| {
-                    Message::Colour(if value == "Frequency" {
-                        ColourMode::Frequency
-                    } else {
-                        ColourMode::Phase
-                    })
-                })
-                .text_size(14)
-                .padding([3.0, 8.0])
-                .width(Length::Fill)
-                .style(theme::choice),
-            )
-            .height(28.0)
-            .align_y(Alignment::Center);
-        let preferences = Column::new()
-            .push(settings_heading("Appearance"))
-            .push(choice)
-            .push(disabled_choice("Frequency scale", "Logarithmic"))
-            .push(disabled_choice("Rendering", "Particles"))
-            .push(text("Contrast").size(14).height(18.0))
-            .push(setting_slider(
-                display.contrast,
-                0.0..=1.0,
-                0.01,
-                Message::Contrast,
-                format!("{:.0}%", display.contrast * 100.0),
-            ))
-            .push(Space::new().height(12.0))
-            .push(settings_heading("Stereo position"))
-            .push(text("Midpoint (50%)").size(14).height(18.0))
-            .push(disabled_setting("12 dB"))
-            .push(text("Edge (99%)").size(14).height(18.0))
-            .push(disabled_setting("32 dB"))
-            .push(Space::new().height(12.0))
-            .push(settings_heading("Correlation"))
-            .push(settings_check(
-                "Show band correlation",
-                self.correlation_shown,
-                Some(Message::Correlation),
-            ))
-            .push(settings_check("Smooth correlation numbers", false, None))
-            .push(Space::new().height(12.0))
-            .push(settings_heading("Display behavior"))
-            .push(text("Persistence").size(14).height(18.0))
-            .push(setting_slider(
-                display.persistence_seconds,
-                0.05..=3.0,
-                0.01,
-                Message::Persistence,
-                format!("{:.2} s", display.persistence_seconds),
-            ))
-            .push(settings_check("Hide spectrogram", false, None))
-            .push(settings_check("Stop spectrogram analysis", false, None))
-            .push(settings_check("Show frame rate", false, None))
-            .push(Space::new().height(8.0))
-            .push(control(
-                "Reset display appearance",
-                366.0,
-                Some(Message::ResetAppearance),
-                false,
-                theme::BLUE,
-            ))
-            .push(Space::new().height(8.0))
-            .push(control("Keyboard shortcuts", 366.0, None, false, theme::BLUE));
-        container(scrollable(container(preferences).padding(iced::Padding {
-            top: 4.0,
-            right: 12.0,
-            bottom: 12.0,
-            left: 12.0,
-        })))
-        .height(Length::Fill)
-        .width(390.0)
-        .style(theme::callout)
-        .into()
     }
 
     /// Builds one quiet band surface with Solo/Link in its heading, followed by five stacked labelled rows.
@@ -752,8 +848,9 @@ impl EditorState {
         let heading = Row::new()
             .push(
                 text(*layout::BAND_NAMES.get(band).expect("fixed band name"))
-                    .font(theme::BOLD)
-                    .size(16)
+                    .font(theme::SEMIBOLD)
+                    .size(theme::BAND_TITLE_SIZE)
+                    .line_height(theme::LINE_HEIGHT)
                     .color(theme::GREY_SUPER_LIGHT),
             )
             .push(Space::new().width(Length::Fill))
@@ -768,8 +865,9 @@ impl EditorState {
                 container(
                     checkbox(self.linked.get(band).copied().unwrap_or(false))
                         .label("Link")
-                        .text_size(14)
-                        .size(13)
+                        .text_size(theme::LABEL_SIZE)
+                        .size(theme::CHECKBOX_SIZE)
+                        .spacing(6.0)
                         .style(theme::check)
                         .on_toggle(move |value| Message::Link(band, value)),
                 )
@@ -791,9 +889,11 @@ impl EditorState {
             .push(heading)
             .push(
                 text(range)
-                    .size(14)
+                    .size(theme::LABEL_SIZE)
+                    .line_height(theme::LINE_HEIGHT)
                     .color(theme::GREY_MIDDLE_LIGHT)
-                    .height(layout::BAND_HEADER_HEIGHT),
+                    .height(layout::BAND_HEADER_HEIGHT)
+                    .align_y(iced::alignment::Vertical::Center),
             )
             .push(Space::new().height(sections.band_header_gap));
         for (field, label) in layout::FIELD_NAMES.into_iter().enumerate() {
@@ -802,8 +902,10 @@ impl EditorState {
                 Column::new()
                     .push(
                         text(label)
-                            .size(14)
+                            .size(theme::LABEL_SIZE)
+                            .line_height(theme::LINE_HEIGHT)
                             .height(layout::SLIDER_LABEL_HEIGHT)
+                            .align_y(iced::alignment::Vertical::Bottom)
                             .color(theme::GREY_LIGHT),
                     )
                     .push(self.parameter_slider(id, layout::VALUE_WIDTH))
@@ -890,17 +992,19 @@ impl EditorState {
             .width(Length::Fill);
         Row::new()
             .push(slider)
-            .push(
-                container(
-                    text(format_value(spec, value))
-                        .font(theme::MONO)
-                        .size(15)
-                        .align_x(iced::alignment::Horizontal::Center),
+            .push({
+                let formatted = format_value(spec, value);
+                let draft = self.numeric_draft.as_ref().filter(|draft| draft.id == id);
+                numeric_input::input(
+                    id,
+                    draft.map_or(formatted.as_str(), |draft| draft.text.as_str()),
+                    value_width,
+                    value_height,
+                    draft.is_some_and(|draft| draft.invalid),
+                    draft.is_some(),
+                    self.settings_shown,
                 )
-                .center_y(value_height)
-                .width(value_width)
-                .style(theme::value),
-            )
+            })
             .height(height)
             .align_y(Alignment::Center)
             .into()
@@ -1000,338 +1104,17 @@ const fn release_message(event: &iced::Event) -> Option<Message> {
     }
 }
 
-/// Builds the same retained parameter widget for production views and hardware-free event tests.
-fn parameter_input(id: u32, value: f64) -> slider::Slider<'static, f64, Message> {
-    let spec = parameter_spec(id).expect("visible control has registry metadata");
-    slider(0.0..=1.0, value, move |value| Message::Change(id, value))
-        .step(0.001_f64)
-        .shift_step(0.0001_f64)
-        .default(spec.default_normalized)
-        .on_release(Message::EndGesture)
-        .height(layout::SLIDER_HEIGHT)
-        .style(theme::parameter_slider)
-}
-
-/// Gives every button a compact, fixed target and disables unavailable features rather than simulating them.
-fn control(
-    label: &str,
-    width: f32,
-    message: Option<Message>,
-    active: bool,
-    accent: iced::Color,
-) -> Element<'_, Message> {
-    control_button(label, width, message, active, accent).into()
-}
-
-/// Shares the production button with event-only tests rather than simulating its messages.
-fn control_button(
-    label: &str,
-    width: f32,
-    message: Option<Message>,
-    active: bool,
-    accent: iced::Color,
-) -> button::Button<'_, Message> {
-    control_input(
-        text(label).size(13).align_x(iced::alignment::Horizontal::Center),
-        width,
-        message,
-        active,
-        accent,
-    )
-}
-
-/// Retains production click and selected styling behavior independently of glyph rasterization.
-fn control_input<'a, Renderer: iced::advanced::Renderer>(
-    content: impl Into<iced::core::Element<'a, Message, Theme, Renderer>>,
-    width: f32,
-    message: Option<Message>,
-    active: bool,
-    accent: iced::Color,
-) -> button::Button<'a, Message, Theme, Renderer> {
-    button(content)
-        .width(width)
-        .height(24.0)
-        .padding(0)
-        .on_press_maybe(message)
-        .style(move |_, status| theme::control(status, active, accent))
-}
-
-/// Preserves the actual comparison/preset row positions while absent history and library services remain disabled.
-fn processing_toolbar<'a>() -> Element<'a, Message> {
-    container(
-        Row::new()
-            .push(control("A", 32.0, None, true, theme::BLUE))
-            .push(control("B", 32.0, None, false, theme::BLUE))
-            .push(Space::new().width(4.0))
-            .push(control("A → B", 72.0, None, false, theme::BLUE))
-            .push(Space::new().width(12.0))
-            .push(
-                container(text("Unsaved sound").size(13).color(theme::GREY_MIDDLE))
-                    .padding([3.0, 8.0])
-                    .width(Length::Fill)
-                    .height(24.0)
-                    .style(theme::value),
-            )
-            .push(Space::new().width(160.0))
-            .push(control("Presets", 72.0, None, false, theme::BLUE))
-            .height(24.0)
-            .align_y(Alignment::Center),
-    )
-    .padding([4.0, 0.0])
-    .height(layout::TOOLBAR_HEIGHT)
-    .into()
-}
-
-/// Pins a real retained widget into an independently testable logical target.
-fn at<'a>(content: impl Into<Element<'a, Message>>, bounds: Rectangle) -> Element<'a, Message> {
-    pin(container(content).width(bounds.width).height(bounds.height))
-        .x(bounds.x)
-        .y(bounds.y)
-        .into()
-}
-
-fn settings_check(label: &str, checked: bool, message: Option<Message>) -> Element<'_, Message> {
-    container(
-        checkbox(checked)
-            .label(label)
-            .text_size(14)
-            .size(16)
-            .style(theme::check)
-            .on_toggle_maybe(message.map(|message| move |_| message)),
-    )
-    .center_y(28.0)
-    .into()
-}
-
-fn settings_heading(label: &str) -> Element<'_, Message> {
-    Column::new()
-        .push(container(text(label).font(theme::BOLD).size(18).color(theme::GREY_MIDDLE_LIGHT)).height(24.0))
-        .push(Space::new().height(8.0))
-        .into()
-}
-
-fn disabled_choice<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
-    Row::new()
-        .push(text(label).size(14).width(112.0))
-        .push(
-            container(text(value).size(14).color(theme::GREY_MIDDLE))
-                .padding([3.0, 8.0])
-                .width(Length::Fill)
-                .height(24.0)
-                .style(theme::value),
+/// Accepts the displayed mute spelling locally without changing the host's finite parameter parser.
+fn parse_numeric(spec: ParameterSpec, text: &str) -> Option<f64> {
+    if spec.kind == ParameterKind::BandGain
+        && matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "-inf" | "-inf db" | "-∞" | "-∞ db"
         )
-        .height(28.0)
-        .align_y(Alignment::Center)
-        .into()
-}
-
-fn disabled_setting(value: &str) -> Element<'_, Message> {
-    Row::new()
-        .push(Chrome::new(Symbol::DisabledSlider, Size::new(290.0, 28.0), None, false))
-        .push(
-            container(text(value).font(theme::MONO).size(12).color(theme::GREY_MIDDLE))
-                .center_y(22.0)
-                .width(76.0)
-                .style(theme::value),
-        )
-        .height(28.0)
-        .align_y(Alignment::Center)
-        .into()
-}
-
-fn setting_slider(
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-    step: f32,
-    change: fn(f32) -> Message,
-    label: String,
-) -> Element<'static, Message> {
-    Row::new()
-        .push(
-            container(slider(range, value, change).step(step).style(theme::parameter_slider))
-                .padding([0.0, 6.0])
-                .width(Length::Fill),
-        )
-        .push(
-            container(text(label).font(theme::MONO).size(12))
-                .center_y(22.0)
-                .width(76.0)
-                .style(theme::value),
-        )
-        .height(28.0)
-        .align_y(Alignment::Center)
-        .into()
-}
-
-/// Measures worst-case numeric glyphs once per view so compact full names never depend on the current value.
-fn compact_text_width(content: &str) -> f32 {
-    use iced::advanced::text::Paragraph as _;
-    let paragraph =
-        <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(iced::advanced::text::Text {
-            content,
-            bounds: Size::new(f32::INFINITY, 11.0),
-            size: 11.0.into(),
-            line_height: iced::advanced::text::LineHeight::Relative(1.0),
-            font: theme::MONO,
-            align_x: iced::advanced::text::Alignment::Center,
-            align_y: iced::alignment::Vertical::Center,
-            shaping: iced::advanced::text::Shaping::Basic,
-            wrapping: iced::advanced::text::Wrapping::None,
-        });
-    paragraph.min_width().ceil() + 4.0
-}
-
-fn format_compact_value(spec: ParameterSpec, normalized: f64, suffix: &str) -> String {
-    let value = spec.normalized_to_plain(normalized);
-    match spec.kind {
-        ParameterKind::BandGain if value <= -60.0 => format!("-inf{suffix}"),
-        ParameterKind::BandGain => format!("{value:+.1}{suffix}"),
-        ParameterKind::Width => format!("{value:.2}{suffix}"),
-        ParameterKind::Pan if value.round().abs() < 0.5 => format!("C{suffix}"),
-        ParameterKind::Pan => format!("{:.0}{}{suffix}", value.abs(), if value < 0.0 { "L" } else { "R" }),
-        _ => format_value(spec, normalized),
-    }
-}
-
-/// Tracks the last observed publication on the UI thread, without audio-thread clock calls.
-struct CorrelationObservation {
-    readings: [f32; 4],
-    generation: u64,
-    revision: u64,
-    updated: Option<Instant>,
-}
-
-impl Default for CorrelationObservation {
-    fn default() -> Self {
-        Self {
-            readings: [f32::NAN; 4],
-            generation: u64::MAX,
-            revision: 0,
-            updated: None,
-        }
-    }
-}
-
-impl CorrelationObservation {
-    /// Only a fresh audio publication restarts expiry. GUI refreshes never fabricate meter activity.
-    const fn observe(&mut self, snapshot: CorrelationSnapshot, now: Instant) {
-        if snapshot.generation != self.generation {
-            self.readings = [f32::NAN; 4];
-            self.updated = None;
-            self.generation = snapshot.generation;
-            self.revision = snapshot.revision;
-            return;
-        }
-        if snapshot.revision != self.revision {
-            self.readings = snapshot.readings;
-            self.revision = snapshot.revision;
-            self.updated = Some(now);
-        }
-    }
-
-    /// Returns unavailable values after two maximum host blocks, with a 250 ms minimum.
-    fn readings(&self, now: Instant, expiry: Duration) -> [Option<f32>; 4] {
-        if self
-            .updated
-            .is_none_or(|updated| now.saturating_duration_since(updated) >= expiry.max(Duration::from_millis(250)))
-        {
-            return [None; 4];
-        }
-        self.readings
-            .map(|value| value.is_finite().then(|| value.clamp(-1.0, 1.0)))
-    }
-}
-
-/// Explains analysis-only limitations while all ordinary processing controls remain available.
-const fn analysis_status_text(status: AnalysisStatus) -> Option<&'static str> {
-    match status {
-        AnalysisStatus::Waiting => Some("Waiting for audio"),
-        AnalysisStatus::UnsupportedRate => Some("Spatial analysis unavailable at this sample rate"),
-        AnalysisStatus::Failed => Some("Spatial analysis failed"),
-        AnalysisStatus::Disabled => Some("Spatial analysis disabled"),
-        AnalysisStatus::Running => None,
-    }
-}
-
-/// Displays real processed-band readings, with no marker or invented number while unavailable.
-fn correlation_meter<'a>(reading: Option<f32>) -> Element<'a, Message> {
-    let label = Row::new()
-        .push(text("Correlation").size(11))
-        .push(Space::new().width(Length::Fill))
-        .push(
-            text(reading.map_or_else(String::new, |value| format!("{value:+.2}")))
-                .font(theme::MONO)
-                .size(11),
-        )
-        .height(17.0);
-    let mut track = stack![
-        container(Space::new().height(5.0))
-            .width(Length::Fill)
-            .style(|_| container::Style::default().background(theme::GREY_MEDIUM)),
-    ];
-    if let Some(value) = reading {
-        let position = ((value + 1.0) * 500.0).round() as u16;
-        track = track.push(
-            Row::new()
-                .push(Space::new().width(Length::FillPortion(position.max(1))))
-                .push(container(Space::new().width(3.0).height(5.0)).style(move |_| {
-                    container::Style::default().background(if value < 0.0 { theme::ORANGE } else { theme::BLUE })
-                }))
-                .push(Space::new().width(Length::FillPortion((1000 - position).max(1)))),
-        );
-    }
-    let scale = Row::new()
-        .push(text("-1").size(11))
-        .push(Space::new().width(Length::Fill))
-        .push(text("0").size(11))
-        .push(Space::new().width(Length::Fill))
-        .push(text("+1").size(11));
-    container(
-        Column::new()
-            .push(label)
-            .push(track)
-            .push(Space::new().height(2.0))
-            .push(scale),
-    )
-    .padding([2.0, 10.0])
-    .width(Length::FillPortion(1))
-    .height(layout::CORRELATION_HEIGHT)
-    .style(|_| container::Style::default().color(theme::GREY_MIDDLE_LIGHT))
-    .into()
-}
-
-/// Formats band and header values using the same domains as their host metadata.
-fn format_value(spec: ParameterSpec, normalized: f64) -> String {
-    let value = spec.normalized_to_plain(normalized);
-    match spec.kind {
-        ParameterKind::BandGain if value <= -60.0 => "-inf dB".into(),
-        ParameterKind::BandGain | ParameterKind::OutputGain => {
-            let value = if value.abs() < 0.05 { 0.0 } else { value };
-            format!("{value:.1} dB")
-        }
-        ParameterKind::Width => format!("{value:.2}"),
-        ParameterKind::Recovery => format!("{value:.0}%"),
-        ParameterKind::Pan if value.round().abs() < 0.5 => "C".into(),
-        ParameterKind::Pan => format!("{:.0}{}", value.abs(), if value < 0.0 { "L" } else { "R" }),
-        ParameterKind::Crossover => format_frequency(value),
-        ParameterKind::Switch => {
-            if value >= 0.5 {
-                "On".into()
-            } else {
-                "Off".into()
-            }
-        }
-    }
-}
-
-/// Formats the visible frequency ranges and marker labels without redundant trailing precision.
-fn format_frequency(frequency: f64) -> String {
-    if frequency.round() < 1000.0 {
-        format!("{frequency:.0} Hz")
-    } else if frequency < 10_000.0 {
-        format!("{:.2} kHz", frequency * 0.001)
+    {
+        Some(0.0)
     } else {
-        format!("{:.1} kHz", frequency * 0.001)
+        spec.parse(text)
     }
 }
 
@@ -1346,11 +1129,19 @@ mod tests {
     struct RecordingBinding {
         events: RefCell<Vec<(u32, Option<f64>, bool)>>,
         resizes: RefCell<Vec<Size>>,
+        closed: std::cell::Cell<bool>,
+        close_on_begin: std::cell::Cell<bool>,
     }
 
     impl EditorBinding for RecordingBinding {
+        fn is_open(&self) -> bool {
+            !self.closed.get()
+        }
         fn begin_edit(&self, id: u32) {
             self.events.borrow_mut().push((id, None, true));
+            if self.close_on_begin.get() {
+                self.closed.set(true);
+            }
         }
         fn set_value(&self, id: u32, value: f64) {
             self.events.borrow_mut().push((id, Some(value), false));
@@ -1377,6 +1168,7 @@ mod tests {
             window_size: None,
             notifier: None,
             gesture: None,
+            numeric_draft: None,
             linked: [false; 4],
             toolbar_shown: true,
             correlation_shown: true,
@@ -1387,6 +1179,114 @@ mod tests {
             compact_bands: false,
         };
         (state, binding)
+    }
+
+    #[test]
+    fn unchanged_notifications_and_reverted_typing_preserve_newer_automation() {
+        let (mut state, binding) = editor();
+        let _ = state.update(Message::NumericFocus(GAIN_PARAMETER));
+        let initial = state.numeric_draft.as_ref().expect("draft").text.clone();
+        assert!(state.parameters.set(GAIN_PARAMETER, 0.25));
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, initial.clone()));
+        let _ = state.update(Message::NumericCommit(GAIN_PARAMETER));
+        assert_eq!(state.parameters.get(GAIN_PARAMETER), Some(0.25));
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, initial));
+        let _ = state.update(Message::NumericBlur(GAIN_PARAMETER));
+        assert_eq!(state.parameters.get(GAIN_PARAMETER), Some(0.25));
+        assert!(binding.events.borrow().is_empty());
+    }
+
+    #[test]
+    fn settings_excludes_background_numeric_edits_and_traversal() {
+        let (mut state, binding) = editor();
+        let _ = state.update(Message::Settings);
+        let _ = state.update(Message::FocusNext(false));
+        let _ = state.update(Message::NumericFocus(GAIN_PARAMETER));
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+        let _ = state.update(Message::NumericCommit(GAIN_PARAMETER));
+        assert!(state.numeric_draft.is_none());
+        assert!(binding.events.borrow().is_empty());
+    }
+
+    #[test]
+    fn reentrant_removal_during_begin_rejects_parameter_publication() {
+        let (mut state, binding) = editor();
+        binding.close_on_begin.set(true);
+        let before = state.parameters.snapshot();
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+        let _ = state.update(Message::NumericCommit(GAIN_PARAMETER));
+        assert_eq!(
+            serde_json::to_vec(&state.parameters.snapshot()).expect("state"),
+            serde_json::to_vec(&before).expect("state")
+        );
+        assert!(binding.events.borrow().iter().all(|(_, value, _)| value.is_none()));
+        assert!(state.gesture.is_none());
+    }
+
+    #[test]
+    fn numeric_drafts_commit_once_and_link_at_commit_time() {
+        let (mut state, binding) = editor();
+        let mid = band_parameter_id(0, 0).expect("Mid");
+        let side = band_parameter_id(0, 1).expect("Side");
+        let _ = state.update(Message::Link(0, true));
+        let _ = state.update(Message::NumericFocus(mid));
+        let _ = state.update(Message::NumericDraft(mid, "-6 dB".into()));
+        let _ = state.update(Message::Refresh);
+        assert!(binding.events.borrow().is_empty());
+        let _ = state.update(Message::NumericCommit(mid));
+        assert!((state.plain(mid) + 6.0).abs() < 0.000_001);
+        assert!((state.plain(side) + 6.0).abs() < 0.000_001);
+        assert!(state.gesture.is_none());
+        let count = binding.events.borrow().len();
+        let _ = state.update(Message::NumericBlur(mid));
+        assert_eq!(binding.events.borrow().len(), count);
+        let events = binding.events.borrow();
+        assert_eq!(events.first(), Some(&(mid, None, true)));
+        assert_eq!(events.last(), Some(&(mid, None, false)));
+        assert_eq!(events.iter().filter(|(_, value, _)| value.is_some()).count(), 2);
+    }
+
+    #[test]
+    fn invalid_cancelled_and_clean_drafts_never_overwrite_automation() {
+        let (mut state, binding) = editor();
+        for draft in ["NaN", "inf", "1000 dB", "garbage", ""] {
+            let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, draft.into()));
+            let _ = state.update(Message::NumericCommit(GAIN_PARAMETER));
+            assert!(state.numeric_draft.as_ref().expect("invalid draft").invalid);
+            let _ = state.update(Message::NumericBlur(GAIN_PARAMETER));
+            assert!(state.numeric_draft.is_none());
+        }
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+        assert!(state.parameters.set(GAIN_PARAMETER, 0.25));
+        let _ = state.update(Message::Refresh);
+        assert_eq!(state.numeric_draft.as_ref().expect("draft").text, "6 dB");
+        let _ = state.update(Message::NumericCancel(GAIN_PARAMETER));
+        assert_eq!(state.parameters.get(GAIN_PARAMETER), Some(0.25));
+        let _ = state.update(Message::NumericFocus(GAIN_PARAMETER));
+        assert!(state.parameters.set(GAIN_PARAMETER, 0.75));
+        let _ = state.update(Message::NumericBlur(GAIN_PARAMETER));
+        assert_eq!(state.parameters.get(GAIN_PARAMETER), Some(0.75));
+        assert!(binding.events.borrow().is_empty());
+    }
+
+    #[test]
+    fn numeric_special_values_and_interrupted_teardown_remain_local_until_commit() {
+        let (mut state, binding) = editor();
+        for (field, text, expected) in [
+            (0, "-inf dB", 0.0),
+            (2, "1.25", 0.625),
+            (3, "25%", 0.25),
+            (4, "C", 0.5),
+            (4, "50L", 0.25),
+        ] {
+            let id = band_parameter_id(0, field).expect("band field");
+            let spec = parameter_spec(id).expect("metadata");
+            assert_eq!(parse_numeric(spec, text), Some(expected));
+        }
+        let _ = state.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
+        drop(state);
+        assert!(binding.events.borrow().is_empty());
     }
 
     #[test]

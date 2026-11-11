@@ -11,6 +11,7 @@
 mod deferred_ui;
 #[cfg(feature = "editor")]
 mod editor;
+mod editor_geometry;
 mod host;
 #[cfg(feature = "editor")]
 mod iced_bridge;

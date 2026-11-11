@@ -141,6 +141,10 @@ pub struct Parameters {
 
 /// UI-only automation seam. Implementations release any host-handler lock before invoking host code.
 pub trait EditorBinding {
+    /// Reports whether this UI lifetime still accepts edits after potentially reentrant host callbacks.
+    fn is_open(&self) -> bool {
+        true
+    }
     /// Starts a host gesture for a validated stable id.
     fn begin_edit(&self, id: u32);
     /// Writes one finite normalized value and reports the edit to the host.

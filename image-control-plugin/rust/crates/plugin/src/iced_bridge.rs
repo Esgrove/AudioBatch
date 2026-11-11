@@ -157,7 +157,10 @@ impl Editor {
                 f64::from(crate::editor::MIN_EDITOR_SIZE.0),
                 f64::from(crate::editor::MIN_EDITOR_SIZE.1),
             )))
-            .with_max_size(Some(baseview::dpi::LogicalSize::new(4096.0, 4096.0)))
+            .with_max_size(Some(baseview::dpi::LogicalSize::new(
+                f64::from(crate::editor_geometry::MAX_EDITOR_SIZE.0),
+                f64::from(crate::editor_geometry::MAX_EDITOR_SIZE.1),
+            )))
             .with_poll_interval(DISPLAY_INTERVAL)
             .with_always_redraw(true);
         let host = Host::new().with_callbacks(EditorHost {
@@ -302,6 +305,10 @@ struct LogicalBinding {
 }
 
 impl EditorBinding for LogicalBinding {
+    fn is_open(&self) -> bool {
+        self.native.is_open()
+    }
+
     fn begin_edit(&self, id: u32) {
         self.native.begin_edit(id);
     }
@@ -340,8 +347,16 @@ fn logical_resize_size(width: u32, height: u32, scale: f64, physical: bool) -> O
         (native.round() <= f64::from(i32::MAX)).then_some(native.round() as u32)
     };
     Some((
-        convert(width, crate::editor::MIN_EDITOR_SIZE.0, 4096)?,
-        convert(height, crate::editor::MIN_EDITOR_SIZE.1, 4096)?,
+        convert(
+            width,
+            crate::editor::MIN_EDITOR_SIZE.0,
+            crate::editor_geometry::MAX_EDITOR_SIZE.0,
+        )?,
+        convert(
+            height,
+            crate::editor::MIN_EDITOR_SIZE.1,
+            crate::editor_geometry::MAX_EDITOR_SIZE.1,
+        )?,
     ))
 }
 

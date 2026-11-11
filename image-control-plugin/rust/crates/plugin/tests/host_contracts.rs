@@ -24,6 +24,7 @@ fn production_in_process_host_contracts() {
     every_parameter_survives_state_with_fixed_missing_defaults(&ui);
     malformed_state_is_transactional(&ui);
     display_preferences_roundtrip_without_sound_changes(&ui);
+    geometry_roundtrips_across_components_with_fixed_legacy_defaults(&ui);
     independent_multiband_automation(&ui);
     cold_callbacks_and_mono_reset(&ui);
 }
@@ -152,7 +153,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
         defaults.pointer("/parameters/width").is_none(),
         "no global width in state"
     );
-    assert_eq!(defaults.get("version").expect("version"), 2);
+    assert_eq!(defaults.get("version").expect("version"), 3);
     assert!(
         (defaults
             .pointer("/parameters/gain")
@@ -229,6 +230,31 @@ fn display_preferences_roundtrip_without_sound_changes(ui: &UiThread) {
     assert_eq!(instance.state(ui).expect("stable v2 serialization"), saved);
 }
 
+/// Restores logical geometry without an editor, copies it to a fresh component, and checks legacy defaults.
+fn geometry_roundtrips_across_components_with_fixed_legacy_defaults(ui: &UiThread) {
+    let mut source = instance(ui, 2, ProcessMode::Offline);
+    source.deactivate(ui).expect("stop source");
+    assert!(restore_json(
+        &mut source, ui,
+        br#"{"version":3,"parameters":{"gain":0.25},"editor":{"tap":"pre"},"geometry":{"width":1200.5,"height":900.25}}"#,
+    ));
+    let saved = source.state(ui).expect("geometry capture");
+    let mut destination = instance(ui, 2, ProcessMode::Offline);
+    destination.deactivate(ui).expect("stop destination");
+    let defaults = saved_json(&destination, ui);
+    assert_eq!(defaults.pointer("/geometry/width"), Some(&Value::from(1000.0)));
+    assert_eq!(defaults.pointer("/geometry/height"), Some(&Value::from(764.0)));
+    assert!(destination.set_state(ui, &saved).expect("new component restore"));
+    assert_eq!(destination.state(ui).expect("new component recapture"), saved);
+    for version in [1, 2] {
+        let legacy = format!(r#"{{"version":{version},"parameters":{{}}}}"#);
+        assert!(restore_json(&mut destination, ui, legacy.as_bytes()));
+        let reset = saved_json(&destination, ui);
+        assert_eq!(reset.get("geometry"), defaults.get("geometry"));
+        assert_eq!(source.state(ui).expect("independent source retention"), saved);
+    }
+}
+
 /// Rejects malformed, incompatible, truncated, oversized, and semantically invalid states without partial writes.
 fn malformed_state_is_transactional(ui: &UiThread) {
     let mut instance = instance(ui, 2, ProcessMode::Offline);
@@ -238,7 +264,10 @@ fn malformed_state_is_transactional(ui: &UiThread) {
         vec![0, 0, 0],
         vec![0, 0, 0, 0],
         u32::MAX.to_le_bytes().to_vec(),
-        framed(br#"{"version":3,"parameters":{}}"#),
+        framed(br#"{"version":4,"parameters":{}}"#),
+        framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
+        framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
+        framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
         framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"persistence_seconds":0.0}}"#),
         framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":1.1}}"#),
         framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"color_mode":"unknown"}}"#),
