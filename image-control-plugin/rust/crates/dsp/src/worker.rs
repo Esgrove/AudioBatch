@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use crate::monitoring::{AnalysisSample, MonitoringConfiguration, capture_enabled};
 use crate::particles::ParticleBuilder;
-use crate::{AnalysisStatus, DisplayPreferences, SharedState, SpatialAnalyzer, SpatialParticle};
+use crate::{AnalysisStatus, DisplayConfiguration, SharedState, SpatialAnalyzer, SpatialParticle};
 
 /// Hard upper bound on pending instances independently of producer or refresh speed.
 const MAXIMUM_POINTS: usize = 65_536;
 /// Worker polling never requires an audio-side notification or a GUI callback.
-const POLL_INTERVAL: Duration = Duration::from_millis(16);
+/// Bounded fallback draining when native frames pause. Visible editors wake the worker at display cadence.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Bounded chunk between cancellation and stream-generation checks.
 const CHUNK_FRAMES: usize = 4096;
 /// Maximum queue storage examined per pass, even with a continuously refilling producer.
@@ -25,15 +26,16 @@ pub struct AnalysisUpdate {
     pub generation: u64,
     /// Explicit availability for editor status text.
     pub status: AnalysisStatus,
-    /// Immutable projection identity retained through editor queues and GPU history, exclusively off audio.
-    pub preferences: Arc<DisplayPreferences>,
+    /// Coherent settings and retained projection epoch carried through editor queues and GPU history,
+    /// exclusively off audio.
+    pub preferences: Arc<DisplayConfiguration>,
 }
 
 impl AnalysisUpdate {
-    /// Compares both independently published identities, never just their preference values.
+    /// Compares stream and retained projection epochs, permitting compatible live settings to coexist.
     #[must_use]
-    pub fn matches(&self, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
-        self.generation == generation && Arc::ptr_eq(&self.preferences, preferences)
+    pub fn matches(&self, generation: u64, preferences: &Arc<DisplayConfiguration>) -> bool {
+        self.generation == generation && self.preferences.analysis_matches(preferences)
     }
 }
 
@@ -143,6 +145,19 @@ impl AnalysisWorker {
         self.shutdown.clone()
     }
 
+    /// Wakes bounded analysis from the UI frame clock, never from audio or a parameter callback.
+    pub fn wake(&self) {
+        let thread = self
+            .shutdown
+            .state
+            .thread
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(worker) = thread.as_ref() {
+            worker.thread().unpark();
+        }
+    }
+
     /// Swaps reusable completed storage and returns its identity even when no particles exist.
     pub fn drain_batch(&self, destination: &mut Vec<SpatialParticle>) -> AnalysisUpdate {
         let shared = &self.shutdown.state.shared;
@@ -193,8 +208,8 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             continue;
         };
         if source != generation || !shared.monitoring.preferences_match(&preferences) {
-            // Source and immutable preferences publish independently. Retain and recheck both identities,
-            // including the interval after a preference swap but before its source-generation increment.
+            // Source and projection epoch publish independently. Retain and recheck both identities,
+            // including the interval after an incompatible publication but before its source increment.
             let next_preferences = shared.monitoring.preference_snapshot();
             if !configuration_matches(shared, source, &next_preferences) {
                 continue;
@@ -209,8 +224,7 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             if !configuration_matches(shared, source, &next_preferences) {
                 continue;
             }
-            // Settings are sampled only at configuration boundaries, never half-way through a tier deadline.
-            apply_settings(&mut builder, analyzer.as_mut(), *next_preferences);
+            apply_settings(&mut builder, analyzer.as_mut(), **next_preferences);
             preferences = next_preferences;
             generation = source;
             let status = if !capture_enabled(source) {
@@ -223,7 +237,10 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             publish(shared, pending, source, &preferences, status, &[]);
         }
         for _ in 0..CHUNKS_PER_PASS {
-            if stop.load(Ordering::Acquire) || !configuration_matches(shared, source, &preferences) {
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            if !refresh_settings(shared, source, &mut preferences, &mut builder, analyzer.as_mut()) {
                 break;
             }
             shared.drain_analysis(&mut queued);
@@ -269,6 +286,26 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
     }
 }
 
+/// Samples one coherent settings record between chunks, never between tiers sharing one deadline.
+/// Compatible edits preserve FFT history, audio time, adaptive reference, and already-weighted particles.
+fn refresh_settings(
+    shared: &SharedState,
+    generation: u64,
+    preferences: &mut Arc<DisplayConfiguration>,
+    builder: &mut ParticleBuilder,
+    analyzer: Option<&mut SpatialAnalyzer>,
+) -> bool {
+    let latest = shared.monitoring.preference_snapshot();
+    if !preferences.analysis_matches(&latest) || !configuration_matches(shared, generation, &latest) {
+        return false;
+    }
+    if !Arc::ptr_eq(preferences, &latest) {
+        apply_settings(builder, analyzer, **latest);
+        *preferences = latest;
+    }
+    true
+}
+
 /// Adapts the transport's detached preference record to the pure projection model.
 fn apply_settings(
     builder: &mut ParticleBuilder,
@@ -303,7 +340,7 @@ fn apply_settings(
 }
 
 /// Validates both independent configuration identities using only non-audio preference loads.
-fn configuration_matches(shared: &SharedState, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
+fn configuration_matches(shared: &SharedState, generation: u64, preferences: &Arc<DisplayConfiguration>) -> bool {
     generation == shared.analysis_generation() && shared.monitoring.preferences_match(preferences)
 }
 
@@ -312,7 +349,7 @@ fn publish(
     shared: &SharedState,
     pending: &Mutex<PendingBatch>,
     generation: u64,
-    preferences: &Arc<DisplayPreferences>,
+    preferences: &Arc<DisplayConfiguration>,
     status: AnalysisStatus,
     points: &[SpatialParticle],
 ) {
@@ -381,7 +418,7 @@ mod test_worker {
             AnalysisStatus::Running
         );
 
-        assert!(shared.set_display_preferences(*stale));
+        assert!(shared.set_display_preferences(**stale));
         assert!(
             !shared.monitoring.preferences_match(&stale),
             "equal values cannot reuse an old identity"
@@ -399,7 +436,7 @@ mod test_worker {
         assert!(Arc::ptr_eq(&update.preferences, &original));
         assert!(shared.set_display_preferences(DisplayPreferences {
             mel_scale: true,
-            ..*original
+            ..**original
         }));
         let current = shared.display_preferences_snapshot();
         assert!(!update.matches(shared.analysis_generation(), &current));
@@ -407,6 +444,141 @@ mod test_worker {
         assert!(replacement.matches(shared.analysis_generation(), &current));
         assert!(Arc::ptr_eq(&replacement.preferences, &current));
         assert_eq!(points.len(), 0);
+    }
+
+    #[test]
+    fn compatible_edits_keep_completed_and_drainable_particles_at_original_energy() {
+        let shared = Imager::new().shared();
+        let worker = AnalysisWorker::new(Arc::clone(&shared)).expect("worker");
+        // Join the real thread so publication and draining have deterministic ownership in this test.
+        worker.shutdown_handle().shutdown();
+        let generation = shared.analysis_generation();
+        let original = shared.display_preferences_snapshot();
+        let mut builder = crate::ParticleBuilder::new();
+        let point = crate::SpectralPoint::new(1000.0, 1000.0, 10.0, 0.5, 1.0, 1.0).expect("point");
+        builder.add_frame(
+            &[point],
+            crate::SpectralFrameInfo {
+                tier_index: 0,
+                frame_seconds: 0.04,
+                end_seconds: 0.04,
+                last_at_time: true,
+            },
+        );
+        let particles = builder.particles().to_vec();
+        publish(
+            &shared,
+            &worker.pending,
+            generation,
+            &original,
+            AnalysisStatus::Running,
+            &particles,
+        );
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            persistence_seconds: 2.5,
+            contrast: 0.1,
+            solid_rendering: true,
+            show_fps: true,
+            ..**original
+        }));
+        let current = shared.display_preferences_snapshot();
+        // Work computed before a compatible publication must remain publishable without rescaling.
+        publish(
+            &shared,
+            &worker.pending,
+            generation,
+            &original,
+            AnalysisStatus::Running,
+            &particles,
+        );
+        let mut drained = Vec::new();
+        let update = worker.drain_batch(&mut drained);
+        assert!(update.matches(generation, &current));
+        assert_eq!(drained, particles.repeat(2));
+    }
+
+    #[test]
+    fn rapid_live_settings_preserve_fft_clock_reference_and_future_particle_weighting() {
+        let shared = Imager::new().shared();
+        let generation = shared.analysis_generation();
+        let mut preferences = shared.display_preferences_snapshot();
+        let mut analyzer = crate::SpatialAnalyzer::new(48_000.0).expect("analyzer");
+        let mut builder = crate::ParticleBuilder::new();
+        let signal: Vec<_> = (0..4096)
+            .map(|index| {
+                let sample = (std::f32::consts::TAU * 750.0 * index as f32 / 48_000.0).sin();
+                [sample, sample * 10.0_f32.powf(-6.0 / 20.0)]
+            })
+            .collect();
+        let mut endpoint = 0.0;
+        analyzer
+            .push_frames(&signal, |points, info| {
+                endpoint = info.end_seconds;
+                builder.add_frame(points, info);
+            })
+            .expect("first chunk");
+        let reference = builder.reference_level();
+        let original_particles = builder.particles().to_vec();
+        assert!(!original_particles.is_empty(), "first chunk must produce particles");
+        for index in 0..128 {
+            let live = DisplayPreferences {
+                persistence_seconds: if index % 2 == 0 { 0.1 } else { 1.2 },
+                contrast: index as f32 / 128.0,
+                solid_rendering: index % 2 == 0,
+                pan_midpoint_db: 6.0,
+                pan_edge_db: 18.0,
+                smooth_correlation: index % 2 == 0,
+                show_fps: index % 2 != 0,
+                ..DisplayPreferences::default()
+            };
+            assert!(shared.set_display_preferences(live));
+            assert!(super::refresh_settings(
+                &shared,
+                generation,
+                &mut preferences,
+                &mut builder,
+                Some(&mut analyzer)
+            ));
+            assert_eq!(builder.particles(), original_particles);
+            assert_eq!(builder.reference_level().to_bits(), reference.to_bits());
+        }
+        builder.clear();
+        let mut low_persistence = crate::ParticleBuilder::new();
+        super::apply_settings(
+            &mut low_persistence,
+            None,
+            DisplayPreferences {
+                persistence_seconds: 0.3,
+                ..**preferences
+            },
+        );
+        analyzer
+            .push_frames(&signal[..512], |points, info| {
+                assert!(
+                    info.end_seconds > endpoint,
+                    "live edits cannot restart the FFT audio clock"
+                );
+                assert_eq!(info.end_seconds.to_bits(), ((4096.0_f64 + 512.0) / 48_000.0).to_bits());
+                builder.add_frame(points, info);
+                low_persistence.add_frame(points, info);
+            })
+            .expect("continued chunk");
+        assert!(
+            !builder.particles().is_empty(),
+            "continued clock must produce particles"
+        );
+        for (actual, low) in builder.particles().iter().zip(low_persistence.particles()) {
+            assert!(
+                (actual.position()[1] - 0.25).abs() < 0.002,
+                "position curve applies to future observations"
+            );
+            for (actual_energy, low_energy) in actual.color().into_iter().zip(low.color()) {
+                assert!(
+                    actual_energy.mul_add(2.0, -low_energy).abs() < 1.0e-6,
+                    "new persistence changes only future particle weight"
+                );
+            }
+        }
     }
 
     #[test]

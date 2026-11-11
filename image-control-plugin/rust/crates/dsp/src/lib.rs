@@ -24,7 +24,9 @@ pub use analyzer::{
 };
 pub use crossover::order_crossovers;
 use monitoring::{AnalysisSample, Monitoring};
-pub use monitoring::{AnalysisStatus, AnalysisTap, ColourMode, CorrelationSnapshot, DisplayPreferences};
+pub use monitoring::{
+    AnalysisStatus, AnalysisTap, ColourMode, CorrelationSnapshot, DisplayConfiguration, DisplayPreferences,
+};
 pub use multiband::{BandControls, MultibandError, MultibandImager};
 pub use particles::SpatialParticle;
 pub use particles::{
