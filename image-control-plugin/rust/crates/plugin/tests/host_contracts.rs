@@ -152,13 +152,13 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
     let saved = instance.state(ui).expect("all parameter capture");
     assert!(saved.component.len() < 4096);
     instance.deactivate(ui).expect("inactive restore");
-    assert!(restore_json(&mut instance, ui, br#"{"version":5,"parameters":{}}"#));
+    assert!(restore_json(&mut instance, ui, br#"{"version":6,"parameters":{}}"#));
     let defaults = saved_json(&instance, ui);
     assert!(
         defaults.pointer("/parameters/width").is_none(),
         "no global width in state"
     );
-    assert_eq!(defaults.get("version").expect("version"), 5);
+    assert_eq!(defaults.get("version").expect("version"), 6);
     assert!(
         (defaults
             .pointer("/parameters/gain")
@@ -204,7 +204,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
     assert!(restore_json(
         &mut instance,
         ui,
-        br#"{"version":5,"parameters":{"bands":[{"mid":0.0},{},{},{}]}}"#
+        br#"{"version":6,"parameters":{"bands":[{"mid":0.0},{},{},{}]}}"#
     ));
     let partial = saved_json(&instance, ui);
     assert_eq!(partial.pointer("/parameters/bands/0/mid").expect("Mid"), 0.0);
@@ -218,7 +218,7 @@ fn display_preferences_roundtrip_without_sound_changes(ui: &UiThread) {
     let before = saved_json(&instance, ui);
     assert!(restore_json(
         &mut instance, ui,
-        br#"{"version":5,"parameters":{},"tap":"Pre","display":{"persistence_seconds":1.25,"contrast":0.25,"color_mode":"Phase"}}"#,
+        br#"{"version":6,"parameters":{},"tap":"Pre","display":{"persistence_seconds":1.25,"contrast":0.25,"color_mode":"Phase"}}"#,
     ));
     let restored = saved_json(&instance, ui);
     assert_eq!(restored.get("parameters"), before.get("parameters"));
@@ -230,7 +230,7 @@ fn display_preferences_roundtrip_without_sound_changes(ui: &UiThread) {
     assert_eq!(restored.pointer("/display/contrast"), Some(&Value::from(0.25)));
     assert_eq!(restored.pointer("/display/color_mode"), Some(&Value::from("Phase")));
     let saved = instance.state(ui).expect("current capture");
-    assert!(restore_json(&mut instance, ui, br#"{"version":5,"parameters":{}}"#));
+    assert!(restore_json(&mut instance, ui, br#"{"version":6,"parameters":{}}"#));
     let defaults = saved_json(&instance, ui);
     assert_eq!(defaults.pointer("/tap"), Some(&Value::from("Post")));
     assert_eq!(defaults.pointer("/display/color_mode"), Some(&Value::from("Frequency")));
@@ -245,7 +245,7 @@ fn geometry_roundtrips_across_components_with_fixed_missing_defaults(ui: &UiThre
     assert!(restore_json(
         &mut source,
         ui,
-        br#"{"version":5,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200.5,"height":900.25}}"#,
+        br#"{"version":6,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200.5,"height":900.25}}"#,
     ));
     let saved = source.state(ui).expect("geometry capture");
     let mut destination = instance(ui, 2, ProcessMode::Offline);
@@ -255,7 +255,7 @@ fn geometry_roundtrips_across_components_with_fixed_missing_defaults(ui: &UiThre
     assert_eq!(defaults.pointer("/geometry/height"), Some(&Value::from(764.0)));
     assert!(destination.set_state(ui, &saved).expect("new component restore"));
     assert_eq!(destination.state(ui).expect("new component recapture"), saved);
-    assert!(restore_json(&mut destination, ui, br#"{"version":5,"parameters":{}}"#));
+    assert!(restore_json(&mut destination, ui, br#"{"version":6,"parameters":{}}"#));
     let reset = saved_json(&destination, ui);
     assert_eq!(reset.get("geometry"), defaults.get("geometry"));
     assert_eq!(source.state(ui).expect("independent source retention"), saved);
@@ -275,24 +275,25 @@ fn malformed_state_is_transactional(ui: &UiThread) {
         framed(br#"{"version":2,"parameters":{}}"#),
         framed(br#"{"version":3,"parameters":{}}"#),
         framed(br#"{"version":4,"parameters":{}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25},"display":{"persistence_seconds":0.0}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25},"display":{"contrast":1.1}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25},"display":{"color_mode":"unknown"}}"#),
+        framed(br#"{"version":5,"parameters":{}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25},"display":{"persistence_seconds":0.0}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25},"display":{"contrast":1.1}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25},"display":{"color_mode":"unknown"}}"#),
         framed(br#"{"version":0,"parameters":{}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":2.0}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":null}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.25,"crossovers":[0.1,0.2,2.0]}}"#),
-        framed(br#"{"version":5,"parameters":{"bands":[{},{},{},{"recover":-1.0}]}}"#),
-        framed(br#"{"version":5,"parameters":{"bands":[{},{},{}]}}"#),
-        framed(br#"{"version":5,"parameters":{"bands":[{},{},{},{"unknown":0.0}]}}"#),
-        framed(br#"{"version":5,"parameters":{"mono":2.0}}"#),
-        framed(br#"{"version":5,"parameters":{"width":0.5}}"#),
-        framed(br#"{"version":5,"parameters":{"gain":0.5,"gain":0.25}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":2.0}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":null}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.25,"crossovers":[0.1,0.2,2.0]}}"#),
+        framed(br#"{"version":6,"parameters":{"bands":[{},{},{},{"recover":-1.0}]}}"#),
+        framed(br#"{"version":6,"parameters":{"bands":[{},{},{}]}}"#),
+        framed(br#"{"version":6,"parameters":{"bands":[{},{},{},{"unknown":0.0}]}}"#),
+        framed(br#"{"version":6,"parameters":{"mono":2.0}}"#),
+        framed(br#"{"version":6,"parameters":{"width":0.5}}"#),
+        framed(br#"{"version":6,"parameters":{"gain":0.5,"gain":0.25}}"#),
         framed(b"not JSON"),
-        framed(br#"{"version":5,"parameters":{}} trailing"#),
+        framed(br#"{"version":6,"parameters":{}} trailing"#),
     ] {
         assert!(
             !instance
