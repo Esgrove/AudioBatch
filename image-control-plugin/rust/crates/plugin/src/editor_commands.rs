@@ -4,12 +4,27 @@ use super::{EditorState, Message, PlotGesture, layout, plot_overlay, presets};
 use crate::params::{CROSSOVER_PARAMETERS, band_parameter_id, parameter_spec};
 
 impl EditorState {
+    /// Captures command identity before resolving drafts or gestures that can synchronously restore or close the editor.
+    fn prepare_command(&mut self) -> Option<u64> {
+        let generation = self.parameters.restore_generation();
+        if !self.binding.is_open() {
+            return None;
+        }
+        self.finish_numeric();
+        if !self.binding.is_open() || generation != self.parameters.restore_generation() {
+            return None;
+        }
+        self.end_gesture();
+        (self.binding.is_open() && generation == self.parameters.restore_generation()).then_some(generation)
+    }
+
     /// Keeps preset modal commands separate from sound and display updates.
     pub(super) fn update_preset(&mut self, message: Message) {
         match message {
             Message::Presets => {
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.presets.shown = !self.presets.shown;
                 if self.presets.shown {
                     self.start_preset(presets::Action::Refresh);
@@ -83,14 +98,16 @@ impl EditorState {
                     .set_analysis_enabled(!self.analysis_stopped && !self.spectrogram_hidden);
             }
             Message::Shortcuts => {
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.settings_shown = true;
                 self.shortcuts_shown = !self.shortcuts_shown;
             }
             Message::CompactBands => {
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.divider_drag = None;
                 self.compact_bands = !self.compact_bands;
             }
@@ -105,8 +122,9 @@ impl EditorState {
                 }
             }
             Message::Toolbar => {
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.toolbar_shown = !self.toolbar_shown;
             }
             Message::Correlation => {
@@ -118,7 +136,9 @@ impl EditorState {
                 }
             }
             Message::Settings => {
-                self.finish_numeric();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.settings_shown = !self.settings_shown;
             }
             Message::Tap(tap) if self.shared.analysis_tap() != tap => {
@@ -158,8 +178,9 @@ impl EditorState {
 
     /// Captures file-operation inputs on the UI thread and moves only detached values to the worker.
     fn start_preset(&mut self, action: presets::Action) {
-        self.finish_numeric();
-        self.end_gesture();
+        let Some(generation) = self.prepare_command() else {
+            return;
+        };
         let comparison = self
             .parameters
             .with_editing(|editing, snapshot| editing.comparison(snapshot));
@@ -188,7 +209,7 @@ impl EditorState {
         }
         self.presets.start(
             action,
-            self.parameters.restore_generation(),
+            generation,
             comparison.active,
             crate::editing::SoundSnapshot::capture(self.parameters.snapshot()),
             identity,
@@ -197,6 +218,9 @@ impl EditorState {
 
     /// Recall validates the selected complete sound without affecting audition switches or display choices.
     fn load_preset(&mut self, index: usize) {
+        if self.prepare_command().is_none() {
+            return;
+        }
         let Some(preset) = self.presets.entries.get(index).cloned() else {
             return;
         };
@@ -210,9 +234,9 @@ impl EditorState {
 
     /// Applies an independently reread accepted library revision through normal sound transactions.
     fn recall_preset(&mut self, preset: crate::user_presets::UserPreset) {
-        self.finish_numeric();
-        self.end_gesture();
-        let generation = self.parameters.restore_generation();
+        let Some(generation) = self.prepare_command() else {
+            return;
+        };
         self.parameters.with_editing(|editing, snapshot| {
             editing.begin();
             editing.select_preset(
@@ -225,8 +249,8 @@ impl EditorState {
                 snapshot,
             );
         });
-        self.recall_values(&preset.sound.parameters().collect::<Vec<_>>(), generation, true);
-        if generation == self.parameters.restore_generation() {
+        let success = self.recall_values(&preset.sound.parameters().collect::<Vec<_>>(), generation, true);
+        if success && generation == self.parameters.restore_generation() {
             self.parameters.with_editing(|editing, snapshot| {
                 editing.set_effective_origin(crate::editing::SoundSnapshot::capture(snapshot));
             });
@@ -245,6 +269,9 @@ impl EditorState {
 
     /// Applies file completions only to their captured restore generation, slot, and unchanged sound.
     pub(super) fn poll_presets(&mut self) {
+        if !self.binding.is_open() {
+            return;
+        }
         let Some(completion) = self.presets.poll() else {
             return;
         };
@@ -292,7 +319,9 @@ impl EditorState {
                 self.presets.name.clone_from(&preset.name);
                 *self.presets.bound.get_mut(comparison.active).expect("active slot") = Some(preset);
                 self.binding.mark_dirty();
-                self.start_preset(presets::Action::Refresh);
+                if self.binding.is_open() && completion.generation == self.parameters.restore_generation() {
+                    self.start_preset(presets::Action::Refresh);
+                }
             }
             Ok(presets::Outcome::Renamed(preset)) => {
                 self.parameters.with_editing(|editing, snapshot| {
@@ -303,7 +332,9 @@ impl EditorState {
                 self.presets.name.clone_from(&preset.name);
                 *self.presets.bound.get_mut(comparison.active).expect("active slot") = Some(preset);
                 self.binding.mark_dirty();
-                self.start_preset(presets::Action::Refresh);
+                if self.binding.is_open() && completion.generation == self.parameters.restore_generation() {
+                    self.start_preset(presets::Action::Refresh);
+                }
             }
             Ok(presets::Outcome::Reconnected(preset)) => {
                 *self.presets.bound.get_mut(comparison.active).expect("active slot") = Some(preset);
@@ -323,8 +354,9 @@ impl EditorState {
         use plot_overlay::PlotEvent;
         match event {
             PlotEvent::Begin(index) => {
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.begin_pointer_gesture(*CROSSOVER_PARAMETERS.get(index).expect("fixed crossover index"));
             }
             PlotEvent::Change(index, frequency) => {
@@ -337,8 +369,9 @@ impl EditorState {
             PlotEvent::HoverBand(band) => self.plot_band = band,
             PlotEvent::Reset(index) => {
                 let id = *CROSSOVER_PARAMETERS.get(index).expect("fixed crossover index");
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 self.change_parameter(id, parameter_spec(id).expect("crossover").default_normalized);
                 self.end_gesture();
             }
@@ -358,8 +391,9 @@ impl EditorState {
                 }
             }
             PlotEvent::BeginGain(band, mid) => {
-                self.finish_numeric();
-                self.end_gesture();
+                if self.prepare_command().is_none() {
+                    return;
+                }
                 let id = band_parameter_id(band, usize::from(!mid)).expect("band gain");
                 let baseline = self.plain(id);
                 self.begin_pointer_gesture(id);
@@ -392,13 +426,13 @@ impl EditorState {
 
     /// Captures exactly the crossovers surrounding a dragged band before opening host edits.
     fn begin_band_gesture(&mut self, band: usize) {
-        self.finish_numeric();
-        self.end_gesture();
+        let Some(generation) = self.prepare_command() else {
+            return;
+        };
         let ids = (0..3)
             .filter(|index| *index == band || *index + 1 == band)
             .map(|index| *CROSSOVER_PARAMETERS.get(index).expect("fixed crossover index"))
             .collect::<Vec<_>>();
-        let generation = self.parameters.restore_generation();
         self.parameters.with_editing(|editing, _| editing.begin());
         let mut opened = Vec::new();
         for id in ids {
@@ -418,20 +452,25 @@ impl EditorState {
 
     /// Replays only touched values, without coupling linked controls or recording automation as local edits.
     pub(super) fn replay_history(&mut self, undo: bool) {
-        self.finish_numeric();
-        self.end_gesture();
-        let generation = self.parameters.restore_generation();
-        let command = self.parameters.with_editing(|editing, _| editing.replay(undo));
+        let Some(generation) = self.prepare_command() else {
+            return;
+        };
+        let command = self
+            .parameters
+            .with_editing(|editing, snapshot| editing.begin_replay(undo, snapshot));
         if let Some(command) = command {
             let targets = command
                 .changes
                 .into_iter()
                 .map(|(id, before, after)| (id, if undo { before } else { after }))
                 .collect::<Vec<_>>();
-            self.recall_values(&targets, generation, false);
+            let success = self.recall_values(&targets, generation, false);
             if generation == self.parameters.restore_generation() {
                 self.parameters
-                    .with_editing(|editing, snapshot| editing.complete_replay(undo, snapshot));
+                    .with_editing(|editing, snapshot| editing.complete_replay(undo, snapshot, success));
+            }
+            if !success {
+                self.presets.error = Some("The host did not accept the complete history command. Some sound values may have changed. Retry Undo or Redo".into());
             }
             self.presets.invalidate();
             if self.binding.is_open() && generation == self.parameters.restore_generation() {
@@ -442,18 +481,17 @@ impl EditorState {
 
     /// Switching captures outgoing headless automation and recalls sound only as one chronological command.
     pub(super) fn switch_comparison(&mut self, slot: usize) {
-        self.finish_numeric();
-        self.end_gesture();
-        let generation = self.parameters.restore_generation();
+        let Some(generation) = self.prepare_command() else {
+            return;
+        };
         self.presets.invalidate();
         let target = self.parameters.with_editing(|editing, snapshot| {
             editing.begin();
             editing.switch(slot, snapshot)
         });
-        if let Some(sound) = target {
-            self.recall_values(&sound.parameters().collect::<Vec<_>>(), generation, true);
-        }
-        if target.is_some() && generation == self.parameters.restore_generation() {
+        let success =
+            target.is_none_or(|sound| self.recall_values(&sound.parameters().collect::<Vec<_>>(), generation, true));
+        if success && target.is_some() && generation == self.parameters.restore_generation() {
             self.parameters.with_editing(|editing, snapshot| {
                 let current = crate::editing::SoundSnapshot::capture(snapshot);
                 let comparison = editing.comparison(snapshot);
@@ -472,8 +510,9 @@ impl EditorState {
 
     /// Copy changes only the other slot's sound and is undoable even though live parameters stay unchanged.
     pub(super) fn copy_comparison(&mut self) {
-        self.finish_numeric();
-        self.end_gesture();
+        if self.prepare_command().is_none() {
+            return;
+        }
         self.parameters.with_editing(|editing, snapshot| {
             editing.begin();
             editing.copy(snapshot);
@@ -483,10 +522,10 @@ impl EditorState {
     }
 
     /// Sends independently balanced host gestures and stops stale work after every potentially reentrant callback.
-    fn recall_values(&self, targets: &[(u32, f64)], generation: u64, record: bool) {
+    fn recall_values(&self, targets: &[(u32, f64)], generation: u64, record: bool) -> bool {
         for &(id, value) in targets {
             if !self.binding.is_open() || generation != self.parameters.restore_generation() {
-                break;
+                return false;
             }
             if self
                 .parameters
@@ -496,12 +535,19 @@ impl EditorState {
                 continue;
             }
             self.binding.begin_edit(id);
-            if record {
-                self.write(id, value, generation);
-            } else if self.binding.is_open() && generation == self.parameters.restore_generation() {
-                self.binding.publish_value(&self.parameters, id, value);
-            }
+            let accepted = if self.binding.is_open() && generation == self.parameters.restore_generation() {
+                if record && let Some(before) = self.parameters.get(id) {
+                    self.parameters.with_editing(|editing, _| editing.touch(id, before));
+                }
+                self.binding.publish_value(&self.parameters, id, value)
+            } else {
+                false
+            };
             self.binding.end_edit(id);
+            if !accepted || !self.binding.is_open() || generation != self.parameters.restore_generation() {
+                return false;
+            }
         }
+        self.binding.is_open() && generation == self.parameters.restore_generation()
     }
 }
