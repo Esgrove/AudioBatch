@@ -196,6 +196,28 @@ struct Samples {
     }
 };
 
+/// Accumulates callback observations across warmed repetitions, excluding setup and scheduling work.
+struct CallbackResults {
+    Samples samples;
+    Samples postRequest;
+    std::vector<double> repetitionP99;
+    double checksum {0.0};
+    double maximumStartLateness {0.0};
+    std::size_t requests {0};
+    std::size_t lateStarts {0};
+    bool truncated {false};
+};
+
+/// Keeps each repetition's audio timeline independent of the workload's pooled observations.
+struct CallbackSchedule {
+    Clock::time_point start {Clock::now()};
+    Clock::time_point nextRefresh {start};
+    Clock::time_point lastRequest {start - std::chrono::seconds(1)};
+    double audioSeconds {0.0};
+    double nextChangeSeconds {0.0};
+    double nextDisplayAudioSeconds {0.0};
+};
+
 /// Quantiles use nearest rank, and max remains an observed sample rather than an extrapolated bound.
 struct Distribution {
     double p50 {0.0};
@@ -407,28 +429,6 @@ void printCallbacks(
         checksum
     );
 }
-
-/// Accumulates callback observations across warmed repetitions, excluding setup and scheduling work.
-struct CallbackResults {
-    Samples samples;
-    Samples postRequest;
-    std::vector<double> repetitionP99;
-    double checksum {0.0};
-    double maximumStartLateness {0.0};
-    std::size_t requests {0};
-    std::size_t lateStarts {0};
-    bool truncated {false};
-};
-
-/// Keeps each repetition's audio timeline independent of the workload's pooled observations.
-struct CallbackSchedule {
-    Clock::time_point start {Clock::now()};
-    Clock::time_point nextRefresh {start};
-    Clock::time_point lastRequest {start - std::chrono::seconds(1)};
-    double audioSeconds {0.0};
-    double nextChangeSeconds {0.0};
-    double nextDisplayAudioSeconds {0.0};
-};
 
 /// Converts audio intervals to the monotonic clock without quantizing them to whole milliseconds.
 Clock::duration durationFromSeconds(const double seconds)

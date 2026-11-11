@@ -101,8 +101,8 @@ public:
     SpatialSpectrogramView& operator=(const SpatialSpectrogramView&) = delete;
     SpatialSpectrogramView& operator=(SpatialSpectrogramView&&) = delete;
 
-    [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
     [[nodiscard]] juce::Rectangle<float> crossoverLabelBounds(std::size_t crossover) const;
+    [[nodiscard]] juce::Rectangle<float> getPlotBounds() const;
     [[nodiscard]] std::optional<std::size_t> getHoveredBand() const;
     [[nodiscard]] float positionCurveOpacity() const;
 
@@ -145,11 +145,11 @@ private:
     [[nodiscard]] std::optional<std::size_t> bandAt(float x) const;
     [[nodiscard]] std::optional<std::size_t> crossoverNear(float x) const;
 
+    [[nodiscard]] bool isLinked(std::size_t band) const;
     [[nodiscard]] double bandWidth(std::size_t band) const;
+    [[nodiscard]] double xToFrequency(float x) const;
     [[nodiscard]] float frequencyToX(double frequency) const;
     [[nodiscard]] float positionToY(double position) const;
-    [[nodiscard]] double xToFrequency(float x) const;
-    [[nodiscard]] bool isLinked(std::size_t band) const;
 
     void beginHistoryEdit(const juce::String& name);
     void endHistoryEdit();
@@ -195,10 +195,10 @@ private:
     std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> midParameters;
     /// Side gain parameters, owned by the parameter tree, which outlives this view.
     std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> sideParameters;
-    /// Independent Width parameters, owned by the parameter tree, which outlives this view.
-    std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> widthParameters;
     /// Solo parameters, owned by the parameter tree, which outlives this view.
     std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> soloParameters;
+    /// Independent Width parameters, owned by the parameter tree, which outlives this view.
+    std::array<std::reference_wrapper<juce::RangedAudioParameter>, BAND_COUNT> widthParameters;
     /// Animated hover highlight of each band, from 0 to 1.
     std::array<float, BAND_COUNT> bandHighlights {};
     /// Animated hover highlight of each crossover, from 0 to 1.

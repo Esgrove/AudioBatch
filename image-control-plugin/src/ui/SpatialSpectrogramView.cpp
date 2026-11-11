@@ -259,8 +259,8 @@ SpatialSpectrogramView::SpatialSpectrogramView(
     ),
     midParameters(getViewParameters(parameters, midGainParameterId, std::make_index_sequence<BAND_COUNT> {})),
     sideParameters(getViewParameters(parameters, sideGainParameterId, std::make_index_sequence<BAND_COUNT> {})),
-    widthParameters(getViewParameters(parameters, widthParameterId, std::make_index_sequence<BAND_COUNT> {})),
-    soloParameters(getViewParameters(parameters, soloParameterId, std::make_index_sequence<BAND_COUNT> {}))
+    soloParameters(getViewParameters(parameters, soloParameterId, std::make_index_sequence<BAND_COUNT> {})),
+    widthParameters(getViewParameters(parameters, widthParameterId, std::make_index_sequence<BAND_COUNT> {}))
 {
     // The rounded corners show the editor background and the plot shows the GPU picture,
     // so the view does not fill its whole bounds.

@@ -33,10 +33,10 @@ public:
     ControlSlider& operator=(const ControlSlider&) = delete;
     ControlSlider& operator=(ControlSlider&&) = delete;
 
-    [[nodiscard]] std::unique_ptr<juce::Label> createValueBox();
     [[nodiscard]] juce::String compactValueText();
     [[nodiscard]] juce::String numericValueSuffix();
     [[nodiscard]] juce::String numericValueText();
+    [[nodiscard]] std::unique_ptr<juce::Label> createValueBox();
     [[nodiscard]] int compactValueRequiredWidth(bool fullNames) const;
     void endDrag();
     void setCompactValue(const juce::String& identity);
