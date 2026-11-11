@@ -299,3 +299,13 @@ These inputs are not a record of listening evaluations.
 
 - Add a Metal backend for `SpectrogramRenderer` on macOS.
   [JUCE Metal rendering on macOS](https://github.com/UVI-Dev/JUCE/tree/metal-renderer)
+
+## Known issues
+
+- On Windows, resizing the editor while a numeric value field is being edited commits the entry instead of keeping it.
+  The editor's OpenGL context repositions its native child window,
+  which makes JUCE's Windows window hook dismiss the modal text editor.
+  macOS keeps the entry.
+  `CompactLayout.InlineNamesDoNotCommitOrDismissNumericEntry` fails on Windows in Debug and Release because of this.
+  The fix belongs in the JUCE fork, in the OpenGL window positioning,
+  and needs a submodule update committed together with the test result.

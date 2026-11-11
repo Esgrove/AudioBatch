@@ -366,6 +366,9 @@ TEST(CompactLayout, ConciseControlsStaySingleRowAcrossEditorHeights)
 }
 
 /// Expanding inline control names with width leaves unfinished numeric input and keyboard focus intact.
+/// Known to fail on Windows, where the OpenGL context repositions its native child window while the editor resizes.
+/// JUCE's Windows window hook then dismisses the modal text editor and commits the entry.
+/// See the known issues in the plugin README.
 TEST(CompactLayout, InlineNamesDoNotCommitOrDismissNumericEntry)
 {
     ImageControlProcessor processor;
