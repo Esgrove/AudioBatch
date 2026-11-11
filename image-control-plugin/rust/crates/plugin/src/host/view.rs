@@ -35,8 +35,24 @@ const MINIMUM_SIZE: (i32, i32) = (
     crate::editor::MIN_EDITOR_SIZE.0 as i32,
     crate::editor::MIN_EDITOR_SIZE.1 as i32,
 );
-/// Bounds unreasonable host dimensions without overflow.
-const MAXIMUM_DIMENSION: i32 = 4096;
+/// Matches the C++ editor's maximum logical dimensions before platform-native DPI conversion.
+const MAXIMUM_SIZE: (i32, i32) = (4096, 4096);
+
+/// Native VST3 rectangles are macOS points or Windows physical pixels, not renderer backing pixels.
+/// Round both bounds identically to the editor's logical-to-native resize requests.
+fn native_bounds(scale: f64) -> ((i32, i32), (i32, i32)) {
+    let dimension = |value: i32| (f64::from(value) * scale).round() as i32;
+    (
+        (dimension(MINIMUM_SIZE.0), dimension(MINIMUM_SIZE.1)),
+        (dimension(MAXIMUM_SIZE.0), dimension(MAXIMUM_SIZE.1)),
+    )
+}
+
+/// Validates sizes from hosts and native child requests with the same current-DPI contract.
+fn valid_dimensions(width: i32, height: i32, scale: f64) -> bool {
+    let (minimum, maximum) = native_bounds(scale);
+    (minimum.0..=maximum.0).contains(&width) && (minimum.1..=maximum.1).contains(&height)
+}
 
 /// COM view whose native resources belong to the constructing UI thread.
 pub(super) struct PlugView {
@@ -52,6 +68,8 @@ pub(super) struct PlugView {
     dimensions: Cell<(i32, i32)>,
     /// Most recently supplied host scale, including before attachment.
     scale: Cell<f64>,
+    /// Explicit pre-attachment host geometry takes precedence over scaling the default editor size.
+    host_sized: Cell<bool>,
     /// Authoritative parameters, shared with the same controller and processor.
     parameters: Arc<Parameters>,
     /// Audio analysis transport, independent of mutable DSP history.
@@ -90,6 +108,7 @@ impl PlugView {
             owner: thread::current().id(),
             dimensions: Cell::new(EDITOR_SIZE),
             scale: Cell::new(1.0),
+            host_sized: Cell::new(false),
             parameters,
             shared,
             handler,
@@ -159,6 +178,12 @@ impl IPlugViewContentScaleSupportTrait for PlugView {
             return kResultFalse;
         }
         self.scale.set(f64::from(factor));
+        if cfg!(windows) && !self.updates.active.get() && !self.host_sized.get() {
+            self.dimensions.set((
+                (f64::from(EDITOR_SIZE.0) * f64::from(factor)).round() as i32,
+                (f64::from(EDITOR_SIZE.1) * f64::from(factor)).round() as i32,
+            ));
+        }
         kResultOk
     }
 }
@@ -200,12 +225,18 @@ impl IPlugViewTrait for PlugView {
             updates: Rc::downgrade(&self.updates),
             gestures: Cell::new(0),
         });
+        let size = if self.host_sized.get() {
+            baseview::dpi::NativeSize::new(width as u32, height as u32).into()
+        } else {
+            // A default editor opens at its intended logical size even when the host has not supplied DPI yet.
+            baseview::dpi::LogicalSize::new(f64::from(EDITOR_SIZE.0), f64::from(EDITOR_SIZE.1)).into()
+        };
         // SAFETY: VST3 guarantees a live parent until removed, and this editor's methods and drop stay on its UI owner.
         let Ok(editor) = (unsafe {
             Editor::attach(
                 parent,
-                width as u32,
-                height as u32,
+                size,
+                self.scale.get(),
                 Arc::clone(&self.parameters),
                 Arc::clone(&self.shared),
                 binding,
@@ -215,6 +246,11 @@ impl IPlugViewTrait for PlugView {
         };
         if editor.set_scale_factor(self.scale.get()).is_err() {
             return kResultFalse;
+        }
+        if let Ok(native) = editor.native_size()
+            && let (Ok(width), Ok(height)) = (i32::try_from(native.width), i32::try_from(native.height))
+        {
+            self.dimensions.set((width, height));
         }
         *slot = Some(Rc::new(editor));
         self.updates.active.set(true);
@@ -270,15 +306,14 @@ impl IPlugViewTrait for PlugView {
         let (Some(width), Some(height)) = (size.right.checked_sub(size.left), size.bottom.checked_sub(size.top)) else {
             return kInvalidArgument;
         };
-        if !(MINIMUM_SIZE.0..=MAXIMUM_DIMENSION).contains(&width)
-            || !(MINIMUM_SIZE.1..=MAXIMUM_DIMENSION).contains(&height)
-        {
+        if !valid_dimensions(width, height, self.updates.native_scale(self.scale.get())) {
             return kResultFalse;
         }
         if self.updates.resize(width as u32, height as u32).is_err() {
             return kResultFalse;
         }
         self.dimensions.set((width, height));
+        self.host_sized.set(true);
         kResultOk
     }
 
@@ -311,14 +346,9 @@ impl IPlugViewTrait for PlugView {
         }
         // SAFETY: the host provides one writable ViewRect.
         let rect = unsafe { &mut *rect };
-        let width = rect
-            .right
-            .saturating_sub(rect.left)
-            .clamp(MINIMUM_SIZE.0, MAXIMUM_DIMENSION);
-        let height = rect
-            .bottom
-            .saturating_sub(rect.top)
-            .clamp(MINIMUM_SIZE.1, MAXIMUM_DIMENSION);
+        let (minimum, maximum) = native_bounds(self.updates.native_scale(self.scale.get()));
+        let width = rect.right.saturating_sub(rect.left).clamp(minimum.0, maximum.0);
+        let height = rect.bottom.saturating_sub(rect.top).clamp(minimum.1, maximum.1);
         let (Some(right), Some(bottom)) = (rect.left.checked_add(width), rect.top.checked_add(height)) else {
             return kInvalidArgument;
         };
@@ -410,9 +440,7 @@ impl EditorBinding for Binding {
         let (Ok(width), Ok(height)) = (i32::try_from(width), i32::try_from(height)) else {
             return false;
         };
-        if !(MINIMUM_SIZE.0..=MAXIMUM_DIMENSION).contains(&width)
-            || !(MINIMUM_SIZE.1..=MAXIMUM_DIMENSION).contains(&height)
-        {
+        if !valid_dimensions(width, height, updates.native_scale(1.0)) {
             return false;
         }
         let frame = self.frame.borrow().clone();
@@ -432,6 +460,159 @@ impl EditorBinding for Binding {
         // SAFETY: this UI callback retains the frame and live view.
         // No RefCell borrow or handler mutex spans resizeView,
         // which may synchronously reenter onSize or save state.
-        unsafe { frame.resizeView(view, &raw mut size) == kResultOk }
+        unsafe { frame.resizeView(view, &raw mut size) == kResultOk && updates.active.get() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a real COM view without attaching a native child or requiring an application event loop.
+    fn view() -> ComPtr<IPlugView> {
+        let imager = image_control_dsp::Imager::new();
+        let pointer = PlugView::create(Arc::new(Parameters::new()), imager.shared(), Arc::new(Mutex::new(None)));
+        // SAFETY: create transfers one owning reference for its declared IPlugView interface.
+        unsafe { ComPtr::from_raw(pointer) }.expect("view interface")
+    }
+
+    #[test]
+    fn host_constraints_and_on_size_share_bounds_and_preserve_valid_origins() {
+        let view = view();
+        let mut size = ViewRect {
+            left: 15,
+            top: 27,
+            right: 16,
+            bottom: 28,
+        };
+        let (minimum, maximum) = native_bounds(1.0);
+        // SAFETY: Every COM call uses a live owned view and one writable rectangle on its creator thread.
+        unsafe {
+            assert_eq!(view.canResize(), kResultTrue);
+            assert_eq!(view.checkSizeConstraint(&raw mut size), kResultOk);
+            assert_eq!((size.left, size.top), (15, 27));
+            assert_eq!((size.right, size.bottom), (15 + minimum.0, 27 + minimum.1));
+            assert_eq!(view.onSize(&raw mut size), kResultOk);
+            assert_eq!(view.getSize(&raw mut size), kResultOk);
+            assert_eq!(
+                (size.left, size.top, size.right, size.bottom),
+                (0, 0, minimum.0, minimum.1)
+            );
+            size.right = maximum.0 + 1;
+            assert_eq!(view.onSize(&raw mut size), kResultFalse);
+            size.left = i32::MIN;
+            size.right = i32::MAX;
+            assert_eq!(view.onSize(&raw mut size), kInvalidArgument);
+            size.left = i32::MAX;
+            assert_eq!(view.checkSizeConstraint(&raw mut size), kInvalidArgument);
+            assert_eq!(view.checkSizeConstraint(std::ptr::null_mut()), kInvalidArgument);
+        }
+    }
+
+    #[test]
+    fn pre_attachment_scale_preserves_macos_points_and_scales_windows_defaults() {
+        let view = view();
+        let scale = view
+            .cast::<IPlugViewContentScaleSupport>()
+            .expect("content scale interface");
+        let mut size = ViewRect {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: The real COM interfaces and writable rectangle remain live on their owner thread.
+        unsafe {
+            assert_eq!(scale.setContentScaleFactor(2.0), kResultOk);
+            assert_eq!(view.getSize(&raw mut size), kResultOk);
+            let factor = if cfg!(windows) { 2 } else { 1 };
+            assert_eq!(
+                (size.right, size.bottom),
+                (EDITOR_SIZE.0 * factor, EDITOR_SIZE.1 * factor)
+            );
+            assert_eq!(scale.setContentScaleFactor(f32::NAN), kInvalidArgument);
+            assert_eq!(scale.setContentScaleFactor(0.0), kInvalidArgument);
+            let mut supplied = ViewRect {
+                left: 0,
+                top: 0,
+                right: 2000,
+                bottom: 1600,
+            };
+            assert_eq!(view.onSize(&raw mut supplied), kResultOk);
+            assert_eq!(scale.setContentScaleFactor(1.25), kResultOk);
+            assert_eq!(view.getSize(&raw mut size), kResultOk);
+            assert_eq!((size.right, size.bottom), (2000, 1600));
+        }
+    }
+
+    #[test]
+    fn logical_constraints_scale_for_native_windows_pixels_without_changing_point_contract() {
+        for scale in [1.0, 1.25, 1.5, 2.0, 8.0] {
+            let (minimum, maximum) = native_bounds(scale);
+            assert_eq!(minimum.0, (f64::from(MINIMUM_SIZE.0) * scale).round() as i32);
+            assert_eq!(maximum.0, (4096.0 * scale).round() as i32);
+            assert_eq!(maximum.1, (4096.0 * scale).round() as i32);
+            assert!(valid_dimensions(minimum.0, minimum.1, scale));
+            assert!(!valid_dimensions(minimum.0 - 1, minimum.1, scale));
+            assert!(!valid_dimensions(maximum.0 + 1, maximum.1, scale));
+        }
+    }
+
+    /// A rejecting frame may synchronously query the view without changing its accepted native geometry.
+    struct RejectFrame(Cell<*mut IPlugView>);
+
+    impl Class for RejectFrame {
+        type Interfaces = (IPlugFrame,);
+    }
+
+    impl vst3::Steinberg::IPlugFrameTrait for RejectFrame {
+        unsafe fn resizeView(&self, view: *mut IPlugView, _size: *mut ViewRect) -> tresult {
+            assert_eq!(view, self.0.get());
+            // SAFETY: The caller retains this same live view through the synchronous frame callback.
+            let view = unsafe { ComRef::from_raw(view) }.expect("live callback view");
+            let mut size = ViewRect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            // SAFETY: The owner-thread view and output rectangle are valid across this query.
+            assert_eq!(unsafe { view.getSize(&raw mut size) }, kResultOk);
+            assert_eq!((size.right, size.bottom), EDITOR_SIZE);
+            kResultFalse
+        }
+    }
+
+    #[test]
+    fn host_rejection_and_missing_frame_never_queue_optimistic_native_geometry() {
+        let view = view();
+        let updates = ViewUpdates::new();
+        updates.active.set(true);
+        let binding = Binding {
+            parameters: Arc::new(Parameters::new()),
+            handler: Arc::new(Mutex::new(None)),
+            frame: Rc::new(RefCell::new(None)),
+            interface: Rc::new(Cell::new(view.as_ptr())),
+            updates: Rc::downgrade(&updates),
+            gestures: Cell::new(0),
+        };
+        assert!(!binding.request_resize(1200, 900));
+        let frame = ComWrapper::new(RejectFrame(Cell::new(view.as_ptr())))
+            .to_com_ptr::<IPlugFrame>()
+            .expect("frame interface");
+        *binding.frame.borrow_mut() = Some(frame);
+        assert!(!binding.request_resize(1200, 900));
+        assert!(!binding.request_resize(u32::MAX, 900));
+        updates.active.set(false);
+        assert!(!binding.request_resize(1200, 900));
+        let mut size = ViewRect {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: This unattached owner-thread view and writable rectangle remain owned through the query.
+        assert_eq!(unsafe { view.getSize(&raw mut size) }, kResultOk);
+        assert_eq!((size.right, size.bottom), EDITOR_SIZE);
     }
 }

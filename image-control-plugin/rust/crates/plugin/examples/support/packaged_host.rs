@@ -611,7 +611,7 @@ fn exercise_monitoring_taps(ui: &UiThread, instance: &PluginInstance, worker: &C
         .find(|window| window.title().to_string() == "ImageControl RS packaged host A")
         .context("owned monitoring test window")?;
     let parent = window.contentView().context("host content view")?;
-    for (x, expected) in [(210.0, "pre"), (252.0, "post")] {
+    for (x, expected) in [(201.0, "pre"), (243.0, "post")] {
         let bounds = parent.bounds();
         let local = NSPoint::new(
             x,

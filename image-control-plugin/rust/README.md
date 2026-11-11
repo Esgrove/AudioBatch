@@ -16,7 +16,8 @@ The C++ plugin remains the supported implementation.
 - Bit-exact delayed input at settled neutral settings, with warm convolution history for processing changes.
 - Background crossover-kernel design for realtime use and synchronous deterministic design for offline rendering.
 - Six-tier spatial spectral analysis with frequency reassignment, stereo position, and phase coherence.
-- GPU particles, persistent energy, bloom, and history-preserving resize, with frequency or phase coloring.
+- GPU particles, persistent energy, five-level bloom, and history-preserving resize, with frequency or phase coloring.
+- C++-aligned header and band geometry, compact band controls, modal display settings, and an embedded resize grip.
 - Functional Pre/Post analysis, persistence and contrast settings, and processed-band correlation meters.
 - Thirty-one stable automatable sound parameters and independent versioned host state containing display preferences.
 
@@ -98,5 +99,7 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
   Windows reentrant removal may be rejected until the host retries outside an active callback.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, DSP, analysis, rendering, state, and verification contracts.
+The bounded `editor_compare` example hosts explicit C++ and Rust build-tree bundles with the same stereo comb.
+Use it for manual layout and spectrum comparison without audio hardware.
 [The evaluation](docs/rust-evaluation.md) records dependency research, historical experiments, and production gates.
 [Plugin agent instructions](../AGENTS.md) and [repository instructions](../../AGENTS.md) govern development.

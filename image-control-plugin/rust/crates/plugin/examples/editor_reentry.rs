@@ -128,6 +128,8 @@ mod native {
         latest: Cell<(i32, i32)>,
         /// Suppresses access after the view has been removed.
         closed: Cell<bool>,
+        /// A host may decline plugin-originated resizing without changing either parent or child.
+        reject_resize: Cell<bool>,
     }
 
     /// Private automation host, without a strong COM view or native-window ownership cycle.
@@ -357,6 +359,7 @@ mod native {
                 view: Cell::new(std::ptr::null_mut()),
                 latest: Cell::new((1000, 764)),
                 closed: Cell::new(false),
+                reject_resize: Cell::new(false),
             })
         }
 
@@ -496,6 +499,9 @@ mod native {
             if size.is_null() {
                 return kInvalidArgument;
             }
+            if self.host.upgrade().is_some_and(|host| host.reject_resize.get()) {
+                return kResultFalse;
+            }
             self.evidence.record((|| {
                 let host = self
                     .host
@@ -508,17 +514,29 @@ mod native {
                     !host.closed.get() && view == host.view.get(),
                     "frame callback has no live view"
                 );
+                // getSize must remain authoritative and unchanged before the host acknowledges the request.
+                host.verify_size()?;
                 // SAFETY: resizeView's caller supplies one readable and writable rectangle for this callback.
-                let size = unsafe { &*size };
+                let size = unsafe { &mut *size };
                 ensure!(
                     size.right > size.left && size.bottom > size.top,
                     "invalid frame rectangle"
                 );
-                host.window.setContentSize(NSSize::new(
-                    f64::from(size.right - size.left),
-                    f64::from(size.bottom - size.top),
+                let dimensions = (size.right - size.left, size.bottom - size.top);
+                let old_frame = host.window.frame();
+                host.window
+                    .setContentSize(NSSize::new(f64::from(dimensions.0), f64::from(dimensions.1)));
+                let new_frame = host.window.frame();
+                host.window.setFrameOrigin(NSPoint::new(
+                    old_frame.origin.x,
+                    old_frame.origin.y + old_frame.size.height - new_frame.size.height,
                 ));
-                Ok(())
+                // SAFETY: This owning host follows VST3's synchronous resizeView -> onSize acknowledgment contract.
+                let view = unsafe { ComRef::from_raw(view) }.context("missing frame view")?;
+                // SAFETY: The view and writable rectangle remain owned on the main thread.
+                ensure!(unsafe { view.onSize(size) } == kResultOk, "frame onSize rejected");
+                host.latest.set(dimensions);
+                host.verify_size()
             })())
         }
     }
@@ -639,6 +657,15 @@ mod native {
             let view = unsafe { ComPtr::from_raw(component.controller.createView(c"editor".as_ptr())) }
                 .context("packaged controller did not create an editor")?;
             host.view.set(view.as_ptr());
+            let mut initial = rectangle((0, 0));
+            ensure!(
+                // SAFETY: The newly created view and writable rectangle are owned on this UI thread.
+                unsafe { view.getSize(&raw mut initial) } == kResultOk,
+                "initial getSize failed"
+            );
+            host.latest.set((initial.right, initial.bottom));
+            host.window
+                .setContentSize(NSSize::new(f64::from(initial.right), f64::from(initial.bottom)));
             let frame = ComWrapper::new(Frame {
                 host: Rc::downgrade(&host),
                 evidence: Rc::clone(evidence),
@@ -714,6 +741,7 @@ mod native {
         // SAFETY: only the explicit packaged primary VST3 is loaded and it outlives all COM/native resources.
         let library = unsafe { libloading::Library::new(executable) }.context("load packaged ImageControl VST3")?;
         let component = Component::create(&library)?;
+        exercise_user_resize(&application, &component, marker)?;
         for (iteration, mode) in [
             Mode::Resize,
             Mode::Resize,
@@ -734,6 +762,186 @@ mod native {
         drop(library);
         drop(watchdog);
         println!("CASE_OK native-editor-reentry");
+        Ok(())
+    }
+
+    /// Exercises the embedded grip with native pointer events, host rejection, constraints, DPI, and host border geometry.
+    fn exercise_user_resize(application: &Application, component: &Component, marker: MainThreadMarker) -> Result<()> {
+        let evidence = Rc::new(Evidence::default());
+        let mut editor = Editor::open(component, marker, &evidence, false)?;
+        application.settle();
+        let initial = editor.host.latest.get();
+        verify_resize_constraints(&editor)?;
+        editor.host.verify_size()?;
+        let calls = evidence.frame.get();
+        native_resize_drag(application, &editor.host, (96.0, 64.0))?;
+        let enlarged = (initial.0 + 96, initial.1 + 64);
+        application.until(
+            || evidence.frame.get() > calls && editor.host.latest.get() == enlarged,
+            "pointer-driven resizeView acknowledgement",
+        )?;
+        application.until(
+            || editor.host.child_size().is_ok_and(|size| close_size(size, enlarged)),
+            "grip child resize",
+        )?;
+        ensure!(
+            close_size(
+                (
+                    editor.host.parent.bounds().size.width,
+                    editor.host.parent.bounds().size.height
+                ),
+                enlarged
+            ),
+            "grip did not resize host"
+        );
+
+        editor.host.reject_resize.set(true);
+        let calls = evidence.frame.get();
+        native_resize_drag(application, &editor.host, (40.0, 32.0))?;
+        application.until(|| evidence.frame.get() > calls, "rejected native resize request")?;
+        application.settle();
+        ensure!(
+            editor.host.latest.get() == enlarged,
+            "rejected resize changed COM dimensions"
+        );
+        ensure!(
+            close_size(editor.host.child_size()?, enlarged),
+            "rejected resize changed native child"
+        );
+        editor.host.verify_size()?;
+        editor.host.reject_resize.set(false);
+
+        // The host's content-scale suggestion must not double macOS point geometry on a Retina display.
+        editor.host.reenter(enlarged, 2.0)?;
+        application.settle();
+        native_resize_drag(application, &editor.host, (32.0, 24.0))?;
+        let scaled = (enlarged.0 + 32, enlarged.1 + 24);
+        application.until(|| editor.host.latest.get() == scaled, "DPI-correct native grip")?;
+        application.until(
+            || editor.host.child_size().is_ok_and(|size| close_size(size, scaled)),
+            "DPI-correct child",
+        )?;
+
+        // A host border drives the same production constraint/onSize path without an editor-originated frame call.
+        let calls = evidence.frame.get();
+        let border = (initial.0 + 48, initial.1 + 40);
+        let mut constrained = rectangle(border);
+        ensure!(
+            // SAFETY: The retained live view and rectangle stay on the owner thread.
+            unsafe { editor.view.checkSizeConstraint(&raw mut constrained) } == kResultOk,
+            "border constraints failed"
+        );
+        editor
+            .host
+            .window
+            .setContentSize(NSSize::new(f64::from(border.0), f64::from(border.1)));
+        editor.host.reenter(border, 1.0)?;
+        application.until(
+            || editor.host.child_size().is_ok_and(|size| close_size(size, border)),
+            "host border child resize",
+        )?;
+        ensure!(evidence.frame.get() == calls, "host resize echoed back to resizeView");
+        ensure!(
+            evidence.begin.get() == 0 && evidence.end.get() == 0,
+            "resizing opened a sound gesture"
+        );
+        evidence.verify()?;
+        editor.close()?;
+        let counts = evidence.counts();
+        drop(editor);
+        application.settle();
+        ensure!(counts == evidence.counts(), "late callbacks after grip teardown");
+        evidence.verify()?;
+        println!(
+            "native-editor-user-resize initial={initial:?} grip={enlarged:?} dpi={scaled:?} border={border:?} rejection=preserved"
+        );
+        Ok(())
+    }
+
+    /// Checks the real packaged COM constraints before any native user gesture can change accepted geometry.
+    fn verify_resize_constraints(editor: &Editor) -> Result<()> {
+        // SAFETY: The retained editor view and writable constraint rectangles remain live on the main thread.
+        unsafe {
+            ensure!(editor.view.canResize() == kResultOk, "embedded editor is not resizable");
+            let mut minimum = rectangle((1, 1));
+            ensure!(
+                editor.view.checkSizeConstraint(&raw mut minimum) == kResultOk,
+                "minimum constraint failed"
+            );
+            ensure!(minimum.right > 1 && minimum.bottom > 1, "missing minimum constraints");
+            let mut maximum = rectangle((i32::MAX, i32::MAX));
+            ensure!(
+                editor.view.checkSizeConstraint(&raw mut maximum) == kResultOk,
+                "maximum constraint failed"
+            );
+            ensure!(
+                maximum.right == 4096 && maximum.bottom == 4096,
+                "missing maximum constraints"
+            );
+            let mut invalid = rectangle((1, 1));
+            ensure!(
+                editor.view.onSize(&raw mut invalid) == kResultFalse,
+                "invalid geometry was accepted"
+            );
+        }
+        Ok(())
+    }
+
+    /// Dispatches ordinary `AppKit` pointer events to the actual bottom-right embedded child, never an Iced test message.
+    fn native_resize_drag(application: &Application, host: &Host, delta: (f64, f64)) -> Result<()> {
+        let bounds = host.parent.bounds();
+        let local = NSPoint::new(
+            bounds.size.width - 4.0,
+            if host.parent.isFlipped() {
+                bounds.size.height - 4.0
+            } else {
+                4.0
+            },
+        );
+        let start = host.parent.convertPoint_toView(local, None);
+        let target = host
+            .parent
+            .hitTest(local)
+            .context("native resize grip target missing")?;
+        ensure!(
+            Retained::as_ptr(&target) != Retained::as_ptr(&host.parent),
+            "grip hit only host parent"
+        );
+        let start = host.window.convertPointToScreen(start);
+        let end = NSPoint::new(start.x + delta.0, start.y - delta.1);
+        let event = |kind, screen, pressure| {
+            let location = host.window.convertPointFromScreen(screen);
+            NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind, location, NSEventModifierFlags::empty(), 0.0, host.window.windowNumber(), None, 1, 1, pressure,
+            ).context("native resize event missing")
+        };
+        let moved = event(NSEventType::MouseMoved, start, 0.0)?;
+        let down = event(NSEventType::LeftMouseDown, start, 1.0)?;
+        let midpoint = NSPoint::new(delta.0.mul_add(0.5, start.x), delta.1.mul_add(-0.5, start.y));
+        // SAFETY: Native hitTest retains the actual responder and every event references its owned NSWindow.
+        unsafe {
+            let _: () = msg_send![&*target, mouseMoved: &*moved];
+            let _: () = msg_send![&*target, mouseDown: &*down];
+        }
+        application.settle();
+        let first_drag = event(NSEventType::LeftMouseDragged, midpoint, 1.0)?;
+        // SAFETY: Give Iced one UI turn to acquire the in-bounds pointer before moving beyond the current child.
+        unsafe {
+            let _: () = msg_send![&*target, mouseDragged: &*first_drag];
+        }
+        application.settle();
+        let drag = event(NSEventType::LeftMouseDragged, end, 1.0)?;
+        // SAFETY: The active grip and target remain owned across the first acknowledged native resize.
+        unsafe {
+            let _: () = msg_send![&*target, mouseDragged: &*drag];
+        }
+        application.settle();
+        let up = event(NSEventType::LeftMouseUp, end, 0.0)?;
+        // SAFETY: This normal resize keeps the actual native child and parent alive through the pointer release.
+        unsafe {
+            let _: () = msg_send![&*target, mouseUp: &*up];
+        }
+        application.settle();
         Ok(())
     }
 

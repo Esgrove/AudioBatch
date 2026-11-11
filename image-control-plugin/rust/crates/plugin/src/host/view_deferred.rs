@@ -68,6 +68,19 @@ impl ViewUpdates {
         Ok(())
     }
 
+    /// Reads the child's actual DPI without native mutation, falling back before attachment only.
+    pub(super) fn native_scale(&self, fallback: f64) -> f64 {
+        if cfg!(windows) {
+            self.editor
+                .borrow()
+                .as_ref()
+                .and_then(|editor| editor.scale_factor().ok())
+                .unwrap_or(fallback)
+        } else {
+            1.0
+        }
+    }
+
     /// Marks removal before ending gestures, preventing any later user edit or resize from reviving the view.
     pub(super) fn remove(self: &Rc<Self>) -> Result<(), crate::iced_bridge::EditorError> {
         if !self.active.get() && self.editor.borrow().is_none() {
