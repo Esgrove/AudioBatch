@@ -538,7 +538,7 @@ mod test_true_peak {
     #[test]
     fn seeded_four_phase_signals_match_at_every_level() {
         let planes = seeded_planes(2, 257);
-        for rate in [8_000, 44_100, 48_000, 88_200, 95_999] {
+        for rate in [8000, 44_100, 48_000, 88_200, 95_999] {
             assert_reference(&planes, rate, &random_chunks());
         }
     }

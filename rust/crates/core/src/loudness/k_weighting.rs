@@ -223,7 +223,7 @@ fn filter_coefficients(rate: f64) -> Coefficients {
     reason = "separate multiplication and addition preserve the reference coefficient rounding"
 )]
 fn shelving_coefficients(rate: f64) -> ([f64; 3], [f64; 3]) {
-    let frequency = 1_681.974_450_955_533;
+    let frequency = 1681.974_450_955_533;
     let gain = 3.999_843_853_973_347;
     let quality = 0.707_175_236_955_419_6;
     let tangent = f64::tan(PI * frequency / rate);

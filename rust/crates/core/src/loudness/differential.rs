@@ -162,7 +162,7 @@ mod test_harness {
     fn the_block_meter_matches_the_reference() {
         for case in cases() {
             let reference = reference(&case);
-            let output = measure_signal(&case.planes, case.sample_rate, 1_000);
+            let output = measure_signal(&case.planes, case.sample_rate, 1000);
             assert_bits_equal(&case.label, "true peak", &reference.true_peaks, &output.true_peaks);
             assert_loudness_equal(
                 &case.label,
@@ -188,10 +188,10 @@ mod test_harness {
 
     #[test]
     fn repeated_windows_and_gate_changes_preserve_displayed_loudness() {
-        let mut case = Case::new(SignalKind::MusicLike, 8_000, 2, 7.1);
+        let mut case = Case::new(SignalKind::MusicLike, 8000, 2, 7.1);
         for plane in &mut case.planes {
             for (frame, sample) in plane.iter_mut().enumerate() {
-                *sample *= if frame < 8_000 {
+                *sample *= if frame < 8000 {
                     0.000_3
                 } else if frame < 32_000 {
                     0.3
@@ -247,9 +247,9 @@ mod test_harness {
     #[test]
     fn final_partial_window_excludes_the_expired_prefix() {
         for expected in [None, Some(0), Some(57_677)] {
-            let case = Case::new(SignalKind::MusicLike, 8_000, 2, 7.123);
+            let case = Case::new(SignalKind::MusicLike, 8000, 2, 7.123);
             let reference = reference(&case);
-            let mut meter = crate::loudness::gating::LoudnessMeter::new(2, 8_000, expected);
+            let mut meter = crate::loudness::gating::LoudnessMeter::new(2, 8000, expected);
             let mut history = Vec::new();
             for start in (0..case.frames()).step_by(800) {
                 history.push(normalize_loudness(

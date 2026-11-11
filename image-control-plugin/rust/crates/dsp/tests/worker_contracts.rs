@@ -10,7 +10,7 @@ fn actual_audio_reaches_worker_projected_spatial_particles() {
     assert!(imager.prepare(48_000.0));
     let worker = AnalysisWorker::new(imager.shared()).expect("analysis worker");
     imager.begin_block();
-    for index in 0..8_192 {
+    for index in 0..8192 {
         let sine = (std::f32::consts::TAU * 750.0 * index as f32 / 48_000.0).sin() * 0.5;
         let _ = imager.process_frame([sine, sine]);
     }

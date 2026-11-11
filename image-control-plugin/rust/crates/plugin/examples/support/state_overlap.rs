@@ -428,7 +428,7 @@ fn callback_loop(processor: &ComPtr<IAudioProcessor>, progress: &Progress) -> Re
         for (frame, (left, right)) in left.iter_mut().zip(&mut right).enumerate() {
             let phase = ((block * BLOCK_FRAMES + frame) % 48_000) as f32 / 48_000.0;
             let mid = (phase * std::f32::consts::TAU * 440.0).sin() * 0.1;
-            let side = (phase * std::f32::consts::TAU * 1_100.0).sin() * 0.025;
+            let side = (phase * std::f32::consts::TAU * 1100.0).sin() * 0.025;
             *left = mid + side;
             *right = mid - side;
         }

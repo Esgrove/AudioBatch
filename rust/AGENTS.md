@@ -533,6 +533,10 @@ Module boundaries:
 ## Code Style and Conventions
 
 - Rust 2024 edition, with clippy pedantic and nursery lints denied.
+- Group decimal integer parts with underscores only when they have five or more digits.
+  Write `4000` and `4000.0`, but `40_000` and `40_000.0`, grouping larger integer parts in threes from the right.
+  Fractional groups remain allowed independently, such as `1681.974_450_955_533`.
+  Preserve radix literals, fractional precision, identifiers, and serialized or user-facing formats.
 - Prefer named constants over unexplained numeric literals when values represent domain concepts, protocol fields,
   policy limits, or reused values. Keep self-evident arithmetic and conventional values inline.
 - Do not use plain `unwrap`. Use proper error handling, or `.expect()` in constants and tests.

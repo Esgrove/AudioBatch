@@ -33,7 +33,7 @@ const SECONDS: usize = 10;
 const RATES: [u32; 5] = [44_100, 48_000, 88_200, 96_000, 192_000];
 
 /// Frames per chunk fed to the meters, like a decoder packet.
-const CHUNK_FRAMES: usize = 4_096;
+const CHUNK_FRAMES: usize = 4096;
 
 /// Generated files for the end to end group, the common formats at 44.1 kHz and every rate as 24 bit WAV.
 const FILES: [&str; 10] = [
@@ -202,7 +202,7 @@ fn bench_true_peak_underflow(criterion: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(3));
     let rate = 48_000;
-    let frames = 4_800;
+    let frames = 4800;
     group.throughput(Throughput::Elements(frames as u64));
     for (name, amplitude) in [
         ("ordinary", 0.5),
@@ -228,12 +228,12 @@ fn bench_true_peak_underflow(criterion: &mut Criterion) {
 fn bench_overload_history(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("overload_history");
     let rate = 48_000;
-    let block = 4_800;
+    let block = 4800;
     for channels in [1, 2, 8, 64] {
         let flags: Vec<_> = (0..channels)
             .map(|channel| if channel % 2 == 0 { SAMPLE_OVER } else { TRUE_PEAK_OVER })
             .collect();
-        for blocks in [100_u64, 8_193, 32_771] {
+        for blocks in [100_u64, 8193, 32_771] {
             group.throughput(Throughput::Elements(blocks));
             group.bench_function(format!("{channels}ch_{blocks}blocks"), |bencher| {
                 bencher.iter(|| {

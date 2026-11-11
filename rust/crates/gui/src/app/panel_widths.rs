@@ -454,7 +454,7 @@ mod test_preview_widths {
                 panel.scale_limits().1,
             );
             close(
-                requested_scale(panel, original, 1800.0, 10000.0).expect("valid range"),
+                requested_scale(panel, original, 1800.0, 10_000.0).expect("valid range"),
                 1.10,
             );
         }
@@ -485,7 +485,7 @@ mod test_preview_widths {
     #[test]
     fn waveform_minimum_clamps_only_the_requested_column() {
         let original = resolve_widths(610.0, 0.95, 0.90);
-        let scale = requested_scale(PreviewPanel::Information, original, 610.0, 10000.0).expect("valid range");
+        let scale = requested_scale(PreviewPanel::Information, original, 610.0, 10_000.0).expect("valid range");
         let changed = resolve_widths(610.0, 0.95, scale);
         close(changed.controls, original.controls);
         close(changed.waveform, WAVEFORM_MINIMUM_WIDTH);

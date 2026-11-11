@@ -383,7 +383,7 @@ mod test_chunk_size_invariance {
         let mut meter = super::BlockMeter::new(2, sample_rate, Some(40_000)).expect("meter");
         let mut offset = 0;
         while offset < 40_000 {
-            let end = (offset + 1 + random.next_below(9_000) as usize).min(40_000);
+            let end = (offset + 1 + random.next_below(9000) as usize).min(40_000);
             let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[offset..end]).collect();
             meter.push(&chunk);
             offset = end;
@@ -402,8 +402,8 @@ mod test_channel_handling {
     fn mono_reads_like_the_same_content_on_both_stereo_channels() {
         let mono = generate(SignalKind::MusicLike, 48_000, 1, 48_000);
         let stereo = vec![mono[0].clone(), mono[0].clone()];
-        let mono_output = measure_signal(&mono, 48_000, 1_000);
-        let stereo_output = measure_signal(&stereo, 48_000, 1_000);
+        let mono_output = measure_signal(&mono, 48_000, 1000);
+        let stereo_output = measure_signal(&stereo, 48_000, 1000);
         assert_eq!(
             mono_output.integrated_lufs.to_bits(),
             stereo_output.integrated_lufs.to_bits()
@@ -419,7 +419,7 @@ mod test_channel_handling {
     fn identical_channels_measure_identical_peaks() {
         let mono = generate(SignalKind::Intersample, 44_100, 1, 20_000);
         let stereo = vec![mono[0].clone(), mono[0].clone()];
-        let output = measure_signal(&stereo, 44_100, 1_000);
+        let output = measure_signal(&stereo, 44_100, 1000);
         assert_eq!(output.true_peaks[0].to_bits(), output.true_peaks[1].to_bits());
         assert_eq!(output.min_samples[0].to_bits(), output.min_samples[1].to_bits());
         assert_eq!(output.max_samples[0].to_bits(), output.max_samples[1].to_bits());
@@ -441,13 +441,13 @@ mod test_channel_handling {
     #[test]
     fn a_short_channel_retains_its_nonempty_prefix() {
         let left = vec![0.25; 10_000];
-        let right = vec![-0.75; 5_123];
+        let right = vec![-0.75; 5123];
         let mut meter = BlockMeter::new(2, 44_100, None).expect("meter");
         meter.push(&[left.as_slice(), right.as_slice()]);
         let output = meter.finish(10_000);
         let mut padded = right;
         padded.resize(left.len(), 0.0);
-        let expected = measure_signal(&[left, padded], 44_100, 1_000);
+        let expected = measure_signal(&[left, padded], 44_100, 1000);
         assert_eq!(output.min_samples, expected.min_samples);
         assert_eq!(output.true_peaks, expected.true_peaks);
         assert_eq!(output.history, expected.history);
@@ -456,12 +456,12 @@ mod test_channel_handling {
 
     #[test]
     fn missing_planes_are_silent_even_after_a_partial_block() {
-        let left = vec![0.25; 5_000];
+        let left = vec![0.25; 5000];
         let mut meter = BlockMeter::new(3, 44_100, None).expect("meter");
         meter.push(&[&left[..7]]);
         meter.push(&[&left[7..]]);
-        let output = meter.finish(5_000);
-        let expected = measure_signal(&[left, vec![0.0; 5_000], vec![0.0; 5_000]], 44_100, 1_000);
+        let output = meter.finish(5000);
+        let expected = measure_signal(&[left, vec![0.0; 5000], vec![0.0; 5000]], 44_100, 1000);
         assert_eq!(output.true_peaks, expected.true_peaks);
         assert_eq!(output.history, expected.history);
         assert_eq!(output.waveform, expected.waveform);
@@ -515,15 +515,15 @@ mod test_edge_signals {
 
     #[test]
     fn a_partial_block_adds_one_reading() {
-        for frames in [1, 4_409, 4_410, 4_411, 8_820] {
+        for frames in [1, 4409, 4410, 4411, 8820] {
             let output = measure_signal(&generate(SignalKind::Sine, 44_100, 2, frames), 44_100, 512);
-            assert_eq!(output.history.len(), frames.div_ceil(4_410), "{frames} frames");
+            assert_eq!(output.history.len(), frames.div_ceil(4410), "{frames} frames");
         }
     }
 
     #[test]
     fn silence_reads_the_sentinel_everywhere() {
-        let output = measure_signal(&generate(SignalKind::Silence, 48_000, 2, 96_000), 48_000, 1_000);
+        let output = measure_signal(&generate(SignalKind::Silence, 48_000, 2, 96_000), 48_000, 1000);
         assert_eq!(output.integrated_lufs.to_bits(), NEGATIVE_INFINITY_LOUDNESS.to_bits());
         assert!(
             output
@@ -536,7 +536,7 @@ mod test_edge_signals {
 
     #[test]
     fn dc_is_removed_by_the_k_weighting() {
-        let output = measure_signal(&generate(SignalKind::Dc, 48_000, 2, 96_000), 48_000, 1_000);
+        let output = measure_signal(&generate(SignalKind::Dc, 48_000, 2, 96_000), 48_000, 1000);
         // An unfiltered 0.25 offset would read about -12 LUFS, only the transient of its onset remains.
         assert!(output.integrated_lufs < -30.0, "{}", output.integrated_lufs);
         // The step from the silence before the first sample rings in the interpolator, so the true peak overshoots.
@@ -548,7 +548,7 @@ mod test_edge_signals {
         let mut planes = generate(SignalKind::Sine, 44_100, 2, 44_100);
         planes[0][100] = f32::NAN;
         planes[1][200] = f32::NEG_INFINITY;
-        let output = measure_signal(&planes, 44_100, 1_000);
+        let output = measure_signal(&planes, 44_100, 1000);
         assert_eq!(output.history.len(), 10);
         assert_eq!(output.min_samples[1], f32::NEG_INFINITY);
     }
@@ -585,39 +585,39 @@ mod test_edge_signals {
             f32::NEG_INFINITY,
             f32::INFINITY,
         ];
-        for frames in [1, 7, 4_799, 4_800, 4_801, 9_603] {
+        for frames in [1, 7, 4799, 4800, 4801, 9603] {
             let plane: Vec<_> = (0..frames).map(|index| samples[index % samples.len()]).collect();
             let (minimum, maximum) = reference_extrema(&plane);
             let output = measure_signal(&[plane], 48_000, frames);
             assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
             assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
         }
-        let mut negative_zero_then_nan = vec![-0.0; 4_800];
-        negative_zero_then_nan.resize(9_603, f32::NAN);
-        let mut alternating_zero_blocks = vec![-0.0; 4_800];
-        alternating_zero_blocks.resize(9_600, 0.0);
-        alternating_zero_blocks.resize(9_603, -0.0);
+        let mut negative_zero_then_nan = vec![-0.0; 4800];
+        negative_zero_then_nan.resize(9603, f32::NAN);
+        let mut alternating_zero_blocks = vec![-0.0; 4800];
+        alternating_zero_blocks.resize(9600, 0.0);
+        alternating_zero_blocks.resize(9603, -0.0);
         for samples in [
-            vec![-0.0; 9_603],
-            vec![f32::NAN; 9_603],
+            vec![-0.0; 9603],
+            vec![f32::NAN; 9603],
             negative_zero_then_nan,
             alternating_zero_blocks,
         ] {
             let (minimum, maximum) = reference_extrema(&samples);
-            for chunk_frames in [1_000, 4_800, 4_801, 9_603] {
+            for chunk_frames in [1000, 4800, 4801, 9603] {
                 let output = measure_signal(std::slice::from_ref(&samples), 48_000, chunk_frames);
                 assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
                 assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
             }
         }
-        for boundary in [4_799, 4_800, 4_801, 9_599, 9_600, 9_601] {
-            let mut samples = vec![-0.0; 9_603];
+        for boundary in [4799, 4800, 4801, 9599, 9600, 9601] {
+            let mut samples = vec![-0.0; 9603];
             samples[boundary] = -0.75;
             samples[boundary + 1] = 0.5;
             let (minimum, maximum) = reference_extrema(&samples);
             assert_eq!(minimum.to_bits(), (-0.75_f32).to_bits());
             assert_eq!(maximum.to_bits(), 0.5_f32.to_bits());
-            for chunk_frames in [1_000, 4_800, 4_801, 9_603] {
+            for chunk_frames in [1000, 4800, 4801, 9603] {
                 let output = measure_signal(std::slice::from_ref(&samples), 48_000, chunk_frames);
                 assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
                 assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
@@ -627,7 +627,7 @@ mod test_edge_signals {
 
     #[test]
     fn a_full_scale_square_has_a_true_peak_above_its_sample_peak() {
-        let output = measure_signal(&generate(SignalKind::Square, 44_100, 2, 44_100), 44_100, 1_000);
+        let output = measure_signal(&generate(SignalKind::Square, 44_100, 2, 44_100), 44_100, 1000);
         assert_eq!(output.max_samples[0], 1.0);
         assert!(output.true_peaks[0] > 1.0, "{}", output.true_peaks[0]);
     }

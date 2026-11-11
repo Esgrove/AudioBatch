@@ -42,16 +42,16 @@ fn render(imager: &mut MultibandImager, input: &[[f32; 2]], blocks: &[usize]) ->
 #[test]
 fn neutral_preserves_delayed_bits_and_rate_geometry() {
     for (rate, half_length) in [
-        (44_100.0, 4_096),
-        (48_000.0, 4_096),
-        (88_200.0, 8_192),
+        (44_100.0, 4096),
+        (48_000.0, 4096),
+        (88_200.0, 8192),
         (192_000.0, 16_384),
     ] {
         let mut imager = MultibandImager::new(rate).expect("supported rate");
         assert_eq!(imager.latency_samples(), half_length + 256);
         assert_eq!(imager.tail_samples(), half_length);
-        let input = signal(imager.latency_samples() + 1_000);
-        let output = render(&mut imager, &input, &[1, 17, 1_023, 256]);
+        let input = signal(imager.latency_samples() + 1000);
+        let output = render(&mut imager, &input, &[1, 17, 1023, 256]);
         for (index, actual) in output.into_iter().enumerate() {
             let expected = index
                 .checked_sub(imager.latency_samples())
@@ -78,8 +78,8 @@ fn controls_and_crossovers_reject_non_finite_values() {
     assert!(BandControls::new(1.0, 1.0, 2.1, 0.0, 0.0, false).is_none());
     assert!(BandControls::new(1.0, 1.0, 1.0, -0.1, 0.0, false).is_none());
     let mut imager = MultibandImager::new(48_000.0).expect("rate");
-    assert!(!imager.set_crossovers([100.0, f32::NAN, 5_000.0]));
-    assert_eq!(imager.active_crossovers(), [100.0, 500.0, 5_000.0]);
+    assert!(!imager.set_crossovers([100.0, f32::NAN, 5000.0]));
+    assert_eq!(imager.active_crossovers(), [100.0, 500.0, 5000.0]);
     assert!(!imager.set_channels(3));
 }
 
@@ -167,7 +167,7 @@ fn fullband_recovery_matches_independent_cotangent_impulse_and_has_finite_tail()
 
 #[test]
 fn individual_solos_isolate_the_four_expected_frequency_regions() {
-    for (selected, frequency) in [40.0_f32, 250.0, 2_000.0, 12_000.0].into_iter().enumerate() {
+    for (selected, frequency) in [40.0_f32, 250.0, 2000.0, 12_000.0].into_iter().enumerate() {
         for solo_band in 0..4 {
             let mut imager = MultibandImager::new(48_000.0).expect("rate");
             imager.set_controls(std::array::from_fn(|band| {
@@ -175,7 +175,7 @@ fn individual_solos_isolate_the_four_expected_frequency_regions() {
             }));
             imager.reset();
             let begin = imager.latency_samples() + imager.tail_samples();
-            let end = begin + 4_800;
+            let end = begin + 4800;
             let mut power = 0.0_f64;
             for sample in 0..end {
                 let sine = (std::f32::consts::TAU * frequency * sample as f32 / 48_000.0).sin();
@@ -184,7 +184,7 @@ fn individual_solos_isolate_the_four_expected_frequency_regions() {
                     power += f64::from(output).powi(2);
                 }
             }
-            let power = power / 4_800.0;
+            let power = power / 4800.0;
             if selected == solo_band {
                 assert!((power - 0.5).abs() < 0.002, "band {selected}: {power}");
             } else {
@@ -213,12 +213,12 @@ fn offline_handoffs_and_automation_do_not_depend_on_host_block_sizes() {
         }));
         imager.reset();
     }
-    for (segment, crossovers) in input.chunks(3_400).zip([
-        [70.0, 700.0, 7_000.0],
-        [200.0, 900.0, 4_000.0],
+    for (segment, crossovers) in input.chunks(3400).zip([
+        [70.0, 700.0, 7000.0],
+        [200.0, 900.0, 4000.0],
         [20_000.0, 20.0, 20.0],
-        [20.0, 200.0, 2_000.0],
-        [100.0, 500.0, 5_000.0],
+        [20.0, 200.0, 2000.0],
+        [100.0, 500.0, 5000.0],
     ]) {
         assert!(first.set_crossovers(crossovers));
         assert!(second.set_crossovers(crossovers));
@@ -265,7 +265,7 @@ fn twenty_millisecond_band_ramps_land_exactly_without_block_restarts() {
     let muted = [control(0.0, 0.0, 1.0, 0.0, 0.0, false); 4];
     whole.set_controls(muted);
     split.set_controls(muted);
-    for sample in 0_usize..1_600 {
+    for sample in 0_usize..1600 {
         if sample % 17 == 0 {
             split.set_controls(muted);
         }
@@ -276,7 +276,7 @@ fn twenty_millisecond_band_ramps_land_exactly_without_block_restarts() {
         let gain = 1.0 - ramp_samples as f32 / 960.0;
         for (actual, source) in actual.into_iter().zip(frame) {
             assert!(source.mul_add(-gain, actual).abs() < 1.0e-5, "ramp sample {sample}");
-            if sample >= 1_215 {
+            if sample >= 1215 {
                 assert!(actual.abs() < f32::EPSILON, "the endpoint must land exactly at zero");
             }
         }
@@ -294,12 +294,12 @@ fn crossover_replacement_is_one_coherent_partition_fade_of_warm_firs() {
         imager.set_controls(settings);
         imager.reset();
     }
-    let crossovers = [220.0, 1_200.0, 8_000.0];
+    let crossovers = [220.0, 1200.0, 8000.0];
     assert!(new.set_crossovers(crossovers));
     let boundary = 12_032;
     let output_fade_start = boundary + 256;
     let mut changed_power = 0.0_f64;
-    for (sample, input) in signal(boundary + 1_024).into_iter().enumerate() {
+    for (sample, input) in signal(boundary + 1024).into_iter().enumerate() {
         if sample == boundary {
             assert!(changing.set_crossovers(crossovers));
         }
@@ -363,10 +363,10 @@ fn independent_source_trims_gate_recovery_and_global_polarity_remains_linear() {
 #[test]
 fn a_rapid_offline_roundtrip_does_not_lose_the_next_realtime_request() {
     let mut imager = MultibandImager::new(48_000.0).expect("rate");
-    assert!(imager.set_crossovers([80.0, 800.0, 8_000.0]));
+    assert!(imager.set_crossovers([80.0, 800.0, 8000.0]));
     imager.set_offline(true).expect("offline");
     imager.set_offline(false).expect("realtime");
-    let requested = [90.0, 900.0, 9_000.0];
+    let requested = [90.0, 900.0, 9000.0];
     assert!(imager.set_crossovers(requested));
     let deadline = Instant::now() + Duration::from_secs(3);
     while imager.active_crossovers().map(f32::to_bits) != requested.map(f32::to_bits) {
@@ -382,7 +382,7 @@ fn a_rapid_offline_roundtrip_does_not_lose_the_next_realtime_request() {
 #[test]
 fn realtime_worker_publishes_coherent_requests_without_disturbing_neutral_bits() {
     let mut imager = MultibandImager::new(48_000.0).expect("rate");
-    let requested = [200.0, 1_000.0, 8_000.0];
+    let requested = [200.0, 1000.0, 8000.0];
     assert!(imager.set_crossovers(requested));
     let deadline = Instant::now() + Duration::from_secs(3);
     let frame = [-0.0, 0.123_456_79];

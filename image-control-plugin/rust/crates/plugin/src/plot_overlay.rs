@@ -13,7 +13,7 @@ const MIN_FREQUENCY: f64 = 20.0;
 const MAX_FREQUENCY: f64 = 20_000.0;
 const GRAB_DISTANCE: f32 = 6.0;
 const GRID_FREQUENCIES: [f64; 10] = [
-    20.0, 50.0, 100.0, 200.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0, 20_000.0,
+    20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0,
 ];
 
 /// Editor messages retain only an index and a plain frequency, not references to renderer state.
@@ -121,7 +121,7 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
                 Rectangle::new(Point::new(x, bounds.y), Size::new(1.0, bounds.height)),
                 theme::GREY_LIGHT.scale_alpha(0.1),
             );
-            let label = if frequency >= 1_000.0 {
+            let label = if frequency >= 1000.0 {
                 format!("{:.0}k", frequency * 0.001)
             } else {
                 format!("{frequency:.0}")
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn pointer_drag_captures_only_a_marker_and_releases_outside_plot() {
         let bounds = Rectangle::new(Point::new(28.0, 10.0), Size::new(900.0, 300.0));
-        let crossovers = [100.0, 500.0, 5_000.0];
+        let crossovers = [100.0, 500.0, 5000.0];
         let mut interaction = Interaction::default();
         let cursor = mouse::Cursor::Available(Point::new(frequency_x(500.0, bounds), 100.0));
         let events = interaction.update(
@@ -340,7 +340,7 @@ mod tests {
         assert!(matches!(events.as_slice(), [PlotEvent::Begin(1)]));
         let events = interaction.update(
             &Event::Mouse(mouse::Event::CursorMoved {
-                position: Point::new(2_000.0, 900.0),
+                position: Point::new(2000.0, 900.0),
             }),
             cursor,
             bounds,
@@ -370,7 +370,7 @@ mod tests {
                     &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
                     cursor,
                     bounds,
-                    [100.0, 500.0, 5_000.0]
+                    [100.0, 500.0, 5000.0]
                 )
                 .is_empty()
         );

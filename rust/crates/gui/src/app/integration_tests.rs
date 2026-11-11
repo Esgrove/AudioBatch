@@ -2112,11 +2112,11 @@ async fn integration_fresh_analysis_has_cached_previews_at_completion_and_select
                 .expect("spectrum cached before completed notification");
             assert_eq!(record.sample_rate, 48_000);
             assert_eq!(record.channels, 2);
-            assert_eq!(record.length_in_samples, 9_600);
+            assert_eq!(record.length_in_samples, 9600);
             assert_eq!(waveform.sample_rate(), record.sample_rate);
             assert_eq!(waveform.channels(), record.channels);
             assert_eq!(waveform.length_in_frames(), record.length_in_samples);
-            assert!(spectrogram.matches_stream(48_000, 9_600, 2));
+            assert!(spectrogram.matches_stream(48_000, 9600, 2));
             assert_eq!(spectrogram.column_count(), 10);
             // Independent anti-phase fixture powers must not cancel as summed stereo samples would.
             assert!(spectrogram.intensities().iter().any(|&intensity| intensity > 0));

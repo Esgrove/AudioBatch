@@ -14,9 +14,9 @@ fn prepared() -> Imager {
 fn prepared_neutral_copies_delayed_channel_bits_exactly() {
     let mut imager = prepared();
     let latency = imager.latency_samples() as usize;
-    assert_eq!(latency, 4_352);
-    assert_eq!(imager.tail_samples(), 4_096);
-    let input: Vec<_> = (0..8_192)
+    assert_eq!(latency, 4352);
+    assert_eq!(imager.tail_samples(), 4096);
+    let input: Vec<_> = (0..8192)
         .map(|index| {
             if index == 0 {
                 [-0.0, 0.0]
@@ -44,7 +44,7 @@ fn saved_crossovers_apply_to_the_first_prering_not_a_late_worker_result() {
         imager.shared().set_crossover(0, frequency);
         imager.shared().set_band_parameter(0, 5, 1.0);
         assert!(imager.prepare(48_000.0));
-        (0..9_000)
+        (0..9000)
             .map(|index| imager.process_frame(if index == 0 { [1.0; 2] } else { [0.0; 2] })[0])
             .collect::<Vec<_>>()
     };
@@ -70,7 +70,7 @@ fn saved_band_off_values_mute_without_changing_latency() {
         let frame = [(index as f32 * 0.07).sin(), (index as f32 * 0.1).cos()];
         assert!(imager.process_frame(frame).iter().all(|sample| sample.abs() < 1e-6));
     }
-    assert_eq!(imager.latency_samples(), 4_352);
+    assert_eq!(imager.latency_samples(), 4352);
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn bypass_restores_delayed_input_and_exact_neutral_delta_is_zero() {
     imager.reset();
     imager.begin_block();
     let latency = imager.latency_samples() as usize;
-    for index in 0..latency + 2_048 {
+    for index in 0..latency + 2048 {
         let frame = if index == 0 { [0.75, -0.25] } else { [0.0; 2] };
         let output = imager.process_frame(frame);
         if index == latency {
@@ -95,7 +95,7 @@ fn bypass_restores_delayed_input_and_exact_neutral_delta_is_zero() {
     imager.shared().set_delta(true);
     imager.reset();
     imager.begin_block();
-    for index in 0..latency + 4_096 {
+    for index in 0..latency + 4096 {
         assert_eq!(imager.process_frame([(index as f32 * 0.1).sin(), 0.25]), [0.0; 2]);
     }
 }

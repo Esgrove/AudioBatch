@@ -13,7 +13,7 @@ const SAMPLE_RATE: f32 = 48_000.0;
 /// Warm history and end at a partition boundary before changing controls or kernels.
 const WARMUP: usize = 12_032;
 /// Distinct ordered crossover targets that measurably move the selected region.
-const REPLACEMENT: [f32; 3] = [220.0, 1_200.0, 8_000.0];
+const REPLACEMENT: [f32; 3] = [220.0, 1200.0, 8000.0];
 
 /// Builds neutral source controls with an arbitrary set of selected bands.
 fn selected_controls(selected: [bool; 4]) -> [BandControls; 4] {
@@ -90,7 +90,7 @@ fn expected_lowpass(cutoff: f64, half_length: usize) -> Vec<f64> {
 fn expected_bands(half_length: usize) -> Vec<[f64; 4]> {
     let low = expected_lowpass(100.0, half_length);
     let low_mid = expected_lowpass(500.0, half_length);
-    let high_mid = expected_lowpass(5_000.0, half_length);
+    let high_mid = expected_lowpass(5000.0, half_length);
     low.into_iter()
         .zip(low_mid)
         .zip(high_mid)
@@ -201,7 +201,7 @@ fn mono_reference_contains_only_selected_mid_in_both_channels() {
     }));
     imager.reset();
     let mut power = 0.0_f64;
-    for sample in 0..8_000 {
+    for sample in 0..8000 {
         let [left, _] = signal(sample);
         let output = imager.process_mono(left);
         let [reference, duplicate] = imager.dry_reference();
@@ -218,7 +218,7 @@ fn reference_ignores_processing_controls_and_repeated_reads_do_not_advance_solo(
     let mut neutral = selected_imager(1);
     let mut processed = selected_imager(1);
     let mut difference_power = 0.0_f64;
-    for sample in 0..WARMUP + 2_000 {
+    for sample in 0..WARMUP + 2000 {
         if sample == WARMUP {
             neutral.set_controls(selected_controls([false, false, true, true]));
             processed.set_controls(std::array::from_fn(|band| {
@@ -248,14 +248,14 @@ fn solo_smoothing_matches_independent_audible_mix_and_unsolo_endpoint() {
     let mut old = selected_imager(0);
     let mut new = selected_imager(2);
     let mut changing = selected_imager(0);
-    for sample in 0..WARMUP + 3_000 {
+    for sample in 0..WARMUP + 3000 {
         if sample == WARMUP {
             changing.set_controls(selected_controls([false, false, true, false]));
-        } else if sample == WARMUP + 1_536 {
+        } else if sample == WARMUP + 1536 {
             changing.set_controls(selected_controls([false; 4]));
         }
         if sample >= WARMUP && sample % 17 == 0 {
-            let solo = if sample < WARMUP + 1_536 {
+            let solo = if sample < WARMUP + 1536 {
                 [false, false, true, false]
             } else {
                 [false; 4]
@@ -265,7 +265,7 @@ fn solo_smoothing_matches_independent_audible_mix_and_unsolo_endpoint() {
         let old = old.process_frame(signal(sample));
         let new = new.process_frame(signal(sample));
         let actual = assert_matching_reference(&mut changing, signal(sample));
-        if (WARMUP..WARMUP + 1_536).contains(&sample) {
+        if (WARMUP..WARMUP + 1536).contains(&sample) {
             let advanced = sample.saturating_sub(WARMUP + PARTITION - 1).min(960);
             let fade = advanced as f32 / 960.0;
             for ((old, new), actual) in old.into_iter().zip(new).zip(actual) {
@@ -273,7 +273,7 @@ fn solo_smoothing_matches_independent_audible_mix_and_unsolo_endpoint() {
                 assert!((actual - expected).abs() < 5.0e-6, "audible ramp sample {sample}");
             }
         }
-        if sample >= WARMUP + 1_536 + PARTITION + 960 {
+        if sample >= WARMUP + 1536 + PARTITION + 960 {
             let expected = signal(sample - changing.latency_samples());
             assert_eq!(actual.map(f32::to_bits), expected.map(f32::to_bits));
         }
@@ -308,7 +308,7 @@ fn offline_selected_reference_tracks_coherent_kernel_handoff() {
     }
     assert!(new.set_crossovers(REPLACEMENT));
     let mut changed_power = 0.0_f64;
-    for sample in 0..WARMUP + 1_024 {
+    for sample in 0..WARMUP + 1024 {
         if sample == WARMUP {
             assert!(changing.set_crossovers(REPLACEMENT));
         }

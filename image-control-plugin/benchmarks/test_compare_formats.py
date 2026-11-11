@@ -72,7 +72,7 @@ class AiffContracts(unittest.TestCase):
         path = self.write("valid.aif", audio(offset=b"padding", extra=chunk(b"ANNO", b"odd")))
         parsed = comparator.read_audio(path)
         assert parsed.samples == (1, -2, 3, -4)
-        assert parsed.sample_rate == 44100
+        assert parsed.sample_rate == 44_100
         assert (parsed.channels, parsed.frames, parsed.bits) == (2, 2, 16)
 
     def test_ssnd_can_precede_comm(self) -> None:

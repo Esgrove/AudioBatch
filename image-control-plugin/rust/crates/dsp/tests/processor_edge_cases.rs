@@ -56,7 +56,7 @@ fn unsupported_preparation_keeps_the_previous_rate_and_audio_history() {
         assert_eq!(candidate.shared().sample_rate().to_bits(), 48_000.0_f32.to_bits());
         assert_eq!(candidate.latency_samples(), reference.latency_samples());
     }
-    for _ in 0..5_000 {
+    for _ in 0..5000 {
         assert_eq!(
             candidate.process_frame([0.125, -0.5]),
             reference.process_frame([0.125, -0.5])
@@ -67,8 +67,8 @@ fn unsupported_preparation_keeps_the_previous_rate_and_audio_history() {
 #[test]
 fn preparation_uses_actual_low_and_ultrahigh_rates() {
     for (rate, expected_latency, expected_tail) in [
-        (1.0, 4_352, 4_096),
-        (8_000.0, 4_352, 4_096),
+        (1.0, 4352, 4096),
+        (8000.0, 4352, 4096),
         (768_000.0, 65_792, 65_536),
         (1_536_000.0, 131_328, 131_072),
     ] {
@@ -128,11 +128,11 @@ fn solo_delta_reference_follows_audible_ramps_and_crossover_handoffs() {
     imager.shared().set_delta(true);
     imager.reset();
     for index in 0..20_480 {
-        if index == 6_000 {
+        if index == 6000 {
             imager.shared().set_band_parameter(1, 5, 1.0);
         }
-        if index == 9_000 {
-            imager.shared().set_crossover(1, 1_200.0);
+        if index == 9000 {
+            imager.shared().set_crossover(1, 1200.0);
         }
         if index == 12_000 {
             imager.shared().set_band_parameter(2, 5, 1.0);

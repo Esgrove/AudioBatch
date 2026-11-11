@@ -5,7 +5,7 @@ use realfft::num_complex::Complex32;
 use thiserror::Error;
 
 /// Crossover frequencies used before the first host request, in Hz.
-pub const DEFAULT_CROSSOVERS: [f32; 3] = [100.0, 500.0, 5_000.0];
+pub const DEFAULT_CROSSOVERS: [f32; 3] = [100.0, 500.0, 5000.0];
 /// Shared overlap-save partition and crossover handoff length.
 pub const PARTITION_SIZE: usize = 256;
 /// Minimum separation between crossovers, one third of an octave.
@@ -33,7 +33,7 @@ pub fn half_length(sample_rate: f32) -> Result<usize, MultibandError> {
         return Err(MultibandError::InvalidRate);
     }
     let mut reference_rate = 48_000.0;
-    let mut length = 4_096;
+    let mut length = 4096;
     for _ in 0..6 {
         if sample_rate <= reference_rate {
             break;

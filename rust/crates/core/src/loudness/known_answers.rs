@@ -20,9 +20,9 @@ const TRUE_PEAK_UPPER_TOLERANCE: f64 = 0.2;
 /// Allowed true peak reading below the expected level, in dB.
 const TRUE_PEAK_LOWER_TOLERANCE: f64 = 0.4;
 /// Frames per push, unrelated to the meter's block size.
-const CHUNK_FRAMES: usize = 4_096;
+const CHUNK_FRAMES: usize = 4096;
 /// Frequency of the test tone in hertz.
-const TONE_FREQUENCY: f64 = 1_000.0;
+const TONE_FREQUENCY: f64 = 1000.0;
 
 /// A steady tone at the target level.
 const TONE_AT_MINUS_23: Case = Case {
