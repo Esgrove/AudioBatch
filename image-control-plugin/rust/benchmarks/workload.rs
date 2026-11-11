@@ -71,7 +71,8 @@ impl Scenario {
             values[1] = 0.78;
         }
         if active {
-            values[3] = 0.8;
+            // Keep the measured workload at 80% plain Recover on its 0..200% host range.
+            values[3] = 0.4;
         }
         if matches!(self, Self::Solo) && band == 1 {
             values[5] = 1.0;

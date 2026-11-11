@@ -181,9 +181,9 @@ fn analytical_correlation(mid: f64, side: f64, width: f64, recover: f64, pan: f6
 fn each_band_observes_source_trims_width_recovery_and_signal_transfer_pan() {
     let settings = [
         [0.8, 0.6, 0.7, 0.0, 0.3],
-        [0.0, 0.9, 0.25, 0.8, -0.4],
-        [1.1, 0.4, 1.5, 1.0, 0.1],
-        [0.6, 0.8, 0.0, 1.0, -0.2],
+        [0.0, 0.9, 0.25, 1.5, -0.4],
+        [1.1, 0.4, 1.5, 2.0, 0.1],
+        [0.6, 0.8, 0.0, 2.0, -0.2],
     ];
     let mut imager = MultibandImager::new(48_000.0).expect("rate");
     imager

@@ -88,7 +88,7 @@ struct ControlRamp {
 }
 
 impl BandControls {
-    /// Validates source gains in [0, 16], Width in [0, 2], Recover in [0, 1], and Pan in [-1, 1].
+    /// Validates source gains in [0, 16], Width and Recover in [0, 2], and Pan in [-1, 1].
     #[must_use]
     pub fn new(mid_gain: f32, side_gain: f32, width: f32, recover: f32, pan: f32, solo: bool) -> Option<Self> {
         let values = [mid_gain, side_gain, width, recover, pan];
@@ -96,7 +96,7 @@ impl BandControls {
             && (0.0..=16.0).contains(&mid_gain)
             && (0.0..=16.0).contains(&side_gain)
             && (0.0..=2.0).contains(&width)
-            && (0.0..=1.0).contains(&recover)
+            && (0.0..=2.0).contains(&recover)
             && (-1.0..=1.0).contains(&pan))
         .then_some(Self {
             mid_gain,
@@ -126,7 +126,7 @@ impl BandControls {
         self.width
     }
 
-    /// Returns the fraction of removed Side waveform amplitude recovered into Mid below unity Width.
+    /// Returns the removed Side amplitude multiplier recovered into Mid below unity Width, up to two.
     #[must_use]
     pub const fn recover(self) -> f32 {
         self.recover

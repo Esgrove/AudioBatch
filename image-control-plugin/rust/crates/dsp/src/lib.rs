@@ -394,7 +394,7 @@ impl Imager {
                     gain(mid),
                     gain(side),
                     width * 2.0,
-                    recover,
+                    recover * 2.0,
                     pan.mul_add(2.0, -1.0),
                     solo >= 0.5,
                 )

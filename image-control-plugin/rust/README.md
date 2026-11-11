@@ -27,7 +27,9 @@ At 48 kHz, processing latency is 4352 samples and the conservative tail beyond c
 Long bass-analysis windows affect display responsiveness, not the reported audio latency.
 The spectrogram uses relative adaptive brightness and is not an absolute level meter.
 
-Recover adds a finite quadrature-rotated contribution from removed Side amplitude when Width is below one.
+Recover ranges from 0–200%, matching C++.
+It adds a finite quadrature-rotated contribution from removed Side amplitude when Width is below one.
+At 200%, the recovered contribution is twice its 100% amplitude, not twice the overall output level.
 It is not automatic loudness compensation or a power-preserving width law.
 
 ## Build and test
@@ -126,8 +128,6 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
   Automation is sampled per host block, not sample-accurate within a block.
 - Audio preparation supports actual rates from 1 through 2,822,400 Hz.
   Spatial analysis supports 8 through 768 kHz, reporting unavailable outside that range without disabling audio.
-- Recover retains its independent normalized 0–100% range. C++ also supports 200%.
-  Shared tests cover the common plain-unit range without clamping or changing existing RS automation semantics.
 - Undo/Redo, A/B, and presets remain visibly unavailable.
   Link and layout choices are local editor state, not part of the persisted display-preference snapshot.
 - Full Iced device-loss recovery, native accessibility qualification, safe arbitrary module unloading,

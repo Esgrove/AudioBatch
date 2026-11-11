@@ -1,8 +1,7 @@
 /// ImageControlParity hosts the two explicit build-tree VST3 bundles without editors or audio hardware.
 /// Independent delayed-input and analytical expectations complement absolute full-scale null residual limits.
 /// Neither implementation supplies expected PCM. DSP mismatches and unsupported common-domain values fail.
-/// Recover is compared only through 100%. Rust retains its persisted 0..100% normalization contract,
-/// while C++ independently supports 200%. The report explicitly identifies this capability difference.
+/// Recover is compared across the shared 0..200% domain, including its upper endpoint and automation ramps.
 
 #include <fmt/base.h>
 #include <fmt/format.h>
@@ -39,8 +38,8 @@ constexpr double MAX_RESIDUAL_FS {1.0e-5};
 constexpr double RMS_RESIDUAL_FS {1.0e-6};
 /// Independent post-support silence is stricter than pairwise peak parity and permits only FFT roundoff.
 constexpr double DRAIN_MAX_FS {1.0e-6};
-/// Shared Recover domain preserves Rust's persisted normalized automation without remapping or clamping.
-constexpr double RECOVER_COMMON_MAX_PERCENT {100.0};
+/// Both implementations map normalized automation onto the same Recover percentage range.
+constexpr double RECOVER_COMMON_MAX_PERCENT {200.0};
 /// Independent FIR/adapter timing constants, not copied from either loaded plugin's report.
 constexpr int PARTITION_FRAMES {256};
 constexpr int PARAMETER_COUNT {31};
@@ -261,6 +260,15 @@ std::vector<Scenario> scenarios()
         {"width_zero", allBands(2, 0.0)},
         {"width_double", allBands(2, 2.0)},
         {"recover_100", allBands(2, 0.25)},
+        {"recover_150", allBands(2, 0.25)},
+        {"recover_200", allBands(2, 0.25)},
+        {"recovery_automation_200",
+         allBands(2, 0.0),
+         {{.frame = 4096, .settings = allBands(3, 100.0)},
+          {.frame = 8192, .settings = allBands(3, RECOVER_COMMON_MAX_PERCENT)},
+          {.frame = 12'288, .settings = allBands(3, 0.0)},},
+         Oracle::none,
+         Signal::antiPhase,},
         {"recover_anti_phase", allBands(2, 0.0), {}, Oracle::none, Signal::antiPhase},
         {"recover_inverted", allBands(2, 0.4), {}, Oracle::none, Signal::inverted},
         {"recover_swapped", allBands(2, 0.4), {}, Oracle::none, Signal::swapped},
@@ -296,7 +304,13 @@ std::vector<Scenario> scenarios()
     };
     for (auto& scenario : result) {
         if (scenario.name.starts_with("recover_") || scenario.name.ends_with("_off_recovery")) {
-            append(scenario.settings, allBands(3, RECOVER_COMMON_MAX_PERCENT));
+            auto recovery = RECOVER_COMMON_MAX_PERCENT;
+            if (scenario.name == "recover_100") {
+                recovery = 100.0;
+            } else if (scenario.name == "recover_150") {
+                recovery = 150.0;
+            }
+            append(scenario.settings, allBands(3, recovery));
         }
         if (scenario.name.ends_with("_off_recovery")) {
             append(scenario.settings, allBands(2, 0.0));
@@ -475,7 +489,7 @@ void apply(
     const auto& spec = specs.at(index);
     require(
         spec.kind != Kind::recover || (setting.value >= 0.0 && setting.value <= RECOVER_COMMON_MAX_PERCENT),
-        "Recover parity targets must be inside the explicit shared 0..100% domain"
+        "Recover parity targets must be inside the explicit shared 0..200% domain"
     );
     const auto text = targetText(spec, setting.value);
     const auto normalized = parameter.getValueForText(text);
@@ -1016,26 +1030,6 @@ int run(const Options& options)
     const auto failed = static_cast<int>(std::ranges::count_if(results, [](const juce::var& entry) {
         return !static_cast<bool>(entry["passed"]);
     }));
-    const auto recoveryCapability = object({
-        {"parameter", "Recover"},
-        {"cpp_max_percent", 200.0},
-        {"rust_max_percent", 100.0},
-        {"common_max_percent", RECOVER_COMMON_MAX_PERCENT},
-        {
-            "reason",
-            juce::String(
-                "Rust preserves its persisted normalized 0..100% automation domain. "
-                "C++ additionally supports 200%."
-            ),
-        },
-        {
-            "comparison_policy",
-            juce::String(
-                "Compare explicit plain-unit values only within the common domain. "
-                "Never clamp or remap."
-            ),
-        },
-    });
     const auto report = object({
         {"schema_version", 1},
         {"cpp_bundle", options.cpp.getFullPathName()},
@@ -1047,7 +1041,7 @@ int run(const Options& options)
         {"drain_rms_fs_limit", RMS_RESIDUAL_FS},
         {"drain_gate_mutation_check_passed", true},
         {"recover_common_max_percent", RECOVER_COMMON_MAX_PERCENT},
-        {"capability_differences", juce::Array<juce::var> {recoveryCapability}},
+        {"capability_differences", juce::Array<juce::var> {}},
         {"noise_seed", static_cast<juce::int64>(NOISE_SEED)},
         {"input_peak_bound_fs", 0.32},
         {"input_tone_amplitude_fs", 0.035},
@@ -1085,7 +1079,7 @@ int main(const int argc, char* argv[])
                 "  -q, --quick       Use 48 kHz with fixed and irregular blocks (all extended scenarios)\n"
                 "  -h, --help        Show help without loading plugins\n"
                 "Full: 44.1/48/96/192 kHz, mono/stereo, blocks 32/256/512/irregular. No editors or audio device.\n"
-                "Recover common domain: 0..100%. C++ additionally supports 200%, Rust preserves 100% automation.\n"
+                "Recover common domain: 0..200%, including endpoint and automation comparisons.\n"
                 "Bundles must be inside the repository or explicit CARGO_TARGET_DIR. No installed-plugin search.\n"
             );
             return 0;

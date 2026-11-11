@@ -93,6 +93,8 @@ and designs ordinary and antisymmetric quadrature kernels.
 Each band's processing order is source Mid/Side trims, Width and Recover, Solo contribution, then signal-transfer Pan.
 Recover contributes the quadrature-rotated Side multiplied by the source Side trim,
 Recover amount, and the removed Width amplitude below unity.
+Normalized Recover 0–1 maps linearly to 0–200%, or a DSP amplitude multiplier of 0–2, matching C++.
+Host automation, numeric input, and normalized saved state use this same domain without migration.
 Mid Off mutes source Mid but does not suppress recovered Side.
 Side Off suppresses both ordinary and recovered Side.
 Pan transfers signal into the receiving channel rather than merely attenuating the opposite channel.
@@ -299,9 +301,9 @@ queue overflow, stale generations, unsupported-rate recovery, and bounded shutdo
 Plugin tests exercise actual in-process and packaged VST3 interfaces,
 transactional state validation, stable metadata, automation, native UI events, and editor close/reopen.
 The separate C++ `ImageControlParity` host loads both packaged plugins with explicit plain-unit mappings,
-seeded signals, analytical expectations, full latency/tail drains, and a fixed 240-case offline matrix.
+seeded signals, analytical expectations, full latency/tail drains, and a fixed 264-case offline matrix.
 Absolute limits are `1e-5` FS peak residual and `1e-6` FS RMS, while exact neutral and null contracts stay exact.
-Recover compares the common 0–100% domain, explicitly recording C++'s additional 200% capability.
+Recover compares the shared 0–200% domain, including the 200% endpoint and automation ramps.
 An opt-in Rust integration tier and `parity.sh` require complete counterpart selection
 and preserve per-case JSON reports.
 Criterion and hyperfine measure preallocated DSP and actual packaged processing separately from functional validation.

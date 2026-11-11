@@ -73,7 +73,7 @@ pub enum ParameterKind {
     Crossover,
     /// Source trim in -60..12 dB, with the lower endpoint muted.
     BandGain,
-    /// Finite quadrature recovery in 0..100 percent.
+    /// Finite quadrature recovery in 0..200 percent.
     Recovery,
     /// Signed signal-transfer pan in -100..100 percent.
     Pan,
@@ -173,7 +173,7 @@ impl ParameterSpec {
             ParameterKind::Width => normalized * 2.0,
             ParameterKind::Crossover => 20.0 * 1000.0_f64.powf(normalized),
             ParameterKind::BandGain => normalized.mul_add(72.0, -60.0),
-            ParameterKind::Recovery => normalized * 100.0,
+            ParameterKind::Recovery => normalized * 200.0,
             ParameterKind::Pan => normalized.mul_add(200.0, -100.0),
             ParameterKind::Switch => f64::from(normalized >= 0.5),
         }
@@ -187,7 +187,7 @@ impl ParameterSpec {
             ParameterKind::Width => (plain * 0.5).clamp(0.0, 1.0),
             ParameterKind::Crossover => (plain.clamp(20.0, 20_000.0) / 20.0).log(1000.0),
             ParameterKind::BandGain => ((plain + 60.0) / 72.0).clamp(0.0, 1.0),
-            ParameterKind::Recovery => (plain / 100.0).clamp(0.0, 1.0),
+            ParameterKind::Recovery => (plain / 200.0).clamp(0.0, 1.0),
             ParameterKind::Pan => ((plain + 100.0) / 200.0).clamp(0.0, 1.0),
             ParameterKind::Switch => f64::from(plain >= 0.5),
         }
@@ -252,7 +252,7 @@ impl ParameterSpec {
             ParameterKind::Width => (0.0, 2.0),
             ParameterKind::Crossover => (20.0, 20_000.0),
             ParameterKind::BandGain => (-60.0, 12.0),
-            ParameterKind::Recovery => (0.0, 100.0),
+            ParameterKind::Recovery => (0.0, 200.0),
             ParameterKind::Pan => (-100.0, 100.0),
             ParameterKind::Switch => (0.0, 1.0),
         };

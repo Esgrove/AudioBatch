@@ -42,7 +42,7 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
         (4, -60.0, 0.0, 12.0),
         (5, -60.0, 0.0, 12.0),
         (6, 0.0, 1.0, 2.0),
-        (7, 0.0, 0.0, 100.0),
+        (7, 0.0, 0.0, 200.0),
         (8, -100.0, 0.0, 100.0),
         (9, 0.0, 0.0, 1.0),
     ] {
@@ -59,6 +59,9 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
         (0, "-12 dB", -12.0),
         (1, "1.5 kHz", 1500.0),
         (7, "25%", 25.0),
+        (7, "100%", 100.0),
+        (7, "150%", 150.0),
+        (7, "200%", 200.0),
         (8, "40% L", -40.0),
         (8, "C", 0.0),
     ] {
@@ -75,6 +78,26 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
             let parsed = spec.parse(&text).expect("formatted text parses");
             assert!((parsed - normalized).abs() < 1e-5, "{id}: {text}");
         }
+    }
+}
+
+#[test]
+fn recover_uses_the_full_200_percent_host_and_numeric_input_domain_for_every_band() {
+    for band in 0..4 {
+        let id = band_parameter_id(band, 3).expect("Recover id");
+        let spec = parameter_spec(id).expect("Recover spec");
+        assert_eq!(spec.units, "%");
+        assert_eq!(spec.default_normalized, 0.0);
+        for (normalized, percent) in [(0.0, 0.0), (0.25, 50.0), (0.5, 100.0), (0.75, 150.0), (1.0, 200.0)] {
+            assert_eq!(spec.normalized_to_plain(normalized), percent);
+            assert_eq!(spec.plain_to_normalized(percent), normalized);
+            assert_eq!(spec.parse(&format!("{percent}%")), Some(normalized));
+            assert_eq!(spec.parse(&spec.format(normalized)), Some(normalized));
+        }
+        for text in ["-1%", "200.1%", "201%", "NaN%", "inf%"] {
+            assert!(spec.parse(text).is_none(), "{text}");
+        }
+        assert_eq!(spec.plain_to_normalized(201.0), 1.0);
     }
 }
 
