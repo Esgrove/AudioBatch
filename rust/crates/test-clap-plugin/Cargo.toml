@@ -1,0 +1,27 @@
+[package]
+name = "audiobatch-test-clap-plugin"
+description = "Dev-only deterministic CLAP fixtures for AudioBatch host tests"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+clack-host = { workspace = true, features = ["clack-plugin"] }
+clack-plugin.workspace = true
+clack-extensions = { workspace = true, features = ["clack-plugin", "audio-ports", "audio-ports-config", "params", "state", "latency", "tail", "render"] }
+
+[dev-dependencies]
+clack-extensions = { workspace = true, features = ["clack-host"] }
+tempfile.workspace = true
+test-fixtures.workspace = true
+
+[[example]]
+name = "clap_module"
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
