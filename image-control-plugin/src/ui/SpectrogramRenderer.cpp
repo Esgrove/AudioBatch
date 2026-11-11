@@ -148,7 +148,8 @@ constexpr juce::uint32 BACKGROUND {0xff050608};
 static_assert(sizeof(SpectrogramParticle) == sizeof(float) * PARTICLE_FLOATS);
 
 /// Makes a triangle that covers the viewport from the vertex index, with texture coordinates from 0 to 1.
-constexpr auto SCREEN_VERTEX_SHADER = R"(#version 330 core
+constexpr auto SCREEN_VERTEX_SHADER {
+    R"(#version 330 core
 out vec2 uv;
 void main()
 {
@@ -156,22 +157,26 @@ void main()
     uv = corner;
     gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
 }
-)";
+)",
+};
 
 /// Outputs white, which the blend function turns into a multiplication of the target by the blend colour.
-constexpr auto FADE_FRAGMENT_SHADER = R"(#version 330 core
+constexpr auto FADE_FRAGMENT_SHADER {
+    R"(#version 330 core
 out vec4 colour;
 void main()
 {
     colour = vec4(1.0);
 }
-)";
+)",
+};
 
 /// Places a sprite around a particle: the centre from its plot shares, the spread from its bin spacing,
 /// never narrower than the sharp core, and the size from the wider of the core and the halo.
 /// The core and the halo scale with the particle's size, so louder content draws larger dots,
 /// and the halo's brightness scales with the particle's emphasis.
-constexpr auto PARTICLE_VERTEX_SHADER = R"(#version 330 core
+constexpr auto PARTICLE_VERTEX_SHADER {
+    R"(#version 330 core
 layout(location = 0) in vec2 corner;
 layout(location = 1) in vec3 placement;
 layout(location = 2) in vec3 tint;
@@ -199,10 +204,12 @@ void main()
     particleColour = tint;
     gl_Position = vec4((centre + offset) / targetSize * 2.0 - 1.0, 0.0, 1.0);
 }
-)";
+)",
+};
 
 /// A Gaussian core with a faint wider halo, evaluated at the exact sub-pixel offset from the centre.
-constexpr auto PARTICLE_FRAGMENT_SHADER = R"(#version 330 core
+constexpr auto PARTICLE_FRAGMENT_SHADER {
+    R"(#version 330 core
 in vec2 offset;
 flat in vec2 core;
 flat in vec2 halo;
@@ -217,10 +224,12 @@ void main()
     float weight = exp(-0.5 * dot(inCore, inCore)) + haloWeight * emphasis * exp(-0.5 * dot(inHalo, inHalo));
     colour = vec4(particleColour * weight, 0.0);
 }
-)";
+)",
+};
 
 /// Halves a picture with the 13-tap filter of the Call of Duty bloom, which does not flicker as particles move.
-constexpr auto DOWNSAMPLE_FRAGMENT_SHADER = R"(#version 330 core
+constexpr auto DOWNSAMPLE_FRAGMENT_SHADER {
+    R"(#version 330 core
 in vec2 uv;
 uniform sampler2D source;
 uniform vec2 sourceTexel;
@@ -236,10 +245,12 @@ void main()
     vec3 inner = (tap(-1.0, 1.0) + tap(1.0, 1.0) + tap(-1.0, -1.0) + tap(1.0, -1.0)) * 0.125;
     colour = vec4(tap(0.0, 0.0) * 0.125 + outer + edges + inner, 1.0);
 }
-)";
+)",
+};
 
 /// Doubles a picture with a 3×3 tent filter. The blend function adds it to the next larger level.
-constexpr auto UPSAMPLE_FRAGMENT_SHADER = R"(#version 330 core
+constexpr auto UPSAMPLE_FRAGMENT_SHADER {
+    R"(#version 330 core
 in vec2 uv;
 uniform sampler2D source;
 uniform vec2 sourceTexel;
@@ -256,7 +267,8 @@ void main()
     sum += tap(-1.0, 1.0) + tap(1.0, 1.0) + tap(-1.0, -1.0) + tap(1.0, -1.0);
     colour = vec4(sum / 16.0, 1.0);
 }
-)";
+)",
+};
 
 /// Tone maps the particles and their glow into the plot.
 /// The curve maps the brightest channel with 1 − exp(−energy) and scales the others with it,
@@ -273,7 +285,8 @@ void main()
 /// Each layer fills where the tone-mapped density passes its level, tinted by the field's colour,
 /// and is outlined with an antialiased line one to two pixels wide.
 /// The sharp particles show over the layers only where they are bright, so the strongest content draws as traces.
-constexpr auto COMPOSITE_FRAGMENT_SHADER = R"(#version 330 core
+constexpr auto COMPOSITE_FRAGMENT_SHADER {
+    R"(#version 330 core
 uniform sampler2D accumulation;
 uniform sampler2D bloom;
 uniform sampler2D field;
@@ -387,7 +400,8 @@ void main()
     float distance = roundedBoxDistance(local - plotSize * 0.5, plotSize * 0.5, cornerRadius);
     colour = vec4(result, clamp(0.5 - distance, 0.0, 1.0));
 }
-)";
+)",
+};
 
 /// Returns a byte offset into a vertex buffer in the form glVertexAttribPointer takes.
 const void* bufferOffset(const std::size_t bytes)

@@ -38,9 +38,9 @@ constexpr BandWidths HANDOFF_WIDTHS {0.25F, 0.5F, 0.0F, 0.75F};
 
 /// Sparse source events permit direct full-support convolution without another streaming imager as the oracle.
 struct HandoffImpulse {
-    int sample;
-    float mid;
-    float side;
+    int sample {0};
+    float mid {0.0F};
+    float side {0.0F};
 };
 
 /// Each case covers one recovery, destination, and rendering-mode combination with no worker-timing assumptions.
