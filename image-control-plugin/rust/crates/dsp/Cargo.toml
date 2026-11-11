@@ -11,6 +11,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+arc-swap.workspace = true
 realfft.workspace = true
 rustfft = "6.4.1"
 rtrb.workspace = true

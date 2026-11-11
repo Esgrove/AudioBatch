@@ -17,6 +17,8 @@ editor = ["dep:iced_baseview", "dep:iced_program", "dep:iced_widget", "dep:basev
 vst3 = []
 
 [dependencies]
+arc-swap.workspace = true
+atomic_refcell.workspace = true
 baseview = { version = "0.4.2", optional = true }
 clack-plugin = { version = "=0.2.0", optional = true }
 clack-extensions = { version = "=0.2.0", optional = true, features = ["clack-plugin", "audio-ports", "configurable-audio-ports", "gui", "latency", "params", "render", "state", "tail"] }
@@ -31,6 +33,7 @@ tempfile.workspace = true
 raw-window-handle.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde.workspace = true
+sync_wrapper.workspace = true
 thiserror.workspace = true
 vst3.workspace = true
 
