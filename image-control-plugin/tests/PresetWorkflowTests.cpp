@@ -140,46 +140,9 @@ struct PresetWorkflowTestAccess final {
 
 namespace
 {
-/// Dispatches native callbacks for a bounded interval without running a second application or audio device.
-void pumpPresetEvents()
-{
-#if JUCE_MAC
-    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, static_cast<Boolean>(true));
-#elif JUCE_WINDOWS
-    MSG message {};
-    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
-    juce::Thread::sleep(1);
-#endif
-}
-
-/// Waits for a production toolbar condition, with bounded event dispatch and message-thread completion consumption.
-void waitForPreset(ProcessingToolbar& toolbar, const std::function<bool()>& done)
-{
-    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 3000.0;
-    do {
-        pumpPresetEvents();
-        toolbar.refresh();
-    } while (!done() && juce::Time::getMillisecondCounterHiRes() < deadline);
-    EXPECT_TRUE(done());
-}
-
-/// Checks a real menu command's enabled state without creating its native popup.
-void expectPresetMenuEnabled(ProcessingToolbar& toolbar, const PresetMenuAction action, const bool enabled)
-{
-    const auto menu = PresetWorkflowTestAccess::menu(toolbar);
-    juce::PopupMenu::MenuItemIterator iterator(menu);
-    while (iterator.next()) {
-        const auto& item = iterator.getItem();
-        if (item.itemID == static_cast<int>(action)) {
-            EXPECT_EQ(item.isEnabled, enabled) << item.text;
-            return;
-        }
-    }
-    ADD_FAILURE() << "Missing preset menu command " << static_cast<int>(action);
-}
+// The fixture's inline methods use these helpers, whose definitions follow the fixture.
+void pumpPresetEvents();
+void waitForPreset(ProcessingToolbar& toolbar, const std::function<bool()>& done);
 
 /// Owns isolated library storage and the real processor before constructing its toolbar.
 class PresetWorkflowTest : public testing::Test
@@ -311,6 +274,47 @@ protected:
         EXPECT_TRUE(directory.deleteRecursively());
     }
 };
+
+/// Dispatches native callbacks for a bounded interval without running a second application or audio device.
+void pumpPresetEvents()
+{
+#if JUCE_MAC
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, static_cast<Boolean>(true));
+#elif JUCE_WINDOWS
+    MSG message {};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    juce::Thread::sleep(1);
+#endif
+}
+
+/// Waits for a production toolbar condition, with bounded event dispatch and message-thread completion consumption.
+void waitForPreset(ProcessingToolbar& toolbar, const std::function<bool()>& done)
+{
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 3000.0;
+    do {
+        pumpPresetEvents();
+        toolbar.refresh();
+    } while (!done() && juce::Time::getMillisecondCounterHiRes() < deadline);
+    EXPECT_TRUE(done());
+}
+
+/// Checks a real menu command's enabled state without creating its native popup.
+void expectPresetMenuEnabled(ProcessingToolbar& toolbar, const PresetMenuAction action, const bool enabled)
+{
+    const auto menu = PresetWorkflowTestAccess::menu(toolbar);
+    juce::PopupMenu::MenuItemIterator iterator(menu);
+    while (iterator.next()) {
+        const auto& item = iterator.getItem();
+        if (item.itemID == static_cast<int>(action)) {
+            EXPECT_EQ(item.isEnabled, enabled) << item.text;
+            return;
+        }
+    }
+    ADD_FAILURE() << "Missing preset menu command " << static_cast<int>(action);
+}
 
 /// Menu order keeps direct Save before Save As and separates naming, file exchange, and maintenance actions.
 TEST_F(PresetWorkflowTest, PresetMenuOrdersCommandsAndReflectsSaveAdmission)

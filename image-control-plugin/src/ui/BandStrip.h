@@ -57,8 +57,8 @@ public:
 
     [[nodiscard]] juce::String readoutText() const;
     [[nodiscard]] juce::String valueText() const;
-    [[nodiscard]] std::optional<float> trendValue() const;
     [[nodiscard]] std::optional<juce::Range<float>> recentRange() const;
+    [[nodiscard]] std::optional<float> trendValue() const;
     void clearHistory();
     void setSmoothedReadout(bool smoothed);
     void setCorrelation(

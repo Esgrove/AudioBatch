@@ -36,6 +36,11 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Size of the view in the tests, in pixels.
+constexpr int VIEW_WIDTH {1000};
+/// Height of the view in the tests, in pixels.
+constexpr int VIEW_HEIGHT {400};
+
 /// Records the host gesture boundaries of one parameter without changing its values.
 class GestureCounter final : public juce::AudioProcessorParameter::Listener
 {
@@ -93,11 +98,6 @@ juce::Button* buttonWithText(const juce::Component& parent, const juce::String& 
     }
     return nullptr;
 }
-
-/// Size of the view in the tests, in pixels.
-constexpr int VIEW_WIDTH {1000};
-/// Height of the view in the tests, in pixels.
-constexpr int VIEW_HEIGHT {400};
 
 /// Returns the plain value of a parameter of a processor.
 float parameterValue(ImageControlProcessor& processor, const juce::String& parameterId)

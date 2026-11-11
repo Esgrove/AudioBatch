@@ -23,6 +23,13 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Parameterizes the expensive filter preparation rather than putting every rate in one long test case.
+class RecoveryRates : public testing::TestWithParam<double>
+{};
+/// Each case independently exercises one band's solo, width, recovery, and post-recovery pan.
+class RecoveryBands : public testing::TestWithParam<std::size_t>
+{};
+
 /// Controls are set before preparation unless a test explicitly exercises automation.
 struct RecoveryControls {
     BandGains mid {1.0F, 1.0F, 1.0F, 1.0F};
@@ -147,12 +154,6 @@ std::pair<double, double> expectedPan(const double mid, const double side, const
     return {left * (1.0 - toRight) + right * toLeft, right * (1.0 - toLeft) + left * toRight};
 }
 
-/// Parameterizes the expensive filter preparation rather than putting every rate in one long test case.
-class RecoveryRates : public testing::TestWithParam<double>
-{};
-/// Each case independently exercises one band's solo, width, recovery, and post-recovery pan.
-class RecoveryBands : public testing::TestWithParam<std::size_t>
-{};
 }  // namespace
 
 /// Host formatting exposes whole percentages, while legacy Off input, strict parsing, and clamping remain intact.

@@ -24,6 +24,46 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Counts non-parameter dirty notifications independently of parameter automation.
+class ComparisonDirtyListener final : public juce::AudioProcessorListener
+{
+public:
+    /// Parameter writes are tracked independently by APVTS listeners where needed.
+    void audioProcessorParameterChanged(juce::AudioProcessor* /*processor*/, int /*index*/, float /*value*/) override {}
+
+    /// Records only actual non-parameter dirty notifications from explicit metadata changes.
+    void audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& details) override
+    {
+        if (details.nonParameterStateChanged) {
+            ++changes;
+            if (const auto action = std::exchange(callback, {})) {
+                action();
+            }
+        }
+    }
+
+    /// One-shot host action invoked after committed metadata becomes dirty.
+    std::function<void()> callback;
+    /// Dirty notifications observed while registered with the processor.
+    int changes {0};
+};
+
+/// Runs one host request synchronously from a real parameter notification.
+class ComparisonCallback final : public juce::AudioProcessorValueTreeState::Listener
+{
+public:
+    /// Consumes the action before invoking it so nested save-triggered notifications cannot repeat it.
+    void parameterChanged(const juce::String& /*parameterId*/, float /*value*/) override
+    {
+        if (auto const action = std::exchange(callback, {})) {
+            action();
+        }
+    }
+
+    /// One-shot host request owned by the enclosing test.
+    std::function<void()> callback;
+};
+
 /// Applies unrecorded host-style output automation to a headless processor.
 void setComparisonGain(ImageControlProcessor& processor, const float value)
 {
@@ -66,46 +106,6 @@ bool loadComparisonPreset(ImageControlProcessor& processor, const UserPreset& pr
     const auto presentation = processor.getPresetPresentation();
     return processor.loadUserPreset(preset, presentation.generation, presentation.comparisonSlot);
 }
-
-/// Counts non-parameter dirty notifications independently of parameter automation.
-class ComparisonDirtyListener final : public juce::AudioProcessorListener
-{
-public:
-    /// Parameter writes are tracked independently by APVTS listeners where needed.
-    void audioProcessorParameterChanged(juce::AudioProcessor* /*processor*/, int /*index*/, float /*value*/) override {}
-
-    /// Records only actual non-parameter dirty notifications from explicit metadata changes.
-    void audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& details) override
-    {
-        if (details.nonParameterStateChanged) {
-            ++changes;
-            if (const auto action = std::exchange(callback, {})) {
-                action();
-            }
-        }
-    }
-
-    /// One-shot host action invoked after committed metadata becomes dirty.
-    std::function<void()> callback;
-    /// Dirty notifications observed while registered with the processor.
-    int changes {0};
-};
-
-/// Runs one host request synchronously from a real parameter notification.
-class ComparisonCallback final : public juce::AudioProcessorValueTreeState::Listener
-{
-public:
-    /// Consumes the action before invoking it so nested save-triggered notifications cannot repeat it.
-    void parameterChanged(const juce::String& /*parameterId*/, float /*value*/) override
-    {
-        if (auto const action = std::exchange(callback, {})) {
-            action();
-        }
-    }
-
-    /// One-shot host request owned by the enclosing test.
-    std::function<void()> callback;
-};
 }  // namespace
 
 TEST(Comparison, SwitchingCapturesHeadlessAutomationAndLeavesAuditionControlsAlone)
