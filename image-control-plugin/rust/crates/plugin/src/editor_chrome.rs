@@ -1,7 +1,8 @@
 //! Font-independent C++ header symbols, contextual section disclosures, divider, and captured resize grip.
 
-use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, renderer, widget::tree};
-use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, mouse};
+use iced::advanced::widget::{Id, Operation, operation::Focusable, tree};
+use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, renderer};
+use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, keyboard, mouse};
 use iced_baseview as iced;
 
 use super::{Message, theme};
@@ -17,7 +18,6 @@ pub(super) enum Symbol {
     Disclosure(bool),
     Divider,
     Resize,
-    DisabledSlider,
 }
 
 /// One production widget supports both click-driven icons and raw-motion drag acquisition.
@@ -26,21 +26,70 @@ pub(super) struct Chrome {
     size: Size,
     message: Option<Message>,
     active: bool,
+    id: Id,
 }
 
+/// Focus operations own keyboard focus, while pointer acquisition keeps its outline quiet.
 #[derive(Default)]
 struct Interaction {
     pressed: bool,
+    focused: bool,
+    keyboard_focus: bool,
+    window_inactive: bool,
+}
+
+impl Focusable for Interaction {
+    fn is_focused(&self) -> bool {
+        self.focused
+    }
+
+    fn focus(&mut self) {
+        self.focused = true;
+        self.keyboard_focus = true;
+    }
+
+    fn unfocus(&mut self) {
+        self.focused = false;
+        self.keyboard_focus = false;
+    }
+}
+
+impl Symbol {
+    /// Symbol identity does not depend on the current expanded or selected presentation.
+    const fn default_id(self) -> &'static str {
+        match self {
+            Self::Settings => "settings",
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::Chevron(_) => "processing-toolbar-disclosure",
+            Self::Headphones => "solo",
+            Self::Disclosure(_) => "section-disclosure",
+            Self::Divider => "split-divider",
+            Self::Resize => "resize-grip",
+        }
+    }
 }
 
 impl Chrome {
-    pub(super) const fn new(symbol: Symbol, size: Size, message: Option<Message>, active: bool) -> Self {
+    pub(super) fn new(symbol: Symbol, size: Size, message: Option<Message>, active: bool) -> Self {
         Self {
             symbol,
             size,
             message,
             active,
+            id: symbol.default_id().into(),
         }
+    }
+
+    /// Gives repeated disclosures and per-band Solo controls independent stable focus targets.
+    pub(super) fn id(mut self, id: impl Into<Id>) -> Self {
+        self.id = id.into();
+        self
+    }
+
+    /// Only actionable controls participate in native traversal. Host resize remains pointer-owned.
+    const fn focusable(&self) -> bool {
+        self.message.is_some() && !matches!(self.symbol, Symbol::Resize)
     }
 }
 
@@ -51,12 +100,29 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
     fn state(&self) -> tree::State {
         tree::State::new(Interaction::default())
     }
+    /// Disabled actions cannot retain a keyboard target or revive an unfinished pointer activation.
+    fn diff(&self, tree: &mut tree::Tree) {
+        if self.message.is_none() {
+            *tree.state.downcast_mut::<Interaction>() = Interaction::default();
+        }
+    }
     fn size(&self) -> Size<Length> {
         Size::new(self.size.width.into(), self.size.height.into())
     }
     fn layout(&mut self, _: &mut tree::Tree, _: &Renderer, _: &layout::Limits) -> layout::Node {
         layout::Node::new(self.size)
     }
+    /// Registers the real retained focus state with Iced's focus and Tab traversal operations.
+    fn operate(&mut self, tree: &mut tree::Tree, layout: Layout<'_>, _: &Renderer, operation: &mut dyn Operation) {
+        if self.focusable() {
+            operation.focusable(
+                Some(&self.id),
+                layout.bounds(),
+                tree.state.downcast_mut::<Interaction>(),
+            );
+        }
+    }
+
     fn update(
         &mut self,
         tree: &mut tree::Tree,
@@ -75,6 +141,9 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if cursor.is_over(layout.bounds()) => {
                 state.pressed = true;
+                state.focused = self.focusable();
+                state.keyboard_focus = false;
+                shell.request_redraw();
                 if let Some(position) = cursor.position() {
                     match self.symbol {
                         Symbol::Resize => shell.publish(Message::ResizeStart(position)),
@@ -95,7 +164,49 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
                 }
                 shell.capture_event();
             }
-            Event::Window(iced::window::Event::Unfocused) => state.pressed = false,
+            Event::Mouse(mouse::Event::ButtonPressed(_)) => {
+                state.unfocus();
+                shell.request_redraw();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key, modifiers, repeat, ..
+            }) if state.focused
+                && !state.window_inactive
+                && !modifiers
+                    .intersects(keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT | keyboard::Modifiers::LOGO) =>
+            {
+                if matches!(self.symbol, Symbol::Divider) && !state.pressed {
+                    let step = if modifiers.shift() { 1.0 } else { 8.0 };
+                    let delta = match key {
+                        keyboard::Key::Named(keyboard::key::Named::ArrowUp) => Some(-step),
+                        keyboard::Key::Named(keyboard::key::Named::ArrowDown) => Some(step),
+                        _ => None,
+                    };
+                    if let Some(delta) = delta {
+                        shell.publish(Message::DividerNudge(delta));
+                        shell.capture_event();
+                    }
+                } else if !matches!(self.symbol, Symbol::Resize | Symbol::Divider)
+                    && matches!(
+                        key,
+                        keyboard::Key::Named(keyboard::key::Named::Space | keyboard::key::Named::Enter)
+                    )
+                {
+                    if !repeat && let Some(message) = self.message.clone() {
+                        shell.publish(message);
+                    }
+                    shell.capture_event();
+                }
+            }
+            Event::Window(iced::window::Event::Unfocused) => {
+                state.pressed = false;
+                state.window_inactive = true;
+                shell.request_redraw();
+            }
+            Event::Window(iced::window::Event::Focused) => {
+                state.window_inactive = false;
+                shell.request_redraw();
+            }
             _ => {}
         }
     }
@@ -130,7 +241,23 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
         _: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let hovered = cursor.is_over(bounds) || tree.state.downcast_ref::<Interaction>().pressed;
+        let state = tree.state.downcast_ref::<Interaction>();
+        let focused = self.focusable() && state.focused && state.keyboard_focus && !state.window_inactive;
+        let hovered = cursor.is_over(bounds) || state.pressed || focused;
+        if focused {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: bounds.shrink(1.0),
+                    border: iced::Border {
+                        color: theme::GREY_MIDDLE_LIGHT.scale_alpha(0.55),
+                        width: 1.0,
+                        radius: 3.0.into(),
+                    },
+                    ..renderer::Quad::default()
+                },
+                Color::TRANSPARENT,
+            );
+        }
         let color = if self.message.is_none() {
             theme::GREY_MIDDLE_LIGHT.scale_alpha(0.3)
         } else if self.active && matches!(self.symbol, Symbol::Headphones) {
@@ -140,88 +267,82 @@ impl<Renderer: iced::advanced::Renderer> Widget<Message, Theme, Renderer> for Ch
         } else {
             theme::GREY_MIDDLE_LIGHT
         };
-        let center = bounds.center();
-        match self.symbol {
-            Symbol::Settings => settings_icon(renderer, center, color),
-            Symbol::Undo | Symbol::Redo => history_icon(renderer, center, color, matches!(self.symbol, Symbol::Redo)),
-            Symbol::Chevron(expanded) => {
-                let sign: f32 = if expanded { -1.0 } else { 1.0 };
-                let tip = Point::new(center.x, sign.mul_add(1.5, center.y));
-                stroke(
-                    renderer,
-                    Point::new(center.x - 3.5, sign.mul_add(-1.5, center.y)),
-                    tip,
-                    1.0,
-                    color,
-                );
-                stroke(
-                    renderer,
-                    tip,
-                    Point::new(center.x + 3.5, sign.mul_add(-1.5, center.y)),
-                    1.0,
-                    color,
-                );
-            }
-            Symbol::Headphones => {
-                let radius = bounds.height * 0.29;
-                let mut previous = Point::new(center.x - radius, center.y + 1.0);
-                for step in 1..=20 {
-                    let angle = std::f32::consts::PI + step as f32 * std::f32::consts::PI / 20.0;
-                    let next = Point::new(
-                        radius.mul_add(angle.cos(), center.x),
-                        radius.mul_add(angle.sin(), center.y + 1.0),
-                    );
-                    stroke(renderer, previous, next, 1.5, color);
-                    previous = next;
-                }
-                for x in [center.x - radius - 0.7, center.x + radius - 2.9] {
-                    quad(
-                        renderer,
-                        Rectangle::new(Point::new(x, center.y), Size::new(3.6, 6.2)),
-                        color,
-                        1.2,
-                    );
-                }
-            }
-            Symbol::Disclosure(down) if hovered => disclosure_icon(renderer, center, down),
-            Symbol::Divider if hovered => {
-                quad(
-                    renderer,
-                    Rectangle::new(Point::new(center.x - 18.0, center.y - 1.0), Size::new(36.0, 2.0)),
-                    theme::GREY_MIDDLE_LIGHT.scale_alpha(0.5),
-                    1.0,
-                );
-            }
-            Symbol::Resize => {
-                for offset in [4.0, 8.0, 12.0] {
-                    stroke(
-                        renderer,
-                        Point::new(bounds.x + bounds.width - offset, bounds.y + bounds.height - 2.0),
-                        Point::new(bounds.x + bounds.width - 2.0, bounds.y + bounds.height - offset),
-                        1.0,
-                        color.scale_alpha(if hovered { 0.8 } else { 0.3 }),
-                    );
-                }
-            }
-            Symbol::DisabledSlider => {
-                quad(
-                    renderer,
-                    Rectangle::new(
-                        Point::new(bounds.x + 12.0, center.y - 3.0),
-                        Size::new((bounds.width - 24.0).max(0.0), 6.0),
-                    ),
-                    theme::GREY_MEDIUM,
-                    3.0,
-                );
-                quad(
-                    renderer,
-                    Rectangle::new(Point::new(center.x - 6.0, center.y - 6.0), Size::new(12.0, 12.0)),
-                    theme::GREY_MIDDLE,
-                    6.0,
-                );
-            }
-            Symbol::Disclosure(_) | Symbol::Divider => {}
+        draw_symbol(renderer, self.symbol, bounds, color, hovered);
+    }
+}
+
+/// Draws one vector glyph independently of focus and interaction presentation.
+fn draw_symbol(
+    renderer: &mut impl iced::advanced::Renderer,
+    symbol: Symbol,
+    bounds: Rectangle,
+    color: Color,
+    hovered: bool,
+) {
+    let center = bounds.center();
+    match symbol {
+        Symbol::Settings => settings_icon(renderer, center, color),
+        Symbol::Undo | Symbol::Redo => history_icon(renderer, center, color, matches!(symbol, Symbol::Redo)),
+        Symbol::Chevron(expanded) => {
+            let sign: f32 = if expanded { -1.0 } else { 1.0 };
+            let tip = Point::new(center.x, sign.mul_add(1.5, center.y));
+            stroke(
+                renderer,
+                Point::new(center.x - 3.5, sign.mul_add(-1.5, center.y)),
+                tip,
+                1.0,
+                color,
+            );
+            stroke(
+                renderer,
+                tip,
+                Point::new(center.x + 3.5, sign.mul_add(-1.5, center.y)),
+                1.0,
+                color,
+            );
         }
+        Symbol::Headphones => {
+            let radius = bounds.height * 0.29;
+            let mut previous = Point::new(center.x - radius, center.y + 1.0);
+            for step in 1..=20 {
+                let angle = std::f32::consts::PI + step as f32 * std::f32::consts::PI / 20.0;
+                let next = Point::new(
+                    radius.mul_add(angle.cos(), center.x),
+                    radius.mul_add(angle.sin(), center.y + 1.0),
+                );
+                stroke(renderer, previous, next, 1.5, color);
+                previous = next;
+            }
+            for x in [center.x - radius - 0.7, center.x + radius - 2.9] {
+                quad(
+                    renderer,
+                    Rectangle::new(Point::new(x, center.y), Size::new(3.6, 6.2)),
+                    color,
+                    1.2,
+                );
+            }
+        }
+        Symbol::Disclosure(down) if hovered => disclosure_icon(renderer, center, down),
+        Symbol::Divider if hovered => {
+            quad(
+                renderer,
+                Rectangle::new(Point::new(center.x - 18.0, center.y - 1.0), Size::new(36.0, 2.0)),
+                theme::GREY_MIDDLE_LIGHT.scale_alpha(0.5),
+                1.0,
+            );
+        }
+        Symbol::Resize => {
+            for offset in [4.0, 8.0, 12.0] {
+                stroke(
+                    renderer,
+                    Point::new(bounds.x + bounds.width - offset, bounds.y + bounds.height - 2.0),
+                    Point::new(bounds.x + bounds.width - 2.0, bounds.y + bounds.height - offset),
+                    1.0,
+                    color.scale_alpha(if hovered { 0.8 } else { 0.3 }),
+                );
+            }
+        }
+        Symbol::Disclosure(_) | Symbol::Divider => {}
     }
 }
 
