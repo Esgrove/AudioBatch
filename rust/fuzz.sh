@@ -156,10 +156,10 @@ build_targets() {
     if [ "$NO_BUILD" != true ]; then
         print_magenta "Building $TARGET_GROUP fuzz targets..."
         if [ "$TARGET_GROUP" = all ]; then
-            cargo +nightly fuzz build
+            cargo +nightly fuzz build --fuzz-dir "$REPO/fuzz"
         else
             for target in "${TARGETS[@]}"; do
-                cargo +nightly fuzz build "$target"
+                cargo +nightly fuzz build --fuzz-dir "$REPO/fuzz" "$target"
             done
         fi
     fi
