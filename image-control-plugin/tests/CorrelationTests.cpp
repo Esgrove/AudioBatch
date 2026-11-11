@@ -1,13 +1,18 @@
 /// Tests independent analytical correlation expectations and integration with the processed multiband signals.
 /// Metering must not change PCM, even for the exact neutral and Delta paths.
+/// Processor lifecycle transitions and stopped callbacks invalidate stale published readings.
 
 #include "dsp/BandCorrelation.h"
 #include "dsp/MultibandImager.h"
+#include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "tests/TestSignals.h"
 #include <stop_token>
 
 #include <gtest/gtest.h>
+
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_core/juce_core.h>
 
 #include <algorithm>
 #include <array>
@@ -23,6 +28,29 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// Fills and processes a coherent stereo high-frequency signal that yields a valid High-band reading.
+void publishCorrelation(ImageControlProcessor& processor)
+{
+    juce::AudioBuffer<float> block(2, 256);
+    juce::MidiBuffer midi;
+    for (int pass = 0; pass < 64; ++pass) {
+        for (int sample = 0; sample < 256; ++sample) {
+            const float value = sample % 2 == 0 ? 0.25F : -0.25F;
+            block.setSample(0, sample, value);
+            block.setSample(1, sample, value);
+        }
+        processor.processBlock(block, midi);
+    }
+}
+
+/// Checks the explicit unavailable state without treating NaN as a numeric correlation.
+void expectUnavailable(const BandCorrelations& readings)
+{
+    for (const float value : readings) {
+        EXPECT_TRUE(std::isnan(value));
+    }
+}
+
 /// Reads independent published meters until stopped, recording invalid values without assertions on the worker.
 void monitorPublishedCorrelations(const MultibandImager& imager, std::atomic<bool>& valid, const std::stop_token& stop)
 {
@@ -381,5 +409,82 @@ TEST(Correlation, BandReadingsAreBlockInvariantAndIgnoreDelta)
         }
         reference = readings;
     }
+}
+
+TEST(CorrelationLifecycle, StoppedAndHiddenViewsCannotShowAnOldReading)
+{
+    ImageControlProcessor processor;
+    processor.prepareToPlay(48'000.0, 256);
+    processor.setCorrelationEnabled(true);
+    publishCorrelation(processor);
+    EXPECT_NEAR(processor.getBandCorrelations().back(), 1.0F, 1.0e-6F);
+    processor.setCorrelationEnabled(false);
+    expectUnavailable(processor.getBandCorrelations());
+    processor.setCorrelationEnabled(true);
+    expectUnavailable(processor.getBandCorrelations());
+    juce::AudioBuffer<float> shortBlock(2, 1);
+    shortBlock.clear();
+    juce::MidiBuffer midi;
+    processor.processBlock(shortBlock, midi);
+    expectUnavailable(processor.getBandCorrelations());
+    publishCorrelation(processor);
+    EXPECT_NEAR(processor.getBandCorrelations().back(), 1.0F, 1.0e-6F);
+    processor.releaseResources();
+    expectUnavailable(processor.getBandCorrelations());
+}
+
+TEST(CorrelationLifecycle, SnapshotsExposeTransitionsEvenWhenPublicationResumesBeforeTheNextRead)
+{
+    ImageControlProcessor processor;
+    processor.prepareToPlay(48'000.0, 256);
+    processor.setCorrelationEnabled(true);
+    publishCorrelation(processor);
+    auto snapshot = processor.getBandCorrelationSnapshot();
+    ASSERT_TRUE(std::isfinite(snapshot.readings.back()));
+    processor.setCorrelationEnabled(true);
+    EXPECT_EQ(processor.getBandCorrelationSnapshot().generation, snapshot.generation);
+
+    processor.reset();
+    publishCorrelation(processor);
+    auto next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    EXPECT_NEAR(next.readings.back(), 1.0F, 1.0e-6F);
+    snapshot = next;
+
+    processor.prepareToPlay(96'000.0, 256);
+    publishCorrelation(processor);
+    next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    EXPECT_NEAR(next.readings.back(), 1.0F, 1.0e-6F);
+    snapshot = next;
+
+    // No callback or display read observes the disabled interval.
+    processor.setCorrelationEnabled(false);
+    processor.setCorrelationEnabled(true);
+    publishCorrelation(processor);
+    next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    EXPECT_NEAR(next.readings.back(), 1.0F, 1.0e-6F);
+    snapshot = next;
+    processor.releaseResources();
+    next = processor.getBandCorrelationSnapshot();
+    EXPECT_NE(next.generation, snapshot.generation);
+    expectUnavailable(next.readings);
+}
+
+TEST(CorrelationLifecycle, MissingCallbacksExpireWithoutReadingOrMutatingAudioHistory)
+{
+    ImageControlProcessor processor;
+    processor.prepareToPlay(48'000.0, 256);
+    processor.setCorrelationEnabled(true);
+    publishCorrelation(processor);
+    ASSERT_TRUE(std::isfinite(processor.getBandCorrelations().back()));
+    juce::Thread::sleep(300);
+    expectUnavailable(processor.getBandCorrelations());
+    publishCorrelation(processor);
+    EXPECT_NEAR(processor.getBandCorrelations().back(), 1.0F, 1.0e-6F);
+    processor.reset();
+    expectUnavailable(processor.getBandCorrelations());
+    processor.releaseResources();
 }
 }  // namespace esgrove::image_control::test
