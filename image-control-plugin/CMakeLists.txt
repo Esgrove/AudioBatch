@@ -234,8 +234,10 @@ juce_add_binary_data(
     ImageControlAssets
     HEADER_NAME ImageControlBinaryData.h
     NAMESPACE ImageControlBinaryData
-    SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-Regular.ttf"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-Regular.ttf"
+    SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-SemiBold.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-Regular.ttf"
 )
 
 target_link_libraries(

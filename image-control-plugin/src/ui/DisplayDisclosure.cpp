@@ -25,7 +25,6 @@ constexpr double FADE_IN_SECONDS {0.14};
 constexpr double FADE_OUT_SECONDS {0.1};
 constexpr float LABEL_HEIGHT {11.0F};
 constexpr float LABEL_INSET {4.0F};
-constexpr float FOCUS_CORNER_RADIUS {3.0F};
 }  // namespace
 
 /// Creates a focusable toggle whose state describes display visibility.
@@ -146,7 +145,7 @@ void DisplayDisclosure::paintButton(juce::Graphics& graphics, const bool /*highl
     }
     if (keyboardFocus && hasKeyboardFocus(false)) {
         graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(ICON_ALPHA));
-        graphics.drawRoundedRectangle(area.reduced(1.0F), FOCUS_CORNER_RADIUS, 1.0F);
+        graphics.drawRoundedRectangle(area.reduced(1.0F), corner_radius::CONTROL, 1.0F);
     }
     const float opacity = getIndicatorOpacity();
     if (opacity <= 0.0F) {

@@ -28,12 +28,11 @@ public:
     void drawOutline(juce::Graphics& graphics, const int width, const int height) override
     {
         constexpr float thickness = 1.0F;
-        constexpr float cornerRadius = 3.0F;
         constexpr float opacity = 0.7F;
         graphics.setColour(juce::Colour(palette::BLUE).withAlpha(opacity));
         graphics.drawRoundedRectangle(
             juce::Rectangle<float>(static_cast<float>(width), static_cast<float>(height)).reduced(thickness * 0.5F),
-            cornerRadius,
+            corner_radius::CONTROL,
             thickness
         );
     }
@@ -65,6 +64,15 @@ const juce::Typeface::Ptr& textTypeface()
 {
     static const juce::Typeface::Ptr typeface = juce::Typeface::createSystemTypefaceFor(
         ImageControlBinaryData::RobotoRegular_ttf, ImageControlBinaryData::RobotoRegular_ttfSize
+    );
+    return typeface;
+}
+
+/// Returns the embedded Roboto SemiBold face without host font matching or synthetic weight.
+const juce::Typeface::Ptr& semiboldTypeface()
+{
+    static const juce::Typeface::Ptr typeface = juce::Typeface::createSystemTypefaceFor(
+        ImageControlBinaryData::RobotoSemiBold_ttf, ImageControlBinaryData::RobotoSemiBold_ttfSize
     );
     return typeface;
 }
@@ -185,6 +193,12 @@ juce::Font monoFont(const float height)
     return juce::Font(juce::FontOptions(monoTypeface())).withHeight(height);
 }
 
+/// Returns the embedded Roboto SemiBold at an explicit height without synthesizing a heavier regular face.
+juce::Font semiboldTextFont(const float height)
+{
+    return juce::Font(juce::FontOptions(semiboldTypeface())).withHeight(height);
+}
+
 /// Returns Roboto at a height.
 juce::Font textFont(const float height)
 {
@@ -243,13 +257,12 @@ void ImageControlLookAndFeel::drawAlertBox(
     juce::TextLayout& textLayout
 )
 {
-    constexpr float cornerRadius = 6.0F;
     constexpr float outlineThickness = 1.0F;
     const auto panel = alert.getLocalBounds().toFloat().reduced(outlineThickness * 0.5F);
     graphics.setColour(alert.findColour(juce::AlertWindow::backgroundColourId));
-    graphics.fillRoundedRectangle(panel, cornerRadius);
+    graphics.fillRoundedRectangle(panel, corner_radius::PANEL);
     graphics.setColour(alert.findColour(juce::AlertWindow::outlineColourId));
-    graphics.drawRoundedRectangle(panel, cornerRadius, outlineThickness);
+    graphics.drawRoundedRectangle(panel, corner_radius::PANEL, outlineThickness);
 
     auto contentArea = textArea.getIntersection(alert.getLocalBounds()).toFloat();
     if (alert.getAlertType() != juce::MessageBoxIconType::NoIcon) {
@@ -290,5 +303,92 @@ void ImageControlLookAndFeel::drawAlertBox(
     graphics.reduceClipRegion(contentArea.getSmallestIntegerContainer());
     graphics.setColour(alert.findColour(juce::AlertWindow::textColourId));
     textLayout.draw(graphics, contentArea);
+}
+
+/// Rounds the native Settings bubble while retaining JUCE's arrow, shadow, placement, and modal behavior.
+float ImageControlLookAndFeel::getCallOutBoxCornerSize(const juce::CallOutBox& /*box*/)
+{
+    return corner_radius::CALLOUT;
+}
+
+/// Paints modestly rounded buttons with the usual enabled, hover, down, and connected-edge treatments.
+void ImageControlLookAndFeel::drawButtonBackground(
+    juce::Graphics& graphics,
+    juce::Button& button,
+    const juce::Colour& background,
+    const bool highlighted,
+    const bool down
+)
+{
+    constexpr float outlineThickness = 1.0F;
+    constexpr float focusedSaturation = 1.3F;
+    constexpr float restingSaturation = 0.9F;
+    constexpr float pressedContrast = 0.2F;
+    constexpr float hoverContrast = 0.05F;
+    const auto bounds = button.getLocalBounds().toFloat().reduced(outlineThickness * 0.5F);
+    auto base
+        = background.withMultipliedSaturation(button.hasKeyboardFocus(true) ? focusedSaturation : restingSaturation)
+              .withMultipliedAlpha(button.isEnabled() ? 1.0F : 0.5F);
+    if (down || highlighted) {
+        base = base.contrasting(down ? pressedContrast : hoverContrast);
+    }
+    const bool flatLeft = button.isConnectedOnLeft();
+    const bool flatRight = button.isConnectedOnRight();
+    const bool flatTop = button.isConnectedOnTop();
+    const bool flatBottom = button.isConnectedOnBottom();
+    juce::Path outline;
+    outline.addRoundedRectangle(
+        bounds.getX(),
+        bounds.getY(),
+        bounds.getWidth(),
+        bounds.getHeight(),
+        corner_radius::BUTTON,
+        corner_radius::BUTTON,
+        !(flatLeft || flatTop),
+        !(flatRight || flatTop),
+        !(flatLeft || flatBottom),
+        !(flatRight || flatBottom)
+    );
+    graphics.setColour(base);
+    graphics.fillPath(outline);
+    graphics.setColour(button.findColour(juce::ComboBox::outlineColourId));
+    graphics.strokePath(outline, juce::PathStrokeType(outlineThickness));
+}
+
+/// Rounds selector surfaces without changing their label placement, arrow geometry, or enabled-state feedback.
+void ImageControlLookAndFeel::drawComboBox(
+    juce::Graphics& graphics,
+    const int width,
+    const int height,
+    const bool /*down*/,
+    const int /*buttonX*/,
+    const int /*buttonY*/,
+    const int /*buttonWidth*/,
+    const int /*buttonHeight*/,
+    juce::ComboBox& box
+)
+{
+    constexpr float outlineThickness = 1.0F;
+    const auto bounds = juce::Rectangle<int>(width, height).toFloat();
+    const float radius
+        = box.findParentComponentOfClass<juce::ChoicePropertyComponent>() != nullptr ? 0.0F : corner_radius::CONTROL;
+    graphics.setColour(box.findColour(juce::ComboBox::backgroundColourId));
+    graphics.fillRoundedRectangle(bounds, radius);
+    graphics.setColour(box.findColour(juce::ComboBox::outlineColourId));
+    graphics.drawRoundedRectangle(bounds.reduced(outlineThickness * 0.5F), radius, outlineThickness);
+    constexpr int arrowRightInset = 30;
+    constexpr int arrowWidth = 20;
+    constexpr float arrowInset = 3.0F;
+    constexpr float arrowTopOffset = 2.0F;
+    const auto arrowZone = juce::Rectangle<int>(width - arrowRightInset, 0, arrowWidth, height).toFloat();
+    juce::Path arrow;
+    arrow.startNewSubPath(arrowZone.getX() + arrowInset, arrowZone.getCentreY() - arrowTopOffset);
+    arrow.lineTo(arrowZone.getCentreX(), arrowZone.getCentreY() + arrowInset);
+    arrow.lineTo(arrowZone.getRight() - arrowInset, arrowZone.getCentreY() - arrowTopOffset);
+    constexpr float enabledArrowAlpha = 0.9F;
+    constexpr float disabledArrowAlpha = 0.2F;
+    graphics.setColour(box.findColour(juce::ComboBox::arrowColourId)
+                           .withAlpha(box.isEnabled() ? enabledArrowAlpha : disabledArrowAlpha));
+    graphics.strokePath(arrow, juce::PathStrokeType(2.0F));
 }
 }  // namespace esgrove::image_control

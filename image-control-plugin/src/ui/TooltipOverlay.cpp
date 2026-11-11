@@ -32,8 +32,6 @@ constexpr int PADDING {8};
 constexpr int MARGIN {10};
 /// Offset of the bubble from the pointer, in pixels.
 constexpr juce::Point<int> POINTER_OFFSET {14, 20};
-/// Corner radius of the bubble, in pixels.
-constexpr float CORNER_RADIUS {6.0F};
 /// Opacity of the bubble background.
 constexpr float BACKGROUND_ALPHA {0.97F};
 /// Radius of the bubble shadow, in pixels.
@@ -98,7 +96,7 @@ void TooltipOverlay::paint(juce::Graphics& graphics)
     const auto bubble = getLocalBounds().reduced(MARGIN).toFloat().translated(0.0F, slide);
 
     juce::Path outline;
-    outline.addRoundedRectangle(bubble, CORNER_RADIUS);
+    outline.addRoundedRectangle(bubble, corner_radius::PANEL);
     juce::DropShadow(juce::Colours::black.withAlpha(SHADOW_ALPHA), SHADOW_RADIUS, {0, 2})
         .drawForPath(graphics, outline);
     graphics.setColour(juce::Colour(palette::GREY_MEDIUM_DARK).withAlpha(BACKGROUND_ALPHA));

@@ -69,6 +69,8 @@ constexpr int TEXT_BOX_HEIGHT {22};
 constexpr int LINK_WIDTH {60};
 /// Gap between the Solo button and the Link toggle, in pixels.
 constexpr int SOLO_GAP {6};
+/// Insets only Solo artwork to 16 logical units inside its unchanged 20-by-20 interaction bounds.
+constexpr int SOLO_ICON_INDENT {2};
 /// Gap separating the inline name, range, and heading buttons, in pixels.
 constexpr int HEADER_TEXT_GAP {8};
 /// How much brighter the headphone icon draws while the pointer is over the Solo button.
@@ -78,8 +80,6 @@ constexpr float SOLO_HOVER_BRIGHTNESS {0.3F};
 constexpr int HEADER_SLIDER_GAP {16};
 /// Inner margin of the strip, in pixels.
 constexpr int MARGIN {10};
-/// Corner radius of the strip background, in pixels.
-constexpr float CORNER_RADIUS {6.0F};
 /// Number of slider rows: Mid, Side, Width, Recover, and Pan.
 constexpr int SLIDER_ROWS {5};
 /// Font height of the band name.
@@ -549,10 +549,12 @@ BandStrip::BandStrip(
     setTitle(bandName(band) + " band controls");
     setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
     nameLabel.setText(bandName(band), juce::dontSendNotification);
-    nameLabel.setFont(textFont(NAME_FONT_HEIGHT).boldened());
+    nameLabel.setFont(semiboldTextFont(NAME_FONT_HEIGHT));
+    nameLabel.setBorderSize({});
     nameLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_SUPER_LIGHT));
     nameLabel.setJustificationType(juce::Justification::centredLeft);
     rangeLabel.setFont(textFont(LABEL_FONT_HEIGHT));
+    rangeLabel.setBorderSize({});
     rangeLabel.setJustificationType(juce::Justification::centredLeft);
     rangeLabel.setColour(juce::Label::textColourId, juce::Colour(palette::GREY_MIDDLE_LIGHT));
     addAndMakeVisible(nameLabel);
@@ -612,7 +614,7 @@ BandStrip::BandStrip(
     );
     soloButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
     soloButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
-    soloButton.setEdgeIndent(0);
+    soloButton.setEdgeIndent(SOLO_ICON_INDENT);
     soloButton.setClickingTogglesState(true);
     soloButton.setTooltip(
         "Solo: listen to this band only. Solo several bands to hear them together. Press S over a band to toggle it"
@@ -784,7 +786,7 @@ void BandStrip::setHeaderDisclosureInset(const int inset)
 void BandStrip::paint(juce::Graphics& graphics)
 {
     graphics.setColour(juce::Colour(palette::GREY_SEMI_DARK));
-    graphics.fillRoundedRectangle(getLocalBounds().toFloat(), CORNER_RADIUS);
+    graphics.fillRoundedRectangle(getLocalBounds().toFloat(), corner_radius::PANEL);
 }
 
 /// Uses one compact row of four values, with inline full names only when their worst-case glyphs fit together.

@@ -139,8 +139,6 @@ constexpr float CURVE_LINE_THICKNESS {2.0F};
 /// Horizontal distance between the points of the drawn curve, in pixels.
 constexpr float CURVE_STEP_PIXELS {2.0F};
 
-/// Corner radius of the spectrogram box, matching the band strips, in pixels.
-constexpr float BOX_CORNER_RADIUS {6.0F};
 /// Space around the plot inside the box, in pixels.
 constexpr float BOX_PADDING {6.0F};
 
@@ -343,7 +341,7 @@ void SpatialSpectrogramView::paint(juce::Graphics& graphics)
 
     // The box with the rounded plot cut out of it.
     juce::Path box;
-    box.addRoundedRectangle(getLocalBounds().toFloat(), BOX_CORNER_RADIUS);
+    box.addRoundedRectangle(getLocalBounds().toFloat(), corner_radius::PANEL);
     box.addPath(plotOutline);
     box.setUsingNonZeroWinding(false);
     graphics.setColour(juce::Colour(palette::GREY_SEMI_DARK));

@@ -10,6 +10,7 @@
 #include "ui/DisplayDisclosure.h"
 #include "ui/HistoryAttachments.h"
 #include "ui/ImageControlLookAndFeel.h"
+#include "ui/SpatialSpectrogramView.h"
 
 #include <gtest/gtest.h>
 
@@ -109,6 +110,12 @@ int bandHeadingTextWidth(juce::Label& label)
     return glyphWidth + label.getLookAndFeel().getLabelBorderSize(label).getLeftAndRight();
 }
 
+/// Returns the actual left-aligned text area in strip coordinates, including look-and-feel label insets.
+juce::Rectangle<int> bandLabelTextArea(juce::Label& label)
+{
+    return label.getLookAndFeel().getLabelBorderSize(label).subtractedFrom(label.getBounds());
+}
+
 /// Includes both margins, Solo, Link, their gap, and two readable inline text gaps in the fit boundary.
 int bandHeadingInlineWidth(juce::Label& name, juce::Label& range, const int disclosureInset)
 {
@@ -162,6 +169,12 @@ void expectExpandedBandHeadingThresholds(
             strip.setSize(width, height);
             const bool inlineRange = width >= threshold;
             EXPECT_EQ(name->getY(), 10);
+            EXPECT_EQ(bandLabelTextArea(*name).getX(), 10);
+            auto* midLabel = bandHeadingLabel(strip, "Mid");
+            ASSERT_NE(midLabel, nullptr);
+            EXPECT_EQ(bandLabelTextArea(*midLabel).getX(), 10);
+            EXPECT_EQ(bandLabelTextArea(*name).getX(), bandLabelTextArea(*midLabel).getX());
+            EXPECT_EQ(bandLabelTextArea(*range).getX(), inlineRange ? name->getRight() + 8 : 10);
             EXPECT_EQ(range->getY(), inlineRange ? name->getY() : name->getBottom());
             EXPECT_EQ(range->getX(), inlineRange ? name->getRight() + 8 : 10);
             EXPECT_EQ(range->getHeight(), 20);
@@ -445,6 +458,100 @@ TEST(CompactBands, ExpandedHeadingFitUsesActualTextFontsAndReservedControls)
         }
     }
     EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Band names retain an explicit embedded semibold face and fixed height through responsive and compact layouts.
+TEST(CompactBands, ExpandedNamesUseEmbeddedSemiboldAtExistingHeight)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    const auto semibold = semiboldTextFont(16.0F);
+    ASSERT_NE(semibold.getTypefacePtr(), nullptr);
+    EXPECT_NE(semibold.getTypefacePtr(), textFont(16.0F).getTypefacePtr());
+    EXPECT_TRUE(semibold.getTypefacePtr()->getName().containsIgnoreCase("Roboto"));
+    const auto faceIdentity = semibold.getTypefacePtr()->getName() + " " + semibold.getTypefacePtr()->getStyle();
+    EXPECT_TRUE(faceIdentity.containsIgnoreCase("SemiBold"));
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), band, processor.getHistory());
+        strip.setLookAndFeel(&lookAndFeel);
+        strip.setRangeText("1.25 kHz to 16.00 kHz");
+        auto* name = bandHeadingLabel(strip, bandName(band));
+        auto* range = bandHeadingLabel(strip, "1.25 kHz to 16.00 kHz");
+        ASSERT_NE(name, nullptr);
+        ASSERT_NE(range, nullptr);
+        const int threshold = bandHeadingInlineWidth(*name, *range, 0);
+        for (const bool compact : {false, true, false}) {
+            strip.setCompact(compact);
+            for (const int width : {threshold - 1, threshold, threshold + 80}) {
+                strip.setSize(width, compact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT);
+                const auto drawingFont = lookAndFeel.getLabelFont(*name);
+                EXPECT_EQ(name->getFont(), semibold);
+                EXPECT_EQ(drawingFont.getTypefacePtr(), semibold.getTypefacePtr());
+                EXPECT_EQ(drawingFont.getStyleFlags(), semibold.getStyleFlags());
+                EXPECT_FLOAT_EQ(drawingFont.getHeight(), 16.0F);
+                EXPECT_FLOAT_EQ(lookAndFeel.getLabelFont(*range).getHeight(), 14.0F);
+            }
+        }
+    }
+}
+
+/// Solo's artwork is smaller in every visual state while its hit target, focus, and host attachment stay intact.
+TEST(CompactBands, SoloArtworkKeepsTwentyUnitHitTargetAndAutomation)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        BandStrip strip(processor.getParameters(), processor.getEditorState(), band, processor.getHistory());
+        strip.setLookAndFeel(&lookAndFeel);
+        strip.setSize(240, BAND_STRIP_MIN_HEIGHT);
+        strip.setVisible(true);
+        auto* solo = compactControl<juce::DrawableButton>(strip, bandName(band) + " Solo");
+        ASSERT_NE(solo, nullptr);
+        EXPECT_EQ(solo->getLocalBounds(), juce::Rectangle<int>(20, 20));
+        EXPECT_EQ(solo->getImageBounds(), juce::Rectangle<float>(2.0F, 2.0F, 16.0F, 16.0F));
+        EXPECT_TRUE(solo->getWantsKeyboardFocus());
+        EXPECT_EQ(solo->getExplicitFocusOrder(), 1);
+        EXPECT_NE(lookAndFeel.createFocusOutlineForComponent(*solo), nullptr);
+        for (const auto point : {juce::Point<int> {0, 0}, {19, 0}, {0, 19}, {19, 19}, {10, 10}}) {
+            EXPECT_EQ(strip.getComponentAt(solo->getPosition() + point), solo);
+        }
+        auto& parameter = *processor.getParameters().getParameter(soloParameterId(band));
+        for (const bool enabled : {false, true, false}) {
+            parameter.setValueNotifyingHost(enabled ? 1.0F : 0.0F);
+            EXPECT_EQ(solo->getToggleState(), enabled);
+            for (const auto state : {juce::Button::buttonNormal, juce::Button::buttonOver, juce::Button::buttonDown}) {
+                solo->setState(state);
+                const auto* image = solo->getCurrentImage();
+                ASSERT_NE(image, nullptr);
+                const auto art = image->getOutlineAsPath().getBounds();
+                EXPECT_NEAR(art.getWidth(), 16.0F, 0.00001F);
+                EXPECT_GE(art.getHeight(), 15.0F);
+                EXPECT_LE(art.getHeight(), 16.0F);
+                EXPECT_NEAR(art.getCentreX(), 10.0F, 0.001F);
+                EXPECT_NEAR(art.getCentreY(), 10.0F, 0.001F);
+            }
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Surface rounding stays centralized, scale-independent, and well below half the height of ordinary controls.
+TEST(CompactBands, SharedRadiiKeepPanelsPlotMasksAndControlsProportionate)
+{
+    EXPECT_FLOAT_EQ(corner_radius::PANEL, 8.0F);
+    EXPECT_FLOAT_EQ(corner_radius::PLOT, 6.0F);
+    EXPECT_FLOAT_EQ(SPECTROGRAM_PLOT_CORNER_RADIUS, corner_radius::PLOT);
+    EXPECT_FLOAT_EQ(corner_radius::CONTROL, 4.0F);
+    EXPECT_FLOAT_EQ(corner_radius::BUTTON, 7.0F);
+    EXPECT_FLOAT_EQ(corner_radius::CALLOUT, 10.0F);
+    EXPECT_LT(corner_radius::CONTROL, 24.0F * 0.5F);
+    EXPECT_LT(corner_radius::BUTTON, 20.0F * 0.5F);
+    EXPECT_LT(corner_radius::PLOT, corner_radius::PANEL);
+    ImageControlLookAndFeel lookAndFeel;
+    juce::Component content;
+    content.setSize(240, 120);
+    const juce::CallOutBox callout(content, juce::Rectangle<int>(10, 10, 20, 20), nullptr);
+    EXPECT_FLOAT_EQ(lookAndFeel.getCallOutBoxCornerSize(callout), corner_radius::CALLOUT);
 }
 
 /// Live range changes reflow expanded headings at unchanged strip size, and never change compact geometry or names.
