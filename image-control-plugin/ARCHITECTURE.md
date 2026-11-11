@@ -328,7 +328,10 @@ The callback swaps indices rather than moving or destroying allocated spectra.
 
 With `isNonRealtime()` set by the host, the calling processing thread designs moved crossovers synchronously.
 A mutex serializes that work against any design already in flight, and the background designer stands aside.
-A pending second request is designed after the previous slot switch.
+Realtime pending requests retain bounded slot ownership until their next partition handoff.
+Entering offline mode supersedes stale pending slots with the latest complete request before processing.
+Returning to the active frequencies cancels obsolete pending work instead of replaying it.
+Request identity is exact, so small accepted automation changes are not discarded by approximate display equality.
 This makes offline results independent of worker scheduling, but deliberately allows allocation and locking offline.
 It is not a real-time-safe mode switch policy for a host that mislabels its callbacks.
 
@@ -498,8 +501,8 @@ Expanded band names and frequency ranges share their heading when measured text 
 otherwise ranges remain on the second line. Live range changes relayout without committing numeric drafts.
 Band names use embedded Roboto SemiBold at 16 logical units, with zero-border headings aligned to the slider labels.
 Solo fits 16-unit artwork inside its unchanged 20-unit hit and focus target.
-`ImageControlLookAndFeel.h` centralizes surface radii, including the 8-unit panels and 6-unit plot mask
-shared by the CPU cutout and GPU composite.
+`ImageControlLookAndFeel.h` centralizes surface radii,
+including the 8-unit panels and 6-unit plot mask shared by the CPU cutout and GPU composite.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
 `DisplayDisclosure` fades a centered translucent triangle in only near its section-border action.
@@ -573,6 +576,9 @@ Live analysis, meter history, and GPU contents are not persisted.
 Mono is persisted with the other audio parameters.
 Missing editor properties restore from deterministic defaults, independently of the instance's previous edits.
 Missing audio parameters use their declared defaults through APVTS.
+Detached restore targets expose the actual clamped and snapped parameter values during reentrant save callbacks,
+while retaining the original request separately to avoid repeated skew rounding and preserve preset provenance.
+A host recall cancels pending band and Output numeric drafts even when the restored values are unchanged.
 Older states without Width or Recover load unity Width and Recover Off, preserving their existing gain-driven sound.
 There is no gain-derived Width migration, so unequal saved Mid/Side gains remain independent source trims.
 

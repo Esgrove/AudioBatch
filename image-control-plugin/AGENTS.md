@@ -34,7 +34,8 @@ Run `build.sh`, `test.sh`, `lint.sh --check`, and `format.sh --check` from `rust
 Use root Rust lints and formatting, narrow documented unsafe ABI boundaries, and the plugin realtime contracts below.
 Treat Rust state/class identities separately from the C++ persistence contracts.
 Cross-implementation state migration is not implied.
-The evaluation and remaining platform/lifecycle gates are documented in [`docs/rust-evaluation.md`](docs/rust-evaluation.md).
+The evaluation
+and remaining platform/lifecycle gates are documented in [`rust/docs/rust-evaluation.md`](rust/docs/rust-evaluation.md).
 The C++-specific organization, JUCE, and OpenGL instructions below apply to the C++ implementation.
 
 ## Layout
