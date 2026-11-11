@@ -1,0 +1,8 @@
+---
+# Native AU tests compare explicit protocol and signal expectations, like the project's other tests.
+# Core Foundation factory lookup and variable-length AudioBufferList/CocoaUI structures require ABI reinterpret casts.
+# Keep that exception in this isolated native test host, never in the processing implementation.
+InheritParentConfig: true
+Checks: >
+  -readability-magic-numbers,
+  -cppcoreguidelines-pro-type-reinterpret-cast

@@ -309,6 +309,14 @@ impl Imager {
         }
     }
 
+    /// Releases prepared kernels and joins their worker while preserving the instance's stable editor transport.
+    /// The host must stop callbacks before calling this non-realtime lifecycle operation.
+    pub fn release(&mut self) {
+        self.shared.set_processing_active(false);
+        self.shared.invalidate_monitoring();
+        self.multiband = None;
+    }
+
     /// Sets host offline rendering policy. Any synchronous design happens only on the processing owner.
     pub fn set_offline(&mut self, offline: bool) {
         if self.offline != offline {

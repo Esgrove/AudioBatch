@@ -1,6 +1,7 @@
 # ImageControl RS
 
-ImageControl RS is an independent Rust multiband stereo-imaging VST3 with a native Iced/wgpu editor.
+ImageControl RS is an independent Rust multiband stereo-imaging plugin with a native Iced/wgpu editor.
+It provides VST3 and CLAP on macOS and Windows, and an experimental self-contained AUv2 on macOS.
 It shares the repository's Cargo workspace, but does not use AudioBatch's application services or GUI.
 It installs alongside the C++ ImageControl plugin rather than replacing it.
 
@@ -38,10 +39,13 @@ Run scripts from this directory.
 Use the Rust toolchain declared by the [root workspace](../../Cargo.toml), a native platform build toolchain,
 and a GPU supported by wgpu's Metal or Direct3D backend.
 The Rust plugin does not require JUCE to compile.
+The macOS AU build additionally requires CMake and an Apple C++/Objective-C++ toolchain.
+It fetches immutable upstream clap-wrapper, CLAP SDK, and AudioUnitSDK revisions into the selected build tree.
+The component statically links the Rust CLAP implementation and does not search for an installed CLAP.
 Build-tree validation can build the repository-pinned pluginval when it is not on `PATH`.
 
 ```shell
-# Release VST3, without installation.
+# Release VST3 and CLAP, plus AUv2 on macOS, without installation.
 ./build.sh
 
 # Debug build, complete scoped tests, and build-tree pluginval validation.
@@ -59,10 +63,14 @@ Build-tree validation can build the repository-pinned pluginval when it is not o
 ./test.sh --miri
 ./test.sh --licenses
 ./rtsan.sh
+./rtsan.sh --format clap
+# Verify known AU dependency reports as BLOCKED, not clean callback evidence.
+./rtsan.sh --format au --diagnostic
 ```
 
-The default bundle is `rust/target/bundled/ImageControl RS.vst3` relative to the repository root,
-not this directory's ignored `target/`.
+The default artifacts are `rust/target/bundled/ImageControl RS.vst3`, `ImageControl RS.clap`,
+and on macOS `ImageControl RS.component`, relative to the repository root, not this directory's ignored `target/`.
+The Windows CLAP artifact is a single file. The macOS CLAP and AU artifacts are bundles.
 `CARGO_TARGET_DIR` overrides the artifact location, resolved from the invocation directory before scripts change directories.
 Explicit external target roots are allowed, with canonical path checks rejecting symlink escapes.
 Debug and Release packaging use the same bundle path, so the last build selects its contents.
@@ -113,23 +121,34 @@ Close hosts using ImageControl RS before replacing its installed bundle.
 ./install.sh --no-build --validate
 ```
 
-The default per-user destinations are `~/Library/Audio/Plug-Ins/VST3` on macOS
+The default per-user VST3 destinations are `~/Library/Audio/Plug-Ins/VST3` on macOS
 and `%LOCALAPPDATA%/Programs/Common/VST3` on Windows.
-Use `--destination <directory>` for another VST3 folder and `--validation-level <5-10>` for installed validation.
+CLAP uses the sibling `CLAP` folder. The macOS Audio Unit uses `~/Library/Audio/Plug-Ins/Components`.
+Use `--destination <directory>`, `--clap-destination <directory>`, and `--au-destination <directory>`
+to select format-specific folders, and `--validation-level <5-10>` for installed validation.
 Rescan the host and select **ImageControl RS**.
-The installer neither replaces C++ `ImageControl.vst3` nor installs an Audio Unit.
+The installer never replaces the C++ ImageControl bundles.
+Installed AU validation registers and checks the distinct `aufx / Egir / Esgr` component with strict auval.
+Build-tree tests load the exact artifacts without installation or registrar changes.
 Local macOS signing is ad-hoc, not Developer ID signing or notarization.
 
 ## Scope and limitations
 
-- The plugin has its own class identity and `com.esgrove.imagecontrol-rs-own` bundle identity.
-  Its state is not compatible with JUCE ImageControl projects or the removed Nice experiment.
+- The VST3 retains its own class identity and `com.esgrove.imagecontrol-rs-own` bundle identity.
+  CLAP uses descriptor ID `com.esgrove.imagecontrol-rs-own`, while the AU has a separate component identity.
+  Formats share the Rust state codec, not JUCE ImageControl project compatibility or the removed Nice experiment.
+- AUv2 is an experimental wrapper route, not equivalent qualification to the own-wrapper VST3.
+  Upstream offline-mode forwarding, automation contention, and lifecycle/state behavior have explicit diagnostics.
+  Nonblocking render admission can still produce silence under wrapper contention, which RTSan alone cannot qualify.
 - Only matching mono-to-mono and stereo-to-stereo main buses and 32-bit floating-point processing are supported.
   Automation is sampled per host block, not sample-accurate within a block.
 - Audio preparation supports actual rates from 1 through 2,822,400 Hz.
   Spatial analysis supports 8 through 768 kHz, reporting unavailable outside that range without disabling audio.
 - Undo/Redo, A/B, and presets remain visibly unavailable.
   Link and layout choices are local editor state, not part of the persisted display-preference snapshot.
+- Windows CLAP currently exposes host-provided parameter controls, not the custom Iced editor.
+  CLAP destruction cannot use VST3's rejected-removal retry protocol during a reentrant Win32 callback.
+  The custom CLAP GUI is not advertised there until safe synchronous teardown is implemented and tested.
 - Full Iced device-loss recovery, native accessibility qualification, safe arbitrary module unloading,
   and complete upstream widget-cache reclamation are not established.
   Windows reentrant removal may be rejected until the host retries outside an active callback.

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use image_control_dsp::Imager;
 
 /// Exclusive DSP storage guarded by one bounded compare-exchange attempt.
-pub(super) struct AudioState {
+pub struct AudioState {
     /// Only the successful admission owner accesses the processor.
     admitted: AtomicBool,
     /// Prepared processor state, never accessed by state or editor callbacks.
@@ -24,7 +24,7 @@ unsafe impl Sync for AudioState {}
 
 impl AudioState {
     /// Takes sole ownership of a processor before publishing its COM object.
-    pub(super) const fn new(imager: Imager) -> Self {
+    pub(crate) const fn new(imager: Imager) -> Self {
         Self {
             admitted: AtomicBool::new(false),
             imager: UnsafeCell::new(imager),
@@ -32,7 +32,7 @@ impl AudioState {
     }
 
     /// Runs an operation with exclusive DSP access, rejecting concurrent calls immediately.
-    pub(super) fn try_with<R>(&self, operation: impl FnOnce(&mut Imager) -> R) -> Option<R> {
+    pub(crate) fn try_with<R>(&self, operation: impl FnOnce(&mut Imager) -> R) -> Option<R> {
         self.admitted
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .ok()?;

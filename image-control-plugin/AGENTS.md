@@ -25,9 +25,13 @@ Read the architecture section of the area you change before changing DSP, state,
 
 ## Rust experiment
 
-`rust/` contains one independent VST3 implementation in the repository-root Cargo workspace.
-`rust/crates/dsp` owns framework-independent processing, `rust/crates/plugin` the narrow VST3/Iced/wgpu adapter,
-and `rust/crates/xtask` the bundler. The package and plugin identities are stable across directory renames.
+`rust/` contains one independent DSP/editor implementation in the repository-root Cargo workspace.
+It exports VST3 and CLAP on macOS and Windows, plus experimental AUv2 on macOS through pinned upstream clap-wrapper.
+`rust/crates/dsp` owns framework-independent processing, `rust/crates/plugin` the VST3/Clack/Iced/wgpu adapters,
+and `rust/crates/xtask` the bundler. `rust/au/` owns the native AU build and isolated qualification host.
+The AU component statically hosts Rust CLAP, with distinct `aufx / Egir / Esgr` identity, never C++ `Egic`.
+Preserve explicit upstream offline/state/contention diagnostics and do not generalize VST3 realtime evidence to AU.
+The package and plugin identities are stable across directory renames.
 There is no plugin-local GPUI workspace, vendored embedding patch, or nice-plug runtime.
 AudioBatch's application GPUI dependencies remain separate.
 Run `build.sh`, `test.sh`, `lint.sh --check`, and `format.sh --check` from `rust/` for this experiment.
