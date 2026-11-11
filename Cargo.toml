@@ -24,8 +24,6 @@ test-fixtures = { path = "rust/crates/test-fixtures" }
 vst3-host = { path = "rust/crates/vst3-host" }
 
 anyhow = "1.0.104"
-arc-swap = "1.9.5"
-atomic_refcell = "0.1.14"
 async-channel = "2.5.0"
 audioadapter-buffers = "5.2.0"
 base64 = "0.23.1"
@@ -67,7 +65,6 @@ serde_json = "1.0.154"
 sha2 = "0.11.1"
 symphonia = { version = "0.6.1", features = ["aiff", "aac", "alac", "flac", "isomp4", "mp3", "wav"] }
 symphonia-common = "0.6.1"
-sync_wrapper = "1.0.2"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tracing = "0.1.44"
