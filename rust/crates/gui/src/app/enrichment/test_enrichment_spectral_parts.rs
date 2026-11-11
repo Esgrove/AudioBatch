@@ -418,7 +418,13 @@ fn equal_size_and_mtime_replacement_during_decode_rejects_both_artifacts() {
                 .set_times(std::fs::FileTimes::new().set_modified(modified))
                 .expect("same modification time");
             std::fs::rename(&replacement, &path).expect("atomic replacement");
-            assert_eq!(file_identity(&path), Some((record.file_size, record.modified_time_ms)));
+            assert_eq!(
+                file_identity(&path),
+                Some(audiobatch_core::record::FileIdentity {
+                    file_size: record.file_size,
+                    modified_time_ms: record.modified_time_ms
+                })
+            );
             AudioArtifacts {
                 waveform: Some(waveform()),
                 spectrogram: Some(spectrogram()),

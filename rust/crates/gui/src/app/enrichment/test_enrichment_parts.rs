@@ -10,7 +10,10 @@ use super::*;
 
 /// Binds independent artifact tests to a real source without decoding it or opening a window.
 pub(super) fn record(path: &Path) -> AnalysisRecord {
-    let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+    let audiobatch_core::record::FileIdentity {
+        file_size,
+        modified_time_ms,
+    } = file_identity(path).expect("source identity");
     AnalysisRecord {
         path: path.to_path_buf(),
         file_size,

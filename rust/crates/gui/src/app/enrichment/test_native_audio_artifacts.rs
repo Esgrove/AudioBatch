@@ -106,7 +106,13 @@ fn replacement_after_decoder_open_discards_both_native_artifacts() {
         checks.set(checks.get() + 1);
         if checks.get() == 3 {
             std::fs::rename(&replacement, &path).expect("replace opened decoder source");
-            assert_eq!(file_identity(&path), Some((record.file_size, record.modified_time_ms)));
+            assert_eq!(
+                file_identity(&path),
+                Some(audiobatch_core::record::FileIdentity {
+                    file_size: record.file_size,
+                    modified_time_ms: record.modified_time_ms
+                })
+            );
         }
         true
     })

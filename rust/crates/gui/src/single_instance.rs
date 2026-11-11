@@ -49,6 +49,12 @@ pub enum Claim {
     Forwarded,
 }
 
+/// Loopback endpoint and authentication token parsed from the running application's port file.
+struct InstanceEndpoint {
+    port: u16,
+    token: String,
+}
+
 /// Hands the paths to a running app, or makes this launch the running app.
 /// Relative paths are resolved against this launch's working directory first.
 /// When listening fails, the launch still runs, only without receiving later launches.
@@ -125,7 +131,7 @@ fn new_token() -> String {
 
 /// Sends the token and the paths to the app whose port the file names, and returns true when it took them.
 fn forward(port_file: &Path, paths: &[PathBuf]) -> bool {
-    let Some((port, token)) = std::fs::read_to_string(port_file)
+    let Some(InstanceEndpoint { port, token }) = std::fs::read_to_string(port_file)
         .ok()
         .and_then(|text| parse_port_file(&text))
     else {
@@ -149,11 +155,11 @@ fn forward(port_file: &Path, paths: &[PathBuf]) -> bool {
 }
 
 /// Returns the port and the token of a port file, written as the port and the token on one line.
-fn parse_port_file(text: &str) -> Option<(u16, String)> {
+fn parse_port_file(text: &str) -> Option<InstanceEndpoint> {
     let mut fields = text.split_whitespace();
     let port = fields.next()?.parse().ok()?;
     let token = fields.next()?.to_string();
-    Some((port, token))
+    Some(InstanceEndpoint { port, token })
 }
 
 /// Listens on a free loopback port and writes the port and the token to the file,
@@ -219,7 +225,9 @@ mod test_single_instance {
         let directory = tempfile::tempdir().expect("temporary directory");
         let port_file = directory.path().join(PORT_FILE_NAME);
         let server = serve_once(&port_file);
-        let (port, _) = parse_port_file(&std::fs::read_to_string(&port_file).expect("read")).expect("parses");
+        let port = parse_port_file(&std::fs::read_to_string(&port_file).expect("read"))
+            .expect("parses")
+            .port;
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connects");
         writeln!(stream, "wrong token\n/music/a.wav").expect("writes");
         drop(stream);

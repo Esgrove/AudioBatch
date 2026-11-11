@@ -368,7 +368,8 @@ impl AppView {
         let total = records.len();
         let mut options = normalization_options(&self.settings, self.overwrite_existing);
         options.dispose = Arc::clone(&self.dispose);
-        let (run_id, receiver) = coordinator.start(records, options);
+        let audiobatch_core::normalize_coordinator::NormalizeRun { run_id, receiver } =
+            coordinator.start(records, options);
         let run = OperationRun::new(OperationKind::Normalize, run_id, total);
         self.status = run.progress_text().into();
         self.normalize_run = Some(run);
@@ -445,7 +446,7 @@ impl AppView {
 fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx: &Context<AppView>) -> Task<()> {
     cx.spawn_in(window, async move |this, cx| {
         loop {
-            let (batch, disconnected) = drain_events(&receiver);
+            let super::analysis::DrainedEvents { batch, disconnected } = drain_events(&receiver);
             if !batch.is_empty()
                 && this
                     .update_in(cx, |view, window, cx| view.apply_normalize_events(batch, window, cx))

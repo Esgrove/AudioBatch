@@ -20,7 +20,7 @@ use crossbeam_channel::{Sender, unbounded};
 use gpui_kit::Context;
 
 use super::AppView;
-use super::preview::PreviewVersion;
+use super::preview::PreviewToken;
 
 /// Maximum retained display-tag results, including negative results, independent of table size.
 const TAG_RESULT_LIMIT: usize = 8;
@@ -46,6 +46,14 @@ enum EnrichmentPart {
     Tags(Option<Arc<FileTags>>),
     Waveform(Arc<WaveformOverview>),
     Spectrogram(Option<Arc<SpectrogramData>>),
+}
+
+/// Completed and total unique preview candidates while background repair is admitted.
+#[non_exhaustive]
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct EnrichmentProgress {
+    pub(super) completed: usize,
+    pub(super) total: usize,
 }
 
 /// GUI-owned admission state, separate from playback and selected-preview generations.
@@ -75,7 +83,7 @@ struct EnrichmentIdentity {
 /// One selected audio attempt, terminal only while the same preview generation remains selected.
 struct SelectedAudioAttempt {
     identity: EnrichmentIdentity,
-    preview: Option<(PreviewVersion, u64)>,
+    preview: Option<PreviewToken>,
 }
 
 /// One admitted job, whose cancellation does not release its blocking-worker slot.
@@ -85,7 +93,7 @@ struct EnrichmentRequest {
     source_identity: Option<SourceIdentity>,
     cancelled: Arc<AtomicBool>,
     selected: Arc<AtomicBool>,
-    preview: Option<(PreviewVersion, u64)>,
+    preview: Option<PreviewToken>,
     generation: u64,
     mode: EnrichmentMode,
     artifacts_attempted: bool,
@@ -109,10 +117,10 @@ struct ArtifactGeometry {
 impl EnrichmentQueue {
     /// Reports completed and total unique source candidates while background repair is admitted.
     /// Cancelled readers remain pending until their occupied worker slot actually drains.
-    pub(super) fn progress(&self) -> Option<(usize, usize)> {
+    pub(super) fn progress(&self) -> Option<EnrichmentProgress> {
         let total = self.candidates.len();
         let completed = self.completed.len();
-        (self.gate_open && completed < total).then_some((completed, total))
+        (self.gate_open && completed < total).then_some(EnrichmentProgress { completed, total })
     }
 
     /// Shares expensive decoder admission with the transient gain prediction reader.
@@ -187,7 +195,7 @@ impl EnrichmentQueue {
     fn take_next(
         &mut self,
         selected: Option<&Path>,
-        preview: Option<(PreviewVersion, u64)>,
+        preview: Option<PreviewToken>,
         repair_allowed: bool,
     ) -> Option<EnrichmentRequest> {
         if self.active.is_some() {
@@ -232,7 +240,7 @@ impl EnrichmentQueue {
     }
 
     /// Joins only the same selected-preview generation, restarting obsolete selected reads cooperatively.
-    fn select(&mut self, identity: EnrichmentIdentity, preview: Option<&(PreviewVersion, u64)>) {
+    fn select(&mut self, identity: EnrichmentIdentity, preview: Option<&PreviewToken>) {
         if let Some(active) = &self.active {
             let matching = active.identity == identity;
             active.selected.store(matching, Ordering::Release);
@@ -249,10 +257,7 @@ impl EnrichmentQueue {
     fn accepts_preview(&self, request: &EnrichmentRequest, source: &super::preview::PreviewSource) -> bool {
         request.generation == self.generation
             && request.is_current()
-            && request
-                .preview
-                .as_ref()
-                .is_some_and(|(version, generation)| source.accepts(version, *generation))
+            && request.preview.as_ref().is_some_and(|token| source.accepts(token))
     }
 
     /// Releases admission only after the blocking task has been awaited, never merely cancelled.
@@ -332,7 +337,11 @@ impl EnrichmentIdentity {
 
     /// Rejects source replacement before every expensive stage and publication.
     fn matches_disk(&self) -> bool {
-        file_identity(&self.path) == Some((self.file_size, self.modified_time_ms))
+        file_identity(&self.path)
+            == Some(audiobatch_core::record::FileIdentity {
+                file_size: self.file_size,
+                modified_time_ms: self.modified_time_ms,
+            })
     }
 
     /// Checks a result row without replacing any measurement or operation fields.
@@ -477,7 +486,7 @@ impl AppView {
             // so parts are adopted promptly without a polling timer.
             loop {
                 let disconnected = woken.recv().await.is_err();
-                let (parts, _) = super::drain_events(&receiver);
+                let parts = super::drain_events(&receiver).batch;
                 if !parts.is_empty() {
                     let _ = this.update(cx, |view, cx| {
                         for part in parts {

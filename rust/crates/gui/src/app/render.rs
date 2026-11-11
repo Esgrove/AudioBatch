@@ -32,7 +32,7 @@ use gpui_kit::{
 
 use super::panel_widths::{PreviewPanel, baseline_widths, compact_controls_width};
 use super::{
-    APP_TITLE, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
+    APP_TITLE, ActivityProgress, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
     TABLE_FRAME_BORDER, content_size,
 };
 use crate::control_ids;
@@ -118,6 +118,13 @@ pub(super) struct PreviewStartupFit {
     complete: bool,
 }
 
+/// Presentation values prepared together before the main frame is composed.
+struct PreparedFrame {
+    progress: Option<f32>,
+    content_width: f32,
+    workspace_height: f32,
+}
+
 impl PreviewStartupFit {
     /// Commits once after stable valid geometry and platform readiness, with a bounded platform fallback.
     fn observe(&mut self, geometry: (f32, f32), platform_ready: bool) -> bool {
@@ -189,10 +196,10 @@ impl AppView {
     }
 
     /// Sets the window title, with the activity and its progress while a run is in progress.
-    fn update_window_title(&mut self, progress: Option<(&str, f32)>, window: &mut Window) {
+    fn update_window_title(&mut self, progress: Option<ActivityProgress>, window: &mut Window) {
         let title = progress.map_or_else(
             || String::from(APP_TITLE),
-            |(activity, fraction)| format!("{APP_TITLE} - {activity} {:.0}%", fraction * 100.0),
+            |progress| format!("{APP_TITLE} - {} {:.0}%", progress.activity, progress.fraction * 100.0),
         );
         if title != self.window_title {
             window.set_window_title(&title);
@@ -240,7 +247,12 @@ impl AppView {
         } else {
             self.enrichment.progress().map_or_else(
                 || self.status.clone(),
-                |(completed, total)| SharedString::from(format!("Background previews: {completed}/{total} files")),
+                |progress| {
+                    SharedString::from(format!(
+                        "Background previews: {}/{} files",
+                        progress.completed, progress.total
+                    ))
+                },
             )
         };
         div()
@@ -536,7 +548,7 @@ impl Focusable for AppView {
 
 impl AppView {
     /// Synchronizes table sizing and pending controls before composing the main frame.
-    fn prepare_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> (Option<f32>, f32, f32) {
+    fn prepare_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> PreparedFrame {
         // A removed or disabled slider must not strand the window's contextual action path.
         let slider_enabled = [
             !self.preview_compact,
@@ -562,7 +574,11 @@ impl AppView {
         });
         self.sync_gain_slider(window, cx);
         self.apply_pending_zoom_reset(window, cx);
-        (progress.map(|(_, fraction)| fraction), content_width, workspace_height)
+        PreparedFrame {
+            progress: progress.map(|progress| progress.fraction),
+            content_width,
+            workspace_height,
+        }
     }
 }
 
@@ -595,7 +611,11 @@ impl AppView {
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (progress, content_width, workspace_height) = self.prepare_frame(window, cx);
+        let PreparedFrame {
+            progress,
+            content_width,
+            workspace_height,
+        } = self.prepare_frame(window, cx);
         Self::on_option_actions(div().id("app"), cx)
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)

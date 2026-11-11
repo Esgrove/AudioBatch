@@ -27,7 +27,10 @@ fn completion_gate_and_one_active_reader_are_required() {
 #[test]
 fn foreground_run_allows_selected_cache_reads_but_defers_repairs() {
     let file = tempfile::NamedTempFile::new().expect("source");
-    let (file_size, modified_time_ms) = file_identity(file.path()).expect("source identity");
+    let audiobatch_core::record::FileIdentity {
+        file_size,
+        modified_time_ms,
+    } = file_identity(file.path()).expect("source identity");
     let selected = EnrichmentIdentity {
         path: file.path().to_path_buf(),
         file_size,

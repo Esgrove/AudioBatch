@@ -49,6 +49,13 @@ pub(super) struct RunProgress {
     failed: usize,
 }
 
+/// Events already received, with the channel's terminal state kept distinct from an empty batch.
+#[non_exhaustive]
+pub(super) struct DrainedEvents<T> {
+    pub(super) batch: Vec<T>,
+    pub(super) disconnected: bool,
+}
+
 impl RunProgress {
     /// Starts tracking an analysis run and its elapsed time.
     fn new(run_id: u64, kind: RunKind) -> Self {
@@ -195,7 +202,7 @@ impl AppView {
             drain.detach();
         }
         self.analysis_workers += 1;
-        let (run_id, receiver) = coordinator.start(AnalysisOptions {
+        let audiobatch_core::coordinator::AnalysisRun { run_id, receiver } = coordinator.start(AnalysisOptions {
             input_paths: inputs,
             recursive: true,
             refresh,
@@ -362,13 +369,23 @@ impl AppView {
 
 /// Takes every event waiting in a coordinator channel.
 /// Returns the events and whether the channel is disconnected, which means the run has no more events.
-pub(super) fn drain_events<T>(receiver: &Receiver<T>) -> (Vec<T>, bool) {
+pub(super) fn drain_events<T>(receiver: &Receiver<T>) -> DrainedEvents<T> {
     let mut batch = Vec::new();
     loop {
         match receiver.try_recv() {
             Ok(event) => batch.push(event),
-            Err(TryRecvError::Empty) => return (batch, false),
-            Err(TryRecvError::Disconnected) => return (batch, true),
+            Err(TryRecvError::Empty) => {
+                return DrainedEvents {
+                    batch,
+                    disconnected: false,
+                };
+            }
+            Err(TryRecvError::Disconnected) => {
+                return DrainedEvents {
+                    batch,
+                    disconnected: true,
+                };
+            }
         }
     }
 }
@@ -383,7 +400,7 @@ fn log_open_path(path: &std::path::Path) {
 fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -> Task<()> {
     cx.spawn(async move |this, cx| {
         loop {
-            let (batch, disconnected) = drain_events(&receiver);
+            let DrainedEvents { batch, disconnected } = drain_events(&receiver);
             if !batch.is_empty()
                 && this
                     .update(cx, |view, cx| view.apply_analysis_events(batch, cx))
@@ -406,6 +423,29 @@ fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -
 #[cfg(test)]
 mod test_run_progress {
     use super::*;
+
+    #[test]
+    fn event_drain_distinguishes_empty_connected_and_terminal_batches() {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let empty = drain_events(&receiver);
+        assert_eq!(empty.batch, [] as [i32; 0]);
+        assert!(!empty.disconnected);
+
+        sender.send(1).expect("first event");
+        sender.send(2).expect("second event");
+        let pending = drain_events(&receiver);
+        assert_eq!(pending.batch, [1, 2]);
+        assert!(!pending.disconnected);
+
+        sender.send(3).expect("final event");
+        drop(sender);
+        let terminal = drain_events(&receiver);
+        assert_eq!(terminal.batch, [3]);
+        assert!(terminal.disconnected);
+        let exhausted = drain_events(&receiver);
+        assert_eq!(exhausted.batch, [] as [i32; 0]);
+        assert!(exhausted.disconnected);
+    }
 
     #[test]
     fn summary_counts_fresh_cached_and_failed_results() {

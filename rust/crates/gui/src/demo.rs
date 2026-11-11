@@ -27,6 +27,13 @@ pub struct DemoRandom {
     state: u64,
 }
 
+/// Generated overview and loudness history for the same synthetic preview timeline.
+#[non_exhaustive]
+pub struct DemoWaveform {
+    pub overview: Arc<WaveformOverview>,
+    pub loudness: Arc<ShortTermLoudnessHistory>,
+}
+
 impl DemoRandom {
     /// Creates a generator from a non-zero seed.
     #[must_use]
@@ -91,7 +98,7 @@ pub fn advance_row(row: &mut ResultRow, random: &mut DemoRandom) {
 
 /// Generates a three minute overview and loudness history with a varying envelope.
 #[must_use]
-pub fn demo_waveform() -> (Arc<WaveformOverview>, Arc<ShortTermLoudnessHistory>) {
+pub fn demo_waveform() -> DemoWaveform {
     let total_frames = u64::from(DEMO_SAMPLE_RATE * DEMO_SECONDS);
     let block = DEMO_SAMPLE_RATE as usize / 10;
     let mut builder = WaveformBuilder::new(2, Some(total_frames));
@@ -118,7 +125,10 @@ pub fn demo_waveform() -> (Arc<WaveformOverview>, Arc<ShortTermLoudnessHistory>)
         length_in_samples: total_frames,
         samples_per_point: DEMO_SAMPLE_RATE / 10,
     });
-    (overview, history)
+    DemoWaveform {
+        overview,
+        loudness: history,
+    }
 }
 
 /// Generates a plausible record for a row.

@@ -646,10 +646,21 @@ mod integration_tests {
 
     use super::*;
 
+    /// Chain view and its retained event subscription, kept alive for the driven workflow.
+    struct OpenedChain {
+        handle: gpui_kit::AnyWindowHandle,
+        view: Entity<ChainView>,
+        _subscription: gpui_kit::Subscription,
+    }
+
     #[gpui_kit::test]
     fn rescan_button_emits_request_and_is_disabled_while_scanning(cx: &mut TestAppContext) {
         let events = Rc::new(RefCell::new(Vec::new()));
-        let (handle, view, _subscription) = cx.update(|cx| {
+        let OpenedChain {
+            handle,
+            view,
+            _subscription,
+        } = cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
             let (handle, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -660,7 +671,11 @@ mod integration_tests {
             let subscription = cx.subscribe(&view, move |_, event: &ChainEvent, _| {
                 events.borrow_mut().push(event.clone());
             });
-            (handle, view, subscription)
+            OpenedChain {
+                handle,
+                view,
+                _subscription: subscription,
+            }
         });
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);

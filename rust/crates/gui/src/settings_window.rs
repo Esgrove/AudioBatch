@@ -754,8 +754,14 @@ mod integration_tests {
 
     use super::*;
 
+    /// Production preferences view and the framework handle of its owning window.
+    struct OpenedSettings {
+        handle: AnyWindowHandle,
+        view: Entity<SettingsView>,
+    }
+
     /// Opens the production settings view with enough space to exercise every preference without audio hardware.
-    fn open_settings(cx: &TestAppContext) -> (AnyWindowHandle, Entity<SettingsView>) {
+    fn open_settings(cx: &TestAppContext) -> OpenedSettings {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -774,12 +780,12 @@ mod integration_tests {
             )
             .expect("opens the settings view")
         });
-        (window, view)
+        OpenedSettings { handle: window, view }
     }
 
     #[gpui_kit::test]
     fn gain_adjusted_metrics_are_enabled_by_default_and_can_be_toggled(cx: &mut TestAppContext) {
-        let (handle, view) = open_settings(cx);
+        let OpenedSettings { handle, view } = open_settings(cx);
         for enabled in [false, true] {
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
@@ -796,7 +802,7 @@ mod integration_tests {
 
     #[gpui_kit::test]
     fn loudness_range_remains_editable_when_graph_is_hidden(cx: &mut TestAppContext) {
-        let (handle, view) = open_settings(cx);
+        let OpenedSettings { handle, view } = open_settings(cx);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             if window.find("show-loudness-graph").checked() == Some(true) {
@@ -824,7 +830,7 @@ mod integration_tests {
 
     #[gpui_kit::test]
     fn overload_controls_accept_all_eight_independent_combinations(cx: &mut TestAppContext) {
-        let (handle, view) = open_settings(cx);
+        let OpenedSettings { handle, view } = open_settings(cx);
         for sample in [false, true] {
             for true_peak in [false, true] {
                 for lines in [false, true] {
@@ -856,7 +862,7 @@ mod integration_tests {
 
     #[gpui_kit::test]
     fn preview_selector_uses_keyboard_and_retains_its_identity_when_synced(cx: &mut TestAppContext) {
-        let (handle, view) = open_settings(cx);
+        let OpenedSettings { handle, view } = open_settings(cx);
         let selector = cx.read(|cx| view.read(cx).preview_view_select.entity_id());
         for mode in PreviewViewMode::ALL {
             if mode != PreviewViewMode::Waveform {

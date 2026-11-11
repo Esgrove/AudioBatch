@@ -37,6 +37,12 @@ pub(super) struct SpectrogramRaster {
     image: Arc<RenderImage>,
 }
 
+/// Distinct true-source clipping and padded-grid image footprints for the same raster projection.
+struct RasterBounds {
+    clip: Bounds<Pixels>,
+    image: Bounds<Pixels>,
+}
+
 impl SpectrogramRaster {
     /// Converts low-frequency-first column-major intensities to top-down row-major BGRA storage.
     pub(super) fn new(source: Arc<SpectrogramData>) -> Self {
@@ -73,7 +79,10 @@ impl SpectrogramRaster {
 
     /// Paints a cropped full grid without stretching the final partial column to source EOF.
     pub(super) fn paint(&self, viewport: Viewport, window: &mut Window) {
-        let (clip, image_bounds) = raster_bounds(&self.source, viewport);
+        let RasterBounds {
+            clip,
+            image: image_bounds,
+        } = raster_bounds(&self.source, viewport);
         if let Err(error) = window.paint_image(
             clip,
             image_bounds,
@@ -94,7 +103,7 @@ pub(super) fn paint_background(plot: Bounds<Pixels>, window: &mut Window) {
 }
 
 /// Projects the padded grid separately from the true decoded source extent.
-fn raster_bounds(source: &SpectrogramData, viewport: Viewport) -> (Bounds<Pixels>, Bounds<Pixels>) {
+fn raster_bounds(source: &SpectrogramData, viewport: Viewport) -> RasterBounds {
     let rate = f64::from(source.sample_rate());
     let duration = source.length_in_frames() as f64 / rate;
     let grid_duration = source.samples_per_column() as f64 * source.column_count() as f64 / rate;
@@ -112,7 +121,10 @@ fn raster_bounds(source: &SpectrogramData, viewport: Viewport) -> (Bounds<Pixels
         point(px(start), viewport.plot.bottom() - height),
         size(px(grid_finish - start), height),
     );
-    (viewport.plot.intersect(&source_bounds), image_bounds)
+    RasterBounds {
+        clip: viewport.plot.intersect(&source_bounds),
+        image: image_bounds,
+    }
 }
 
 /// Draws fixed reference ticks across a Mel range extending to at least 20 kHz.
@@ -212,10 +224,13 @@ mod test_projection {
             length: 1.1,
             plot: Bounds::new(point(px(10.0), px(20.0)), size(px(110.0), px(80.0))),
         };
-        let (clip, image) = raster_bounds(&source, viewport);
+        let RasterBounds { clip, image } = raster_bounds(&source, viewport);
         assert!((f32::from(clip.size.width) - 110.0).abs() < 0.001);
         assert!((f32::from(image.size.width) - 204.8).abs() < 0.001);
-        let (zoom_clip, zoom_image) = raster_bounds(
+        let RasterBounds {
+            clip: zoom_clip,
+            image: zoom_image,
+        } = raster_bounds(
             &source,
             Viewport {
                 start: 1.0,
@@ -237,7 +252,7 @@ mod test_projection {
             length: 1024.0 / 8000.0,
             plot: Bounds::new(point(px(10.0), px(20.0)), size(px(110.0), px(80.0))),
         };
-        let (_, image) = raster_bounds(&source, viewport);
+        let image = raster_bounds(&source, viewport).image;
         assert!(image.origin.y > viewport.plot.origin.y);
         assert!((f32::from(image.bottom() - viewport.plot.bottom())).abs() < 0.001);
         assert!((FREQUENCIES[9] - 20_000.0).abs() < f64::EPSILON);
@@ -252,7 +267,7 @@ mod test_projection {
             length: 1024.0 / 96_000.0,
             plot: Bounds::new(point(px(10.0), px(20.0)), size(px(110.0), px(80.0))),
         };
-        let (clip, image) = raster_bounds(&source, viewport);
+        let RasterBounds { clip, image } = raster_bounds(&source, viewport);
         assert!((f32::from(image.origin.y - viewport.plot.origin.y)).abs() < f32::EPSILON);
         assert!((f32::from(image.size.height - viewport.plot.size.height)).abs() < f32::EPSILON);
         assert!((f32::from(clip.size.height - viewport.plot.size.height)).abs() < f32::EPSILON);

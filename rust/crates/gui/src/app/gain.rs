@@ -30,6 +30,12 @@ const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
 /// How long gain edits must rest before their latest values are written to the cache.
 const GAIN_STORE_DELAY: Duration = Duration::from_millis(500);
 
+/// Independent linear gains authorized for decoded audio and static waveform presentation.
+struct PreviewGains {
+    audible: f32,
+    display: f32,
+}
+
 impl AppView {
     /// Clears the custom gain of the selected files, in the table and in the cache.
     pub(super) fn clear_selected_gain(&mut self, cx: &mut Context<Self>) {
@@ -154,7 +160,7 @@ impl AppView {
     /// An absent or mismatched loaded source gets unity audible gain instead of a different file's override.
     /// The player applies it only in front of the plugin chain, so a plain preview plays the file as it is.
     pub(super) fn apply_preview_gain(&self, cx: &mut Context<Self>) {
-        let (audible, display) = preview_gains(
+        let PreviewGains { audible, display } = preview_gains(
             &self.preview_source,
             self.player.as_ref().and_then(Player::loaded_path),
             self.selected_record(cx),
@@ -202,9 +208,12 @@ pub(super) fn take_pending_gains(
 }
 
 /// Separates audible authority from static display gain when no decoder is loaded.
-fn preview_gains(source: &PreviewSource, loaded_path: Option<&Path>, record: Option<&AnalysisRecord>) -> (f32, f32) {
+fn preview_gains(source: &PreviewSource, loaded_path: Option<&Path>, record: Option<&AnalysisRecord>) -> PreviewGains {
     let Some(record) = record else {
-        return (1.0, 1.0);
+        return PreviewGains {
+            audible: 1.0,
+            display: 1.0,
+        };
     };
     let display = if presentation_matches_source(source, loaded_path, record) {
         record.custom_gain_linear()
@@ -216,7 +225,7 @@ fn preview_gains(source: &PreviewSource, loaded_path: Option<&Path>, record: Opt
     } else {
         1.0
     };
-    (audible, display)
+    PreviewGains { audible, display }
 }
 
 #[cfg(test)]
@@ -230,7 +239,10 @@ mod test_preview_gain_authority {
 
     /// Makes a ready record for the actual source bytes without opening an audio device.
     fn record(path: &Path) -> AnalysisRecord {
-        let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+        let audiobatch_core::record::FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path).expect("source identity");
         AnalysisRecord {
             path: path.to_path_buf(),
             file_size,
@@ -247,7 +259,7 @@ mod test_preview_gain_authority {
         let record = record(file.path());
         let mut source = PreviewSource::default();
         source.begin(file.path());
-        let (audible, display) = preview_gains(&source, Some(file.path()), Some(&record));
+        let PreviewGains { audible, display } = preview_gains(&source, Some(file.path()), Some(&record));
         assert!((audible - record.custom_gain_linear()).abs() < f32::EPSILON);
         assert!((display - audible).abs() < f32::EPSILON);
     }
@@ -257,7 +269,7 @@ mod test_preview_gain_authority {
         let file = tempfile::NamedTempFile::new().expect("source");
         let record = record(file.path());
         let source = PreviewSource::default();
-        let (audible, display) = preview_gains(&source, None, Some(&record));
+        let PreviewGains { audible, display } = preview_gains(&source, None, Some(&record));
         assert!((audible - 1.0).abs() < f32::EPSILON);
         assert!((display - record.custom_gain_linear()).abs() < f32::EPSILON);
     }
@@ -271,12 +283,12 @@ mod test_preview_gain_authority {
         file.write_all(b"replacement").expect("replacement bytes");
         let current_record = record(file.path());
         for record in [&old_record, &current_record] {
-            let (audible, display) = preview_gains(&source, Some(file.path()), Some(record));
+            let PreviewGains { audible, display } = preview_gains(&source, Some(file.path()), Some(record));
             assert!((audible - 1.0).abs() < f32::EPSILON);
             assert!((display - 1.0).abs() < f32::EPSILON);
         }
         source.begin(file.path());
-        let (audible, _) = preview_gains(&source, Some(file.path()), Some(&current_record));
+        let audible = preview_gains(&source, Some(file.path()), Some(&current_record)).audible;
         assert!((audible - current_record.custom_gain_linear()).abs() < f32::EPSILON);
     }
 
@@ -286,10 +298,10 @@ mod test_preview_gain_authority {
         let record = record(file.path());
         let mut source = PreviewSource::default();
         source.begin(file.path());
-        let (wrong_path_gain, _) = preview_gains(&source, Some(Path::new("another.wav")), Some(&record));
+        let wrong_path_gain = preview_gains(&source, Some(Path::new("another.wav")), Some(&record)).audible;
         assert!((wrong_path_gain - 1.0).abs() < f32::EPSILON);
         source.clear();
-        let (cleared_gain, _) = preview_gains(&source, Some(file.path()), Some(&record));
+        let cleared_gain = preview_gains(&source, Some(file.path()), Some(&record)).audible;
         assert!((cleared_gain - 1.0).abs() < f32::EPSILON);
     }
 }

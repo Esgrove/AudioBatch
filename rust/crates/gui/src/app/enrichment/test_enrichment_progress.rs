@@ -4,7 +4,10 @@ use super::*;
 
 /// Captures real identities so completion tests exercise ordinary source validation.
 fn identity(path: &Path) -> EnrichmentIdentity {
-    let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+    let audiobatch_core::record::FileIdentity {
+        file_size,
+        modified_time_ms,
+    } = file_identity(path).expect("source identity");
     EnrichmentIdentity {
         path: path.to_path_buf(),
         file_size,
@@ -22,19 +25,19 @@ fn progress_counts_unique_candidates_not_selected_retries() {
     queue.enqueue(identity(first.path()), false);
     queue.enqueue(identity(first.path()), true);
     queue.enqueue(identity(second.path()), false);
-    assert_eq!(queue.progress(), Some((0, 2)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 2 }));
     let active = queue.take_next(Some(first.path()), None, true).expect("first repair");
-    assert_eq!(queue.progress(), Some((0, 2)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 2 }));
     queue.complete(&active);
-    assert_eq!(queue.progress(), Some((1, 2)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 1, total: 2 }));
     queue.enqueue(identity(first.path()), true);
-    assert_eq!(queue.progress(), Some((1, 2)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 1, total: 2 }));
     let retry = queue
         .take_next(Some(first.path()), None, true)
         .expect("selected lookup");
     assert!(retry.artifacts_attempted);
     queue.complete(&retry);
-    assert_eq!(queue.progress(), Some((1, 2)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 1, total: 2 }));
     let remaining = queue.take_next(None, None, true).expect("remaining repair");
     queue.complete(&remaining);
     assert_eq!(queue.progress(), None);
@@ -54,15 +57,15 @@ fn foreground_and_cancelled_readers_do_not_report_completed_repairs() {
     assert_eq!(queue.progress(), None);
     queue.complete(&cached);
     queue.gate_open = true;
-    assert_eq!(queue.progress(), Some((0, 1)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 1 }));
     let repair = queue.take_next(Some(file.path()), None, true).expect("repair");
     queue.pause();
     assert_eq!(queue.progress(), None);
     queue.gate_open = true;
-    assert_eq!(queue.progress(), Some((0, 1)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 1 }));
     assert!(queue.take_next(Some(file.path()), None, true).is_none());
     queue.complete(&repair);
-    assert_eq!(queue.progress(), Some((0, 1)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 1 }));
     assert!(
         !queue
             .take_next(Some(file.path()), None, true)
@@ -84,10 +87,10 @@ fn invalidated_completion_cannot_change_new_generation_progress() {
     assert_eq!(queue.progress(), None);
     queue.gate_open = true;
     queue.enqueue(identity(second.path()), false);
-    assert_eq!(queue.progress(), Some((0, 1)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 1 }));
     assert!(queue.take_next(None, None, true).is_none());
     queue.complete(&old);
-    assert_eq!(queue.progress(), Some((0, 1)));
+    assert_eq!(queue.progress(), Some(EnrichmentProgress { completed: 0, total: 1 }));
     let current = queue.take_next(None, None, true).expect("new repair");
     queue.complete(&current);
     assert_eq!(queue.progress(), None);

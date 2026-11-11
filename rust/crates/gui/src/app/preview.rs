@@ -37,7 +37,7 @@ const LIVE_CAPTURE_TIMEOUT: Duration = Duration::from_millis(50);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PreviewVersion {
     path: PathBuf,
-    identity: (u64, i64),
+    identity: audiobatch_core::record::FileIdentity,
 }
 
 /// Tracks the source captured before a decoder load and invalidates callbacks across same-path reloads.
@@ -45,6 +45,14 @@ pub(super) struct PreviewVersion {
 pub(super) struct PreviewSource {
     version: Option<PreviewVersion>,
     generation: u64,
+}
+
+/// An immutable source capture paired with the load generation that authorized an asynchronous request.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PreviewToken {
+    version: PreviewVersion,
+    pub(super) generation: u64,
 }
 
 impl PreviewVersion {
@@ -60,7 +68,8 @@ impl PreviewVersion {
     fn matches_record(&self, record: &AnalysisRecord) -> bool {
         record.is_ready()
             && record.path == self.path
-            && (record.file_size, record.modified_time_ms) == self.identity
+            && record.file_size == self.identity.file_size
+            && record.modified_time_ms == self.identity.modified_time_ms
             && self.matches_disk()
     }
 
@@ -84,13 +93,18 @@ impl PreviewSource {
     }
 
     /// Returns an immutable request token for asynchronous tag work.
-    pub(super) fn token(&self) -> Option<(PreviewVersion, u64)> {
-        Some((self.version.clone()?, self.generation))
+    pub(super) fn token(&self) -> Option<PreviewToken> {
+        Some(PreviewToken {
+            version: self.version.clone()?,
+            generation: self.generation,
+        })
     }
 
     /// Rejects callbacks from an older load even when the path and filesystem metadata are equal.
-    pub(super) fn accepts(&self, version: &PreviewVersion, generation: u64) -> bool {
-        generation == self.generation && self.version.as_ref() == Some(version) && version.matches_disk()
+    pub(super) fn accepts(&self, token: &PreviewToken) -> bool {
+        token.generation == self.generation
+            && self.version.as_ref() == Some(&token.version)
+            && token.version.matches_disk()
     }
 
     /// Reports whether the current decoder belongs to the selected source version.
@@ -292,10 +306,10 @@ mod test_preview_source {
         let file = tempfile::NamedTempFile::new().expect("temporary source");
         let mut source = PreviewSource::default();
         source.begin(file.path());
-        let (version, generation) = source.token().expect("captured source");
-        assert!(source.accepts(&version, generation));
+        let token = source.token().expect("captured source");
+        assert!(source.accepts(&token));
         source.begin(file.path());
-        assert!(!source.accepts(&version, generation));
+        assert!(!source.accepts(&token));
         assert!(!source.needs_reload(file.path(), Some(file.path())));
         source.clear();
         assert!(source.needs_reload(file.path(), Some(file.path())));
@@ -307,22 +321,25 @@ mod test_preview_source {
         let mut file = tempfile::NamedTempFile::new().expect("temporary source");
         let mut source = PreviewSource::default();
         source.begin(file.path());
-        let (version, generation) = source.token().expect("captured source");
+        let token = source.token().expect("captured source");
         let mut record = AnalysisRecord {
             path: file.path().to_path_buf(),
-            file_size: version.identity.0,
-            modified_time_ms: version.identity.1,
+            file_size: token.version.identity.file_size,
+            modified_time_ms: token.version.identity.modified_time_ms,
             status: audiobatch_core::AnalysisStatus::Analyzed,
             ..AnalysisRecord::default()
         };
         assert!(source.matches_record(&record));
         file.write_all(b"replacement bytes").expect("replace source");
         assert!(source.needs_reload(file.path(), Some(file.path())));
-        assert!(!source.accepts(&version, generation));
+        assert!(!source.accepts(&token));
         assert!(!source.matches_record(&record));
         source.begin(file.path());
         assert!(!source.matches_record(&record));
-        let (file_size, modified_time_ms) = file_identity(file.path()).expect("replacement identity");
+        let audiobatch_core::record::FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(file.path()).expect("replacement identity");
         record.file_size = file_size;
         record.modified_time_ms = modified_time_ms;
         record.status = audiobatch_core::AnalysisStatus::Cached;
