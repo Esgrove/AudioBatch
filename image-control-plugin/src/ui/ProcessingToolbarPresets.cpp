@@ -26,7 +26,6 @@ namespace
 /// Cancel is the non-destructive default for confirmations, including Return and Escape.
 constexpr int ACCEPT_RESULT {1};
 constexpr int CANCEL_RESULT {0};
-constexpr auto NAME_FIELD {"presetName"};
 /// Rejected-file diagnostics remain bounded even for an unexpectedly large directory.
 constexpr std::size_t MAX_VISIBLE_ISSUES {8};
 
@@ -64,19 +63,7 @@ private:
     const PresetDialogPresentation presentation;
 };
 
-/// Retains invalid name input and describes the correction without stealing focus in non-rendering tests.
-void showNameValidation(juce::AlertWindow& window, const juce::String& instructions, const juce::String& error)
-{
-    window.setMessage(instructions + juce::newLine + juce::newLine + error);
-    if (auto* input = window.getTextEditor(NAME_FIELD)) {
-        input->setDescription(error);
-        if (window.getAlpha() > 0.0F) {
-            input->grabKeyboardFocus();
-        }
-    }
-}
-
-/// Names the actual filesystem work in the existing compact status label, without adding another control.
+/// Names filesystem work for the selector and preset-menu tooltips.
 juce::String describeProgress(const PresetOperation operation)
 {
     switch (operation) {
@@ -122,7 +109,7 @@ void performSelectedPresetRequest(const UserPresets& library, const UserPreset& 
             capturePresetResult(completion, library.load(selection));
             break;
         case PresetOperation::update:
-            capturePresetResult(completion, library.update(selection, command.sound));
+            capturePresetResult(completion, library.update(selection, command.name, command.sound));
             break;
         case PresetOperation::rename:
             capturePresetResult(completion, library.rename(selection, command.name));
@@ -284,6 +271,7 @@ void ProcessingToolbarContent::acceptPresetResult(const PresetRequest& request, 
         return;
     }
     if (request.operation == PresetOperation::saveAs || request.operation == PresetOperation::update) {
+        cancelNameEdit();
         juce::ignoreUnused(
             processor.setSelectedUserPreset(std::move(preset), request.generation, request.comparisonSlot)
         );
@@ -304,6 +292,14 @@ void ProcessingToolbarContent::acceptCompletion(PresetCompletion completion)
     if (completion.error.isNotEmpty()) {
         if (request.operation == PresetOperation::list) {
             listingError = completion.error;
+        } else if (request.operation == PresetOperation::saveAs || request.operation == PresetOperation::update) {
+            nameError = completion.error;
+            if (!nameEditContext) {
+                nameEditContext = request;
+                draftName = request.name;
+                savingAs = request.operation == PresetOperation::saveAs;
+            }
+            presetSelector.beginNameEdit(draftName);
         } else {
             showError(completion.error);
         }
@@ -331,40 +327,50 @@ void ProcessingToolbarContent::loadSelectedPreset()
         updatePresetSelector();
         return;
     }
+    cancelNameEdit();
     auto request = makeRequest(PresetOperation::load);
     request.selection = presets.at(static_cast<std::size_t>(index));
     queueRequest(std::move(request));
     refresh();
 }
 
-/// Offers explicit library actions and distinguishes saved-revision export from library-only import.
-void ProcessingToolbarContent::showPresetMenu()
+/// Builds inspectable menu contents without creating a platform popup window.
+juce::PopupMenu ProcessingToolbarContent::buildPresetMenu() const
 {
-    if (!canInteract()) {
-        return;
-    }
     const bool selected = processor.getSelectedUserPreset().has_value();
-    const auto provenance = processor.getPresetProvenance();
     juce::PopupMenu menu;
-    menu.setLookAndFeel(&dialogLookAndFeel);
+    menu.addItem(static_cast<int>(PresetMenuAction::update), "Save", canSave());
     menu.addItem(static_cast<int>(PresetMenuAction::saveAs), "Save As...");
-    menu.addItem(static_cast<int>(PresetMenuAction::update), "Update saved preset...", selected);
-    menu.addItem(
-        static_cast<int>(PresetMenuAction::reconnect), "Reconnect by UUID (without loading)...", provenance.has_value()
-    );
     menu.addSeparator();
     menu.addItem(static_cast<int>(PresetMenuAction::rename), "Rename...", selected);
     menu.addItem(static_cast<int>(PresetMenuAction::remove), "Delete...", selected);
     menu.addSeparator();
-    menu.addItem(static_cast<int>(PresetMenuAction::importPreset), "Import to Library (without loading)...");
+    menu.addItem(static_cast<int>(PresetMenuAction::importPreset), "Import...");
+    menu.addItem(static_cast<int>(PresetMenuAction::exportPreset), "Export...", selected);
     menu.addItem(
-        static_cast<int>(PresetMenuAction::exportPreset), "Export Saved Preset (not current edits)...", selected
+        static_cast<int>(PresetMenuAction::reconnect), "Reconnect...", processor.getPresetProvenance().has_value()
     );
     menu.addSeparator();
     menu.addItem(static_cast<int>(PresetMenuAction::refresh), "Refresh preset list");
     if (!issues.empty() || listingError.isNotEmpty()) {
         menu.addItem(static_cast<int>(PresetMenuAction::issues), "Preset file errors...");
     }
+    if (nameError.isNotEmpty()) {
+        juce::PopupMenu::Item feedback(nameError);
+        feedback.setEnabled(false);
+        menu.addItem(std::move(feedback));
+    }
+    return menu;
+}
+
+/// Offers concise library actions while retaining diagnostics outside the preset name field.
+void ProcessingToolbarContent::showPresetMenu()
+{
+    if (!canInteract()) {
+        return;
+    }
+    auto menu = buildPresetMenu();
+    menu.setLookAndFeel(&dialogLookAndFeel);
     menuOpen = true;
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     menu.showMenuAsync(
@@ -388,16 +394,16 @@ void ProcessingToolbarContent::handleMenuAction(const int action)
     }
     switch (static_cast<PresetMenuAction>(action)) {
         case PresetMenuAction::saveAs:
-            promptName(false);
+            beginNameEdit(true);
             break;
         case PresetMenuAction::update:
-            confirmUpdate();
+            savePreset();
             break;
         case PresetMenuAction::reconnect:
             confirmReconnect();
             break;
         case PresetMenuAction::rename:
-            promptName(true);
+            beginNameEdit(false);
             break;
         case PresetMenuAction::remove:
             confirmDelete();
@@ -446,9 +452,6 @@ void ProcessingToolbarContent::beginDialog(std::function<void(int)> completion)
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     for (int index = 0; index < dialog->getNumButtons(); ++index) {
         auto* button = dialog->getButton(index);
-        if (button->getComponentID() == "preset-name-accept") {
-            continue;
-        }
         const int result = index == 0 ? ACCEPT_RESULT : CANCEL_RESULT;
         button->onClick = [safeThis, result] {
             if (safeThis != nullptr) {
@@ -474,57 +477,108 @@ void ProcessingToolbarContent::finishDialog(const int result)
     });
 }
 
-/// Keeps invalid input in the same name dialog with inline feedback until the user corrects it or cancels.
-void ProcessingToolbarContent::promptName(const bool renaming)
+/// Reports whether Save has a changed, valid name or sound and a writable bound revision.
+bool ProcessingToolbarContent::canSave() const
 {
-    auto request = makeRequest(renaming ? PresetOperation::rename : PresetOperation::saveAs);
-    if (renaming && !request.selection) {
+    const auto presentation = processor.getPresetPresentation();
+    if (!canInteract() || (nameEditContext && !requestIsCurrent(*nameEditContext))) {
+        return false;
+    }
+    const auto name = currentPresetName();
+    if (UserPresets::validateName(name).failed()) {
+        return false;
+    }
+    if (savingAs) {
+        return nameEditContext.has_value();
+    }
+    return presentation.selection
+        && (presentation.modified || (presentation.provenance && name != presentation.provenance->name));
+}
+
+/// Starts inline naming without changing the current file binding or recalling a matching library name.
+void ProcessingToolbarContent::beginNameEdit(const bool saveAs)
+{
+    if (!canInteract()) {
         return;
     }
-    const juce::String instructions = renaming
-        ? "Choose a new name for the selected user preset."
-        : "Save the current sound as a new user preset. Save As never replaces an existing preset.";
-    dialog = std::make_unique<PresetAlertWindow>(
-        renaming ? "Rename Preset" : "Save Preset As",
-        instructions,
-        juce::MessageBoxIconType::NoIcon,
-        *this,
-        dialogPresentation
-    );
-    dialog->setComponentID("preset-name-dialog");
-    dialog->setLookAndFeel(&dialogLookAndFeel);
-    dialog->addTextEditor(NAME_FIELD, request.provenanceName, "Preset name:");
-    dialog->addButton(renaming ? "Rename" : "Save", ACCEPT_RESULT, juce::KeyPress(juce::KeyPress::returnKey));
-    dialog->addButton("Cancel", CANCEL_RESULT, juce::KeyPress(juce::KeyPress::escapeKey));
-    const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
-    const juce::Component::SafePointer<juce::AlertWindow> safeDialog(dialog.get());
-    auto* accept = dialog->getButton(0);
-    if (accept != nullptr) {
-        accept->setComponentID("preset-name-accept");
-        accept->onClick = [safeThis, safeDialog, instructions] {
-            if (safeThis == nullptr || safeDialog == nullptr) {
-                return;
-            }
-            const auto validation = UserPresets::validateName(safeDialog->getTextEditorContents(NAME_FIELD));
-            if (validation.failed()) {
-                showNameValidation(*safeDialog, instructions, validation.getErrorMessage());
-                return;
-            }
-            safeThis->finishDialog(ACCEPT_RESULT);
-        };
+    if (nameEditContext && !requestIsCurrent(*nameEditContext)) {
+        cancelNameEdit();
     }
-    beginDialog([safeThis, safeDialog, request](const int result) mutable {
-        if (safeThis == nullptr || safeThis->closing || safeDialog == nullptr) {
-            return;
-        }
-        const auto name = safeDialog->getTextEditorContents(NAME_FIELD);
-        safeThis->dialog.reset();
-        if (result == ACCEPT_RESULT) {
-            request.name = name;
-            safeThis->queueRequest(std::move(request));
-        }
-        safeThis->refresh();
-    });
+    if (!nameEditContext) {
+        nameEditContext = makeRequest(PresetOperation::update);
+        draftName = nameEditContext->provenanceName;
+    } else {
+        draftName = presetSelector.getNameText();
+    }
+    savingAs = savingAs || saveAs || !nameEditContext->selection;
+    nameError.clear();
+    presetSelector.beginNameEdit(draftName);
+    updatePresetSelector();
+}
+
+/// Discards only the local name draft. Sound and library identity remain unchanged.
+void ProcessingToolbarContent::cancelNameEdit()
+{
+    nameEditContext.reset();
+    draftName.clear();
+    nameError.clear();
+    savingAs = false;
+    presetSelector.endNameEdit();
+    shownPresetText.reset();
+    updatePresetSelector();
+}
+
+/// Enter commits Save As, while ordinary name entry remains a draft until explicit Save.
+void ProcessingToolbarContent::commitNameEdit()
+{
+    if (const auto validation = UserPresets::validateName(currentPresetName()); validation.failed()) {
+        nameError = validation.getErrorMessage();
+        updatePresetSelector();
+        return;
+    }
+    if (savingAs) {
+        savePreset();
+    } else {
+        presetSelector.endNameEdit();
+        updatePresetSelector();
+    }
+}
+
+/// Saves the current name and sound in one revision-checked request without an extra confirmation.
+void ProcessingToolbarContent::savePreset()
+{
+    if (!canInteract()) {
+        return;
+    }
+    if (nameEditContext && !requestIsCurrent(*nameEditContext)) {
+        cancelNameEdit();
+        return;
+    }
+    const auto name = currentPresetName();
+    const auto validation = UserPresets::validateName(name);
+    if (validation.failed()) {
+        nameError = validation.getErrorMessage();
+        updatePresetSelector();
+        return;
+    }
+    if (!canSave()) {
+        return;
+    }
+    auto request = makeRequest(savingAs ? PresetOperation::saveAs : PresetOperation::update);
+    if (nameEditContext) {
+        // Keep the draft's original context while capturing the latest sound. Queue admission rejects any restore.
+        auto context = *nameEditContext;
+        context.operation = request.operation;
+        context.sound = std::move(request.sound);
+        request = std::move(context);
+    }
+    request.name = name;
+    if (nameEditContext) {
+        draftName = name;
+    }
+    presetSelector.endNameEdit();
+    queueRequest(std::move(request));
+    refresh();
 }
 
 /// Owns an asynchronous dialog with lifetime-checked callbacks and Cancel as the safe confirmation default.
@@ -576,26 +630,6 @@ void ProcessingToolbarContent::showError(const juce::String& message)
     showDialog("ImageControl Presets", message, juce::MessageBoxIconType::WarningIcon, "OK", {});
 }
 
-/// Confirms the named target and captured revision before writing the captured current sound to disk.
-void ProcessingToolbarContent::confirmUpdate()
-{
-    auto request = makeRequest(PresetOperation::update);
-    if (!request.selection) {
-        return;
-    }
-    const auto message = "Replace the saved sound in " + request.selection->name.quoted()
-        + " with the captured current sound? The exact saved revision will be checked before writing. "
-          "This library update cannot be undone. Use Save As to keep both presets.";
-    const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
-    showDialog(
-        "Update Saved Preset", message, juce::MessageBoxIconType::WarningIcon, "Update", [safeThis, request] mutable {
-            if (safeThis != nullptr) {
-                safeThis->queueRequest(std::move(request));
-            }
-        }
-    );
-}
-
 /// Matches only the persistent UUID and confirms an exact displayed revision before a fresh worker validation.
 /// Binding must not load sound or replace the restored modified-state baseline.
 void ProcessingToolbarContent::confirmReconnect()
@@ -607,10 +641,8 @@ void ProcessingToolbarContent::confirmReconnect()
     const auto candidate = std::ranges::find(presets, request.provenanceId, &UserPreset::id);
     if (candidate == presets.end()) {
         showError(
-            "No valid library preset with UUID " + request.provenanceId + " is available for "
-            + request.provenanceName.quoted()
-            + ". The stored name and baseline are retained. Refresh the list or use Save As. "
-              "A matching name alone cannot reconnect a preset."
+            "The original preset file is unavailable for " + request.provenanceName.quoted()
+            + ". Refresh the list or use Save As to create a new preset."
         );
         return;
     }
@@ -620,18 +652,13 @@ void ProcessingToolbarContent::confirmReconnect()
         ? juce::String("The library sound differs from the project's stored preset baseline.")
         : juce::String("The library sound matches the project's stored preset baseline.");
     const auto message = "Reconnect stored preset " + request.provenanceName.quoted() + " to library preset "
-        + candidate->name.quoted() + "?" + juce::newLine + "UUID: " + candidate->id + juce::newLine + discrepancy
-        + juce::newLine
+        + candidate->name.quoted() + "?" + juce::newLine + discrepancy + juce::newLine
         + "The exact saved revision will be read and checked again. No sound is loaded, "
-          "and the stored name and modified-state baseline stay unchanged. Update, Rename, Delete, and Export "
+          "and the stored name and modified-state baseline stay unchanged. Save, Rename, Delete, and Export "
           "will then target this library revision.";
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     showDialog(
-        "Reconnect Preset Without Loading",
-        message,
-        juce::MessageBoxIconType::QuestionIcon,
-        "Reconnect",
-        [safeThis, request] mutable {
+        "Reconnect Preset", message, juce::MessageBoxIconType::QuestionIcon, "Reconnect", [safeThis, request] mutable {
             if (safeThis != nullptr) {
                 safeThis->queueRequest(std::move(request));
             }
@@ -662,9 +689,8 @@ void ProcessingToolbarContent::confirmDelete()
 void ProcessingToolbarContent::chooseImport()
 {
     auto request = makeRequest(PresetOperation::importPreset);
-    fileChooser = std::make_unique<juce::FileChooser>(
-        "Import ImageControl Preset to Library (Without Loading)", juce::File(), "*.xml", true, false, this
-    );
+    fileChooser
+        = std::make_unique<juce::FileChooser>("Import ImageControl Preset", juce::File(), "*.xml", true, false, this);
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     fileChooser->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -691,7 +717,7 @@ void ProcessingToolbarContent::chooseExport()
         return;
     }
     fileChooser = std::make_unique<juce::FileChooser>(
-        "Export Saved Preset (Not Current Edits) to a New File", request.selection->file, "*.xml", true, false, this
+        "Export Saved Preset", request.selection->file, "*.xml", true, false, this
     );
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     fileChooser->launchAsync(

@@ -90,6 +90,11 @@ public:
         const UserPreset& selection,
         const ProcessingSnapshot& snapshot
     ) const;
+    [[nodiscard]] std::expected<UserPreset, juce::String> update(
+        const UserPreset& selection,
+        const juce::String& name,
+        const ProcessingSnapshot& snapshot
+    ) const;
 
 private:
     /// Immutable parameter schema owned by the processor, which outlives every library operation.

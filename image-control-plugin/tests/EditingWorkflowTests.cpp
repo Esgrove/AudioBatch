@@ -35,6 +35,9 @@ namespace esgrove::image_control::test
 {
 namespace
 {
+/// First whole-editor width fitting the compact 328-pixel preset group and a usable 190-pixel output slider.
+constexpr int INLINE_PRESET_EDITOR_WIDTH {1114};
+
 /// Observes host gesture boundaries and detaches before the processor-owned parameter disappears.
 class EditingGestureCounter final : private juce::AudioProcessorParameter::Listener
 {
@@ -108,6 +111,25 @@ juce::Component* editingControl(juce::Component& parent, const juce::String& ide
     return nullptr;
 }
 
+/// Checks visible siblings for usable, contained, disjoint hit targets in the selected part of their parent.
+void expectEditingControlsContained(const juce::Component& parent, const int maximumTop, const int minimumHeight)
+{
+    std::vector<juce::Rectangle<int>> bounds;
+    for (const auto* child : parent.getChildren()) {
+        if (!child->isVisible() || child->getY() >= maximumTop) {
+            continue;
+        }
+        SCOPED_TRACE(child->getComponentID().toStdString());
+        EXPECT_FALSE(child->getBounds().isEmpty());
+        EXPECT_TRUE(parent.getLocalBounds().contains(child->getBounds()));
+        EXPECT_GE(child->getHeight(), minimumHeight);
+        for (const auto previous : bounds) {
+            EXPECT_FALSE(previous.intersects(child->getBounds()));
+        }
+        bounds.push_back(child->getBounds());
+    }
+}
+
 /// Consumes asynchronous selector messages and disk results with a bounded native event pump.
 void pumpEditing(ProcessingToolbar& toolbar, const std::function<bool()>& done)
 {
@@ -148,14 +170,27 @@ TEST(EditingWorkflow, ToolbarFitsMinimumWidthAndCompactLayout)
     EXPECT_NE(undo->getNormalImage(), nullptr);
     EXPECT_NE(redo->getNormalImage(), nullptr);
     EXPECT_NE(toggle->getNormalImage(), nullptr);
-    for (const int width : {760, 939, 940, 1000, 1200}) {
+    for (const int width :
+         {
+             760,
+             939,
+             940,
+             1000,
+             INLINE_PRESET_EDITOR_WIDTH - 1,
+             INLINE_PRESET_EDITOR_WIDTH,
+             INLINE_PRESET_EDITOR_WIDTH + 1,
+             1200,
+         })
+    {
+        SCOPED_TRACE(width);
         editor.setSize(width, editor.getHeight());
-        EXPECT_EQ(toolbar->getHeight(), PROCESSING_TOOLBAR_HEIGHT);
+        const bool inHeader = width >= INLINE_PRESET_EDITOR_WIDTH;
+        EXPECT_EQ(toolbar->getHeight(), inHeader ? 28 : PROCESSING_TOOLBAR_HEIGHT);
         EXPECT_TRUE(editor.getLocalBounds().contains(toolbar->getBounds()));
         std::vector<juce::Rectangle<int>> headerBounds;
         for (const auto* child : editor.getChildren()) {
-            if (child->isVisible() && child->getY() < toolbar->getY()
-                && (dynamic_cast<const juce::Button*>(child) != nullptr
+            if (child->isVisible() && child->getY() < 36
+                && (child == toolbar || dynamic_cast<const juce::Button*>(child) != nullptr
                     || dynamic_cast<const juce::Label*>(child) != nullptr
                     || dynamic_cast<const juce::Slider*>(child) != nullptr))
             {
@@ -171,6 +206,9 @@ TEST(EditingWorkflow, ToolbarFitsMinimumWidthAndCompactLayout)
         ASSERT_NE(content, nullptr);
         std::vector<juce::Rectangle<int>> rowBounds;
         for (const auto* child : content->getChildren()) {
+            if (!child->isVisible()) {
+                continue;
+            }
             EXPECT_FALSE(child->getBounds().isEmpty());
             EXPECT_TRUE(content->getLocalBounds().contains(child->getBounds()));
             for (const auto bounds : rowBounds) {
@@ -231,7 +269,7 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
     ASSERT_NE(bypass, nullptr);
     int previousSettingsX = -1;
     int previousOutputWidth = -1;
-    for (int width = 760; width <= 1200; ++width) {
+    for (int width = 760; width < INLINE_PRESET_EDITOR_WIDTH; ++width) {
         editor.setSize(width, editor.getHeight());
         EXPECT_GE(mono->getX() - redo->getRight(), 2);
         if (output->getWidth() < 240) {
@@ -255,7 +293,9 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
     for (const int width : {1600, 2400, 4096}) {
         editor.setSize(width, editor.getHeight());
         EXPECT_EQ(output->getWidth(), 240);
-        EXPECT_EQ(toolbarToggle->getRight(), width - 8);
+        EXPECT_FALSE(toolbarToggle->isVisible());
+        EXPECT_TRUE(toolbarToggle->getBounds().isEmpty());
+        EXPECT_EQ(output->getRight(), width - 8);
         std::vector<int> insets;
         for (const auto* control : std::array<const juce::Component*, 4> {mono, delta, bypass, output}) {
             insets.push_back(width - control->getRight());
@@ -268,48 +308,53 @@ TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
     }
 }
 
-/// Every header edge and width moves monotonically during one-pixel resizing and retraces the same geometry.
+/// Each placement's header edges grow monotonically one pixel at a time and retrace identical geometry.
 TEST(EditingWorkflow, HeaderResizingNeverOscillatesOrChangesButtonWidthsBackwards)
 {
     ImageControlProcessor processor;
     ImageControlEditor editor(processor);
-    editor.setSize(760, editor.getHeight());
-    std::vector<juce::Component*> controls;
-    for (auto* child : editor.getChildren()) {
-        if (child->isVisible() && child->getY() < 36
-            && (dynamic_cast<juce::Button*>(child) != nullptr || dynamic_cast<juce::Slider*>(child) != nullptr
-                || dynamic_cast<juce::Label*>(child) != nullptr))
-        {
-            controls.push_back(child);
-        }
-    }
-    ASSERT_FALSE(controls.empty());
-    std::vector<std::vector<juce::Rectangle<int>>> layouts;
-    for (int width = 760; width <= 1300; ++width) {
-        editor.setSize(width, editor.getHeight());
-        std::vector<juce::Rectangle<int>> bounds;
-        for (std::size_t index = 0; index < controls.size(); ++index) {
-            const auto current = controls.at(index)->getBounds();
-            SCOPED_TRACE(controls.at(index)->getName().toStdString());
-            SCOPED_TRACE(width);
-            if (!layouts.empty()) {
-                const auto previous = layouts.back().at(index);
-                EXPECT_GE(current.getX(), previous.getX());
-                EXPECT_LE(current.getX(), previous.getX() + 1);
-                EXPECT_GE(current.getRight(), previous.getRight());
-                EXPECT_LE(current.getRight(), previous.getRight() + 1);
-                EXPECT_GE(current.getWidth(), previous.getWidth());
-                EXPECT_LE(current.getWidth(), previous.getWidth() + 1);
+    for (const auto& [minimumWidth, maximumWidth] :
+         std::array {std::pair {760, INLINE_PRESET_EDITOR_WIDTH - 1}, std::pair {INLINE_PRESET_EDITOR_WIDTH, 1800}})
+    {
+        editor.setSize(minimumWidth, editor.getHeight());
+        std::vector<juce::Component*> controls;
+        for (auto* child : editor.getChildren()) {
+            if (child->isVisible() && child->getY() < 36
+                && (dynamic_cast<juce::Button*>(child) != nullptr || dynamic_cast<juce::Slider*>(child) != nullptr
+                    || dynamic_cast<juce::Label*>(child) != nullptr
+                    || dynamic_cast<ProcessingToolbar*>(child) != nullptr))
+            {
+                controls.push_back(child);
             }
-            bounds.push_back(current);
         }
-        layouts.push_back(bounds);
-    }
-    for (int width = 1300; width >= 760; --width) {
-        editor.setSize(width, editor.getHeight());
-        const auto& expected = layouts.at(static_cast<std::size_t>(width - 760));
-        for (std::size_t index = 0; index < controls.size(); ++index) {
-            EXPECT_EQ(controls.at(index)->getBounds(), expected.at(index));
+        ASSERT_FALSE(controls.empty());
+        std::vector<std::vector<juce::Rectangle<int>>> layouts;
+        for (int width = minimumWidth; width <= maximumWidth; ++width) {
+            editor.setSize(width, editor.getHeight());
+            std::vector<juce::Rectangle<int>> bounds;
+            for (std::size_t index = 0; index < controls.size(); ++index) {
+                const auto current = controls.at(index)->getBounds();
+                SCOPED_TRACE(controls.at(index)->getName().toStdString());
+                SCOPED_TRACE(width);
+                if (!layouts.empty()) {
+                    const auto previous = layouts.back().at(index);
+                    EXPECT_GE(current.getX(), previous.getX());
+                    EXPECT_LE(current.getX(), previous.getX() + 1);
+                    EXPECT_GE(current.getRight(), previous.getRight());
+                    EXPECT_LE(current.getRight(), previous.getRight() + 1);
+                    EXPECT_GE(current.getWidth(), previous.getWidth());
+                    EXPECT_LE(current.getWidth(), previous.getWidth() + 1);
+                }
+                bounds.push_back(current);
+            }
+            layouts.push_back(bounds);
+        }
+        for (int width = maximumWidth; width >= minimumWidth; --width) {
+            editor.setSize(width, editor.getHeight());
+            const auto& expected = layouts.at(static_cast<std::size_t>(width - minimumWidth));
+            for (std::size_t index = 0; index < controls.size(); ++index) {
+                EXPECT_EQ(controls.at(index)->getBounds(), expected.at(index));
+            }
         }
     }
 }
@@ -421,27 +466,68 @@ TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
     auto* slotA = editingControl(editor, "comparison-a");
     auto* selector = editingControl(editor, "preset-selector");
     auto* toggle = editingControl(editor, "processing-toolbar-toggle");
+    auto* redo = editingControl(editor, "processing-redo");
+    auto* output = editingChild<ControlSlider>(editor);
+    juce::Button* mono = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (auto* button = dynamic_cast<juce::Button*>(child); button != nullptr && button->getButtonText() == "Mono") {
+            mono = button;
+        }
+    }
     ASSERT_NE(toolbar, nullptr);
     ASSERT_NE(slotA, nullptr);
     ASSERT_NE(selector, nullptr);
     ASSERT_NE(toggle, nullptr);
+    ASSERT_NE(redo, nullptr);
+    ASSERT_NE(output, nullptr);
+    ASSERT_NE(mono, nullptr);
+    EXPECT_EQ(PROCESSING_TOOLBAR_INLINE_MIN_WIDTH, 328);
+    EXPECT_EQ(PROCESSING_TOOLBAR_MAX_WIDTH, 548);
     slotA->grabKeyboardFocus();
     bool sawInline = false;
     bool sawRow = false;
-    for (int width = 1400; width <= 1800; ++width) {
+    for (const int width :
+         {
+             INLINE_PRESET_EDITOR_WIDTH - 1,
+             INLINE_PRESET_EDITOR_WIDTH,
+             INLINE_PRESET_EDITOR_WIDTH + 1,
+             INLINE_PRESET_EDITOR_WIDTH + 49,
+             INLINE_PRESET_EDITOR_WIDTH + 50,
+             INLINE_PRESET_EDITOR_WIDTH + 51,
+             INLINE_PRESET_EDITOR_WIDTH + 269,
+             INLINE_PRESET_EDITOR_WIDTH + 270,
+             INLINE_PRESET_EDITOR_WIDTH + 271,
+             4096,
+             INLINE_PRESET_EDITOR_WIDTH,
+             INLINE_PRESET_EDITOR_WIDTH - 1,
+         })
+    {
+        SCOPED_TRACE(width);
         editor.setSize(width, editor.getHeight());
         EXPECT_TRUE(slotA->hasKeyboardFocus(false));
         const bool inHeader = toolbar->getY() < 36;
+        EXPECT_EQ(inHeader, width >= INLINE_PRESET_EDITOR_WIDTH);
         sawInline = sawInline || inHeader;
         sawRow = sawRow || !inHeader;
         EXPECT_EQ(toggle->isVisible(), !inHeader);
+        EXPECT_GE(selector->getWidth(), 100);
         EXPECT_LE(selector->getWidth(), 320);
+        if (inHeader) {
+            EXPECT_EQ(toolbar->getX() - redo->getRight(), 4);
+            EXPECT_EQ(mono->getX() - toolbar->getRight(), 4);
+            const int extraWidth = width - INLINE_PRESET_EDITOR_WIDTH;
+            const int outputGrowth = std::min(extraWidth, 50);
+            const int selectorGrowth = std::min(extraWidth - outputGrowth, 220);
+            EXPECT_EQ(toolbar->getWidth(), 328 + selectorGrowth);
+            EXPECT_EQ(selector->getWidth(), 100 + selectorGrowth);
+            EXPECT_EQ(output->getWidth(), 190 + outputGrowth);
+            EXPECT_EQ(output->getRight(), width - 8);
+            EXPECT_TRUE(toggle->getBounds().isEmpty());
+        }
+        expectEditingControlsContained(editor, 36, 1);
         auto* content = toolbar->getChildComponent(0);
         ASSERT_NE(content, nullptr);
-        for (const auto* child : content->getChildren()) {
-            EXPECT_TRUE(content->getLocalBounds().contains(child->getBounds()));
-            EXPECT_GE(child->getHeight(), 24);
-        }
+        expectEditingControlsContained(*content, content->getHeight(), 24);
     }
     EXPECT_TRUE(sawInline);
     EXPECT_TRUE(sawRow);
@@ -454,6 +540,11 @@ TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
     editor.setSize(760, editor.getHeight());
     EXPECT_FALSE(toolbar->isVisible());
     EXPECT_TRUE(toggle->hasKeyboardFocus(false));
+    editor.setSize(INLINE_PRESET_EDITOR_WIDTH, editor.getHeight());
+    EXPECT_TRUE(toolbar->isVisible());
+    EXPECT_FALSE(toggle->isVisible());
+    EXPECT_TRUE(toolbar->hasKeyboardFocus(true));
+    EXPECT_FALSE(static_cast<bool>(processor.getEditorState().getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));
 }
 
 /// Hover affordances stay centered and focusable without requesting a strong selected outline.
@@ -1082,8 +1173,8 @@ TEST(EditingWorkflow, OpenSettingsAndShortcutsTearDownSynchronouslyWithEditor)
     juce::ModalComponentManager::getInstance()->cancelAllModalComponents();
 }
 
-/// Restored preset feedback uses the existing title space only when the selector row is hidden.
-TEST(EditingWorkflow, RestoredPresetIdentityAppearsOnceAndFitsLongNames)
+/// Preset identity stays in the selector, without changing the brand header when its row is hidden.
+TEST(EditingWorkflow, RestoredPresetIdentityStaysInSelectorAndFitsLongNames)
 {
     ImageControlProcessor source;
     UserPreset preset;
@@ -1097,34 +1188,38 @@ TEST(EditingWorkflow, RestoredPresetIdentityAppearsOnceAndFitsLongNames)
     ImageControlProcessor restored;
     restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     ImageControlEditor editor(restored);
-    auto* identity = dynamic_cast<juce::Label*>(editingControl(editor, "header-preset-name"));
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    auto* title = editingChild<juce::Label>(editor);
+    auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(editor, "preset-selector"));
     auto* disclosure = dynamic_cast<juce::Button*>(editingControl(editor, "processing-toolbar-toggle"));
-    ASSERT_NE(identity, nullptr);
+    ASSERT_NE(toolbar, nullptr);
+    ASSERT_NE(title, nullptr);
+    ASSERT_NE(selector, nullptr);
     ASSERT_NE(disclosure, nullptr);
-    EXPECT_TRUE(identity->isVisible());
-    EXPECT_EQ(identity->getText(), preset.name);
-    EXPECT_EQ(identity->getTooltip(), preset.name + " · Slot A");
-    for (const int width : {760, 940, 1200}) {
+    EXPECT_EQ(title->getText(), "ImageControl");
+    for (const int width : {760, 940, INLINE_PRESET_EDITOR_WIDTH - 1, INLINE_PRESET_EDITOR_WIDTH, 2000, 760}) {
         editor.setSize(width, editor.getHeight());
-        EXPECT_TRUE(editor.getLocalBounds().contains(identity->getBounds()));
-        for (auto* child : editor.getChildren()) {
-            if (child != identity && child->isVisible() && dynamic_cast<juce::Button*>(child) != nullptr) {
-                EXPECT_FALSE(identity->getBounds().intersects(child->getBounds()));
+        EXPECT_EQ(editingControl(editor, "header-preset-name"), nullptr);
+        EXPECT_EQ(toolbar->isVisible(), width >= INLINE_PRESET_EDITOR_WIDTH);
+        EXPECT_EQ(selector->getText(), preset.name);
+        EXPECT_LE(selector->getWidth(), 320);
+        EXPECT_EQ(title->getText(), "ImageControl");
+        EXPECT_FLOAT_EQ(title->getFont().getHeight(), 18.0F);
+        EXPECT_EQ(title->getBounds().getCentreY(), 22);
+        EXPECT_TRUE(editor.getLocalBounds().contains(title->getBounds()));
+        for (const auto* child : editor.getChildren()) {
+            if (child != title && child->isVisible() && child->getY() < 36) {
+                EXPECT_FALSE(title->getBounds().intersects(child->getBounds()));
             }
         }
     }
-    editor.setSize(2000, editor.getHeight());
-    EXPECT_FALSE(identity->isVisible());
-    auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(editor, "preset-selector"));
-    ASSERT_NE(selector, nullptr);
+    disclosure->onClick();
+    EXPECT_TRUE(toolbar->isVisible());
     EXPECT_EQ(selector->getText(), preset.name);
-    EXPECT_LE(selector->getWidth(), 320);
-    editor.setSize(760, editor.getHeight());
-    EXPECT_TRUE(identity->isVisible());
+    EXPECT_EQ(editingControl(editor, "header-preset-name"), nullptr);
     disclosure->onClick();
-    EXPECT_FALSE(identity->isVisible());
-    disclosure->onClick();
-    EXPECT_TRUE(identity->isVisible());
+    EXPECT_FALSE(toolbar->isVisible());
+    EXPECT_EQ(editingControl(editor, "header-preset-name"), nullptr);
 }
 
 /// Same-value host recall discards Output's native numeric draft without adding gestures or blocking fresh edits.
@@ -1252,18 +1347,19 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(toolbar, "preset-selector"));
         ASSERT_NE(selector, nullptr);
         pumpEditing(toolbar, [&] { return selector->getNumItems() == 1 && selector->isEnabled(); });
+        EXPECT_EQ(selector->getText(), "Unsaved");
+        EXPECT_EQ(selector->getTextWhenNothingSelected(), "Unsaved");
         selector->setSelectedId(1, juce::sendNotificationSync);
         toolbar.setVisible(false);
         pumpEditing(toolbar, [&] { return processor.getSelectedUserPreset().has_value(); });
+        EXPECT_EQ(selector->getText(), "Narrow test");
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), -9.0F, 0.001F);
         EXPECT_TRUE(processor.getHistory().canUndo());
         auto* output = processor.getParameters().getParameter(OUTPUT_GAIN_ID);
         output->setValueNotifyingHost(output->convertTo0to1(-6.0F));
         toolbar.refresh();
-        EXPECT_EQ(selector->getText(), "Narrow test");
-        auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-status"));
-        ASSERT_NE(status, nullptr);
-        EXPECT_EQ(status->getText(), "Modified");
+        EXPECT_EQ(selector->getText(), "Narrow test *");
+        EXPECT_EQ(editingControl(toolbar, "preset-status"), nullptr);
         EXPECT_TRUE(processor.getHistory().undo());
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), 0.0F, 0.001F);
     }
@@ -1271,10 +1367,8 @@ TEST(EditingWorkflow, PresetSelectorLoadsSoundAndRetainsBaselineAcrossToolbarReo
         ProcessingToolbar reopened(processor, directory, PresetDialogPresentation::nonRendering);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(reopened, "preset-selector"));
         ASSERT_NE(selector, nullptr);
-        EXPECT_EQ(selector->getText(), "Narrow test");
-        auto* status = dynamic_cast<juce::Label*>(editingControl(reopened, "preset-status"));
-        ASSERT_NE(status, nullptr);
-        EXPECT_EQ(status->getText(), "Modified");
+        EXPECT_EQ(selector->getText(), "Narrow test *");
+        EXPECT_EQ(editingControl(reopened, "preset-status"), nullptr);
     }
     EXPECT_TRUE(directory.deleteRecursively());
 }
@@ -1293,15 +1387,15 @@ TEST(EditingWorkflow, HistoryCommandsRejectPendingPresetLoadsWhileCollapsed)
     {
         ProcessingToolbar toolbar(processor, directory, PresetDialogPresentation::nonRendering);
         auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(toolbar, "preset-selector"));
-        auto* status = dynamic_cast<juce::Label*>(editingControl(toolbar, "preset-library-status"));
         ASSERT_NE(selector, nullptr);
-        ASSERT_NE(status, nullptr);
         pumpEditing(toolbar, [&] { return selector->getNumItems() == 1 && selector->isEnabled(); });
         selector->setSelectedId(1, juce::sendNotificationSync);
         toolbar.setVisible(false);
         toolbar.undo();
         toolbar.redo();
-        pumpEditing(toolbar, [&] { return status->getText() != "Loading..."; });
+        // Rejection opens an error dialog, so completion clears progress without re-enabling the selector.
+        pumpEditing(toolbar, [&] { return !selector->getTooltip().contains("Loading..."); });
+        EXPECT_FALSE(toolbar.isVisible());
         EXPECT_NEAR(processor.getSoundSnapshot().at(OUTPUT_GAIN_ID), -6.0F, 0.001F);
         EXPECT_FALSE(processor.getSelectedUserPreset().has_value());
     }

@@ -156,9 +156,11 @@ The persisted `showProcessingToolbar` editor property defaults to true.
 Collapsing that row is immediate and leaves header history actions and asynchronous preset completion handling active.
 Preset confirmations and operation errors use an explicitly owned `ImageControlLookAndFeel`,
 including the plugin palette, embedded fonts, compact actions, and restrained semantic icons.
-Workflow tests inject hidden, peerless alert presentation and invoke its real validation and button actions.
+Preset names are edited inline in the selector, with a trailing asterisk marking unsaved name or sound changes.
+Save atomically replaces the bound preset's name and sound. Save As creates a new preset after inline name entry.
+Workflow tests exercise the real inline editor and inject hidden, peerless presentation for remaining alerts.
 Their results use the same asynchronous completion handlers without native modal registration or taskbar entries.
-The default production presentation remains visible, and background scan failures stay in status feedback.
+The default production alert presentation remains visible, and library diagnostics stay in tooltips and menu feedback.
 Successful metadata completions wait for active local sound gestures before publication,
 then recheck restore generation, slot, baseline, and bound revision.
 Project recall never reads the preset library.
@@ -522,11 +524,11 @@ Compacting retains the window dimensions and saved full-strip height, releasing 
 A single 28-pixel row uses value suffixes and directional pan text, without band headings.
 Wider columns use full inline control names based on measured text widths, never a separate label row.
 With the spectrogram hidden, the fixed-height editor instead follows the compact value row.
-A/B and preset controls reuse the same live toolbar in spare header space when its minimum inline width fits.
+A/B and preset controls reuse the same live toolbar when the header's controls and minimum preset width fit.
 The dedicated second row closes automatically while inline and returns only when its saved visibility preference is on.
 Automatic placement never changes that preference or the saved expanded height.
 The preset name field is capped at 320 pixels in either placement.
-The preset name occupies the existing title area only when neither the row nor inline selector is visible.
+Preset identity appears only in the selector, leaving the brand title unchanged when the row is hidden.
 `ControlSlider` separates numeric text from fixed display units in its plugin-local value label.
 The inline editor shares the readout's font and placement.
 Up/Down uses the slider's ordinary fine/coarse nudge path.
