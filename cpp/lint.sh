@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS] [-- CLANG_TIDY_ARGS...]
 
 Lint C++ code in src/, tests/, and ../test-plugin/src/ with clang-tidy.
@@ -59,19 +63,7 @@ OPTIONS: All options are optional
 Arguments after -- are passed to clang-tidy as is.
 "
 
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-# Help takes precedence over parsing and validation, but not over downstream arguments after --.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help) print_usage_and_exit 0 ;;
-    esac
-done
-
-init_options() {
+parse_arguments() {
     CHECK=false
     PREPARE=false
     CLANG_TIDY_ARGS=()
@@ -264,25 +256,26 @@ database_lacks_sources() {
     return 1
 }
 
-init_options "$@"
-
-cd "$REPO"
-ROOT=$(cd "$REPO/.." && pwd)
-REPORT_ROOT_PREFIXES=("$ROOT/")
-if [ "$BASH_PLATFORM" = "windows" ] && command -v cygpath > /dev/null 2>&1; then
-    REPORT_ROOT_PREFIXES+=("$(cygpath -m "$ROOT")/" "$(cygpath -w "$ROOT")\\")
-fi
-
-CLANG_TIDY=$(command -v clang-tidy || true)
-if [ -z "$CLANG_TIDY" ] && [ "$BASH_PLATFORM" = "mac" ] && command -v brew > /dev/null 2>&1; then
-    LLVM_PREFIX=$(brew --prefix llvm 2> /dev/null || true)
-    if [ -n "$LLVM_PREFIX" ] && [ -x "$LLVM_PREFIX/bin/clang-tidy" ]; then
-        CLANG_TIDY="$LLVM_PREFIX/bin/clang-tidy"
+# Resolves tools and diagnostic path prefixes before workspace preparation.
+prepare_lint_tools() {
+    cd "$REPO"
+    ROOT="$REPO_ROOT"
+    REPORT_ROOT_PREFIXES=("$ROOT/")
+    if [ "$BASH_PLATFORM" = "windows" ] && command -v cygpath > /dev/null 2>&1; then
+        REPORT_ROOT_PREFIXES+=("$(cygpath -m "$ROOT")/" "$(cygpath -w "$ROOT")\\")
     fi
-fi
-if [ -z "$CLANG_TIDY" ]; then
-    print_error_and_exit "clang-tidy not found. Install LLVM (brew install llvm on macOS) or add its bin directory to PATH."
-fi
+
+    CLANG_TIDY=$(command -v clang-tidy || true)
+    if [ -z "$CLANG_TIDY" ] && [ "$BASH_PLATFORM" = "mac" ] && command -v brew > /dev/null 2>&1; then
+        LLVM_PREFIX=$(brew --prefix llvm 2> /dev/null || true)
+        if [ -n "$LLVM_PREFIX" ] && [ -x "$LLVM_PREFIX/bin/clang-tidy" ]; then
+            CLANG_TIDY="$LLVM_PREFIX/bin/clang-tidy"
+        fi
+    fi
+    if [ -z "$CLANG_TIDY" ]; then
+        print_error_and_exit "clang-tidy not found. Install LLVM (brew install llvm on macOS) or add its bin directory to PATH."
+    fi
+}
 
 # Replaces a worker subshell with clang-tidy so its recorded PID can also be cancelled directly.
 # Project sources discover their own configuration, including the inherited test exceptions.
@@ -352,252 +345,277 @@ run_clang_tidy() {
 }
 
 # The debug preset supplies the toolchain even when selecting another single-configuration build type.
-case "$BASH_PLATFORM" in
-    mac)
-        BUILD_PRESET="macos-debug"
-        BUILD_PREFIX="cmake-build-mac"
-        ;;
-    windows)
-        if [ "$USE_CLANG" = true ]; then
-            BUILD_PRESET="windows-clang-debug"
-            BUILD_PREFIX="cmake-build-windows-clang"
-        else
-            BUILD_PRESET="windows-ninja-debug"
-            BUILD_PREFIX="cmake-build-windows-ninja"
+select_lint_workspace() {
+    case "$BASH_PLATFORM" in
+        mac)
+            BUILD_PRESET="macos-debug"
+            BUILD_PREFIX="cmake-build-mac"
+            ;;
+        windows)
+            if [ "$USE_CLANG" = true ]; then
+                BUILD_PRESET="windows-clang-debug"
+                BUILD_PREFIX="cmake-build-windows-clang"
+            else
+                BUILD_PRESET="windows-ninja-debug"
+                BUILD_PREFIX="cmake-build-windows-ninja"
+            fi
+            ;;
+        *)
+            print_error_and_exit "Platform is not supported yet"
+            ;;
+    esac
+    BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
+
+    BUILD_DIR=""
+    if [ -n "$REQUESTED_BUILD_DIR" ]; then
+        if [ "$BASH_PLATFORM" = "windows" ]; then
+            REQUESTED_BUILD_DIR=$(cygpath -u "$REQUESTED_BUILD_DIR")
         fi
-        ;;
-    *)
-        print_error_and_exit "Platform is not supported yet"
-        ;;
-esac
-BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
-
-BUILD_DIR=""
-if [ -n "$REQUESTED_BUILD_DIR" ]; then
-    if [ "$BASH_PLATFORM" = "windows" ]; then
-        REQUESTED_BUILD_DIR=$(cygpath -u "$REQUESTED_BUILD_DIR")
-    fi
-    BUILD_DIR="$REQUESTED_BUILD_DIR"
-elif [ "$FUZZ" = true ]; then
-    if [ "$BASH_PLATFORM" != "mac" ]; then
-        print_error_and_exit "--fuzz is only supported on macOS."
-    fi
-    BUILD_PRESET="macos-fuzz"
-    BUILD_DIR="$REPO/cmake-build-mac-fuzz"
-elif [ "$USE_CLANG" = true ] || [ "$BUILD_TYPE_EXPLICIT" = true ]; then
-    BUILD_DIR="$REPO/$BUILD_PREFIX-$BUILD_TYPE_LOWER"
-else
-    for candidate in cmake-build-mac-debug cmake-build-windows-clang-debug cmake-build-windows-ninja-debug cmake-build-mac-release cmake-build-windows-clang-release cmake-build-windows-ninja-release build; do
-        if [ -f "$REPO/$candidate/compile_commands.json" ]; then
-            BUILD_DIR="$REPO/$candidate"
-            break
+        BUILD_DIR="$REQUESTED_BUILD_DIR"
+    elif [ "$FUZZ" = true ]; then
+        if [ "$BASH_PLATFORM" != "mac" ]; then
+            print_error_and_exit "--fuzz is only supported on macOS."
         fi
-    done
-fi
-
-if [ -z "$BUILD_DIR" ]; then
-    BUILD_DIR="$REPO/$BUILD_PREFIX-$BUILD_TYPE_LOWER"
-fi
-
-SELECT_BUILD_TYPE="$BUILD_TYPE_EXPLICIT"
-if [ "$USE_CLANG" = true ] && [ -z "$REQUESTED_BUILD_DIR" ]; then
-    SELECT_BUILD_TYPE=true
-fi
-
-NEEDS_BUILD=false
-if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
-    NEEDS_BUILD=true
-elif database_is_older_than_cmake_files; then
-    print_yellow "The compile database is older than the CMake files, rebuilding it"
-    NEEDS_BUILD=true
-elif database_lacks_sources; then
-    print_yellow "The compile database is missing sources to lint, rebuilding it"
-    NEEDS_BUILD=true
-fi
-if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
-    CACHED_BUILD_TYPE=$(sed -n 's/^CMAKE_BUILD_TYPE:[A-Z]*=//p' "$BUILD_DIR/CMakeCache.txt")
-    CACHED_GENERATOR=$(sed -n 's/^CMAKE_GENERATOR:INTERNAL=//p' "$BUILD_DIR/CMakeCache.txt")
-    if [ "$SELECT_BUILD_TYPE" = true ] && [ "$CACHED_GENERATOR" != "Ninja Multi-Config" ] &&
-        [ "$CACHED_BUILD_TYPE" != "$BUILD_TYPE" ]; then
-        NEEDS_BUILD=true
-    elif [ "$SELECT_BUILD_TYPE" != true ] && [ -n "$CACHED_BUILD_TYPE" ]; then
-        BUILD_TYPE="$CACHED_BUILD_TYPE"
-    fi
-    if [ "$USE_CLANG" = true ] && ! grep -Eiq '^CMAKE_CXX_COMPILER:[A-Z]*=.*clang-cl' "$BUILD_DIR/CMakeCache.txt"; then
-        print_error_and_exit "--clang requires a clang-cl workspace. Use a separate build directory from MSVC."
-    fi
-fi
-
-if [ "$NEEDS_BUILD" = true ] || [ "$PREPARE" = true ]; then
-    print_magenta "Preparing the compile database workspace at $BUILD_DIR..."
-    load_msvc_environment
-    CONFIGURE_OPTIONS=(-B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
-    if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
-        case "$CACHED_GENERATOR" in
-            Ninja | "Ninja Multi-Config" | "Unix Makefiles")
-                if [ "$PREPARE" = true ] && [ "$CACHED_GENERATOR" != Ninja ]; then
-                    print_error_and_exit "--prepare requires a single-configuration Ninja workspace."
-                fi
-                ;;
-            *)
-                print_error_and_exit "$CACHED_GENERATOR cannot export a compile database. Select a separate Ninja workspace."
-                ;;
-        esac
-        CONFIGURE_OPTIONS+=(-S "$REPO")
-        if [ "$SELECT_BUILD_TYPE" = true ] && [ "$CACHED_GENERATOR" != "Ninja Multi-Config" ]; then
-            CONFIGURE_OPTIONS+=("-DCMAKE_BUILD_TYPE=$BUILD_TYPE")
-        fi
+        BUILD_PRESET="macos-fuzz"
+        BUILD_DIR="$REPO/cmake-build-mac-fuzz"
+    elif [ "$USE_CLANG" = true ] || [ "$BUILD_TYPE_EXPLICIT" = true ]; then
+        BUILD_DIR="$REPO/$BUILD_PREFIX-$BUILD_TYPE_LOWER"
     else
-        CONFIGURE_OPTIONS+=(--preset "$BUILD_PRESET")
-        if [ "$FUZZ" != true ]; then
-            CONFIGURE_OPTIONS+=("-DCMAKE_BUILD_TYPE=$BUILD_TYPE")
-        fi
+        for candidate in cmake-build-mac-debug cmake-build-windows-clang-debug cmake-build-windows-ninja-debug cmake-build-mac-release cmake-build-windows-clang-release cmake-build-windows-ninja-release build; do
+            if [ -f "$REPO/$candidate/compile_commands.json" ]; then
+                BUILD_DIR="$REPO/$candidate"
+                break
+            fi
+        done
     fi
-    if [ "$FUZZ" != true ]; then
-        CONFIGURE_OPTIONS+=(-DBUILD_TESTING=ON)
+
+    if [ -z "$BUILD_DIR" ]; then
+        BUILD_DIR="$REPO/$BUILD_PREFIX-$BUILD_TYPE_LOWER"
     fi
-    cmake "${CONFIGURE_OPTIONS[@]}"
-    if [ "$BUILD_TYPE_EXPLICIT" != true ]; then
+
+    SELECT_BUILD_TYPE="$BUILD_TYPE_EXPLICIT"
+    if [ "$USE_CLANG" = true ] && [ -z "$REQUESTED_BUILD_DIR" ]; then
+        SELECT_BUILD_TYPE=true
+    fi
+}
+
+# Refreshes missing, stale, or incomplete compile commands and generated headers.
+prepare_lint_workspace() {
+    NEEDS_BUILD=false
+    if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+        NEEDS_BUILD=true
+    elif database_is_older_than_cmake_files; then
+        print_yellow "The compile database is older than the CMake files, rebuilding it"
+        NEEDS_BUILD=true
+    elif database_lacks_sources; then
+        print_yellow "The compile database is missing sources to lint, rebuilding it"
+        NEEDS_BUILD=true
+    fi
+    if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
         CACHED_BUILD_TYPE=$(sed -n 's/^CMAKE_BUILD_TYPE:[A-Z]*=//p' "$BUILD_DIR/CMakeCache.txt")
-        if [ -n "$CACHED_BUILD_TYPE" ]; then
+        CACHED_GENERATOR=$(sed -n 's/^CMAKE_GENERATOR:INTERNAL=//p' "$BUILD_DIR/CMakeCache.txt")
+        if [ "$SELECT_BUILD_TYPE" = true ] && [ "$CACHED_GENERATOR" != "Ninja Multi-Config" ] &&
+            [ "$CACHED_BUILD_TYPE" != "$BUILD_TYPE" ]; then
+            NEEDS_BUILD=true
+        elif [ "$SELECT_BUILD_TYPE" != true ] && [ -n "$CACHED_BUILD_TYPE" ]; then
             BUILD_TYPE="$CACHED_BUILD_TYPE"
         fi
-    fi
-    if [ "$PREPARE" = true ] && [ "$FUZZ" != true ]; then
-        # These generated headers are enough to analyze every target without compiling the applications.
-        cmake --build "$BUILD_DIR" --target \
-            AudioBatch_artefacts/JuceLibraryCode/JuceHeader.h \
-            AudioBatchCli_artefacts/JuceLibraryCode/JuceHeader.h \
-            AudioBatchTests_artefacts/JuceLibraryCode/JuceHeader.h \
-            AudioBatchIntegrationTests_artefacts/JuceLibraryCode/JuceHeader.h \
-            juce_binarydata_Assets/JuceLibraryCode/BinaryData.h
-    else
-        cmake --build "$BUILD_DIR" --config "$BUILD_TYPE"
-    fi
-
-    if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
-        print_error_and_exit "Build did not generate $BUILD_DIR/compile_commands.json"
-    fi
-fi
-BUILD_DIR=$(cd "$BUILD_DIR" && pwd)
-
-print_magenta "Using compile database at $BUILD_DIR"
-"$CLANG_TIDY" --version | head -n 2
-
-# MSVC compile commands contain flags like /MP that clang does not use,
-# which would otherwise be reported as errors.
-EXTRA_ARGS=(--extra-arg=-Wno-unused-command-line-argument)
-if [ "$BASH_PLATFORM" = "mac" ] && command -v xcrun > /dev/null 2>&1; then
-    SDK=$(xcrun --show-sdk-path 2> /dev/null || true)
-    if [ -n "$SDK" ]; then
-        EXTRA_ARGS+=(--extra-arg=-isysroot --extra-arg="$SDK")
-    fi
-fi
-
-# Collect the C++ sources under src/ and tests/, including subdirectories, or only the changed ones.
-SOURCES=()
-while IFS= read -r source; do
-    SOURCES+=("$source")
-done < <(collect_sources)
-
-if [ "${#SOURCES[@]}" -eq 0 ]; then
-    if [ "$FUZZ" = true ]; then
-        print_error_and_exit "No fuzz harnesses found in $REPO/tests/fuzz"
-    fi
-    print_green "No $FILE_SELECTION C++ sources to lint (0 warnings, 0 errors)"
-    exit 0
-fi
-
-# Do not let clang-tidy infer flags from an unrelated source when the database is stale.
-# The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere,
-# and the test plugin only in a build with the tests enabled.
-LINTED_SOURCES=()
-for source in "${SOURCES[@]}"; do
-    if in_compile_database "$source"; then
-        LINTED_SOURCES+=("$source")
-    elif [[ "$source" == "$REPO/tests/fuzz/"* ]] && [ "$FUZZ" != true ]; then
-        print_yellow "Skipping ${source#"$ROOT/"}, which only the macos-fuzz preset builds"
-    elif [ "$source" = "$REPO/tests/RealtimeTests.cpp" ]; then
-        print_yellow "Skipping ${source#"$ROOT/"}, which needs the macos-rtsan database (--build-dir cmake-build-mac-rtsan)"
-    elif [[ "$source" == "$ROOT/test-plugin/"* ]]; then
-        print_yellow "Skipping ${source#"$ROOT/"}, which only a build with the tests enabled has"
-    else
-        print_error_and_exit "Compile database has no entry for ${source#"$ROOT/"}. Reconfigure and build CMake first, for example: cmake --preset macos-debug && cmake --build --preset macos-debug"
-    fi
-done
-if [ "${#LINTED_SOURCES[@]}" -eq 0 ]; then
-    print_green "No C++ sources in this compile database to lint (0 warnings, 0 errors)"
-    exit 0
-fi
-SOURCES=("${LINTED_SOURCES[@]}")
-PROJECT_SOURCES=()
-PLUGIN_SOURCES=()
-for source in "${SOURCES[@]}"; do
-    if [[ "$source" == "$ROOT/test-plugin/"* ]]; then
-        PLUGIN_SOURCES+=("$source")
-    else
-        PROJECT_SOURCES+=("$source")
-    fi
-done
-
-WORK_DIR=$(mktemp -d)
-WORKER_PIDS=()
-trap cleanup_lint EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-OUTPUT_FILE="$WORK_DIR/output.log"
-CLANG_TIDY_STATUS=0
-PLUGIN_ARGS=()
-if [ "${#PLUGIN_SOURCES[@]}" -gt 0 ] && [ "$BASH_PLATFORM" = windows ] &&
-    [ ! -L "$ROOT/test-plugin/.clang-format" ]; then
-    OVERLAY="$WORK_DIR/plugin-overlay.json"
-    printf '{"version":0,"roots":[{"type":"file","name":"%s","external-contents":"%s"}]}\n' \
-        "$(cygpath -m "$ROOT/test-plugin/.clang-format")" \
-        "$(cygpath -m "$REPO/.clang-format")" > "$OVERLAY"
-    PLUGIN_ARGS+=(--vfsoverlay="$OVERLAY")
-fi
-
-print_magenta "Running clang-tidy on ${#SOURCES[@]} source files with up to $JOBS parallel jobs..."
-
-if [ "$JOBS" -eq 1 ]; then
-    # Retain batched invocations for fixes and exports, which must share a single clang-tidy process.
-    index=0
-    for group in project plugin; do
-        if [ "$group" = project ]; then
-            GROUP_SOURCES=("${PROJECT_SOURCES[@]}")
-        else
-            GROUP_SOURCES=("${PLUGIN_SOURCES[@]}")
+        if [ "$USE_CLANG" = true ] && ! grep -Eiq '^CMAKE_CXX_COMPILER:[A-Z]*=.*clang-cl' "$BUILD_DIR/CMakeCache.txt"; then
+            print_error_and_exit "--clang requires a clang-cl workspace. Use a separate build directory from MSVC."
         fi
-        if [ "${#GROUP_SOURCES[@]}" -gt 0 ]; then
-            run_clang_tidy_sources "${GROUP_SOURCES[@]}" > "$WORK_DIR/$index.log" 2>&1 &
-            WORKER_PIDS[index]=$!
-            finish_worker "$index"
-            index=$((index + 1))
+    fi
+
+    if [ "$NEEDS_BUILD" = true ] || [ "$PREPARE" = true ]; then
+        print_magenta "Preparing the compile database workspace at $BUILD_DIR..."
+        load_msvc_environment
+        CONFIGURE_OPTIONS=(-B "$BUILD_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)
+        if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+            case "$CACHED_GENERATOR" in
+                Ninja | "Ninja Multi-Config" | "Unix Makefiles")
+                    if [ "$PREPARE" = true ] && [ "$CACHED_GENERATOR" != Ninja ]; then
+                        print_error_and_exit "--prepare requires a single-configuration Ninja workspace."
+                    fi
+                    ;;
+                *)
+                    print_error_and_exit "$CACHED_GENERATOR cannot export a compile database. Select a separate Ninja workspace."
+                    ;;
+            esac
+            CONFIGURE_OPTIONS+=(-S "$REPO")
+            if [ "$SELECT_BUILD_TYPE" = true ] && [ "$CACHED_GENERATOR" != "Ninja Multi-Config" ]; then
+                CONFIGURE_OPTIONS+=("-DCMAKE_BUILD_TYPE=$BUILD_TYPE")
+            fi
+        else
+            CONFIGURE_OPTIONS+=(--preset "$BUILD_PRESET")
+            if [ "$FUZZ" != true ]; then
+                CONFIGURE_OPTIONS+=("-DCMAKE_BUILD_TYPE=$BUILD_TYPE")
+            fi
+        fi
+        if [ "$FUZZ" != true ]; then
+            CONFIGURE_OPTIONS+=(-DBUILD_TESTING=ON)
+        fi
+        cmake "${CONFIGURE_OPTIONS[@]}"
+        if [ "$BUILD_TYPE_EXPLICIT" != true ]; then
+            CACHED_BUILD_TYPE=$(sed -n 's/^CMAKE_BUILD_TYPE:[A-Z]*=//p' "$BUILD_DIR/CMakeCache.txt")
+            if [ -n "$CACHED_BUILD_TYPE" ]; then
+                BUILD_TYPE="$CACHED_BUILD_TYPE"
+            fi
+        fi
+        if [ "$PREPARE" = true ] && [ "$FUZZ" != true ]; then
+            # These generated headers are enough to analyze every target without compiling the applications.
+            cmake --build "$BUILD_DIR" --target \
+                AudioBatch_artefacts/JuceLibraryCode/JuceHeader.h \
+                AudioBatchCli_artefacts/JuceLibraryCode/JuceHeader.h \
+                AudioBatchTests_artefacts/JuceLibraryCode/JuceHeader.h \
+                AudioBatchIntegrationTests_artefacts/JuceLibraryCode/JuceHeader.h \
+                juce_binarydata_Assets/JuceLibraryCode/BinaryData.h
+        else
+            cmake --build "$BUILD_DIR" --config "$BUILD_TYPE"
+        fi
+
+        if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+            print_error_and_exit "Build did not generate $BUILD_DIR/compile_commands.json"
+        fi
+    fi
+    BUILD_DIR=$(cd "$BUILD_DIR" && pwd)
+}
+
+# Collects sources with exact compile entries and configures platform arguments.
+prepare_lint_sources() {
+    print_magenta "Using compile database at $BUILD_DIR"
+    "$CLANG_TIDY" --version | head -n 2
+
+    # MSVC compile commands contain flags like /MP that clang does not use,
+    # which would otherwise be reported as errors.
+    EXTRA_ARGS=(--extra-arg=-Wno-unused-command-line-argument)
+    if [ "$BASH_PLATFORM" = "mac" ] && command -v xcrun > /dev/null 2>&1; then
+        SDK=$(xcrun --show-sdk-path 2> /dev/null || true)
+        if [ -n "$SDK" ]; then
+            EXTRA_ARGS+=(--extra-arg=-isysroot --extra-arg="$SDK")
+        fi
+    fi
+
+    # Collect the C++ sources under src/ and tests/, including subdirectories, or only the changed ones.
+    SOURCES=()
+    while IFS= read -r source; do
+        SOURCES+=("$source")
+    done < <(collect_sources)
+
+    if [ "${#SOURCES[@]}" -eq 0 ]; then
+        if [ "$FUZZ" = true ]; then
+            print_error_and_exit "No fuzz harnesses found in $REPO/tests/fuzz"
+        fi
+        print_green "No $FILE_SELECTION C++ sources to lint (0 warnings, 0 errors)"
+        exit 0
+    fi
+
+    # Do not let clang-tidy infer flags from an unrelated source when the database is stale.
+    # The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere,
+    # and the test plugin only in a build with the tests enabled.
+    LINTED_SOURCES=()
+    for source in "${SOURCES[@]}"; do
+        if in_compile_database "$source"; then
+            LINTED_SOURCES+=("$source")
+        elif [[ "$source" == "$REPO/tests/fuzz/"* ]] && [ "$FUZZ" != true ]; then
+            print_yellow "Skipping ${source#"$ROOT/"}, which only the macos-fuzz preset builds"
+        elif [ "$source" = "$REPO/tests/RealtimeTests.cpp" ]; then
+            print_yellow "Skipping ${source#"$ROOT/"}, which needs the macos-rtsan database (--build-dir cmake-build-mac-rtsan)"
+        elif [[ "$source" == "$ROOT/test-plugin/"* ]]; then
+            print_yellow "Skipping ${source#"$ROOT/"}, which only a build with the tests enabled has"
+        else
+            print_error_and_exit "Compile database has no entry for ${source#"$ROOT/"}. Reconfigure and build CMake first, for example: cmake --preset macos-debug && cmake --build --preset macos-debug"
         fi
     done
-else
-    run_clang_tidy
-fi
+    if [ "${#LINTED_SOURCES[@]}" -eq 0 ]; then
+        print_green "No C++ sources in this compile database to lint (0 warnings, 0 errors)"
+        exit 0
+    fi
+    SOURCES=("${LINTED_SOURCES[@]}")
+    PROJECT_SOURCES=()
+    PLUGIN_SOURCES=()
+    for source in "${SOURCES[@]}"; do
+        if [[ "$source" == "$ROOT/test-plugin/"* ]]; then
+            PLUGIN_SOURCES+=("$source")
+        else
+            PROJECT_SOURCES+=("$source")
+        fi
+    done
+}
+
+# Keeps cleanup state global so the EXIT trap can reap workers after this function returns.
+run_lint_checks() {
+    WORK_DIR=$(mktemp -d)
+    WORKER_PIDS=()
+    trap cleanup_lint EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    OUTPUT_FILE="$WORK_DIR/output.log"
+    CLANG_TIDY_STATUS=0
+    PLUGIN_ARGS=()
+    if [ "${#PLUGIN_SOURCES[@]}" -gt 0 ] && [ "$BASH_PLATFORM" = windows ] &&
+        [ ! -L "$ROOT/test-plugin/.clang-format" ]; then
+        OVERLAY="$WORK_DIR/plugin-overlay.json"
+        printf '{"version":0,"roots":[{"type":"file","name":"%s","external-contents":"%s"}]}\n' \
+            "$(cygpath -m "$ROOT/test-plugin/.clang-format")" \
+            "$(cygpath -m "$REPO/.clang-format")" > "$OVERLAY"
+        PLUGIN_ARGS+=(--vfsoverlay="$OVERLAY")
+    fi
+
+    print_magenta "Running clang-tidy on ${#SOURCES[@]} source files with up to $JOBS parallel jobs..."
+
+    if [ "$JOBS" -eq 1 ]; then
+        # Retain batched invocations for fixes and exports, which must share a single clang-tidy process.
+        index=0
+        for group in project plugin; do
+            if [ "$group" = project ]; then
+                GROUP_SOURCES=("${PROJECT_SOURCES[@]}")
+            else
+                GROUP_SOURCES=("${PLUGIN_SOURCES[@]}")
+            fi
+            if [ "${#GROUP_SOURCES[@]}" -gt 0 ]; then
+                run_clang_tidy_sources "${GROUP_SOURCES[@]}" > "$WORK_DIR/$index.log" 2>&1 &
+                WORKER_PIDS[index]=$!
+                finish_worker "$index"
+                index=$((index + 1))
+            fi
+        done
+    else
+        run_clang_tidy
+    fi
+}
 
 # Headers are linted once per including source file, so count each finding only once.
-WARNING_COUNT=$({ grep -E "(^|: )warning: " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
-ERROR_COUNT=$({ grep -E "(^|: )error: " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
-ISSUE_COUNT=$((WARNING_COUNT + ERROR_COUNT))
+report_lint_results() {
+    WARNING_COUNT=$({ grep -E "(^|: )warning: " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
+    ERROR_COUNT=$({ grep -E "(^|: )error: " "$OUTPUT_FILE" || true; } | sort -u | wc -l | tr -d ' ')
+    ISSUE_COUNT=$((WARNING_COUNT + ERROR_COUNT))
 
-if [ "$ISSUE_COUNT" -gt 0 ]; then
-    print_yellow "clang-tidy reported $WARNING_COUNT warning(s) and $ERROR_COUNT error(s)"
-else
-    print_green "clang-tidy reported 0 warnings and 0 errors"
-fi
+    if [ "$ISSUE_COUNT" -gt 0 ]; then
+        print_yellow "clang-tidy reported $WARNING_COUNT warning(s) and $ERROR_COUNT error(s)"
+    else
+        print_green "clang-tidy reported 0 warnings and 0 errors"
+    fi
 
-if [ "$CHECK" = false ]; then
-    exit "$CLANG_TIDY_STATUS"
-fi
+    if [ "$CHECK" = false ]; then
+        exit "$CLANG_TIDY_STATUS"
+    fi
 
-if [ "$ISSUE_COUNT" -gt 0 ]; then
-    exit 1
-fi
+    if [ "$ISSUE_COUNT" -gt 0 ]; then
+        exit 1
+    fi
 
-if [ "$CLANG_TIDY_STATUS" -ne 0 ]; then
-    print_error_and_exit "clang-tidy failed with exit code $CLANG_TIDY_STATUS"
-fi
+    if [ "$CLANG_TIDY_STATUS" -ne 0 ]; then
+        print_error_and_exit "clang-tidy failed with exit code $CLANG_TIDY_STATUS"
+    fi
+}
+
+lint_project() {
+    parse_arguments "$@"
+    prepare_lint_tools
+    select_lint_workspace
+    prepare_lint_workspace
+    prepare_lint_sources
+    run_lint_checks
+    report_lint_results
+}
+
+lint_project "$@"

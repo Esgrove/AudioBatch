@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [cpp|rust|image-control] [OPTIONS]
 
 Format the C++ and Rust projects with their own format.sh scripts, then the ImageControl plugin.
@@ -25,108 +29,115 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
+parse_arguments() {
+    parse_project_arguments format.sh true "$@"
+}
 
-if [ "$1" = "image-control" ]; then
-    shift
-    for argument in "$@"; do
-        if [ "$argument" = "-h" ] || [ "$argument" = "--help" ]; then
-            "$REPO_ROOT/image-control-plugin/format.sh" --help
-            exit 0
-        fi
-    done
-    print_magenta "Running image-control-plugin/format.sh $*"
-    "$REPO_ROOT/image-control-plugin/format.sh" "$@"
-    exit 0
-fi
-
-run_project_scripts format.sh "$@"
-
-if [ "$1" = "cpp" ] || [ "$1" = "rust" ]; then
-    exit 0
-fi
-
-print_magenta "Running image-control-plugin/format.sh $*"
-"$REPO_ROOT/image-control-plugin/format.sh" "$@"
-
-CHECK=false
-for argument in "$@"; do
-    if [ "$argument" = "-c" ] || [ "$argument" = "--check" ]; then
-        CHECK=true
-    fi
-done
-
-cd "$DIR"
-
-require_command jq "jq not found in path, it formats the JSON files"
-if [ "$CHECK" = true ]; then
-    print_magenta "Checking JSON formatting..."
-else
-    print_magenta "Formatting JSON files..."
-fi
-
-git ls-files -z --cached --others --exclude-standard -- '*.json' |
-    while IFS= read -r -d '' file; do
-        temporary=$(mktemp)
-        if ! jq --indent 2 . "$file" > "$temporary"; then
-            rm -- "$temporary"
-            print_error "Failed to parse JSON: $file"
-            exit 1
-        fi
-        if [ "$CHECK" = true ]; then
-            printf 'Checking %s\n' "$file"
-        else
-            printf 'Formatting %s\n' "$file"
-        fi
-        if ! cmp -s "$temporary" "$file"; then
-            if [ "$CHECK" = true ]; then
-                rm -- "$temporary"
-                print_error "JSON formatting differs: $file"
-                exit 1
-            fi
-            if ! cat "$temporary" > "$file"; then
-                rm -- "$temporary"
-                print_error "Failed to write formatted JSON: $file"
-                exit 1
-            fi
-            printf '  changed %s\n' "$file"
-        fi
+# Format one JSON file without replacing its permissions, and clean up after parse or write failures.
+format_json_file() {
+    local check="$1" file="$2" temporary
+    temporary=$(mktemp)
+    if ! jq --indent 2 . "$file" > "$temporary"; then
         rm -- "$temporary"
-    done
-
-if [ -n "$(command -v shfmt)" ]; then
-    SHELL_FILES=(./*.sh)
-    if [ "$CHECK" = true ]; then
-        print_magenta "Checking root shell script formatting..."
-        print_file_list Checking "${SHELL_FILES[@]}"
-        shfmt --diff "${SHELL_FILES[@]}"
-    else
-        print_magenta "Formatting root shell scripts..."
-        print_file_list Formatting "${SHELL_FILES[@]}"
-        shfmt --list --write "${SHELL_FILES[@]}"
+        print_error_and_exit "Failed to parse JSON: $file"
     fi
-fi
-
-if [ -n "$(command -v slb)" ]; then
-    if [ "$CHECK" = true ]; then
-        print_magenta "Checking root prose..."
-        slb --exclude cpp --exclude rust --exclude image-control-plugin --quiet "$DIR"
+    if [ "$check" = true ]; then
+        printf 'Checking %s\n' "$file"
     else
-        print_magenta "Formatting root prose..."
-        slb --exclude cpp --exclude rust --exclude image-control-plugin --fix "$DIR"
+        printf 'Formatting %s\n' "$file"
     fi
-fi
+    if ! cmp -s "$temporary" "$file"; then
+        if [ "$check" = true ]; then
+            rm -- "$temporary"
+            print_error_and_exit "JSON formatting differs: $file"
+        fi
+        if ! cat "$temporary" > "$file"; then
+            rm -- "$temporary"
+            print_error_and_exit "Failed to write formatted JSON: $file"
+        fi
+        printf '  changed %s\n' "$file"
+    fi
+    rm -- "$temporary"
+}
 
-require_command uv "uv not found in path, it runs ruff for the Python scripts"
-if [ "$CHECK" = true ]; then
-    print_magenta "Checking Python formatting..."
-    uv run --frozen ruff format --check
-    uv run --frozen ruff check
-else
-    print_magenta "Formatting Python scripts..."
-    uv run --frozen ruff format
-    uv run --frozen ruff check --fix
-fi
+# Include tracked and non-ignored new JSON paths, preserving filenames containing whitespace.
+format_json() {
+    local check="$1" file
+    require_command jq "jq not found in path, it formats the JSON files"
+    if [ "$check" = true ]; then
+        print_magenta "Checking JSON formatting..."
+    else
+        print_magenta "Formatting JSON files..."
+    fi
+    git ls-files -z --cached --others --exclude-standard -- '*.json' |
+        while IFS= read -r -d '' file; do
+            format_json_file "$check" "$file"
+        done
+}
+
+# Keep optional root shell formatting independent of project formatter availability.
+format_shell() {
+    local check="$1"
+    local shell_files=(./*.sh)
+    if command -v shfmt > /dev/null 2>&1; then
+        if [ "$check" = true ]; then
+            print_magenta "Checking root shell script formatting..."
+            print_file_list Checking "${shell_files[@]}"
+            shfmt --diff "${shell_files[@]}"
+        else
+            print_magenta "Formatting root shell scripts..."
+            print_file_list Formatting "${shell_files[@]}"
+            shfmt --list --write "${shell_files[@]}"
+        fi
+    fi
+}
+
+# Project formatters own their prose, leaving only shared documentation to this pass.
+format_prose() {
+    local check="$1"
+    if command -v slb > /dev/null 2>&1; then
+        if [ "$check" = true ]; then
+            print_magenta "Checking root prose..."
+            slb --exclude cpp --exclude rust --exclude image-control-plugin --quiet "$REPO_ROOT"
+        else
+            print_magenta "Formatting root prose..."
+            slb --exclude cpp --exclude rust --exclude image-control-plugin --fix "$REPO_ROOT"
+        fi
+    fi
+}
+
+# Use the locked Ruff environment for all first-party Python scripts.
+format_python() {
+    local check="$1"
+    require_command uv "uv not found in path, it runs ruff for the Python scripts"
+    if [ "$check" = true ]; then
+        print_magenta "Checking Python formatting..."
+        uv run --frozen ruff format --check
+        uv run --frozen ruff check
+    else
+        print_magenta "Formatting Python scripts..."
+        uv run --frozen ruff format
+        uv run --frozen ruff check --fix
+    fi
+}
+
+# Dispatch project-scoped requests before running the shared repository formatters.
+format_projects() {
+    parse_arguments "$@"
+    run_project_scripts format.sh "${PROJECT_ARGUMENTS[@]}"
+    if [ "$PROJECT_SCOPE" = cpp ] || [ "$PROJECT_SCOPE" = rust ]; then
+        return
+    fi
+    print_magenta "Running image-control-plugin/format.sh ${PROJECT_ARGUMENTS[*]}"
+    "$REPO_ROOT/image-control-plugin/format.sh" "${PROJECT_ARGUMENTS[@]}"
+    if [ "$PROJECT_SCOPE" = image-control ]; then
+        return
+    fi
+    cd "$REPO_ROOT"
+    format_json "$PROJECT_CHECK"
+    format_shell "$PROJECT_CHECK"
+    format_prose "$PROJECT_CHECK"
+    format_python "$PROJECT_CHECK"
+}
+
+format_projects "$@"

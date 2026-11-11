@@ -2,6 +2,11 @@
 # Formats the root-workspace Rust plugin, its scripts, and its evaluation prose.
 set -eo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
+# shellcheck source=../common.sh
+source "$PLUGIN_DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Format Rust ImageControl crates, local shell scripts, and evaluation prose.
@@ -13,45 +18,56 @@ OPTIONS:
     -c | --check
         Check formatting without changing files.
 "
-for argument in "$@"; do
-    case "$argument" in
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-        --) break ;;
-    esac
-done
+parse_arguments() {
+    CHECK=false
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h | --help)
+                printf '%s\n' "$USAGE"
+                exit 0
+                ;;
+            -c | --check) CHECK=true ;;
+            *) print_error_and_exit "Unknown option: $1. See --help." ;;
+        esac
+        shift
+    done
+}
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
-# shellcheck source=../common.sh
-source "$PLUGIN_DIR/common.sh"
-cd "$SCRIPT_DIR"
-PACKAGES=(-p image-control-dsp -p image-control-plugin-rs -p image-control-xtask)
-CHECK=false
-for argument in "$@"; do
-    case "$argument" in
-        -c | --check) CHECK=true ;;
-        *) print_error_and_exit "Unknown option: $argument. See --help." ;;
-    esac
-done
-if [ "$CHECK" = true ]; then
-    cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" "${PACKAGES[@]}" --check
-else
-    cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" "${PACKAGES[@]}"
-fi
-if command -v shfmt > /dev/null 2>&1; then
+format_rust() {
     if [ "$CHECK" = true ]; then
-        shfmt --diff ./*.sh
+        cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" "${PACKAGES[@]}" --check
     else
-        shfmt --write ./*.sh
+        cargo fmt --manifest-path "$REPO_ROOT/Cargo.toml" "${PACKAGES[@]}"
     fi
-fi
-if command -v slb > /dev/null 2>&1; then
-    if [ "$CHECK" = true ]; then
-        slb crates ./*.toml README.md ARCHITECTURE.md "$SCRIPT_DIR/docs/rust-evaluation.md"
-    else
-        slb --fix crates ./*.toml README.md ARCHITECTURE.md "$SCRIPT_DIR/docs/rust-evaluation.md"
+}
+
+format_shell_scripts() {
+    if command -v shfmt > /dev/null 2>&1; then
+        if [ "$CHECK" = true ]; then
+            shfmt --diff ./*.sh
+        else
+            shfmt --write ./*.sh
+        fi
     fi
-fi
+}
+
+format_prose() {
+    if command -v slb > /dev/null 2>&1; then
+        if [ "$CHECK" = true ]; then
+            slb crates ./*.toml README.md ARCHITECTURE.md "$SCRIPT_DIR/docs/rust-evaluation.md"
+        else
+            slb --fix crates ./*.toml README.md ARCHITECTURE.md "$SCRIPT_DIR/docs/rust-evaluation.md"
+        fi
+    fi
+}
+
+format_plugin() {
+    parse_arguments "$@"
+    cd "$SCRIPT_DIR"
+    local PACKAGES=(-p image-control-dsp -p image-control-plugin-rs -p image-control-xtask)
+    format_rust
+    format_shell_scripts
+    format_prose
+}
+
+format_plugin "$@"

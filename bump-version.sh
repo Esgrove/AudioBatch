@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Bump the C++ application, Rust application workspace, and shared test plugin project versions together.
@@ -25,50 +29,43 @@ OPTIONS: All options are optional
         Leave unrelated staged files out of the commit.
 "
 
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-BUMP="patch"
-BUMP_SELECTED=false
-COMMIT=false
-for argument in "$@"; do
-    case "$argument" in
-        -h | --help)
-            print_usage_and_exit 0
-            ;;
-        -c | --commit)
-            COMMIT=true
-            continue
-            ;;
-        -m | --major)
-            NEXT_BUMP=major
-            ;;
-        -n | --minor)
-            NEXT_BUMP=minor
-            ;;
-        *)
-            print_error_and_exit "Unknown argument: $argument. See --help."
-            ;;
-    esac
-    if [ "$BUMP_SELECTED" = true ]; then
-        print_error_and_exit "Choose only one version bump option."
-    fi
-    BUMP=$NEXT_BUMP
-    BUMP_SELECTED=true
-done
-
-require_command perl
-require_command cargo
-if [ "$COMMIT" = true ]; then
-    require_command git
-fi
-
-VERSION_FILES=(cpp/CMakeLists.txt Cargo.toml Cargo.lock test-plugin/CMakeLists.txt)
+# Handle version selection and help before checking tools or editing files.
+parse_arguments() {
+    local argument next_bump bump_selected=false
+    BUMP="patch"
+    CREATE_COMMIT=false
+    for argument in "$@"; do
+        case "$argument" in
+            -h | --help)
+                print_usage_and_exit 0
+                ;;
+            -c | --commit)
+                CREATE_COMMIT=true
+                continue
+                ;;
+            -m | --major)
+                next_bump=major
+                ;;
+            -n | --minor)
+                next_bump=minor
+                ;;
+            *)
+                print_error_and_exit "Unknown argument: $argument. See --help."
+                ;;
+        esac
+        if [ "$bump_selected" = true ]; then
+            print_error_and_exit "Choose only one version bump option."
+        fi
+        BUMP=$next_bump
+        bump_selected=true
+    done
+}
 
 # Validate every declaration before changing any file.
 # Match only project metadata, leaving dependency versions, examples, and fake plugin data untouched.
-perl - "$BUMP" "$DIR/cpp/CMakeLists.txt" "$DIR/Cargo.toml" "$DIR/test-plugin/CMakeLists.txt" << 'PERL'
+bump_project_versions() {
+    local bump="$1"
+    perl - "$bump" "$REPO_ROOT/cpp/CMakeLists.txt" "$REPO_ROOT/Cargo.toml" "$REPO_ROOT/test-plugin/CMakeLists.txt" << 'PERL'
 use strict;
 use warnings;
 
@@ -111,16 +108,35 @@ for my $index (0 .. $#paths) {
 }
 print "Bumped project versions: $current -> $next\n";
 PERL
+}
 
-cd "$DIR"
-if ! cargo update --workspace; then
-    print_error_and_exit "Versions were changed, but Cargo.lock could not be refreshed. Run cargo update --workspace in the repository root."
-fi
-print_green "Project versions and Rust lockfile updated."
+# Commit only the coordinated version files, leaving unrelated staged work alone.
+commit_version() {
+    local version
+    local version_files=(cpp/CMakeLists.txt Cargo.toml Cargo.lock test-plugin/CMakeLists.txt)
+    version=$(perl -ne 'print $1 if /^version = "([0-9]+\.[0-9]+\.[0-9]+)"/' "$REPO_ROOT/Cargo.toml")
+    git add -- "${version_files[@]}"
+    git commit --only -m "Version $version" -- "${version_files[@]}"
+    git tag -a "v$version" -m "Version $version" HEAD
+}
 
-if [ "$COMMIT" = true ]; then
-    VERSION=$(perl -ne 'print $1 if /^version = "([0-9]+\.[0-9]+\.[0-9]+)"/' "$DIR/Cargo.toml")
-    git add -- "${VERSION_FILES[@]}"
-    git commit --only -m "Version $VERSION" -- "${VERSION_FILES[@]}"
-    git tag -a "v$VERSION" -m "Version $VERSION" HEAD
-fi
+# Update coordinated declarations and the lockfile before optionally committing their explicit paths.
+update_versions() {
+    parse_arguments "$@"
+    require_command perl
+    require_command cargo
+    if [ "$CREATE_COMMIT" = true ]; then
+        require_command git
+    fi
+    bump_project_versions "$BUMP"
+    cd "$REPO_ROOT"
+    if ! cargo update --workspace; then
+        print_error_and_exit "Versions were changed, but Cargo.lock could not be refreshed. Run cargo update --workspace in the repository root."
+    fi
+    print_green "Project versions and Rust lockfile updated."
+    if [ "$CREATE_COMMIT" = true ]; then
+        commit_version
+    fi
+}
+
+update_versions "$@"

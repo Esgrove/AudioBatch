@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=../common.sh
+source "$RUST_DIR/common.sh"
+
 USAGE="Usage: $0 save|compare <dir> [--] [paths...]
 
 Save the output of the Rust CLI, or compare a later run to a saved snapshot.
@@ -19,64 +23,83 @@ OPTIONS:
         Display these instructions.
 "
 
-# Resolve help before checking fixtures or creating snapshot directories.
-# Arguments after -- are literal paths, not help requests.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help)
-            printf '%s\n' "$USAGE"
-            exit 0
-            ;;
-    esac
-done
-
-RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=../common.sh
-source "$RUST_DIR/common.sh"
-FIXTURES_DIR=$(cd "$REPO_ROOT/fixtures" && pwd)
-
-case "$1" in
-    save | compare)
-        COMMAND="$1"
-        ;;
-    *)
-        echo "$USAGE"
-        exit 1
-        ;;
-esac
-if [ -z "$2" ]; then
-    echo "$USAGE"
-    exit 1
-fi
-mkdir -p "$(dirname "$2")"
-SNAPSHOT_DIR="$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")"
-shift 2
-
-if [ "${1:-}" = -- ]; then
-    shift
-fi
-PATHS=()
-for path in "$@"; do
-    # cp and the comparison helpers must receive option-looking names as literal paths.
-    if [[ "$path" == -* ]]; then path="./$path"; fi
-    PATHS+=("$path")
-done
-if [ ${#PATHS[@]} -eq 0 ]; then
-    for path in "$FIXTURES_DIR"/*.*; do
-        case "$path" in
-            *.md | *.sh | *.py) ;;
-            *) PATHS+=("$path") ;;
+parse_arguments() {
+    COMMAND=""
+    SNAPSHOT_PATH=""
+    PATHS=()
+    local position=0
+    while [ $# -gt 0 ]; do
+        if [ "$position" -eq 2 ] && [ "$1" = -- ]; then
+            shift
+            for path in "$@"; do
+                # cp and the comparison helpers must receive option-looking names as literal paths.
+                if [[ "$path" == -* ]]; then path="./$path"; fi
+                PATHS+=("$path")
+            done
+            break
+        fi
+        case "$1" in
+            -h | --help) print_usage_and_exit 0 ;;
+            *)
+                case "$position" in
+                    0) COMMAND="$1" ;;
+                    1) SNAPSHOT_PATH="$1" ;;
+                    *)
+                        path="$1"
+                        if [[ "$path" == -* ]]; then path="./$path"; fi
+                        PATHS+=("$path")
+                        ;;
+                esac
+                ;;
         esac
+        position=$((position + 1))
+        shift
     done
-    PATHS+=("$FIXTURES_DIR/normalization")
-fi
+    case "$COMMAND" in
+        save | compare) ;;
+        *) print_usage_and_exit ;;
+    esac
+    if [ -z "$SNAPSHOT_PATH" ]; then
+        print_usage_and_exit
+    fi
+}
 
-(cd "$RUST_DIR" && cargo build --quiet --release --bin audiobatch-rs)
-RUST_CLI="$RUST_DIR/target/release/audiobatch-rs"
+run_snapshot() {
+    parse_arguments "$@"
+    FIXTURES_DIR=$(cd "$REPO_ROOT/fixtures" && pwd)
+    mkdir -p "$(dirname "$SNAPSHOT_PATH")"
+    SNAPSHOT_DIR="$(cd "$(dirname "$SNAPSHOT_PATH")" && pwd -P)/$(basename "$SNAPSHOT_PATH")"
+    if [ ${#PATHS[@]} -eq 0 ]; then
+        for path in "$FIXTURES_DIR"/*.*; do
+            case "$path" in
+                *.md | *.sh | *.py) ;;
+                *) PATHS+=("$path") ;;
+            esac
+        done
+        PATHS+=("$FIXTURES_DIR/normalization")
+    fi
 
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
+    (cd "$RUST_DIR" && cargo build --quiet --release --bin audiobatch-rs)
+    RUST_CLI="$RUST_DIR/target/release/audiobatch-rs"
+
+    # Keep trap state global so it survives the workflow returning.
+    WORK_DIR=$(mktemp -d)
+    trap 'rm -rf "$WORK_DIR"' EXIT
+
+    if [ "$COMMAND" = "save" ]; then
+        rm -rf "$SNAPSHOT_DIR"
+        take_snapshot "$SNAPSHOT_DIR"
+        echo "Saved the snapshot to $SNAPSHOT_DIR"
+        exit 0
+    fi
+
+    if [ ! -d "$SNAPSHOT_DIR" ]; then
+        echo "No snapshot in $SNAPSHOT_DIR, take one with: $0 save $SNAPSHOT_DIR" >&2
+        exit 1
+    fi
+    take_snapshot "$WORK_DIR/current"
+    compare_snapshot
+}
 
 # Copies the paths into a numbered folder each, so paths with the same base name do not overwrite each other.
 copy_inputs() {
@@ -116,32 +139,23 @@ take_snapshot() {
     rm -rf "$WORK_DIR/analyze"
 }
 
-if [ "$COMMAND" = "save" ]; then
-    rm -rf "$SNAPSHOT_DIR"
-    take_snapshot "$SNAPSHOT_DIR"
-    echo "Saved the snapshot to $SNAPSHOT_DIR"
-    exit 0
-fi
+compare_snapshot() {
+    STATUS=0
+    for name in analyze peak lufs; do
+        if diff -u "$SNAPSHOT_DIR/$name.json" "$WORK_DIR/current/$name.json"; then
+            echo "$name.json: identical"
+        else
+            STATUS=1
+        fi
+    done
+    # An empty list of lossy sources makes every output pair require identical samples.
+    : > "$WORK_DIR/lossy.txt"
+    for mode in peak lufs; do
+        echo "$mode outputs:"
+        uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$SNAPSHOT_DIR/$mode" "$WORK_DIR/current/$mode" \
+            --lossy "$WORK_DIR/lossy.txt" || STATUS=1
+    done
+    exit "$STATUS"
+}
 
-if [ ! -d "$SNAPSHOT_DIR" ]; then
-    echo "No snapshot in $SNAPSHOT_DIR, take one with: $0 save $SNAPSHOT_DIR" >&2
-    exit 1
-fi
-take_snapshot "$WORK_DIR/current"
-
-STATUS=0
-for name in analyze peak lufs; do
-    if diff -u "$SNAPSHOT_DIR/$name.json" "$WORK_DIR/current/$name.json"; then
-        echo "$name.json: identical"
-    else
-        STATUS=1
-    fi
-done
-# An empty list of lossy sources makes every output pair require identical samples.
-: > "$WORK_DIR/lossy.txt"
-for mode in peak lufs; do
-    echo "$mode outputs:"
-    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$SNAPSHOT_DIR/$mode" "$WORK_DIR/current/$mode" \
-        --lossy "$WORK_DIR/lossy.txt" || STATUS=1
-done
-exit "$STATUS"
+run_snapshot "$@"

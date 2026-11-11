@@ -387,6 +387,8 @@ class TestBenchmarkSequence(unittest.TestCase):
             initialization = calls.pop(0)
             assert initialization[-2:] == ["--corpus", "auto"]
             assert initialization[5] == "init"
+            # EXIT cleanup must still find its workspace after the workflow function returns.
+            assert not Path(initialization[6]).exists()
             for jobs in (1, 2):
                 for mode in benchmark.TARGETS:
                     for run in range(1, 4):

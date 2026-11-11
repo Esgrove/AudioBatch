@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [OPTIONS]
 
 Build AudioBatch.
@@ -49,20 +53,7 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
-
-# Help takes precedence over parsing and validation, but not over downstream arguments after --.
-for argument in "$@"; do
-    case "$argument" in
-        --) break ;;
-        -h | --help) print_usage_and_exit 0 ;;
-    esac
-done
-
-init_options() {
+parse_arguments() {
     BUILD_TYPE="Release"
     USE_NINJA=false
     USE_CLANG=false
@@ -399,41 +390,50 @@ export_cmake_project() {
     fi
 }
 
-init_options "$@"
-
-if [ "$BASH_PLATFORM" = "windows" ] && [ "$USE_NINJA" = true ]; then
-    load_msvc_environment
-    if [ "$USE_CLANG" = true ] && { ! command -v clang-cl > /dev/null 2>&1 || ! command -v lld-link > /dev/null 2>&1; }; then
-        print_error_and_exit "clang-cl and lld-link must be on PATH. Install LLVM or add its bin directory to PATH."
+# Loads the selected Windows toolchain before reusing or configuring its workspace.
+prepare_toolchain() {
+    if [ "$BASH_PLATFORM" = "windows" ] && [ "$USE_NINJA" = true ]; then
+        load_msvc_environment
+        if [ "$USE_CLANG" = true ] && { ! command -v clang-cl > /dev/null 2>&1 || ! command -v lld-link > /dev/null 2>&1; }; then
+            print_error_and_exit "clang-cl and lld-link must be on PATH. Install LLVM or add its bin directory to PATH."
+        fi
     fi
-fi
+}
 
-if [ "$REUSE_BUILD_DIR" = true ]; then
-    if [ ! -d "$CMAKE_BUILD_DIR" ]; then
-        print_error_and_exit "Build directory does not exist: $CMAKE_BUILD_DIR"
+# Reuses a compatible workspace or configures the selected generator in command order.
+prepare_build_directory() {
+    if [ "$REUSE_BUILD_DIR" = true ]; then
+        if [ ! -d "$CMAKE_BUILD_DIR" ]; then
+            print_error_and_exit "Build directory does not exist: $CMAKE_BUILD_DIR"
+        fi
+        if [ "$RUN_TESTS" = true ] && ! grep -Eiq '^BUILD_TESTING:BOOL=(ON|TRUE|1)$' "$CMAKE_BUILD_DIR/CMakeCache.txt"; then
+            print_error_and_exit "Tests are disabled in this build directory. Run with --test without --reuse to enable them."
+        fi
+        print_magenta "Reusing existing build directory: $CMAKE_BUILD_DIR"
+        ensure_cached_build_type
+    else
+        check_juce_submodule
+        if [ "$CLEAN_BUILD_DIR" = true ]; then
+            print_magenta "Removing CMake build directory: $CMAKE_BUILD_DIR"
+            rm -rf -- "${CMAKE_BUILD_DIR:?}"
+        fi
+        export_cmake_project
     fi
-    if [ "$RUN_TESTS" = true ] && ! grep -Eiq '^BUILD_TESTING:BOOL=(ON|TRUE|1)$' "$CMAKE_BUILD_DIR/CMakeCache.txt"; then
-        print_error_and_exit "Tests are disabled in this build directory. Run with --test without --reuse to enable them."
+}
+
+build_project() {
+    parse_arguments "$@"
+    prepare_toolchain
+    prepare_build_directory
+    if [ "$OPEN_PROJECT" = true ]; then
+        print_magenta "Opening project in the IDE..."
+        cmake --open "$CMAKE_BUILD_DIR"
+        return 0
     fi
-    print_magenta "Reusing existing build directory: $CMAKE_BUILD_DIR"
-    ensure_cached_build_type
-else
-    check_juce_submodule
-    if [ "$CLEAN_BUILD_DIR" = true ]; then
-        print_magenta "Removing CMake build directory: $CMAKE_BUILD_DIR"
-        rm -rf -- "${CMAKE_BUILD_DIR:?}"
+    build_app
+    if [ "$RUN_TESTS" = true ]; then
+        "$REPO/test.sh" --build-dir "$CMAKE_BUILD_DIR" --build-type "$BUILD_TYPE"
     fi
-    export_cmake_project
-fi
+}
 
-if [ "$OPEN_PROJECT" = true ]; then
-    print_magenta "Opening project in the IDE..."
-    cmake --open "$CMAKE_BUILD_DIR"
-    exit 0
-fi
-
-build_app
-
-if [ "$RUN_TESTS" = true ]; then
-    "$REPO/test.sh" --build-dir "$CMAKE_BUILD_DIR" --build-type "$BUILD_TYPE"
-fi
+build_project "$@"

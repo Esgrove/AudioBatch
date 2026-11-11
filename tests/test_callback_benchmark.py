@@ -761,7 +761,7 @@ class OptionContracts(unittest.TestCase):
             ("--report-key", "-K", "benchmark.cases"),
             ("--native-schema", "-N", "rust"),
             ("--field-map", "-F", '{"case": "case"}'),
-            ("--env", "-v", '{"SHARED": "with spaces"}'),
+            ("--env", "-e", '{"SHARED": "with spaces"}'),
             ("--baseline-env", "-u", '{"ROLE": "baseline"}'),
             ("--candidate-env", "-U", '{"ROLE": "candidate"}'),
             ("--baseline-metadata", "-M", '{"flags": ["-O3"]}'),

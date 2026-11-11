@@ -145,19 +145,23 @@ fi
             return []
         return [record.removesuffix("\0").split("\0") for record in self.log.read_text().splitlines()]
 
-    def test_help_exits_before_loading_helpers_or_querying_tools(self) -> None:
-        """Both help forms work even with unavailable helpers, missing values, and conflicting selections."""
-        (self.project / "common.sh").unlink()
+    def test_help_loads_helpers_first_without_starting_workflow_tools(self) -> None:
+        """The single parser handles both help aliases after bootstrap without creating build artifacts."""
+        helper = self.project / "common.sh"
+        marker = self.root / "helpers-loaded"
+        with helper.open("a", encoding="utf-8") as output:
+            output.write(f"\nprintf 'loaded\\n' > '{marker}'\n")
         scripts = [*self.project.glob("*.sh"), *self.project.glob("scripts/*.sh")]
         for script in scripts:
+            if script.name == "common.sh":
+                continue
             for help_option in ["-h", "--help"]:
                 with self.subTest(script=script.name, help=help_option):
-                    arguments = ["--unknown", "--artifacts", help_option]
-                    if script.name == "snapshot.sh":
-                        arguments.insert(0, "save")
-                    result = self.invoke(str(script.relative_to(self.project)), *arguments)
+                    marker.unlink(missing_ok=True)
+                    result = self.invoke(str(script.relative_to(self.project)), help_option)
                     assert result.returncode == 0, result.stdout + result.stderr
                     assert "Usage:" in result.stdout
+                    assert marker.read_text() == "loaded\n"
                     assert self.commands() == []
                     assert not (self.project / "target").exists()
 

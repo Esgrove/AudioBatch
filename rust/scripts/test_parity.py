@@ -479,6 +479,8 @@ class TestNormalizationMode(unittest.TestCase):
                     assert command[command.index("--mode") + 1] == mode
                     assert "--lossy" in command
                     assert "--snapshots" in command
+                    # EXIT cleanup must retain the workspace path across workflow function boundaries.
+                    assert not Path(command[5]).parent.exists()
             assert source.read_bytes() == b"original"
 
 

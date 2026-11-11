@@ -1,6 +1,10 @@
 #!/bin/bash
 set -eo pipefail
 
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
 USAGE="Usage: $0 [cpp|rust|image-control] [OPTIONS]
 
 Lint the C++ and Rust projects with their own lint.sh scripts, then the ImageControl plugin.
@@ -26,25 +30,19 @@ OPTIONS: All options are optional
         Display commands being executed.
 "
 
-# Import common functions
-DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=./common.sh
-source "$DIR/common.sh"
+parse_arguments() {
+    parse_project_arguments lint.sh true "$@"
+}
 
-if [ "$1" = "image-control" ]; then
-    shift
-    for argument in "$@"; do
-        if [ "$argument" = "-h" ] || [ "$argument" = "--help" ]; then
-            "$REPO_ROOT/image-control-plugin/lint.sh" --help
-            exit 0
-        fi
-    done
-else
-    run_project_scripts lint.sh "$@"
-    if [ "$1" = "cpp" ] || [ "$1" = "rust" ]; then
-        exit 0
+# Run selected projects sequentially, preserving the first failed lint command's status.
+lint_projects() {
+    parse_arguments "$@"
+    run_project_scripts lint.sh "${PROJECT_ARGUMENTS[@]}"
+    if [ "$PROJECT_SCOPE" = cpp ] || [ "$PROJECT_SCOPE" = rust ]; then
+        return
     fi
-fi
+    print_magenta "Running image-control-plugin/lint.sh ${PROJECT_ARGUMENTS[*]}"
+    "$REPO_ROOT/image-control-plugin/lint.sh" "${PROJECT_ARGUMENTS[@]}"
+}
 
-print_magenta "Running image-control-plugin/lint.sh $*"
-"$REPO_ROOT/image-control-plugin/lint.sh" "$@"
+lint_projects "$@"
