@@ -47,6 +47,21 @@ pub enum FrequencyScale {
     Mel,
 }
 
+impl FrequencyScale {
+    /// Projects a finite positive frequency onto the 20 Hz through 20 kHz axis without clamping.
+    /// This pure helper is shared by worker particles, editor overlays, and input geometry.
+    #[must_use]
+    pub fn normalized(self, frequency: f64) -> f64 {
+        frequency_to_share(frequency, self)
+    }
+
+    /// Inverts the axis share without clamping, so overlays and hit testing share particle geometry.
+    #[must_use]
+    pub fn frequency(self, normalized: f64) -> f64 {
+        share_to_frequency(normalized, self)
+    }
+}
+
 /// Finite, range-validated settings applied only to worker-side display construction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DisplaySettings {

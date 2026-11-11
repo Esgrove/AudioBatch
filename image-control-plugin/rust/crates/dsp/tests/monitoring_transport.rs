@@ -189,6 +189,29 @@ fn shutdown_is_bounded_under_continuously_refilling_producer() {
 }
 
 #[test]
+fn complete_preferences_round_trip_and_no_op_publication_preserves_generation() {
+    let shared = Imager::new().shared();
+    let preferences = DisplayPreferences {
+        persistence_seconds: 1.25,
+        contrast: 0.875,
+        color_mode: image_control_dsp::ColourMode::Phase,
+        mel_scale: true,
+        solid_rendering: true,
+        pan_midpoint_db: 6.0,
+        pan_edge_db: 18.0,
+        smooth_correlation: false,
+        show_fps: true,
+    };
+    let initial_generation = shared.analysis_generation();
+    assert!(shared.set_display_preferences(preferences));
+    assert_eq!(shared.display_preferences(), preferences);
+    let generation = shared.analysis_generation();
+    assert_ne!(generation, initial_generation);
+    assert!(shared.set_display_preferences(preferences));
+    assert_eq!(shared.analysis_generation(), generation);
+}
+
+#[test]
 fn malformed_preferences_are_transactionally_rejected() {
     let shared = Imager::new().shared();
     let negative_zero = DisplayPreferences {
@@ -214,6 +237,35 @@ fn malformed_preferences_are_transactionally_rejected() {
         },
         DisplayPreferences {
             contrast: 1.1,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_midpoint_db: f32::NAN,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_edge_db: f32::INFINITY,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_midpoint_db: 2.99,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_midpoint_db: 24.01,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_edge_db: 11.99,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_edge_db: 60.01,
+            ..initial
+        },
+        DisplayPreferences {
+            pan_midpoint_db: 24.0,
+            pan_edge_db: 26.99,
             ..initial
         },
     ] {

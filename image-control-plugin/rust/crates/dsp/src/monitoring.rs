@@ -1,8 +1,9 @@
 //! Atomic monitoring configuration, detached display preferences, and generation-tagged audio transport.
 //!
-//! Audio owns only the producer and correlation accumulators. All configuration payloads are atomic,
-//! and a callback never retries a configuration read or waits for an editor.
+//! Audio owns only the producer and correlation accumulators. Audio configuration remains atomic,
+//! while coherent display preferences use an off-audio mutex that callbacks never read or acquire.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,18 @@ pub struct DisplayPreferences {
     pub contrast: f32,
     /// Frequency or phase-coherence palette.
     pub color_mode: ColourMode,
+    /// HTK mel frequency projection instead of the logarithmic axis.
+    pub mel_scale: bool,
+    /// Density layers and contours beneath the brightest particle traces.
+    pub solid_rendering: bool,
+    /// Channel level difference placing a point halfway from center to either edge.
+    pub pan_midpoint_db: f32,
+    /// Channel level difference placing a point at 99% of the center-to-edge distance.
+    pub pan_edge_db: f32,
+    /// Selects the smoothed correlation number without changing audio measurements.
+    pub smooth_correlation: bool,
+    /// Shows the UI refresh-rate diagnostic, not an audio-performance measurement.
+    pub show_fps: bool,
 }
 
 impl Default for DisplayPreferences {
@@ -70,6 +83,12 @@ impl Default for DisplayPreferences {
             persistence_seconds: 0.3,
             contrast: 0.6,
             color_mode: ColourMode::Frequency,
+            mel_scale: false,
+            solid_rendering: false,
+            pan_midpoint_db: 12.0,
+            pan_edge_db: 32.0,
+            smooth_correlation: true,
+            show_fps: false,
         }
     }
 }
@@ -82,6 +101,11 @@ impl DisplayPreferences {
             && (0.05..=3.0).contains(&self.persistence_seconds)
             && self.contrast.is_finite()
             && (0.0..=1.0).contains(&self.contrast)
+            && self.pan_midpoint_db.is_finite()
+            && (3.0..=24.0).contains(&self.pan_midpoint_db)
+            && self.pan_edge_db.is_finite()
+            && (12.0..=60.0).contains(&self.pan_edge_db)
+            && f64::from(self.pan_edge_db) >= f64::from(self.pan_midpoint_db) + 3.0
     }
 }
 
@@ -103,14 +127,14 @@ pub struct AnalysisSample {
     pub(crate) generation: u64,
 }
 
-/// Atomic scalar storage with no callback-owned heap objects or GUI references.
+/// Atomic audio configuration and off-audio preference storage, without callback-owned GUI references.
 pub struct Monitoring {
     pub(crate) source: AtomicU64,
     pub(crate) rate: AtomicU32,
     pub(crate) claimed: AtomicBool,
     pub(crate) status: AtomicU8,
     pub(crate) status_generation: AtomicU64,
-    preferences: AtomicU64,
+    preferences: Mutex<DisplayPreferences>,
     pub(crate) correlation_enabled: AtomicBool,
     pub(crate) correlation_generation: AtomicU64,
     pub(crate) correlation_revision: AtomicU64,
@@ -129,7 +153,7 @@ impl Monitoring {
             claimed: AtomicBool::new(false),
             status: AtomicU8::new(AnalysisStatus::Disabled as u8),
             status_generation: AtomicU64::new(0),
-            preferences: AtomicU64::new(encode_preferences(DisplayPreferences::default())),
+            preferences: Mutex::new(DisplayPreferences::default()),
             correlation_enabled: AtomicBool::new(false),
             correlation_generation: AtomicU64::new(0),
             correlation_revision: AtomicU64::new(0),
@@ -184,42 +208,31 @@ impl Monitoring {
         }
     }
 
-    /// Reads one coherent packed preference record without acquiring an editor lock.
+    /// Copies one coherent preference record. Only UI, state, and analysis workers may acquire this mutex.
     pub(crate) fn preferences(&self) -> DisplayPreferences {
-        decode_preferences(self.preferences.load(Ordering::Acquire))
+        *self
+            .preferences
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Publishes the complete validated preference record atomically.
+    /// Publishes a complete validated record, advancing identity before releasing the preference lock.
+    /// A worker reads preferences and then rechecks its source identity before applying them.
+    /// Audio reads only the atomic source token and never acquires this lock.
     pub(crate) fn set_preferences(&self, preferences: DisplayPreferences) -> bool {
         if !preferences.is_valid() {
             return false;
         }
-        let encoded = encode_preferences(preferences);
-        if self.preferences.swap(encoded, Ordering::AcqRel) != encoded {
+        let mut current = self
+            .preferences
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != preferences {
+            *current = preferences;
             self.source.fetch_add(GENERATION_STEP, Ordering::AcqRel);
         }
+        drop(current);
         true
-    }
-}
-
-/// Packs two bounded float values and one mode without lossy quantization.
-/// Nonnegative contrast leaves its sign bit available for the palette selection.
-fn encode_preferences(preferences: DisplayPreferences) -> u64 {
-    u64::from(preferences.persistence_seconds.to_bits())
-        | (u64::from(preferences.contrast.to_bits() & 0x7fff_ffff) << 32)
-        | (u64::from(preferences.color_mode == ColourMode::Phase) << 63)
-}
-
-/// Decodes only records produced from validated nonnegative values.
-const fn decode_preferences(encoded: u64) -> DisplayPreferences {
-    DisplayPreferences {
-        persistence_seconds: f32::from_bits(encoded as u32),
-        contrast: f32::from_bits((encoded >> 32) as u32 & 0x7fff_ffff),
-        color_mode: if encoded >> 63 == 0 {
-            ColourMode::Frequency
-        } else {
-            ColourMode::Phase
-        },
     }
 }
 
@@ -284,6 +297,7 @@ impl crate::SharedState {
     }
 
     /// Publishes validated appearance preferences without host sound-parameter gestures.
+    /// Acquires a short display-only lock. Call only from UI or non-audio state callbacks.
     pub fn set_display_preferences(&self, preferences: DisplayPreferences) -> bool {
         self.monitoring.set_preferences(preferences)
     }
@@ -351,4 +365,91 @@ pub const fn capture_enabled(source: u64) -> bool {
 /// Returns the selected samples using the same token that will accompany them in the queue.
 pub const fn select_frame(source: u64, input: [f32; 2], output: [f32; 2]) -> [f32; 2] {
     if source & PRE_FLAG != 0 { input } else { output }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DisplayPreferences, GENERATION_STEP};
+    use crate::Imager;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    #[test]
+    fn missing_display_fields_restore_fixed_defaults() {
+        use serde::Deserialize;
+        use serde::de::value::{Error, MapDeserializer};
+
+        let legacy =
+            MapDeserializer::<_, Error>::new([("persistence_seconds", 0.75_f32), ("contrast", 0.25_f32)].into_iter());
+        let preferences = DisplayPreferences::deserialize(legacy).expect("legacy display fields");
+        assert_eq!(
+            preferences,
+            DisplayPreferences {
+                persistence_seconds: 0.75,
+                contrast: 0.25,
+                ..DisplayPreferences::default()
+            }
+        );
+        assert!(!preferences.mel_scale);
+        assert!(!preferences.solid_rendering);
+        assert_eq!(preferences.pan_midpoint_db.to_bits(), 12.0_f32.to_bits());
+        assert_eq!(preferences.pan_edge_db.to_bits(), 32.0_f32.to_bits());
+        assert!(preferences.smooth_correlation);
+        assert!(!preferences.show_fps);
+    }
+
+    #[test]
+    fn preference_mutex_is_never_needed_by_audio_processing() {
+        let mut imager = Imager::new();
+        assert!(imager.prepare(48_000.0));
+        let shared = imager.shared();
+        let preferences = shared.monitoring.preferences.lock().expect("preference lock");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let processing = std::thread::spawn(move || {
+            imager.begin_block();
+            for _ in 0..4096 {
+                let _ = imager.process_frame([0.25, -0.125]);
+            }
+            sender.send(()).expect("processing completion");
+        });
+        let completed = receiver.recv_timeout(Duration::from_secs(5));
+        drop(preferences);
+        processing.join().expect("processing thread");
+        completed.expect("audio must finish while the preference lock remains held");
+    }
+
+    #[test]
+    fn source_snapshot_recheck_identifies_the_complete_preference_record() {
+        let shared = Imager::new().shared();
+        let initial = shared.analysis_generation();
+        std::thread::scope(|scope| {
+            let shared = &shared;
+            scope.spawn(move || {
+                for index in 1_u32..=2000 {
+                    assert!(shared.set_display_preferences(DisplayPreferences {
+                        contrast: index as f32 / 2000.0,
+                        mel_scale: index.is_multiple_of(2),
+                        solid_rendering: index.is_multiple_of(3),
+                        ..DisplayPreferences::default()
+                    }));
+                }
+            });
+            for _ in 0..4000 {
+                let source = shared.analysis_generation();
+                let preferences = shared.display_preferences();
+                if source == shared.analysis_generation() && source != initial {
+                    let index = (source - initial) / GENERATION_STEP;
+                    assert_eq!(preferences.contrast.to_bits(), (index as f32 / 2000.0).to_bits());
+                    assert_eq!(preferences.mel_scale, index.is_multiple_of(2));
+                    assert_eq!(preferences.solid_rendering, index.is_multiple_of(3));
+                }
+            }
+        });
+        let preferences = shared.monitoring.preferences.lock().expect("preference lock");
+        assert_eq!(
+            shared.monitoring.source.load(Ordering::Acquire),
+            initial + 2000 * GENERATION_STEP
+        );
+        assert_eq!(preferences.contrast.to_bits(), 1.0_f32.to_bits());
+    }
 }
