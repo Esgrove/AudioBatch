@@ -10,8 +10,8 @@ use crate::params::{Parameters, Snapshot};
 
 /// Largest accepted state payload, independently of its host transport.
 pub const MAXIMUM_STATE_BYTES: usize = 16_384;
-/// Only this independent project schema is accepted. Other generations are not reinterpreted.
-pub const STATE_VERSION: u32 = 6;
+/// First supported parameter and project-state schema. Unsupported generations are not reinterpreted.
+pub const STATE_VERSION: u32 = 1;
 
 /// Failure to decode or transfer bounded state, always outside the audio callback.
 #[derive(Debug, Error)]
@@ -126,6 +126,7 @@ mod tests {
     /// Detached recall preserves every accepted normalized bit without snapping or plain-unit conversion.
     #[test]
     fn current_sound_precision_survives_repeated_saves_and_recalls() {
+        assert_eq!(STATE_VERSION, 1, "first supported parameter and project-state format");
         let instance = Instance::new();
         let document = serde_json::json!({
             "version": STATE_VERSION,
@@ -330,7 +331,7 @@ mod tests {
                 .is_err()
             );
         }
-        for version in [0, 1, 2, 3, 4, 5, STATE_VERSION + 1, u32::MAX] {
+        for version in [0, STATE_VERSION + 1, u32::MAX] {
             let bytes = format!(r#"{{"version":{version},"parameters":{{"gain":0.25}}}}"#);
             assert!(
                 restore_bytes(

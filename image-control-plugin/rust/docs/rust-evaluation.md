@@ -345,7 +345,7 @@ The C++ reference defines intended features and audio behavior, not an internal 
   Undo history remains transient and host automation does not enter it.
   Host restores invalidate pending local transactions and do not synchronously wait for message dispatch.
 
-**Recommendation:** use the independent RS JSON codec with schema 6 only.
+**Recommendation:** use the independent RS JSON codec with schema 1 only.
 Serialize `Snapshot`, `AnalysisTap`, and `DisplayPreferences` directly instead of duplicate mirrors or migration layers.
 Older and unknown schemas reject transactionally, leaving all live values and restore identity untouched.
 Use fixed defaults for absent current-schema fields and validate the complete detached document before publication.
@@ -631,7 +631,7 @@ AU wrapper, native Windows, accessibility, device-loss, widget-cache, and unload
   six controls per band, bypass, Delta, and Mono. There is no global Width parameter or slider.
   Crossovers use true logarithmic `f64` conversion, with useful plain-unit snapping for stepped controls,
   not JUCE float emulation. Parameter IDs stay stable, but older RS normalized automation is not promised compatibility.
-- Independent JSON project state accepts schema 6 only, with a 16 KiB payload limit.
+- Independent JSON project state accepts schema 1 only, with a 16 KiB payload limit.
   It directly serializes `Snapshot`, `AnalysisTap`, and `DisplayPreferences`, without duplicate mirrors or migration.
   Sound, A/B sounds and preset origins, layout, display, and logical geometry validate before publication.
   Older and unknown schemas reject transactionally. Missing current-schema fields use fixed defaults.
@@ -688,7 +688,7 @@ Its reviewed artifacts passed:
 No installed plugin was replaced and no Audio Unit registration was changed for this verification.
 These results do not establish native Windows or representative-DAW qualification, native accessibility,
 upstream widget-cache reclamation, device-loss recovery, arbitrary module unloading, or clean AU callbacks.
-Those artifacts do not verify the current schema-6-only codec, logarithmic mapping, or ownership cleanup.
+Those artifacts do not verify the current schema-1-only codec, logarithmic mapping, or ownership cleanup.
 No new passing cleanup evidence is claimed.
 
 ### Cross-implementation and performance evidence

@@ -238,7 +238,7 @@ fn packaged_untrusted_state_is_rejected_without_mutating_parameters() {
     let _deadline = NativeDeadline::start();
     on_ui(move |ui| {
         let mut instance = instance(ui, &bundle)?;
-        let valid = state_blob(r#"{"version":6,"parameters":{"gain":0.25}}"#);
+        let valid = state_blob(r#"{"version":1,"parameters":{"gain":0.25}}"#);
         ensure!(
             instance.set_state(ui, &valid)?,
             "independent current-version state refused"
@@ -258,18 +258,14 @@ fn packaged_untrusted_state_is_rejected_without_mutating_parameters() {
                 controller: Vec::new(),
             },
             state_blob(r#"{"version":99,"parameters":{"gain":0.75}}"#),
-            state_blob(r#"{"version":1,"parameters":{"gain":0.75}}"#),
             state_blob(r#"{"version":2,"parameters":{"gain":0.75}}"#),
-            state_blob(r#"{"version":3,"parameters":{"gain":0.75}}"#),
-            state_blob(r#"{"version":4,"parameters":{"gain":0.75}}"#),
-            state_blob(r#"{"version":5,"parameters":{"gain":0.75}}"#),
-            state_blob(r#"{"version":6,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#),
-            state_blob(r#"{"version":6,"parameters":{"gain":0.75},"geometry":{"width":4097,"height":900}}"#),
-            state_blob(r#"{"version":6,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":null}}"#),
-            state_blob(r#"{"version":6,"parameters":{"gain":1.5}}"#),
-            state_blob(r#"{"version":6,"parameters":{"gain":1e999}}"#),
-            state_blob(r#"{"version":6,"parameters":{"bands":[{"width":0.25},{"recover":2.0},{},{}]}}"#),
-            state_blob(r#"{"version":6,"parameters":{"gain":0.75,"unknown_control":0.5}}"#),
+            state_blob(r#"{"version":1,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#),
+            state_blob(r#"{"version":1,"parameters":{"gain":0.75},"geometry":{"width":4097,"height":900}}"#),
+            state_blob(r#"{"version":1,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":null}}"#),
+            state_blob(r#"{"version":1,"parameters":{"gain":1.5}}"#),
+            state_blob(r#"{"version":1,"parameters":{"gain":1e999}}"#),
+            state_blob(r#"{"version":1,"parameters":{"bands":[{"width":0.25},{"recover":2.0},{},{}]}}"#),
+            state_blob(r#"{"version":1,"parameters":{"gain":0.75,"unknown_control":0.5}}"#),
         ];
         for state in invalid {
             ensure!(!instance.set_state(ui, &state)?, "hostile packaged state was accepted");
@@ -295,14 +291,14 @@ fn packaged_geometry_roundtrips_with_independent_instance_and_missing_defaults()
         let mut destination = instance(ui, &bundle)?;
         let defaults = destination.state(ui)?;
         let geometry = state_blob(
-            r#"{"version":6,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200.5,"height":900.25}}"#,
+            r#"{"version":1,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200.5,"height":900.25}}"#,
         );
         ensure!(source.set_state(ui, &geometry)?, "current geometry restore");
         let saved = source.state(ui)?;
         ensure!(destination.state(ui)? == defaults, "geometry leaked between components");
         ensure!(destination.set_state(ui, &saved)?, "new component geometry restore");
         ensure!(destination.state(ui)? == saved, "geometry did not roundtrip");
-        let sparse = state_blob(r#"{"version":6,"parameters":{}}"#);
+        let sparse = state_blob(r#"{"version":1,"parameters":{}}"#);
         ensure!(destination.set_state(ui, &sparse)?, "missing geometry default restore");
         ensure!(
             destination.state(ui)? == defaults,
@@ -325,7 +321,7 @@ fn packaged_missing_fields_restore_independent_neutral_defaults() {
         let mut instance = instance(ui, &bundle)?;
         let defaults = instance.state(ui)?.component;
         ensure!(
-            instance.set_state(ui, &state_blob(r#"{"version":6,"parameters":{"gain":0.1,"mono":1.0}}"#))?,
+            instance.set_state(ui, &state_blob(r#"{"version":1,"parameters":{"gain":0.1,"mono":1.0}}"#))?,
             "changed state"
         );
         ensure!(
@@ -333,7 +329,7 @@ fn packaged_missing_fields_restore_independent_neutral_defaults() {
             "changed controls were not restored"
         );
         ensure!(
-            instance.set_state(ui, &state_blob(r#"{"version":6,"parameters":{}}"#))?,
+            instance.set_state(ui, &state_blob(r#"{"version":1,"parameters":{}}"#))?,
             "sparse default state"
         );
         ensure!(

@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::BUNDLE_ID;
 use crate::editing::{SoundSnapshot, valid_identity, valid_name};
 
-/// The sound-preset schema is independent of the host-state schema and its migrations.
-const PRESET_VERSION: u32 = 2;
+/// First supported sound-preset schema, independent of the host-state envelope.
+const PRESET_VERSION: u32 = 1;
 /// Limit both allocation and reads, including files that grow after their metadata is inspected.
 const MAXIMUM_PRESET_BYTES: usize = 64 * 1024;
 /// This file must remain in place so every instance locks the same filesystem object.
@@ -615,7 +615,7 @@ mod tests {
         assert_ne!(first.id, first.revision);
         assert_sound_bits(first.sound, first_sound);
         let document: serde_json::Value = serde_json::from_slice(&first.fingerprint).expect("JSON");
-        assert_eq!(document["version"], PRESET_VERSION);
+        assert_eq!(document["version"], 1, "first supported preset format");
         assert_eq!(document["plugin"], BUNDLE_ID);
         assert!(document.get("path").is_none());
         assert!(document.get("comparison").is_none());
@@ -854,7 +854,6 @@ mod tests {
         let base: serde_json::Value = serde_json::from_slice(&saved.fingerprint).expect("document");
         for (key, value) in [
             ("version", serde_json::json!(0)),
-            ("version", serde_json::json!(1)),
             ("version", serde_json::json!(PRESET_VERSION + 1)),
             ("plugin", serde_json::json!("com.esgrove.imagecontrol")),
             ("id", serde_json::json!("00000000000000000000000000000000")),

@@ -47,8 +47,15 @@ Stale selections are rejected rather than silently overwriting another instance'
 
 Crossovers use a true logarithmic `f64` mapping, with useful plain-unit snapping for stepped controls,
 not JUCE float emulation. Parameter IDs remain stable, but older RS normalized automation is not promised compatibility.
-Only project-state schema 6 and preset schema 2 are accepted.
-Older schemas are rejected without changing live state, not migrated.
+The current implementation is the first supported iteration.
+Parameter/project-state and preset schemas both start at version 1.
+Prototype data has no compatibility guarantee and is not migrated.
+Before using it with existing data, move aside prototype preset files.
+Their library is `~/Library/Application Support/esgrove/ImageControl RS/Presets` on macOS
+or `%APPDATA%\esgrove\ImageControl RS\Presets` on Windows.
+Recreate Rust plugin instances and host/chain presets saved by prototype builds.
+Some prototypes also used version 1, so a matching version number alone does not establish compatibility.
+Leave the independent C++ ImageControl library unchanged.
 The detached codec uses `Snapshot`, `AnalysisTap`, and `DisplayPreferences` directly, without duplicate state mirrors.
 
 ## Build and test
