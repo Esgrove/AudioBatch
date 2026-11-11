@@ -7,6 +7,8 @@ repos:
   - repo: builtin
     hooks:
       - id: check-added-large-files
+        # Full variable-font families are intentional binary assets, not generated build products.
+        exclude: ^assets/(Roboto-Italic-VariableFont_wdth,wght|RobotoFlex-VariableFont_GRAD,XOPQ,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght)\.ttf$
         priority: 1
       - id: check-case-conflict
         priority: 1
