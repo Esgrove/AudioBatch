@@ -705,6 +705,15 @@ BandStrip::~BandStrip()
     soloAttachment.reset();
 }
 
+/// Checks uncompressed heading glyphs against the current width, including buttons, gaps, and disclosure space.
+/// The message-thread editor combines all bands' fit results before selecting their shared heading layout.
+bool BandStrip::canFitInlineRange()
+{
+    const int requiredWidth = MARGIN * 2 + headerDisclosureInset + LINK_WIDTH + SOLO_GAP + HEADER_ROW_HEIGHT
+        + headingLabelWidth(nameLabel) + headingLabelWidth(rangeLabel) + HEADER_TEXT_GAP * 2;
+    return rangeLabel.getText().isNotEmpty() && getWidth() >= requiredWidth;
+}
+
 /// Cancels unfinished numeric text after a host restore, without overwriting restored parameter values.
 void BandStrip::discardPendingEdits()
 {
@@ -782,6 +791,18 @@ void BandStrip::setHeaderDisclosureInset(const int inset)
     resized();
 }
 
+/// Applies the message-thread editor's shared wrapping requirement without touching numeric drafts or gestures.
+void BandStrip::setRangeOnSecondRow(const bool secondRow)
+{
+    if (rangeOnSecondRow == secondRow) {
+        return;
+    }
+    rangeOnSecondRow = secondRow;
+    if (!compact) {
+        resized();
+    }
+}
+
 /// Paints the rounded background of the strip.
 void BandStrip::paint(juce::Graphics& graphics)
 {
@@ -790,7 +811,7 @@ void BandStrip::paint(juce::Graphics& graphics)
 }
 
 /// Uses one compact row of four values, with inline full names only when their worst-case glyphs fit together.
-/// Expanded headings share a row only when both full labels fit beside Solo, Link, and the disclosure inset.
+/// Expanded headings share a row only when both full labels fit and the editor permits the shared inline layout.
 /// Otherwise the range keeps its own row. A gap takes at most 16 spare pixels before the five fixed-font slider rows,
 /// which share the remaining height evenly without interrupting their editors or gestures.
 void BandStrip::resized()
@@ -825,9 +846,7 @@ void BandStrip::resized()
     header.removeFromRight(SOLO_GAP);
     soloButton.setBounds(header.removeFromRight(HEADER_ROW_HEIGHT));
     const int nameWidth = headingLabelWidth(nameLabel);
-    const int rangeWidth = headingLabelWidth(rangeLabel);
-    const bool inlineRange
-        = rangeLabel.getText().isNotEmpty() && header.getWidth() >= nameWidth + rangeWidth + HEADER_TEXT_GAP * 2;
+    const bool inlineRange = !rangeOnSecondRow && canFitInlineRange();
     if (inlineRange) {
         nameLabel.setBounds(header.removeFromLeft(nameWidth));
         header.removeFromLeft(HEADER_TEXT_GAP);

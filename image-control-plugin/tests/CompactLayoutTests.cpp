@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace esgrove::image_control::test
@@ -41,6 +42,54 @@ juce::Button* compactToggle(const juce::Component& parent)
     }
     return nullptr;
 }
+/// Measures the full inline heading width independently from the strip's responsive layout decision.
+int expandedHeadingWidth(const BandStrip& strip)
+{
+    int width = 20 + 20 + 60 + 6 + 8 * 2;
+    for (auto* child : strip.getChildren()) {
+        if (auto* label = dynamic_cast<juce::Label*>(child); label != nullptr
+            && (strip.getTitle() == label->getText() + " band controls" || label->getText().contains(" Hz")
+                || label->getText().contains(" kHz")))
+        {
+            auto& lookAndFeel = label->getLookAndFeel();
+            width += static_cast<int>(std::ceil(
+                         juce::GlyphArrangement::getStringWidth(lookAndFeel.getLabelFont(*label), label->getText())
+                     ))
+                + lookAndFeel.getLabelBorderSize(*label).getLeftAndRight();
+        }
+    }
+    return width;
+}
+
+/// Checks the shared range row and slider alignment across every production strip without painting pixels.
+void expectExpandedHeadingRows(const ImageControlEditor& editor, const bool inlineRanges)
+{
+    int midY = -1;
+    int rangeCount = 0;
+    for (const auto* child : editor.getChildren()) {
+        const auto* strip = dynamic_cast<const BandStrip*>(child);
+        if (strip == nullptr) {
+            continue;
+        }
+        for (const auto* control : strip->getChildren()) {
+            if (const auto* label = dynamic_cast<const juce::Label*>(control);
+                label != nullptr && label->getText().contains("Hz"))
+            {
+                ++rangeCount;
+                EXPECT_TRUE(label->isVisible());
+                EXPECT_EQ(label->getY(), inlineRanges ? 10 : 30);
+            }
+            if (control->getTitle().endsWith(" Mid")) {
+                if (midY < 0) {
+                    midY = control->getY();
+                }
+                EXPECT_EQ(control->getY(), midY);
+            }
+        }
+    }
+    EXPECT_EQ(rangeCount, static_cast<int>(BAND_COUNT));
+}
+
 /// Checks compact column geometry and independent meter alignment through production component bounds.
 void expectCompactColumns(const ImageControlEditor& editor, const int expectedHeight)
 {
@@ -353,6 +402,61 @@ TEST(CompactLayout, InlineNamesDoNotCommitOrDismissNumericEntry)
         EXPECT_FALSE(processor.getHistory().canUndo());
     }
     pan->hideTextBox(true);
+}
+
+/// Every expanded band uses the same heading row count at the widest measured text boundary in both directions.
+TEST(CompactLayout, ExpandedFrequencyRangesWrapTogetherAcrossResizeAndCompactRoundTrips)
+{
+    for (const int bandHeight : {BAND_STRIP_MIN_HEIGHT, BAND_STRIP_MIN_HEIGHT + 80}) {
+        ImageControlProcessor processor;
+        processor.getEditorState().setProperty(BAND_SECTION_HEIGHT_PROPERTY, bandHeight, nullptr);
+        processor.getEditorState().setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
+        ImageControlEditor editor(processor);
+        std::vector<int> thresholds;
+        int stripSpace = 0;
+        for (const auto* child : editor.getChildren()) {
+            if (const auto* strip = dynamic_cast<const BandStrip*>(child)) {
+                thresholds.push_back(expandedHeadingWidth(*strip));
+                stripSpace += strip->getWidth();
+            }
+        }
+        ASSERT_EQ(thresholds.size(), BAND_COUNT);
+        const auto [smallestThreshold, sharedThreshold] = std::ranges::minmax(thresholds);
+        ASSERT_LT(smallestThreshold, sharedThreshold);
+        const int outsideStrips = editor.getWidth() - stripSpace;
+        auto* toggle = compactToggle(editor);
+        ASSERT_NE(toggle, nullptr);
+        for (const bool compactRoundTrip : {false, true}) {
+            if (compactRoundTrip) {
+                toggle->onClick();
+            }
+            for (const int width :
+                 {
+                     smallestThreshold,
+                     sharedThreshold - 1,
+                     sharedThreshold,
+                     sharedThreshold + 1,
+                     sharedThreshold + 80,
+                     sharedThreshold - 1,
+                 })
+            {
+                SCOPED_TRACE(width);
+                SCOPED_TRACE(compactRoundTrip);
+                editor.setSize(outsideStrips + static_cast<int>(BAND_COUNT) * width, 900);
+                if (compactRoundTrip) {
+                    toggle->onClick();
+                }
+                expectExpandedHeadingRows(editor, width >= sharedThreshold);
+                if (compactRoundTrip) {
+                    toggle->onClick();
+                }
+            }
+            if (compactRoundTrip) {
+                toggle->onClick();
+            }
+        }
+        EXPECT_FALSE(processor.getHistory().canUndo());
+    }
 }
 
 /// The full-view action stays in reserved band-heading space, clear of analysis controls and readouts.

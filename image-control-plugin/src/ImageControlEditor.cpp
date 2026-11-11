@@ -524,6 +524,7 @@ void ImageControlEditor::resized()
     }
     layoutBandControlsDisclosure();
     updateSettingsBounds();
+    updateBandHeadingLayout();
 
     if (!layoutRestored || layoutTransition) {
         return;
@@ -917,7 +918,18 @@ void ImageControlEditor::refreshDisplay(const double timestamp)
     }
 }
 
-/// Shows the frequency range of each band, which follows the crossovers.
+/// Keeps every frequency range inline only when all expanded headings fit at their actual column widths.
+/// Runs on the message thread after strip bounds or crossover labels change, without ending active control edits.
+void ImageControlEditor::updateBandHeadingLayout()
+{
+    const bool inlineRanges
+        = std::ranges::all_of(bandStrips, [](const auto& strip) { return strip->canFitInlineRange(); });
+    for (const auto& strip : bandStrips) {
+        strip->setRangeOnSecondRow(!inlineRanges);
+    }
+}
+
+/// Shows the frequency range of each band, which follows the crossovers, then synchronizes their heading rows.
 void ImageControlEditor::updateBandRanges()
 {
     const Crossovers crossovers = imageControlProcessor.getCrossovers();
@@ -934,3 +946,4 @@ void ImageControlEditor::updateBandRanges()
     }
 }
 }  // namespace esgrove::image_control
+    updateBandHeadingLayout();

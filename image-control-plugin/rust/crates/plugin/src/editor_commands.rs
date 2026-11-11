@@ -168,9 +168,22 @@ impl EditorState {
             .get(comparison.active)
             .and_then(Option::as_ref)
             .map(|origin| origin.id.clone());
-        if !matches!(action, presets::Action::Refresh | presets::Action::Load | presets::Action::SaveAs | presets::Action::Import | presets::Action::Reconnect)
-            && self.presets.bound.get(comparison.active).and_then(Option::as_ref).is_some_and(|preset| Some(&preset.id) != identity.as_ref()) {
-            self.presets.error = Some("The comparison's selected preset changed. Reconnect before modifying the library".into());
+        if !matches!(
+            action,
+            presets::Action::Refresh
+                | presets::Action::Load
+                | presets::Action::SaveAs
+                | presets::Action::Import
+                | presets::Action::Reconnect
+        ) && self
+            .presets
+            .bound
+            .get(comparison.active)
+            .and_then(Option::as_ref)
+            .is_some_and(|preset| Some(&preset.id) != identity.as_ref())
+        {
+            self.presets.error =
+                Some("The comparison's selected preset changed. Reconnect before modifying the library".into());
             return;
         }
         self.presets.start(
@@ -238,7 +251,10 @@ impl EditorState {
         let comparison = self
             .parameters
             .with_editing(|editing, snapshot| editing.comparison(snapshot));
-        if completion.generation != self.parameters.restore_generation() || completion.slot != comparison.active {
+        if completion.generation != self.parameters.restore_generation()
+            || completion.epoch != self.presets.epoch
+            || completion.slot != comparison.active
+        {
             self.presets.error = Some("The project or comparison changed while the preset operation completed".into());
             return;
         }
@@ -279,10 +295,15 @@ impl EditorState {
                 self.start_preset(presets::Action::Refresh);
             }
             Ok(presets::Outcome::Renamed(preset)) => {
-                self.parameters.with_editing(|editing, snapshot| { editing.begin(); editing.rename_origin(&preset.id, preset.name.clone(), snapshot); editing.end(snapshot); });
+                self.parameters.with_editing(|editing, snapshot| {
+                    editing.begin();
+                    editing.rename_origin(&preset.id, preset.name.clone(), snapshot);
+                    editing.end(snapshot);
+                });
                 self.presets.name.clone_from(&preset.name);
                 *self.presets.bound.get_mut(comparison.active).expect("active slot") = Some(preset);
-                self.binding.mark_dirty(); self.start_preset(presets::Action::Refresh);
+                self.binding.mark_dirty();
+                self.start_preset(presets::Action::Refresh);
             }
             Ok(presets::Outcome::Reconnected(preset)) => {
                 *self.presets.bound.get_mut(comparison.active).expect("active slot") = Some(preset);
@@ -424,12 +445,24 @@ impl EditorState {
         self.finish_numeric();
         self.end_gesture();
         let generation = self.parameters.restore_generation();
+        self.presets.invalidate();
         let target = self.parameters.with_editing(|editing, snapshot| {
             editing.begin();
             editing.switch(slot, snapshot)
         });
         if let Some(sound) = target {
             self.recall_values(&sound.parameters().collect::<Vec<_>>(), generation, true);
+        }
+        if target.is_some() && generation == self.parameters.restore_generation() {
+            self.parameters.with_editing(|editing, snapshot| {
+                let current = crate::editing::SoundSnapshot::capture(snapshot);
+                let comparison = editing.comparison(snapshot);
+                if let Some(origin) = comparison.origins.get(comparison.active).and_then(Option::as_ref)
+                    && target == Some(origin.effective.unwrap_or(origin.baseline))
+                {
+                    editing.set_effective_origin(current);
+                }
+            });
         }
         self.parameters.with_editing(crate::editing::EditingState::end);
         if target.is_some() && self.binding.is_open() && generation == self.parameters.restore_generation() {

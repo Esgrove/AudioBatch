@@ -293,7 +293,7 @@ mod tests {
                     assert!(geometry.publish_preferences(first));
                 }
             });
-            scope.spawn(&read_snapshots);
+            scope.spawn(read_snapshots);
             read_snapshots();
         });
         assert_eq!(geometry.preferences(), first);

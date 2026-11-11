@@ -90,8 +90,9 @@ impl StoredSnapshot {
     }
 
     /// Validates before converting v1-v3 exponential normalized crossovers through their original plain Hz.
-    /// The float-skew inverse is rounded to a float host value, bounding migration error to the native
-    /// conversion's float precision. Non-crossover bits are retained, never snapped as a side effect of recall.
+    /// The float-skew inverse is rounded to a float host value,
+    /// bounding migration error to the native conversion's float precision.
+    /// Non-crossover bits are retained, never snapped as a side effect of recall.
     fn migrate(self, version: u32) -> Option<Snapshot> {
         let mut snapshot = Snapshot {
             gain: self.gain,

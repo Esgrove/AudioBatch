@@ -505,15 +505,15 @@ fn restart_reentry_replaces_the_handler_before_coalesced_follow_up() {
     *original.action.borrow_mut() = Some(Rc::new(move |component| {
         component.latency_notifications.request();
         component.latency_notifications.request();
-        // SAFETY: synchronous restart reentry remains in the host UI context and the retained handler is live.
         assert_eq!(
+            // SAFETY: synchronous restart reentry remains in the host UI context and the retained handler is live.
             unsafe { component.setComponentHandler(replacement_handler.as_ptr()) },
             kResultOk
         );
     }));
     component.latency_notifications.request();
-    // SAFETY: installation is a host UI lifecycle call with a live handler.
     assert_eq!(
+        // SAFETY: installation is a host UI lifecycle call with a live handler.
         unsafe { component.setComponentHandler(original_handler.as_ptr()) },
         kResultOk
     );
@@ -530,8 +530,8 @@ fn continuous_reentry_is_bounded_and_preserves_pending_work_for_the_next_ui_call
     let handler = recording_handler(&component, &evidence);
     *evidence.action.borrow_mut() = Some(Rc::new(|component| {
         component.latency_notifications.request();
-        // SAFETY: the recursive UI entry must defer notification instead of recursively calling the host.
         assert_eq!(
+            // SAFETY: the recursive UI entry must defer notification instead of recursively calling the host.
             unsafe { component.setComponentHandler(std::ptr::null_mut()) },
             kResultOk
         );
@@ -565,7 +565,7 @@ fn continuous_reentry_is_bounded_and_preserves_pending_work_for_the_next_ui_call
     assert_restart_safety(&evidence);
 }
 
-/// Stack-owned COM storage permits AddRef and Release reentry without a fixture lifetime cycle.
+/// Stack-owned COM storage permits `AddRef` and `Release` reentry without a fixture lifetime cycle.
 #[repr(C)]
 struct ReentrantReferenceHandler {
     /// First-field ABI interface remains live until the test clears every plugin reference.

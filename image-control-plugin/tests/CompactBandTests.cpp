@@ -639,6 +639,7 @@ TEST(CompactBands, ResponsiveHeadingPreservesNumericDraftAndLinkedGestures)
         strip.setSize(width, strip.getHeight());
         for (const auto* text : {"Below 16.00 kHz", "Below 120 Hz"}) {
             strip.setRangeText(text);
+            strip.setRangeOnSecondRow(juce::String(text) == "Below 16.00 kHz");
             EXPECT_EQ(compactValueBox(*mid), label);
             ASSERT_EQ(label->getCurrentTextEditor(), editor.getComponent());
             EXPECT_EQ(editor->getText(), "-3.27");
@@ -659,6 +660,7 @@ TEST(CompactBands, ResponsiveHeadingPreservesNumericDraftAndLinkedGestures)
         strip.setSize(width, strip.getHeight());
         for (const auto* text : {"Below 16.00 kHz", "Below 120 Hz"}) {
             strip.setRangeText(text);
+            strip.setRangeOnSecondRow(juce::String(text) == "Below 16.00 kHz");
             EXPECT_TRUE(history.isEditing());
             EXPECT_DOUBLE_EQ(mid->getValue(), edited);
             EXPECT_EQ(midGestures.gestureBoundaries(), (std::vector<bool> {true}));

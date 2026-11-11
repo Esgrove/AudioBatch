@@ -9,6 +9,7 @@
 #include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ui/BandStrip.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 
@@ -21,6 +22,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -151,6 +153,12 @@ public:
     void parameterGestureChanged(int /*index*/, bool /*starting*/) override {}
 
     /// Number of value notifications received.
+    /// Applies the range-update path used by display refreshes, without requiring a VBlank or graphics frame.
+    void updateBandRanges()
+    {
+        editor.updateBandRanges();
+    }
+
     int notifications {0};
     /// Whether all received payloads were finite.
     bool allFinite {true};
@@ -177,6 +185,66 @@ void expectUnavailable(const BandCorrelations& readings)
     for (const float value : readings) {
         EXPECT_TRUE(std::isnan(value));
     }
+/// Measures the widest actual expanded heading independently of its responsive layout decision.
+int widestBandHeading(const ImageControlEditor& editor)
+{
+    int widest = 0;
+    for (const auto* child : editor.getChildren()) {
+        const auto* strip = dynamic_cast<const BandStrip*>(child);
+        if (strip == nullptr) {
+            continue;
+        }
+        int width = 20 + 20 + 60 + 6 + 8 * 2;
+        for (auto* control : strip->getChildren()) {
+            auto* label = dynamic_cast<juce::Label*>(control);
+            if (label == nullptr
+                || (strip->getTitle() != label->getText() + " band controls" && !label->getText().contains("Hz")))
+            {
+                continue;
+            }
+            auto& lookAndFeel = label->getLookAndFeel();
+            width += static_cast<int>(std::ceil(
+                         juce::GlyphArrangement::getStringWidth(lookAndFeel.getLabelFont(*label), label->getText())
+                     ))
+                + lookAndFeel.getLabelBorderSize(*label).getLeftAndRight();
+        }
+        widest = std::max(widest, width);
+    }
+    return widest;
+}
+
+/// Checks every production frequency label has the expected shared row after a live crossover update.
+void expectBandRangeRow(const ImageControlEditor& editor, const int expectedY)
+{
+    int rangeCount = 0;
+    for (const auto* child : editor.getChildren()) {
+        const auto* strip = dynamic_cast<const BandStrip*>(child);
+        if (strip == nullptr) {
+            continue;
+        }
+        for (const auto* control : strip->getChildren()) {
+            if (const auto* label = dynamic_cast<const juce::Label*>(control);
+                label != nullptr && label->getText().contains("Hz"))
+            {
+                ++rangeCount;
+                EXPECT_TRUE(label->isVisible());
+                EXPECT_EQ(label->getY(), expectedY);
+            }
+        }
+    }
+    EXPECT_EQ(rangeCount, static_cast<int>(BAND_COUNT));
+}
+
+/// Sets host crossover values without creating local editing history.
+void setHeadingCrossovers(ImageControlProcessor& processor, const Crossovers& crossovers)
+{
+    for (std::size_t index = 0; index < CROSSOVER_COUNT; ++index) {
+        setParameterInGesture(
+            *processor.getParameters().getParameter(crossoverParameterId(index)), crossovers.at(index)
+        );
+    }
+}
+
 }
 }  // namespace
 
@@ -654,6 +722,57 @@ TEST(ImageControlEditorLifecycle, VisibilityCannotOverrideHiddenOrBypassedAnalys
         editor.setVisible(true);
         EXPECT_TRUE(access.analyzes());
         access.applySettings();
+/// Crossover text changes move every heading together at unchanged editor bounds, including while compacted.
+TEST(ImageControlEditorLayout, CrossoverChangesSynchronizeEveryFrequencyRangeRow)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    const Crossovers shortRanges {80.0F, 120.0F, 800.0F};
+    const Crossovers longRanges {1250.0F, 10'000.0F, 16'000.0F};
+    setHeadingCrossovers(processor, shortRanges);
+    access.updateBandRanges();
+    const int requiredWidth = widestBandHeading(editor);
+    int stripSpace = 0;
+    for (const auto* child : editor.getChildren()) {
+        if (dynamic_cast<const BandStrip*>(child) != nullptr) {
+            stripSpace += child->getWidth();
+        }
+    }
+    editor.setSize(editor.getWidth() - stripSpace + static_cast<int>(BAND_COUNT) * requiredWidth, editor.getHeight());
+    juce::Button* toggle = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (child->getComponentID() == "band-controls-disclosure") {
+            toggle = dynamic_cast<juce::Button*>(child);
+        }
+    }
+    ASSERT_NE(toggle, nullptr);
+    const auto bounds = editor.getBounds();
+    for (const bool compact : {false, true}) {
+        if (compact) {
+            toggle->onClick();
+        }
+        for (const bool longText : {false, true, false}) {
+            const auto& crossovers = longText ? longRanges : shortRanges;
+            setHeadingCrossovers(processor, crossovers);
+            access.updateBandRanges();
+            EXPECT_EQ(editor.getBounds(), bounds);
+            if (compact) {
+                toggle->onClick();
+            }
+            expectBandRangeRow(editor, longText ? 30 : 10);
+            if (compact) {
+                toggle->onClick();
+            }
+        }
+        if (compact) {
+            toggle->onClick();
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
         EXPECT_TRUE(access.analyzes());
         processor.getEditorState().setProperty(property, true, nullptr);
         access.applySettings();

@@ -64,6 +64,29 @@ fn comparisons_are_sound_only_and_metadata_copy_is_undoable() {
     assert_ne!(comparison.slots[0], comparison.slots[1]);
 }
 
+/// Repeated replay retains accepted readback even when restoring an off-grid legacy value snaps once.
+#[test]
+fn repeated_history_replay_preserves_exact_accepted_grid_representation() {
+    let (mut state, _) = editor();
+    let mut legacy = state.parameters.snapshot();
+    legacy.gain = 0.123_456_789;
+    assert!(state.parameters.restore(legacy));
+    let _ = state.update(Message::Refresh);
+    let _ = state.update(Message::Change(GAIN_PARAMETER, 0.75));
+    let _ = state.update(Message::EndGesture);
+    let _ = state.update(Message::Undo);
+    let accepted = state.parameters.get(GAIN_PARAMETER).expect("accepted legacy undo");
+    for _ in 0..8 {
+        let _ = state.update(Message::Redo);
+        assert_eq!(state.parameters.get(GAIN_PARAMETER), Some(0.75));
+        let _ = state.update(Message::Undo);
+        assert_eq!(
+            state.parameters.get(GAIN_PARAMETER).expect("undo").to_bits(),
+            accepted.to_bits()
+        );
+    }
+}
+
 /// Records the real editor's host callbacks without creating a native host or GPU device.
 #[derive(Default)]
 struct RecordingBinding {
