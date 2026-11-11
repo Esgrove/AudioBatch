@@ -136,6 +136,9 @@ impl IEditControllerTrait for Component {
             handler,
         );
         drop(old);
+        // SAFETY: the SDK annotates setComponentHandler as UI-thread. Reference-count callbacks have returned,
+        // and notification delivery snapshots whichever handler is current after any reentrant replacement.
+        unsafe { self.flush_latency_notifications() };
         kResultOk
     }
 

@@ -27,6 +27,10 @@ use super::enums::{to_i32, to_u32};
 use super::state;
 use crate::runtime::Instance;
 use crate::strings_utf16;
+use notifications::LatencyNotifications;
+
+#[path = "notifications.rs"]
+mod notifications;
 
 #[cfg(test)]
 #[path = "component_tests.rs"]
@@ -42,6 +46,8 @@ pub(super) struct Component {
     /// UI-only shared COM owner. Arc copies execute no host reference-count callbacks under the lock.
     /// Installation, replacement, termination, and UI calls release COM owners outside this mutex.
     pub(super) handler: Arc<Mutex<Option<Arc<ComPtr<IComponentHandler>>>>>,
+    /// Coalesced host restart requests, delivered only by SDK-defined UI lifecycle calls.
+    latency_notifications: LatencyNotifications,
     /// Matching main input/output arrangement.
     arrangement: AtomicU64,
     /// Largest accepted host block, zero before setup.
@@ -78,12 +84,22 @@ impl Component {
         Self {
             instance: Instance::new(),
             handler: Arc::new(Mutex::new(None)),
+            latency_notifications: LatencyNotifications::new(),
             arrangement: AtomicU64::new(SpeakerArr::kStereo),
             maximum_frames: AtomicI32::new(0),
             latency_samples: AtomicU32::new(0),
             tail_samples: AtomicU32::new(0),
             active: AtomicBool::new(false),
         }
+    }
+
+    /// Flushes detached latency restart requests without retaining mutable DSP or handler-lock ownership.
+    ///
+    /// # Safety
+    /// The caller must be a host UI-thread callback, as annotated in the native VST3 SDK.
+    pub(super) unsafe fn flush_latency_notifications(&self) {
+        // SAFETY: the caller provides the SDK UI-thread context. No mutable DSP admission is held here.
+        unsafe { self.latency_notifications.flush(&self.handler) };
     }
 
     /// Applies each queue's final finite point at block rate, including zero-sample flushes.
@@ -130,6 +146,7 @@ impl IPluginBaseTrait for Component {
         self.active.store(false, Ordering::Release);
         self.shared.set_processing_active(false);
         self.shared.invalidate_monitoring();
+        self.latency_notifications.clear();
         let old = self
             .handler
             .lock()
@@ -301,12 +318,18 @@ impl IAudioProcessorTrait for Component {
         ) else {
             return kResultFalse;
         };
-        self.latency_samples.store(latency, Ordering::Relaxed);
+        let previous_latency = self.latency_samples.swap(latency, Ordering::Relaxed);
         self.tail_samples.store(tail, Ordering::Relaxed);
         self.maximum_frames.store(setup.maxSamplesPerBlock, Ordering::Relaxed);
         self.shared.set_maximum_block_frames(setup.maxSamplesPerBlock as u32);
         self.shared.set_processing_active(false);
         self.shared.invalidate_monitoring();
+        if previous_latency != latency {
+            self.latency_notifications.request();
+        }
+        // SAFETY: ivstaudioprocessor.h annotates setupProcessing as UI-thread, matching restartComponent.
+        // Preparation has released mutable DSP admission and every prepared report is published before reentry.
+        unsafe { self.flush_latency_notifications() };
         kResultOk
     }
 
