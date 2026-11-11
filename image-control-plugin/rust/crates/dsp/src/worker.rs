@@ -19,19 +19,28 @@ const CHUNK_FRAMES: usize = 4096;
 const CHUNKS_PER_PASS: usize = 8;
 
 /// Metadata accompanies empty batches too, allowing GPU history to clear during silence.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AnalysisUpdate {
     /// Exact stream identity whose observations are in this batch.
     pub generation: u64,
     /// Explicit availability for editor status text.
     pub status: AnalysisStatus,
+    /// Immutable projection identity retained through editor queues and GPU history, exclusively off audio.
+    pub preferences: Arc<DisplayPreferences>,
+}
+
+impl AnalysisUpdate {
+    /// Compares both independently published identities, never just their preference values.
+    #[must_use]
+    pub fn matches(&self, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
+        self.generation == generation && Arc::ptr_eq(&self.preferences, preferences)
+    }
 }
 
 /// One bounded completed batch, shared only between worker and editor.
 struct PendingBatch {
     points: Vec<SpatialParticle>,
     update: AnalysisUpdate,
-    preferences: Arc<DisplayPreferences>,
 }
 
 /// Owns the sole queue consumer. Construction and destruction belong off the audio thread.
@@ -86,8 +95,8 @@ impl AnalysisWorker {
             update: AnalysisUpdate {
                 generation: shared.analysis_generation(),
                 status: AnalysisStatus::Waiting,
+                preferences: shared.monitoring.preference_snapshot(),
             },
-            preferences: shared.monitoring.preference_snapshot(),
         }));
         let shutdown = AnalysisShutdown {
             state: Arc::new(AnalysisShutdownState {
@@ -140,16 +149,17 @@ impl AnalysisWorker {
         let generation = shared.analysis_generation();
         let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         destination.clear();
-        if pending.update.generation != generation || !shared.monitoring.preferences_match(&pending.preferences) {
+        if pending.update.generation != generation || !shared.monitoring.preferences_match(&pending.update.preferences)
+        {
             pending.points.clear();
             pending.update = AnalysisUpdate {
                 generation,
                 status: shared.analysis_status(),
+                preferences: shared.monitoring.preference_snapshot(),
             };
-            pending.preferences = shared.monitoring.preference_snapshot();
         }
         std::mem::swap(destination, &mut pending.points);
-        pending.update
+        pending.update.clone()
     }
 
     /// Compatibility drain for consumers that do not retain GPU history.
@@ -306,11 +316,14 @@ fn publish(
     if !configuration_matches(shared, generation, preferences) {
         return;
     }
-    if pending.update.generation != generation || !Arc::ptr_eq(&pending.preferences, preferences) {
+    if !pending.update.matches(generation, preferences) {
         pending.points.clear();
     }
-    pending.update = AnalysisUpdate { generation, status };
-    pending.preferences = Arc::clone(preferences);
+    pending.update = AnalysisUpdate {
+        generation,
+        status,
+        preferences: Arc::clone(preferences),
+    };
     let incoming = points
         .get(points.len().saturating_sub(MAXIMUM_POINTS)..)
         .unwrap_or_default();
@@ -350,8 +363,8 @@ mod test_worker {
             update: AnalysisUpdate {
                 generation,
                 status: AnalysisStatus::Waiting,
+                preferences: Arc::clone(&current),
             },
-            preferences: Arc::clone(&current),
         });
         publish(&shared, &pending, generation, &stale, AnalysisStatus::Running, &[]);
         assert_eq!(
@@ -369,6 +382,27 @@ mod test_worker {
             !shared.monitoring.preferences_match(&stale),
             "equal values cannot reuse an old identity"
         );
+    }
+
+    #[test]
+    fn drained_batch_retains_the_exact_projection_identity() {
+        let shared = Imager::new().shared();
+        let worker = AnalysisWorker::new(Arc::clone(&shared)).expect("worker");
+        let mut points = Vec::new();
+        let original = shared.display_preferences_snapshot();
+        let update = worker.drain_batch(&mut points);
+        assert!(update.matches(shared.analysis_generation(), &original));
+        assert!(Arc::ptr_eq(&update.preferences, &original));
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            mel_scale: true,
+            ..*original
+        }));
+        let current = shared.display_preferences_snapshot();
+        assert!(!update.matches(shared.analysis_generation(), &current));
+        let replacement = worker.drain_batch(&mut points);
+        assert!(replacement.matches(shared.analysis_generation(), &current));
+        assert!(Arc::ptr_eq(&replacement.preferences, &current));
+        assert_eq!(points.len(), 0);
     }
 
     #[test]

@@ -146,6 +146,103 @@ fn submit_case(
 }
 
 #[test]
+fn preference_publication_before_source_increment_discards_pending_and_prepared_gpu_work() {
+    use std::sync::Arc;
+
+    let (device, queue) = super::tests::native_device();
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut pipeline = SpectrogramPipeline::new(&device, &queue, wgpu::TextureFormat::Rgba16Float);
+    let imager = Imager::new();
+    let spectrogram = Spectrogram::new(imager.shared()).expect("analysis owner");
+    let shared = &spectrogram.program.shared;
+    let generation = shared.analysis_generation();
+    let original = shared.display_preferences_snapshot();
+    let replacement = Arc::new(DisplayPreferences {
+        mel_scale: !original.mel_scale,
+        ..*original
+    });
+    let points = independent_particles(FrequencyScale::Logarithmic, ColorMode::Frequency);
+    let primitive = SpectrogramPrimitive {
+        program: spectrogram.program.clone(),
+    };
+    let bounds = Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 200.0,
+        height: 100.0,
+    };
+    let clip = Rectangle {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+    };
+    let viewport = Viewport::with_physical_size(Size::new(1024, 512), 1.0);
+    let target = output_target(&device, wgpu::TextureFormat::Rgba16Float);
+    {
+        let mut pending = spectrogram.program.pending.lock().expect("pending");
+        pending.points.extend_from_slice(&points);
+    }
+    primitive.prepare(&mut pipeline, &device, &queue, &bounds, &viewport);
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    primitive.render(&pipeline, &mut encoder, &target, &clip);
+    queue.submit([encoder.finish()]);
+    let history = pipeline.widgets.get(&spectrogram.program.id).expect("rendered history");
+    assert_eq!(history.current.load(super::Ordering::Acquire), 1);
+    assert!(history.configuration_matches(generation, &original));
+
+    {
+        let mut pending = spectrogram.program.pending.lock().expect("pending");
+        pending.points.extend_from_slice(&points);
+    }
+    primitive.prepare(&mut pipeline, &device, &queue, &bounds, &viewport);
+    let history = pipeline.widgets.get(&spectrogram.program.id).expect("prepared history");
+    assert_eq!(history.particle_count, 3);
+    assert!(history.prepared_matches(generation, &original));
+
+    // Freeze publication immediately after its immutable record swap, before the source increment.
+    // The production render core receives exactly the pair sampled at that boundary, without timing sleeps.
+    {
+        let mut pending = spectrogram.program.pending.lock().expect("pending");
+        pending.points.extend_from_slice(&points);
+        pending.synchronize(generation, &replacement);
+        assert!(
+            pending.points.is_empty(),
+            "old pending projection must clear with unchanged source"
+        );
+        assert_eq!(pending.generation, generation);
+        assert!(Arc::ptr_eq(&pending.preferences, &replacement));
+        drop(pending);
+    }
+    assert!(!history.prepared_matches(generation, &replacement));
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    primitive.render_configuration(
+        &pipeline,
+        &mut encoder,
+        &target,
+        &clip,
+        (generation, Arc::clone(&replacement)),
+    );
+    assert!(history.configuration_matches(generation, &replacement));
+    assert_eq!(history.generation.load(super::Ordering::Acquire), generation);
+    assert_eq!(
+        history.current.load(super::Ordering::Acquire),
+        0,
+        "clearing cannot run the stale prepared fade/particle pass or advance ping-pong history"
+    );
+    assert!(!history.update_pending.load(super::Ordering::Acquire));
+    assert!(!history.resize_pending.load(super::Ordering::Acquire));
+    let submission = queue.submit([encoder.finish()]);
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .expect("preference-only invalidation passes");
+    assert!(block_on(device.pop_error_scope()).is_none(), "native GPU validation");
+}
+
+#[test]
 fn native_gpu_runs_particles_and_solid_density_at_dpi_odd_and_tiny_sizes_in_both_encodings() {
     let (device, queue) = super::tests::native_device();
     device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -201,6 +298,7 @@ fn native_gpu_runs_particles_and_solid_density_at_dpi_odd_and_tiny_sizes_in_both
                 }));
                 let mut pending = spectrogram.program.pending.lock().expect("pending inputs");
                 pending.generation = spectrogram.program.shared.analysis_generation();
+                pending.preferences = shared.display_preferences_snapshot();
                 pending.points.extend(independent_particles(scale, color));
                 drop(pending);
                 submit_case(&device, &queue, &mut pipeline, &spectrogram, &target, case);

@@ -7,9 +7,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use iced_baseview::widget::{Shader, shader};
 use iced_baseview::{Element, Length, Rectangle, mouse, wgpu};
-use image_control_dsp::{AnalysisShutdown, AnalysisStatus, AnalysisWorker, SharedState, SpatialParticle};
+use image_control_dsp::{
+    AnalysisShutdown, AnalysisStatus, AnalysisWorker, DisplayPreferences, SharedState, SpatialParticle,
+};
 
 const MAX_PARTICLES: usize = 65_536;
 const PARTICLE_STRIDE: u64 = 32;
@@ -37,6 +40,18 @@ pub struct Spectrogram {
 struct PendingParticles {
     points: Vec<SpatialParticle>,
     generation: u64,
+    preferences: Arc<DisplayPreferences>,
+}
+
+impl PendingParticles {
+    /// Discards observations whenever either independently published configuration identity changes.
+    fn synchronize(&mut self, generation: u64, preferences: &Arc<DisplayPreferences>) {
+        if self.generation != generation || !Arc::ptr_eq(&self.preferences, preferences) {
+            self.points.clear();
+            self.generation = generation;
+            self.preferences = Arc::clone(preferences);
+        }
+    }
 }
 
 /// A stable identity keeps cached GPU history separate for every spectrogram using the same Iced renderer.
@@ -97,7 +112,9 @@ struct GpuHistory {
     update_pending: AtomicBool,
     last_frame: Instant,
     generation: AtomicU64,
+    preferences: ArcSwap<DisplayPreferences>,
     prepared_generation: u64,
+    prepared_preferences: Arc<DisplayPreferences>,
     resize_source: Option<wgpu::BindGroup>,
     resize_pending: AtomicBool,
 }
@@ -122,6 +139,7 @@ impl Spectrogram {
                 pending: Arc::new(Mutex::new(PendingParticles {
                     points: Vec::with_capacity(MAX_PARTICLES),
                     generation: shared.analysis_generation(),
+                    preferences: shared.display_preferences_snapshot(),
                 })),
                 shared,
             },
@@ -142,16 +160,14 @@ impl Spectrogram {
     pub fn tick(&mut self) -> bool {
         let update = self.worker.drain_batch(&mut self.scratch);
         let generation = self.program.shared.analysis_generation();
+        let preferences = self.program.shared.display_preferences_snapshot();
         let mut pending = self
             .program
             .pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if pending.generation != generation {
-            pending.points.clear();
-            pending.generation = generation;
-        }
-        if update.generation == generation {
+        pending.synchronize(generation, &preferences);
+        if update.matches(generation, &preferences) {
             if pending.points.len() + self.scratch.len() > MAX_PARTICLES {
                 pending.points.clear();
             }
@@ -224,7 +240,10 @@ impl shader::Primitive for SpectrogramPrimitive {
         if replace {
             let mut history = GpuHistory::new(device, pipeline, &self.program, size);
             if let Some(previous) = pipeline.widgets.remove(&self.program.id)
-                && previous.generation.load(Ordering::Acquire) == self.program.shared.analysis_generation()
+                && previous.configuration_matches(
+                    self.program.shared.analysis_generation(),
+                    &self.program.shared.display_preferences_snapshot(),
+                )
             {
                 let current = previous.current.load(Ordering::Acquire);
                 if let Some(source) = previous.accumulation.get(current) {
@@ -237,6 +256,7 @@ impl shader::Primitive for SpectrogramPrimitive {
                     history
                         .generation
                         .store(previous.generation.load(Ordering::Acquire), Ordering::Release);
+                    history.preferences.store(previous.preferences.load_full());
                     history.last_frame = previous.last_frame;
                 }
             }
@@ -247,11 +267,14 @@ impl shader::Primitive for SpectrogramPrimitive {
         };
         history.bounds = physical_bounds;
         let prepared_generation = self.program.shared.analysis_generation();
-        let preferences = self.program.shared.display_preferences();
-        if prepared_generation != self.program.shared.analysis_generation() {
+        let preferences = self.program.shared.display_preferences_snapshot();
+        if prepared_generation != self.program.shared.analysis_generation()
+            || !Arc::ptr_eq(&preferences, &self.program.shared.display_preferences_snapshot())
+        {
             return;
         }
         history.prepared_generation = prepared_generation;
+        history.prepared_preferences = Arc::clone(&preferences);
         history.solid_rendering = preferences.solid_rendering;
         history.upload.clear();
         if !history.resize_pending.load(Ordering::Acquire) {
@@ -263,10 +286,7 @@ impl shader::Primitive for SpectrogramPrimitive {
                 .pending
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if pending.generation != history.prepared_generation {
-                pending.points.clear();
-                pending.generation = history.prepared_generation;
-            }
+            pending.synchronize(history.prepared_generation, &history.prepared_preferences);
             for point in pending.points.drain(..).take(MAX_PARTICLES) {
                 if let Some(attributes) = particle_attributes(point) {
                     for value in attributes {
@@ -312,16 +332,40 @@ impl shader::Primitive for SpectrogramPrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
+        self.render_configuration(
+            pipeline,
+            encoder,
+            target,
+            clip_bounds,
+            (
+                self.program.shared.analysis_generation(),
+                self.program.shared.display_preferences_snapshot(),
+            ),
+        );
+    }
+}
+
+impl SpectrogramPrimitive {
+    /// Encodes only work matching the render-time source and immutable projection identity.
+    /// Keeping the sampled pair explicit permits deterministic tests of publication before source invalidation.
+    fn render_configuration(
+        &self,
+        pipeline: &SpectrogramPipeline,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        clip_bounds: &Rectangle<u32>,
+        (generation, preferences): (u64, Arc<DisplayPreferences>),
+    ) {
         let Some(history) = pipeline.widgets.get(&self.program.id) else {
             return;
         };
-        let generation = self.program.shared.analysis_generation();
-        if history.generation.load(Ordering::Acquire) != generation {
+        if !history.configuration_matches(generation, &preferences) {
             history.clear(encoder);
             history.generation.store(generation, Ordering::Release);
+            history.preferences.store(Arc::clone(&preferences));
             history.resize_pending.store(false, Ordering::Release);
         }
-        if history.update_pending.swap(false, Ordering::AcqRel) {
+        if history.update_pending.swap(false, Ordering::AcqRel) && history.prepared_matches(generation, &preferences) {
             let source = history.current.load(Ordering::Acquire);
             if history.resize_pending.swap(false, Ordering::AcqRel)
                 && let (Some(input), Some(output)) = (&history.resize_source, history.accumulation.get(source))
@@ -343,7 +387,7 @@ impl shader::Primitive for SpectrogramPrimitive {
                     pass.set_bind_group(1, input, &[]);
                     pass.set_pipeline(&pipeline.fade);
                     pass.draw(0..3, 0..1);
-                    if history.particle_count > 0 && history.prepared_generation == generation {
+                    if history.particle_count > 0 {
                         pass.set_pipeline(&pipeline.particles);
                         pass.set_vertex_buffer(0, history.particle_buffer.slice(..));
                         pass.draw(0..6, 0..history.particle_count);
@@ -523,10 +567,22 @@ impl GpuHistory {
             update_pending: AtomicBool::new(false),
             last_frame: Instant::now(),
             generation: AtomicU64::new(u64::MAX),
+            preferences: ArcSwap::from(program.shared.display_preferences_snapshot()),
             prepared_generation: program.shared.analysis_generation(),
+            prepared_preferences: program.shared.display_preferences_snapshot(),
             resize_source: None,
             resize_pending: AtomicBool::new(false),
         }
+    }
+
+    /// Checks the exact stream and projection identities whose energy is retained in the GPU textures.
+    fn configuration_matches(&self, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
+        self.generation.load(Ordering::Acquire) == generation && Arc::ptr_eq(&self.preferences.load(), preferences)
+    }
+
+    /// Rejects uploads prepared with different preferences even before the source generation advances.
+    fn prepared_matches(&self, generation: u64, preferences: &Arc<DisplayPreferences>) -> bool {
+        self.prepared_generation == generation && Arc::ptr_eq(&self.prepared_preferences, preferences)
     }
 
     /// Rebuilds every glow level before adding the smaller levels back into their larger neighbors.
@@ -917,6 +973,7 @@ mod tests {
         {
             let mut pending = spectrogram.program.pending.lock().expect("pending");
             pending.generation = shared.analysis_generation();
+            pending.preferences = shared.display_preferences_snapshot();
             pending.points.push(point);
         }
         primitive.prepare(pipeline, device, queue, &bounds, &viewport);
