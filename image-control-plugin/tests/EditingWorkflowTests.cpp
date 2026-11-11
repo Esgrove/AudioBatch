@@ -142,6 +142,20 @@ TEST(EditingWorkflow, ToolbarFitsMinimumWidthAndCompactLayout)
     }
 }
 
+/// Host resize constraints use the same square maximum for both editor dimensions.
+TEST(EditingWorkflow, SquareSizeLimit)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    const auto* constrainer = editor.getConstrainer();
+    ASSERT_NE(constrainer, nullptr);
+    EXPECT_EQ(constrainer->getMaximumWidth(), 4096);
+    EXPECT_EQ(constrainer->getMaximumHeight(), 4096);
+    editor.setSize(4096, 4096);
+    EXPECT_EQ(editor.getWidth(), 4096);
+    EXPECT_EQ(editor.getHeight(), 4096);
+}
+
 /// Header pressure compresses gaps smoothly while spare space stays before the right-anchored output group.
 TEST(EditingWorkflow, ToolbarCompressesContinuouslyBeforeShrinkingOutput)
 {
