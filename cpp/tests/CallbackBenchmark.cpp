@@ -139,12 +139,16 @@ double threadCpuSeconds()
     return static_cast<double>(information.user_time.seconds + information.system_time.seconds)
         + static_cast<double>(information.user_time.microseconds + information.system_time.microseconds) * 1.0e-6;
 #elif JUCE_WINDOWS
-    FILETIME creation {}, exit {}, kernel {}, user {};
+    FILETIME creation {};
+    FILETIME exit {};
+    FILETIME kernel {};
+    FILETIME user {};
     require(
         GetThreadTimes(GetCurrentThread(), &creation, &exit, &kernel, &user) != 0,
         "Could not read callback thread CPU time"
     );
-    ULARGE_INTEGER kernelTicks {}, userTicks {};
+    ULARGE_INTEGER kernelTicks {};
+    ULARGE_INTEGER userTicks {};
     kernelTicks.LowPart = kernel.dwLowDateTime;
     kernelTicks.HighPart = kernel.dwHighDateTime;
     userTicks.LowPart = user.dwLowDateTime;
@@ -162,11 +166,15 @@ double processCpuSeconds()
     return static_cast<double>(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
         + static_cast<double>(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) * 1.0e-6;
 #elif JUCE_WINDOWS
-    FILETIME creation {}, exit {}, kernel {}, user {};
+    FILETIME creation {};
+    FILETIME exit {};
+    FILETIME kernel {};
+    FILETIME user {};
     require(
         GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user) != 0, "Could not read process CPU time"
     );
-    ULARGE_INTEGER kernelTicks {}, userTicks {};
+    ULARGE_INTEGER kernelTicks {};
+    ULARGE_INTEGER userTicks {};
     kernelTicks.LowPart = kernel.dwLowDateTime;
     kernelTicks.HighPart = kernel.dwHighDateTime;
     userTicks.LowPart = user.dwLowDateTime;
@@ -660,7 +668,7 @@ juce::var benchmark(const Options& options)
     device.sampleRate = options.rate;
     device.blockSize = options.block;
     TestPlugin fake({.gain = EFFECT_GAIN});
-    auto hosted = native ? createNativePlugin(options) : nullptr;
+    const auto hosted = native ? createNativePlugin(options) : nullptr;
     auto& processor = native ? *hosted : static_cast<juce::AudioPluginInstance&>(fake);
     preparePlugin(processor, options);
     AudioPreviewPlayer player;

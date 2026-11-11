@@ -1014,6 +1014,10 @@ if(BUILD_TESTING)
             AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
             AUDIOBATCH_TEST_VST3_PATH="${AUDIOBATCH_TEST_PLUGIN_BUNDLE}"
     )
+    if(WIN32)
+        # windows.h defines min and max macros that break std::min and std::max in the tests.
+        target_compile_definitions(AudioBatchTests PRIVATE NOMINMAX)
+    endif()
     add_dependencies(AudioBatchTests AudioBatchTestPlugin_VST3)
     set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
 
