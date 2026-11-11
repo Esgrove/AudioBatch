@@ -49,6 +49,37 @@ fn tap_and_preference_changes_never_publish_stale_audio_after_generation_change(
 }
 
 #[test]
+fn display_records_remain_coherent_under_multiple_non_audio_writers() {
+    let shared = Imager::new().shared();
+    let first = DisplayPreferences::default();
+    let second = DisplayPreferences {
+        persistence_seconds: 2.75,
+        contrast: 0.125,
+        color_mode: ColourMode::Phase,
+        mel_scale: true,
+        solid_rendering: true,
+        pan_midpoint_db: 24.0,
+        pan_edge_db: 60.0,
+        smooth_correlation: false,
+        show_fps: true,
+    };
+    std::thread::scope(|scope| {
+        for preferences in [first, second] {
+            let shared = &shared;
+            scope.spawn(move || {
+                for _ in 0..2000 {
+                    assert!(shared.set_display_preferences(preferences));
+                }
+            });
+        }
+        for _ in 0..4000 {
+            let observed = shared.display_preferences();
+            assert!(observed == first || observed == second, "preference fields cannot tear");
+        }
+    });
+}
+
+#[test]
 fn correlation_invalidation_does_not_require_access_to_processing_history() {
     let mut imager = Imager::new();
     assert!(imager.prepare(48_000.0));

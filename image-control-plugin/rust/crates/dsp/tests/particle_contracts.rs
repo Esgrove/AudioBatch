@@ -62,6 +62,14 @@ fn logarithmic_and_htk_mel_projection_match_independent_equations() {
             };
             assert!((frequency_to_share(frequency, scale) - expected).abs() < 1.0e-14);
             assert!((share_to_frequency(expected, scale) - frequency).abs() < 1.0e-9);
+            assert_eq!(
+                scale.normalized(frequency).to_bits(),
+                frequency_to_share(frequency, scale).to_bits()
+            );
+            assert_eq!(
+                scale.frequency(expected).to_bits(),
+                share_to_frequency(expected, scale).to_bits()
+            );
         }
         let mut builder = ParticleBuilder::new();
         builder.set_settings(DisplaySettings::new(ColorMode::Phase, scale, 0.3, 0.0).expect("settings"));

@@ -175,6 +175,12 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             continue;
         };
         if source != generation {
+            // The preference setter advances source before unlocking. A second source read therefore
+            // rejects settings that were published after the stable rate/source snapshot above.
+            let preferences = shared.display_preferences();
+            if source != shared.analysis_generation() {
+                continue;
+            }
             generation = source;
             if rate.to_bits() != rate_bits {
                 analyzer = SpatialAnalyzer::new(rate).ok();
@@ -183,8 +189,11 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
                 analyzer.reset();
             }
             builder.reset();
+            if source != shared.analysis_generation() {
+                continue;
+            }
             // Settings are sampled only at stream boundaries, never half-way through a tier deadline.
-            apply_settings(&mut builder, shared.display_preferences());
+            apply_settings(&mut builder, analyzer.as_mut(), preferences);
             let status = if !capture_enabled(source) {
                 AnalysisStatus::Disabled
             } else if analyzer.is_none() {
@@ -235,14 +244,31 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
 }
 
 /// Adapts the transport's detached preference record to the pure projection model.
-fn apply_settings(builder: &mut ParticleBuilder, preferences: crate::DisplayPreferences) {
+fn apply_settings(
+    builder: &mut ParticleBuilder,
+    analyzer: Option<&mut SpatialAnalyzer>,
+    preferences: crate::DisplayPreferences,
+) {
+    if let Some(analyzer) = analyzer
+        && let Some(curve) = crate::StereoPositionCurve::new(
+            f64::from(preferences.pan_midpoint_db),
+            f64::from(preferences.pan_edge_db),
+        )
+    {
+        analyzer.set_position_curve(curve);
+    }
+    let frequency_scale = if preferences.mel_scale {
+        crate::particles::FrequencyScale::Mel
+    } else {
+        crate::particles::FrequencyScale::Logarithmic
+    };
     let color_mode = match preferences.color_mode {
         crate::ColourMode::Frequency => crate::particles::ColorMode::Frequency,
         crate::ColourMode::Phase => crate::particles::ColorMode::Phase,
     };
     if let Some(settings) = crate::particles::DisplaySettings::new(
         color_mode,
-        crate::particles::FrequencyScale::Logarithmic,
+        frequency_scale,
         f64::from(preferences.persistence_seconds),
         preferences.contrast,
     ) {

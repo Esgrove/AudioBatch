@@ -2,7 +2,61 @@
 
 use std::time::{Duration, Instant};
 
-use image_control_dsp::{AnalysisWorker, Imager};
+use image_control_dsp::{AnalysisTap, AnalysisWorker, DisplayPreferences, FrequencyScale, Imager};
+
+#[test]
+fn worker_applies_mel_projection_and_stereo_curve_after_preference_generation_changes() {
+    let mut imager = Imager::new();
+    assert!(imager.prepare(48_000.0));
+    let shared = imager.shared();
+    shared.set_analysis_tap(AnalysisTap::Pre);
+    let worker = AnalysisWorker::new(std::sync::Arc::clone(&shared)).expect("worker");
+    for (mel_scale, midpoint, edge, difference, expected_position) in [
+        (false, 12.0, 32.0, 12.0, 0.25),
+        (true, 6.0, 18.0, 6.0, 0.25),
+        (true, 6.0, 18.0, 18.0, 0.005),
+        (false, 24.0, 60.0, 24.0, 0.25),
+    ] {
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            mel_scale,
+            pan_midpoint_db: midpoint,
+            pan_edge_db: edge,
+            ..DisplayPreferences::default()
+        }));
+        let generation = shared.analysis_generation();
+        let mut discarded = Vec::new();
+        assert_eq!(worker.drain_batch(&mut discarded).generation, generation);
+        assert!(discarded.is_empty(), "old generation cannot survive preference changes");
+        let quiet = 10.0_f32.powf(-difference / 20.0);
+        imager.begin_block();
+        for index in 0..4096 {
+            let sine = (std::f32::consts::TAU * 750.0 * index as f32 / 48_000.0).sin() * 0.5;
+            let _ = imager.process_frame([sine, sine * quiet]);
+        }
+        let scale = if mel_scale {
+            FrequencyScale::Mel
+        } else {
+            FrequencyScale::Logarithmic
+        };
+        let expected_frequency = scale.normalized(750.0) as f32;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut particles = Vec::new();
+        let mut observed = false;
+        while !observed && Instant::now() < deadline {
+            let update = worker.drain_batch(&mut particles);
+            assert_eq!(update.generation, generation);
+            observed = particles.iter().any(|particle| {
+                (particle.position()[0] - expected_frequency).abs() < 0.0002
+                    && (particle.position()[1] - expected_position).abs() < 0.0002
+            });
+            std::thread::yield_now();
+        }
+        assert!(
+            observed,
+            "worker projects the independent 750 Hz signal with the selected curve and axis"
+        );
+    }
+}
 
 #[test]
 fn actual_audio_reaches_worker_projected_spatial_particles() {
