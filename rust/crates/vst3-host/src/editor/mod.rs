@@ -20,6 +20,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+#[cfg(windows)]
+pub use plugin_host_core::editor::WindowObservation;
 pub use plugin_host_core::editor::WindowPosition;
 use plugin_host_core::editor::{EditorCallbacks, NativeWindow, WindowError, WindowSize as ViewSize};
 use raw_window_handle::RawWindowHandle;
@@ -197,6 +199,16 @@ impl EditorWindow {
     #[must_use]
     pub fn position(&self) -> Option<WindowPosition> {
         self.window.position()
+    }
+
+    /// Reads the owned Win32 client's geometry, DPI, and visibility on its UI thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the native window's client area or DPI cannot be queried.
+    #[cfg(windows)]
+    pub fn native_observation(&self, _ui: &UiThread) -> std::io::Result<WindowObservation> {
+        self.window.observation()
     }
 
     /// Shows the window again after it was closed, and brings it to the front.
