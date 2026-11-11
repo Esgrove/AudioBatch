@@ -271,6 +271,148 @@ TEST(EditingWorkflow, HeaderResizingNeverOscillatesOrChangesButtonWidthsBackward
     }
 }
 
+/// A/B and presets reuse their live controls inline, restoring the second row only when it was requested.
+TEST(EditingWorkflow, PresetsMoveIntoHeaderAndRestoreRememberedRowVisibility)
+{
+    for (int combination = 0; combination < 4; ++combination) {
+        const bool rowShown = combination % 2 != 0;
+        const bool spectrumHidden = combination / 2 != 0;
+        ImageControlProcessor processor;
+        auto& state = processor.getEditorState();
+        state.setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, rowShown, nullptr);
+        state.setProperty(HIDE_SPECTROGRAM_PROPERTY, spectrumHidden, nullptr);
+        state.setProperty(EDITOR_HEIGHT_PROPERTY, 900, nullptr);
+        state.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 304, nullptr);
+        ImageControlEditor editor(processor);
+        auto* toolbar = editingChild<ProcessingToolbar>(editor);
+        auto* spectrum = editingChild<SpatialSpectrogramView>(editor);
+        auto* selector = editingControl(editor, "preset-selector");
+        auto* slotA = editingControl(editor, "comparison-a");
+        auto* toggle = editingControl(editor, "processing-toolbar-toggle");
+        ASSERT_NE(toolbar, nullptr);
+        ASSERT_NE(spectrum, nullptr);
+        ASSERT_NE(selector, nullptr);
+        ASSERT_NE(slotA, nullptr);
+        ASSERT_NE(toggle, nullptr);
+        const auto sound = processor.getSoundSnapshot();
+        const int initialHeight = editor.getHeight();
+        const int initialPlotHeight = spectrum->getHeight();
+        for (const int width : {2000, 4096, 760, 2000, 760}) {
+            SCOPED_TRACE(width);
+            editor.setSize(width, editor.getHeight());
+            const bool inlineControls = width >= 2000;
+            EXPECT_EQ(toolbar->isVisible(), inlineControls || rowShown);
+            EXPECT_EQ(toggle->isVisible(), !inlineControls);
+            EXPECT_EQ(static_cast<bool>(state.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)), rowShown);
+            EXPECT_EQ(editingControl(editor, "preset-selector"), selector);
+            EXPECT_EQ(editingControl(editor, "comparison-a"), slotA);
+            EXPECT_EQ(toolbar->getParentComponent(), &editor);
+            EXPECT_LE(selector->getWidth(), 320);
+            if (toolbar->isVisible()) {
+                EXPECT_GE(selector->getWidth(), 100);
+            }
+            if (inlineControls) {
+                EXPECT_LT(toolbar->getY(), 36);
+                EXPECT_LE(toolbar->getWidth(), PROCESSING_TOOLBAR_MAX_WIDTH);
+                EXPECT_TRUE(std::ranges::all_of(editor.getChildren(), [toolbar](const auto* child) {
+                    return child == toolbar || !child->isVisible() || child->getY() >= 36
+                        || !toolbar->getBounds().intersects(child->getBounds());
+                }));
+            } else if (rowShown) {
+                EXPECT_GE(toolbar->getY(), 36);
+                EXPECT_EQ(toolbar->getHeight(), PROCESSING_TOOLBAR_HEIGHT);
+            }
+            const int reclaimed = inlineControls && rowShown ? PROCESSING_TOOLBAR_HEIGHT + 8 : 0;
+            if (spectrumHidden) {
+                EXPECT_EQ(editor.getHeight(), initialHeight - reclaimed);
+            } else {
+                EXPECT_EQ(editor.getHeight(), initialHeight);
+                EXPECT_EQ(spectrum->getHeight(), initialPlotHeight + reclaimed);
+            }
+            EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_HEIGHT_PROPERTY)), 900);
+            EXPECT_EQ(static_cast<int>(state.getProperty(EDITOR_WIDTH_PROPERTY)), width);
+            EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), sound));
+            EXPECT_FALSE(processor.getHistory().canUndo());
+        }
+    }
+}
+
+/// Saving while inline preserves the user's narrow-row preference across host state and editor replacement.
+TEST(EditingWorkflow, InlinePlacementDoesNotReplaceSavedRowPreference)
+{
+    for (const bool rowShown : {false, true}) {
+        ImageControlProcessor source;
+        source.getEditorState().setProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, rowShown, nullptr);
+        source.getEditorState().setProperty(EDITOR_WIDTH_PROPERTY, 2000, nullptr);
+        {
+            const ImageControlEditor editor(source);
+            auto* toolbar = editingChild<ProcessingToolbar>(editor);
+            ASSERT_NE(toolbar, nullptr);
+            EXPECT_LT(toolbar->getY(), 36);
+            EXPECT_TRUE(toolbar->isVisible());
+        }
+        juce::MemoryBlock saved;
+        source.getStateInformation(saved);
+        ImageControlProcessor restored;
+        restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        ImageControlEditor editor(restored);
+        auto* toolbar = editingChild<ProcessingToolbar>(editor);
+        ASSERT_NE(toolbar, nullptr);
+        EXPECT_EQ(editor.getWidth(), 2000);
+        EXPECT_TRUE(toolbar->isVisible());
+        EXPECT_LT(toolbar->getY(), 36);
+        editor.setSize(760, editor.getHeight());
+        EXPECT_EQ(toolbar->isVisible(), rowShown);
+        EXPECT_EQ(static_cast<bool>(restored.getEditorState().getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)), rowShown);
+    }
+}
+
+/// Every inline control stays contained while resizing through the packing boundary, with no duplicate row.
+TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
+{
+    ImageControlProcessor processor;
+    ImageControlEditor editor(processor);
+    editor.addToDesktop(0);
+    editor.setVisible(true);
+    auto* toolbar = editingChild<ProcessingToolbar>(editor);
+    auto* slotA = editingControl(editor, "comparison-a");
+    auto* selector = editingControl(editor, "preset-selector");
+    auto* toggle = editingControl(editor, "processing-toolbar-toggle");
+    ASSERT_NE(toolbar, nullptr);
+    ASSERT_NE(slotA, nullptr);
+    ASSERT_NE(selector, nullptr);
+    ASSERT_NE(toggle, nullptr);
+    slotA->grabKeyboardFocus();
+    bool sawInline = false;
+    bool sawRow = false;
+    for (int width = 1400; width <= 1800; ++width) {
+        editor.setSize(width, editor.getHeight());
+        EXPECT_TRUE(slotA->hasKeyboardFocus(false));
+        const bool inHeader = toolbar->getY() < 36;
+        sawInline = sawInline || inHeader;
+        sawRow = sawRow || !inHeader;
+        EXPECT_EQ(toggle->isVisible(), !inHeader);
+        EXPECT_LE(selector->getWidth(), 320);
+        auto* content = toolbar->getChildComponent(0);
+        ASSERT_NE(content, nullptr);
+        for (const auto* child : content->getChildren()) {
+            EXPECT_TRUE(content->getLocalBounds().contains(child->getBounds()));
+            EXPECT_GE(child->getHeight(), 24);
+        }
+    }
+    EXPECT_TRUE(sawInline);
+    EXPECT_TRUE(sawRow);
+    editor.setSize(760, editor.getHeight());
+    auto* disclosure = dynamic_cast<juce::Button*>(toggle);
+    ASSERT_NE(disclosure, nullptr);
+    disclosure->onClick();
+    editor.setSize(2000, editor.getHeight());
+    slotA->grabKeyboardFocus();
+    editor.setSize(760, editor.getHeight());
+    EXPECT_FALSE(toolbar->isVisible());
+    EXPECT_TRUE(toggle->hasKeyboardFocus(false));
+}
+
 /// Hover affordances stay centered and focusable without requesting a strong selected outline.
 TEST(EditingWorkflow, DisclosuresUseCenteredHoverOnlyIndicators)
 {
@@ -928,6 +1070,14 @@ TEST(EditingWorkflow, RestoredPresetIdentityAppearsOnceAndFitsLongNames)
             }
         }
     }
+    editor.setSize(2000, editor.getHeight());
+    EXPECT_FALSE(identity->isVisible());
+    auto* selector = dynamic_cast<juce::ComboBox*>(editingControl(editor, "preset-selector"));
+    ASSERT_NE(selector, nullptr);
+    EXPECT_EQ(selector->getText(), preset.name);
+    EXPECT_LE(selector->getWidth(), 320);
+    editor.setSize(760, editor.getHeight());
+    EXPECT_TRUE(identity->isVisible());
     disclosure->onClick();
     EXPECT_FALSE(identity->isVisible());
     disclosure->onClick();

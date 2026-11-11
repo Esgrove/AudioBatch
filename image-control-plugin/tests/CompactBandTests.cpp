@@ -1,4 +1,4 @@
-/// Tests compact BandStrip geometry and the production sliders' pointer, wheel, key, and native numeric input.
+/// Tests expanded heading and compact BandStrip geometry, plus production pointer, wheel, key, and numeric input.
 /// The same parameter attachments must preserve local history, Link, automation exclusion, and balanced host gestures.
 
 #include "ImageControlEditor.h"
@@ -88,6 +88,108 @@ Control* compactControl(const juce::Component& parent, const juce::String& title
         }
     }
     return nullptr;
+}
+
+/// Finds a strip-owned heading by its displayed text, valid until the strip is destroyed.
+juce::Label* bandHeadingLabel(const BandStrip& strip, const juce::String& text)
+{
+    for (auto* child : strip.getChildren()) {
+        if (auto* label = dynamic_cast<juce::Label*>(child); label != nullptr && label->getText() == text) {
+            return label;
+        }
+    }
+    return nullptr;
+}
+
+/// Measures uncompressed heading text and the actual look-and-feel border at its fixed display font.
+int bandHeadingTextWidth(juce::Label& label)
+{
+    const auto font = label.getLookAndFeel().getLabelFont(label);
+    const int glyphWidth = static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, label.getText())));
+    return glyphWidth + label.getLookAndFeel().getLabelBorderSize(label).getLeftAndRight();
+}
+
+/// Includes both margins, Solo, Link, their gap, and two readable inline text gaps in the fit boundary.
+int bandHeadingInlineWidth(juce::Label& name, juce::Label& range, const int disclosureInset)
+{
+    return 20 + 20 + 60 + 6 + 8 * 2 + disclosureInset + bandHeadingTextWidth(name) + bandHeadingTextWidth(range);
+}
+
+/// Checks every expanded child remains visible, inside its strip, and disjoint from all other children.
+void expectExpandedBandChildrenDoNotOverlap(const BandStrip& strip)
+{
+    std::vector<juce::Component*> visible;
+    for (auto* child : strip.getChildren()) {
+        ASSERT_TRUE(child->isVisible());
+        EXPECT_TRUE(strip.getLocalBounds().contains(child->getBounds()));
+        for (const auto* previous : visible) {
+            EXPECT_FALSE(child->getBounds().intersects(previous->getBounds()));
+        }
+        visible.push_back(child);
+    }
+}
+
+/// Exercises grow/shrink boundaries for one heading configuration at minimum and spare strip heights.
+void expectExpandedBandHeadingThresholds(
+    BandStrip& strip,
+    const std::size_t band,
+    const juce::String& text,
+    const int inset
+)
+{
+    auto* name = bandHeadingLabel(strip, bandName(band));
+    auto* range = bandHeadingLabel(strip, text);
+    auto* solo = compactControl<juce::Component>(strip, bandName(band) + " Solo");
+    auto* link = compactControl<juce::Component>(strip, bandName(band) + " Link");
+    auto* mid = compactControl<ControlSlider>(strip, bandName(band) + " Mid");
+    auto* side = compactControl<ControlSlider>(strip, bandName(band) + " Side");
+    ASSERT_NE(name, nullptr);
+    ASSERT_NE(range, nullptr);
+    ASSERT_NE(solo, nullptr);
+    ASSERT_NE(link, nullptr);
+    ASSERT_NE(mid, nullptr);
+    ASSERT_NE(side, nullptr);
+    const auto nameFont = name->getFont();
+    const auto rangeFont = range->getFont();
+    const int threshold = bandHeadingInlineWidth(*name, *range, inset);
+    for (const int height : {BAND_STRIP_MIN_HEIGHT, BAND_STRIP_MIN_HEIGHT + 80}) {
+        strip.setSize(threshold - 1, height);
+        const int narrowMidY = mid->getY();
+        const int narrowRowSpacing = side->getY() - mid->getY();
+        for (const int width : {threshold - 1, threshold, threshold + 1, threshold + 100, threshold - 1}) {
+            SCOPED_TRACE(width);
+            SCOPED_TRACE(height);
+            strip.setSize(width, height);
+            const bool inlineRange = width >= threshold;
+            EXPECT_EQ(name->getY(), 10);
+            EXPECT_EQ(range->getY(), inlineRange ? name->getY() : name->getBottom());
+            EXPECT_EQ(range->getX(), inlineRange ? name->getRight() + 8 : 10);
+            EXPECT_EQ(range->getHeight(), 20);
+            EXPECT_GE(name->getWidth(), bandHeadingTextWidth(*name));
+            EXPECT_GE(range->getWidth(), bandHeadingTextWidth(*range));
+            EXPECT_EQ(solo->getRight() + 6, link->getX());
+            EXPECT_EQ(link->getRight(), strip.getWidth() - 10 - inset);
+            EXPECT_EQ(solo->getWidth(), 20);
+            EXPECT_EQ(link->getWidth(), 60);
+            EXPECT_EQ(name->getFont(), nameFont);
+            EXPECT_EQ(range->getFont(), rangeFont);
+            EXPECT_EQ(mid->getHeight(), 26);
+            EXPECT_EQ(side->getHeight(), 26);
+            EXPECT_EQ(range->findColour(juce::Label::textColourId), juce::Colour(palette::GREY_MIDDLE_LIGHT));
+            if (inlineRange) {
+                EXPECT_EQ(range->getRight() + 8, solo->getX());
+                EXPECT_LT(mid->getY(), narrowMidY);
+                EXPECT_GE(side->getY() - mid->getY(), narrowRowSpacing);
+                if (height > BAND_STRIP_MIN_HEIGHT) {
+                    EXPECT_GT(side->getY() - mid->getY(), narrowRowSpacing);
+                }
+            } else {
+                EXPECT_EQ(mid->getY(), narrowMidY);
+                EXPECT_EQ(side->getY() - mid->getY(), narrowRowSpacing);
+            }
+            expectExpandedBandChildrenDoNotOverlap(strip);
+        }
+    }
 }
 
 /// Finds the slider's JUCE-owned numeric label, valid until its presentation or look and feel changes.
@@ -321,6 +423,150 @@ TEST(CompactBands, MinimumWidthGeometryAndBoundaryValuesRemainLegible)
             EXPECT_TRUE(foundName);
         }
     }
+}
+
+/// Full heading glyphs select one or two rows at the exact measured boundary, with room for buttons and disclosure.
+TEST(CompactBands, ExpandedHeadingFitUsesActualTextFontsAndReservedControls)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    for (std::size_t band = 0; band < BAND_COUNT; ++band) {
+        for (const auto* text : {"Below 120 Hz", "1.25 kHz to 16.00 kHz"}) {
+            for (const int inset : {0, 24}) {
+                SCOPED_TRACE(band);
+                SCOPED_TRACE(text);
+                SCOPED_TRACE(inset);
+                BandStrip strip(processor.getParameters(), processor.getEditorState(), band, processor.getHistory());
+                strip.setLookAndFeel(&lookAndFeel);
+                strip.setHeaderDisclosureInset(inset);
+                strip.setRangeText(text);
+                expectExpandedBandHeadingThresholds(strip, band, text, inset);
+            }
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Live range changes reflow expanded headings at unchanged strip size, and never change compact geometry or names.
+TEST(CompactBands, LiveHeadingTextChangesReflowWithoutTogglingCompactControls)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 1, processor.getHistory());
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setHeaderDisclosureInset(24);
+    strip.setRangeText("120 Hz to 800 Hz");
+    auto* name = bandHeadingLabel(strip, "Low Mid");
+    auto* range = bandHeadingLabel(strip, "120 Hz to 800 Hz");
+    ASSERT_NE(name, nullptr);
+    ASSERT_NE(range, nullptr);
+    const int shortThreshold = bandHeadingInlineWidth(*name, *range, 24);
+    strip.setRangeText("1.25 kHz to 16.00 kHz");
+    const int longThreshold = bandHeadingInlineWidth(*name, *range, 24);
+    ASSERT_GT(longThreshold, shortThreshold);
+    strip.setSize(shortThreshold, BAND_STRIP_MIN_HEIGHT + 80);
+    for (const bool compact : {false, true, false}) {
+        strip.setCompact(compact);
+        strip.setSize(shortThreshold, compact ? BAND_STRIP_COMPACT_HEIGHT : BAND_STRIP_MIN_HEIGHT + 80);
+        std::vector<std::tuple<juce::Component*, juce::Rectangle<int>, bool>> geometry;
+        for (auto* child : strip.getChildren()) {
+            geometry.emplace_back(child, child->getBounds(), child->isVisible());
+        }
+        auto* mid = compactControl<ControlSlider>(strip, "Low Mid Mid");
+        ASSERT_NE(mid, nullptr);
+        const auto midText = mid->compactValueText();
+        for (const auto* text : {"120 Hz to 800 Hz", "1.25 kHz to 16.00 kHz", "120 Hz to 800 Hz"}) {
+            strip.setRangeText(text);
+            EXPECT_EQ(range->getText(), text);
+            if (compact) {
+                for (const auto& [child, bounds, visible] : geometry) {
+                    EXPECT_EQ(child->getBounds(), bounds);
+                    EXPECT_EQ(child->isVisible(), visible);
+                }
+                EXPECT_EQ(mid->compactValueText(), midText);
+            } else {
+                EXPECT_TRUE(name->isVisible());
+                EXPECT_TRUE(range->isVisible());
+                EXPECT_EQ(range->getY(), juce::String(text) == "120 Hz to 800 Hz" ? name->getY() : name->getBottom());
+                const auto bounds = range->getBounds();
+                const auto midBounds = mid->getBounds();
+                strip.setRangeText(text);
+                EXPECT_EQ(range->getBounds(), bounds);
+                EXPECT_EQ(mid->getBounds(), midBounds);
+            }
+        }
+    }
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// Heading row changes retain uncommitted numeric text and linked Mid/Side gesture ownership through grow and shrink.
+TEST(CompactBands, ResponsiveHeadingPreservesNumericDraftAndLinkedGestures)
+{
+    ImageControlProcessor processor;
+    ImageControlLookAndFeel lookAndFeel;
+    auto& history = processor.getHistory();
+    processor.getEditorState().setProperty(linkPropertyName(0), true, nullptr);
+    BandStrip strip(processor.getParameters(), processor.getEditorState(), 0, history);
+    strip.setLookAndFeel(&lookAndFeel);
+    strip.setRangeText("Below 120 Hz");
+    auto* name = bandHeadingLabel(strip, "Low");
+    auto* range = bandHeadingLabel(strip, "Below 120 Hz");
+    auto* mid = compactControl<ControlSlider>(strip, "Low Mid");
+    ASSERT_NE(name, nullptr);
+    ASSERT_NE(range, nullptr);
+    ASSERT_NE(mid, nullptr);
+    const int threshold = bandHeadingInlineWidth(*name, *range, 0);
+    strip.setSize(threshold, BAND_STRIP_MIN_HEIGHT + 80);
+    strip.addToDesktop(0);
+    strip.setVisible(true);
+    const CompactGestureCounter midGestures(*processor.getParameters().getParameter(midGainParameterId(0)));
+    const CompactGestureCounter sideGestures(*processor.getParameters().getParameter(sideGainParameterId(0)));
+    ASSERT_TRUE(mid->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)));
+    const auto* label = compactValueBox(*mid);
+    ASSERT_NE(label, nullptr);
+    const juce::Component::SafePointer<juce::TextEditor> editor(label->getCurrentTextEditor());
+    ASSERT_NE(editor, nullptr);
+    editor->setText("-3.27", false);
+    editor->setHighlightedRegion({1, 4});
+    for (const int width : {threshold, threshold + 80, threshold - 1, threshold}) {
+        strip.setSize(width, strip.getHeight());
+        for (const auto* text : {"Below 16.00 kHz", "Below 120 Hz"}) {
+            strip.setRangeText(text);
+            EXPECT_EQ(compactValueBox(*mid), label);
+            ASSERT_EQ(label->getCurrentTextEditor(), editor.getComponent());
+            EXPECT_EQ(editor->getText(), "-3.27");
+            EXPECT_EQ(editor->getHighlightedRegion(), (juce::Range<int> {1, 4}));
+            EXPECT_TRUE(editor->hasKeyboardFocus(true));
+            EXPECT_FALSE(history.canUndo());
+            EXPECT_TRUE(midGestures.gestureBoundaries().empty());
+            EXPECT_TRUE(sideGestures.gestureBoundaries().empty());
+        }
+    }
+    mid->hideTextBox(true);
+    EXPECT_NEAR(mid->getValue(), 0.0, 0.0001);
+    mid->mouseDown(compactMouse(*mid));
+    mid->mouseDrag(compactMouse(*mid, {32.0F, 12.0F}));
+    ASSERT_TRUE(history.isEditing());
+    const double edited = mid->getValue();
+    for (const int width : {threshold, threshold + 80, threshold - 1, threshold}) {
+        strip.setSize(width, strip.getHeight());
+        for (const auto* text : {"Below 16.00 kHz", "Below 120 Hz"}) {
+            strip.setRangeText(text);
+            EXPECT_TRUE(history.isEditing());
+            EXPECT_DOUBLE_EQ(mid->getValue(), edited);
+            EXPECT_EQ(midGestures.gestureBoundaries(), (std::vector<bool> {true}));
+            EXPECT_EQ(sideGestures.gestureBoundaries(), (std::vector<bool> {true}));
+        }
+    }
+    mid->mouseDrag(compactMouse(*mid, {52.0F, 12.0F}));
+    EXPECT_GT(mid->getValue(), edited);
+    mid->endDrag();
+    EXPECT_EQ(midGestures.gestureBoundaries(), (std::vector<bool> {true, false}));
+    EXPECT_EQ(sideGestures.gestureBoundaries(), (std::vector<bool> {true, false}));
+    EXPECT_TRUE(history.undo());
+    EXPECT_NEAR(compactParameterValue(processor, midGainParameterId(0)), 0.0F, 0.0001F);
+    EXPECT_NEAR(compactParameterValue(processor, sideGainParameterId(0)), 0.0F, 0.0001F);
+    EXPECT_FALSE(history.canUndo());
 }
 
 /// Width alone selects short suffixes or inline full names without showing another label row or replacing controls.

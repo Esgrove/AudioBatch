@@ -19,6 +19,10 @@ enum class PresetDialogPresentation : std::uint8_t { visible, nonRendering };
 
 /// Height of the processing row, including its vertical control insets, in logical pixels.
 inline constexpr int PROCESSING_TOOLBAR_HEIGHT {32};
+/// Smallest inline allocation that preserves every action, status, and a readable preset name.
+inline constexpr int PROCESSING_TOOLBAR_INLINE_MIN_WIDTH {560};
+/// Maximum allocation bounds the preset name field even in very wide headers.
+inline constexpr int PROCESSING_TOOLBAR_MAX_WIDTH {700};
 
 /// A processor-backed toolbar whose refresh is driven by the editor's existing VBlank callback.
 /// The processor outlives this component. Destruction joins only independent filesystem work, never a UI callback.
