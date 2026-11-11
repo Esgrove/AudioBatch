@@ -204,6 +204,8 @@ private:
     bool correlationShown {true};
     /// Whether the A/B and user-preset toolbar row is shown, independently of analysis visibility.
     bool processingToolbarShown {true};
+    /// Automatic inline placement never overwrites the user's second-row visibility preference.
+    bool processingToolbarInline {false};
     /// Compact values release the full strip area to the spectrogram without replacing the saved strip height.
     bool compactBandControls {false};
     /// Whether the spectrogram is hidden, which shrinks the editor to the header and the band strips.

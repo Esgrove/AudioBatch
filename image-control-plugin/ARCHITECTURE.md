@@ -494,6 +494,8 @@ Its separate `SpatialSpectrogramViewInput.cpp` owns hit testing and parameter ge
 The plot itself is left unpainted so the GPU image beneath the components remains visible.
 `BandStrip` owns APVTS slider/button attachments, including independent Width and Recover sliders,
 and gain-only Link gesture behavior.
+Expanded band names and frequency ranges share their heading when measured text fits beside Solo and Link,
+otherwise ranges remain on the second line. Live range changes relayout without committing numeric drafts.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
 `DisplayDisclosure` fades a centered translucent triangle in only near its section-border action.
@@ -513,7 +515,11 @@ Compacting retains the window dimensions and saved full-strip height, releasing 
 A single 28-pixel row uses value suffixes and directional pan text, without band headings.
 Wider columns use full inline control names based on measured text widths, never a separate label row.
 With the spectrogram hidden, the fixed-height editor instead follows the compact value row.
-The preset name occupies the existing title area only when its selector row is collapsed.
+A/B and preset controls reuse the same live toolbar in spare header space when its minimum inline width fits.
+The dedicated second row closes automatically while inline and returns only when its saved visibility preference is on.
+Automatic placement never changes that preference or the saved expanded height.
+The preset name field is capped at 320 pixels in either placement.
+The preset name occupies the existing title area only when neither the row nor inline selector is visible.
 `ControlSlider` separates numeric text from fixed display units in its plugin-local value label.
 The inline editor shares the readout's font and placement.
 Up/Down uses the slider's ordinary fine/coarse nudge path.

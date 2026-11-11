@@ -30,6 +30,8 @@ constexpr int COPY_WIDTH {72};
 constexpr int MENU_WIDTH {72};
 constexpr int STATUS_WIDTH {64};
 constexpr int LIBRARY_STATUS_WIDTH {84};
+/// Preset names stay bounded while the actions and independent status fields remain adjacent.
+constexpr int MAX_PRESET_SELECTOR_WIDTH {320};
 /// Status text remains legible without competing with the compact preset selector.
 constexpr float STATUS_FONT_HEIGHT {12.0F};
 /// Stable left-to-right traversal is independent of the controls' dependency-safe declaration order.
@@ -195,19 +197,24 @@ bool ProcessingToolbarContent::requestIsCurrent(const PresetRequest& request) co
 /// Keeps independently hit-testable sound and library statuses next to the flexible name-only selector.
 void ProcessingToolbarContent::resized()
 {
-    auto area = getLocalBounds().reduced(0, CONTROL_INSET);
+    constexpr int controlHeight {24};
+    const int inset = std::min(CONTROL_INSET, std::max(0, (getHeight() - controlHeight) / 2));
+    auto area = getLocalBounds().reduced(0, inset);
     slotAButton.setBounds(area.removeFromLeft(SLOT_WIDTH));
     slotBButton.setBounds(area.removeFromLeft(SLOT_WIDTH));
     area.removeFromLeft(CONTROL_GAP);
     copyButton.setBounds(area.removeFromLeft(COPY_WIDTH));
     area.removeFromLeft(GROUP_GAP);
-    presetMenuButton.setBounds(area.removeFromRight(MENU_WIDTH));
-    area.removeFromRight(CONTROL_GAP);
-    libraryStatus.setBounds(area.removeFromRight(LIBRARY_STATUS_WIDTH));
-    area.removeFromRight(CONTROL_GAP);
-    presetStatus.setBounds(area.removeFromRight(STATUS_WIDTH));
-    area.removeFromRight(CONTROL_GAP);
-    presetSelector.setBounds(area);
+    constexpr int trailingWidth {MENU_WIDTH + LIBRARY_STATUS_WIDTH + STATUS_WIDTH + CONTROL_GAP * 3};
+    presetSelector.setBounds(
+        area.removeFromLeft(std::clamp(area.getWidth() - trailingWidth, 1, MAX_PRESET_SELECTOR_WIDTH))
+    );
+    area.removeFromLeft(CONTROL_GAP);
+    presetStatus.setBounds(area.removeFromLeft(STATUS_WIDTH));
+    area.removeFromLeft(CONTROL_GAP);
+    libraryStatus.setBounds(area.removeFromLeft(LIBRARY_STATUS_WIDTH));
+    area.removeFromLeft(CONTROL_GAP);
+    presetMenuButton.setBounds(area.removeFromLeft(MENU_WIDTH));
 }
 
 /// Replays history and invalidates a pending load even when another action restores the same sound.

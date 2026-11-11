@@ -69,6 +69,8 @@ constexpr int TEXT_BOX_HEIGHT {22};
 constexpr int LINK_WIDTH {60};
 /// Gap between the Solo button and the Link toggle, in pixels.
 constexpr int SOLO_GAP {6};
+/// Gap separating the inline name, range, and heading buttons, in pixels.
+constexpr int HEADER_TEXT_GAP {8};
 /// How much brighter the headphone icon draws while the pointer is over the Solo button.
 constexpr float SOLO_HOVER_BRIGHTNESS {0.3F};
 /// Largest vertical gap between the range label and the first slider row, in pixels.
@@ -115,6 +117,16 @@ static_assert(
     BAND_STRIP_MIN_HEIGHT == MARGIN * 2 + HEADER_ROW_HEIGHT * 2 + SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT),
     "The minimum strip height must fit the margins, the header rows, and the slider rows"
 );
+
+/// Measures the label's actual drawing font and insets without allowing fitted-text compression.
+int headingLabelWidth(juce::Label& label)
+{
+    auto& lookAndFeel = label.getLookAndFeel();
+    return static_cast<int>(
+               std::ceil(juce::GlyphArrangement::getStringWidth(lookAndFeel.getLabelFont(label), label.getText()))
+           )
+        + lookAndFeel.getLabelBorderSize(label).getLeftAndRight();
+}
 
 /// Returns a headphone icon in a HEADPHONE_BOX square: a headband arc over two ear cups.
 juce::Path headphonePath()
@@ -776,8 +788,9 @@ void BandStrip::paint(juce::Graphics& graphics)
 }
 
 /// Uses one compact row of four values, with inline full names only when their worst-case glyphs fit together.
-/// Expanded controls place the name, Solo, and Link above the range and five labelled slider rows.
-/// A gap takes at most 16 spare pixels below the range, and slider rows share the remaining height evenly.
+/// Expanded headings share a row only when both full labels fit beside Solo, Link, and the disclosure inset.
+/// Otherwise the range keeps its own row. A gap takes at most 16 spare pixels before the five fixed-font slider rows,
+/// which share the remaining height evenly without interrupting their editors or gestures.
 void BandStrip::resized()
 {
     if (compact) {
@@ -809,8 +822,18 @@ void BandStrip::resized()
     linkButton.setBounds(header.removeFromRight(LINK_WIDTH));
     header.removeFromRight(SOLO_GAP);
     soloButton.setBounds(header.removeFromRight(HEADER_ROW_HEIGHT));
-    nameLabel.setBounds(header);
-    rangeLabel.setBounds(area.removeFromTop(HEADER_ROW_HEIGHT));
+    const int nameWidth = headingLabelWidth(nameLabel);
+    const int rangeWidth = headingLabelWidth(rangeLabel);
+    const bool inlineRange
+        = rangeLabel.getText().isNotEmpty() && header.getWidth() >= nameWidth + rangeWidth + HEADER_TEXT_GAP * 2;
+    if (inlineRange) {
+        nameLabel.setBounds(header.removeFromLeft(nameWidth));
+        header.removeFromLeft(HEADER_TEXT_GAP);
+        rangeLabel.setBounds(header.withTrimmedRight(HEADER_TEXT_GAP));
+    } else {
+        nameLabel.setBounds(header);
+        rangeLabel.setBounds(area.removeFromTop(HEADER_ROW_HEIGHT));
+    }
     const int spareHeight = area.getHeight() - SLIDER_ROWS * (SLIDER_LABEL_HEIGHT + SLIDER_HEIGHT);
     area.removeFromTop(std::clamp(spareHeight, 0, HEADER_SLIDER_GAP));
 
@@ -830,10 +853,17 @@ void BandStrip::resized()
     }
 }
 
-/// Shows the frequency range of the band under its name.
+/// Updates the message-thread range and its measured heading layout only when the crossover text changes.
+/// Compact controls, active numeric drafts, and host gestures retain their presentation and ownership.
 void BandStrip::setRangeText(const juce::String& text)
 {
+    if (rangeLabel.getText() == text) {
+        return;
+    }
     rangeLabel.setText(text, juce::dontSendNotification);
+    if (!compact) {
+        resized();
+    }
 }
 
 /// Sets up a full-width horizontal slider with its value box on the right and its label above it.

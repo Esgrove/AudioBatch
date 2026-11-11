@@ -407,8 +407,24 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     undoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
     headerX += iconGaps.at(0);
     redoButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
-    // Extra space separates the left tools from the right-anchored monitoring and output controls.
-    headerX += groupGaps.at(2) + std::max(0, outputWidth - MAX_OUTPUT_SLIDER_WIDTH);
+    // The responsive preset group uses only spare space, preserving the right-anchored monitoring controls.
+    const int spareWidth = std::max(0, outputWidth - MAX_OUTPUT_SLIDER_WIDTH);
+    processingToolbarInline = spareWidth >= PROCESSING_TOOLBAR_INLINE_MIN_WIDTH + GAP;
+    if (!processingToolbarInline && !processingToolbarShown && processingToolbar.hasKeyboardFocus(true) && isShowing())
+    {
+        processingToolbarButton.setVisible(true);
+        processingToolbarButton.grabKeyboardFocus();
+    }
+    processingToolbar.setVisible(processingToolbarInline || processingToolbarShown);
+    if (processingToolbarInline) {
+        processingToolbar.setBounds(
+            headerX + groupGaps.at(2),
+            header.getY(),
+            std::min(spareWidth - GAP, PROCESSING_TOOLBAR_MAX_WIDTH),
+            header.getHeight()
+        );
+    }
+    headerX += groupGaps.at(2) + spareWidth;
     monoButton.setBounds(takeHeader(buttonWidths.at(0)).reduced(0, BUTTON_INSET));
     headerX += groupGaps.at(3);
     deltaButton.setBounds(takeHeader(buttonWidths.at(1)).reduced(0, BUTTON_INSET));
@@ -419,6 +435,10 @@ void ImageControlEditor::layoutHeader(const juce::Rectangle<int> header)
     outputSlider.setBounds(takeHeader(std::min(outputWidth, MAX_OUTPUT_SLIDER_WIDTH)));
     headerX += iconGaps.at(1);
     processingToolbarButton.setBounds(takeHeader(ICON_BUTTON_WIDTH).reduced(0, BUTTON_INSET));
+    if (processingToolbarInline && processingToolbarButton.hasKeyboardFocus(false) && isShowing()) {
+        processingToolbar.grabKeyboardFocus();
+    }
+    processingToolbarButton.setVisible(!processingToolbarInline);
 }
 
 /// Lays out the header, the spectrogram, the divider, and the band strips,
@@ -430,11 +450,25 @@ void ImageControlEditor::resized()
     auto area = getLocalBounds().reduced(GAP);
     layoutHeader(area.removeFromTop(HEADER_HEIGHT - GAP));
     area.removeFromTop(GAP);
-    if (processingToolbarShown) {
-        processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
-        area.removeFromTop(GAP);
-    } else {
-        processingToolbar.setBounds({});
+    if (!processingToolbarInline) {
+        if (processingToolbarShown) {
+            processingToolbar.setBounds(area.removeFromTop(PROCESSING_TOOLBAR_HEIGHT));
+            area.removeFromTop(GAP);
+        } else {
+            processingToolbar.setBounds({});
+        }
+    }
+    if (spectrogramHidden && !layoutTransition) {
+        const int height = compactHeight();
+        if (getHeight() != height) {
+            const juce::ScopedValueSetter<bool> transition(layoutTransition, true);
+            setResizeLimits(MIN_EDITOR_WIDTH, height, MAX_EDITOR_WIDTH, height);
+            setSize(getWidth(), height);
+            if (layoutRestored) {
+                imageControlProcessor.getEditorState().setProperty(EDITOR_WIDTH_PROPERTY, getWidth(), nullptr);
+            }
+            return;
+        }
     }
 
     if (spectrogramHidden) {
@@ -485,6 +519,7 @@ void ImageControlEditor::resized()
         correlationArea.removeFromLeft(GAP);
     }
     layoutBandControlsDisclosure();
+    updatePresetIdentity();
     updateSettingsBounds();
 
     if (!layoutRestored || layoutTransition) {
@@ -528,7 +563,8 @@ std::optional<std::size_t> ImageControlEditor::bandUnderPointer() const
 /// Returns the editor height that fits the header and the band strips without the spectrogram.
 int ImageControlEditor::compactHeight() const
 {
-    return HEADER_HEIGHT + GAP * 2 + (processingToolbarShown ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
+    return HEADER_HEIGHT + GAP * 2
+        + (processingToolbarShown && !processingToolbarInline ? PROCESSING_TOOLBAR_HEIGHT + GAP : 0)
         + RESTORE_HANDLE_HEIGHT + GAP
         + (compactBandControls ? BAND_STRIP_COMPACT_HEIGHT : std::max(bandSectionHeight, BAND_STRIP_MIN_HEIGHT))
         + (correlationShown ? BAND_CORRELATION_HEIGHT : RESTORE_HANDLE_HEIGHT) + CONTROLS_ACTION_HEIGHT;
@@ -612,7 +648,7 @@ void ImageControlEditor::applyLayoutSettings()
     const bool showToolbar = static_cast<bool>(editorState.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY, true));
     const bool toolbarChanged = processingToolbarShown != showToolbar;
     processingToolbarShown = showToolbar;
-    processingToolbar.setVisible(showToolbar);
+    processingToolbar.setVisible(showToolbar || processingToolbarInline);
     processingToolbarButton.setToggleState(showToolbar, juce::dontSendNotification);
     processingToolbarButton.setTooltip(
         showToolbar ? "Hide A/B comparison and presets" : "Show A/B comparison and presets"
@@ -770,7 +806,7 @@ void ImageControlEditor::updatePresetIdentity()
 {
     const auto presentation = imageControlProcessor.getPresetPresentation();
     const auto& provenance = presentation.provenance;
-    const bool show = !processingToolbarShown && provenance.has_value();
+    const bool show = !processingToolbar.isVisible() && provenance.has_value();
     juce::String text;
     if (provenance.has_value()) {
         text = provenance->name + (presentation.modified ? " *" : "");
@@ -783,7 +819,7 @@ void ImageControlEditor::updatePresetIdentity()
     presetLabel.setVisible(show);
     titleLabel.setFont(textFont(show ? COMPACT_BRAND_FONT_HEIGHT : TITLE_FONT_HEIGHT).boldened());
     if (visibilityChanged) {
-        resized();
+        layoutHeader(getLocalBounds().reduced(GAP).removeFromTop(HEADER_HEIGHT - GAP));
     }
 }
 
