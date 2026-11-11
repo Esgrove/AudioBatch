@@ -257,7 +257,7 @@ fn packaged_untrusted_state_is_rejected_without_mutating_parameters() {
                 component: vec![8, 0, 0, 0, b'{'],
                 controller: Vec::new(),
             },
-            state_blob(r#"{"version":5,"parameters":{"gain":0.75}}"#),
+            state_blob(r#"{"version":99,"parameters":{"gain":0.75}}"#),
             state_blob(r#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#),
             state_blob(r#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":4097,"height":900}}"#),
             state_blob(r#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":null}}"#),

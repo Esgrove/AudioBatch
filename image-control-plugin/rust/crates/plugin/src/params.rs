@@ -145,6 +145,28 @@ pub struct Parameters {
     values: [AtomicU64; PARAMETER_COUNT],
     /// Successful detached recalls invalidate precomputed UI writes without changing ordinary automation semantics.
     restore_generation: AtomicU64,
+    /// Non-audio local history and comparison ownership, never read by processing or automation publication.
+    pub(crate) editing: std::sync::Mutex<crate::editing::EditingState>,
+    /// Remembered non-sound choices shared by editor views and state callbacks, never sampled by audio.
+    pub(crate) layout: crate::editor_geometry::EditorGeometry,
+}
+
+/// Independent non-audio worker retirement retained by the native editor binding, not the widget cache.
+#[derive(Clone)]
+pub struct EditorShutdown(std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>);
+
+impl EditorShutdown {
+    /// Shares join ownership without transferring a native editor or mutable program state.
+    pub(crate) const fn new(worker: std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>) -> Self {
+        Self(worker)
+    }
+    /// Joins outside the mutex so worker destruction cannot retain or reenter plugin ownership under lock.
+    pub(crate) fn shutdown(&self) {
+        let worker = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
+    }
 }
 
 /// UI-only automation seam. Implementations release any host-handler lock before invoking host code.
@@ -176,6 +198,8 @@ pub trait EditorBinding {
     fn end_edit(&self, id: u32);
     /// Marks a changed persisted non-sound preference on the UI thread, without a sound gesture.
     fn mark_dirty(&self) {}
+    /// Registers independent non-audio worker ownership for synchronous native removal.
+    fn register_shutdown(&self, _shutdown: EditorShutdown) {}
     /// Balances remaining gestures synchronously when the native editor is removed.
     fn close(&self) {}
     /// Negotiates an editor-originated logical size through the retained host frame.
@@ -402,6 +426,8 @@ impl Parameters {
                 .values()
                 .map(|value| AtomicU64::new(value.to_bits())),
             restore_generation: AtomicU64::new(0),
+            editing: std::sync::Mutex::new(crate::editing::EditingState::new(Snapshot::default())),
+            layout: crate::editor_geometry::EditorGeometry::default(),
         }
     }
 
@@ -456,11 +482,19 @@ impl Parameters {
         if !snapshot.is_valid() {
             return false;
         }
+        let mut editing = self.editing.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.restore_values(snapshot);
+        editing.synchronize(self.restore_generation(), snapshot);
+        drop(editing);
+        true
+    }
+
+    /// Publishes validated restore values while the non-audio editing owner excludes stale local transactions.
+    pub(crate) fn restore_values(&self, snapshot: Snapshot) {
         for (slot, value) in self.values.iter().zip(snapshot.values()) {
             slot.store(value.to_bits(), Ordering::Relaxed);
         }
         self.restore_generation.fetch_add(1, Ordering::Release);
-        true
     }
 
     /// Reads successful recall publication, independent of automation and without entering DSP or GUI state.

@@ -8,9 +8,11 @@ use crate::editor_geometry::{EditorGeometry, LogicalSize};
 use crate::params::{CROSSOVER_PARAMETER_START, Parameters, Snapshot, parameter_spec};
 
 /// Largest accepted state payload, independently of its host transport.
-pub const MAXIMUM_STATE_BYTES: usize = 4096;
-/// Native power-skew crossovers extend the sound, display, and geometry generations.
-const STATE_VERSION: u32 = 4;
+pub const MAXIMUM_STATE_BYTES: usize = 16_384;
+/// Comparison sounds, provenance, and complete editor preferences extend the independent project schema.
+const STATE_VERSION: u32 = 5;
+/// Native power-skew normalization was introduced independently of comparisons.
+const CROSSOVER_MAPPING_VERSION: u32 = 4;
 /// First generation containing host-accepted logical geometry.
 const GEOMETRY_VERSION: u32 = 3;
 
@@ -42,6 +44,12 @@ struct State {
     /// Logical units do not depend on the state thread's DPI or an attached editor.
     #[serde(default)]
     geometry: LogicalSize,
+    /// Comparison metadata is independent from sound and never requires library reads during restore.
+    #[serde(default)]
+    comparison: Option<crate::editing::ComparisonState>,
+    /// Complete non-sound editor layout, with fixed defaults for older generations.
+    #[serde(default)]
+    layout: crate::editor_preferences::LayoutPreferences,
 }
 
 /// Stored crossovers distinguish an absent fixed default from values requiring versioned migration.
@@ -96,7 +104,7 @@ impl StoredSnapshot {
         if !snapshot.is_valid() {
             return None;
         }
-        if version < STATE_VERSION && self.crossovers.is_some() {
+        if version < CROSSOVER_MAPPING_VERSION && self.crossovers.is_some() {
             for (index, normalized) in snapshot.crossovers.iter_mut().enumerate() {
                 let plain = (20.0 * 1000.0_f64.powf(*normalized)) as f32;
                 let spec = parameter_spec(CROSSOVER_PARAMETER_START + index as u32)?;
@@ -139,6 +147,18 @@ struct EditorPreferences {
     contrast: f32,
     /// Worker palette selection.
     color_mode: Palette,
+    /// Horizontal projection is independent of host sound automation.
+    mel_scale: bool,
+    /// GPU density contours retain the same analysis energy.
+    solid_rendering: bool,
+    /// Validated channel level difference at the position midpoint.
+    pan_midpoint_db: f32,
+    /// Validated channel level difference near the position edge.
+    pan_edge_db: f32,
+    /// Numeric meter mode preserves its transient history.
+    smooth_correlation: bool,
+    /// Display refresh diagnostic visibility.
+    show_fps: bool,
 }
 
 /// Stable state spellings independent of DSP enum representation.
@@ -174,6 +194,12 @@ impl EditorPreferences {
                 ColourMode::Frequency => Palette::Frequency,
                 ColourMode::Phase => Palette::Phase,
             },
+            mel_scale: display.mel_scale,
+            solid_rendering: display.solid_rendering,
+            pan_midpoint_db: display.pan_midpoint_db,
+            pan_edge_db: display.pan_edge_db,
+            smooth_correlation: display.smooth_correlation,
+            show_fps: display.show_fps,
         }
     }
 
@@ -186,6 +212,12 @@ impl EditorPreferences {
                 Palette::Frequency => ColourMode::Frequency,
                 Palette::Phase => ColourMode::Phase,
             },
+            mel_scale: self.mel_scale,
+            solid_rendering: self.solid_rendering,
+            pan_midpoint_db: self.pan_midpoint_db,
+            pan_edge_db: self.pan_edge_db,
+            smooth_correlation: self.smooth_correlation,
+            show_fps: self.show_fps,
         };
         display.is_valid().then_some(display)
     }
@@ -199,6 +231,12 @@ impl Default for EditorPreferences {
             persistence_seconds: display.persistence_seconds,
             contrast: display.contrast,
             color_mode: Palette::default(),
+            mel_scale: display.mel_scale,
+            solid_rendering: display.solid_rendering,
+            pan_midpoint_db: display.pan_midpoint_db,
+            pan_edge_db: display.pan_edge_db,
+            smooth_correlation: display.smooth_correlation,
+            show_fps: display.show_fps,
         }
     }
 }
@@ -214,10 +252,16 @@ pub fn restore_bytes(
         return Err(StateError::Invalid);
     }
     let state: State = serde_json::from_slice(bytes)?;
-    if !(1..=STATE_VERSION).contains(&state.version) || !state.geometry.is_valid() {
+    if !(1..=STATE_VERSION).contains(&state.version) || !state.geometry.is_valid() || !state.layout.is_valid() {
         return Err(StateError::Invalid);
     }
     let sound = state.parameters.migrate(state.version).ok_or(StateError::Invalid)?;
+    let comparison = state
+        .comparison
+        .unwrap_or_else(|| crate::editing::ComparisonState::from_sound(crate::editing::SoundSnapshot::capture(sound)));
+    if !comparison.is_valid() {
+        return Err(StateError::Invalid);
+    }
     let display = state.editor.display().ok_or(StateError::Invalid)?;
     if !shared.set_display_preferences(display) {
         return Err(StateError::Invalid);
@@ -226,7 +270,15 @@ pub fn restore_bytes(
         Tap::Pre => AnalysisTap::Pre,
         Tap::Post => AnalysisTap::Post,
     });
-    parameters.restore(sound);
+    parameters.layout.publish_preferences(state.layout);
+    let mut editing = parameters
+        .editing
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    parameters.restore_values(sound);
+    editing.synchronize(parameters.restore_generation(), sound);
+    editing.restore_comparison(comparison);
+    drop(editing);
     geometry.publish(if state.version < GEOMETRY_VERSION {
         LogicalSize::default()
     } else {
@@ -242,11 +294,14 @@ pub fn save_bytes(
     shared: &SharedState,
     geometry: &EditorGeometry,
 ) -> Result<Vec<u8>, StateError> {
+    let (snapshot, comparison) = parameters.with_editing(|editing, snapshot| (snapshot, editing.comparison(snapshot)));
     let bytes = serde_json::to_vec(&State {
         version: STATE_VERSION,
-        parameters: StoredSnapshot::capture(parameters.snapshot()),
+        parameters: StoredSnapshot::capture(snapshot),
         editor: EditorPreferences::capture(shared),
         geometry: geometry.snapshot(),
+        comparison: Some(comparison),
+        layout: parameters.layout.preferences(),
     })?;
     if bytes.len() > MAXIMUM_STATE_BYTES {
         return Err(StateError::Invalid);
@@ -256,7 +311,7 @@ pub fn save_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{MAXIMUM_STATE_BYTES, restore_bytes, save_bytes};
+    use super::{MAXIMUM_STATE_BYTES, STATE_VERSION, restore_bytes, save_bytes};
     use crate::runtime::Instance;
 
     /// Legacy off-grid sound retains exact non-crossover bits. Crossover error is bounded in the native Hz domain.
@@ -288,7 +343,7 @@ mod tests {
                 }
                 let saved = save_bytes(&instance.parameters, &instance.shared, &instance.geometry).expect("save v4");
                 let value: serde_json::Value = serde_json::from_slice(&saved).expect("v4");
-                assert_eq!(value["version"], 4);
+                assert_eq!(value["version"], STATE_VERSION);
                 assert_eq!(value["parameters"]["gain"], document["parameters"]["gain"]);
                 assert_eq!(value["parameters"]["bands"][0], document["parameters"]["bands"][0]);
                 let expected_geometry = if version == 3 { 1200.5 } else { 1000.0 };
@@ -371,6 +426,61 @@ mod tests {
                     before
                 );
             }
+        }
+    }
+
+    /// Project comparisons and layout round trip without filesystem work, and recalls clear transient history.
+    #[test]
+    fn comparisons_and_layout_roundtrip_with_fixed_legacy_defaults() {
+        let source = Instance::new();
+        source.parameters.set(0, 0.25);
+        source.parameters.with_editing(|editing, snapshot| {
+            editing.begin();
+            editing.copy(snapshot);
+            editing.end(snapshot);
+        });
+        let preferences = crate::editor_preferences::LayoutPreferences {
+            linked: [false, true, false, true],
+            toolbar_shown: false,
+            correlation_shown: false,
+            compact_bands: true,
+            band_height: 350.5,
+            spectrogram_hidden: true,
+            analysis_stopped: true,
+        };
+        assert!(source.parameters.layout.publish_preferences(preferences));
+        let bytes = save_bytes(&source.parameters, &source.shared, &source.geometry).expect("project capture");
+        let destination = Instance::new();
+        restore_bytes(
+            &bytes,
+            &destination.parameters,
+            &destination.shared,
+            &destination.geometry,
+        )
+        .expect("restore project");
+        assert_eq!(destination.parameters.layout.preferences(), preferences);
+        let comparison = destination.parameters.with_editing(|editing, snapshot| {
+            assert!(!editing.can_undo());
+            assert!(!editing.can_redo());
+            editing.comparison(snapshot)
+        });
+        assert_eq!(comparison.slots[0], comparison.slots[1]);
+        assert_eq!(
+            save_bytes(&destination.parameters, &destination.shared, &destination.geometry).expect("stable"),
+            bytes
+        );
+        for version in 1..=4 {
+            restore_bytes(
+                format!(r#"{{"version":{version},"parameters":{{}}}}"#).as_bytes(),
+                &destination.parameters,
+                &destination.shared,
+                &destination.geometry,
+            )
+            .expect("legacy restore");
+            assert_eq!(
+                destination.parameters.layout.preferences(),
+                crate::editor_preferences::LayoutPreferences::default()
+            );
         }
     }
 

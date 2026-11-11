@@ -37,7 +37,7 @@ const PROGRESS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Number of different detached snapshots restored while callbacks remain active.
 const RESTORE_COUNT: usize = 4;
 /// Largest private test stream, including the plugin's state-length prefix.
-const MAXIMUM_STREAM_BYTES: usize = 8192;
+const MAXIMUM_STREAM_BYTES: usize = 16_388;
 /// VST3 real-time processing mode and 32-bit sample format both have SDK value zero.
 const REALTIME_SAMPLE32: i32 = 0;
 

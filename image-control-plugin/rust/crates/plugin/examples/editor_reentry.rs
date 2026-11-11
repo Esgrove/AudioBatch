@@ -62,7 +62,7 @@ mod native {
     /// Header output slider position in the packaged editor's initial logical coordinates.
     const OUTPUT_POINT: (f64, f64) = (850.0, 22.0);
     /// Maximum component payload and its four-byte length prefix.
-    const MAXIMUM_STATE_STREAM_BYTES: usize = 4100;
+    const MAXIMUM_STATE_STREAM_BYTES: usize = 16_388;
 
     /// Selects which real native callback removes the child, if any.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
