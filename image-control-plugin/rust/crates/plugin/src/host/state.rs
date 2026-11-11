@@ -7,8 +7,6 @@ use vst3::ComRef;
 use vst3::Steinberg::{IBStream, IBStreamTrait as _, kResultOk};
 
 use crate::editor_geometry::EditorGeometry;
-#[cfg(test)]
-use crate::editor_geometry::LogicalSize;
 use crate::params::Parameters;
 use crate::state::{MAXIMUM_STATE_BYTES, StateError, restore_bytes, save_bytes};
 
@@ -94,10 +92,12 @@ fn transfer_write(stream: &ComRef<'_, IBStream>, mut bytes: &mut [u8]) -> Result
 mod tests {
     use image_control_dsp::{AnalysisTap, ColourMode, DisplayPreferences, Imager};
 
-    use super::{EditorGeometry, LogicalSize, Parameters, restore_bytes, save_bytes};
+    use super::{EditorGeometry, Parameters, restore_bytes, save_bytes};
+    use crate::editor_geometry::LogicalSize;
+    use crate::state::STATE_VERSION;
 
     #[test]
-    fn version_four_roundtrips_preferences_and_fractional_logical_geometry() {
+    fn current_state_roundtrips_preferences_and_fractional_logical_geometry() {
         let imager = Imager::new();
         let shared = imager.shared();
         let parameters = Parameters::default();
@@ -108,18 +108,25 @@ mod tests {
             persistence_seconds: 1.25,
             contrast: 0.2,
             color_mode: ColourMode::Phase,
-            ..DisplayPreferences::default()
+            mel_scale: true,
+            solid_rendering: true,
+            pan_midpoint_db: 20.0,
+            pan_edge_db: 50.0,
+            smooth_correlation: false,
+            show_fps: true,
         };
         assert!(shared.set_display_preferences(display));
         let remembered = LogicalSize::default().acknowledged(1501, 1201, 1.5);
         geometry.publish(remembered);
         let bytes = save_bytes(&parameters, &shared, &geometry).expect("save");
-        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("v4 JSON");
-        assert_eq!(json.get("version"), Some(&serde_json::Value::from(5)));
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("current JSON");
+        assert_eq!(json.get("version"), Some(&serde_json::Value::from(STATE_VERSION)));
+        assert_eq!(json["tap"], "Pre");
+        assert_eq!(json["display"]["color_mode"], "Phase");
         shared.set_analysis_tap(AnalysisTap::Post);
         geometry.publish(LogicalSize::default());
         assert!(shared.set_display_preferences(DisplayPreferences::default()));
-        restore_bytes(&bytes, &parameters, &shared, &geometry).expect("restore v4");
+        restore_bytes(&bytes, &parameters, &shared, &geometry).expect("restore current state");
         assert_eq!(shared.analysis_tap(), AnalysisTap::Pre);
         assert_eq!(shared.display_preferences(), display);
         assert_eq!(geometry.snapshot(), remembered);
@@ -128,42 +135,49 @@ mod tests {
     }
 
     #[test]
-    fn legacy_versions_restore_fixed_geometry_not_previous_instance_choices() {
+    fn missing_fields_restore_fixed_defaults_not_previous_instance_choices() {
         let imager = Imager::new();
         let shared = imager.shared();
         let parameters = Parameters::default();
         let geometry = EditorGeometry::default();
-        for bytes in [
-            br#"{"version":1,"parameters":{"gain":0.25}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":0.25}}"#.as_slice(),
-            br#"{"version":3,"parameters":{"gain":0.25}}"#.as_slice(),
-        ] {
-            geometry.publish(LogicalSize {
-                width: 1200.0,
-                height: 900.0,
-            });
-            shared.set_analysis_tap(AnalysisTap::Pre);
-            assert!(shared.set_display_preferences(DisplayPreferences {
-                persistence_seconds: 2.0,
-                contrast: 0.1,
-                color_mode: ColourMode::Phase,
-                ..DisplayPreferences::default()
-            }));
-            restore_bytes(bytes, &parameters, &shared, &geometry).expect("fixed missing defaults");
-            assert_eq!(shared.analysis_tap(), AnalysisTap::Post);
-            assert_eq!(shared.display_preferences(), DisplayPreferences::default());
-            assert_eq!(geometry.snapshot(), LogicalSize::default());
-            assert_eq!(parameters.get(0), Some(0.25));
-        }
+        geometry.publish(LogicalSize {
+            width: 1200.0,
+            height: 900.0,
+        });
+        shared.set_analysis_tap(AnalysisTap::Pre);
+        assert!(shared.set_display_preferences(DisplayPreferences {
+            persistence_seconds: 2.0,
+            contrast: 0.1,
+            color_mode: ColourMode::Phase,
+            ..DisplayPreferences::default()
+        }));
         restore_bytes(
-            br#"{"version":2,"parameters":{},"editor":{"tap":"pre","contrast":0.25,"color_mode":"phase"}}"#,
+            br#"{"version":5,"parameters":{"gain":0.25}}"#,
             &parameters,
             &shared,
             &geometry,
         )
-        .expect("version two preferences");
+        .expect("fixed missing defaults");
+        assert_eq!(shared.analysis_tap(), AnalysisTap::Post);
+        assert_eq!(shared.display_preferences(), DisplayPreferences::default());
+        assert_eq!(geometry.snapshot(), LogicalSize::default());
+        assert_eq!(parameters.get(0), Some(0.25));
+        restore_bytes(
+            br#"{"version":5,"parameters":{},"tap":"Pre","display":{"contrast":0.25,"color_mode":"Phase"}}"#,
+            &parameters,
+            &shared,
+            &geometry,
+        )
+        .expect("partial current preferences");
         assert_eq!(shared.analysis_tap(), AnalysisTap::Pre);
-        assert_eq!(shared.display_preferences().color_mode, ColourMode::Phase);
+        assert_eq!(
+            shared.display_preferences(),
+            DisplayPreferences {
+                contrast: 0.25,
+                color_mode: ColourMode::Phase,
+                ..DisplayPreferences::default()
+            }
+        );
         assert_eq!(geometry.snapshot(), LogicalSize::default());
     }
 
@@ -178,38 +192,42 @@ mod tests {
             height: 960.0,
         });
         let before = save_bytes(&parameters, &shared, &geometry).expect("capture");
+        let generation = parameters.restore_generation();
         for bytes in [
-            br#"{"version":2,"parameters":{"gain":0.25},"editor":{"persistence_seconds":0}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":1.01}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":0.25},"editor":{"tap":"middle"}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":0.25},"editor":{"color_mode":"random"}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":null}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":0.25},"editor":{"unknown":true}}"#.as_slice(),
-            br#"{"version":2,"parameters":{"gain":2},"editor":{"tap":"pre"}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"display":{"persistence_seconds":0}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"display":{"contrast":1.01}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"tap":"middle"}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"display":{"color_mode":"random"}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"display":{"contrast":null}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"display":{"unknown":true}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"tap":null}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"display":null}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25},"editor":{}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":2},"tap":"Pre"}"#.as_slice(),
             br#"{"version":99,"parameters":{"gain":0.25}}"#.as_slice(),
         ] {
             assert!(restore_bytes(bytes, &parameters, &shared, &geometry).is_err());
+            assert_eq!(parameters.restore_generation(), generation);
             assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);
         }
-        for version in [1, 2, 3, 4] {
-            for invalid in [
-                "null",
-                "{}",
-                r#"{"width":1200}"#,
-                r#"{"width":1200,"height":null}"#,
-                r#"{"width":0,"height":900}"#,
-                r#"{"width":1200,"height":599}"#,
-                r#"{"width":4097,"height":900}"#,
-                r#"{"width":1200,"height":4097}"#,
-                r#"{"width":1e999,"height":900}"#,
-                r#"{"width":1200,"height":900,"unknown":0}"#,
-            ] {
-                let bytes = format!(
-                    r#"{{"version":{version},"parameters":{{"gain":0.25}},"editor":{{"tap":"pre"}},"geometry":{invalid}}}"#
-                );
-                assert!(restore_bytes(bytes.as_bytes(), &parameters, &shared, &geometry).is_err());
-                assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);
-            }
+        for invalid in [
+            "null",
+            "{}",
+            r#"{"width":1200}"#,
+            r#"{"width":1200,"height":null}"#,
+            r#"{"width":0,"height":900}"#,
+            r#"{"width":1200,"height":599}"#,
+            r#"{"width":4097,"height":900}"#,
+            r#"{"width":1200,"height":4097}"#,
+            r#"{"width":1e999,"height":900}"#,
+            r#"{"width":1200,"height":900,"unknown":0}"#,
+        ] {
+            let bytes = format!(
+                r#"{{"version":{STATE_VERSION},"parameters":{{"gain":0.25}},"tap":"Pre","geometry":{invalid}}}"#
+            );
+            assert!(restore_bytes(bytes.as_bytes(), &parameters, &shared, &geometry).is_err());
+            assert_eq!(parameters.restore_generation(), generation);
+            assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);
         }
     }
 
@@ -223,7 +241,7 @@ mod tests {
         let state_geometry = std::sync::Arc::clone(&geometry);
         let state_thread = std::thread::spawn(move || {
             restore_bytes(
-                br#"{"version":3,"parameters":{"gain":0.25},"editor":{"tap":"pre"},"geometry":{"width":1200,"height":900}}"#,
+                br#"{"version":5,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200,"height":900}}"#,
                 &state_parameters,
                 &shared,
                 &state_geometry,

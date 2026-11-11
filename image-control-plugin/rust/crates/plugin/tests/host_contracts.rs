@@ -24,7 +24,7 @@ fn production_in_process_host_contracts() {
     every_parameter_survives_state_with_fixed_missing_defaults(&ui);
     malformed_state_is_transactional(&ui);
     display_preferences_roundtrip_without_sound_changes(&ui);
-    geometry_roundtrips_across_components_with_fixed_legacy_defaults(&ui);
+    geometry_roundtrips_across_components_with_fixed_missing_defaults(&ui);
     independent_multiband_automation(&ui);
     cold_callbacks_and_mono_reset(&ui);
 }
@@ -152,7 +152,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
     let saved = instance.state(ui).expect("all parameter capture");
     assert!(saved.component.len() < 4096);
     instance.deactivate(ui).expect("inactive restore");
-    assert!(restore_json(&mut instance, ui, br#"{"version":1,"parameters":{}}"#));
+    assert!(restore_json(&mut instance, ui, br#"{"version":5,"parameters":{}}"#));
     let defaults = saved_json(&instance, ui);
     assert!(
         defaults.pointer("/parameters/width").is_none(),
@@ -204,7 +204,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
     assert!(restore_json(
         &mut instance,
         ui,
-        br#"{"version":1,"parameters":{"bands":[{"mid":0.0},{},{},{}]}}"#
+        br#"{"version":5,"parameters":{"bands":[{"mid":0.0},{},{},{}]}}"#
     ));
     let partial = saved_json(&instance, ui);
     assert_eq!(partial.pointer("/parameters/bands/0/mid").expect("Mid"), 0.0);
@@ -218,33 +218,34 @@ fn display_preferences_roundtrip_without_sound_changes(ui: &UiThread) {
     let before = saved_json(&instance, ui);
     assert!(restore_json(
         &mut instance, ui,
-        br#"{"version":2,"parameters":{},"editor":{"tap":"pre","persistence_seconds":1.25,"contrast":0.25,"color_mode":"phase"}}"#,
+        br#"{"version":5,"parameters":{},"tap":"Pre","display":{"persistence_seconds":1.25,"contrast":0.25,"color_mode":"Phase"}}"#,
     ));
     let restored = saved_json(&instance, ui);
     assert_eq!(restored.get("parameters"), before.get("parameters"));
-    assert_eq!(restored.pointer("/editor/tap"), Some(&Value::from("pre")));
+    assert_eq!(restored.pointer("/tap"), Some(&Value::from("Pre")));
     assert_eq!(
-        restored.pointer("/editor/persistence_seconds"),
+        restored.pointer("/display/persistence_seconds"),
         Some(&Value::from(1.25))
     );
-    assert_eq!(restored.pointer("/editor/contrast"), Some(&Value::from(0.25)));
-    assert_eq!(restored.pointer("/editor/color_mode"), Some(&Value::from("phase")));
-    let saved = instance.state(ui).expect("v2 capture");
-    assert!(restore_json(&mut instance, ui, br#"{"version":1,"parameters":{}}"#));
-    let legacy = saved_json(&instance, ui);
-    assert_eq!(legacy.pointer("/editor/tap"), Some(&Value::from("post")));
-    assert_eq!(legacy.pointer("/editor/color_mode"), Some(&Value::from("frequency")));
-    assert!(instance.set_state(ui, &saved).expect("v2 recall"));
-    assert_eq!(instance.state(ui).expect("stable v2 serialization"), saved);
+    assert_eq!(restored.pointer("/display/contrast"), Some(&Value::from(0.25)));
+    assert_eq!(restored.pointer("/display/color_mode"), Some(&Value::from("Phase")));
+    let saved = instance.state(ui).expect("current capture");
+    assert!(restore_json(&mut instance, ui, br#"{"version":5,"parameters":{}}"#));
+    let defaults = saved_json(&instance, ui);
+    assert_eq!(defaults.pointer("/tap"), Some(&Value::from("Post")));
+    assert_eq!(defaults.pointer("/display/color_mode"), Some(&Value::from("Frequency")));
+    assert!(instance.set_state(ui, &saved).expect("current recall"));
+    assert_eq!(instance.state(ui).expect("stable current serialization"), saved);
 }
 
-/// Restores logical geometry without an editor, copies it to a fresh component, and checks legacy defaults.
-fn geometry_roundtrips_across_components_with_fixed_legacy_defaults(ui: &UiThread) {
+/// Restores logical geometry without an editor, copies it to a fresh component, and checks fixed missing defaults.
+fn geometry_roundtrips_across_components_with_fixed_missing_defaults(ui: &UiThread) {
     let mut source = instance(ui, 2, ProcessMode::Offline);
     source.deactivate(ui).expect("stop source");
     assert!(restore_json(
-        &mut source, ui,
-        br#"{"version":3,"parameters":{"gain":0.25},"editor":{"tap":"pre"},"geometry":{"width":1200.5,"height":900.25}}"#,
+        &mut source,
+        ui,
+        br#"{"version":5,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200.5,"height":900.25}}"#,
     ));
     let saved = source.state(ui).expect("geometry capture");
     let mut destination = instance(ui, 2, ProcessMode::Offline);
@@ -254,13 +255,10 @@ fn geometry_roundtrips_across_components_with_fixed_legacy_defaults(ui: &UiThrea
     assert_eq!(defaults.pointer("/geometry/height"), Some(&Value::from(764.0)));
     assert!(destination.set_state(ui, &saved).expect("new component restore"));
     assert_eq!(destination.state(ui).expect("new component recapture"), saved);
-    for version in [1, 2] {
-        let legacy = format!(r#"{{"version":{version},"parameters":{{}}}}"#);
-        assert!(restore_json(&mut destination, ui, legacy.as_bytes()));
-        let reset = saved_json(&destination, ui);
-        assert_eq!(reset.get("geometry"), defaults.get("geometry"));
-        assert_eq!(source.state(ui).expect("independent source retention"), saved);
-    }
+    assert!(restore_json(&mut destination, ui, br#"{"version":5,"parameters":{}}"#));
+    let reset = saved_json(&destination, ui);
+    assert_eq!(reset.get("geometry"), defaults.get("geometry"));
+    assert_eq!(source.state(ui).expect("independent source retention"), saved);
 }
 
 /// Rejects malformed, incompatible, truncated, oversized, and semantically invalid states without partial writes.
@@ -273,24 +271,28 @@ fn malformed_state_is_transactional(ui: &UiThread) {
         vec![0, 0, 0, 0],
         u32::MAX.to_le_bytes().to_vec(),
         framed(br#"{"version":99,"parameters":{}}"#),
-        framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
-        framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
-        framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
-        framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"persistence_seconds":0.0}}"#),
-        framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":1.1}}"#),
-        framed(br#"{"version":2,"parameters":{"gain":0.25},"editor":{"color_mode":"unknown"}}"#),
+        framed(br#"{"version":1,"parameters":{}}"#),
+        framed(br#"{"version":2,"parameters":{}}"#),
+        framed(br#"{"version":3,"parameters":{}}"#),
+        framed(br#"{"version":4,"parameters":{}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25},"display":{"persistence_seconds":0.0}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25},"display":{"contrast":1.1}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25},"display":{"color_mode":"unknown"}}"#),
         framed(br#"{"version":0,"parameters":{}}"#),
-        framed(br#"{"version":1,"parameters":{"gain":2.0}}"#),
-        framed(br#"{"version":1,"parameters":{"gain":null}}"#),
-        framed(br#"{"version":1,"parameters":{"gain":0.25,"crossovers":[0.1,0.2,2.0]}}"#),
-        framed(br#"{"version":1,"parameters":{"bands":[{},{},{},{"recover":-1.0}]}}"#),
-        framed(br#"{"version":1,"parameters":{"bands":[{},{},{}]}}"#),
-        framed(br#"{"version":1,"parameters":{"bands":[{},{},{},{"unknown":0.0}]}}"#),
-        framed(br#"{"version":1,"parameters":{"mono":2.0}}"#),
-        framed(br#"{"version":1,"parameters":{"width":0.5}}"#),
-        framed(br#"{"version":1,"parameters":{"gain":0.5,"gain":0.25}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":2.0}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":null}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.25,"crossovers":[0.1,0.2,2.0]}}"#),
+        framed(br#"{"version":5,"parameters":{"bands":[{},{},{},{"recover":-1.0}]}}"#),
+        framed(br#"{"version":5,"parameters":{"bands":[{},{},{}]}}"#),
+        framed(br#"{"version":5,"parameters":{"bands":[{},{},{},{"unknown":0.0}]}}"#),
+        framed(br#"{"version":5,"parameters":{"mono":2.0}}"#),
+        framed(br#"{"version":5,"parameters":{"width":0.5}}"#),
+        framed(br#"{"version":5,"parameters":{"gain":0.5,"gain":0.25}}"#),
         framed(b"not JSON"),
-        framed(br#"{"version":1,"parameters":{}} trailing"#),
+        framed(br#"{"version":5,"parameters":{}} trailing"#),
     ] {
         assert!(
             !instance
