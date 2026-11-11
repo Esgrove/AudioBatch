@@ -36,6 +36,8 @@ There is no plugin-local GPUI workspace, vendored embedding patch, or nice-plug 
 AudioBatch's application GPUI dependencies remain separate.
 Run `build.sh`, `test.sh`, `lint.sh --check`, and `format.sh --check` from `rust/` for this experiment.
 Use root Rust lints and formatting, narrow documented unsafe ABI boundaries, and the plugin realtime contracts below.
+Follow the repository-wide [Rust return-value guidelines](../AGENTS.md#rust-return-values),
+using domain-specific structs with named fields instead of ambiguous tuple results.
 Treat Rust state/class identities separately from the C++ persistence contracts.
 Cross-implementation state migration is not implied.
 The evaluation
