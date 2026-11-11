@@ -289,7 +289,8 @@ Complete renderer/device-loss fallback is not implemented.
 [`host/state.rs`](crates/plugin/src/host/state.rs) provides VST3 stream transport,
 with a four-byte little-endian payload length preceding at most 16 KiB.
 CLAP streams use the same bounded codec. The AU wrapper stores the CLAP stream in its host property-list container.
-Only schema 6 is accepted. Its detached envelope uses `Snapshot` for normalized parameters,
+Parameter and project-state persistence starts at schema 1 for the first supported iteration.
+Its detached envelope uses `Snapshot` for normalized parameters,
 `AnalysisTap` for Pre/Post, and `DisplayPreferences` directly, without duplicate mirrors or migration codecs.
 It also stores A/B sounds and preset origins, complete layout preferences, and host-accepted logical window dimensions.
 Layout includes Link, toolbar/correlation visibility, compact bands, retained band height, spectrogram hiding,
@@ -297,7 +298,7 @@ and the independent stop-analysis choice.
 Display includes persistence, contrast, palette, Mel/solid modes, stereo-position curve,
 correlation numeric smoothing, and frame-rate visibility.
 Absent current-schema fields use fixed defaults rather than the current instance's choices.
-Older and unknown schemas, malformed fields, invalid values, and impossible stream progress are rejected.
+Unsupported schemas, malformed fields, invalid values, and impossible stream progress are rejected.
 The complete detached document, including comparisons and origins, is validated before publishing live values.
 Rejected restores leave parameters, preferences, geometry, comparisons, and restore identity unchanged.
 
@@ -328,7 +329,9 @@ A continuing UI operation cannot overwrite a newer recall, including a restore i
 The independent state format does not imply C++ project migration.
 
 [`user_presets.rs`](crates/plugin/src/user_presets.rs) owns the independent, bounded RS JSON preset codec and library.
-Preset schema 2 uses the logarithmic parameter mapping and rejects older preset documents without migration.
+Preset schema 1 stores the current logarithmic parameter mapping.
+Prototype presets and host state are outside this baseline and are not migrated,
+including prototype files that happen to carry the same version number.
 Rust formats share per-user application-data storage under `esgrove/ImageControl RS/Presets`, not the C++ XML library.
 The modal callout supports loading, Save/Save As, rename, delete, refresh, reconnect, and absolute-path import/export.
 Operations run off the UI/audio threads, and completion checks reject changed project, slot, or sound identities.

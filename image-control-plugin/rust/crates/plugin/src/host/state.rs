@@ -152,7 +152,7 @@ mod tests {
             ..DisplayPreferences::default()
         }));
         restore_bytes(
-            br#"{"version":6,"parameters":{"gain":0.25}}"#,
+            br#"{"version":1,"parameters":{"gain":0.25}}"#,
             &parameters,
             &shared,
             &geometry,
@@ -163,7 +163,7 @@ mod tests {
         assert_eq!(geometry.snapshot(), LogicalSize::default());
         assert_eq!(parameters.get(0), Some(0.25));
         restore_bytes(
-            br#"{"version":6,"parameters":{},"tap":"Pre","display":{"contrast":0.25,"color_mode":"Phase"}}"#,
+            br#"{"version":1,"parameters":{},"tap":"Pre","display":{"contrast":0.25,"color_mode":"Phase"}}"#,
             &parameters,
             &shared,
             &geometry,
@@ -194,16 +194,16 @@ mod tests {
         let before = save_bytes(&parameters, &shared, &geometry).expect("capture");
         let generation = parameters.restore_generation();
         for bytes in [
-            br#"{"version":6,"parameters":{"gain":0.25},"display":{"persistence_seconds":0}}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"display":{"contrast":1.01}}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"tap":"middle"}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"display":{"color_mode":"random"}}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"display":{"contrast":null}}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"display":{"unknown":true}}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"tap":null}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"display":null}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":0.25},"editor":{}}"#.as_slice(),
-            br#"{"version":6,"parameters":{"gain":2},"tap":"Pre"}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"display":{"persistence_seconds":0}}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"display":{"contrast":1.01}}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"tap":"middle"}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"display":{"color_mode":"random"}}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"display":{"contrast":null}}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"display":{"unknown":true}}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"tap":null}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"display":null}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":0.25},"editor":{}}"#.as_slice(),
+            br#"{"version":1,"parameters":{"gain":2},"tap":"Pre"}"#.as_slice(),
             br#"{"version":99,"parameters":{"gain":0.25}}"#.as_slice(),
         ] {
             assert!(restore_bytes(bytes, &parameters, &shared, &geometry).is_err());
@@ -241,7 +241,7 @@ mod tests {
         let state_geometry = std::sync::Arc::clone(&geometry);
         let state_thread = std::thread::spawn(move || {
             restore_bytes(
-                br#"{"version":6,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200,"height":900}}"#,
+                br#"{"version":1,"parameters":{"gain":0.25},"tap":"Pre","geometry":{"width":1200,"height":900}}"#,
                 &state_parameters,
                 &shared,
                 &state_geometry,
