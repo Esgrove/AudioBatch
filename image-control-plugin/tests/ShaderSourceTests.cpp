@@ -18,7 +18,7 @@ namespace
 /// A shader's source filename and its process-lifetime binary resource, excluding JUCE's terminator padding.
 struct ShaderSource {
     /// Filename relative to the shader source directory supplied by CMake.
-    const char* filename;
+    const char* filename {nullptr};
     /// Non-owning view of the bytes owned by ImageControlBinaryData for the process lifetime.
     std::span<const char> bytes;
 };

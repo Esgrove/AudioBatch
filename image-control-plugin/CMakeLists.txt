@@ -557,6 +557,10 @@ if(IMAGE_CONTROL_BUILD_TESTS)
     target_compile_definitions(
         ImageControlTests PRIVATE IMAGE_CONTROL_SHADER_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders"
     )
+    if(WIN32)
+        # windows.h defines min and max macros that break std::min and std::max in the tests.
+        target_compile_definitions(ImageControlTests PRIVATE NOMINMAX)
+    endif()
     set_source_files_properties(
         ${IMAGE_CONTROL_TEST_SOURCES} TARGET_DIRECTORY ImageControlTests
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"

@@ -101,7 +101,7 @@ bool insideRoot(const std::filesystem::path& path, const std::filesystem::path& 
 std::filesystem::path filesystemPath(const juce::String& text)
 {
 #if JUCE_WINDOWS
-    return std::filesystem::path(text.toWideCharPointer());
+    return {text.toWideCharPointer()};
 #else
     return {text.toRawUTF8()};
 #endif
@@ -111,7 +111,7 @@ std::filesystem::path filesystemPath(const juce::String& text)
 juce::File juceFile(const std::filesystem::path& path)
 {
 #if JUCE_WINDOWS
-    return juce::File(juce::String(path.c_str()));
+    return {juce::String(path.c_str())};
 #else
     return {juce::String::fromUTF8(path.c_str())};
 #endif
@@ -709,8 +709,8 @@ juce::var runCase(
     }
     details.setProperty("block_frames", blockPattern);
     try {
-        auto cpp = load(formats, options.cpp, false, rate);
-        auto rust = load(formats, options.rust, true, rate);
+        const auto cpp = load(formats, options.cpp, false, rate);
+        const auto rust = load(formats, options.rust, true, rate);
         const auto cppParameters = mapParameters(*cpp, specs, false);
         const auto rustParameters = mapParameters(*rust, specs, true);
         constexpr int inputFrames = 20'483;

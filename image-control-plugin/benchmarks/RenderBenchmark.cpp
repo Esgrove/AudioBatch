@@ -206,7 +206,7 @@ float readFloat(juce::InputStream& input)
 Workload loadWorkload(const Options& options)
 {
     const juce::File file(juce::String::fromUTF8(options.input.c_str()));
-    auto input = file.createInputStream();
+    const auto input = file.createInputStream();
     if (input == nullptr || file.getSize() < static_cast<juce::int64>(HEADER_BYTES)
         || file.getSize() > static_cast<juce::int64>(MAX_INPUT_BYTES))
     {

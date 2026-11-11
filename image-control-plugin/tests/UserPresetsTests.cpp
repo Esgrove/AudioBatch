@@ -400,64 +400,64 @@ TEST_F(UserPresetsTest, UnknownCorruptAndFutureDocumentsAreRejectedWithoutChangi
     const auto parsed = juce::parseXML(original);
     ASSERT_NE(parsed, nullptr);
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->setAttribute("version", "99");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->setAttribute("id", "not-a-uuid");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->setAttribute("revision", "");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->setAttribute("unknown", 1);
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->createNewChildElement("EditorState");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->createNewChildElement("Unknown");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->setAttribute("version", "2");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->getChildElement(0)->setAttribute("id", "unknown_parameter");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->addChildElement(
             std::make_unique<juce::XmlElement>(*xml->getChildElement(0)->getChildElement(0)).release()
         );
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->getChildElement(0)->setAttribute("value", "NaN");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->getChildElement(0)->setAttribute("value", "99999999");
         invalid.add(xml->toString());
     }
     {
-        auto xml = std::make_unique<juce::XmlElement>(*parsed);
+        const auto xml = std::make_unique<juce::XmlElement>(*parsed);
         xml->getChildElement(0)->removeChildElement(xml->getChildElement(0)->getChildElement(0), true);
         invalid.add(xml->toString());
     }

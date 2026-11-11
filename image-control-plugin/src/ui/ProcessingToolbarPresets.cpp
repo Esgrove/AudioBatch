@@ -693,7 +693,10 @@ void ProcessingToolbarContent::chooseImport()
         = std::make_unique<juce::FileChooser>("Import ImageControl Preset", juce::File(), "*.xml", true, false, this);
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     fileChooser->launchAsync(
-        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        static_cast<int>(
+            static_cast<unsigned int>(juce::FileBrowserComponent::openMode)
+            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectFiles)
+        ),
         [safeThis, request](const juce::FileChooser& chooser) mutable {
             if (safeThis == nullptr || safeThis->closing) {
                 return;
@@ -721,7 +724,10 @@ void ProcessingToolbarContent::chooseExport()
     );
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     fileChooser->launchAsync(
-        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+        static_cast<int>(
+            static_cast<unsigned int>(juce::FileBrowserComponent::saveMode)
+            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectFiles)
+        ),
         [safeThis, request](const juce::FileChooser& chooser) mutable {
             if (safeThis == nullptr || safeThis->closing) {
                 return;

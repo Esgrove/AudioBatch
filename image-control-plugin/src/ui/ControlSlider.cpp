@@ -126,8 +126,8 @@ protected:
         const auto field = getLocalBounds().toFloat();
         graphics.setColour(findColour(juce::Label::backgroundColourId));
         graphics.fillRoundedRectangle(field, corner_radius::CONTROL);
-        const auto font = getLookAndFeel().getLabelFont(*this);
-        graphics.setFont(font);
+        const auto labelFont = getLookAndFeel().getLabelFont(*this);
+        graphics.setFont(labelFont);
         graphics.setColour(
             slider.findColour(juce::Slider::textBoxTextColourId).withMultipliedAlpha(isEnabled() ? 1.0F : 0.5F)
         );
@@ -143,10 +143,10 @@ protected:
     /// Reflows only the editable numeric region, leaving units and identities outside its selection bounds.
     void resized() override
     {
-        if (auto* editor = getCurrentTextEditor()) {
-            editor->setBounds(textBounds().first);
+        if (auto* textEditor = getCurrentTextEditor()) {
+            textEditor->setBounds(textBounds().first);
             // Fitting values share the resting text origin. Only overflowing drafts need caret scrolling.
-            editor->setScrollToShowCursor(editor->getTextWidth() > editor->getWidth());
+            textEditor->setScrollToShowCursor(textEditor->getTextWidth() > textEditor->getWidth());
         }
         repaint();
     }
@@ -154,83 +154,83 @@ protected:
     /// Hands JUCE ownership of a transparent editor configured to share the painted value's font and alignment.
     juce::TextEditor* createEditorComponent() override
     {
-        auto editor = std::make_unique<NumericValueEditor>(slider);
-        editor->setFont(getLookAndFeel().getLabelFont(*this));
-        editor->setBorder({});
-        editor->setIndents(0, 0);
-        editor->setJustification(juce::Justification::centredLeft);
-        editor->setScrollbarsShown(false);
-        editor->setScrollToShowCursor(true);
-        editor->setEscapeAndReturnKeysConsumed(true);
-        editor->setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
-        editor->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-        editor->setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
-        editor->setColour(juce::TextEditor::shadowColourId, juce::Colours::transparentBlack);
+        auto textEditor = std::make_unique<NumericValueEditor>(slider);
+        textEditor->setFont(getLookAndFeel().getLabelFont(*this));
+        textEditor->setBorder({});
+        textEditor->setIndents(0, 0);
+        textEditor->setJustification(juce::Justification::centredLeft);
+        textEditor->setScrollbarsShown(false);
+        textEditor->setScrollToShowCursor(true);
+        textEditor->setEscapeAndReturnKeysConsumed(true);
+        textEditor->setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        textEditor->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        textEditor->setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        textEditor->setColour(juce::TextEditor::shadowColourId, juce::Colours::transparentBlack);
         const auto textColour = slider.findColour(juce::Slider::textBoxTextColourId);
-        editor->setColour(juce::TextEditor::textColourId, textColour);
-        editor->setColour(juce::TextEditor::highlightedTextColourId, textColour);
-        editor->setColour(
+        textEditor->setColour(juce::TextEditor::textColourId, textColour);
+        textEditor->setColour(juce::TextEditor::highlightedTextColourId, textColour);
+        textEditor->setColour(
             juce::TextEditor::highlightColourId, juce::Colour(palette::BLUE).withAlpha(NUMERIC_SELECTION_ALPHA)
         );
-        return editor.release();
+        return textEditor.release();
     }
 
     /// Normalizes the outgoing token for hideTextBox(false), without changing the host-facing label text.
-    void editorAboutToBeHidden(juce::TextEditor* editor) override
+    void editorAboutToBeHidden(juce::TextEditor* textEditor) override
     {
-        prepareCommit(*editor);
-        juce::Label::editorAboutToBeHidden(editor);
+        prepareCommit(*textEditor);
+        juce::Label::editorAboutToBeHidden(textEditor);
     }
 
     /// Removes only display-owned suffixes after JUCE has populated and focused its native label editor.
-    void editorShown(juce::TextEditor* editor) override
+    void editorShown(juce::TextEditor* textEditor) override
     {
         initialNumber = slider.numericValueText();
         initialText = getText();
         inputSuffix = slider.numericValueSuffix();
-        editor->setText(initialNumber, false);
-        editor->selectAll();
+        textEditor->setText(initialNumber, false);
+        textEditor->selectAll();
         resized();
-        juce::Label::editorShown(editor);
+        juce::Label::editorShown(textEditor);
     }
 
     /// Updates the numeric region as text grows, preserving JUCE's ordinary focus-loss commit policy.
-    void textEditorTextChanged(juce::TextEditor& editor) override
+    void textEditorTextChanged(juce::TextEditor& textEditor) override
     {
         resized();
-        juce::Label::textEditorTextChanged(editor);
+        juce::Label::textEditorTextChanged(textEditor);
     }
 
     /// Applies the same display-unit conversion before JUCE checks whether Return changed the label contents.
-    void textEditorReturnKeyPressed(juce::TextEditor& editor) override
+    void textEditorReturnKeyPressed(juce::TextEditor& textEditor) override
     {
-        prepareCommit(editor);
-        juce::Label::textEditorReturnKeyPressed(editor);
+        prepareCommit(textEditor);
+        juce::Label::textEditorReturnKeyPressed(textEditor);
     }
 
 private:
     /// Converts untouched values back to their exact original label token and bare kHz entries to displayed units.
     /// Explicit pasted units and malformed tokens still reach the original parameter parser unchanged.
-    void prepareCommit(juce::TextEditor& editor)
+    void prepareCommit(juce::TextEditor& textEditor)
     {
-        const auto text = editor.getText();
+        const auto text = textEditor.getText();
         if (text == initialNumber) {
-            editor.setText(initialText, false);
+            textEditor.setText(initialText, false);
         } else if (inputSuffix == " kHz" && text.trim().containsOnly("0123456789+-.eE")) {
-            editor.setText(text + inputSuffix, false);
+            textEditor.setText(text + inputSuffix, false);
         }
     }
 
     /// Measures the complete readout as one centred group, then splits it into editable and fixed regions.
     std::pair<juce::Rectangle<int>, juce::Rectangle<int>> textBounds()
     {
-        const auto font = getLookAndFeel().getLabelFont(*this);
+        const auto labelFont = getLookAndFeel().getLabelFont(*this);
         const auto number = isBeingEdited() ? getCurrentTextEditor()->getText() : slider.numericValueText();
         const auto suffix = slider.numericValueSuffix();
         const auto area = getBorderSize().subtractedFrom(getLocalBounds());
-        const int suffixWidth = static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, suffix)));
+        const int suffixWidth = static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(labelFont, suffix)));
         const int numberWidth = std::min(
-            std::max(1, static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(font, number)))),
+            std::max(1, static_cast<int>(std::ceil(juce::GlyphArrangement::getStringWidth(labelFont, number)))),
             std::max(1, area.getWidth() - suffixWidth)
         );
         const int left = area.getX() + std::max(0, (area.getWidth() - numberWidth - suffixWidth) / 2);

@@ -491,9 +491,11 @@ TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
     {
         SCOPED_TRACE(width);
         editor.setSize(width, editor.getHeight());
+        // A native window on a scaled display can snap the requested size to its pixel grid.
+        const int editorWidth = editor.getWidth();
         EXPECT_TRUE(slotA->hasKeyboardFocus(false));
         const bool inHeader = toolbar->getY() < 36;
-        EXPECT_EQ(inHeader, width >= INLINE_PRESET_EDITOR_WIDTH);
+        EXPECT_EQ(inHeader, editorWidth >= INLINE_PRESET_EDITOR_WIDTH);
         sawInline = sawInline || inHeader;
         sawRow = sawRow || !inHeader;
         EXPECT_EQ(toggle->isVisible(), !inHeader);
@@ -501,7 +503,7 @@ TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
         EXPECT_LE(selector->getWidth(), 320);
         if (inHeader) {
             EXPECT_EQ(toolbar->getX() - redo->getRight(), 4);
-            const int extraWidth = width - INLINE_PRESET_EDITOR_WIDTH;
+            const int extraWidth = editorWidth - INLINE_PRESET_EDITOR_WIDTH;
             const int outputGrowth = std::min(extraWidth, 50);
             const int selectorGrowth = std::min(extraWidth - outputGrowth, 220);
             const int spareSpace = extraWidth - outputGrowth - selectorGrowth;
@@ -509,7 +511,7 @@ TEST(EditingWorkflow, InlinePresetThresholdKeepsControlsContainedAndFocusIntact)
             EXPECT_EQ(toolbar->getWidth(), 328 + selectorGrowth);
             EXPECT_EQ(selector->getWidth(), 100 + selectorGrowth);
             EXPECT_EQ(output->getWidth(), 190 + outputGrowth);
-            EXPECT_EQ(output->getRight(), width - 8);
+            EXPECT_EQ(output->getRight(), editorWidth - 8);
             EXPECT_TRUE(toggle->getBounds().isEmpty());
         }
         expectEditingControlsContained(editor, 36, 1);
@@ -629,7 +631,9 @@ TEST(EditingWorkflow, KeyboardToggleUndoAndRedoUseLocalHistory)
     EXPECT_TRUE(editor.keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)));
     EXPECT_FLOAT_EQ(bypass->getValue(), original);
     EXPECT_TRUE(editor.keyPressed(
-        juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)
+        juce::KeyPress(
+            'z', juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier), 0
+        )
     ));
     EXPECT_FALSE(juce::exactlyEqual(bypass->getValue(), original));
     auto* toggle = dynamic_cast<juce::Button*>(editingControl(editor, "processing-toolbar-toggle"));
@@ -650,7 +654,9 @@ TEST(EditingWorkflow, KeyboardToggleUndoAndRedoUseLocalHistory)
     EXPECT_TRUE(redo->isEnabled());
     EXPECT_EQ(redo->getTooltip(), "Redo Bypass");
     EXPECT_TRUE(editor.keyPressed(
-        juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)
+        juce::KeyPress(
+            'z', juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier), 0
+        )
     ));
     EXPECT_FALSE(juce::exactlyEqual(bypass->getValue(), original));
     processor.getHistory().beginEdit("Open gesture");
@@ -675,7 +681,9 @@ TEST(EditingWorkflow, UndoAndBothRedoShortcutsWorkWithEitherToolbarVisibility)
     const auto edited = bypass->getValue();
     const std::vector<juce::KeyPress> redoKeys {
         juce::KeyPress('y', juce::ModifierKeys::commandModifier, 0),
-        juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0),
+        juce::KeyPress(
+            'z', juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier), 0
+        ),
     };
     for (int visibility = 0; visibility < 2; ++visibility) {
         for (const auto& redoKey : redoKeys) {
@@ -686,7 +694,11 @@ TEST(EditingWorkflow, UndoAndBothRedoShortcutsWorkWithEitherToolbarVisibility)
             EXPECT_FALSE(editor.keyPressed(juce::KeyPress('y', juce::ModifierKeys::noModifiers, 0)));
             EXPECT_FALSE(editor.keyPressed(juce::KeyPress('z', juce::ModifierKeys::noModifiers, 0)));
             EXPECT_FALSE(editor.keyPressed(
-                juce::KeyPress('y', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0)
+                juce::KeyPress(
+                    'y',
+                    juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::altModifier),
+                    0
+                )
             ));
             EXPECT_FLOAT_EQ(bypass->getValue(), edited);
         }

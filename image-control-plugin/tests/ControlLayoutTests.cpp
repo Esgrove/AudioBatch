@@ -747,8 +747,12 @@ TEST(SplitDivider, PointerResizeRejectsNonLeftButtonsAndUnstartedDrags)
          {
              static_cast<int>(juce::ModifierKeys::rightButtonModifier),
              static_cast<int>(juce::ModifierKeys::middleButtonModifier),
-             juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::rightButtonModifier,
-             juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::backButtonModifier,
+             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)
+                 .withFlags(juce::ModifierKeys::rightButtonModifier)
+                 .getRawFlags(),
+             juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier)
+                 .withFlags(juce::ModifierKeys::backButtonModifier)
+                 .getRawFlags(),
          })
     {
         divider.mouseDown(mouseAtScreen(divider, start, start, buttons));

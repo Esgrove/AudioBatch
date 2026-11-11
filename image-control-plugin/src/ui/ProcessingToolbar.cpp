@@ -409,8 +409,8 @@ void ProcessingToolbarContent::updatePresetSelector()
         name + juce::newLine + soundDescription + juce::newLine + feedback + juce::newLine
         + "Click the name to edit. Use the arrow to load a preset."
     );
-    presetMenuButton.setTooltip("Save and manage presets" + juce::String(juce::newLine) + feedback);
-    presetSelector.setDescription(soundDescription + juce::String(juce::newLine) + feedback);
+    presetMenuButton.setTooltip("Save and manage presets" + juce::newLine + feedback);
+    presetSelector.setDescription(soundDescription + juce::newLine + feedback);
     presetSelector.setColour(
         juce::ComboBox::outlineColourId, juce::Colour(nameError.isEmpty() ? palette::GREY_MEDIUM : palette::YELLOW)
     );
@@ -498,7 +498,7 @@ ProcessingToolbar::~ProcessingToolbar() = default;
 /// Enters the implementation's nested focus container rather than falling back to a header sibling.
 void ProcessingToolbar::focusControls()
 {
-    if (auto traverser = content->createKeyboardFocusTraverser()) {
+    if (const auto traverser = content->createKeyboardFocusTraverser()) {
         if (auto* first = traverser->getDefaultComponent(content.get())) {
             first->grabKeyboardFocus();
         }
