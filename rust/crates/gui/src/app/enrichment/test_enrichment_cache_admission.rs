@@ -5,7 +5,10 @@ use crate::app::preview::PreviewSource;
 
 /// Captures a source identity without decoding or opening a window.
 fn identity(path: &Path) -> EnrichmentIdentity {
-    let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+    let audiobatch_core::record::FileIdentity {
+        file_size,
+        modified_time_ms,
+    } = file_identity(path).expect("source identity");
     EnrichmentIdentity {
         path: path.to_path_buf(),
         file_size,

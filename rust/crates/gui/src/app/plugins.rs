@@ -64,6 +64,20 @@ pub(super) struct PluginWindow<V: 'static> {
     _subscription: Subscription,
 }
 
+/// Scan preparation holding exclusive persistence access until the worker finishes saving its result.
+struct PreparedScan {
+    lock: ScanLock,
+    known: KnownPlugins,
+    options: ScanOptions,
+    recovered: Option<String>,
+}
+
+/// Updated plugin library and its scan report, published together after persistence.
+struct CompletedScan {
+    known: KnownPlugins,
+    report: ScanReport,
+}
+
 impl<V: 'static> PluginWindow<V> {
     /// Returns true when the window was closed.
     fn is_closed(&self) -> bool {
@@ -602,11 +616,24 @@ impl AppView {
                 let Some(lock) = lock else {
                     return Ok(None);
                 };
-                let (known, recovered) = KnownPlugins::load_recovering(&paths.known_plugins)?;
+                let audiobatch_plugins::library::RecoveredData {
+                    value: known,
+                    warning: recovered,
+                } = KnownPlugins::load_recovering(&paths.known_plugins)?;
                 let options = ScanOptions::new(known.search_folders(), Some(paths.worker_log.clone()))?;
-                Ok(Some((lock, known, options, recovered)))
+                Ok(Some(PreparedScan {
+                    lock,
+                    known,
+                    options,
+                    recovered,
+                }))
             });
-        let (lock, mut known, options, recovered) = match prepared {
+        let PreparedScan {
+            lock,
+            mut known,
+            options,
+            recovered,
+        } = match prepared {
             Ok(Some(prepared)) => prepared,
             Ok(None) => return self.report_status(String::from(SCAN_BUSY_MESSAGE), cx),
             Err(error) => return self.report_status(format!("Could not start the plugin scan: {error:#}"), cx),
@@ -640,7 +667,7 @@ impl AppView {
                     .save_to(&paths.known_plugins)
                     .context("Could not save the plugin list")?;
                 drop(lock);
-                anyhow::Ok((known, report))
+                anyhow::Ok(CompletedScan { known, report })
             })
         };
         let task = cx.spawn(async move |this, cx| {
@@ -653,12 +680,12 @@ impl AppView {
     }
 
     /// Applies the result of a scan to the known plugins and shows its summary.
-    fn finish_plugin_scan(&mut self, result: anyhow::Result<(KnownPlugins, ScanReport)>, cx: &mut Context<Self>) {
+    fn finish_plugin_scan(&mut self, result: anyhow::Result<CompletedScan>, cx: &mut Context<Self>) {
         if let Some(scan) = self.plugins.scan.take() {
             scan.task.detach();
         }
         match result {
-            Ok((known, report)) => {
+            Ok(CompletedScan { known, report }) => {
                 self.plugins.known = known;
                 self.status = report.summary().into();
                 self.plugins.last_report = Some(report);
@@ -682,7 +709,7 @@ impl AppView {
                     return Ok(None);
                 };
                 // A file that cannot be parsed is moved aside, so the edit starts a new list instead of failing every time.
-                let (mut known, _) = KnownPlugins::load_recovering(&path)?;
+                let mut known = KnownPlugins::load_recovering(&path)?.value;
                 edit(&mut known);
                 known.sort();
                 known.save_to(&path)?;

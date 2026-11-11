@@ -60,6 +60,19 @@ pub(super) struct Sliders {
     pub(super) loudness_target: Entity<SliderState>,
 }
 
+/// The controls and their retained subscriptions, created as one startup result.
+#[non_exhaustive]
+pub(super) struct SubscribedSliders {
+    pub(super) sliders: Sliders,
+    pub(super) subscriptions: [Subscription; 4],
+}
+
+/// Zoom and input gain controls, kept distinct despite sharing their state type.
+struct ViewSliders {
+    zoom: Entity<SliderState>,
+    gain: Entity<SliderState>,
+}
+
 /// Creates the results table for the content width, with multi-row selection kept by the delegate.
 /// It hides the columns the settings name, or the columns hidden by default when no choice is saved.
 pub(super) fn new_results_table(
@@ -82,12 +95,8 @@ pub(super) fn new_results_table(
 }
 
 /// Creates the sliders of the controls column, and subscribes the view to them.
-pub(super) fn new_sliders(
-    settings: &GuiSettings,
-    window: &Window,
-    cx: &mut Context<AppView>,
-) -> (Sliders, [Subscription; 4]) {
-    let (zoom, gain) = new_view_sliders(cx);
+pub(super) fn new_sliders(settings: &GuiSettings, window: &Window, cx: &mut Context<AppView>) -> SubscribedSliders {
+    let ViewSliders { zoom, gain } = new_view_sliders(cx);
     let peak_target = new_target_slider(NormalizeMode::Peak, settings.normalize_target_peak_dbfs, cx);
     let loudness_target = new_target_slider(NormalizeMode::Loudness, settings.normalize_target_lufs, cx);
     let subscriptions = [
@@ -121,7 +130,7 @@ pub(super) fn new_sliders(
         peak_target,
         loudness_target,
     };
-    (sliders, subscriptions)
+    SubscribedSliders { sliders, subscriptions }
 }
 
 /// Opens the coordinators and plugin chain from explicit paths, and opens playback only when permitted.
@@ -158,7 +167,10 @@ pub(super) fn open_startup(
         None
     };
     let sample_rate = player.as_ref().map_or(FALLBACK_SAMPLE_RATE, Player::output_rate);
-    let (plugins, plugin_problems) = PluginHost::open_with_paths(
+    let crate::plugins::OpenedPluginHost {
+        host: plugins,
+        problems: plugin_problems,
+    } = PluginHost::open_with_paths(
         dispatcher,
         sample_rate,
         editor_owner,
@@ -182,7 +194,7 @@ pub(super) fn open_startup(
 }
 
 /// Creates the zoom slider, logarithmic from 1 to 20 times, and the input gain slider in decibels.
-fn new_view_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<SliderState>) {
+fn new_view_sliders(cx: &mut Context<AppView>) -> ViewSliders {
     let zoom = cx.new(|_| {
         SliderState::new()
             .min(MINIMUM_ZOOM as f32)
@@ -198,7 +210,7 @@ fn new_view_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<S
             .step(0.1)
             .default_value(DEFAULT_GAIN_DB)
     });
-    (zoom, gain)
+    ViewSliders { zoom, gain }
 }
 
 /// Creates the target slider of a normalization mode, starting at the saved target.

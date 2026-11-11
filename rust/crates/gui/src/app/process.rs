@@ -255,7 +255,8 @@ impl AppView {
         });
         let options = self.processing_options();
         let total = records.len();
-        let (run_id, receiver) = coordinator.start(records, options, chains);
+        let audiobatch_plugins::processing_coordinator::ProcessingRun { run_id, receiver } =
+            coordinator.start(records, options, chains);
         let run = OperationRun::new(OperationKind::Process, run_id, total);
         self.status = run.progress_text().into();
         self.process_run = Some(run);
@@ -346,7 +347,7 @@ fn show_warning(message: &str, window: &mut Window, cx: &mut Context<AppView>) {
 fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx: &Context<AppView>) -> Task<()> {
     cx.spawn_in(window, async move |this, cx| {
         loop {
-            let (batch, disconnected) = drain_events(&receiver);
+            let super::analysis::DrainedEvents { batch, disconnected } = drain_events(&receiver);
             if !batch.is_empty()
                 && this
                     .update_in(cx, |view, window, cx| view.apply_process_events(batch, window, cx))

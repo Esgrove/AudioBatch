@@ -43,7 +43,10 @@ pub(super) struct ArtworkRequests {
 impl ArtworkIdentity {
     /// Captures an existing file independently of its analysis or playback availability.
     fn read(path: &Path) -> Option<Self> {
-        let (file_size, modified_time_ms) = file_identity(path)?;
+        let audiobatch_core::record::FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path)?;
         Some(Self {
             path: path.to_path_buf(),
             file_size,
@@ -53,7 +56,11 @@ impl ArtworkIdentity {
 
     /// Returns whether this identity still describes the bytes at its path.
     fn matches_disk(&self) -> bool {
-        file_identity(&self.path) == Some((self.file_size, self.modified_time_ms))
+        file_identity(&self.path)
+            == Some(audiobatch_core::record::FileIdentity {
+                file_size: self.file_size,
+                modified_time_ms: self.modified_time_ms,
+            })
     }
 }
 

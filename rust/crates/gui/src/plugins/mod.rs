@@ -95,6 +95,13 @@ pub struct RunningScan {
     pub task: Task<()>,
 }
 
+/// Startup plugin state and the independent recoverable problems presented by its owner.
+#[non_exhaustive]
+pub struct OpenedPluginHost {
+    pub host: PluginHost,
+    pub problems: Vec<String>,
+}
+
 impl PluginHost {
     /// Loads plugin state from explicit application-private paths, without consulting the environment.
     #[must_use]
@@ -103,10 +110,13 @@ impl PluginHost {
         sample_rate: u32,
         editor_owner: Option<RawWindowHandle>,
         paths: PluginDataPaths,
-    ) -> (Self, Vec<String>) {
+    ) -> OpenedPluginHost {
         let mut problems = Vec::new();
         let known = match KnownPlugins::load_recovering(&paths.known_plugins) {
-            Ok((known, message)) => {
+            Ok(audiobatch_plugins::library::RecoveredData {
+                value: known,
+                warning: message,
+            }) => {
                 problems.extend(message);
                 known
             }
@@ -116,7 +126,8 @@ impl PluginHost {
                 KnownPlugins::default()
             }
         };
-        let (chain, error) = LiveChain::load(paths.chain.clone(), dispatcher.clone(), sample_rate);
+        let live_chain::LoadedChain { chain, error } =
+            LiveChain::load(paths.chain.clone(), dispatcher.clone(), sample_rate);
         problems.extend(error);
         let presets = PresetStore::new(paths.presets.clone());
         let host = Self {
@@ -131,7 +142,7 @@ impl PluginHost {
             last_report: None,
             pending_editor_capture: None,
         };
-        (host, problems)
+        OpenedPluginHost { host, problems }
     }
 
     /// Returns true while a scan runs.

@@ -97,6 +97,26 @@ pub struct LiveChain {
     unread_file: bool,
 }
 
+/// A restored live chain and the recoverable problem to report at startup.
+#[non_exhaustive]
+pub struct LoadedChain {
+    pub chain: LiveChain,
+    pub error: Option<String>,
+}
+
+/// Saved chain contents and recovery metadata needed before creating live slots.
+struct SavedChainData {
+    saved: PluginChain,
+    error: Option<String>,
+    unread_file: bool,
+}
+
+/// Loaded plugin instance and whether it accepted the slot's saved settings.
+struct LoadedInstance {
+    instance: PluginInstance,
+    accepted: bool,
+}
+
 impl LiveSlot {
     /// Destroys the editor window, remembering where it was so the next editor of this slot opens there.
     fn close_editor(&mut self) {
@@ -151,7 +171,7 @@ impl LiveSlot {
     fn load(&mut self, ui: &UiThread, dispatcher: &UiDispatcher, sample_rate: u32) {
         self.load_attempted = true;
         match load_instance(ui, dispatcher, &self.slot) {
-            Ok((instance, accepted)) => {
+            Ok(LoadedInstance { instance, accepted }) => {
                 if !accepted {
                     tracing::warn!(
                         "Plugin \"{}\" did not accept its saved settings, which are kept until its editor opens",
@@ -226,14 +246,25 @@ impl LiveChain {
     /// One that cannot be read at all, or was saved by a newer version, gives an empty chain and the error,
     /// and stays in place until the user builds a new chain, see `save`.
     #[must_use]
-    pub fn load(path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Option<String>) {
-        let (saved, error, unread_file) = match PluginChain::load_recovering(&path) {
-            Ok((saved, message)) => (saved, message, false),
-            Err(error) => (
-                PluginChain::default(),
-                Some(format!("{:#}", anyhow::Error::from(error))),
-                true,
-            ),
+    pub fn load(path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> LoadedChain {
+        let SavedChainData {
+            saved,
+            error,
+            unread_file,
+        } = match PluginChain::load_recovering(&path) {
+            Ok(audiobatch_plugins::library::RecoveredData {
+                value: saved,
+                warning: error,
+            }) => SavedChainData {
+                saved,
+                error,
+                unread_file: false,
+            },
+            Err(error) => SavedChainData {
+                saved: PluginChain::default(),
+                error: Some(format!("{:#}", anyhow::Error::from(error))),
+                unread_file: true,
+            },
         };
         let mut chain = Self::new(path, dispatcher, sample_rate);
         chain.unread_file = unread_file;
@@ -241,7 +272,7 @@ impl LiveChain {
             let live = chain.new_slot(slot);
             chain.slots.push(live);
         }
-        (chain, error)
+        LoadedChain { chain, error }
     }
 
     /// Loads and prepares the plugins of the slots that have not been loaded yet, only the enabled ones when asked.
@@ -734,13 +765,13 @@ impl LiveChain {
 
 /// Loads the plugin of a slot and creates an instance with the slot's saved settings.
 /// Returns the instance and whether the plugin accepted the settings.
-fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<(PluginInstance, bool)> {
+fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<LoadedInstance> {
     let module = Module::load(ui, &slot.plugin.bundle)?;
     let mut instance = PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone()))?;
     let accepted = instance
         .set_state(ui, &slot.state())
         .context("Could not restore the saved settings")?;
-    Ok((instance, accepted))
+    Ok(LoadedInstance { instance, accepted })
 }
 
 /// Prepares an instance for the preview at the output rate, in blocks of up to `PREVIEW_BLOCK_FRAMES`.
@@ -871,7 +902,7 @@ mod test_slots {
         std::fs::write(&path, newer).expect("written");
         let (dispatcher, _jobs) = ui_channel();
 
-        let (mut chain, error) = LiveChain::load(path.clone(), dispatcher, 48_000);
+        let LoadedChain { mut chain, error } = LiveChain::load(path.clone(), dispatcher, 48_000);
         assert!(error.is_some_and(|error| error.contains("newer version")));
         chain.save().expect("an empty chain is not saved");
         assert_eq!(std::fs::read_to_string(&path).expect("read"), newer);
@@ -1144,6 +1175,26 @@ mod test_replace {
     use super::*;
     use crate::test_helpers::effect;
 
+    /// Captured replacement outcome, with slot identities separate from persisted chain contents.
+    struct ReplacementResult {
+        old: SlotId,
+        ids: Vec<SlotId>,
+        errors: usize,
+        saved: PluginChain,
+        preset_name: Option<String>,
+    }
+
+    /// Captured lazy-loading checkpoints, kept distinct across enabled and disabled slots.
+    struct LazyLoadResult {
+        error: Option<String>,
+        errors_after_load: usize,
+        enabled_loaded: bool,
+        errors_after_enabled: usize,
+        all_loaded: bool,
+        errors_after_all: usize,
+        again: bool,
+    }
+
     /// Returns the dispatcher of the shared test UI thread, starting the thread on first use.
     pub(super) fn dispatcher() -> UiDispatcher {
         crate::test_helpers::plugin_dispatcher()
@@ -1178,12 +1229,24 @@ mod test_replace {
                     chain.replace(ui, preset, Some(String::from("Wide")));
                     let ids: Vec<SlotId> = chain.slots().iter().map(LiveSlot::id).collect();
                     let errors = chain.slots().iter().filter(|slot| slot.error().is_some()).count();
-                    (old, ids, errors, chain.chain(), chain.preset_name().map(str::to_owned))
+                    ReplacementResult {
+                        old,
+                        ids,
+                        errors,
+                        saved: chain.chain(),
+                        preset_name: chain.preset_name().map(str::to_owned),
+                    }
                 },
                 &|| false,
             )
             .expect("the test UI thread runs the job");
-        let (old, ids, errors, saved, preset_name) = result;
+        let ReplacementResult {
+            old,
+            ids,
+            errors,
+            saved,
+            preset_name,
+        } = result;
         assert_eq!(ids.len(), 2);
         assert!(!ids.contains(&old));
         assert_eq!(errors, 2);
@@ -1208,27 +1271,34 @@ mod test_replace {
         let result = dispatcher()
             .call(
                 move |ui| {
-                    let (mut chain, error) = LiveChain::load(path, dispatcher_for_chain, 48_000);
+                    let LoadedChain { mut chain, error } = LiveChain::load(path, dispatcher_for_chain, 48_000);
                     let errors_after_load = errors(&chain);
                     let enabled_loaded = chain.load_slots(ui, true);
                     let errors_after_enabled = errors(&chain);
                     let all_loaded = chain.load_slots(ui, false);
                     let again = chain.load_slots(ui, false);
-                    (
+                    LazyLoadResult {
                         error,
                         errors_after_load,
                         enabled_loaded,
                         errors_after_enabled,
                         all_loaded,
-                        errors(&chain),
+                        errors_after_all: errors(&chain),
                         again,
-                    )
+                    }
                 },
                 &|| false,
             )
             .expect("the test UI thread runs the job");
-        let (error, errors_after_load, enabled_loaded, errors_after_enabled, all_loaded, errors_after_all, again) =
-            result;
+        let LazyLoadResult {
+            error,
+            errors_after_load,
+            enabled_loaded,
+            errors_after_enabled,
+            all_loaded,
+            errors_after_all,
+            again,
+        } = result;
         assert_eq!(error, None);
         assert_eq!(errors_after_load, 0);
         assert!(enabled_loaded);

@@ -239,7 +239,7 @@ impl AppView {
             state.delegate_mut().set_rows(generated);
             cx.notify();
         });
-        let (overview, loudness) = demo_waveform();
+        let crate::demo::DemoWaveform { overview, loudness } = demo_waveform();
         let playhead = Some(PlayheadSource::Simulated {
             started: Instant::now(),
             duration: overview.duration_seconds(),
@@ -387,7 +387,7 @@ impl AppView {
                     {
                         let token = view.preview_source.token();
                         if view.selected.as_deref() == Some(preview.path())
-                            && token.is_some_and(|(_, generation)| generation == preview.generation())
+                            && token.is_some_and(|token| token.generation == preview.generation())
                             && preview.matches_file_on_disk()
                             && view
                                 .table
@@ -602,7 +602,10 @@ mod test_pending_gain_removal {
 
     /// Lists a ready source with metadata bound to its actual temporary file.
     fn delegate_for(path: &Path) -> ResultsDelegate {
-        let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+        let audiobatch_core::record::FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path).expect("source identity");
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_record(AnalysisRecord {
             path: path.to_path_buf(),

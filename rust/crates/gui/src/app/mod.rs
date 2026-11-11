@@ -248,6 +248,20 @@ struct AppOptions {
     directory: Arc<tempfile::TempDir>,
 }
 
+/// Current foreground activity and its bounded completion fraction for the title and status bar.
+#[derive(Clone, Copy)]
+struct ActivityProgress {
+    activity: &'static str,
+    fraction: f32,
+}
+
+/// File-run counts before active per-file progress is folded into the displayed fraction.
+struct FileRunProgress {
+    activity: &'static str,
+    finished: usize,
+    total: usize,
+}
+
 impl AppView {
     /// Creates the main view, opens the cache, the audio device, and the plugin chain,
     /// and starts any startup analysis.
@@ -273,7 +287,10 @@ impl AppView {
         let settings = GuiSettings::load_from(&settings_path);
         let table = new_results_table(content_width, &settings, window, cx);
         let waveform = cx.new(|_| WaveformView::new());
-        let (sliders, slider_subscriptions) = new_sliders(&settings, window, cx);
+        let startup::SubscribedSliders {
+            sliders,
+            subscriptions: slider_subscriptions,
+        } = new_sliders(&settings, window, cx);
         let mut subscriptions = vec![
             cx.subscribe_in(&table, window, Self::on_table_event),
             cx.subscribe_in(&waveform, window, Self::on_waveform_event),
@@ -469,25 +486,46 @@ impl AppView {
     /// or none when no analysis, normalization, plugin processing run, or plugin scan is in progress.
     /// Files being worked on count with their fraction, so the line moves smoothly on long files.
     /// A plugin scan shows only while no file run is in progress, since that run is what the table shows.
-    fn overall_progress(&self, cx: &Context<Self>) -> Option<(&'static str, f32)> {
+    fn overall_progress(&self, cx: &Context<Self>) -> Option<ActivityProgress> {
         let file_run = self
             .normalize_run
             .as_ref()
             .filter(|_| self.is_normalizing())
             .or_else(|| self.process_run.as_ref().filter(|_| self.is_processing()));
-        let (activity, finished, total) = if let Some(run) = file_run {
-            (run.kind.activity(), run.finished, run.total)
+        let FileRunProgress {
+            activity,
+            finished,
+            total,
+        } = if let Some(run) = file_run {
+            FileRunProgress {
+                activity: run.kind.activity(),
+                finished: run.finished,
+                total: run.total,
+            }
         } else if let Some(run) = self.run.as_ref().filter(|_| self.is_analyzing()) {
-            ("Analyzing", run.finished, run.total)
+            FileRunProgress {
+                activity: "Analyzing",
+                finished: run.finished,
+                total: run.total,
+            }
         } else {
             let scan = self.plugins.scan_progress()?;
-            return Some(("Scanning plugins", scan.fraction));
+            return Some(ActivityProgress {
+                activity: "Scanning plugins",
+                fraction: scan.fraction,
+            });
         };
         if total == 0 {
-            return Some((activity, 0.0));
+            return Some(ActivityProgress {
+                activity,
+                fraction: 0.0,
+            });
         }
         let active = self.table.read(cx).delegate().active_progress();
-        Some((activity, ((finished as f32 + active) / total as f32).clamp(0.0, 1.0)))
+        Some(ActivityProgress {
+            activity,
+            fraction: ((finished as f32 + active) / total as f32).clamp(0.0, 1.0),
+        })
     }
 }
 

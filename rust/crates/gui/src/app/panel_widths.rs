@@ -85,6 +85,12 @@ pub(super) struct PreviewWidths {
     constrained: bool,
 }
 
+/// Stored default and minimum width scale, relative to a panel's responsive baseline.
+struct PanelScaleLimits {
+    default: f32,
+    minimum: f32,
+}
+
 /// Application-lifetime marker, avoiding duplicate keyboard registrations when the root view is recreated.
 struct PanelWidthBindings;
 
@@ -113,10 +119,16 @@ impl Global for PanelWidthBindings {}
 
 impl PreviewPanel {
     /// Returns this panel's stored default and lower bound, relative to its responsive baseline.
-    const fn scale_limits(self) -> (f32, f32) {
+    const fn scale_limits(self) -> PanelScaleLimits {
         match self {
-            Self::Controls => (DEFAULT_CONTROLS_WIDTH_SCALE, MINIMUM_CONTROLS_WIDTH_SCALE),
-            Self::Information => (DEFAULT_INFORMATION_WIDTH_SCALE, MINIMUM_INFORMATION_WIDTH_SCALE),
+            Self::Controls => PanelScaleLimits {
+                default: DEFAULT_CONTROLS_WIDTH_SCALE,
+                minimum: MINIMUM_CONTROLS_WIDTH_SCALE,
+            },
+            Self::Information => PanelScaleLimits {
+                default: DEFAULT_INFORMATION_WIDTH_SCALE,
+                minimum: MINIMUM_INFORMATION_WIDTH_SCALE,
+            },
         }
     }
 
@@ -299,7 +311,7 @@ impl AppView {
     /// Restores just one default, leaving the other scale and the preview height untouched.
     fn reset_panel_width(&mut self, panel: PreviewPanel, cx: &mut Context<Self>) {
         self.panel_width_drag = None;
-        self.commit_panel_width(panel, panel.scale_limits().0, cx);
+        self.commit_panel_width(panel, panel.scale_limits().default, cx);
     }
 
     /// Routes completed width edits through the canonical preference owner and its settings-window synchronization.
@@ -377,11 +389,11 @@ fn requested_scale(panel: PreviewPanel, widths: PreviewWidths, content_width: f3
         return None;
     }
     let baseline = panel.width(baseline_widths(content_width));
-    let minimum = baseline * panel.scale_limits().1;
+    let minimum = baseline * panel.scale_limits().minimum;
     let maximum = (widths.gap.mul_add(-2.0, content_width) - WAVEFORM_MINIMUM_WIDTH - panel.sibling_width(widths))
         .min(baseline * MAXIMUM_PANEL_WIDTH_SCALE);
     (maximum >= minimum).then(|| {
-        (requested.clamp(minimum, maximum) / baseline).clamp(panel.scale_limits().1, MAXIMUM_PANEL_WIDTH_SCALE)
+        (requested.clamp(minimum, maximum) / baseline).clamp(panel.scale_limits().minimum, MAXIMUM_PANEL_WIDTH_SCALE)
     })
 }
 
@@ -451,7 +463,7 @@ mod test_preview_widths {
         for panel in [PreviewPanel::Controls, PreviewPanel::Information] {
             close(
                 requested_scale(panel, original, 1800.0, -1000.0).expect("valid range"),
-                panel.scale_limits().1,
+                panel.scale_limits().minimum,
             );
             close(
                 requested_scale(panel, original, 1800.0, 10_000.0).expect("valid range"),

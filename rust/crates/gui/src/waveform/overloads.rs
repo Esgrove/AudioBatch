@@ -546,7 +546,10 @@ mod test_attachment {
 
     /// Makes an identity-matched record without decoding audio or creating any GUI context.
     fn record(file: &NamedTempFile, flags: u8) -> AnalysisRecord {
-        let (file_size, modified_time_ms) = file_identity(file.path()).expect("temporary source identity");
+        let audiobatch_core::record::FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(file.path()).expect("temporary source identity");
         let mut waveform = WaveformBuilder::new(1, Some(100));
         waveform.push(&[&[0.0; 100]]);
         AnalysisRecord {

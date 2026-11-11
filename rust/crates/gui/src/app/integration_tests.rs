@@ -55,6 +55,19 @@ struct Workflow {
     view: Entity<AppView>,
 }
 
+/// Production root and its framework window handle, retained together when recreating a workflow.
+struct OpenedApp {
+    window: gpui_kit::AnyWindowHandle,
+    view: Entity<AppView>,
+}
+
+/// Measured table widths and independent horizontal-scroll baseline captured after a native column edit.
+struct ColumnScrollSnapshot {
+    manual: Vec<Pixels>,
+    origin: Pixels,
+    offset: Pixels,
+}
+
 impl WaveformEvents {
     /// Subscribes beside the production root listener so native gestures must reach the real renderer first.
     fn subscribe(workflow: &Workflow, cx: &mut TestAppContext) -> Self {
@@ -101,7 +114,7 @@ impl Workflow {
             crate::theme::install(cx);
             crate::menus::install(cx);
         });
-        let (window, view) = Self::open(None, cx);
+        let OpenedApp { window, view } = Self::open(None, cx);
         let directory = cx.read(|cx| Arc::clone(&view.read(cx).test_directory));
         let paths = StoragePaths::in_root(directory.path()).expect("view-owned test storage");
         Self {
@@ -113,7 +126,7 @@ impl Workflow {
     }
 
     /// Reuses the persisted storage while replacing all view-owned entities and subscriptions.
-    fn open(services: Option<AppOptions>, cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<AppView>) {
+    fn open(services: Option<AppOptions>, cx: &mut TestAppContext) -> OpenedApp {
         let opened = cx.update(|cx| {
             gpui_kit::open_window(
                 WindowOptions {
@@ -137,7 +150,10 @@ impl Workflow {
         });
         cx.update_window(opened.0, |_, window, cx| window.render_frame(cx))
             .expect("render initial frame");
-        opened
+        OpenedApp {
+            window: opened.0,
+            view: opened.1,
+        }
     }
 
     /// Copies a shared fixture so a real file operation can never alter committed audio.
@@ -1157,7 +1173,8 @@ fn integration_old_column_choices_hide_path_once(cx: &mut TestAppContext) {
     fs::create_dir_all(workflow.paths.data()).expect("create isolated data directory");
     fs::write(&settings_path, r#"{"hidden_columns": ["peak_left"]}"#)
         .expect("write settings saved before the Folder column");
-    let (_, view) = Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&workflow.directory))), cx);
+    let OpenedApp { view, .. } =
+        Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&workflow.directory))), cx);
     cx.read(|cx| {
         let view = view.read(cx);
         let delegate = view.table.read(cx).delegate();
@@ -1351,7 +1368,7 @@ async fn integration_results_horizontal_wheel_preserves_manual_widths_alignment_
         })
         .expect("manually resize the Name column through its native header boundary");
     cx.run_until_parked();
-    let (manual, origin, offset) = cx
+    let ColumnScrollSnapshot { manual, origin, offset } = cx
         .update_window(workflow.window, |_, window, cx| {
             window.render_frame(cx);
             let manual = result_column_widths(&workflow, cx);
@@ -1381,7 +1398,7 @@ async fn integration_results_horizontal_wheel_preserves_manual_widths_alignment_
             window
                 .within(control_ids::RESULTS)
                 .scroll("table", ScrollDelta::Pixels(point(px(-120.0), px(0.0))), cx);
-            (manual, origin, offset)
+            ColumnScrollSnapshot { manual, origin, offset }
         })
         .expect("wheel horizontally over the overflowing production table");
     cx.run_until_parked();
@@ -2218,7 +2235,7 @@ async fn integration_recreated_view_restores_gain_and_preferences(cx: &mut TestA
     drop(view);
     cx.run_until_parked();
     let services = AppOptions::in_test_directory(Arc::clone(&directory));
-    let (window, view) = Workflow::open(Some(services), cx);
+    let OpenedApp { window, view } = Workflow::open(Some(services), cx);
     let workflow = Workflow {
         directory,
         paths,
@@ -2816,7 +2833,7 @@ fn integration_panel_width_keyboard_reset_collapse_and_recreation(cx: &mut TestA
     } = workflow;
     drop(view);
     cx.run_until_parked();
-    let (window, view) = Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&directory))), cx);
+    let OpenedApp { window, view } = Workflow::open(Some(AppOptions::in_test_directory(Arc::clone(&directory))), cx);
     cx.read(|cx| assert_eq!(view.read(cx).settings, reset));
     cx.update_window(window, |_, window, cx| {
         window.click(control_ids::INFORMATION_WIDTH_DIVIDER, cx);

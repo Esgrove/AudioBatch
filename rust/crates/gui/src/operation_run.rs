@@ -236,7 +236,8 @@ mod test_run {
             }),
             ..NormalizationOptions::default()
         };
-        let (run_id, receiver) = coordinator.start(vec![record], options);
+        let audiobatch_core::normalize_coordinator::NormalizeRun { run_id, receiver } =
+            coordinator.start(vec![record], options);
         entry
             .recv_timeout(Duration::from_secs(2))
             .expect("writer reached commit");

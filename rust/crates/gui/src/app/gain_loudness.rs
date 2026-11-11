@@ -102,7 +102,11 @@ impl AppView {
         let worker = cx.background_executor().spawn(async move {
             let cancelled = || cancel.load(Ordering::Acquire);
             let current = || {
-                file_identity(&worker_key.path) == Some((worker_key.file_size, worker_key.modified_time_ms))
+                file_identity(&worker_key.path)
+                    == Some(audiobatch_core::record::FileIdentity {
+                        file_size: worker_key.file_size,
+                        modified_time_ms: worker_key.modified_time_ms,
+                    })
                     && worker_key
                         .source
                         .as_ref()
@@ -164,7 +168,7 @@ impl AppView {
             file_size: record.file_size,
             modified_time_ms: record.modified_time_ms,
             source: record.source_identity.clone(),
-            generation: self.preview_source.token().map_or(0, |(_, generation)| generation),
+            generation: self.preview_source.token().map_or(0, |token| token.generation),
             gain_bits: gain.to_bits(),
         })
     }

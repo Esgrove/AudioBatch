@@ -14,6 +14,20 @@ use crate::menus::ColumnChoice;
 use crate::results::{ResultRow, ResultsDelegate, RowState};
 use crate::waveform::{MINIMUM_ZOOM, NO_FILE_TEXT};
 
+/// A playable table row with its current display position and stable source path.
+#[derive(Debug, PartialEq, Eq)]
+struct PlayableRow {
+    index: usize,
+    path: PathBuf,
+}
+
+/// Source selection intent with the independent request to start playback.
+#[derive(Debug, PartialEq, Eq)]
+struct SelectionRequest {
+    path: PathBuf,
+    play: bool,
+}
+
 impl AppView {
     /// Returns the usable result of the selected file.
     pub(super) fn selected_record<'app>(&self, cx: &'app App) -> Option<&'app AnalysisRecord> {
@@ -87,7 +101,7 @@ impl AppView {
                     .needs_reload(path, self.player.as_ref().and_then(Player::loaded_path))
             },
         );
-        if let Some((path, play)) = request {
+        if let Some(SelectionRequest { path, play }) = request {
             // Pointer batch selection is handled by the row's mouse-down callback, including the preview anchor.
             // Cursor restoration emits the same event, so a same-path event must preserve the batch selection.
             if self.selected.as_deref() != Some(path.as_path()) {
@@ -134,7 +148,7 @@ impl AppView {
             let delegate = self.table.read(cx).delegate();
             next_playable_row(delegate, &selected)
         };
-        if let Some((index, path)) = next {
+        if let Some(PlayableRow { index, path }) = next {
             self.table.update(cx, |state, cx| {
                 state.delegate_mut().select_only(Some(path.clone()));
                 state.set_selected_row(index, cx);
@@ -217,7 +231,7 @@ impl AppView {
         }
         self.selected = Some(path.to_path_buf());
         if let Some(coordinator) = &self.coordinator {
-            let generation = self.preview_source.token().map_or(0, |(_, generation)| generation);
+            let generation = self.preview_source.token().map_or(0, |token| token.generation);
             coordinator.select_preview(Some(path), generation);
         }
         self.table.update(cx, |state, _| {
@@ -320,13 +334,16 @@ impl AppView {
 }
 
 /// Returns the display index and path of the first row after a file that did not fail analysis.
-fn next_playable_row(delegate: &ResultsDelegate, current: &Path) -> Option<(usize, PathBuf)> {
+fn next_playable_row(delegate: &ResultsDelegate, current: &Path) -> Option<PlayableRow> {
     let start = delegate.index_of(current)? + 1;
     (start..delegate.len()).find_map(|index| {
         delegate
             .row(index)
             .filter(|row| !row.has_error())
-            .map(|row| (index, row.path.clone()))
+            .map(|row| PlayableRow {
+                index,
+                path: row.path.clone(),
+            })
     })
 }
 
@@ -340,7 +357,7 @@ fn table_selection_request(
     continue_playback: bool,
     pointer_path: Option<&Path>,
     needs_reload: impl FnOnce(&Path) -> bool,
-) -> Option<(PathBuf, bool)> {
+) -> Option<SelectionRequest> {
     let (index, play) = match event {
         TableEvent::SelectRow(index) if cursor == Some(*index) => (*index, continue_playback),
         TableEvent::DoubleClickedRow(index) => (*index, true),
@@ -357,7 +374,10 @@ fn table_selection_request(
             return None;
         }
     }
-    Some((path.clone(), play))
+    Some(SelectionRequest {
+        path: path.clone(),
+        play,
+    })
 }
 
 /// Allows static analysis without a decoder, but binds a loaded decoder's waveform and warnings to its capture.
@@ -405,7 +425,7 @@ mod test_table_selection_intent {
     use crate::app::cue_start::CueStartIntent;
 
     /// Returns the production event decision for two listed sources without opening a player.
-    fn request(event: &TableEvent, cursor: usize, continuation: bool) -> Option<(PathBuf, bool)> {
+    fn request(event: &TableEvent, cursor: usize, continuation: bool) -> Option<SelectionRequest> {
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_files(&[PathBuf::from("/a.wav"), PathBuf::from("/b.wav")]);
         table_selection_request(
@@ -441,7 +461,10 @@ mod test_table_selection_intent {
         for continuation in [false, true] {
             assert_eq!(
                 request(&TableEvent::SelectRow(1), 1, continuation),
-                Some((PathBuf::from("/b.wav"), continuation))
+                Some(SelectionRequest {
+                    path: PathBuf::from("/b.wav"),
+                    play: continuation
+                })
             );
         }
         assert_eq!(request(&TableEvent::SelectRow(0), 1, true), None);
@@ -453,7 +476,7 @@ mod test_table_selection_intent {
         source: &PreviewSource,
         loaded: Option<&Path>,
         play: bool,
-    ) -> Option<(PathBuf, bool)> {
+    ) -> Option<SelectionRequest> {
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_files(&[path.to_path_buf()]);
         table_selection_request(
@@ -476,7 +499,10 @@ mod test_table_selection_intent {
         for continuation in [false, true] {
             assert_eq!(
                 pointer_request(path, &source, None, continuation),
-                Some((path.to_path_buf(), continuation))
+                Some(SelectionRequest {
+                    path: path.to_path_buf(),
+                    play: continuation
+                })
             );
         }
     }
@@ -489,7 +515,10 @@ mod test_table_selection_intent {
         file.write_all(b"replacement source").expect("replacement");
         assert_eq!(
             pointer_request(file.path(), &source, Some(file.path()), false),
-            Some((file.path().to_path_buf(), false))
+            Some(SelectionRequest {
+                path: file.path().to_path_buf(),
+                play: false
+            })
         );
     }
 
@@ -554,7 +583,10 @@ mod test_table_selection_intent {
     fn explicit_activation_of_the_anchor_still_requests_play() {
         assert_eq!(
             request(&TableEvent::DoubleClickedRow(0), 0, false),
-            Some((PathBuf::from("/a.wav"), true))
+            Some(SelectionRequest {
+                path: PathBuf::from("/a.wav"),
+                play: true
+            })
         );
     }
 }
@@ -570,7 +602,10 @@ mod test_preview_presentation_authority {
 
     /// Makes source metadata without a player or a GPUI context.
     fn record(path: &Path) -> AnalysisRecord {
-        let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+        let audiobatch_core::record::FileIdentity {
+            file_size,
+            modified_time_ms,
+        } = file_identity(path).expect("source identity");
         AnalysisRecord {
             path: path.to_path_buf(),
             file_size,
@@ -618,12 +653,12 @@ mod test_preview_presentation_authority {
         let file = tempfile::NamedTempFile::new().expect("source");
         let mut source = PreviewSource::default();
         source.begin(file.path());
-        let (version, generation) = source.token().expect("first load");
+        let token = source.token().expect("first load");
         source.clear();
         source.begin(file.path());
-        assert!(!source.accepts(&version, generation));
-        let (current_version, current_generation) = source.token().expect("second load");
-        assert!(source.accepts(&current_version, current_generation));
+        assert!(!source.accepts(&token));
+        let current_token = source.token().expect("second load");
+        assert!(source.accepts(&current_token));
     }
 }
 
@@ -654,7 +689,10 @@ mod test_continue_after_end {
     fn next_row_follows_display_order_including_pending_rows() {
         assert_eq!(
             next_playable_row(&delegate(), Path::new("/a.wav")),
-            Some((1, PathBuf::from("/b.wav")))
+            Some(PlayableRow {
+                index: 1,
+                path: PathBuf::from("/b.wav")
+            })
         );
     }
 
@@ -662,7 +700,10 @@ mod test_continue_after_end {
     fn failed_rows_are_skipped() {
         assert_eq!(
             next_playable_row(&delegate(), Path::new("/b.wav")),
-            Some((3, PathBuf::from("/d.wav")))
+            Some(PlayableRow {
+                index: 3,
+                path: PathBuf::from("/d.wav")
+            })
         );
     }
 
