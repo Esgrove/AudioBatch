@@ -20,8 +20,8 @@ vst3 = []
 arc-swap = "1.9.5"
 atomic_refcell = "0.1.14"
 baseview = { version = "0.4.2", optional = true }
-clack-extensions = { version = "=0.2.0", optional = true, features = ["clack-plugin", "audio-ports", "configurable-audio-ports", "gui", "latency", "params", "render", "state", "tail"] }
-clack-plugin = { version = "=0.2.0", optional = true }
+clack-extensions = { workspace = true, optional = true, features = ["clack-plugin", "audio-ports", "configurable-audio-ports", "gui", "latency", "params", "render", "state", "tail"] }
+clack-plugin = { workspace = true, optional = true }
 crossbeam-queue = { workspace = true, optional = true }
 dirs.workspace = true
 fragile = { version = "3.0.0", optional = true }
@@ -48,8 +48,8 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphic
 
 [dev-dependencies]
 anyhow.workspace = true
-clack-host = { version = "=0.2.0", features = ["clack-plugin"] }
-clack-extensions = { version = "=0.2.0", features = ["clack-host"] }
+clack-host = { workspace = true, features = ["clack-plugin"] }
+clack-extensions = { workspace = true, features = ["clack-host"] }
 libloading.workspace = true
 tempfile.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }

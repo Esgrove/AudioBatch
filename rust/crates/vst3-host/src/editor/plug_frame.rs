@@ -12,7 +12,9 @@ use vst3::Steinberg::{
     IPlugFrame, IPlugFrameTrait, IPlugView, ViewRect, kInvalidArgument, kResultFalse, kResultTrue, tresult,
 };
 
-use super::{EditorShared, NativeWindow, ViewSize};
+use super::{EditorShared, NativeWindow, view_size};
+#[cfg(test)]
+use super::{ViewSize, view_rect};
 
 /// The frame given to an editor view.
 pub struct PlugFrame {
@@ -45,7 +47,7 @@ impl IPlugFrameTrait for PlugFrame {
             return kInvalidArgument;
         }
         // SAFETY: the plugin passes a valid rectangle, checked for null above.
-        let size = ViewSize::from_rect(unsafe { &*new_size });
+        let size = view_size(unsafe { &*new_size });
         if size.width == 0 || size.height == 0 {
             return kInvalidArgument;
         }
@@ -64,11 +66,10 @@ mod test_plug_frame {
     #[test]
     fn requests_are_refused_once_the_editor_is_gone() {
         let frame = PlugFrame::new(Weak::new(), Weak::new());
-        let mut rect = ViewSize {
+        let mut rect = view_rect(ViewSize {
             width: 300,
             height: 200,
-        }
-        .rect();
+        });
         // SAFETY: the rectangle lives for the call, and the view pointer is only compared.
         unsafe {
             assert_eq!(

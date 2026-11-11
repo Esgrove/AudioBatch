@@ -18,7 +18,9 @@ audiobatch-core = { path = "rust/crates/core" }
 audiobatch-playback = { path = "rust/crates/playback" }
 audiobatch-plugins = { path = "rust/crates/plugins" }
 audiobatch-test-plugin = { path = "rust/crates/test-plugin" }
+audiobatch-test-clap-plugin = { path = "rust/crates/test-clap-plugin" }
 build-info = { path = "rust/crates/build-info" }
+plugin-host-core = { path = "rust/crates/plugin-host-core" }
 serato-tags = { path = "rust/crates/serato" }
 test-fixtures = { path = "rust/crates/test-fixtures" }
 vst3-host = { path = "rust/crates/vst3-host" }
@@ -28,6 +30,9 @@ async-channel = "2.5.0"
 audioadapter-buffers = "5.2.0"
 base64 = "0.23.1"
 byteorder = "1.5.0"
+clack-host = "=0.2.0"
+clack-plugin = "=0.2.0"
+clack-extensions = "=0.2.0"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 colored = "3.1.1"

@@ -14,18 +14,14 @@
 
 #![expect(unsafe_code, reason = "calls the IPlugView COM interface of plugin editors")]
 
-#[cfg(target_os = "macos")]
-mod macos;
 mod plug_frame;
-#[cfg(not(any(target_os = "macos", windows)))]
-mod unsupported;
-#[cfg(windows)]
-mod windows;
 
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+pub use plugin_host_core::editor::WindowPosition;
+use plugin_host_core::editor::{EditorCallbacks, NativeWindow, WindowError, WindowSize as ViewSize};
 use raw_window_handle::RawWindowHandle;
 use thiserror::Error;
 use vst3::Steinberg::Vst::IEditControllerTrait as _;
@@ -36,13 +32,19 @@ use vst3::{ComPtr, ComWrapper};
 
 use crate::instance::{InstanceCore, PluginInstance};
 use crate::thread::UiThread;
-#[cfg(target_os = "macos")]
-use macos::NativeWindow;
 use plug_frame::PlugFrame;
-#[cfg(not(any(target_os = "macos", windows)))]
-use unsupported::NativeWindow;
+
+/// Native parent type expected by a VST3 editor.
+#[cfg(target_os = "macos")]
+const PLATFORM_TYPE: vst3::Steinberg::FIDString = vst3::Steinberg::kPlatformTypeNSView;
+
+/// Native parent type expected by a VST3 editor.
 #[cfg(windows)]
-use windows::NativeWindow;
+const PLATFORM_TYPE: vst3::Steinberg::FIDString = vst3::Steinberg::kPlatformTypeHWND;
+
+/// No editor parent type exists on unsupported platforms.
+#[cfg(not(any(target_os = "macos", windows)))]
+const PLATFORM_TYPE: vst3::Steinberg::FIDString = c"unsupported".as_ptr();
 
 /// Size of the window for an editor that does not report its size.
 const FALLBACK_SIZE: ViewSize = ViewSize {
@@ -106,27 +108,6 @@ pub struct EditorWindow {
     _core: Arc<InstanceCore>,
 }
 
-/// Where an editor window was on screen, so a new window for the same editor can open there.
-///
-/// It is the top-left corner of the window's frame, in the screen units and coordinates of the platform:
-/// physical pixels from the top left of the virtual screen on Windows,
-/// and points from the bottom left of the main screen on macOS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowPosition {
-    /// Horizontal coordinate of the top-left corner.
-    pub x: i32,
-    /// Vertical coordinate of the top-left corner.
-    pub y: i32,
-}
-
-/// The width and height of an editor view, in the units of the platform.
-/// These are points on macOS and physical pixels on Windows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ViewSize {
-    width: i32,
-    height: i32,
-}
-
 /// The state that the window, its event handlers, and the plug frame share.
 struct EditorShared {
     /// The plugin's editor view.
@@ -138,6 +119,17 @@ struct EditorShared {
     /// Whether the window is being resized because the plugin asked for it,
     /// so the resize is not reported back to the plugin.
     resizing_for_plugin: Cell<bool>,
+}
+
+impl From<WindowError> for EditorError {
+    fn from(error: WindowError) -> Self {
+        match error {
+            WindowError::MainThreadRequired => Self::MainThreadRequired,
+            WindowError::CreateWindow { source } => Self::CreateWindow { source },
+            WindowError::RegisterWindowClass { source } => Self::RegisterWindowClass { source },
+            WindowError::UnsupportedPlatform => Self::UnsupportedPlatform,
+        }
+    }
 }
 
 impl EditorWindow {
@@ -163,7 +155,7 @@ impl EditorWindow {
         // SAFETY: the controller is valid, and the view type is a null-terminated constant.
         let view = unsafe { ComPtr::from_raw(controller.createView(kEditor)) }.ok_or(EditorError::MissingEditor)?;
         // SAFETY: the view is valid, and the platform type is a null-terminated constant.
-        let result = unsafe { view.isPlatformTypeSupported(NativeWindow::PLATFORM_TYPE) };
+        let result = unsafe { view.isPlatformTypeSupported(PLATFORM_TYPE) };
         if result != kResultTrue {
             return Err(EditorError::UnsupportedWindowType { result });
         }
@@ -174,9 +166,10 @@ impl EditorWindow {
             resizing_for_plugin: Cell::new(false),
         });
         let size = shared.size().unwrap_or(FALLBACK_SIZE);
+        let callbacks: Rc<dyn EditorCallbacks> = shared.clone();
         let window = Rc::new(NativeWindow::create(
             ui,
-            &shared,
+            &callbacks,
             title,
             size,
             shared.can_resize(),
@@ -227,11 +220,7 @@ impl EditorWindow {
         }
         // SAFETY: the view is valid, the parent stays valid until the view is removed,
         // and the platform type is a null-terminated constant.
-        let result = unsafe {
-            self.shared
-                .view
-                .attached(self.window.parent(), NativeWindow::PLATFORM_TYPE)
-        };
+        let result = unsafe { self.shared.view.attached(self.window.parent(), PLATFORM_TYPE) };
         if result != kResultOk {
             return Err(EditorError::Attach { result });
         }
@@ -271,35 +260,13 @@ impl std::fmt::Debug for EditorWindow {
     }
 }
 
-impl ViewSize {
-    /// Returns the size of a view rectangle, treating a negative extent as 0.
-    const fn from_rect(rect: &ViewRect) -> Self {
-        let width = rect.right.saturating_sub(rect.left);
-        let height = rect.bottom.saturating_sub(rect.top);
-        Self {
-            width: if width > 0 { width } else { 0 },
-            height: if height > 0 { height } else { 0 },
-        }
-    }
-
-    /// Returns a view rectangle with this size at the origin.
-    const fn rect(self) -> ViewRect {
-        ViewRect {
-            left: 0,
-            top: 0,
-            right: self.width,
-            bottom: self.height,
-        }
-    }
-}
-
 impl EditorShared {
     /// Returns the size the view asks for, or none when it does not report one.
     fn size(&self) -> Option<ViewSize> {
-        let mut rect = ViewSize { width: 0, height: 0 }.rect();
+        let mut rect = view_rect(ViewSize { width: 0, height: 0 });
         // SAFETY: the view is valid, and the rectangle lives for the call.
         let result = unsafe { self.view.getSize(&raw mut rect) };
-        let size = ViewSize::from_rect(&rect);
+        let size = view_size(&rect);
         (result == kResultOk && size.width > 0 && size.height > 0).then_some(size)
     }
 
@@ -311,10 +278,10 @@ impl EditorShared {
 
     /// Returns the nearest size to `size` that the view accepts, or `size` when the view does not say.
     fn constrain(&self, size: ViewSize) -> ViewSize {
-        let mut rect = size.rect();
+        let mut rect = view_rect(size);
         // SAFETY: the view is valid, and the rectangle lives for the call.
         let result = unsafe { self.view.checkSizeConstraint(&raw mut rect) };
-        let constrained = ViewSize::from_rect(&rect);
+        let constrained = view_size(&rect);
         if result == kResultTrue && constrained.width > 0 && constrained.height > 0 {
             constrained
         } else {
@@ -331,7 +298,7 @@ impl EditorShared {
 
     /// Tells the view its new size.
     fn tell_size(&self, size: ViewSize) {
-        let mut rect = size.rect();
+        let mut rect = view_rect(size);
         // SAFETY: the view is valid, and the rectangle lives for the call.
         unsafe { self.view.onSize(&raw mut rect) };
     }
@@ -347,6 +314,44 @@ impl EditorShared {
     /// Marks the window closed after the user closed it.
     fn close_requested(&self) {
         self.closed.set(true);
+    }
+}
+
+impl EditorCallbacks for EditorShared {
+    fn constrain(&self, size: ViewSize) -> ViewSize {
+        self.constrain(size)
+    }
+
+    fn resized(&self, size: ViewSize) {
+        self.user_resized(size);
+    }
+
+    fn scale_changed(&self, factor: f32) {
+        self.set_content_scale(factor);
+    }
+
+    fn close_requested(&self) {
+        self.close_requested();
+    }
+}
+
+/// Returns the size of a VST3 rectangle, ignoring its origin and clamping negative extents to zero.
+const fn view_size(rect: &ViewRect) -> ViewSize {
+    let width = rect.right.saturating_sub(rect.left);
+    let height = rect.bottom.saturating_sub(rect.top);
+    ViewSize {
+        width: if width > 0 { width } else { 0 },
+        height: if height > 0 { height } else { 0 },
+    }
+}
+
+/// Returns a VST3 view rectangle with this content size at the origin.
+const fn view_rect(size: ViewSize) -> ViewRect {
+    ViewRect {
+        left: 0,
+        top: 0,
+        right: size.width,
+        bottom: size.height,
     }
 }
 
@@ -366,7 +371,7 @@ mod test_editor {
             bottom: 320,
         };
         assert_eq!(
-            ViewSize::from_rect(&rect),
+            view_size(&rect),
             ViewSize {
                 width: 400,
                 height: 300
@@ -378,12 +383,30 @@ mod test_editor {
             right: 10,
             bottom: 10,
         };
-        assert_eq!(ViewSize::from_rect(&inverted), ViewSize { width: 0, height: 0 });
+        assert_eq!(view_size(&inverted), ViewSize { width: 0, height: 0 });
         let size = ViewSize {
             width: 640,
             height: 480,
         };
-        assert_eq!(ViewSize::from_rect(&size.rect()), size);
+        assert_eq!(view_size(&view_rect(size)), size);
+    }
+
+    #[test]
+    fn native_window_errors_preserve_vst3_error_variants_and_sources() {
+        let main_thread = EditorError::from(WindowError::MainThreadRequired);
+        assert!(matches!(main_thread, EditorError::MainThreadRequired));
+        let unsupported = EditorError::from(WindowError::UnsupportedPlatform);
+        assert!(matches!(unsupported, EditorError::UnsupportedPlatform));
+        let create = EditorError::from(WindowError::CreateWindow {
+            source: std::io::Error::from_raw_os_error(5),
+        });
+        assert!(matches!(create, EditorError::CreateWindow { ref source } if source.raw_os_error() == Some(5)));
+        let register = EditorError::from(WindowError::RegisterWindowClass {
+            source: std::io::Error::from_raw_os_error(6),
+        });
+        assert!(
+            matches!(register, EditorError::RegisterWindowClass { ref source } if source.raw_os_error() == Some(6))
+        );
     }
 
     #[test]
