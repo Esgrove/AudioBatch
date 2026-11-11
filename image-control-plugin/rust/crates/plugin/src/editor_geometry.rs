@@ -1,8 +1,10 @@
-//! Component-owned logical editor geometry, independent of DSP, native windows, and the editor feature.
+//! Component-owned logical geometry and layout preferences, independent of DSP, native windows, and the editor feature.
 
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+
+use crate::editor_preferences::LayoutPreferences;
 
 /// Fixed logical dimensions for a new instance and legacy host states.
 pub const DEFAULT_EDITOR_SIZE: (u32, u32) = (1000, 764);
@@ -62,20 +64,48 @@ impl Default for LogicalSize {
     }
 }
 
-/// A coherent pair shared only by UI and non-audio state callbacks for one component lifetime.
+/// Component-lifetime editor choices shared only by UI and non-audio state callbacks.
+/// Size and layout snapshots are individually coherent and never require GUI ownership or dispatch.
 #[derive(Default)]
-pub struct EditorGeometry(Mutex<LogicalSize>);
+pub struct EditorGeometry {
+    /// Last host-accepted logical dimensions, independent of section layout choices.
+    size: Mutex<LogicalSize>,
+    /// Last validated section layout and interaction choices, independent of native view lifetime.
+    preferences: Mutex<LayoutPreferences>,
+}
 
 impl EditorGeometry {
     /// Captures both dimensions under one short lock, without touching GUI ownership or dispatch.
     pub fn snapshot(&self) -> LogicalSize {
-        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Publishes a complete validated pair without resizing or waiting for any native window.
     pub fn publish(&self, size: LogicalSize) {
         debug_assert!(size.is_valid());
-        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = size;
+        *self.size.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = size;
+    }
+
+    /// Captures one complete layout under a short non-audio lock, independently of the logical size.
+    #[must_use]
+    pub fn preferences(&self) -> LayoutPreferences {
+        *self
+            .preferences
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Publishes validated layout choices without resizing or dispatching to a native editor.
+    /// Returns true for accepted values, including unchanged ones. Invalid input leaves every stored value untouched.
+    pub fn publish_preferences(&self, preferences: LayoutPreferences) -> bool {
+        if !preferences.is_valid() {
+            return false;
+        }
+        *self
+            .preferences
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = preferences;
+        true
     }
 }
 
@@ -126,5 +156,147 @@ mod tests {
             }
         });
         assert_eq!(other.snapshot(), LogicalSize::default());
+    }
+
+    #[test]
+    fn new_instances_have_fixed_layout_defaults() {
+        let geometry = EditorGeometry::default();
+        assert_eq!(geometry.preferences(), LayoutPreferences::default());
+        assert_eq!(geometry.snapshot(), LogicalSize::default());
+    }
+
+    #[test]
+    fn layout_and_size_publication_do_not_overwrite_each_other_or_other_instances() {
+        let geometry = EditorGeometry::default();
+        let other = EditorGeometry::default();
+        let preferences = LayoutPreferences {
+            linked: [false, true, false, true],
+            toolbar_shown: false,
+            correlation_shown: false,
+            compact_bands: true,
+            band_height: 512.25,
+            spectrogram_hidden: true,
+            analysis_stopped: true,
+        };
+        assert!(geometry.publish_preferences(preferences));
+        assert_eq!(geometry.preferences(), preferences);
+        assert_eq!(geometry.snapshot(), LogicalSize::default());
+
+        let resized = LogicalSize {
+            width: 1400.5,
+            height: 1024.25,
+        };
+        geometry.publish(resized);
+        assert_eq!(geometry.snapshot(), resized);
+        assert_eq!(geometry.preferences(), preferences);
+
+        assert!(geometry.publish_preferences(LayoutPreferences::default()));
+        assert_eq!(geometry.snapshot(), resized);
+        assert_eq!(geometry.preferences(), LayoutPreferences::default());
+        assert_eq!(other.snapshot(), LogicalSize::default());
+        assert_eq!(other.preferences(), LayoutPreferences::default());
+    }
+
+    #[test]
+    fn detached_layout_edits_require_explicit_publication_and_unchanged_values_are_accepted() {
+        let geometry = EditorGeometry::default();
+        let mut detached = geometry.preferences();
+        detached.linked = [false; 4];
+        detached.band_height = 600.5;
+        assert_eq!(geometry.preferences(), LayoutPreferences::default());
+        assert!(geometry.publish_preferences(detached));
+        assert!(geometry.publish_preferences(detached));
+        assert_eq!(geometry.preferences(), detached);
+    }
+
+    #[test]
+    fn invalid_layout_publication_keeps_every_preference_and_dimension_unchanged() {
+        let geometry = EditorGeometry::default();
+        let retained = LayoutPreferences {
+            linked: [false, true, true, false],
+            toolbar_shown: false,
+            correlation_shown: false,
+            compact_bands: true,
+            band_height: 700.25,
+            spectrogram_hidden: true,
+            analysis_stopped: true,
+        };
+        let resized = LogicalSize {
+            width: 1500.5,
+            height: 1100.25,
+        };
+        assert!(geometry.publish_preferences(retained));
+        geometry.publish(resized);
+
+        for band_height in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MIN,
+            f32::MAX,
+            0.0,
+            crate::editor_preferences::MIN_BAND_HEIGHT.next_down(),
+            crate::editor_preferences::MAX_BAND_HEIGHT.next_up(),
+        ] {
+            let invalid = LayoutPreferences {
+                band_height,
+                ..LayoutPreferences::default()
+            };
+            assert!(!geometry.publish_preferences(invalid));
+            assert_eq!(geometry.preferences(), retained);
+            assert_eq!(geometry.snapshot(), resized);
+        }
+    }
+
+    #[test]
+    fn concurrent_size_and_layout_snapshots_remain_individually_coherent() {
+        let geometry = EditorGeometry::default();
+        let other = EditorGeometry::default();
+        let first = LayoutPreferences::default();
+        let second = LayoutPreferences {
+            linked: [false; 4],
+            toolbar_shown: false,
+            correlation_shown: false,
+            compact_bands: true,
+            band_height: 4096.0,
+            spectrogram_hidden: true,
+            analysis_stopped: true,
+        };
+        let resized = LogicalSize {
+            width: 1300.5,
+            height: 900.25,
+        };
+        let start = std::sync::Barrier::new(4);
+        let read_snapshots = || {
+            start.wait();
+            for _ in 0..1024 {
+                let preferences = geometry.preferences();
+                assert!(preferences == first || preferences == second);
+                let size = geometry.snapshot();
+                assert!(size == LogicalSize::default() || size == resized);
+                assert_eq!(other.preferences(), LayoutPreferences::default());
+                assert_eq!(other.snapshot(), LogicalSize::default());
+            }
+        };
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..1024 {
+                    geometry.publish(resized);
+                    geometry.publish(LogicalSize::default());
+                }
+            });
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..1024 {
+                    assert!(geometry.publish_preferences(second));
+                    assert!(geometry.publish_preferences(first));
+                }
+            });
+            scope.spawn(&read_snapshots);
+            read_snapshots();
+        });
+        assert_eq!(geometry.preferences(), first);
+        assert_eq!(geometry.snapshot(), LogicalSize::default());
     }
 }
