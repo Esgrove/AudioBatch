@@ -57,6 +57,25 @@ pub struct Command {
     metadata: Option<(ComparisonState, ComparisonState)>,
 }
 
+/// One in-flight replay retains its rollback metadata until all host callbacks have returned.
+#[cfg(any(feature = "editor", test))]
+struct ReplayTicket {
+    /// Direction identifies the command until its host writes have completed.
+    undo: bool,
+    /// Retained command index, independent of the speculative cursor position.
+    index: usize,
+    /// Cursor to restore when any host write is rejected.
+    previous_position: usize,
+    /// Authoritative outgoing sound and metadata to restore on rejection.
+    previous_comparison: ComparisonState,
+    /// Exact requested ids remain separate from their accepted readback.
+    command: Command,
+    /// Speculative metadata is reused unchanged when a rejected command is retried.
+    target_comparison: ComparisonState,
+    /// A matching preset reference is adjusted only for replayed ids.
+    effective_source: Option<SoundSnapshot>,
+}
+
 /// Non-audio owner is protected by the parameter allocation's short editing mutex.
 pub struct EditingState {
     /// Last synchronized host-restore identity.
@@ -80,6 +99,12 @@ pub struct EditingState {
     /// Captured metadata before a comparison command.
     #[cfg(any(feature = "editor", test))]
     metadata_before: Option<ComparisonState>,
+    /// Speculative cursor and metadata stay recoverable while host callbacks run outside the mutex.
+    #[cfg(any(feature = "editor", test))]
+    replay: Option<ReplayTicket>,
+    /// A failed replay keeps its intended targets even if some parameter writes were accepted.
+    #[cfg(any(feature = "editor", test))]
+    rejected_replay: Option<ReplayTicket>,
 }
 
 impl SoundSnapshot {
@@ -97,6 +122,26 @@ impl SoundSnapshot {
         self.values
             .iter()
             .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+    }
+
+    /// Applies only replay-owned sound ids, preserving unrelated automation and preset reference values.
+    #[cfg(any(feature = "editor", test))]
+    fn apply_replay(&mut self, changes: &[(u32, f64, f64)], undo: bool) {
+        for (value, id) in self.values.iter_mut().zip(sound_ids()) {
+            if let Some((_, before, after)) = changes.iter().find(|(changed, _, _)| *changed == id) {
+                *value = if undo { *before } else { *after };
+            }
+        }
+    }
+
+    /// Retains normalization readback only for ids owned by this replay, never the whole live sound.
+    #[cfg(any(feature = "editor", test))]
+    fn accept_replay(&mut self, changes: &[(u32, f64, f64)], snapshot: Snapshot) {
+        for (value, id) in self.values.iter_mut().zip(sound_ids()) {
+            if changes.iter().any(|(changed, _, _)| *changed == id) {
+                *value = snapshot_value(snapshot, id);
+            }
+        }
     }
 
     /// Lists exact target values without including Solo, Delta, Bypass, or editor choices.
@@ -146,6 +191,10 @@ impl EditingState {
             pending: Vec::new(),
             #[cfg(any(feature = "editor", test))]
             metadata_before: None,
+            #[cfg(any(feature = "editor", test))]
+            replay: None,
+            #[cfg(any(feature = "editor", test))]
+            rejected_replay: None,
         }
     }
 
@@ -162,6 +211,8 @@ impl EditingState {
                 self.depth = 0;
                 self.pending.clear();
                 self.metadata_before = None;
+                self.replay = None;
+                self.rejected_replay = None;
             }
         }
     }
@@ -223,6 +274,7 @@ impl EditingState {
         if changes.is_empty() && metadata.is_none() {
             return;
         }
+        self.rejected_replay = None;
         self.history.truncate(self.position);
         if self.history.len() == HISTORY_CAPACITY {
             self.history.remove(0);
@@ -299,63 +351,155 @@ impl EditingState {
     /// Reports availability without modifying the chronological history.
     #[cfg(any(feature = "editor", test))]
     pub const fn can_undo(&self) -> bool {
-        self.depth == 0 && self.position > 0
+        self.depth == 0 && self.replay.is_none() && self.position > 0
     }
 
     /// Reports the redo branch without manufacturing entries from host automation.
     #[cfg(any(feature = "editor", test))]
     pub const fn can_redo(&self) -> bool {
-        self.depth == 0 && self.position < self.history.len()
+        self.depth == 0 && self.replay.is_none() && self.position < self.history.len()
     }
 
-    /// Records exact replay readback only for the direction just applied, preventing normalization drift on repeats.
-    #[cfg(feature = "editor")]
-    pub fn complete_replay(&mut self, undo: bool, snapshot: Snapshot) {
-        let index = if undo {
-            self.position
-        } else {
-            self.position.saturating_sub(1)
-        };
-        if let Some(command) = self.history.get_mut(index) {
+    /// Completes host writes outside the editing mutex, committing readback only after every write was accepted.
+    /// Rejection restores cursor and metadata without pretending partially accepted audio writes were rolled back.
+    /// The caller reports that failure and may retry the same direction with the original intended targets.
+    #[cfg(any(feature = "editor", test))]
+    pub fn complete_replay(&mut self, undo: bool, snapshot: Snapshot, success: bool) {
+        if self.replay.as_ref().is_none_or(|ticket| ticket.undo != undo) {
+            return;
+        }
+        let ticket = self.replay.take().expect("matching replay");
+        if !success {
+            self.position = ticket.previous_position;
+            self.comparison = ticket.previous_comparison.clone();
+            self.rejected_replay = Some(ticket);
+            self.interaction_epoch = self.interaction_epoch.wrapping_add(1);
+            return;
+        }
+
+        let accepted_sound = SoundSnapshot::capture(snapshot);
+        *self
+            .comparison
+            .slots
+            .get_mut(self.comparison.active)
+            .expect("active slot") = accepted_sound;
+        let effective = ticket.effective_source.map(|mut sound| {
+            sound.accept_replay(&ticket.command.changes, snapshot);
+            sound
+        });
+        if let Some(effective) = effective
+            && let Some(Some(origin)) = self.comparison.origins.get_mut(self.comparison.active)
+        {
+            origin.effective = Some(effective);
+        }
+        if let Some(command) = self.history.get_mut(ticket.index) {
             if let Some((before, after)) = &mut command.metadata {
                 let comparison = if undo { before } else { after };
-                let source = comparison.slots.get(comparison.active).copied();
-                if let Some(Some(origin)) = comparison.origins.get_mut(comparison.active)
-                    && source == Some(origin.effective.unwrap_or(origin.baseline))
+                comparison
+                    .slots
+                    .get_mut(comparison.active)
+                    .expect("historical active slot")
+                    .accept_replay(&ticket.command.changes, snapshot);
+                if let Some(effective) = effective
+                    && let Some(Some(origin)) = comparison.origins.get_mut(comparison.active)
                 {
-                    origin.effective = Some(SoundSnapshot::capture(snapshot));
-                    if let Some(Some(live_origin)) = self.comparison.origins.get_mut(self.comparison.active) {
-                        live_origin.effective = origin.effective;
-                    }
+                    origin.effective = Some(effective);
                 }
             }
             for (id, before, after) in &mut command.changes {
-                if undo {
-                    *before = snapshot_value(snapshot, *id);
-                } else {
-                    *after = snapshot_value(snapshot, *id);
+                if ticket.command.changes.iter().any(|(changed, _, _)| changed == id) {
+                    if undo {
+                        *before = snapshot_value(snapshot, *id);
+                    } else {
+                        *after = snapshot_value(snapshot, *id);
+                    }
                 }
             }
         }
+        self.rejected_replay = None;
     }
 
-    /// Captures replay targets and updates metadata before reentrant parameter notifications.
+    /// Captures rollback ownership and publishes narrow metadata before callbacks can reenter project save.
+    /// The returned command is applied only after releasing the editing mutex, then completed with its acceptance.
     #[cfg(any(feature = "editor", test))]
-    pub fn replay(&mut self, undo: bool) -> Option<Command> {
+    pub fn begin_replay(&mut self, undo: bool, snapshot: Snapshot) -> Option<Command> {
         if (undo && !self.can_undo()) || (!undo && !self.can_redo()) {
             return None;
         }
+        let index = if undo { self.position - 1 } else { self.position };
+        let ticket = if let Some(ticket) = self
+            .rejected_replay
+            .take()
+            .filter(|ticket| ticket.undo == undo && ticket.index == index)
+        {
+            ticket
+        } else {
+            let mut command = self.history.get(index)?.clone();
+            let previous_comparison = self.comparison(snapshot);
+            let mut target_comparison = previous_comparison.clone();
+            if let Some((before, after)) = &command.metadata {
+                let target = if undo { before } else { after };
+                for slot in 0..2 {
+                    if before.slots.get(slot) != after.slots.get(slot) && before.active == after.active {
+                        let target_sound = target.slots.get(slot).expect("historical slot");
+                        let sound = target_comparison.slots.get_mut(slot).expect("comparison slot");
+                        if slot == target_comparison.active {
+                            sound.apply_replay(&command.changes, undo);
+                        } else {
+                            *sound = *target_sound;
+                        }
+                    }
+                    if before.origins.get(slot) != after.origins.get(slot) {
+                        target_comparison
+                            .origins
+                            .get_mut(slot)?
+                            .clone_from(target.origins.get(slot)?);
+                    }
+                }
+                if before.active != after.active {
+                    target_comparison.active = target.active;
+                    let outgoing = SoundSnapshot::capture(snapshot);
+                    let destination = target_comparison.slots.get(target.active)?;
+                    command.changes = sound_ids()
+                        .zip(outgoing.values.into_iter().zip(destination.values))
+                        .filter_map(|(id, (current, target))| {
+                            (current.to_bits() != target.to_bits()).then_some((
+                                id,
+                                if undo { target } else { current },
+                                if undo { current } else { target },
+                            ))
+                        })
+                        .collect();
+                }
+            }
+            let source = target_comparison.slots.get(target_comparison.active).copied();
+            let effective_source = command
+                .metadata
+                .as_ref()
+                .filter(|_| !command.changes.is_empty())
+                .and_then(|_| {
+                    target_comparison
+                        .origins
+                        .get(target_comparison.active)
+                        .and_then(Option::as_ref)
+                        .map(|origin| origin.effective.unwrap_or(origin.baseline))
+                        .filter(|effective| Some(*effective) == source)
+                });
+            ReplayTicket {
+                undo,
+                index,
+                previous_position: self.position,
+                previous_comparison,
+                command,
+                target_comparison,
+                effective_source,
+            }
+        };
+        self.position = if undo { index } else { index + 1 };
+        self.comparison = ticket.target_comparison.clone();
         self.interaction_epoch = self.interaction_epoch.wrapping_add(1);
-        if undo {
-            self.position -= 1;
-        }
-        let command = self.history.get(self.position)?.clone();
-        if !undo {
-            self.position += 1;
-        }
-        if let Some((before, after)) = &command.metadata {
-            self.comparison = if undo { before } else { after }.clone();
-        }
+        let command = ticket.command.clone();
+        self.replay = Some(ticket);
         Some(command)
     }
 }
@@ -432,6 +576,10 @@ pub fn valid_name(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "editing_replay_tests.rs"]
+mod replay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -464,8 +612,10 @@ mod tests {
         assert!(!state.can_undo());
         state.end(snapshot);
         assert!(state.can_undo());
-        let undo = state.replay(true).expect("undo");
+        let undo = state.begin_replay(true, snapshot).expect("undo");
         assert_eq!(undo.changes, vec![(0, Snapshot::default().gain, 0.25)]);
+        snapshot.gain = Snapshot::default().gain;
+        state.complete_replay(true, snapshot, true);
         state.begin();
         state.end(snapshot);
         assert!(state.can_redo());
@@ -489,16 +639,21 @@ mod tests {
         state.begin();
         let target = state.switch(1, snapshot).expect("switch B");
         assert_eq!(target, SoundSnapshot::capture(Snapshot::default()));
+        state.touch(0, snapshot.gain);
+        snapshot.gain = Snapshot::default().gain;
         state.end(snapshot);
         assert_eq!(state.comparison.active, 1);
-        assert_eq!(state.comparison.slots[0], SoundSnapshot::capture(snapshot));
-        state.replay(true).expect("undo switch");
+        assert_eq!(state.comparison.slots[0].values[0], 0.25);
+        state.begin_replay(true, snapshot).expect("undo switch");
+        snapshot.gain = 0.25;
+        state.complete_replay(true, snapshot, true);
         assert_eq!(state.comparison.active, 0);
         state.begin();
         state.copy(snapshot);
         state.end(snapshot);
         assert_eq!(state.comparison.slots[1], SoundSnapshot::capture(snapshot));
-        state.replay(true).expect("undo copy");
+        state.begin_replay(true, snapshot).expect("undo copy");
+        state.complete_replay(true, snapshot, true);
         assert_eq!(state.comparison.slots[1], SoundSnapshot::capture(Snapshot::default()));
     }
 }

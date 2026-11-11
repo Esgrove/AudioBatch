@@ -152,17 +152,63 @@ pub struct Parameters {
 }
 
 /// Independent non-audio worker retirement retained by the native editor binding, not the widget cache.
-#[derive(Clone)]
-pub struct EditorShutdown(std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>);
+#[cfg(feature = "editor")]
+#[derive(Clone, Default)]
+pub struct EditorShutdown(std::sync::Arc<EditorWorker>);
 
+/// Admission and join ownership outlive a borrowed Iced program and cannot reopen after native removal.
+#[cfg(feature = "editor")]
+#[derive(Default)]
+struct EditorWorker {
+    /// Permanent retirement is independent of the lifetime of any particular worker operation.
+    closed: std::sync::atomic::AtomicBool,
+    /// Admission and installation share the same lock as retirement, preventing an unowned late spawn.
+    worker: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+#[cfg(feature = "editor")]
 impl EditorShutdown {
-    /// Shares join ownership without transferring a native editor or mutable program state.
-    pub(crate) const fn new(worker: std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>) -> Self {
-        Self(worker)
+    /// Rejects work after native removal, including callbacks that still retain the Iced program.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.0.closed.load(Ordering::Acquire)
     }
-    /// Joins outside the mutex so worker destruction cannot retain or reenter plugin ownership under lock.
+
+    /// Starts and retains a worker atomically with admission, without invoking UI or host callbacks.
+    /// Returns false when retirement closed admission or an operation is still retained. Errors retain no detached worker.
+    pub(crate) fn spawn(&self, operation: impl FnOnce() + Send + 'static) -> std::io::Result<bool> {
+        let mut worker = self.0.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.is_closed() || worker.is_some() {
+            return Ok(false);
+        }
+        *worker = Some(
+            std::thread::Builder::new()
+                .name("imagecontrol-presets".into())
+                .spawn(operation)?,
+        );
+        drop(worker);
+        Ok(true)
+    }
+
+    /// Joins one completed operation without closing admission for the next explicit command.
+    pub(crate) fn finish(&self) {
+        let worker = self
+            .0
+            .worker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
+    }
+
+    /// Permanently closes admission before joining outside the mutex. Repeated retirement is harmless.
     pub(crate) fn shutdown(&self) {
-        let worker = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        let worker = {
+            let mut worker = self.0.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.0.closed.store(true, Ordering::Release);
+            worker.take()
+        };
         if let Some(worker) = worker {
             let _ = worker.join();
         }
@@ -199,6 +245,7 @@ pub trait EditorBinding {
     /// Marks a changed persisted non-sound preference on the UI thread, without a sound gesture.
     fn mark_dirty(&self) {}
     /// Registers independent non-audio worker ownership for synchronous native removal.
+    #[cfg(feature = "editor")]
     fn register_shutdown(&self, _shutdown: EditorShutdown) {}
     /// Balances remaining gestures synchronously when the native editor is removed.
     fn close(&self) {}

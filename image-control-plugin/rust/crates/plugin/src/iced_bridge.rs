@@ -175,7 +175,7 @@ impl Editor {
         // Baseview constructs the handler on this same thread on macOS and Windows.
         // Fragile supplies a checked boundary instead of an unsafe Send implementation for Rc.
         // Both successful extraction and early-error destruction occur on the owner thread.
-        let ui_binding = Fragile::new((Rc::clone(&binding), Rc::clone(&analysis), shutdowns));
+        let ui_binding = Fragile::new((Rc::clone(&binding), Rc::clone(&analysis), shutdowns, Rc::clone(&open)));
         let build_notifier = notifier.clone();
         let editor_shared = Arc::clone(&shared);
         let executor = crate::iced_executor::Shutdown::new().map_err(EditorError::Executor)?;
@@ -184,11 +184,12 @@ impl Editor {
                 settings,
                 notifier,
                 move |shared_window_size| {
-                    let (binding, analysis, shutdowns) = ui_binding.into_inner();
+                    let (binding, analysis, shutdowns, open) = ui_binding.into_inner();
                     let binding = Rc::new(LogicalBinding {
                         native: binding,
                         window_size: shared_window_size.clone(),
                         shutdowns,
+                        open,
                     });
                     Ok(crate::editor::create_program_with_notifier(
                         parameters,
@@ -287,12 +288,13 @@ impl Editor {
         self.open.set(false);
         self.shared.set_correlation_enabled(false);
         self.shared.set_analysis_enabled(false);
-        let detached = self.child.detach();
-        self.binding.close();
+        // Retire admission before native removal or host gesture cleanup can reenter the retained program.
         let shutdowns = std::mem::take(&mut *self.shutdowns.borrow_mut());
         for shutdown in shutdowns {
             shutdown.shutdown();
         }
+        let detached = self.child.detach();
+        self.binding.close();
         let analysis = self.analysis.borrow_mut().take();
         if let Some(analysis) = analysis {
             analysis.shutdown();
@@ -325,18 +327,21 @@ struct LogicalBinding {
     window_size: iced_baseview::shell::SharedWindowSize,
     /// Independent file-worker joins are retired without waiting for program-state destruction.
     shutdowns: Rc<RefCell<Vec<crate::params::EditorShutdown>>>,
+    /// Native close rejects registration even before or during reentrant host gesture cleanup.
+    open: Rc<Cell<bool>>,
 }
 
 impl EditorBinding for LogicalBinding {
     fn register_shutdown(&self, shutdown: crate::params::EditorShutdown) {
-        let old = std::mem::replace(&mut *self.shutdowns.borrow_mut(), vec![shutdown]);
-        for shutdown in old {
+        if self.open.get() && self.native.is_open() {
+            self.shutdowns.borrow_mut().push(shutdown);
+        } else {
             shutdown.shutdown();
         }
     }
 
     fn is_open(&self) -> bool {
-        self.native.is_open()
+        self.open.get() && self.native.is_open()
     }
 
     fn begin_edit(&self, id: u32) {
