@@ -11,8 +11,10 @@ use std::time::UNIX_EPOCH;
 use audiobatch_core::atomic_write::{AtomicWriteError, write_atomically};
 use audiobatch_core::cache::data_directory;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use vst3_host::{ClassId, ClassInfo, default_search_folders};
+use serde::{Deserialize, Serialize, Serializer};
+use vst3_host::ClassInfo;
+
+use crate::identity::{PluginFormat, PluginId, PluginIdError};
 
 /// File name of the known plugins list in the data directory.
 const KNOWN_PLUGINS_FILE_NAME: &str = "plugins.json";
@@ -30,12 +32,12 @@ const CHAIN_FILE_NAME: &str = "plugin-chain.json";
 const PRESETS_FOLDER_NAME: &str = "chain-presets";
 
 /// Format version of `plugins.json`, raised when a change cannot be read by older versions.
-const KNOWN_PLUGINS_FORMAT_VERSION: u32 = 1;
+const KNOWN_PLUGINS_FORMAT_VERSION: u32 = 2;
 
 /// Name of the format version field in the JSON data files.
 const VERSION_FIELD: &str = "version";
 
-/// Format name shown for every plugin, since VST3 is the only supported format.
+/// The VST3 format label retained for callers that specifically display VST3 plugins.
 pub const FORMAT_NAME: &str = "VST3";
 
 /// Failures while reading or writing saved plugin data.
@@ -110,7 +112,8 @@ pub struct RecoveredData<T> {
 }
 
 /// One plugin class found in a bundle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "PluginDescriptionFields")]
 pub struct PluginDescription {
     /// Display name.
     pub name: String,
@@ -123,12 +126,15 @@ pub struct PluginDescription {
     /// Subcategories separated by "|", such as "Fx|Delay".
     #[serde(default)]
     pub category: String,
-    /// Class id of the plugin's component.
-    pub class_id: ClassId,
+    /// Format-qualified identity of the plugin's component.
+    pub class_id: PluginId,
+    /// Plugin API, defaulting to VST3 for descriptions saved without this field.
+    #[serde(default)]
+    pub format: PluginFormat,
     /// VST SDK version the plugin was built with.
     #[serde(default)]
     pub sdk_version: String,
-    /// Path of the `.vst3` bundle.
+    /// Path of the `.vst3` or `.clap` bundle.
     pub bundle: PathBuf,
     /// Modification time of the bundle when it was scanned, in milliseconds since the Unix epoch.
     #[serde(default)]
@@ -173,6 +179,44 @@ pub struct PluginDataPaths {
     pub presets: PathBuf,
 }
 
+/// Serialized description fields, with the format selecting the interpretation of the original id string.
+#[derive(Serialize, Deserialize)]
+struct PluginDescriptionFields {
+    /// Display name.
+    name: String,
+    /// Vendor reported by the descriptor.
+    #[serde(default)]
+    vendor: String,
+    /// Plugin version text.
+    #[serde(default)]
+    version: String,
+    /// Categories separated by a pipe character.
+    #[serde(default)]
+    category: String,
+    /// Original plugin id, kept compatible with legacy VST3 hex strings.
+    class_id: String,
+    /// Authoritative API namespace of the id.
+    #[serde(default)]
+    format: PluginFormat,
+    /// VST SDK version, empty for other formats.
+    #[serde(default)]
+    sdk_version: String,
+    /// Location of the plugin bundle.
+    bundle: PathBuf,
+    /// Last observed bundle modification time.
+    #[serde(default)]
+    bundle_modified_ms: i64,
+    /// Whether the plugin generates audio rather than processing an input.
+    #[serde(default)]
+    is_instrument: bool,
+    /// Main input channel count, when inspected.
+    #[serde(default)]
+    main_input_channels: Option<u32>,
+    /// Main output channel count, when inspected.
+    #[serde(default)]
+    main_output_channels: Option<u32>,
+}
+
 /// A value written with its format version next to its own fields.
 #[derive(Serialize)]
 struct Versioned<'a, T> {
@@ -184,7 +228,26 @@ struct Versioned<'a, T> {
 }
 
 impl PluginDescription {
-    /// Creates the description of a class in a bundle.
+    /// Creates a description from the original CLAP descriptor without altering its stable string id.
+    #[must_use]
+    pub fn from_clap_class(class: &clap_host::ClassInfo, bundle: &Path, bundle_modified_ms: i64) -> Self {
+        Self {
+            name: class.name.clone(),
+            vendor: class.vendor.clone(),
+            version: class.version.clone(),
+            category: class.category.clone(),
+            class_id: PluginId::Clap(class.id.clone()),
+            format: PluginFormat::Clap,
+            sdk_version: String::new(),
+            bundle: bundle.to_path_buf(),
+            bundle_modified_ms,
+            is_instrument: class.features.iter().any(|feature| feature == "instrument"),
+            main_input_channels: None,
+            main_output_channels: None,
+        }
+    }
+
+    /// Creates the description of a VST3 class in a bundle.
     #[must_use]
     pub fn from_class(class: &ClassInfo, bundle: &Path, bundle_modified_ms: i64) -> Self {
         Self {
@@ -192,7 +255,8 @@ impl PluginDescription {
             vendor: class.vendor.clone(),
             version: class.version.clone(),
             category: class.subcategories.clone(),
-            class_id: class.id,
+            class_id: class.id.into(),
+            format: PluginFormat::Vst3,
             sdk_version: class.sdk_version.clone(),
             bundle: bundle.to_path_buf(),
             bundle_modified_ms,
@@ -200,6 +264,50 @@ impl PluginDescription {
             main_input_channels: None,
             main_output_channels: None,
         }
+    }
+}
+
+impl Serialize for PluginDescription {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.class_id
+            .validate_format(self.format)
+            .map_err(serde::ser::Error::custom)?;
+        PluginDescriptionFields {
+            name: self.name.clone(),
+            vendor: self.vendor.clone(),
+            version: self.version.clone(),
+            category: self.category.clone(),
+            class_id: self.class_id.to_string(),
+            format: self.format,
+            sdk_version: self.sdk_version.clone(),
+            bundle: self.bundle.clone(),
+            bundle_modified_ms: self.bundle_modified_ms,
+            is_instrument: self.is_instrument,
+            main_input_channels: self.main_input_channels,
+            main_output_channels: self.main_output_channels,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl TryFrom<PluginDescriptionFields> for PluginDescription {
+    type Error = PluginIdError;
+
+    fn try_from(fields: PluginDescriptionFields) -> Result<Self, Self::Error> {
+        Ok(Self {
+            class_id: PluginId::from_format(fields.format, &fields.class_id)?,
+            format: fields.format,
+            name: fields.name,
+            vendor: fields.vendor,
+            version: fields.version,
+            category: fields.category,
+            sdk_version: fields.sdk_version,
+            bundle: fields.bundle,
+            bundle_modified_ms: fields.bundle_modified_ms,
+            is_instrument: fields.is_instrument,
+            main_input_channels: fields.main_input_channels,
+            main_output_channels: fields.main_output_channels,
+        })
     }
 }
 
@@ -251,16 +359,20 @@ impl KnownPlugins {
     #[must_use]
     pub fn search_folders(&self) -> Vec<PathBuf> {
         if self.custom_folders.is_empty() {
-            default_search_folders()
+            let mut folders = vst3_host::default_search_folders();
+            folders.extend(clap_host::discovery::default_search_paths());
+            let mut seen = std::collections::HashSet::new();
+            folders.retain(|folder| seen.insert(folder.clone()));
+            folders
         } else {
             self.custom_folders.clone()
         }
     }
 
-    /// Returns the plugin with a class id.
+    /// Returns the plugin with a format-qualified class id.
     #[must_use]
-    pub fn find(&self, class_id: ClassId) -> Option<&PluginDescription> {
-        self.plugins.iter().find(|plugin| plugin.class_id == class_id)
+    pub fn find(&self, class_id: &PluginId) -> Option<&PluginDescription> {
+        self.plugins.iter().find(|plugin| plugin.class_id == *class_id)
     }
 
     /// Returns true when a bundle is blacklisted.
@@ -437,7 +549,8 @@ mod test_known_plugins {
             vendor: "Vendor".to_owned(),
             version: "1.0".to_owned(),
             category: "Fx|Delay".to_owned(),
-            class_id: ClassId([7; 16]),
+            class_id: vst3_host::ClassId([7; 16]).into(),
+            format: PluginFormat::Vst3,
             sdk_version: "VST 3.8.0".to_owned(),
             bundle: PathBuf::from(bundle),
             bundle_modified_ms: 1_700_000_000_000,
@@ -458,6 +571,114 @@ mod test_known_plugins {
         };
         known.save_to(&path).expect("saved");
         assert_eq!(KnownPlugins::load_from(&path).expect("loaded"), known);
+    }
+
+    #[test]
+    fn clap_descriptors_preserve_original_identity_and_metadata() {
+        let class = clap_host::ClassInfo {
+            id: "07070707070707070707070707070707".to_owned(),
+            name: "CLAP Delay".to_owned(),
+            vendor: "Descriptor Vendor".to_owned(),
+            version: "2.3.4".to_owned(),
+            category: "delay".to_owned(),
+            is_effect: true,
+            features: vec!["audio-effect".to_owned(), "delay".to_owned()],
+        };
+        let bundle = Path::new("Effects.clap");
+        let plugin = PluginDescription::from_clap_class(&class, bundle, 123);
+        assert_eq!(plugin.class_id, PluginId::Clap(class.id.clone()));
+        assert_eq!(plugin.format, PluginFormat::Clap);
+        assert_eq!(plugin.name, class.name);
+        assert_eq!(plugin.vendor, class.vendor);
+        assert_eq!(plugin.version, class.version);
+        assert_eq!(plugin.category, class.category);
+        assert_eq!(plugin.bundle, bundle);
+        assert_eq!(plugin.bundle_modified_ms, 123);
+        assert_eq!(plugin.sdk_version, "");
+        assert!(!plugin.is_instrument);
+        assert_eq!(plugin.main_input_channels, None);
+        assert_eq!(plugin.main_output_channels, None);
+    }
+
+    #[test]
+    fn legacy_vst3_descriptions_default_the_format_and_optional_metadata() {
+        let json = r#"{
+            "plugins": [{
+                "name": "Legacy", "class_id": "07070707070707070707070707070707", "bundle": "Legacy.vst3"
+            }]
+        }"#;
+        let known: KnownPlugins = read_versioned_json(json, KNOWN_PLUGINS_FORMAT_VERSION, Path::new("plugins.json"))
+            .expect("legacy plugin list");
+        let plugin = known.plugins.first().expect("legacy plugin");
+        assert_eq!(plugin.format, PluginFormat::Vst3);
+        assert_eq!(plugin.class_id, vst3_host::ClassId([7; 16]).into());
+        assert_eq!(plugin.vendor, "");
+        assert_eq!(plugin.main_input_channels, None);
+        let saved = serde_json::to_value(plugin).expect("description JSON");
+        assert_eq!(saved["class_id"], "07070707070707070707070707070707");
+        assert_eq!(saved["format"], "VST3");
+    }
+
+    #[test]
+    fn clap_description_format_is_authoritative_even_for_hex_looking_ids() {
+        let original = "07070707070707070707070707070707";
+        let mut plugin = description("CLAP Effect", "Effect.clap");
+        plugin.class_id = PluginId::Clap(original.to_owned());
+        plugin.format = PluginFormat::Clap;
+        let saved = serde_json::to_value(&plugin).expect("CLAP description JSON");
+        assert_eq!(saved["class_id"], original);
+        assert_eq!(saved["format"], "CLAP");
+        assert_eq!(
+            serde_json::from_value::<PluginDescription>(saved).expect("CLAP description"),
+            plugin
+        );
+        assert_eq!(plugin.class_id.clap(), Some(original));
+        assert_eq!(plugin.class_id.vst3(), None);
+        let vst3 = description("VST3 Effect", "Effect.vst3");
+        let known = KnownPlugins {
+            plugins: vec![vst3.clone(), plugin.clone()],
+            ..KnownPlugins::default()
+        };
+        assert_eq!(known.find(&plugin.class_id), Some(&plugin));
+        assert_eq!(known.find(&vst3.class_id), Some(&vst3));
+    }
+
+    #[test]
+    fn descriptions_reject_invalid_ids_and_inconsistent_in_memory_formats() {
+        for json in [
+            r#"{"name":"Invalid","bundle":"Effect.vst3","class_id":"org.example.effect"}"#,
+            r#"{"name":"Invalid","bundle":"Effect.clap","class_id":"","format":"CLAP"}"#,
+            r#"{"name":"Invalid","bundle":"Effect.clap","class_id":"id","format":"Unknown"}"#,
+        ] {
+            assert!(serde_json::from_str::<PluginDescription>(json).is_err(), "{json}");
+        }
+        let mut plugin = description("Invalid", "Effect.vst3");
+        plugin.format = PluginFormat::Clap;
+        assert!(serde_json::to_string(&plugin).is_err());
+    }
+
+    #[test]
+    fn clap_lists_are_versioned_so_older_readers_reject_them_before_decoding() {
+        let directory = tempfile::tempdir().expect("temporary folder");
+        let path = directory.path().join("plugins.json");
+        let mut plugin = description("CLAP Effect", "Effect.clap");
+        plugin.class_id = PluginId::Clap("org.example.effect".to_owned());
+        plugin.format = PluginFormat::Clap;
+        let known = KnownPlugins {
+            plugins: vec![plugin],
+            ..KnownPlugins::default()
+        };
+        known.save_to(&path).expect("saved CLAP list");
+        assert_eq!(KnownPlugins::load_from(&path).expect("loaded CLAP list"), known);
+        let text = fs::read_to_string(&path).expect("plugin JSON");
+        assert!(matches!(
+            read_versioned_json::<KnownPlugins>(&text, 1, &path),
+            Err(VersionedJsonError::NewerVersion {
+                version: 2,
+                supported_version: 1,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -497,7 +718,17 @@ mod test_known_plugins {
     #[test]
     fn custom_folders_replace_the_defaults() {
         let mut known = KnownPlugins::default();
-        assert_eq!(known.search_folders(), default_search_folders());
+        let defaults = known.search_folders();
+        for expected in vst3_host::default_search_folders()
+            .into_iter()
+            .chain(clap_host::discovery::default_search_paths())
+        {
+            assert!(defaults.contains(&expected));
+        }
+        assert_eq!(
+            defaults.iter().collect::<std::collections::HashSet<_>>().len(),
+            defaults.len()
+        );
         known.custom_folders = vec![PathBuf::from("/custom")];
         assert_eq!(known.search_folders(), vec![PathBuf::from("/custom")]);
     }

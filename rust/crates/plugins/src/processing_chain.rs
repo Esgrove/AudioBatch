@@ -1,6 +1,6 @@
 //! The plugin instances one processing worker renders files with.
 //!
-//! VST3 restricts bus arrangement, `setupProcessing`, `setActive`, and `setState` to the UI thread,
+//! Native formats restrict configuration, activation, and state restoration to the UI thread,
 //! so a worker hands its chain to the UI thread to prepare it for each file and to release it afterwards,
 //! and only runs the returned processor handles itself.
 //! The instances live in a `UiBound`, so the worker can own the chain without ever touching them.
@@ -10,9 +10,11 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use vst3_host::{
-    CallError, InstanceError, Module, ModuleError, PluginInstance, PluginState, ProcessMode, ProcessorHandle, UiBound,
-    UiDispatcher, UiThread,
+use vst3_host::{CallError, ProcessMode, UiBound, UiDispatcher, UiThread};
+
+use crate::host::{
+    HostError as InstanceError, HostError as ModuleError, HostInstance as PluginInstance,
+    HostProcessor as ProcessorHandle, HostState as PluginState,
 };
 
 use crate::chain::{ChainSlot, PluginChain};
@@ -133,8 +135,12 @@ pub(crate) struct PreparedChain {
 impl ChainPlugin {
     /// Wraps an instance and the settings it is restored to.
     #[must_use]
-    pub const fn new(name: String, instance: PluginInstance, state: PluginState) -> Self {
-        Self { name, instance, state }
+    pub fn new(name: String, instance: impl Into<PluginInstance>, state: impl Into<PluginState>) -> Self {
+        Self {
+            name,
+            instance: instance.into(),
+            state: state.into(),
+        }
     }
 
     /// Loads the plugin of a slot and creates an instance with the slot's settings.
@@ -149,20 +155,21 @@ impl ChainPlugin {
         dispatcher: &UiDispatcher,
         slot: &ChainSlot,
     ) -> Result<Self, ProcessingChainError> {
-        let module = Module::load(ui, &slot.plugin.bundle).map_err(|source| ProcessingChainError::LoadModule {
-            name: slot.plugin.name.clone(),
-            source,
-        })?;
-        let instance =
-            PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone())).map_err(|source| {
-                ProcessingChainError::CreateInstance {
-                    name: slot.plugin.name.clone(),
-                    source,
+        let instance = PluginInstance::load(ui, &slot.plugin, Some(dispatcher.clone())).map_err(|source| {
+            let name = slot.plugin.name.clone();
+            match source {
+                InstanceError::Vst3Module(_) | InstanceError::ClapModule(_) => {
+                    ProcessingChainError::LoadModule { name, source }
                 }
-            })?;
+                _ => ProcessingChainError::CreateInstance { name, source },
+            }
+        })?;
         let saved = slot.state();
-        let state = if saved == PluginState::default() {
-            instance.state(ui).unwrap_or(saved)
+        let state = if saved.is_empty() {
+            instance.state(ui).map_err(|source| ProcessingChainError::Restore {
+                name: slot.plugin.name.clone(),
+                source,
+            })?
         } else {
             saved
         };

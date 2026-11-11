@@ -7,11 +7,10 @@ use std::path::Path;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
-use vst3_host::{
-    InstanceError, Module, ModuleError, PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiDispatcher,
-};
+use vst3_host::{InstanceError, Module, ModuleError, PluginInstance, ProcessMode, UiDispatcher};
 
 use crate::chain_signal::ChainSignal;
+use crate::host::{HostProcessError as ProcessError, HostProcessor as ProcessorHandle};
 use crate::library::bundle_modified_ms;
 use crate::processing_chain::PROCESSING_BLOCK_FRAMES;
 use crate::{ChainSlot, PluginChain, PluginDescription, ProcessingChain, ProcessingChainError};
@@ -43,6 +42,9 @@ pub enum BenchmarkError {
     /// The test plugin could not be configured.
     #[error(transparent)]
     Instance(#[from] InstanceError),
+    /// A saved slot received state from the wrong plugin API.
+    #[error(transparent)]
+    State(#[from] crate::chain::StateFormatError),
     /// The production chain could not be prepared.
     #[error(transparent)]
     Chain(#[from] ProcessingChainError),
@@ -277,7 +279,7 @@ fn load_chain(
                 &bundle,
                 bundle_modified_ms(&bundle),
             ));
-            slot.set_state(state);
+            slot.set_state(state)?;
             let saved = PluginChain {
                 slots: vec![slot; options.instances],
             };

@@ -10,9 +10,14 @@
 //! The audio thread cannot format the message itself, because formatting allocates.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
-use vst3_host::{InstanceError, PluginInstance, PluginState, ProcessError, ProcessMode, ProcessorHandle, UiThread};
+use vst3_host::{ProcessMode, UiThread};
+
+use crate::host::{
+    HostError as InstanceError, HostInstance as PluginInstance, HostProcessError as ProcessError,
+    HostProcessor as ProcessorHandle, HostState as PluginState,
+};
 
 use crate::chain_signal::{ChainSignal, StageFailure};
 use crate::library::error_chain;
@@ -45,6 +50,8 @@ pub struct PreviewFailure {
     stage: AtomicUsize,
     /// Result code the failed plugin returned.
     result: AtomicI32,
+    /// Whether the failed stage uses the CLAP result-code namespace.
+    clap: AtomicBool,
 }
 
 /// The plugin chain the live preview plays through.
@@ -70,6 +77,7 @@ impl PreviewFailure {
             names,
             stage: AtomicUsize::new(NO_FAILURE),
             result: AtomicI32::new(0),
+            clap: AtomicBool::new(false),
         }
     }
 
@@ -81,7 +89,12 @@ impl PreviewFailure {
             return None;
         }
         let name = self.names.get(stage).map_or("A plugin", String::as_str);
-        let error = ProcessError(self.result.load(Ordering::Relaxed));
+        let code = self.result.load(Ordering::Relaxed);
+        let error = if self.clap.load(Ordering::Relaxed) {
+            ProcessError::Clap(clap_host::ProcessError(code))
+        } else {
+            ProcessError::Vst3(vst3_host::ProcessError(code))
+        };
         Some(format!("{name}: {error}"))
     }
 
@@ -95,7 +108,12 @@ impl PreviewFailure {
         if self.has_failed() {
             return;
         }
-        self.result.store(failure.error.0, Ordering::Relaxed);
+        let (code, clap) = match failure.error {
+            ProcessError::Vst3(error) => (error.0, false),
+            ProcessError::Clap(error) => (error.0, true),
+        };
+        self.clap.store(clap, Ordering::Relaxed);
+        self.result.store(code, Ordering::Relaxed);
         self.stage.store(failure.index, Ordering::Release);
     }
 }
@@ -273,7 +291,7 @@ mod test_preview_chain {
     use std::error::Error as _;
 
     use audiobatch_test_plugin::{DELAY_LATENCY, Kind};
-    use vst3_host::{ClassId, Module, PluginState};
+    use vst3_host::{ClassId, Module, PluginInstance as Vst3Instance, PluginState};
 
     use super::*;
     use crate::test_helpers::{dispatcher, gain_state};
@@ -294,9 +312,10 @@ mod test_preview_chain {
                     let mut instances = Vec::new();
                     for (kind, state) in &plugins {
                         let class_id = ClassId::from_tuid(&kind.class_id());
-                        let mut instance = PluginInstance::create(ui, &module, class_id, Some(dispatcher().clone()))
+                        let mut instance = Vst3Instance::create(ui, &module, class_id, Some(dispatcher().clone()))
                             .map_err(|error| error.to_string())?;
                         instance.set_state(ui, state).map_err(|error| error.to_string())?;
+                        let mut instance = crate::HostInstance::from(instance);
                         prepare_for_preview(ui, &mut instance, RATE, SETUP_BLOCK_FRAMES)
                             .map_err(|error| format!("{error:#}"))?;
                         instances.push((kind.name(), instance));
@@ -396,11 +415,11 @@ mod test_preview_chain {
         assert!(failure.message().is_none());
         failure.record(StageFailure {
             index: 1,
-            error: ProcessError(1),
+            error: ProcessError::Vst3(vst3_host::ProcessError(1)),
         });
         failure.record(StageFailure {
             index: 0,
-            error: ProcessError(2),
+            error: ProcessError::Vst3(vst3_host::ProcessError(2)),
         });
         assert_eq!(
             failure.message().as_deref(),
@@ -409,26 +428,36 @@ mod test_preview_chain {
     }
 
     #[test]
+    fn clap_callback_failures_keep_their_native_error_namespace() {
+        let failure = PreviewFailure::new(vec![String::from("CLAP effect")]);
+        let error = clap_host::ProcessError(0);
+        failure.record(StageFailure {
+            index: 0,
+            error: ProcessError::Clap(error),
+        });
+        assert_eq!(failure.message(), Some(format!("CLAP effect: {error}")));
+    }
+
+    #[test]
     fn reload_reconstructs_an_instance_that_repreparation_cannot_repair() {
         dispatcher()
             .call(
                 |ui| {
                     let module = Module::from_factory(ui, "reload test", audiobatch_test_plugin::factory());
-                    let mut instance = PluginInstance::create(
+                    let instance = Vst3Instance::create(
                         ui,
                         &module,
                         ClassId::from_tuid(&Kind::ReloadRequired.class_id()),
                         Some(dispatcher().clone()),
                     )
                     .expect("instance");
+                    let mut instance = crate::HostInstance::from(instance);
                     prepare_for_preview(ui, &mut instance, RATE, SETUP_BLOCK_FRAMES).expect("prepare");
                     instance.set_parameter(ui, 0, 0.375).expect("gain");
                     instance
                         .set_parameter(ui, audiobatch_test_plugin::RELOAD_TRIGGER_PARAMETER, 1.0)
                         .expect("reload trigger");
-                    let flags = instance.take_restart_flags();
-                    assert!(flags.reload_component() && flags.latency_changed() && flags.io_changed());
-                    assert_eq!(flags.action(), Some(vst3_host::RestartAction::Reload));
+                    assert_eq!(instance.take_restart_action(), Some(vst3_host::RestartAction::Reload));
                     let state = instance.state(ui).expect("capture flushes trigger");
                     prepare_for_preview(ui, &mut instance, 96_000.0, SETUP_BLOCK_FRAMES).expect("lighter reprepare");
                     let mut broken = instance.processor(ui).expect("processor");
@@ -453,7 +482,7 @@ mod test_preview_chain {
                 |ui| {
                     let module = Module::from_factory(ui, "reload failures", audiobatch_test_plugin::factory());
                     let make = || {
-                        PluginInstance::create(ui, &module, ClassId::from_tuid(&Kind::Gain.class_id()), None)
+                        Vst3Instance::create(ui, &module, ClassId::from_tuid(&Kind::Gain.class_id()), None)
                             .expect("gain")
                     };
                     let invalid = PluginState {
@@ -461,12 +490,12 @@ mod test_preview_chain {
                         controller: Vec::new(),
                     };
                     assert!(matches!(
-                        reload_for_preview(ui, make(), &invalid, RATE, SETUP_BLOCK_FRAMES),
-                        Err(InstanceError::RestoreState)
+                        reload_for_preview(ui, make().into(), &invalid.into(), RATE, SETUP_BLOCK_FRAMES),
+                        Err(InstanceError::Vst3(vst3_host::InstanceError::RestoreState))
                     ));
                     assert!(matches!(
-                        reload_for_preview(ui, make(), &gain_state(0.25), 0.0, SETUP_BLOCK_FRAMES),
-                        Err(InstanceError::Setup { .. })
+                        reload_for_preview(ui, make().into(), &gain_state(0.25).into(), 0.0, SETUP_BLOCK_FRAMES),
+                        Err(InstanceError::Vst3(vst3_host::InstanceError::Setup { .. }))
                     ));
                 },
                 &|| false,
@@ -478,7 +507,7 @@ mod test_preview_chain {
     fn setup_failures_keep_the_plugin_name_and_concrete_host_cause() {
         let error = PreviewChainError {
             name: "Effect".to_owned(),
-            source: InstanceError::ActivationBeforeProcessing,
+            source: vst3_host::InstanceError::ActivationBeforeProcessing.into(),
         };
         assert_eq!(
             error.to_string(),
@@ -486,7 +515,9 @@ mod test_preview_chain {
         );
         assert!(matches!(
             error.source().and_then(|source| source.downcast_ref::<InstanceError>()),
-            Some(InstanceError::ActivationBeforeProcessing)
+            Some(InstanceError::Vst3(
+                vst3_host::InstanceError::ActivationBeforeProcessing
+            ))
         ));
     }
 }

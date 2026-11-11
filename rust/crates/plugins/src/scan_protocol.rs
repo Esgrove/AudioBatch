@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::PluginFormat;
 use crate::library::PluginDescription;
 
 /// Command line flag that starts an executable as a scan worker.
@@ -22,6 +23,9 @@ const REPLY_MARKER: &str = "AUDIOBATCH-SCAN-REPLY ";
 pub struct ScanRequest {
     /// Path of the bundle.
     pub bundle: PathBuf,
+    /// Plugin API to load, defaulting to VST3 for legacy requests.
+    #[serde(default)]
+    pub format: PluginFormat,
 }
 
 /// The result of scanning one bundle.
@@ -52,6 +56,19 @@ impl ScanReply {
 #[cfg(test)]
 mod test_scan_protocol {
     use super::*;
+
+    #[test]
+    fn legacy_requests_default_to_vst3_and_clap_requests_round_trip() {
+        let request: ScanRequest = serde_json::from_str(r#"{"bundle":"Effect.vst3"}"#).expect("legacy request");
+        assert_eq!(request.format, PluginFormat::Vst3);
+        let request = ScanRequest {
+            bundle: PathBuf::from("Effects.clap"),
+            format: PluginFormat::Clap,
+        };
+        let text = serde_json::to_string(&request).expect("request JSON");
+        assert_eq!(serde_json::from_str::<ScanRequest>(&text).expect("request"), request);
+        assert!(serde_json::from_str::<ScanRequest>(r#"{"bundle":"Effect.clap","format":"Unknown"}"#).is_err());
+    }
 
     #[test]
     fn reply_round_trips_through_a_line() {

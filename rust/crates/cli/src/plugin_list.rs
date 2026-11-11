@@ -11,8 +11,8 @@ use std::path::Path;
 use anyhow::{Context as _, Result};
 use audiobatch_core::sorting::compare_natural;
 use audiobatch_plugins::{
-    FORMAT_NAME, KnownPlugins, PluginDataPaths, PluginDescription, SCAN_BUSY_MESSAGE, SCAN_TIMEOUT, ScanLock,
-    ScanOptions, ScanReport, WorkerCommand, scan_plugins,
+    KnownPlugins, PluginDataPaths, PluginDescription, SCAN_BUSY_MESSAGE, SCAN_TIMEOUT, ScanLock, ScanOptions,
+    ScanReport, WorkerCommand, scan_plugins,
 };
 use colored::Colorize;
 use unicode_width::UnicodeWidthStr;
@@ -82,7 +82,7 @@ impl Column {
             Self::Name => plugin.name.clone(),
             Self::Manufacturer => manufacturer_label(plugin),
             Self::Type => type_label(plugin),
-            Self::Format => String::from(FORMAT_NAME),
+            Self::Format => plugin.format.to_string(),
             Self::Version => plugin.version.clone(),
         }
     }
@@ -160,7 +160,9 @@ pub fn format_plugin_list(plugins: &[PluginDescription], grouping: PluginGroupin
 /// Sorts plugins by name, then manufacturer, then format, in natural order ignoring case.
 pub fn sort_plugins(plugins: &mut [PluginDescription]) {
     plugins.sort_by(|first, second| {
-        compare_natural(&first.name, &second.name).then_with(|| compare_natural(&first.vendor, &second.vendor))
+        compare_natural(&first.name, &second.name)
+            .then_with(|| compare_natural(&first.vendor, &second.vendor))
+            .then_with(|| compare_natural(&first.format.to_string(), &second.format.to_string()))
     });
 }
 
@@ -172,7 +174,7 @@ fn rescan(lock: &ScanLock, known: &mut KnownPlugins, context: &PluginListContext
         .map(|folder| folder.display().to_string())
         .collect::<Vec<_>>()
         .join(";");
-    write_bold!(log, "Scanning {FORMAT_NAME} plugins in {folder_list}")?;
+    write_bold!(log, "Scanning VST3 and CLAP plugins in {folder_list}")?;
     let options = ScanOptions {
         folders,
         worker: context.worker.clone(),
@@ -363,7 +365,7 @@ fn group_label(plugin: &PluginDescription, grouping: PluginGrouping) -> String {
     match grouping {
         PluginGrouping::Manufacturer => manufacturer_label(plugin),
         PluginGrouping::Type => type_label(plugin),
-        PluginGrouping::Format => String::from(FORMAT_NAME),
+        PluginGrouping::Format => plugin.format.to_string(),
         PluginGrouping::Name => String::new(),
     }
 }
@@ -384,7 +386,8 @@ mod test_plugin_list_format {
             vendor: String::from(vendor),
             version: String::from("1.0.0"),
             category: String::from(category),
-            class_id: ClassId([0; 16]),
+            class_id: ClassId([0; 16]).into(),
+            format: audiobatch_plugins::PluginFormat::Vst3,
             sdk_version: String::from("VST 3.8.0"),
             bundle: PathBuf::from("/Plugins/Test.vst3"),
             bundle_modified_ms: 0,
@@ -472,6 +475,25 @@ Unknown (1)
     }
 
     #[test]
+    fn mixed_formats_are_reported_and_grouped_by_their_actual_api() {
+        let vst3 = plugin("Equal", "Studio", "Fx|EQ");
+        let mut clap = vst3.clone();
+        clap.format = audiobatch_plugins::PluginFormat::Clap;
+        clap.class_id = audiobatch_plugins::PluginId::Clap(vst3.class_id.to_string());
+        clap.bundle = PathBuf::from("/Plugins/Test.clap");
+        let plugins = vec![vst3, clap];
+        let table = listing(plugins.clone(), PluginGrouping::Name);
+        let rows: Vec<_> = table.lines().skip(1).collect();
+        assert!(rows.first().expect("CLAP row").contains("CLAP"), "{table}");
+        assert!(rows.get(1).expect("VST3 row").contains("VST3"), "{table}");
+        let groups = listing(plugins, PluginGrouping::Format);
+        assert_eq!(
+            groups,
+            "CLAP (1)\n  Equal  Studio  EQ  1.0.0\n\nVST3 (1)\n  Equal  Studio  EQ  1.0.0\n"
+        );
+    }
+
+    #[test]
     fn type_and_format_groups_leave_out_their_column() {
         let plugins = vec![plugin("Comp", "Studio", "Fx|Dynamics"), plugin("EQ", "Acme", "Fx|EQ")];
         let by_type = listing(plugins.clone(), PluginGrouping::Type);
@@ -544,7 +566,8 @@ mod test_run_plugin_list {
             vendor: String::from("Studio"),
             version: String::from("2.1"),
             category: String::from("Fx|EQ"),
-            class_id: vst3_host::ClassId([0; 16]),
+            class_id: vst3_host::ClassId([0; 16]).into(),
+            format: audiobatch_plugins::PluginFormat::Vst3,
             sdk_version: String::new(),
             bundle: PathBuf::from("/Plugins/Saved.vst3"),
             bundle_modified_ms: 0,
@@ -596,7 +619,7 @@ mod test_run_plugin_list {
         } = setup.run(true);
         assert_eq!(code, EXIT_SUCCESS);
         assert!(
-            log.contains(&format!("Scanning VST3 plugins in {}", folder.display())),
+            log.contains(&format!("Scanning VST3 and CLAP plugins in {}", folder.display())),
             "{log}"
         );
         let saved = KnownPlugins::load_from(&setup.context.data_paths.known_plugins).expect("loads");

@@ -55,7 +55,7 @@ pub enum CliCommand {
     /// Render audio through a saved plugin chain as 16-bit AIFF
     Process(ProcessArgs),
 
-    /// List the available VST3 plugins
+    /// List the available VST3 and CLAP plugins
     #[command(name = "list")]
     List(PluginListing),
 

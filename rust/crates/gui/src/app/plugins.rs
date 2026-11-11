@@ -19,12 +19,12 @@ use std::time::Duration;
 use anyhow::Context as _;
 use audiobatch_core::format::format_kilohertz;
 use audiobatch_playback::Player;
-use audiobatch_plugins::{KnownPlugins, PluginDescription, ScanLock, ScanOptions, ScanReport, scan_plugins};
+use audiobatch_plugins::{HostError, KnownPlugins, PluginDescription, ScanLock, ScanOptions, ScanReport, scan_plugins};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, PathPromptOptions, Subscription, Task,
     TitlebarOptions, WeakEntity, WindowBounds, WindowOptions, px, size,
 };
-use vst3_host::{InstanceError, UiThread};
+use vst3_host::UiThread;
 
 use super::AppView;
 use crate::files::open_folder;
@@ -33,7 +33,7 @@ use crate::plugins::chain_window::{
     CHAIN_HEIGHT, CHAIN_TITLE, CHAIN_WIDTH, ChainEvent, ChainRow, ChainSnapshot, ChainView,
 };
 use crate::plugins::labels::{group_by_vendor, latency_text, plugin_label, slot_label};
-use crate::plugins::live_chain::{LiveSlot, SlotId};
+use crate::plugins::live_chain::{LiveChain, LiveSlot, SlotId};
 use crate::plugins::manager_window::{
     MANAGER_HEIGHT, MANAGER_TITLE, MANAGER_WIDTH, ManagerEvent, ManagerSnapshot, ManagerView,
 };
@@ -79,6 +79,12 @@ struct CompletedScan {
 }
 
 impl<V: 'static> PluginWindow<V> {
+    /// Returns the production window handle for driven in-process workflows.
+    #[cfg(test)]
+    pub(super) const fn handle(&self) -> AnyWindowHandle {
+        self.handle
+    }
+
     /// Returns true when the window was closed.
     fn is_closed(&self) -> bool {
         self.view.upgrade().is_none()
@@ -152,7 +158,11 @@ impl AppView {
             .known
             .plugins
             .iter()
-            .find(|plugin| plugin.bundle == bundle && plugin.class_id.to_string() == action.class_id.as_ref())
+            .find(|plugin| {
+                plugin.bundle == bundle
+                    && plugin.format == action.format
+                    && plugin.class_id.to_string() == action.class_id.as_ref()
+            })
             .cloned();
         match plugin {
             Some(plugin) => self.add_plugin(plugin, cx),
@@ -289,6 +299,7 @@ impl AppView {
         let Some(ui) = UiThread::current() else {
             return;
         };
+        LiveChain::service_callbacks(&ui);
         let prepared = self.sync_plugin_preview(&ui, cx);
         let was_modified = self.plugins.chain.is_modified();
         let newly_modified = self.plugins.chain.take_settings_changes() && !was_modified;
@@ -419,7 +430,15 @@ impl AppView {
     /// Saves the chain after a change to its structure, shows it in the menus and the windows,
     /// and gives the preview the new chain.
     fn chain_changed(&mut self, cx: &mut Context<Self>) {
-        self.save_chain_settings(cx);
+        let Some(ui) = UiThread::current() else {
+            return;
+        };
+        // Capture must not reattach an intermediate chain before the structural refresh below.
+        self.detach_plugin_preview();
+        match self.plugins.chain.capture_states(&ui) {
+            Ok(()) => self.save_captured_chain(cx),
+            Err(error) => self.report_status(format!("Could not save plugin settings: {error:#}"), cx),
+        }
         self.refresh_plugin_preview(cx);
     }
 
@@ -453,10 +472,19 @@ impl AppView {
                 self.plugins.pending_editor_capture = None;
                 self.save_captured_chain(cx);
             }
-            Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) && attempts > 1 => {
+            Err(error)
+                if error
+                    .downcast_ref::<HostError>()
+                    .is_some_and(HostError::is_edits_pending)
+                    && attempts > 1 =>
+            {
                 self.plugins.pending_editor_capture = Some(attempts - 1);
             }
-            Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) => {
+            Err(error)
+                if error
+                    .downcast_ref::<HostError>()
+                    .is_some_and(HostError::is_edits_pending) =>
+            {
                 self.plugins.pending_editor_capture = None;
                 self.save_chain_settings(cx);
             }

@@ -97,6 +97,7 @@ pub fn run_process(
         });
         while !handle.is_finished() {
             jobs.drain_pending(&ui);
+            audiobatch_plugins::service_plugin_callbacks(&ui);
             pump_platform_events(&ui, EVENT_INTERVAL);
         }
         let result = handle.join().map_err(|_| anyhow::anyhow!("Processing worker failed"))?;
@@ -104,6 +105,7 @@ pub fn run_process(
         result
     });
     jobs.drain_pending(&ui);
+    audiobatch_plugins::service_plugin_callbacks(&ui);
     if is_interrupted() && result.is_err() {
         return Ok(EXIT_INTERRUPTED);
     }
@@ -241,7 +243,8 @@ mod test_process_preset {
             vendor: "Vendor".to_owned(),
             version: "1.0".to_owned(),
             category: "Fx".to_owned(),
-            class_id: vst3_host::ClassId([7; 16]),
+            class_id: vst3_host::ClassId([7; 16]).into(),
+            format: audiobatch_plugins::PluginFormat::Vst3,
             sdk_version: "VST 3.8.0".to_owned(),
             bundle: PathBuf::from("/plugins/Effect.vst3"),
             bundle_modified_ms: 0,

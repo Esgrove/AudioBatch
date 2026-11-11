@@ -17,7 +17,7 @@ anyhow.workspace = true
 async-channel.workspace = true
 audiobatch-core.workspace = true
 audiobatch-playback.workspace = true
-audiobatch-plugins.workspace = true
+audiobatch-plugins = { workspace = true, features = ["editor"] }
 crossbeam-channel.workspace = true
 gpui-kit.workspace = true
 gpui-pre = { workspace = true, optional = true }
@@ -31,6 +31,7 @@ trash.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }
 
 [dev-dependencies]
+audiobatch-test-clap-plugin.workspace = true
 audiobatch-test-plugin.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

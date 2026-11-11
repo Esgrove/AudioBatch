@@ -36,6 +36,7 @@ vst3-host.workspace = true
 build-info.workspace = true
 
 [dev-dependencies]
+audiobatch-test-clap-plugin.workspace = true
 audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
 test-fixtures.workspace = true

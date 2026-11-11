@@ -113,7 +113,7 @@ fn plugin_slot(bundle: &Path, parameters: Option<Parameters>) -> ChainSlot {
                 if let Some(parameters) = parameters {
                     let state =
                         configured_state(ui, &module, class.id, parameters).map_err(|error| format!("{error:#}"))?;
-                    slot.set_state(state);
+                    slot.set_state(state).expect("matching VST3 state");
                 }
                 Ok::<_, String>(slot)
             },

@@ -16,8 +16,9 @@ use std::time::{Duration, Instant};
 use audiobatch_core::AnalysisRecord;
 use audiobatch_core::record::file_identity;
 use audiobatch_playback::Player;
+use audiobatch_plugins::HostError;
 use gpui_kit::Context;
-use vst3_host::{InstanceError, UiThread};
+use vst3_host::UiThread;
 
 use super::AppView;
 use crate::plugins::preview::ChainInsert;
@@ -171,9 +172,13 @@ impl AppView {
             return;
         };
         player.set_latency_compensation(self.settings.compensate_preview_latency);
+        self.plugins.preview.detached();
         let chain = if self.settings.preview_plugin_chain && self.plugins.chain.sample_rate() == player.output_rate() {
-            self.plugins.chain.preview_chain(&ui)
+            self.plugins
+                .chain
+                .replace_preview_chain(&ui, || retire_player_insert(player))
         } else {
+            retire_player_insert(player);
             Ok(None)
         };
         match chain {
@@ -188,12 +193,7 @@ impl AppView {
                     }
                 }
             }
-            Ok(None) => {
-                if self.plugins.preview.is_attached() {
-                    let _ = player.set_insert(None);
-                }
-                self.plugins.preview.detached();
-            }
+            Ok(None) => {}
             Err(error) => self.turn_plugin_preview_off(error.to_string(), cx),
         }
     }
@@ -207,12 +207,7 @@ impl AppView {
         let Some(player) = &mut self.player else {
             return;
         };
-        let _ = player.set_insert(None);
-        let deadline = Instant::now() + DETACH_TIMEOUT;
-        while !player.is_insert_settled() && Instant::now() < deadline {
-            thread::sleep(DETACH_POLL_INTERVAL);
-        }
-        drop(player.take_retired_inserts());
+        retire_player_insert(player);
     }
 
     /// Captures the settings of the live instances into the chain.
@@ -239,7 +234,11 @@ impl AppView {
         let deadline = Instant::now() + LIVE_CAPTURE_TIMEOUT;
         loop {
             match self.plugins.chain.capture_states_live(&ui) {
-                Err(error) if matches!(error.downcast_ref(), Some(InstanceError::EditsPending)) => {
+                Err(error)
+                    if error
+                        .downcast_ref::<HostError>()
+                        .is_some_and(HostError::is_edits_pending) =>
+                {
                     if Instant::now() >= deadline {
                         return self.capture_plugin_states(cx);
                     }
@@ -256,6 +255,17 @@ impl AppView {
     /// and drops the chains the audio callback let go of.
     /// Returns true when instances were prepared again.
     pub(super) fn sync_plugin_preview(&mut self, ui: &UiThread, cx: &mut Context<Self>) -> bool {
+        // A paused stream does not call the insert. Retire its lease before servicing CLAP audio requests.
+        if self.player.as_ref().is_none_or(|player| !player.is_playing()) && self.plugins.chain.needs_idle_service() {
+            let attached = self.plugins.preview.is_attached();
+            self.detach_plugin_preview();
+            if let Err(error) = self.plugins.chain.service_idle(ui) {
+                self.report_status(format!("Could not update plugin settings: {error:#}"), cx);
+            }
+            if attached {
+                self.refresh_plugin_preview(cx);
+            }
+        }
         let sample_rate = self.preview_sample_rate();
         let rate_changed = sample_rate != self.plugins.chain.sample_rate();
         let restarts = self.plugins.chain.take_restart_requests();
@@ -293,6 +303,17 @@ impl AppView {
         self.apply_settings(settings, cx);
         self.report_status(message, cx);
     }
+}
+
+/// Returns callback ownership before another chain can lease the same native processors.
+/// Playback transport stays running, and the player's normal insert transition resets the replacement.
+fn retire_player_insert(player: &mut Player) {
+    let _ = player.set_insert(None);
+    let deadline = Instant::now() + DETACH_TIMEOUT;
+    while !player.is_insert_settled() && Instant::now() < deadline {
+        thread::sleep(DETACH_POLL_INTERVAL);
+    }
+    drop(player.take_retired_inserts());
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //! and the known effects grouped by vendor.
 
 use audiobatch_core::sorting::compare_natural;
-use audiobatch_plugins::{FORMAT_NAME, PluginDescription};
+use audiobatch_plugins::PluginDescription;
 
 /// Vendor group of the plugins that report no vendor.
 pub const UNKNOWN_VENDOR: &str = "Unknown Vendor";
@@ -23,9 +23,9 @@ pub struct VendorGroup {
 #[must_use]
 pub fn plugin_label(plugin: &PluginDescription) -> String {
     if plugin.vendor.is_empty() {
-        format!("{} ({FORMAT_NAME})", plugin.name)
+        format!("{} ({})", plugin.name, plugin.format)
     } else {
-        format!("{} {} ({FORMAT_NAME})", plugin.vendor, plugin.name)
+        format!("{} {} ({})", plugin.vendor, plugin.name, plugin.format)
     }
 }
 
@@ -79,6 +79,7 @@ pub fn group_by_vendor(plugins: &[PluginDescription]) -> Vec<VendorGroup> {
     effects.sort_by(|first, second| {
         compare_natural(vendor_name(first), vendor_name(second))
             .then_with(|| compare_natural(&first.name, &second.name))
+            .then_with(|| compare_natural(&first.format.to_string(), &second.format.to_string()))
     });
     let mut groups: Vec<VendorGroup> = Vec::new();
     for plugin in effects {
@@ -113,6 +114,11 @@ mod test_labels {
         assert_eq!(plugin_label(&plugin("Acme", "Delay")), "Acme Delay (VST3)");
         assert_eq!(plugin_label(&plugin("", "Delay")), "Delay (VST3)");
         assert_eq!(slot_label(2, &plugin("Acme", "Delay")), "2. Acme Delay (VST3)");
+        let mut clap = plugin("Acme", "Delay");
+        clap.format = audiobatch_plugins::PluginFormat::Clap;
+        clap.class_id = audiobatch_plugins::PluginId::Clap("com.acme.delay".to_owned());
+        assert_eq!(plugin_label(&clap), "Acme Delay (CLAP)");
+        assert_eq!(slot_label(2, &clap), "2. Acme Delay (CLAP)");
     }
 
     #[test]

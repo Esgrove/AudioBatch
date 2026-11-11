@@ -49,7 +49,7 @@ pub struct NativeFixture {
     /// Kept alive through synchronous insert disposal and final instance teardown.
     dispatcher: UiDispatcher,
     /// Only accessed through the UI thread token, even when the fixture lives on the control thread.
-    instance: UiBound<PluginInstance>,
+    instance: UiBound<audiobatch_plugins::HostInstance>,
     /// Read only after processing, since native process failures can otherwise appear as finite silence.
     failure: Arc<PreviewFailure>,
     /// Canonical build-tree path for benchmark provenance.
@@ -100,7 +100,12 @@ impl NativeFixture {
                         .iter()
                         .find(|class| class.is_audio_effect() && class.name == PLUGIN_NAME)
                         .context("Native callback bundle does not contain AudioBatch Test MS")?;
-                    let mut instance = PluginInstance::create(ui, &module, class.id, Some(setup_dispatcher.clone()))?;
+                    let mut instance = audiobatch_plugins::HostInstance::from(PluginInstance::create(
+                        ui,
+                        &module,
+                        class.id,
+                        Some(setup_dispatcher.clone()),
+                    )?);
                     prepare_for_preview(ui, &mut instance, f64::from(sample_rate), block_frames)?;
                     instance.set_parameter(ui, GAIN_PARAMETER, NORMALIZED_GAIN)?;
                     instance.set_parameter(ui, WIDTH_PARAMETER, NORMALIZED_WIDTH)?;

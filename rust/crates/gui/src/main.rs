@@ -12,7 +12,7 @@
 //! The executable also serves as the plugin scan worker,
 //! so a plugin that crashes while it is scanned takes down only the worker process.
 //! The worker flag is checked before anything else starts.
-//! The main thread is the VST3 UI thread, and a foreground task runs the plugin jobs other threads send to it.
+//! The main thread is the plugin UI thread, and a foreground task runs the plugin jobs other threads send to it.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
@@ -180,7 +180,7 @@ fn main() {
     tracing::info!("Quit");
 }
 
-/// Registers the main thread as the VST3 UI thread,
+/// Registers the main thread as the plugin UI thread,
 /// and runs the plugin jobs that other threads send to it on the foreground executor for the life of the app.
 /// Returns the dispatcher that sends those jobs.
 ///

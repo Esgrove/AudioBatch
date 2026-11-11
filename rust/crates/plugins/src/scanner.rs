@@ -1,7 +1,7 @@
-//! Scanning folders for VST3 plugins without loading plugin code in this process.
+//! Scanning folders for VST3 and CLAP plugins without loading plugin code in this process.
 //!
 //! Bundles that are unchanged since the last scan, and blacklisted ones, are skipped.
-//! A bundle with a `moduleinfo.json` file is described from that file.
+//! A VST3 bundle with a `moduleinfo.json` file is described from that file.
 //! Every other bundle is loaded by a worker process, which is this executable started with `WORKER_FLAG`.
 //! One worker serves the whole scan and is started again after it crashes or hangs.
 //! A crash blacklists the bundle, so later scans skip it.
@@ -21,8 +21,9 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
-use vst3_host::{find_bundles, read_module_info};
+use vst3_host::read_module_info;
 
+use crate::identity::PluginFormat;
 use crate::library::{KnownPlugins, PluginDescription, bundle_modified_ms};
 use crate::scan_protocol::{ScanReply, ScanRequest, WORKER_FLAG};
 
@@ -342,9 +343,10 @@ impl WorkerProcess {
     }
 
     /// Sends a request. Returns false when the worker no longer reads requests.
-    fn send(&mut self, bundle: &Path) -> bool {
+    fn send(&mut self, bundle: &Path, format: PluginFormat) -> bool {
         let request = ScanRequest {
             bundle: bundle.to_path_buf(),
+            format,
         };
         let Ok(line) = serde_json::to_string(&request) else {
             return false;
@@ -408,7 +410,7 @@ pub fn scan_plugins(
         }
         None => None,
     };
-    let bundles = find_bundles(&options.folders);
+    let bundles = discover_bundles(&options.folders);
     let mut worker: Option<WorkerProcess> = None;
     for (index, bundle) in bundles.iter().enumerate() {
         if is_cancelled() {
@@ -426,11 +428,19 @@ pub fn scan_plugins(
             total: bundles.len(),
             bundle,
         });
+        let format = if vst3_host::is_bundle_path(bundle) {
+            PluginFormat::Vst3
+        } else {
+            PluginFormat::Clap
+        };
         let modified = bundle_modified_ms(bundle);
-        if known.is_blacklisted(bundle) || is_up_to_date(known, bundle, modified) {
+        if known.is_blacklisted(bundle) || is_up_to_date(known, bundle, format, modified) {
             continue;
         }
-        if let Some(classes) = read_module_info(bundle) {
+        if let Some(classes) = (format == PluginFormat::Vst3)
+            .then(|| read_module_info(bundle))
+            .flatten()
+        {
             let plugins: Vec<PluginDescription> = classes
                 .iter()
                 .filter(|class| class.is_audio_effect())
@@ -442,25 +452,10 @@ pub fn scan_plugins(
             apply_results(known, &mut report, bundle, plugins);
             continue;
         }
-        let outcome = scan_in_worker(&mut worker, options, log.as_ref(), bundle, is_cancelled)?;
+        let outcome = scan_in_worker(&mut worker, options, log.as_ref(), bundle, format, is_cancelled)?;
         match outcome {
             WorkerOutcome::Reply(reply) => {
-                let plugins: Vec<PluginDescription> = reply
-                    .plugins
-                    .into_iter()
-                    .map(|mut plugin| {
-                        plugin.bundle.clone_from(bundle);
-                        plugin.bundle_modified_ms = modified;
-                        plugin
-                    })
-                    .collect();
-                if plugins.is_empty() {
-                    match reply.error {
-                        Some(error) => report.failed.push((bundle.clone(), error)),
-                        None => report.no_plugins.push(bundle.clone()),
-                    }
-                }
-                apply_results(known, &mut report, bundle, plugins);
+                apply_worker_reply(known, &mut report, bundle, format, modified, reply);
             }
             WorkerOutcome::Crashed => {
                 worker = None;
@@ -486,10 +481,68 @@ pub fn scan_plugins(
     Ok(report)
 }
 
+/// Combines filesystem discovery without treating files inside either format's package as separate bundles.
+fn discover_bundles(folders: &[PathBuf]) -> Vec<PathBuf> {
+    let mut bundles = vst3_host::find_bundles(folders);
+    bundles.extend(clap_host::discovery::find_bundles(folders));
+    bundles.retain(|bundle| {
+        !bundle
+            .ancestors()
+            .skip(1)
+            .any(|parent| vst3_host::is_bundle_path(parent) || clap_host::discovery::is_clap_bundle(parent))
+    });
+    bundles.sort();
+    bundles.dedup();
+    bundles
+}
+
+/// Applies validated worker descriptions while keeping the requested path and namespace authoritative.
+fn apply_worker_reply(
+    known: &mut KnownPlugins,
+    report: &mut ScanReport,
+    bundle: &Path,
+    format: PluginFormat,
+    modified: i64,
+    reply: ScanReply,
+) {
+    if reply
+        .plugins
+        .iter()
+        .any(|plugin| plugin.format != format || plugin.class_id.validate_format(format).is_err())
+    {
+        report.failed.push((
+            bundle.to_path_buf(),
+            format!("The plugin scan worker returned an identity with the wrong format for {format}"),
+        ));
+        return;
+    }
+    let plugins: Vec<PluginDescription> = reply
+        .plugins
+        .into_iter()
+        .map(|mut plugin| {
+            plugin.bundle = bundle.to_path_buf();
+            plugin.bundle_modified_ms = modified;
+            plugin
+        })
+        .collect();
+    if plugins.is_empty() {
+        match reply.error {
+            Some(error) => report.failed.push((bundle.to_path_buf(), error)),
+            None => report.no_plugins.push(bundle.to_path_buf()),
+        }
+    }
+    apply_results(known, report, bundle, plugins);
+}
+
 /// Returns true when the known plugins of a bundle were scanned from the bundle as it is now.
-fn is_up_to_date(known: &KnownPlugins, bundle: &Path, modified: i64) -> bool {
+fn is_up_to_date(known: &KnownPlugins, bundle: &Path, format: PluginFormat, modified: i64) -> bool {
     let mut plugins = known.plugins.iter().filter(|plugin| plugin.bundle == bundle).peekable();
-    plugins.peek().is_some() && plugins.all(|plugin| plugin.bundle_modified_ms == modified)
+    plugins.peek().is_some()
+        && plugins.all(|plugin| {
+            plugin.bundle_modified_ms == modified
+                && plugin.format == format
+                && plugin.class_id.validate_format(format).is_ok()
+        })
 }
 
 /// Sends a bundle to the worker, starting one when none runs, and waits for the outcome.
@@ -498,6 +551,7 @@ fn scan_in_worker(
     options: &ScanOptions,
     log: Option<&File>,
     bundle: &Path,
+    format: PluginFormat,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<WorkerOutcome, ScanError> {
     let mut sent = false;
@@ -506,7 +560,7 @@ fn scan_in_worker(
             Some(process) => process,
             None => worker.insert(WorkerProcess::start(&options.worker, log)?),
         };
-        if process.send(bundle) {
+        if process.send(bundle, format) {
             sent = true;
             break;
         }
@@ -691,6 +745,17 @@ mod test_scanner {
     }
 
     #[test]
+    fn discovery_keeps_both_formats_without_scanning_package_internals() {
+        let directory = tempfile::tempdir().expect("temporary plugin folder");
+        let vst3 = directory.path().join("Effect.vst3");
+        let clap = directory.path().join("Effect.CLAP");
+        std::fs::create_dir_all(vst3.join("Contents/Embedded.clap")).expect("VST3 package");
+        std::fs::create_dir_all(clap.join("Contents/Embedded.vst3")).expect("CLAP package");
+        let roots = vec![directory.path().to_path_buf(), vst3.clone(), clap.clone()];
+        assert_eq!(discover_bundles(&roots), vec![clap, vst3]);
+    }
+
+    #[test]
     fn finds_every_plugin_and_skips_unchanged_bundles() {
         let setup = Setup::new();
         let mut known = KnownPlugins::default();
@@ -728,6 +793,117 @@ mod test_scanner {
         assert_eq!(known.plugins, Vec::new());
         let report = setup.scan(&mut known, &[]);
         assert_eq!(report.added, Vec::new());
+    }
+
+    #[test]
+    fn finds_clap_descriptors_and_skips_unchanged_bundles() {
+        let setup = Setup::new();
+        let clap_bundle =
+            audiobatch_test_clap_plugin::create_bundle(&setup.folder, "ClapEffects").expect("CLAP test plugin bundle");
+        let mut known = KnownPlugins::default();
+        let report = setup.scan(&mut known, &[]);
+        let clap_plugins: Vec<_> = report
+            .added
+            .iter()
+            .filter(|plugin| plugin.bundle == clap_bundle)
+            .collect();
+        assert_ne!(clap_plugins, Vec::<&PluginDescription>::new());
+        let effect = clap_plugins
+            .iter()
+            .find(|plugin| plugin.class_id.clap() == audiobatch_test_clap_plugin::PLUGIN_ID.to_str().ok())
+            .expect("CLAP effect descriptor");
+        assert_eq!(effect.name, "AudioBatch Test MS CLAP");
+        assert_eq!(effect.vendor, "AudioBatch Tests");
+        assert_eq!(effect.format, PluginFormat::Clap);
+        assert_eq!(effect.class_id.vst3(), None);
+        assert_eq!(effect.main_input_channels, Some(2));
+        assert_eq!(effect.main_output_channels, Some(2));
+        assert!(report.crashed.is_empty() && report.failed.is_empty());
+        let report = setup.scan(&mut known, &[]);
+        assert_eq!(report, ScanReport::default());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clap_worker_crash_is_isolated_and_the_next_bundle_is_scanned() {
+        let setup = Setup::new();
+        std::fs::remove_dir_all(&setup.bundle).expect("VST3 fixture removed");
+        let crashing = setup.folder.join("A-Crash.clap");
+        let next = setup.folder.join("B-Next.clap");
+        std::fs::write(&crashing, b"fixture selected by fake worker").expect("crashing fixture");
+        std::fs::write(&next, b"fixture selected by fake worker").expect("next fixture");
+        let mut known = KnownPlugins::default();
+        let report = setup.scan_with_script(&mut known, r#"
+case "$request" in
+    *A-Crash.clap*) exit 1 ;;
+esac
+printf 'AUDIOBATCH-SCAN-REPLY {"plugins":[{"name":"Next","class_id":"org.example.next","format":"CLAP","bundle":"ignored.clap"}]}\n'
+exec cat > /dev/null"#);
+        assert_eq!(report.crashed, vec![crashing.clone()]);
+        assert_eq!(known.blacklist, vec![crashing]);
+        assert_eq!(report.added.len(), 1);
+        assert_eq!(known.plugins.len(), 1);
+        let effect = known.plugins.first().expect("surviving CLAP effect");
+        assert_eq!(effect.bundle, next);
+        assert_eq!(effect.class_id.clap(), Some("org.example.next"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clap_bundle_ignores_vst3_module_info_and_keeps_all_factory_ids() {
+        let setup = Setup::new();
+        std::fs::remove_dir_all(&setup.bundle).expect("VST3 fixture removed");
+        let bundle = setup.folder.join("Factory.clap");
+        let resources = bundle.join("Contents/Resources");
+        std::fs::create_dir_all(&resources).expect("CLAP fixture resources");
+        std::fs::write(
+            resources.join("moduleinfo.json"),
+            r#"{
+            "Classes":[{"CID":"07070707070707070707070707070707","Category":"Audio Module Class","Name":"Wrong"}]
+        }"#,
+        )
+        .expect("VST3 metadata decoy");
+        let mut known = KnownPlugins::default();
+        let report = setup.scan_with_script(&mut known, r#"
+case "$request" in
+    *'"format":"CLAP"'*) ;;
+    *) exit 1 ;;
+esac
+printf 'AUDIOBATCH-SCAN-REPLY {"plugins":[{"name":"One","class_id":"07070707070707070707070707070707","format":"CLAP","bundle":"ignored"},{"name":"Two","class_id":"org.example.two","format":"CLAP","bundle":"ignored"}]}\n'
+exec cat > /dev/null"#);
+        assert_eq!(report.added.len(), 2);
+        assert!(report.crashed.is_empty() && report.failed.is_empty());
+        assert!(
+            known
+                .plugins
+                .iter()
+                .all(|plugin| plugin.format == PluginFormat::Clap && plugin.bundle == bundle)
+        );
+        assert!(
+            known
+                .plugins
+                .iter()
+                .any(|plugin| plugin.class_id.clap() == Some("07070707070707070707070707070707"))
+        );
+        assert!(
+            known
+                .plugins
+                .iter()
+                .any(|plugin| plugin.class_id.clap() == Some("org.example.two"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_reply_cannot_change_the_requested_format() {
+        let setup = Setup::new();
+        let mut known = KnownPlugins::default();
+        let report = setup.scan_with_script(&mut known, r#"
+printf 'AUDIOBATCH-SCAN-REPLY {"plugins":[{"name":"Wrong","class_id":"org.example.effect","format":"CLAP","bundle":"ignored"}]}\n'
+exec cat > /dev/null"#);
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(known.plugins, Vec::<PluginDescription>::new());
+        assert_eq!(known.blacklist, Vec::<PathBuf>::new());
     }
 
     #[test]

@@ -23,13 +23,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use audiobatch_plugins::{
-    ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames, prepare_for_preview, reload_for_preview,
+    ChainSlot, HostEditor, HostError, HostInstance, HostState, PluginChain, PluginDescription, PreviewChain,
+    chain_tail_frames, prepare_for_preview, reload_for_preview,
 };
 use raw_window_handle::RawWindowHandle;
-use vst3_host::{
-    EditorWindow, InstanceError, Module, PluginInstance, PluginState, RestartAction, UiDispatcher, UiThread,
-    WindowPosition,
-};
+use vst3_host::{RestartAction, UiDispatcher, UiThread, WindowPosition};
 
 /// Most frames the preview passes to the live instances in one call.
 pub const PREVIEW_BLOCK_FRAMES: usize = 1024;
@@ -55,12 +53,12 @@ pub struct LiveSlot {
     slot: ChainSlot,
     /// The window showing the plugin's editor.
     /// It comes before the instance, so it is destroyed first when the slot is dropped.
-    editor: Option<EditorWindow>,
+    editor: Option<HostEditor>,
     /// Where the editor window was when it last closed, so it reopens there.
     /// Kept only while the application runs.
     editor_position: Option<WindowPosition>,
     /// The live instance, missing when the plugin could not be loaded.
-    instance: Option<PluginInstance>,
+    instance: Option<HostInstance>,
     /// Latency of the prepared instance, in samples.
     latency_samples: u32,
     /// Why the plugin could not be loaded or prepared.
@@ -113,7 +111,7 @@ struct SavedChainData {
 
 /// Loaded plugin instance and whether it accepted the slot's saved settings.
 struct LoadedInstance {
-    instance: PluginInstance,
+    instance: HostInstance,
     accepted: bool,
 }
 
@@ -207,7 +205,7 @@ impl LiveSlot {
 
     /// Returns and clears whether the plugin reported a change to its settings since this was last called.
     fn take_settings_change(&self) -> bool {
-        self.instance.as_ref().is_some_and(PluginInstance::take_dirty)
+        self.instance.as_ref().is_some_and(HostInstance::take_dirty)
     }
 
     /// Captures complete settings, leaving the previous saved state unchanged on delivery failure.
@@ -218,7 +216,7 @@ impl LiveSlot {
             let state = instance
                 .state(ui)
                 .with_context(|| format!("{}: Could not capture settings", self.slot.plugin.name))?;
-            self.slot.set_state(state);
+            self.slot.set_state(state)?;
         }
         Ok(())
     }
@@ -448,14 +446,40 @@ impl LiveChain {
         self.modified = false;
     }
 
+    /// Delivers deferred native main-thread callbacks before reading restart requests or settings changes.
+    pub fn service_callbacks(ui: &UiThread) {
+        // Also services retired CLAP instances after the final live slot was removed.
+        audiobatch_plugins::service_plugin_callbacks(ui);
+    }
+
+    /// Whether a CLAP instance requested processing or parameter delivery while playback is idle.
+    #[must_use]
+    pub fn needs_idle_service(&self) -> bool {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.instance.as_ref())
+            .any(HostInstance::needs_idle_service)
+    }
+
+    /// Services pending CLAP audio work only after the owner retired the playback insert.
+    ///
+    /// # Errors
+    /// Returns the first plugin failure, preserving requests for subsequent retry.
+    pub fn service_idle(&self, ui: &UiThread) -> Result<()> {
+        for slot in &self.slots {
+            if let Some(instance) = &slot.instance {
+                instance
+                    .service_idle(ui)
+                    .with_context(|| format!("{}: Could not service pending plugin edits", slot.slot.plugin.name))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Collects typed requests without forgetting work while processors are still being retired.
     pub fn take_restart_requests(&mut self) -> Vec<SlotRestart> {
         for slot in &mut self.slots {
-            if let Some(action) = slot
-                .instance
-                .as_ref()
-                .and_then(|instance| instance.take_restart_flags().action())
-            {
+            if let Some(action) = slot.instance.as_ref().and_then(HostInstance::take_restart_action) {
                 slot.pending_restart = Some(match (slot.pending_restart, action) {
                     (Some(RestartAction::Reload), _) | (_, RestartAction::Reload) => RestartAction::Reload,
                     _ => RestartAction::Reconfigure,
@@ -497,11 +521,7 @@ impl LiveChain {
             if !rate_changed && action.is_none() {
                 continue;
             }
-            if slot
-                .instance
-                .as_ref()
-                .is_some_and(PluginInstance::has_processor_handles)
-            {
+            if slot.instance.as_ref().is_some_and(HostInstance::has_processor_handles) {
                 slot.pending_restart = Some(action.unwrap_or(RestartAction::Reconfigure));
                 first_error
                     .get_or_insert_with(|| anyhow::anyhow!("{}: The plugin is still in use", slot.slot.plugin.name));
@@ -542,7 +562,7 @@ impl LiveChain {
                     continue;
                 }
                 if reopen && let Some(instance) = &slot.instance {
-                    match EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner, slot.editor_position) {
+                    match HostEditor::open(ui, instance, &slot.slot.plugin.name, owner, slot.editor_position) {
                         Ok(editor) => slot.editor = Some(editor),
                         Err(error) => {
                             first_error.get_or_insert_with(|| anyhow::Error::from(error));
@@ -586,6 +606,17 @@ impl LiveChain {
         Ok(Some(PreviewChain::new(ui, &plugins)?))
     }
 
+    /// Retires the owner's previous insert before leasing the processors for its replacement.
+    /// The retirement callback must wait for audio ownership to return and drop every retired insert.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first enabled slot's loading, preparation, or processor acquisition failure.
+    pub fn replace_preview_chain(&self, ui: &UiThread, retire: impl FnOnce()) -> Result<Option<PreviewChain>> {
+        retire();
+        self.preview_chain(ui)
+    }
+
     /// Returns the sum of the tails the enabled, prepared instances report now, each limited, in frames.
     #[must_use]
     pub fn preview_tail_frames(&self, ui: &UiThread) -> usize {
@@ -613,7 +644,7 @@ impl LiveChain {
     /// # Errors
     ///
     /// Returns an error without changing saved slots when any instance cannot be captured.
-    /// The error wraps `InstanceError::EditsPending` while a live processor has not yet received every edit,
+    /// The error wraps `HostError` with pending edits while a live processor has not yet received every edit,
     /// and the caller tries again after the next audio blocks.
     pub fn capture_states_live(&mut self, ui: &UiThread) -> Result<()> {
         self.publish_states(|instance| instance.live_state(ui))
@@ -642,7 +673,7 @@ impl LiveChain {
         let Some(instance) = slot.instance.as_ref() else {
             anyhow::bail!("{}", slot.error.as_deref().unwrap_or("The plugin is not loaded"));
         };
-        slot.editor = Some(EditorWindow::open(
+        slot.editor = Some(HostEditor::open(
             ui,
             instance,
             &slot.slot.plugin.name,
@@ -659,7 +690,7 @@ impl LiveChain {
     pub fn reap_closed_editors(&mut self, _ui: &UiThread) -> bool {
         let mut reaped = false;
         for slot in &mut self.slots {
-            if slot.editor.as_ref().is_some_and(EditorWindow::is_closed) {
+            if slot.editor.as_ref().is_some_and(HostEditor::is_closed) {
                 slot.close_editor();
                 reaped = true;
             }
@@ -703,10 +734,7 @@ impl LiveChain {
     /// Captures every instance with `capture` and publishes the settings into the saved slots,
     /// only once all of them succeeded, so a failed slot cannot produce a mixed saved snapshot.
     /// Slots that keep their saved settings, or have no instance, are left as they are.
-    fn publish_states(
-        &mut self,
-        capture: impl Fn(&PluginInstance) -> Result<PluginState, InstanceError>,
-    ) -> Result<()> {
+    fn publish_states(&mut self, capture: impl Fn(&HostInstance) -> Result<HostState, HostError>) -> Result<()> {
         let states = self
             .slots
             .iter()
@@ -726,7 +754,7 @@ impl LiveChain {
             .collect::<Result<Vec<_>>>()?;
         for (slot, state) in self.slots.iter_mut().zip(states) {
             if let Some(state) = state {
-                slot.slot.set_state(state);
+                slot.slot.set_state(state)?;
             }
         }
         Ok(())
@@ -766,8 +794,7 @@ impl LiveChain {
 /// Loads the plugin of a slot and creates an instance with the slot's saved settings.
 /// Returns the instance and whether the plugin accepted the settings.
 fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<LoadedInstance> {
-    let module = Module::load(ui, &slot.plugin.bundle)?;
-    let mut instance = PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone()))?;
+    let mut instance = HostInstance::load(ui, &slot.plugin, Some(dispatcher.clone()))?;
     let accepted = instance
         .set_state(ui, &slot.state())
         .context("Could not restore the saved settings")?;
@@ -775,7 +802,7 @@ fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> 
 }
 
 /// Prepares an instance for the preview at the output rate, in blocks of up to `PREVIEW_BLOCK_FRAMES`.
-fn prepare_instance(ui: &UiThread, instance: &mut PluginInstance, sample_rate: u32) -> Result<()> {
+fn prepare_instance(ui: &UiThread, instance: &mut HostInstance, sample_rate: u32) -> Result<()> {
     Ok(prepare_for_preview(
         ui,
         instance,
@@ -783,6 +810,10 @@ fn prepare_instance(ui: &UiThread, instance: &mut PluginInstance, sample_rate: u
         PREVIEW_BLOCK_FRAMES,
     )?)
 }
+
+#[cfg(test)]
+#[path = "preview_replacement_tests.rs"]
+mod test_preview_replacement;
 
 #[cfg(test)]
 mod test_slots {
@@ -918,7 +949,7 @@ mod test_slots {
 #[cfg(test)]
 mod test_restarts {
     use audiobatch_test_plugin::{Kind, RELOAD_TRIGGER_PARAMETER};
-    use vst3_host::ClassId;
+    use vst3_host::{ClassId, InstanceError, Module, PluginInstance};
 
     use super::*;
     use crate::test_helpers::effect;
@@ -926,11 +957,15 @@ mod test_restarts {
     /// Adds an in-process fake instance without opening a native editor or loading a bundle.
     fn fake_slot(ui: &UiThread, chain: &mut LiveChain, kind: Kind) -> SlotId {
         let module = Module::from_factory(ui, "restart tests", audiobatch_test_plugin::factory());
-        let mut instance =
-            PluginInstance::create(ui, &module, ClassId::from_tuid(&kind.class_id()), None).expect("instance");
+        let mut instance: HostInstance =
+            PluginInstance::create(ui, &module, ClassId::from_tuid(&kind.class_id()), None)
+                .expect("instance")
+                .into();
         prepare_instance(ui, &mut instance, chain.sample_rate).expect("prepare");
         let mut slot = chain.new_slot(ChainSlot::new(effect("Tests", kind.name())));
-        slot.slot.set_state(instance.state(ui).expect("initial state"));
+        slot.slot
+            .set_state(instance.state(ui).expect("initial state"))
+            .expect("matching format");
         slot.instance = Some(instance);
         slot.load_attempted = true;
         let id = slot.id;
@@ -987,7 +1022,10 @@ mod test_restarts {
                 .instance
                 .as_ref()
                 .expect("recreated instance");
-            assert_eq!(instance.state(ui).expect("state").component, 0.375_f64.to_le_bytes());
+            let HostState::Vst3(state) = instance.state(ui).expect("state") else {
+                panic!("VST3 fixture state expected");
+            };
+            assert_eq!(state.component, 0.375_f64.to_le_bytes());
             let mut processor = instance.processor(ui).expect("processor");
             assert!((processor.sample_rate() - 96_000.0).abs() < f64::EPSILON);
             processor.process(1).expect("fresh component works");
@@ -1112,7 +1150,10 @@ mod test_restarts {
                 .process(1)
                 .expect("first delivers");
             let error = chain.capture_states_live(ui).expect_err("second slot is pending");
-            assert!(matches!(error.downcast_ref(), Some(InstanceError::EditsPending)));
+            assert!(matches!(
+                error.downcast_ref(),
+                Some(HostError::Vst3(InstanceError::EditsPending))
+            ));
             assert_eq!(chain.chain(), previous);
             processors
                 .last_mut()
@@ -1121,7 +1162,10 @@ mod test_restarts {
                 .expect("second delivers");
             chain.capture_states_live(ui).expect("live capture");
             for slot in &chain.slots {
-                assert_eq!(slot.slot.state().component, 0.25_f64.to_le_bytes());
+                let HostState::Vst3(state) = slot.slot.state() else {
+                    panic!("VST3 fixture state expected");
+                };
+                assert_eq!(state.component, 0.25_f64.to_le_bytes());
             }
             drop(processors);
         });

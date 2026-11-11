@@ -236,7 +236,7 @@ pub struct OpenPluginChain;
 #[action(namespace = audiobatch)]
 pub struct OpenPluginManager;
 
-/// Rescans VST plugins in the configured search folders.
+/// Rescans VST3 and CLAP plugins in the configured search folders.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
 pub struct RescanPlugins;
@@ -289,7 +289,9 @@ pub struct CancelRun;
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch, no_json)]
 pub struct AddPluginToChain {
-    /// Class id of the plugin in hex.
+    /// Plugin API namespace, so equal text ids from different formats cannot collide.
+    pub format: audiobatch_plugins::PluginFormat,
+    /// Original plugin identifier, hexadecimal for VST3 and descriptor text for CLAP.
     pub class_id: SharedString,
     /// Path of the plugin's bundle, since the same plugin can be installed in more than one folder.
     pub bundle: SharedString,
@@ -563,8 +565,9 @@ fn plugins_menu(state: &MenuState) -> Menu {
         .map(|group| {
             let plugins = group.plugins.iter().map(|plugin| {
                 MenuItem::action(
-                    plugin.name.clone(),
+                    format!("{} ({})", plugin.name, plugin.format),
                     AddPluginToChain {
+                        format: plugin.format,
                         class_id: plugin.class_id.to_string().into(),
                         bundle: plugin.bundle.to_string_lossy().into_owned().into(),
                     },
@@ -585,7 +588,7 @@ fn plugins_menu(state: &MenuState) -> Menu {
         MenuItem::action("Clear Chain", ClearPluginChain),
         MenuItem::separator(),
         MenuItem::action("Plugin Manager…", OpenPluginManager),
-        MenuItem::action("Rescan VST plugins", RescanPlugins).disabled(state.scanning_plugins),
+        MenuItem::action("Rescan VST3 and CLAP plugins", RescanPlugins).disabled(state.scanning_plugins),
         MenuItem::separator(),
         MenuItem::action("Process Selected With Plugin Chain", ProcessSelected),
         MenuItem::action("Process All Files With Plugin Chain", ProcessAll),
@@ -734,6 +737,60 @@ mod test_preview_menus {
         reason = "the GPUI test macro provides a mutable test context"
     )]
     #[gpui_kit::test]
+    fn plugin_menu_namespaces_equal_text_ids_by_format(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            install(cx);
+            let vst3 = crate::test_helpers::effect("Tests", "Equal");
+            let mut clap = vst3.clone();
+            clap.format = audiobatch_plugins::PluginFormat::Clap;
+            clap.class_id = audiobatch_plugins::PluginId::Clap(vst3.class_id.to_string());
+            set_menus(
+                cx,
+                &MenuState {
+                    plugin_groups: vec![VendorGroup {
+                        vendor: "Tests".to_owned(),
+                        plugins: vec![vst3, clap],
+                    }],
+                    ..MenuState::default()
+                },
+            );
+            let menu = cx
+                .get_menus()
+                .expect("menus")
+                .into_iter()
+                .find(|menu| menu.name == "Plugins")
+                .expect("Plugins");
+            let vendor = submenu(&submenu(&menu, "Add Plugin"), "Tests");
+            let actions: Vec<_> = vendor
+                .items
+                .iter()
+                .map(|item| {
+                    let OwnedMenuItem::Action { name, action, .. } = item else {
+                        panic!("plugin action")
+                    };
+                    let action = action
+                        .as_any()
+                        .downcast_ref::<AddPluginToChain>()
+                        .expect("add plugin action");
+                    (name.as_str(), action.clone())
+                })
+                .collect();
+            let (vst3_name, vst3) = actions.first().expect("VST3 action");
+            let (clap_name, clap) = actions.get(1).expect("CLAP action");
+            assert_eq!(*vst3_name, "Equal (VST3)");
+            assert_eq!(*clap_name, "Equal (CLAP)");
+            assert_eq!(vst3.class_id, clap.class_id);
+            assert_eq!(vst3.bundle, clap.bundle);
+            assert_ne!(vst3, clap);
+        });
+    }
+
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "the GPUI test macro provides a mutable test context"
+    )]
+    #[gpui_kit::test]
     fn plugin_rescan_menu_tracks_scan_state(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -754,7 +811,7 @@ mod test_preview_menus {
                     .expect("Plugins menu exists");
                 assert!(menu.items.iter().any(|item| matches!(item,
                     OwnedMenuItem::Action { name, action, disabled, .. }
-                    if name == "Rescan VST plugins" && action.as_any().is::<RescanPlugins>() && *disabled == scanning
+                    if name == "Rescan VST3 and CLAP plugins" && action.as_any().is::<RescanPlugins>() && *disabled == scanning
                 )));
             }
         });

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::chain::{ChainSlot, PluginChain, deserialize_slots_skipping_damaged};
 
 /// Version of the preset file format, raised when a change would make older versions misread a file.
-pub(crate) const PRESET_FORMAT_VERSION: u32 = 1;
+pub(crate) const PRESET_FORMAT_VERSION: u32 = 2;
 
 /// File extension of the preset files.
 const PRESET_EXTENSION: &str = "json";
@@ -365,7 +365,8 @@ mod test_presets {
             vendor: "Vendor".to_owned(),
             version: "1.0".to_owned(),
             category: "Fx".to_owned(),
-            class_id: ClassId([5; 16]),
+            class_id: ClassId([5; 16]).into(),
+            format: crate::PluginFormat::Vst3,
             sdk_version: "VST 3.8.0".to_owned(),
             bundle: PathBuf::from(format!("/plugins/{name}.vst3")),
             bundle_modified_ms: 0,
@@ -376,7 +377,8 @@ mod test_presets {
         slot.set_state(PluginState {
             component: component.to_vec(),
             controller: b"controller".to_vec(),
-        });
+        })
+        .expect("matching VST3 state");
         slot.enabled = enabled;
         slot
     }
@@ -408,6 +410,31 @@ mod test_presets {
                 load_preset_file_strict(&path),
                 Err(PresetError::Invalid { .. })
             ));
+        }
+    }
+
+    #[test]
+    fn strict_presets_reject_foreign_format_state_instead_of_rendering_defaults() {
+        let directory = TempDir::new().expect("temp dir");
+        let store = store(&directory);
+        let chain = PluginChain {
+            slots: vec![slot("Effect", &[1], true)],
+        };
+        let path = store.save("Foreign", &chain).expect("preset");
+        for clap in [false, true] {
+            let mut value = serde_json::to_value(ChainPreset::new("Foreign".into(), &chain)).expect("JSON");
+            if clap {
+                value["slots"][0]["plugin"]["format"] = "CLAP".into();
+                value["slots"][0]["plugin"]["class_id"] = "org.example.effect".into();
+            } else {
+                value["slots"][0]["clap_state"] = "AQ==".into();
+            }
+            fs::write(&path, value.to_string()).expect("foreign streams");
+            assert!(matches!(store.load_strict("Foreign"), Err(PresetError::Invalid { .. })));
+            assert_eq!(
+                store.load("Foreign").expect("GUI recovers").slots,
+                Vec::<ChainSlot>::new()
+            );
         }
     }
 

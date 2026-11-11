@@ -26,9 +26,9 @@ use audiobatch_core::output_file::{
     commit_temporary_output_expected, create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
 use audiobatch_core::record::{AnalysisError, AnalysisRecord, MeasurementProducer};
-use vst3_host::ProcessError;
 
 use crate::chain_signal::{ChainSignal, StageFailure};
+use crate::host::HostProcessError as ProcessError;
 use crate::library::error_chain;
 #[cfg(test)]
 use crate::processing_chain::CANCELLED_MESSAGE;
@@ -554,6 +554,10 @@ fn render_blocks(
 ) -> Result<RenderedAudio, ProcessingError> {
     let channels = decoder.info().channels;
     let sample_rate = decoder.info().sample_rate;
+    // Reset on the rendering thread. Restoring parameter state and reactivation need not clear native DSP history.
+    for processor in &mut prepared.processors {
+        processor.reset(0);
+    }
     let latency = prepared.latency_samples;
     let after_source = latency + prepared.tail_samples;
     let mut source = SourceBlocks::new(decoder, gain);
@@ -742,7 +746,7 @@ mod test_quantize {
             &["Effect".to_owned()],
             StageFailure {
                 index: 0,
-                error: ProcessError(1),
+                error: ProcessError::Vst3(vst3_host::ProcessError(1)),
             },
         );
         assert_eq!(
@@ -752,7 +756,7 @@ mod test_quantize {
         assert!(matches!(&error, ProcessingError::Process { stage: 0, .. }));
         assert_eq!(
             error.source().and_then(|source| source.downcast_ref::<ProcessError>()),
-            Some(&ProcessError(1))
+            Some(&ProcessError::Vst3(vst3_host::ProcessError(1)))
         );
     }
 
