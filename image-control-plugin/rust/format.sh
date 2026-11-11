@@ -50,8 +50,8 @@ if command -v shfmt > /dev/null 2>&1; then
 fi
 if command -v slb > /dev/null 2>&1; then
     if [ "$CHECK" = true ]; then
-        slb crates ./*.toml "$REPO_ROOT/image-control-plugin/docs/rust-evaluation.md"
+        slb crates ./*.toml README.md ARCHITECTURE.md "$SCRIPT_DIR/docs/rust-evaluation.md"
     else
-        slb --fix crates ./*.toml "$REPO_ROOT/image-control-plugin/docs/rust-evaluation.md"
+        slb --fix crates ./*.toml README.md ARCHITECTURE.md "$SCRIPT_DIR/docs/rust-evaluation.md"
     fi
 fi
