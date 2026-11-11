@@ -11,16 +11,40 @@
 
 #include <gtest/gtest.h>
 
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 namespace esgrove::image_control::test
 {
 namespace
 {
+/// Observes the actual notification payload rather than APVTS's reread of the current value.
+class ParameterValueListener final : public juce::AudioProcessorParameter::Listener
+{
+public:
+    /// Records whether even one non-finite notification escaped the public parameter boundary.
+    void parameterValueChanged(int /*index*/, const float value) override
+    {
+        ++notifications;
+        allFinite = allFinite && std::isfinite(value);
+    }
+
+    /// Gesture boundaries are unrelated to invalid-value rejection.
+    void parameterGestureChanged(int /*index*/, bool /*starting*/) override {}
+
+    /// Number of value notifications received.
+    int notifications {0};
+    /// Whether all received payloads were finite.
+    bool allFinite {true};
+};
+
 /// Writes a plain parameter value using the same conversion the host uses.
 void setPlain(ImageControlProcessor& processor, const juce::String& parameterId, const float value)
 {
@@ -570,5 +594,46 @@ TEST(HostContracts, EmptyBlocksAndRepeatedLayoutPreparationAreSafe)
         processor.reset();
         processor.releaseResources();
     }
+}
+
+TEST(ParameterNotifications, RejectedValuesNeverReachListenersOrAttachments)
+{
+    ImageControlProcessor processor;
+    auto& pan = *processor.getParameters().getParameter(panParameterId(0));
+    auto& solo = *processor.getParameters().getParameter(soloParameterId(0));
+    juce::Slider slider;
+    juce::ToggleButton button;
+    const juce::SliderParameterAttachment sliderAttachment(pan, slider);
+    const juce::ButtonParameterAttachment buttonAttachment(solo, button);
+    ParameterValueListener panListener;
+    ParameterValueListener soloListener;
+    pan.addListener(&panListener);
+    solo.addListener(&soloListener);
+    pan.setValueNotifyingHost(pan.convertTo0to1(40.0F));
+    solo.setValueNotifyingHost(1.0F);
+    ASSERT_EQ(panListener.notifications, 1);
+    ASSERT_EQ(soloListener.notifications, 1);
+    for (const float invalid :
+         {
+             std::numeric_limits<float>::quiet_NaN(),
+             std::numeric_limits<float>::infinity(),
+             -std::numeric_limits<float>::infinity(),
+         })
+    {
+        pan.setValueNotifyingHost(invalid);
+        solo.setValueNotifyingHost(invalid);
+        pan.sendValueChangedMessageToListeners(invalid);
+        solo.sendValueChangedMessageToListeners(invalid);
+        EXPECT_NEAR(slider.getValue(), 40.0, 0.001);
+        EXPECT_TRUE(button.getToggleState());
+        EXPECT_TRUE(std::isfinite(pan.getValue()));
+        EXPECT_FLOAT_EQ(solo.getValue(), 1.0F);
+    }
+    EXPECT_EQ(panListener.notifications, 1);
+    EXPECT_EQ(soloListener.notifications, 1);
+    EXPECT_TRUE(panListener.allFinite);
+    EXPECT_TRUE(soloListener.allFinite);
+    pan.removeListener(&panListener);
+    solo.removeListener(&soloListener);
 }
 }  // namespace esgrove::image_control::test

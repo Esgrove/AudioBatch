@@ -1,16 +1,14 @@
 /// Tests SettingsPanel's coupled pan curve controls and SplitDivider's incremental screen-space movement.
-/// Event-handler tests also verify that editor divider clamps persist through host state and reopening.
 /// These tests inspect control values and layout bounds without desktop automation or pixel assertions.
 
-#include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
 #include "ProcessingState.h"
-#include "ui/BandStrip.h"
+#include "tests/ControlLayoutTestSupport.h"
+#include "tests/ViewInteractionTestSupport.h"
 #include "ui/ControlSlider.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SettingsPanel.h"
-#include "ui/SpatialSpectrogramView.h"
 #include "ui/SplitDivider.h"
 
 #include <gtest/gtest.h>
@@ -72,41 +70,6 @@ private:
     mutable int changes {0};
 };
 
-/// Finds a direct panel or editor child without depending on its position in the child list.
-/// The returned observer is null when absent and otherwise remains valid while the parent owns the child.
-template<typename Child>
-Child* childOfType(const juce::Component& parent)
-{
-    for (auto* child : parent.getChildren()) {
-        if (auto* match = dynamic_cast<Child*>(child)) {
-            return match;
-        }
-    }
-    return nullptr;
-}
-
-/// Finds an owned descendant by stable identity, returning a nullable observer valid until parent destruction.
-/// An explicit stack avoids recursion through JUCE's implementation-owned viewport and control children.
-template<typename Control>
-Control* settingsControl(const juce::Component& parent, const juce::String& identifier)
-{
-    std::vector<juce::Component*> pending;
-    for (auto* child : parent.getChildren()) {
-        pending.push_back(child);
-    }
-    while (!pending.empty()) {
-        auto* child = pending.back();
-        pending.pop_back();
-        if (child->getComponentID() == identifier) {
-            return dynamic_cast<Control*>(child);
-        }
-        for (auto* descendant : child->getChildren()) {
-            pending.push_back(descendant);
-        }
-    }
-    return nullptr;
-}
-
 /// Delivers queued value bindings and peer-slider callbacks with a short, bounded native message pump.
 /// JUCE's optional modal dispatch loop is disabled in the plugin, so tests pump only the platform queue.
 void dispatchControlChanges()
@@ -157,33 +120,6 @@ bool waitForVisibleControl(const juce::Viewport& viewport, const juce::Component
     return false;
 }
 
-/// Creates a handler event at a fixed screen position even when layout has moved the component since mouse-down.
-juce::MouseEvent mouseAtScreen(
-    juce::Component& component,
-    const juce::Point<int> screenPosition,
-    const juce::Point<int> downScreenPosition,
-    const juce::ModifierKeys modifiers = juce::ModifierKeys::leftButtonModifier
-)
-{
-    const auto now = juce::Time::getCurrentTime();
-    return {
-        juce::Desktop::getInstance().getMainMouseSource(),
-        component.getLocalPoint(nullptr, screenPosition).toFloat(),
-        modifiers,
-        1.0F,
-        0.0F,
-        0.0F,
-        0.0F,
-        0.0F,
-        &component,
-        &component,
-        now,
-        component.getLocalPoint(nullptr, downScreenPosition).toFloat(),
-        now,
-        1,
-        screenPosition != downScreenPosition,
-    };
-}
 }  // namespace
 
 /// Every interactive setting has a stable id and a useful accessible title, including both explicit choices.
@@ -606,82 +542,6 @@ TEST(SettingsPanel, SubmenuResizePreservesPreferenceScrollAndControlLifetime)
     EXPECT_EQ(settingsControl<juce::TextButton>(panel, "showKeyboardShortcuts"), shortcuts);
 }
 
-/// The owned popup grows below its real anchor before scrolling and clamps to natural content after every resize.
-TEST(ImageControlEditor, SettingsCalloutUsesAnchorChromeAndNaturalContentHeight)
-{
-    ImageControlProcessor processor;
-    processor.getEditorState().setProperty(EDITOR_HEIGHT_PROPERTY, 600, nullptr);
-    ImageControlEditor editor(processor);
-    auto* opener = settingsControl<juce::Button>(editor, "display-settings");
-    ASSERT_NE(opener, nullptr);
-    opener->onClick();
-    auto* callout = childOfType<juce::CallOutBox>(editor);
-    ASSERT_NE(callout, nullptr);
-    auto* panel = childOfType<SettingsPanel>(*callout);
-    ASSERT_NE(panel, nullptr);
-    auto* viewport = settingsControl<juce::Viewport>(*panel, "displaySettingsViewport");
-    auto* reference = settingsControl<juce::Component>(*panel, "keyboardShortcuts");
-    ASSERT_NE(viewport, nullptr);
-    ASSERT_NE(reference, nullptr);
-    auto* content = viewport->getViewedComponent();
-    ASSERT_NE(content, nullptr);
-    const int naturalHeight = panel->getNaturalHeight();
-    const int border = callout->getBorderSize();
-    const auto anchor = editor.getLocalArea(opener, opener->getLocalBounds());
-    const int exactFitHeight = anchor.getBottom() + border * 2 + naturalHeight;
-    int previousHeight = 0;
-    for (const int height : {600, 680, exactFitHeight - 1, exactFitHeight, 1100, 600, 1100}) {
-        SCOPED_TRACE(height);
-        editor.setSize(editor.getWidth(), height);
-        const auto currentAnchor = editor.getLocalArea(opener, opener->getLocalBounds());
-        const int available = editor.getHeight() - currentAnchor.getBottom() - border * 2;
-        EXPECT_EQ(panel->getHeight(), std::min(available, naturalHeight));
-        EXPECT_EQ(callout->getHeight(), panel->getHeight() + border * 2);
-        EXPECT_EQ(panel->getY(), border);
-        EXPECT_EQ(panel->getNaturalHeight(), naturalHeight);
-        EXPECT_EQ(content->getHeight(), naturalHeight);
-        EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
-        EXPECT_GE(callout->getY(), currentAnchor.getBottom());
-        EXPECT_EQ(viewport->getVerticalScrollBar().isVisible(), available < naturalHeight);
-        if (height == 680) {
-            EXPECT_GT(panel->getHeight(), previousHeight);
-        }
-        if (height == 1100) {
-            EXPECT_GT(panel->getHeight(), 640);
-            EXPECT_EQ(content->getWidth(), viewport->getWidth());
-        }
-        previousHeight = panel->getHeight();
-    }
-    panel->showKeyboardShortcuts();
-    EXPECT_TRUE(reference->isVisible());
-    editor.setSize(editor.getWidth(), 600);
-    const auto resizedAnchor = editor.getLocalArea(opener, opener->getLocalBounds());
-    EXPECT_EQ(panel->getHeight(), 600 - resizedAnchor.getBottom() - border * 2);
-    EXPECT_TRUE(panel->getLocalBounds().contains(reference->getBounds()));
-    EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
-    panel->showPreferences();
-    EXPECT_TRUE(viewport->isVisible());
-    EXPECT_TRUE(viewport->getVerticalScrollBar().isVisible());
-    editor.setSize(editor.getWidth(), 1100);
-    EXPECT_EQ(panel->getHeight(), naturalHeight);
-    EXPECT_FALSE(viewport->getVerticalScrollBar().isVisible());
-    EXPECT_EQ(childOfType<juce::CallOutBox>(editor), callout);
-    EXPECT_EQ(childOfType<SettingsPanel>(*callout), panel);
-    for (const bool compact : {false, true}) {
-        SCOPED_TRACE(compact);
-        processor.getEditorState().setProperty(COMPACT_BAND_CONTROLS_PROPERTY, compact, nullptr);
-        processor.getEditorState().setProperty(HIDE_SPECTROGRAM_PROPERTY, true, nullptr);
-        const auto compactAnchor = editor.getLocalArea(opener, opener->getLocalBounds());
-        const int available = editor.getHeight() - compactAnchor.getBottom() - border * 2;
-        EXPECT_EQ(panel->getHeight(), std::min(available, naturalHeight));
-        EXPECT_TRUE(editor.getLocalBounds().contains(callout->getBounds()));
-        EXPECT_EQ(viewport->getVerticalScrollBar().isVisible(), available < naturalHeight);
-        panel->showKeyboardShortcuts();
-        EXPECT_TRUE(panel->getLocalBounds().contains(reference->getBounds()));
-        panel->showPreferences();
-    }
-}
-
 /// Keyboard traversal reveals distant controls rather than leaving focus below the popup's visible viewport.
 TEST(SettingsPanel, FocusedControlsScrollIntoView)
 {
@@ -971,54 +831,92 @@ TEST(SplitDivider, TracksMovementWithoutACallbackAndResetsTheOriginForEachDrag)
     EXPECT_EQ(movements, (std::vector<int> {5, -4}));
 }
 
-/// Extreme divider drags save the effective clamp, not an unreachable request, and reopening restores that layout.
-TEST(ImageControlEditor, DividerClampsPersistThroughHostStateAndReopening)
+TEST(ControlSlider, WheelNotchMovesATenthOfADecibel)
 {
-    for (const int movement : {10'000, -10'000}) {
-        SCOPED_TRACE(movement);
-        ImageControlProcessor processor;
-        auto& state = processor.getEditorState();
-        state.setProperty(EDITOR_WIDTH_PROPERTY, 1100, nullptr);
-        state.setProperty(EDITOR_HEIGHT_PROPERTY, 800, nullptr);
-        state.setProperty(BAND_SECTION_HEIGHT_PROPERTY, 320, nullptr);
-        juce::MemoryBlock saved;
-        int savedBandHeight = 0;
-        {
-            const ImageControlEditor editor(processor);
-            auto* divider = childOfType<SplitDivider>(editor);
-            auto* strip = childOfType<BandStrip>(editor);
-            auto* spectrogram = childOfType<SpatialSpectrogramView>(editor);
-            ASSERT_NE(divider, nullptr);
-            ASSERT_NE(strip, nullptr);
-            ASSERT_NE(spectrogram, nullptr);
-            const auto start = divider->localPointToGlobal(juce::Point<int> {5, 5});
-            const auto end = start.translated(0, movement);
-            divider->mouseDown(mouseAtScreen(*divider, start, start));
-            divider->mouseDrag(mouseAtScreen(*divider, end, start));
-            divider->mouseDrag(mouseAtScreen(*divider, end, start));
-            divider->mouseUp(mouseAtScreen(*divider, end, start));
-            savedBandHeight = strip->getHeight();
-            EXPECT_EQ(static_cast<int>(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY)), savedBandHeight);
-            if (movement > 0) {
-                EXPECT_EQ(savedBandHeight, BAND_STRIP_MIN_HEIGHT);
-            } else {
-                EXPECT_GT(savedBandHeight, BAND_STRIP_MIN_HEIGHT);
-                EXPECT_EQ(spectrogram->getHeight(), 160);
-            }
-            processor.getStateInformation(saved);
-        }
+    ControlSlider slider;
+    slider.setRange(static_cast<double>(BAND_GAIN_MIN_DB), static_cast<double>(BAND_GAIN_MAX_DB), 0.01);
+    slider.setValue(0.0);
+    const juce::Point<float> position {1.0F, 1.0F};
 
-        ImageControlProcessor restored;
-        restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
-        const ImageControlEditor reopened(restored);
-        auto* strip = childOfType<BandStrip>(reopened);
-        ASSERT_NE(strip, nullptr);
-        EXPECT_EQ(strip->getHeight(), savedBandHeight);
-        EXPECT_EQ(reopened.getWidth(), 1100);
-        EXPECT_EQ(reopened.getHeight(), 800);
-        EXPECT_EQ(
-            static_cast<int>(restored.getEditorState().getProperty(BAND_SECTION_HEIGHT_PROPERTY)), savedBandHeight
-        );
+    slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(1.0F));
+    EXPECT_NEAR(slider.getValue(), 0.1, 1e-9);
+    slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(-3.0F));
+    EXPECT_NEAR(slider.getValue(), -0.2, 1e-9);
+    slider.mouseWheelMove(mouseEvent(slider, position, position, juce::ModifierKeys::shiftModifier), notch(1.0F));
+    EXPECT_NEAR(slider.getValue(), -0.19, 1e-9);
+}
+
+TEST(ControlSlider, SmoothWheelMovementAddsUpToWholeSteps)
+{
+    juce::MouseWheelDetails wheel {};
+    wheel.deltaY = 0.03F;
+    wheel.isSmooth = true;
+    float remainder = 0.0F;
+    // A step takes 0.05 of smooth movement, so the first event takes none and the second one.
+    EXPECT_EQ(wheelSteps(wheel, remainder), 0);
+    EXPECT_EQ(wheelSteps(wheel, remainder), 1);
+    wheel.isReversed = true;
+    EXPECT_EQ(wheelSteps(wheel, remainder), 0);
+    EXPECT_EQ(wheelSteps(wheel, remainder), -1);
+}
+
+TEST(ControlSlider, WheelAndKeysDoNotNestInsideAPointerGesture)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    {
+        ControlSlider slider;
+        slider.setSize(200, 26);
+        const juce::SliderParameterAttachment attachment(parameter, slider);
+        const juce::Point<float> position {80.0F, 13.0F};
+        slider.mouseDown(mouseEvent(slider, position, position, juce::ModifierKeys::leftButtonModifier));
+        slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(1.0F));
+        EXPECT_FALSE(slider.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true}));
+        slider.endDrag();
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+        slider.mouseWheelMove(mouseEvent(slider, position, position, {}), notch(1.0F));
+        EXPECT_TRUE(slider.keyPressed(juce::KeyPress(juce::KeyPress::rightKey)));
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false, true, false}));
     }
+    parameter.removeListener(&gestures);
+}
+
+TEST(ControlSlider, DoubleClickResetDoesNotNestInsideTheSecondPointerDown)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(OUTPUT_GAIN_ID);
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    {
+        ControlSlider slider;
+        slider.setSize(200, 26);
+        const juce::SliderParameterAttachment attachment(parameter, slider);
+        const juce::Point<float> position {80.0F, 13.0F};
+        const auto event = mouseEvent(slider, position, position, juce::ModifierKeys::leftButtonModifier);
+        slider.mouseDown(event);
+        slider.mouseDoubleClick(event);
+        slider.mouseUp(event);
+        EXPECT_EQ(gestures.events, (std::vector<bool> {true, false, true, false}));
+    }
+    parameter.removeListener(&gestures);
+}
+
+/// The display toggle defaults on, writes the saved property, and observes external setting changes.
+TEST(SettingsPanel, SmoothCorrelationNumbersDefaultsOnAndBindsBothDirections)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    const SettingsPanel settings(state);
+    auto* smooth = buttonWithText(settings, "Smooth correlation numbers");
+    ASSERT_NE(smooth, nullptr);
+    EXPECT_TRUE(smooth->getToggleState());
+    smooth->setToggleState(false, juce::sendNotificationSync);
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
+    state.setProperty(SMOOTH_CORRELATION_READOUT_PROPERTY, true, nullptr);
+    EXPECT_TRUE(smooth->getToggleState());
 }
 }  // namespace esgrove::image_control::test

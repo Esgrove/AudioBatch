@@ -66,6 +66,11 @@ The C++-specific organization, JUCE, and OpenGL instructions below apply to the 
 - `src/ui/` holds the reusable controls, gestures, display algorithms, and the OpenGL renderer.
 - `tests/` holds the GoogleTest suites, `TestMain.cpp`, the shared `TestSignals.h`,
   the RTSan-only `RealtimeTests.cpp`, and `test_build_scripts.py` for the shell scripts.
+  `SpectrogramOverlayTests.cpp` owns CPU-only overlay geometry and response-cache tests,
+  and `ImageControlEditorTests.cpp` owns editor layout and analysis lifecycle tests.
+  Processor correlation lifecycle tests live in `CorrelationTests.cpp`,
+  and non-finite parameter notification tests live in `HostContractsTests.cpp`.
+  Particle projection and band-strip gestures have their own topic suites.
 - `benchmarks/` holds `Benchmark.cpp` for `ImageControlBenchmark`,
   `PresetWriter.cpp` for `ImageControlPresetWriter`,
   and `compare_formats.py` with its tests, which compare the VST3 and the Audio Unit through the AudioBatch CLI.
@@ -128,7 +133,7 @@ Treat a change to any of them as a deliberate compatibility decision, and test i
   Fix JUCE bugs in the fork instead of working around them in plugin code.
   Commit the fix on the fork's `master` in JUCE's own code style, keep each patch small and upstreamable,
   push it before the commit that refers to it, and update the submodule in the commit that relies on the fix,
-  with a test that pins the fixed behaviour, as `tests/FollowUpTests.cpp` does for non-finite parameter notifications.
+  with a test that pins the fixed behaviour, as `tests/HostContractsTests.cpp` does for non-finite parameter notifications.
   The C++ application and the test plugin build against the same submodule,
   so a submodule update must also pass the C++ workflow.
 - GoogleTest, fetched by CMake at a pinned commit, for the unit tests.
