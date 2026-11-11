@@ -111,6 +111,7 @@ fn private_module_public_api_supports_warm_processing_and_offline_replacement() 
     assert!((controls.pan() - 0.2).abs() < f32::EPSILON);
     assert!(!controls.solo());
     imager.set_controls([controls; 4]);
+    assert!(imager.set_output_controls(0.8, 1.0, true));
     imager.reset();
     imager.set_offline(true).expect("offline");
     assert!(imager.set_crossovers([80.0, 800.0, 8000.0]));

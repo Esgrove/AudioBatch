@@ -64,6 +64,48 @@ fn neutral_preserves_delayed_bits_and_rate_geometry() {
 }
 
 #[test]
+fn unity_output_width_trims_panned_channels_without_an_extra_mid_side_roundtrip() {
+    let mut ordinary = MultibandImager::new(48_000.0).expect("rate");
+    let mut trimmed = MultibandImager::new(48_000.0).expect("rate");
+    let pan = 1.0 - 2.0_f32.powi(-24);
+    for imager in [&mut ordinary, &mut trimmed] {
+        imager.set_controls([control(1.0, 1.0, 1.0, 0.0, pan, false); 4]);
+    }
+    assert!(trimmed.set_output_controls(0.5, 1.0, false));
+    ordinary.reset();
+    trimmed.reset();
+    let mut quiet_power = 0.0_f64;
+    for sample in 0..9000 {
+        let source = (sample as f32 * 0.07).sin() * 0.5;
+        let expected = ordinary.process_frame([source; 2]).map(|value| (value * 0.5).to_bits());
+        let actual = trimmed.process_frame([source; 2]);
+        assert_eq!(actual.map(f32::to_bits), expected, "sample {sample}");
+        quiet_power += f64::from(actual[0]).powi(2);
+    }
+    assert!(
+        quiet_power > 1.0e-15,
+        "the nearly fully panned quiet channel must remain present"
+    );
+}
+
+#[test]
+fn output_controls_validate_transactionally_and_reset_settles_partition_targets() {
+    let mut imager = MultibandImager::new(48_000.0).expect("rate");
+    assert!(imager.set_output_controls(0.5, 1.0, true));
+    for (gain, width) in [(f32::NAN, 1.0), (0.25, f32::INFINITY), (17.0, 1.0), (0.25, 3.0)] {
+        assert!(!imager.set_output_controls(gain, width, false));
+    }
+    imager.reset();
+    for sample in 0..imager.latency_samples() + imager.tail_samples() {
+        let output = imager.process_frame([0.75, -0.25]);
+        let reference = imager.dry_reference();
+        for (actual, dry) in output.into_iter().zip(reference) {
+            assert!(dry.mul_add(0.5, actual).abs() < 1.0e-6, "sample {sample}");
+        }
+    }
+}
+
+#[test]
 fn controls_and_crossovers_reject_non_finite_values() {
     for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
         assert!(BandControls::new(bad, 1.0, 1.0, 0.0, 0.0, false).is_none());
@@ -278,6 +320,40 @@ fn twenty_millisecond_band_ramps_land_exactly_without_block_restarts() {
             assert!(source.mul_add(-gain, actual).abs() < 1.0e-5, "ramp sample {sample}");
             if sample >= 1215 {
                 assert!(actual.abs() < f32::EPSILON, "the endpoint must land exactly at zero");
+            }
+        }
+    }
+}
+
+#[test]
+fn band_ramps_floor_fractional_sample_counts_and_settle_subsample_durations() {
+    for rate in [1.0_f32, 11_025.0, 48_001.0] {
+        let mut imager = MultibandImager::new(rate).expect("rate");
+        let frame = [0.5, -0.25];
+        let warmup = (imager.latency_samples() + imager.tail_samples()).div_ceil(256) * 256;
+        for _ in 0..warmup {
+            let _ = imager.process_frame(frame);
+        }
+        imager.set_controls([control(0.0, 0.0, 1.0, 0.0, 0.0, false); 4]);
+        let ramp = (f64::from(rate) * 0.02).floor() as usize;
+        let mut gain = 1.0_f32;
+        for sample in 0..256 + ramp + 256 {
+            if sample >= 256 {
+                let advanced = sample - 256 + 1;
+                gain = if advanced >= ramp {
+                    0.0
+                } else {
+                    gain - 1.0 / ramp as f32
+                };
+            }
+            for (actual, source) in imager.process_frame(frame).into_iter().zip(frame) {
+                assert!(
+                    source.mul_add(-gain, actual).abs() < 1.0e-6,
+                    "rate={rate}, sample={sample}"
+                );
+                if sample >= 256 && sample + 1 >= 256 + ramp {
+                    assert_eq!(actual.to_bits() & 0x7fff_ffff, 0, "exact muted endpoint");
+                }
             }
         }
     }

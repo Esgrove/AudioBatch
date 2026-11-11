@@ -45,6 +45,7 @@ pub fn half_length(sample_rate: f32) -> Result<usize, MultibandError> {
 }
 
 /// Rejects non-finite requests and orders finite controls using the shared one-third-octave rule.
+#[must_use]
 pub fn order_crossovers(requested: [f32; 3]) -> Option<[f32; 3]> {
     if !requested.iter().all(|frequency| frequency.is_finite()) {
         return None;

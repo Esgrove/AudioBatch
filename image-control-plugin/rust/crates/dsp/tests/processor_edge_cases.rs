@@ -10,6 +10,114 @@ fn prepared() -> Imager {
     imager
 }
 
+/// Computes a linear control transition independently of the processor's ramp implementation.
+fn transition(initial: f32, target: f32, advanced: usize, samples: usize) -> f32 {
+    if advanced >= samples {
+        return target;
+    }
+    let step = (target - initial) / samples as f32;
+    (0..advanced).fold(initial, |value, _| value + step)
+}
+
+#[test]
+#[expect(
+    clippy::suboptimal_flops,
+    reason = "The independent oracle pins separate gain/Delta rounding"
+)]
+fn global_gain_delta_and_bypass_share_partition_timing_at_standard_and_fractional_rates() {
+    for rate in [11_025.0_f32, 44_100.0, 48_000.0, 48_001.0] {
+        let ramp = (f64::from(rate) * 0.02).floor() as usize;
+        for offset in [0, 37, 255] {
+            for (gain_target, delta_target, bypass) in [(0.5, false, false), (1.0, true, false), (0.5, true, true)] {
+                let mut imager = Imager::new();
+                imager.set_offline(true);
+                let shared = imager.shared();
+                if bypass {
+                    shared.set_parameters(Parameters::new(0.5, 1.0).expect("saved gain"));
+                    shared.set_delta(true);
+                    for band in 0..4 {
+                        shared.set_band_parameter(band, 0, 0.0);
+                        shared.set_band_parameter(band, 1, 0.0);
+                    }
+                }
+                assert!(imager.prepare(rate));
+                let frame = [0.75_f32, -0.25];
+                let warmup =
+                    (imager.latency_samples() as usize + imager.tail_samples() as usize).div_ceil(256) * 256 + offset;
+                for _ in 0..warmup {
+                    let _ = imager.process_frame(frame);
+                }
+                let initial_gain = if bypass { 0.5 } else { 1.0 };
+                let initial_delta = f32::from(bypass);
+                shared.set_parameters(Parameters::new(gain_target, 1.0).expect("gain target"));
+                shared.set_delta(delta_target);
+                shared.set_bypass(bypass);
+                imager.begin_block();
+                let delay = 256 - offset;
+                for sample in 0_usize..delay + ramp + 256 {
+                    if sample % 17 == 0 {
+                        imager.begin_block();
+                    }
+                    let advanced = (sample + 1).saturating_sub(delay);
+                    let gain = transition(initial_gain, if bypass { 1.0 } else { gain_target }, advanced, ramp);
+                    let delta = transition(initial_delta, f32::from(!bypass && delta_target), advanced, ramp);
+                    let band_gain = if bypass {
+                        transition(0.0, 1.0, advanced, ramp)
+                    } else {
+                        1.0
+                    };
+                    for (actual, source) in imager.process_frame(frame).into_iter().zip(frame) {
+                        let expected = source * band_gain * gain - delta * source;
+                        assert!(
+                            (actual - expected).abs() < 1.0e-6,
+                            "rate={rate}, offset={offset}, bypass={bypass}, frame={sample}: {actual} vs {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn final_mono_uses_floored_ramps_without_waiting_for_a_partition() {
+    for rate in [1.0_f32, 11_025.0, 48_001.0] {
+        let mut imager = Imager::new();
+        imager.set_offline(true);
+        assert!(imager.prepare(rate));
+        let frame = [0.75, -0.25];
+        for _ in 0..imager.latency_samples() + 37 {
+            let _ = imager.process_frame(frame);
+        }
+        imager.shared().set_mono(true);
+        imager.begin_block();
+        let ramp = (f64::from(rate) * 0.02).floor() as usize;
+        for sample in 0..ramp + 2 {
+            let blend = transition(0.0, 1.0, sample + 1, ramp);
+            let expected = frame.map(|source| (0.25_f32 - source).mul_add(blend, source));
+            let actual = imager.process_frame(frame);
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 1.0e-6, "rate={rate}, sample={sample}");
+            }
+            if sample + 1 >= ramp {
+                assert_eq!(actual.map(f32::to_bits), [0.25_f32.to_bits(); 2]);
+            }
+        }
+    }
+}
+
+#[test]
+fn unprepared_unity_width_output_trim_preserves_the_quiet_channel() {
+    let mut imager = Imager::new();
+    imager.shared().set_parameters(Parameters::new(0.5, 1.0).expect("gain"));
+    imager.reset();
+    let frame = [1.0, 2.0_f32.powi(-26)];
+    assert_eq!(
+        imager.process_frame(frame).map(f32::to_bits),
+        frame.map(|sample| (sample * 0.5).to_bits())
+    );
+}
+
 #[test]
 fn settled_mono_assigns_identical_midpoint_bits_for_cancellation_sensitive_input() {
     let mut imager = prepared();

@@ -47,6 +47,98 @@ fn assert_matching_reference(imager: &mut MultibandImager, frame: [f32; 2]) -> [
     reference
 }
 
+/// Designs an independent sampled quadrature lowpass using a double-precision inverse transform.
+/// Coefficients and convolution expectations do not read any production designer or mixer output.
+fn expected_quadrature(cutoff: f64, half_length: usize) -> Vec<f64> {
+    let size = half_length * 4;
+    let inverse = RealFftPlanner::<f64>::new().plan_fft_inverse(size);
+    let mut spectrum = inverse.make_input_vec();
+    for (bin, value) in spectrum.iter_mut().enumerate() {
+        let frequency = bin as f64 * f64::from(SAMPLE_RATE) / size as f64;
+        let position = (frequency / cutoff).log2();
+        let magnitude = if position <= -0.5 {
+            1.0
+        } else if position >= 0.5 {
+            0.0
+        } else {
+            0.5 * (1.0 - (std::f64::consts::PI * position).sin())
+        };
+        *value = Complex64::new(0.0, if bin == 0 || bin == size / 2 { 0.0 } else { -magnitude });
+    }
+    let mut impulse = inverse.make_output_vec();
+    inverse
+        .process(&mut spectrum, &mut impulse)
+        .expect("independent quadrature inverse");
+    (0..=half_length * 2)
+        .map(|tap| {
+            let circular = (tap + size - half_length) % size;
+            let phase = std::f64::consts::PI * tap as f64 / half_length as f64;
+            let window = (-0.488_29_f64).mul_add(phase.cos(), 0.358_75);
+            let window = 0.141_28_f64.mul_add((2.0 * phase).cos(), window);
+            let window = (-0.011_68_f64).mul_add((3.0 * phase).cos(), window);
+            impulse.get(circular).copied().expect("quadrature tap") * window / size as f64
+        })
+        .collect()
+}
+
+#[test]
+fn selected_custom_crossover_recovery_matches_independent_direct_convolution_centered_and_panned() {
+    for pan in [0.0_f32, -0.4, 0.6] {
+        let mut imager = MultibandImager::new(SAMPLE_RATE).expect("rate");
+        imager.set_offline(true).expect("offline");
+        assert!(imager.set_crossovers([70.0, 850.0, 10_000.0]));
+        for _ in 0..PARTITION {
+            let _ = imager.process_frame([0.0; 2]);
+        }
+        imager.set_controls(std::array::from_fn(|band| {
+            BandControls::new(0.0, 0.7, 0.25, 0.8, pan, band == 1).expect("selected recovery")
+        }));
+        imager.reset();
+        let half_length = imager.tail_samples();
+        let lower = expected_quadrature(70.0, half_length);
+        let upper = expected_quadrature(850.0, half_length);
+        let ordinary_lower = expected_lowpass(70.0, half_length);
+        let ordinary_upper = expected_lowpass(850.0, half_length);
+        let input = [1.0_f64, 0.5, 0.25, 0.125, 0.0625];
+        let mut power = 0.0;
+        for sample in 0..PARTITION + half_length * 2 + input.len() + PARTITION {
+            let source = input.get(sample).copied().unwrap_or_default() as f32;
+            let actual = imager.process_frame([source, -source]);
+            let mut recovered = 0.0;
+            let mut ordinary = 0.0;
+            for (position, &source) in input.iter().enumerate() {
+                if let Some(tap) = sample.checked_sub(PARTITION + position)
+                    && let (Some(&upper), Some(&lower), Some(&ordinary_upper), Some(&ordinary_lower)) = (
+                        upper.get(tap),
+                        lower.get(tap),
+                        ordinary_upper.get(tap),
+                        ordinary_lower.get(tap),
+                    )
+                {
+                    recovered = (source * (upper - lower) * 0.7 * 0.8).mul_add(0.75, recovered);
+                    ordinary = (source * (ordinary_upper - ordinary_lower) * 0.7).mul_add(0.25, ordinary);
+                }
+            }
+            let left = recovered + ordinary;
+            let right = recovered - ordinary;
+            let to_right = f64::from(pan.max(0.0));
+            let to_left = f64::from((-pan).max(0.0));
+            let expected = [
+                right.mul_add(to_left, left * (1.0 - to_right)),
+                left.mul_add(to_right, right * (1.0 - to_left)),
+            ];
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!(
+                    (f64::from(actual) - expected).abs() < 2.0e-7,
+                    "pan={pan}, sample={sample}"
+                );
+                power += f64::from(actual).powi(2);
+            }
+        }
+        assert!(power > 0.001, "selected recovery must carry audio");
+    }
+}
+
 /// Designs an independent double-precision sampled lowpass and directly normalizes its windowed impulse.
 /// It uses no production filter coefficients, convolution outputs, band mixer, or reference accessor.
 fn expected_lowpass(cutoff: f64, half_length: usize) -> Vec<f64> {
@@ -135,6 +227,50 @@ fn selected_neutral_reference_matches_independent_ordinary_band_impulses() {
 }
 
 /// A selected source trim changes only its processed contribution, never the ordinary dry reference.
+#[test]
+#[expect(
+    clippy::suboptimal_flops,
+    reason = "The independent oracle pins separate gain/Delta rounding"
+)]
+fn selected_output_gain_and_delta_share_the_ordinary_reference_during_automation() {
+    let mut ordinary = selected_imager(1);
+    let mut processed = selected_imager(1);
+    let change = WARMUP + 37;
+    let first_changed = (change / PARTITION + 1) * PARTITION;
+    let step = (0.5 - 1.0) / 960.0;
+    let delta_step = 1.0 / 960.0;
+    let mut gain = 1.0_f32;
+    let mut delta = 0.0_f32;
+    let mut power = 0.0_f64;
+    for sample in 0..change + 1800 {
+        if sample == change {
+            assert!(processed.set_output_controls(0.5, 1.0, true));
+            let selected = selected_controls([false, false, true, false]);
+            ordinary.set_controls(selected);
+            processed.set_controls(selected);
+        }
+        let reference = ordinary.process_frame(signal(sample));
+        let actual = processed.process_frame(signal(sample));
+        assert_eq!(processed.dry_reference().map(f32::to_bits), reference.map(f32::to_bits));
+        if sample >= first_changed {
+            let advanced = sample - first_changed + 1;
+            if advanced >= 960 {
+                gain = 0.5;
+                delta = 1.0;
+            } else {
+                gain += step;
+                delta += delta_step;
+            }
+        }
+        for (actual, dry) in actual.into_iter().zip(reference) {
+            let expected = dry * gain - delta * dry;
+            assert!((actual - expected).abs() < 1.0e-6, "output/reference frame {sample}");
+            power += f64::from(actual).powi(2);
+        }
+    }
+    assert!(power > 0.1);
+}
+
 #[test]
 fn selected_trim_delta_matches_independent_band_impulse() {
     let mut imager = selected_imager(2);
