@@ -350,22 +350,35 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
         result = self.invoke("lint.sh", "--changed", "--build-dir", str(database), "--jobs", "1")
         self.assert_success(result)
 
-    def test_format_check_aliases(self) -> None:
-        """Both check aliases call the nonmutating formatter mode rather than rewriting files."""
+    def test_format_source_discovery_and_check_aliases(self) -> None:
+        """Discover C++ and GLSL files in both modes, keeping check aliases nonmutating and failures visible."""
         for command in ("find", "sort"):
             executable = shutil.which(command)
             assert executable is not None
             (self.tools / command).symlink_to(executable)
-        for directory in ("src", "tests", "benchmarks"):
-            (self.plugin / directory).mkdir(exist_ok=True)
+        sources = (
+            "src/Contract.cpp",
+            "tests/Contract.h",
+            "src/ui/shaders/contract vertex.vert",
+            "src/ui/shaders/contract fragment.frag",
+            "benchmarks/shaders/contract.glsl",
+        )
+        for relative in (*sources, "src/ui/shaders/ignored.wgsl", "tests/ignored.txt", "outside.vert"):
+            path = self.plugin / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        # Stop at the first formatter so this contract never needs or runs the other formatting tools.
         self.write_tool("clang-format", "exit 37\n")
-        for flag in ("-c", "--check"):
-            with self.subTest(flag=flag):
+        for arguments in ((), ("-c",), ("--check",)):
+            with self.subTest(arguments=arguments):
                 self.clear_log()
-                result = self.invoke("format.sh", flag)
+                result = self.invoke("format.sh", *arguments)
                 assert result.returncode == 37, result.stdout + result.stderr
-                assert "--dry-run" in self.commands("clang-format")[0]
-                assert "-i" not in self.commands("clang-format")[0]
+                mode = ["--dry-run", "--Werror"] if arguments else []
+                prefix = ["--verbose"] if arguments else ["-i", "--verbose"]
+                assert self.commands("clang-format") == [
+                    [*prefix, f"--style=file:{self.plugin / '.clang-format'}", *mode, *sorted(sources)]
+                ]
 
     def test_validation_is_opt_in(self) -> None:
         """Ordinary builds and installs never invoke either validator."""

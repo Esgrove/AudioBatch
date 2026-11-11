@@ -5,6 +5,7 @@
 
 #include "ui/SpectrogramRenderer.h"
 
+#include "ImageControlBinaryData.h"
 #include "Parameters.h"
 #include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpatialSpectrogramView.h"
@@ -147,262 +148,6 @@ constexpr juce::uint32 BACKGROUND {0xff050608};
 
 static_assert(sizeof(SpectrogramParticle) == sizeof(float) * PARTICLE_FLOATS);
 
-/// Makes a triangle that covers the viewport from the vertex index, with texture coordinates from 0 to 1.
-constexpr auto SCREEN_VERTEX_SHADER {
-    R"(#version 330 core
-out vec2 uv;
-void main()
-{
-    vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-    uv = corner;
-    gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
-}
-)",
-};
-
-/// Outputs white, which the blend function turns into a multiplication of the target by the blend colour.
-constexpr auto FADE_FRAGMENT_SHADER {
-    R"(#version 330 core
-out vec4 colour;
-void main()
-{
-    colour = vec4(1.0);
-}
-)",
-};
-
-/// Places a sprite around a particle: the centre from its plot shares, the spread from its bin spacing,
-/// never narrower than the sharp core, and the size from the wider of the core and the halo.
-/// The core and the halo scale with the particle's size, so louder content draws larger dots,
-/// and the halo's brightness scales with the particle's emphasis.
-constexpr auto PARTICLE_VERTEX_SHADER {
-    R"(#version 330 core
-layout(location = 0) in vec2 corner;
-layout(location = 1) in vec3 placement;
-layout(location = 2) in vec3 tint;
-layout(location = 3) in float particleSize;
-layout(location = 4) in float particleEmphasis;
-uniform vec2 targetSize;
-uniform float coreSigma;
-uniform float maxSigma;
-uniform float haloSigma;
-uniform float reach;
-out vec2 offset;
-flat out vec2 core;
-flat out vec2 halo;
-flat out vec3 particleColour;
-flat out float emphasis;
-void main()
-{
-    vec2 centre = vec2(placement.x, 1.0 - placement.y) * targetSize;
-    emphasis = particleEmphasis;
-    float sizedCore = coreSigma * particleSize;
-    float sizedHalo = haloSigma * particleSize;
-    core = vec2(clamp(placement.z * targetSize.x, sizedCore, maxSigma), sizedCore);
-    halo = vec2(max(core.x, sizedHalo), sizedHalo);
-    offset = corner * halo * reach;
-    particleColour = tint;
-    gl_Position = vec4((centre + offset) / targetSize * 2.0 - 1.0, 0.0, 1.0);
-}
-)",
-};
-
-/// A Gaussian core with a faint wider halo, evaluated at the exact sub-pixel offset from the centre.
-constexpr auto PARTICLE_FRAGMENT_SHADER {
-    R"(#version 330 core
-in vec2 offset;
-flat in vec2 core;
-flat in vec2 halo;
-flat in vec3 particleColour;
-flat in float emphasis;
-uniform float haloWeight;
-out vec4 colour;
-void main()
-{
-    vec2 inCore = offset / core;
-    vec2 inHalo = offset / halo;
-    float weight = exp(-0.5 * dot(inCore, inCore)) + haloWeight * emphasis * exp(-0.5 * dot(inHalo, inHalo));
-    colour = vec4(particleColour * weight, 0.0);
-}
-)",
-};
-
-/// Halves a picture with the 13-tap filter of the Call of Duty bloom, which does not flicker as particles move.
-constexpr auto DOWNSAMPLE_FRAGMENT_SHADER {
-    R"(#version 330 core
-in vec2 uv;
-uniform sampler2D source;
-uniform vec2 sourceTexel;
-out vec4 colour;
-vec3 tap(float x, float y)
-{
-    return texture(source, uv + vec2(x, y) * sourceTexel).rgb;
-}
-void main()
-{
-    vec3 outer = (tap(-2.0, 2.0) + tap(2.0, 2.0) + tap(-2.0, -2.0) + tap(2.0, -2.0)) * 0.03125;
-    vec3 edges = (tap(0.0, 2.0) + tap(-2.0, 0.0) + tap(2.0, 0.0) + tap(0.0, -2.0)) * 0.0625;
-    vec3 inner = (tap(-1.0, 1.0) + tap(1.0, 1.0) + tap(-1.0, -1.0) + tap(1.0, -1.0)) * 0.125;
-    colour = vec4(tap(0.0, 0.0) * 0.125 + outer + edges + inner, 1.0);
-}
-)",
-};
-
-/// Doubles a picture with a 3×3 tent filter. The blend function adds it to the next larger level.
-constexpr auto UPSAMPLE_FRAGMENT_SHADER {
-    R"(#version 330 core
-in vec2 uv;
-uniform sampler2D source;
-uniform vec2 sourceTexel;
-uniform float radius;
-out vec4 colour;
-vec3 tap(float x, float y)
-{
-    return texture(source, uv + vec2(x, y) * sourceTexel * radius).rgb;
-}
-void main()
-{
-    vec3 sum = tap(0.0, 0.0) * 4.0;
-    sum += (tap(0.0, 1.0) + tap(-1.0, 0.0) + tap(1.0, 0.0) + tap(0.0, -1.0)) * 2.0;
-    sum += tap(-1.0, 1.0) + tap(1.0, 1.0) + tap(-1.0, -1.0) + tap(1.0, -1.0);
-    colour = vec4(sum / 16.0, 1.0);
-}
-)",
-};
-
-/// Tone maps the particles and their glow into the plot.
-/// The curve maps the brightest channel with 1 − exp(−energy) and scales the others with it,
-/// so colours keep their hue and saturation instead of washing out,
-/// and only the brightest clusters lighten towards white.
-/// The result goes over the plot background in linear light and is encoded as sRGB,
-/// since the framebuffer stores the encoded values the display shows,
-/// so faint particles get their full perceived brightness instead of sinking into the background.
-/// It is drawn inside rounded corners with an antialiased edge,
-/// and a little noise keeps the dark gradients from banding.
-///
-/// The solid mode reads a smooth level of the glow chain as a density field, with a bicubic B-spline sample,
-/// so its contours have no bilinear kinks.
-/// Each layer fills where the tone-mapped density passes its level, tinted by the field's colour,
-/// and is outlined with an antialiased line one to two pixels wide.
-/// The sharp particles show over the layers only where they are bright, so the strongest content draws as traces.
-constexpr auto COMPOSITE_FRAGMENT_SHADER {
-    R"(#version 330 core
-uniform sampler2D accumulation;
-uniform sampler2D bloom;
-uniform sampler2D field;
-uniform vec2 fieldSize;
-uniform vec2 plotOrigin;
-uniform vec2 plotSize;
-uniform float cornerRadius;
-uniform float exposure;
-uniform float glowStrength;
-uniform vec3 highlight;
-uniform vec3 background;
-uniform float solid;
-uniform float fieldGain;
-uniform vec4 layerLevels;
-uniform vec4 layerAlphas;
-uniform vec4 outlineStrengths;
-uniform float outlineWidth;
-uniform vec2 solidHighlight;
-out vec4 colour;
-vec3 bicubic(sampler2D source, vec2 uv, vec2 size)
-{
-    vec2 position = uv * size - 0.5;
-    vec2 cell = floor(position);
-    vec2 f = position - cell;
-    vec2 f2 = f * f;
-    vec2 f3 = f2 * f;
-    vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-    vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-    vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
-    vec2 w3 = f3 / 6.0;
-    vec2 g0 = w0 + w1;
-    vec2 g1 = w2 + w3;
-    vec2 h0 = (cell - 0.5 + w1 / g0) / size;
-    vec2 h1 = (cell + 1.5 + w3 / g1) / size;
-    return g0.y * (g0.x * texture(source, vec2(h0.x, h0.y)).rgb + g1.x * texture(source, vec2(h1.x, h0.y)).rgb)
-         + g1.y * (g0.x * texture(source, vec2(h0.x, h1.y)).rgb + g1.x * texture(source, vec2(h1.x, h1.y)).rgb);
-}
-vec3 toneMap(vec3 energy)
-{
-    float peak = max(max(energy.r, energy.g), energy.b);
-    if (peak <= 1.0e-6)
-    {
-        return vec3(0.0);
-    }
-    float toned = 1.0 - exp(-peak);
-    vec3 mapped = energy * (toned / peak);
-    return mix(mapped, vec3(toned), smoothstep(highlight.x, highlight.y, peak) * highlight.z);
-}
-vec3 solidLayers(vec2 uv)
-{
-    vec3 fieldEnergy = exposure * fieldGain * max(bicubic(field, uv, fieldSize), vec3(0.0));
-    float fieldPeak = max(max(fieldEnergy.r, fieldEnergy.g), fieldEnergy.b);
-    if (fieldPeak <= 1.0e-6)
-    {
-        return vec3(0.0);
-    }
-    vec3 hue = fieldEnergy / fieldPeak;
-    float density = 1.0 - exp(-fieldPeak);
-    float fieldStep = max(fwidth(density), 1.0e-5);
-    vec3 result = vec3(0.0);
-    for (int layer = 0; layer < 4; ++layer)
-    {
-        float level = layerLevels[layer];
-        float inside = smoothstep(level - fieldStep, level + fieldStep, density);
-        float shade = 0.35 + 0.65 * float(layer) / 3.0;
-        result = mix(result, hue * shade, inside * layerAlphas[layer]);
-        float lineDistance = abs(density - level) / fieldStep;
-        float line = 1.0 - smoothstep(outlineWidth * 0.5 - 0.5, outlineWidth * 0.5 + 0.5, lineDistance);
-        result += hue * line * outlineStrengths[layer];
-    }
-    return result;
-}
-float roundedBoxDistance(vec2 position, vec2 halfSize, float radius)
-{
-    vec2 outside = abs(position) - halfSize + radius;
-    return length(max(outside, 0.0)) + min(max(outside.x, outside.y), 0.0) - radius;
-}
-float noise(vec2 position)
-{
-    return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
-}
-vec3 srgbToLinear(vec3 value)
-{
-    return mix(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), value));
-}
-vec3 linearToSrgb(vec3 value)
-{
-    return mix(value * 12.92, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), value));
-}
-void main()
-{
-    vec2 local = gl_FragCoord.xy - plotOrigin;
-    vec2 uv = local / plotSize;
-    vec3 mapped;
-    if (solid > 0.5)
-    {
-        vec3 sharp = toneMap(exposure * texture(accumulation, uv).rgb);
-        float sharpPeak = max(max(sharp.r, sharp.g), sharp.b);
-        vec3 glow = toneMap(exposure * glowStrength * texture(bloom, uv).rgb);
-        vec3 layers = solidLayers(uv);
-        mapped = layers + glow + sharp * smoothstep(solidHighlight.x, solidHighlight.y, sharpPeak);
-        mapped = min(mapped, vec3(1.0));
-    }
-    else
-    {
-        mapped = toneMap(exposure * (texture(accumulation, uv).rgb + glowStrength * texture(bloom, uv).rgb));
-    }
-    vec3 linearBackground = srgbToLinear(background);
-    vec3 result = linearToSrgb(clamp(linearBackground + mapped * (1.0 - linearBackground), 0.0, 1.0));
-    result += (noise(gl_FragCoord.xy) - 0.5) / 255.0;
-    float distance = roundedBoxDistance(local - plotSize * 0.5, plotSize * 0.5, cornerRadius);
-    colour = vec4(result, clamp(0.5 - distance, 0.0, 1.0));
-}
-)",
-};
-
 /// Returns a byte offset into a vertex buffer in the form glVertexAttribPointer takes.
 const void* bufferOffset(const std::size_t bytes)
 {
@@ -414,8 +159,8 @@ const void* bufferOffset(const std::size_t bytes)
 /// Compiles and links a shader program, or returns null and logs why it failed.
 std::unique_ptr<juce::OpenGLShaderProgram> buildProgram(
     const juce::OpenGLContext& context,
-    const char* vertexShader,
-    const char* fragmentShader
+    const juce::String& vertexShader,
+    const juce::String& fragmentShader
 )
 {
     auto program = std::make_unique<juce::OpenGLShaderProgram>(context);
@@ -747,11 +492,33 @@ void SpectrogramRenderer::renderOpenGL()
 /// Returns false when a shader fails. No cached uniform survives a context's resource teardown.
 bool SpectrogramRenderer::createPrograms()
 {
-    particleProgram = buildProgram(openGLContext, PARTICLE_VERTEX_SHADER, PARTICLE_FRAGMENT_SHADER);
-    fadeProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, FADE_FRAGMENT_SHADER);
-    downsampleProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, DOWNSAMPLE_FRAGMENT_SHADER);
-    upsampleProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, UPSAMPLE_FRAGMENT_SHADER);
-    compositeProgram = buildProgram(openGLContext, SCREEN_VERTEX_SHADER, COMPOSITE_FRAGMENT_SHADER);
+    const auto screenVertex
+        = juce::String::fromUTF8(ImageControlBinaryData::screen_vert, ImageControlBinaryData::screen_vertSize);
+    particleProgram = buildProgram(
+        openGLContext,
+        juce::String::fromUTF8(ImageControlBinaryData::particle_vert, ImageControlBinaryData::particle_vertSize),
+        juce::String::fromUTF8(ImageControlBinaryData::particle_frag, ImageControlBinaryData::particle_fragSize)
+    );
+    fadeProgram = buildProgram(
+        openGLContext,
+        screenVertex,
+        juce::String::fromUTF8(ImageControlBinaryData::fade_frag, ImageControlBinaryData::fade_fragSize)
+    );
+    downsampleProgram = buildProgram(
+        openGLContext,
+        screenVertex,
+        juce::String::fromUTF8(ImageControlBinaryData::downsample_frag, ImageControlBinaryData::downsample_fragSize)
+    );
+    upsampleProgram = buildProgram(
+        openGLContext,
+        screenVertex,
+        juce::String::fromUTF8(ImageControlBinaryData::upsample_frag, ImageControlBinaryData::upsample_fragSize)
+    );
+    compositeProgram = buildProgram(
+        openGLContext,
+        screenVertex,
+        juce::String::fromUTF8(ImageControlBinaryData::composite_frag, ImageControlBinaryData::composite_fragSize)
+    );
     if (particleProgram == nullptr || fadeProgram == nullptr || downsampleProgram == nullptr
         || upsampleProgram == nullptr || compositeProgram == nullptr)
     {

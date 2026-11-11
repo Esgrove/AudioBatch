@@ -229,7 +229,7 @@ set_source_files_properties(
     PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
 )
 
-# The editor uses the same Roboto fonts as AudioBatch, from the shared assets.
+# The editor embeds its GLSL sources and the same Roboto fonts as AudioBatch, from the shared assets.
 juce_add_binary_data(
     ImageControlAssets
     HEADER_NAME ImageControlBinaryData.h
@@ -238,6 +238,13 @@ juce_add_binary_data(
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-Regular.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-SemiBold.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/screen.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/fade.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/downsample.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/upsample.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/composite.frag"
 )
 
 target_link_libraries(
@@ -520,6 +527,7 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CorrelationTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/CrossoverTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/SpectrogramOverlayTests.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/ShaderSourceTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ImageControlEditorTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/HostContractsTests.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/ImagerTests.cpp"
@@ -536,8 +544,11 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/TestMain.cpp"
     )
     add_executable(ImageControlTests ${IMAGE_CONTROL_TEST_SOURCES})
-    target_link_libraries(ImageControlTests PRIVATE ImageControl GTest::gtest)
+    target_link_libraries(ImageControlTests PRIVATE ImageControl ImageControlAssets GTest::gtest)
     target_include_directories(ImageControlTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(
+        ImageControlTests PRIVATE IMAGE_CONTROL_SHADER_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders"
+    )
     set_source_files_properties(
         ${IMAGE_CONTROL_TEST_SOURCES} TARGET_DIRECTORY ImageControlTests
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
