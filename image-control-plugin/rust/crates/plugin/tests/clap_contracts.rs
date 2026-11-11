@@ -21,21 +21,71 @@ use clack_host::utils::ClapId;
 #[path = "../examples/support/clap_host.rs"]
 mod host;
 
+/// Independently specified native parameter metadata, not copied from the plugin's registry.
+struct ExpectedParameter {
+    minimum: f64,
+    maximum: f64,
+    default: f64,
+    stepped: bool,
+}
+
 /// Independent plain-unit ranges and neutral defaults, deliberately not derived from the plugin's registry.
-const fn expected_parameter(id: u32) -> (f64, f64, f64, bool) {
+const fn expected_parameter(id: u32) -> ExpectedParameter {
     match id {
-        0 => (-24.0, 12.0, 0.0, false),
-        1 => (20.0, 20_000.0, 100.0, false),
-        2 => (20.0, 20_000.0, 500.0, false),
-        3 => (20.0, 20_000.0, 5000.0, false),
-        4..=27 => match (id - 4) % 6 {
-            0 | 1 => (-60.0, 12.0, 0.0, false),
-            2 => (0.0, 2.0, 1.0, false),
-            3 => (0.0, 200.0, 0.0, false),
-            4 => (-100.0, 100.0, 0.0, false),
-            _ => (0.0, 1.0, 0.0, true),
+        0 => ExpectedParameter {
+            minimum: -24.0,
+            maximum: 12.0,
+            default: 0.0,
+            stepped: false,
         },
-        _ => (0.0, 1.0, 0.0, true),
+        1..=3 => ExpectedParameter {
+            minimum: 20.0,
+            maximum: 20_000.0,
+            default: match id {
+                1 => 100.0,
+                2 => 500.0,
+                _ => 5000.0,
+            },
+            stepped: false,
+        },
+        4..=27 => match (id - 4) % 6 {
+            0 | 1 => ExpectedParameter {
+                minimum: -60.0,
+                maximum: 12.0,
+                default: 0.0,
+                stepped: false,
+            },
+            2 => ExpectedParameter {
+                minimum: 0.0,
+                maximum: 2.0,
+                default: 1.0,
+                stepped: false,
+            },
+            3 => ExpectedParameter {
+                minimum: 0.0,
+                maximum: 200.0,
+                default: 0.0,
+                stepped: false,
+            },
+            4 => ExpectedParameter {
+                minimum: -100.0,
+                maximum: 100.0,
+                default: 0.0,
+                stepped: false,
+            },
+            _ => ExpectedParameter {
+                minimum: 0.0,
+                maximum: 1.0,
+                default: 0.0,
+                stepped: true,
+            },
+        },
+        _ => ExpectedParameter {
+            minimum: 0.0,
+            maximum: 1.0,
+            default: 0.0,
+            stepped: true,
+        },
     }
 }
 
@@ -66,7 +116,12 @@ fn packaged_parameter_metadata_and_plain_conversions() -> Result<()> {
         let info = params
             .get_info(&handle, id, &mut scratch)
             .context("parameter metadata")?;
-        let (minimum, maximum, default, stepped) = expected_parameter(id);
+        let ExpectedParameter {
+            minimum,
+            maximum,
+            default,
+            stepped,
+        } = expected_parameter(id);
         ensure!(info.id.get() == id, "parameter id/index reordered");
         ensure!(!info.name.is_empty(), "parameter name missing");
         ensure!(

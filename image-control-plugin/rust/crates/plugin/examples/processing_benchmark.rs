@@ -91,6 +91,14 @@ struct Report {
     callback_seconds: f64,
 }
 
+/// Callback-only timing and invocation count from one warmed rendering pass.
+struct CallbackTiming {
+    /// Sum of measured process durations, excluding signal copies and output checks.
+    elapsed: Duration,
+    /// Number of measured process invocations, excluding warmup.
+    callbacks: usize,
+}
+
 /// Fatal watchdog bounds even a native ABI call that never returns.
 struct Deadline {
     /// Completion signal sent after all native lifecycle ownership has been retired.
@@ -235,7 +243,7 @@ fn render(
     input: &[[f32; 2]],
     output: &mut [[f32; 2]],
     options: &Options,
-) -> Result<(Duration, usize)> {
+) -> Result<CallbackTiming> {
     let warmup_frames = input.len() - output.len();
     let channels = options.scenario.channels();
     let mut callback_time = Duration::ZERO;
@@ -281,7 +289,10 @@ fn render(
         }
         position += frames;
     }
-    Ok((callback_time, callbacks))
+    Ok(CallbackTiming {
+        elapsed: callback_time,
+        callbacks,
+    })
 }
 
 /// Loads the exact production bundle and executes a finite deterministic stream with preallocated host buffers.
@@ -322,7 +333,7 @@ fn run(options: Options) -> Result<Report> {
     let mut output = vec![[0.0_f32; 2]; options.frames];
     let mut processor = instance.processor(&ui)?;
     processor.reset(0);
-    let (callback_time, callbacks) = render(&mut processor, &input, &mut output, &options)?;
+    let timing = render(&mut processor, &input, &mut output, &options)?;
     drop(processor);
     instance.deactivate(&ui)?;
     drop(instance);
@@ -373,13 +384,13 @@ fn run(options: Options) -> Result<Report> {
         blocks: options.blocks,
         warmup_frames,
         frames: options.frames,
-        callbacks,
+        callbacks: timing.callbacks,
         finite_samples,
         checksum: format!("{checksum:016x}"),
         energy,
         peak,
         latency_samples,
-        callback_seconds: callback_time.as_secs_f64(),
+        callback_seconds: timing.elapsed.as_secs_f64(),
     })
 }
 

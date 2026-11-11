@@ -315,12 +315,12 @@ where
             return;
         }
         let state = tree.state.downcast_ref::<PlotState>();
-        let (hovered, hovered_band) = if self.enabled {
+        let hovered = if self.enabled {
             state
                 .input
                 .hover(cursor, bounds, self.crossovers, self.scale, self.epoch)
         } else {
-            (None, None)
+            input::HoverTarget::default()
         };
         responses::draw_bands(
             renderer,
@@ -329,7 +329,7 @@ where
             self.crossovers,
             self.scale,
             self.soloed,
-            hovered_band,
+            hovered.band,
         );
         for frequency in GRID_FREQUENCIES {
             line(
@@ -369,8 +369,8 @@ where
                 occupied.push(label_bounds);
             }
         }
-        self.draw_band_labels(renderer, bounds, hovered_band, &mut occupied, viewport);
-        self.draw_crossovers(renderer, bounds, hovered, &state.input, &mut occupied, viewport);
+        self.draw_band_labels(renderer, bounds, hovered.band, &mut occupied, viewport);
+        self.draw_crossovers(renderer, bounds, hovered.marker, &state.input, &mut occupied, viewport);
         responses::draw_position_curve(
             renderer,
             &state.position_curve,
@@ -632,9 +632,18 @@ fn line(renderer: &mut impl iced::advanced::Renderer, bounds: Rectangle, plot: R
     );
 }
 
+/// Centered renderer text and its matching anchor in plot coordinates.
+struct LabelPlacement {
+    text: text::Text,
+    anchor: Point,
+}
+
 /// Couples centered text with its matching renderer anchor so placement tests exercise the production geometry.
-fn label_placement(content: String, bounds: Rectangle) -> (text::Text, Point) {
-    (label_text(content, bounds.size()), bounds.center())
+fn label_placement(content: String, bounds: Rectangle) -> LabelPlacement {
+    LabelPlacement {
+        text: label_text(content, bounds.size()),
+        anchor: bounds.center(),
+    }
 }
 
 /// Draws center-aligned text from its rectangle's center, as required by Iced's renderer anchor contract.
@@ -645,8 +654,8 @@ fn label_at(
     color: Color,
     viewport: &Rectangle,
 ) {
-    let (label, anchor) = label_placement(content, bounds);
-    renderer.fill_text(label, anchor, color, *viewport);
+    let placement = label_placement(content, bounds);
+    renderer.fill_text(placement.text, placement.anchor, color, *viewport);
 }
 
 #[cfg(test)]
@@ -683,12 +692,12 @@ mod tests {
             Rectangle::new(Point::new(72.0, 31.0), Size::new(90.0, 11.0)),
             Rectangle::new(Point::new(400.0, 220.0), Size::new(42.0, 15.0)),
         ] {
-            let (label, anchor) = label_placement("Low Mid".into(), bounds);
-            assert_eq!(anchor, bounds.center());
-            assert_eq!(label.bounds, bounds.size());
-            assert_eq!(label.align_x, text::Alignment::Center);
-            assert_eq!(label.align_y, iced::alignment::Vertical::Center);
-            assert!((label.size.0 - theme::ANNOTATION_SIZE).abs() < f32::EPSILON);
+            let placement = label_placement("Low Mid".into(), bounds);
+            assert_eq!(placement.anchor, bounds.center());
+            assert_eq!(placement.text.bounds, bounds.size());
+            assert_eq!(placement.text.align_x, text::Alignment::Center);
+            assert_eq!(placement.text.align_y, iced::alignment::Vertical::Center);
+            assert!((placement.text.size.0 - theme::ANNOTATION_SIZE).abs() < f32::EPSILON);
         }
     }
 
@@ -790,8 +799,8 @@ mod tests {
         assert!(crossover_label_bounds(182.0, plot, size, &[first, second]).is_none());
         for bounds in [first, second] {
             assert_contained(bounds, plot);
-            let (_, anchor) = label_placement("1k".into(), bounds);
-            assert_eq!(anchor, bounds.center());
+            let placement = label_placement("1k".into(), bounds);
+            assert_eq!(placement.anchor, bounds.center());
         }
         let narrow = Rectangle::new(plot.position(), Size::new(32.0, 200.0));
         assert!(crossover_label_bounds(narrow.center_x(), narrow, size, &[]).is_none());
@@ -814,11 +823,11 @@ mod tests {
                 assert_contained(pill, plot);
                 assert!(pill.width >= LABEL_GAP.mul_add(2.0, size.width));
                 assert!(pill.height >= size.height + LABEL_GAP);
-                let (text, anchor) = label_placement(label.into(), pill);
-                let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text.as_ref());
+                let placement = label_placement(label.into(), pill);
+                let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(placement.text.as_ref());
                 assert!(paragraph.min_width() <= pill.width);
                 assert!(paragraph.min_height() <= pill.height);
-                assert_eq!(anchor, pill.center());
+                assert_eq!(placement.anchor, pill.center());
             }
         }
     }
