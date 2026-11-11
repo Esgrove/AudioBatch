@@ -18,7 +18,6 @@ use clack_extensions::configurable_audio_ports::{
     AudioPortRequest, AudioPortRequestDetails, PluginConfigurableAudioPorts,
 };
 use clack_extensions::latency::PluginLatency;
-#[cfg(test)]
 use clack_extensions::params::PluginParams;
 use clack_extensions::render::{PluginRender, RenderMode};
 use clack_host::entry::LibraryEntry;
@@ -261,7 +260,6 @@ pub fn activate(instance: &mut Instance) -> Result<Stopped> {
 }
 
 /// Sends plain-unit automation while inactive, outside audio execution and state save/restore.
-#[cfg(test)]
 pub fn flush(instance: &mut Instance, values: &[(u32, f64)]) -> Result<()> {
     let events: Vec<_> = values.iter().map(|&(id, value)| event(id, value)).collect();
     let mut handle = instance.inactive_plugin_handle().context("inactive flush")?;
