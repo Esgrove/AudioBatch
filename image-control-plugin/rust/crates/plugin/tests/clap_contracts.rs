@@ -286,7 +286,8 @@ fn save(instance: &mut host::Instance) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Exercises partial streams, an independent legacy document, transactional malformed input, and independent instances.
+/// Exercises partial streams, an independent current document, and transactional malformed input.
+/// Separate instances verify that restore defaults do not inherit another plugin's choices.
 #[test]
 #[cfg_attr(miri, ignore = "dynamically loads actual packaged CLAP state interfaces")]
 fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
@@ -320,13 +321,17 @@ fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
     ensure!(before == partial.bytes, "partial save/load did not roundtrip");
     for bytes in [
         Vec::new(),
-        vec![b' '; 4097],
+        vec![b' '; 16_385],
         b"{".to_vec(),
         br#"{"version":99,"parameters":{"gain":0.75}}"#.to_vec(),
-        br#"{"version":3,"parameters":{"gain":1.1}}"#.to_vec(),
-        br#"{"version":3,"parameters":{"gain":1e999}}"#.to_vec(),
-        br#"{"version":3,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#.to_vec(),
-        br#"{"version":3,"parameters":{"gain":0.75,"unknown":0.5}}"#.to_vec(),
+        br#"{"version":1,"parameters":{"gain":0.75}}"#.to_vec(),
+        br#"{"version":2,"parameters":{"gain":0.75}}"#.to_vec(),
+        br#"{"version":3,"parameters":{"gain":0.75}}"#.to_vec(),
+        br#"{"version":4,"parameters":{"gain":0.75}}"#.to_vec(),
+        br#"{"version":5,"parameters":{"gain":1.1}}"#.to_vec(),
+        br#"{"version":5,"parameters":{"gain":1e999}}"#.to_vec(),
+        br#"{"version":5,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#.to_vec(),
+        br#"{"version":5,"parameters":{"gain":0.75,"unknown":0.5}}"#.to_vec(),
     ] {
         let mut invalid = PartialStream {
             bytes,
@@ -355,13 +360,13 @@ fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
         state.save(&destination.plugin_handle(), &mut no_progress).is_err(),
         "zero-write stream accepted"
     );
-    let legacy = br#"{"version":1,"parameters":{"gain":0.25}}"#;
-    state.load(&destination.plugin_handle(), &mut legacy.as_slice())?;
+    let current = br#"{"version":5,"parameters":{"gain":0.25}}"#;
+    state.load(&destination.plugin_handle(), &mut current.as_slice())?;
     let handle = destination.plugin_handle();
     let params = handle.get_extension::<PluginParams>().context("CLAP params")?;
     ensure!(
         params.get_value(&handle, ClapId::new(0)) == Some(-15.0),
-        "legacy normalized gain mapping"
+        "current normalized gain mapping"
     );
     ensure!(
         params.get_value(&handle, ClapId::new(28)) == Some(0.0),
@@ -369,7 +374,7 @@ fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
     );
     state.load(
         &destination.plugin_handle(),
-        &mut br#"{"version":1,"parameters":{}}"#.as_slice(),
+        &mut br#"{"version":5,"parameters":{}}"#.as_slice(),
     )?;
     ensure!(
         save(&mut destination)? == defaults,

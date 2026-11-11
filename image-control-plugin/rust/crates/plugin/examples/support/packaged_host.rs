@@ -604,7 +604,7 @@ fn exercise_monitoring_taps(ui: &UiThread, instance: &PluginInstance, worker: &C
         .find(|window| window.title().to_string() == "ImageControl RS packaged host A")
         .context("owned monitoring test window")?;
     let parent = window.contentView().context("host content view")?;
-    for (x, expected) in [(201.0, "pre"), (243.0, "post")] {
+    for (x, expected) in [(201.0, "Pre"), (243.0, "Post")] {
         let bounds = parent.bounds();
         let local = NSPoint::new(
             x,
@@ -645,11 +645,7 @@ fn exercise_monitoring_taps(ui: &UiThread, instance: &PluginInstance, worker: &C
         let payload = bytes.get(4..).context("bounded state envelope")?;
         let decoded: serde_json::Value = serde_json::from_slice(payload)?;
         ensure!(
-            decoded
-                .get("editor")
-                .and_then(|editor| editor.get("tap"))
-                .and_then(serde_json::Value::as_str)
-                == Some(expected),
+            decoded.get("tap").and_then(serde_json::Value::as_str) == Some(expected),
             "native tap click did not publish {expected}"
         );
     }
