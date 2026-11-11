@@ -4,8 +4,10 @@ The Rust version of AudioBatch, developed next to the C++ application in `../cpp
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
 caches the results in SQLite, and lists them in a CLI and a GUI with a waveform overview and playback.
 Both also normalize files to a sample peak or loudness target, written as AIFF with their tags carried over.
-The GUI hosts VST3 effects on macOS and Windows:
-it processes files through a plugin chain, shows the plugins' editors, and can play the preview through the chain.
+The GUI and CLI process mixed VST3 and CLAP effect chains on macOS and Windows.
+The GUI shows plugin-provided native editors and can play the preview through the chain.
+CLAP hosting is Rust-only because the bundled JUCE has no CLAP host.
+Audio Unit hosting remains C++-only on macOS.
 The CLI lists the plugins a scan found.
 The CLI takes the same arguments and prints the same output as the C++ CLI, so the two can be compared directly.
 
@@ -60,9 +62,12 @@ Analysis and normalization support multichannel audio, while playback and plugin
   the waveform overview, tags with lofty, the SQLite cache with rusqlite, and normalization to AIFF.
   Ebur128 is a development-only reference for differential tests and benchmarks.
 - `crates/playback`: preview playback with cpal, rtrb, and rubato, with an optional insert such as a plugin chain
-- `crates/vst3-host`: VST3 hosting on the `vst3` bindings: modules, instances, processing, and editor windows
-- `crates/plugins`: plugin scanning in a worker process, the plugin chain, batch processing, and the preview chain
+- `crates/plugin-host-core`: shared UI-thread lifecycle, dispatch, event pumping, and Cocoa/Win32 editor windows
+- `crates/vst3-host`: VST3 hosting on the `vst3` bindings: modules, instances, processing, and editor adapters
+- `crates/clap-host`: CLAP hosting through Clack, including state, offline rendering, live processing, and native GUI
+- `crates/plugins`: isolated scanning, mixed-format chains and presets, batch processing, and the preview chain
 - `crates/test-plugin`: fake VST3 plugins for the tests
+- `crates/test-clap-plugin`: a deterministic development-only CLAP gain, mid/side width, and latency effect
 - `crates/serato`: parsers for the Serato GEOB tags, extracted from track-rename
 - `crates/cli`: the `audiobatch-rs` command line tool
 - `crates/gui`: the AudioBatchRs app, built on gpui-kit
@@ -70,7 +75,7 @@ Analysis and normalization support multichannel audio, while playback and plugin
 - `crates/test-fixtures`: locates the shared test fixtures in `../fixtures`
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the crates work together,
-with the threads, the analysis and processing pipelines, the preview, and VST3 hosting.
+with the threads, the analysis and processing pipelines, the preview, and plugin hosting.
 
 Analysis uses custom K weighting and block-energy gating, with SIMD true peak.
 Loudness stays within 0.001 LU of ebur128 and matches displayed integrated
@@ -188,7 +193,7 @@ and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
 Ctrl-C cancels the run, removes unfinished temporary output, reports committed files, and exits with code 130.
 A second Ctrl-C exits immediately.
-The `list` subcommand lists scanned VST3 effects, and `completion` generates shell completions.
+The `list` subcommand lists scanned VST3 and CLAP effects, and `completion` generates shell completions.
 
 `--normalize` writes analyzed files as a sibling `<name>.aif` at the source sample rate,
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
@@ -215,7 +220,7 @@ Usage: audiobatch-rs [OPTIONS] [PATHS]...
 
 Commands:
   process     Render audio through a saved plugin chain as 16-bit AIFF
-  list        List the available VST3 plugins
+  list        List the available VST3 and CLAP plugins
   completion  Generate shell completion script
   help        Print this message or the help of the given subcommand(s)
 
@@ -261,6 +266,8 @@ audiobatch-rs process -p "/path/to/Master.json" -n --lufs -16 --force --delete "
 A value that is a file, contains a path separator, or ends in `.json` is a preset file,
 and any other value is a preset name in the GUI's `chain-presets` folder.
 Only the Rust JSON presets are read, not the C++ XML presets.
+A preset can mix VST3 and CLAP effects, with each slot retaining its own format and opaque state.
+VST3-only presets remain readable.
 A preset with any damaged slot is rejected as a whole, before any file is touched.
 `--recurse`, `--refresh`, `--jobs`, `--sort`, `--reverse`, and `--output` work as in analysis.
 `--normalize` applies a peak or loudness gain before the first enabled plugin, by default a 0 dBFS peak.
@@ -274,18 +281,18 @@ A plugin crash or hang can end or block the CLI, since only scanning runs in a s
 
 ### Plugin Listing
 
-`audiobatch-rs list` prints the known VST3 plugins,
+`audiobatch-rs list` prints the known VST3 and CLAP plugins,
 and `--rescan` first scans the plugin folders for new or changed ones.
 The C++ CLI has the same subcommand with the same options.
-Bundles with `moduleinfo.json` are described without loading their code.
-Other bundles are loaded in a worker process shared by the scan.
+VST3 bundles with `moduleinfo.json` are described without loading their code.
+Other VST3 bundles and all `.clap` entries are loaded in the same isolated worker process.
 A crash blacklists the bundle and restarts the worker instead of ending the scan,
 and a bundle that takes longer than three minutes is skipped without being blacklisted.
 Bundles that are unchanged since the last scan are not loaded again.
 The list is saved to `plugins.json` in the data folder and shared with the GUI.
 
 ```console
-List the available VST3 plugins
+List the available VST3 and CLAP plugins
 
 Usage: audiobatch-rs list [OPTIONS]
 
@@ -385,17 +392,20 @@ See [Isolated application storage](../AGENTS.md#isolated-application-storage) fo
 
 ### Plugins
 
-The GUI hosts VST3 audio effects on macOS and Windows.
+The GUI hosts mixed VST3 and CLAP audio effect chains on macOS and Windows.
 Instruments are listed by scans but cannot be added to the chain.
 
-- Plugins > Plugin Manager… scans the plugin folders, which are the platform's standard VST3 folders
-  after the folders in `VST3_PATH`, unless custom folders are set there.
-  Bundles are described from `moduleinfo.json` when available, otherwise loaded in a worker shared by the scan.
+- Plugins > Plugin Manager… scans the platform's standard VST3 and CLAP folders,
+  including the folders in `VST3_PATH` and `CLAP_PATH`, unless custom folders replace the defaults.
+  VST3 bundles use `moduleinfo.json` when available, otherwise both formats load in the same isolated worker.
   A crash blacklists the bundle and restarts the worker instead of ending the scan,
   and a bundle that takes longer than three minutes is skipped without being blacklisted.
   The manager lists the known effects and the blacklisted bundles, which can be removed from the blacklist.
 - Plugins > Add Plugin, the Plugin Manager, or the Plugin Chain window adds an effect at the end of the chain
-  and opens its editor in a window of its own.
+  and opens its plugin-provided editor in a native window when available.
+  CLAP editors use the GUI and timer extensions with Cocoa on macOS and Win32 on Windows.
+  A plugin without a supported native GUI has no editor.
+  There is no generic parameter window.
   Plugins > Edit Chain… opens the Plugin Chain window, which enables, reorders, removes,
   and opens the editor of each plugin, and shows the latency of each plugin and of the whole chain.
   The chain and the plugins' settings are saved after every change, when an editor closes, and on quit.
@@ -427,6 +437,9 @@ Instruments are listed by scans but cannot be added to the chain.
   At the end of a file the plugins' tails keep playing, up to 20 seconds each, while the playhead waits at the end.
   A plugin that cannot be prepared or fails to process turns the preview off with its name and error,
   and output that is not finite stops playback.
+
+ImageControl RS's direct Windows CLAP has no custom GUI.
+AudioBatch does not supply generic parameter controls for it.
 
 Scans write `plugins.json`, the list of known plugins that the CLI shares,
 and the chain is saved in `plugin-chain.json`, both in the `AudioBatch-rs` folder.
@@ -599,8 +612,9 @@ and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
 ## Miri
 
 [Miri](https://github.com/rust-lang/miri) interprets tests and reports undefined behaviour in unsafe code.
-`miri.sh` runs it with Stacked Borrows on the unsafe COM code of `vst3-host` and the test plugin,
-the Serato tag parsers, and the waveform, overload, and spectrogram blob readers of the cache.
+`miri.sh` runs it with Stacked Borrows on shared host lifecycle, VST3 and in-process CLAP hosting,
+both dev test plugins, the Serato tag parsers, callback admission and retirement, and cache blob readers.
+Native plugin loading and editor windows need separate native validation.
 It does not exercise the native Core Audio AAC bridge, which needs native validation.
 
 ```shell
@@ -622,6 +636,7 @@ It uses native compiler annotations, a startup-linked runtime,
 and isolated `target/rtsan/` build and diagnostic storage.
 The ordinary stable toolchain and Windows builds do not enable this instrumentation.
 `./rtsan.sh --skip-native` requires clean first-party audio data callbacks, including admission and guard destruction.
+It includes deterministic in-process CLAP cold automation, reset, and retirement, not arbitrary CLAP plugin validation.
 Use `./rtsan.sh --diagnostic` to verify native-plugin and owned stream-error disposal blockers alongside clean cases.
 Native callback captures are pinned until backend disposal, and renderer resources retire on the owning thread.
 A `BLOCKED` result is not a clean real-time callback.

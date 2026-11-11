@@ -123,8 +123,8 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   and `rust/fuzz.sh` replays that corpus in place next to its own seeds in `rust/fuzz/corpus/`.
   Change a harness input layout in both projects together.
   The Rust-only `cache_blobs` and `decode_audio` targets have only their own seeds.
-  `rust/miri.sh` runs the unsafe VST3 hosting code, the Serato parsers, the playback callback admission,
-  and the cache blob readers under Miri.
+  `rust/miri.sh` checks shared host lifecycle, VST3 and in-process CLAP hosting, both dev test plugins,
+  the Serato parsers, playback callback admission, and cache blob readers under Miri.
 - `.agents/rules/` holds the rules for the C++ sources of the C++ application, the test plugin, and ImageControl.
   `.claude/rules` is a symlink to it, and the `.mdc` files in `.cursor/rules/` are symlinks to its files,
   because Cursor reads only `.mdc` rules there.
@@ -210,6 +210,10 @@ Feature requests apply to both the C++ and Rust applications by default.
 Implement the feature in both versions, including matching behavior, presentation, settings, and tests where applicable.
 Work on only one version when the user explicitly specifies C++ or Rust.
 Do not infer single-version scope from the currently open file or the implementation discussed most recently.
+
+CLAP hosting is a Rust-only capability on macOS and Windows.
+The bundled JUCE has no CLAP hosting support, so the C++ application's supported plugin formats remain unchanged.
+This format capability difference does not relax parity for operations both applications support.
 
 ## Behavioral Parity
 
