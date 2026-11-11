@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -293,9 +294,13 @@ namespace esgrove::image_control::test
 							throw std::runtime_error("Invalid band parameter field");
 					}
 				}
+				// The native float-skew frequency default returns through its float normalized host representation.
+				// Bound only frequency round trips by float precision, not the gain, percentage, or switch contracts.
+				const auto defaultTolerance =
+				    id >= 1 && id <= 3 ? std::max(1.0F, std::abs(expectedDefault)) * std::numeric_limits<float>::epsilon() * 8.0F : 1.0e-5F;
 				require(
 				    std::abs(info.minValue - expectedMinimum) < 1.0e-5F && std::abs(info.maxValue - expectedMaximum) < 1.0e-5F &&
-				        std::abs(info.defaultValue - expectedDefault) < 1.0e-5F,
+				        std::abs(info.defaultValue - expectedDefault) <= defaultTolerance,
 				    fmt::format("Parameter {} does not match its independent plain-unit range/default", id)
 				);
 				const auto requiredFlags = kAudioUnitParameterFlag_IsReadable | kAudioUnitParameterFlag_IsWritable;

@@ -148,7 +148,9 @@ impl HostedComponent {
             // SAFETY: the queried controller is live and parameter changes publish independent atomics only.
             let result = unsafe { self.controller.setParamNormalized(id, value) };
             ensure!(result == kResultOk, "parameter {id}");
-            expected.push(value);
+            // Read back the independently requested edit because the production plain grid may snap it.
+            // SAFETY: the same live controller and stable parameter id remain owned by this main thread.
+            expected.push(unsafe { self.controller.getParamNormalized(id) });
         }
         Ok(expected)
     }
