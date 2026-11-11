@@ -604,7 +604,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-cli"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-core"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "base64 0.23.1",
  "criterion",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-gui"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-playback"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "audioadapter-buffers",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-plugins"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-test-plugin"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "vst3",
  "vst3-host",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "build-info"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "jiff",
 ]
@@ -4634,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "image-control-plugin-rs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "baseview",
@@ -7828,7 +7828,7 @@ dependencies = [
 
 [[package]]
 name = "serato-tags"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "base64 0.23.1",
  "byteorder",
@@ -8700,7 +8700,7 @@ dependencies = [
 
 [[package]]
 name = "test-fixtures"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "colored",
  "serde",
@@ -9404,7 +9404,7 @@ dependencies = [
 
 [[package]]
 name = "vst3-host"
-version = "1.2.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-channel",
