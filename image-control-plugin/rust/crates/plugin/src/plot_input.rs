@@ -62,7 +62,10 @@ pub(super) struct Outcome {
 
 impl Interaction {
     /// Routes production mouse and keyboard events, retaining only local gesture origins.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keeps pointer gesture inputs explicit at the event boundary"
+    )]
     pub(super) fn update(
         &mut self,
         event: &Event,

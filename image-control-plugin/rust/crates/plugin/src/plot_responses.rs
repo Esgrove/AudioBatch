@@ -147,7 +147,6 @@ impl PositionOverlay {
 }
 
 /// Draws solo veils first, then the hovered region and cached analytical responses without a CPU pixel buffer.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_bands(
     renderer: &mut impl iced::advanced::Renderer,
     cache: &RefCell<ResponseCache>,
