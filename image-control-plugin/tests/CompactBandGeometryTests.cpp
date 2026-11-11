@@ -118,6 +118,8 @@ void expectCompactBoundaryValuesFit(ControlSlider& slider)
     auto* label = compactValueBox(slider);
     ASSERT_NE(label, nullptr);
     const auto font = label->getLookAndFeel().getLabelFont(*label);
+    EXPECT_EQ(font, semiboldMonoFont(12.0F));
+    EXPECT_EQ(label->getFont(), font);
     std::array values {-60.0, -59.99, -59.95, -11.11, -10.0, -9.99, -0.01, 0.0, 9.99, 11.11, 12.0};
     if (slider.getName() == "Width") {
         values = {0.0, 0.01, 0.09, 0.10, 0.99, 1.0, 1.01, 1.11, 1.88, 1.99, 2.0};
@@ -181,6 +183,23 @@ TEST(CompactBands, MinimumWidthGeometryAndBoundaryValuesRemainLegible)
             EXPECT_TRUE(foundName);
         }
     }
+}
+
+/// Compact values use a real embedded monospaced semibold face rather than a synthetic regular-font weight.
+TEST(CompactBands, CompactValuesUseEmbeddedSemiboldMono)
+{
+    const auto semibold = semiboldMonoFont(12.0F);
+    ASSERT_NE(semibold.getTypefacePtr(), nullptr);
+    EXPECT_NE(semibold.getTypefacePtr(), monoFont(12.0F).getTypefacePtr());
+    EXPECT_NE(semibold.getTypefacePtr(), semiboldTextFont(12.0F).getTypefacePtr());
+    const auto faceIdentity = semibold.getTypefacePtr()->getName() + " " + semibold.getTypefacePtr()->getStyle();
+    EXPECT_TRUE(faceIdentity.containsIgnoreCase("Roboto Mono"));
+    EXPECT_TRUE(faceIdentity.containsIgnoreCase("SemiBold"));
+    EXPECT_FLOAT_EQ(semibold.getHeight(), 12.0F);
+    EXPECT_FLOAT_EQ(
+        juce::GlyphArrangement::getStringWidth(semibold, "1111"),
+        juce::GlyphArrangement::getStringWidth(semibold, "8888")
+    );
 }
 
 /// Full heading glyphs select one or two rows at the exact measured boundary, with room for buttons and disclosure.

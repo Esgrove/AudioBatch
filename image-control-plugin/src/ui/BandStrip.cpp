@@ -434,7 +434,7 @@ void BandCorrelationMeter::paint(juce::Graphics& graphics)
     const auto positionFor
         = [&track](const float value) { return track.getX() + (value + 1.0F) * 0.5F * track.getWidth(); };
     if (correlation.has_value() && track.getWidth() > 0.0F) {
-        constexpr float rangeLightShare {0.55F};
+        constexpr float rangeLightShare {0.35F};
         const auto rangeColour
             = juce::Colour(palette::BLUE).interpolatedWith(juce::Colour(palette::GREY_LIGHT), rangeLightShare);
         // Lift faint, older coverage without changing its duration or introducing a hard opacity floor.

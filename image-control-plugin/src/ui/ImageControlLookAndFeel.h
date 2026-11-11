@@ -42,6 +42,7 @@ constexpr float CALLOUT {10.0F};
 }  // namespace corner_radius
 
 [[nodiscard]] juce::Font monoFont(float height);
+[[nodiscard]] juce::Font semiboldMonoFont(float height);
 [[nodiscard]] juce::Font semiboldTextFont(float height);
 [[nodiscard]] juce::Font textFont(float height);
 

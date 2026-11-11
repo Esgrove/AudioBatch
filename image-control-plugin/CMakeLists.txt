@@ -238,6 +238,7 @@ juce_add_binary_data(
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-Regular.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/Roboto-SemiBold.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/RobotoMono-SemiBold.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/screen.vert"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/fade.frag"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/shaders/particle.vert"
