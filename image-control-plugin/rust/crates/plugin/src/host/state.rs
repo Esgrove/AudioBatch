@@ -141,6 +141,7 @@ fn restore_bytes(
         Tap::Pre => AnalysisTap::Pre,
         Tap::Post => AnalysisTap::Post,
     });
+    // Only a successful fully validated sound restore advances the editor recall generation.
     parameters.restore(state.parameters);
     geometry.publish(if state.version < STATE_VERSION {
         LogicalSize::default()

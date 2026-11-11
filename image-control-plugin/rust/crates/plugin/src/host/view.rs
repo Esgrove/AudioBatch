@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
 
 use image_control_dsp::SharedState;
-use vst3::Steinberg::Vst::{IComponentHandler, IComponentHandlerTrait as _};
+use vst3::Steinberg::Vst::{
+    IComponentHandler, IComponentHandler2, IComponentHandler2Trait as _, IComponentHandlerTrait as _,
+};
 use vst3::Steinberg::{
     FIDString, IPlugFrame, IPlugFrameTrait as _, IPlugView, IPlugViewContentScaleSupport,
     IPlugViewContentScaleSupportTrait, IPlugViewTrait, TBool, ViewRect, kInvalidArgument, kResultFalse, kResultOk,
@@ -45,12 +47,15 @@ fn valid_dimensions(width: i32, height: i32, scale: f64) -> bool {
     (minimum.0..=maximum.0).contains(&width) && (minimum.1..=maximum.1).contains(&height)
 }
 
+/// UI-thread frame slot shares its retained COM owner without invoking host reference-count code while borrowed.
+type FrameSlot = Rc<RefCell<Option<Rc<ComPtr<IPlugFrame>>>>>;
+
 /// COM view whose native resources belong to the constructing UI thread.
 pub(super) struct PlugView {
     /// Editor destruction is restricted to the creating UI thread.
     updates: ManuallyDrop<Rc<ViewUpdates>>,
     /// Host frame lifetime is retained until replacement or view teardown.
-    frame: ManuallyDrop<Rc<RefCell<Option<ComPtr<IPlugFrame>>>>>,
+    frame: ManuallyDrop<FrameSlot>,
     /// Borrowed self interface, valid while the view exists. Rc destruction stays on the UI owner.
     interface: ManuallyDrop<Rc<Cell<*mut IPlugView>>>,
     /// Thread ownership check, never called from audio.
@@ -70,17 +75,17 @@ pub(super) struct PlugView {
     /// Audio analysis transport, independent of mutable DSP history.
     shared: Arc<SharedState>,
     /// UI-only host callback ownership.
-    handler: Arc<Mutex<Option<ComPtr<IComponentHandler>>>>,
+    handler: Arc<Mutex<Option<Arc<ComPtr<IComponentHandler>>>>>,
 }
 
 /// UI gesture routing without retaining the editor or holding locks across host calls.
 struct Binding {
     /// Parameters are read by the editor directly from this same authoritative allocation.
     parameters: Arc<Parameters>,
-    /// Host handler, cloned under a short lock before callback invocation.
-    handler: Arc<Mutex<Option<ComPtr<IComponentHandler>>>>,
+    /// Shared COM owner. Cloning the Arc under lock never executes host `AddRef` or Release.
+    handler: Arc<Mutex<Option<Arc<ComPtr<IComponentHandler>>>>>,
     /// Host frame shared only on the UI thread and cloned before any callback.
-    frame: Rc<RefCell<Option<ComPtr<IPlugFrame>>>>,
+    frame: FrameSlot,
     /// Borrowed live view interface for resizeView, without a self-reference cycle.
     interface: Rc<Cell<*mut IPlugView>>,
     /// Weak owner prevents a program/window cycle while tracking host callback depth.
@@ -94,7 +99,7 @@ impl PlugView {
     pub(super) fn create(
         parameters: Arc<Parameters>,
         shared: Arc<SharedState>,
-        handler: Arc<Mutex<Option<ComPtr<IComponentHandler>>>>,
+        handler: Arc<Mutex<Option<Arc<ComPtr<IComponentHandler>>>>>,
         geometry: Arc<EditorGeometry>,
     ) -> *mut IPlugView {
         let logical = geometry.snapshot();
@@ -314,8 +319,20 @@ impl IPlugViewTrait for PlugView {
         let logical = self.logical.get().acknowledged(width, height, native_scale);
         self.dimensions.set((width, height));
         self.logical.set(logical);
+        let changed = self.geometry.snapshot() != logical;
         self.geometry.publish(logical);
         self.host_sized.set(true);
+        if changed {
+            let _host_call = self.updates.host_call();
+            let handler = self
+                .handler
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(handler) = handler {
+                notify_dirty(&handler);
+            }
+        }
         kResultOk
     }
 
@@ -328,7 +345,7 @@ impl IPlugViewTrait for PlugView {
             return kInvalidArgument;
         }
         // SAFETY: the host provides a live frame or null. The retained COM reference owns its lifetime.
-        let frame = unsafe { ComRef::from_raw(frame) }.map(|frame| frame.to_com_ptr());
+        let frame = unsafe { ComRef::from_raw(frame) }.map(|frame| Rc::new(frame.to_com_ptr()));
         let Ok(mut slot) = self.frame.try_borrow_mut() else {
             return kResultFalse;
         };
@@ -361,8 +378,9 @@ impl IPlugViewTrait for PlugView {
 }
 
 impl Binding {
-    /// Clones a host reference before calling arbitrary, potentially reentrant host code.
-    fn handler(&self) -> Option<ComPtr<IComponentHandler>> {
+    /// Shares an existing COM owner without calling host `AddRef` while the handler mutex is locked.
+    /// The final UI callback releases its temporary owner after all plugin locks and borrows have ended.
+    fn handler(&self) -> Option<Arc<ComPtr<IComponentHandler>>> {
         self.handler
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -425,6 +443,16 @@ impl EditorBinding for Binding {
         }
     }
 
+    fn mark_dirty(&self) {
+        let Some(updates) = self.updates.upgrade().filter(|updates| updates.active.get()) else {
+            return;
+        };
+        let _host_call = updates.host_call();
+        if let Some(handler) = self.handler() {
+            notify_dirty(&handler);
+        }
+    }
+
     fn close(&self) {
         // Clear ownership before arbitrary endEdit reentry, including recursive removed calls.
         let gestures = self.gestures.replace(0);
@@ -469,6 +497,19 @@ impl EditorBinding for Binding {
         unsafe { frame.resizeView(view, &raw mut size) == kResultOk && updates.active.get() }
     }
 }
+
+/// Queries the optional dirty-state interface only after releasing all plugin locks and borrows.
+/// This helper is called exclusively from UI-owned edits and geometry acknowledgements, never state restoration.
+fn notify_dirty(handler: &ComPtr<IComponentHandler>) {
+    if let Some(handler) = handler.cast::<IComponentHandler2>() {
+        // SAFETY: the UI caller retains the host handler, and no plugin lock spans queryInterface, setDirty, or release.
+        unsafe { handler.setDirty(1) };
+    }
+}
+
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod host_tests;
 
 #[cfg(test)]
 mod tests {
@@ -710,7 +751,7 @@ mod tests {
         assert!(!binding.request_resize(1200, 900));
         let scripted = ComWrapper::new(ReplyFrame(Cell::new(view.as_ptr()), Cell::new(kResultFalse)));
         let frame = scripted.to_com_ptr::<IPlugFrame>().expect("frame interface");
-        *binding.frame.borrow_mut() = Some(frame);
+        *binding.frame.borrow_mut() = Some(Rc::new(frame));
         assert!(!binding.request_resize(1200, 900));
         scripted.1.set(kResultOk);
         assert!(binding.request_resize(1200, 900));

@@ -10,8 +10,8 @@ use std::sync::atomic::Ordering;
 
 use image_control_dsp::Imager;
 use vst3::Steinberg::Vst::{
-    AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessorTrait as _, ProcessData, ProcessModes_,
-    SymbolicSampleSizes_,
+    AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessorTrait as _, IComponentTrait as _, ProcessData,
+    ProcessModes_, ProcessSetup, SpeakerArr, SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{kInvalidArgument, kResultFalse, kResultOk};
 
@@ -32,6 +32,62 @@ fn process_data(bus: *mut AudioBusBuffers, frames: i32) -> ProcessData {
     data.inputs = bus;
     data.outputs = bus;
     data
+}
+
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "full FIR preparation and native worker creation are verified natively"
+)]
+fn mono_arrangement_after_setup_updates_the_prepared_audio_layout() {
+    let component = Component::new();
+    let mut setup = ProcessSetup {
+        processMode: to_i32(ProcessModes_::kOffline),
+        symbolicSampleSize: to_i32(SymbolicSampleSizes_::kSample32),
+        maxSamplesPerBlock: 256,
+        sampleRate: 48_000.0,
+    };
+    // JUCE hosts may prepare before publishing their final speaker arrangements.
+    // SAFETY: setup and both arrangement slots remain live for the complete lifecycle calls.
+    unsafe {
+        assert_eq!(component.setupProcessing(&raw mut setup), kResultOk);
+        let mut input = SpeakerArr::kMono;
+        let mut output = SpeakerArr::kMono;
+        assert_eq!(
+            component.setBusArrangements(&raw mut input, 1, &raw mut output, 1),
+            kResultOk
+        );
+        let pan = crate::params::band_parameter_id(0, 4).expect("Pan");
+        for band in 0..4 {
+            component.parameters.set(pan + band * 6, 1.0);
+        }
+        assert_eq!(component.setActive(1), kResultOk);
+        assert_eq!(component.setProcessing(1), kResultOk);
+        let mut samples = [0.0_f32; 256];
+        let mut channels = [samples.as_mut_ptr()];
+        let mut bus = AudioBusBuffers {
+            numChannels: 1,
+            silenceFlags: 0,
+            __field0: AudioBusBuffers__type0 {
+                channelBuffers32: channels.as_mut_ptr(),
+            },
+        };
+        for block in 0..20 {
+            samples.fill(0.0);
+            if block == 0 {
+                *samples.first_mut().expect("first sample") = 0.75;
+            }
+            let mut data = process_data(&raw mut bus, 256);
+            data.processMode = to_i32(ProcessModes_::kOffline);
+            assert_eq!(component.process(&raw mut data), kResultOk);
+            for (offset, sample) in samples.iter().enumerate() {
+                let expected: f32 = if block * 256 + offset == 4352 { 0.75 } else { 0.0 };
+                assert_eq!(sample.to_bits(), expected.to_bits());
+            }
+        }
+        assert_eq!(component.setProcessing(0), kResultOk);
+        assert_eq!(component.setActive(0), kResultOk);
+    }
 }
 
 #[test]

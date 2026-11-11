@@ -84,6 +84,7 @@ pub enum Message {
 
 /// Uncommitted text is GUI-owned and never published by refreshes or incoming automation.
 struct NumericDraft {
+    generation: u64,
     id: u32,
     text: String,
     baseline: String,
@@ -99,6 +100,7 @@ struct GeometryDrag {
 
 /// Captured linked values preserve source-trim offsets and balanced automation when Link changes mid-edit.
 struct Gesture {
+    generation: u64,
     id: u32,
     linked: Option<(u32, f64, f64)>,
     last_change: Instant,
@@ -116,6 +118,7 @@ struct EditorProgram {
 
 /// Window-owned state keeps parameter atomics authoritative and never holds mutable audio-processing state.
 pub struct EditorState {
+    restore_generation: u64,
     parameters: Arc<Parameters>,
     shared: Arc<SharedState>,
     settings_shown: bool,
@@ -130,6 +133,7 @@ pub struct EditorState {
     toolbar_shown: bool,
     correlation_shown: bool,
     input_held: bool,
+    input_cancelled: bool,
     band_height: f32,
     divider_drag: Option<GeometryDrag>,
     resize_drag: Option<GeometryDrag>,
@@ -181,6 +185,7 @@ impl iced_program::Program for EditorProgram {
         }
         (
             EditorState {
+                restore_generation: self.parameters.restore_generation(),
                 parameters: Arc::clone(&self.parameters),
                 shared: Arc::clone(&self.shared),
                 settings_shown: false,
@@ -195,6 +200,7 @@ impl iced_program::Program for EditorProgram {
                 toolbar_shown: true,
                 correlation_shown: true,
                 input_held: false,
+                input_cancelled: false,
                 band_height: layout::BAND_HEIGHT,
                 divider_drag: None,
                 resize_drag: None,
@@ -226,45 +232,66 @@ impl iced_program::Program for EditorProgram {
 }
 
 impl EditorState {
+    /// Builds the production update owner without native resources for host-binding contract tests.
+    #[cfg(test)]
+    pub fn for_host_test(
+        parameters: Arc<Parameters>,
+        shared: Arc<SharedState>,
+        binding: Rc<dyn EditorBinding>,
+    ) -> Self {
+        Self {
+            restore_generation: parameters.restore_generation(),
+            parameters,
+            shared,
+            settings_shown: false,
+            correlation: CorrelationObservation::default(),
+            binding,
+            spectrogram: Err(std::io::Error::other("headless host interaction test")),
+            window_size: None,
+            notifier: None,
+            gesture: None,
+            numeric_draft: None,
+            linked: [false; 4],
+            toolbar_shown: true,
+            correlation_shown: true,
+            input_held: false,
+            input_cancelled: false,
+            band_height: layout::BAND_HEIGHT,
+            divider_drag: None,
+            resize_drag: None,
+            compact_bands: false,
+        }
+    }
+
     /// Applies only local user messages, leaving host automation as atomics read directly by each view.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if self.synchronize_restore()
+            && matches!(
+                message,
+                Message::Change(..)
+                    | Message::NumericDraft(..)
+                    | Message::NumericCommit(..)
+                    | Message::NumericBlur(..)
+                    | Message::Pointer(..)
+            )
+        {
+            return Task::none();
+        }
         match message {
-            Message::FocusNext(backwards) => {
-                if self.settings_shown {
-                    return Task::none();
-                }
-                if let Some(id) = self.numeric_draft.as_ref().map(|draft| draft.id) {
-                    self.commit_numeric(id, false);
-                }
-                return if backwards {
-                    iced::widget::operation::focus_previous()
-                } else {
-                    iced::widget::operation::focus_next()
-                };
-            }
-            Message::NumericFocus(id) => self.focus_numeric(id),
-            Message::NumericDraft(id, text) => self.edit_numeric(id, text),
-            Message::NumericCommit(id) => self.commit_numeric(id, false),
-            Message::NumericBlur(id) => self.commit_numeric(id, true),
-            Message::NumericCancel(id) => {
-                if self.numeric_draft.as_ref().is_some_and(|draft| draft.id == id) {
-                    self.numeric_draft = None;
-                }
-            }
-            Message::Begin(id) => {
-                self.finish_numeric();
-                self.input_held = true;
-                self.begin_gesture(id);
-            }
+            Message::FocusNext(backwards) => return self.focus_next(backwards),
+            Message::NumericFocus(_)
+            | Message::NumericDraft(..)
+            | Message::NumericCommit(_)
+            | Message::NumericBlur(_)
+            | Message::NumericCancel(_) => self.update_numeric(message),
+            Message::Begin(id) => self.begin_pointer_gesture(id),
             Message::Hold => self.input_held = true,
             Message::DividerStart(pointer) => self.start_divider(pointer),
             Message::ResizeStart(pointer) => self.start_resize(pointer),
             Message::Pointer(pointer) => self.move_pointer(pointer),
-            Message::Change(id, value) => {
-                self.finish_numeric();
-                self.change(id, value);
-            }
+            Message::Change(id, value) => self.change_parameter(id, value),
             Message::EndGesture => {
+                self.input_cancelled = false;
                 self.divider_drag = None;
                 self.resize_drag = None;
                 self.input_held = false;
@@ -282,8 +309,7 @@ impl EditorState {
             }
             Message::CloseSettings => self.settings_shown = false,
             Message::ResetAppearance => {
-                self.shared
-                    .set_display_preferences(image_control_dsp::DisplayPreferences::default());
+                self.set_display_preferences(image_control_dsp::DisplayPreferences::default());
             }
             Message::Ignore => {}
             Message::Toggle(id) => self.toggle_parameter(id),
@@ -306,28 +332,111 @@ impl EditorState {
                 self.finish_numeric();
                 self.settings_shown = !self.settings_shown;
             }
-            Message::Tap(tap) => self.shared.set_analysis_tap(tap),
+            Message::Tap(tap) => {
+                if self.shared.analysis_tap() != tap {
+                    self.shared.set_analysis_tap(tap);
+                    self.binding.mark_dirty();
+                }
+            }
             Message::Persistence(persistence_seconds) => {
                 let mut display = self.shared.display_preferences();
                 display.persistence_seconds = persistence_seconds;
-                self.shared.set_display_preferences(display);
+                self.set_display_preferences(display);
             }
             Message::Contrast(contrast) => {
                 let mut display = self.shared.display_preferences();
                 display.contrast = contrast;
-                self.shared.set_display_preferences(display);
+                self.set_display_preferences(display);
             }
             Message::Colour(color_mode) => {
                 let mut display = self.shared.display_preferences();
                 display.color_mode = color_mode;
-                self.shared.set_display_preferences(display);
+                self.set_display_preferences(display);
             }
             Message::Refresh => self.refresh(),
         }
+        self.synchronize_restore();
         Task::none()
     }
 
-    /// Polls observational state without touching numeric drafts or fabricating parameter gestures.
+    /// Starts a captured pointer gesture only if resolving the previous draft did not trigger host recall.
+    fn begin_pointer_gesture(&mut self, id: u32) {
+        let generation = self.parameters.restore_generation();
+        self.input_cancelled = false;
+        self.finish_numeric();
+        if generation == self.parameters.restore_generation() {
+            self.input_held = true;
+            self.begin_gesture(id);
+        }
+    }
+
+    /// Rejects remaining movement after recall, including when the raw press arrives after its first slider update.
+    fn change_parameter(&mut self, id: u32, value: f64) {
+        if self.input_cancelled {
+            return;
+        }
+        let generation = self.parameters.restore_generation();
+        self.finish_numeric();
+        if generation == self.parameters.restore_generation() {
+            self.change(id, value);
+        }
+        self.input_cancelled |= generation != self.parameters.restore_generation();
+    }
+
+    /// Resolves the previous draft before native traversal and cancels it if a host callback recalls state.
+    fn focus_next(&mut self, backwards: bool) -> Task<Message> {
+        if self.settings_shown {
+            return Task::none();
+        }
+        if let Some(id) = self.numeric_draft.as_ref().map(|draft| draft.id) {
+            self.commit_numeric(id, false);
+        }
+        self.synchronize_restore();
+        if backwards {
+            iced::widget::operation::focus_previous()
+        } else {
+            iced::widget::operation::focus_next()
+        }
+    }
+
+    /// Keeps numeric draft messages together without changing their host gesture or native focus semantics.
+    fn update_numeric(&mut self, message: Message) {
+        match message {
+            Message::NumericFocus(id) => self.focus_numeric(id),
+            Message::NumericDraft(id, text) => self.edit_numeric(id, text),
+            Message::NumericCommit(id) => self.commit_numeric(id, false),
+            Message::NumericBlur(id) => self.commit_numeric(id, true),
+            Message::NumericCancel(id) if self.numeric_draft.as_ref().is_some_and(|draft| draft.id == id) => {
+                self.numeric_draft = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Publishes a validated appearance change once, independently of sound automation.
+    fn set_display_preferences(&self, display: image_control_dsp::DisplayPreferences) {
+        if self.shared.display_preferences() != display && self.shared.set_display_preferences(display) {
+            self.binding.mark_dirty();
+        }
+    }
+
+    /// Discards pre-recall GUI work and closes its exact gesture participants without replaying any values.
+    fn synchronize_restore(&mut self) -> bool {
+        let generation = self.parameters.restore_generation();
+        if self.restore_generation == generation {
+            return false;
+        }
+        self.restore_generation = generation;
+        self.numeric_draft = None;
+        self.input_cancelled |= self.input_held || self.gesture.is_some();
+        self.input_held = false;
+        self.divider_drag = None;
+        self.resize_drag = None;
+        self.end_gesture();
+        true
+    }
+
+    /// Polls observational state without fabricating parameter gestures. Recalls discard unfinished numeric drafts.
     fn refresh(&mut self) {
         if self.correlation_shown {
             self.correlation
@@ -370,6 +479,7 @@ impl EditorState {
         ])
     }
 
+    /// Captures section geometry for a view-only drag after resolving any numeric entry.
     fn start_divider(&mut self, pointer: Point) {
         self.finish_numeric();
         self.end_gesture();
@@ -381,6 +491,7 @@ impl EditorState {
         });
     }
 
+    /// Captures the accepted geometry before requesting a host-owned resize drag.
     fn start_resize(&mut self, pointer: Point) {
         self.finish_numeric();
         self.end_gesture();
@@ -416,6 +527,7 @@ impl EditorState {
             })
     }
 
+    /// Resolves view-only section choices against the current host-approved logical size.
     fn sections(&self, size: Size) -> layout::Sections {
         layout::Sections::new(
             size,
@@ -552,7 +664,9 @@ impl EditorState {
 
     /// Blocks underlying controls while retaining the release-driven Settings opener as the one exception.
     fn with_settings<'a>(&'a self, content: Element<'a, Message>, size: Size) -> Element<'a, Message> {
-        let mut content = stack![content].width(Length::Fill).height(Length::Fill);
+        let mut content = stack![controls::interaction::modal_background(content, self.settings_shown)]
+            .width(Length::Fill)
+            .height(Length::Fill);
         if self.settings_shown {
             let header = layout::Header::new(size.width);
             let callout = layout::rect(
@@ -584,11 +698,15 @@ impl EditorState {
 
     /// Toggles a switch using one host gesture after any pending numeric entry is resolved.
     fn toggle_parameter(&mut self, id: u32) {
+        let generation = self.parameters.restore_generation();
         self.finish_numeric();
         self.end_gesture();
+        if generation != self.parameters.restore_generation() {
+            return;
+        }
         if let Some(value) = self.parameters.get(id) {
             self.binding.begin_edit(id);
-            self.write(id, f64::from(value < 0.5));
+            self.write(id, f64::from(value < 0.5), generation);
             self.binding.end_edit(id);
         }
     }
@@ -611,13 +729,18 @@ impl EditorState {
         if self.numeric_draft.as_ref().is_some_and(|draft| draft.id == id) || parameter_spec(id).is_none() {
             return;
         }
+        let generation = self.parameters.restore_generation();
         if let Some(previous) = self.numeric_draft.as_ref().map(|draft| draft.id) {
             self.commit_numeric(previous, true);
         }
         self.end_gesture();
+        if generation != self.parameters.restore_generation() || !self.binding.is_open() {
+            return;
+        }
         let spec = parameter_spec(id).expect("validated numeric parameter");
         let value = self.parameters.get(id).unwrap_or(spec.default_normalized);
         self.numeric_draft = Some(NumericDraft {
+            generation: self.parameters.restore_generation(),
             id,
             text: format_value(spec, value),
             baseline: format_value(spec, value),
@@ -638,6 +761,9 @@ impl EditorState {
         let Some(mut draft) = self.numeric_draft.take() else {
             return;
         };
+        if draft.generation != self.parameters.restore_generation() {
+            return;
+        }
         if draft.id != id {
             self.numeric_draft = Some(draft);
             return;
@@ -653,7 +779,7 @@ impl EditorState {
         if let Some(value) = value {
             self.change(id, value);
             self.end_gesture();
-            if !blur {
+            if !blur && draft.generation == self.parameters.restore_generation() && self.binding.is_open() {
                 draft.text = format_value(spec, self.parameters.get(id).unwrap_or(spec.default_normalized));
                 draft.baseline.clone_from(&draft.text);
                 draft.dirty = false;
@@ -668,11 +794,17 @@ impl EditorState {
 
     /// Captures linked source trims once, so incoming automation never recursively drives Link.
     fn begin_gesture(&mut self, id: u32) {
-        if self.gesture.as_ref().is_some_and(|gesture| gesture.id == id) {
+        let generation = self.parameters.restore_generation();
+        if self
+            .gesture
+            .as_ref()
+            .is_some_and(|gesture| gesture.id == id && gesture.generation == generation)
+        {
             return;
         }
         self.end_gesture();
-        if parameter_spec(id).is_none() || !self.binding.is_open() {
+        if parameter_spec(id).is_none() || !self.binding.is_open() || generation != self.parameters.restore_generation()
+        {
             return;
         }
         let linked = (0..4).find_map(|band| {
@@ -683,19 +815,20 @@ impl EditorState {
             Some((side, self.plain(id), self.plain(side)))
         });
         self.binding.begin_edit(id);
-        if !self.binding.is_open() {
+        if !self.binding.is_open() || generation != self.parameters.restore_generation() {
             self.binding.end_edit(id);
             return;
         }
         if let Some((side, _, _)) = linked {
             self.binding.begin_edit(side);
-            if !self.binding.is_open() {
+            if !self.binding.is_open() || generation != self.parameters.restore_generation() {
                 self.binding.end_edit(side);
                 self.binding.end_edit(id);
                 return;
             }
         }
         self.gesture = Some(Gesture {
+            generation,
             id,
             linked,
             last_change: Instant::now(),
@@ -704,6 +837,7 @@ impl EditorState {
 
     /// Writes finite host-normalized values and moves linked Side by the same plain dB amount as Mid.
     fn change(&mut self, id: u32, value: f64) {
+        let generation = self.parameters.restore_generation();
         if !value.is_finite() || !(0.0..=1.0).contains(&value) || parameter_spec(id).is_none() {
             return;
         }
@@ -727,15 +861,18 @@ impl EditorState {
         let Some(gesture) = &mut self.gesture else {
             return;
         };
+        if generation != gesture.generation || generation != self.parameters.restore_generation() {
+            return;
+        }
         gesture.last_change = Instant::now();
         let linked = gesture.linked;
-        self.write(id, value);
+        self.write(id, value, generation);
         if let Some((side, start_mid, start_side)) = linked
             && start_side > -60.0
             && let (Some(mid_spec), Some(side_spec)) = (parameter_spec(id), parameter_spec(side))
         {
             let side_db = start_side + mid_spec.normalized_to_plain(value) - start_mid;
-            self.write(side, side_spec.plain_to_normalized(side_db));
+            self.write(side, side_spec.plain_to_normalized(side_db), generation);
         }
     }
 
@@ -750,8 +887,11 @@ impl EditorState {
     }
 
     /// Updates the authoritative UI/host atomics before notifying the adapter, never a temporary UI mirror.
-    fn write(&self, id: u32, value: f64) {
-        if self.binding.is_open() && self.parameters.set(id, value) {
+    fn write(&self, id: u32, value: f64, generation: u64) {
+        if self.binding.is_open()
+            && generation == self.parameters.restore_generation()
+            && self.parameters.set(id, value)
+        {
             self.binding.set_value(id, value);
         }
     }
@@ -765,7 +905,10 @@ impl EditorState {
 
     /// Reads all three visible markers from the same registry used by the host and sliders.
     fn crossovers(&self) -> [f64; 3] {
-        CROSSOVER_PARAMETERS.map(|id| self.plain(id))
+        let requested = CROSSOVER_PARAMETERS.map(|id| self.plain(id) as f32);
+        image_control_dsp::order_crossovers(requested)
+            .expect("finite registry crossover values")
+            .map(f64::from)
     }
 
     /// Preserves the header's exact left tools and right-anchored Mono/Delta/Bypass/Output ordering.
@@ -1029,28 +1172,6 @@ impl Drop for EditorState {
     }
 }
 
-/// Creates a direct Iced program for an adapter that supplies polling messages itself.
-/// The native bridge must use `create_program_with_notifier` when relying on `iced::poll_events`.
-#[expect(
-    dead_code,
-    reason = "four-argument factory retained for adapters with an external message sender"
-)]
-pub fn create_program(
-    parameters: Arc<Parameters>,
-    shared: Arc<SharedState>,
-    binding: Rc<dyn EditorBinding>,
-    window_size: iced::shell::SharedWindowSize,
-) -> impl iced_program::Program<State = EditorState, Message = Message, Theme = Theme, Renderer = iced::Renderer> {
-    EditorProgram {
-        parameters,
-        shared,
-        binding,
-        window_size,
-        notifier: None,
-        analysis: Rc::new(std::cell::RefCell::new(None)),
-    }
-}
-
 /// Shares the window's poll notifier so each bounded timer callback rearms the next analyzer refresh.
 pub fn create_program_with_notifier(
     parameters: Arc<Parameters>,
@@ -1159,6 +1280,7 @@ mod tests {
     fn editor() -> (EditorState, Rc<RecordingBinding>) {
         let binding = Rc::new(RecordingBinding::default());
         let state = EditorState {
+            restore_generation: 0,
             parameters: Arc::new(Parameters::default()),
             shared: image_control_dsp::Imager::new().shared(),
             settings_shown: false,
@@ -1173,6 +1295,7 @@ mod tests {
             toolbar_shown: true,
             correlation_shown: true,
             input_held: false,
+            input_cancelled: false,
             band_height: layout::BAND_HEIGHT,
             divider_drag: None,
             resize_drag: None,
@@ -1349,6 +1472,26 @@ mod tests {
         let _ = state.update(Message::Toggle(MONO_PARAMETER));
         assert_eq!(binding.events.borrow().last(), Some(&(MONO_PARAMETER, None, false)));
         assert!(state.parameters.get(MONO_PARAMETER).expect("Mono") >= 0.5);
+    }
+
+    #[test]
+    fn automated_unordered_crossover_presentation_uses_the_same_ordering_as_audio() {
+        let (state, binding) = editor();
+        for (id, frequency) in CROSSOVER_PARAMETERS.into_iter().zip([5000.0, 100.0, 200.0]) {
+            let spec = parameter_spec(id).expect("crossover");
+            assert!(state.parameters.set(id, spec.plain_to_normalized(frequency)));
+        }
+        let expected = image_control_dsp::order_crossovers([5000.0, 100.0, 200.0]).expect("ordered");
+        for (visible, ordered) in state.crossovers().into_iter().zip(expected) {
+            assert!((visible - f64::from(ordered)).abs() < 0.001);
+        }
+        assert!(
+            state
+                .crossovers()
+                .windows(2)
+                .all(|pair| pair.first().expect("lower") < pair.get(1).expect("upper"))
+        );
+        assert!(binding.events.borrow().is_empty());
     }
 
     #[test]
