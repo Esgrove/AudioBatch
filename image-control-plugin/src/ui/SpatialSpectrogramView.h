@@ -13,6 +13,7 @@
 
 #include "analysis/SpatialAnalyzer.h"
 #include "Parameters.h"
+#include "ui/ImageControlLookAndFeel.h"
 #include "ui/SpectrogramParticles.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -52,7 +53,7 @@ struct SpectrogramBandResponses {
 
 /// Corner radius of the plot inside the spectrogram box, in logical pixels.
 /// The view cuts it out of the box and the renderer rounds the picture to it.
-constexpr float SPECTROGRAM_PLOT_CORNER_RADIUS {4.0F};
+constexpr float SPECTROGRAM_PLOT_CORNER_RADIUS {corner_radius::PLOT};
 
 /// What a mouse drag on the spectrogram changes, chosen when the button goes down.
 /// A drag on a crossover line moves that crossover, a drag on a band moves the band,

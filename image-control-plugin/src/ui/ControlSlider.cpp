@@ -30,8 +30,6 @@ constexpr float SMOOTH_WHEEL_DELTA_PER_STEP {0.05F};
 constexpr float COMPACT_FONT_HEIGHT {11.0F};
 /// Padding around each compact value, in pixels.
 constexpr int COMPACT_VALUE_PADDING {2};
-/// Radius of the compact numeric field, in pixels.
-constexpr float COMPACT_CORNER_RADIUS {3.0F};
 /// Restrained selection opacity shared with the editor's ordinary text fields.
 constexpr float NUMERIC_SELECTION_ALPHA {0.24F};
 
@@ -125,7 +123,9 @@ protected:
     /// Paints one stable field and fixed suffix with the same font and text origin during editing.
     void paint(juce::Graphics& graphics) override
     {
-        graphics.fillAll(findColour(juce::Label::backgroundColourId));
+        const auto field = getLocalBounds().toFloat();
+        graphics.setColour(findColour(juce::Label::backgroundColourId));
+        graphics.fillRoundedRectangle(field, corner_radius::CONTROL);
         const auto font = getLookAndFeel().getLabelFont(*this);
         graphics.setFont(font);
         graphics.setColour(
@@ -137,7 +137,7 @@ protected:
         }
         graphics.drawText(slider.numericValueSuffix(), suffixBounds, juce::Justification::centredLeft, false);
         graphics.setColour(findColour(juce::Label::outlineColourId));
-        graphics.drawRect(getLocalBounds());
+        graphics.drawRoundedRectangle(field.reduced(0.5F), corner_radius::CONTROL, 1.0F);
     }
 
     /// Reflows only the editable numeric region, leaving units and identities outside its selection bounds.
@@ -466,7 +466,7 @@ void ControlSlider::paint(juce::Graphics& graphics)
     }
     const auto bounds = getLocalBounds().toFloat().reduced(0.5F);
     graphics.setColour(findColour(juce::Slider::textBoxBackgroundColourId));
-    graphics.fillRoundedRectangle(bounds, COMPACT_CORNER_RADIUS);
+    graphics.fillRoundedRectangle(bounds, corner_radius::CONTROL);
     for (auto* child : getChildren()) {
         if (dynamic_cast<NumericValueLabel*>(child) != nullptr) {
             return;

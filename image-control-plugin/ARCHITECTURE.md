@@ -496,6 +496,10 @@ The plot itself is left unpainted so the GPU image beneath the components remain
 and gain-only Link gesture behavior.
 Expanded band names and frequency ranges share their heading when measured text fits beside Solo and Link,
 otherwise ranges remain on the second line. Live range changes relayout without committing numeric drafts.
+Band names use embedded Roboto SemiBold at 16 logical units, with zero-border headings aligned to the slider labels.
+Solo fits 16-unit artwork inside its unchanged 20-unit hit and focus target.
+`ImageControlLookAndFeel.h` centralizes surface radii, including the 8-unit panels and 6-unit plot mask
+shared by the CPU cutout and GPU composite.
 The independent `BandCorrelationMeter` components occupy columns aligned with those strips.
 Compact layout and row visibility preserve the saved expanded editor height.
 `DisplayDisclosure` fades a centered translucent triangle in only near its section-border action.

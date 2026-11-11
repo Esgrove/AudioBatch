@@ -26,7 +26,23 @@ constexpr juce::uint32 ORANGE {0xffDD8B65};
 constexpr juce::uint32 YELLOW {0xffCEAF6C};
 }  // namespace palette
 
+/// Shared rounding in logical units, independent of display scale and component hit bounds.
+namespace corner_radius
+{
+/// Band panels, spectrogram surround, alerts, and tooltip bubbles.
+constexpr float PANEL {8.0F};
+/// One mask radius shared by the CPU plot cutout and the GPU composite.
+constexpr float PLOT {6.0F};
+/// Compact values, selectors, and keyboard focus outlines.
+constexpr float CONTROL {4.0F};
+/// Ordinary and connected text buttons, kept below a pill's half-height.
+constexpr float BUTTON {7.0F};
+/// Settings callout outline, including its native arrow join.
+constexpr float CALLOUT {10.0F};
+}  // namespace corner_radius
+
 [[nodiscard]] juce::Font monoFont(float height);
+[[nodiscard]] juce::Font semiboldTextFont(float height);
 [[nodiscard]] juce::Font textFont(float height);
 
 /// The editor's look and feel: AudioBatch's dark colour scheme and control colours,
@@ -54,11 +70,30 @@ public:
     [[nodiscard]] juce::Font getAlertWindowMessageFont() override;
     [[nodiscard]] juce::Font getAlertWindowTitleFont() override;
     [[nodiscard]] int getAlertWindowButtonHeight() override;
+    [[nodiscard]] float getCallOutBoxCornerSize(const juce::CallOutBox& box) override;
     void drawAlertBox(
         juce::Graphics& graphics,
         juce::AlertWindow& alert,
         const juce::Rectangle<int>& textArea,
         juce::TextLayout& textLayout
+    ) override;
+    void drawButtonBackground(
+        juce::Graphics& graphics,
+        juce::Button& button,
+        const juce::Colour& background,
+        bool highlighted,
+        bool down
+    ) override;
+    void drawComboBox(
+        juce::Graphics& graphics,
+        int width,
+        int height,
+        bool down,
+        int buttonX,
+        int buttonY,
+        int buttonWidth,
+        int buttonHeight,
+        juce::ComboBox& box
     ) override;
 
 private:
