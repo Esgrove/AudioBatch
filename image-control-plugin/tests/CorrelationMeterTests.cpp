@@ -22,8 +22,19 @@ namespace esgrove::image_control::test
 {
 /// Observes the production fade field without coupling tests to painted pixels or exposing a public display API.
 struct BandCorrelationMeterTestAccess final {
+    /// Observes a test-owned meter that outlives this non-owning accessor.
+    explicit BandCorrelationMeterTestAccess(const BandCorrelationMeter& meterToTest) : meter(meterToTest) {}
+
+    /// Leaves the test-owned meter and its display history untouched.
+    ~BandCorrelationMeterTestAccess() = default;
+
+    BandCorrelationMeterTestAccess(const BandCorrelationMeterTestAccess&) = delete;
+    BandCorrelationMeterTestAccess(BandCorrelationMeterTestAccess&&) = delete;
+    BandCorrelationMeterTestAccess& operator=(const BandCorrelationMeterTestAccess&) = delete;
+    BandCorrelationMeterTestAccess& operator=(BandCorrelationMeterTestAccess&&) = delete;
+
     /// Returns the cached field at a signed correlation coordinate that lies on a spatial sample.
-    [[nodiscard]] static float intensityAt(const BandCorrelationMeter& meter, const float value)
+    [[nodiscard]] float intensityAt(const float value) const
     {
         const auto sample = static_cast<std::size_t>(
             std::lround((value + 1.0F) * 0.5F * static_cast<float>(meter.rangeIntensity.size() - 1))
@@ -32,10 +43,13 @@ struct BandCorrelationMeterTestAccess final {
     }
 
     /// Returns whether all retained visual coverage is absent.
-    [[nodiscard]] static bool fieldIsClear(const BandCorrelationMeter& meter)
+    [[nodiscard]] bool fieldIsClear() const
     {
         return std::ranges::none_of(meter.rangeIntensity, [](const float intensity) { return intensity > 0.0F; });
     }
+
+    /// Meter owned by the test, which outlives this read-only accessor.
+    const BandCorrelationMeter& meter;
 };
 
 namespace
@@ -338,7 +352,7 @@ TEST(BandCorrelationMeter, NonfiniteReadingsClearAndReseedHistory)
         EXPECT_EQ(meter.valueText(), "Unavailable");
         EXPECT_FALSE(meter.trendValue().has_value());
         EXPECT_FALSE(meter.recentRange().has_value());
-        EXPECT_TRUE(BandCorrelationMeterTestAccess::fieldIsClear(meter));
+        EXPECT_TRUE(BandCorrelationMeterTestAccess(meter).fieldIsClear());
         meter.setCorrelation(0.4F, 0.1, MAX_PERSISTENCE_SECONDS);
         expectTrend(meter, 0.4);
         expectRange(meter, 0.4F, 0.4F);
@@ -413,8 +427,8 @@ TEST(BandCorrelationMeter, InvalidElapsedTimeAndLongGapsResetHistory)
         EXPECT_EQ(meter.readoutText(), "-0.25");
         expectTrend(meter, -0.25);
         expectRange(meter, -0.25F, -0.25F);
-        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
-        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.5F), 0.0F);
+        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.0F);
+        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(0.5F), 0.0F);
         meter.setCorrelation(0.25F, 0.1, MAX_PERSISTENCE_SECONDS);
         expectTrend(meter, 0.25 - 0.5 * std::exp(-0.1 / MAX_PERSISTENCE_SECONDS));
         expectRange(meter, -0.25F, 0.25F);
@@ -491,18 +505,18 @@ TEST(BandCorrelationMeter, RangeFieldFadesBeforeExpiryWithoutExtendingPersistenc
     constexpr double persistenceSeconds {0.8};
     BandCorrelationMeter meter("Low");
     meter.setCorrelation(-1.0F, 0.0, persistenceSeconds);
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 1.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 1.0F);
     for (int step = 1; step <= 4; ++step) {
         meter.setCorrelation(1.0F, 0.2, persistenceSeconds);
         const double remaining = 1.0 - static_cast<double>(step) * 0.25;
         const double expected = remaining * remaining * (3.0 - 2.0 * remaining);
-        EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), expected, 1.0e-6);
-        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 1.0F), 1.0F);
+        EXPECT_NEAR(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), expected, 1.0e-6);
+        EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(1.0F), 1.0F);
         if (step < 4) {
             expectRange(meter, -1.0F, 1.0F);
         }
     }
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.0F);
 }
 
 /// Refresh counts and bucket phases do not quantize the visual release of an isolated excursion.
@@ -517,7 +531,7 @@ TEST(BandCorrelationMeter, RangeFieldUsesObservationAgeIndependentlyOfRefreshRat
         for (int frame = 0; frame < frames; ++frame) {
             meter.setCorrelation(1.0F, persistenceSeconds * 0.5 / static_cast<double>(frames), persistenceSeconds);
         }
-        EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
+        EXPECT_NEAR(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.5F, 1.0e-6F);
     }
 }
 
@@ -528,17 +542,17 @@ TEST(BandCorrelationMeter, RangeFieldHasIndependentFadingEdgesAndSoftSpatialFall
     meter.setCorrelation(-1.0F, 0.0, 1.0);
     meter.setCorrelation(1.0F, 0.25, 1.0);
     meter.setCorrelation(0.0F, 0.25, 1.0);
-    EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
-    EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, 1.0F), 0.84375F, 1.0e-6F);
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.0F), 1.0F);
+    EXPECT_NEAR(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.5F, 1.0e-6F);
+    EXPECT_NEAR(BandCorrelationMeterTestAccess(meter).intensityAt(1.0F), 0.84375F, 1.0e-6F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(0.0F), 1.0F);
     meter.clearHistory();
-    EXPECT_TRUE(BandCorrelationMeterTestAccess::fieldIsClear(meter));
+    EXPECT_TRUE(BandCorrelationMeterTestAccess(meter).fieldIsClear());
     meter.setCorrelation(0.0F);
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.0F), 1.0F);
-    const float feather = BandCorrelationMeterTestAccess::intensityAt(meter, 0.03125F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(0.0F), 1.0F);
+    const float feather = BandCorrelationMeterTestAccess(meter).intensityAt(0.03125F);
     EXPECT_GT(feather, 0.0F);
     EXPECT_LT(feather, 1.0F);
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, 0.0625F), 0.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(0.0625F), 0.0F);
 }
 
 /// Changing Persistence immediately reselects and reweights retained history without extending the selected window.
@@ -548,13 +562,13 @@ TEST(BandCorrelationMeter, RangeFieldReusesRetainedHistoryWhenPersistenceChanges
     meter.setCorrelation(-1.0F, 0.0, MAX_PERSISTENCE_SECONDS);
     meter.setCorrelation(1.0F, 0.4, MAX_PERSISTENCE_SECONDS);
     meter.setCorrelation(1.0F, 0.0, 0.2);
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.0F);
     meter.setCorrelation(1.0F, 0.0, 0.8);
-    EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.5F, 1.0e-6F);
+    EXPECT_NEAR(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.5F, 1.0e-6F);
     meter.setCorrelation(std::numeric_limits<float>::quiet_NaN());
-    EXPECT_TRUE(BandCorrelationMeterTestAccess::fieldIsClear(meter));
+    EXPECT_TRUE(BandCorrelationMeterTestAccess(meter).fieldIsClear());
     meter.setCorrelation(1.0F, 0.0, MAX_PERSISTENCE_SECONDS);
-    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess::intensityAt(meter, -1.0F), 0.0F);
+    EXPECT_FLOAT_EQ(BandCorrelationMeterTestAccess(meter).intensityAt(-1.0F), 0.0F);
 }
 
 /// A separate observation log validates filled spatial coverage and independent age weighting across ring wraps.
@@ -588,7 +602,7 @@ TEST(BandCorrelationMeter, RangeFieldMatchesIndependentObservationCoverage)
                 const double coverage = std::clamp(1.0 - static_cast<double>(distance) / 0.06, 0.0, 1.0);
                 expected = std::max(expected, opacity * coverage * coverage * (3.0 - 2.0 * coverage));
             }
-            EXPECT_NEAR(BandCorrelationMeterTestAccess::intensityAt(meter, probe), expected, 1.0e-6);
+            EXPECT_NEAR(BandCorrelationMeterTestAccess(meter).intensityAt(probe), expected, 1.0e-6);
         }
     }
 }
@@ -614,5 +628,72 @@ TEST(BandCorrelationMeter, SoftwarePaintPreservesHistoryState)
     meter.paint(graphics);
     EXPECT_FALSE(meter.trendValue().has_value());
     EXPECT_FALSE(meter.recentRange().has_value());
+}
+TEST(BandCorrelationMeter, ExposesNamedReadOnlyValuesAndSilenceIsUnavailable)
+{
+    BandCorrelationMeter meter("High Mid");
+    meter.setSize(200, BAND_CORRELATION_HEIGHT);
+    meter.addToDesktop(0);
+    auto* handler = meter.getAccessibilityHandler();
+    ASSERT_NE(handler, nullptr);
+    EXPECT_EQ(handler->getTitle(), "High Mid correlation");
+    auto* value = handler->getValueInterface();
+    ASSERT_NE(value, nullptr);
+    EXPECT_TRUE(value->isReadOnly());
+    EXPECT_EQ(value->getCurrentValueAsString(), "Unavailable");
+    meter.setCorrelation(-0.75F);
+    EXPECT_EQ(value->getCurrentValueAsString(), "-0.75");
+    value->setValueAsString("0.5");
+    EXPECT_EQ(value->getCurrentValueAsString(), "-0.75");
+    meter.setCorrelation(std::numeric_limits<float>::quiet_NaN());
+    EXPECT_EQ(value->getCurrentValueAsString(), "Unavailable");
+}
+
+/// Native accessibility exposes the smoothed default and follows immediate readout-mode changes.
+TEST(BandCorrelationMeter, AccessibleValueUsesTheSmoothedDefaultAndCanSwitchToLive)
+{
+    constexpr double persistenceSeconds {0.6};
+    BandCorrelationMeter meter("Low");
+    meter.addToDesktop(0);
+    auto* handler = meter.getAccessibilityHandler();
+    ASSERT_NE(handler, nullptr);
+    auto* value = handler->getValueInterface();
+    ASSERT_NE(value, nullptr);
+    meter.setCorrelation(-0.75F);
+    meter.setCorrelation(0.75F, persistenceSeconds, persistenceSeconds);
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
+    EXPECT_EQ(meter.readoutText(), "+0.20");
+    meter.setSmoothedReadout(false);
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.75");
+    meter.setSmoothedReadout(true);
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
+    value->setValueAsString("1.00");
+    EXPECT_EQ(value->getCurrentValueAsString(), "+0.20");
+}
+
+TEST(BandCorrelationMeter, ReadoutIsBlankForUnavailableMeasurements)
+{
+    BandCorrelationMeter meter("Low");
+    meter.setSmoothedReadout(false);
+    EXPECT_TRUE(meter.readoutText().isEmpty());
+    EXPECT_EQ(meter.valueText(), "Unavailable");
+
+    meter.setCorrelation(-0.75F);
+    EXPECT_EQ(meter.readoutText(), "-0.75");
+    meter.setCorrelation(0.0F);
+    EXPECT_EQ(meter.readoutText(), "+0.00");
+    meter.setCorrelation(0.75F);
+    EXPECT_EQ(meter.readoutText(), "+0.75");
+
+    constexpr std::array unavailableValues {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+    };
+    for (const float value : unavailableValues) {
+        meter.setCorrelation(value);
+        EXPECT_TRUE(meter.readoutText().isEmpty());
+        EXPECT_EQ(meter.valueText(), "Unavailable");
+    }
 }
 }  // namespace esgrove::image_control::test
