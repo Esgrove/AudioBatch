@@ -328,10 +328,11 @@ fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
         br#"{"version":2,"parameters":{"gain":0.75}}"#.to_vec(),
         br#"{"version":3,"parameters":{"gain":0.75}}"#.to_vec(),
         br#"{"version":4,"parameters":{"gain":0.75}}"#.to_vec(),
-        br#"{"version":5,"parameters":{"gain":1.1}}"#.to_vec(),
-        br#"{"version":5,"parameters":{"gain":1e999}}"#.to_vec(),
-        br#"{"version":5,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#.to_vec(),
-        br#"{"version":5,"parameters":{"gain":0.75,"unknown":0.5}}"#.to_vec(),
+        br#"{"version":5,"parameters":{"gain":0.75}}"#.to_vec(),
+        br#"{"version":6,"parameters":{"gain":1.1}}"#.to_vec(),
+        br#"{"version":6,"parameters":{"gain":1e999}}"#.to_vec(),
+        br#"{"version":6,"parameters":{"gain":0.75},"geometry":{"width":1200,"height":599}}"#.to_vec(),
+        br#"{"version":6,"parameters":{"gain":0.75,"unknown":0.5}}"#.to_vec(),
     ] {
         let mut invalid = PartialStream {
             bytes,
@@ -360,7 +361,7 @@ fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
         state.save(&destination.plugin_handle(), &mut no_progress).is_err(),
         "zero-write stream accepted"
     );
-    let current = br#"{"version":5,"parameters":{"gain":0.25}}"#;
+    let current = br#"{"version":6,"parameters":{"gain":0.25}}"#;
     state.load(&destination.plugin_handle(), &mut current.as_slice())?;
     let handle = destination.plugin_handle();
     let params = handle.get_extension::<PluginParams>().context("CLAP params")?;
@@ -374,7 +375,7 @@ fn packaged_state_partial_streams_and_transactional_rejection() -> Result<()> {
     );
     state.load(
         &destination.plugin_handle(),
-        &mut br#"{"version":5,"parameters":{}}"#.as_slice(),
+        &mut br#"{"version":6,"parameters":{}}"#.as_slice(),
     )?;
     ensure!(
         save(&mut destination)? == defaults,

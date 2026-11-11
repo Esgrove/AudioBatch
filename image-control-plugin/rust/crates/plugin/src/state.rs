@@ -11,7 +11,7 @@ use crate::params::{Parameters, Snapshot};
 /// Largest accepted state payload, independently of its host transport.
 pub const MAXIMUM_STATE_BYTES: usize = 16_384;
 /// Only this independent project schema is accepted. Other generations are not reinterpreted.
-pub const STATE_VERSION: u32 = 5;
+pub const STATE_VERSION: u32 = 6;
 
 /// Failure to decode or transfer bounded state, always outside the audio callback.
 #[derive(Debug, Error)]
@@ -330,7 +330,7 @@ mod tests {
                 .is_err()
             );
         }
-        for version in [0, 1, 2, 3, 4, STATE_VERSION + 1, u32::MAX] {
+        for version in [0, 1, 2, 3, 4, 5, STATE_VERSION + 1, u32::MAX] {
             let bytes = format!(r#"{{"version":{version},"parameters":{{"gain":0.25}}}}"#);
             assert!(
                 restore_bytes(

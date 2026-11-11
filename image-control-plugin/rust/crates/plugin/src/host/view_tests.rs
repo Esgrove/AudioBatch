@@ -200,7 +200,7 @@ impl IBStreamTrait for StateStream {
 
 /// Restores a valid independently authored state without closing the editor or calling a test-only parameter model.
 fn restore(component: &Component) {
-    let json = br#"{"version":5,"parameters":{"gain":0.25,"bands":[{"mid":0.5,"side":0.25},{},{},{}]}}"#;
+    let json = br#"{"version":6,"parameters":{"gain":0.25,"bands":[{"mid":0.5,"side":0.25},{},{},{}]}}"#;
     let mut bytes = u32::try_from(json.len()).expect("bounded state").to_le_bytes().to_vec();
     bytes.extend_from_slice(json);
     let stream = ComWrapper::new(StateStream(RefCell::new(Cursor::new(bytes))));
