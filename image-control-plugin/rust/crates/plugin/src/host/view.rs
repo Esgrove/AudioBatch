@@ -7,7 +7,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_void};
-use std::mem::ManuallyDrop;
+use std::mem;
+use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, ThreadId};
@@ -50,14 +51,43 @@ fn valid_dimensions(width: i32, height: i32, scale: f64) -> bool {
 /// UI-thread frame slot shares its retained COM owner without invoking host reference-count code while borrowed.
 type FrameSlot = Rc<RefCell<Option<Rc<ComPtr<IPlugFrame>>>>>;
 
+/// Normally dropped UI ownership that can be deliberately leaked after an invalid foreign host teardown.
+/// The value remains present throughout the view's callable lifetime. Only final teardown may empty this owner.
+struct UiOwner<T>(Option<T>);
+
+impl<T> UiOwner<T> {
+    /// Retains a UI resource for ordinary automatic destruction on its owner thread.
+    const fn new(value: T) -> Self {
+        Self(Some(value))
+    }
+
+    /// Abandons ownership without touching the resource when host teardown cannot safely destroy it.
+    fn leak(&mut self) {
+        if let Some(value) = self.0.take() {
+            mem::forget(value);
+        }
+    }
+}
+
+impl<T> Deref for UiOwner<T> {
+    type Target = T;
+
+    /// Borrows the resource, which is present until the view's final teardown abandons ownership.
+    fn deref(&self) -> &Self::Target {
+        self.0
+            .as_ref()
+            .expect("UI ownership is present until final view teardown")
+    }
+}
+
 /// COM view whose native resources belong to the constructing UI thread.
 pub(super) struct PlugView {
     /// Editor destruction is restricted to the creating UI thread.
-    updates: ManuallyDrop<Rc<ViewUpdates>>,
+    updates: UiOwner<Rc<ViewUpdates>>,
     /// Host frame lifetime is retained until replacement or view teardown.
-    frame: ManuallyDrop<FrameSlot>,
+    frame: UiOwner<FrameSlot>,
     /// Borrowed self interface, valid while the view exists. Rc destruction stays on the UI owner.
-    interface: ManuallyDrop<Rc<Cell<*mut IPlugView>>>,
+    interface: UiOwner<Rc<Cell<*mut IPlugView>>>,
     /// Thread ownership check, never called from audio.
     owner: ThreadId,
     /// Native host dimensions, in macOS points or Windows physical pixels.
@@ -104,9 +134,9 @@ impl PlugView {
     ) -> *mut IPlugView {
         let logical = geometry.snapshot();
         let wrapper = ComWrapper::new(Self {
-            updates: ManuallyDrop::new(ViewUpdates::new()),
-            frame: ManuallyDrop::new(Rc::new(RefCell::new(None))),
-            interface: ManuallyDrop::new(Rc::new(Cell::new(std::ptr::null_mut()))),
+            updates: UiOwner::new(ViewUpdates::new()),
+            frame: UiOwner::new(Rc::new(RefCell::new(None))),
+            interface: UiOwner::new(Rc::new(Cell::new(std::ptr::null_mut()))),
             owner: thread::current().id(),
             dimensions: Cell::new(logical.native(1.0)),
             logical: Cell::new(logical),
@@ -152,24 +182,22 @@ impl Class for PlugView {
 }
 
 impl Drop for PlugView {
+    /// Removes the native child before automatic field destruction, leaking UI ownership after invalid host teardown.
     fn drop(&mut self) {
         if self.is_owner() {
-            // SAFETY: native editor and frame destruction occur only on their constructing UI thread.
-            unsafe {
-                let removed = self.updates.remove();
-                self.interface.set(std::ptr::null_mut());
-                // A final release after rejected Win32 removal is invalid.
-                // Destroying a focused child inside Iced's active poll is unsafe.
-                // Retain native ownership rather than dispatch focus callbacks through a borrowed runtime.
-                // This is not a clean teardown.
-                if removed.is_err() {
-                    return;
-                }
-                ManuallyDrop::drop(&mut self.updates);
-                ManuallyDrop::drop(&mut self.frame);
-                ManuallyDrop::drop(&mut self.interface);
+            let removed = self.updates.remove();
+            self.interface.set(std::ptr::null_mut());
+            if removed.is_ok() {
+                return;
             }
+            // A final release after rejected Win32 removal is invalid.
+            // Retain native ownership rather than dispatch focus callbacks through a borrowed Iced runtime.
+            // This is not a clean teardown.
         }
+        // Off-thread final release must not touch native state or even decrement its UI-only Rc owners.
+        self.updates.leak();
+        self.frame.leak();
+        self.interface.leak();
     }
 }
 

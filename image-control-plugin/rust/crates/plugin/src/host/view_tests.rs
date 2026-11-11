@@ -17,6 +17,154 @@ use crate::editor::{EditorState, Message};
 use crate::host::component::Component;
 use crate::params::{GAIN_PARAMETER, Snapshot, band_parameter_id};
 
+/// Builds production view ownership without a native child, GPU, or running application event loop.
+fn unattached_view() -> PlugView {
+    let imager = image_control_dsp::Imager::new();
+    let logical = LogicalSize::default();
+    PlugView {
+        updates: UiOwner::new(ViewUpdates::new()),
+        frame: UiOwner::new(Rc::new(RefCell::new(None))),
+        interface: UiOwner::new(Rc::new(Cell::new(std::ptr::null_mut()))),
+        owner: thread::current().id(),
+        dimensions: Cell::new(logical.native(1.0)),
+        logical: Cell::new(logical),
+        geometry: Arc::new(EditorGeometry::default()),
+        scale: Cell::new(1.0),
+        host_sized: Cell::new(false),
+        parameters: Arc::new(Parameters::new()),
+        shared: imager.shared(),
+        handler: Arc::new(Mutex::new(None)),
+    }
+}
+
+#[test]
+fn owner_thread_final_release_clears_interface_and_drops_ui_ownership() {
+    let wrapper = ComWrapper::new(unattached_view());
+    let updates = Rc::downgrade(&wrapper.updates);
+    let frame = Rc::downgrade(&wrapper.frame);
+    let interface = Rc::clone(&wrapper.interface);
+    let view = wrapper.to_com_ptr::<IPlugView>().expect("view interface");
+    wrapper.interface.set(view.as_ptr());
+    drop(wrapper);
+    drop(view);
+    assert!(updates.upgrade().is_none());
+    assert!(frame.upgrade().is_none());
+    assert!(interface.get().is_null());
+    assert_eq!(Rc::strong_count(&interface), 1);
+}
+
+#[test]
+fn off_thread_final_release_leaks_every_ui_owner_without_touching_the_interface() {
+    let wrapper = ComWrapper::new(unattached_view());
+    let updates = Rc::downgrade(&wrapper.updates);
+    let frame = Rc::downgrade(&wrapper.frame);
+    let interface = Rc::downgrade(&wrapper.interface);
+    let view = wrapper.to_com_ptr::<IPlugView>().expect("view interface");
+    wrapper.interface.set(view.as_ptr());
+    // Only the foreign ABI pointer crosses threads. No Send implementation exposes the UI-owned Rust resources.
+    let address = view.into_raw().expose_provenance();
+    drop(wrapper);
+    thread::spawn(move || {
+        let pointer = std::ptr::with_exposed_provenance_mut::<IPlugView>(address);
+        // SAFETY: the test transfers its sole live COM reference into this deliberately invalid host release.
+        // No owner-thread access occurs until this thread has joined, and the view must leak its UI resources.
+        let view = unsafe { ComPtr::from_raw(pointer) }.expect("transferred view reference");
+        drop(view);
+    })
+    .join()
+    .expect("off-thread host release returns");
+    assert_eq!(updates.strong_count(), 1);
+    assert_eq!(frame.strong_count(), 1);
+    assert_eq!(interface.strong_count(), 1);
+    assert_eq!(
+        interface
+            .upgrade()
+            .expect("leaked interface owner")
+            .get()
+            .expose_provenance(),
+        address
+    );
+}
+
+#[test]
+#[cfg(windows)]
+fn final_release_after_rejected_windows_removal_retains_all_ui_ownership() {
+    let wrapper = ComWrapper::new(unattached_view());
+    wrapper.updates.active.set(true);
+    let updates = Rc::downgrade(&wrapper.updates);
+    let frame = Rc::downgrade(&wrapper.frame);
+    let interface = Rc::downgrade(&wrapper.interface);
+    let call = wrapper.updates.host_call();
+    let view = wrapper.to_com_ptr::<IPlugView>().expect("view interface");
+    wrapper.interface.set(view.as_ptr());
+    // SAFETY: this live owner-thread view must reject removal while its Iced-to-host callback remains active.
+    assert_eq!(unsafe { view.removed() }, kResultFalse);
+    drop(wrapper);
+    drop(view);
+    assert!(updates.upgrade().expect("retained update owner").active.get());
+    assert!(interface.upgrade().expect("retained interface owner").get().is_null());
+    drop(call);
+    assert_eq!(updates.strong_count(), 1);
+    assert_eq!(frame.strong_count(), 1);
+    assert_eq!(interface.strong_count(), 1);
+}
+
+/// A real frame synchronously reenters view removal while the binding's host callback guard is active.
+struct RemovalFrame(Rc<Cell<Option<tresult>>>);
+
+impl Class for RemovalFrame {
+    type Interfaces = (IPlugFrame,);
+}
+
+impl vst3::Steinberg::IPlugFrameTrait for RemovalFrame {
+    unsafe fn resizeView(&self, view: *mut IPlugView, _: *mut ViewRect) -> tresult {
+        // SAFETY: the binding passes the live owner-thread view retained by the test throughout this callback.
+        let view = unsafe { ComRef::from_raw(view) }.expect("live reentrant view");
+        // SAFETY: reentrant removal uses the same live interface and lets its platform admission rule decide.
+        self.0.set(Some(unsafe { view.removed() }));
+        kResultOk
+    }
+}
+
+#[test]
+fn reentrant_removal_keeps_ui_owners_live_until_the_host_callback_returns() {
+    let wrapper = ComWrapper::new(unattached_view());
+    let updates = Rc::downgrade(&wrapper.updates);
+    let frame = Rc::downgrade(&wrapper.frame);
+    let interface = Rc::downgrade(&wrapper.interface);
+    let view = wrapper.to_com_ptr::<IPlugView>().expect("view interface");
+    wrapper.interface.set(view.as_ptr());
+    wrapper.updates.active.set(true);
+    let removal = Rc::new(Cell::new(None));
+    let host = ComWrapper::new(RemovalFrame(Rc::clone(&removal)));
+    *wrapper.frame.borrow_mut() = Some(Rc::new(host.to_com_ptr::<IPlugFrame>().expect("frame interface")));
+    drop(host);
+    let binding = Binding {
+        parameters: Arc::clone(&wrapper.parameters),
+        handler: Arc::clone(&wrapper.handler),
+        frame: Rc::clone(&wrapper.frame),
+        interface: Rc::clone(&wrapper.interface),
+        updates: Rc::downgrade(&wrapper.updates),
+        gestures: Cell::new(0),
+    };
+    assert_eq!(binding.request_resize(1200, 900), cfg!(windows));
+    assert_eq!(
+        removal.get(),
+        Some(if cfg!(windows) { kResultFalse } else { kResultOk })
+    );
+    assert_eq!(wrapper.updates.active.get(), cfg!(windows));
+    assert!(updates.upgrade().is_some());
+    assert_eq!(wrapper.interface.get(), view.as_ptr());
+    // SAFETY: the host callback has returned, so both platforms accept removal on this live UI-owned view.
+    assert_eq!(unsafe { view.removed() }, kResultOk);
+    drop(binding);
+    drop(wrapper);
+    drop(view);
+    assert!(updates.upgrade().is_none());
+    assert!(frame.upgrade().is_none());
+    assert!(interface.upgrade().is_none());
+}
+
 /// A bounded read-only host stream supplies independently authored state through the production component ABI.
 struct StateStream(RefCell<Cursor<Vec<u8>>>);
 
@@ -52,7 +200,7 @@ impl IBStreamTrait for StateStream {
 
 /// Restores a valid independently authored state without closing the editor or calling a test-only parameter model.
 fn restore(component: &Component) {
-    let json = br#"{"version":3,"parameters":{"gain":0.25,"bands":[{"mid":0.5,"side":0.25},{},{},{}]}}"#;
+    let json = br#"{"version":5,"parameters":{"gain":0.25,"bands":[{"mid":0.5,"side":0.25},{},{},{}]}}"#;
     let mut bytes = u32::try_from(json.len()).expect("bounded state").to_le_bytes().to_vec();
     bytes.extend_from_slice(json);
     let stream = ComWrapper::new(StateStream(RefCell::new(Cursor::new(bytes))));
