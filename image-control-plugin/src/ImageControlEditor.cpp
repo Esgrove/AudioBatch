@@ -522,9 +522,9 @@ void ImageControlEditor::resized()
         area.removeFromLeft(GAP);
         correlationArea.removeFromLeft(GAP);
     }
+    updateBandHeadingLayout();
     layoutBandControlsDisclosure();
     updateSettingsBounds();
-    updateBandHeadingLayout();
 
     if (!layoutRestored || layoutTransition) {
         return;
@@ -944,6 +944,6 @@ void ImageControlEditor::updateBandRanges()
         }
         bandStrips.at(band)->setRangeText(text);
     }
+    updateBandHeadingLayout();
 }
 }  // namespace esgrove::image_control
-    updateBandHeadingLayout();
