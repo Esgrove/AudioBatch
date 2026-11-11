@@ -68,6 +68,14 @@ constexpr double TAIL_PERCENTILE_99 {0.99};
 constexpr int WORKER_PRIMING_MILLISECONDS {20};
 constexpr int MAXIMUM_REPETITIONS {10};
 constexpr double QUICK_PACED_SECONDS {0.16};
+/// Short-run defaults retain repeated observations without changing the selected workload matrix.
+constexpr int QUICK_CALLBACKS {128};
+constexpr int QUICK_REPETITIONS {2};
+/// Explicit callback counts stay within the documented bounded workload range.
+constexpr int MINIMUM_CALLBACKS {32};
+constexpr int MAXIMUM_CALLBACKS {16'384};
+/// Back-to-back clock reads estimate measurement overhead separately from callback work.
+constexpr int CLOCK_OVERHEAD_SAMPLES {1024};
 /// Wall-clock spacing leaves several design-thread polls between requests.
 constexpr double CROSSOVER_CHANGE_SECONDS {0.08};
 /// Includes delayed publication and a partition crossfade, not just the requesting callback.
@@ -1321,8 +1329,8 @@ p99 needs more than --quick for stable tail evidence.)"
         options.maximumWorkloadSeconds
     );
     std::vector<double> clockOverhead;
-    clockOverhead.reserve(1024);
-    for (int index = 0; index < 1024; ++index) {
+    clockOverhead.reserve(CLOCK_OVERHEAD_SAMPLES);
+    for (int index = 0; index < CLOCK_OVERHEAD_SAMPLES; ++index) {
         const auto before = Clock::now();
         clockOverhead.push_back(Microseconds(Clock::now() - before).count());
     }
@@ -1348,8 +1356,8 @@ Options parseOptions(const std::span<const std::string_view> arguments)
 {
     Options options;
     if (std::ranges::find(arguments, "--quick") != arguments.end()) {
-        options.callbacks = 128;
-        options.repetitions = 2;
+        options.callbacks = QUICK_CALLBACKS;
+        options.repetitions = QUICK_REPETITIONS;
         options.refreshes = REFRESH_RATE;
         options.componentAudioSeconds = 2.0;
         options.pacedSeconds = QUICK_PACED_SECONDS;
@@ -1368,7 +1376,7 @@ Options parseOptions(const std::span<const std::string_view> arguments)
             continue;
         }
         if (argument == "--callbacks") {
-            options.callbacks = boundedInteger(value(), 32, 16'384);
+            options.callbacks = boundedInteger(value(), MINIMUM_CALLBACKS, MAXIMUM_CALLBACKS);
         } else if (argument == "--repetitions") {
             options.repetitions = boundedInteger(value(), 1, MAXIMUM_REPETITIONS);
         } else if (argument == "--label") {
