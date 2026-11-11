@@ -36,7 +36,7 @@ namespace esgrove::image_control::test
 {
 namespace
 {
-/// Size of the view in the tests, in pixels.
+/// Width of the view in the tests, in pixels.
 constexpr int VIEW_WIDTH {1000};
 /// Height of the view in the tests, in pixels.
 constexpr int VIEW_HEIGHT {400};
@@ -480,10 +480,10 @@ TEST(SpectrogramView, CommandDragChangesTheMidGainAndLinkedSide)
     ImageControlProcessor processor;
     SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
-    const float x = xOf(view, 2000.0);
+    const float bandCentreX = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
     // 50 pixels up at 0.12 dB per pixel raises the High Mid mid gain by 6 dB, and Link, on by default, the side too.
-    dragOnView(view, {x, centreY}, {x, centreY - 50.0F}, juce::ModifierKeys::commandModifier);
+    dragOnView(view, {bandCentreX, centreY}, {bandCentreX, centreY - 50.0F}, juce::ModifierKeys::commandModifier);
 
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 6.0F, 0.05F);
     EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 6.0F, 0.05F);
@@ -499,9 +499,9 @@ TEST(SpectrogramView, CommandDragLeavesTheSideAloneWithoutLink)
     processor.getEditorState().setProperty(linkPropertyName(2), false, nullptr);
     SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
-    const float x = xOf(view, 2000.0);
+    const float bandCentreX = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
-    dragOnView(view, {x, centreY}, {x, centreY + 50.0F}, juce::ModifierKeys::commandModifier);
+    dragOnView(view, {bandCentreX, centreY}, {bandCentreX, centreY + 50.0F}, juce::ModifierKeys::commandModifier);
 
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), -6.0F, 0.05F);
     EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 0.0F, 0.01F);
@@ -512,9 +512,9 @@ TEST(SpectrogramView, AltDragChangesTheSideGain)
     ImageControlProcessor processor;
     SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
     view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
-    const float x = xOf(view, 2000.0);
+    const float bandCentreX = xOf(view, 2000.0);
     const float centreY = view.getPlotBounds().getCentreY();
-    dragOnView(view, {x, centreY}, {x, centreY - 50.0F}, juce::ModifierKeys::altModifier);
+    dragOnView(view, {bandCentreX, centreY}, {bandCentreX, centreY - 50.0F}, juce::ModifierKeys::altModifier);
 
     EXPECT_NEAR(parameterValue(processor, sideGainParameterId(2)), 6.0F, 0.05F);
     EXPECT_NEAR(parameterValue(processor, midGainParameterId(2)), 0.0F, 0.01F);
@@ -665,9 +665,9 @@ TEST(SpectrogramView, MaximizedPlotAcceptsCrossoverEditingAcrossTheReclaimedBott
         view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
         view.setFrequencyScale(scale);
         view.setMaximized(true);
-        const float y = view.getPlotBounds().getBottom() - 6.0F;
-        const auto start = juce::Point<float> {xOf(view, 100.0, scale), y};
-        const auto end = juce::Point<float> {xOf(view, 150.0, scale), y};
+        const float gutterY = view.getPlotBounds().getBottom() - 6.0F;
+        const auto start = juce::Point<float> {xOf(view, 100.0, scale), gutterY};
+        const auto end = juce::Point<float> {xOf(view, 150.0, scale), gutterY};
         dragOnView(view, start, end);
         EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 150.0F, 0.01F);
         EXPECT_TRUE(processor.getHistory().undo());
