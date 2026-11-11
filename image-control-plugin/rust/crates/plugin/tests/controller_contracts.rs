@@ -120,9 +120,10 @@ fn conversions_and_non_finite_validation_use_real_controller() {
         for id in 0..PARAMETER_COUNT as u32 {
             let spec = parameter_spec(id).expect("spec");
             assert_eq!(controller.setParamNormalized(id, 0.25), kResultOk);
+            let accepted = controller.getParamNormalized(id);
             for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
                 assert_eq!(controller.setParamNormalized(id, invalid), kInvalidArgument);
-                assert_eq!(controller.getParamNormalized(id).to_bits(), 0.25_f64.to_bits());
+                assert_eq!(controller.getParamNormalized(id).to_bits(), accepted.to_bits());
             }
             for normalized in [0.0, spec.default_normalized, 1.0] {
                 let mut string = [0_u16; 128];

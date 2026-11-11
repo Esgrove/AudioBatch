@@ -3,8 +3,8 @@
 use image_control_dsp::Imager;
 use image_control_plugin_rs::params::{
     BAND_CONTROL_COUNT, BAND_PARAMETER_START, BYPASS_PARAMETER, CROSSOVER_PARAMETER_START, DELTA_PARAMETER,
-    GAIN_PARAMETER, MONO_PARAMETER, NEUTRAL_GAIN, PARAMETER_COUNT, Parameters, Snapshot, band_parameter_id,
-    parameter_spec,
+    EditorBinding, GAIN_PARAMETER, MONO_PARAMETER, NEUTRAL_GAIN, PARAMETER_COUNT, Parameters, Snapshot,
+    band_parameter_id, parameter_spec,
 };
 
 #[test]
@@ -53,7 +53,7 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
     }
     for (index, default) in [100.0, 500.0, 5000.0].into_iter().enumerate() {
         let spec = parameter_spec(CROSSOVER_PARAMETER_START + index as u32).expect("crossover");
-        assert!((spec.normalized_to_plain(spec.default_normalized) - default).abs() < 1e-9);
+        assert!((spec.normalized_to_plain(spec.default_normalized) - default).abs() < 0.003);
     }
     for (id, text, plain) in [
         (0, "-12 dB", -12.0),
@@ -62,15 +62,15 @@ fn plain_ranges_defaults_and_text_are_processing_units() {
         (7, "100%", 100.0),
         (7, "150%", 150.0),
         (7, "200%", 200.0),
-        (8, "40% L", -40.0),
+        (8, "40L", -40.0),
         (8, "C", 0.0),
     ] {
         let spec = parameter_spec(id).expect("spec");
-        assert!((spec.normalized_to_plain(spec.parse(text).expect("valid text")) - plain).abs() < 1e-9);
+        assert!((spec.normalized_to_plain(spec.parse(text).expect("valid text")) - plain).abs() < 0.003);
     }
     for id in 0..PARAMETER_COUNT as u32 {
         let spec = parameter_spec(id).expect("spec");
-        for text in ["NaN", "inf", "-inf", "not a number"] {
+        for text in ["NaN", "inf", "not a number"] {
             assert!(spec.parse(text).is_none(), "{id}: {text}");
         }
         for normalized in [0.0, spec.default_normalized, 1.0] {
@@ -94,11 +94,175 @@ fn recover_uses_the_full_200_percent_host_and_numeric_input_domain_for_every_ban
             assert_eq!(spec.parse(&format!("{percent}%")), Some(normalized));
             assert_eq!(spec.parse(&spec.format(normalized)), Some(normalized));
         }
-        for text in ["-1%", "200.1%", "201%", "NaN%", "inf%"] {
+        for text in ["NaN%", "inf%", "10%%"] {
             assert!(spec.parse(text).is_none(), "{text}");
         }
+        assert_eq!(spec.parse("-1%"), Some(0.0));
+        assert_eq!(spec.parse("200.1%"), Some(1.0));
+        assert_eq!(spec.parse("201%"), Some(1.0));
         assert_eq!(spec.plain_to_normalized(201.0), 1.0);
     }
+}
+
+/// Expected plain grid points are independent decimal targets, including asymmetric negative ties.
+#[test]
+fn native_plain_grid_boundaries_apply_to_host_edits_and_text() {
+    let parameters = Parameters::new();
+    for (id, input, expected, tolerance) in [
+        (0, -0.006, -0.01, 0.000_004),
+        (0, 0.004, 0.0, 0.000_004),
+        (0, 0.006, 0.01, 0.000_004),
+        (4, -13.374, -13.37, 0.000_008),
+        (4, -13.376, -13.38, 0.000_008),
+        (6, 0.504, 0.50, 0.000_001),
+        (6, 0.506, 0.51, 0.000_001),
+        (7, 49.499, 49.0, 0.0),
+        (7, 49.5, 50.0, 0.0),
+        (7, 199.5, 200.0, 0.0),
+        (8, -49.501, -50.0, 0.0),
+        (8, -49.5, -49.0, 0.0),
+        (8, -0.5, 0.0, 0.0),
+        (8, 0.5, 1.0, 0.0),
+    ] {
+        let spec = parameter_spec(id).expect("spec");
+        let normalized = match id {
+            0 => (input + 24.0) / 36.0,
+            4 => (input + 60.0) / 72.0,
+            6 => input * 0.5,
+            7 => input / 200.0,
+            _ => (input + 100.0) / 200.0,
+        };
+        assert!(parameters.set(id, normalized));
+        let actual = spec.normalized_to_plain(parameters.get(id).expect("accepted"));
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "id={id}, input={input}, actual={actual}"
+        );
+        let parsed = spec.parse(&input.to_string()).expect("numeric input");
+        assert!((spec.normalized_to_plain(parsed) - expected).abs() <= tolerance);
+        let accepted = parameters.get(id).expect("accepted");
+        assert!(parameters.set(id, accepted));
+        assert_eq!(parameters.get(id), Some(accepted), "quantization is idempotent");
+    }
+}
+
+/// Every declared native step remains stable after repeated host publication and plain conversion.
+#[test]
+fn complete_plain_grids_are_idempotent_and_preserve_neutral_dsp_band_units() {
+    let parameters = Parameters::new();
+    for (id, minimum, interval, steps) in [
+        (0, -24.0, 0.01, 3600),
+        (4, -60.0, 0.01, 7200),
+        (6, 0.0, 0.01, 200),
+        (7, 0.0, 1.0, 200),
+        (8, -100.0, 1.0, 200),
+        (9, 0.0, 1.0, 1),
+    ] {
+        let spec = parameter_spec(id).expect("spec");
+        for step in 0..=steps {
+            let plain = f64::from(step).mul_add(interval, minimum);
+            let normalized = spec.plain_to_normalized(plain);
+            assert!(parameters.set(id, normalized));
+            assert_eq!(parameters.get(id), Some(normalized), "id={id}, step={step}");
+            assert_eq!(spec.snap_normalized(normalized), normalized);
+        }
+    }
+    let shared = Imager::new().shared();
+    for band in 0..4 {
+        for (field, normalized) in [(0, 5.0 / 6.0), (1, 5.0 / 6.0), (2, 0.5), (3, 0.0), (4, 0.5), (5, 0.0)] {
+            let id = band_parameter_id(band, field).expect("band field");
+            assert!(parameters.set(id, normalized));
+        }
+    }
+    parameters.publish(&shared);
+    for band in 0..4 {
+        let values = shared.band_parameters(band).expect("linear float band protocol");
+        assert_eq!(
+            values.map(f32::to_bits),
+            [5.0_f32 / 6.0, 5.0 / 6.0, 0.5, 0.0, 0.5, 0.0].map(f32::to_bits)
+        );
+    }
+}
+
+/// Native reference values come from the float `NormalisableRange` expression, not RS conversion output.
+#[test]
+fn crossover_uses_native_float_power_skew_not_an_exponential_mapping() {
+    let spec = parameter_spec(1).expect("crossover");
+    for (normalized, expected) in [
+        (0.0, 20.0),
+        (0.1, 20.187_408_447_265_625),
+        (0.25, 38.773_849_487_304_69),
+        (0.5, 632.455_322_265_625),
+        (0.75, 4723.568_359_375),
+        (0.9, 11_783.472_656_25),
+        (1.0, 20_000.0),
+    ] {
+        assert!((spec.normalized_to_plain(normalized) - expected).abs() < 0.002);
+        let roundtrip = spec.plain_to_normalized(expected);
+        assert!((roundtrip - normalized).abs() < 0.000_002);
+    }
+    assert_eq!(spec.normalized_to_plain(-1.0), 20.0);
+    assert_eq!(spec.normalized_to_plain(2.0), 20_000.0);
+    assert_eq!(spec.plain_to_normalized(-1.0), 0.0);
+    assert_eq!(spec.plain_to_normalized(30_000.0), 1.0);
+}
+
+#[test]
+fn native_text_grammar_and_formatting_cover_units_edges_and_direction() {
+    for (id, text, expected) in [
+        (0, "-0.004 dB", "0.0 dB"),
+        (4, "-infinity dB", "-inf dB"),
+        (4, "-100 dB", "-inf dB"),
+        (6, "150%", "1.50"),
+        (7, "Off", "0%"),
+        (7, "50.5%", "51%"),
+        (8, "-35L", "35L"),
+        (8, "-35R", "35R"),
+        (8, "35%", "35R"),
+        (8, "-0.5", "C"),
+        (9, "true", "On"),
+        (9, "false", "Off"),
+        (1, "999.4 Hz", "999 Hz"),
+        (1, "999.6 Hz", "1.00 kHz"),
+        (1, "1.25 kHz", "1.25 kHz"),
+        (1, "12 kHz", "12.0 kHz"),
+    ] {
+        let spec = parameter_spec(id).expect("spec");
+        assert_eq!(
+            spec.format(spec.parse(text).expect("valid text")),
+            expected,
+            "{id}: {text}"
+        );
+    }
+    for (id, text) in [(4, "Off"), (8, "35% L"), (7, "50%%"), (1, "1k"), (0, "--1"), (0, "+-1")] {
+        assert!(parameter_spec(id).expect("spec").parse(text).is_none(), "{id}: {text}");
+    }
+    for id in 0..PARAMETER_COUNT as u32 {
+        for text in ["", "NaN", "inf", "1e999", "1e-999", "12 junk"] {
+            assert!(parameter_spec(id).expect("spec").parse(text).is_none());
+        }
+    }
+}
+
+#[test]
+fn editor_binding_reports_the_accepted_grid_value_not_the_request() {
+    #[derive(Default)]
+    struct Binding(std::cell::Cell<Option<(u32, f64)>>);
+    impl EditorBinding for Binding {
+        fn begin_edit(&self, _: u32) {}
+        fn set_value(&self, id: u32, value: f64) {
+            self.0.set(Some((id, value)));
+        }
+        fn end_edit(&self, _: u32) {}
+    }
+    let binding = Binding::default();
+    let parameters = Parameters::new();
+    assert!(binding.publish_value(&parameters, 7, 0.2475));
+    assert_eq!(parameters.get(7), Some(0.25));
+    assert_eq!(binding.0.get(), Some((7, 0.25)));
+    assert!(!binding.publish_value(&parameters, 7, f64::NAN));
+    assert!(!binding.publish_value(&parameters, u32::MAX, 0.5));
+    assert_eq!(binding.0.get(), Some((7, 0.25)));
 }
 
 #[test]
@@ -169,7 +333,7 @@ fn publication_is_detached_and_never_changes_unrelated_parameter_atomics() {
 }
 
 #[test]
-fn output_gain_neutral_host_representations_publish_exact_unity_without_rewriting_state() {
+fn output_gain_edits_canonicalize_neutral_but_recall_keeps_legacy_neutral_bits() {
     let parameters = Parameters::new();
     let imager = Imager::new();
     let shared = imager.shared();
@@ -179,9 +343,9 @@ fn output_gain_neutral_host_representations_publish_exact_unity_without_rewritin
         assert_eq!(shared.parameters().gain().to_bits(), 1.0_f32.to_bits());
         assert_eq!(
             parameters.get(GAIN_PARAMETER).expect("gain").to_bits(),
-            normalized.to_bits()
+            NEUTRAL_GAIN.to_bits()
         );
-        assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
+        assert_eq!(parameters.snapshot().gain.to_bits(), NEUTRAL_GAIN.to_bits());
 
         assert!(parameters.restore(Snapshot {
             gain: normalized,
@@ -194,7 +358,7 @@ fn output_gain_neutral_host_representations_publish_exact_unity_without_rewritin
 }
 
 #[test]
-fn output_gain_neighbors_are_not_snapped_to_a_neutral_host_representation() {
+fn detached_recall_retains_legacy_output_gain_neighbors_without_snapping() {
     let parameters = Parameters::new();
     let imager = Imager::new();
     let shared = imager.shared();
@@ -210,7 +374,10 @@ fn output_gain_neighbors_are_not_snapped_to_a_neutral_host_representation() {
         (f64::from(float_neutral.next_down()), std::cmp::Ordering::Less),
         (f64::from(float_neutral.next_up()), std::cmp::Ordering::Greater),
     ] {
-        assert!(parameters.set(GAIN_PARAMETER, normalized));
+        assert!(parameters.restore(Snapshot {
+            gain: normalized,
+            ..Snapshot::default()
+        }));
         parameters.publish(&shared);
         assert_eq!(parameters.snapshot().gain.to_bits(), normalized.to_bits());
         assert_eq!(
@@ -335,7 +502,10 @@ fn concurrent_unrelated_writes_are_not_lost() {
     for id in 0..PARAMETER_COUNT as u32 {
         assert_eq!(
             parameters.get(id).expect("known id").to_bits(),
-            (f64::from(id) / 31.0).to_bits()
+            parameter_spec(id)
+                .expect("spec")
+                .snap_normalized(f64::from(id) / 31.0)
+                .to_bits()
         );
     }
 }

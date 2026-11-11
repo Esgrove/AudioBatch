@@ -158,7 +158,7 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
         defaults.pointer("/parameters/width").is_none(),
         "no global width in state"
     );
-    assert_eq!(defaults.get("version").expect("version"), 3);
+    assert_eq!(defaults.get("version").expect("version"), 4);
     assert!(
         (defaults
             .pointer("/parameters/gain")
@@ -177,7 +177,10 @@ fn every_parameter_survives_state_with_fixed_missing_defaults(ui: &UiThread) {
         .iter()
         .zip([100.0_f64, 500.0, 5000.0])
     {
-        assert!((actual.as_f64().expect("normalized") - (hertz / 20.0).log(1000.0)).abs() < 1e-15);
+        let plain = image_control_plugin_rs::parameter_spec(1)
+            .expect("crossover")
+            .normalized_to_plain(actual.as_f64().expect("normalized"));
+        assert!((plain - hertz).abs() < 0.003);
     }
     for band in defaults
         .pointer("/parameters/bands")
@@ -269,7 +272,7 @@ fn malformed_state_is_transactional(ui: &UiThread) {
         vec![0, 0, 0],
         vec![0, 0, 0, 0],
         u32::MAX.to_le_bytes().to_vec(),
-        framed(br#"{"version":4,"parameters":{}}"#),
+        framed(br#"{"version":5,"parameters":{}}"#),
         framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":599}}"#),
         framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":4097,"height":900}}"#),
         framed(br#"{"version":3,"parameters":{"gain":0.25},"geometry":{"width":1200,"height":null}}"#),
