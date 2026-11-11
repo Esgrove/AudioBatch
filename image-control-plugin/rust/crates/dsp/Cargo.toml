@@ -17,5 +17,12 @@ rtrb.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "dsp"
+harness = false
+
 [lints]
 workspace = true
