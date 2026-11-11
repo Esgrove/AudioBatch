@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result, bail, ensure};
 
+#[path = "support/artifacts.rs"]
+mod artifacts;
+
 #[cfg(target_os = "macos")]
 #[expect(
     unsafe_code,
@@ -1367,18 +1370,10 @@ Requires macOS native event delivery. No installed plugins, audio devices, or sc
         }
     }
     let bundle = bundle.context("give --bundle <absolute-build-tree.vst3>")?;
-    ensure!(bundle.is_absolute(), "--bundle must be absolute");
-    let bundle = bundle.canonicalize().context("packaged bundle is missing")?;
+    let bundle = artifacts::checked_artifact(&bundle).context("invalid packaged build-tree bundle")?;
     ensure!(
         bundle.is_dir() && bundle.extension().is_some_and(|extension| extension == "vst3"),
         "expected a packaged .vst3 directory"
-    );
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../..")
-        .canonicalize()?;
-    ensure!(
-        bundle.starts_with(repository),
-        "only a repository build-tree bundle may be loaded"
     );
     Ok(Some(bundle))
 }

@@ -38,14 +38,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ancestors()
         .nth(4)
         .ok_or("repository root missing")?;
-    let metadata = Command::new("cargo")
-        .current_dir(workspace)
-        .args(["metadata", "--no-deps", "--format-version", "1"])
-        .output()?;
-    if !metadata.status.success() {
-        return Err("cargo metadata failed".into());
-    }
-    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
+    let invocation_directory = std::env::current_dir()?;
+    let target_override = std::env::var_os("CARGO_TARGET_DIR")
+        .filter(|value| !value.is_empty())
+        .map(|value| absolute_target_directory(Path::new(&value), &invocation_directory));
+    let metadata = workspace_metadata(workspace, target_override.as_deref())?;
     let root = PathBuf::from(
         metadata
             .get("workspace_root")
@@ -74,6 +71,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         command
             .current_dir(&root)
             .args(["build", "-p", "image-control-plugin-rs"]);
+        if let Some(target) = &target_override {
+            command.env("CARGO_TARGET_DIR", target);
+        }
         if release {
             command.arg("--release");
         }
@@ -112,6 +112,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Reads Cargo's authoritative workspace paths while retaining an invocation-resolved artifact override.
+fn workspace_metadata(workspace: &Path, target_override: Option<&Path>) -> Result<serde_json::Value, Box<dyn Error>> {
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(workspace)
+        .args(["metadata", "--no-deps", "--format-version", "1"]);
+    if let Some(target) = target_override {
+        command.env("CARGO_TARGET_DIR", target);
+    }
+    let metadata = command.output()?;
+    if !metadata.status.success() {
+        return Err("cargo metadata failed".into());
+    }
+    Ok(serde_json::from_slice(&metadata.stdout)?)
+}
+
+/// Makes an explicit Cargo override independent of the nested command's repository working directory.
+fn absolute_target_directory(target: &Path, invocation_directory: &Path) -> PathBuf {
+    if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        invocation_directory.join(target)
+    }
+}
+
 /// Chooses the standard executable location without linking any platform GUI dependency into the bundler.
 fn executable_path(bundle: &Path) -> Result<PathBuf, Box<dyn Error>> {
     if cfg!(target_os = "macos") {
@@ -128,5 +153,41 @@ fn executable_path(bundle: &Path) -> Result<PathBuf, Box<dyn Error>> {
             .join(format!("{PLUGIN_NAME}.vst3")))
     } else {
         Err("VST3 packaging supports macOS and Windows".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{PLUGIN_NAME, absolute_target_directory, executable_path};
+
+    /// A relative override retains the caller's directory instead of the nested Cargo working directory.
+    #[test]
+    fn relative_target_override_is_anchored_before_changing_directory() {
+        let invocation = std::env::current_dir().expect("invocation directory");
+        let target = Path::new("custom artifacts with spaces");
+        assert_eq!(absolute_target_directory(target, &invocation), invocation.join(target));
+    }
+
+    /// An absolute custom directory remains independent of the invoking shell's location.
+    #[test]
+    fn absolute_target_override_is_not_rebased() {
+        let invocation = std::env::current_dir().expect("invocation directory");
+        let target = std::env::temp_dir().join("ImageControl external build");
+        assert_eq!(absolute_target_directory(&target, &invocation), target);
+    }
+
+    /// The packaged executable stays inside its selected bundle on each supported native target.
+    #[test]
+    fn native_bundle_layout_uses_the_selected_artifact_root() {
+        let bundle = std::env::temp_dir().join(format!("{PLUGIN_NAME}.vst3"));
+        let executable = executable_path(&bundle).expect("supported native platform");
+        assert!(executable.starts_with(bundle.join("Contents")));
+        if cfg!(target_os = "macos") {
+            assert_eq!(executable, bundle.join("Contents/MacOS").join(PLUGIN_NAME));
+        } else {
+            assert_eq!(executable.extension(), Some(std::ffi::OsStr::new("vst3")));
+        }
     }
 }

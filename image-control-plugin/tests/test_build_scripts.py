@@ -11,6 +11,8 @@ No compiler, installed plugin, Audio Unit registry, or real validator is used.
 
 from __future__ import annotations
 
+import base64
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,7 +33,7 @@ class BuildScriptContracts(unittest.TestCase):
         assert BASH is not None, "Bash is required for build script contracts"
         temporary = tempfile.TemporaryDirectory(prefix="image-control-scripts-")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name).resolve() / "repository with spaces"
+        self.root = Path(temporary.name).resolve() / "developer's repository with spaces [exact]"
         for relative in (
             "common.sh",
             "image-control-plugin/common.sh",
@@ -60,7 +62,7 @@ class BuildScriptContracts(unittest.TestCase):
             "LC_ALL": "C",
         }
         # Deliberately do not inherit PATH: a developer's pluginval, auval, or killall must never run.
-        for command in ("dirname", "tr", "mkdir", "rm", "cp", "seq", "grep"):
+        for command in ("dirname", "tr", "mkdir", "rm", "cp", "mv", "diff", "mktemp", "iconv", "base64", "seq", "grep"):
             executable = shutil.which(command)
             assert executable is not None, f"Required shell utility not found: {command}"
             (self.tools / command).symlink_to(executable)
@@ -134,6 +136,7 @@ fi
 """,
         )
         self.write_tool("killall", "exit 0\n")
+        self.write_tool("codesign", "exit 0\n")
         self.write_tool(
             "cygpath",
             """test "$1" = -w
@@ -338,7 +341,7 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
 
     def test_lint_selection_and_check_aliases(self) -> None:
         """All lint selectors, database paths, job counts, and check aliases reach the production command."""
-        for command in ("find", "sort", "mktemp", "xargs", "cat"):
+        for command in ("find", "sort", "xargs", "cat"):
             executable = shutil.which(command)
             assert executable is not None
             (self.tools / command).symlink_to(executable)
@@ -561,6 +564,365 @@ printf '%s\\n' "$TEST_WINDOWS_PATH"
                 result = self.invoke("build.sh", "--test", "--validate", **overrides)
                 assert result.returncode == status, result.stdout + result.stderr
                 assert not self.commands("pluginval")
+
+    def prepare_installed(self, *, audio_unit: bool = False, windows: bool = False) -> Path:
+        """Seed a complete old installation with nested content that a partial copy cannot replace."""
+        if windows:
+            destination = self.root / "Common Files user's [exact]/VST3/ImageControl.vst3"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text("old DLL", encoding="utf-8")
+        else:
+            name = "Components/ImageControl.component" if audio_unit else "VST3/ImageControl.vst3"
+            destination = self.home / "Library/Audio/Plug-Ins" / name
+            (destination / "Contents/nested").mkdir(parents=True, exist_ok=True)
+            (destination / "Contents/contract.txt").write_text("old bundle", encoding="utf-8")
+            (destination / "Contents/nested/preserve.txt").write_text("old resource", encoding="utf-8")
+        return destination
+
+    def inject_install_failure(self, destination: Path, failure: str) -> None:
+        """Wrap real disposable filesystem operations, failing only the requested transaction phase."""
+        self.environment |= {"FAIL_DESTINATION": str(destination), "INSTALL_FAILURE": failure}
+        for command in ("cp", "mv", "diff", "rm"):
+            executable = shutil.which(command)
+            assert executable is not None
+            (self.tools / command).unlink()
+            prefix = f"real_tool={str(executable)!r}\n"
+            if command == "cp":
+                body = """staged="${@: -1}"
+if [[ "$staged" == "${FAIL_DESTINATION%/*}/.ImageControl-install."* ]]; then
+    case "$INSTALL_FAILURE" in
+        copy)
+            if [[ "$FAIL_DESTINATION" == *.vst3 && "$TEST_PLATFORM" != Darwin ]]; then
+                printf 'partial DLL' > "$staged"
+            else
+                mkdir -p "$staged/Contents"
+                printf 'partial bundle' > "$staged/Contents/contract.txt"
+            fi
+            exit 31 ;;
+        corrupt)
+            "$real_tool" "$@"
+            if [ -d "$staged" ]; then
+                printf 'corrupted bundle' > "$staged/Contents/contract.txt"
+            else
+                printf 'corrupted DLL' > "$staged"
+            fi
+            exit 0 ;;
+    esac
+fi
+"""
+            elif command == "mv":
+                body = """if [[ "$1" == "${FAIL_DESTINATION%/*}/.ImageControl-install."* ]]; then
+    case "$1:$INSTALL_FAILURE" in
+        */previous:recovery) exit 33 ;;
+        */ImageControl.*:publish|*/ImageControl.*:recovery) exit 32 ;;
+    esac
+elif [ "$1" = "$FAIL_DESTINATION" ] && [ "$INSTALL_FAILURE" = backup ]; then
+    exit 34
+fi
+"""
+            elif command == "diff":
+                body = """if [ "${@: -1}" = "$FAIL_DESTINATION" ] && [ "$INSTALL_FAILURE" = published-copy ]; then
+    exit 35
+fi
+"""
+            else:
+                body = """if [ "${@: -1}" = "$FAIL_DESTINATION" ] && [ "$INSTALL_FAILURE" = recovery-remove ]; then
+    exit 36
+fi
+"""
+            self.write_tool(command, prefix + body + 'exec "$real_tool" "$@"\n')
+        self.write_tool(
+            "codesign",
+            """target="${@: -1}"
+if [[ "$FAIL_DESTINATION" == *.component ]]; then
+    case "$INSTALL_FAILURE" in
+        staged-signature) exit 37 ;;
+        published-signature|recovery-remove)
+            if [ "$target" = "$FAIL_DESTINATION" ]; then exit 38; fi ;;
+    esac
+fi
+""",
+        )
+
+    def assert_old_installation(self, destination: Path) -> None:
+        """Require the full old tree, not merely a destination that still exists."""
+        if destination.is_file():
+            assert destination.read_text() == "old DLL"
+        else:
+            assert (destination / "Contents/contract.txt").read_text() == "old bundle"
+            assert (destination / "Contents/nested/preserve.txt").read_text() == "old resource"
+        assert not list(destination.parent.glob(".ImageControl-install.*"))
+
+    def configure_windows_install(self) -> Path:
+        """Map the system-wide target into the disposable repository and keep paths exact."""
+        destination = self.prepare_installed(windows=True)
+        self.environment |= {
+            "TEST_PLATFORM": "MINGW64_NT",
+            "COMMONPROGRAMFILES": r"C:\Common Files user's [exact]",
+            "TEST_COMMON_DIRECTORY": str(destination.parent.parent),
+        }
+        self.write_tool(
+            "cygpath",
+            """case "$1" in
+    -u) test "$2" = "$COMMONPROGRAMFILES"; printf '%s\\n' "$TEST_COMMON_DIRECTORY" ;;
+    -w) printf '%s\\n' "$2" ;;
+    *) exit 91 ;;
+esac
+""",
+        )
+        return destination
+
+    def test_install_replacement_preserves_old_bundle_on_failures(self) -> None:
+        """Partial staging, corruption, backup/publication, and AU signing failures preserve the old tree."""
+        for audio_unit in (False, True):
+            failures = ["copy", "corrupt", "backup", "publish", "published-copy"]
+            if audio_unit:
+                failures.extend(("staged-signature", "published-signature"))
+            for failure in failures:
+                with self.subTest(audio_unit=audio_unit, failure=failure):
+                    destination = self.prepare_installed(audio_unit=audio_unit)
+                    self.inject_install_failure(destination, failure)
+                    self.clear_log()
+                    result = self.invoke("install.sh", "--validate")
+                    assert result.returncode != 0, result.stdout + result.stderr
+                    self.assert_old_installation(destination)
+                    assert "Installation complete" not in result.stdout
+                    assert not self.commands("killall")
+                    assert not self.commands("auval")
+                    assert not self.commands("pluginval")
+                    if failure in ("copy", "corrupt", "staged-signature"):
+                        assert not any(command[0] == str(destination) for command in self.commands("mv"))
+                    shutil.rmtree(destination)
+                    for command in ("cp", "mv", "diff", "rm"):
+                        (self.tools / command).unlink()
+                        executable = shutil.which(command)
+                        assert executable is not None
+                        (self.tools / command).symlink_to(executable)
+
+    def test_install_recovery_failure_retains_previous_bundle(self) -> None:
+        """A failed rollback reports its recovery location and never cleans the only old copy."""
+        for failure in ("recovery", "recovery-remove"):
+            with self.subTest(failure=failure):
+                destination = self.prepare_installed(audio_unit=True)
+                self.inject_install_failure(destination, failure)
+                self.clear_log()
+                result = self.invoke("install.sh", "--validate")
+                assert result.returncode != 0, result.stdout + result.stderr
+                transactions = list(destination.parent.glob(".ImageControl-install.*"))
+                assert len(transactions) == 1
+                backup = transactions[0] / "previous"
+                assert (backup / "Contents/contract.txt").read_text() == "old bundle"
+                assert (backup / "Contents/nested/preserve.txt").read_text() == "old resource"
+                assert str(backup) in result.stderr
+                assert "Recovery failed" in result.stderr
+                assert "Installation complete" not in result.stdout
+                assert not self.commands("killall")
+                assert not self.commands("auval")
+                assert not self.commands("pluginval")
+                shutil.rmtree(transactions[0])
+                if destination.exists():
+                    shutil.rmtree(destination)
+                for command in ("cp", "mv", "diff", "rm"):
+                    (self.tools / command).unlink()
+                    executable = shutil.which(command)
+                    assert executable is not None
+                    (self.tools / command).symlink_to(executable)
+
+    def test_successful_replacement_verifies_and_cleans_transactions(self) -> None:
+        """Both formats publish exact complete bundles, verify AU signatures, and leave no old copy."""
+        destinations = [self.prepare_installed(), self.prepare_installed(audio_unit=True)]
+        self.inject_install_failure(destinations[1], "none")
+        self.assert_success(self.invoke("install.sh", "--validate"))
+        self.assert_validation("install.sh", 5)
+        for destination, expected in zip(destinations, ("built VST3", "built AU"), strict=True):
+            assert (destination / "Contents/contract.txt").read_text() == expected
+            assert not (destination / "Contents/nested").exists()
+            assert not list(destination.parent.glob(".ImageControl-install.*"))
+            copies = [command for command in self.commands("cp") if command[-1].endswith(destination.name)]
+            assert len(copies) == 1
+            staged = Path(copies[0][-1])
+            assert staged.parent.parent == destination.parent
+            assert self.commands("mv").count([str(destination), str(staged.parent / "previous")]) == 1
+            assert self.commands("mv").count([str(staged), str(destination)]) == 1
+        signatures = self.commands("codesign")
+        assert len(signatures) == 2
+        assert all(command[:-1] == ["--verify", "--deep", "--strict"] for command in signatures)
+        assert signatures[0][-1] != str(destinations[1])
+        assert signatures[1][-1] == str(destinations[1])
+        names = [command[0] for command in self.commands()]
+        assert names.index("codesign") < names.index("killall") < names.index("auval") < names.index("pluginval")
+
+    def test_windows_direct_install_publishes_only_the_dll(self) -> None:
+        """A writable system directory installs the plain DLL without elevation or macOS operations."""
+        destination = self.configure_windows_install()
+        self.assert_success(self.invoke("install.sh"))
+        assert destination.is_file()
+        assert destination.read_text() == "built DLL"
+        assert not list(destination.parent.glob(".ImageControl-install.*"))
+        assert not self.commands("powershell.exe")
+        assert not self.commands("killall")
+        assert not self.commands("codesign")
+
+    def test_windows_failed_publish_or_recovery_never_retries_elevated(self) -> None:
+        """Successful rollback still fails the install, and recovery backups cannot be lost to a retry."""
+        for failure in ("publish", "recovery"):
+            with self.subTest(failure=failure):
+                destination = self.configure_windows_install()
+                self.inject_install_failure(destination, failure)
+                self.write_tool("powershell.exe", "exit 0\n")
+                self.clear_log()
+                result = self.invoke("install.sh")
+                assert result.returncode != 0, result.stdout + result.stderr
+                assert not self.commands("powershell.exe")
+                if failure == "publish":
+                    self.assert_old_installation(destination)
+                else:
+                    transactions = list(destination.parent.glob(".ImageControl-install.*"))
+                    assert len(transactions) == 1
+                    assert (transactions[0] / "previous").read_text() == "old DLL"
+                    assert str(transactions[0] / "previous") in result.stderr
+
+    def test_windows_elevated_payload_uses_escaped_native_literal_paths(self) -> None:
+        """Inspect the exact UTF-16 payload passed to UAC, including apostrophes and wildcard characters."""
+        destination = self.configure_windows_install()
+        self.inject_install_failure(destination, "copy")
+        temporary = self.root / "user's temporary files [exact]"
+        temporary.mkdir()
+        self.environment["TMPDIR"] = str(temporary)
+        mktemp = shutil.which("mktemp")
+        assert mktemp is not None
+        (self.tools / "mktemp").unlink()
+        self.write_tool(
+            "mktemp",
+            f"real_tool={mktemp!r}\n"
+            'if [ "$#" -eq 0 ]; then exec "$real_tool" "$TMPDIR/install-log.XXXXXXXX"; fi\n'
+            'exec "$real_tool" "$@"\n',
+        )
+        self.write_tool(
+            "cygpath",
+            """case "$1" in
+    -u) printf '%s\\n' "$TEST_COMMON_DIRECTORY" ;;
+    -w) printf 'C:%s\\n' "${2//\\//\\\\}" ;;
+    *) exit 91 ;;
+esac
+""",
+        )
+        self.write_tool("powershell.exe", "exit 39\n")
+        result = self.invoke("install.sh")
+        assert result.returncode != 0
+        self.assert_old_installation(destination)
+        commands = self.commands("powershell.exe")
+        assert len(commands) == 1
+        assert commands[0][:2] == ["-NoProfile", "-Command"]
+        outer = commands[0][2]
+        assert "-Verb RunAs -Wait -PassThru" in outer
+        match = re.search(r"'-EncodedCommand','([A-Za-z0-9+/=]+)'", outer)
+        assert match is not None, outer
+        payload = base64.b64decode(match[1], validate=True).decode("utf-16-le")
+        conversions = [command[1] for command in self.commands("cygpath") if command[0] == "-w"]
+        assert len(conversions) == 3
+        for variable, path in zip(("directory", "source", "log"), conversions, strict=True):
+            assert "'" in path
+            assert " " in path
+            native = "C:" + path.replace("/", "\\")
+            escaped = native.replace("'", "''")
+            assert f"${variable} = '{escaped}';" in payload, payload
+        for operation in ("Get-FileHash", "Test-Path", "Move-Item", "Remove-Item", "Out-File"):
+            lines = [line for line in payload.splitlines() if operation in line]
+            assert lines
+            assert all(f"{operation} -LiteralPath" in line for line in lines), lines
+        assert (
+            payload.index("[IO.File]::Copy($source, $staged)")
+            < payload.index("Move-Item -LiteralPath $destination -Destination $backup")
+            < payload.index("Move-Item -LiteralPath $staged -Destination $destination")
+        )
+        assert "$keepBackup = $true" in payload
+        assert "if ($transaction -and !$keepBackup)" in payload
+        assert "Move-Item -LiteralPath $backup -Destination $destination" in payload
+        assert "exit 1" in payload
+        assert not list(temporary.iterdir())
+        assert "Installation complete" not in result.stdout
+
+    def test_native_powershell_transaction_success_and_failures(self) -> None:
+        """Run the production elevated body without UAC against disposable paths when PowerShell exists."""
+        powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+        if powershell is None:
+            self.skipTest("Native PowerShell is unavailable, encoded-payload contracts still run")
+        destination = self.configure_windows_install()
+        self.inject_install_failure(destination, "copy")
+        self.write_tool("powershell.exe", "exit 39\n")
+        result = self.invoke("install.sh")
+        assert result.returncode != 0
+        outer = self.commands("powershell.exe")[0][2]
+        match = re.search(r"'-EncodedCommand','([A-Za-z0-9+/=]+)'", outer)
+        assert match is not None
+        payload = base64.b64decode(match[1], validate=True).decode("utf-16-le")
+        body = payload.split("\n", 1)[1]
+
+        def literal(path: Path) -> str:
+            return "'" + str(path).replace("'", "''") + "'"
+
+        for failure in ("none", "copy", "staged-hash", "publish", "published-hash", "recovery"):
+            with self.subTest(failure=failure):
+                sandbox = self.root / f"native user's [exact] {failure}"
+                directory = sandbox / "Common Files user's [exact]/VST3"
+                directory.mkdir(parents=True)
+                installed = directory / "ImageControl.vst3"
+                installed.write_text("old DLL", encoding="utf-8")
+                source = sandbox / "source user's [exact]/ImageControl.vst3"
+                source.parent.mkdir()
+                if failure != "copy":
+                    source.write_text("new DLL", encoding="utf-8")
+                log = sandbox / "failure user's [exact].log"
+                prelude = (
+                    f"$directory = {literal(directory)}; $source = {literal(source)}; $log = {literal(log)};\n"
+                    f"$contractFailure = '{failure}'\n"
+                    """function Move-Item {
+    param([string]$LiteralPath, [string]$Destination)
+    if (($contractFailure -eq 'publish' -or $contractFailure -eq 'recovery') -and
+        $LiteralPath.EndsWith('ImageControl.vst3') -and $LiteralPath.Contains('.ImageControl-install.')) {
+        throw 'Injected publication failure'
+    }
+    if ($contractFailure -eq 'recovery' -and $LiteralPath.EndsWith('previous')) {
+        throw 'Injected recovery failure'
+    }
+    Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+}
+function Get-FileHash {
+    param([string]$LiteralPath)
+    if (($contractFailure -eq 'staged-hash' -and $LiteralPath.Contains('.ImageControl-install.')) -or
+        ($contractFailure -eq 'published-hash' -and $LiteralPath -eq (Join-Path $directory 'ImageControl.vst3'))) {
+        throw 'Injected verification failure'
+    }
+    Microsoft.PowerShell.Utility\\Get-FileHash -LiteralPath $LiteralPath
+}
+"""
+                )
+                encoded = base64.b64encode((prelude + body).encode("utf-16-le")).decode("ascii")
+                native = subprocess.run(  # noqa: S603
+                    [powershell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                transactions = list(directory.glob(".ImageControl-install.*"))
+                if failure == "none":
+                    assert native.returncode == 0, native.stdout + native.stderr
+                    assert installed.read_text() == "new DLL"
+                    assert not transactions
+                    assert not log.exists()
+                else:
+                    assert native.returncode != 0, native.stdout + native.stderr
+                    assert log.is_file()
+                    if failure == "recovery":
+                        assert len(transactions) == 1
+                        backup = transactions[0] / "previous"
+                        assert backup.read_text() == "old DLL"
+                        assert str(backup) in log.read_text(encoding="utf-8-sig")
+                    else:
+                        assert installed.read_text() == "old DLL"
+                        assert not transactions
 
     def test_windows_missing_pluginval_passes_native_path_to_pinned_helper(self) -> None:
         """The automatic setup path must preserve Windows paths and the requested strictness."""
