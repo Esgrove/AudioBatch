@@ -681,11 +681,17 @@ void ImageControlEditor::applyLayoutSettings()
         }
     }
     divider.setVisible(!spectrogramHidden && !compactBandControls);
+    const bool maximized = booleanSetting(editorState, MAXIMIZE_SPECTROGRAM_PROPERTY);
+    const bool maximizedChanged = shownMaximized != maximized;
+    if (maximizedChanged) {
+        shownMaximized = maximized;
+        spectrogram.setMaximized(maximized);
+    }
     const bool hidden = booleanSetting(editorState, HIDE_SPECTROGRAM_PROPERTY);
     if (shownHidden != hidden) {
         shownHidden = hidden;
         applySpectrogramHidden(hidden);
-    } else if (toolbarChanged || correlationChanged || controlsChanged || restored) {
+    } else if (toolbarChanged || correlationChanged || controlsChanged || maximizedChanged || restored) {
         if (hidden) {
             // Compact mode's fixed height follows the visible rows without replacing the saved expanded height.
             const juce::ScopedValueSetter<bool> transition(layoutTransition, true);

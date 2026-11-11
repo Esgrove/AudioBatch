@@ -181,6 +181,7 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
         },
         std::pair<juce::ToggleButton*, const char*> {&bypassRenderingButton, BYPASS_RENDERING_PROPERTY},
         std::pair<juce::ToggleButton*, const char*> {&hideSpectrogramButton, HIDE_SPECTROGRAM_PROPERTY},
+        std::pair<juce::ToggleButton*, const char*> {&maximizeSpectrogramButton, MAXIMIZE_SPECTROGRAM_PROPERTY},
     };
     for (const auto& [button, property] : toggles) {
         identifyControl(*button, property, button->getButtonText());
@@ -197,6 +198,10 @@ SettingsPanel::SettingsPanel(juce::ValueTree& editorState, const std::optional<i
         "Use the main audio Bypass control to bypass the effect."
     );
     hideSpectrogramButton.setTooltip("Hide the spectrogram and shrink its section. Sound settings remain unchanged.");
+    maximizeSpectrogramButton.setTooltip(
+        "Expand the plot near the panel edges and place frequency and stereo-position labels inside it. "
+        "Turn off to restore the outside-axis layout. Window size and sound stay unchanged."
+    );
 
     configureChoice(colourChoice, "Frequency", "Phase coherence", state, PHASE_COLOURS_PROPERTY);
     configureChoice(frequencyChoice, "Logarithmic", "Mel", state, MEL_SCALE_PROPERTY);
@@ -482,6 +487,7 @@ void SettingsPanel::layoutPreferences(const int width)
     placeHeading(displayLabel);
     persistenceLabel.setBounds(takeRow(SLIDER_LABEL_HEIGHT));
     persistenceSlider.setBounds(takeRow(ROW_HEIGHT));
+    maximizeSpectrogramButton.setBounds(takeRow(ROW_HEIGHT));
     hideSpectrogramButton.setBounds(takeRow(ROW_HEIGHT));
     bypassRenderingButton.setBounds(takeRow(ROW_HEIGHT));
     showFpsButton.setBounds(takeRow(ROW_HEIGHT));

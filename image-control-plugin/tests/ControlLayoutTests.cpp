@@ -201,6 +201,7 @@ TEST(SettingsPanel, ControlsAreNamedAndExplicitChoicesFollowLiveState)
         MEL_SCALE_PROPERTY,
         SOLID_RENDERING_PROPERTY,
         HIDE_SPECTROGRAM_PROPERTY,
+        MAXIMIZE_SPECTROGRAM_PROPERTY,
         SHOW_BAND_CORRELATION_PROPERTY,
         SMOOTH_CORRELATION_READOUT_PROPERTY,
         BYPASS_RENDERING_PROPERTY,
@@ -323,6 +324,7 @@ TEST(SettingsPanel, AppearanceResetLeavesSoundVisibilityLayoutLinksAndStoppedAna
              SOLID_RENDERING_PROPERTY,
              SHOW_FPS_PROPERTY,
              HIDE_SPECTROGRAM_PROPERTY,
+             MAXIMIZE_SPECTROGRAM_PROPERTY,
              BYPASS_RENDERING_PROPERTY,
          })
     {
@@ -353,6 +355,7 @@ TEST(SettingsPanel, AppearanceResetLeavesSoundVisibilityLayoutLinksAndStoppedAna
     }
     EXPECT_TRUE(static_cast<bool>(state.getProperty(SMOOTH_CORRELATION_READOUT_PROPERTY)));
     EXPECT_TRUE(static_cast<bool>(state.getProperty(HIDE_SPECTROGRAM_PROPERTY)));
+    EXPECT_TRUE(static_cast<bool>(state.getProperty(MAXIMIZE_SPECTROGRAM_PROPERTY)));
     EXPECT_TRUE(static_cast<bool>(state.getProperty(BYPASS_RENDERING_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(state.getProperty(SHOW_BAND_CORRELATION_PROPERTY)));
     EXPECT_FALSE(static_cast<bool>(state.getProperty(SHOW_PROCESSING_TOOLBAR_PROPERTY)));

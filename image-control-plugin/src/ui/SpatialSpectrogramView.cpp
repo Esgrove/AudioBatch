@@ -50,6 +50,10 @@ constexpr float MUTED_BAND_ALPHA {0.55F};
 
 /// Equal horizontal plot insets leave compact room for position labels on the left.
 constexpr float PLOT_SIDE_INSET {16.0F};
+/// Thin border retained by the maximized plot inside the editor's unchanged section bounds.
+constexpr float MAXIMIZED_PLOT_INSET {2.0F};
+/// Inside-position pills leave their glyphs clear of the rounded plot edge.
+constexpr float POSITION_AXIS_LABEL_WIDTH {20.0F};
 /// Height of the frequency labels at the bottom, in pixels.
 constexpr float FREQUENCY_GUTTER {18.0F};
 /// Horizontal distance within which a click grabs a crossover line, in pixels.
@@ -237,9 +241,12 @@ SpatialSpectrogramView::~SpatialSpectrogramView()
     endDrag();
 }
 
-/// Returns the area of the spectrogram inside the axis labels.
+/// Returns the shared renderer and interaction area, keeping outside-axis gutters only in the standard layout.
 juce::Rectangle<float> SpatialSpectrogramView::getPlotBounds() const
 {
+    if (maximized) {
+        return getLocalBounds().toFloat().reduced(MAXIMIZED_PLOT_INSET);
+    }
     // Endpoint frequency labels are clamped to the view rather than requiring asymmetric plot gutters.
     return getLocalBounds()
         .toFloat()
@@ -284,6 +291,20 @@ void SpatialSpectrogramView::setFrequencyScale(const FrequencyScale newScale)
         scale = newScale;
         repaint();
     }
+}
+
+/// Changes only message-thread display geometry, balancing any drag before its coordinate system changes.
+/// Renderer submissions and pointer handlers both use getPlotBounds, so particles and editing stay aligned.
+void SpatialSpectrogramView::setMaximized(const bool shouldBeMaximized)
+{
+    if (maximized == shouldBeMaximized) {
+        return;
+    }
+    endDrag();
+    wheelRemainder = 0.0F;
+    maximized = shouldBeMaximized;
+    updateCursor(juce::ModifierKeys::getCurrentModifiers());
+    repaint();
 }
 
 /// Sets the stereo position curve the particles are placed with.
@@ -443,7 +464,10 @@ std::array<bool, BAND_COUNT> SpatialSpectrogramView::mutedBands() const
 juce::Rectangle<float> SpatialSpectrogramView::framesPerSecondArea() const
 {
     const auto plot = getPlotBounds();
-    return {plot.getX() + LABEL_INSET, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT};
+    const float positionLabelSpace = maximized ? POSITION_AXIS_LABEL_WIDTH + LABEL_INSET : 0.0F;
+    return {
+        plot.getX() + LABEL_INSET + positionLabelSpace, plot.getY() + LABEL_INSET, FPS_LABEL_WIDTH, LABEL_FONT_HEIGHT
+    };
 }
 
 /// Returns the band's independent Width target, regardless of its source trims.
@@ -674,7 +698,8 @@ juce::Rectangle<float> SpatialSpectrogramView::crossoverLabelBounds(const std::s
     const float rightX = lineX + LABEL_INSET;
     const float preferredX = rightX + width <= plot.getRight() ? rightX : lineX - LABEL_INSET - width;
     const float left = std::clamp(preferredX, plot.getX(), plot.getRight() - width);
-    return {left, plot.getBottom() - LABEL_FONT_HEIGHT - LABEL_INSET - height * 0.5F, width, height};
+    const float axisSpace = maximized ? FREQUENCY_GUTTER + LABEL_INSET : 0.0F;
+    return {left, plot.getBottom() - LABEL_FONT_HEIGHT - LABEL_INSET - height * 0.5F - axisSpace, width, height};
 }
 
 /// Paints the crossover lines, faint at rest, with a layered glow and a brighter line while hovered or dragged,
@@ -710,32 +735,73 @@ void SpatialSpectrogramView::paintCrossovers(juce::Graphics& graphics, const Cro
     }
 }
 
-/// Paints the frequency and stereo position labels around the plot.
-void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
+/// Keeps outside frequency labels in their original gutter, or inside pills clear of the position-axis corner.
+juce::Rectangle<float> SpatialSpectrogramView::frequencyAxisLabelBounds(const double frequency) const
 {
     const auto plot = getPlotBounds();
+    const float left = maximized ? plot.getX() + LABEL_INSET * 2.0F + POSITION_AXIS_LABEL_WIDTH : 0.0F;
+    const float right = maximized ? plot.getRight() - LABEL_INSET : static_cast<float>(getWidth());
+    const float width = std::min(FREQUENCY_LABEL_WIDTH, std::max(0.0F, right - left));
+    const float height = maximized ? LABEL_FONT_HEIGHT + PILL_PADDING : FREQUENCY_GUTTER;
+    const float top = maximized ? plot.getBottom() - LABEL_INSET - height : plot.getBottom();
+    return {
+        std::clamp(frequencyToX(frequency) - width * 0.5F, left, std::max(left, right - width)), top, width, height
+    };
+}
+
+/// Clamps inside L/C/R pills to the plot while preserving the standard outside-axis text alignment.
+juce::Rectangle<float> SpatialSpectrogramView::positionAxisLabelBounds(const double position) const
+{
+    const float y = positionToY(position);
+    if (!maximized) {
+        return {0.0F, y - LABEL_FONT_HEIGHT * 0.5F, PLOT_SIDE_INSET - LABEL_INSET, LABEL_FONT_HEIGHT};
+    }
+    const auto plot = getPlotBounds().reduced(LABEL_INSET);
+    const float height = LABEL_FONT_HEIGHT + PILL_PADDING;
+    return {
+        plot.getX(),
+        std::clamp(y - height * 0.5F, plot.getY(), std::max(plot.getY(), plot.getBottom() - height)),
+        POSITION_AXIS_LABEL_WIDTH,
+        height
+    };
+}
+
+/// Paints standard gutter labels or subtle background-backed axis overlays inside the maximized plot.
+/// These are paint-only labels, so the full plot remains available for hover, wheel, and drag input.
+void SpatialSpectrogramView::paintAxisLabels(juce::Graphics& graphics) const
+{
     graphics.setFont(textFont(LABEL_FONT_HEIGHT));
     graphics.setColour(juce::Colour(palette::GREY_LIGHT).withAlpha(AXIS_LABEL_ALPHA));
+    std::optional<juce::Rectangle<float>> previousLabel;
+    const auto lastLabel = frequencyAxisLabelBounds(GRID_FREQUENCIES.back());
     for (const double frequency : GRID_FREQUENCIES) {
-        const float x = frequencyToX(frequency);
-        const juce::Rectangle<float> label(
-            std::clamp(
-                x - FREQUENCY_LABEL_WIDTH * 0.5F,
-                0.0F,
-                std::max(0.0F, static_cast<float>(getWidth()) - FREQUENCY_LABEL_WIDTH)
-            ),
-            plot.getBottom(),
-            FREQUENCY_LABEL_WIDTH,
-            FREQUENCY_GUTTER
-        );
-        graphics.drawText(formatGridFrequency(frequency), label, juce::Justification::centred);
+        const auto text = formatGridFrequency(frequency);
+        const auto label = frequencyAxisLabelBounds(frequency);
+        if (maximized) {
+            // Mel's low-frequency ticks can bunch together. Retain both endpoints without overlapping glyphs.
+            const auto spacedLabel = label.expanded(LABEL_INSET, 0.0F);
+            if ((previousLabel.has_value() && spacedLabel.intersects(*previousLabel))
+                || (frequency < GRID_FREQUENCIES.back() && spacedLabel.intersects(lastLabel)))
+            {
+                continue;
+            }
+            previousLabel = label;
+            paintLabelPill(graphics, text, label.getCentre(), AXIS_LABEL_ALPHA);
+        } else {
+            graphics.drawText(text, label, juce::Justification::centred);
+        }
     }
     for (std::size_t index = 0; index < GRID_POSITIONS.size(); ++index) {
-        const float y = positionToY(GRID_POSITIONS.at(index));
-        const juce::Rectangle<float> label(
-            0.0F, y - LABEL_FONT_HEIGHT * 0.5F, PLOT_SIDE_INSET - LABEL_INSET, LABEL_FONT_HEIGHT
-        );
-        graphics.drawText(GRID_POSITION_LABELS.at(index), label, juce::Justification::centredRight);
+        const juce::String text(GRID_POSITION_LABELS.at(index));
+        if (text.isEmpty()) {
+            continue;
+        }
+        const auto label = positionAxisLabelBounds(GRID_POSITIONS.at(index));
+        if (maximized) {
+            paintLabelPill(graphics, text, label.getCentre(), AXIS_LABEL_ALPHA);
+        } else {
+            graphics.drawText(text, label, juce::Justification::centredRight);
+        }
     }
 }
 

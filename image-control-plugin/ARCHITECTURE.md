@@ -495,6 +495,10 @@ Unchanged position-curve settings reuse their derived coefficients.
 Large refresh gaps are capped for visual animation and fade progression.
 
 `SpatialSpectrogramView` paints axes, grids, band regions, response guides, crossover lines, and status text.
+The optional `maximizeSpectrogram` editor setting expands the plot to a two-unit panel inset,
+with frequency and L/C/R labels overlaid inside it. Standard outside-axis gutters remain the default.
+Both layouts share renderer submission and pointer geometry, and switching balances an active plot gesture.
+The setting preserves window dimensions, row visibility, saved full-strip sizing, and sound settings.
 Its separate `SpatialSpectrogramViewInput.cpp` owns hit testing and parameter gestures.
 The plot itself is left unpainted so the GPU image beneath the components remains visible.
 `BandStrip` owns APVTS slider/button attachments, including independent Width and Recover sliders,

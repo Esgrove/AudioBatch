@@ -75,6 +75,7 @@ private:
 
     juce::ToggleButton bypassRenderingButton {"Stop spectrogram analysis"};
     juce::ToggleButton hideSpectrogramButton {"Hide spectrogram"};
+    juce::ToggleButton maximizeSpectrogramButton {"Maximize spectrogram"};
     juce::ToggleButton showBandCorrelationButton {"Show band correlation"};
     juce::ToggleButton showFpsButton {"Show frame rate"};
     juce::ToggleButton smoothCorrelationReadoutButton {"Smooth correlation numbers"};
