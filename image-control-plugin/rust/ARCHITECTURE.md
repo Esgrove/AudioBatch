@@ -66,6 +66,10 @@ with handler locks released before invoking host code.
 Cancellable native UI work applies them outside active Iced update borrows.
 Native child ownership remains valid through reentrant operations.
 Closing balances host gestures, detaches the child, cancels pending geometry, and joins owned workers.
+The embedded bottom-right grip sends constrained logical dimensions through the editor binding to `IPlugFrame::resizeView`.
+The host's `onSize` acknowledgement is authoritative, so rejected requests do not optimistically resize the child.
+macOS host dimensions remain points, while Windows dimensions convert once between logical units and physical pixels.
+The default editor is 1000 by 764 logical units, bounded by 760 by 600 and 4096 by 4096.
 
 Native reentrant removal is exercised on macOS.
 Windows rejects removal during an active callback or geometry flush so the host can retry safely.
@@ -220,7 +224,8 @@ Pure projection helpers also support mel, but there is no editor mel control.
 2. On ordinary resize, resample the previous current accumulation into the replacement GPU target.
 3. Fade retained linear energy exponentially using elapsed display time and the selected persistence.
 4. Add instanced Gaussian cores and halos with spacing-aware horizontal spread and weighted energy.
-5. Generate reduced-resolution bloom and composite tone-mapped energy with the plot background.
+5. Downsample through five reduced-resolution glow levels with a normalized 13-tap filter,
+   then tent-upsample additively and composite tone-mapped energy with the rounded plot background.
 
 Accumulation uses half-float textures and ping-pong targets.
 Zero-sized or invalid layouts allocate no history, and target dimensions are bounded by device limits and 4096 pixels.
@@ -246,7 +251,10 @@ Live analyzer history, particles, GPU energy, correlation history, Link, and lay
 The independent state format does not imply C++ project migration.
 
 [`editor.rs`](crates/plugin/src/editor.rs) composes ordinary controls and polls atomics and completed analysis.
-Pre/Post and compact appearance settings are functional without creating host sound-parameter gestures.
+Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
+Vector icons, hover disclosures, a separate controls margin, and compact band values replace text-symbol approximations.
+Settings appears as a modal callout without reallocating the plot or moving the parameter controls.
+Pre/Post and appearance settings are functional without creating host sound-parameter gestures.
 The 31 sound parameters retain balanced host gestures, including linked source-trim gestures and interrupted teardown.
 Undo/Redo, A/B, and preset commands remain disabled rather than simulating missing services.
 

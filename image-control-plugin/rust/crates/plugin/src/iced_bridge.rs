@@ -130,13 +130,16 @@ impl Editor {
     )]
     pub unsafe fn attach(
         parent: *mut c_void,
-        width: u32,
-        height: u32,
+        size: baseview::dpi::Size,
+        fallback_scale: f64,
         parameters: Arc<Parameters>,
         shared: Arc<SharedState>,
         binding: Rc<dyn EditorBinding>,
     ) -> Result<Self, EditorError> {
-        validate_size(width, height)?;
+        let logical = size.to_logical::<f64>(fallback_scale);
+        if !logical.width.is_finite() || !logical.height.is_finite() || logical.width <= 0.0 || logical.height <= 0.0 {
+            return Err(EditorError::InvalidSize);
+        }
         // SAFETY: The caller guarantees the parent's native type and lifetime for this editor.
         let native_parent = unsafe { native::NativeParent::new(parent)? };
         // SAFETY: NativeParent validated the same host pointer and UI thread above.
@@ -146,9 +149,15 @@ impl Editor {
         let notifier = PollSubNotifier::new();
         let settings = IcedWindowSettings::new()
             .with_title("ImageControl RS")
-            .with_size(NativeSize::new(width, height))
+            .with_size(size)
             .with_parent(&native_parent)
             .with_resizable(true)
+            .with_fallback_scale_factor(fallback_scale)
+            .with_min_size(Some(baseview::dpi::LogicalSize::new(
+                f64::from(crate::editor::MIN_EDITOR_SIZE.0),
+                f64::from(crate::editor::MIN_EDITOR_SIZE.1),
+            )))
+            .with_max_size(Some(baseview::dpi::LogicalSize::new(4096.0, 4096.0)))
             .with_poll_interval(DISPLAY_INTERVAL)
             .with_always_redraw(true);
         let host = Host::new().with_callbacks(EditorHost {
@@ -169,6 +178,10 @@ impl Editor {
                 notifier,
                 move |shared_window_size| {
                     let (binding, analysis) = ui_binding.into_inner();
+                    let binding = Rc::new(LogicalBinding {
+                        native: binding,
+                        window_size: shared_window_size.clone(),
+                    });
                     Ok(crate::editor::create_program_with_notifier(
                         parameters,
                         shared,
@@ -206,6 +219,16 @@ impl Editor {
         validate_size(width, height)?;
         self.window()?.resize(NativeSize::new(width, height))?;
         Ok(())
+    }
+
+    /// Reads committed platform geometry without borrowing Iced or emitting another host request.
+    pub(crate) fn native_size(&self) -> Result<NativeSize<u32>, EditorError> {
+        Ok(self.window()?.size().into())
+    }
+
+    /// Reads native DPI without entering Iced or dispatching a native geometry callback.
+    pub(crate) fn scale_factor(&self) -> Result<f64, EditorError> {
+        Ok(self.window()?.size().scale_factor)
     }
 
     /// Suggests the host's DPI scale without applying a second user zoom on top of native scaling.
@@ -267,6 +290,59 @@ impl Drop for Editor {
     fn drop(&mut self) {
         let _ = self.close();
     }
+}
+
+/// Gives Iced controls logical resize coordinates while preserving native coordinates at the VST3 boundary.
+/// The shared size is read without borrowing either the active Iced state or the baseview window.
+struct LogicalBinding {
+    /// Host binding takes platform-native dimensions and owns balanced parameter gestures.
+    native: Rc<dyn EditorBinding>,
+    /// Native DPI follows the live child, rather than an unrelated host fallback or backing-pixel guess.
+    window_size: iced_baseview::shell::SharedWindowSize,
+}
+
+impl EditorBinding for LogicalBinding {
+    fn begin_edit(&self, id: u32) {
+        self.native.begin_edit(id);
+    }
+
+    fn set_value(&self, id: u32, normalized: f64) {
+        self.native.set_value(id, normalized);
+    }
+
+    fn end_edit(&self, id: u32) {
+        self.native.end_edit(id);
+    }
+
+    fn close(&self) {
+        self.native.close();
+    }
+
+    /// Converts a user grip's logical dimensions once, before asking the host to resize its frame.
+    fn request_resize(&self, width: u32, height: u32) -> bool {
+        let Some((width, height)) =
+            logical_resize_size(width, height, self.window_size.get().scale_factor, cfg!(windows))
+        else {
+            return false;
+        };
+        self.native.request_resize(width, height)
+    }
+}
+
+/// Bounds logical user geometry before DPI conversion. macOS host coordinates remain points at every backing scale.
+fn logical_resize_size(width: u32, height: u32, scale: f64, physical: bool) -> Option<(u32, u32)> {
+    if !scale.is_finite() || scale <= 0.0 || width == 0 || height == 0 {
+        return None;
+    }
+    let factor = if physical { scale } else { 1.0 };
+    let convert = |dimension: u32, minimum: f32, maximum: u32| {
+        let native = f64::from(dimension.clamp(minimum as u32, maximum)) * factor;
+        (native.round() <= f64::from(i32::MAX)).then_some(native.round() as u32)
+    };
+    Some((
+        convert(width, crate::editor::MIN_EDITOR_SIZE.0, 4096)?,
+        convert(height, crate::editor::MIN_EDITOR_SIZE.1, 4096)?,
+    ))
 }
 
 /// Main-thread host callbacks use the same Rc as parameter gestures, never an Arc/Send COM proxy.
@@ -380,6 +456,33 @@ mod tests {
         }
         assert!(validate_size(1000, 760).is_ok());
         assert!(validate_size(i32::MAX as u32, i32::MAX as u32).is_ok());
+    }
+
+    #[test]
+    fn logical_grip_dimensions_are_constrained_before_windows_dpi_conversion() {
+        let minimum = crate::editor::MIN_EDITOR_SIZE;
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            assert_eq!(super::logical_resize_size(1000, 764, scale, false), Some((1000, 764)));
+            assert_eq!(
+                super::logical_resize_size(1000, 764, scale, true),
+                Some(((1000.0 * scale).round() as u32, (764.0 * scale).round() as u32))
+            );
+            assert_eq!(
+                super::logical_resize_size(1, 1, scale, true),
+                Some((
+                    (f64::from(minimum.0) * scale).round() as u32,
+                    (f64::from(minimum.1) * scale).round() as u32
+                ))
+            );
+        }
+        assert_eq!(
+            super::logical_resize_size(u32::MAX, u32::MAX, 2.0, true),
+            Some((8192, 8192))
+        );
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            assert!(super::logical_resize_size(1000, 764, scale, true).is_none());
+        }
+        assert!(super::logical_resize_size(0, 764, 1.0, false).is_none());
     }
 
     #[test]

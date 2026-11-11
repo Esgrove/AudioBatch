@@ -1,7 +1,7 @@
 //! GPU-rendered plot guides and real crossover hit testing over the persistent spectrogram shader.
 
 use iced::advanced::Renderer as _;
-use iced::advanced::text::Renderer as _;
+use iced::advanced::text::{Paragraph as _, Renderer as _};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, renderer, text, widget::tree};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, mouse};
 use iced_baseview as iced;
@@ -129,9 +129,12 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
             label_at(
                 renderer,
                 label,
-                Point::new(x - 20.0, bounds.y + bounds.height + 1.0),
+                Point::new(
+                    (x - 20.0).clamp(layout.bounds().x, layout.bounds().x + layout.bounds().width - 40.0),
+                    bounds.y + bounds.height,
+                ),
                 Size::new(40.0, 17.0),
-                theme::GREY_MIDDLE_LIGHT,
+                theme::GREY_LIGHT.scale_alpha(0.55),
                 viewport,
             );
         }
@@ -145,8 +148,8 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
             label_at(
                 renderer,
                 label.into(),
-                Point::new(bounds.x - 26.0, y - 8.0),
-                Size::new(22.0, 16.0),
+                Point::new(layout.bounds().x, y - 5.5),
+                Size::new(12.0, 11.0),
                 theme::GREY_MIDDLE_LIGHT,
                 viewport,
             );
@@ -161,8 +164,8 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
                 renderer,
                 name.into(),
                 Point::new(left, bounds.y + 4.0),
-                Size::new((right - left).max(0.0), 16.0),
-                theme::GREY_MIDDLE_LIGHT,
+                Size::new((right - left).max(0.0), 11.0),
+                theme::GREY_LIGHT.scale_alpha(0.7),
                 viewport,
             );
             left = right;
@@ -179,18 +182,7 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for PlotOverlay<Message> {
                 theme::YELLOW.scale_alpha(if active { 0.9 } else { 0.4 }),
             );
             let label = super::format_frequency(frequency);
-            let position = Point::new(
-                (x + 4.0).min(bounds.x + bounds.width - 68.0),
-                bounds.y + bounds.height - 24.0,
-            );
-            label_at(
-                renderer,
-                label,
-                position,
-                Size::new(68.0, 18.0),
-                theme::YELLOW.scale_alpha(if active { 1.0 } else { 0.55 }),
-                viewport,
-            );
+            crossover_label(renderer, &label, x, bounds, active, viewport);
         }
     }
 }
@@ -229,19 +221,17 @@ impl Interaction {
                 }
             }
             Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) if cursor.is_over(bounds) => {
-                let direction = match key {
+                let direction: f64 = match key {
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => -1.0,
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => 1.0,
                     _ => return Vec::new(),
                 };
                 let Some(index) = self.selected else { return Vec::new() };
-                let octaves = if modifiers.shift() { 1.0 / 120.0 } else { 1.0 / 12.0 };
+                let frequency = crossovers.get(index).copied().unwrap_or(MIN_FREQUENCY);
+                let step = (frequency * if modifiers.shift() { 0.01 } else { 0.1 }).clamp(1.0, 1000.0);
                 vec![
                     PlotEvent::Begin(index),
-                    PlotEvent::Change(
-                        index,
-                        crossovers.get(index).copied().unwrap_or(MIN_FREQUENCY) * f64::exp2(direction * octaves),
-                    ),
+                    PlotEvent::Change(index, direction.mul_add(step, frequency)),
                 ]
             }
             Event::Keyboard(iced::keyboard::Event::KeyReleased { .. }) if self.selected.is_some() => {
@@ -281,6 +271,60 @@ fn hit_test(cursor: mouse::Cursor, bounds: Rectangle, crossovers: [f64; 3]) -> O
     crossovers.into_iter().enumerate().find_map(|(index, frequency)| {
         ((position.x - frequency_x(frequency, bounds)).abs() <= GRAB_DISTANCE).then_some(index)
     })
+}
+
+/// Measures the actual embedded face before placing a compact C++-style crossover pill.
+fn crossover_label(
+    renderer: &mut iced::Renderer,
+    label: &str,
+    line_x: f32,
+    plot: Rectangle,
+    active: bool,
+    viewport: &Rectangle,
+) {
+    let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(text::Text {
+        content: label,
+        bounds: Size::new(f32::INFINITY, 11.0),
+        size: 11.0.into(),
+        line_height: text::LineHeight::Relative(1.0),
+        font: theme::TEXT,
+        align_x: text::Alignment::Center,
+        align_y: iced::alignment::Vertical::Center,
+        shaping: text::Shaping::Basic,
+        wrapping: text::Wrapping::None,
+    });
+    let width = (paragraph.min_width() + 8.0).min(plot.width);
+    let preferred_x = if line_x + 4.0 + width <= plot.x + plot.width {
+        line_x + 4.0
+    } else {
+        line_x - 4.0 - width
+    };
+    let pill = Rectangle::new(
+        Point::new(
+            preferred_x.clamp(plot.x, plot.x + plot.width - width),
+            plot.y + plot.height - 22.5,
+        ),
+        Size::new(width, 15.0),
+    );
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: pill,
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..iced::Border::default()
+            },
+            ..renderer::Quad::default()
+        },
+        theme::GREY_DARK.scale_alpha(0.8),
+    );
+    label_at(
+        renderer,
+        label.into(),
+        pill.position(),
+        pill.size(),
+        theme::YELLOW.scale_alpha(if active { 1.0 } else { 0.55 }),
+        viewport,
+    );
 }
 
 /// Emits only a geometric quad into Iced's renderer, never a CPU-generated pixel buffer.
