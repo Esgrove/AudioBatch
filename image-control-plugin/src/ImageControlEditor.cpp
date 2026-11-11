@@ -39,7 +39,7 @@ constexpr int MIN_EDITOR_HEIGHT {600};
 /// Largest editor width, in pixels.
 constexpr int MAX_EDITOR_WIDTH {4096};
 /// Largest editor height, in pixels.
-constexpr int MAX_EDITOR_HEIGHT {2400};
+constexpr int MAX_EDITOR_HEIGHT {4096};
 /// Height of the header row, in pixels.
 constexpr int HEADER_HEIGHT {36};
 /// Gap between sections, in pixels.
