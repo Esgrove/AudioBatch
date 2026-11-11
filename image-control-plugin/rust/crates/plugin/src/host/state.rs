@@ -97,7 +97,7 @@ mod tests {
     use super::{EditorGeometry, LogicalSize, Parameters, restore_bytes, save_bytes};
 
     #[test]
-    fn version_three_roundtrips_preferences_and_fractional_logical_geometry() {
+    fn version_four_roundtrips_preferences_and_fractional_logical_geometry() {
         let imager = Imager::new();
         let shared = imager.shared();
         let parameters = Parameters::default();
@@ -113,12 +113,12 @@ mod tests {
         let remembered = LogicalSize::default().acknowledged(1501, 1201, 1.5);
         geometry.publish(remembered);
         let bytes = save_bytes(&parameters, &shared, &geometry).expect("save");
-        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("v3 JSON");
-        assert_eq!(json.get("version"), Some(&serde_json::Value::from(3)));
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("v4 JSON");
+        assert_eq!(json.get("version"), Some(&serde_json::Value::from(4)));
         shared.set_analysis_tap(AnalysisTap::Post);
         geometry.publish(LogicalSize::default());
         assert!(shared.set_display_preferences(DisplayPreferences::default()));
-        restore_bytes(&bytes, &parameters, &shared, &geometry).expect("restore v3");
+        restore_bytes(&bytes, &parameters, &shared, &geometry).expect("restore v4");
         assert_eq!(shared.analysis_tap(), AnalysisTap::Pre);
         assert_eq!(shared.display_preferences(), display);
         assert_eq!(geometry.snapshot(), remembered);
@@ -184,12 +184,12 @@ mod tests {
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"contrast":null}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":0.25},"editor":{"unknown":true}}"#.as_slice(),
             br#"{"version":2,"parameters":{"gain":2},"editor":{"tap":"pre"}}"#.as_slice(),
-            br#"{"version":4,"parameters":{"gain":0.25}}"#.as_slice(),
+            br#"{"version":5,"parameters":{"gain":0.25}}"#.as_slice(),
         ] {
             assert!(restore_bytes(bytes, &parameters, &shared, &geometry).is_err());
             assert_eq!(save_bytes(&parameters, &shared, &geometry).expect("unchanged"), before);
         }
-        for version in [1, 2, 3] {
+        for version in [1, 2, 3, 4] {
             for invalid in [
                 "null",
                 "{}",
