@@ -1,6 +1,5 @@
 //! Native event pumping and best-effort geometry, visibility, and display-refresh capability observations.
 
-#[cfg(target_os = "macos")]
 use anyhow::Context as _;
 use anyhow::Result;
 #[cfg(target_os = "macos")]
@@ -12,7 +11,7 @@ use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
 use serde_json::json;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
-use vst3_host::UiThread;
+use vst3_host::{EditorWindow, UiThread};
 
 /// Starts only this dedicated executable's `AppKit` application, leaving other hosts untouched.
 #[cfg(target_os = "macos")]
@@ -64,7 +63,7 @@ pub fn handle_events(ui: &UiThread) {
 
 /// Reads only this host's own window, reporting maximum refresh capability separately from achieved encoding.
 #[cfg(target_os = "macos")]
-pub fn native_observation() -> Result<serde_json::Value> {
+pub fn native_observation(_ui: &UiThread, _editor: &EditorWindow) -> Result<serde_json::Value> {
     let marker = MainThreadMarker::new().context("native observation requires main thread")?;
     let application = NSApplication::sharedApplication(marker);
     let windows = application.windows();
@@ -97,16 +96,24 @@ pub fn native_observation() -> Result<serde_json::Value> {
     }))
 }
 
-/// Native handles are intentionally private in the shared Win32 host. Missing observations remain explicit.
+/// Queries only the benchmark's owned Win32 window, without discovering other desktop windows.
 #[cfg(target_os = "windows")]
-pub fn native_observation() -> Result<serde_json::Value> {
+pub fn native_observation(ui: &UiThread, editor: &EditorWindow) -> Result<serde_json::Value> {
+    let observation = editor
+        .native_observation(ui)
+        .context("observe benchmark native window")?;
+    let physical_width = f64::from(observation.physical_size.width);
+    let physical_height = f64::from(observation.physical_size.height);
     Ok(json!({
         "observed_unix_seconds": super::unix_seconds()?,
-        "window_visible": null,
+        "window_visible": observation.visible && !observation.minimized,
+        "window_minimized": observation.minimized,
         "occlusion_state_visible": null,
-        "logical_width": null,
-        "logical_height": null,
-        "backing_scale": null,
+        "logical_width": physical_width / observation.content_scale,
+        "logical_height": physical_height / observation.content_scale,
+        "backing_scale": observation.content_scale,
+        "physical_width": observation.physical_size.width,
+        "physical_height": observation.physical_size.height,
         "expected_display_refresh_hz": null,
         "refresh_source": "unavailable through the current host window API",
         "physical_scanout_observed": false

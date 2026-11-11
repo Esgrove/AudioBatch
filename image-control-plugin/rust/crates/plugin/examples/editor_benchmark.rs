@@ -401,7 +401,7 @@ fn observe_editor(ui: &UiThread, instance: &PluginInstance, options: &Options) -
             "editor closed before the bounded measurement completed"
         );
         if Instant::now() >= next_observation {
-            native_samples.push(platform::native_observation()?);
+            native_samples.push(platform::native_observation(ui, &editor)?);
             next_observation += Duration::from_secs(1);
         }
         platform::handle_events(ui);

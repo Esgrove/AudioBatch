@@ -18,7 +18,7 @@ pub use macos::NativeWindow;
 #[cfg(not(any(target_os = "macos", windows)))]
 pub use unsupported::NativeWindow;
 #[cfg(windows)]
-pub use windows::NativeWindow;
+pub use windows::{NativeWindow, WindowObservation};
 
 /// Why a native editor window could not be created.
 #[derive(Debug, Error)]

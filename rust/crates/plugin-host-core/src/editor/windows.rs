@@ -20,11 +20,11 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWL_STYLE,
-    GWLP_USERDATA, GetWindowLongPtrW, GetWindowLongW, GetWindowRect, IDC_ARROW, IsIconic, LoadCursorW,
-    RegisterClassExW, SIZE_MINIMIZED, SW_HIDE, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_CLOSE, WM_DPICHANGED, WM_NCDESTROY, WM_SIZE,
-    WM_SIZING, WMSZ_BOTTOMLEFT, WMSZ_LEFT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WNDCLASSEXW, WS_CAPTION,
-    WS_CLIPCHILDREN, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
+    GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowLongW, GetWindowRect, IDC_ARROW, IsIconic,
+    IsWindowVisible, LoadCursorW, RegisterClassExW, SIZE_MINIMIZED, SW_HIDE, SW_SHOWNORMAL, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WM_CLOSE,
+    WM_DPICHANGED, WM_NCDESTROY, WM_SIZE, WM_SIZING, WMSZ_BOTTOMLEFT, WMSZ_LEFT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
+    WNDCLASSEXW, WS_CAPTION, WS_CLIPCHILDREN, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
 };
 
 use super::{EditorCallbacks, WindowError, WindowPosition, WindowSize};
@@ -34,6 +34,19 @@ use crate::thread::UiThread;
 const CLASS_NAME: &str = "AudioBatchPluginEditor";
 /// Dots per inch of a display at 100 percent scale.
 const BASE_DPI: f32 = 96.0;
+
+/// Read-only observations of one owned Win32 editor, queried on its UI thread.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowObservation {
+    /// Client dimensions in physical pixels, without the title bar or frame.
+    pub physical_size: WindowSize,
+    /// Actual physical pixels per logical unit reported for this window.
+    pub content_scale: f64,
+    /// Whether the window has the visible style; this does not prove lack of occlusion.
+    pub visible: bool,
+    /// Whether the top-level window is minimized.
+    pub minimized: bool,
+}
 
 /// A native editor window that stays on the UI thread and hides on a user close request.
 pub struct NativeWindow {
@@ -191,6 +204,40 @@ impl NativeWindow {
     pub fn content_scale(&self) -> Option<f32> {
         // SAFETY: the window is valid.
         Some(dpi_scale(unsafe { GetDpiForWindow(self.hwnd) }))
+    }
+
+    /// Queries actual client geometry, DPI, and visibility without changing the window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Windows cannot query the owned window's client area or DPI.
+    pub fn observation(&self) -> std::io::Result<WindowObservation> {
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: the owned window and output rectangle remain valid throughout the query.
+        if unsafe { GetClientRect(self.hwnd, &raw mut rect) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: the owned window remains valid on its UI thread.
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) };
+        if dpi == 0 {
+            return Err(std::io::Error::other("The editor window DPI is unavailable"));
+        }
+        Ok(WindowObservation {
+            physical_size: WindowSize {
+                width: rect.right - rect.left,
+                height: rect.bottom - rect.top,
+            },
+            content_scale: f64::from(dpi) / f64::from(BASE_DPI),
+            // SAFETY: these read-only queries use the live owned window on its UI thread.
+            visible: unsafe { IsWindowVisible(self.hwnd) } != 0,
+            // SAFETY: the live top-level window belongs to this UI thread.
+            minimized: unsafe { IsIconic(self.hwnd) } != 0,
+        })
     }
 
     /// Shows the window in front of the others and gives it keyboard focus.
@@ -425,6 +472,59 @@ fn wide(text: &str) -> Vec<u16> {
 #[cfg(test)]
 mod test_window_placement {
     use super::*;
+
+    struct ObservationCallbacks;
+
+    impl EditorCallbacks for ObservationCallbacks {
+        fn constrain(&self, size: WindowSize) -> WindowSize {
+            size
+        }
+        fn resized(&self, _size: WindowSize) {}
+        fn scale_changed(&self, _factor: f32) {}
+        fn close_requested(&self) {}
+    }
+
+    #[test]
+    fn native_observation_tracks_client_resize_and_visibility() {
+        let size = WindowSize {
+            width: 640,
+            height: 480,
+        };
+        let resized_size = WindowSize {
+            width: 800,
+            height: 600,
+        };
+        let observations = crate::test_helpers::dispatcher()
+            .call(
+                move |ui| {
+                    std::panic::catch_unwind(|| {
+                        let callbacks: Rc<dyn EditorCallbacks> = Rc::new(ObservationCallbacks);
+                        let window =
+                            NativeWindow::create(ui, &callbacks, "Native observation contract", size, true, None)
+                                .expect("create native parent");
+                        let hidden = window.observation().expect("observe hidden window");
+                        window.show();
+                        let shown = window.observation().expect("observe visible window");
+                        window.set_content_size(resized_size);
+                        let resized = window.observation().expect("observe resized window");
+                        window.hide();
+                        let hidden_again = window.observation().expect("observe hidden window again");
+                        [hidden, shown, resized, hidden_again]
+                    })
+                },
+                &|| false,
+            )
+            .expect("dispatch native observations")
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        let [hidden, shown, resized, hidden_again] = observations;
+        assert_eq!(hidden.physical_size, size);
+        assert!(!hidden.visible);
+        assert!(!hidden.minimized);
+        assert!(hidden.content_scale.is_finite() && hidden.content_scale > 0.0);
+        assert!(shown.visible);
+        assert_eq!(resized.physical_size, resized_size);
+        assert!(!hidden_again.visible);
+    }
 
     /// Returns a rectangle from its top-left corner and size.
     const fn rect(left: i32, top: i32, width: i32, height: i32) -> RECT {
