@@ -130,9 +130,11 @@ public:
     BandStrip& operator=(const BandStrip&) = delete;
     BandStrip& operator=(BandStrip&&) = delete;
 
+    [[nodiscard]] bool canFitInlineRange();
     void discardPendingEdits();
     void setHeaderDisclosureInset(int inset);
     void setCompact(bool compact);
+    void setRangeOnSecondRow(bool secondRow);
     void setRangeText(const juce::String& text);
 
     void paint(juce::Graphics& graphics) override;
@@ -208,6 +210,8 @@ private:
     bool linkedSideGesture {false};
     /// Whether only editable Mid, Side, Width, and Pan values with inline identities are visible.
     bool compact {false};
+    /// Editor-wide heading decision keeps every range on a second row whenever any band needs it.
+    bool rangeOnSecondRow {false};
     /// Space in the final band's full heading reserved for the editor's controls disclosure.
     int headerDisclosureInset {0};
 };

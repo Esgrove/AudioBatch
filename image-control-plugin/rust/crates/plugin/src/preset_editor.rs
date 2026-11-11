@@ -27,6 +27,7 @@ pub enum Action {
 /// One filesystem completion carries the editor and sound selection identities checked before applying it.
 pub(super) struct Completion {
     pub(super) generation: u64,
+    pub(super) epoch: u64,
     pub(super) slot: usize,
     pub(super) before: SoundSnapshot,
     pub(super) result: Result<Outcome, String>,
@@ -55,6 +56,7 @@ pub(super) struct PresetEditor {
     pub(super) error: Option<String>,
     pub(super) confirmation: Option<Action>,
     binding: Option<std::rc::Rc<dyn crate::params::EditorBinding>>,
+    pub(super) epoch: u64,
     receiver: Option<Receiver<Completion>>,
     worker: std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
@@ -83,6 +85,7 @@ impl PresetEditor {
     pub(super) fn invalidate(&mut self) {
         self.bound = [None, None];
         self.confirmation = None;
+        self.epoch = self.epoch.wrapping_add(1);
     }
 
     /// Reports one in-flight operation without blocking the editor's event loop.
@@ -122,6 +125,7 @@ impl PresetEditor {
         if let Some(binding) = &self.binding {
             binding.register_shutdown(self.shutdown());
         }
+        let epoch = self.epoch;
         let name = self.name.clone();
         let path = PathBuf::from(&self.path);
         let selection = self.bound.get(slot).cloned().flatten();
@@ -174,6 +178,7 @@ impl PresetEditor {
                 })();
                 let _ = sender.send(Completion {
                     generation,
+                    epoch,
                     slot,
                     before: sound,
                     result,

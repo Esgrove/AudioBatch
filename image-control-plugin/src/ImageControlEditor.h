@@ -89,6 +89,7 @@ private:
     void refreshDisplay(double timestamp);
     void setAnalyzeOutput(bool output);
     void setKeyboardRouting(bool enabled);
+    void updateBandHeadingLayout();
     void updateBandRanges();
     void updateCorrelationMonitoring();
     void updateDisplayDisclosures();

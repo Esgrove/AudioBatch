@@ -499,8 +499,9 @@ Its separate `SpatialSpectrogramViewInput.cpp` owns hit testing and parameter ge
 The plot itself is left unpainted so the GPU image beneath the components remains visible.
 `BandStrip` owns APVTS slider/button attachments, including independent Width and Recover sliders,
 and gain-only Link gesture behavior.
-Expanded band names and frequency ranges share their heading when measured text fits beside Solo and Link,
-otherwise ranges remain on the second line. Live range changes relayout without committing numeric drafts.
+Expanded band names and frequency ranges share their heading only when every band's measured text fits beside Solo and Link.
+Otherwise all ranges move to the second line together, keeping the slider rows aligned.
+Resizing and live range changes update that shared layout without committing numeric drafts.
 Band names use embedded Roboto SemiBold at 16 logical units, with zero-border headings aligned to the slider labels.
 Solo fits 16-unit artwork inside its unchanged 20-unit hit and focus target.
 `ImageControlLookAndFeel.h` centralizes surface radii,

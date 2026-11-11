@@ -175,8 +175,8 @@ fn run_worker(shared: &SharedState, stop: &AtomicBool, pending: &Mutex<PendingBa
             continue;
         };
         if source != generation {
-            // The preference setter advances source before unlocking. A second source read therefore
-            // rejects settings that were published after the stable rate/source snapshot above.
+            // The preference setter advances source before unlocking.
+            // A second source read rejects settings published after the stable rate/source snapshot above.
             let preferences = shared.display_preferences();
             if source != shared.analysis_generation() {
                 continue;

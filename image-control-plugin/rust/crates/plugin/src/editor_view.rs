@@ -45,7 +45,7 @@ impl EditorState {
                 .height(Length::Fill),
             plot_overlay::PlotOverlay::new(self.crossovers(), plot_message)
                 .display(self.shared.display_preferences().mel_scale, self.parameters.snapshot())
-                .interaction_epoch(self.parameters.restore_generation())
+                .interaction_epoch(self.parameters.with_editing(|editing, _| editing.interaction_epoch()))
                 .enabled(!self.settings_shown && !self.presets.shown)
                 .position_curve(
                     f64::from(self.shared.display_preferences().pan_midpoint_db),
@@ -152,7 +152,13 @@ impl EditorState {
     ) -> Stack<'a, Message> {
         if !self.correlation_shown {
             content = content.push(at(
-                text("Correlation").size(11).color(theme::GREY_MIDDLE_LIGHT),
+                control(
+                    "Correlation",
+                    sections.correlation.width,
+                    Some(Message::Correlation),
+                    false,
+                    theme::BLUE,
+                ),
                 sections.correlation,
             ));
         }

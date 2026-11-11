@@ -61,6 +61,8 @@ pub struct Command {
 pub struct EditingState {
     /// Last synchronized host-restore identity.
     generation: u64,
+    /// Non-sound command changes invalidate retained plot origins without impersonating a host recall.
+    interaction_epoch: u64,
     /// Persistent comparisons, independent of transient history.
     comparison: ComparisonState,
     /// Chronological commands including ordinary edits, A/B, copy, and preset recall.
@@ -132,6 +134,7 @@ impl EditingState {
     pub fn new(snapshot: Snapshot) -> Self {
         Self {
             generation: 0,
+            interaction_epoch: 0,
             comparison: ComparisonState::from_sound(SoundSnapshot::capture(snapshot)),
             #[cfg(any(feature = "editor", test))]
             history: Vec::new(),
@@ -150,6 +153,7 @@ impl EditingState {
     pub fn synchronize(&mut self, generation: u64, snapshot: Snapshot) {
         if self.generation != generation {
             self.generation = generation;
+            self.interaction_epoch = self.interaction_epoch.wrapping_add(1);
             self.comparison = ComparisonState::from_sound(SoundSnapshot::capture(snapshot));
             #[cfg(any(feature = "editor", test))]
             {
@@ -238,6 +242,7 @@ impl EditingState {
         self.metadata_before = Some(before.clone());
         self.comparison = before;
         self.comparison.active = slot;
+        self.interaction_epoch = self.interaction_epoch.wrapping_add(1);
         Some(target)
     }
 
@@ -254,6 +259,7 @@ impl EditingState {
     /// Selects a preset before recall, retaining its baseline independently from a transient library binding.
     #[cfg(feature = "editor")]
     pub fn select_preset(&mut self, origin: PresetOrigin, snapshot: Snapshot) {
+        self.interaction_epoch = self.interaction_epoch.wrapping_add(1);
         let before = self.comparison(snapshot);
         self.metadata_before = Some(before.clone());
         self.comparison = before;
@@ -268,7 +274,9 @@ impl EditingState {
     #[cfg(feature = "editor")]
     pub fn rename_origin(&mut self, id: &str, name: String, snapshot: Snapshot) {
         let before = self.comparison(snapshot);
-        if let Some(Some(origin)) = self.comparison.origins.get_mut(self.comparison.active) && origin.id == id {
+        if let Some(Some(origin)) = self.comparison.origins.get_mut(self.comparison.active)
+            && origin.id == id
+        {
             origin.name = name;
             self.metadata_before = Some(before);
         }
@@ -280,6 +288,12 @@ impl EditingState {
         if let Some(Some(origin)) = self.comparison.origins.get_mut(self.comparison.active) {
             origin.effective = Some(sound);
         }
+    }
+
+    /// Captures interaction cancellation independently from stable sound and state identities.
+    #[cfg(feature = "editor")]
+    pub const fn interaction_epoch(&self) -> u64 {
+        self.interaction_epoch
     }
 
     /// Reports availability without modifying the chronological history.
@@ -303,6 +317,18 @@ impl EditingState {
             self.position.saturating_sub(1)
         };
         if let Some(command) = self.history.get_mut(index) {
+            if let Some((before, after)) = &mut command.metadata {
+                let comparison = if undo { before } else { after };
+                let source = comparison.slots.get(comparison.active).copied();
+                if let Some(Some(origin)) = comparison.origins.get_mut(comparison.active)
+                    && source == Some(origin.effective.unwrap_or(origin.baseline))
+                {
+                    origin.effective = Some(SoundSnapshot::capture(snapshot));
+                    if let Some(Some(live_origin)) = self.comparison.origins.get_mut(self.comparison.active) {
+                        live_origin.effective = origin.effective;
+                    }
+                }
+            }
             for (id, before, after) in &mut command.changes {
                 if undo {
                     *before = snapshot_value(snapshot, *id);
@@ -319,6 +345,7 @@ impl EditingState {
         if (undo && !self.can_undo()) || (!undo && !self.can_redo()) {
             return None;
         }
+        self.interaction_epoch = self.interaction_epoch.wrapping_add(1);
         if undo {
             self.position -= 1;
         }
