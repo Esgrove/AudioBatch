@@ -656,6 +656,48 @@ TEST(SpectrogramView, DoubleClickResetDoesNotOverlapThePointerGesture)
     parameter.removeListener(&gestures);
 }
 
+/// Inside axis text remains paint-only: the reclaimed gutter accepts the same crossover drags in either scale.
+TEST(SpectrogramView, MaximizedPlotAcceptsCrossoverEditingAcrossTheReclaimedBottomGutter)
+{
+    for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
+        ImageControlProcessor processor;
+        SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+        view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+        view.setFrequencyScale(scale);
+        view.setMaximized(true);
+        const float y = view.getPlotBounds().getBottom() - 6.0F;
+        const auto start = juce::Point<float> {xOf(view, 100.0, scale), y};
+        const auto end = juce::Point<float> {xOf(view, 150.0, scale), y};
+        dragOnView(view, start, end);
+        EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 150.0F, 0.01F);
+        EXPECT_TRUE(processor.getHistory().undo());
+        EXPECT_NEAR(parameterValue(processor, crossoverParameterId(0)), 100.0F, 0.01F);
+    }
+}
+
+/// A live geometry switch closes its existing host gesture once and cannot revive it from stale pointer movement.
+TEST(SpectrogramView, MaximizingFinishesAnActiveDragWithoutFurtherParameterWrites)
+{
+    ImageControlProcessor processor;
+    auto& parameter = *processor.getParameters().getParameter(crossoverParameterId(0));
+    GestureCounter gestures;
+    parameter.addListener(&gestures);
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    view.setSize(VIEW_WIDTH, VIEW_HEIGHT);
+    const juce::Point<float> start {xOf(view, 100.0), view.getPlotBounds().getCentreY()};
+    const auto down = mouseEvent(view, start, start, juce::ModifierKeys::leftButtonModifier);
+    view.mouseDown(down);
+    EXPECT_EQ(gestures.events, (std::vector<bool> {true}));
+    view.setMaximized(true);
+    EXPECT_EQ(gestures.events, (std::vector<bool> {true, false}));
+    view.mouseDrag(down.withNewPosition(juce::Point<float> {xOf(view, 200.0), start.y}));
+    view.mouseUp(down);
+    EXPECT_NEAR(plainValue(parameter), 100.0F, 0.01F);
+    EXPECT_FALSE(processor.getHistory().isEditing());
+    EXPECT_FALSE(processor.getHistory().canUndo());
+    parameter.removeListener(&gestures);
+}
+
 TEST(SpectrogramView, AxisAndSecondaryClicksDoNotOpenGestures)
 {
     ImageControlProcessor processor;

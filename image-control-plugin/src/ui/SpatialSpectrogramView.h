@@ -109,6 +109,7 @@ public:
     void endDrag();
     void setFrameStatistics(std::optional<double> rate, std::optional<double> gpuMilliseconds);
     void setFrequencyScale(FrequencyScale newScale);
+    void setMaximized(bool maximized);
     void setPositionCurve(const StereoPositionCurve& curve);
     void setRenderingBypassed(bool bypassed);
     void setRenderingUnavailable(bool unavailable);
@@ -133,6 +134,8 @@ private:
     [[nodiscard]] Crossovers currentCrossovers() const;
     [[nodiscard]] SpectrogramOverlayState currentOverlayState() const;
     [[nodiscard]] juce::Rectangle<float> framesPerSecondArea() const;
+    [[nodiscard]] juce::Rectangle<float> frequencyAxisLabelBounds(double frequency) const;
+    [[nodiscard]] juce::Rectangle<float> positionAxisLabelBounds(double position) const;
     [[nodiscard]] juce::Rectangle<float> positionCurveLabelBounds(float difference, bool leftChannel) const;
     [[nodiscard]] juce::Point<float> positionCurvePoint(float difference, bool leftChannel) const;
     [[nodiscard]] std::array<bool, BAND_COUNT> mutedBands() const;
@@ -237,5 +240,7 @@ private:
     bool renderingBypassed {false};
     /// Whether the GPU renderer could not start, such as without OpenGL 3.3.
     bool renderingUnavailable {false};
+    /// Expands the plot to a thin panel inset and draws both axes as noninteractive overlays inside it.
+    bool maximized {false};
 };
 }  // namespace esgrove::image_control

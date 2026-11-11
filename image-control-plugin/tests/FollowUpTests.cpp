@@ -9,7 +9,10 @@
 #include "ImageControlEditor.h"
 #include "ImageControlProcessor.h"
 #include "Parameters.h"
+#include "ProcessingState.h"
 #include "ui/BandStrip.h"
+#include "ui/DisplayDisclosure.h"
+#include "ui/SettingsPanel.h"
 #include "ui/SpatialSpectrogramView.h"
 #include "ui/SpectrogramParticles.h"
 
@@ -50,6 +53,24 @@ struct SpectrogramViewTestAccess {
     const SpectrogramBandResponses& responses()
     {
         return view.bandResponses(view.currentCrossovers());
+    }
+
+    /// Reads the production frequency-axis overlay geometry without rendering pixels.
+    [[nodiscard]] juce::Rectangle<float> frequencyAxisLabel(const double frequency) const
+    {
+        return view.frequencyAxisLabelBounds(frequency);
+    }
+
+    /// Reads the production stereo-axis overlay geometry without rendering pixels.
+    [[nodiscard]] juce::Rectangle<float> positionAxisLabel(const double position) const
+    {
+        return view.positionAxisLabelBounds(position);
+    }
+
+    /// Reads the diagnostic overlay bounds to check it stays clear of inside position labels.
+    [[nodiscard]] juce::Rectangle<float> frameRateLabel() const
+    {
+        return view.framesPerSecondArea();
     }
 
     /// Returns the label bounds used by the position mapping overlay without painting pixels.
@@ -414,6 +435,73 @@ TEST(SpectrogramPositionOverlay, RightOriginEndpointsAndMirroredSettingsUseThePl
     }
 }
 
+/// Maximized geometry expands on every edge, retains complete inside labels, and restores the original gutters.
+TEST(SpectrogramLayout, MaximizedAxesStayInsideTheExpandedPlotWithoutCornerOrCrossoverCollisions)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    const SpectrogramViewTestAccess access(view);
+    for (const auto size : {juce::Point<int> {300, 120}, {760, 160}, {1000, 401}}) {
+        view.setSize(size.x, size.y);
+        view.setMaximized(false);
+        const auto standard = view.getPlotBounds();
+        view.setMaximized(true);
+        const auto plot = view.getPlotBounds();
+        EXPECT_EQ(plot, view.getLocalBounds().toFloat().reduced(2.0F));
+        EXPECT_TRUE(plot.contains(standard));
+        EXPECT_GT(plot.getWidth(), standard.getWidth());
+        EXPECT_GT(plot.getHeight(), standard.getHeight());
+        const auto left = access.positionAxisLabel(1.0);
+        const auto centre = access.positionAxisLabel(0.0);
+        const auto right = access.positionAxisLabel(-1.0);
+        EXPECT_TRUE(plot.contains(left));
+        EXPECT_TRUE(plot.contains(centre));
+        EXPECT_TRUE(plot.contains(right));
+        EXPECT_FLOAT_EQ(centre.getCentreY(), plot.getCentreY());
+        EXPECT_FALSE(access.frameRateLabel().intersects(left));
+        for (const auto scale : {FrequencyScale::logarithmic, FrequencyScale::mel}) {
+            view.setFrequencyScale(scale);
+            for (const double frequency : {20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10'000.0, 20'000.0})
+            {
+                const auto label = access.frequencyAxisLabel(frequency);
+                EXPECT_TRUE(plot.contains(label));
+                EXPECT_FALSE(label.intersects(right));
+                for (std::size_t crossover = 0; crossover < CROSSOVER_COUNT; ++crossover) {
+                    EXPECT_FALSE(label.intersects(view.crossoverLabelBounds(crossover)));
+                    EXPECT_TRUE(plot.contains(view.crossoverLabelBounds(crossover)));
+                }
+            }
+        }
+        view.setMaximized(false);
+        EXPECT_EQ(view.getPlotBounds(), standard);
+        EXPECT_FALSE(standard.intersects(access.frequencyAxisLabel(1000.0)));
+        EXPECT_FALSE(standard.intersects(access.positionAxisLabel(0.0)));
+    }
+}
+
+/// Geometry toggles rebuild response paths on demand, without modifying audio or window dimensions.
+TEST(SpectrogramLayout, MaximizingInvalidatesResponseGeometryOnlyWhenNeeded)
+{
+    ImageControlProcessor processor;
+    SpatialSpectrogramView view(processor.getParameters(), processor.getEditorState(), processor.getHistory());
+    view.setSize(760, 300);
+    SpectrogramViewTestAccess access(view);
+    const auto original = access.responses().plot;
+    EXPECT_EQ(access.builds(), 1U);
+    view.setMaximized(true);
+    EXPECT_EQ(access.builds(), 1U);
+    EXPECT_EQ(access.responses().plot, view.getPlotBounds());
+    EXPECT_NE(access.responses().plot, original);
+    EXPECT_EQ(access.builds(), 2U);
+    view.setMaximized(true);
+    EXPECT_EQ(access.responses().plot, view.getPlotBounds());
+    EXPECT_EQ(access.builds(), 2U);
+    view.setMaximized(false);
+    EXPECT_EQ(access.responses().plot, original);
+    EXPECT_EQ(access.builds(), 3U);
+    EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
 /// Right-aligned guide pills remain exposed and wholly inside even when the stereo mapping reaches an edge.
 TEST(SpectrogramPositionOverlay, GuideLabelsStayInsideTheRightSideOfThePlot)
 {
@@ -683,6 +771,85 @@ TEST(ImageControlEditorLayout, CrossoverChangesSynchronizeEveryFrequencyRangeRow
         }
     }
     EXPECT_FALSE(processor.getHistory().canUndo());
+}
+
+/// The real settings toggle grows only the plot and preserves window geometry, sound, and saved full-strip sizing.
+/// Host state and editor reopening retain the opt-in, while older states deterministically restore standard axes.
+TEST(ImageControlEditorLayout, MaximizedSpectrogramIsOptionalPersistentAndIndependentOfSound)
+{
+    ImageControlProcessor processor;
+    auto& state = processor.getEditorState();
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(MAXIMIZE_SPECTROGRAM_PROPERTY)));
+    ImageControlEditor editor(processor);
+    ImageControlEditorTestAccess access(editor);
+    access.disableDisplayCallbacks();
+    const SettingsPanel settings(state);
+    juce::ToggleButton* toggle = nullptr;
+    SpatialSpectrogramView* view = nullptr;
+    juce::Component* disclosure = nullptr;
+    for (auto* child : editor.getChildren()) {
+        if (auto* candidate = dynamic_cast<SpatialSpectrogramView*>(child)) {
+            view = candidate;
+        }
+        if (child->getComponentID() == "spectrogram-disclosure") {
+            disclosure = child;
+        }
+    }
+    // The toggle lives in the settings viewport's content, not directly on the panel.
+    const auto* viewport = dynamic_cast<juce::Viewport*>(settings.getChildComponent(0));
+    ASSERT_NE(viewport, nullptr);
+    for (auto* child : viewport->getViewedComponent()->getChildren()) {
+        if (child->getComponentID() == MAXIMIZE_SPECTROGRAM_PROPERTY) {
+            toggle = dynamic_cast<juce::ToggleButton*>(child);
+        }
+    }
+    ASSERT_NE(toggle, nullptr);
+    ASSERT_NE(view, nullptr);
+    ASSERT_NE(disclosure, nullptr);
+    const auto standard = view->getPlotBounds();
+    const auto window = editor.getBounds();
+    const auto section = view->getBounds();
+    const auto bandHeight = state.getProperty(BAND_SECTION_HEIGHT_PROPERTY);
+    const auto sound = processor.getSoundSnapshot();
+    for (const bool maximized : {true, false, true}) {
+        toggle->setToggleState(maximized, juce::sendNotificationSync);
+        access.applySettings();
+        EXPECT_EQ(view->getPlotBounds(), maximized ? view->getLocalBounds().toFloat().reduced(2.0F) : standard);
+        EXPECT_EQ(editor.getBounds(), window);
+        EXPECT_EQ(view->getBounds(), section);
+        EXPECT_EQ(state.getProperty(BAND_SECTION_HEIGHT_PROPERTY), bandHeight);
+        EXPECT_TRUE(sameProcessingState(processor.getSoundSnapshot(), sound));
+        EXPECT_FALSE(processor.getHistory().canUndo());
+        const auto* action = dynamic_cast<DisplayDisclosure*>(disclosure);
+        ASSERT_NE(action, nullptr);
+        EXPECT_NEAR(
+            static_cast<float>(action->getY()) + action->getIndicatorBounds().getCentreY(),
+            static_cast<float>(view->getY()) + view->getPlotBounds().getY(),
+            0.5F
+        );
+    }
+    juce::MemoryBlock saved;
+    processor.getStateInformation(saved);
+    ImageControlProcessor restored;
+    restored.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    EXPECT_TRUE(static_cast<bool>(restored.getEditorState().getProperty(MAXIMIZE_SPECTROGRAM_PROPERTY)));
+    const ImageControlEditor reopened(restored);
+    for (const auto* child : reopened.getChildren()) {
+        if (const auto* plot = dynamic_cast<const SpatialSpectrogramView*>(child)) {
+            EXPECT_EQ(plot->getPlotBounds(), plot->getLocalBounds().toFloat().reduced(2.0F));
+        }
+    }
+    const auto xml = juce::AudioProcessor::getXmlFromBinary(saved.getData(), static_cast<int>(saved.getSize()));
+    ASSERT_NE(xml, nullptr);
+    auto* editorState = xml->getChildByName("EditorState");
+    ASSERT_NE(editorState, nullptr);
+    editorState->removeAttribute(MAXIMIZE_SPECTROGRAM_PROPERTY);
+    juce::AudioProcessor::copyXmlToBinary(*xml, saved);
+    processor.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    access.applySettings();
+    EXPECT_FALSE(static_cast<bool>(state.getProperty(MAXIMIZE_SPECTROGRAM_PROPERTY)));
+    EXPECT_FALSE(toggle->getToggleState());
+    EXPECT_EQ(view->getPlotBounds(), standard);
 }
 
 /// Host visibility updates the real worker without a VBlank or a GPU, retaining drain-only behavior while hidden.

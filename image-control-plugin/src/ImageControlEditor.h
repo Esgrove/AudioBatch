@@ -190,6 +190,8 @@ private:
     std::optional<bool> shownRenderingBypassed;
     /// Whether the spectrogram was last hidden, empty before the first update.
     std::optional<bool> shownHidden;
+    /// Whether the plot geometry was last maximized, empty until the initial layout settings are applied.
+    std::optional<bool> shownMaximized;
 
     /// Whether the saved layout has been restored, so layout changes are saved from now on.
     /// Until then, sizes JUCE applies while the editor is built, such as the minimum size, are not saved.
