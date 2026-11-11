@@ -17,12 +17,16 @@ The C++ plugin remains the supported implementation.
 - Bit-exact delayed input at settled neutral settings, with warm convolution history for processing changes.
 - Background crossover-kernel design for realtime use and synchronous deterministic design for offline rendering.
 - Six-tier spatial spectral analysis with frequency reassignment, stereo position, and phase coherence.
-- GPU particles, persistent energy, five-level bloom, and history-preserving resize, with frequency or phase coloring.
-- Consistent Iced controls and embedded font weights,
-  editable numeric values, compact bands, and modal display settings.
+- GPU particles or solid density contours, persistent energy, five-level bloom, and history-preserving resize,
+  with Logarithmic/Mel frequency axes, frequency/phase coloring, and adjustable stereo-position curves.
+- Consistent Iced controls, embedded font weights, compact numeric editing, and modal display settings.
+  Plot gestures move crossovers or whole bands, adjust source gains, and support reset and keyboard shortcuts.
+- Local Undo/Redo, independently editable A/B sounds with copy, and a per-user Rust JSON preset library.
 - An embedded resize grip with host-approved logical window sizes retained across close/reopen and saved projects.
-- Functional Pre/Post analysis, persistence and contrast settings, and processed-band correlation meters.
-- Thirty-one stable automatable sound parameters and independent versioned state for sound, display, and window geometry.
+- Pre/Post analysis, persistence and contrast, correlation trends and fading range fields,
+  hide/stop analysis controls, frame-rate diagnostics, and shortcut help.
+- Thirty-one stable automatable sound parameters and independent versioned state for sound, comparisons,
+  preset origins, complete editor layout, display preferences, and window geometry.
 
 At 48 kHz, processing latency is 4352 samples and the conservative tail beyond compensation is 4096 samples.
 Long bass-analysis windows affect display responsiveness, not the reported audio latency.
@@ -32,6 +36,16 @@ Recover ranges from 0–200%, matching C++.
 It adds a finite quadrature-rotated contribution from removed Side amplitude when Width is below one.
 At 200%, the recovered contribution is twice its 100% amplitude, not twice the overall output level.
 It is not automatic loudness compensation or a power-preserving width law.
+
+Preset files are independent RS JSON, not C++ XML imports or migrated C++ projects.
+The Presets callout supports load, Save/Save As, rename, delete, reconnect, and explicit absolute-path import/export.
+Filesystem work runs asynchronously and is joined on native editor close.
+Stale selections are rejected rather than silently overwriting another instance's changes.
+
+New host and editor edits use C++-compatible float skew and plain-unit snapping.
+State versions 1–3 migrate stored crossover frequencies through Hz while retaining off-grid non-crossover values.
+This migrates plugin state blobs only, not normalized automation stored separately by a DAW.
+Older RS normalized frequency automation must be remapped externally to preserve its original Hz values.
 
 ## Build and test
 
@@ -144,8 +158,9 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
   Automation is sampled per host block, not sample-accurate within a block.
 - Audio preparation supports actual rates from 1 through 2,822,400 Hz.
   Spatial analysis supports 8 through 768 kHz, reporting unavailable outside that range without disabling audio.
-- Undo/Redo, A/B, and presets remain visibly unavailable.
-  Link and layout choices are local editor state, not part of the persisted display-preference snapshot.
+- Presets store sound, excluding Solo, Delta, Bypass, editor preferences, and local history.
+  Project preset origins retain identity and a sound baseline, not permission to overwrite a library revision.
+  After project recall, reconnect explicitly before changing the corresponding library entry.
 - Windows CLAP currently exposes host-provided parameter controls, not the custom Iced editor.
   CLAP destruction cannot use VST3's rejected-removal retry protocol during a reentrant Win32 callback.
   The custom CLAP GUI is not advertised there until safe synchronous teardown is implemented and tested.
