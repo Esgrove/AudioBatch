@@ -1375,20 +1375,24 @@ fn arguments() -> Result<Option<Options>> {
         match argument.to_str() {
             Some("-h" | "--help") => {
                 println!(
-                    "Usage: editor_reentry --bundle <absolute-build-tree.vst3> [--case nested-dispatch|removal-retry|synchronous-removal]\n\
+                    "Usage: editor_reentry --bundle <absolute-build-tree.vst3> [--case nested-dispatch|callback-removal|synchronous-removal]\n\
 Runs native-editor-reentry against the actual packaged ImageControl RS editor.\n\
 Requires macOS or Windows native event delivery. No installed plugins, audio devices, or screenshots are used.\n\
-Windows defaults to nested-dispatch; removal-retry isolates callback rejection without a nested event loop."
+Windows defaults to nested-dispatch; callback-removal retires the child without a nested event loop.\n\
+removal-retry is a compatibility alias for callback-removal."
                 );
                 return Ok(None);
             }
             Some("--bundle") => bundle = Some(PathBuf::from(arguments.next().context("--bundle needs a path")?)),
             Some("--case") => {
                 let case = arguments.next().context("--case needs a name")?;
-                synchronous_removal = case == "synchronous-removal";
+                synchronous_removal = matches!(
+                    case.to_str(),
+                    Some("synchronous-removal" | "callback-removal" | "removal-retry")
+                );
                 nested_events = match case.to_str() {
                     Some("nested-dispatch" | "synchronous-removal") => true,
-                    Some("removal-retry") => false,
+                    Some("callback-removal" | "removal-retry") => false,
                     _ => bail!("unknown native reentry case: {}", case.to_string_lossy()),
                 };
             }

@@ -11,10 +11,89 @@ No framework, graphics backend, or permissive license by itself establishes prod
 The dated parity-completion and benchmark results retained below describe earlier reviewed artifacts.
 The Rust-native cleanup checks are recorded separately and do not imply a performance improvement.
 
+### Windows Acceptance Status: 12 November 2026
+
+The finish-Windows plan is **not complete**.
+The following is current local evidence, separate from the historical probes below.
+No new macOS qualification or performance comparison was performed.
+No plugin installation, display/audio configuration change, external tool installation, push,
+or runner registration was performed.
+
+The starting checkout was clean at `532e6133a0c9c91736f7b989892f0d9392a9bad2`.
+As-found plugin, native host/benchmark, C++ reference, and application host executables were archived before rebuilding.
+Evidence is retained in the local session directory
+`C:\Users\faksu\.copilot\session-state\463a79c2-07b8-443b-906b-7025e0a21f42\files\windows-baseline`.
+`as-found.tar`, `as-found-hosts.tar`, `sha256.txt`, and `host-sha256.txt` identify those artifacts.
+The as-found RS module hash is `61f7c645e675739b83cde1d94f393a035babb7a50792e34c56f0af4cf4ff2b7e`.
+It is not substituted for the older as-found artifact described below.
+Reproducible current-source Debug
+and Release packages are retained separately in repository-root `rust/target/windows-qualification/debug/`
+and `release/`.
+Their respective module hashes are `bafcfcf1ecf2708dbbea13406f3778ae694c48f7b9d964127817d7dca4756850`
+and `61f7c645e675739b83cde1d94f393a035babb7a50792e34c56f0af4cf4ff2b7e`.
+Within each profile, the VST3 and CLAP contain identical module bytes.
+`debug-sha256.txt`, `release-sha256.txt`, and `current-driver-sha256.txt` distinguish packages from test drivers.
+
+The workstation runs Windows 11 Pro build 26300, an AMD Ryzen 9 7950X, and the High performance power scheme.
+The active NVIDIA RTX 4090 driver is `32.0.16.2101`.
+Monitor enumeration found two active displays, both at 125%.
+Their reported desktop rectangles are `(0, 0, 3072, 1728)` and `(-3072, 0, 0, 1728)`.
+The video-controller query reports 3840 by 2160 physical output.
+The topology query is DPI-virtualized and is not a physical editor-size assertion.
+No genuine transition between differently scaled monitors was available or synthesized as a substitute.
+The audio-device inventory includes an RME Fireface UCX II, Realtek USB Audio, and display/virtual endpoints.
+Device presence is not physical playback evidence.
+The sibling `windows-hardware.txt` retains the read-only inventory.
+Rust `1.99.1`, Cargo `1.99.1`, and CMake `4.4.5` were recorded in `source-toolchains.txt`.
+
+| Acceptance cell | Status | Current evidence and remaining boundary |
+| --- | --- | --- |
+| WIN-01 baseline and packages | PASS, bounded | Separate as-found archives and current-source profile hashes. Both `build.sh --test --validate` profiles passed, including 303 plugin library tests and format contracts. |
+| WIN-02 exercised VST3 callbacks | PASS, bounded | Three cycles each of nested dispatch and synchronous removal in both profiles. Three non-nested callback-removal cycles and three compatibility-alias cycles per profile also passed. Original HWND retirement, changed authoritative Output, balanced gestures, and no late host callbacks were asserted. |
+| WIN-02 CLAP lifecycle and callback removal | BLOCKED for the full repeat matrix | Debug passed three ordinary and three active callback-destruction cycles. Release passed ordinary lifecycle, then stopped before pointer delivery because `Chrome_RenderWidgetHostHWND` covered the owned child. No foreign window was bypassed. |
+| WIN-02 broader input and genuine DPI transitions | BLOCKED | Full keyboard/text/focus/control/geometry coverage is not implemented. Both available displays use 125%, so the required genuine mixed-DPI transitions are untested. |
+| WIN-03 actual application GUI and playback | BLOCKED | Production-native GUI workflow drivers and physical playback qualification remain outstanding. CLI, headless workflows, and device enumeration are not substitutes. |
+| WIN-04 renderer resource contracts | PASS, bounded | Eleven dedicated `spectrogram::` tests passed in Release, including production analyzer input, native GPU passes, incompatible-generation rejection, resize, and independent histories. `imagecontrol-gpu-contracts.log` records this invocation. |
+| WIN-04 recovery and redraw qualification | BLOCKED | Upstream surface handling was traced, but owner-level fault injection, device recreation, fatal failure containment, and measured redraw qualification remain outstanding. Compatibility scheduling is unchanged. |
+| WIN-05 reclamation and legal unload | BLOCKED | Existing worker/cancellation contracts pass, but no 100-cycle resource study, complete upstream cache proof, or format-compliant DLL unmap/reload and UI-thread-retirement probe was added. Dropping a library is not an unload pass. |
+| WIN-06 processing correctness | PASS, bounded | Both profile package suites and native test-script runs passed. Release pluginval strictness 10 passed. Independent C++/RS packaged parity passed all 264 cases without tolerance changes. |
+| WIN-06 local performance closure | BLOCKED | No matched five-repetition baseline/candidate study, practical noise-derived budgets, physical-device continuity study, or regression conclusion was produced. Functional test timing is not performance evidence. |
+| WIN-07 correctness-only CI policy | PASS locally | Workflow benchmark execution and benchmark help smokes are removed. Compilation remains permitted. Direct package/parity tests remain, and the opt-in native tier runs dedicated GPU contracts and three VST3 cases. A three-test workflow guard checks known performance execution routes and retained functional coverage. No remote run is claimed. |
+| WIN-07 tooling and final formatting | FAIL, pre-existing format gate | Eight root shell-help tests, six Python-option tests, 17 benchmark-runner contract tests, 45 render-runner contract tests, scoped Ruff, Cargo formatting, and strict plugin Clippy passed. Full plugin prose formatting reports an existing semicolon violation in `audio_render_workload.rs:106`, also present in the starting commit. |
+
+The original `removal-retry` driver failed because it expected valid synchronous callback removal to be rejected.
+The current non-nested `callback-removal` case instead requires immediate original-child destruction,
+including repeated removal, balanced gestures, and unchanged callback counts after retirement.
+The old spelling remains an alias.
+This repairs the qualification driver, not plugin processing or the supported removal contract.
+The initial failure is retained in `debug-removal-retry.log`.
+The repaired cases are in `{debug,release}-{callback-removal,removal-retry}-current.log`.
+Current VST3 cases are in `{debug,release}-{nested-dispatch,synchronous-removal}-current.log`.
+CLAP logs are `{debug,release}-clap-editor.log`, including the blocked Release run.
+`debug-build.log`, `imagecontrol-release-build.log`, `imagecontrol-debug-test.log`,
+`imagecontrol-release-test.log`, `release-pluginval-10.log`,
+and `imagecontrol-parity.log` retain the package, validator, and independent correctness results.
+`imagecontrol-format.log` and `imagecontrol-lint.log` retain the separate formatting and lint outcomes.
+
+The renderer ownership trace reaches `iced_baseview` revision `f9d3384` in `src/shell/mod.rs`,
+where the shell presents the surface, handles outdated/lost surfaces, and panics on out-of-memory.
+`iced_wgpu` 0.14.0 `src/window/compositor.rs` owns acquisition and the engine-backed device.
+The existing surface reconfiguration/recreation branches are not evidence of device-loss recovery.
+Changing plugin `GpuHistory` alone cannot repair failures at those owners.
+A publishable dependency-level repair and its fault-injection tests remain necessary before that gate can pass.
+No Cargo cache or local-path dependency was modified, and no dependency fork was pushed.
+
+Remaining plan work includes T004-T009's complete native/host matrix,
+T010-T012's recovery and scheduling qualification, T013-T015's reclamation and legal unload,
+T016-T018's local-only matched performance study, and final T019-T021 closure.
+Available hardware and desktop obstruction limit specific cells, not every remaining engineering task.
+The passing bounded cells do not establish full Windows parity or completion.
+
 ### Windows Native Probe: 12 November 2026
 
-The Windows `editor_reentry` driver supports `--case removal-retry`, `--case nested-dispatch`,
+The Windows `editor_reentry` driver supports `--case callback-removal`, `--case nested-dispatch`,
 and `--case synchronous-removal`.
+`--case removal-retry` remains a compatibility alias for `callback-removal`.
 All cases load an explicit build-tree VST3 bundle and fail after a 30-second watchdog deadline.
 The inspected baseline module SHA-256 is `001c7b5db6d0069f4ed50bd3516ee39ab3a4c8c86b0bd18c2ec59a69543dc050`.
 This is a preserved as-found binary, not a verified rebuild of the recorded source revision.

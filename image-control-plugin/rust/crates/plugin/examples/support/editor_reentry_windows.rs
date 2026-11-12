@@ -68,9 +68,9 @@ struct Handler {
     host: Weak<Callbacks>,
     /// Retained independently to detect callbacks after editor retirement.
     evidence: Rc<Evidence>,
-    /// Separates ordinary rejection from the upstream nested-runtime qualification gate.
+    /// Dispatches nested native events during the parameter callback when requested.
     nested_events: bool,
-    /// Removes the child synchronously instead of exercising the historical retry contract.
+    /// Requires synchronous child retirement during the parameter callback.
     synchronous_removal: bool,
 }
 
@@ -213,32 +213,18 @@ impl Handler {
         if self.nested_events {
             pump_platform_events(&ui, Duration::from_millis(5));
         }
-        if remove && (self.synchronous_removal || !self.nested_events) {
+        if remove && self.synchronous_removal {
             // SAFETY: these queries and removal attempts use the retained view and owned native parent.
             unsafe {
                 let child = GetWindow(host.parent.get(), GW_CHILD);
                 ensure!(!child.is_null(), "child missing before callback removal");
                 for _ in 0..2 {
-                    if self.synchronous_removal {
-                        ensure!(view.removed() == kResultOk, "synchronous callback removal failed");
-                        ensure!(GetWindow(host.parent.get(), GW_CHILD).is_null(), "child still attached");
-                        ensure!(IsWindow(child) == 0, "native child survived synchronous removal");
-                        self.evidence
-                            .removal_attempts
-                            .set(self.evidence.removal_attempts.get() + 1);
-                        continue;
-                    }
-                    ensure!(
-                        view.removed() == kResultFalse,
-                        "callback removal must be rejected on Windows"
-                    );
+                    ensure!(view.removed() == kResultOk, "synchronous callback removal failed");
+                    ensure!(GetWindow(host.parent.get(), GW_CHILD).is_null(), "child still attached");
+                    ensure!(IsWindow(child) == 0, "native child survived synchronous removal");
                     self.evidence
                         .removal_attempts
                         .set(self.evidence.removal_attempts.get() + 1);
-                    ensure!(
-                        GetWindow(host.parent.get(), GW_CHILD) == child && IsWindow(child) != 0,
-                        "rejected removal changed native ownership"
-                    );
                 }
             }
         }
@@ -594,12 +580,12 @@ pub fn run(bundle: &Path, nested_events: bool, synchronous_removal: bool) -> Res
     drop(component);
     settle(&ui);
     drop(library);
-    let case = if synchronous_removal {
+    let case = if synchronous_removal && !nested_events {
+        "callback-removal"
+    } else if synchronous_removal {
         "synchronous-removal"
-    } else if nested_events {
-        "nested-dispatch"
     } else {
-        "removal-retry"
+        "nested-dispatch"
     };
     println!("CASE_OK native-editor-reentry windows-pointer-{case}");
     Ok(())
