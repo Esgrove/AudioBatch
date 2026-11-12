@@ -8,12 +8,11 @@ C++ is the feature, close user-experience, and audio reference, not an exact int
 Compatibility with older RS state or normalized automation is not required.
 
 The implementation targets macOS and Windows.
-Native Windows Debug/Release packages, bounded VST3/CLAP editor cases,
-GPU contracts, and packaged parity have been tested.
-Broader native input, genuine DPI transitions, application GUI/playback, renderer recovery,
-resource churn, and legal unload remain qualification gates.
-See the [Windows acceptance status](docs/rust-evaluation.md#windows-acceptance-status-12-november-2026) for exact evidence
-and blocked checks.
+Debug and Release packages, bounded native VST3/CLAP editor lifecycle cases, and packaged parity pass on Windows.
+Initial editor geometry is checked against the parent DPI.
+Broader native input, genuine mixed-DPI transitions, application GUI/playback, renderer recovery,
+resource reclamation, and legal module unload remain open qualification gates.
+See [platform and format status](docs/rust-evaluation.md#platform-and-format-status).
 The C++ plugin remains the supported implementation.
 
 ## Features
@@ -109,14 +108,13 @@ The packaged realtime checks require macOS, nightly Rust, uv, jq, and a matching
 They verify allocation and mutex detector controls separately from required-clean callback cases.
 Passing these exercised scenarios does not establish audio deadlines or arbitrary host compatibility.
 
-## Cross-implementation tests and benchmarks
-
-Performance tools run locally only.
-CI compiles benchmark targets without executing them and uses dedicated package, parity, and GPU tests for correctness.
+## Cross-implementation tests and local benchmarks
 
 The packaged parity host compares both actual VST3s with deterministic signals and independent neutral,
 gain, pan, mono, latency, and tail expectations.
 It uses plain-unit parameter mappings, not shared normalized IDs or project-state migration.
+Peak residual must stay below `1e-5` full scale and RMS residual below `1e-6`, with exact neutral checks retained.
+Parity runs on the build-tree packages and does not install either plugin.
 
 ```shell
 # Build C++ once with tests, then its independent packaged-plugin comparison host.
@@ -126,74 +124,27 @@ cmake --build ../cmake-build-release --config Release --target ImageControlParit
 ./parity.sh --cpp "$PWD/../cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3" \
     --executable "$PWD/../cmake-build-release/ImageControlParity_artefacts/Release/ImageControlParity"
 
-# Preallocated production DSP/analysis benchmarks, with preparation measured separately.
+# Optional local DSP benchmark.
 cargo bench -p image-control-dsp --bench dsp -- --quick
 
-# Production GPU spectrogram: packing, submission, and completed-work Criterion groups.
+# Optional local GPU benchmark.
 cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram
 
-# Complete-process hyperfine runs with separate warmed-callback diagnostics.
+# Optional local packaged-processing benchmark.
 ./benchmark.sh --case recover --frames 960000 --runs 5 --warmup 1
-
-# Broadband audio with independently moving, beat-enveloped frequency bands.
-./benchmark.sh --signal moving-noise --frames 384000 --runs 5
-
-# Export eight seconds of production-analyzed particles for either native renderer.
-cargo run --release -p image-control-plugin-rs --features render-benchmark \
-  --example audio_render_workload -- --output "$PWD/target/benchmark/moving-noise.icrb"
-IMAGECONTROL_RENDER_INPUT="$PWD/target/benchmark/moving-noise.icrb" \
-  cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram -- audio_input --quick
 ```
-
-The broadband source uses seeded noise, six bass-balanced bands, independent rhythmic envelopes,
-and frequency-dependent equal-power panning that evolves over time.
-The DSP Criterion target includes separate `imager_warm_moving_noise` and `analyzer_warm_moving_noise` groups,
-streaming successive chunks of an eight-second precomputed source outside input-generation timing.
-The visible `editor_benchmark` also accepts `--signal moving-noise` and records its eight-second PCM-loop hash.
-For paired GPU measurements, pass the export
-as `--input` to `../benchmarks/render_benchmark.py` with explicit `--cpp` and/or `--rust` binaries
-and a new `--artifacts` directory.
-The export uses production FFT analysis and particle projection after one second of warmup,
-at 48 kHz stereo and 30 render frames per second.
-It retains every generated particle, padding shorter frames with zero-energy records for the shared fixed-stride format.
-The sidecar records active counts, audio identity, and workload hashes.
-Criterion audio groups include the input SHA-256.
-Tone and static-cloud controls remain separate.
-This synthetic music-like source is not a recorded-music corpus.
 
 Use the `.exe` parity host on Windows.
-`parity.sh` rejects incomplete setup rather than skipping a missing counterpart.
-The Rust integration test is optional without counterpart selection, and CI supplies both build-tree bundles.
-Peak residual must stay below `1e-5` full scale and RMS residual below `1e-6`, with exact neutral checks retained.
-Reports live under the shared target's `image-control-parity/` directory.
-Benchmark artifacts include exact binary hashes, compiler/source identity, workload, checksums, and machine metadata.
-Native processing reports separate module loading, instance preparation, and warmed callbacks.
-Preparation covers instance creation through activation, not exclusive kernel design or complete-process wall time.
-Run timings with other builds idle. There is no implied speedup without a matched baseline.
-The `spectrogram` Criterion target uses the native GPU without a host window.
-Cargo's bench profile inherits Release with full optimization, LTO, and one codegen unit.
-The repository enables `target-cpu=native`.
-Measured entry points reject development, non-opt-level-3, or non-native artifacts.
-Its completed-work group includes bounded batch completion, not physical display FPS or exclusive GPU timestamps.
-Filter it with `-- 'completed_gpu_work/1280x720/particles/4096$' --quick` for a short single-case run.
-See [the evaluation](docs/rust-evaluation.md#cross-implementation-and-performance-evidence) for measured scope
-and limitations.
+The benchmarks are local measurement tools, not correctness checks.
+Use Release builds and a matched baseline, and treat DSP, GPU completion, and complete-process timings separately.
 
-For isolated application CLI integration, capture host-native presets from explicit build-tree artifacts:
+## CI verification
 
-```shell
-cargo run --release -p audiobatch-plugins --example image_control_presets -- \
-  --bundle "$PWD/../../rust/target/bundled/ImageControl RS.clap" \
-  --artifacts "$PWD/target/native-host-presets"
-```
-
-The artifacts directory must be new and absolute.
-The helper saves neutral and -6 dB output-trim presets through AudioBatch-rs's production host and preset store.
-It also accepts the C++ or RS VST3, without installed discovery or application settings changes.
-C++ AudioBatch requires its own native XML presets, captured with `ImageControlPresetWriter --bundle`.
-`--neutral` saves initialized defaults, while the default captures its mapped comparison controls.
-Use separate absolute `AUDIOBATCH_DATA_ROOT` directories and temporary input copies for `process --preset` runs.
-The dated Windows results and remaining GUI qualification gates are recorded in the evaluation.
+CI builds and tests the Rust plugin in Debug and Release on macOS and Windows.
+It validates VST3 with pinned pluginval strictness 10, exercises CLAP host scenarios,
+checks packaged C++/Rust parity, and runs Miri, RealtimeSanitizer, and the cargo-deny license audit.
+macOS CI also checks native CLAP and AU editors and validates the installed Audio Unit.
+CI runs no benchmarks.
 
 ## Install
 
@@ -232,10 +183,9 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
 - Presets store sound, excluding Solo, Delta, Bypass, editor preferences, and local history.
   Project preset origins retain identity and a sound baseline, not permission to overwrite a library revision.
   After project recall, reconnect explicitly before changing the corresponding library entry.
-- Windows CLAP exposes the custom Iced editor with synchronous native retirement during host callbacks.
-  The published Iced bridge repair defers nested runtime polling without losing queued events.
-  Bounded native callback probes pass, but broader input/DPI,
-  and actual application GUI workflows remain qualification gates, as recorded in the evaluation.
+- Windows CLAP exposes the custom Iced editor.
+  Bounded callback-removal and lifecycle cases pass, but broader input, genuine mixed-DPI transitions,
+  and actual application GUI workflows remain qualification gates.
 - Full Iced device-loss recovery, native accessibility qualification, legal module unload/reload,
   and complete upstream widget-cache reclamation are not established.
   Invalid off-thread or reentrant final release retains UI resources as leak containment, not unload qualification.
@@ -243,5 +193,5 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, DSP, analysis, rendering, state, and verification contracts.
 The bounded `editor_compare` example hosts explicit C++ and Rust build-tree bundles with the same stereo comb.
 Use it for manual layout and spectrum comparison without audio hardware.
-[The evaluation](docs/rust-evaluation.md) records dependency research, historical experiments, and production gates.
+The [current-status evaluation](docs/rust-evaluation.md) summarizes the selected stack and remaining gates.
 [Plugin agent instructions](../AGENTS.md) and [repository instructions](../../AGENTS.md) govern development.

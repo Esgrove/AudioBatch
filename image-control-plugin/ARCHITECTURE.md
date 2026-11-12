@@ -634,8 +634,9 @@ Post analysis, independent gestures, and initialization from the first FIR pre-r
 These numerical contracts do not establish the subjective sound of recovered reverb or transient detail.
 
 `cmake/Verification.cmake` adds plugin-specific sanitizer or source-coverage instrumentation.
-CI runs Debug and Release on macOS and Windows, pinned pluginval validation,
-macOS AU validation, clang-tidy, macOS sanitizers, coverage, and comparator tooling contracts.
+CI runs Debug and Release builds and tests on macOS and Windows, pinned pluginval validation,
+macOS AU validation, clang-tidy, AddressSanitizer, UndefinedBehaviorSanitizer,
+ThreadSanitizer, RealtimeSanitizer, and coverage. It runs no benchmarks.
 Source coverage does not establish GPU correctness or packaged-host integration.
 The current unit environment exercises little of the renderer's actual GPU drawing path.
 
@@ -650,7 +651,8 @@ excluding the untimed processing used to advance ramps and observe results.
 Separate analyzer and captured-frame particle probes isolate worker-side costs.
 Hovered overlay probes exercise response geometry,
 while `--focused` selects those probes and small Solo/Delta callbacks.
-These probes are observations, not performance improvement evidence without a matched baseline.
+These probes are available for local use only.
+They are observations, not performance improvement evidence without a matched baseline.
 `test-signals/generate.py --group listening` supplies deterministic synthetic decays, pure-Side sweeps/combs,
 phase/adversarial pairs of both signs, and left/right hard-panned transients with bass for manual comparisons.
 Those generated inputs do not establish that any listening evaluation has taken place.

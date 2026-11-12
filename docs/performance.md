@@ -477,127 +477,52 @@ The largest history difference occurs near -143.28 LUFS in the final 192 kHz DC-
 Displayed loudness values and normalized sample bytes in the golden tests agree.
 These results describe the tested corpus, not identical decoding for every lossy input.
 
-## ImageControl Render Development Measurements
+## ImageControl Render Measurements
 
-Measured November 11, 2026, on an Apple M3 Max with a 40-core GPU and 64 GiB memory, running macOS 27.2.1.
-Visible-editor captures use the built-in display's advertised 120 Hz maximum and a backing scale of two.
+Measured on November 11, 2026, on an Apple M3 Max with a 40-core GPU and 64 GiB memory, running macOS 27.2.1.
+Visible-editor captures use the built-in 120 Hz display at a backing scale of two.
 These are short Release development observations, not regression thresholds or physical presentation measurements.
-No Windows render benchmark was executed.
+No matched Windows render comparison has been made.
 
 ### Offscreen Production Renderer
 
-The baseline covers 1280×720 and 2560×1440 physical targets at scale one, particles and solid modes,
+Both implementations render the same deterministic particle workload in 32-frame batches.
+The capture covers 1280×720 and 2560×1440 targets at scale one, particles and solid modes,
 and 4096 and 16_384 particles per frame.
-Two counterbalanced process pairs per case give eight cases and 32 native runs.
-Each process completes 120 measured frames after 30 warmup frames.
-These historical captures use 16-frame C++ batches and 32-frame Rust batches.
-Because completion timings include batch waits, the cross-implementation throughput includes unequal synchronization overhead.
-The current runners both use 32-frame batches and report that contract explicitly.
-The following completion times sum both processes' measured phases, 240 frames per implementation.
-Each pair is C++ / Rust, and particle counts are listed as 4096 then 16_384:
-
-- 1280×720 particles: 117.677291 / 150.448499 ms, then 120.449209 / 149.436458 ms.
-- 1280×720 solid: 126.623000 / 156.643292 ms, then 128.313833 / 164.156875 ms.
-- 2560×1440 particles: 136.951500 / 152.272709 ms, then 140.386834 / 164.144709 ms.
-- 2560×1440 solid: 144.113124 / 169.646625 ms, then 150.443292 / 183.772458 ms.
-
-Aggregate completed throughput ranges from 1595.3 to 2039.5 frames/s for C++ and 1306.0 to 1606.0 for Rust.
-Rust completion takes 11.19 to 27.93 percent longer in these historical pairs despite often lower CPU submission p50s.
-The unequal batch sizes prevent interpreting those ratios as a matched renderer-efficiency comparison.
-For example, 1280×720 particles at 4096 has C++ p50s of 256.4375 and 256.3540 µs,
-versus Rust's 226.5835 and 233.7495 µs, but completed throughput is 2039.5 versus 1595.2 frames/s.
-Submission p50 does not measure completed GPU work.
-
-C++ reports asynchronous OpenGL per-frame elapsed queries.
-Rust's Metal adapter advertises timestamp support but returns zero or non-monotonic intervals in all 16 runs.
-Those GPU samples are null and timing is explicitly unsupported, not zero-cost.
-Completed throughput is separate from GPU query duration and includes batch completion and query/readback overhead.
-The implementations have different backends, output formats, and target allocations.
-These measurements neither isolate GPU efficiency nor establish equivalence, significance, or display deadlines.
-The offscreen tier excludes the full editor, analyzer, audio processing, swap, and physical presentation.
-A second 32-run capture after the scheduling/continuity work passed the same workload and schema validation.
-Candidate-to-baseline completed-wall-time ratios span 1.006–1.115 for C++ and 0.990–1.216 for Rust.
-With only two short process runs per case and no intended shader optimization,
-these spreads do not establish renderer improvements or statistically qualified regressions.
-Both raw captures and their saved-report comparison remain available for longer repetitions.
-
-The final equal-batch capture uses 32-frame batches for both implementations, three counterbalanced process pairs per case,
-240 measured frames after 32 warmup frames, and the same eight cases.
-All 48 native runs pass shared workload, count, geometry, batch, and timing validation.
-Completed throughput, computed as measured frames divided by mean completed wall time across each case's three runs,
+Three counterbalanced process pairs per case measure 240 frames after 32 warmup frames.
+Completed throughput, measured frames divided by mean completed wall time,
 ranges from 1658.0 to 2191.8 frames/s for C++ and 1289.7 to 1570.3 for Rust.
-At 2560×1440 solid with 16_384 particles, the corresponding rates are 1658.0 and 1289.7 frames/s.
-These remain offscreen completed-batch observations with different graphics APIs, not screen-refresh or scanout rates.
-Evidence is retained in `render-matched32-verified-20261111/`.
+At 2560×1440 solid with 16_384 particles, the rates are 1658.0 and 1289.7 frames/s.
+
+C++ reports OpenGL per-frame GPU time.
+Rust's Metal adapter returns zero or non-monotonic timestamp intervals,
+so its GPU samples are reported as unsupported, not as zero cost.
+The backends, output formats, and target allocations differ,
+so these results do not isolate renderer efficiency or establish display deadlines.
+The offscreen tier excludes the full editor, analyzer, audio processing, swap, and presentation.
 
 ### Visible Production Editor
 
-Each capture observes one explicit build-tree VST3 for six seconds after two seconds of warmup.
-At 1000×764 logical pixels, the baseline reports 119.998945 successful frames/s for C++ and 62.492385 for Rust.
-Rust's original application-refresh observations arrive about every 31.994459 ms, about 31 Hz,
-but observe coalesced increments representing about 62.5 encoded frames/s.
-Their zero p50 inter-observation frame gap is not valid frame pacing.
+Each capture observes one build-tree VST3 editor for six seconds after two seconds of warmup.
+At the default 1000×764 logical size, C++ observes about 120 frames/s,
+and Rust encodes 120.0 frames/s with p50 and p95 frame gaps of 8.33 and 8.42 ms.
+On macOS, the Rust editor follows the view's display link through the pinned Iced/baseview fork.
+On Windows, a `DwmFlush` worker paces redraws to the desktop composition.
+It measured 153 frames/s on a 144 Hz display, including the background poll.
 
-The Rust native-frame candidate records 720 encoding endpoints, 120.0 frames/s,
-with p50/p95 endpoint gaps of 8.331917/8.421417 ms and p50 encoding time of 5.042 µs.
-This changes both scheduling and timestamp source, so it is not a like-for-like CPU timing comparison.
-The [pinned Iced/baseview fork](https://github.com/Esgrove/iced_baseview/commit/c7b466323a8ffd18282739d61073fa0f88b06c25)
-adds opt-in native scheduling instead of timer-driven presentation, forwarding macOS redraws to the view's display link.
-Windows retains compatibility scheduling until its fixed redraw timer is separately qualified.
-The preliminary 1728×1000 Rust candidate records 707 endpoints, 117.833333 frames/s,
-with p95/p99 gaps of 9.287083/16.789625 ms.
-Large-window preliminary captures may overlap builds,
-so they do not establish stable cadence or a size-dependent regression.
-A later isolated ten-second 1728×1000 capture records 119.4 encoded frames/s for Rust and 119.586554 for C++.
-Rust's p95/p99 encoding gaps are 9.257458/13.045916 ms, with a 16.797250 ms maximum.
-C++ counter-observation gaps have p95/p99 of 9.990208/10.324459 ms, with a 17.093000 ms maximum.
-Both remain close to native refresh but these tails do not establish an every-frame 120 Hz guarantee.
-The solid candidate reports 120.0 frames/s but is explicitly hidden/occluded and not qualified as visible.
+A ten-second 1728×1000 capture records 119.4 encoded frames/s for Rust and 119.6 for C++.
+Rust's p95 and p99 gaps are 9.26 and 13.05 ms, and C++ observes 9.99 and 10.32 ms.
+During a continuous Persistence and Contrast sweep, both editors stay near 120 frames/s,
+and every production preference update is accepted without a source-generation change.
+These tails do not establish an every-frame 120 Hz guarantee.
 Native visibility observations do not prove unobstructed pixels, GPU completion, or physical scanout.
 
-A ten-second Rust continuous Persistence/Contrast capture after three seconds of warmup records 1200 endpoints,
-120.0 encoded frames/s, with p95/p99 gaps of 8.471833/8.573334 ms.
-The native-frame driver applies 1565 accepted production preference updates across warmup and measurement,
-with no source-generation or projection-epoch changes and no rejected updates.
-Persistence spans approximately 0.1003–2.4995 seconds and Contrast 0.1001–0.8998.
-The corresponding C++ sweep accepts 1564 updates with no source-generation changes and observes 119.918459 frames/s.
-These captures exercise live setters, not repeated project-state restores.
+### Render Reproduction
 
-C++ skips unchanged property-derived settings while retaining VBlank meter/render updates.
-Its default-size candidate observes 119.920104 frames/s, with refresh-work p50/p95 of 79.208/107.584 µs,
-versus the baseline's 93.250/125.875 µs. Cadence was already near 120 Hz on this built-in display.
-An isolated production settings probe, `ImageControlBenchmark --refresh-settings-only --repetitions 10`,
-measures median p50/p95 across three runs of 26.257812/29.796875 µs before and 24.252625/26.856813 µs after.
-Those bounded CPU observations do not establish a fix for the originally reported external-display behavior.
-
-### Criterion Spectrogram Benchmarks
-
-The Rust plugin also exposes the warmed production renderer directly through Criterion:
-
-```shell
-cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram
-cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram -- \
-  'completed_gpu_work/1280x720/particles/4096$' --quick
-```
-
-Groups separately measure `particle_packing_cpu`, `submission_cpu`, and `completed_gpu_work`.
-Each case uses a deterministic ICRB0001 frame, physical 1280×720 or 2560×1440 targets,
-particle/solid modes, and 0, 4096, 16_384, or 65_536 particles.
-Setup and cold warmup are outside timing. Submission excludes batch-boundary waits but includes queue backpressure.
-The Cargo bench profile explicitly inherits Release,
-with opt-level 3, LTO, one codegen unit, and debug assertions disabled.
-Repository Cargo configuration adds `-C target-cpu=native`.
-Measured benchmark entry points reject compiled development, unoptimized, or non-native artifacts,
-including conflicting environment/profile overrides. Help and correctness tests remain available in Debug.
-Completed work includes packing, upload, command encoding, submission, and bounded GPU completion every 32 frames.
-Criterion throughput counts frames, not display refreshes. GPU timestamps remain disabled for these groups.
-Use the shared artifact runner below for cross-implementation and machine-provenance comparisons.
-
-### Render Reproduction And Evidence
-
-Run these macOS commands from the repository root, finishing all builds before timing.
-The bundler packages only the explicit build-tree VST3 and does not install it.
-Use new report paths and new or empty artifact directories for every capture:
+Benchmarks run locally only. Finish all builds before timing,
+and use new report paths and new or empty artifact directories for every capture.
+Measured entry points reject development, unoptimized, or non-native builds.
+Run these macOS commands from the repository root:
 
 ```shell
 (cd image-control-plugin && \
@@ -613,29 +538,31 @@ rust="$PWD/rust/target/release/examples/render_benchmark"
 evidence="$PWD/image-control-plugin/rust/target"
 uv run --script image-control-plugin/benchmarks/render_benchmark.py \
   --cpp "$cpp" --rust "$rust" --no-build --artifacts "$evidence/render-new" \
-  --runs 2 --frames 120 --warmup 30 --size 1280x720 --size 2560x1440 \
-  --scale 1 --mode particles --mode solid --particles 4096 --particles 16384 \
-  --step 0.008333333333333333 --persistence 0.3
+  --runs 3 --frames 240 --warmup 32 --size 1280x720 --size 2560x1440 \
+  --scale 1 --mode particles --mode solid --particles 4096 --particles 16384
 rust/target/release/examples/editor_benchmark \
   --bundle "$PWD/rust/target/bundled/ImageControl RS.vst3" \
   --seconds 6 --warmup 2 --width 1000 --height 764 --case default \
   --report "$evidence/editor-rust-new.json"
 uv run --script image-control-plugin/benchmarks/render_compare.py \
-  --compare "$evidence/render-baseline-gui-20261111" --compare "$evidence/render-new" \
+  --compare "$evidence/render-baseline" --compare "$evidence/render-new" \
   --artifacts "$evidence/render-comparison-new"
 ```
 
-Supply only `--cpp` or only `--rust` to capture an individual implementation with the shared runner.
-The same visible-editor host accepts the C++ build-tree bundle through `--bundle`:
-`image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3`.
-Saved comparisons require matching workloads and raw evidence, and report second-over-first descriptive ratios.
-They do not turn separate captures or different machines into paired experiments or isolate an operating-system effect.
+Pass only `--cpp` or only `--rust` to capture one implementation.
+The visible-editor host also accepts the C++ build-tree bundle through `--bundle`.
+Saved comparisons require matching workloads and report second-over-first ratios.
+They do not turn separate captures or different machines into paired experiments.
 
-Historical ignored evidence remains under `image-control-plugin/rust/target/`:
-`render-baseline-gui-20261111/` retains native reports, raw timings, workload manifests and hashes,
-executable SHA-256 identities, commands, source revision, dirty-worktree status, and host/backend metadata.
-Caller build-metadata objects were empty, so these identities are not a complete compiler/flags provenance record.
-`editor-{cpp,rust}[-large]-baseline-gui-20261111.json` retains the original counter-based captures,
-and `editor-rust[-large|-solid]-native-frame-20261111.json` retains the candidate endpoint captures.
-The two-pair, 120-frame offscreen samples and single short visible captures need longer isolated repetition
-before making performance guarantees or accepting a regression threshold.
+The Rust plugin also exposes the warmed production renderer through Criterion:
+
+```shell
+cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram
+cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram -- \
+  'completed_gpu_work/1280x720/particles/4096$' --quick
+```
+
+Its groups separately measure `particle_packing_cpu`, `submission_cpu`, and `completed_gpu_work`,
+with setup and cold warmup outside timing.
+Submission excludes batch-boundary waits but includes queue backpressure.
+Throughput counts frames, not display refreshes.
