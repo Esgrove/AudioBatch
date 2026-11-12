@@ -95,14 +95,21 @@ The embedded bottom-right grip sends constrained logical dimensions through the 
 The host's `onSize` acknowledgement is authoritative, so rejected requests do not optimistically resize the child.
 macOS host dimensions remain points, while Windows dimensions convert once between logical units and physical pixels.
 The default editor is 1000 by 764 logical units, bounded by 760 by 600 and 4096 by 4096.
+Windows attachment resolves remembered logical size against the live parent's DPI before creating the child.
+Explicit physical host sizes are preserved without another DPI multiplication.
 
-Native reentrant removal is exercised on macOS.
-Windows VST3 rejects removal during an active callback or geometry flush so the host can retry safely.
-Windows CLAP does not advertise the custom GUI because its void destroy callback cannot support that retry protocol.
-Host-provided CLAP parameter controls remain available, with DSP/state independent of a native editor.
-The host must not destroy the parent or unload the module after rejected removal.
+Native reentrant removal is exercised on macOS and by the Windows VST3 qualification driver.
+The pinned Iced bridge defers nested runtime polling while retaining queued events and active native dispatch storage.
+Windows VST3 removal now synchronously retires its child and workers during host callbacks.
+Windows CLAP advertises its custom GUI when the editor feature is enabled.
+Its native driver exercises ordinary lifecycle and destruction inside an active host parameter callback,
+checking synchronous child retirement and independently flushed balanced gestures.
+Later repeatability checks can be blocked before input delivery by an obstructing desktop window.
+The driver treats that as a failure, not a successful lifecycle result.
+DSP/state remain independent of a native editor.
 The view's safe `UiOwner<T>(Option<T>)` uses ordinary automatic drops rather than unsafe `ManuallyDrop` cleanup.
-Invalid off-thread or reentrant foreign final release deliberately forgets retained UI resources.
+Invalid off-thread final release, or final release whose native retirement fails, deliberately forgets retained UI resources.
+Valid owner-thread final release after callback removal drops the UI owners when the callback unwinds.
 This is leak containment, not module-unload qualification.
 Complete upstream widget-cache reclamation and arbitrary module unloading remain separate production gates.
 

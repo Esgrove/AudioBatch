@@ -1,6 +1,6 @@
 # Rust ImageControl evaluation
 
-Source inspection date: **11 November 2026**.
+Source inspection date: **12 November 2026**.
 This is a feasibility and dependency evaluation for macOS and Windows, not a production rewrite approval.
 The C++ plugin remains the supported implementation.
 The Rust experiment includes four-band FIR processing and a native GPU editor, but not C++ project-state compatibility.
@@ -10,6 +10,197 @@ No framework, graphics backend, or permissive license by itself establishes prod
 
 The dated parity-completion and benchmark results retained below describe earlier reviewed artifacts.
 The Rust-native cleanup checks are recorded separately and do not imply a performance improvement.
+
+### Windows Native Probe: 12 November 2026
+
+The Windows `editor_reentry` driver supports `--case removal-retry`, `--case nested-dispatch`,
+and `--case synchronous-removal`.
+All cases load an explicit build-tree VST3 bundle and fail after a 30-second watchdog deadline.
+The inspected baseline module SHA-256 is `001c7b5db6d0069f4ed50bd3516ee39ab3a4c8c86b0bd18c2ec59a69543dc050`.
+This is a preserved as-found binary, not a verified rebuild of the recorded source revision.
+
+With the host's Win32 message drain bounded by its timeout, the Release removal/retry probe passed three cycles.
+Each cycle delivered native pointer input, read back a changed Output value, balanced begin/end gestures,
+rejected removal twice per parameter callback without losing the child,
+then successfully removed it outside the callback and verified native child retirement.
+The host-core regression suite passed 13 tests, including a queued-message budget check.
+This does not establish a bound on an individual native window procedure.
+
+Nested dispatch aborted in the former `iced_baseview` revision `c7b4663`,
+because `poll_runtime` mutably borrowed an already-borrowed runtime.
+The published fork repair `f9d3384c50e95d78fbfe0a1b8e002c1f1a314e2d` defers nested polling,
+preserves queued events, and avoids draining native commands inside an active runtime borrow.
+The workspace now pins that revision.
+Its eight library tests pass, including recursive polling followed by later progress.
+The repaired packaged VST3 passed three nested-dispatch cycles and subsequently three synchronous-removal cycles.
+Each synchronous cycle retired the HWND inside the parameter callback and balanced its gesture.
+The strengthened driver subsequently passed three cycles of each case against both Debug and Release packages.
+It retains the original child HWND for retirement assertions and stops pointer delivery after child detachment.
+The focused callback-removal and geometry-flush ownership regressions also pass on Windows.
+
+Windows CLAP advertises its custom GUI with the editor feature enabled.
+The Windows `clap_editor` driver passed three ordinary create/show/hide/resize/destroy/reopen cycles,
+checking actual native geometry, pending-work cancellation, and immediate HWND destruction.
+Three subsequent active `request_flush` callback-destruction cycles passed after allowing native input to settle.
+Each verified native child retirement and independently flushed balanced begin/end gestures.
+Later repetitions passed ordinary lifecycle checks but stopped before pointer delivery:
+the strict native hit-test found a covering `MozillaWindowClass`, despite visible and enabled plugin windows.
+Fixed placement and per-monitor DPI awareness did not remove that obstruction.
+Those stopped runs are not successful callback tests or established teardown failures.
+The native driver does not send input through a foreign window or suppress the failure.
+Subsequent unobstructed runs passed all three ordinary
+and all three callback-destruction cycles against each of the Debug and Release packages,
+with strict hit-testing unchanged.
+Their raw logs are retained in `rust/target/benchmark/windows-host-integration/`, relative to the plugin directory.
+This establishes repeatability for the exercised native cases, not the broader input and lifecycle matrix.
+
+Both Debug and Release packaged builds passed 302 plugin library tests and format contracts.
+The full native test script passed, including its editor lifecycle case.
+Pluginval passed strictness 5 for both profiles and strictness 10 for Release.
+Independent C++/Rust packaged parity passed all 264 cases without changing tolerances.
+Shared VST3 hosting passed 76 unit tests and its integration test.
+The Windows callback-final-release regression verifies successful synchronous removal without retained UI owners
+after the host callback returns.
+These are bounded package and ownership results, not complete native GUI qualification.
+
+The subsequent editor benchmark smoke exposed plugin-dependent DPI awareness:
+C++ opened at 1250 by 955 physical pixels and 125% scale, while RS opened at 1000 by 764 and 100%.
+The benchmark now establishes a per-monitor-aware thread context before loading either plugin.
+That exposed a separate RS initialization defect: its child remained 1000 by 764 physical pixels at 125% scale,
+despite a correct pre-attachment VST3 size of 1250 by 955.
+The shared Windows attachment layer now resolves initial logical size against the live parent DPI
+before native child creation, without scaling explicit physical host sizes again.
+The corrected Release VST3 smoke observed exactly 1000 by 764 logical and 1250 by 955 physical pixels at 125%.
+A native-parent regression verifies authoritative DPI and unchanged explicit physical sizes.
+Both profiles were subsequently rebuilt with `--test --validate`, passing package contracts,
+all 303 plugin library tests, and pluginval strictness 5 after this repair.
+Strict lint and formatting also passed.
+This verifies the exercised initial geometry, not genuine multi-monitor DPI transitions.
+The earlier Debug/Release callback passes precede this geometry repair.
+Its callback repeats stopped before pointer delivery after the desktop locked:
+CLAP identified the covering `LockScreenBackstopFrame` window.
+Post-repair callback qualification remains blocked, and no lock-screen input bypass was attempted.
+The unmatched editor smoke reports are retained as diagnostics, not performance comparisons.
+
+### Windows Application Hosts: 12 November 2026
+
+Actual C++ AudioBatch
+and AudioBatch-rs CLIs processed only temporary copies with separate absolute `AUDIOBATCH_DATA_ROOT` directories
+and explicit build-tree plugin paths.
+JUCE captured native XML presets.
+AudioBatch-rs captured native JSON through its production host and preset store.
+No opaque state was converted between host schemas or plugin implementations.
+Both applications loaded C++ ImageControl and ImageControl RS VST3.
+AudioBatch-rs also loaded RS CLAP.
+
+Twenty renders covered neutral and active states with two repetitions on each of these five routes.
+Neutral decoded PCM16 and repeated outputs were bit-exact.
+The C++ application's matched crossover/Mid/Side/Pan presets produced matching 546-frame trailing output
+and at most one PCM16-step cross-implementation residual.
+The Rust application's separate -6 dB output-trim presets matched independently quantized expectations within one PCM16 step.
+RS VST3 and CLAP outputs were bit-identical.
+Five additional tagged-FLAC renders preserved title, artist, and album.
+Processed Serato fixtures correctly discarded stale Overview tags.
+These exported-file checks do not replace the independent floating-point parity or latency/tail tests.
+
+Reports, captured native presets, decoded PCM hashes, executable/plugin/fixture SHA-256 inventory,
+and machine metadata are retained locally under
+`rust/target/benchmark/windows-host-integration/` relative to the plugin directory.
+The application executables are identified as-found builds, not a fresh rebuild of every application source.
+No CLI processing duration is presented as DSP-only time.
+Actual GUI chain manipulation, preview/playback removal, multi-instance editing,
+and genuine DPI transitions remain unqualified.
+
+### Windows Matched Measurements: 12 November 2026
+
+Hardware metadata identifies Windows 11 Pro build 26300, Ryzen 9 7950X,
+and GeForce RTX 4090 with driver `32.0.16.2101`.
+The High performance power scheme was recorded after the captures, not monitored throughout each sample.
+Renderer reports identify DX12 for Rust and OpenGL 4.1/NVIDIA 621.01 for C++.
+
+The same optimized native VST3 host measured C++, preserved RS baseline, and candidate RS plugins.
+Ten processing scenarios passed bounded smoke at 44.1/48/96/192 kHz for both implementations.
+The matched capture contains 300 runs:
+five counterbalanced repetitions of neutral/recover/delta/bypass at 48 kHz,
+960000 measured frames, and fixed 64/128/256/512 or irregular 1/17/257/511 blocks.
+Each run used the host's built-in audio warmup, not an additional whole-process warmup.
+The recorded helper metadata value `warmup=1` must not be interpreted as a separate process invocation.
+Every five-sample group has one deterministic output checksum.
+Checksums alone do not prove correctness.
+
+At 256-frame blocks, total warmed callback milliseconds were:
+
+| Case | C++ Median (Range) | RS Baseline Median (Range) | RS Candidate Median (Range) |
+| --- | --- | --- | --- |
+| Neutral | 37.005 (36.747-37.369) | 19.547 (19.097-20.503) | 19.145 (19.110-19.335) |
+| Recover | 547.671 (542.730-552.014) | 89.719 (88.936-92.006) | 90.862 (90.187-96.793) |
+| Delta | 547.663 (543.907-554.648) | 90.736 (90.393-92.426) | 92.080 (89.790-97.065) |
+| Bypass | 37.022 (36.765-37.649) | 19.152 (19.083-19.634) | 19.111 (19.093-19.225) |
+
+Local artifacts: `rust/target/benchmark/windows-processing-matched-5UivmfjK/`, relative to the plugin directory.
+The directory retains raw samples, exact bundle/host hashes, and all block schedules.
+These observations do not establish an RS before/after improvement: sample ranges overlap.
+The preserved baseline is an as-found artifact, not a proven rebuild of its recorded source revision.
+
+The shared native host now also separates module loading from instance preparation and warmed callbacks.
+Sixty fresh-process captures cover C++, preserved RS baseline, and current RS at all four rates,
+with five counterbalanced repetitions, 256-frame blocks, and 4096 measured neutral frames.
+Every run passed its independent delayed-input bit check, with deterministic outputs in each five-run group.
+Instance preparation includes construction, bus configuration, processing setup, and activation.
+It excludes module loading, sound configuration, input generation, warmup, and teardown.
+These are complete host-preparation boundaries, not exclusive kernel-design or analysis timings.
+Filesystem caches were not controlled, and there was no additional process warmup.
+
+| Rate (kHz) | C++ Preparation Median (ms) | RS Baseline (ms) | RS Current (ms) |
+| --- | --- | --- | --- |
+| 44.1 | 8.019 | 3.306 | 3.353 |
+| 48 | 8.002 | 3.381 | 3.328 |
+| 96 | 12.755 | 6.082 | 6.121 |
+| 192 | 21.553 | 11.572 | 11.656 |
+
+At 48 kHz, preparation ranges were 7.855-8.453, 3.271-3.595, and 3.295-3.459 ms respectively.
+Module-load medians were separately 5.924, 3.365, and 3.329 ms.
+The overlapping RS preparation ranges establish no before/after improvement.
+Raw samples, exact bundle/host identities,
+and min/median/max summaries are retained in `rust/target/benchmark/windows-preparation-matched-zBRCMkVL/`,
+relative to the plugin directory.
+The seven focused evidence contracts pass, including finite preparation timings and unchanged non-timing determinism.
+The full benchmark-script suite remains blocked by six existing Windows shell-mock failures:
+native paths in generated shebangs and Git launcher's PATH rewriting prevent faithful command isolation.
+Exploratory harness changes were withdrawn rather than weakening those tests.
+
+Separate candidate-only Criterion runs used 100 samples after three seconds of warmup at each rate.
+At 44.1/48/96/192 kHz, preparation point estimates were 2.671/2.548/5.098/10.332 milliseconds.
+Warmed analysis of 4096 frames measured 0.903/0.879/0.880/0.921 milliseconds at those rates.
+Preparation includes allocation and kernel worker creation, with destruction excluded.
+The saved `windows-20261112` Criterion data is in the root workspace's `rust/target/criterion/`.
+The invocation log is `rust/target/benchmark/windows-setup-analysis-20261112.log`, relative to the plugin directory.
+These are not matched C++ or baseline measurements and establish no before/after improvement.
+
+The paired renderer capture contains 40 validated runs, five repetitions per implementation and case,
+using identical workload bytes at 1280 by 720 physical pixels, scale 1, particles/solid, and 4096/16384 particles.
+Each run has 30 warmup and 120 measured frames.
+For 16384 particles, median mean CPU encoding was 129.309 microseconds/frame for C++ and 234.984 for Rust.
+Median completed-batch time was 49.871 milliseconds for C++ and 29.469 for Rust.
+For 4096 particles, the corresponding batch medians were 22.775 and 22.773 milliseconds.
+C++ uses RGBA32F accumulation on Windows.
+Rust uses Rgba16Float, with different output formats as well.
+C++ GPU timestamps were unavailable and remain null, so these batch/CPU values are not GPU pass-time comparisons.
+No physical presentation or display FPS is inferred from this headless measurement.
+Raw reports and validated summaries are in `rust/target/benchmark/windows-render-matched-20261112T091626Z/`.
+The C++ benchmark retires pending warmup query bookkeeping before resetting measured frame identities.
+The exact duplicate-index regression and subsequent paired matrix passed strict report validation.
+
+The workflow includes bounded packaged-processing workloads
+and an opt-in interactive Windows native job selected with `windows_native_runner`.
+That job validates four native GPU reports with the reproduced 30-warmup/120-measured-frame query workload
+before running Debug and Release editor probes.
+The exact GPU invocation passed locally after rebuilding the touched C++ targets.
+Native failures retain their raw logs.
+The workflow schema validates locally, but the new jobs have not been qualified remotely.
+Remaining gates include post-DPI-repair callback repeats, broader native input and DPI,
+actual application GUI workflows, matched editor and isolated C++/baseline analysis measurements, renderer failure recovery,
+upstream widget-cache reclamation, and arbitrary module unloading.
 
 ## Recommendation
 
@@ -22,7 +213,9 @@ The Rust-native cleanup checks are recorded separately and do not imply a perfor
   **egui is excluded from the implementation choice**, as requested.
 - The GPU spectrogram uses custom wgpu shader primitives for instanced particles, half-float persistence,
   bloom, and composition. The selected Iced graph has no `iced_tiny_skia` software backend and no egui dependency.
-  macOS selects Metal, while native Windows graphics remain unverified.
+  macOS selects Metal.
+  Bounded Windows DX12 native/headless runs are recorded above,
+  without complete device-loss or display-presentation qualification.
 - The own VST3 and Clack CLAP adapters share one Rust DSP/state/Iced/wgpu implementation.
   The raw VST3/patched-GPUI reference, its vendor patches, and its separate workspace have been removed.
   The primary artifact links no nice-plug, nice-plug-iced, or patched GPUI crate.

@@ -341,7 +341,8 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   Custom folders replace those defaults.
   CLAP editors use the GUI and timer extensions with Cocoa or Win32 parents.
   Plugins without a supported native GUI have no editor, not a generic parameter window.
-  This includes ImageControl RS's direct Windows CLAP, which does not expose its custom GUI.
+  ImageControl RS exposes its custom Windows CLAP GUI with the editor feature enabled.
+  Its native qualification gates and remaining limitations are recorded in the plugin's Rust evaluation.
 - **Crashes.** Only scanning is isolated in a worker process.
   A plugin that crashes while processing, previewing, or showing its editor takes the GUI down.
 - **Data files** in the `AudioBatch-rs` data directory:

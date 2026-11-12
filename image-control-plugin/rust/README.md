@@ -136,6 +136,8 @@ The Rust integration test is optional without counterpart selection, and CI supp
 Peak residual must stay below `1e-5` full scale and RMS residual below `1e-6`, with exact neutral checks retained.
 Reports live under the shared target's `image-control-parity/` directory.
 Benchmark artifacts include exact binary hashes, compiler/source identity, workload, checksums, and machine metadata.
+Native processing reports separate module loading, instance preparation, and warmed callbacks.
+Preparation covers instance creation through activation, not exclusive kernel design or complete-process wall time.
 Run timings with other builds idle. There is no implied speedup without a matched baseline.
 The `spectrogram` Criterion target uses the native GPU without a host window.
 Cargo's bench profile inherits Release with full optimization, LTO, and one codegen unit.
@@ -145,6 +147,22 @@ Its completed-work group includes bounded batch completion, not physical display
 Filter it with `-- 'completed_gpu_work/1280x720/particles/4096$' --quick` for a short single-case run.
 See [the evaluation](docs/rust-evaluation.md#cross-implementation-and-performance-evidence) for measured scope
 and limitations.
+
+For isolated application CLI integration, capture host-native presets from explicit build-tree artifacts:
+
+```shell
+cargo run --release -p audiobatch-plugins --example image_control_presets -- \
+  --bundle "$PWD/../../rust/target/bundled/ImageControl RS.clap" \
+  --artifacts "$PWD/target/native-host-presets"
+```
+
+The artifacts directory must be new and absolute.
+The helper saves neutral and -6 dB output-trim presets through AudioBatch-rs's production host and preset store.
+It also accepts the C++ or RS VST3, without installed discovery or application settings changes.
+C++ AudioBatch requires its own native XML presets, captured with `ImageControlPresetWriter --bundle`.
+`--neutral` saves initialized defaults, while the default captures its mapped comparison controls.
+Use separate absolute `AUDIOBATCH_DATA_ROOT` directories and temporary input copies for `process --preset` runs.
+The dated Windows results and remaining GUI qualification gates are recorded in the evaluation.
 
 ## Install
 
@@ -183,12 +201,12 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
 - Presets store sound, excluding Solo, Delta, Bypass, editor preferences, and local history.
   Project preset origins retain identity and a sound baseline, not permission to overwrite a library revision.
   After project recall, reconnect explicitly before changing the corresponding library entry.
-- Windows CLAP currently exposes host-provided parameter controls, not the custom Iced editor.
-  CLAP destruction cannot use VST3's rejected-removal retry protocol during a reentrant Win32 callback.
-  The custom CLAP GUI is not advertised there until safe synchronous teardown is implemented and tested.
+- Windows CLAP exposes the custom Iced editor with synchronous native retirement during host callbacks.
+  The published Iced bridge repair defers nested runtime polling without losing queued events.
+  Bounded native callback probes pass, but repeated unobstructed Debug/Release, broader input/DPI,
+  and actual application GUI workflows remain qualification gates, as recorded in the evaluation.
 - Full Iced device-loss recovery, native accessibility qualification, safe arbitrary module unloading,
   and complete upstream widget-cache reclamation are not established.
-  Windows reentrant removal may be rejected until the host retries outside an active callback.
   Invalid off-thread or reentrant final release retains UI resources as leak containment, not unload qualification.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, DSP, analysis, rendering, state, and verification contracts.
