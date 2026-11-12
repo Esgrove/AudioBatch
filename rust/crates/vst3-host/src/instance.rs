@@ -23,7 +23,8 @@ use thiserror::Error;
 use vst3::Steinberg::Vst::{
     BusDirections_, IAudioProcessor, IAudioProcessorTrait as _, IComponent, IComponentHandler, IComponentTrait as _,
     IConnectionPoint, IConnectionPointTrait as _, IEditController, IEditControllerTrait as _, IParameterChanges,
-    MediaTypes_, ProcessData, ProcessModes_, ProcessSetup, SpeakerArr, SpeakerArrangement, SymbolicSampleSizes_,
+    MediaTypes_, ParameterInfo, ProcessData, ProcessModes_, ProcessSetup, SpeakerArr, SpeakerArrangement,
+    SymbolicSampleSizes_,
 };
 use vst3::Steinberg::{FUnknown, IBStream, IPluginBaseTrait as _, TUID, kResultOk, kResultTrue};
 use vst3::{ComPtr, ComWrapper};
@@ -259,10 +260,6 @@ impl InstanceCore {
     }
 
     /// Returns the edit controller, if the plugin has one.
-    #[cfg_attr(
-        not(any(feature = "editor", test)),
-        expect(dead_code, reason = "only editor windows and tests reach the controller")
-    )]
     pub(crate) fn controller(&self) -> Option<&ComPtr<IEditController>> {
         self.parts.controller.as_ref()
     }
@@ -758,6 +755,27 @@ impl PluginInstance {
         }
         self.core.edits.force_push(ParameterEdit { id, value });
         Ok(())
+    }
+
+    /// Finds a controller parameter by its exact displayed title on the UI thread, outside processing.
+    ///
+    /// # Errors
+    /// Returns an error when the plugin has no edit controller.
+    pub fn parameter_id(&self, _ui: &UiThread, title: &str) -> Result<Option<u32>, InstanceError> {
+        let controller = self.core.controller().ok_or(InstanceError::MissingController)?;
+        // SAFETY: the initialized controller is retained by this instance and accessed on its UI thread.
+        let count = unsafe { controller.getParameterCount() };
+        for index in 0..count {
+            // SAFETY: ParameterInfo contains only numeric fields and fixed-size UTF-16 arrays.
+            let mut info: ParameterInfo = unsafe { std::mem::zeroed() };
+            // SAFETY: the index is within the reported count and info is writable for the entire call.
+            if unsafe { controller.getParameterInfo(index, &raw mut info) } == kResultOk
+                && crate::strings::from_utf16(&info.title) == title
+            {
+                return Ok(Some(info.id));
+            }
+        }
+        Ok(None)
     }
 
     /// Delivers a finite snapshot of queued edits through zero-length processing calls.
@@ -1309,6 +1327,17 @@ mod test_plugin_failures {
             non_finite.to_string(),
             "The value inf for parameter 0 is not a finite number"
         );
+    }
+
+    #[test]
+    fn parameter_titles_resolve_controller_ids_without_assuming_their_indices() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Gain, 2)?;
+            assert_eq!(instance.parameter_id(ui, "Gain")?, Some(0));
+            assert_eq!(instance.parameter_id(ui, "missing parameter")?, None);
+            Ok::<_, anyhow::Error>(())
+        })
+        .expect("parameter metadata on the owner thread");
     }
 
     #[test]
