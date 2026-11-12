@@ -24,10 +24,16 @@ pub fn start_application() -> Result<()> {
     Ok(())
 }
 
-/// The shared Win32 native window backend initializes its own resources.
+/// Pins this dedicated host thread's DPI context before plugin code can change process-wide awareness.
 #[cfg(target_os = "windows")]
-#[expect(clippy::unnecessary_wraps, reason = "shared fallible native startup contract")]
-pub const fn start_application() -> Result<()> {
+#[expect(unsafe_code, reason = "dedicated benchmark thread owns its native DPI context")]
+pub fn start_application() -> Result<()> {
+    use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext};
+
+    // SAFETY: startup precedes window creation.
+    // This dedicated UI thread keeps this context until process exit.
+    let previous = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    anyhow::ensure!(!previous.is_null(), "set benchmark per-monitor DPI awareness");
     Ok(())
 }
 

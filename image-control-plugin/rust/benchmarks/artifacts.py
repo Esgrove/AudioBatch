@@ -18,6 +18,7 @@ from typing import NoReturn
 
 LATENCY_BY_RATE = {44_100: 4352, 48_000: 4352, 96_000: 8448, 192_000: 16_640}
 MAXIMUM_BLOCK = 4096
+PREPARATION_TIMINGS = ("module_load_seconds", "preparation_seconds")
 
 
 def fail(message: str) -> NoReturn:
@@ -63,7 +64,8 @@ def report(path: Path, frames: int, case: str) -> dict:
     for name, wanted in expected.items():
         if value.get(name) != wanted:
             fail(f"{path.name}: {name} does not match independently requested {wanted}")
-    for name in ("energy", "peak", "callback_seconds"):
+    timings = PREPARATION_TIMINGS if any(name in value for name in PREPARATION_TIMINGS) else ()
+    for name in ("energy", "peak", "callback_seconds", *timings):
         number = value.get(name)
         if not isinstance(number, int | float) or not math.isfinite(number) or number <= 0:
             fail(f"{path.name}: {name} must be finite and positive")
@@ -91,7 +93,7 @@ def compare(first: Path, second: Path, frames: int, case: str) -> None:
     left = report(first, frames, case)
     right = report(second, frames, case)
     for key in left.keys() | right.keys():
-        if key != "callback_seconds" and left.get(key) != right.get(key):
+        if key not in ("callback_seconds", *PREPARATION_TIMINGS) and left.get(key) != right.get(key):
             fail(f"nondeterministic benchmark evidence: {key}")
 
 

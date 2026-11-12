@@ -26,6 +26,7 @@ use workload::{Scenario, input_frame};
 const USAGE: &str = "Usage: processing_benchmark [OPTIONS]
   -h, --help                Show help without loading a plugin
   -b, --bundle PATH         Absolute build-tree ImageControl RS.vst3 (required)
+    -i, --implementation NAME rust|cpp [rust]; exact ImageControl class identity
   -C, --case NAME           neutral|width|pan|gains|recover|delta|bypass|mono|solo|mono-input [recover]
   -S, --sample-rate HZ      44100|48000|96000|192000 [48000]
   -k, --block FRAMES        1..4096, or irregular (1,17,257,511) [irregular]
@@ -42,6 +43,8 @@ Bundles must be inside the repository or an explicitly supplied CARGO_TARGET_DIR
 struct Options {
     /// Canonical build-tree bundle selected explicitly inside an authorized repository or Cargo target root.
     bundle: PathBuf,
+    /// Explicit wrapper identity and controller-title mapping, never inferred from filenames.
+    implementation: Implementation,
     /// Saved sound controls held constant across the warmed callbacks.
     scenario: Scenario,
     /// Supported sample rate selecting one of four FIR geometries.
@@ -50,6 +53,13 @@ struct Options {
     blocks: Vec<usize>,
     /// Exact measured frame count, excluding warmup.
     frames: usize,
+}
+
+/// Selects one independently identified implementation while retaining a shared processing host and input.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Implementation {
+    Rust,
+    Cpp,
 }
 
 /// Machine-readable evidence, written only after native processing and teardown succeed.
@@ -87,6 +97,10 @@ struct Report {
     peak: f32,
     /// Host-reported FIR latency at the selected rate.
     latency_samples: u32,
+    /// Native module load and factory enumeration, excluding instance creation.
+    module_load_seconds: f64,
+    /// Instance creation, bus configuration, processing setup, and activation, excluding sound configuration.
+    preparation_seconds: f64,
     /// Sum of warmed host process call durations, excluding filling, checking, and report creation.
     callback_seconds: f64,
 }
@@ -166,6 +180,7 @@ fn options() -> Result<Option<Options>> {
         return Ok(None);
     }
     let mut bundle = None;
+    let mut implementation = Implementation::Rust;
     let mut scenario = Scenario::Recover;
     let mut sample_rate = 48_000;
     let mut blocks = vec![1, 17, 257, 511];
@@ -176,13 +191,30 @@ fn options() -> Result<Option<Options>> {
         ensure!(
             matches!(
                 name,
-                "-b" | "--bundle" | "-C" | "--case" | "-S" | "--sample-rate" | "-k" | "--block" | "-f" | "--frames"
+                "-b" | "--bundle"
+                    | "-i"
+                    | "--implementation"
+                    | "-C"
+                    | "--case"
+                    | "-S"
+                    | "--sample-rate"
+                    | "-k"
+                    | "--block"
+                    | "-f"
+                    | "--frames"
             ),
             "unknown option {name}"
         );
         let value = arguments.next().with_context(|| format!("{name} requires a value"))?;
         match name {
             "-b" | "--bundle" => bundle = Some(PathBuf::from(value)),
+            "-i" | "--implementation" => {
+                implementation = match value.to_str() {
+                    Some("rust") => Implementation::Rust,
+                    Some("cpp") => Implementation::Cpp,
+                    _ => bail!("--implementation must be rust or cpp"),
+                };
+            }
             "-C" | "--case" => {
                 scenario = Scenario::ALL
                     .into_iter()
@@ -212,6 +244,7 @@ fn options() -> Result<Option<Options>> {
     ensure!((4096..=4_000_000).contains(&frames), "frames must be 4096..4000000");
     Ok(Some(Options {
         bundle: checked_bundle(&bundle.context("--bundle is required")?)?,
+        implementation,
         scenario,
         sample_rate,
         blocks,
@@ -220,19 +253,38 @@ fn options() -> Result<Option<Options>> {
 }
 
 /// Publishes the same normalized sound cases as the direct DSP tier, without changing crossover kernels.
-fn configure(ui: &UiThread, instance: &PluginInstance, scenario: Scenario) -> Result<()> {
+fn configure(
+    ui: &UiThread,
+    instance: &PluginInstance,
+    scenario: Scenario,
+    implementation: Implementation,
+) -> Result<()> {
+    let parameter = |rust_id: u32, title: &str| -> Result<u32> {
+        if implementation == Implementation::Rust {
+            return Ok(rust_id);
+        }
+        instance
+            .parameter_id(ui, title)?
+            .with_context(|| format!("missing C++ control {title}"))
+    };
     if scenario == Scenario::Gains {
         let normalized = 20.0_f64.mul_add(0.8_f64.log10(), 24.0) / 36.0;
-        instance.set_parameter(ui, 0, normalized)?;
+        instance.set_parameter(ui, parameter(0, "Output Gain")?, normalized)?;
     }
     for band in 0..4 {
-        for (field, value) in scenario.band(band).into_iter().enumerate() {
-            instance.set_parameter(ui, u32::try_from(4 + band * 6 + field)?, value)?;
+        let name = ["Low", "Low Mid", "High Mid", "High"].get(band).context("band title")?;
+        for (field, (title, value)) in ["Mid", "Side", "Width", "Recover", "Pan", "Solo"]
+            .into_iter()
+            .zip(scenario.band(band))
+            .enumerate()
+        {
+            let id = parameter(u32::try_from(4 + band * 6 + field)?, &format!("{name}: {title}"))?;
+            instance.set_parameter(ui, id, value)?;
         }
     }
-    instance.set_parameter(ui, 28, f64::from(scenario == Scenario::Bypass))?;
-    instance.set_parameter(ui, 29, f64::from(scenario == Scenario::Delta))?;
-    instance.set_parameter(ui, 30, f64::from(scenario == Scenario::Mono))?;
+    instance.set_parameter(ui, parameter(28, "Bypass")?, f64::from(scenario == Scenario::Bypass))?;
+    instance.set_parameter(ui, parameter(29, "Delta")?, f64::from(scenario == Scenario::Delta))?;
+    instance.set_parameter(ui, parameter(30, "Mono")?, f64::from(scenario == Scenario::Mono))?;
     instance.flush_parameter_edits(ui)?;
     Ok(())
 }
@@ -295,22 +347,46 @@ fn render(
     })
 }
 
+/// Selects and validates the requested implementation without treating class positions as stable identities.
+fn selected_class(module: &Module, implementation: Implementation) -> Result<&vst3_host::ClassInfo> {
+    let class_id = if implementation == Implementation::Cpp {
+        module
+            .classes()
+            .iter()
+            .find(|class| class.is_audio_effect() && class.name == "ImageControl")
+            .context("bundle lacks the C++ ImageControl identity")?
+            .id
+    } else {
+        ClassId::from_tuid(&COMPONENT_ID)
+    };
+    let class = module
+        .class(class_id)
+        .context("bundle lacks the selected ImageControl identity")?;
+    ensure!(
+        class.is_audio_effect()
+            && class.name
+                == if implementation == Implementation::Cpp {
+                    "ImageControl"
+                } else {
+                    PLUGIN_NAME
+                },
+        "not the explicitly selected ImageControl implementation"
+    );
+    Ok(class)
+}
+
 /// Loads the exact production bundle and executes a finite deterministic stream with preallocated host buffers.
 fn run(options: Options) -> Result<Report> {
     let _deadline = Deadline::start()?;
     let ui = UiThread::register_current()?;
+    let module_started = Instant::now();
     let module = Module::load(&ui, &options.bundle)?;
-    let class_id = ClassId::from_tuid(&COMPONENT_ID);
-    let class = module
-        .class(class_id)
-        .context("bundle lacks the primary ImageControl RS identity")?;
-    ensure!(
-        class.is_audio_effect() && class.name == PLUGIN_NAME,
-        "not the primary ImageControl RS VST3"
-    );
+    let module_load_seconds = module_started.elapsed().as_secs_f64();
+    let class = selected_class(&module, options.implementation)?;
     let channels = options.scenario.channels();
     let maximum_block = *options.blocks.iter().max().context("nonempty block schedule")?;
-    let mut instance = PluginInstance::create(&ui, &module, class_id, None)?;
+    let preparation_started = Instant::now();
+    let mut instance = PluginInstance::create(&ui, &module, class.id, None)?;
     let layout = instance.configure_main_buses(&ui, channels)?;
     ensure!(
         layout.inputs == [channels] && layout.outputs == [channels],
@@ -323,7 +399,8 @@ fn run(options: Options) -> Result<Report> {
         maximum_block,
     )?;
     instance.activate(&ui)?;
-    configure(&ui, &instance, options.scenario)?;
+    let preparation_seconds = preparation_started.elapsed().as_secs_f64();
+    configure(&ui, &instance, options.scenario, options.implementation)?;
     let latency_samples = instance.latency_samples(&ui);
     let warmup_frames =
         latency_samples as usize * 2 + instance.tail_samples(&ui) as usize + options.sample_rate as usize / 10;
@@ -390,6 +467,8 @@ fn run(options: Options) -> Result<Report> {
         energy,
         peak,
         latency_samples,
+        module_load_seconds,
+        preparation_seconds,
         callback_seconds: timing.elapsed.as_secs_f64(),
     })
 }
