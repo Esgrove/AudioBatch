@@ -20,6 +20,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 RUST = ROOT / "image-control-plugin/rust"
 BASH = shutil.which("bash")
+if os.name == "nt" and BASH is not None:
+    native_bash = Path(BASH).parent.parent / "usr/bin/bash.exe"
+    if native_bash.is_file():
+        BASH = str(native_bash)
+SHEBANG = "/bin/bash" if os.name == "nt" else BASH
 SPEC = importlib.util.spec_from_file_location("benchmark_artifacts", RUST / "benchmarks/artifacts.py")
 assert SPEC is not None
 assert SPEC.loader is not None
@@ -246,16 +251,24 @@ class BenchmarkScriptContracts(unittest.TestCase):
         self.tools.mkdir()
         self.log = self.root / "commands.log"
         for name in ("dirname", "mkdir", "date", "mktemp"):
-            executable = shutil.which(name)
-            assert executable is not None
-            (self.tools / name).symlink_to(executable)
+            if os.name == "nt":
+                executable = Path(BASH).with_name(f"{name}.exe")
+                self.tool(name, f'exec "{executable.as_posix()}" "$@"\n', record=False)
+            else:
+                executable = shutil.which(name)
+                assert executable is not None
+                (self.tools / name).symlink_to(executable)
         self.tool("uname", 'printf "%s\\n" "${TEST_PLATFORM:-Darwin}"\n', record=False)
         self.tool("uv", 'exit "${CHECK_STATUS:-0}"\n')
         self.tool("git", "exit 0\n")
         self.tool("rustc", "exit 0\n")
         self.tool("cargo", 'exit "${BUILD_STATUS:-0}"\n')
-        self.tool("bash.exe", f'exec "{BASH}" "$@"\n', record=False)
-        self.tool("cygpath", 'printf "%s\\n" "$2"\n')
+        self.tool("bash.exe", f'exec "{Path(BASH).as_posix()}" "$@"\n', record=False)
+        cygpath = Path(BASH).with_name("cygpath.exe")
+        self.tool(
+            "cygpath",
+            f'exec "{cygpath.as_posix()}" "$@"\n' if os.name == "nt" else 'printf "%s\\n" "$2"\n',
+        )
         self.tool(
             "hyperfine",
             """
@@ -265,7 +278,11 @@ for argument in "$@"; do last="$argument"; done
 """,
         )
         build = self.script.parent / "build.sh"
-        build.write_text(f'#!{BASH}\nprintf "build %s\\n" "$*" >> "$BENCHMARK_LOG"\nexit "${{BUILD_STATUS:-0}}"\n')
+        build.write_text(
+            f'#!{SHEBANG}\nprintf "build %s\\n" "$*" >> "$BENCHMARK_LOG"\nexit "${{BUILD_STATUS:-0}}"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
         build.chmod(0o755)
         self.target = self.root / "rust/target"
         self.artifact_tree(self.target)
@@ -277,7 +294,8 @@ for argument in "$@"; do last="$argument"; done
             "LC_ALL": "C",
             "BENCHMARK_LOG": str(self.log),
             "EVIDENCE": str(fixture),
-            "REAL_BASH": BASH,
+            "REAL_BASH": Path(BASH).as_posix(),
+            "TEST_PLATFORM": "MINGW64_NT" if os.name == "nt" else "Darwin",
         }
 
     def artifact_tree(self, target: Path) -> None:
@@ -286,9 +304,11 @@ for argument in "$@"; do last="$argument"; done
         host = target / "release/examples/processing_benchmark"
         host.parent.mkdir(parents=True)
         host.write_text(
-            f'#!{BASH}\nprintf "host %s\\n" "$*" >> "$BENCHMARK_LOG"\n'
+            f'#!{SHEBANG}\nprintf "host %s\\n" "$*" >> "$BENCHMARK_LOG"\n'
             'printf "host-target %s\\n" "$CARGO_TARGET_DIR" >> "$BENCHMARK_LOG"\n'
-            'while IFS= read -r line || [ -n "$line" ]; do printf "%s\\n" "$line"; done < "$EVIDENCE"\n'
+            'while IFS= read -r line || [ -n "$line" ]; do printf "%s\\n" "$line"; done < "$EVIDENCE"\n',
+            encoding="utf-8",
+            newline="\n",
         )
         host.chmod(0o755)
         shutil.copy2(host, host.with_suffix(".exe"))
@@ -297,15 +317,29 @@ for argument in "$@"; do last="$argument"; done
         """Write an isolated shell stand-in with optional invocation evidence."""
         prefix = 'printf "%s %s\\n" "${0##*/}" "$*" >> "$BENCHMARK_LOG"\n' if record else ""
         path = self.tools / name
-        path.write_text(f"#!{BASH}\n{prefix}{body}", encoding="utf-8")
+        path.write_text(f"#!{SHEBANG}\n{prefix}{body}", encoding="utf-8", newline="\n")
         path.chmod(0o755)
+
+    def native_path(self, value: str) -> Path:
+        """Resolve observed MSYS paths through the same native conversion as the shell under test."""
+        if os.name == "nt":
+            assert BASH is not None
+            result = subprocess.run(  # noqa: S603
+                [str(Path(BASH).with_name("cygpath.exe")), "-m", value],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+            value = result.stdout.strip()
+        return Path(value)
 
     def invoke(
         self, *arguments: str, working_directory: Path | None = None, **overrides: str
     ) -> subprocess.CompletedProcess[str]:
         """Bound shell execution and capture failures while all plugin/build tools remain fake."""
         return subprocess.run(  # noqa: S603
-            [BASH, str(self.script), *arguments],
+            [BASH, self.script.as_posix(), *arguments],
             cwd=self.root if working_directory is None else working_directory,
             env=self.environment | overrides,
             capture_output=True,
@@ -419,9 +453,9 @@ for argument in "$@"; do last="$argument"; done
         )
         assert result.returncode == 0, result.stdout + result.stderr
         log = self.log.read_text()
-        assert f"host-target {target}" in log
-        assert f"host --bundle {target}/bundled/ImageControl RS.vst3" in log
-        assert str(self.root / relative) not in log
+        assert f"host-target {target.as_posix()}" in log
+        assert f"host --bundle {target.as_posix()}/bundled/ImageControl RS.vst3" in log
+        assert (self.root / relative).as_posix() not in log
 
     def test_external_absolute_target_is_preserved(self) -> None:
         """An explicit external build tree supplies both native host and selected bundle, with no default fallback."""
@@ -430,9 +464,9 @@ for argument in "$@"; do last="$argument"; done
         result = self.invoke("-N", "-f", "4096", "-r", "1", "-w", "0", CARGO_TARGET_DIR=str(target))
         assert result.returncode == 0, result.stdout + result.stderr
         log = self.log.read_text()
-        assert f"host-target {target}" in log
-        assert f"host --bundle {target}/bundled/ImageControl RS.vst3" in log
-        assert f"host --bundle {self.target}" not in log
+        assert f"host-target {target.as_posix()}" in log
+        assert f"host --bundle {target.as_posix()}/bundled/ImageControl RS.vst3" in log
+        assert f"host --bundle {self.target.as_posix()}" not in log
 
     def test_windows_relative_target_converts_after_invocation_resolution(self) -> None:
         """Windows receives a native target after caller-relative resolution and selects the native host executable."""
@@ -455,10 +489,12 @@ for argument in "$@"; do last="$argument"; done
         assert result.returncode == 0, result.stdout + result.stderr
         log = self.log.read_text()
         converted = [
-            Path(line.removeprefix("cygpath -m ")) for line in log.splitlines() if line.startswith("cygpath -m ")
+            self.native_path(line.removeprefix("cygpath -m "))
+            for line in log.splitlines()
+            if line.startswith("cygpath -m ")
         ]
         assert any(path.is_absolute() and path.resolve() == target for path in converted), log
-        assert f"host-target {target}" in log
+        assert f"host-target {target.as_posix()}" in log
         assert "processing_benchmark.exe" in log
 
     def test_windows_selects_native_git_bash(self) -> None:
