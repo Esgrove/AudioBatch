@@ -128,7 +128,32 @@ cargo bench -p image-control-plugin-rs --features render-benchmark --bench spect
 
 # Complete-process hyperfine runs with separate warmed-callback diagnostics.
 ./benchmark.sh --case recover --frames 960000 --runs 5 --warmup 1
+
+# Broadband audio with independently moving, beat-enveloped frequency bands.
+./benchmark.sh --signal moving-noise --frames 384000 --runs 5
+
+# Export eight seconds of production-analyzed particles for either native renderer.
+cargo run --release -p image-control-plugin-rs --features render-benchmark \
+  --example audio_render_workload -- --output "$PWD/target/benchmark/moving-noise.icrb"
+IMAGECONTROL_RENDER_INPUT="$PWD/target/benchmark/moving-noise.icrb" \
+  cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram -- audio_input --quick
 ```
+
+The broadband source uses seeded noise, six bass-balanced bands, independent rhythmic envelopes,
+and frequency-dependent equal-power panning that evolves over time.
+The DSP Criterion target includes separate `imager_warm_moving_noise` and `analyzer_warm_moving_noise` groups,
+streaming successive chunks of an eight-second precomputed source outside input-generation timing.
+The visible `editor_benchmark` also accepts `--signal moving-noise` and records its eight-second PCM-loop hash.
+For paired GPU measurements, pass the export
+as `--input` to `../benchmarks/render_benchmark.py` with explicit `--cpp` and/or `--rust` binaries
+and a new `--artifacts` directory.
+The export uses production FFT analysis and particle projection after one second of warmup,
+at 48 kHz stereo and 30 render frames per second.
+It retains every generated particle, padding shorter frames with zero-energy records for the shared fixed-stride format.
+The sidecar records active counts, audio identity, and workload hashes.
+Criterion audio groups include the input SHA-256.
+Tone and static-cloud controls remain separate.
+This synthetic music-like source is not a recorded-music corpus.
 
 Use the `.exe` parity host on Windows.
 `parity.sh` rejects incomplete setup rather than skipping a missing counterpart.

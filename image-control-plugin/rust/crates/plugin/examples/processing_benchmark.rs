@@ -20,7 +20,7 @@ mod artifacts;
 #[path = "../../../benchmarks/workload.rs"]
 mod workload;
 
-use workload::{Scenario, input_frame};
+use workload::{Scenario, SignalKind};
 
 /// Help is recognized before parsing, filesystem checks, or native plugin initialization.
 const USAGE: &str = "Usage: processing_benchmark [OPTIONS]
@@ -31,6 +31,7 @@ const USAGE: &str = "Usage: processing_benchmark [OPTIONS]
   -S, --sample-rate HZ      44100|48000|96000|192000 [48000]
   -k, --block FRAMES        1..4096, or irregular (1,17,257,511) [irregular]
   -f, --frames COUNT        Measured audio frames, 4096..4000000 [96000]
+    -a, --signal NAME         tones|moving-noise [tones]; broadband moving stereo is additive
 
 JSON includes finite sample count, bit checksum, energy, reported latency, and callback-only elapsed time.
 Hyperfine wall time includes setup, signal copies, warmup, output checks, and teardown, not just callbacks.
@@ -53,6 +54,8 @@ struct Options {
     blocks: Vec<usize>,
     /// Exact measured frame count, excluding warmup.
     frames: usize,
+    /// Immutable audio source, independent of sound controls.
+    signal: SignalKind,
 }
 
 /// Selects one independently identified implementation while retaining a shared processing host and input.
@@ -73,6 +76,8 @@ struct Report {
     plugin: String,
     /// Saved sound case name.
     case: &'static str,
+    /// Audio source identity, separating tone and broadband results.
+    signal: &'static str,
     /// Host processing mode, with no synchronous offline crossover design in callbacks.
     mode: &'static str,
     /// Actual setup sample rate.
@@ -185,6 +190,7 @@ fn options() -> Result<Option<Options>> {
     let mut sample_rate = 48_000;
     let mut blocks = vec![1, 17, 257, 511];
     let mut frames = 96_000;
+    let mut signal = SignalKind::Tones;
     let mut arguments = arguments.into_iter();
     while let Some(option) = arguments.next() {
         let name = option.to_str().context("option must be UTF-8")?;
@@ -202,6 +208,8 @@ fn options() -> Result<Option<Options>> {
                     | "--block"
                     | "-f"
                     | "--frames"
+                    | "-a"
+                    | "--signal"
             ),
             "unknown option {name}"
         );
@@ -230,6 +238,13 @@ fn options() -> Result<Option<Options>> {
                 };
             }
             "-f" | "--frames" => frames = integer(&value, name)?,
+            "-a" | "--signal" => {
+                signal = match value.to_str() {
+                    Some("tones") => SignalKind::Tones,
+                    Some("moving-noise") => SignalKind::MovingNoise,
+                    _ => bail!("--signal must be tones or moving-noise"),
+                };
+            }
             _ => bail!("unknown option {name}"),
         }
     }
@@ -249,6 +264,7 @@ fn options() -> Result<Option<Options>> {
         sample_rate,
         blocks,
         frames,
+        signal,
     }))
 }
 
@@ -404,9 +420,9 @@ fn run(options: Options) -> Result<Report> {
     let latency_samples = instance.latency_samples(&ui);
     let warmup_frames =
         latency_samples as usize * 2 + instance.tail_samples(&ui) as usize + options.sample_rate as usize / 10;
-    let input: Vec<_> = (0..warmup_frames + options.frames)
-        .map(|index| input_frame(index, f64::from(options.sample_rate), channels))
-        .collect();
+    let input = options
+        .signal
+        .frames(f64::from(options.sample_rate), channels, warmup_frames + options.frames);
     let mut output = vec![[0.0_f32; 2]; options.frames];
     let mut processor = instance.processor(&ui)?;
     processor.reset(0);
@@ -455,6 +471,7 @@ fn run(options: Options) -> Result<Report> {
         bundle: options.bundle,
         plugin: class.name.clone(),
         case: options.scenario.name(),
+        signal: options.signal.name(),
         mode: "realtime-warm-callbacks",
         sample_rate: options.sample_rate,
         channels,

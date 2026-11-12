@@ -21,6 +21,10 @@ render-benchmark = ["editor", "dep:sha2"]
 name = "render_benchmark"
 required-features = ["render-benchmark"]
 
+[[example]]
+name = "audio_render_workload"
+required-features = ["render-benchmark"]
+
 [[bench]]
 name = "spectrogram"
 harness = false
