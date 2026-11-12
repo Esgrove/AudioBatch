@@ -412,8 +412,8 @@ It is neither GPU-completion timing nor physical presentation evidence.
 
 ## Verification and limits
 
-The following describes test coverage and verification commands, not new passing evidence for this cleanup.
-Retained passing results and performance observations predate it. Current cleanup verification is in progress.
+The test suites exercise the production DSP, plugin adapters, editor, state codec, and GPU resource contracts.
+Passing bounded tests do not establish arbitrary host compatibility, physical audio deadlines, or display cadence.
 
 The DSP tests use analytical signals, direct convolution, explicit Hann/derivative DFT expectations,
 calibrated stereo cases, exact delayed-neutral bits, and monitoring-on/off PCM comparisons.
@@ -428,11 +428,8 @@ Absolute limits are `1e-5` FS peak residual and `1e-6` FS RMS, while exact neutr
 Recover compares the shared 0–200% domain, including the 200% endpoint and automation ramps.
 An opt-in Rust integration tier and `parity.sh` require complete counterpart selection
 and preserve per-case JSON reports.
-Criterion and hyperfine measure preallocated DSP and actual packaged processing separately from functional validation.
-The plugin's `spectrogram` Criterion target reuses warmed production GPU resources through `PreparedRenderer`.
-It separates particle packing, CPU submission, and completed offscreen work, with completion bounded to 32-frame batches.
-Device setup, shader compilation, immutable workload generation, and validation are outside measured intervals.
-It disables timestamp instrumentation, so native timestamp capability does not determine whether Criterion can run.
+Criterion and hyperfine benchmarks are available for local measurement only.
+They measure preallocated DSP, packaged processing, and GPU work separately from functional validation.
 Neither submission timing nor completed offscreen work establishes physical presentation cadence.
 
 Native GPU tests execute real particle, fade, bloom, generation-clear, and resize passes with independent histories.
@@ -441,12 +438,22 @@ They establish resource and pass contracts, not screenshot or pixel-golden equiv
 `./test.sh --miri` covers bounded parameter/controller and admission contracts, not full native FIR or GPU execution.
 `./rtsan.sh` separates positive detector controls from required-clean packaged callbacks,
 including cold automation, reset, concurrent state restore, and two-editor lifecycle with live monitoring.
+The license audit checks the resolved dependency graph with cargo-deny.
 Build-tree pluginval checks validate the exact packaged format.
-A compile check for Windows does not establish native Windows rendering or lifecycle correctness.
+Windows package and parity checks do not establish broad native GUI or playback qualification.
 
-Remaining gates include native Windows qualification, complete AU host qualification, native accessibility qualification,
-upstream widget-cache cleanup, device-loss handling, and arbitrary module-unload safety.
-The [evaluation](docs/rust-evaluation.md) separates dependency research and historical evidence from current code.
+CI builds and tests Debug and Release packages on macOS and Windows,
+validates VST3 with pinned pluginval strictness 10,
+exercises CLAP host scenarios, runs packaged parity, Miri, RealtimeSanitizer, and cargo-deny,
+and checks native CLAP and AU editors on macOS.
+Strict AU validation also runs on macOS.
+CI runs no benchmarks.
+
+Windows keyboard/text/focus coverage, genuine mixed-DPI transitions,
+and application GUI/playback qualification remain open.
+Other gates include complete AU host qualification, native accessibility, upstream widget-cache cleanup,
+device-loss handling, and arbitrary module-unload safety.
+The [evaluation](docs/rust-evaluation.md) summarizes the current stack, platform status, and verification scope.
 
 ### AU dependency limitations
 

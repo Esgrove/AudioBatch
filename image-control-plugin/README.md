@@ -244,7 +244,9 @@ and passing checks do not establish audio deadlines.
 Each sanitizer uses a separate build directory and does not build the AudioBatch applications.
 Lint also checks RTSan-only sources when their instrumented compilation database exists,
 and otherwise reports that those probes need `./sanitize.sh --realtime` first.
-CI runs Debug and Release tests on both platforms, pinned VST3 validation, and macOS Audio Unit validation.
+CI builds and tests Debug and Release on macOS and Windows, validates VST3 with pinned pluginval,
+and validates the Audio Unit on macOS. It also runs clang-tidy, AddressSanitizer, UndefinedBehaviorSanitizer,
+ThreadSanitizer, RealtimeSanitizer, and coverage. CI runs no benchmarks.
 
 ### Optional pluginval target
 
@@ -266,7 +268,7 @@ The benchmark measures full-callback throughput and timing distributions across 
 including recovery off, selected/all bands, crossover changes, and optional metering/analysis load.
 It also measures isolated imager processing and Width/Recover setters, plus separate analyzer and particle workloads.
 CPU-side overlay probes include hovered response curves, and focused callback rows cover Solo/Delta and small blocks.
-These measurements exclude GPU drawing.
+These measurements exclude GPU drawing and are available for local use only.
 After configuring tests, build the benchmark explicitly.
 `--test` does not build it:
 
