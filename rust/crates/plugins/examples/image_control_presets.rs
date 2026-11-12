@@ -12,7 +12,7 @@ use vst3_host::{ProcessMode, UiThread};
 struct Options {
     /// Canonical repository-built VST3 or CLAP selected by the caller.
     bundle: PathBuf,
-    /// New directory; existing presets are never overwritten by the capture helper.
+    /// New output directory that must not already exist.
     artifacts: PathBuf,
 }
 

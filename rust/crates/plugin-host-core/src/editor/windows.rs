@@ -42,7 +42,7 @@ pub struct WindowObservation {
     pub physical_size: WindowSize,
     /// Actual physical pixels per logical unit reported for this window.
     pub content_scale: f64,
-    /// Whether the window has the visible style; this does not prove lack of occlusion.
+    /// Whether the window has the visible style. It may still be occluded.
     pub visible: bool,
     /// Whether the top-level window is minimized.
     pub minimized: bool,
