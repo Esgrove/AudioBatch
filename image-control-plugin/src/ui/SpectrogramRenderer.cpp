@@ -831,6 +831,11 @@ bool SpectrogramRenderer::prepareBenchmark(
         return false;
     }
     const ScopedSpectrogramBindings bindings;
+    if (!finishBenchmarkBatch()) {
+        return false;
+    }
+    pendingTimerQueries.fill(false);
+    nextTimerQuery = 0;
     benchmarkScale = scale;
     benchmarkGpuTiming = gpuTiming;
     benchmarkGpuSamples.clear();
