@@ -87,6 +87,10 @@ These probes do not establish another DPI configuration.
 Logs and tested-module SHA-256 manifests are retained in `rust/target/benchmark/windows-post-dpi-U2YZjUl4/`,
 relative to the plugin directory.
 The earlier unmatched editor smokes remain diagnostics, not performance comparisons.
+The rebuilt Release `editor_compare` host also completed separate five-second runs with two RS editors
+and with C++ and RS together, processing both instances through concurrent paced callbacks.
+Their exit-success logs and input hashes are retained beside the post-DPI logs.
+This is a basic two-editor lifecycle smoke, not input, physical playback, or arbitrary-unload qualification.
 
 ### Windows Application Hosts: 12 November 2026
 
