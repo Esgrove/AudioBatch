@@ -307,11 +307,15 @@ jobs:
             if [ "$implementation" = cpp ]; then
               bundle="$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3"
             fi
-            for scenario in neutral recover delta bypass; do
-              cargo run --release -p image-control-plugin-rs --no-default-features --features vst3 \
-                --example processing_benchmark -- --implementation "$implementation" \
-                --bundle "$bundle" --case "$scenario" --frames 4096 \
-                > "target/benchmark/ci-processing/$implementation-$scenario.json"
+            for signal in tones moving-noise; do
+              frames=4096
+              if [ "$signal" = moving-noise ]; then frames=384000; fi
+              for scenario in neutral recover delta bypass; do
+                cargo run --release -p image-control-plugin-rs --no-default-features --features vst3 \
+                  --example processing_benchmark -- --implementation "$implementation" \
+                  --bundle "$bundle" --case "$scenario" --signal "$signal" --frames "$frames" \
+                  > "target/benchmark/ci-processing/$implementation-$scenario-$signal.json"
+              done
             done
           done
 
@@ -356,12 +360,21 @@ jobs:
           mkdir -p target/windows-native
           ../build.sh --test 2>&1 | tee target/windows-native/cpp-build.log
           cmake --build ../cmake-build-release --config Release --target ImageControlRenderBenchmark
-          cargo build --release -p image-control-plugin-rs --features render-benchmark --example render_benchmark
+          cargo build --release -p image-control-plugin-rs --features render-benchmark \
+            --example render_benchmark --example audio_render_workload
           uv run --script ../benchmarks/render_benchmark.py \
             --cpp "$(cygpath -w "$PWD/../cmake-build-release/ImageControlRenderBenchmark_artefacts/Release/ImageControlRenderBenchmark.exe")" \
             --rust "$(cygpath -w "$PWD/../../rust/target/release/examples/render_benchmark.exe")" \
             --artifacts "$(cygpath -w "$PWD/target/windows-native/render")" \
             --runs 2 --frames 120 --warmup 30 --particles 4096 --mode particles --size 1280x720 --timeout 30
+          ../../rust/target/release/examples/audio_render_workload.exe \
+            --output target/windows-native/moving-noise.icrb
+          uv run --script ../benchmarks/render_benchmark.py \
+            --cpp "$(cygpath -w "$PWD/../cmake-build-release/ImageControlRenderBenchmark_artefacts/Release/ImageControlRenderBenchmark.exe")" \
+            --rust "$(cygpath -w "$PWD/../../rust/target/release/examples/render_benchmark.exe")" \
+            --input "$(cygpath -w "$PWD/target/windows-native/moving-noise.icrb")" \
+            --artifacts "$(cygpath -w "$PWD/target/windows-native/render-moving-noise")" \
+            --runs 2 --frames 240 --warmup 30 --size 1280x720 --timeout 30
       - name: Qualify Debug and Release native editors
         run: |
           set -o pipefail

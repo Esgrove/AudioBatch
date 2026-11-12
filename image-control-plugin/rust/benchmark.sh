@@ -30,6 +30,8 @@ OPTIONS:
         Default: shared target/bundled/ImageControl RS.vst3. Relative targets use the invocation directory.
     -C | --case <name>
         neutral|width|pan|gains|recover|delta|bypass|mono|solo|mono-input. Default: recover.
+    -a | --signal <name>
+        tones|moving-noise. Default: tones. Moving noise has six independently enveloped, panned bands.
     -S | --sample-rate <Hz>
         44100|48000|96000|192000. Default: 48000.
     -k | --block <frames|irregular>
@@ -48,6 +50,7 @@ parse_arguments() {
     BUNDLE=
     CUSTOM_BUNDLE=false
     CASE=recover
+    SIGNAL=tones
     SAMPLE_RATE=48000
     BLOCK=irregular
     FRAMES=96000
@@ -61,7 +64,7 @@ parse_arguments() {
                 exit 0
                 ;;
             -N | --no-build) BUILD=false ;;
-            -b | --bundle | -C | --case | -S | --sample-rate | -k | --block | -f | --frames | -r | --runs | -w | --warmup | -A | --artifacts)
+            -b | --bundle | -C | --case | -a | --signal | -S | --sample-rate | -k | --block | -f | --frames | -r | --runs | -w | --warmup | -A | --artifacts)
                 [ $# -ge 2 ] && [ -n "$2" ] || print_error_and_exit "Missing value for $1. See --help."
                 case "$1" in
                     -b | --bundle)
@@ -69,6 +72,7 @@ parse_arguments() {
                         CUSTOM_BUNDLE=true
                         ;;
                     -C | --case) CASE="$2" ;;
+                    -a | --signal) SIGNAL="$2" ;;
                     -S | --sample-rate) SAMPLE_RATE="$2" ;;
                     -k | --block) BLOCK="$2" ;;
                     -f | --frames) FRAMES="$2" ;;
@@ -96,6 +100,10 @@ check_integer() {
 }
 
 validate_options() {
+    case "$SIGNAL" in
+        tones | moving-noise) ;;
+        *) print_error_and_exit "Unknown --signal: $SIGNAL." ;;
+    esac
     check_integer --frames "$FRAMES" 4096 4000000
     check_integer --runs "$RUNS" 1 100
     check_integer --warmup "$WARMUP" 0 20
@@ -154,7 +162,7 @@ run_preflight() {
     "$HOST" "${OPTIONS[@]}" > "$RESULT_DIR/preflight.json"
     "$HOST" "${OPTIONS[@]}" > "$RESULT_DIR/repeat.json"
     uv run --quiet --script "$SCRIPT_DIR/benchmarks/artifacts.py" check \
-        "$RESULT_DIR/preflight.json" "$RESULT_DIR/repeat.json" "$FRAMES" "$CASE"
+        "$RESULT_DIR/preflight.json" "$RESULT_DIR/repeat.json" "$FRAMES" "$CASE" "$SIGNAL"
     uv run --quiet --script "$SCRIPT_DIR/benchmarks/artifacts.py" metadata \
         "$REPO_ROOT" "$RESULT_DIR" "$HOST" "$BUNDLE" "$RUNS" "$WARMUP" "$BUILD" "$CUSTOM_BUNDLE"
 }
@@ -169,10 +177,10 @@ run_measurements() {
     command=$(quote_command "$HOST" "${OPTIONS[@]}")
     command+=" > $(printf '%q' "$RESULT_DIR/last-run.json")"
     hyperfine --shell "$BENCHMARK_SHELL" --warmup "$WARMUP" --runs "$RUNS" \
-        --command-name "ImageControl RS $CASE $SAMPLE_RATE/$BLOCK frames=$FRAMES" \
+        --command-name "ImageControl RS $CASE $SIGNAL $SAMPLE_RATE/$BLOCK frames=$FRAMES" \
         --export-json "$RESULT_DIR/hyperfine.json" "$command"
     uv run --quiet --script "$SCRIPT_DIR/benchmarks/artifacts.py" check \
-        "$RESULT_DIR/preflight.json" "$RESULT_DIR/last-run.json" "$FRAMES" "$CASE"
+        "$RESULT_DIR/preflight.json" "$RESULT_DIR/last-run.json" "$FRAMES" "$CASE" "$SIGNAL"
     printf 'Complete process timings: %s/hyperfine.json\nWarmed callback diagnostics: %s/last-run.json\n' \
         "$RESULT_DIR" "$RESULT_DIR"
 }
@@ -184,7 +192,7 @@ benchmark_plugin() {
     cd "$SCRIPT_DIR"
     prepare_tools
     prepare_artifacts
-    local OPTIONS=(--bundle "$BUNDLE" --case "$CASE" --sample-rate "$SAMPLE_RATE" --block "$BLOCK" --frames "$FRAMES")
+    local OPTIONS=(--bundle "$BUNDLE" --case "$CASE" --signal "$SIGNAL" --sample-rate "$SAMPLE_RATE" --block "$BLOCK" --frames "$FRAMES")
     run_preflight
     run_measurements
 }

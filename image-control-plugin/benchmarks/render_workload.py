@@ -158,6 +158,26 @@ def write_workload(path: Path, header: WorkloadHeader, seed: int = DEFAULT_SEED)
     return manifest
 
 
+def read_workload(path: Path) -> dict[str, object]:
+    """Validate supplied binary evidence and its self-hashed provenance before native execution."""
+    require(path.is_file() and path.stat().st_size <= MAX_WORKLOAD_BYTES, "missing or oversized input")
+    sidecar = path.with_suffix(path.suffix + ".json")
+    require(sidecar.is_file() and sidecar.stat().st_size <= 1024 * 1024, "missing or oversized input manifest")
+    data = path.read_bytes()
+    header = decode_bytes(data)
+    manifest = json.loads(sidecar.read_text(encoding="utf-8"))
+    require(isinstance(manifest, dict), "input manifest must be an object")
+    unsigned = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    require(manifest.get("manifest_sha256") == canonical_hash(unsigned), "input manifest self-hash differs")
+    require(manifest.get("schema_version") == 1, "unsupported input manifest schema")
+    require(isinstance(manifest.get("generator"), str) and bool(manifest["generator"]), "missing input generator")
+    require(manifest.get("header") == asdict(header), "input header differs from manifest")
+    require(manifest.get("bytes") == len(data), "input byte count differs from manifest")
+    require(manifest.get("sha256") == hashlib.sha256(data).hexdigest(), "input SHA-256 differs from manifest")
+    require(manifest.get("fnv1a64") == fnv1a64(data), "input FNV identity differs from manifest")
+    return manifest
+
+
 def parser() -> argparse.ArgumentParser:
     """Expose no-side-effect help and paired short/long options for standalone workload generation."""
     result = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

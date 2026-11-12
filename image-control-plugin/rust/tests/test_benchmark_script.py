@@ -383,6 +383,7 @@ for argument in "$@"; do last="$argument"; done
             ("--block", "4097"),
             ("--sample-rate", "88200"),
             ("--case", "unknown"),
+            ("--signal", "unknown"),
             ("--unknown",),
         ):
             with self.subTest(arguments=arguments):
@@ -424,6 +425,16 @@ for argument in "$@"; do last="$argument"; done
             assert "--warmup 0 --runs 2" in log
             assert "metadata " in log
             assert " check " in log
+
+    def test_moving_noise_is_forwarded_to_every_host_invocation(self) -> None:
+        """Both source aliases retain the requested audio identity through preflight and timed runs."""
+        for flag in ("-a", "--signal"):
+            result = self.invoke("--no-build", flag, "moving-noise", "--frames", "4096", "--runs", "1")
+            assert result.returncode == 0, result.stdout + result.stderr
+            hosts = [line for line in self.log.read_text().splitlines() if line.startswith("host ")]
+            assert len(hosts) >= 3
+            assert all("--signal moving-noise" in line for line in hosts)
+            self.log.unlink()
 
     def test_builds_release_and_propagates_failures(self) -> None:
         """Default build is a build-tree package, never installation, and every failure remains fatal."""

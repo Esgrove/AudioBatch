@@ -17,6 +17,15 @@ use vst3_host::{EditorWindow, Module, PluginInstance, PluginState, ProcessMode, 
 #[path = "support/editor_benchmark_platform.rs"]
 mod platform;
 
+#[path = "../../../benchmarks/workload.rs"]
+#[expect(
+    dead_code,
+    reason = "editor workloads share audio generation, not saved DSP scenarios"
+)]
+mod workload;
+
+use workload::SignalKind;
+
 /// This benchmark deliberately uses the same stereo sample rate and block size for either implementation.
 const SAMPLE_RATE: usize = 48_000;
 /// A callback's absolute deadline is derived from its ordinal, never from the previous callback's completion.
@@ -43,6 +52,7 @@ struct Options {
     width: u32,
     height: u32,
     case: Case,
+    signal: SignalKind,
 }
 
 /// Precomputed planar PCM is reused without signal generation or hashing in timed processing.
@@ -105,7 +115,7 @@ fn main() -> Result<()> {
     let telemetry_directory = tempfile::tempdir().context("temporary editor telemetry")?;
     let telemetry_path = telemetry_directory.path().join("render.json");
     set_report_environment(&telemetry_path, options.case);
-    let signal = precompute_signal();
+    let signal = precompute_signal(options.signal);
     let signal_hash = signal.hash.clone();
     let ui = UiThread::register_current()?;
     platform::start_application()?;
@@ -149,7 +159,7 @@ fn main() -> Result<()> {
                 let input = processor.input_channel_mut(channel).context("stereo input plane")?;
                 for (offset, sample) in input.iter_mut().enumerate() {
                     *sample = *source
-                        .get((block * BLOCK_FRAMES + offset) % SAMPLE_RATE)
+                        .get((block * BLOCK_FRAMES + offset) % source.len())
                         .context("precomputed PCM")?;
                 }
             }
@@ -253,7 +263,9 @@ fn write_report(
         "machine": {"os": std::env::consts::OS, "architecture": std::env::consts::ARCH,
                     "available_parallelism": std::thread::available_parallelism().ok().map(std::num::NonZero::get)},
         "signal": {"hash_algorithm": "fnv1a64-f32le-channel-major", "hash": signal_hash,
-                   "sample_rate": SAMPLE_RATE, "loop_frames": SAMPLE_RATE, "channels": 2, "block_frames": BLOCK_FRAMES},
+                   "kind": options.signal.name(), "sample_rate": SAMPLE_RATE,
+                   "loop_frames": if options.signal == SignalKind::MovingNoise { SAMPLE_RATE * 8 } else { SAMPLE_RATE },
+                   "channels": 2, "block_frames": BLOCK_FRAMES},
         "observation": observation,
         "render_summary": summary,
         "callbacks": callbacks,
@@ -428,26 +440,36 @@ fn observe_editor(ui: &UiThread, instance: &PluginInstance, options: &Options) -
     })
 }
 
-/// Builds one second of a repeatable stereo comb and hashes exact precomputed sample bits before timing.
-fn precompute_signal() -> Signal {
-    let channels = std::array::from_fn(|channel| {
-        (0..SAMPLE_RATE)
-            .map(|frame| {
-                let time = frame as f64 / SAMPLE_RATE as f64;
-                [40.0, 80.0, 150.0, 300.0, 600.0, 1200.0, 2400.0, 4800.0, 9600.0]
-                    .into_iter()
-                    .enumerate()
-                    .fold(0.0, |value, (tone, frequency)| {
-                        let right_gain = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 1.0, 0.5]
-                            .get(tone)
-                            .copied()
-                            .expect("tone");
-                        let gain = if channel == 0 { 1.0 } else { right_gain };
-                        ((std::f64::consts::TAU * frequency * time).sin() * gain).mul_add(0.015, value)
-                    }) as f32
-            })
-            .collect::<Vec<_>>()
-    });
+/// Builds the requested repeatable audio and hashes exact precomputed sample bits before timing.
+fn precompute_signal(kind: SignalKind) -> Signal {
+    let channels = if kind == SignalKind::MovingNoise {
+        let frames = kind.frames(SAMPLE_RATE as f64, 2, SAMPLE_RATE * 8);
+        std::array::from_fn(|channel| {
+            frames
+                .iter()
+                .map(|frame| *frame.get(channel).expect("stereo channel"))
+                .collect::<Vec<_>>()
+        })
+    } else {
+        std::array::from_fn(|channel| {
+            (0..SAMPLE_RATE)
+                .map(|frame| {
+                    let time = frame as f64 / SAMPLE_RATE as f64;
+                    [40.0, 80.0, 150.0, 300.0, 600.0, 1200.0, 2400.0, 4800.0, 9600.0]
+                        .into_iter()
+                        .enumerate()
+                        .fold(0.0, |value, (tone, frequency)| {
+                            let right_gain = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 1.0, 0.5]
+                                .get(tone)
+                                .copied()
+                                .expect("tone");
+                            let gain = if channel == 0 { 1.0 } else { right_gain };
+                            ((std::f64::consts::TAU * frequency * time).sin() * gain).mul_add(0.015, value)
+                        }) as f32
+                })
+                .collect::<Vec<_>>()
+        })
+    };
     let hash = channels
         .iter()
         .flatten()
@@ -703,6 +725,7 @@ fn parse_options(arguments: impl Iterator<Item = OsString>) -> Result<Option<Opt
                   -W, --width N       Logical editor width 760..4096 (default 1000)\n\
                   -H, --height N      Logical editor height 600..4096 (default 764)\n\
                   -c, --case NAME     default, solid, persistence-contrast (live sweep), maximize\n\
+                  -a, --signal NAME   tones, moving-noise (default tones; eight-second broadband loop)\n\
                   -h, --help          Print help without starting native resources"
         );
         return Ok(None);
@@ -715,6 +738,7 @@ fn parse_options(arguments: impl Iterator<Item = OsString>) -> Result<Option<Opt
         width: 1000,
         height: 764,
         case: Case::Default,
+        signal: SignalKind::Tones,
     };
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -726,6 +750,13 @@ fn parse_options(arguments: impl Iterator<Item = OsString>) -> Result<Option<Opt
             "--report" | "-r" => options.report = PathBuf::from(value),
             "--width" | "-W" => options.width = value.to_string_lossy().parse()?,
             "--height" | "-H" => options.height = value.to_string_lossy().parse()?,
+            "--signal" | "-a" => {
+                options.signal = match value.to_str() {
+                    Some("tones") => SignalKind::Tones,
+                    Some("moving-noise") => SignalKind::MovingNoise,
+                    _ => bail!("--signal must be tones or moving-noise"),
+                };
+            }
             "--case" | "-c" => {
                 options.case = match value.to_str() {
                     Some("default") => Case::Default,
@@ -797,6 +828,7 @@ mod tests {
             width: 1280,
             height: 900,
             case: Case::PersistenceContrast,
+            signal: SignalKind::Tones,
         };
         let document = json!({"version": 1, "parameters": {"gain": 0.123}, "geometry": {},
             "display": {"solid_rendering": false, "contrast": 0.6, "persistence_seconds": 0.3}});
@@ -973,8 +1005,8 @@ mod tests {
     /// A stable precomputed loop has exact-bit identity, with no callback-time trigonometry or hashing.
     #[test]
     fn pcm_identity_is_repeatable() {
-        let first = precompute_signal();
-        let second = precompute_signal();
+        let first = precompute_signal(SignalKind::Tones);
+        let second = precompute_signal(SignalKind::Tones);
         assert_eq!(first.hash, second.hash);
         assert_eq!(first.channels.first().expect("left").len(), SAMPLE_RATE);
         assert!(first.channels.iter().flatten().all(|sample| sample.is_finite()));

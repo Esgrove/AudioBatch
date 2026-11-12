@@ -188,7 +188,7 @@ The saved `windows-20261112` Criterion data is in the root workspace's `rust/tar
 The invocation log is `rust/target/benchmark/windows-setup-analysis-20261112.log`, relative to the plugin directory.
 These are not matched C++ or baseline measurements and establish no before/after improvement.
 
-The paired renderer capture contains 40 validated runs, five repetitions per implementation and case,
+The static-cloud renderer capture contains 40 validated runs, five repetitions per implementation and case,
 using identical workload bytes at 1280 by 720 physical pixels, scale 1, particles/solid, and 4096/16384 particles.
 Each run has 30 warmup and 120 measured frames.
 For 16384 particles, median mean CPU encoding was 129.309 microseconds/frame for C++ and 234.984 for Rust.
@@ -202,7 +202,7 @@ Raw reports and validated summaries are in `rust/target/benchmark/windows-render
 The C++ benchmark retires pending warmup query bookkeeping before resetting measured frame identities.
 The exact duplicate-index regression and subsequent paired matrix passed strict report validation.
 
-The native editor capture contains 60 reports: five counterbalanced repetitions of C++, preserved RS baseline,
+The tone-only native editor capture contains 60 reports: five counterbalanced repetitions of C++, preserved RS baseline,
 and current RS for default, solid, continuous persistence/contrast, and maximized layouts.
 Each fresh process has two seconds of warmup and five measured seconds with concurrent paced stereo callbacks.
 The host explicitly requests constrained physical size after attachment, without changing the preserved baseline.
@@ -231,13 +231,32 @@ the uncommitted host-source patch, protocol, and spreads are retained in
 `rust/target/benchmark/windows-editor-matched-L7j2PKUm/`, relative to the plugin directory.
 Input hashes remained unchanged through capture, and the complete artifact checksum inventory verifies.
 
-The workflow includes bounded packaged-processing workloads
+Additional broadband qualification uses deterministic, bass-balanced noise across six frequency bands,
+with independent rhythmic envelopes and frequency- and time-dependent equal-power panning.
+Production analysis and particle projection produce 240 changing frames at 30 Hz after a one-second warmup,
+using 48 kHz stereo input and one-second persistence.
+The shared GPU export contains 3046-4433 active particles per frame,
+with zero-energy padding to 4433 records and no duplicated, resampled, or truncated observations.
+Its SHA-256 is `83bf04fe6ad1747806d6efaba0405933c5ae34e6a4047aef649030755120fe4b`.
+Eight paired native GPU reports passed for C++/RS, particles/solid, 1280 by 720 pixels,
+two runs per implementation and mode, with 30 warmup and 240 measured frames.
+Twelve packaged DSP reports passed neutral, bypass, and recover at 48 kHz,
+using 384000 measured frames and 64-frame/irregular callbacks for both implementations.
+Four visible-editor reports passed default/solid with one-second warmup and eight-second measurement for C++/RS.
+The actual packaged hyperfine runner and candidate-only Criterion audio GPU, imager, and analyzer groups also ran.
+Raw broadband reports
+and the exact binary/manifest are retained in `rust/target/benchmark/windows-moving-noise-KvlxwRwS/`,
+relative to the plugin directory.
+These are bounded workload qualification runs, not matched-baseline performance claims or recorded-music coverage.
+The earlier tone/cloud measurements do not establish realistic-audio performance.
+
+The workflow includes tone and moving-broadband packaged-processing workloads
 and an opt-in interactive Windows native job selected with `windows_native_runner`.
 That job validates four native GPU reports with the reproduced 30-warmup/120-measured-frame query workload
-before running Debug and Release editor probes.
+and eight reports from the production-analyzed broadband export before running Debug and Release editor probes.
 The exact GPU invocation passed locally after rebuilding the touched C++ targets.
 Native failures retain their raw logs.
-The workflow schema validates locally, but the new jobs have not been qualified remotely.
+The workflow YAML and embedded Bash syntax validate locally, but the new jobs have not been qualified remotely.
 Remaining gates include broader native input and DPI, actual application GUI workflows,
 isolated C++/baseline analysis measurements, renderer failure recovery,
 upstream widget-cache reclamation, and arbitrary module unloading.

@@ -4,11 +4,13 @@
 //! Submission timing excludes batch-boundary completion waits but includes queue backpressure.
 //! Completed timing includes those waits, with at most 32 frames in flight. Neither measures display presentation.
 
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use image_control_plugin_rs::render_benchmark::{PreparedRenderer, RenderSettings};
+use sha2::{Digest as _, Sha256};
 
 /// Same common particle ceilings as the cross-implementation renderer workload.
 const PARTICLE_COUNTS: [u32; 4] = [0, 4096, 16_384, 65_536];
@@ -121,12 +123,70 @@ fn production_rendering(criterion: &mut Criterion) {
     }
 }
 
+/// Adds changing production-analyzed frames from an explicit ICRB export without replacing static controls.
+fn audio_rendering(criterion: &mut Criterion) {
+    let Some(path) = std::env::var_os("IMAGECONTROL_RENDER_INPUT") else {
+        return;
+    };
+    image_control_plugin_rs::benchmark_build::require_optimized_native().expect("Release native benchmark build");
+    let metadata = std::fs::metadata(&path).expect("explicit audio GPU workload");
+    assert!(metadata.len() <= 256 * 1024 * 1024, "bounded audio workload");
+    let input = std::fs::read(&path).expect("explicit audio GPU workload bytes");
+    let identity = Sha256::digest(&input)
+        .iter()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            write!(&mut output, "{byte:02x}").expect("writing to String");
+            output
+        });
+    eprintln!(
+        "audio GPU input {}: SHA-256 {identity}",
+        std::path::Path::new(&path).display()
+    );
+    for submission_only in [true, false] {
+        let name = if submission_only {
+            "spectrogram/audio_input_submission_cpu"
+        } else {
+            "spectrogram/audio_input_completed_gpu_work"
+        };
+        let mut group = criterion.benchmark_group(name);
+        group.throughput(Throughput::Elements(1));
+        for [width, height] in TARGETS {
+            for solid in [false, true] {
+                let mode = if solid { "solid" } else { "particles" };
+                let id = BenchmarkId::new(format!("{width}x{height}/{mode}"), &identity);
+                group.bench_function(id, |bencher| {
+                    let mut renderer = PreparedRenderer::new(
+                        &input,
+                        RenderSettings {
+                            width,
+                            height,
+                            scale: 1.0,
+                            solid,
+                        },
+                    )
+                    .expect("validated production audio particles");
+                    bencher.iter_custom(|frames| {
+                        if submission_only {
+                            renderer.measure_submission_frames(frames)
+                        } else {
+                            renderer.measure_completed_frames(frames)
+                        }
+                        .expect("bounded production audio rendering completion")
+                    });
+                    renderer.validate().expect("audio renderer validation");
+                });
+            }
+        }
+        group.finish();
+    }
+}
+
 criterion_group! {
     name = spectrogram;
     config = Criterion::default()
         .sample_size(20)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = particle_packing, production_rendering
+    targets = particle_packing, production_rendering, audio_rendering
 }
 criterion_main!(spectrogram);

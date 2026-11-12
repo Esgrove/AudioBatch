@@ -455,6 +455,49 @@ class RunnerContracts(unittest.TestCase):
         assert (directory / "stdout.txt").read_text() == "failed\n"
         assert (directory / "command.json").is_file()
 
+    def test_supplied_workload_preserves_bytes_and_provenance(self) -> None:
+        """Retain changing shared frame bytes and their supplied generator identity in every paired record."""
+        source = self.root / "audio.icrb"
+        header = workload.WorkloadHeader(2, 4, 1 / 30, 1.0)
+        manifest = workload.write_workload(source, header)
+        data = bytearray(source.read_bytes())
+        data[-4:] = struct.pack("<f", 0.25)
+        source.write_bytes(data)
+        manifest["generator"] = "production-audio-test"
+        manifest["sha256"] = hashlib.sha256(data).hexdigest()
+        manifest["fnv1a64"] = workload.fnv1a64(data)
+        del manifest["manifest_sha256"]
+        manifest["manifest_sha256"] = workload.canonical_hash(manifest)
+        workload.write_json(source.with_suffix(".icrb.json"), manifest)
+        self.options.input = source
+        self.options.particles = None
+        cases = benchmark.validate_options(self.options)
+        self.options.artifacts.mkdir()
+        original = benchmark.run_native
+
+        def run_stub(command: list[str], arguments: list[str], directory: Path, timeout: float) -> float:
+            """Replace only native execution while retaining supplied-input scheduling and report validation."""
+            return original([sys.executable, str(self.stub)], arguments, directory, timeout)
+
+        with patch.object(benchmark, "run_native", side_effect=run_stub):
+            records = benchmark.run_matrix(self.options, cases)
+        assert len(records) == 4
+        assert all(record["workload_manifest"] == manifest for record in records)
+        assert (self.options.artifacts / "inputs/particles-4.icrb").read_bytes() == data
+
+    def test_supplied_workload_rejects_bad_identity_before_artifacts(self) -> None:
+        """Reject malformed provenance and ambiguous count overrides before creating a matrix directory."""
+        source = self.root / "invalid.icrb"
+        workload.write_workload(source, workload.WorkloadHeader(2, 4, 1 / 30, 1.0))
+        self.options.input = source
+        with self.assertRaisesRegex(ValueError, "omit --particles"):
+            benchmark.validate_options(self.options)
+        self.options.particles = None
+        source.write_bytes(source.read_bytes()[:-1] + b"\x00")
+        with self.assertRaises(ValueError):
+            benchmark.validate_options(self.options)
+        assert not self.options.artifacts.exists()
+
     def test_timeout_retains_raw_artifacts(self) -> None:
         """Bound a stalled child and retain the attempted command and native streams."""
         directory = self.root / "timeout"

@@ -48,9 +48,11 @@ def checked_bundle(root: Path, bundle: Path, mode: str) -> None:
         fail("selected build-tree bundle is missing")
 
 
-def report(path: Path, frames: int, case: str) -> dict:
+def report(path: Path, frames: int, case: str, signal: str = "tones") -> dict:
     """Check independent geometry and signal sanity, not a checksum recorded from the implementation."""
     value = json.loads(path.read_text(encoding="utf-8"))
+    if signal not in ("tones", "moving-noise") or value.get("signal", "tones") != signal:
+        fail(f"{path.name}: signal does not match independently requested {signal}")
     channels = 1 if case == "mono-input" else 2
     expected = {
         "schema": 1,
@@ -88,10 +90,10 @@ def report(path: Path, frames: int, case: str) -> dict:
     return value
 
 
-def compare(first: Path, second: Path, frames: int, case: str) -> None:
+def compare(first: Path, second: Path, frames: int, case: str, signal: str = "tones") -> None:
     """Require deterministic non-timing evidence across fresh isolated process invocations."""
-    left = report(first, frames, case)
-    right = report(second, frames, case)
+    left = report(first, frames, case, signal)
+    right = report(second, frames, case, signal)
     for key in left.keys() | right.keys():
         if key not in ("callback_seconds", *PREPARATION_TIMINGS) and left.get(key) != right.get(key):
             fail(f"nondeterministic benchmark evidence: {key}")
@@ -199,6 +201,7 @@ def main() -> None:
     check.add_argument("second", type=Path)
     check.add_argument("frames", type=int)
     check.add_argument("case")
+    check.add_argument("signal", nargs="?", choices=("tones", "moving-noise"), default="tones")
     record = subparsers.add_parser("metadata", help="record exact machine/build provenance")
     for name in ("root", "directory", "host", "bundle"):
         record.add_argument(name, type=Path)
@@ -210,7 +213,7 @@ def main() -> None:
     if arguments.command == "validate-bundle":
         checked_bundle(arguments.root, arguments.bundle, arguments.mode)
     elif arguments.command == "check":
-        compare(arguments.first, arguments.second, arguments.frames, arguments.case)
+        compare(arguments.first, arguments.second, arguments.frames, arguments.case, arguments.signal)
     else:
         metadata(arguments)
 

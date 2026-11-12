@@ -521,8 +521,16 @@ def run_matrix(options: argparse.Namespace, cases: list[RenderCase]) -> list[dic
     manifests = {}
     for particles in sorted({case.particles for case in cases}):
         path = inputs / f"particles-{particles}.icrb"
-        header = workload.WorkloadHeader(options.input_frames, particles, options.step, options.persistence)
-        manifests[particles] = workload.write_workload(path, header, options.seed)
+        if options.input is not None:
+            manifest = workload.read_workload(options.input)
+            data = options.input.read_bytes()
+            workload.require(hashlib.sha256(data).hexdigest() == manifest["sha256"], "input changed during capture")
+            path.write_bytes(data)
+            workload.write_json(path.with_suffix(path.suffix + ".json"), manifest)
+            manifests[particles] = manifest
+        else:
+            header = workload.WorkloadHeader(options.input_frames, particles, options.step, options.persistence)
+            manifests[particles] = workload.write_workload(path, header, options.seed)
     records = []
     sequence = 0
     for case_index, case in enumerate(cases):
@@ -644,6 +652,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("-R", "--rust", type=Path, help="explicit existing Rust native Release executable")
     result.add_argument("-A", "--artifacts", type=Path, required=True, help="new or empty absolute artifact directory")
     result.add_argument(
+        "-I", "--input", type=Path, help="existing ICRB0001 input and .json sidecar; uses its counts and cadence"
+    )
+    result.add_argument(
         "-N", "--no-build", action="store_true", default=True, help="use existing binaries, always enabled"
     )
     result.add_argument("-r", "--runs", type=int, default=3, help="process runs per implementation/case, at least two")
@@ -712,7 +723,24 @@ def validate_options(options: argparse.Namespace) -> list[RenderCase]:
         workload.require(scale >= MIN_SCALE, "scale must be at least 0.125")
     # Native renderers store scale as float32. Pair the actual shared value rather than unequal JSON round trips.
     scales = [struct.unpack("<f", struct.pack("<f", value))[0] for value in scales]
-    particles = options.particles if options.particles is not None else workload.STANDARD_PARTICLE_COUNTS
+    if options.input is not None:
+        workload.require(options.particles is None, "--input determines particle count; omit --particles")
+        workload.require(
+            options.input_frames == 1
+            and options.seed == workload.DEFAULT_SEED
+            and options.step == workload.DEFAULT_STEP
+            and options.persistence == workload.DEFAULT_PERSISTENCE,
+            "--input determines stored frames, seed, step, and persistence; omit generation overrides",
+        )
+        options.input = options.input.expanduser().resolve()
+        manifest = workload.read_workload(options.input)
+        header = manifest["header"]
+        options.input_frames = header["frame_count"]
+        options.step = header["step_seconds"]
+        options.persistence = header["persistence_seconds"]
+        particles = [header["particles_per_frame"]]
+    else:
+        particles = options.particles if options.particles is not None else workload.STANDARD_PARTICLE_COUNTS
     for particle_count in particles:
         workload.validate_parameters(
             workload.WorkloadHeader(options.input_frames, particle_count, options.step, options.persistence)

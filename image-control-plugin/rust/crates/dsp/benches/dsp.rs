@@ -15,7 +15,7 @@ mod require_build;
 #[path = "../../../benchmarks/workload.rs"]
 mod workload;
 
-use workload::{Scenario, input_frame};
+use workload::{Scenario, SignalKind};
 
 /// Four production FIR geometries, including both base-rate families.
 const SAMPLE_RATES: [u32; 4] = [44_100, 48_000, 96_000, 192_000];
@@ -93,14 +93,25 @@ fn preparation(criterion: &mut Criterion) {
 
 /// Measures only the warmed production callback path, with identical deterministic initialization per timed batch.
 fn warm_imager(criterion: &mut Criterion) {
+    for signal in [SignalKind::Tones, SignalKind::MovingNoise] {
+        warm_imager_signal(criterion, signal);
+    }
+}
+
+/// Keeps historical tone IDs stable and measures broadband streaming in a separate additive group.
+fn warm_imager_signal(criterion: &mut Criterion, signal: SignalKind) {
     require_build::require_release_native();
-    let mut group = criterion.benchmark_group("imager_warm");
+    let name = if signal.name() == "tones" {
+        "imager_warm"
+    } else {
+        "imager_warm_moving_noise"
+    };
+    let mut group = criterion.benchmark_group(name);
     group.throughput(Throughput::Elements(ITERATION_FRAMES as u64));
     for sample_rate in SAMPLE_RATES {
         for scenario in Scenario::ALL {
-            let input: Vec<_> = (0..ITERATION_FRAMES)
-                .map(|index| input_frame(index, f64::from(sample_rate), scenario.channels()))
-                .collect();
+            let count = signal_frame_count(signal, sample_rate);
+            let input = signal.frames(f64::from(sample_rate), scenario.channels(), count);
             let mut output = vec![[0.0; 2]; ITERATION_FRAMES];
             let mut imager = Imager::new();
             configure(&mut imager, scenario);
@@ -114,11 +125,22 @@ fn warm_imager(criterion: &mut Criterion) {
                             + imager.tail_samples() as usize
                             + sample_rate as usize / 50;
                         for _ in 0..prime_frames.div_ceil(ITERATION_FRAMES) {
-                            process_blocks(&mut imager, &input, &mut output, blocks);
+                            process_blocks(
+                                &mut imager,
+                                input.first_chunk::<ITERATION_FRAMES>().expect("audio chunk"),
+                                &mut output,
+                                blocks,
+                            );
                         }
+                        let mut stream = input.as_chunks::<ITERATION_FRAMES>().0.iter().cycle();
                         let started = Instant::now();
                         for _ in 0..iterations {
-                            process_blocks(&mut imager, black_box(&input), &mut output, blocks);
+                            process_blocks(
+                                &mut imager,
+                                black_box(stream.next().expect("audio chunk")),
+                                &mut output,
+                                blocks,
+                            );
                         }
                         started.elapsed()
                     });
@@ -131,28 +153,42 @@ fn warm_imager(criterion: &mut Criterion) {
 
 /// Measures public worker-side six-tier FFT analysis without exposing private crossover or convolver APIs.
 fn spatial_analysis(criterion: &mut Criterion) {
+    for signal in [SignalKind::Tones, SignalKind::MovingNoise] {
+        spatial_analysis_signal(criterion, signal);
+    }
+}
+
+/// Retains analyzer history while consecutive chunks traverse an eight-second moving broadband source.
+fn spatial_analysis_signal(criterion: &mut Criterion, signal: SignalKind) {
     require_build::require_release_native();
-    let mut group = criterion.benchmark_group("analyzer_warm");
+    let name = if signal.name() == "tones" {
+        "analyzer_warm"
+    } else {
+        "analyzer_warm_moving_noise"
+    };
+    let mut group = criterion.benchmark_group(name);
     group.throughput(Throughput::Elements(ITERATION_FRAMES as u64));
     for sample_rate in SAMPLE_RATES {
-        let input: Vec<_> = (0..ITERATION_FRAMES)
-            .map(|index| input_frame(index, f64::from(sample_rate), 2))
-            .collect();
+        let input = signal.frames(f64::from(sample_rate), 2, signal_frame_count(signal, sample_rate));
         let mut analyzer = SpatialAnalyzer::new(sample_rate as f32).expect("supported analyzer rate");
         group.bench_function(BenchmarkId::from_parameter(sample_rate), |bencher| {
             bencher.iter_custom(|iterations| {
                 analyzer.reset();
                 for _ in 0..32 {
                     analyzer
-                        .push_frames(&input, |points, info| {
-                            black_box((points, info));
-                        })
+                        .push_frames(
+                            input.first_chunk::<ITERATION_FRAMES>().expect("audio chunk"),
+                            |points, info| {
+                                black_box((points, info));
+                            },
+                        )
                         .expect("preallocated analyzer warmup");
                 }
+                let mut stream = input.as_chunks::<ITERATION_FRAMES>().0.iter().cycle();
                 let started = Instant::now();
                 for _ in 0..iterations {
                     analyzer
-                        .push_frames(black_box(&input), |points, info| {
+                        .push_frames(black_box(stream.next().expect("audio chunk")), |points, info| {
                             black_box((points, info));
                         })
                         .expect("preallocated analyzer stream");
@@ -162,6 +198,15 @@ fn spatial_analysis(criterion: &mut Criterion) {
         });
     }
     group.finish();
+}
+
+/// Complete host chunks avoid short periodic resets of the moving source within timed iterations.
+fn signal_frame_count(signal: SignalKind, sample_rate: u32) -> usize {
+    if signal == SignalKind::Tones {
+        ITERATION_FRAMES
+    } else {
+        (sample_rate as usize * 8).div_ceil(ITERATION_FRAMES) * ITERATION_FRAMES
+    }
 }
 
 criterion_group!(benches, preparation, warm_imager, spatial_analysis);
