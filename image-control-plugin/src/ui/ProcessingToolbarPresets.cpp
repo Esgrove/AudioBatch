@@ -29,6 +29,14 @@ constexpr int CANCEL_RESULT {0};
 /// Rejected-file diagnostics remain bounded even for an unexpectedly large directory.
 constexpr std::size_t MAX_VISIBLE_ISSUES {8};
 
+/// Combines the chooser's open or save mode with file selection.
+int fileChooserFlags(const juce::FileBrowserComponent::FileChooserFlags mode)
+{
+    return static_cast<int>(
+        static_cast<unsigned int>(mode) | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectFiles)
+    );
+}
+
 /// Keeps non-rendering workflow alerts out of desktop activation as well as painting.
 class PresetAlertWindow final : public juce::AlertWindow
 {
@@ -693,10 +701,7 @@ void ProcessingToolbarContent::chooseImport()
         = std::make_unique<juce::FileChooser>("Import ImageControl Preset", juce::File(), "*.xml", true, false, this);
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     fileChooser->launchAsync(
-        static_cast<int>(
-            static_cast<unsigned int>(juce::FileBrowserComponent::openMode)
-            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectFiles)
-        ),
+        fileChooserFlags(juce::FileBrowserComponent::openMode),
         [safeThis, request](const juce::FileChooser& chooser) mutable {
             if (safeThis == nullptr || safeThis->closing) {
                 return;
@@ -724,10 +729,7 @@ void ProcessingToolbarContent::chooseExport()
     );
     const juce::Component::SafePointer<ProcessingToolbarContent> safeThis(this);
     fileChooser->launchAsync(
-        static_cast<int>(
-            static_cast<unsigned int>(juce::FileBrowserComponent::saveMode)
-            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectFiles)
-        ),
+        fileChooserFlags(juce::FileBrowserComponent::saveMode),
         [safeThis, request](const juce::FileChooser& chooser) mutable {
             if (safeThis == nullptr || safeThis->closing) {
                 return;

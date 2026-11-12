@@ -12,6 +12,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 use super::EditorError;
 
+/// Dots per inch of a Windows display at 100 percent scale.
+#[cfg(target_os = "windows")]
+const BASE_DPI: f64 = 96.0;
+
 /// A borrowed host parent, used only synchronously while baseview retains its platform parent handle.
 /// The unsafe attachment caller guarantees the native object's type and lifetime.
 pub(super) struct NativeParent {
@@ -21,7 +25,7 @@ pub(super) struct NativeParent {
 
 impl NativeParent {
     /// Resolves initial logical geometry against the live parent rather than a guessed creation-time DPI.
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     #[expect(unsafe_code, reason = "the validated native parent remains live on its UI thread")]
     pub(super) fn initial_size(&self, size: baseview::dpi::Size, fallback_scale: f64) -> baseview::dpi::Size {
         // SAFETY: NativeParent validates the caller-owned HWND and its owner thread before this query.
@@ -29,7 +33,7 @@ impl NativeParent {
         let scale = if dpi == 0 {
             fallback_scale
         } else {
-            f64::from(dpi) / 96.0
+            f64::from(dpi) / BASE_DPI
         };
         baseview::dpi::NativeSize::<u32>::from_size(size, scale).into()
     }
@@ -90,7 +94,7 @@ impl HasWindowHandle for NativeParent {
 mod tests {
     use super::{EditorError, NativeParent};
 
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     #[test]
     #[expect(unsafe_code, reason = "the test owns the native parent through its validated borrow")]
     fn initial_size_uses_parent_dpi_and_preserves_explicit_physical_pixels() {

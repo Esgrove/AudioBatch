@@ -282,8 +282,16 @@ impl IComponentHandler2Trait for Handler {
     }
 }
 
-/// Owns the actual host binding and editor update state without requiring a native child or GPU.
-fn editor(component: &Rc<Component>, evidence: &Rc<Evidence>) -> (EditorState, Rc<ViewUpdates>) {
+/// Keeps the host editor state and its native update owner alive without a child window or GPU.
+struct EditorFixture {
+    /// Editor state exercised by the host callback tests.
+    editor: EditorState,
+    /// Update state retained by the weak host binding.
+    updates: Rc<ViewUpdates>,
+}
+
+/// Builds the actual host binding and editor update state without requiring a native child or GPU.
+fn editor(component: &Rc<Component>, evidence: &Rc<Evidence>) -> EditorFixture {
     let host = ComWrapper::new(Handler {
         component: Rc::downgrade(component),
         evidence: Rc::clone(evidence),
@@ -301,14 +309,14 @@ fn editor(component: &Rc<Component>, evidence: &Rc<Evidence>) -> (EditorState, R
         updates: Rc::downgrade(&updates),
         gestures: Cell::new(0),
     });
-    (
-        EditorState::for_host_test(
+    EditorFixture {
+        editor: EditorState::for_host_test(
             Arc::clone(&component.parameters),
             Arc::clone(&component.shared),
             binding,
         ),
         updates,
-    )
+    }
 }
 
 /// Every opened participant must finish exactly once, even when recall occurs inside a host callback.
@@ -335,7 +343,10 @@ fn recall_inside_real_begin_perform_and_end_callbacks_cannot_publish_stale_linke
     ] {
         let component = Rc::new(Component::new());
         let evidence = Rc::new(Evidence::default());
-        let (mut editor, _updates) = editor(&component, &evidence);
+        let EditorFixture {
+            mut editor,
+            updates: _updates,
+        } = editor(&component, &evidence);
         let _ = editor.update(Message::Link(0, true));
         evidence.restore_at.set(Some(phase));
         let _ = editor.update(Message::NumericDraft(mid, "-6 dB".into()));
@@ -368,7 +379,10 @@ fn recall_inside_real_begin_perform_and_end_callbacks_cannot_publish_stale_linke
 fn recall_during_first_slider_change_cannot_be_revived_by_its_later_raw_press() {
     let component = Rc::new(Component::new());
     let evidence = Rc::new(Evidence::default());
-    let (mut editor, _updates) = editor(&component, &evidence);
+    let EditorFixture {
+        mut editor,
+        updates: _updates,
+    } = editor(&component, &evidence);
     evidence.restore_at.set(Some(RestoreAt::Begin(GAIN_PARAMETER)));
     let _ = editor.update(Message::Change(GAIN_PARAMETER, 0.8));
     // Native slider messages precede the listen_raw subscription for this same pointer press.
@@ -386,7 +400,10 @@ fn recall_during_first_slider_change_cannot_be_revived_by_its_later_raw_press() 
 fn recall_inside_toggle_begin_never_overwrites_the_recalled_switch() {
     let component = Rc::new(Component::new());
     let evidence = Rc::new(Evidence::default());
-    let (mut editor, _updates) = editor(&component, &evidence);
+    let EditorFixture {
+        mut editor,
+        updates: _updates,
+    } = editor(&component, &evidence);
     evidence
         .restore_at
         .set(Some(RestoreAt::Begin(crate::params::MONO_PARAMETER)));
@@ -400,7 +417,10 @@ fn recall_inside_toggle_begin_never_overwrites_the_recalled_switch() {
 fn recall_cancels_a_dirty_draft_and_remaining_held_drag_before_the_next_refresh() {
     let component = Rc::new(Component::new());
     let evidence = Rc::new(Evidence::default());
-    let (mut editor, _updates) = editor(&component, &evidence);
+    let EditorFixture {
+        mut editor,
+        updates: _updates,
+    } = editor(&component, &evidence);
     let _ = editor.update(Message::NumericDraft(GAIN_PARAMETER, "6 dB".into()));
     restore(&component);
     let _ = editor.update(Message::NumericCommit(GAIN_PARAMETER));
@@ -424,7 +444,10 @@ fn recall_cancels_a_dirty_draft_and_remaining_held_drag_before_the_next_refresh(
 fn changed_persisted_preferences_dirty_the_host_without_sound_gestures_or_restore_notifications() {
     let component = Rc::new(Component::new());
     let evidence = Rc::new(Evidence::default());
-    let (mut editor, _updates) = editor(&component, &evidence);
+    let EditorFixture {
+        mut editor,
+        updates: _updates,
+    } = editor(&component, &evidence);
     for message in [
         Message::Tap(image_control_dsp::AnalysisTap::Pre),
         Message::Persistence(1.25),
@@ -466,7 +489,7 @@ fn changed_persisted_preferences_dirty_the_host_without_sound_gestures_or_restor
 fn accepted_changed_geometry_dirties_once_and_invalid_or_echoed_geometry_does_not() {
     let component = Rc::new(Component::new());
     let evidence = Rc::new(Evidence::default());
-    let (_editor, _updates) = editor(&component, &evidence);
+    let _fixture = editor(&component, &evidence);
     // SAFETY: creation transfers an owned view reference on its UI owner thread.
     let view = unsafe { ComPtr::from_raw(component.createView(c"editor".as_ptr())) }.expect("view");
     let mut size = ViewRect {
