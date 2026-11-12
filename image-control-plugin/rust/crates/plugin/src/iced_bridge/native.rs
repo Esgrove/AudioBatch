@@ -20,6 +20,20 @@ pub(super) struct NativeParent {
 }
 
 impl NativeParent {
+    /// Resolves initial logical geometry against the live parent rather than a guessed creation-time DPI.
+    #[cfg(windows)]
+    #[expect(unsafe_code, reason = "the validated native parent remains live on its UI thread")]
+    pub(super) fn initial_size(&self, size: baseview::dpi::Size, fallback_scale: f64) -> baseview::dpi::Size {
+        // SAFETY: NativeParent validates the caller-owned HWND and its owner thread before this query.
+        let dpi = unsafe { windows_sys::Win32::UI::HiDpi::GetDpiForWindow(self.pointer.as_ptr()) };
+        let scale = if dpi == 0 {
+            fallback_scale
+        } else {
+            f64::from(dpi) / 96.0
+        };
+        baseview::dpi::NativeSize::<u32>::from_size(size, scale).into()
+    }
+
     /// Rejects null parents and off-thread attachment before baseview can touch native object APIs.
     ///
     /// # Safety
@@ -75,6 +89,47 @@ impl HasWindowHandle for NativeParent {
 #[cfg(test)]
 mod tests {
     use super::{EditorError, NativeParent};
+
+    #[cfg(windows)]
+    #[test]
+    #[expect(unsafe_code, reason = "the test owns the native parent through its validated borrow")]
+    fn initial_size_uses_parent_dpi_and_preserves_explicit_physical_pixels() {
+        use plugin_host_core::{EditorCallbacks, NativeWindow, UiThread, WindowSize};
+        use std::rc::Rc;
+
+        struct Callbacks;
+        impl EditorCallbacks for Callbacks {
+            fn constrain(&self, size: WindowSize) -> WindowSize {
+                size
+            }
+            fn resized(&self, _size: WindowSize) {}
+            fn scale_changed(&self, _factor: f32) {}
+            fn close_requested(&self) {}
+        }
+
+        let ui = UiThread::register_current().expect("register native owner");
+        let callbacks: Rc<dyn EditorCallbacks> = Rc::new(Callbacks);
+        let window = NativeWindow::create(
+            &ui,
+            &callbacks,
+            "ImageControl initial geometry regression",
+            WindowSize {
+                width: 1000,
+                height: 764,
+            },
+            false,
+            None,
+        )
+        .expect("create owned native parent");
+        // SAFETY: this test owns the live parent on its registered UI thread until after the borrow is dropped.
+        let parent = unsafe { NativeParent::new(window.parent()) }.expect("validated parent");
+        let scale = f64::from(window.content_scale().expect("native scale"));
+        let logical = baseview::dpi::LogicalSize::new(1000.0, 764.0);
+        let expected = baseview::dpi::NativeSize::<u32>::from_size(logical.into(), scale);
+        assert_eq!(parent.initial_size(logical.into(), 0.5), expected.into());
+        let physical = baseview::dpi::NativeSize::new(911_u32, 733_u32);
+        assert_eq!(parent.initial_size(physical.into(), 0.5), physical.into());
+    }
 
     #[test]
     #[expect(unsafe_code, reason = "A null pointer is rejected before any native API is called")]

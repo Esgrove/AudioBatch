@@ -87,26 +87,25 @@ fn off_thread_final_release_leaks_every_ui_owner_without_touching_the_interface(
 }
 
 #[test]
-#[cfg(windows)]
-fn final_release_after_rejected_windows_removal_retains_all_ui_ownership() {
+fn final_release_during_host_callback_drops_removed_ui_ownership() {
     let wrapper = ComWrapper::new(unattached_view());
     wrapper.updates.active.set(true);
     let updates = Rc::downgrade(&wrapper.updates);
     let frame = Rc::downgrade(&wrapper.frame);
-    let interface = Rc::downgrade(&wrapper.interface);
+    let interface = Rc::clone(&wrapper.interface);
     let call = wrapper.updates.host_call();
     let view = wrapper.to_com_ptr::<IPlugView>().expect("view interface");
     wrapper.interface.set(view.as_ptr());
-    // SAFETY: this live owner-thread view must reject removal while its Iced-to-host callback remains active.
-    assert_eq!(unsafe { view.removed() }, kResultFalse);
+    // SAFETY: this live owner-thread view accepts synchronous removal inside its guarded host callback.
+    assert_eq!(unsafe { view.removed() }, kResultOk);
     drop(wrapper);
     drop(view);
-    assert!(updates.upgrade().expect("retained update owner").active.get());
-    assert!(interface.upgrade().expect("retained interface owner").get().is_null());
+    assert!(!updates.upgrade().expect("callback retains update owner").active.get());
+    assert!(frame.upgrade().is_none());
+    assert!(interface.get().is_null());
+    assert_eq!(Rc::strong_count(&interface), 1);
     drop(call);
-    assert_eq!(updates.strong_count(), 1);
-    assert_eq!(frame.strong_count(), 1);
-    assert_eq!(interface.strong_count(), 1);
+    assert!(updates.upgrade().is_none());
 }
 
 /// A real frame synchronously reenters view removal while the binding's host callback guard is active.
@@ -147,12 +146,9 @@ fn reentrant_removal_keeps_ui_owners_live_until_the_host_callback_returns() {
         updates: Rc::downgrade(&wrapper.updates),
         gestures: Cell::new(0),
     };
-    assert_eq!(binding.request_resize(1200, 900), cfg!(windows));
-    assert_eq!(
-        removal.get(),
-        Some(if cfg!(windows) { kResultFalse } else { kResultOk })
-    );
-    assert_eq!(wrapper.updates.active.get(), cfg!(windows));
+    assert!(!binding.request_resize(1200, 900));
+    assert_eq!(removal.get(), Some(kResultOk));
+    assert!(!wrapper.updates.active.get());
     assert!(updates.upgrade().is_some());
     assert_eq!(wrapper.interface.get(), view.as_ptr());
     // SAFETY: the host callback has returned, so both platforms accept removal on this live UI-owned view.

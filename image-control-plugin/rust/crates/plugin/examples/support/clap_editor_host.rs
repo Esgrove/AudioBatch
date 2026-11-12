@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result, ensure};
 use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl};
+use clack_extensions::params::{
+    HostParams, HostParamsImplMainThread, HostParamsImplShared, ParamClearFlags, ParamRescanFlags,
+};
 use clack_host::entry::LibraryEntry;
 use clack_host::prelude::*;
 
@@ -22,6 +25,61 @@ const PLUGIN_ID: &std::ffi::CStr = c"com.esgrove.imagecontrol-rs-own";
 
 /// GUI-only host never activates an audio processor or opens physical audio devices.
 pub struct EditorHost;
+
+/// GUI-only parameter metadata notifications never trigger rescans or audio activation.
+pub struct MainThread;
+
+impl MainThreadHandler<'_> for MainThread {}
+
+#[cfg(windows)]
+thread_local! {
+    /// Reentry is armed only on the owning native thread, never in the thread-safe host state.
+    static FLUSH_CALLBACK: std::cell::RefCell<Option<std::rc::Rc<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Scoped hook is removed before the captured instance or its native parent can be dropped.
+#[cfg(windows)]
+pub struct FlushCallback;
+
+#[cfg(windows)]
+impl Drop for FlushCallback {
+    /// Clears the callback even if the native qualification returns an error.
+    fn drop(&mut self) {
+        FLUSH_CALLBACK.with(|slot| {
+            slot.borrow_mut().take();
+        });
+    }
+}
+
+/// Arms a main-thread-only adversarial callback without transferring native pointers across threads.
+#[cfg(windows)]
+pub fn on_flush(callback: std::rc::Rc<dyn Fn()>) -> FlushCallback {
+    FLUSH_CALLBACK.with(|slot| {
+        *slot.borrow_mut() = Some(callback);
+    });
+    FlushCallback
+}
+
+impl HostParamsImplMainThread for MainThread {
+    /// This inactive host does not cache parameter metadata.
+    fn rescan(&self, _flags: ParamRescanFlags) {}
+    /// There is no automation graph for this GUI-only lifecycle.
+    fn clear(&self, _param_id: ClapId, _flags: ParamClearFlags) {}
+}
+
+impl HostParamsImplShared for Shared {
+    /// Runs an optional owner-thread reentry case without calling parameter flush recursively.
+    fn request_flush(&self) {
+        self.process.store(true, Ordering::Release);
+        #[cfg(windows)]
+        FLUSH_CALLBACK.with(|slot| {
+            let callback = slot.borrow().clone();
+            if let Some(callback) = callback {
+                callback();
+            }
+        });
+    }
+}
 
 /// Thread-safe host notifications use atomics and never touch `AppKit` from arbitrary plugin threads.
 #[derive(Default)]
@@ -38,12 +96,13 @@ pub struct Shared {
 
 impl HostHandlers for EditorHost {
     type Shared<'a> = Shared;
-    type MainThread<'a> = ();
+    type MainThread<'a> = MainThread;
     type AudioProcessor<'a> = ();
 
     /// Advertises the real GUI extension independently of the existing audio-contract host.
     fn declare_extensions(builder: &mut HostExtensions<Self>, _shared: &Self::Shared<'_>) {
         builder.register::<HostGui>();
+        builder.register::<HostParams>();
     }
 }
 
@@ -95,22 +154,35 @@ pub type Instance = PluginInstance<EditorHost>;
 /// Requires an absolute authorized build-tree package and a canonical binary that cannot escape its bundle.
 pub fn checked_bundle(path: &Path) -> Result<PathBuf> {
     let bundle = artifacts::checked_artifact(path).context("CLAP must be an explicit authorized build artifact")?;
-    ensure!(
-        bundle.is_dir() && bundle.extension().is_some_and(|extension| extension == "clap"),
-        "expected a macOS .clap package directory"
-    );
-    let binary = artifacts::checked_artifact(&bundle.join("Contents/MacOS/ImageControl RS"))?;
-    ensure!(
-        binary.is_file() && binary.starts_with(&bundle),
-        "CLAP binary is missing or escaped its package"
-    );
+    #[cfg(windows)]
+    {
+        ensure!(
+            bundle.is_file() && bundle.extension().is_some_and(|extension| extension == "clap"),
+            "expected a Windows .clap module"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        ensure!(
+            bundle.is_dir() && bundle.extension().is_some_and(|extension| extension == "clap"),
+            "expected a macOS .clap package directory"
+        );
+        let binary = artifacts::checked_artifact(&bundle.join("Contents/MacOS/ImageControl RS"))?;
+        ensure!(
+            binary.is_file() && binary.starts_with(&bundle),
+            "CLAP binary is missing or escaped its package"
+        );
+    }
     Ok(bundle)
 }
 
 /// Instantiates the actual packaged plugin through its dynamic factory, never an in-process Rust entry.
 pub fn load(bundle: &Path) -> Result<Instance> {
     let bundle = checked_bundle(bundle)?;
+    #[cfg(target_os = "macos")]
     let binary = bundle.join("Contents/MacOS/ImageControl RS");
+    #[cfg(windows)]
+    let binary = bundle.clone();
     let path = CString::new(bundle.to_str().context("CLAP package path must be UTF-8")?)?;
     // SAFETY: the caller explicitly selects this authorized build-tree native library.
     // Clack owns the loaded entry and keeps it live until every plugin instance has been retired.
@@ -134,7 +206,13 @@ pub fn load(bundle: &Path) -> Result<Instance> {
         "https://esgrove.com",
         "1",
     )?;
-    Ok(Instance::new(|()| Shared::default(), |_| (), &entry, PLUGIN_ID, &info)?)
+    Ok(Instance::new(
+        |()| Shared::default(),
+        |_| MainThread,
+        &entry,
+        PLUGIN_ID,
+        &info,
+    )?)
 }
 
 /// Services one deferred callback per native turn, with the process watchdog bounding recursive plugin requests.

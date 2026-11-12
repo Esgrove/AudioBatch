@@ -9,6 +9,10 @@ use anyhow::{Context as _, Result, bail};
 #[path = "support/clap_editor_native.rs"]
 mod native;
 
+#[cfg(all(windows, feature = "clap", feature = "editor"))]
+#[path = "support/clap_editor_windows.rs"]
+mod native;
+
 /// Parses an explicit package selection before loading a plugin or initializing `AppKit`.
 fn arguments() -> Result<Option<PathBuf>> {
     let mut arguments = std::env::args_os().skip(1);
@@ -18,11 +22,10 @@ fn arguments() -> Result<Option<PathBuf>> {
             Some("-h" | "--help") => {
                 println!(
                     "Usage: clap_editor -b|--bundle <absolute-build-tree.clap>\n\
-Runs the actual packaged CLAP Iced editor on the macOS main thread.\n\
+Runs the actual packaged CLAP Iced editor on its native owner thread.\n\
 IMAGE_CONTROL_CLAP_BUNDLE supplies the explicit package when --bundle is absent.\n\
 Checks create, size, parent, show, hide, show, resize, destroy, and two reopens.\n\
-No installation, audio hardware, screenshots, or installed-plugin discovery.\n\
-Native Windows editor hosting is not implemented."
+No installation, audio hardware, screenshots, or installed-plugin discovery."
                 );
                 return Ok(None);
             }
@@ -43,13 +46,11 @@ fn main() -> Result<()> {
     let Some(bundle) = arguments()? else {
         return Ok(());
     };
-    #[cfg(all(target_os = "macos", feature = "clap", feature = "editor"))]
+    #[cfg(all(any(target_os = "macos", windows), feature = "clap", feature = "editor"))]
     return native::run(&bundle);
-    #[cfg(not(all(target_os = "macos", feature = "clap", feature = "editor")))]
+    #[cfg(not(all(any(target_os = "macos", windows), feature = "clap", feature = "editor")))]
     {
         let _ = bundle;
-        bail!(
-            "clap_editor requires macOS with the clap and editor features; native Windows HWND hosting is not implemented"
-        )
+        bail!("clap_editor requires macOS or Windows with the clap and editor features")
     }
 }

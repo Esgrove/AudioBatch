@@ -190,9 +190,7 @@ impl Drop for PlugView {
             if removed.is_ok() {
                 return;
             }
-            // A final release after rejected Win32 removal is invalid.
-            // Retain native ownership rather than dispatch focus callbacks through a borrowed Iced runtime.
-            // This is not a clean teardown.
+            // A failed native retirement retains UI ownership as containment, not a clean teardown.
         }
         // Off-thread final release must not touch native state or even decrement its UI-only Rc owners.
         self.updates.leak();

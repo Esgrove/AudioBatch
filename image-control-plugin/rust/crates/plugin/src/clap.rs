@@ -91,9 +91,8 @@ impl Plugin for ImageControl {
             .register::<PluginParams>()
             .register::<PluginRender>()
             .register::<PluginState>();
-        // Win32 reentrant destruction cannot use VST3's rejected-removal retry protocol in CLAP's void destroy.
-        // Keep processing/state available without exposing an unsafe custom editor lifecycle.
-        #[cfg(all(feature = "editor", target_os = "macos"))]
+        // The shared editor synchronously retires its native child during CLAP's void destroy callback.
+        #[cfg(all(feature = "editor", any(target_os = "macos", windows)))]
         builder.register::<clack_extensions::gui::PluginGui>();
     }
 }

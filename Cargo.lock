@@ -4320,7 +4320,7 @@ dependencies = [
 [[package]]
 name = "iced_baseview"
 version = "0.6.0"
-source = "git+https://github.com/Esgrove/iced_baseview.git?rev=c7b466323a8ffd18282739d61073fa0f88b06c25#c7b466323a8ffd18282739d61073fa0f88b06c25"
+source = "git+https://github.com/Esgrove/iced_baseview.git?rev=f9d3384c50e95d78fbfe0a1b8e002c1f1a314e2d#f9d3384c50e95d78fbfe0a1b8e002c1f1a314e2d"
 dependencies = [
  "baseview",
  "crossbeam-utils",
@@ -4716,6 +4716,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "plugin-host-core",
  "raw-window-handle",
  "serde",
  "serde_json",
