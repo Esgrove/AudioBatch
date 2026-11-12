@@ -104,6 +104,9 @@ Windows VST3 removal now synchronously retires its child and workers during host
 Windows CLAP advertises its custom GUI when the editor feature is enabled.
 Its native driver exercises ordinary lifecycle and destruction inside an active host parameter callback,
 checking synchronous child retirement and independently flushed balanced gestures.
+The VST3 `callback-removal` case verifies immediate retirement without nested event dispatch,
+while `synchronous-removal` also pumps nested events.
+`removal-retry` is a compatibility spelling for `callback-removal`, not an assertion that valid removal is rejected.
 Later repeatability checks can be blocked before input delivery by an obstructing desktop window.
 The driver treats that as a failure, not a successful lifecycle result.
 DSP/state remain independent of a native editor.
@@ -291,6 +294,12 @@ Generation is checked again at rendering so a tap or reset change after upload c
 Normal rendering neither reads pixels back nor waits synchronously for GPU completion.
 The surrounding Iced controls and plot overlays use the same GPU renderer.
 Complete renderer/device-loss fallback is not implemented.
+The pinned `iced_baseview` shell owns the compositor, surface, and presentation-error handling.
+`iced_wgpu::window::Compositor` owns the device through its engine and translates surface acquisition errors.
+The shell reconfigures an outdated surface and recreates a lost surface, but this is not device recreation.
+Its out-of-memory branch panics.
+Plugin-owned `GpuHistory` cannot intercept that branch or qualify recovery at the upstream owner.
+The existing surface branches remain unqualified by injected Windows faults.
 
 ## State and editor preferences
 
@@ -363,6 +372,8 @@ The worker wakes from the display cadence with bounded fallback draining when fr
 On macOS, the pinned Iced/baseview integration forwards redraw requests to baseview's existing view-bound display link.
 Polling and resize request native frames rather than presenting through a competing timer.
 Windows retains compatibility scheduling until its backend's fixed redraw timer is separately qualified.
+CI exercises dedicated spectrogram resource, invalidation, resize, and multi-widget contracts without timing samples.
+Benchmark executables and Criterion targets may be compiled there, but all performance execution remains local.
 Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
 The comparison/preset toolbar moves into available header space without changing its saved narrow-layout visibility choice.
 All frequency ranges share the band-title row only when every measured heading fits, otherwise all use a second row.

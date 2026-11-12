@@ -8,9 +8,12 @@ C++ is the feature, close user-experience, and audio reference, not an exact int
 Compatibility with older RS state or normalized automation is not required.
 
 The implementation targets macOS and Windows.
-Historical local verification covers native macOS processing, editor, GPU tests, and Windows MSVC cross-checks.
-That evidence predates the current cleanup. New verification is in progress, with no new measurements asserted here.
-Native Windows execution and graphics remain unverified.
+Native Windows Debug/Release packages, bounded VST3/CLAP editor cases,
+GPU contracts, and packaged parity have been tested.
+Broader native input, genuine DPI transitions, application GUI/playback, renderer recovery,
+resource churn, and legal unload remain qualification gates.
+See the [Windows acceptance status](docs/rust-evaluation.md#windows-acceptance-status-12-november-2026) for exact evidence
+and blocked checks.
 The C++ plugin remains the supported implementation.
 
 ## Features
@@ -107,6 +110,9 @@ They verify allocation and mutex detector controls separately from required-clea
 Passing these exercised scenarios does not establish audio deadlines or arbitrary host compatibility.
 
 ## Cross-implementation tests and benchmarks
+
+Performance tools run locally only.
+CI compiles benchmark targets without executing them and uses dedicated package, parity, and GPU tests for correctness.
 
 The packaged parity host compares both actual VST3s with deterministic signals and independent neutral,
 gain, pan, mono, latency, and tail expectations.
@@ -228,9 +234,9 @@ Local macOS signing is ad-hoc, not Developer ID signing or notarization.
   After project recall, reconnect explicitly before changing the corresponding library entry.
 - Windows CLAP exposes the custom Iced editor with synchronous native retirement during host callbacks.
   The published Iced bridge repair defers nested runtime polling without losing queued events.
-  Bounded native callback probes pass, but repeated unobstructed Debug/Release, broader input/DPI,
+  Bounded native callback probes pass, but broader input/DPI,
   and actual application GUI workflows remain qualification gates, as recorded in the evaluation.
-- Full Iced device-loss recovery, native accessibility qualification, safe arbitrary module unloading,
+- Full Iced device-loss recovery, native accessibility qualification, legal module unload/reload,
   and complete upstream widget-cache reclamation are not established.
   Invalid off-thread or reentrant final release retains UI resources as leak containment, not unload qualification.
 

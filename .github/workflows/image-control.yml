@@ -34,6 +34,8 @@ on:
       - "tests/realtime_sanitizer.py"
       - "tests/test_realtime_sanitizer.py"
       - "tests/test_realtime_scripts.py"
+      - "tests/test_shell_help.py"
+      - "tests/test_python_options.py"
       - "uv.lock"
       - "!**/*.md"
   pull_request:
@@ -60,6 +62,8 @@ on:
       - "tests/realtime_sanitizer.py"
       - "tests/test_realtime_sanitizer.py"
       - "tests/test_realtime_scripts.py"
+      - "tests/test_shell_help.py"
+      - "tests/test_python_options.py"
       - "uv.lock"
       - "!**/*.md"
 
@@ -104,17 +108,12 @@ jobs:
         timeout-minutes: 20
         run: ./build.sh --test --build-type "${{ matrix.build-type }}"
 
-      - name: Build and smoke-test renderer benchmark
+      - name: Compile renderer benchmark without executing it
         timeout-minutes: 10
         run: |
           build_type="${{ matrix.build-type }}"
           build_dir="cmake-build-$(printf '%s' "$build_type" | tr '[:upper:]' '[:lower:]')"
           cmake --build "$build_dir" --config "$build_type" --target ImageControlRenderBenchmark
-          benchmark="$build_dir/ImageControlRenderBenchmark_artefacts/$build_type/ImageControlRenderBenchmark"
-          if [ "$RUNNER_OS" = Windows ]; then
-            benchmark="$benchmark.exe"
-          fi
-          "$benchmark" --help
 
       # This target builds the exact pluginval revision pinned in cpp/cmake/Pluginval.cmake.
       # Failure or absence of the validator must fail CI, not silently skip validation.
@@ -195,6 +194,15 @@ jobs:
           ./lint.sh --check
           cargo check -p image-control-plugin-rs --no-default-features
           cargo test -p image-control-plugin-rs --no-default-features --lib
+
+      - name: Check Windows shell and option contracts
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: |
+          uv run --script tests/test_shell_help.py
+          uv run --script tests/test_python_options.py
+          uv run --script image-control-plugin/tests/test_ci_contracts.py
+          uv run --script image-control-plugin/rust/tests/test_benchmark_script.py
 
       - name: Check parity and benchmark runner contracts
         if: runner.os == 'macOS'
@@ -286,46 +294,14 @@ jobs:
             --cpp "$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3" \
             --executable "$parity"
 
-      - name: Build and smoke-test Rust renderer benchmark
+      - name: Compile Rust renderer benchmark without executing it
         timeout-minutes: 5
-        run: cargo run -p image-control-plugin-rs --features render-benchmark --example render_benchmark -- --help
+        run: cargo build -p image-control-plugin-rs --features render-benchmark --example render_benchmark
 
       - name: Compile Criterion benchmarks
         run: |
           cargo bench -p image-control-dsp --no-run
           cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram --no-run
-
-      - name: Check packaged processing benchmark workloads
-        timeout-minutes: 10
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
-        run: |
-          repository="$(git rev-parse --show-toplevel)"
-          mkdir -p target/benchmark/ci-processing
-          for implementation in rust cpp; do
-            bundle="$repository/rust/target/bundled/ImageControl RS.vst3"
-            if [ "$implementation" = cpp ]; then
-              bundle="$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3"
-            fi
-            for signal in tones moving-noise; do
-              frames=4096
-              if [ "$signal" = moving-noise ]; then frames=384000; fi
-              for scenario in neutral recover delta bypass; do
-                cargo run --release -p image-control-plugin-rs --no-default-features --features vst3 \
-                  --example processing_benchmark -- --implementation "$implementation" \
-                  --bundle "$bundle" --case "$scenario" --signal "$signal" --frames "$frames" \
-                  > "target/benchmark/ci-processing/$implementation-$scenario-$signal.json"
-              done
-            done
-          done
-
-      - name: Upload processing workload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: image-control-processing-${{ runner.os }}
-          path: image-control-plugin/rust/target/benchmark/ci-processing
-          if-no-files-found: ignore
 
       - name: Upload cross-implementation diagnostics
         if: failure()
@@ -354,27 +330,14 @@ jobs:
       - name: Require interactive Windows runner
         run: test "$RUNNER_OS" = Windows
       - uses: astral-sh/setup-uv@v10.3.3
-      - name: Validate native GPU workload reports
+      - name: Validate native GPU resource and rendering contracts
+        timeout-minutes: 15
         run: |
           set -o pipefail
           mkdir -p target/windows-native
           ../build.sh --test 2>&1 | tee target/windows-native/cpp-build.log
-          cmake --build ../cmake-build-release --config Release --target ImageControlRenderBenchmark
-          cargo build --release -p image-control-plugin-rs --features render-benchmark \
-            --example render_benchmark --example audio_render_workload
-          uv run --script ../benchmarks/render_benchmark.py \
-            --cpp "$(cygpath -w "$PWD/../cmake-build-release/ImageControlRenderBenchmark_artefacts/Release/ImageControlRenderBenchmark.exe")" \
-            --rust "$(cygpath -w "$PWD/../../rust/target/release/examples/render_benchmark.exe")" \
-            --artifacts "$(cygpath -w "$PWD/target/windows-native/render")" \
-            --runs 2 --frames 120 --warmup 30 --particles 4096 --mode particles --size 1280x720 --timeout 30
-          ../../rust/target/release/examples/audio_render_workload.exe \
-            --output target/windows-native/moving-noise.icrb
-          uv run --script ../benchmarks/render_benchmark.py \
-            --cpp "$(cygpath -w "$PWD/../cmake-build-release/ImageControlRenderBenchmark_artefacts/Release/ImageControlRenderBenchmark.exe")" \
-            --rust "$(cygpath -w "$PWD/../../rust/target/release/examples/render_benchmark.exe")" \
-            --input "$(cygpath -w "$PWD/target/windows-native/moving-noise.icrb")" \
-            --artifacts "$(cygpath -w "$PWD/target/windows-native/render-moving-noise")" \
-            --runs 2 --frames 240 --warmup 30 --size 1280x720 --timeout 30
+          cargo test --release -p image-control-plugin-rs --lib spectrogram:: \
+            -- --test-threads=1 2>&1 | tee target/windows-native/gpu-contracts.log
       - name: Qualify Debug and Release native editors
         run: |
           set -o pipefail
@@ -389,7 +352,7 @@ jobs:
               cargo_options+=(--release)
             fi
             ./build.sh "${build_options[@]}" 2>&1 | tee "target/windows-native/$profile-build.log"
-            for scenario in nested-dispatch synchronous-removal; do
+            for scenario in nested-dispatch callback-removal synchronous-removal; do
               cargo run "${cargo_options[@]}" -p image-control-plugin-rs --example editor_reentry -- \
                 --case "$scenario" --bundle "$repository/rust/target/bundled/ImageControl RS.vst3" \
                 2>&1 | tee "target/windows-native/$profile-$scenario.log"
@@ -599,7 +562,9 @@ jobs:
           uv run --script benchmarks/test_render_benchmark.py
 
       - name: Test build and validation script contracts
-        run: uv run --script tests/test_build_scripts.py
+        run: |
+          uv run --script tests/test_build_scripts.py
+          uv run --script tests/test_ci_contracts.py
 
       - name: Test shared realtime runner and script contracts
         run: |
