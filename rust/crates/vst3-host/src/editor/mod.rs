@@ -217,6 +217,19 @@ impl EditorWindow {
         self.window.show();
     }
 
+    /// Requests a host-originated content size in native view units, constrained by the plugin.
+    /// Closed or non-resizable editors ignore the request.
+    pub fn set_content_size(&self, _ui: &UiThread, size: ViewSize) {
+        if self.shared.closed.get() || !self.shared.can_resize() {
+            return;
+        }
+        let size = self.shared.constrain(size);
+        self.shared.resizing_for_plugin.set(true);
+        self.window.set_content_size(size);
+        self.shared.resizing_for_plugin.set(false);
+        self.shared.tell_size(size);
+    }
+
     /// Gives the view its frame and window, sizes the window to the view,
     /// moves it to `position` when there is one, and shows it.
     /// The move comes after the final size, so keeping the window on a display accounts for its whole frame.
