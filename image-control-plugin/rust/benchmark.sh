@@ -179,9 +179,9 @@ run_measurements() {
 
 benchmark_plugin() {
     parse_arguments "$@"
+    validate_options
     image_control_resolve_target_directory
     cd "$SCRIPT_DIR"
-    validate_options
     prepare_tools
     prepare_artifacts
     local OPTIONS=(--bundle "$BUNDLE" --case "$CASE" --sample-rate "$SAMPLE_RATE" --block "$BLOCK" --frames "$FRAMES")
