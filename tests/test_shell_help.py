@@ -4,6 +4,7 @@
 # ///
 """Verify first-party shell entry points expose help without invoking tools or changing files."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -13,6 +14,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
+if os.name == "nt" and BASH is not None:
+    native_bash = Path(BASH).parent.parent / "usr/bin/bash.exe"
+    if native_bash.is_file():
+        BASH = str(native_bash)
+SHEBANG = "/bin/bash" if os.name == "nt" else BASH
 SCRIPT_DIRECTORIES = (
     ".",
     "cpp",
@@ -147,23 +153,55 @@ class ShellHelpContracts(unittest.TestCase):
         self.tools.mkdir()
         self.log = self.root / "unexpected-tools.log"
         for name in ("dirname", "basename", "realpath", "tr", "sed", "awk", "cut", "readlink"):
+            self.allow_tool(name)
+        self.tool("uname", 'printf "%s\\n" "${TEST_PLATFORM:-Darwin}"\n')
+        for name in SIDE_EFFECT_TOOLS:
+            self.tool(name, 'printf "%s\\n" "${0##*/} $*" >> "$HELP_TOOL_LOG"\nexit 93\n')
+        if os.name == "nt":
+            self.allow_tool("cygpath")
+        self.environment = {
+            "PATH": str(self.tools),
+            "HOME": (self.root / "home").as_posix(),
+            "LC_ALL": "C",
+            "HELP_TOOL_LOG": self.log.as_posix(),
+            "TEST_PLATFORM": "MINGW64_NT" if os.name == "nt" else "Darwin",
+        }
+
+    def tool(self, name: str, body: str) -> None:
+        """Create executable POSIX fixtures with LF endings and a shell-resolvable interpreter."""
+        path = self.tools / name
+        path.write_text(f"#!{SHEBANG}\n{body}", encoding="utf-8", newline="\n")
+        path.chmod(0o755)
+
+    def allow_tool(self, name: str) -> None:
+        """Keep Windows runtime tools at their original paths instead of relocating Scoop shims."""
+        assert BASH is not None
+        if os.name == "nt":
+            executable = Path(BASH).with_name(f"{name}.exe")
+            assert executable.is_file(), executable
+            self.tool(name, f'exec "{executable.as_posix()}" "$@"\n')
+        else:
             executable = shutil.which(name)
             assert executable is not None
             (self.tools / name).symlink_to(executable)
-        (self.tools / "uname").write_text(f'#!{BASH}\nprintf "Darwin\\n"\n', encoding="utf-8")
-        (self.tools / "uname").chmod(0o755)
+
+    def test_denied_tools_execute_only_recording_fixtures(self) -> None:
+        """A usable fixture shell must reject every side-effect tool rather than finding real programs."""
+        assert BASH is not None
         for name in SIDE_EFFECT_TOOLS:
-            tool = self.tools / name
-            tool.write_text(
-                f'#!{BASH}\nprintf "%s\\n" "${{0##*/}} $*" >> "$HELP_TOOL_LOG"\nexit 93\n', encoding="utf-8"
-            )
-            tool.chmod(0o755)
-        self.environment = {
-            "PATH": str(self.tools),
-            "HOME": str(self.root / "home"),
-            "LC_ALL": "C",
-            "HELP_TOOL_LOG": str(self.log),
-        }
+            with self.subTest(tool=name):
+                self.log.unlink(missing_ok=True)
+                result = subprocess.run(  # noqa: S603
+                    [BASH, "-c", '"$1" "argument with spaces"', "fixture", name],
+                    cwd=self.root,
+                    env=self.environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                assert result.returncode == 93, result.stdout + result.stderr
+                assert self.log.read_text() == f"{name} argument with spaces\n"
 
     def test_all_entry_points_support_both_help_aliases_without_side_effects(self) -> None:
         """Each alias exits successfully, documents itself, and avoids build/install/format tools."""
@@ -211,10 +249,11 @@ class ShellHelpContracts(unittest.TestCase):
             for name in ("build.sh", "install.sh", "format.sh", "lint.sh"):
                 script = self.root / project / name
                 script.write_text(
-                    f'#!{BASH}\nprintf "%s\\0" "{project}/{name}" "$@" >> "$HELP_TOOL_LOG"\n'
+                    f'#!{SHEBANG}\nprintf "%s\\0" "{project}/{name}" "$@" >> "$HELP_TOOL_LOG"\n'
                     f'printf "\\n" >> "$HELP_TOOL_LOG"\n'
                     f'if [ "${{FAIL_PROJECT:-}}" = "{project}" ]; then exit 47; fi\n',
                     encoding="utf-8",
+                    newline="\n",
                 )
                 script.chmod(0o755)
         for name in ("build.sh", "install.sh", "format.sh", "lint.sh"):
@@ -274,23 +313,18 @@ class ShellHelpContracts(unittest.TestCase):
     def test_version_workflow_updates_only_coordinated_declarations_and_propagates_lock_failure(self) -> None:
         """Exercise the real version editor in disposable files with a recording Cargo command."""
         assert BASH is not None
-        perl = shutil.which("perl")
-        assert perl is not None
-        (self.tools / "perl").symlink_to(perl)
+        self.allow_tool("perl")
         declarations = {
             "cpp/CMakeLists.txt": 'project(\n  "AudioBatch"\n  VERSION 1.2.3\n)\n',
             "Cargo.toml": '[workspace.package]\nversion = "1.2.3"\n',
             "test-plugin/CMakeLists.txt": 'project(\n  "AudioBatchTestPlugin"\n  VERSION 1.2.3\n)\n',
         }
-        (self.tools / "cargo").write_text(
-            f'#!{BASH}\nprintf "%s\\n" "$*" >> "$HELP_TOOL_LOG"\nexit "${{CARGO_STATUS:-0}}"\n',
-            encoding="utf-8",
-        )
+        self.tool("cargo", 'printf "%s\\n" "$*" >> "$HELP_TOOL_LOG"\nexit "${CARGO_STATUS:-0}"\n')
         for arguments, expected, cargo_status in [([], "1.2.4", 0), (["--minor"], "1.3.0", 0), (["-m"], "2.0.0", 48)]:
             with self.subTest(arguments=arguments, cargo_status=cargo_status):
                 self.log.unlink(missing_ok=True)
                 for relative, content in declarations.items():
-                    (self.root / relative).write_text(content, encoding="utf-8")
+                    (self.root / relative).write_text(content, encoding="utf-8", newline="\n")
                 result = subprocess.run(  # noqa: S603
                     [BASH, str(self.root / "bump-version.sh"), *arguments],
                     cwd=self.root,
