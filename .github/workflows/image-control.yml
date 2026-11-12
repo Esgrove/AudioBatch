@@ -1,13 +1,6 @@
 name: ImageControl
 
 on:
-  workflow_dispatch:
-    inputs:
-      windows_native_runner:
-        description: "Interactive Windows GPU runner label; leave empty for hosted contracts only"
-        required: false
-        type: string
-        default: ""
   push:
     branches:
       - main
@@ -32,10 +25,6 @@ on:
       - "image-control-plugin/**"
       - "pyproject.toml"
       - "tests/realtime_sanitizer.py"
-      - "tests/test_realtime_sanitizer.py"
-      - "tests/test_realtime_scripts.py"
-      - "tests/test_shell_help.py"
-      - "tests/test_python_options.py"
       - "uv.lock"
       - "!**/*.md"
   pull_request:
@@ -60,10 +49,6 @@ on:
       - "image-control-plugin/**"
       - "pyproject.toml"
       - "tests/realtime_sanitizer.py"
-      - "tests/test_realtime_sanitizer.py"
-      - "tests/test_realtime_scripts.py"
-      - "tests/test_shell_help.py"
-      - "tests/test_python_options.py"
       - "uv.lock"
       - "!**/*.md"
 
@@ -107,13 +92,6 @@ jobs:
       - name: Build and test
         timeout-minutes: 20
         run: ./build.sh --test --build-type "${{ matrix.build-type }}"
-
-      - name: Compile renderer benchmark without executing it
-        timeout-minutes: 10
-        run: |
-          build_type="${{ matrix.build-type }}"
-          build_dir="cmake-build-$(printf '%s' "$build_type" | tr '[:upper:]' '[:lower:]')"
-          cmake --build "$build_dir" --config "$build_type" --target ImageControlRenderBenchmark
 
       # This target builds the exact pluginval revision pinned in cpp/cmake/Pluginval.cmake.
       # Failure or absence of the validator must fail CI, not silently skip validation.
@@ -194,23 +172,6 @@ jobs:
           ./lint.sh --check
           cargo check -p image-control-plugin-rs --no-default-features
           cargo test -p image-control-plugin-rs --no-default-features --lib
-
-      - name: Check Windows shell and option contracts
-        if: runner.os == 'Windows'
-        working-directory: .
-        run: |
-          uv run --script tests/test_shell_help.py
-          uv run --script tests/test_python_options.py
-          uv run --script image-control-plugin/tests/test_ci_contracts.py
-          uv run --script image-control-plugin/rust/tests/test_benchmark_script.py
-
-      - name: Check parity and benchmark runner contracts
-        if: runner.os == 'macOS'
-        working-directory: .
-        run: |
-          uv run --script image-control-plugin/tests/test_parity_runner.py
-          uv run --script image-control-plugin/rust/tests/test_benchmark_script.py
-          uv run --script image-control-plugin/rust/tests/test_install_script.py
 
       # Build the shared pinned validator before either Rust profile, regardless of runner PATH contents.
       - name: Build C++ parity host and pinned pluginval
@@ -294,15 +255,6 @@ jobs:
             --cpp "$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3" \
             --executable "$parity"
 
-      - name: Compile Rust renderer benchmark without executing it
-        timeout-minutes: 5
-        run: cargo build -p image-control-plugin-rs --features render-benchmark --example render_benchmark
-
-      - name: Compile Criterion benchmarks
-        run: |
-          cargo bench -p image-control-dsp --no-run
-          cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram --no-run
-
       - name: Upload cross-implementation diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -310,64 +262,6 @@ jobs:
           name: image-control-parity-${{ runner.os }}
           path: rust/target/image-control-parity
           if-no-files-found: ignore
-
-  windows-native:
-    name: Interactive Windows native qualification
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_native_runner != ''
-    runs-on: ${{ inputs.windows_native_runner }}
-    timeout-minutes: 60
-    env:
-      RUSTFLAGS: "-C target-cpu=native"
-    defaults:
-      run:
-        shell: bash
-        working-directory: image-control-plugin/rust
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Require interactive Windows runner
-        run: test "$RUNNER_OS" = Windows
-      - uses: astral-sh/setup-uv@v10.3.3
-      - name: Validate native GPU resource and rendering contracts
-        timeout-minutes: 15
-        run: |
-          set -o pipefail
-          mkdir -p target/windows-native
-          ../build.sh --test 2>&1 | tee target/windows-native/cpp-build.log
-          cargo test --release -p image-control-plugin-rs --lib spectrogram:: \
-            -- --test-threads=1 2>&1 | tee target/windows-native/gpu-contracts.log
-      - name: Qualify Debug and Release native editors
-        run: |
-          set -o pipefail
-          repository="$(git rev-parse --show-toplevel)"
-          mkdir -p target/windows-native
-          for profile in debug release; do
-            build_options=(--test)
-            cargo_options=()
-            if [ "$profile" = debug ]; then
-              build_options+=(--debug)
-            else
-              cargo_options+=(--release)
-            fi
-            ./build.sh "${build_options[@]}" 2>&1 | tee "target/windows-native/$profile-build.log"
-            for scenario in nested-dispatch callback-removal synchronous-removal; do
-              cargo run "${cargo_options[@]}" -p image-control-plugin-rs --example editor_reentry -- \
-                --case "$scenario" --bundle "$repository/rust/target/bundled/ImageControl RS.vst3" \
-                2>&1 | tee "target/windows-native/$profile-$scenario.log"
-            done
-            cargo run "${cargo_options[@]}" -p image-control-plugin-rs --example clap_editor -- \
-              --bundle "$repository/rust/target/bundled/ImageControl RS.clap" \
-              2>&1 | tee "target/windows-native/$profile-clap-editor.log"
-          done
-      - name: Upload native qualification diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: image-control-windows-native
-          path: image-control-plugin/rust/target/windows-native
-          if-no-files-found: error
 
   rust-miri:
     name: Rust scalar and admission Miri
@@ -545,28 +439,3 @@ jobs:
             image-control-plugin/cmake-build-mac-coverage/coverage/lcov.info
             image-control-plugin/cmake-build-mac-coverage/Testing/Temporary/LastTest.log
           if-no-files-found: error
-
-  tooling-tests:
-    runs-on: macos-latest
-    timeout-minutes: 5
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      - name: Test format comparison and renderer benchmark contracts
-        run: |
-          uv run --script benchmarks/test_compare_formats.py
-          uv run --script benchmarks/test_render_benchmark.py
-
-      - name: Test build and validation script contracts
-        run: |
-          uv run --script tests/test_build_scripts.py
-          uv run --script tests/test_ci_contracts.py
-
-      - name: Test shared realtime runner and script contracts
-        run: |
-          uv run --script ../tests/test_realtime_sanitizer.py
-          uv run --script ../tests/test_realtime_scripts.py

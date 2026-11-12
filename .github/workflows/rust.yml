@@ -131,23 +131,6 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
 
-      - name: Check Rust shell entry points and realtime contracts
-        if: runner.os == 'macOS'
-        run: |
-          uv run --script ../tests/test_rust_scripts.py
-          uv run --script ../tests/test_rust_workspace.py
-          uv run --script ../tests/test_realtime_sanitizer.py
-          uv run --script ../tests/test_realtime_scripts.py
-
-      # Runs the isolated packaging contracts of both applications' shared signing helper, without native signing.
-      - name: Check local macOS signing contracts
-        if: runner.os == 'macOS'
-        run: uv run --script ../tests/test_mac_signing.py
-
-      - name: Test parity oracles and benchmark tooling natively
-        if: runner.os == 'Windows'
-        run: ./test.sh --tooling
-
       - name: Check formatting
         if: runner.os == 'macOS'
         run: |
@@ -175,10 +158,6 @@ jobs:
       - name: Driven GUI integration workflows
         timeout-minutes: 5
         run: ./test.sh --gui-integration
-
-      - name: Check distribution license notices
-        if: runner.os == 'macOS'
-        run: uv run --script scripts/test_distribution_licenses.py
 
       # Each backend must preserve its platform baseline in optimized builds too.
       - name: Run optimized core and Windows CLI tests

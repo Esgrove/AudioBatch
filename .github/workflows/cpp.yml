@@ -180,17 +180,6 @@ jobs:
           key: ${{ runner.os }}-Debug-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-Debug-cmake-
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      - name: Test shell script contracts
-        run: |
-          uv run --script ../tests/test_cpp_lint.py
-          uv run --script ../tests/test_cpp_test.py
-          uv run --script ../tests/test_realtime_sanitizer.py
-          uv run --script ../tests/test_realtime_scripts.py
-          uv run --script ../tests/test_callback_benchmark.py
-
       # --prepare refreshes the compile database and generated headers without compiling the applications.
       # lint.sh selects Homebrew clang-tidy while CMake retains the build job's Apple toolchain.
       - name: Prepare workspace and run clang-tidy

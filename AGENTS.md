@@ -138,9 +138,7 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   Release executable of either application, for changes to callback synchronization.
   [`docs/performance.md`](docs/performance.md) records the measured CLI, VST3, and callback comparisons
   and how to reproduce them.
-- The other `tests/test_*.py` scripts check the shell and Python tooling contracts through uv:
-  the C++ lint and test runners, the Rust scripts, the realtime runner and scripts, the callback benchmark,
-  and the macOS signing helper.
+  Benchmarks run locally only, never in CI.
 - `tests/cli_integration.py` runs the same executable-level CLI contracts against either built CLI through uv.
   Pass `--cli <absolute-executable-path>` and optionally `--artifacts <directory>` for failure diagnostics.
   It isolates application storage with `AUDIOBATCH_DATA_ROOT`
@@ -157,26 +155,27 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   The C++ tier drives a transparent desktop window through `cpp/tests/GuiDriver.*`,
   and the Rust tier uses gpui-kit's test window helpers.
 - `pyproject.toml` configures ruff for the Python scripts in `fixtures/`, `tests/`, `rust/scripts/`,
-  `image-control-plugin/benchmarks/`, `image-control-plugin/tests/`, and `image-control-plugin/test-signals/`,
-  and pins it in `uv.lock`.
+  and `image-control-plugin/`, and pins it in `uv.lock`.
+  Python scripts generate fixtures, compare or drive the real applications and plugins, and run local benchmarks.
+  Do not add Python tests of the shell scripts, Python tooling, or CI configuration.
   Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.
   Each script declares its Python version and packages in an inline `# /// script` block
   and runs in its own environment with `uv run --script`, so add a script's packages there, not to `pyproject.toml`.
   Check the scripts with `uv run ruff format` and `uv run ruff check --fix` from the repository root.
 - `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, `test-plugin/`, and `image-control-plugin/`,
   cargo fmt on `rust/`, ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
-- `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
-  Their path filters include their own project, fixtures, the test plugin, assets, and shared shell helpers.
-  They also include their workflow files, and exclude Markdown-only changes.
+- CI builds, tests, lints, format-checks, sanitizes, fuzzes, and measures coverage of the applications and plugins.
+  It runs no benchmarks and no tests of the scripts themselves.
+  `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
+  Their path filters include their own project, fixtures, the test plugin, assets, shared shell helpers,
+  the root `tests/` scripts, and their workflow files, and exclude Markdown-only changes.
   The C++ workflow excludes the normalization collection.
   `format.yml` runs the root `./format.sh --check` on every change,
   checks that `fixtures/plugin_expected/` matches what its script writes,
   and verifies the independent spectrogram and source-metric expectations with their generators' `--check` modes.
-  Both also include the root `tests/` scripts.
   `cpp.yml` builds and tests Debug and Release on macOS and Windows,
-  and runs coverage, clang-tidy with the tooling contract tests, the sanitizers, RealtimeSanitizer, and fuzzing.
+  and runs coverage, clang-tidy, the sanitizers, RealtimeSanitizer, and fuzzing.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
-  Its macOS build job also runs `tests/test_mac_signing.py`, the packaging contracts of the shared signing helper.
   Its `miri`, `fuzz`, and `realtime` jobs run `rust/miri.sh`, `rust/fuzz.sh`, and `rust/rtsan.sh` on macOS with nightly Rust.
   The realtime job requires clean first-party callbacks with `--skip-native`,
   then verifies known blockers with `--diagnostic`.
@@ -188,10 +187,12 @@ and do not discuss Linux support or Linux tooling in plans, reviews, or answers.
   It also runs the shared-cache tests in both directions.
   `image-control.yml` builds and tests ImageControl in Debug and Release on macOS and Windows,
   validates the VST3 with the pinned pluginval, and validates its Audio Unit on macOS.
-  It also runs clang-tidy, AddressSanitizer, ThreadSanitizer, RealtimeSanitizer, coverage,
-  and the plugin's script contract tests on macOS.
+  It builds, tests, and validates the Rust implementation's formats on both platforms,
+  and compares both packaged implementations.
+  It also runs clang-tidy, AddressSanitizer, ThreadSanitizer, RealtimeSanitizer, and coverage on macOS,
+  and Miri, RealtimeSanitizer, and a license audit for the Rust implementation.
   Its path filters cover the plugin, JUCE submodule, shared C++ style, optimization, and pluginval configuration,
-  native CPU detection helper, root `common.sh`, the shared realtime runner and its tests,
+  native CPU detection helper, root `common.sh`, the shared realtime runner,
   the Python configuration, and the workflow itself, excluding Markdown-only changes.
 
 ## Isolated Application Storage
@@ -300,8 +301,6 @@ Keep exceptions narrow, and revisit them when their technical constraints change
   Common pairs include `-h/--help`, `-v/--verbose`, `-d/--debug`, `-c/--check` in checkers,
   `-c/--clean` in builders, `-j/--jobs`, `-t/--test`, `-V/--validate`, `-L/--validation-level`,
   `-N/--no-build`, `-B/--build-only`, `-A/--artifacts`, and `-R/--realtime` in sanitizer scripts.
-  `tests/test_shell_help.py` checks shell help and shared flag names.
-  `tests/test_python_options.py` checks Python aliases against their real parsers without running the tools.
   Parameter-taking shell entry points print useful help and exit successfully
   before builds, installations, required-tool checks, or other side effects.
   Use `REPO_ROOT` from root `common.sh` for repository-level paths.

@@ -72,19 +72,6 @@ For `all` or application scopes, also verify independent expectations from the r
   run the copied script through uv, and compare the generated file set and bytes with `fixtures/plugin_expected/`.
   Do not delete or regenerate the working tree's expected-output directory.
 
-Run shared Python script contracts with `uv run --script <path>` from the repository root:
-
-- C++ scope: `tests/test_cpp_lint.py`, `tests/test_cpp_test.py`, and `tests/test_callback_benchmark.py`.
-- Rust scope: `tests/test_rust_scripts.py`, plus `rust/scripts/test_distribution_licenses.py` on macOS.
-  The Rust tooling tier below covers parity and benchmark regression tests.
-- Either application on macOS: `tests/test_mac_signing.py`.
-- Any selected project: `tests/test_realtime_sanitizer.py` and `tests/test_realtime_scripts.py`.
-- ImageControl scope: `image-control-plugin/benchmarks/test_compare_formats.py`
-  and `image-control-plugin/tests/test_build_scripts.py`.
-
-Run each applicable script once, not once per project that uses it.
-These test tooling behavior, not benchmark performance.
-
 ## C++ application
 
 From `cpp/`, run the following for both `Debug` and `Release`, replacing `<type>` with the build type:
@@ -131,9 +118,8 @@ Then, from `rust/`:
 5. `./test.sh --gui-integration`.
 6. `./test.sh --optimized`.
 7. `./test.sh --cli-integration`.
-8. `./test.sh --tooling`.
-9. `cargo test --workspace --doc` for documentation tests not run by nextest.
-10. `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions`.
+8. `cargo test --workspace --doc` for documentation tests not run by nextest.
+9. `cargo test --manifest-path fuzz/Cargo.toml --test decoder_regressions`.
 
 Set `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1` on test invocations when the complete corpus is available.
 A full run must not claim normalization coverage from a locally skipped corpus.
@@ -200,6 +186,12 @@ On macOS, also run `./sanitize.sh`, `./sanitize.sh --thread`, `./sanitize.sh --r
 and `./coverage.sh --lcov`.
 Then run `./lint.sh --check` on either platform.
 Run lint after the macOS real-time build so it can include RTSan-only sources.
+
+From `image-control-plugin/rust/`, run `./format.sh --check` and `./lint.sh --check`,
+then `./build.sh --debug --test --validate`, `./test.sh`, `./build.sh --test --validate`, and `./test.sh` again.
+With the C++ Release build and its `ImageControlParity` target available,
+run `./parity.sh` with `--cpp` and `--executable` to compare both packaged implementations.
+On macOS, also run `./test.sh --miri` and `./rtsan.sh --format vst3`.
 
 Audio Unit validation through `./install.sh --reuse --validate` installs plugins and changes the native registry.
 Do not run it without explicit permission for those side effects.

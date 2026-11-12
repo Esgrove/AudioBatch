@@ -667,10 +667,7 @@ so third-party plugins load. The signature is for local use, without notarizatio
 
 ```shell
 codesign --verify --deep --strict --verbose=2 cmake-build-mac-debug/AudioBatch_artefacts/Debug/AudioBatch.app
-uv run --script ../tests/test_mac_signing.py
 ```
-
-`AUDIOBATCH_TEST_NATIVE_SIGNING=1` makes the test also sign and inspect real bundles on macOS.
 
 ### Build script and installation
 

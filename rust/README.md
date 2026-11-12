@@ -158,10 +158,7 @@ so third-party plugins load. The signature is for local use, without notarizatio
 
 ```shell
 codesign --verify --deep --strict --verbose=2 AudioBatchRs.app
-uv run --script ../tests/test_mac_signing.py
 ```
-
-`AUDIOBATCH_TEST_NATIVE_SIGNING=1` makes the test also sign and inspect real bundles on macOS.
 
 ## Shell Completions
 
@@ -477,7 +474,6 @@ AUDIOBATCH_GUI_SNAPSHOT=target/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatc
 ./test.sh --gui-integration
 ./test.sh --optimized
 ./test.sh --cli-integration
-./test.sh --tooling
 
 # Run every workspace test together
 cargo nextest run
@@ -489,7 +485,6 @@ The optimized tier runs release core tests, adding the CLI normalization subset 
 The CLI tier builds the debug executable and runs the shared contracts through uv with isolated application storage.
 Its diagnostics go to `target/integration-artifacts/cli/`.
 Use `--artifacts <directory>` with either integration tier to choose a different diagnostic directory.
-`--tooling` runs the parity-oracle and benchmark-tooling regression suites.
 Set `RUSTFLAGS=""` to reproduce CI's portable CPU configuration.
 
 The core golden tests compare exact floating point bits, histories, waveforms, and normalized samples.

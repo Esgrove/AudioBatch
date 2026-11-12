@@ -65,7 +65,7 @@ The C++-specific organization, JUCE, and OpenGL instructions below apply to the 
 - `src/analysis/` holds the audio-to-editor SPSC queue and the spatial spectral analysis.
 - `src/ui/` holds the reusable controls, gestures, display algorithms, and the OpenGL renderer.
 - `tests/` holds the GoogleTest suites, `TestMain.cpp`, the shared `TestSignals.h`,
-  the RTSan-only `RealtimeTests.cpp`, and `test_build_scripts.py` for the shell scripts.
+  and the RTSan-only `RealtimeTests.cpp`.
   `SpectrogramOverlayTests.cpp` owns CPU-only overlay geometry and response-cache tests,
   and `ImageControlEditorTests.cpp` owns editor layout and analysis lifecycle tests.
   Processor correlation lifecycle tests live in `CorrelationTests.cpp`,
@@ -77,8 +77,11 @@ The C++-specific organization, JUCE, and OpenGL instructions below apply to the 
 - `benchmarks/` holds `Benchmark.cpp` for the `ImageControlBenchmark` command,
   `CallbackBenchmarks.cpp` for processor workloads, `ComponentBenchmarks.cpp` for isolated CPU probes,
   and their shared `BenchmarkSupport.h`.
+  `RenderBenchmark.cpp` measures the OpenGL renderer for `ImageControlRenderBenchmark`,
+  and `render_benchmark.py` pairs its runs with the Rust renderer benchmark.
   It also holds `PresetWriter.cpp` for `ImageControlPresetWriter`,
-  and `compare_formats.py` with its tests, which compare the VST3 and the Audio Unit through the AudioBatch CLI.
+  and `compare_formats.py`, which compares the VST3 and the Audio Unit through the AudioBatch CLI.
+  Benchmarks run locally only, never in CI.
 - `test-signals/generate.py` writes reference signals into the ignored `test-signals/output/` directory.
 - `cmake/Verification.cmake` adds the sanitizer and coverage options.
   `CMakeLists.txt` also includes `../cpp/cmake/Optimizations.cmake`,
@@ -346,12 +349,13 @@ It requires both installed formats, so it is not a routine check.
 - `RealtimeTests.cpp` builds only in the `realtime` sanitizer configuration,
   where it fails to compile without RealtimeSanitizer.
   Mark only the callback under test as nonblocking, and keep setup and assertions outside the marked region.
-- `tests/test_build_scripts.py` and `benchmarks/test_compare_formats.py` check the scripts through uv:
-  `uv run --script tests/test_build_scripts.py` and `uv run --script benchmarks/test_compare_formats.py`.
+- Test the plugin itself, not the shell scripts, Python tooling, or CI configuration.
 - `tests/.clang-tidy` disables `readability-magic-numbers`, since tests compare against literal expected values.
 - CI runs `../.github/workflows/image-control.yml`:
   Debug and Release builds and tests on macOS and Windows, pinned pluginval, Audio Unit validation on macOS,
-  clang-tidy, AddressSanitizer, ThreadSanitizer, RealtimeSanitizer, coverage, and the script contract tests.
+  clang-tidy, AddressSanitizer, ThreadSanitizer, RealtimeSanitizer, and coverage.
+  It also builds, tests, and validates the Rust implementation and compares both packaged implementations.
+  It runs no benchmarks.
 
 ## Formatting
 
