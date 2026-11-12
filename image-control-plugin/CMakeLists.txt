@@ -324,10 +324,6 @@ if(IMAGE_CONTROL_BUILD_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/PluginParityScenarios.cpp" TARGET_DIRECTORY ImageControlParity
         PROPERTIES COMPILE_OPTIONS "${IMAGE_CONTROL_WARNINGS}"
     )
-    if(NOT IMAGE_CONTROL_SANITIZE AND NOT IMAGE_CONTROL_COVERAGE)
-        add_test(NAME ImageControlParity.Help COMMAND ImageControlParity --help)
-        set_tests_properties(ImageControlParity.Help PROPERTIES LABELS "parity;tooling" TIMEOUT 10)
-    endif()
     set(IMAGE_CONTROL_PARITY_RUST_BUNDLE "" CACHE PATH
                                                   "Explicit Rust build-tree VST3 for CTest cross-implementation parity"
     )

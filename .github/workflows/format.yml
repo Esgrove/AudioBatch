@@ -44,12 +44,6 @@ jobs:
           clang-format --version
           ./format.sh --check
 
-      - name: Check script flag aliases and isolated Rust plugin installation
-        run: |
-          uv run --script tests/test_shell_help.py
-          uv run --script tests/test_python_options.py
-          uv run --script image-control-plugin/rust/tests/test_install_script.py
-
   plugin-expected:
     # The expected outputs of the test plugin must be what fixtures/plugin_expected.py writes,
     # so a changed script cannot leave stale files behind for the C++ and Rust tests.

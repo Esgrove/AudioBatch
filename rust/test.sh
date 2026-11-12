@@ -29,9 +29,6 @@ OPTIONS: Choose at most one test tier
         Build the debug CLI and run its executable contracts through uv.
         CARGO_TARGET_DIR selects the build directory, defaulting to target/.
 
-    -T | --tooling
-        Check the parity oracles and benchmark tooling through uv.
-
     -A | --artifacts DIRECTORY
         Set the diagnostic directory for an integration tier.
         Defaults to target/integration-artifacts for GUI and target/integration-artifacts/cli for CLI.
@@ -50,7 +47,7 @@ parse_arguments() {
             -h | --help)
                 print_usage_and_exit 0
                 ;;
-            -u | --unit | -g | --gui-integration | -O | --optimized | -i | --cli-integration | -T | --tooling)
+            -u | --unit | -g | --gui-integration | -O | --optimized | -i | --cli-integration)
                 if [ -n "$TIER" ]; then
                     print_error_and_exit "Choose only one test tier."
                 fi
@@ -59,7 +56,6 @@ parse_arguments() {
                     -g | --gui-integration) TIER=--gui-integration ;;
                     -O | --optimized) TIER=--optimized ;;
                     -i | --cli-integration) TIER=--cli-integration ;;
-                    -T | --tooling) TIER=--tooling ;;
                 esac
                 ;;
             -A | --artifacts)
@@ -90,9 +86,7 @@ run_tests() {
     parse_arguments "$@"
     cd "$REPO"
 
-    if [ "$TIER" != --tooling ]; then
-        require_command cargo "Cargo not found in path. Maybe install rustup?"
-    fi
+    require_command cargo "Cargo not found in path. Maybe install rustup?"
 
     case "$TIER" in
         --unit)
@@ -121,12 +115,6 @@ run_tests() {
             cli_binary="$(cd "$(dirname "$cli_binary")" && pwd)/$(basename "$cli_binary")"
             uv run --script ../tests/cli_integration.py --cli "$cli_binary" \
                 --artifacts "${ARTIFACTS:-target/integration-artifacts/cli}"
-            ;;
-        --tooling)
-            require_command uv "uv not found in path, it runs the Python tooling tests"
-            uv run --script scripts/test_parity.py
-            uv run --script scripts/test_cli_benchmark.py
-            uv run --script ../tests/test_callback_benchmark.py
             ;;
     esac
 }

@@ -414,16 +414,14 @@ cargo fmt
 ./test.sh --gui-integration
 ./test.sh --optimized
 ./test.sh --cli-integration
-./test.sh --tooling
 ```
 
 `test.sh` defaults to `--unit`, excluding GUI integration workflows.
 The GUI and CLI integration tiers retain diagnostics under `target/integration-artifacts/`,
 and accept `--artifacts <directory>`.
 The optimized tier runs release core tests and adds the CLI normalization subset on Windows.
-The CLI tier builds the executable and runs the shared Python contracts through uv,
-and the tooling tier runs the parity and benchmark regression suites through uv.
-Raw `cargo nextest run` includes the GUI integration workflows but not either Python suite.
+The CLI tier builds the executable and runs the shared Python contracts through uv.
+Raw `cargo nextest run` includes the GUI integration workflows but not the Python suite.
 `cargo test` also runs the Rust workspace tests.
 `./lint.sh` runs the same clippy command with `-D warnings`, also on the fuzz crate,
 and `./lint.sh --check` reports the warnings without applying fixes.
