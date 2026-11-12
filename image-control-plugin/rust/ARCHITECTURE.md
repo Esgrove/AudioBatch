@@ -371,7 +371,11 @@ and retained correlation widgets sample publications and advance history without
 The worker wakes from the display cadence with bounded fallback draining when frames pause.
 On macOS, the pinned Iced/baseview integration forwards redraw requests to baseview's existing view-bound display link.
 Polling and resize request native frames rather than presenting through a competing timer.
-Windows retains compatibility scheduling until its backend's fixed redraw timer is separately qualified.
+Windows keeps compatibility scheduling because baseview's own redraw source is a coarse `WM_TIMER`.
+[`frame_pacer.rs`](crates/plugin/src/iced_bridge/frame_pacer.rs) instead waits on `DwmFlush`
+and invalidates the editor child once per desktop composition,
+so baseview's `WM_PAINT` handler renders at the display refresh rate on the UI thread.
+The poll interval stretches to 100 ms while the pacer runs, and `close` stops the worker before the child is destroyed.
 CI exercises dedicated spectrogram resource, invalidation, resize, and multi-widget contracts without timing samples.
 Benchmark executables and Criterion targets may be compiled there, but all performance execution remains local.
 Whole-pixel header allocation matches the C++ compression order and anchors monitoring and Output to the right.
