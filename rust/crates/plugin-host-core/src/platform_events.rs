@@ -9,6 +9,8 @@
 )]
 
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::{CFRunLoop, kCFRunLoopDefaultMode};
@@ -27,9 +29,10 @@ pub fn pump_platform_events(_ui: &UiThread, timeout: Duration) {
     CFRunLoop::run_in_mode(mode, timeout.as_secs_f64(), true);
 }
 
-/// Handles queued window messages, then waits up to `timeout` for another one.
+/// Handles queued window messages within `timeout`, including the wait for new work.
 #[cfg(windows)]
 pub fn pump_platform_events(_ui: &UiThread, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
     // SAFETY: `MSG` is a plain struct for which all zero bits are valid.
     let mut message: MSG = unsafe { std::mem::zeroed() };
     let milliseconds = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
@@ -40,6 +43,9 @@ pub fn pump_platform_events(_ui: &UiThread, timeout: Duration) {
         while PeekMessageW(&raw mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
             TranslateMessage(&raw const message);
             DispatchMessageW(&raw const message);
+            if Instant::now() >= deadline {
+                break;
+            }
         }
     }
 }
@@ -48,4 +54,55 @@ pub fn pump_platform_events(_ui: &UiThread, timeout: Duration) {
 #[cfg(not(any(target_os = "macos", windows)))]
 pub fn pump_platform_events(_ui: &UiThread, timeout: Duration) {
     std::thread::sleep(timeout);
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
+
+    use super::*;
+
+    #[test]
+    fn expired_budget_leaves_queued_work_for_the_next_turn() {
+        const TEST_MESSAGE: u32 = WM_APP + 173;
+        const MESSAGE_COUNT: usize = 128;
+
+        let remaining = crate::test_helpers::dispatcher()
+            .call(
+                |ui| -> std::io::Result<usize> {
+                    // SAFETY: MSG has a valid all-zero representation.
+                    let mut message: MSG = unsafe { std::mem::zeroed() };
+                    // SAFETY: the live local message also ensures this thread has a message queue.
+                    unsafe {
+                        PeekMessageW(&raw mut message, std::ptr::null_mut(), TEST_MESSAGE, TEST_MESSAGE, 0);
+                    }
+                    for _ in 0..MESSAGE_COUNT {
+                        // SAFETY: a null HWND queues this private, pointer-free message on the current thread.
+                        if unsafe { PostMessageW(std::ptr::null_mut(), TEST_MESSAGE, 0, 0) } == 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    pump_platform_events(ui, Duration::ZERO);
+                    let mut remaining = 0;
+                    // SAFETY: only this test's pointer-free messages are removed into a live local MSG.
+                    unsafe {
+                        while PeekMessageW(
+                            &raw mut message,
+                            std::ptr::null_mut(),
+                            TEST_MESSAGE,
+                            TEST_MESSAGE,
+                            PM_REMOVE,
+                        ) != 0
+                        {
+                            remaining += 1;
+                        }
+                    }
+                    Ok(remaining)
+                },
+                &|| false,
+            )
+            .expect("dispatch bounded message pump check")
+            .expect("queue native test messages");
+        assert!(remaining > 0, "an expired budget must not drain the queue");
+    }
 }
