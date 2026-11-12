@@ -93,6 +93,23 @@ class BenchmarkEvidenceContracts(unittest.TestCase):
         with pytest.raises(ValueError, match="nondeterministic"):
             ARTIFACTS.compare(self.first, self.second, 4096, "recover")
 
+    def test_preparation_timings_are_finite_paired_and_excluded_from_determinism(self) -> None:
+        """Preserve legacy evidence while validating both independently timed preparation boundaries."""
+        value = evidence() | {"module_load_seconds": 0.02, "preparation_seconds": 0.03}
+        self.write(value, value | {"module_load_seconds": 0.04, "preparation_seconds": 0.05})
+        ARTIFACTS.compare(self.first, self.second, 4096, "recover")
+        for field in ARTIFACTS.PREPARATION_TIMINGS:
+            for malformed in (None, 0.0, -0.1, float("nan"), float("inf")):
+                with self.subTest(field=field, malformed=malformed):
+                    self.write(value | {field: malformed})
+                    with pytest.raises(ValueError, match="finite and positive"):
+                        ARTIFACTS.report(self.first, 4096, "recover")
+            incomplete = value.copy()
+            del incomplete[field]
+            self.write(incomplete)
+            with pytest.raises(ValueError, match="finite and positive"):
+                ARTIFACTS.report(self.first, 4096, "recover")
+
     def test_explicit_build_tree_paths_and_symlink_escapes(self) -> None:
         """Never permit installed bundles, relative requests, or symlinks leaving the repository."""
         repository = self.root / "repository"
