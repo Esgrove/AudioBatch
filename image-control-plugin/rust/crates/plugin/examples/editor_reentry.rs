@@ -1378,21 +1378,17 @@ fn arguments() -> Result<Option<Options>> {
                     "Usage: editor_reentry --bundle <absolute-build-tree.vst3> [--case nested-dispatch|callback-removal|synchronous-removal]\n\
 Runs native-editor-reentry against the actual packaged ImageControl RS editor.\n\
 Requires macOS or Windows native event delivery. No installed plugins, audio devices, or screenshots are used.\n\
-Windows defaults to nested-dispatch; callback-removal retires the child without a nested event loop.\n\
-removal-retry is a compatibility alias for callback-removal."
+Windows defaults to nested-dispatch. callback-removal retires the child without a nested event loop."
                 );
                 return Ok(None);
             }
             Some("--bundle") => bundle = Some(PathBuf::from(arguments.next().context("--bundle needs a path")?)),
             Some("--case") => {
                 let case = arguments.next().context("--case needs a name")?;
-                synchronous_removal = matches!(
-                    case.to_str(),
-                    Some("synchronous-removal" | "callback-removal" | "removal-retry")
-                );
+                synchronous_removal = matches!(case.to_str(), Some("synchronous-removal" | "callback-removal"));
                 nested_events = match case.to_str() {
                     Some("nested-dispatch" | "synchronous-removal") => true,
-                    Some("callback-removal" | "removal-retry") => false,
+                    Some("callback-removal") => false,
                     _ => bail!("unknown native reentry case: {}", case.to_string_lossy()),
                 };
             }
@@ -1422,10 +1418,12 @@ fn main() -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let _ = (options.nested_events, options.synchronous_removal);
-        return native::run(&options.bundle);
+        native::run(&options.bundle)
     }
     #[cfg(windows)]
-    return native_windows::run(&options.bundle, options.nested_events, options.synchronous_removal);
+    {
+        native_windows::run(&options.bundle, options.nested_events, options.synchronous_removal)
+    }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = options;

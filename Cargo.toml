@@ -92,7 +92,7 @@ gpui-pre-platform = { version = "=0.3.12", features = ["test-support"] }
 vst3 = "=0.3.0"
 
 # Opt-in native frame scheduling, keeping the upstream package and license identity.
-# Windows stays on timer-driven compatibility scheduling until its backend supports native pacing.
+# Windows keeps timer-driven polling and requests composition-paced paints with ImageControl's DwmFlush pacer.
 [patch.crates-io]
 iced_baseview = { git = "https://github.com/Esgrove/iced_baseview.git", rev = "f9d3384c50e95d78fbfe0a1b8e002c1f1a314e2d" }
 

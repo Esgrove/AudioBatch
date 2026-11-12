@@ -151,7 +151,7 @@ impl Editor {
         }
         // SAFETY: The caller guarantees the parent's native type and lifetime for this editor.
         let native_parent = unsafe { native::NativeParent::new(parent)? };
-        #[cfg(windows)]
+        #[cfg(target_os = "windows")]
         let size = native_parent.initial_size(size, fallback_scale);
         // SAFETY: NativeParent validated the same host pointer and UI thread above.
         let children = unsafe { child::ChildrenBefore::capture(parent)? };
@@ -404,9 +404,12 @@ impl EditorBinding for LogicalBinding {
 
     /// Converts a user grip's logical dimensions once, before asking the host to resize its frame.
     fn request_resize(&self, width: u32, height: u32) -> bool {
-        let Some((width, height)) =
-            logical_resize_size(width, height, self.window_size.get().scale_factor, cfg!(windows))
-        else {
+        let Some((width, height)) = logical_resize_size(
+            width,
+            height,
+            self.window_size.get().scale_factor,
+            cfg!(target_os = "windows"),
+        ) else {
             return false;
         };
         self.native.request_resize(width, height)
