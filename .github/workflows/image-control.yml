@@ -1,6 +1,13 @@
 name: ImageControl
 
 on:
+  workflow_dispatch:
+    inputs:
+      windows_native_runner:
+        description: "Interactive Windows GPU runner label; leave empty for hosted contracts only"
+        required: false
+        type: string
+        default: ""
   push:
     branches:
       - main
@@ -288,6 +295,34 @@ jobs:
           cargo bench -p image-control-dsp --no-run
           cargo bench -p image-control-plugin-rs --features render-benchmark --bench spectrogram --no-run
 
+      - name: Check packaged processing benchmark workloads
+        timeout-minutes: 10
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+        run: |
+          repository="$(git rev-parse --show-toplevel)"
+          mkdir -p target/benchmark/ci-processing
+          for implementation in rust cpp; do
+            bundle="$repository/rust/target/bundled/ImageControl RS.vst3"
+            if [ "$implementation" = cpp ]; then
+              bundle="$repository/image-control-plugin/cmake-build-release/ImageControl_artefacts/Release/VST3/ImageControl.vst3"
+            fi
+            for scenario in neutral recover delta bypass; do
+              cargo run --release -p image-control-plugin-rs --no-default-features --features vst3 \
+                --example processing_benchmark -- --implementation "$implementation" \
+                --bundle "$bundle" --case "$scenario" --frames 4096 \
+                > "target/benchmark/ci-processing/$implementation-$scenario.json"
+            done
+          done
+
+      - name: Upload processing workload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-control-processing-${{ runner.os }}
+          path: image-control-plugin/rust/target/benchmark/ci-processing
+          if-no-files-found: ignore
+
       - name: Upload cross-implementation diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -295,6 +330,68 @@ jobs:
           name: image-control-parity-${{ runner.os }}
           path: rust/target/image-control-parity
           if-no-files-found: ignore
+
+  windows-native:
+    name: Interactive Windows native qualification
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_native_runner != ''
+    runs-on: ${{ inputs.windows_native_runner }}
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: "-C target-cpu=native"
+    defaults:
+      run:
+        shell: bash
+        working-directory: image-control-plugin/rust
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Require interactive Windows runner
+        run: test "$RUNNER_OS" = Windows
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Validate native GPU workload reports
+        run: |
+          set -o pipefail
+          mkdir -p target/windows-native
+          ../build.sh --test 2>&1 | tee target/windows-native/cpp-build.log
+          cmake --build ../cmake-build-release --config Release --target ImageControlRenderBenchmark
+          cargo build --release -p image-control-plugin-rs --features render-benchmark --example render_benchmark
+          uv run --script ../benchmarks/render_benchmark.py \
+            --cpp "$(cygpath -w "$PWD/../cmake-build-release/ImageControlRenderBenchmark_artefacts/Release/ImageControlRenderBenchmark.exe")" \
+            --rust "$(cygpath -w "$PWD/../../rust/target/release/examples/render_benchmark.exe")" \
+            --artifacts "$(cygpath -w "$PWD/target/windows-native/render")" \
+            --runs 2 --frames 120 --warmup 30 --particles 4096 --mode particles --size 1280x720 --timeout 30
+      - name: Qualify Debug and Release native editors
+        run: |
+          set -o pipefail
+          repository="$(git rev-parse --show-toplevel)"
+          mkdir -p target/windows-native
+          for profile in debug release; do
+            build_options=(--test)
+            cargo_options=()
+            if [ "$profile" = debug ]; then
+              build_options+=(--debug)
+            else
+              cargo_options+=(--release)
+            fi
+            ./build.sh "${build_options[@]}" 2>&1 | tee "target/windows-native/$profile-build.log"
+            for scenario in nested-dispatch synchronous-removal; do
+              cargo run "${cargo_options[@]}" -p image-control-plugin-rs --example editor_reentry -- \
+                --case "$scenario" --bundle "$repository/rust/target/bundled/ImageControl RS.vst3" \
+                2>&1 | tee "target/windows-native/$profile-$scenario.log"
+            done
+            cargo run "${cargo_options[@]}" -p image-control-plugin-rs --example clap_editor -- \
+              --bundle "$repository/rust/target/bundled/ImageControl RS.clap" \
+              2>&1 | tee "target/windows-native/$profile-clap-editor.log"
+          done
+      - name: Upload native qualification diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-control-windows-native
+          path: image-control-plugin/rust/target/windows-native
+          if-no-files-found: error
 
   rust-miri:
     name: Rust scalar and admission Miri
