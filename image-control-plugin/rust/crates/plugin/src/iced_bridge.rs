@@ -6,6 +6,8 @@
 //! and rearms the notifier after each refresh. No parameter or audio callback sends messages into this bridge.
 
 mod child;
+#[cfg(target_os = "windows")]
+mod frame_pacer;
 mod native;
 
 use baseview::dpi::NativeSize;
@@ -27,6 +29,11 @@ use crate::params::{EditorBinding, Parameters};
 
 /// Main-thread polling cadence for host atomics and completed analysis, not a second timer thread.
 const DISPLAY_INTERVAL: Duration = Duration::from_millis(16);
+
+/// Windows background polling while composition-paced paints already poll before each draw.
+/// Each poll also draws in compatibility scheduling, so a slow cadence avoids off-refresh duplicates.
+#[cfg(target_os = "windows")]
+const PACED_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Failures at the native embedding boundary. None creates a replacement standalone window.
 #[derive(Debug)]
@@ -108,6 +115,9 @@ pub struct Editor {
     executor: RefCell<crate::iced_executor::Shutdown>,
     /// Joins detached file operations even during reentrant removal while Iced state remains borrowed.
     shutdowns: Rc<RefCell<Vec<crate::params::EditorShutdown>>>,
+    /// Requests composition-paced paints, stopped before the child can be destroyed.
+    #[cfg(target_os = "windows")]
+    frame_pacer: RefCell<Option<frame_pacer::FramePacer>>,
 }
 
 impl Editor {
@@ -150,6 +160,17 @@ impl Editor {
         let editor_shutdowns = Rc::clone(&shutdowns);
         let open = Rc::new(Cell::new(true));
         let notifier = PollSubNotifier::new();
+        // A failed worker start keeps the timer cadence rather than failing attachment.
+        #[cfg(target_os = "windows")]
+        let frame_pacer = frame_pacer::FramePacer::start().ok();
+        #[cfg(target_os = "windows")]
+        let poll_interval = if frame_pacer.is_some() {
+            PACED_POLL_INTERVAL
+        } else {
+            DISPLAY_INTERVAL
+        };
+        #[cfg(not(target_os = "windows"))]
+        let poll_interval = DISPLAY_INTERVAL;
         let settings = IcedWindowSettings::new()
             .with_title("ImageControl RS")
             .with_size(size)
@@ -164,9 +185,10 @@ impl Editor {
                 f64::from(crate::editor_geometry::MAX_EDITOR_SIZE.0),
                 f64::from(crate::editor_geometry::MAX_EDITOR_SIZE.1),
             )))
-            .with_poll_interval(DISPLAY_INTERVAL)
+            .with_poll_interval(poll_interval)
             // macOS uses baseview's existing NSView display link.
             // Windows keeps compatibility scheduling because baseview's native redraw source is a fixed 15 ms timer.
+            // The frame pacer instead requests one WM_PAINT per desktop composition.
             .with_native_frame_scheduling(cfg!(target_os = "macos"))
             .with_always_redraw(!cfg!(target_os = "macos"));
         let host = Host::new().with_callbacks(EditorHost {
@@ -217,7 +239,13 @@ impl Editor {
             owner_thread: std::thread::current().id(),
             executor: RefCell::new(executor),
             shutdowns: editor_shutdowns,
+            #[cfg(target_os = "windows")]
+            frame_pacer: RefCell::new(frame_pacer),
         };
+        #[cfg(target_os = "windows")]
+        if let Some(pacer) = editor.frame_pacer.borrow().as_ref() {
+            pacer.attach(editor.child.hwnd());
+        }
         editor.window()?.show()?;
         Ok(editor)
     }
@@ -288,6 +316,10 @@ impl Editor {
             return Ok(());
         }
         self.open.set(false);
+        #[cfg(target_os = "windows")]
+        if let Some(mut pacer) = self.frame_pacer.borrow_mut().take() {
+            pacer.stop();
+        }
         self.shared.set_correlation_enabled(false);
         self.shared.set_analysis_enabled(false);
         // Retire admission before native removal or host gesture cleanup can reenter the retained program.

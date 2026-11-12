@@ -103,7 +103,8 @@ fn generate(frame_count: usize) -> Result<AudioWorkload> {
     Ok(AudioWorkload { frames, audio_fnv1a64 })
 }
 
-/// Pads only zero-energy records; real production observations are neither sampled nor duplicated.
+/// Pads only zero-energy records.
+/// Real production observations are neither sampled nor duplicated.
 fn encode(workload: &AudioWorkload) -> Result<Vec<u8>> {
     let count = workload.frames.iter().map(Vec::len).max().context("render frames")?;
     ensure!(count <= 65_536, "production frame exceeds the shared particle bound");

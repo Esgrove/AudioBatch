@@ -93,6 +93,12 @@ impl ChildrenBefore {
 }
 
 impl ChildLease {
+    /// Returns the borrowed child HWND, valid only while the baseview window remains alive.
+    #[cfg(target_os = "windows")]
+    pub(super) const fn hwnd(&self) -> NativeChild {
+        self.child
+    }
+
     /// Changes only the captured child view's visibility on its owning native UI thread.
     /// The parent and retained baseview window remain unchanged, and native callbacks may reenter the binding.
     #[expect(
